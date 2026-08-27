@@ -40,6 +40,24 @@ const MIGRATIONS: string[] = [
   // created on first insert and dropped by purge, which is what storage.md promises.
   `CREATE TABLE kv (ns TEXT, key TEXT, value TEXT, PRIMARY KEY (ns, key));
    CREATE TABLE settings (plugin TEXT, key TEXT, value TEXT, PRIMARY KEY (plugin, key));`,
+
+  // 2 — the conversation. Core's, not any plugin's: deleting the memory plugin makes
+  // Alexia forget you across sessions, and must not touch what you are saying right now.
+  `CREATE TABLE sessions (
+     id INTEGER PRIMARY KEY,
+     title TEXT,
+     created_at INTEGER NOT NULL,
+     updated_at INTEGER NOT NULL
+   );
+   CREATE TABLE messages (
+     id INTEGER PRIMARY KEY,
+     session_id INTEGER NOT NULL REFERENCES sessions (id) ON DELETE CASCADE,
+     role TEXT NOT NULL,
+     model TEXT,
+     body TEXT NOT NULL,
+     at INTEGER NOT NULL
+   );
+   CREATE INDEX messages_by_session ON messages (session_id, id);`,
 ]
 
 /** What SQLite actually stores. `encode` turns everything else into one of these. */
@@ -121,6 +139,29 @@ function where(clause: Where | undefined): Clause {
   return { sql: parts.length ? ` WHERE ${parts.join(' AND ')}` : '', params }
 }
 
+/**
+ * One turn of a conversation, in the shape a provider takes it. `tool` and the call fields
+ * are the agent's step trace: the loop (M15) writes them, and core stores them so a reload
+ * shows the same steps the user watched happen.
+ */
+export interface Message {
+  role: 'system' | 'user' | 'assistant' | 'tool'
+  content: string
+  /** Assistant: what this turn asked to run. */
+  calls?: { id: string; name: string; arguments: string }[]
+  /** Tool: which of those calls this is the answer to. */
+  callId?: string
+  /** Which model produced it. Kept per message, so switching models cannot make it lie. */
+  model?: string
+}
+
+export interface Session {
+  id: number
+  title: string | null
+  createdAt: number
+  updatedAt: number
+}
+
 export interface SelectQuery {
   where?: Where
   order?: [string, 'asc' | 'desc'][]
@@ -139,6 +180,9 @@ export class Store {
     if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true })
     this.#db = new DatabaseSync(path)
     this.#db.exec('PRAGMA journal_mode = WAL')
+    // Off by default in SQLite, and per connection. Deleting a conversation has to take
+    // its messages with it, and that is the cascade doing it.
+    this.#db.exec('PRAGMA foreign_keys = ON')
     this.#migrate()
   }
 
@@ -289,6 +333,72 @@ export class Store {
     this.#db
       .prepare('INSERT OR REPLACE INTO settings (plugin, key, value) VALUES (?, ?, ?)')
       .run(plugin, ident(key), JSON.stringify(value))
+  }
+
+  /**
+   * A new conversation. The title usually arrives later, from what was actually said.
+   */
+  createSession(title?: string): number {
+    const now = Date.now()
+    return Number(
+      this.#db
+        .prepare('INSERT INTO sessions (title, created_at, updated_at) VALUES (?, ?, ?)')
+        .run(title ?? null, now, now).lastInsertRowid,
+    )
+  }
+
+  /** Newest first, which is the order a list of conversations is read in. */
+  sessions(): Session[] {
+    return this.#db
+      .prepare(
+        'SELECT id, title, created_at AS createdAt, updated_at AS updatedAt FROM sessions' +
+          ' ORDER BY updated_at DESC, id DESC',
+      )
+      .all() as unknown as Session[]
+  }
+
+  renameSession(id: number, title: string): void {
+    this.#db.prepare('UPDATE sessions SET title = ? WHERE id = ?').run(title, id)
+  }
+
+  /** The messages go with it, by `ON DELETE CASCADE` — hence `foreign_keys` in the constructor. */
+  deleteSession(id: number): void {
+    this.#db.prepare('DELETE FROM sessions WHERE id = ?').run(id)
+  }
+
+  /**
+   * Append a turn. `role` and `model` are columns because they are what gets asked about;
+   * the rest is stored as the provider's own shape, so a new field costs no migration.
+   */
+  append(sessionId: number, message: Message): number {
+    const { role, model, ...rest } = message
+    const at = Date.now()
+    return this.transaction(() => {
+      const { lastInsertRowid } = this.#db
+        .prepare('INSERT INTO messages (session_id, role, model, body, at) VALUES (?, ?, ?, ?, ?)')
+        .run(sessionId, role, model ?? null, JSON.stringify(rest), at)
+      this.#db.prepare('UPDATE sessions SET updated_at = ? WHERE id = ?').run(at, sessionId)
+      return Number(lastInsertRowid)
+    })
+  }
+
+  /**
+   * The conversation, oldest first — exactly what gets re-sent to whichever model is
+   * selected now. Models are stateless and the history is ours, which is the whole reason
+   * switching one mid-conversation loses nothing.
+   *
+   * `limit` keeps the newest N and still returns them in order: the trailing window is the
+   * useful one. Trimming the middle intelligently is M15-6, and it belongs to the loop.
+   */
+  history(sessionId: number, limit?: number): Message[] {
+    const rows = this.#db
+      .prepare('SELECT role, model, body FROM messages WHERE session_id = ? ORDER BY id DESC LIMIT ?')
+      .all(sessionId, limit ?? -1) as { role: string; model: string | null; body: string }[]
+    return rows.reverse().map((row) => ({
+      role: row.role as Message['role'],
+      ...(row.model !== null && { model: row.model }),
+      ...(JSON.parse(row.body) as Omit<Message, 'role' | 'model'>),
+    }))
   }
 
   /**

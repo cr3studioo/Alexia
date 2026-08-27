@@ -197,6 +197,13 @@ that has not been enabled yet, and would never be cleaned up.
 ## What core stores, which is not this
 
 Sessions, message history, the step trace, usage and spend, the model catalog cache and the
-settings table itself are core's, in the same file, without a `p_` prefix. Plugins cannot
+settings table itself are core's, in the same file, without a `p_` prefix.
+
+Concretely, that is `sessions` and `messages`: one row per turn, with `role` and `model` as
+columns because those are what gets asked about, and the rest of the message stored in the
+shape a provider takes it, so a new field costs no migration. **The agent's step trace is not
+a third table** — it is the `tool` rows and the assistant calls that produced them, in the
+same order they happened. Deleting a session takes its messages with it, by `ON DELETE
+CASCADE`. Plugins cannot
 read them through this API and there is no method that would let them try. Long-term recall
 is a *plugin* ([`memory`](../../plan.md), M4) and gets a namespace like everyone else.

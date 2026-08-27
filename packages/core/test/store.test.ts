@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { mkdtempSync } from 'node:fs'
+import { mkdirSync, mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { isAbsolute, join, relative } from 'node:path'
+import { dirname, isAbsolute, join, relative } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { expect, test } from 'vitest'
 import { dataDir, Store } from '../src/store.js'
@@ -12,6 +12,9 @@ import { dataDir, Store } from '../src/store.js'
 
 /** A path whose parent does not exist yet — opening it has to make the directory. */
 const tmp = (): string => join(mkdtempSync(join(tmpdir(), 'alexia-store-')), 'data', 'alexia.db')
+
+/** How many migrations this build knows. Every fresh database should be at this version. */
+const MIGRATIONS = 2
 
 /** The schema version as SQLite holds it, read without going through `Store`. */
 function version(path: string): number {
@@ -26,14 +29,14 @@ test('migrations run once, and reopening keeps what was written', () => {
   const first = new Store(path)
   first.kvSet('demo', 'model', 'base')
   first.close()
-  expect(version(path)).toBe(1)
+  expect(version(path)).toBe(MIGRATIONS)
 
-  // Migration 1 is a plain CREATE TABLE. If it ran twice this line throws.
+  // Every migration is a plain CREATE TABLE. If one ran twice this line throws.
   const second = new Store(path)
   expect(second.kvGet('demo', 'model')).toBe('base')
   expect(second.tables()).toContain('kv')
   second.close()
-  expect(version(path)).toBe(1)
+  expect(version(path)).toBe(MIGRATIONS)
 })
 
 test('a database written by a newer Alexia is refused, not opened', () => {
@@ -72,4 +75,78 @@ test('the data directory is per-user and absolute, never beside the executable',
   // A checkout is where the executable lives during development. History does not go there.
   const repoRoot = join(import.meta.dirname, '..', '..', '..')
   expect(relative(repoRoot, dir).startsWith('..')).toBe(true)
+})
+
+// M1-2: the conversation. Core owns it, so deleting the memory plugin (M4) forgets you
+// across sessions without touching what you are saying right now.
+
+test('a database from the previous schema is carried forward, not rebuilt', () => {
+  const path = tmp()
+  mkdirSync(dirname(path), { recursive: true })
+  const db = new DatabaseSync(path)
+  db.exec('CREATE TABLE kv (ns TEXT, key TEXT, value TEXT, PRIMARY KEY (ns, key))')
+  db.exec('CREATE TABLE settings (plugin TEXT, key TEXT, value TEXT, PRIMARY KEY (plugin, key))')
+  db.exec(`INSERT INTO kv VALUES ('demo', 'model', '"base"')`)
+  db.exec('PRAGMA user_version = 1')
+  db.close()
+
+  const store = new Store(path)
+  expect(store.kvGet('demo', 'model')).toBe('base') // migration 1 did not run a second time
+  expect(store.tables()).toContain('sessions') //     migration 2 did run
+  expect(version(path)).toBe(MIGRATIONS)
+  store.close()
+})
+
+test('a conversation comes back in order, and switching models does not lose it', () => {
+  const store = new Store(':memory:')
+  const session = store.createSession('First conversation')
+
+  store.append(session, { role: 'user', content: 'sort my downloads' })
+  store.append(session, {
+    role: 'assistant',
+    content: '',
+    model: 'qwen3:8b',
+    calls: [{ id: 'c1', name: 'fs.list', arguments: '{"path":"Downloads"}' }],
+  })
+  store.append(session, { role: 'tool', content: '340 files', callId: 'c1' })
+  // The model changed mid-conversation. The history is core's, so nothing is lost — and
+  // each turn still says which model produced it.
+  store.append(session, { role: 'assistant', content: 'Six groups.', model: 'gpt-oss-120b' })
+
+  const history = store.history(session)
+  expect(history.map((m) => m.role)).toEqual(['user', 'assistant', 'tool', 'assistant'])
+  expect(history[1]?.calls?.[0]?.name).toBe('fs.list')
+  expect(history[2]?.callId).toBe('c1')
+  expect(history.map((m) => m.model)).toEqual([undefined, 'qwen3:8b', undefined, 'gpt-oss-120b'])
+
+  // A limit keeps the newest turns and still hands them back in order.
+  expect(store.history(session, 2).map((m) => m.content)).toEqual(['340 files', 'Six groups.'])
+  store.close()
+})
+
+test('the session list is newest-touched first, and deleting one takes its messages', async () => {
+  const store = new Store(':memory:')
+  const first = store.createSession('First')
+  const second = store.createSession('Second')
+  await new Promise((resolve) => setTimeout(resolve, 2)) // a real gap, not a same-millisecond tie
+  store.append(first, { role: 'user', content: 'still here' })
+  store.append(second, { role: 'user', content: 'and here' })
+
+  expect(store.sessions().map((s) => s.title)).toEqual(['Second', 'First'])
+  store.renameSession(first, 'Sorting downloads')
+  expect(store.sessions().map((s) => s.title)).toEqual(['Second', 'Sorting downloads'])
+
+  store.deleteSession(second)
+  expect(store.sessions().map((s) => s.id)).toEqual([first])
+  expect(store.history(second)).toEqual([]) //         the cascade took the messages
+  expect(store.history(first)).toHaveLength(1) //      and left the other conversation alone
+  store.close()
+})
+
+test('a message cannot be appended to a conversation that does not exist', () => {
+  const store = new Store(':memory:')
+  // Foreign keys are on, so this is caught here rather than becoming an orphan row nobody
+  // can see and nothing deletes.
+  expect(() => store.append(404, { role: 'user', content: 'hello?' })).toThrow()
+  store.close()
 })
