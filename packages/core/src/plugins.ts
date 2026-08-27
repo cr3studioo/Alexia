@@ -8,7 +8,7 @@ import {
   type Root,
   type Tool,
 } from '@modelcontextprotocol/client'
-import { readdirSync, readFileSync, rmSync, watch, type FSWatcher } from 'node:fs'
+import { readdirSync, readFileSync, realpathSync, rmSync, watch, type FSWatcher } from 'node:fs'
 import { join } from 'node:path'
 import { Host } from './host.js'
 import type { Store } from './store.js'
@@ -135,10 +135,33 @@ export class Plugins {
    * problems live.
    */
   watch(): void {
-    this.#watcher ??= watch(this.options.dir, () => {
-      // Deleting a folder is several events. Coalesce, or the reload runs four times.
-      clearTimeout(this.#pending)
-      this.#pending = setTimeout(() => this.load(), 100).unref()
+    if (this.#watcher) return
+    try {
+      // Windows' fs-event backend compares the path it was handed against the one the OS
+      // reports for each event, and **aborts the process** — not throws — when they differ.
+      // An 8.3 short path — `RUNNER~1` standing in for `runneradmin` — is enough to
+      // trigger it, which is how CI found this and a laptop never would. Ask the OS what
+      // it calls the directory
+      // first. ponytail: if the Windows watcher bites again, chokidar is the sanctioned
+      // replacement and the parts list already carries it.
+      const dir = realpathSync.native(this.options.dir)
+      this.#watcher = watch(dir, () => {
+        // Deleting a folder is several events. Coalesce, or the reload runs four times.
+        clearTimeout(this.#pending)
+        this.#pending = setTimeout(() => this.load(), 100).unref()
+      })
+      // A folder that cannot be watched means core stops noticing changes to it. That is a
+      // degraded install, worth saying out loud, and not a reason to bring anything down.
+      this.#watcher.on('error', (error) => this.#unwatchable(error))
+    } catch (error) {
+      this.#unwatchable(error)
+    }
+  }
+
+  #unwatchable(error: unknown): void {
+    this.#problems.push({
+      dir: this.options.dir,
+      reason: `cannot watch for changes: ${String(error)}`,
     })
   }
 

@@ -16,6 +16,7 @@ const needPlugins = [
   'packages/core/test/invariants/03-crasher-contained.test.ts',
   'packages/core/test/invariants/04-vanisher-replans.test.ts',
   'packages/core/test/invariants/05-purge-leaves-no-residue.test.ts',
+  'packages/core/test/invariants/09-memory-budget.test.ts',
 ]
 const withoutPlugins = existsSync(join(import.meta.dirname, 'plugins')) ? [] : needPlugins
 

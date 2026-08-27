@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, expect, test } from 'vitest'
@@ -33,11 +33,15 @@ test('boots-with-no-plugins: an empty plugins folder is a working install', asyn
 })
 
 test('boots-with-no-plugins: no plugins folder at all is also fine', () => {
-  rmSync(empty, { recursive: true, force: true })
-  // Not an error, and not a crash: a fresh install has nothing installed yet, and that is
-  // the state every user starts in.
-  expect(() => plugins.load()).not.toThrow()
-  expect(plugins.ids).toEqual([])
+  // A path that has never existed, which is the state a fresh install starts in — before
+  // anything has been installed there is nothing to read, and that is not an error.
+  const missing = new Plugins({ dir: join(empty, 'never-created'), store, dataDir })
+  expect(() => missing.load()).not.toThrow()
+  expect(missing.ids).toEqual([])
+
+  // Watching a folder that is not there fails, and says so instead of taking core down.
+  missing.watch()
+  expect(missing.problems[0]?.reason).toContain('cannot watch for changes')
 })
 
 test('boots-with-no-plugins: a capability nothing provides is answered, not thrown away', async () => {
