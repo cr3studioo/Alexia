@@ -6,6 +6,7 @@ import type { AddressInfo } from 'node:net'
 import { join } from 'node:path'
 import { run, said } from './agent.js'
 import { Catalog } from './catalog.js'
+import { asRuling, counted, freshTally, ModelChecker, type Tally } from './checker.js'
 import { commands, pins, run as runCommand } from './commands.js'
 import { installed, OLLAMA, running } from './ollama.js'
 import { usable } from './pool.js'
@@ -177,6 +178,16 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
    * because the loop is single-threaded through it.
    */
   let pending: ((allowed: boolean) => void) | undefined
+
+  /**
+   * The second opinion (M15-4). Local by default — a reviewer that ships what it is
+   * reviewing to somebody else's API has leaked the very file it was asked about.
+   *
+   * The tally lives here rather than in the checker because *this session* is what the
+   * give-up rule counts, and the checker itself is stateless on purpose.
+   */
+  const checker = new ModelChecker({ store, secrets, world, session })
+  let tally: Tally = freshTally()
 
   const server = createServer((request, response) => {
     void handle(request, response).catch((error: unknown) => {
@@ -383,7 +394,8 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
          */
         guard: async (call): Promise<Ruling> => {
           const about = await tooling.about(call.name)
-          return rule(
+          const now = scope()
+          const ruling = rule(
             {
               tool: call.name,
               ...(about?.annotations && { annotations: about.annotations }),
@@ -392,8 +404,16 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
               // `false`. Everything installed today came from this repo.
               reviewed: true,
             },
-            scope(),
+            now,
           )
+          // The fixed rules have already spoken. The checker is coverage on top of them and
+          // never instead of them, so it is only asked about something they would let run.
+          if (ruling.verdict !== 'run' || now.mode !== 'watch') return ruling
+
+          const step = { n: 0, name: call.name, args: call.args }
+          const review = await checker.review({ step, task: text, scope: now })
+          tally = counted(tally, review)
+          return asRuling(review, step, tally)
         },
         approve: (ruling) =>
           new Promise<boolean>((resolve) => {

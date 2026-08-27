@@ -118,7 +118,7 @@ Tick a box only when the task's acceptance criteria pass. `[GATE]` needs a human
 - [x] **M15-1** The agent loop
 - [x] **M15-2** Plugin tools reach the model
 - [x] **M15-3** Permission modes and the never-touch list
-- [ ] **M15-4** The safety checker
+- [x] **M15-4** The safety checker
 - [ ] **M15-5** The visible trace and the stop control
 - [ ] **M15-6** Step-trace trimming
 - [ ] **M15-7** Ceilings and the spend preview
