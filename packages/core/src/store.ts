@@ -58,7 +58,29 @@ const MIGRATIONS: string[] = [
      at INTEGER NOT NULL
    );
    CREATE INDEX messages_by_session ON messages (session_id, id);`,
+
+  // 3 — the rate-limit ledger (M1-6). Counting what has already been sent is the only way
+  // the router can know a free tier is exhausted *before* it sends and collects a 429.
+  `CREATE TABLE provider_usage (
+     provider TEXT NOT NULL,
+     span TEXT NOT NULL,
+     bucket INTEGER NOT NULL,
+     count INTEGER NOT NULL,
+     PRIMARY KEY (provider, span, bucket)
+   );`,
 ]
+
+/**
+ * The two windows a free tier is rationed by, and how long each lasts.
+ *
+ * ponytail: the day is a UTC day, and a provider whose quota resets at some other hour will
+ * disagree for a few hours after the boundary. The cost of being wrong is one 429 and a
+ * fallback that already exists; the fix, if it ever matters, is a reset hour on the row.
+ */
+export const SPANS = [
+  ['minute', 60_000],
+  ['day', 24 * 60 * 60 * 1000],
+] as const
 
 /** What SQLite actually stores. `encode` turns everything else into one of these. */
 type Value = string | number | null
@@ -399,6 +421,37 @@ export class Store {
       ...(row.model !== null && { model: row.model }),
       ...(JSON.parse(row.body) as Omit<Message, 'role' | 'model'>),
     }))
+  }
+
+  /** One more request sent to this provider, counted in both windows at once. */
+  recordRequest(provider: string, at: number = Date.now()): void {
+    this.transaction(() => {
+      for (const [span, size] of SPANS) {
+        const bucket = Math.floor(at / size)
+        this.#db
+          .prepare(
+            'INSERT INTO provider_usage (provider, span, bucket, count) VALUES (?, ?, ?, 1)' +
+              ' ON CONFLICT (provider, span, bucket) DO UPDATE SET count = count + 1',
+          )
+          .run(provider, span, bucket)
+        // Last minute's counter is nobody's business. Pruned here so nothing else has to
+        // remember to, and so the table stays the size of the number of providers.
+        this.#db
+          .prepare('DELETE FROM provider_usage WHERE provider = ? AND span = ? AND bucket < ?')
+          .run(provider, span, bucket)
+      }
+    })
+  }
+
+  /** How many requests have gone to this provider inside the current minute, and day. */
+  requests(provider: string, at: number = Date.now()): { minute: number; day: number } {
+    const count = (span: string, size: number): number => {
+      const row = this.#db
+        .prepare('SELECT count FROM provider_usage WHERE provider = ? AND span = ? AND bucket = ?')
+        .get(provider, span, Math.floor(at / size)) as { count: number } | undefined
+      return row?.count ?? 0
+    }
+    return { minute: count(...SPANS[0]), day: count(...SPANS[1]) }
   }
 
   /**

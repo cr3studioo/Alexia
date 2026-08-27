@@ -24,17 +24,26 @@ export interface Provider {
   /** A local server, or one the user is already the endpoint of. No key, and none asked for. */
   keyless?: boolean
   /**
-   * What its terms say about training on what you send it (D51). Left unset until somebody
-   * has actually read them — M1-6 is where that happens, provider by provider. Never
-   * inferred from the price, however strongly the price hints.
+   * What its terms say about training on what you send it (D51). `unknown` until somebody
+   * has actually read them and written the date down — never inferred from the price,
+   * however strongly a free tier hints.
    */
   trainsOnYourData?: 'yes' | 'no' | 'unknown'
+  /** Where the limits and the data policy are written down, for the person checking. */
+  terms?: string
+  /** The published free-tier limits: requests per minute, and per day. */
+  rpm?: number
+  rpd?: number
 }
 
 /**
- * ponytail: one row, because one is what M1-5 needs to fetch a catalog with. The free-tier
- * pool at M1-6 adds the rest, each with the limits, terms URL and trains-on-your-data flag
- * that D51 makes load-bearing — and those belong with the pool, not scattered ahead of it.
+ * The table. Limits are the published free-tier numbers from the plan's *Verified facts*,
+ * measured 2026-08-27.
+ *
+ * **Every `trainsOnYourData` says `unknown` on purpose.** The terms URL is recorded so the
+ * answer is one read away, and the flag stays honest until somebody has actually done that
+ * read — which the plan makes a condition of any public release, not of this table
+ * existing. Guessing here would break the one promise the whole project rests on.
  */
 export const PROVIDERS: Provider[] = [
   {
@@ -45,6 +54,69 @@ export const PROVIDERS: Provider[] = [
     // OpenRouter attributes traffic to whatever sends these. Being identifiable costs
     // nothing and is the polite half of using somebody's free tier.
     headers: { 'HTTP-Referer': 'https://github.com/cr3studioo/Alexia', 'X-Title': 'Alexia' },
+    terms: 'https://openrouter.ai/terms',
+    trainsOnYourData: 'unknown',
+    rpm: 20,
+    rpd: 50, //                                 1,000 after a one-off $10 of credit
+  },
+  {
+    id: 'groq',
+    name: 'Groq',
+    baseUrl: 'https://api.groq.com/openai/v1',
+    models: '/models',
+    terms: 'https://groq.com/terms-of-use/',
+    trainsOnYourData: 'unknown',
+    rpm: 30,
+    rpd: 14_400,
+  },
+  {
+    id: 'cerebras',
+    name: 'Cerebras',
+    baseUrl: 'https://api.cerebras.ai/v1',
+    models: '/models',
+    terms: 'https://www.cerebras.ai/terms-of-service',
+    trainsOnYourData: 'unknown',
+    rpm: 30,
+    rpd: 14_400,
+  },
+  {
+    id: 'google',
+    name: 'Google AI Studio',
+    baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
+    models: '/models',
+    terms: 'https://ai.google.dev/gemini-api/terms',
+    trainsOnYourData: 'unknown',
+    rpm: 15,
+    rpd: 1_500,
+  },
+  {
+    id: 'mistral',
+    name: 'Mistral',
+    baseUrl: 'https://api.mistral.ai/v1',
+    models: '/models',
+    terms: 'https://mistral.ai/terms',
+    trainsOnYourData: 'unknown',
+    rpm: 60, //                                 published as one request per second
+  },
+  {
+    id: 'nvidia',
+    name: 'NVIDIA NIM',
+    baseUrl: 'https://integrate.api.nvidia.com/v1',
+    models: '/models',
+    terms: 'https://build.nvidia.com/terms',
+    trainsOnYourData: 'unknown',
+    rpm: 40,
+  },
+  {
+    id: 'github',
+    name: 'GitHub Models',
+    baseUrl: 'https://models.inference.ai.azure.com',
+    // No model list endpoint recorded. Left off rather than guessed: the catalog asks the
+    // provider row where to look, and a wrong path is a daily failed fetch.
+    terms: 'https://docs.github.com/site-policy/github-terms/github-terms-of-service',
+    trainsOnYourData: 'unknown',
+    rpm: 10,
+    rpd: 50,
   },
 ]
 
