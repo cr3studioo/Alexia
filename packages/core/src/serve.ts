@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { randomUUID } from 'node:crypto'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { join } from 'node:path'
@@ -30,7 +30,7 @@ import { allowance, warning } from './usage.js'
 
 export interface ServeOptions {
   dataDir?: string
-  /** Where `index.html` lives. Defaults to `packages/ui`, beside this package. */
+  /** Where `index.html` lives. Found beside this package unless something says otherwise. */
   uiDir?: string
   /** Zero — the default — takes whatever port is free, which is what a local app should do. */
   port?: number
@@ -44,6 +44,19 @@ export interface Serving {
   close(): Promise<void>
 }
 
+/**
+ * Where the shell is, from wherever this file is running: compiled into `dist/src`, which is
+ * how it ships, or straight from `src` under a TypeScript runner. Checked rather than
+ * assumed — a wrong path here is a blank window, and it found me before the tests did,
+ * because they were the ones passing the path in.
+ */
+function shell(): string {
+  const candidates = [join('..', '..', '..', 'ui'), join('..', '..', 'ui')].map((up) =>
+    join(import.meta.dirname, up),
+  )
+  return candidates.find((dir) => existsSync(join(dir, 'index.html'))) ?? candidates[0]!
+}
+
 const STATIC: Record<string, [string, string]> = {
   '/': ['index.html', 'text/html; charset=utf-8'],
   '/app.css': ['app.css', 'text/css; charset=utf-8'],
@@ -54,7 +67,7 @@ const STATIC: Record<string, [string, string]> = {
 
 export async function serve(options: ServeOptions = {}): Promise<Serving> {
   const root = options.dataDir ?? dataDir()
-  const ui = options.uiDir ?? join(import.meta.dirname, '..', '..', 'ui')
+  const ui = options.uiDir ?? shell()
   const secrets = options.secrets ?? keychain
   const store = new Store(join(root, 'alexia.db'))
   const catalog = new Catalog(join(root, 'cache', 'models.json'))
