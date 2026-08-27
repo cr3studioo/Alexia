@@ -202,8 +202,13 @@ test('a running plugin is told a setting changed, and a stopped one is left alon
     String(((await plugin.callTool('changed')).content[0] as { text?: string }).text)
 
   expect(await said()).toBe('null') // this is also what spawns it
+
+  // A notification is one-way: `notify` resolves when it has been written, not when the
+  // plugin has acted on it, and the plugin validates the params before its handler runs.
+  // So it arrives when it arrives — asserting on the very next call passed on a fast laptop
+  // and failed on both CI runners, which is the useful way round.
   await plugin.notify(SETTINGS_CHANGED, { changed: { greeting: 'Good evening' } })
-  expect(await said()).toBe(JSON.stringify({ greeting: 'Good evening' }))
+  await expect.poll(said, { timeout: 5_000 }).toBe(JSON.stringify({ greeting: 'Good evening' }))
 
   // A stopped plugin reads the new value when it next starts, so telling it costs nothing
   // and must not cost a process.
