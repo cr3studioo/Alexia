@@ -26,13 +26,29 @@ ever naming a plugin — the check greps for it.
 
 ## Status
 
-**Phase 0.** Nothing runs yet. There is no installable build, no release, and no working
-feature. What exists is the specification and the plan, which are the point right now: this
-is a project where the written contract comes before the code.
+**Phase 0 complete. Nothing runs yet** — no installable build, no release, no working
+feature. What exists is the contract, in writing, and the checks that hold the code to it.
+That is the point at this stage: this is a project where the spec comes before the code,
+because the code is written by AI under direction and a vague brief produces vague code.
 
 - [`Alexia.md`](./Alexia.md) — what is being built and why. The source of truth.
 - [`plan.md`](./plan.md) — how, in what order, and what is done so far.
 - [`questions.md`](./questions.md) — what is still open.
+
+### The contract
+
+- [`docs/spec/wire-protocol.md`](./docs/spec/wire-protocol.md) — a plugin is an MCP server;
+  core is an MCP client. The pinned revision, the five `alexia/*` methods, and the exact
+  words of every refusal.
+- [`docs/spec/manifest.md`](./docs/spec/manifest.md) — `plugin.json` v1, with a
+  [JSON Schema](./docs/spec/plugin.schema.json) generated from the zod schema.
+- [`docs/spec/capabilities.md`](./docs/spec/capabilities.md) ·
+  [`storage.md`](./docs/spec/storage.md) · [`ui-schema.md`](./docs/spec/ui-schema.md) ·
+  [`skills.md`](./docs/spec/skills.md)
+- [`docs/spec/invariants.md`](./docs/spec/invariants.md) — the ten checks. Four of them
+  already run on every commit.
+- [`docs/cold-install.md`](./docs/cold-install.md) — sit a real person in front of it at
+  every milestone, time them, and do not help.
 
 ## Licence
 
