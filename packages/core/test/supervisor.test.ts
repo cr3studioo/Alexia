@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { MCP_PINNED, type Manifest } from '@alexia/protocol'
+import { Manifest, MCP_PINNED } from '@alexia/protocol'
+import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterEach, expect, test, vi } from 'vitest'
 import {
@@ -14,6 +15,13 @@ import {
 // that may die at any moment, and an in-memory transport cannot die.
 
 const fixtures = join(import.meta.dirname, 'fixtures')
+const pluginsDir = join(import.meta.dirname, '..', '..', '..', 'plugins')
+
+/** A real plugin folder, read the way core reads it. */
+const shipped = (id: string): { manifest: Manifest; dir: string } => {
+  const dir = join(pluginsDir, id)
+  return { manifest: Manifest.parse(JSON.parse(readFileSync(join(dir, 'plugin.json'), 'utf8'))), dir }
+}
 
 function manifest(over: Partial<Manifest> = {}): Manifest {
   return {
@@ -66,8 +74,13 @@ const alive = (pid: number | null | undefined): boolean => {
 }
 
 const running: PluginProcess[] = []
-const start = (m: Manifest, h: HostServices, t: Partial<Timings> = {}): PluginProcess => {
-  const p = new PluginProcess(m, fixtures, h, { ...DEFAULT_TIMINGS, ...t })
+const start = (
+  m: Manifest,
+  h: HostServices,
+  t: Partial<Timings> = {},
+  dir = fixtures,
+): PluginProcess => {
+  const p = new PluginProcess(m, dir, h, { ...DEFAULT_TIMINGS, ...t })
   running.push(p)
   return p
 }
@@ -106,27 +119,31 @@ test('an idle plugin is not a running process, and comes back without anyone not
 
 test('a wedged plugin fails its call and gets killed, rather than hanging the chat', async () => {
   const spy = host()
-  const plugin = start(manifest(), spy, { heartbeatMs: 200, callMs: 500, backoffMs: 50 })
+  const crasher = shipped('crasher')
+  const plugin = start(crasher.manifest, spy, { heartbeatMs: 200, callMs: 500, backoffMs: 50 }, crasher.dir)
   await plugin.listTools()
   const wedged = plugin.pid
 
-  await expect(plugin.callTool('wedge')).rejects.toThrow()
+  await expect(plugin.callTool('hang')).rejects.toThrow()
   await vi.waitFor(() => expect(alive(wedged)).toBe(false), { timeout: 10_000 })
   expect(spy.logs.join('\n')).toContain('stopped answering')
 }, 20_000)
 
 test('three stops in a minute and it is switched off, in words a person can act on', async () => {
   const spy = host()
-  const plugin = start(manifest({ entry: { run: 'node', args: ['plugin.js', '--die-on-start'] } }), spy, {
-    backoffMs: 10,
-    startMs: 5_000,
-  })
+  const crasher = shipped('crasher')
+  const plugin = start(
+    { ...crasher.manifest, entry: { ...crasher.manifest.entry, args: [...(crasher.manifest.entry.args ?? []), '--die-on-start'] } },
+    spy,
+    { backoffMs: 10, startMs: 5_000 },
+    crasher.dir,
+  )
 
   await expect(plugin.listTools()).rejects.toThrow()
   await vi.waitFor(() => expect(plugin.state).toBe('unhealthy'), { timeout: 20_000 })
 
   expect(plugin.reason).toBe(
-    'Fixture stopped 3 times in a minute, so Alexia has switched it off.\nEverything else is still running.',
+    'Crasher stopped 3 times in a minute, so Alexia has switched it off.\nEverything else is still running.',
   )
   expect(spy.off).toEqual([plugin.reason])
   // And it stays off: the loop stops, and a human decides when to try again.

@@ -88,7 +88,7 @@ Tick a box only when the task's acceptance criteria pass. `[GATE]` needs a human
 - [x] **M0-2** Supervisor: spawn, handshake, heartbeat, backoff, lazy spawn, idle shutdown
 - [x] **M0-3** `@alexia/sdk` — the plugin-author package
 - [x] **M0-4** `plugins/hello` — the plugin that answers
-- [ ] **M0-5** `plugins/crasher` — the plugin that dies, three ways
+- [x] **M0-5** `plugins/crasher` — the plugin that dies, three ways
 - [ ] **M0-6** `plugins/vanisher` — the plugin that disappears mid-call
 - [ ] **M0-7** Manifest loader and capability resolver
 - [ ] **M0-8** The ten invariant checks, green in CI

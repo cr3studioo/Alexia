@@ -8,7 +8,14 @@ export default tseslint.config(
     // Plain .js in this repo is always a Node program (a plugin entry point, a test
     // fixture). Two globals is cheaper than a dependency that knows every environment.
     files: ['**/*.js'],
-    languageOptions: { globals: { process: 'readonly', console: 'readonly' } },
+    languageOptions: {
+      globals: {
+        process: 'readonly',
+        console: 'readonly',
+        setTimeout: 'readonly',
+        clearTimeout: 'readonly',
+      },
+    },
   },
   tseslint.configs.recommended,
 )

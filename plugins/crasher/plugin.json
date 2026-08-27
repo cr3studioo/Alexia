@@ -1,0 +1,18 @@
+{
+  "$schema": "../../docs/spec/plugin.schema.json",
+  "manifest_version": 1,
+  "id": "crasher",
+  "name": "Crasher",
+  "summary": "Dies three ways on demand, so that core can be shown to survive each of them.",
+  "version": "0.1.0",
+  "license": "AGPL-3.0-only",
+  "entry": {
+    "run": "node",
+    "args": [
+      "--max-old-space-size=64",
+      "index.js"
+    ]
+  },
+  "alexia_protocol": 1,
+  "mcp_protocol": "2025-11-25"
+}

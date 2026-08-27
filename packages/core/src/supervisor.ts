@@ -301,7 +301,9 @@ export class PluginProcess {
 
     this.#session = session
     this.#state = 'running'
-    this.#crashes = []
+    // The crash tally is deliberately *not* cleared here. A plugin that starts fine and
+    // dies on every call would otherwise loop forever without ever reaching the limit —
+    // which is precisely the case invariant 3 exists to catch. The window expires it.
     this.#heartbeat = setInterval(() => void this.#beat(session), this.t.heartbeatMs).unref()
     this.#touch()
     return session

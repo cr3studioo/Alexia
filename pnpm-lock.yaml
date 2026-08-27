@@ -61,7 +61,19 @@ importers:
         specifier: 2.0.0
         version: 2.0.0
 
+  plugins/crasher:
+    dependencies:
+      '@alexia/sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
+
   plugins/hello:
+    dependencies:
+      '@alexia/sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
+
+  plugins/vanisher:
     dependencies:
       '@alexia/sdk':
         specifier: workspace:*

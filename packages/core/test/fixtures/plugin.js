@@ -1,19 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// A real MCP server, standing in for a plugin until `plugins/hello` exists at M0-4. It
-// misbehaves on demand: the supervisor's whole job is what happens when a plugin does.
+// An MCP server written **without** `@alexia/sdk`, which is the point of it: the wire spec
+// claims a plugin can be written in any language with no SDK, and this is core's standing
+// proof of that claim. It exercises what core offers a plugin — the model, the folder
+// scope, a tool list that changes underneath it.
 //
-// stdout is the wire. Everything this file has to say goes to stderr.
+// How a plugin *dies* is `plugins/crasher`. stdout is the wire; everything here is stderr.
 import { McpServer, fromJsonSchema, inputRequired, inputResponse } from '@modelcontextprotocol/server'
 import { StdioServerTransport } from '@modelcontextprotocol/server/stdio'
 
-if (process.argv.includes('--die-on-start')) {
-  console.error('dying on purpose, before anyone can talk to me')
-  process.exit(1)
-}
-
 const server = new McpServer(
   { name: 'fixture', version: '0.1.0' },
-  { capabilities: { tools: { listChanged: true } }, instructions: 'A plugin that misbehaves on request.' },
+  { capabilities: { tools: { listChanged: true } }, instructions: 'A stand-in plugin, for exercising what core offers.' },
 )
 
 const text = (t) => ({ content: [{ type: 'text', text: t }] })
@@ -31,18 +28,6 @@ server.registerTool(
   },
   ({ say }) => text(say),
 )
-
-server.registerTool('boom', { description: 'Exits mid-call.' }, () => {
-  console.error('exiting mid-call')
-  process.exit(3)
-})
-
-server.registerTool('wedge', { description: 'Blocks its own event loop, so not even ping is answered.' }, () => {
-  // A busy plugin is still responsive; a wedged one is not. Blocking the thread is the
-  // honest version of "hangs forever" — it stops the heartbeat too.
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 60_000)
-  return text('woke up')
-})
 
 server.registerTool('ask', { description: 'Asks the host for the model.' }, (ctx) => {
   const answer = inputResponse(ctx.mcpReq.inputResponses, 'model')
