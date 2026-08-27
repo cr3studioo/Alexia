@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, expect, test } from 'vitest'
@@ -47,6 +47,17 @@ test('the shell is served with the token baked into it', async () => {
 
   // The compiled shell, and no bundler in sight.
   expect((await fetch(new URL('/main.js', alexia.url))).status).toBe(200)
+})
+
+test('the one image core serves arrives as the bytes it was written as', async () => {
+  // The token substitution above is a string operation, and a PNG decoded as UTF-8 to run
+  // one comes back subtly broken — a blank tab icon and nothing in the log to say why.
+  const image = await fetch(new URL('/alexia.png', alexia.url))
+  expect(image.headers.get('content-type')).toBe('image/png')
+
+  const bytes = new Uint8Array(await image.arrayBuffer())
+  expect([...bytes.slice(0, 8)]).toEqual([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+  expect(bytes.byteLength).toBe(statSync(join(ui, 'alexia.png')).size)
 })
 
 test('a local server that spends money is not open to whatever else is on the machine', async () => {

@@ -63,6 +63,10 @@ const STATIC: Record<string, [string, string]> = {
   // The shell is TypeScript compiled by the same `tsc -b` as everything else. No bundler,
   // because a chat window is not a build problem.
   '/main.js': [join('dist', 'src', 'main.js'), 'text/javascript; charset=utf-8'],
+  // Her face: the header mark, the first-run mark and the tab icon, one file doing all
+  // three. Everything above is text and gets the token substituted into it; this does not,
+  // which is why the read below is bytes until the content type says otherwise.
+  '/alexia.png': ['alexia.png', 'image/png'],
 }
 
 export async function serve(options: ServeOptions = {}): Promise<Serving> {
@@ -109,7 +113,10 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     const asset = STATIC[url.pathname]
     if (asset) {
       const [file, type] = asset
-      const body = readFileSync(join(ui, file), 'utf8').replace('__TOKEN__', token)
+      const bytes = readFileSync(join(ui, file))
+      // Text assets carry the token; anything else is passed through untouched, because
+      // decoding a PNG as UTF-8 to run a string replace over it returns a broken PNG.
+      const body = type.startsWith('text/') ? bytes.toString('utf8').replace('__TOKEN__', token) : bytes
       response.writeHead(200, { 'content-type': type })
       response.end(body)
       return

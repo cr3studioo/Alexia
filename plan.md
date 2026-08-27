@@ -109,6 +109,7 @@ Tick a box only when the task's acceptance criteria pass. `[GATE]` needs a human
 - [x] **M1-10** Chat shell
 - [x] **M1-11** First-run flow v1
 - [x] **M1-12** Slash commands
+- [x] **M1-D1** Holding theme — black, grey, and a face *(reduced 2026-08-27, D61)*
 - [ ] **M1-13** `[GATE]` Cold-install test #1
 - [ ] **M1-G** **Done when:** a real conversation, routed to a free model, spend showing 0.00
 
@@ -127,6 +128,7 @@ Tick a box only when the task's acceptance criteria pass. `[GATE]` needs a human
 ### M2 — Voice, the real proof
 
 - [ ] **M2-S1** Spike: Tauri tray + hotkey + overlay on Windows *(de-risking M5)*
+- [ ] **M2-D1** The visual language *(deferred from M1 2026-08-27, D61)*
 - [ ] **M2-1** Declarative UI schema v1
 - [ ] **M2-2** Skills loader (agentskills.io)
 - [ ] **M2-3** `plugins/voice` — speech to text
@@ -966,6 +968,44 @@ for every command always, so resolving a collision never breaks one that already
 Typing `/` lists everything with one-line descriptions. **Every command has a UI equivalent** —
 commands are a shortcut for people who like them, never the only route.
 
+### M1-D1 Holding theme — black, grey, and a face
+
+*Inserted 2026-08-27 (D60), reduced the same day (D61).* D60's finding stands — the plan had
+no design task, and M2-1 spends a theme that does not exist. The **sequencing** was wrong.
+`docs/design.md` exists to be inherited by M2-1's ten widgets, so its real deadline is M2-1,
+not the first cold-install test. The full pass moved to **M2-D1**. What stayed here is the
+smallest thing that stops the shell looking unfinished, and two bugs found while doing it.
+
+**What shipped:**
+
+- **One dark palette, achromatic on purpose.** Black, greys, and near-white for the single
+  bright role — what is yours, what is selected, what has focus. No hue, because a hue is a
+  decision and this is a placeholder that says so in its own first comment. The light theme
+  goes with M2-D1.
+- **Her face.** `packages/ui/alexia.png`, 256 px grey, 31 KB: the tab icon, the mark beside
+  the name in the header, and a larger one on first run. One drawing, three sizes. Core
+  serves exactly one image, and `serve.ts` learned to hand back bytes rather than decoding a
+  PNG as UTF-8 to run the token substitution over it — with a test, because that failure is
+  a blank icon and nothing in the log.
+- **A focus ring you can see.** Four lines, and it did not need a design system first.
+
+**Two bugs, found by looking at it rather than reading it:**
+
+1. **The composer was never hidden on first run.** `main.ts` has said `form.hidden = true`
+   since M1-11 and it did nothing: `form { display: flex }` is a type selector, and it
+   outranks the browser's own `[hidden] { display: none }`. So the first thing a new person
+   saw was an *"Ask Alexia"* box that could not answer them — the shell was right and this
+   stylesheet was overruling it. `[hidden]` now wins everywhere.
+2. **The third mode card wrapped.** `#setup` was 44 rem and three `15 rem` cards need
+   46.2 rem, so **Cloud** dropped to a second row and took the provider step under the fold.
+   Widened to 50 rem, spacing tightened: the whole of first run now fits at 1280×800.
+
+**Verified** in a headless browser at 1280×800, both screens, and `pnpm check` green.
+
+**Deliberately not done — every line of it is M2-D1:** the type ramp, the spacing scale, the
+colour roles written down, the light theme, `docs/design.md` itself, and the header hierarchy
+that still renders a control, a status and a number as three identical badges.
+
 ### M1-13 `[GATE]` Cold-install test #1
 
 The first real one. Follow `docs/cold-install.md` exactly. Do not help. Append to
@@ -973,6 +1013,13 @@ The first real one. Follow `docs/cold-install.md` exactly. Do not help. Append t
 
 Not because the product is ready — it is a dev build with no installer — but because *where
 someone hesitates* is cheap information at M1 and expensive at M5.
+
+**Sequencing, settled at D61.** The original argument for waiting on the design pass was that
+a baseline set on a build you would not show anyone measures the look as much as the flow.
+The counter-argument won: the most valuable finding available today — what a person does when
+told to go and make an OpenRouter account — is not affected by any of it, and the full pass
+is now M2-D1 regardless. M1-D1's holding theme is enough to run this on. Note in the results
+what was and was not designed at the time, so the trend across the four tests stays readable.
 
 ### M1-G — Done when
 
@@ -1086,6 +1133,77 @@ the workaround now. The primary local surface depends on this, and M5 is a terri
 discover it does not work.
 
 **Done when** fifty show/hide cycles behave identically, or a workaround is written down.
+
+### M2-D1 The visual language
+
+*Written 2026-08-27 as M1-D1 (D60); moved here the same day (D61) because this is where it is
+spent.* M1-D1 left a holding theme — black, grey, a face and a focus ring. This is the pass
+that makes it a language, and it runs **before M2-1**, not after: build the ten widgets first
+and every plugin inherits an unstyled house style, for good.
+
+M2-1 already promises it — *"Core renders; the plugin never draws. A plugin cannot style
+itself wrong because it never styles itself"* — and Alexia.md sells it as *"every plugin
+matches the theme and looks like it belongs."* Until this task there is no theme to match.
+
+It is not decoration either. This product asks a person to paste an API key, hand over a
+folder, and let something spend their money. The copy already earns that — *"not yet checked
+— 7 of 7. Alexia will say so rather than guess"*, the spend on screen at all times, a
+never-touch list nobody can edit. A careful sentence in a careless frame reads as a
+prototype, and then the honesty is paying for the presentation instead of the other way
+round.
+
+**What is still wrong**, after M1-D1 took the two worst structural faults out:
+
+| | |
+|---|---|
+| The header has no hierarchy | A control (mode), a status (model) and a number that matters (spend) are three identical badges |
+| No scale | No type ramp, no spacing rhythm — `app.css` has good tokens and no opinion |
+| One theme only | M1-D1 committed to dark. Light has to be real, not an inversion |
+| First run is a section, not a view | It works and it fits, but it is still the chat page with a block swapped out |
+
+**This is a restructure, not a recolour.** Move the markup. `index.html` is not fixed — if
+first run wants to be its own view, make it one.
+
+Every surface that exists: first run (the name, the three mode cards, provider connect); the
+conversation and who said what; the composer and the `/` menu; the header; the empty, error
+and `#note` states; and by now M15-5's step trace, which is the hardest thing on this list to
+draw and the one people will look at most.
+
+**The deliverable is a written language, not only a better screen.** `docs/design.md` — the
+type ramp, the spacing scale, the colour roles, the states. That document is what M2-1's ten
+widgets conform to and what M15-5's trace gets drawn against. Without it this is a repaint
+that drifts back within two milestones, and drift is the named failure mode.
+
+**Constraints that do not bend:**
+
+- **Invariant 6** — `packages/ui` imports no Node builtin. It all has to live in a webview.
+- **Invariant 8** — the honest strings are load-bearing. This pass may not soften, shorten or
+  bury the training-data line, the spend, or any refusal. A sentence that is awkward because
+  it is true stays awkward.
+- One stylesheet, no framework, no bundler. *A chat window is not a build problem*, and every
+  kilobyte here is one the Tauri shell carries at M5.
+- Light and dark, both real.
+- Every command keeps its UI equivalent (M1-12).
+- Keyboard reachable throughout, focus always visible.
+
+**Acceptance criteria:**
+
+1. `pnpm check` green.
+2. All three mode cards readable without scrolling at 1280×800 and above *(held from M1-D1 —
+   this pass may not regress it)*.
+3. First run and the composer are never on screen together *(held from M1-D1)*.
+4. Every interactive element has a visible focus state; body text meets 4.5:1 in **both**
+   themes.
+5. No new dependency in `packages/ui`.
+6. `docs/design.md` exists, and the shell demonstrably follows it.
+
+**Out of scope:** the Tauri shell (M5-1). This task decides what the widgets inherit; M2-1
+builds them.
+
+**One copy question to settle while in there:** the shell asks *"What should I call me?"* and
+M5-5's table says *"What should I call you?"*. Those are two different questions — one names
+the assistant, one names the person — and the flow currently only asks the first. Deliberately
+left alone at M1-D1: it is a product decision, not a typo.
 
 ### M2-1 Declarative UI schema v1
 
@@ -1504,6 +1622,8 @@ Newest first. Every entry here is also in Alexia.md's decision log.
 
 | Date | Entry |
 |---|---|
+| 2026-08-27 | **D61** — the design pass is **deferred to M2-D1**, before the widgets that inherit it and after the features. D60's finding held; its sequencing did not. `docs/design.md` exists to be spent by M2-1, so M2-1 is its deadline, and a first cold-install test learns more about *what a person does when told to go and make an OpenRouter account* than about the frame around it. M1-D1 shrank to a holding theme — one dark achromatic palette, her face as icon and mark, a visible focus ring — and to the two structural bugs that were not taste: `form.hidden` defeated by a type selector, and the third mode card wrapping under the fold. |
+| 2026-08-27 | **D60** — the plan had no design task. M5-5's *"polished"* turns out to mean the flow and its timings, not the look, and M2-1's *"every plugin matches the theme"* names a theme nothing creates. Added **M1-D1**, before the first cold-install test: a restructure of the shell, plus a written `docs/design.md` for M2-1's widgets and M15-5's trace to inherit. Trust is not decoration in a product that asks for a key, a folder and a budget. |
 | 2026-08-27 | M1-1: the database file is `alexia.db` under the **local** app-data directory on Windows, not the roaming one. Roaming profiles sync on logoff, and a synced live SQLite file with a WAL beside it is how histories get corrupted. Schema versioning is `PRAGMA user_version` with a forward-only migration list; a database from a newer build is refused rather than opened. |
 | 2026-08-27 | **D59** — a capability is **declared** in the manifest and **bound** on the tool, in MCP's own `_meta` as `alexia/provides`. The manifest is what the library shows and what another plugin's `requires` resolves against before anything is running; the tool is what says it can answer *right now*. A plugin whose model has not downloaded cannot answer `voice.transcribe` and should not claim it can. |
 | 2026-08-27 | **D58** — a plugin's working directory is **not** its folder. Windows will not delete a directory that is a running process's cwd, and that is exactly the demo the project exists for. Measured both ways; core spawns with the cwd on a directory it owns and hands the folder over as `ALEXIA_PLUGIN_DIR`. |

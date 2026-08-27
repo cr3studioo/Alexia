@@ -3,29 +3,41 @@
 /* One stylesheet, no framework. A chat window is not a build problem, and every kilobyte
    here is a kilobyte the Tauri shell carries at M5. */
 
-:root {
-  color-scheme: light dark;
-  --bg: #fbfbfa;
-  --panel: #ffffff;
-  --ink: #1c1b19;
-  --quiet: #6b6862;
-  --line: #e4e1db;
-  --accent: #3a5a9b;
-}
+/* Black and grey, one theme, on purpose. This is a holding pattern and it is written down
+   as one (D61): the type ramp, the spacing rhythm, the colour roles and the light theme are
+   M2-D1's job, done once, before the ten widgets inherit whatever is here. Until then the
+   safest thing a placeholder can be is achromatic — nothing to unlearn, and no hue anybody
+   mistakes for a decision. */
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #17181a;
-    --panel: #1f2124;
-    --ink: #edecea;
-    --quiet: #9a978f;
-    --line: #2e3135;
-    --accent: #8fb0ea;
-  }
+:root {
+  color-scheme: dark;
+
+  --bg: #0b0b0c;
+  --panel: #151517;
+  --ink: #ececec;
+  --quiet: #9b9ba0;
+  --line: #2a2a2e;
+
+  /* The one bright thing, and deliberately not a colour: what is yours, what is selected,
+     what has focus. */
+  --accent: #ededed;
+  --on-accent: #0b0b0c;
+
+  /* Still amber, because a shadowed command still works and the colour says so — lifted off
+     the white background it was mixed for. */
+  --amber: #e0a33a;
 }
 
 * {
   box-sizing: border-box;
+}
+
+/* `form` below sets `display: flex`, and a type selector outranks the browser's own
+   `[hidden] { display: none }` — so `form.hidden = true` in the shell hid nothing, and the
+   composer sat under the first-run form inviting a question it could not answer yet. The
+   shell was right; this sheet was overruling it. */
+[hidden] {
+  display: none !important;
 }
 
 body {
@@ -44,6 +56,23 @@ header {
   align-items: center;
   padding: 0.6rem 1rem;
   border-bottom: 1px solid var(--line);
+}
+
+/* One drawing, three sizes: the tab icon, the mark beside the name, and the big one on the
+   only screen with room for it. */
+.logo {
+  flex: none;
+  width: 1.6rem;
+  height: 1.6rem;
+  border-radius: 0.45rem;
+}
+
+.mark {
+  display: block;
+  width: 4rem;
+  height: 4rem;
+  border-radius: 0.9rem;
+  margin-bottom: 1rem;
 }
 
 .name {
@@ -79,7 +108,7 @@ main {
 .turn.user {
   align-self: flex-end;
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
 }
 
 .turn.assistant {
@@ -129,7 +158,7 @@ button {
   border: 0;
   border-radius: 0.6rem;
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   font: inherit;
   cursor: pointer;
 }
@@ -139,20 +168,29 @@ button[disabled] {
   cursor: default;
 }
 
+/* Keyboard reachable throughout, and visibly so. The full focus treatment belongs to
+   M2-D1; a ring you can actually see does not wait for it. */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 /* First run. Three questions on one page: what to call it, where the work happens, and —
    only when that answer involves somebody else's computer — a key. */
 
 #setup {
   overflow-y: auto;
   padding: 1.5rem 1rem;
-  max-width: 44rem;
+  /* Wide enough for three mode cards on one row at 1280: below that they wrapped, and the
+     third — Cloud — went under the fold along with the provider step. */
+  max-width: 50rem;
   width: 100%;
   margin: 0 auto;
 }
 
 #setup h2 {
   font-size: 1rem;
-  margin: 1.5rem 0 0.5rem;
+  margin: 1.25rem 0 0.5rem;
 }
 
 .field {
@@ -230,7 +268,7 @@ select {
 }
 
 #begin {
-  margin-top: 1.5rem;
+  margin-top: 1.25rem;
   padding: 0.6rem 1.4rem;
 }
 
@@ -271,7 +309,7 @@ select {
 
 /* Amber, because it still works — it is only longer than its author hoped. */
 #menu li.shadowed b {
-  color: #b26a00;
+  color: var(--amber);
 }
 
 select.badge {
