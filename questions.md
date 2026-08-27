@@ -276,9 +276,10 @@ the task that closes it.*
 These are actions rather than open questions. Each is now attached to a task in
 [`plan.md`](./plan.md) rather than floating.
 
-- [ ] **Set the licence files before the first public push** — Apache-2.0 on the SDK and
-  protocol, AGPL-3.0 on the app. → **P0-1**. *The repo is currently private with zero commits
-  and no licence.*
+- [x] **Set the licence files before the first public push** — Apache-2.0 on the SDK and
+  protocol, AGPL-3.0 on the app. → **P0-1**, done 2026-08-27. AGPL-3.0 at the root,
+  Apache-2.0 in `packages/{protocol,sdk,conformance,create-plugin}`, copyright
+  *Alexia contributors*. The repo is public with the licence detected by GitHub.
 - [x] **Read the agentskills.io spec properly.** → read 2026-08-27. It carries what Alexia
   needs: `name` (≤64 chars, lowercase/hyphens, **must match the folder name**) and
   `description` (≤1024 chars, must say what **and when**) are the only required fields;
