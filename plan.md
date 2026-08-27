@@ -76,7 +76,7 @@ Tick a box only when the task's acceptance criteria pass. `[GATE]` needs a human
 ### Phase 0 — Before any feature code
 
 - [x] **P0-1** `[GATE]` Licences, README, repo public
-- [ ] **P0-2** Monorepo skeleton and CI
+- [x] **P0-2** Monorepo skeleton and CI
 - [ ] **P0-3** Spec: the wire protocol (MCP profile + `alexia/*`)
 - [ ] **P0-4** Spec: `plugin.json` v1 + JSON Schema
 - [ ] **P0-5** Spec: capabilities, storage, UI schema, skills
