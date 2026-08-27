@@ -11,6 +11,7 @@ const tags = {
   models: [
     { name: 'qwen3:8b', model: 'qwen3:8b', size: 5_200_000_000, details: { family: 'qwen3' } },
     { name: 'llava:7b', model: 'llava:7b', size: 4_700_000_000, details: { family: 'llama' } },
+    { name: 'bge-m3:latest', model: 'bge-m3:latest', size: 1_200_000_000, details: { family: 'bert' } },
   ],
 }
 
@@ -18,6 +19,7 @@ const shows: Record<string, unknown> = {
   'qwen3:8b': { capabilities: ['completion', 'tools'], model_info: { 'qwen3.context_length': 32_768 } },
   // No capabilities, no model_info: a model that will not describe itself.
   'llava:7b': { capabilities: ['completion', 'vision'], model_info: {} },
+  'bge-m3:latest': { capabilities: ['embedding'], model_info: { 'bert.context_length': 8192 } },
 }
 
 const steps = [
@@ -85,6 +87,10 @@ test('what is installed, as catalog entries priced at zero', async () => {
 
   // A vision model that named no context length: reported as it is, not guessed at.
   expect(models[1]).toMatchObject({ modality: ['text', 'image'], supportsTools: false, context: 0 })
+
+  // And the embedding model is not a model you can talk to. Found the hard way: the router
+  // picked one, and Ollama answered the chat request with a 400.
+  expect(models.map((m) => m.id)).not.toContain('bge-m3:latest')
 })
 
 test('a pull reports every step, and knows when it cannot say how far along it is', async () => {

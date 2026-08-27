@@ -17,11 +17,21 @@ interface Turn {
   model?: string
 }
 
+interface Provider {
+  id: string
+  name: string
+  terms?: string
+  trainsOnYourData: 'yes' | 'no' | 'unknown'
+  free: boolean
+}
+
 interface State {
+  setup: { done: boolean; name: string; mode: string }
   messages: Turn[]
   spent: number
   cap?: number
   warning?: string
+  providers: Provider[]
 }
 
 const token = document.querySelector<HTMLElement>('[data-token]')?.dataset.token ?? ''
@@ -49,8 +59,74 @@ function say(line?: string): void {
   note.hidden = !line
 }
 
+/**
+ * First run, steps 2 to 4a: what to call it, where the work happens, and — only if that
+ * answer involves somebody else's computer — a key. Nothing else. No account, no tour, no
+ * permission questions, because asking which folders an assistant may read before it has
+ * been given a single task is a question with no meaning yet.
+ */
+function firstRun(state: State): void {
+  const setup = document.querySelector<HTMLElement>('#setup')!
+  const connect = document.querySelector<HTMLElement>('#connect')!
+  const provider = document.querySelector<HTMLSelectElement>('#provider')!
+  const terms = document.querySelector<HTMLElement>('#terms')!
+  const name = document.querySelector<HTMLInputElement>('#name')!
+  const key = document.querySelector<HTMLInputElement>('#key')!
+  setup.hidden = false
+  form.hidden = true
+  name.value = state.setup.name
+
+  for (const option of state.providers) {
+    provider.add(new Option(option.free ? `${option.name} — free tier` : option.name, option.id))
+  }
+
+  // The honest trade, said out loud on the card that recommends itself. Nobody has read
+  // these terms yet, and "we have not checked" beats a confident wrong answer.
+  const unchecked = state.providers.filter((p) => p.trainsOnYourData === 'unknown').length
+  document.querySelector<HTMLElement>('#training')!.textContent =
+    unchecked > 0 ?
+      `Whether these providers train on what you send them is not yet checked — ${unchecked} of ${state.providers.length}. Alexia will say so rather than guess.`
+    : ''
+
+  const chosen = (): string =>
+    document.querySelector<HTMLInputElement>('input[name="mode"]:checked')?.value ?? 'combined'
+
+  const showTerms = (): void => {
+    const picked = state.providers.find((p) => p.id === provider.value)
+    // Local mode asks nobody for a key, so the whole step goes away rather than sitting
+    // there greyed out looking like something you got wrong.
+    connect.hidden = chosen() === 'local'
+    terms.textContent = picked?.terms ? `Terms: ${picked.terms}` : ''
+  }
+  for (const radio of document.querySelectorAll('input[name="mode"]')) {
+    radio.addEventListener('change', showTerms)
+  }
+  provider.addEventListener('change', showTerms)
+  showTerms()
+
+  document.querySelector<HTMLElement>('#begin')!.addEventListener('click', () => {
+    void fetch('/api/setup', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-alexia-token': token },
+      body: JSON.stringify({
+        name: name.value.trim() || 'Alexia',
+        mode: chosen(),
+        ...(key.value.trim() && { provider: { id: provider.value, key: key.value.trim() } }),
+      }),
+    }).then(() => {
+      setup.hidden = true
+      form.hidden = false
+      document.querySelector<HTMLElement>('.name')!.textContent = name.value.trim() || 'Alexia'
+      text.focus()
+    })
+  })
+}
+
 async function load(): Promise<void> {
   const state = (await (await fetch('/api/state', { headers: { 'x-alexia-token': token } })).json()) as State
+  document.querySelector<HTMLElement>('.name')!.textContent = state.setup.name
+  if (!state.setup.done) firstRun(state)
+
   for (const turn of state.messages) {
     if (turn.role !== 'user' && turn.role !== 'assistant') continue
     bubble(turn.role, turn.content)

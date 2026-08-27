@@ -138,3 +138,98 @@ button[disabled] {
   opacity: 0.5;
   cursor: default;
 }
+
+/* First run. Three questions on one page: what to call it, where the work happens, and —
+   only when that answer involves somebody else's computer — a key. */
+
+#setup {
+  overflow-y: auto;
+  padding: 1.5rem 1rem;
+  max-width: 44rem;
+  width: 100%;
+  margin: 0 auto;
+}
+
+#setup h2 {
+  font-size: 1rem;
+  margin: 1.5rem 0 0.5rem;
+}
+
+.field {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.field > span {
+  white-space: nowrap;
+}
+
+input,
+select {
+  flex: 1;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: 0.5rem;
+  background: var(--panel);
+  color: inherit;
+  font: inherit;
+}
+
+.cards {
+  display: grid;
+  gap: 0.6rem;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+}
+
+.card {
+  display: block;
+  padding: 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: 0.7rem;
+  background: var(--panel);
+  cursor: pointer;
+}
+
+.card b {
+  display: block;
+  margin: 0.3rem 0;
+}
+
+.card em {
+  font-style: normal;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--accent);
+}
+
+.card span,
+.card small {
+  display: block;
+  font-size: 0.85rem;
+  color: var(--quiet);
+}
+
+.card small {
+  margin-top: 0.5rem;
+}
+
+.card:has(input:checked) {
+  border-color: var(--accent);
+  outline: 1px solid var(--accent);
+}
+
+.card input {
+  flex: none;
+}
+
+.quiet {
+  font-size: 0.85rem;
+  color: var(--quiet);
+}
+
+#begin {
+  margin-top: 1.5rem;
+  padding: 0.6rem 1.4rem;
+}

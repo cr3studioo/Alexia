@@ -73,6 +73,37 @@ test('a turn is kept even when the answer is a refusal', async () => {
   expect(state.spent).toBe(0)
 })
 
+test('first run asks three things and then never asks again', async () => {
+  const fresh = mkdtempSync(join(tmpdir(), 'alexia-first-'))
+  mkdirSync(join(fresh, 'cache'), { recursive: true })
+  writeFileSync(join(fresh, 'cache', 'models.json'), JSON.stringify({ fetchedAt: Date.now(), models: [] }))
+  const secrets = memorySecrets()
+  const first = await serve({ dataDir: fresh, uiDir: ui, secrets })
+  const call = (path: string, init: RequestInit = {}) =>
+    fetch(new URL(path, first.url), { ...init, headers: { 'x-alexia-token': first.token, ...init.headers } })
+
+  const before = (await (await call('/api/state')).json()) as {
+    setup: { done: boolean; name: string }
+    providers: { id: string; trainsOnYourData: string; terms?: string }[]
+  }
+  expect(before.setup).toEqual({ done: false, name: 'Alexia', mode: 'combined' })
+  // What the mode picker is honest about: nobody has read these terms yet.
+  expect(before.providers.every((p) => p.trainsOnYourData === 'unknown' && p.terms)).toBe(true)
+
+  await call('/api/setup', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ name: 'Ada', mode: 'local', provider: { id: 'openrouter', key: 'sk-users-own' } }),
+  })
+
+  const after = (await (await call('/api/state')).json()) as { setup: { done: boolean; name: string } }
+  expect(after.setup).toEqual({ done: true, name: 'Ada', mode: 'local' })
+  // The key went to the keychain and nowhere near the database.
+  expect(await secrets.get('_core', 'provider/openrouter')).toBe('sk-users-own')
+
+  await first.close()
+})
+
 test('a reopened Alexia is the same conversation', async () => {
   const again = await serve({ dataDir: root, uiDir: ui, secrets: memorySecrets() })
   const state = (await (

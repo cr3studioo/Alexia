@@ -44,15 +44,23 @@ export async function running(host: string = HOST): Promise<boolean> {
 export async function installed(host: string = HOST): Promise<Model[]> {
   const ollama = client(host)
   const { models } = await ollama.list().catch(() => ({ models: [] as ModelResponse[] }))
-  return Promise.all(
+  const described = await Promise.all(
     models.map(async (model) => {
-      // `list` does not carry context length or whether it can use tools, and both decide
-      // whether the agent loop can run on it at all. One extra call each, tolerated
-      // separately: a model that will not describe itself is still a model you can chat to.
+      // `list` does not carry context length, whether it can use tools, or even whether it
+      // can hold a conversation — and all three decide whether the loop can run on it. One
+      // extra call each, tolerated separately: a model that will not describe itself is
+      // still a model you can chat to.
       const shown = await ollama.show({ model: model.model }).catch(() => undefined)
-      return describe(model, shown)
+      return { model, shown }
     }),
   )
+
+  return described
+    // An embedding model is installed like any other and answers a chat request with a 400.
+    // Anything that says what it can do and does not say `completion` is not a chat model;
+    // anything that would not say is kept, because not knowing is not a reason to hide it.
+    .filter(({ shown }) => shown === undefined || shown.capabilities.includes('completion'))
+    .map(({ model, shown }) => describe(model, shown))
 }
 
 export interface Progress {

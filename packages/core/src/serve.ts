@@ -7,7 +7,7 @@ import { join } from 'node:path'
 import { Catalog } from './catalog.js'
 import { installed, OLLAMA, running } from './ollama.js'
 import { usable } from './pool.js'
-import { PROVIDERS } from './provider.js'
+import { keyOf, PROVIDERS } from './provider.js'
 import { MODES, route, send, type Placement } from './router.js'
 import { CORE, keychain, type SecretStore } from './secrets.js'
 import { dataDir, Store, type Message } from './store.js'
@@ -66,6 +66,16 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
 
   const session = store.sessions()[0]?.id ?? store.createSession()
 
+  /**
+   * First run, steps 2 to 4a. Done means a mode was chosen — the name is skippable and a
+   * provider can wait, but *where your words go* is not a question Alexia answers for you.
+   */
+  const setup = () => ({
+    done: store.kvGet(CORE, 'mode') !== undefined,
+    name: (store.kvGet(CORE, 'display_name') as string | undefined) ?? 'Alexia',
+    mode: (store.kvGet(CORE, 'mode') as string | undefined) ?? 'combined',
+  })
+
   const placement = (): Placement =>
     MODES[(store.kvGet(CORE, 'mode') as keyof typeof MODES | undefined) ?? 'combined']
 
@@ -106,13 +116,41 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
       response.writeHead(200, { 'content-type': 'application/json' })
       response.end(
         JSON.stringify({
+          setup: setup(),
           messages: store.history(session),
           spent: month.spent,
           cap: month.cap,
           warning: warning(month),
-          models: (await world()).models.length + (await installed()).length,
+          // What the mode picker has to be honest about: nobody has read these terms yet,
+          // and a flag that guesses would be worse than the awkward truth (D51).
+          providers: PROVIDERS.map((p) => ({
+            id: p.id,
+            name: p.name,
+            terms: p.terms,
+            trainsOnYourData: p.trainsOnYourData ?? 'unknown',
+            free: p.rpd !== undefined || p.rpm !== undefined,
+          })),
         }),
       )
+      return
+    }
+
+    if (url.pathname === '/api/setup' && request.method === 'POST') {
+      const chosen = JSON.parse(await read(request)) as {
+        name?: string
+        mode?: keyof typeof MODES
+        provider?: { id: string; key: string }
+      }
+      if (chosen.name) store.kvSet(CORE, 'display_name', chosen.name)
+      if (chosen.mode && chosen.mode in MODES) store.kvSet(CORE, 'mode', chosen.mode)
+      if (chosen.provider?.key) {
+        const provider = PROVIDERS.find((p) => p.id === chosen.provider?.id)
+        // Straight to the keychain, never to the database — the same path a plugin's
+        // password takes, and the same check proves it.
+        if (provider) await secrets.set(CORE, keyOf(provider), chosen.provider.key)
+      }
+      response.writeHead(200, { 'content-type': 'application/json' })
+      response.end(JSON.stringify(setup()))
       return
     }
 
@@ -125,11 +163,15 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     response.end()
   }
 
-  /** One turn: the user's line in, the model's line out, and both kept in the history. */
-  async function reply(request: IncomingMessage, response: ServerResponse): Promise<void> {
+  async function read(request: IncomingMessage): Promise<string> {
     let raw = ''
     for await (const chunk of request) raw += String(chunk)
-    const { text } = JSON.parse(raw || '{}') as { text?: string }
+    return raw || '{}'
+  }
+
+  /** One turn: the user's line in, the model's line out, and both kept in the history. */
+  async function reply(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    const { text } = JSON.parse(await read(request)) as { text?: string }
     if (!text) {
       response.writeHead(400)
       response.end()
