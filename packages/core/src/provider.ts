@@ -23,6 +23,12 @@ export interface Provider {
   headers?: Record<string, string>
   /** A local server, or one the user is already the endpoint of. No key, and none asked for. */
   keyless?: boolean
+  /**
+   * What its terms say about training on what you send it (D51). Left unset until somebody
+   * has actually read them — M1-6 is where that happens, provider by provider. Never
+   * inferred from the price, however strongly the price hints.
+   */
+  trainsOnYourData?: 'yes' | 'no' | 'unknown'
 }
 
 /**
