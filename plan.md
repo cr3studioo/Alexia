@@ -85,7 +85,7 @@ Tick a box only when the task's acceptance criteria pass. `[GATE]` needs a human
 ### M0 — The skeleton that proves the thesis
 
 - [x] **M0-1** `@alexia/protocol` — types, schemas, version constants
-- [ ] **M0-2** Supervisor: spawn, handshake, heartbeat, backoff, lazy spawn, idle shutdown
+- [x] **M0-2** Supervisor: spawn, handshake, heartbeat, backoff, lazy spawn, idle shutdown
 - [ ] **M0-3** `@alexia/sdk` — the plugin-author package
 - [ ] **M0-4** `plugins/hello` — the plugin that answers
 - [ ] **M0-5** `plugins/crasher` — the plugin that dies, three ways
@@ -433,7 +433,7 @@ in this table without a reason written down.**
 | Model catalog | OpenRouter `/api/v1/models` | a hand-maintained list | Carries per-token pricing including the free variants, context length, `supported_parameters` (so you can filter on `tools`), and modality. This endpoint is what makes a self-updating catalog possible at all. Cache to disk; never break because it changed shape. |
 | Secrets | `cross-keychain` at M1 → **Tauri Stronghold / the Rust `keyring` crate** at M5 | `keytar` | `keytar` is archived. `cross-keychain` needs no native module (CLI fallback to Windows Credential Manager), so it survives being bundled. Put both behind one `SecretStore` interface and the M5 swap is one file. |
 | Validation | `zod` v4 | `ajv` | The MCP SDK already uses zod; one schema library, and manifests get a generated JSON Schema for free via `z.toJSONSchema`. |
-| Process spawning | `execa` | `child_process` directly | Sane cross-platform argument handling — a Windows-first project with a portability rule should not be hand-quoting shell arguments. |
+| Process spawning | **`StdioClientTransport`**, from the MCP client | `execa`, `child_process` | Changed at M0-2 (D56): the MCP client's stdio transport already spawns the plugin, wires stdio, exposes `pid` and `stderr`, and escalates stdin-close → `SIGTERM` → `SIGKILL`. A second spawner would have meant replacing the transport to gain nothing. `execa` comes back the day a *plugin* spawns a binary of its own — whisper.cpp at M2. |
 | Logging | `pino` | `console.log` | **stdout is the wire.** Every plugin log line must go to stderr or it corrupts JSON-RPC framing. Configure this once, centrally, and put it in the author docs in bold. |
 | Registry backend | **Hono on Cloudflare Workers + D1** | a VPS, Supabase, Fly | Free tier covers this by a wide margin (5 GB, 5M row reads/day) and there is no server to keep alive. Alexia.md's brief is "a list with a revoke button" and this is the smallest thing that is one. |
 
@@ -1486,6 +1486,7 @@ Newest first. Every entry here is also in Alexia.md's decision log.
 
 | Date | Entry |
 |---|---|
+| 2026-08-27 | **D56** — on `2026-07-28` a plugin never *sends* core a request: sampling, elicitation and roots come back in-band as an `input_required` answer to the call being served, and core re-sends the call with the answers. Found while building M0-2; the wire spec said `sampling/createMessage` and left an author to guess the direction. Sampling and roots are deprecated upstream (SEP-2577, ≥12 months) and Alexia keeps both — the advice to "call provider APIs directly" assumes a key the plugin must not have. Also: `execa` dropped from core, see the parts list. |
 | 2026-08-27 | **D55** — MCP `2026-07-28` has no `initialize`: `server/discover`, a per-request `_meta` envelope, and `subscriptions/listen` for every server-to-client notification. G3 answered — core accepts the pinned revision and its immediate predecessor, two at a time. |
 | 2026-08-27 | **D54** — the agent loop gets its own milestone, M1.5. It had none, and it is the product. |
 | 2026-08-27 | **D53** — Claude Code plugin: built, shipped disabled, never auto-enabled, user runs `setup-token` themselves. Written confirmation from Anthropic before any public release enables it. |

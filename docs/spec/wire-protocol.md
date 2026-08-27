@@ -108,7 +108,8 @@ messages to the plugin's stdin and reads them from its stdout.
 - **Ordering:** requests may be answered out of order. Match on `id`.
 - **Batching:** not used. Send one message per line.
 - **Exit:** when core closes your stdin, finish in-flight work if you can and exit. Core
-  waits 5 s, then sends `SIGTERM`, then 2 s later kills the process.
+  waits 2 s, then sends `SIGTERM`, then kills the process 2 s after that. Do not
+  plan to flush anything slow at exit; write as you go.
 
 Core also captures **stderr** for the whole life of the process. It is tagged with your
 plugin id, ring-buffered, and shown in the plugin's log panel. Write freely there.
@@ -136,9 +137,9 @@ Core's first message. It is a normal request, and per MCP a server **MUST** impl
   "params": { "_meta": {
     "io.modelcontextprotocol/protocolVersion": "2026-07-28",
     "io.modelcontextprotocol/clientInfo": { "name": "Alexia", "version": "0.1.0" },
-    "io.modelcontextprotocol/clientCapabilities": {
-      "roots": {}, "sampling": { "tools": {} }, "elicitation": { "form": {} }
-    }
+    // Only what core can serve, for this request. `elicitation` appears once there is a
+    // UI to ask the user in; nothing here may be remembered for the next request.
+    "io.modelcontextprotocol/clientCapabilities": { "roots": {}, "sampling": { "tools": {} } }
   } } }
 ```
 
@@ -246,8 +247,8 @@ a private meaning, sharing an ecosystem with every other MCP host stops being wo
 | core calls a plugin | `tools/call` |
 | what a plugin can do, right now | `tools/list` |
 | **a tool can vanish mid-task** | `notifications/tools/list_changed` on the listen stream |
-| a plugin needs the model | `sampling/createMessage` |
-| a plugin asks the user something | `elicitation/create` |
+| a plugin needs the model | `sampling/createMessage`, carried in-band — see below |
+| a plugin asks the user something | `elicitation/create`, carried the same way |
 | a long download, with a bar | `notifications/progress` against a `progressToken` |
 | stop, and mean it | `notifications/cancelled` |
 | a plugin logs | `notifications/message` |
@@ -287,6 +288,35 @@ JSON-RPC error.** The model has to see the failure to recover from it; a protoco
 invisible to the model and just ends the step. Reserve JSON-RPC errors for "this request was
 malformed" and "this tool does not exist".
 
+### Asking core for something, mid-call
+
+Under `2026-07-28` there is **no server-to-client request channel**. A plugin that needs the
+model, the user, or the folder scope does not send a request — it *answers* the `tools/call`
+it is in the middle of with an `input_required` result, core fulfils what was asked, and
+core re-sends the original call with the answers attached and a fresh request id.
+
+```jsonc
+// plugin → core, answering tools/call
+{ "jsonrpc": "2.0", "id": 7, "result": {
+  "inputRequests": { "model": { "method": "sampling/createMessage", "params": {
+      "messages": [ { "role": "user", "content": { "type": "text", "text": "…" } } ],
+      "maxTokens": 256 } } },
+  "requestState": "opaque, yours, and it comes back attacker-controlled" } }
+
+// core → plugin, the same call again with the answer
+{ "jsonrpc": "2.0", "id": 8, "method": "tools/call", "params": { "name": "…",
+  "inputResponses": { "model": { "role": "assistant", "content": { "type": "text", "text": "…" } } },
+  "requestState": "…", "_meta": { /* envelope */ } } }
+```
+
+Your handler therefore runs **more than once for one logical call**: first without the
+answers, again with them. Keep what you need in `requestState` — and treat it as untrusted
+on the way back in, because it went through the client.
+
+If you are using `@alexia/sdk` or the MCP SDK, this is `inputRequired(…)` and
+`inputResponse(ctx.mcpReq.inputResponses, key)`; the round trips happen inside one
+`callTool` from core's point of view.
+
 ### Sampling
 
 `sampling/createMessage` is how a plugin uses the model without shipping one, without an API
@@ -297,6 +327,14 @@ their back or leak a Local-mode prompt to a cloud provider.
 Only available when the request's `clientCapabilities` include `sampling`. Check, do not
 assume.
 
+> **Deprecated upstream, kept here.** SEP-2577 deprecates `sampling/createMessage` and
+> `roots/list` as of `2026-07-28` and tells hosts to call provider APIs directly instead.
+> They remain in the spec for at least twelve months. Alexia keeps both, because the advice
+> assumes the caller has an API key: a plugin does not have one, must not have one, and the
+> whole point of routing through core is that the user's tier, privacy mode and spend cap
+> apply to a plugin's model use exactly as they apply to Alexia's own. If MCP removes them,
+> they become `alexia/*` methods — the contract a plugin author writes against does not move.
+
 ### Elicitation
 
 `elicitation/create` is how a plugin asks the user a question — an API key, a folder, a
@@ -304,7 +342,8 @@ yes/no. It renders in Alexia's own UI from your schema. This is the *only* way a
 input from the user at runtime; see [`ui-schema.md`](./ui-schema.md) for settings, which are
 the other half.
 
-Only available when `clientCapabilities` include `elicitation`.
+Only available when `clientCapabilities` include `elicitation` — which core does not offer
+until it has a UI to ask in (M1). Check every time.
 
 ### Logging
 

@@ -5,6 +5,10 @@
   "type": "module",
   "license": "AGPL-3.0-only",
   "dependencies": {
-    "@alexia/protocol": "workspace:*"
+    "@alexia/protocol": "workspace:*",
+    "@modelcontextprotocol/client": "2.0.0"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/server": "2.0.0"
   }
 }
