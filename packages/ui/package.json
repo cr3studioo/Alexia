@@ -1,0 +1,8 @@
+{
+  "name": "@alexia/ui",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The chat shell. A web page with no Node in it, so the Tauri wrap at M5 is a port and not a rewrite.",
+  "license": "AGPL-3.0-only",
+  "type": "module"
+}

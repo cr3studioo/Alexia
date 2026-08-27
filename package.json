@@ -8,6 +8,7 @@
     "node": ">=24"
   },
   "scripts": {
+    "start": "tsc -b && node packages/core/dist/src/serve.js",
     "lint": "eslint . && depcruise packages",
     "typecheck": "tsc -b",
     "test": "vitest run --project unit --passWithNoTests",

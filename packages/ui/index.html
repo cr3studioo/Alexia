@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Alexia</title>
+    <link rel="stylesheet" href="/app.css" />
+  </head>
+  <body>
+    <header>
+      <span class="name">Alexia</span>
+      <!-- Which model answered, and what the month has cost. Both always on screen: the
+           first is how you know where your words went, the second is how nobody is ever
+           surprised by a bill. -->
+      <span id="model" class="badge">no model yet</span>
+      <span id="spend" class="badge">$0.00</span>
+    </header>
+
+    <main id="log" aria-live="polite"></main>
+    <p id="note" hidden></p>
+
+    <form id="ask">
+      <textarea id="text" rows="1" placeholder="Ask Alexia" autofocus></textarea>
+      <button type="submit">Send</button>
+    </form>
+
+    <script type="module" src="/main.js" data-token="__TOKEN__"></script>
+  </body>
+</html>
