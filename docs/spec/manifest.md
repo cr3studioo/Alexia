@@ -81,7 +81,7 @@ is rejected — it is right on your machine and wrong on everyone else's.
 
 ```jsonc
 "alexia_protocol": 1,          // ours: which Alexia contract you were written against
-"mcp_protocol": "2026-07-28"   // MCP's: which revision your server speaks
+"mcp_protocol": "2025-11-25"   // MCP's: which revision your server speaks
 ```
 
 They do different jobs and both are checked before you get a process.
@@ -95,11 +95,17 @@ Voice needs a newer Alexia.
 Update Alexia, or install an earlier version of Voice.
 ```
 
-`mcp_protocol` is the upstream revision. Core accepts the pinned revision and its immediate
-predecessor — today `2026-07-28` and `2025-11-25`. The schema only checks the *shape* of
-this field on purpose: an unaccepted-but-well-formed revision should produce the readable
-refusal in [`wire-protocol.md` §8](./wire-protocol.md#8-errors-and-the-exact-words), not a
-schema error nobody can decode.
+`mcp_protocol` is the upstream revision, and your process must actually serve the one you
+declare — core confirms it at the handshake. Two are accepted: `2025-11-25`, which is what
+an Alexia plugin speaks, and `2026-07-28`, which connects but has **no `alexia/*` layer**
+because that revision removed the direction those methods travel in
+([`wire-protocol.md` §1.1](./wire-protocol.md#11-two-eras-and-why-a-plugin-lives-on-the-older-one)).
+If your plugin reads a setting, writes a row, or calls a capability, declare `2025-11-25`.
+
+The schema only checks the *shape* of this field on purpose: an unaccepted-but-well-formed
+revision should produce the readable refusal in
+[`wire-protocol.md` §8](./wire-protocol.md#8-errors-and-the-exact-words), not a schema error
+nobody can decode.
 
 ### What you need, and what you offer
 

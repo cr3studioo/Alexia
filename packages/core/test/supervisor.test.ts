@@ -158,6 +158,27 @@ test('a tool list that changes mid-session reaches core', async () => {
   expect((await plugin.listTools()).map((t) => t.name)).toContain('grown')
 }, 20_000)
 
+test('the newer MCP revision connects, and cannot reach back into core', async () => {
+  // Both halves of D57 in one test. Core speaks `2026-07-28`, so a server that speaks only
+  // it still works. And on that era there is no server-to-client request channel, which is
+  // why an Alexia plugin is built on the older revision: `alexia/*` needs one.
+  const spy = host()
+  const plugin = start(
+    manifest({
+      id: 'modern',
+      name: 'Modern',
+      mcp_protocol: '2026-07-28',
+      entry: { run: 'node', args: ['modern-plugin.js'] },
+    }),
+    spy,
+  )
+
+  expect((await plugin.listTools()).map((t) => t.name)).toEqual(['reach_back'])
+  const reached = await plugin.callTool('reach_back')
+  expect(reached.content[0]).toMatchObject({ text: expect.stringContaining('refused') })
+  expect(spy.logs.join('\n')).toContain('Dropped inbound request')
+}, 20_000)
+
 test('a plugin written for a newer Alexia never gets a process', async () => {
   const spy = host()
   const plugin = start(manifest({ alexia_protocol: 99 }), spy)

@@ -19,8 +19,16 @@ import { z } from 'zod'
 export const ALEXIA_PROTOCOL_MIN = 1
 export const ALEXIA_PROTOCOL_MAX = 1
 
-/** MCP revisions core accepts: the pinned one and its immediate predecessor (D55). */
-export const MCP_REVISIONS = ['2026-07-28', '2025-11-25'] as const
+/**
+ * The two MCP revisions core speaks, in preference order (D55, corrected by D57).
+ *
+ * `2025-11-25` is first because it is the one an Alexia plugin is built on: it is what the
+ * reference SDK still treats as latest, and it is the last revision where a server may send
+ * its host a request — which is the entire `alexia/*` layer. `2026-07-28` is accepted for
+ * MCP servers that speak only it; on that revision the `alexia/*` layer is unavailable.
+ */
+export const MCP_REVISIONS = ['2025-11-25', '2026-07-28'] as const
+/** What an Alexia plugin declares, and what `@alexia/sdk` serves. */
 export const MCP_PINNED = MCP_REVISIONS[0]
 
 /** Lowercase, hyphen-separated, and it must match the folder name. Mirrors agentskills.io. */

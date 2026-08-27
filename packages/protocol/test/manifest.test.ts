@@ -110,7 +110,7 @@ describe('the two version checks', () => {
   test('an MCP revision outside the two-wide window is refused, and says which two', () => {
     const v = versionVerdict({ ...base, mcp_protocol: '2024-11-05' })
     expect(v.ok).toBe(false)
-    expect(v.ok === false && v.reason).toContain('2026-07-28 and 2025-11-25')
+    expect(v.ok === false && v.reason).toContain('2025-11-25 and 2026-07-28')
     expect(v.ok === false && v.reason).toContain('2024-11-05')
   })
 })

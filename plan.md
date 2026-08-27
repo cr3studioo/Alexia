@@ -391,6 +391,19 @@ one trains on your data**, and show it.
 - **`2026-07-28` has no `initialize`.** `server/discover`, a per-request `_meta` envelope,
   and `subscriptions/listen` for every server-to-client notification. Error `-32022` on a
   version mismatch. D55.
+- **`2026-07-28` also has no server-to-client request channel**, and the SDK does not ship
+  it as the default. Measured on 2026-08-27 while building M0-2 (D57), all three:
+  ```bash
+  node -e "import('@modelcontextprotocol/server').then(m=>console.log(m.LATEST_PROTOCOL_VERSION, m.SUPPORTED_PROTOCOL_VERSIONS))"
+  # -> 2025-11-25 [ '2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05', '2024-10-07' ]
+  ```
+  `2026-07-28` is opt-in via `supportedProtocolVersions`; over stdio it is served only
+  through `serveStdio()` (a plain `server.connect(new StdioServerTransport())` answers
+  `server/discover` with `-32601`, and a negotiating client falls back to `2025-11-25`); and
+  on that era a client **drops** any inbound request — *"Dropped inbound request
+  'alexia/host/info': not servable on this connection's protocol era"*. The regression test
+  is `packages/core/test/supervisor.test.ts`, "the newer MCP revision connects, and cannot
+  reach back into core".
 - SDK v2 is split: `@modelcontextprotocol/server` and `@modelcontextprotocol/client`, both
   at 2.0.0. (`@modelcontextprotocol/sdk` 1.30.0 is the v1 line.)
 - The official registry is a public, cursor-paginated API:
@@ -1486,7 +1499,8 @@ Newest first. Every entry here is also in Alexia.md's decision log.
 
 | Date | Entry |
 |---|---|
-| 2026-08-27 | **D56** — on `2026-07-28` a plugin never *sends* core a request: sampling, elicitation and roots come back in-band as an `input_required` answer to the call being served, and core re-sends the call with the answers. Found while building M0-2; the wire spec said `sampling/createMessage` and left an author to guess the direction. Sampling and roots are deprecated upstream (SEP-2577, ≥12 months) and Alexia keeps both — the advice to "call provider APIs directly" assumes a key the plugin must not have. Also: `execa` dropped from core, see the parts list. |
+| 2026-08-27 | **D57** — an Alexia plugin speaks MCP `2025-11-25`, and `2026-07-28` is the revision core *also* accepts. That era removed the server-to-client request channel, and four of the five `alexia/*` methods are requests a plugin sends to core. Measured, not read: on the newer era they are dropped unanswered. The two-wide window still holds, pointing the other way. |
+| 2026-08-27 | **D56** *(superseded by D57 in mechanism — it describes `2026-07-28`, which is not where Alexia plugins live)* — on `2026-07-28` a plugin never *sends* core a request: sampling, elicitation and roots come back in-band as an `input_required` answer to the call being served, and core re-sends the call with the answers. Found while building M0-2; the wire spec said `sampling/createMessage` and left an author to guess the direction. Sampling and roots are deprecated upstream (SEP-2577, ≥12 months) and Alexia keeps both — the advice to "call provider APIs directly" assumes a key the plugin must not have. Also: `execa` dropped from core, see the parts list. |
 | 2026-08-27 | **D55** — MCP `2026-07-28` has no `initialize`: `server/discover`, a per-request `_meta` envelope, and `subscriptions/listen` for every server-to-client notification. G3 answered — core accepts the pinned revision and its immediate predecessor, two at a time. |
 | 2026-08-27 | **D54** — the agent loop gets its own milestone, M1.5. It had none, and it is the product. |
 | 2026-08-27 | **D53** — Claude Code plugin: built, shipped disabled, never auto-enabled, user runs `setup-token` themselves. Written confirmation from Anthropic before any public release enables it. |

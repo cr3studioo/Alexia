@@ -18,7 +18,15 @@ export function negotiate(plugin: PluginVersions, supportedVersions: readonly st
   const verdict = versionVerdict(plugin)
   if (!verdict.ok) return verdict
 
-  // MCP_REVISIONS is newest first, so the first match is the newest one both sides speak.
+  // The manifest is a claim about a process that did not exist yet. This is where it is
+  // confirmed: a plugin that declared one revision and serves another is a plugin whose
+  // manifest core cannot trust about anything else either.
+  if (!supportedVersions.includes(plugin.mcp_protocol)) {
+    return { ok: false, reason: mcpRefusal(plugin.name, supportedVersions.join(', ')) }
+  }
+
+  // In our preference order, not the plugin's: `2025-11-25` first, because that is where a
+  // plugin can call back into core at all. See MCP_REVISIONS.
   const mcp = MCP_REVISIONS.find((r) => supportedVersions.includes(r))
   if (!mcp) return { ok: false, reason: mcpRefusal(plugin.name, supportedVersions.join(', ')) }
   return { ok: true, mcp }

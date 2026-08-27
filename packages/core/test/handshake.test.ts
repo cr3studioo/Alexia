@@ -9,9 +9,20 @@ test('both sides on the pin: the newest shared revision wins', () => {
   expect(negotiate(voice, [...MCP_REVISIONS])).toEqual({ ok: true, mcp: MCP_PINNED })
 })
 
-test('a plugin one revision behind still loads — that is what the window is for', () => {
-  const old = MCP_REVISIONS[1]
-  expect(negotiate({ ...voice, mcp_protocol: old }, [old])).toEqual({ ok: true, mcp: old })
+test('the newer revision loads too — it just has no alexia/* layer', () => {
+  const newer = MCP_REVISIONS[1]
+  expect(negotiate({ ...voice, mcp_protocol: newer }, [newer])).toEqual({ ok: true, mcp: newer })
+})
+
+test('a plugin that speaks both gets the revision it can call core back on', () => {
+  expect(negotiate(voice, [...MCP_REVISIONS])).toEqual({ ok: true, mcp: MCP_PINNED })
+})
+
+test('a manifest that claimed a revision the process does not serve is refused', () => {
+  // The manifest is a claim about a process that did not exist yet. If it turns out to be
+  // wrong here, nothing else it said can be trusted either.
+  const v = negotiate({ ...voice, mcp_protocol: '2026-07-28' }, [MCP_PINNED])
+  expect(v.ok).toBe(false)
 })
 
 test('the manifest check runs first, so a plugin from the future never gets a process', () => {
@@ -26,6 +37,6 @@ test('no overlap is refused in the words the spec fixes, naming both sides', () 
   expect(v.ok).toBe(false)
   expect(v.ok === false && v.reason).toBe(
     "Voice speaks a version of MCP that Alexia doesn't.\n" +
-      'Alexia speaks 2026-07-28 and 2025-11-25; Voice speaks 2024-11-05.',
+      'Alexia speaks 2025-11-25 and 2026-07-28; Voice speaks 2024-11-05.',
   )
 })

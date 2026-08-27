@@ -23,13 +23,11 @@ talk JSON-RPC 2.0 over the plugin's stdin and stdout.
         │  spawn: entry.run + entry.args               │
         │─────────────────────────────────────────────>│
         │                                              │
-        │  server/discover                             │
+        │  initialize  { protocolVersion, … }          │
         │─────────────────────────────────────────────>│
-        │<───────── supportedVersions, capabilities ───│
+        │<──────── protocolVersion, capabilities ──────│
+        │  notifications/initialized ─────────────────>│
         │                                              │
-        │  two version checks, then:                   │
-        │  subscriptions/listen  { toolsListChanged }  │
-        │─────────────────────────────────────────────>│   (stays open)
         │  tools/list                                  │
         │─────────────────────────────────────────────>│
         │<─────────────────────────── tools            │
@@ -62,38 +60,53 @@ nothing.
 
 ## 1. Which MCP revision, and the policy for moving
 
-*Decision G3, made 2026-08-27.*
+*Decision G3, made 2026-08-27. Corrected the same day by D57, after the first supervisor
+was built against it — see [Two eras](#11-two-eras-and-why-a-plugin-lives-on-the-older-one).*
 
 | | |
 |---|---|
-| **Pinned revision** | `2026-07-28` |
-| **Also accepted** | `2025-11-25` |
+| **What a plugin is built on** | `2025-11-25` |
+| **Also accepted** | `2026-07-28`, for servers that speak only it |
 | **Not accepted** | `2025-06-18`, `2025-03-26`, `2024-11-05`, `draft` |
 
-**Core supports exactly two revisions at a time: the pinned one and its immediate
-predecessor.** That is the whole policy, and it is chosen for one reason — a plugin author
-who is asleep when MCP ships a revision should not wake up to a broken plugin, and Alexia
-should not be carrying five wire dialects to promise that.
+**Core supports exactly two revisions at a time.** That is the whole policy, and it is
+chosen for one reason — a plugin author who is asleep when MCP ships a revision should not
+wake up to a broken plugin, and Alexia should not be carrying five wire dialects to promise
+that.
 
-When MCP publishes a new revision:
+When MCP publishes a new revision, core adds it in a **minor** release and drops the oldest
+of the three one minor release later. Both steps are in the release notes, and the registry
+warns the author of every plugin that will stop loading, before it stops loading.
 
-1. Core adds it as the pinned revision in a **minor** release. The old pin becomes the
-   predecessor. Nothing breaks.
-2. One minor release later, the revision that was the predecessor is dropped, and plugins
-   still speaking it fail the version check with the message in §8.
-3. Both steps are in the release notes, and the registry warns the author of every plugin
-   that will stop loading, before it stops loading.
+### 1.1 Two eras, and why a plugin lives on the older one
 
-`2025-11-25` is on the list because it is the last revision with the `initialize` handshake,
-which is what most of the MCP ecosystem still speaks and what `@modelcontextprotocol/server`
-v2 still serves as its *legacy era*. It is a bridge, not a commitment.
+`2026-07-28` is not a bigger `2025-11-25`; it is a different wire era. It deleted
+`initialize` (version, client identity and capabilities ride in `params._meta` on every
+request instead), replaced unsolicited server notifications with a `subscriptions/listen`
+stream, and — the part that decides this — **removed the server-to-client request
+channel entirely.** On `2026-07-28` a server cannot send its host a request. It can only
+*answer* one with `input_required`, and the shapes it may ask for are MCP's own three:
+elicitation, sampling, roots.
 
-> **Why 2026-07-28 and not the comfortable older one.** The 2026 revision deleted
-> `initialize`. Version, client identity and client capabilities now travel in `_meta` on
-> **every request**, and a server advertises itself through `server/discover` instead. That
-> is a better fit for Alexia than the handshake was: a plugin that is spawned lazily,
-> killed when idle, and restarted after a crash has no long-lived session to initialise —
-> and under the 2026 rules it does not need one.
+The `alexia/*` layer (§6) is five methods a plugin sends *to core*: its settings, its
+storage, another plugin's capability, the host it is running on. On `2026-07-28` every one
+of them is dropped by a conforming client, unanswered. Measured, not assumed:
+
+```
+era=modern  version=2026-07-28  ->  Dropped inbound request 'alexia/host/info':
+                                    not servable on this connection's protocol era
+era=legacy  version=2025-11-25  ->  answered: {"platform":"win32"}
+```
+
+So an Alexia plugin speaks `2025-11-25`, which is also what
+`@modelcontextprotocol/server` v2 reports as its latest and serves by default over stdio.
+Core still accepts a `2026-07-28` server — a plain MCP server added through compatibility
+mode has no use for `alexia/*` and works fine — it simply has no Alexia layer.
+
+> **What happens when MCP retires the older era.** The five methods move to a channel of
+> Alexia's own and `@alexia/sdk` keeps the same shape, so the contract a plugin author
+> writes against does not move. That is the reason the layer is called `alexia/*` and not
+> an MCP extension.
 
 ---
 
@@ -127,37 +140,45 @@ Core reads [`plugin.json`](./manifest.md) **before the process exists** and spaw
 install a runtime. Anything else in `run` must be on `PATH` or be a path relative to the
 plugin directory.
 
-### 3.2 `server/discover` — the handshake
+### 3.2 `initialize` — the handshake
 
-Core's first message. It is a normal request, and per MCP a server **MUST** implement it.
+Core's first message.
 
 ```jsonc
 // core → plugin
-{ "jsonrpc": "2.0", "id": 1, "method": "server/discover",
-  "params": { "_meta": {
-    "io.modelcontextprotocol/protocolVersion": "2026-07-28",
-    "io.modelcontextprotocol/clientInfo": { "name": "Alexia", "version": "0.1.0" },
-    // Only what core can serve, for this request. `elicitation` appears once there is a
-    // UI to ask the user in; nothing here may be remembered for the next request.
-    "io.modelcontextprotocol/clientCapabilities": { "roots": {}, "sampling": { "tools": {} } }
-  } } }
+{ "jsonrpc": "2.0", "id": 1, "method": "initialize",
+  "params": {
+    "protocolVersion": "2025-11-25",
+    "clientInfo": { "name": "Alexia", "version": "0.1.0" },
+    // Only what core can serve. `elicitation` appears once there is a UI to ask the user
+    // in; check what you were offered rather than assuming.
+    "capabilities": { "roots": {}, "sampling": {} } } }
 ```
 
 ```jsonc
 // plugin → core
 { "jsonrpc": "2.0", "id": 1, "result": {
-  "supportedVersions": ["2026-07-28", "2025-11-25"],
+  "protocolVersion": "2025-11-25",
+  "serverInfo": { "name": "voice", "version": "0.3.1" },
   "capabilities": { "tools": { "listChanged": true } },
   "instructions": "Turns speech into text and text into speech."
 } }
 ```
 
+Core then sends `notifications/initialized` and the session is live.
+
 `instructions` is optional natural-language guidance about the server as a whole. Alexia
 puts it in the system prompt when any of your tools are in scope, so write it for the model,
 not for the user — and do not repeat what your tool descriptions already say.
 
-A plugin that does not answer `server/discover` within **10 seconds** is treated as failed to
-start. Answer it before you load models, open files, or hit the network.
+A plugin that does not answer within **10 seconds** is treated as failed to start. Answer it
+before you load models, open files, or hit the network.
+
+> **A server that speaks only `2026-07-28`** answers `server/discover` instead, and must be
+> served through its SDK's era-owning stdio entry point (`serveStdio` in the TypeScript
+> one) — a plain stdio server answers `server/discover` with `-32601` and the connection
+> falls back to `2025-11-25`, which is usually what you wanted anyway. Core probes for
+> `server/discover` first and falls back on its own.
 
 ### 3.3 The two version checks
 
@@ -166,11 +187,13 @@ anything.
 
 | Version | Whose | Where it is declared | What it means |
 |---|---|---|---|
-| `mcp_protocol` | MCP's | `plugin.json`, confirmed by `server/discover` | which MCP revision you speak |
+| `mcp_protocol` | MCP's | `plugin.json`, confirmed by the handshake | which MCP revision you speak |
 | `alexia_protocol` | ours, an integer | `plugin.json` only | which Alexia contract you were written against |
 
-**Check one — MCP.** Core intersects its two accepted revisions with your
-`supportedVersions` and uses the newest match. No match: refusal, §8.
+**Check one — MCP.** Core intersects its two accepted revisions with what your process
+actually serves, preferring `2025-11-25`. No overlap, or an overlap that does not include
+the revision your manifest declared: refusal, §8. Declaring one revision and serving another
+is a manifest core cannot trust about anything else either.
 
 **Check two — Alexia.** Core reads `alexia_protocol` from the manifest and compares it to
 the range core speaks.
@@ -185,54 +208,50 @@ plugin says: alexia_protocol 0     core speaks 1..3   ->  does not load, and say
 Check two reads a file. It happens **before spawn**, so a plugin written for a newer Alexia
 never gets a process at all.
 
-### 3.4 `subscriptions/listen` — how core hears about changes
+### 3.4 How core hears about changes
 
-Under `2026-07-28` a server **must not** send a notification the client did not ask for —
-on stdio exactly as on HTTP. So core opens one long-lived subscription per plugin,
-immediately after the version checks:
+Send `notifications/tools/list_changed` whenever your tool list changes, and core re-reads
+`tools/list`. Nothing to subscribe to: on `2025-11-25` a server may send it unprompted, and
+core listens from the moment the handshake completes.
 
-```jsonc
-// core → plugin
-{ "jsonrpc": "2.0", "id": 2, "method": "subscriptions/listen",
-  "params": { "notifications": { "toolsListChanged": true }, "_meta": { /* envelope */ } } }
-```
+> **On `2026-07-28`** a server must not send a notification the client did not ask for, so
+> core opens one long-lived `subscriptions/listen` request per connection instead, filtered
+> to `toolsListChanged`. Notifications then carry
+> `_meta["io.modelcontextprotocol/subscriptionId"]`, and answering that request ends the
+> subscription — so answer it only when you are shutting down.
 
-This request stays open for the life of the process. Notifications you send on it carry
-`_meta["io.modelcontextprotocol/subscriptionId"]` equal to its id. Responding to it ends the
-subscription, so respond only when you are shutting down.
-
-Core subscribes to `toolsListChanged` always. It subscribes to the other filters only if
-your `server/discover` capabilities advertise them.
-
-Progress notifications for an in-flight request do **not** go on this stream — they are tied
-to the request that carried the `progressToken`.
+Progress notifications for an in-flight request are not part of this either way — they are
+tied to the request that carried the `progressToken`.
 
 ### 3.5 Ready
 
-After `subscriptions/listen`, core calls `tools/list` and the plugin is live. Total budget
-from spawn to live: **2 seconds**, on the machine of someone who has never opened a
-terminal. Load your model on first use, not at start.
+After the handshake, core calls `tools/list` and the plugin is live. Total budget from spawn
+to live: **2 seconds**, on the machine of someone who has never opened a terminal. Load your
+model on first use, not at start.
 
 ---
 
-## 4. The per-request envelope
+## 4. What core told you it can do
 
-Every request core sends carries these keys in `params._meta`:
+The handshake's `capabilities` are what core can do **for this session**, and they are the
+only thing you may rely on. Two of them matter to a plugin:
 
-| Key | Always? | Value |
+| Capability | Present when | Lets you |
 |---|---|---|
-| `io.modelcontextprotocol/protocolVersion` | **yes** | the negotiated revision, e.g. `"2026-07-28"` |
-| `io.modelcontextprotocol/clientCapabilities` | **yes** | what core can do *for this request* |
-| `io.modelcontextprotocol/clientInfo` | yes | `{ "name": "Alexia", "version": "0.1.0" }` |
-| `progressToken` | when core wants progress | opaque; echo it in `notifications/progress` |
+| `sampling` | the user's privacy mode allows a model call for this plugin | `sampling/createMessage` |
+| `elicitation` | there is a UI to ask the user in (M1 onward) | `elicitation/create` |
+| `roots` | always | `roots/list` |
 
-Capabilities are per-request and **must not be remembered between requests**. If core sends
-`sampling` on one call and not the next, the second call may not use `sampling/createMessage`.
-This is MCP's rule, not ours, and it exists so a host can withdraw a capability mid-session —
-which is exactly what Alexia does when the user switches to a privacy mode that forbids it.
+**Check what you were given rather than assuming**, every time: a capability core did not
+offer is a `-32021` if you use it, and Alexia withdraws `sampling` when the user switches to
+a privacy mode that forbids it.
 
-Your own requests to core carry the same `protocolVersion` key. Core rejects a request whose
-version is not the negotiated one with `-32022`.
+`params._meta.progressToken`, when core sends one, is opaque — echo it in
+`notifications/progress`.
+
+> **On `2026-07-28`** there is no handshake, so the version, core's identity and core's
+> capabilities travel in `params._meta` on **every** request, under the reserved
+> `io.modelcontextprotocol/…` keys, and they must not be remembered between requests.
 
 ---
 
@@ -290,32 +309,28 @@ malformed" and "this tool does not exist".
 
 ### Asking core for something, mid-call
 
-Under `2026-07-28` there is **no server-to-client request channel**. A plugin that needs the
-model, the user, or the folder scope does not send a request — it *answers* the `tools/call`
-it is in the middle of with an `input_required` result, core fulfils what was asked, and
-core re-sends the original call with the answers attached and a fresh request id.
+A plugin is a server, and on `2025-11-25` a server may send its host a request at any time —
+including while it is in the middle of serving a `tools/call`. That is how `alexia/*` (§6)
+works, and how sampling, elicitation and roots work:
 
 ```jsonc
-// plugin → core, answering tools/call
-{ "jsonrpc": "2.0", "id": 7, "result": {
-  "inputRequests": { "model": { "method": "sampling/createMessage", "params": {
-      "messages": [ { "role": "user", "content": { "type": "text", "text": "…" } } ],
-      "maxTokens": 256 } } },
-  "requestState": "opaque, yours, and it comes back attacker-controlled" } }
-
-// core → plugin, the same call again with the answer
-{ "jsonrpc": "2.0", "id": 8, "method": "tools/call", "params": { "name": "…",
-  "inputResponses": { "model": { "role": "assistant", "content": { "type": "text", "text": "…" } } },
-  "requestState": "…", "_meta": { /* envelope */ } } }
+// plugin → core, while tools/call id 7 is still open
+{ "jsonrpc": "2.0", "id": 101, "method": "sampling/createMessage",
+  "params": { "messages": [ { "role": "user", "content": { "type": "text", "text": "…" } } ],
+              "maxTokens": 256 } }
+// core → plugin
+{ "jsonrpc": "2.0", "id": 101, "result": { "role": "assistant", "model": "…",
+              "content": { "type": "text", "text": "…" } } }
 ```
 
-Your handler therefore runs **more than once for one logical call**: first without the
-answers, again with them. Keep what you need in `requestState` — and treat it as untrusted
-on the way back in, because it went through the client.
-
-If you are using `@alexia/sdk` or the MCP SDK, this is `inputRequired(…)` and
-`inputResponse(ctx.mcpReq.inputResponses, key)`; the round trips happen inside one
-`callTool` from core's point of view.
+> **On `2026-07-28` this direction does not exist.** A server answers the call it is serving
+> with an `input_required` result naming what it needs, core fulfils it and re-sends the same
+> call with `inputResponses` attached and a fresh id — so a handler runs more than once per
+> logical call, and anything it wants to remember between rounds goes in the opaque
+> `requestState` (which comes back through the client, so treat it as untrusted). The MCP
+> SDKs' `inputRequired(…)` / `inputResponse(…)` helpers write it once and work on both eras;
+> `alexia/*` has no such fallback, which is [why a plugin lives on the older
+> era](#11-two-eras-and-why-a-plugin-lives-on-the-older-one).
 
 ### Sampling
 
@@ -361,6 +376,12 @@ one the log panel always shows.
 Five methods. Everything MCP covers is MCP; this is the remainder. **If you want a sixth,
 argue it against MCP first** — the whole value of adopting MCP evaporates one private
 extension at a time.
+
+> **These require the `2025-11-25` era**, because four of the five are requests a plugin
+> sends to core and `2026-07-28` has no such direction. A server that speaks only the newer
+> revision still connects and its tools still work; it simply has no Alexia layer, and any
+> `alexia/*` request it sends is dropped unanswered. See
+> [§1.1](#11-two-eras-and-why-a-plugin-lives-on-the-older-one).
 
 All five are called **plugin → core**, except `alexia/settings/changed`, which is a
 notification core sends you.

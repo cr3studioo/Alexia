@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { mcpRefusal, versionVerdict, type Manifest } from '@alexia/protocol'
+import { MCP_REVISIONS, mcpRefusal, versionVerdict, type Manifest } from '@alexia/protocol'
 import {
   Client,
   UnsupportedProtocolVersionError,
@@ -201,8 +201,11 @@ export class PluginProcess {
       // user anything, so it does not claim `elicitation`: a plugin that checks, as the
       // spec tells it to, correctly finds it missing.
       capabilities: { roots: {}, sampling: {} },
-      // `auto`, not a pin: the window is two revisions wide (D55) and the older of the two
-      // is the legacy `initialize` handshake. Whatever it lands on is checked below.
+      // `auto`, not a pin: the window is two revisions wide and they are two different
+      // wire eras. A plugin built on `@alexia/sdk` serves `2025-11-25` and lands here on
+      // the era where it can call back into core; a third-party MCP server that speaks only
+      // `2026-07-28` connects too, and simply has no `alexia/*` layer. Checked below.
+      supportedProtocolVersions: [...MCP_REVISIONS],
       versionNegotiation: { mode: 'auto' },
       listChanged: { tools: { onChanged: () => this.host.toolsChanged?.(this.id) } },
     })
