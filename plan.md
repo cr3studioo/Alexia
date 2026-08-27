@@ -86,7 +86,7 @@ Tick a box only when the task's acceptance criteria pass. `[GATE]` needs a human
 
 - [x] **M0-1** `@alexia/protocol` — types, schemas, version constants
 - [x] **M0-2** Supervisor: spawn, handshake, heartbeat, backoff, lazy spawn, idle shutdown
-- [ ] **M0-3** `@alexia/sdk` — the plugin-author package
+- [x] **M0-3** `@alexia/sdk` — the plugin-author package
 - [ ] **M0-4** `plugins/hello` — the plugin that answers
 - [ ] **M0-5** `plugins/crasher` — the plugin that dies, three ways
 - [ ] **M0-6** `plugins/vanisher` — the plugin that disappears mid-call

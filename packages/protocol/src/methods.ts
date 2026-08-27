@@ -45,6 +45,7 @@ const Operator = z
 
 /** Keys are columns, values a literal (equals) or one operator. Multiple keys are AND. */
 export const Where = z.record(ident, z.union([Scalar, Operator]))
+export type Where = z.infer<typeof Where>
 
 /** A row on the way in. Objects and arrays are stored as JSON text. */
 const Row = z.record(ident, z.json())
@@ -74,6 +75,8 @@ export const CallToolResult = z.looseObject({
   structuredContent: z.record(z.string(), z.json()).optional(),
   isError: z.boolean().optional(),
 })
+
+export type CallToolResult = z.infer<typeof CallToolResult>
 
 export const HostInfo = z.object({
   platform: z.string(),

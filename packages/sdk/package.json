@@ -9,6 +9,7 @@
   },
   "types": "./dist/src/index.d.ts",
   "dependencies": {
-    "@alexia/protocol": "workspace:*"
+    "@alexia/protocol": "workspace:*",
+    "@modelcontextprotocol/server": "2.0.0"
   }
 }
