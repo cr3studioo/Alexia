@@ -4,8 +4,14 @@
   "description": "Alexia's plugin contract: types, schemas and version constants.",
   "license": "Apache-2.0",
   "type": "module",
-  "exports": { ".": "./dist/index.js" },
-  "types": "./dist/index.d.ts",
-  "scripts": { "gen:schema": "tsx scripts/gen-schema.ts" },
-  "dependencies": { "zod": "^4.4.3" }
+  "exports": {
+    ".": "./dist/src/index.js"
+  },
+  "types": "./dist/src/index.d.ts",
+  "scripts": {
+    "gen:schema": "tsx scripts/gen-schema.ts"
+  },
+  "dependencies": {
+    "zod": "^4.4.3"
+  }
 }

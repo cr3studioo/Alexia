@@ -27,9 +27,12 @@ export const MCP_PINNED = MCP_REVISIONS[0]
 const ID = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/
 /** Dotted namespaces, LSP and MCP style: `voice.transcribe`, `fs.own_dir`. */
 const CAPABILITY = /^[a-z][a-z0-9]*(?:\.[a-z][a-z0-9_]*)+$/
-/** A SQLite-safe table name. Core prefixes it; the author never sees the prefix. */
-const TABLE = /^[a-z][a-z0-9_]*$/
-const SETTING_KEY = /^[a-z][a-z0-9_]*$/
+/**
+ * A plain identifier: a setting key, a table name, a column name. SQLite-safe, so core can
+ * build `p_<namespace>_<table>` without quoting and without parsing. Shared with the wire
+ * schemas in `methods.ts` — one rule, written once.
+ */
+export const IDENT = /^[a-z][a-z0-9_]*$/
 const SEMVER = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/
 /** Shape only. Whether core *accepts* a revision is a separate check with a readable refusal. */
 const MCP_REVISION = /^\d{4}-\d{2}-\d{2}$/
@@ -39,7 +42,7 @@ const id = z.string().min(1).max(64).regex(ID, 'lowercase letters, digits and hy
 const setting = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('text'),
-    key: z.string().regex(SETTING_KEY),
+    key: z.string().regex(IDENT),
     label: z.string().min(1),
     hint: z.string().optional(),
     default: z.string().optional(),
@@ -49,13 +52,13 @@ const setting = z.discriminatedUnion('type', [
     // Never carries a default and never appears in a log or an export: core keeps the
     // value in the OS keychain and hands it back only to the plugin that declared it.
     type: z.literal('password'),
-    key: z.string().regex(SETTING_KEY),
+    key: z.string().regex(IDENT),
     label: z.string().min(1),
     hint: z.string().optional(),
   }),
   z.object({
     type: z.literal('number'),
-    key: z.string().regex(SETTING_KEY),
+    key: z.string().regex(IDENT),
     label: z.string().min(1),
     hint: z.string().optional(),
     default: z.number().optional(),
@@ -65,14 +68,14 @@ const setting = z.discriminatedUnion('type', [
   }),
   z.object({
     type: z.literal('toggle'),
-    key: z.string().regex(SETTING_KEY),
+    key: z.string().regex(IDENT),
     label: z.string().min(1),
     hint: z.string().optional(),
     default: z.boolean().optional(),
   }),
   z.object({
     type: z.literal('choice'),
-    key: z.string().regex(SETTING_KEY),
+    key: z.string().regex(IDENT),
     label: z.string().min(1),
     hint: z.string().optional(),
     options: z.array(z.string().min(1)).min(1),
@@ -80,7 +83,7 @@ const setting = z.discriminatedUnion('type', [
   }),
   z.object({
     type: z.literal('multi-choice'),
-    key: z.string().regex(SETTING_KEY),
+    key: z.string().regex(IDENT),
     label: z.string().min(1),
     hint: z.string().optional(),
     options: z.array(z.string().min(1)).min(1),
@@ -88,7 +91,7 @@ const setting = z.discriminatedUnion('type', [
   }),
   z.object({
     type: z.literal('path'),
-    key: z.string().regex(SETTING_KEY),
+    key: z.string().regex(IDENT),
     label: z.string().min(1),
     hint: z.string().optional(),
     kind: z.enum(['file', 'dir']),
@@ -97,20 +100,20 @@ const setting = z.discriminatedUnion('type', [
   z.object({
     // Read-only. The plugin drives it; core renders whatever it last wrote.
     type: z.literal('status'),
-    key: z.string().regex(SETTING_KEY),
+    key: z.string().regex(IDENT),
     label: z.string().min(1),
     hint: z.string().optional(),
   }),
   z.object({
     type: z.literal('progress'),
-    key: z.string().regex(SETTING_KEY),
+    key: z.string().regex(IDENT),
     label: z.string().min(1),
     hint: z.string().optional(),
   }),
   z.object({
     // A button. Pressing it calls one of the plugin's own tools with no arguments.
     type: z.literal('action'),
-    key: z.string().regex(SETTING_KEY),
+    key: z.string().regex(IDENT),
     label: z.string().min(1),
     hint: z.string().optional(),
     tool: z.string().min(1),
@@ -160,7 +163,7 @@ export const ManifestShape = z
     storage: z
       .object({
         namespace: id,
-        tables: z.array(z.string().regex(TABLE)).optional(),
+        tables: z.array(z.string().regex(IDENT)).optional(),
         dir: z.boolean().optional(),
       })
       .strict()
@@ -250,12 +253,19 @@ export function versionVerdict(m: Pick<Manifest, 'name' | 'alexia_protocol' | 'm
     }
   }
   if (!(MCP_REVISIONS as readonly string[]).includes(m.mcp_protocol)) {
-    return {
-      ok: false,
-      reason:
-        `${m.name} speaks a version of MCP that Alexia doesn't.\n` +
-        `Alexia speaks ${MCP_REVISIONS.join(' and ')}; ${m.name} speaks ${m.mcp_protocol}.`,
-    }
+    return { ok: false, reason: mcpRefusal(m.name, m.mcp_protocol) }
   }
   return { ok: true }
+}
+
+/**
+ * The refusal a person reads when the revisions do not overlap — written once, because it
+ * is said twice: from the manifest before spawn, and from `server/discover` after it.
+ * `speaks` is what the plugin offered, in its own words.
+ */
+export function mcpRefusal(name: string, speaks: string): string {
+  return (
+    `${name} speaks a version of MCP that Alexia doesn't.\n` +
+    `Alexia speaks ${MCP_REVISIONS.join(' and ')}; ${name} speaks ${speaks}.`
+  )
 }

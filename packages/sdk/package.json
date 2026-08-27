@@ -1,0 +1,14 @@
+{
+  "name": "@alexia/sdk",
+  "version": "0.0.0",
+  "description": "What a plugin author imports: the manifest, the settings, the storage, and a logger that goes to stderr.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "exports": {
+    ".": "./dist/src/index.js"
+  },
+  "types": "./dist/src/index.d.ts",
+  "dependencies": {
+    "@alexia/protocol": "workspace:*"
+  }
+}

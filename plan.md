@@ -84,7 +84,7 @@ Tick a box only when the task's acceptance criteria pass. `[GATE]` needs a human
 
 ### M0 — The skeleton that proves the thesis
 
-- [ ] **M0-1** `@alexia/protocol` — types, schemas, version constants
+- [x] **M0-1** `@alexia/protocol` — types, schemas, version constants
 - [ ] **M0-2** Supervisor: spawn, handshake, heartbeat, backoff, lazy spawn, idle shutdown
 - [ ] **M0-3** `@alexia/sdk` — the plugin-author package
 - [ ] **M0-4** `plugins/hello` — the plugin that answers

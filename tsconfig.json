@@ -5,6 +5,9 @@
       "path": "./packages/protocol"
     },
     {
+      "path": "./packages/sdk"
+    },
+    {
       "path": "./packages/core"
     }
   ]
