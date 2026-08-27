@@ -1,0 +1,154 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+import type { CallToolResult } from '@modelcontextprotocol/client'
+import type { Tooling, ToolOutcome } from './agent.js'
+import type { Plugins } from './plugins.js'
+import type { ToolSpec } from './provider.js'
+
+/**
+ * Every enabled plugin's `tools/list`, as one list the model can be handed.
+ *
+ * This is the join between the two halves of the project: the supervisor knows what is
+ * running, the loop knows how to plan, and neither of them knows the other's vocabulary.
+ * Nothing here branches on which plugin it is holding — it aggregates, prefixes, and routes
+ * back by the prefix it wrote.
+ *
+ * **Why `__` and not `.`.** Commands namespace as `/plugin.command`, which is what a person
+ * types. A model-facing tool name is not typed by a person: it goes into an OpenAI-shaped
+ * `function.name`, and that field is specified as `^[a-zA-Z0-9_-]{1,64}$` — no dots. A dot
+ * here is a provider rejecting the whole request, so the separator has to be something in
+ * that set. A plugin id cannot contain an underscore (`^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$`), so
+ * splitting on the first `__` recovers the id exactly, whatever the tool called itself.
+ */
+
+/** The provider-side limit on a function name, and the reason a long one is dropped. */
+const NAME_LIMIT = 64
+const SEPARATOR = '__'
+
+interface Known {
+  pluginId: string
+  /** What the plugin calls it. The prefix is core's, and never travels back over the wire. */
+  tool: string
+  spec: ToolSpec
+}
+
+export class PluginTooling implements Tooling {
+  #known?: Promise<Known[]>
+
+  constructor(
+    private readonly plugins: Plugins,
+    /** Where a tool with no description gets mentioned. It is a bug, not a style note. */
+    private readonly log?: (line: string) => void,
+  ) {}
+
+  /**
+   * Something changed: a plugin started, stopped, was deleted, or sent
+   * `notifications/tools/list_changed`. The next `list` re-asks everything.
+   *
+   * Dropping the whole cache rather than patching one plugin's entry is deliberate. The
+   * event that matters most — a folder deleted mid-task — is also the one where the entry
+   * to patch is the entry that is gone, and a re-ask costs one round trip to processes that
+   * are already running.
+   */
+  invalidate(): void {
+    this.#known = undefined
+  }
+
+  async list(): Promise<ToolSpec[]> {
+    return (await this.#aggregate()).map((k) => k.spec)
+  }
+
+  /**
+   * Run one, and come back with something the model can read either way.
+   *
+   * Nothing here throws. A plugin that crashed, a folder deleted between the model choosing
+   * a tool and core calling it, a tool that failed on its own terms — all of them are
+   * observations, and the loop's next step is a re-plan around what this says. That is
+   * invariant 4 with a real loop behind it, and it is the whole of M15-8's mechanism.
+   */
+  async call(name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<ToolOutcome> {
+    let found = (await this.#aggregate()).find((k) => k.spec.name === name)
+    if (!found) {
+      // It may have appeared a moment ago — a plugin that just finished starting is the
+      // ordinary case. Ask once more before telling the model it does not exist.
+      this.invalidate()
+      found = (await this.#aggregate()).find((k) => k.spec.name === name)
+    }
+    if (!found) {
+      const available = (await this.#aggregate()).map((k) => k.spec.name)
+      return {
+        ok: false,
+        text:
+          available.length > 0 ?
+            `There is no tool called ${name}. What there is: ${available.join(', ')}.`
+          : `There is no tool called ${name}, and nothing else is available either.`,
+      }
+    }
+
+    const process = this.plugins.process(found.pluginId)
+    if (!process) {
+      this.invalidate()
+      return { ok: false, text: `${name} is gone — the plugin providing it is no longer installed.` }
+    }
+
+    try {
+      return read(await process.callTool(found.tool, args, signal ? { signal } : undefined))
+    } catch (error) {
+      // Whatever went wrong, the model's next move is the same: read this and try
+      // something else. A stack trace would be worse prompt text than a sentence.
+      this.invalidate()
+      return { ok: false, text: `${name} failed: ${error instanceof Error ? error.message : String(error)}` }
+    }
+  }
+
+  /** One pass over everything running, memoised until something says otherwise. */
+  async #aggregate(): Promise<Known[]> {
+    this.#known ??= this.#read()
+    return this.#known
+  }
+
+  async #read(): Promise<Known[]> {
+    const found = await this.plugins.tools()
+    const known: Known[] = []
+    for (const { pluginId, tool } of found) {
+      const name = `${pluginId}${SEPARATOR}${tool.name}`
+      if (name.length > NAME_LIMIT) {
+        // Not a crash and not silence: the tool is unreachable and its author is the only
+        // person who can fix it, so the reason goes where they will see it.
+        this.log?.(`${pluginId}: "${tool.name}" is unreachable — ${name.length} characters, and a model-facing tool name may be ${NAME_LIMIT}`)
+        continue
+      }
+      // Tool descriptions are prompt text. A tool with none is a tool the model will reach
+      // for at the wrong moment, and it is the author's bug — so it is said out loud rather
+      // than papered over with a description core invented.
+      if (!tool.description) this.log?.(`${pluginId}: "${tool.name}" has no description, so the model has only its name to go on`)
+      known.push({
+        pluginId,
+        tool: tool.name,
+        spec: {
+          name,
+          ...(tool.description !== undefined && { description: tool.description }),
+          ...(tool.inputSchema && { parameters: tool.inputSchema as Record<string, unknown> }),
+        },
+      })
+    }
+    return known
+  }
+}
+
+/**
+ * An MCP result as the model reads it. Text blocks are the whole of what a model can use
+ * here; anything else is named rather than dropped silently, because *the tool returned an
+ * image* is something to plan around and an empty string is not.
+ */
+function read(result: CallToolResult): ToolOutcome {
+  const parts = (result.content ?? []).map((block) =>
+    block.type === 'text' ? block.text : `[${block.type}]`,
+  )
+  const text = parts.join('\n').trim()
+  return {
+    ok: result.isError !== true,
+    // A tool that succeeded and said nothing did happen, and the model needs to be told
+    // that rather than handed a blank it will read as a failure.
+    text: text || (result.isError === true ? 'The tool failed and said nothing.' : 'Done.'),
+  }
+}

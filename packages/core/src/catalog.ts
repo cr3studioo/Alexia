@@ -31,6 +31,12 @@ export interface Model {
   modality: string[]
   nsfwOk: Honestly
   trainsOnYourData: Honestly
+  /**
+   * Billions of parameters, when the runner says. Only local models report it, and it is
+   * here because G5 needed an axis that `tier` does not have: every model on this machine
+   * is `T0` whether it is 1B or 8B, and exactly one of those can plan (D62).
+   */
+  params?: number
 }
 
 export interface Snapshot {

@@ -33,6 +33,8 @@ export interface HostOptions {
   /** Route a capability to whichever plugin provides it. The resolver lands at M0-7. */
   capability?(cap: string, args?: Record<string, unknown>): Promise<CallToolResult>
   log?(pluginId: string, line: string): void
+  /** A plugin's tool list changed under us. The aggregate the model sees is now stale. */
+  toolsChanged?(pluginId: string): void
 }
 
 const fail = (code: number, message: string): never => {
@@ -58,7 +60,16 @@ export class Host implements HostServices {
     this.options.log?.(pluginId, line)
   }
 
-  toolsChanged(): void {}
+  /**
+   * `notifications/tools/list_changed`, and the restart path that raises it too.
+   *
+   * It was a no-op until M15-2 because nothing downstream had a list to invalidate. Now the
+   * model is handed one every step, and a plugin that gained a tool after its model finished
+   * downloading has no other way to say so.
+   */
+  toolsChanged(pluginId: string): void {
+    this.options.toolsChanged?.(pluginId)
+  }
 
   unhealthy(pluginId: string, message: string): void {
     this.options.log?.(pluginId, message)

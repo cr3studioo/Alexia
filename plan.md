@@ -116,7 +116,7 @@ Tick a box only when the task's acceptance criteria pass. `[GATE]` needs a human
 ### M1.5 — The loop and its rails *(inserted 2026-08-27 — see Change log)*
 
 - [x] **M15-1** The agent loop
-- [ ] **M15-2** Plugin tools reach the model
+- [x] **M15-2** Plugin tools reach the model
 - [ ] **M15-3** Permission modes and the never-touch list
 - [ ] **M15-4** The safety checker
 - [ ] **M15-5** The visible trace and the stop control
@@ -1610,6 +1610,13 @@ For `questions.md`. Each one came out of planning and none of them blocks starti
 - **G5.** Can a small local model actually *plan*, or only execute? Alexia.md flags this as
   worth testing rather than assuming. **Test it at M15-1** on this machine — qwen3-class 7–9B
   at Q4, 8–16k context. The answer decides whether Local mode is a real agent or a chat window.
+- **G5. Answered 2026-08-27 at M15-1 — yes (D62).** qwen3:8b at Q4, driven by the real loop
+  with no hints, listed a folder, read two files, diffed them and answered correctly in three
+  steps. 113s, which is slow rather than wrong. **Local mode is a real agent.** The one-row
+  change the plan anticipated turned out to need a second one: every local model is `T0`
+  whether it is 1B or 8B, so `tier` could not carry it and `PLANNER` — a 7B floor in
+  parameters — is the axis the evidence is actually about. Measured on this machine only; a
+  weaker GPU is a different question and is not claimed.
 - **G6.** What happens to the free-tier pool when a provider changes its terms mid-release?
   A kill switch for provider entries, the same way the registry has one for plugins?
   *Decide at M1-6.*
@@ -1622,6 +1629,7 @@ Newest first. Every entry here is also in Alexia.md's decision log.
 
 | Date | Entry |
 |---|---|
+| 2026-08-27 | **D62** — **G5 answered: yes.** A 7–9B local model can genuinely plan, so `hard` work no longer skips this machine and Local mode is a real agent rather than a chat window. Two changes, not the one the plan expected: the shape-to-tier table went uniform and was deleted — a lookup returning the same answer for every key is drift with a type annotation — and `PLANNER`, a 7B floor in parameters, took over the job `tier` could not do, since every local model is `T0` at any size. Consequence worth stating: per-step tiering now bites in **Local** mode, where the plan runs on the 8B and the crank steps run on whatever else can call a tool. In cloud mode every step was already going cheapest-first, so there was never a saving there to find. |
 | 2026-08-27 | **D61** — the design pass is **deferred to M2-D1**, before the widgets that inherit it and after the features. D60's finding held; its sequencing did not. `docs/design.md` exists to be spent by M2-1, so M2-1 is its deadline, and a first cold-install test learns more about *what a person does when told to go and make an OpenRouter account* than about the frame around it. M1-D1 shrank to a holding theme — one dark achromatic palette, her face as icon and mark, a visible focus ring — and to the two structural bugs that were not taste: `form.hidden` defeated by a type selector, and the third mode card wrapping under the fold. |
 | 2026-08-27 | **D60** — the plan had no design task. M5-5's *"polished"* turns out to mean the flow and its timings, not the look, and M2-1's *"every plugin matches the theme"* names a theme nothing creates. Added **M1-D1**, before the first cold-install test: a restructure of the shell, plus a written `docs/design.md` for M2-1's widgets and M15-5's trace to inherit. Trust is not decoration in a product that asks for a key, a folder and a budget. |
 | 2026-08-27 | M1-1: the database file is `alexia.db` under the **local** app-data directory on Windows, not the roaming one. Roaming profiles sync on logoff, and a synced live SQLite file with a WAL beside it is how histories get corrupted. Schema versioning is `PRAGMA user_version` with a forward-only migration list; a database from a newer build is refused rather than opened. |

@@ -9,10 +9,12 @@ import { Catalog } from './catalog.js'
 import { commands, pins, run as runCommand } from './commands.js'
 import { installed, OLLAMA, running } from './ollama.js'
 import { usable } from './pool.js'
+import { Plugins } from './plugins.js'
 import { keyOf, PROVIDERS } from './provider.js'
 import { MODES } from './router.js'
 import { CORE, keychain, type SecretStore } from './secrets.js'
 import { dataDir, Store, type Message } from './store.js'
+import { PluginTooling } from './tooling.js'
 import { allowance, warning } from './usage.js'
 
 /**
@@ -33,6 +35,16 @@ export interface ServeOptions {
   dataDir?: string
   /** Where `index.html` lives. Found beside this package unless something says otherwise. */
   uiDir?: string
+  /**
+   * The folder holding installed plugin folders.
+   *
+   * `<dataDir>/extensions`, and deliberately **not** `<dataDir>/plugins` — storage.md spends
+   * that one on a plugin's own data directory, and an install folder that is also the data
+   * folder makes purge remove the same path twice and D58's cwd rule ambiguous.
+   *
+   * ponytail: M2-5 owns install/enable/disable/purge and confirms or renames this.
+   */
+  pluginsDir?: string
   /** Zero — the default — takes whatever port is free, which is what a local app should do. */
   port?: number
   secrets?: SecretStore
@@ -86,6 +98,25 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
   const session = store.sessions()[0]?.id ?? store.createSession()
 
   /**
+   * Everything installed, and the aggregate of what it can do (M15-2).
+   *
+   * The loop asks `tooling.list()` on every step and this cache answers it, so a folder
+   * deleted mid-task is noticed on the next step rather than at the end of the run — which
+   * is invariant 4 meeting the agent loop, and what M15-8 tests.
+   */
+  const plugins = new Plugins({
+    dir: options.pluginsDir ?? join(root, 'extensions'),
+    store,
+    dataDir: root,
+    secrets,
+    log: (id, line) => console.error(`[${id}] ${line}`),
+    onToolsChanged: () => tooling.invalidate(),
+  })
+  const tooling = new PluginTooling(plugins, (line) => console.error(`[tools] ${line}`))
+  plugins.load()
+  plugins.watch()
+
+  /**
    * First run, steps 2 to 4a. Done means a mode was chosen — the name is skippable and a
    * provider can wait, but *where your words go* is not a question Alexia answers for you.
    */
@@ -94,6 +125,9 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     name: (store.kvGet(CORE, 'display_name') as string | undefined) ?? 'Alexia',
     mode: (store.kvGet(CORE, 'mode') as string | undefined) ?? 'combined',
   })
+
+  /** Every enabled plugin's manifest, which is where its commands come from (M1-12). */
+  const manifests = () => plugins.ids.flatMap((id) => plugins.manifest(id) ?? [])
 
   /** Everything the router needs to know, asked fresh: a tier can be exhausted mid-sentence. */
   const world = async () => ({
@@ -138,7 +172,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
           setup: setup(),
           // Everything you could type right now, and the pins those commands set. The
           // shell shows both as controls: a command is a shortcut, never the only route.
-          commands: commands(),
+          commands: commands(manifests()),
           pins: { ...pins(store), placement: undefined },
           messages: store.history(session),
           spent: month.spent,
@@ -179,7 +213,23 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
 
     if (url.pathname === '/api/command' && request.method === 'POST') {
       const { input } = JSON.parse(await read(request)) as { input?: string }
-      const ran = await runCommand(input ?? '', { store })
+      const ran = await runCommand(input ?? '', {
+        store,
+        manifests: manifests(),
+        // A command is bound to the plugin tool of the same name — the whole binding, and
+        // why a manifest declares a command with a name and a sentence and nothing else.
+        call: async (plugin, tool) => {
+          const process = plugins.process(plugin)
+          if (!process) throw new Error(`${plugin} is not running`)
+          const result = await process.callTool(tool)
+          const said = (result.content ?? [])
+            .map((block) => (block.type === 'text' ? block.text : `[${block.type}]`))
+            .join('\n')
+            .trim()
+          if (result.isError === true) throw new Error(said || `${plugin} could not do that`)
+          return said || 'Done.'
+        },
+      })
       response.writeHead(200, { 'content-type': 'application/json' })
       response.end(JSON.stringify({ ...ran, setup: setup(), pins: { ...pins(store), placement: undefined } }))
       return
@@ -225,10 +275,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     try {
       const result = await run({
         messages: store.history(session),
-        // ponytail: M15-2 replaces this with the aggregate of every enabled plugin's
-        // `tools/list`. Until then the loop is one step long, which is what it should be
-        // with nothing to call.
-        tools: { list: () => Promise.resolve([]), call: () => Promise.reject(new Error('no tools yet')) },
+        tools: tooling,
         pins: pins(store),
         world,
         store,
@@ -278,6 +325,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     store,
     close: async () => {
       await new Promise<void>((resolve) => server.close(() => resolve()))
+      await plugins.stop()
       store.close()
     },
   }

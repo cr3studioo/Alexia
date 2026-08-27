@@ -79,6 +79,9 @@ export class Plugins {
       sample: options.sample,
       roots: options.roots,
       log: options.log,
+      // A plugin saying its own tools changed lands in exactly the same place as core
+      // noticing a folder appear or disappear. One event, one listener.
+      toolsChanged: (id) => options.onToolsChanged?.(id),
     })
   }
 

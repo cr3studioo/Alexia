@@ -96,14 +96,33 @@ export interface World {
 }
 
 /**
- * The floor each shape needs, as data. Simple work goes anywhere; hard reasoning stays off
- * a small local model, because a 7–9B model at Q4 is weak at planning.
+ * **How hard the work is no longer picks a tier** (D62). It used to: a `hard` shape floored
+ * at `T1`, and since `T0` *means* local, that one row was the sentence "planning never runs
+ * on this machine". G5 asked whether that was true, and the answer measured here is no —
+ * qwen3:8b at Q4, driven by the M15-1 loop with no hints, listed a folder, read two files,
+ * diffed them and answered correctly in three steps.
  *
- * ponytail: that last row is open question G5 — whether a small local model can genuinely
- * *plan* is being tested at M15-1 on this machine. If it can, this becomes `T0` and Local
- * mode becomes a real agent rather than a chat window. One row, deliberately.
+ * So the row went to `T0`, and then the whole table read `T0, T0, T0` and was doing nothing.
+ * A lookup that returns the same answer for every key is drift with a type annotation, so it
+ * is gone, and what the shape actually decides is written where it happens: `needsTools`
+ * below, and `PLANNER`.
+ *
+ * The floor that remains is the asking plugin's own `min_tier`, which was always separate.
  */
-const FLOOR: Record<Shape, Tier> = { simple: 'T0', tools: 'T0', hard: 'T1' }
+
+/**
+ * The smallest model trusted to plan, in billions of parameters.
+ *
+ * This is the axis `tier` could not carry. **Every** local model is `T0` whether it is 1B or
+ * 8B, so flipping the row above without this would have handed planning to a 1B — which the
+ * measurement says nothing good about. Only local models report a size, so this only ever
+ * excludes something on this machine; a hosted model is judged by its tier, as before.
+ *
+ * Seven because the class measured is 7–9B and the next size down on that machine is 1B.
+ * There is no evidence sitting between them, and a threshold that pretends otherwise is a
+ * guess wearing a number.
+ */
+const PLANNER = 7
 
 /** Words that mean the work is not a quick answer. Boring, and edited when it is wrong. */
 const HARD =
@@ -141,19 +160,22 @@ export function route(ask: Ask, pins: Pins, world: World): Verdict {
   }
 
   const shape = ask.shape ?? shapeOf(ask)
-  const floor = [FLOOR[shape], ask.minTier ?? 'T0'].reduce((a, b) => (rank(a) >= rank(b) ? a : b))
+  const floor = ask.minTier ?? 'T0'
   const needsTools = shape === 'tools' || (ask.tools?.length ?? 0) > 0
 
   const choices = pool
     .filter((c) => rank(c.model.tier) >= rank(floor))
     .filter((c) => ask.above === undefined || rank(c.model.tier) > rank(ask.above))
     .filter((c) => !needsTools || c.model.supportsTools)
+    // A model that reports its size and is too small to plan does not get planning work.
+    // Silence about size is not smallness: a hosted model never says, and is not judged here.
+    .filter((c) => shape !== 'hard' || c.model.params === undefined || c.model.params >= PLANNER)
     // `unknown` is not a yes. Nothing is routed to an uncensored request on a hunch.
     .filter((c) => !pins.uncensored || c.model.nsfwOk === 'yes')
     .sort(cheapest)
 
   if (choices.length > 0) return { ok: true, choices: pins.prefer === 'best' ? [...choices].reverse() : choices }
-  return { ok: false, why: refusal(where, pins, pool, needsTools) }
+  return { ok: false, why: refusal(where, pins, pool, needsTools, shape) }
 }
 
 const cheapest = (a: Choice, b: Choice): number =>
@@ -163,11 +185,22 @@ const cheapest = (a: Choice, b: Choice): number =>
  * Why there is nothing, in words that name the next action. This is the half of the
  * router the user actually meets, so it says what is missing and what to type.
  */
-function refusal(where: 'local' | 'cloud', pins: Pins, pool: Choice[], needsTools: boolean): string {
+function refusal(
+  where: 'local' | 'cloud',
+  pins: Pins,
+  pool: Choice[],
+  needsTools: boolean,
+  shape: Shape,
+): string {
   if (where === 'local') {
     if (pool.length === 0) return 'no local model is installed — install one, or type /cloud'
     if (pins.uncensored) return 'no local uncensored model is installed — install one, or type /cloud'
     if (needsTools) return 'no local model here can use tools — install one that can, or type /cloud'
+    // The one refusal G5 added: the models are here, they can use tools, and they are too
+    // small to be trusted with planning. Say which wall it is, because the fix differs.
+    if (shape === 'hard') {
+      return `this needs planning, and every local model installed is smaller than ${String(PLANNER)}B — install a larger one, or type /cloud`
+    }
     return 'no local model fits this request — install a larger one, or type /cloud'
   }
   if (pool.length === 0) {

@@ -92,6 +92,7 @@ export async function pull(
 
 function describe(model: ModelResponse, shown?: ShowResponse): Model {
   const capabilities = shown?.capabilities ?? []
+  const size = sizeOf(model)
   return {
     id: model.model,
     name: model.name,
@@ -106,7 +107,21 @@ function describe(model: ModelResponse, shown?: ShowResponse): Model {
     // model's business, and not something this can know from the outside.
     nsfwOk: 'unknown',
     trainsOnYourData: 'no',
+    ...(size !== undefined && { params: size }),
   }
+}
+
+/**
+ * `parameter_size` as a number of billions: Ollama writes it `8.2B`, `999.89M`, `1B`.
+ * Undefined when it did not say, which the router reads as *do not judge this one on size*.
+ */
+function sizeOf(model: ModelResponse): number | undefined {
+  const said = model.details.parameter_size
+  const match = /^([\d.]+)\s*([BM])$/i.exec(said?.trim() ?? '')
+  if (!match) return undefined
+  const value = Number(match[1])
+  if (!Number.isFinite(value)) return undefined
+  return match[2]?.toUpperCase() === 'M' ? value / 1000 : value
 }
 
 /**

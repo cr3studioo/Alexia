@@ -24,10 +24,20 @@ alexia.tool(
   },
 )
 
-alexia.tool('greeted', { description: 'How many people have been greeted so far.' }, async () => {
-  const count = await alexia.storage.count('greetings')
-  return { content: [{ type: 'text', text: String(count) }] }
-})
+// A description is prompt text, and it is the only thing the model has to decide whether
+// this is the tool it wants. So it says what comes back *and* when to reach for it — the
+// standard the first-party plugins are here to set (M15-2).
+alexia.tool(
+  'greeted',
+  {
+    description:
+      'Count how many people have been greeted so far, and return the number. Use when the user asks how many greetings have happened. Takes no arguments.',
+  },
+  async () => {
+    const count = await alexia.storage.count('greetings')
+    return { content: [{ type: 'text', text: String(count) }] }
+  },
+)
 
 await alexia.start()
 log.info(`${alexia.manifest.name} is ready`)

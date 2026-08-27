@@ -6,6 +6,7 @@ import { run, type Step, type Tooling } from '../src/agent.js'
 import type { Model } from '../src/catalog.js'
 import { remaining } from '../src/pool.js'
 import { keyOf, type Provider, type ToolSpec } from '../src/provider.js'
+import { OLLAMA } from '../src/ollama.js'
 import { MODES, type Pins, type World } from '../src/router.js'
 import { CORE, memorySecrets } from '../src/secrets.js'
 import { Store } from '../src/store.js'
@@ -27,10 +28,9 @@ const model = (over: Partial<Model> & Pick<Model, 'id' | 'tier'>): Model => ({
   ...over,
 })
 
-// Two tiers, so which one a step chose is visible from the outside. `tools` floors at T0
-// and `hard` at T1, which is the whole of the per-step tiering rule.
+// The hosted pair, for the tests that are not about tiering.
 const tiny = model({ id: 'tiny', tier: 'T0' })
-const big = model({ id: 'big', tier: 'T1', priceIn: 1 })
+const hosted = model({ id: 'hosted', tier: 'T1', priceIn: 1 })
 
 /** One scripted assistant turn: either it calls something, or it answers. */
 type Turn = { say: string } | { call: string; args?: string }
@@ -90,13 +90,24 @@ function tooling(
 
 const pins: Pins = { placement: MODES.combined }
 
+// Local placement always routes to OLLAMA, whose base URL is fixed on purpose — it runs on
+// this machine or it does not. Pointing it at the scripted server is the only seam there is,
+// and vitest gives each test file its own module instance, so it stays in this file.
+OLLAMA.baseUrl = at
+OLLAMA.keyless = true
+
+/** Two local models, same tier and both free: only their size tells them apart. */
+const small = model({ id: 'small', tier: 'T0', provider: 'ollama', params: 1 })
+const big = model({ id: 'big', tier: 'T0', provider: 'ollama', params: 8 })
+const local = (): Promise<World> => Promise.resolve({ models: [], local: [small, big], rungs: [] })
+
 function bench(): { store: Store; session: number; world(): Promise<World> } {
   const store = new Store(':memory:')
   return {
     store,
     session: store.createSession(),
     world: () =>
-      Promise.resolve({ models: [tiny, big], local: [], rungs: [remaining(store, alpha)] }),
+      Promise.resolve({ models: [tiny, hosted], local: [], rungs: [remaining(store, alpha)] }),
   }
 }
 
@@ -131,23 +142,34 @@ test('plan, act, observe, answer — and the trace is the conversation', async (
   store.close()
 })
 
-test('the plan pays for the planning tier; turning the crank does not', async () => {
+test('the plan pays for a model that can plan; turning the crank does not', async () => {
   script = [{ call: 'notes.read' }, { call: 'notes.read' }, { say: 'done' }]
   served = []
-  const { store, session, world } = bench()
+  const { store, session } = bench()
 
-  // "refactor" is one of the words that means this is not a quick answer, so the first
-  // step floors at T1. The two after it are the same task being cranked, and go cheap.
-  await run({ messages: start('refactor the notes module'), tools: tooling(), pins, world, store, secrets, session })
+  // "refactor" is one of the words that means this is not a quick answer, so step one is a
+  // planning step. The two after it are the same plan being cranked.
+  await run({
+    messages: start('refactor the notes module'),
+    tools: tooling(),
+    pins: { placement: MODES.local },
+    world: local,
+    store,
+    secrets,
+    session,
+  })
 
-  expect(served).toEqual(['big', 'tiny', 'tiny'])
+  // Planning skips the 1B — G5 measured an 8B, and said nothing good about anything below
+  // it. Cranking does not need a planner, so it takes the first free model that can call a
+  // tool, which is the small one.
+  expect(served).toEqual(['big', 'small', 'small'])
   store.close()
 })
 
-test('a tool that fails is an observation, and it buys back the planning tier', async () => {
+test('a tool that fails is an observation, and it buys back the planner', async () => {
   script = [{ call: 'notes.read' }, { call: 'notes.read' }, { say: 'I could not read it.' }]
   served = []
-  const { store, session, world } = bench()
+  const { store, session } = bench()
   let first = true
   const tools = tooling({
     call: () => {
@@ -162,8 +184,8 @@ test('a tool that fails is an observation, and it buys back the planning tier', 
   const result = await run({
     messages: start('refactor the notes module'),
     tools,
-    pins,
-    world,
+    pins: { placement: MODES.local },
+    world: local,
     store,
     secrets,
     session,
@@ -173,9 +195,9 @@ test('a tool that fails is an observation, and it buys back the planning tier', 
   expect(result.ended).toBe('answered')
   expect(store.history(session).some((m) => m.content === 'no such note')).toBe(true)
 
-  // Plan on `big`; the step after the failure is re-planning, so it is on `big` again;
-  // the step after the one that worked is cranking, so it is cheap.
-  expect(served).toEqual(['big', 'big', 'tiny'])
+  // Plan on the 8B; the step after the failure is re-planning, so it is on the 8B again;
+  // the step after the one that worked is cranking, so it is on the 1B.
+  expect(served).toEqual(['big', 'big', 'small'])
   store.close()
 })
 
