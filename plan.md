@@ -115,7 +115,7 @@ Tick a box only when the task's acceptance criteria pass. `[GATE]` needs a human
 
 ### M1.5 — The loop and its rails *(inserted 2026-08-27 — see Change log)*
 
-- [ ] **M15-1** The agent loop
+- [x] **M15-1** The agent loop
 - [ ] **M15-2** Plugin tools reach the model
 - [ ] **M15-3** Permission modes and the never-touch list
 - [ ] **M15-4** The safety checker

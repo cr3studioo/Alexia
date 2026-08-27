@@ -4,12 +4,13 @@ import { existsSync, readFileSync } from 'node:fs'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { join } from 'node:path'
+import { run, said } from './agent.js'
 import { Catalog } from './catalog.js'
-import { commands, pins, run } from './commands.js'
+import { commands, pins, run as runCommand } from './commands.js'
 import { installed, OLLAMA, running } from './ollama.js'
 import { usable } from './pool.js'
 import { keyOf, PROVIDERS } from './provider.js'
-import { MODES, route, send } from './router.js'
+import { MODES } from './router.js'
 import { CORE, keychain, type SecretStore } from './secrets.js'
 import { dataDir, Store, type Message } from './store.js'
 import { allowance, warning } from './usage.js'
@@ -178,7 +179,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
 
     if (url.pathname === '/api/command' && request.method === 'POST') {
       const { input } = JSON.parse(await read(request)) as { input?: string }
-      const ran = await run(input ?? '', { store })
+      const ran = await runCommand(input ?? '', { store })
       response.writeHead(200, { 'content-type': 'application/json' })
       response.end(JSON.stringify({ ...ran, setup: setup(), pins: { ...pins(store), placement: undefined } }))
       return
@@ -199,7 +200,13 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     return raw || '{}'
   }
 
-  /** One turn: the user's line in, the model's line out, and both kept in the history. */
+  /**
+   * One task: the user's line in, and however many steps it takes to answer it.
+   *
+   * Not one turn any more (M15-1). What the shell gets is the same stream it always got,
+   * with the step events added — so a turn that happens to need no tools looks exactly as
+   * it did, which is most of them.
+   */
   async function reply(request: IncomingMessage, response: ServerResponse): Promise<void> {
     const { text } = JSON.parse(await read(request)) as { text?: string }
     if (!text) {
@@ -215,27 +222,50 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     store.append(session, user)
 
     const month = allowance(store)
-    const verdict = route({ messages: store.history(session) }, pins(store), await world())
-    if (!verdict.ok) {
-      // The refusal is the answer. It is written to be read by the person who has to act
-      // on it, so it goes to the screen exactly as the router wrote it.
-      say({ error: verdict.why })
-      response.end()
-      return
-    }
-
     try {
-      const answer = await send(verdict.choices, { messages: store.history(session) }, store, secrets, {
+      const result = await run({
+        messages: store.history(session),
+        // ponytail: M15-2 replaces this with the aggregate of every enabled plugin's
+        // `tools/list`. Until then the loop is one step long, which is what it should be
+        // with nothing to call.
+        tools: { list: () => Promise.resolve([]), call: () => Promise.reject(new Error('no tools yet')) },
+        pins: pins(store),
+        world,
+        store,
+        secrets,
         session,
         paidAllowed: !month.stop,
-        onDelta: (delta) => say({ delta }),
-        onNote: (note) => say({ note }),
+        on: {
+          delta: (delta) => say({ delta }),
+          note: (note) => say({ note }),
+          step: (step) => say({ step: { n: step.n, name: step.name, args: step.args } }),
+          done: (step) => say({ step: { n: step.n, name: step.name, ...step.outcome } }),
+        },
       })
-      store.append(session, answer.message)
+
+      if (result.ended === 'refused') {
+        // The refusal is the answer. It is written to be read by the person who has to act
+        // on it, so it goes to the screen exactly as the router wrote it.
+        say({ error: result.why })
+        response.end()
+        return
+      }
+
       const after = allowance(store)
-      say({ done: { model: answer.model.name, tier: answer.model.tier, spent: after.spent, warning: warning(after) } })
+      const last = result.messages.at(-1)
+      say({
+        done: {
+          model: last?.model ?? '',
+          spent: after.spent,
+          warning: warning(after),
+          steps: result.steps.length,
+          // `answered` is the ordinary end. The other two are limits the user should be
+          // told about rather than left to wonder why it stopped talking.
+          ended: result.ended,
+        },
+      })
     } catch (error) {
-      say({ error: error instanceof Error ? error.message : String(error) })
+      say({ error: said(error) })
     }
     response.end()
   }

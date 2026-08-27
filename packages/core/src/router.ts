@@ -67,6 +67,15 @@ export interface Ask {
   minTier?: Tier
   /** *Try that again with a smarter model*: everything at or below this tier is out. */
   above?: Tier
+  /**
+   * The caller already knows how hard this is, so do not guess from the words.
+   *
+   * The agent loop (M15-1) is the reason this exists: `shapeOf` reads the last *user*
+   * message, which does not change for the twenty steps that follow it — so every step of
+   * a task that opened with *"refactor this"* would price as `hard` forever. Turning the
+   * crank is not planning, and that difference is where the cost saving lives.
+   */
+  shape?: Shape
 }
 
 export interface Choice {
@@ -131,7 +140,7 @@ export function route(ask: Ask, pins: Pins, world: World): Verdict {
     return named ? { ok: true, choices: [named] } : { ok: false, why: `${pins.model} is not available right now.` }
   }
 
-  const shape = shapeOf(ask)
+  const shape = ask.shape ?? shapeOf(ask)
   const floor = [FLOOR[shape], ask.minTier ?? 'T0'].reduce((a, b) => (rank(a) >= rank(b) ? a : b))
   const needsTools = shape === 'tools' || (ask.tools?.length ?? 0) > 0
 

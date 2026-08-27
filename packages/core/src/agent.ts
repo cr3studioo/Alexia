@@ -1,0 +1,237 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+import { ProviderError, type ToolSpec } from './provider.js'
+import { route, send, shapeOf, type Pins, type Shape, type World } from './router.js'
+import type { SecretStore } from './secrets.js'
+import type { Message, Store } from './store.js'
+
+/**
+ * Plan → act → observe → repeat.
+ *
+ * The state is the conversation. There is no separate scratchpad, no plan object, no
+ * step list held beside the messages: an assistant turn carrying `calls` *is* a plan, and
+ * a `tool` turn answering one *is* an observation. That is not minimalism for its own
+ * sake — it is what makes a reload show the same steps the user watched happen, and what
+ * makes M15-6's trimming a question about messages rather than about two things that have
+ * to be kept in step with each other.
+ *
+ * Three things here are load-bearing:
+ *
+ * - **Every step re-asks the router.** Not one model for the task — one per step. A free
+ *   rung that ran out on step four does not fail the task on step five, and the mechanical
+ *   steps do not pay for the planning step's tier.
+ * - **The loop never names a plugin.** It is handed a `Tooling` and calls what that lists.
+ *   Invariant 1 holds here by construction rather than by anybody remembering it.
+ * - **A tool that fails is an observation, not an exception.** The failure goes back to the
+ *   model as the answer to its call, because *the file is not there* is something to plan
+ *   around. Only the user's stop and a router refusal end a task early.
+ */
+
+/**
+ * What the model may call, and how to call it. The agent knows nothing else about plugins:
+ * M15-2 supplies the real one over `tools/list`, and a test supplies a fake in four lines.
+ */
+export interface Tooling {
+  /** Everything callable right now, already namespaced. Re-asked every step, on purpose. */
+  list(): Promise<ToolSpec[]>
+  call(name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<ToolOutcome>
+}
+
+export interface ToolOutcome {
+  /** What the model reads back. A failure explains itself here rather than throwing. */
+  text: string
+  ok: boolean
+}
+
+/** One call the model made, and what came of it. The trace M15-5 draws is a list of these. */
+export interface Step {
+  /** 1-based, and it is what the ceiling counts. */
+  n: number
+  name: string
+  args: Record<string, unknown>
+  /** Absent until it comes back. */
+  outcome?: ToolOutcome
+}
+
+export interface AgentEvents {
+  /** The model's own words, as they arrive. A model narrating its plan is the good case. */
+  delta?(text: string): void
+  /** Core talking, not the model: a charge about to happen, a rung that ran out. */
+  note?(line: string): void
+  /** A call is about to run. Fired before the work, because that is the point of a trace. */
+  step?(step: Step): void
+  /** The same step, now with its outcome. */
+  done?(step: Step): void
+}
+
+export interface RunOptions {
+  /** The conversation, ending with the line the user just sent. */
+  messages: Message[]
+  tools: Tooling
+  pins: Pins
+  /** Re-asked every step: a tier can be exhausted mid-task, which is the whole point. */
+  world(): Promise<World>
+  store: Store
+  secrets: SecretStore
+  /** Where the trace is written. Every message this produces is appended as it happens. */
+  session: number
+  /** The hard stop (M1-9). False and the paid rungs are not rungs at all. */
+  paidAllowed?: boolean
+  /**
+   * The ceiling. M15-7 makes it editable and shows the cost before an expensive run; the
+   * loop needs a bound from the first day regardless, because the failure without one is a
+   * model calling the same tool until the month's budget is gone.
+   */
+  maxSteps?: number
+  signal?: AbortSignal
+  on?: AgentEvents
+}
+
+export interface RunResult {
+  /** Everything the loop added, in order. Already appended to the store. */
+  messages: Message[]
+  steps: Step[]
+  /** Why it ended. `answered` is the only one that is not a limit being hit. */
+  ended: 'answered' | 'stopped' | 'ceiling' | 'refused'
+  /** Set when `ended` is `refused` — the router's sentence, or the provider's. */
+  why?: string
+}
+
+/** High enough that no honest task meets it; low enough that a loop cannot bankrupt anyone. */
+export const MAX_STEPS = 24
+
+export async function run(options: RunOptions): Promise<RunResult> {
+  const { store, secrets, session, tools, pins, on } = options
+  const ceiling = options.maxSteps ?? MAX_STEPS
+  const messages = [...options.messages]
+  const added: Message[] = []
+  const steps: Step[] = []
+
+  // The shape of the *request*, read once from the user's words. Every step after the
+  // first is turning the crank on a plan that already exists, which is a different and
+  // much cheaper job — see `Ask.shape`.
+  const planning = shapeOf({ messages })
+  let shape: Shape = planning
+
+  for (;;) {
+    if (options.signal?.aborted) return finish('stopped')
+
+    const available = await tools.list()
+    const ask = {
+      messages,
+      shape,
+      ...(available.length > 0 && { tools: available.map((t) => ({ name: t.name })) }),
+    }
+    const verdict = route(ask, pins, await options.world())
+    // A pin with nothing behind it is a sentence, never a quiet reach for something else.
+    // Mid-task it is also the honest place to stop: half a task is better than a task
+    // finished somewhere the user said not to go.
+    if (!verdict.ok) return finish('refused', verdict.why)
+
+    let answer
+    try {
+      answer = await send(
+        verdict.choices,
+        {
+          messages: [system(available), ...messages],
+          ...(available.length > 0 && { tools: available }),
+          ...(options.signal && { signal: options.signal }),
+        },
+        store,
+        secrets,
+        {
+          session,
+          ...(options.paidAllowed !== undefined && { paidAllowed: options.paidAllowed }),
+          ...(on?.delta && { onDelta: on.delta }),
+          ...(on?.note && { onNote: on.note }),
+        },
+      )
+    } catch (error) {
+      // The user pressing stop arrives here as an abort, and it is not a failure.
+      if (options.signal?.aborted) return finish('stopped')
+      throw error
+    }
+
+    messages.push(answer.message)
+    added.push(answer.message)
+    store.append(session, answer.message)
+
+    const calls = answer.message.calls ?? []
+    if (calls.length === 0) return finish('answered')
+
+    // Every call this turn asked for, then back around. The model gets all of the results
+    // at once, which is what it asked for by making the calls in one turn.
+    let failed = false
+    for (const call of calls) {
+      if (options.signal?.aborted) return finish('stopped')
+      if (steps.length >= ceiling) return finish('ceiling')
+
+      const step: Step = { n: steps.length + 1, name: call.name, args: parse(call.arguments) }
+      steps.push(step)
+      on?.step?.(step)
+
+      const outcome = await tools.call(call.name, step.args, options.signal)
+      step.outcome = outcome
+      failed ||= !outcome.ok
+      on?.done?.(step)
+
+      const result: Message = { role: 'tool', callId: call.id, content: outcome.text }
+      messages.push(result)
+      added.push(result)
+      store.append(session, result)
+    }
+
+    // Turning the crank is cheap work and gets a cheap model. Recovering is not: a tool
+    // that failed — including one whose plugin was deleted out from under the task, which
+    // is invariant 4 — means the plan was wrong, and re-planning is the expensive step the
+    // user is actually paying for. So a failure buys back the planning tier for one turn.
+    shape = failed ? planning : 'tools'
+  }
+
+  function finish(ended: RunResult['ended'], why?: string): RunResult {
+    return { messages: added, steps, ended, ...(why !== undefined && { why }) }
+  }
+}
+
+/**
+ * Arguments as the model sent them. A model that emits malformed JSON is common enough at
+ * the small end that it cannot be an exception: the empty object goes to the tool, the
+ * tool says what it needed, and that sentence is what the model gets to plan around.
+ */
+function parse(raw: string): Record<string, unknown> {
+  try {
+    const parsed: unknown = JSON.parse(raw || '{}')
+    return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed) ?
+        (parsed as Record<string, unknown>)
+      : {}
+  } catch {
+    return {}
+  }
+}
+
+/**
+ * The standing instruction, rebuilt every step because the tool list changes under it.
+ *
+ * It is not stored with the conversation: it is not something anybody said, and a system
+ * line frozen into the history at the moment a plugin happened to be installed would still
+ * be describing that plugin a week after it was deleted.
+ *
+ * Deliberately short. A small local model has limited context and spends it badly on
+ * instructions it half-follows, and everything a longer prompt would buy — what a tool
+ * does, what it needs — belongs in the tool descriptions, where the model actually looks.
+ * Nothing here claims a capability: what is true about tools is whatever `available` says.
+ */
+function system(available: ToolSpec[]): Message {
+  const lines = [
+    'You are Alexia, an assistant running on the user’s own machine.',
+    available.length > 0 ?
+      'You have tools. Call them when they would help, one step at a time, and use what comes back.'
+    : 'You have no tools available right now, so answer from what you know.',
+    'When a tool fails, read the error and try a different approach rather than repeating the call.',
+    'Stop calling tools and answer as soon as you can. Say what you did, briefly.',
+  ]
+  return { role: 'system', content: lines.join(' ') }
+}
+
+/** A provider error the loop could not route around, in the words the user gets. */
+export const said = (error: unknown): string =>
+  error instanceof ProviderError || error instanceof Error ? error.message : String(error)
