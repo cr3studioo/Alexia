@@ -1,0 +1,3 @@
+// SPDX-License-Identifier: Apache-2.0
+export * from './manifest.js'
+export * from './json-schema.js'

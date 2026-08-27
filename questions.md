@@ -300,6 +300,7 @@ These are actions rather than open questions. Each is now attached to a task in
   `setup-token` themselves. **Written confirmation still outstanding** → **M4-7**.
 - [ ] **Check each provider's terms** before free-tier pooling ships as a product feature.
   → **M1-6**, and now more urgent, since D51 makes pooling load-bearing rather than optional.
-- [~] **Write the manifest schema and the wire protocol as documents** before building against
-  them. They are the brief. → **P0-3** done 2026-08-27 (`docs/spec/wire-protocol.md`);
-  **P0-4** next.
+- [x] **Write the manifest schema and the wire protocol as documents** before building against
+  them. They are the brief. → both done 2026-08-27: `docs/spec/wire-protocol.md` (P0-3) and
+  `docs/spec/manifest.md` + `plugin.schema.json` generated from the zod schema in
+  `packages/protocol` (P0-4).

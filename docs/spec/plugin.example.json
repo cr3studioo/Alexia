@@ -1,0 +1,54 @@
+{
+  "$schema": "./plugin.schema.json",
+
+  "manifest_version": 1,
+
+  "id": "voice",
+  "name": "Voice",
+  "summary": "Talk to Alexia and hear it answer back.",
+  "version": "0.1.0",
+  "license": "Apache-2.0",
+
+  "entry": { "run": "node", "args": ["index.js"] },
+
+  "alexia_protocol": 1,
+  "mcp_protocol": "2026-07-28",
+
+  "requires": [
+    { "cap": "audio.input", "why": "to hear you speak" },
+    { "cap": "audio.output", "why": "to speak the answer" },
+    { "cap": "fs.own_dir", "why": "to store the speech model" },
+    { "cap": "net.download", "why": "to fetch the model once, from huggingface.co" }
+  ],
+  "provides": ["voice.transcribe", "voice.speak"],
+
+  "settings": [
+    {
+      "key": "model_size",
+      "type": "choice",
+      "label": "Speech model",
+      "options": ["tiny", "base", "small"],
+      "default": "base",
+      "hint": "Bigger is more accurate and slower."
+    },
+    {
+      "key": "download_state",
+      "type": "progress",
+      "label": "Speech model download"
+    },
+    {
+      "key": "redownload",
+      "type": "action",
+      "label": "Download the model again",
+      "tool": "download_model"
+    }
+  ],
+
+  "storage": { "namespace": "voice", "tables": ["transcripts"], "dir": true },
+
+  "commands": [{ "name": "mute", "summary": "Stop listening" }],
+
+  "skills": ["skills/dictating-well"],
+
+  "min_tier": "T0"
+}

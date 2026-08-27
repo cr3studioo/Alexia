@@ -78,7 +78,7 @@ Tick a box only when the task's acceptance criteria pass. `[GATE]` needs a human
 - [x] **P0-1** `[GATE]` Licences, README, repo public
 - [x] **P0-2** Monorepo skeleton and CI
 - [x] **P0-3** Spec: the wire protocol (MCP profile + `alexia/*`)
-- [ ] **P0-4** Spec: `plugin.json` v1 + JSON Schema
+- [x] **P0-4** Spec: `plugin.json` v1 + JSON Schema
 - [ ] **P0-5** Spec: capabilities, storage, UI schema, skills
 - [ ] **P0-6** The invariant checklist and the cold-install protocol, as documents
 
