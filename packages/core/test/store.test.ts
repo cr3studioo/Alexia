@@ -73,8 +73,12 @@ test('the data directory is per-user and absolute, never beside the executable',
   expect(dir.endsWith('Alexia')).toBe(true)
 
   // A checkout is where the executable lives during development. History does not go there.
+  // `relative` hands back an absolute path when the two are on different drives — which is
+  // the *most* outside-the-repo answer there is, and reading it as "not outside" is how this
+  // check failed on a Windows runner that builds on D: and keeps app data on C:.
   const repoRoot = join(import.meta.dirname, '..', '..', '..')
-  expect(relative(repoRoot, dir).startsWith('..')).toBe(true)
+  const step = relative(repoRoot, dir)
+  expect(step !== '' && !step.startsWith('..') && !isAbsolute(step)).toBe(false)
 })
 
 // M1-2: the conversation. Core owns it, so deleting the memory plugin (M4) forgets you
