@@ -22,3 +22,20 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm check
+
+  # Invariant 2: core works with zero plugins installed. A job, not an aspiration — the
+  # moment core needs a plugin to start, "delete the folder" becomes "delete the folder and
+  # hope". The tests that use the repo's own plugins as fixtures step aside with them; see
+  # `needPlugins` in vitest.config.ts.
+  no-plugins:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: mv plugins "$RUNNER_TEMP/plugins"
+      - run: pnpm check

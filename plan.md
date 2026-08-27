@@ -91,7 +91,7 @@ Tick a box only when the task's acceptance criteria pass. `[GATE]` needs a human
 - [x] **M0-5** `plugins/crasher` — the plugin that dies, three ways
 - [x] **M0-6** `plugins/vanisher` — the plugin that disappears mid-call
 - [x] **M0-7** Manifest loader and capability resolver
-- [ ] **M0-8** The ten invariant checks, green in CI
+- [x] **M0-8** The ten invariant checks, green in CI
 - [ ] **M0-9** Memory budget harness
 - [ ] **M0-G** **Done when:** delete a plugin folder while Alexia is running and nothing else notices
 

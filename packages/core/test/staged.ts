@@ -3,6 +3,8 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
+const repo = join(import.meta.dirname, '..', '..', '..')
+
 /**
  * A plugins directory a test can delete folders out of, without deleting the repo's.
  *
@@ -14,7 +16,6 @@ import { join } from 'node:path'
  */
 export function stage(...ids: string[]): string {
   const root = mkdtempSync(join(tmpdir(), 'alexia-plugins-'))
-  const repo = join(import.meta.dirname, '..', '..', '..')
   for (const id of ids) {
     const from = join(repo, 'plugins', id)
     const manifest = JSON.parse(readFileSync(join(from, 'plugin.json'), 'utf8')) as {

@@ -37,7 +37,12 @@ const fail = (code: number, message: string): never => {
 }
 
 export class Host implements HostServices {
-  constructor(private readonly options: HostOptions) {}
+  constructor(private readonly options: HostOptions) {
+    // Core's own layout, made once. A plugin's directory lives inside this one; the
+    // container is core's and outlives every plugin, which is what lets the purge check
+    // diff the data directory and expect *nothing* left behind.
+    mkdirSync(join(options.dataDir, 'plugins'), { recursive: true })
+  }
 
   /** The plugin's own directory, created on demand. Purged with the plugin, and only there. */
   ownDir(pluginId: string): string {

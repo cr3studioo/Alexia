@@ -1,4 +1,23 @@
+import { existsSync } from 'node:fs'
+import { join } from 'node:path'
 import { defineConfig } from 'vitest/config'
+
+/**
+ * The tests that need the repo's own plugins on disk. Invariant 2 has a CI job that moves
+ * `plugins/` aside and runs the suite, to prove core never needs one — these files are
+ * fixtures rather than core, so they step aside with it. A new plugin-dependent test that
+ * forgets to join this list turns that job red, which is the right way round.
+ */
+const needPlugins = [
+  'packages/core/test/plugins.test.ts',
+  'packages/core/test/registry.test.ts',
+  'packages/core/test/supervisor.test.ts',
+  'packages/core/test/invariants/01-core-names-no-plugin.test.ts',
+  'packages/core/test/invariants/03-crasher-contained.test.ts',
+  'packages/core/test/invariants/04-vanisher-replans.test.ts',
+  'packages/core/test/invariants/05-purge-leaves-no-residue.test.ts',
+]
+const withoutPlugins = existsSync(join(import.meta.dirname, 'plugins')) ? [] : needPlugins
 
 // Two projects, because `pnpm check` runs them as separate gates: a red unit test is a
 // bug, a red invariant is the thesis breaking. `pnpm vitest run --project invariants -t <name>`
@@ -10,13 +29,14 @@ export default defineConfig({
         test: {
           name: 'unit',
           include: ['packages/*/test/**/*.test.ts'],
-          exclude: ['**/test/invariants/**'],
+          exclude: ['**/test/invariants/**', ...withoutPlugins],
         },
       },
       {
         test: {
           name: 'invariants',
           include: ['packages/core/test/invariants/**/*.test.ts'],
+          exclude: withoutPlugins,
         },
       },
     ],

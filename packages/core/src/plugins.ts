@@ -8,7 +8,7 @@ import {
   type Root,
   type Tool,
 } from '@modelcontextprotocol/client'
-import { readdirSync, readFileSync, watch, type FSWatcher } from 'node:fs'
+import { readdirSync, readFileSync, rmSync, watch, type FSWatcher } from 'node:fs'
 import { join } from 'node:path'
 import { Host } from './host.js'
 import type { Store } from './store.js'
@@ -178,6 +178,23 @@ export class Plugins {
     return (manifest.requires ?? [])
       .filter((r) => !isPermission(r.cap) && !provided.has(r.cap))
       .map((r) => ({ cap: r.cap, why: r.why }))
+  }
+
+  /**
+   * Everything this plugin owns, gone: its process, its namespace, its directory, and the
+   * folder it was installed from. The database transaction commits **before** the
+   * directories go — a crash between them leaves a directory with no namespace, which the
+   * next start can clean up, while the reverse would look exactly like a plugin that has
+   * never been enabled and would sit there forever (storage.md).
+   */
+  async purge(id: string): Promise<void> {
+    const entry = this.#entries.get(id)
+    this.#entries.delete(id)
+    await entry?.process.stop()
+    this.options.store.purge(id)
+    rmSync(this.#host.ownDir(id), { recursive: true, force: true })
+    if (entry) rmSync(entry.dir, { recursive: true, force: true })
+    this.options.onToolsChanged?.(id)
   }
 
   async stop(): Promise<void> {

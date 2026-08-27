@@ -27,11 +27,11 @@ the number. A red check is a **stop**, not a note-to-self.
 
 | # | Check | Defends | Lands |
 |---|---|---|---|
-| 1 | `core-names-no-plugin` | Rule 1 | M0-8 |
-| 2 | `boots-with-no-plugins` | Rule 4 | M0-8 |
-| 3 | `crasher-contained` | process isolation earning its memory | M0-8 |
-| 4 | `vanisher-replans` | the invariant meeting the agent loop | M0-8 |
-| 5 | `purge-leaves-no-residue` | the transition worth testing hardest | M0-8 |
+| 1 | `core-names-no-plugin` | Rule 1 | ✅ M0 |
+| 2 | `boots-with-no-plugins` | Rule 4 | ✅ M0 |
+| 3 | `crasher-contained` | process isolation earning its memory | ✅ M0 |
+| 4 | `vanisher-replans` | the invariant meeting the agent loop | ✅ M0 |
+| 5 | `purge-leaves-no-residue` | the transition worth testing hardest | ✅ M0 |
 | 6 | `no-node-apis-in-ui` | the Tauri port staying a port | ✅ P0-2 |
 | 7 | `no-hardcoded-paths` | Windows first, portable by discipline | ✅ P0-2 |
 | 8 | `no-overclaiming-strings` | the privacy promise being exactly true | ✅ P0-2 |
@@ -39,7 +39,10 @@ the number. A red check is a **stop**, not a note-to-self.
 | 10 | `rust-line-budget` | Rust you cannot debug at 3am | ✅ P0-2 |
 
 6, 7, 8 and 10 landed at P0-2 **while they still passed trivially**, which is the only time
-adding a rule is free. Each one carries a test proving its pattern catches a real violation,
+adding a rule is free. 1 to 5 landed across M0, each with the code it defends: 3 with
+`plugins/crasher`, 4 with `plugins/vanisher`, 5 with the store. Checks 1 and 2 also have a
+half that is not a test — a `dependency-cruiser` rule and a CI job — because neither could
+be a test and still defend what it defends. Each one carries a test proving its pattern catches a real violation,
 and one asserting the scanner is reading files at all — a glob that matches nothing passes
 silently, forever, and looks exactly like a clean repo.
 
