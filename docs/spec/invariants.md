@@ -35,7 +35,7 @@ the number. A red check is a **stop**, not a note-to-self.
 | 6 | `no-node-apis-in-ui` | the Tauri port staying a port | ✅ P0-2 |
 | 7 | `no-hardcoded-paths` | Windows first, portable by discipline | ✅ P0-2 |
 | 8 | `no-overclaiming-strings` | the privacy promise being exactly true | ✅ P0-2 |
-| 9 | `memory-budget` | risk 2 — isolation looking like a mistake | M0-9 |
+| 9 | `memory-budget` | risk 2 — isolation looking like a mistake | ✅ M0 |
 | 10 | `rust-line-budget` | Rust you cannot debug at 3am | ✅ P0-2 |
 
 6, 7, 8 and 10 landed at P0-2 **while they still passed trivially**, which is the only time
@@ -135,6 +135,11 @@ all** — lazy spawn on first use, shutdown after idle.
 Risk 2: if lazy spawn slips, a process per plugin starts looking like an architectural
 mistake for reasons that are really an unimplemented optimisation, and the argument gets had
 about the wrong thing.
+
+There is deliberately no *per-plugin* budget: a plugin that loads a speech model is
+legitimately larger than one that greets people, and a number a real plugin has to break is
+a number that gets raised rather than defended. The measured figures, and what they say, are
+in [`../memory.md`](../memory.md).
 
 ### 10 · `rust-line-budget`
 
