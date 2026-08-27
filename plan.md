@@ -77,7 +77,7 @@ Tick a box only when the task's acceptance criteria pass. `[GATE]` needs a human
 
 - [x] **P0-1** `[GATE]` Licences, README, repo public
 - [x] **P0-2** Monorepo skeleton and CI
-- [ ] **P0-3** Spec: the wire protocol (MCP profile + `alexia/*`)
+- [x] **P0-3** Spec: the wire protocol (MCP profile + `alexia/*`)
 - [ ] **P0-4** Spec: `plugin.json` v1 + JSON Schema
 - [ ] **P0-5** Spec: capabilities, storage, UI schema, skills
 - [ ] **P0-6** The invariant checklist and the cold-install protocol, as documents
@@ -188,7 +188,7 @@ ourselves in the same time.
 
 | What Alexia needs | What MCP already has |
 |---|---|
-| `hello`, the version handshake | `initialize` + `protocolVersion` negotiation, with a spec'd mismatch path |
+| `hello`, the version handshake | `server/discover` + a per-request `_meta` version envelope, with a spec'd mismatch path — **see D55, this is not `initialize` any more** |
 | `call`, core → plugin | `tools/call` |
 | `call`, plugin → host, for a model call | `sampling/createMessage` |
 | plugin asks the user something | `elicitation/create` |
@@ -287,6 +287,42 @@ when* — a conversation on a free model — would quietly stop meaning anything
 and its rails become **M1.5**, with a gate of their own. Numbering stays otherwise
 untouched, so Alexia.md's roadmap still reads straight.
 
+### D55 — MCP `2026-07-28` deleted `initialize`, and the pin is two revisions wide
+
+*Answers G3.* D50 was written from the shape MCP had at `2025-11-25`. Reading the pinned
+revision's schema before writing the spec turned up a change big enough to correct D50's
+own table:
+
+- **There is no `initialize` handshake.** Protocol version, client identity and client
+  capabilities travel in `params._meta` on **every request**, under the reserved
+  `io.modelcontextprotocol/*` keys. Capabilities are per-request and a server **must not**
+  infer them from an earlier one.
+- **`server/discover` replaces it.** Servers MUST implement it; clients MAY call it. It
+  returns `supportedVersions[]`, `capabilities` and optional `instructions`.
+- **A server may not send an unsolicited notification** — on stdio exactly as on HTTP. The
+  client opens a long-lived `subscriptions/listen` stream and names the notification types
+  it wants. This is how `notifications/tools/list_changed` reaches core now.
+- Version mismatch has a code of its own: `-32022`, carrying `data.supported[]` and
+  `data.requested`.
+- `logging/setLevel` is gone, replaced by a per-request `_meta` log level — itself already
+  deprecated (SEP-2577) with a twelve-month window.
+
+This is a **better** fit than the handshake was. A plugin that is spawned lazily, shut down
+when idle and restarted after a crash has no long-lived session to initialise, and under
+the 2026 rules it does not need one. `server/discover` is a single round trip that proves
+the process is alive, speaks MCP, and says which revisions it takes.
+
+`@modelcontextprotocol/server` 2.0.0 serves both eras — the 2026 per-request envelope and
+the 2025 `initialize` handshake it calls *legacy* — so supporting two revisions costs one
+code path in the SDK rather than two in ours.
+
+**The policy, which is the actual answer to G3: core accepts exactly two revisions at a
+time — the pinned one and its immediate predecessor.** Today that is `2026-07-28` and
+`2025-11-25`. A new revision becomes the pin in a minor release; the old predecessor drops
+one release later; the registry warns affected authors before their plugin stops loading.
+Pin-and-hold was the alternative and it fails the same way every frozen dependency does:
+quietly, and then all at once.
+
 ---
 
 ## Verified facts, and how to re-verify them
@@ -349,7 +385,12 @@ one trains on your data**, and show it.
 ### MCP
 
 - Current spec revision **`2026-07-28`**; prior revisions `2025-11-25`, `2025-06-18`,
-  `2025-03-26`, `2024-11-05`.
+  `2025-03-26`, `2024-11-05`. Read the schema itself, not a summary of it — see D55 for
+  what changed:
+  `curl -s https://raw.githubusercontent.com/modelcontextprotocol/modelcontextprotocol/main/schema/2026-07-28/schema.ts | grep 'method: "'`
+- **`2026-07-28` has no `initialize`.** `server/discover`, a per-request `_meta` envelope,
+  and `subscriptions/listen` for every server-to-client notification. Error `-32022` on a
+  version mismatch. D55.
 - SDK v2 is split: `@modelcontextprotocol/server` and `@modelcontextprotocol/client`, both
   at 2.0.0. (`@modelcontextprotocol/sdk` 1.30.0 is the v1 line.)
 - The official registry is a public, cursor-paginated API:
@@ -1445,6 +1486,7 @@ Newest first. Every entry here is also in Alexia.md's decision log.
 
 | Date | Entry |
 |---|---|
+| 2026-08-27 | **D55** — MCP `2026-07-28` has no `initialize`: `server/discover`, a per-request `_meta` envelope, and `subscriptions/listen` for every server-to-client notification. G3 answered — core accepts the pinned revision and its immediate predecessor, two at a time. |
 | 2026-08-27 | **D54** — the agent loop gets its own milestone, M1.5. It had none, and it is the product. |
 | 2026-08-27 | **D53** — Claude Code plugin: built, shipped disabled, never auto-enabled, user runs `setup-token` themselves. Written confirmation from Anthropic before any public release enables it. |
 | 2026-08-27 | **D52** — autonomy: Claude Code runs a whole milestone, stopping at gates, irreversible actions and blocks. |

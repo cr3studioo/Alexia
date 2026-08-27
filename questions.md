@@ -190,9 +190,14 @@ the task that closes it.*
   Node comes bundled with Alexia and is therefore free to plugin authors — a real advantage
   worth naming. Python is not. Ship `uv`, require system Python, or keep the first-party set on
   Node? *Decide at M3, with the author docs.*
-- [ ] **G3.** Which MCP revision is pinned, and what is the policy for moving? There have been
-  five revisions; the current one is `2026-07-28`. Pin and hold, or follow with a deprecation
-  window? *Decide at P0-3.*
+- [x] **G3.** Which MCP revision is pinned, and what is the policy for moving?
+  **Answered 2026-08-27 at P0-3 (D55):** pin `2026-07-28`, and accept exactly two revisions
+  at a time — the pinned one and its immediate predecessor, today `2025-11-25`. A new
+  revision becomes the pin in a minor release; the old predecessor drops one release later;
+  the registry warns affected authors first. Reading the pinned schema also corrected D50:
+  `2026-07-28` has **no `initialize`** — `server/discover`, a per-request `_meta` envelope,
+  and `subscriptions/listen` for every server-to-client notification. Landed in
+  `docs/spec/wire-protocol.md` and in Alexia.md's decision log.
 - [ ] **G4.** Does an MCP-compatibility-mode server appear in the plugin marketplace at all, or
   only behind an "add a server" affordance? Different review bars are the entire reason there
   are two marketplaces, and an unreviewed MCP server is a third category.
@@ -295,5 +300,6 @@ These are actions rather than open questions. Each is now attached to a task in
   `setup-token` themselves. **Written confirmation still outstanding** → **M4-7**.
 - [ ] **Check each provider's terms** before free-tier pooling ships as a product feature.
   → **M1-6**, and now more urgent, since D51 makes pooling load-bearing rather than optional.
-- [ ] **Write the manifest schema and the wire protocol as documents** before building against
-  them. They are the brief. → **P0-3** and **P0-4**.
+- [~] **Write the manifest schema and the wire protocol as documents** before building against
+  them. They are the brief. → **P0-3** done 2026-08-27 (`docs/spec/wire-protocol.md`);
+  **P0-4** next.
