@@ -391,6 +391,11 @@ one trains on your data**, and show it.
 - **`2026-07-28` has no `initialize`.** `server/discover`, a per-request `_meta` envelope,
   and `subscriptions/listen` for every server-to-client notification. Error `-32022` on a
   version mismatch. D55.
+- **A running process's working directory cannot be deleted on Windows.** Its *files* can
+  be, but `rmdir` on the directory itself returns `EPERM` while any process has it as a cwd.
+  With the cwd elsewhere the same folder deletes cleanly mid-call and the child carries on.
+  Measured 2026-08-27 (D58) — this is why `entry` spawns with the working directory on a
+  core-owned directory and the plugin folder in `ALEXIA_PLUGIN_DIR`.
 - **`2026-07-28` also has no server-to-client request channel**, and the SDK does not ship
   it as the default. Measured on 2026-08-27 while building M0-2 (D57), all three:
   ```bash
@@ -1499,6 +1504,7 @@ Newest first. Every entry here is also in Alexia.md's decision log.
 
 | Date | Entry |
 |---|---|
+| 2026-08-27 | **D58** — a plugin's working directory is **not** its folder. Windows will not delete a directory that is a running process's cwd, and that is exactly the demo the project exists for. Measured both ways; core spawns with the cwd on a directory it owns and hands the folder over as `ALEXIA_PLUGIN_DIR`. |
 | 2026-08-27 | M0-4 needed core to *answer* `alexia/*`, so the minimum store — `node:sqlite`, namespaced tables, kv, settings, purge — landed here rather than at M1-1. M1-1 adds migrations, the platform data directory and the transaction helper; M1-3 adds the keychain. The wire contract and the namespace rule are what M0 has to prove, and both are now under test. |
 | 2026-08-27 | **D57** — an Alexia plugin speaks MCP `2025-11-25`, and `2026-07-28` is the revision core *also* accepts. That era removed the server-to-client request channel, and four of the five `alexia/*` methods are requests a plugin sends to core. Measured, not read: on the newer era they are dropped unanswered. The two-wide window still holds, pointing the other way. |
 | 2026-08-27 | **D56** *(superseded by D57 in mechanism — it describes `2026-07-28`, which is not where Alexia plugins live)* — on `2026-07-28` a plugin never *sends* core a request: sampling, elicitation and roots come back in-band as an `input_required` answer to the call being served, and core re-sends the call with the answers. Found while building M0-2; the wire spec said `sampling/createMessage` and left an author to guess the direction. Sampling and roots are deprecated upstream (SEP-2577, ≥12 months) and Alexia keeps both — the advice to "call provider APIs directly" assumes a key the plugin must not have. Also: `execa` dropped from core, see the parts list. |

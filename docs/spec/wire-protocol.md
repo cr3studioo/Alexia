@@ -134,11 +134,26 @@ plugin id, ring-buffered, and shown in the plugin's log panel. Write freely ther
 ### 3.1 Spawn
 
 Core reads [`plugin.json`](./manifest.md) **before the process exists** and spawns
-`entry.run` with `entry.args`, with the plugin's own directory as the working directory.
+`entry.run` with `entry.args`.
 
 `"run": "node"` gets **Alexia's bundled Node**, not a system install. Your users never
 install a runtime. Anything else in `run` must be on `PATH` or be a path relative to the
-plugin directory.
+plugin directory. `entry.run`, and any argument that names a file inside your folder, are
+made absolute before the spawn; everything else is passed through untouched.
+
+**Your working directory is not your folder**, and this is deliberate. Windows refuses to
+delete a directory that is a running process's working directory, and *delete the folder
+while Alexia is running* is the one thing this project has to be true. So:
+
+| | |
+|---|---|
+| working directory | a directory core owns and purges with you: yours to write in |
+| `ALEXIA_PLUGIN_DIR` | your folder — the one your `plugin.json` and your files are in |
+| environment | a safe subset, plus that one variable. Not the user's whole environment. |
+
+Read your own files from `ALEXIA_PLUGIN_DIR` (or, in a language that has it, from the
+script's own directory). **Never build a path by hand**, and never assume the working
+directory is anywhere in particular.
 
 ### 3.2 `initialize` — the handshake
 

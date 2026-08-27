@@ -19,7 +19,9 @@ import {
   type StandardSchemaV1,
   type Tool,
 } from '@modelcontextprotocol/client'
-import { StdioClientTransport } from '@modelcontextprotocol/client/stdio'
+import { getDefaultEnvironment, StdioClientTransport } from '@modelcontextprotocol/client/stdio'
+import { existsSync } from 'node:fs'
+import { join } from 'node:path'
 import type { Readable } from 'node:stream'
 import { createInterface } from 'node:readline'
 import { negotiate } from './handshake.js'
@@ -59,6 +61,11 @@ export interface HostServices {
   toolsChanged?(pluginId: string): void
   /** Stopped too often to keep restarting. One line for the user, and a Restart button. */
   unhealthy?(pluginId: string, message: string): void
+  /**
+   * The plugin's own directory, which core creates and owns. It is the process's working
+   * directory — see the spawn below for why that is not the plugin's folder.
+   */
+  ownDir?(pluginId: string): string
   /**
    * Answer an `alexia/*` request. Params arrive already parsed against the wire schema, so
    * this never sees a shape a plugin made up. Absent means core offers no Alexia layer and
@@ -205,11 +212,18 @@ export class PluginProcess {
     if (!declared.ok) throw this.#off(declared.reason)
 
     // `"run": "node"` means *Alexia's* Node — the one the user never had to install.
-    const command = this.manifest.entry.run === 'node' ? process.execPath : this.manifest.entry.run
+    const command = this.manifest.entry.run === 'node' ? process.execPath : this.#inFolder(this.manifest.entry.run)
     const transport = new StdioClientTransport({
       command,
-      args: this.manifest.entry.args,
-      cwd: this.dir,
+      args: this.manifest.entry.args?.map((arg) => this.#inFolder(arg)),
+      // **Not the plugin's folder.** Windows will not let anyone delete a directory that is
+      // a running process's working directory, and "delete the folder while Alexia is
+      // running" is the one thing this project is. Measured: with the working directory
+      // elsewhere, the folder deletes cleanly mid-call and the process carries on.
+      cwd: this.host.ownDir?.(this.id) ?? this.dir,
+      // Which is why the folder is handed over as an environment variable instead. A plugin
+      // in a language with no SDK reads the same one.
+      env: { ...getDefaultEnvironment(), ALEXIA_PLUGIN_DIR: this.dir },
       stderr: 'pipe',
     })
 
@@ -356,6 +370,16 @@ export class PluginProcess {
     this.host.log?.(this.id, `[core] ${message}`)
     this.#crashed(session)
     return this.#state === 'unhealthy' ? new PluginUnavailable(this.#reason) : new Error(message)
+  }
+
+  /**
+   * An argument that names a file inside the plugin's folder becomes an absolute path;
+   * anything else is passed through untouched. That is the whole rule, and it exists
+   * because the working directory is deliberately somewhere else.
+   */
+  #inFolder(arg: string): string {
+    const candidate = join(this.dir, arg)
+    return existsSync(candidate) ? candidate : arg
   }
 
   /** Detach the current session so its handlers stop counting, and hand it back. */
