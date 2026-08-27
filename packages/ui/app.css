@@ -272,6 +272,60 @@ select {
   padding: 0.6rem 1.4rem;
 }
 
+/* The trace. Every step visible as it happens — never a spinner, because a spinner during
+   a five-minute autonomous run is how you lose somebody's trust permanently. What it shows
+   is what ran and what came back, which is the only thing that answers "what is it doing". */
+
+.trace {
+  align-self: flex-start;
+  max-width: 42rem;
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 0.7rem;
+  overflow: hidden;
+}
+
+.trace .step {
+  display: flex;
+  gap: 0.6rem;
+  align-items: baseline;
+  padding: 0.4rem 0.7rem;
+  font-size: 0.85rem;
+  border-top: 1px solid var(--line);
+}
+
+.trace .step:first-child {
+  border-top: 0;
+}
+
+.trace .n {
+  color: var(--quiet);
+  font-variant-numeric: tabular-nums;
+  flex: none;
+}
+
+.trace .what {
+  font-weight: 600;
+  flex: none;
+}
+
+.trace .said {
+  color: var(--quiet);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Running, done, and the one that did not work. The failed row is the only coloured thing
+   on the screen, because it is the only one somebody has to notice. */
+.trace .step.failed .said {
+  color: var(--amber);
+}
+
+.trace .step.running .said::after {
+  content: '…';
+}
+
 /* The permission prompt. Above the composer, never over the trace — what is being decided
    is what just happened on screen, so covering it would be the wrong shape entirely. */
 

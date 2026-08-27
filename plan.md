@@ -119,7 +119,7 @@ Tick a box only when the task's acceptance criteria pass. `[GATE]` needs a human
 - [x] **M15-2** Plugin tools reach the model
 - [x] **M15-3** Permission modes and the never-touch list
 - [x] **M15-4** The safety checker
-- [ ] **M15-5** The visible trace and the stop control
+- [x] **M15-5** The visible trace and the stop control
 - [ ] **M15-6** Step-trace trimming
 - [ ] **M15-7** Ceilings and the spend preview
 - [ ] **M15-8** A tool vanishes mid-task

@@ -180,6 +180,16 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
   let pending: ((allowed: boolean) => void) | undefined
 
   /**
+   * The stop control (M15-5).
+   *
+   * One task runs at a time, so one controller is the whole of it. Aborting reaches three
+   * places at once: the loop checks it between steps, `chat()` passes it to `fetch` so a
+   * half-streamed answer stops arriving, and `tools/call` carries it to the plugin as MCP
+   * `notifications/cancelled`. The plugin that ignores that is why `callMs` exists.
+   */
+  let task: AbortController | undefined
+
+  /**
    * The second opinion (M15-4). Local by default — a reviewer that ships what it is
    * reviewing to somebody else's API has leaked the very file it was asked about.
    *
@@ -318,6 +328,17 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
       return
     }
 
+    if (url.pathname === '/api/stop' && request.method === 'POST') {
+      // Works mid-step, always. An open permission question is settled as a no on the way
+      // out, because a stopped task must not leave the next one waiting on it.
+      task?.abort()
+      pending?.(false)
+      pending = undefined
+      response.writeHead(200, { 'content-type': 'application/json' })
+      response.end(JSON.stringify({ stopping: task !== undefined }))
+      return
+    }
+
     if (url.pathname === '/api/approve' && request.method === 'POST') {
       const { allowed } = JSON.parse(await read(request)) as { allowed?: boolean }
       const waiting = pending
@@ -377,6 +398,8 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     }
 
     const month = allowance(store)
+    const stop = new AbortController()
+    task = stop
     try {
       const result = await run({
         messages: store.history(session),
@@ -387,6 +410,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
         secrets,
         session,
         paidAllowed: !month.stop,
+        signal: stop.signal,
         /**
          * The gate (M15-3). Built fresh per call, because the mode, the folders and the
          * boundaries can all change while a task is running — and the point of a boundary
@@ -456,6 +480,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     // no rather than leaving it is what keeps a stopped task from holding the next one.
     pending?.(false)
     pending = undefined
+    task = undefined
     response.end()
   }
 

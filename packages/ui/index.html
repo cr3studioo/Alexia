@@ -99,6 +99,9 @@
     <form id="ask">
       <textarea id="text" rows="1" placeholder="Ask Alexia" autofocus></textarea>
       <button type="submit">Send</button>
+      <!-- Not a cancel that takes effect at the end of the step. It works while a tool call
+           is in flight, which is the only kind worth having. -->
+      <button id="stop" type="button" class="quiet-button" hidden>Stop</button>
     </form>
 
     <script type="module" src="/main.js" data-token="__TOKEN__"></script>

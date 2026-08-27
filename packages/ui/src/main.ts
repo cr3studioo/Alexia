@@ -63,6 +63,7 @@ const button = form.querySelector('button')!
 const prompt = document.querySelector<HTMLElement>('#prompt')!
 const promptWhy = document.querySelector<HTMLElement>('#prompt-why')!
 const permission = document.querySelector<HTMLSelectElement>('#permission')!
+const stop = document.querySelector<HTMLButtonElement>('#stop')!
 
 const money = (n: number): string => `$${n.toFixed(2)}`
 
@@ -223,8 +224,53 @@ async function* frames(body: ReadableStream<Uint8Array>): AsyncGenerator<Record<
   }
 }
 
+/**
+ * The trace. One panel per task, one row per step, and the row appears **before** the work
+ * rather than after it — a step nobody can see until it finishes is a spinner with extra
+ * steps, and a spinner during a five-minute run is how trust goes.
+ */
+function trace(): { step(n: number, name: string): void; done(n: number, ok: boolean, text: string): void } {
+  let panel: HTMLElement | undefined
+  const rows = new Map<number, HTMLElement>()
+  return {
+    step(n, name) {
+      panel ??= (() => {
+        const made = document.createElement('div')
+        made.className = 'trace'
+        log.append(made)
+        return made
+      })()
+      const row = document.createElement('div')
+      row.className = 'step running'
+      const count = document.createElement('span')
+      count.className = 'n'
+      count.textContent = String(n)
+      const what = document.createElement('span')
+      what.className = 'what'
+      what.textContent = name
+      const said = document.createElement('span')
+      said.className = 'said'
+      row.append(count, what, said)
+      panel.append(row)
+      rows.set(n, row)
+      log.scrollTop = log.scrollHeight
+    },
+    done(n, ok, text) {
+      const row = rows.get(n)
+      if (!row) return
+      row.className = ok ? 'step' : 'step failed'
+      // What came back, on one line. The full text is in the conversation the model reads;
+      // this is the glance version, and a glance that scrolls is not a glance.
+      const said = row.querySelector('.said')
+      if (said) said.textContent = text.replace(/\s+/g, ' ').slice(0, 120)
+      log.scrollTop = log.scrollHeight
+    },
+  }
+}
+
 async function ask(question: string): Promise<void> {
   bubble('user', question)
+  const steps = trace()
   const answer = bubble('assistant')
   answer.textContent = '…'
   let started = false
@@ -253,14 +299,22 @@ async function ask(question: string): Promise<void> {
     if (typeof event.ask === 'string') askPermission(event.ask)
     const step = event.step as { n: number; name: string; ok?: boolean; text?: string } | undefined
     if (step) {
-      // Every step visible as it happens, not a spinner (M15-5 makes this a real trace).
-      say(step.ok === undefined ? `Step ${String(step.n)}: ${step.name}…` : `Step ${String(step.n)}: ${step.name} — ${step.ok ? 'done' : 'failed'}`)
+      if (step.ok === undefined) {
+        steps.step(step.n, step.name)
+        // The answer bubble moves below the steps it came from, so the trace reads in the
+        // order it happened rather than the order the elements were created.
+        log.append(answer)
+      } else {
+        steps.done(step.n, step.ok, step.text ?? '')
+      }
     }
     if (typeof event.error === 'string') {
       answer.remove()
       bubble('refusal', event.error)
     }
-    const done = event.done as { model?: string; spent?: number; warning?: string } | undefined
+    const done = event.done as
+      | { model?: string; spent?: number; warning?: string; ended?: string; steps?: number }
+      | undefined
     if (done) {
       if (done.model) modelBadge.textContent = done.model
       if (typeof done.spent === 'number') {
@@ -270,6 +324,9 @@ async function ask(question: string): Promise<void> {
       }
       if (done.warning) say(done.warning)
       prompt.hidden = true
+      // A task that hit a limit says which one. Silence after a stop looks like a crash.
+      if (done.ended === 'stopped') say('Stopped.')
+      if (done.ended === 'ceiling') say(`Stopped after ${String(done.steps ?? 0)} steps — that is the ceiling, not the end of the task.`)
     }
   }
 }
@@ -324,6 +381,15 @@ function showMenu(): void {
   menu.hidden = matches.length === 0
 }
 
+// Mid-step, always — including while a tool call is in flight. The button does not wait
+// for the step to finish and then pretend it stopped it.
+stop.addEventListener('click', () => {
+  stop.disabled = true
+  void fetch('/api/stop', { method: 'POST', headers: { 'x-alexia-token': token } }).finally(() => {
+    stop.disabled = false
+  })
+})
+
 text.addEventListener('input', showMenu)
 mode.addEventListener('change', () => void command(`/${mode.value}`))
 
@@ -338,10 +404,13 @@ form.addEventListener('submit', (event) => {
     return
   }
   button.disabled = true
+  stop.hidden = false
   void ask(question)
     .catch((error: unknown) => bubble('refusal', String(error)))
     .finally(() => {
       button.disabled = false
+      stop.hidden = true
+      prompt.hidden = true
       text.focus()
     })
 })
