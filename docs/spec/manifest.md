@@ -193,7 +193,8 @@ See [`storage.md`](./storage.md).
 "skills": ["skills/dictating-well"]
 ```
 
-A command is a slash command. Declare **one** name; core derives the namespaced
+A command is a slash command. **Core calls your tool of the same name, with no arguments**
+— the command declares no binding because there is only one it could have. Declare **one** name; core derives the namespaced
 `/voice.mute` automatically and it always works. If another plugin already owns the bare
 word, yours shows in amber with a one-click switch to the namespaced form — so resolving a
 collision never breaks a command that was already working.

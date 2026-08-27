@@ -5,10 +5,11 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import type { AddressInfo } from 'node:net'
 import { join } from 'node:path'
 import { Catalog } from './catalog.js'
+import { commands, pins, run } from './commands.js'
 import { installed, OLLAMA, running } from './ollama.js'
 import { usable } from './pool.js'
 import { keyOf, PROVIDERS } from './provider.js'
-import { MODES, route, send, type Placement } from './router.js'
+import { MODES, route, send } from './router.js'
 import { CORE, keychain, type SecretStore } from './secrets.js'
 import { dataDir, Store, type Message } from './store.js'
 import { allowance, warning } from './usage.js'
@@ -76,9 +77,6 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     mode: (store.kvGet(CORE, 'mode') as string | undefined) ?? 'combined',
   })
 
-  const placement = (): Placement =>
-    MODES[(store.kvGet(CORE, 'mode') as keyof typeof MODES | undefined) ?? 'combined']
-
   /** Everything the router needs to know, asked fresh: a tier can be exhausted mid-sentence. */
   const world = async () => ({
     models: catalog.models,
@@ -117,6 +115,10 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
       response.end(
         JSON.stringify({
           setup: setup(),
+          // Everything you could type right now, and the pins those commands set. The
+          // shell shows both as controls: a command is a shortcut, never the only route.
+          commands: commands(),
+          pins: { ...pins(store), placement: undefined },
           messages: store.history(session),
           spent: month.spent,
           cap: month.cap,
@@ -154,6 +156,14 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
       return
     }
 
+    if (url.pathname === '/api/command' && request.method === 'POST') {
+      const { input } = JSON.parse(await read(request)) as { input?: string }
+      const ran = await run(input ?? '', { store })
+      response.writeHead(200, { 'content-type': 'application/json' })
+      response.end(JSON.stringify({ ...ran, setup: setup(), pins: { ...pins(store), placement: undefined } }))
+      return
+    }
+
     if (url.pathname === '/api/chat' && request.method === 'POST') {
       await reply(request, response)
       return
@@ -185,7 +195,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     store.append(session, user)
 
     const month = allowance(store)
-    const verdict = route({ messages: store.history(session) }, { placement: placement() }, await world())
+    const verdict = route({ messages: store.history(session) }, pins(store), await world())
     if (!verdict.ok) {
       // The refusal is the answer. It is written to be read by the person who has to act
       // on it, so it goes to the screen exactly as the router wrote it.

@@ -25,6 +25,14 @@ interface Provider {
   free: boolean
 }
 
+interface Command {
+  name: string
+  summary: string
+  alias?: string
+  plugin?: string
+  shadowed?: boolean
+}
+
 interface State {
   setup: { done: boolean; name: string; mode: string }
   messages: Turn[]
@@ -32,6 +40,7 @@ interface State {
   cap?: number
   warning?: string
   providers: Provider[]
+  commands: Command[]
 }
 
 const token = document.querySelector<HTMLElement>('[data-token]')?.dataset.token ?? ''
@@ -125,6 +134,8 @@ function firstRun(state: State): void {
 async function load(): Promise<void> {
   const state = (await (await fetch('/api/state', { headers: { 'x-alexia-token': token } })).json()) as State
   document.querySelector<HTMLElement>('.name')!.textContent = state.setup.name
+  known = state.commands
+  document.querySelector<HTMLSelectElement>('#mode')!.value = state.setup.mode
   if (!state.setup.done) firstRun(state)
 
   for (const turn of state.messages) {
@@ -203,11 +214,69 @@ async function ask(question: string): Promise<void> {
   }
 }
 
+// ---- commands: the shortcut half -----------------------------------------------------
+
+const menu = document.querySelector<HTMLElement>('#menu')!
+const mode = document.querySelector<HTMLSelectElement>('#mode')!
+let known: Command[] = []
+
+/** Run one, from the input or from a control. Both go the same way in. */
+async function command(input: string): Promise<void> {
+  const ran = (await (
+    await fetch('/api/command', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-alexia-token': token },
+      body: JSON.stringify({ input }),
+    })
+  ).json()) as { ok: boolean; note: string; setup: { mode: string } }
+  bubble('refusal', ran.note)
+  mode.value = ran.setup.mode
+}
+
+function showMenu(): void {
+  const typed = text.value
+  if (!typed.startsWith('/')) {
+    menu.hidden = true
+    return
+  }
+  const prefix = typed.slice(1).split(/\s/)[0] ?? ''
+  const matches = known.filter((c) => c.name.startsWith(prefix)).slice(0, 8)
+  menu.replaceChildren(
+    ...matches.map((c) => {
+      const item = document.createElement('li')
+      if (c.shadowed) item.className = 'shadowed'
+      const name = document.createElement('b')
+      // A shadowed command still works; it is just longer than its author hoped, and the
+      // list says so rather than leaving somebody typing a word that does nothing.
+      name.textContent = `/${c.name}`
+      const summary = document.createElement('span')
+      summary.textContent = c.shadowed ? `${c.summary} — the short name was taken` : c.summary
+      item.append(name, summary)
+      item.addEventListener('mousedown', (event) => {
+        event.preventDefault()
+        text.value = `/${c.name}`
+        menu.hidden = true
+        form.requestSubmit()
+      })
+      return item
+    }),
+  )
+  menu.hidden = matches.length === 0
+}
+
+text.addEventListener('input', showMenu)
+mode.addEventListener('change', () => void command(`/${mode.value}`))
+
 form.addEventListener('submit', (event) => {
   event.preventDefault()
   const question = text.value.trim()
   if (!question) return
   text.value = ''
+  menu.hidden = true
+  if (question.startsWith('/')) {
+    void command(question)
+    return
+  }
   button.disabled = true
   void ask(question)
     .catch((error: unknown) => bubble('refusal', String(error)))

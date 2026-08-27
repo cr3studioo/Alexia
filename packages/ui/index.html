@@ -12,6 +12,13 @@
       <!-- Which model answered, and what the month has cost. Both always on screen: the
            first is how you know where your words went, the second is how nobody is ever
            surprised by a bill. -->
+      <!-- The UI equivalent of /local, /cloud and /combined. Every command has one: the
+           commands are a shortcut for people who like them, never the only route. -->
+      <select id="mode" class="badge" title="Where the work happens">
+        <option value="local">Local</option>
+        <option value="combined">Combined</option>
+        <option value="cloud">Cloud</option>
+      </select>
       <span id="model" class="badge">no model yet</span>
       <span id="spend" class="badge">$0.00</span>
     </header>
@@ -66,6 +73,10 @@
 
     <main id="log" aria-live="polite"></main>
     <p id="note" hidden></p>
+
+    <!-- Typing `/` lists what there is, with a line each. Nobody is going to read
+         documentation to find a command. -->
+    <ul id="menu" hidden></ul>
 
     <form id="ask">
       <textarea id="text" rows="1" placeholder="Ask Alexia" autofocus></textarea>

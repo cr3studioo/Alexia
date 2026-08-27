@@ -233,3 +233,52 @@ select {
   margin-top: 1.5rem;
   padding: 0.6rem 1.4rem;
 }
+
+/* The command list. Typing `/` shows it; it is the only documentation anybody will read. */
+
+#menu {
+  list-style: none;
+  margin: 0;
+  padding: 0.3rem;
+  max-height: 15rem;
+  overflow-y: auto;
+  border-top: 1px solid var(--line);
+  background: var(--panel);
+}
+
+#menu li {
+  display: flex;
+  gap: 0.6rem;
+  align-items: baseline;
+  padding: 0.3rem 0.6rem;
+  border-radius: 0.4rem;
+  cursor: pointer;
+}
+
+#menu li:hover {
+  background: var(--bg);
+}
+
+#menu b {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+#menu span {
+  font-size: 0.85rem;
+  color: var(--quiet);
+}
+
+/* Amber, because it still works — it is only longer than its author hoped. */
+#menu li.shadowed b {
+  color: #b26a00;
+}
+
+select.badge {
+  padding: 0.15rem 0.4rem;
+  background: var(--panel);
+  color: var(--quiet);
+  font: inherit;
+  font-size: 0.8rem;
+  flex: none;
+}

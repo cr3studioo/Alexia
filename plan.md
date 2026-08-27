@@ -108,7 +108,7 @@ Tick a box only when the task's acceptance criteria pass. `[GATE]` needs a human
 - [x] **M1-9** Usage, attribution and caps
 - [x] **M1-10** Chat shell
 - [x] **M1-11** First-run flow v1
-- [ ] **M1-12** Slash commands
+- [x] **M1-12** Slash commands
 - [ ] **M1-13** `[GATE]` Cold-install test #1
 - [ ] **M1-G** **Done when:** a real conversation, routed to a free model, spend showing 0.00
 
