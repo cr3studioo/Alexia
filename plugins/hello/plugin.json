@@ -21,6 +21,12 @@
       "label": "Greeting",
       "hint": "What it says before your name.",
       "default": "Hello"
+    },
+    {
+      "type": "password",
+      "key": "api_key",
+      "label": "API key",
+      "hint": "Nothing here uses it. Hello declares one so the keychain path is exercised."
     }
   ],
   "storage": {

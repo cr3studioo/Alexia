@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { ErrorCode, isPermission, Manifest, PROVIDES_META } from '@alexia/protocol'
+import { ErrorCode, isPermission, Manifest, PROVIDES_META, SETTINGS_CHANGED } from '@alexia/protocol'
 import {
   ProtocolError,
   type CallToolResult,
@@ -11,6 +11,7 @@ import {
 import { readdirSync, readFileSync, realpathSync, rmSync, watch, type FSWatcher } from 'node:fs'
 import { join } from 'node:path'
 import { Host } from './host.js'
+import { keychain, type SecretStore } from './secrets.js'
 import type { Store } from './store.js'
 import { PluginProcess, type Timings } from './supervisor.js'
 
@@ -29,6 +30,8 @@ export interface PluginsOptions {
   store: Store
   /** Alexia's own data directory: plugin working directories are created inside it. */
   dataDir: string
+  /** Where `password` settings live. The OS keychain unless a test says otherwise. */
+  secrets?: SecretStore
   /** The router (M1-8). Absent means core cannot answer for the model yet, and says so. */
   sample?(pluginId: string, params: CreateMessageRequestParams): Promise<CreateMessageResult>
   roots?(pluginId: string): Root[]
@@ -61,13 +64,16 @@ export class Plugins {
   readonly #entries = new Map<string, Entry>()
   readonly #problems: Problem[] = []
   readonly #host: Host
+  readonly #secrets: SecretStore
   #watcher?: FSWatcher
   #pending?: NodeJS.Timeout
 
   constructor(private readonly options: PluginsOptions) {
+    this.#secrets = options.secrets ?? keychain
     this.#host = new Host({
       store: options.store,
       dataDir: options.dataDir,
+      secrets: this.#secrets,
       manifest: (id) => this.#entries.get(id)?.manifest,
       capability: (cap, args) => this.capability(cap, args),
       sample: options.sample,
@@ -193,6 +199,28 @@ export class Plugins {
     throw new ProtocolError(ErrorCode.CAPABILITY_NOT_AVAILABLE, `nothing enabled provides ${cap}`)
   }
 
+  /**
+   * The user changed a setting. **A `password` goes to the keychain and nowhere else** —
+   * this is the only method that writes one, so the rule holds by construction rather than
+   * by everybody remembering it.
+   *
+   * A running plugin is told what changed; a stopped one reads the new value when it next
+   * starts, which is why nothing is spawned here.
+   */
+  async setSetting(id: string, key: string, value: unknown): Promise<void> {
+    const entry = this.#entries.get(id)
+    const declared = entry?.manifest.settings?.find((s) => s.key === key)
+    if (!entry || !declared) {
+      throw new ProtocolError(ErrorCode.INVALID_PARAMS, `${id} has no setting called "${key}"`)
+    }
+    if (declared.type === 'password') {
+      await this.#secrets.set(id, key, String(value))
+    } else {
+      this.options.store.setSetting(id, key, value)
+    }
+    await entry.process.notify(SETTINGS_CHANGED, { changed: { [key]: value } })
+  }
+
   /** What this plugin asked for that nothing provides. Its author's sentence, verbatim. */
   unmet(id: string): Unmet[] {
     const manifest = this.#entries.get(id)?.manifest
@@ -215,6 +243,13 @@ export class Plugins {
     this.#entries.delete(id)
     await entry?.process.stop()
     this.options.store.purge(id)
+    // Then the keychain, one entry per declared `password`.
+    // ponytail: the key names come from the manifest, so a folder someone deleted by hand
+    // before asking Alexia to purge it takes its own list with it. Record the names in the
+    // settings table the day that stops being a corner case.
+    for (const setting of entry?.manifest.settings ?? []) {
+      if (setting.type === 'password') await this.#secrets.delete(id, setting.key)
+    }
     rmSync(this.#host.ownDir(id), { recursive: true, force: true })
     if (entry) rmSync(entry.dir, { recursive: true, force: true })
     this.options.onToolsChanged?.(id)

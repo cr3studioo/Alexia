@@ -176,6 +176,19 @@ export class PluginProcess {
     )
   }
 
+  /**
+   * A one-way message to a plugin that is **already running**. It never spawns one: a
+   * stopped plugin reads the current settings when it next starts, so waking it to tell it
+   * something it is about to ask about anyway would be pure cost.
+   */
+  async notify(method: string, params: Record<string, unknown>): Promise<void> {
+    const session = this.#session
+    if (!session) return
+    await session.client
+      .notification({ method, params })
+      .catch((error: unknown) => this.host.log?.(this.id, `[core] ${method} not delivered: ${String(error)}`))
+  }
+
   /** The *Restart* button. Clears the crash tally; the next call spawns again. */
   restart(): void {
     this.#crashes = []

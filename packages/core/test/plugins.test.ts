@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, test } from 'vitest'
 import { Host } from '../src/host.js'
+import { memorySecrets } from '../src/secrets.js'
 import { Store } from '../src/store.js'
 import { PluginProcess } from '../src/supervisor.js'
 
@@ -17,8 +18,10 @@ const dir = join(repoRoot, 'plugins', 'hello')
 const manifest = Manifest.parse(JSON.parse(readFileSync(join(dir, 'plugin.json'), 'utf8')))
 
 const store = new Store(':memory:')
+const secrets = memorySecrets()
 const host = new Host({
   store,
+  secrets,
   dataDir: mkdtempSync(join(tmpdir(), 'alexia-data-')),
   manifest: (id) => (id === manifest.id ? manifest : undefined),
 })
@@ -43,6 +46,21 @@ test('a plugin answers, reads its setting, and writes a row core can see', async
   // And the plugin can read back what it wrote, through the same namespace.
   expect((await plugin.callTool('greeted')).content).toEqual([{ type: 'text', text: '1' }])
 }, 20_000)
+
+test('a password comes back to the plugin, and never out of the database', async () => {
+  await secrets.set('hello', 'api_key', 'sk-not-a-real-key')
+
+  // Read at the moment of the call, from the keychain. Everything else still comes from
+  // the store, with the manifest's default underneath it.
+  const { settings } = (await host.alexia('hello', 'alexia/settings/get', {})) as {
+    settings: Record<string, unknown>
+  }
+  expect(settings).toEqual({ greeting: 'Hello', api_key: 'sk-not-a-real-key' })
+
+  // The database has never heard of it. That is invariant 5's secret half, asserted here
+  // where the settings table can be read directly.
+  expect(store.settings('hello')).toEqual({})
+})
 
 test('the user changing a setting changes what the plugin says', async () => {
   store.setSetting('hello', 'greeting', 'Good evening')

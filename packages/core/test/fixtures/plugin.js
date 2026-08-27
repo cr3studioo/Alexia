@@ -48,6 +48,21 @@ server.registerTool('where', { description: 'Asks the host which folders are in 
   return inputRequired({ inputRequests: { roots: inputRequired.listRoots() } })
 })
 
+// The layer core sends *down*. Written out by hand for the same reason as the rest of
+// this file: a plugin in a language with no SDK is told about a setting change too.
+let changed = null
+server.server.setNotificationHandler(
+  'alexia/settings/changed',
+  { params: fromJsonSchema({ type: 'object', properties: { changed: { type: 'object' } } }) },
+  (params) => {
+    changed = params.changed
+  },
+)
+
+server.registerTool('changed', { description: 'What core last said had changed.' }, () =>
+  text(JSON.stringify(changed)),
+)
+
 server.registerTool('grow', { description: 'Gains a new tool, and says so.' }, () => {
   server.registerTool('grown', { description: 'Did not exist a moment ago.' }, () => text('new'))
   server.sendToolListChanged()

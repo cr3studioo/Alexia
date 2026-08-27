@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { Manifest, MCP_PINNED } from '@alexia/protocol'
+import { Manifest, MCP_PINNED, SETTINGS_CHANGED } from '@alexia/protocol'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterEach, expect, test, vi } from 'vitest'
@@ -194,6 +194,23 @@ test('the newer MCP revision connects, and cannot reach back into core', async (
   const reached = await plugin.callTool('reach_back')
   expect(reached.content[0]).toMatchObject({ text: expect.stringContaining('refused') })
   expect(spy.logs.join('\n')).toContain('Dropped inbound request')
+}, 20_000)
+
+test('a running plugin is told a setting changed, and a stopped one is left alone', async () => {
+  const plugin = start(manifest(), host())
+  const said = async (): Promise<string> =>
+    String(((await plugin.callTool('changed')).content[0] as { text?: string }).text)
+
+  expect(await said()).toBe('null') // this is also what spawns it
+  await plugin.notify(SETTINGS_CHANGED, { changed: { greeting: 'Good evening' } })
+  expect(await said()).toBe(JSON.stringify({ greeting: 'Good evening' }))
+
+  // A stopped plugin reads the new value when it next starts, so telling it costs nothing
+  // and must not cost a process.
+  const asleep = start(manifest(), host())
+  await asleep.notify(SETTINGS_CHANGED, { changed: { greeting: 'Good evening' } })
+  expect(asleep.pid).toBeUndefined()
+  expect(asleep.state).toBe('stopped')
 }, 20_000)
 
 test('a plugin written for a newer Alexia never gets a process', async () => {

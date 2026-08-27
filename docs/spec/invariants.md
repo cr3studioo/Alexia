@@ -99,6 +99,12 @@ Snapshot the database and the filesystem. Install → enable → use → delete.
 orphaned table". The contract this proves is written out in [`storage.md`](./storage.md) as
 a table, and this check is that table executed.
 
+**And the secret half** (M1-3): the plugin's `password` setting is filled in during the run,
+and the database file — with its write-ahead log beside it — is read back as raw bytes and
+searched for the value. It is never in there, before the purge or after it. A column nobody
+thought to look in is exactly how a secret in the clear would be missed, so the check looks
+at all of them at once.
+
 ### 6 · `no-node-apis-in-ui`
 
 `packages/ui` may not import a Node builtin — not `node:fs`, not bare `fs`, not

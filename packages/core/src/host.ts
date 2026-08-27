@@ -3,6 +3,7 @@ import { ErrorCode, type AlexiaMethod, type AlexiaParams, type HostInfo, type Ma
 import { ProtocolError, type CallToolResult, type CreateMessageRequestParams, type CreateMessageResult, type Root } from '@modelcontextprotocol/client'
 import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
+import { keychain, type SecretStore } from './secrets.js'
 import { ALEXIA_VERSION, type HostServices } from './supervisor.js'
 import type { Store } from './store.js'
 
@@ -18,6 +19,8 @@ export interface HostOptions {
   store: Store
   /** Alexia's own data directory. Plugin directories are created inside it, never elsewhere. */
   dataDir: string
+  /** Where `password` settings come from. The OS keychain unless a test says otherwise. */
+  secrets?: SecretStore
   /** The manifest of an enabled plugin, or nothing. The loader owns this map (M0-7). */
   manifest(pluginId: string): Manifest | undefined
   /** What the user renamed Alexia to. Plugins show this, not "Alexia". */
@@ -90,7 +93,7 @@ export class Host implements HostServices {
 
     switch (method) {
       case 'alexia/settings/get':
-        return { settings: this.#settings(manifest) }
+        return { settings: await this.#settings(manifest) }
 
       case 'alexia/host/info':
         return this.#info(manifest)
@@ -153,16 +156,35 @@ export class Host implements HostServices {
   }
 
   /** Declared defaults, with whatever the user changed on top. */
-  #settings(manifest: Manifest): Record<string, unknown> {
+  async #settings(manifest: Manifest): Promise<Record<string, unknown>> {
     const stored = this.options.store.settings(manifest.id)
     const settings: Record<string, unknown> = {}
     for (const setting of manifest.settings ?? []) {
-      // ponytail: a `password` is read from the store like any other value until the
-      // keychain lands at M1-3. Nothing writes one yet, so nothing is stored in the clear.
+      if (setting.type === 'password') {
+        // Read now, from the keychain, and never from the database — which is what the
+        // purge check proves rather than trusts. The plugin is told not to cache it.
+        const secret = await this.#secret(manifest.id, setting.key)
+        if (secret !== undefined) settings[setting.key] = secret
+        continue
+      }
       const value = stored[setting.key] ?? ('default' in setting ? setting.default : undefined)
       if (value !== undefined) settings[setting.key] = value
     }
     return settings
+  }
+
+  /**
+   * A machine with no usable keychain has no secret, which is not the same as a crash: a
+   * `password` nobody has filled in is already absent, and that is what the plugin sees.
+   * It says so in the log rather than failing the whole settings read.
+   */
+  async #secret(pluginId: string, key: string): Promise<string | undefined> {
+    try {
+      return await (this.options.secrets ?? keychain).get(pluginId, key)
+    } catch (error) {
+      this.options.log?.(pluginId, `[core] cannot read "${key}" from the keychain: ${String(error)}`)
+      return undefined
+    }
   }
 
   #info(manifest: Manifest): HostInfo {
