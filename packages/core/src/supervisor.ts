@@ -1,5 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { MCP_REVISIONS, mcpRefusal, versionVerdict, type Manifest } from '@alexia/protocol'
+import {
+  ALEXIA_METHODS,
+  MCP_REVISIONS,
+  mcpRefusal,
+  versionVerdict,
+  type AlexiaMethod,
+  type AlexiaParams,
+  type Manifest,
+} from '@alexia/protocol'
 import {
   Client,
   UnsupportedProtocolVersionError,
@@ -8,6 +16,7 @@ import {
   type CreateMessageRequestParams,
   type CreateMessageResult,
   type Root,
+  type StandardSchemaV1,
   type Tool,
 } from '@modelcontextprotocol/client'
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio'
@@ -27,8 +36,10 @@ import { negotiate } from './handshake.js'
  * and a directory by the loader and behaves identically for every one of them.
  */
 
+export const ALEXIA_VERSION = '0.1.0'
+
 /** Core, as the plugin sees it in `clientInfo`. Not the name the user renamed Alexia to. */
-const HOST = { name: 'Alexia', version: '0.1.0' } as const
+const HOST = { name: 'Alexia', version: ALEXIA_VERSION } as const
 
 export interface HostServices {
   /**
@@ -48,6 +59,12 @@ export interface HostServices {
   toolsChanged?(pluginId: string): void
   /** Stopped too often to keep restarting. One line for the user, and a Restart button. */
   unhealthy?(pluginId: string, message: string): void
+  /**
+   * Answer an `alexia/*` request. Params arrive already parsed against the wire schema, so
+   * this never sees a shape a plugin made up. Absent means core offers no Alexia layer and
+   * a plugin asking gets `-32601`, which is the honest answer.
+   */
+  alexia?<M extends AlexiaMethod>(pluginId: string, method: M, params: AlexiaParams<M>): Promise<unknown>
 }
 
 /** Every timeout in one place, so a test can run the five-minute ones in milliseconds. */
@@ -213,6 +230,24 @@ export class PluginProcess {
       this.host.sampling(this.id, request.params),
     )
     client.setRequestHandler('roots/list', async () => ({ roots: await this.host.roots(this.id) }))
+
+    // The `alexia/*` layer, straight off the protocol package's table: one handler per
+    // method, each parsing untrusted plugin params against the schema that documents them.
+    const alexia = this.host.alexia?.bind(this.host)
+    if (alexia) {
+      // The table is keyed by method, so params and method agree by construction. Saying
+      // that to a `for` loop costs one widening: the schemas still parse, the types stop
+      // trying to intersect twelve unrelated results.
+      const methods = Object.entries(ALEXIA_METHODS) as [
+        AlexiaMethod,
+        { params: StandardSchemaV1; result: StandardSchemaV1 },
+      ][]
+      for (const [method, schemas] of methods) {
+        client.setRequestHandler(method, schemas, (params) =>
+          alexia(this.id, method, params as AlexiaParams<AlexiaMethod>),
+        )
+      }
+    }
 
     const session: Session = { client, transport, done: false, counted: false }
     client.onclose = () => this.#onClose(session)

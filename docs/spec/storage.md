@@ -142,6 +142,10 @@ identifier it can find and rejects the whole thing if any of them is not inside 
 prefix.** No `ATTACH`, no `PRAGMA`, no `sqlite_master`, no second statement, no CTE naming
 an unknown table. When core is not sure, it says no.
 
+**Not implemented yet.** Core answers `alexia/storage/raw` with `-32052` until G1 below is
+decided — a permissive regex shipped early is harder to take back than a method that was
+never there.
+
 > **This is [open question G1](../../questions.md), on purpose.** The typed API above has no
 > joins and no aggregates beyond `count`, which is either fine or obviously not — and the
 > first plugin that genuinely needs a join is the evidence. **Decide at M2, with voice as

@@ -87,7 +87,7 @@ Tick a box only when the task's acceptance criteria pass. `[GATE]` needs a human
 - [x] **M0-1** `@alexia/protocol` — types, schemas, version constants
 - [x] **M0-2** Supervisor: spawn, handshake, heartbeat, backoff, lazy spawn, idle shutdown
 - [x] **M0-3** `@alexia/sdk` — the plugin-author package
-- [ ] **M0-4** `plugins/hello` — the plugin that answers
+- [x] **M0-4** `plugins/hello` — the plugin that answers
 - [ ] **M0-5** `plugins/crasher` — the plugin that dies, three ways
 - [ ] **M0-6** `plugins/vanisher` — the plugin that disappears mid-call
 - [ ] **M0-7** Manifest loader and capability resolver
@@ -1499,6 +1499,7 @@ Newest first. Every entry here is also in Alexia.md's decision log.
 
 | Date | Entry |
 |---|---|
+| 2026-08-27 | M0-4 needed core to *answer* `alexia/*`, so the minimum store — `node:sqlite`, namespaced tables, kv, settings, purge — landed here rather than at M1-1. M1-1 adds migrations, the platform data directory and the transaction helper; M1-3 adds the keychain. The wire contract and the namespace rule are what M0 has to prove, and both are now under test. |
 | 2026-08-27 | **D57** — an Alexia plugin speaks MCP `2025-11-25`, and `2026-07-28` is the revision core *also* accepts. That era removed the server-to-client request channel, and four of the five `alexia/*` methods are requests a plugin sends to core. Measured, not read: on the newer era they are dropped unanswered. The two-wide window still holds, pointing the other way. |
 | 2026-08-27 | **D56** *(superseded by D57 in mechanism — it describes `2026-07-28`, which is not where Alexia plugins live)* — on `2026-07-28` a plugin never *sends* core a request: sampling, elicitation and roots come back in-band as an `input_required` answer to the call being served, and core re-sends the call with the answers. Found while building M0-2; the wire spec said `sampling/createMessage` and left an author to guess the direction. Sampling and roots are deprecated upstream (SEP-2577, ≥12 months) and Alexia keeps both — the advice to "call provider APIs directly" assumes a key the plugin must not have. Also: `execa` dropped from core, see the parts list. |
 | 2026-08-27 | **D55** — MCP `2026-07-28` has no `initialize`: `server/discover`, a per-request `_meta` envelope, and `subscriptions/listen` for every server-to-client notification. G3 answered — core accepts the pinned revision and its immediate predecessor, two at a time. |
