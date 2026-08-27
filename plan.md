@@ -123,7 +123,7 @@ Tick a box only when the task's acceptance criteria pass. `[GATE]` needs a human
 - [x] **M15-6** Step-trace trimming
 - [x] **M15-7** Ceilings and the spend preview
 - [x] **M15-8** A tool vanishes mid-task
-- [ ] **M15-G** **Done when:** a multi-step task finishes on a free model, every step visible, stop works mid-step
+- [x] **M15-G** **Done when:** a multi-step task finishes on a free model, every step visible, stop works mid-step
 
 ### M2 — Voice, the real proof
 
@@ -1113,6 +1113,24 @@ the test that proves both.
 
 > **A multi-step task completes on a free model, every step visible, the stop button works
 > mid-step, and deleting a plugin mid-task makes it re-plan rather than crash.**
+
+**Reached 2026-08-27.** Run end to end against `qwen3:8b` on this machine — a real local
+model, real plugins, nothing scripted:
+
+| | Evidence |
+|---|---|
+| Multi-step on a free model | *"Greet Vaclav, then tell me how many people have been greeted"* → `hello__greet`, then `hello__greeted`, answered from both. **Spend $0.00.** |
+| Every step visible | Each step emitted before its work, not after — the trace, not a spinner |
+| Stop mid-step | Aborted 2 s into a 30 s call: the call came back `AbortError` and the task ended `stopped` at 24 s. `stop.test.ts` also covers the impolite case, where a plugin blocks its own event loop and only `callMs` ends it |
+| A plugin deleted mid-task | Folder removed while the task ran; the model was told the tool no longer exists *and what does*, re-planned onto `hello__greet`, and finished — *"The slow tool wasn't available, so I skipped that step"* |
+
+One honest note on the last row: in the live run the deletion landed just **before** the call
+started, because the model took a few seconds to choose. The deletion landing *during* an
+in-flight call is the deterministic case, and it is `replan.test.ts`.
+
+Speed is the finding to carry forward: 44–49 seconds for two steps on an 8B. Correct, and
+not fast. Nothing in M1.5 is wrong about it — it is the model, and Combined mode exists for
+exactly this — but a person watching a local run needs the trace precisely because of it.
 
 **Stop here and report.**
 
