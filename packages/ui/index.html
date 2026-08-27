@@ -21,6 +21,9 @@
         <option value="combined">Combined</option>
         <option value="cloud">Cloud</option>
       </select>
+      <!-- What Alexia may do unasked. A control, not only a setting page: this is the
+           number one thing a person changes after being surprised once. -->
+      <select id="permission" class="badge" title="What Alexia may do without asking"></select>
       <span id="model" class="badge">no model yet</span>
       <span id="spend" class="badge">$0.00</span>
     </header>
@@ -76,6 +79,17 @@
     </section>
 
     <main id="log" aria-live="polite"></main>
+
+    <!-- The permission prompt. It sits above the composer rather than over the page: a
+         modal here would cover the trace, which is the thing being decided about. -->
+    <div id="prompt" hidden>
+      <p id="prompt-why"></p>
+      <div class="row">
+        <button id="allow" type="button">Allow once</button>
+        <button id="deny" type="button" class="quiet-button">Not this time</button>
+      </div>
+    </div>
+
     <p id="note" hidden></p>
 
     <!-- Typing `/` lists what there is, with a line each. Nobody is going to read

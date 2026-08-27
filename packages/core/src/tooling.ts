@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import type { CallToolResult } from '@modelcontextprotocol/client'
 import type { Tooling, ToolOutcome } from './agent.js'
+import type { Annotations } from './permissions.js'
 import type { Plugins } from './plugins.js'
 import type { ToolSpec } from './provider.js'
 
@@ -29,6 +30,8 @@ interface Known {
   /** What the plugin calls it. The prefix is core's, and never travels back over the wire. */
   tool: string
   spec: ToolSpec
+  /** MCP's own hints, carried through untouched for the permission gate to read. */
+  annotations?: Annotations
 }
 
 export class PluginTooling implements Tooling {
@@ -55,6 +58,16 @@ export class PluginTooling implements Tooling {
 
   async list(): Promise<ToolSpec[]> {
     return (await this.#aggregate()).map((k) => k.spec)
+  }
+
+  /**
+   * What the author declared about a tool, for the permission gate (M15-3). Undefined means
+   * core has never heard of it, which the gate reads the same way it reads a tool declaring
+   * nothing: not safe until something says so.
+   */
+  async about(name: string): Promise<{ pluginId: string; annotations?: Annotations } | undefined> {
+    const found = (await this.#aggregate()).find((k) => k.spec.name === name)
+    return found && { pluginId: found.pluginId, ...(found.annotations && { annotations: found.annotations }) }
   }
 
   /**
@@ -124,6 +137,7 @@ export class PluginTooling implements Tooling {
       known.push({
         pluginId,
         tool: tool.name,
+        ...(tool.annotations && { annotations: tool.annotations as Annotations }),
         spec: {
           name,
           ...(tool.description !== undefined && { description: tool.description }),

@@ -10,6 +10,20 @@ import { commands, pins, run as runCommand } from './commands.js'
 import { installed, OLLAMA, running } from './ollama.js'
 import { usable } from './pool.js'
 import { Plugins } from './plugins.js'
+import {
+  boundaryAck,
+  DEFAULT_MODE,
+  heard,
+  lifts,
+  MODE_LABELS,
+  pathsIn,
+  rootsOf,
+  rule,
+  type Boundary,
+  type Mode,
+  type Ruling,
+  type Scope,
+} from './permissions.js'
 import { keyOf, PROVIDERS } from './provider.js'
 import { MODES } from './router.js'
 import { CORE, keychain, type SecretStore } from './secrets.js'
@@ -111,6 +125,9 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     secrets,
     log: (id, line) => console.error(`[${id}] ${line}`),
     onToolsChanged: () => tooling.invalidate(),
+    // The folders the user chose, as MCP roots. A plugin is told where it may work by the
+    // protocol's own mechanism rather than by anything Alexia invented.
+    roots: () => rootsOf(scope()),
   })
   const tooling = new PluginTooling(plugins, (line) => console.error(`[tools] ${line}`))
   plugins.load()
@@ -126,6 +143,21 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     mode: (store.kvGet(CORE, 'mode') as string | undefined) ?? 'combined',
   })
 
+  /**
+   * Where Alexia may work and how much it may do unasked (M15-3). One kv entry, because
+   * these are always read together and always shown together.
+   */
+  const scope = (): Scope => {
+    const saved = store.kvGet(CORE, 'scope') as Partial<Scope> | undefined
+    return {
+      mode: saved?.mode ?? DEFAULT_MODE,
+      roots: saved?.roots ?? [],
+      ...(saved?.everywhere === true && { everywhere: true }),
+      boundaries: (store.kvGet(CORE, 'boundaries') as Boundary[] | undefined) ?? [],
+      dataDir: root,
+    }
+  }
+
   /** Every enabled plugin's manifest, which is where its commands come from (M1-12). */
   const manifests = () => plugins.ids.flatMap((id) => plugins.manifest(id) ?? [])
 
@@ -135,6 +167,16 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     local: (await running()) ? await installed() : [],
     rungs: await usable(store, secrets),
   })
+
+  /**
+   * One question at a time, waiting for an answer from the screen.
+   *
+   * A permission prompt is the one place the loop genuinely blocks on a person, so it is
+   * held here rather than invented per request: the task streams `ask`, this promise waits,
+   * and `/api/approve` settles it. A second question cannot arrive while one is open,
+   * because the loop is single-threaded through it.
+   */
+  let pending: ((allowed: boolean) => void) | undefined
 
   const server = createServer((request, response) => {
     void handle(request, response).catch((error: unknown) => {
@@ -178,6 +220,15 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
           spent: month.spent,
           cap: month.cap,
           warning: warning(month),
+          // The permission controls, and what is standing. Every one of these is a control
+          // in the shell, not only a command — same rule as M1-12.
+          permissions: {
+            mode: scope().mode,
+            modes: MODE_LABELS,
+            roots: scope().roots,
+            everywhere: scope().everywhere === true,
+            boundaries: scope().boundaries,
+          },
           // What the mode picker has to be honest about: nobody has read these terms yet,
           // and a flag that guesses would be worse than the awkward truth (D51).
           providers: PROVIDERS.map((p) => ({
@@ -235,6 +286,37 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
       return
     }
 
+    if (url.pathname === '/api/permissions' && request.method === 'POST') {
+      const asked = JSON.parse(await read(request)) as {
+        mode?: Mode
+        roots?: string[]
+        everywhere?: boolean
+        lift?: boolean
+      }
+      const now = scope()
+      store.kvSet(CORE, 'scope', {
+        mode: asked.mode && asked.mode in MODE_LABELS ? asked.mode : now.mode,
+        roots: asked.roots ?? now.roots,
+        everywhere: asked.everywhere ?? now.everywhere === true,
+      })
+      // Lifting a boundary is a control as well as a sentence, because a rule you cannot
+      // find the off switch for is a rule that gets worked around instead.
+      if (asked.lift === true) store.kvSet(CORE, 'boundaries', [])
+      response.writeHead(200, { 'content-type': 'application/json' })
+      response.end(JSON.stringify({ mode: scope().mode, roots: scope().roots, everywhere: scope().everywhere === true, boundaries: scope().boundaries }))
+      return
+    }
+
+    if (url.pathname === '/api/approve' && request.method === 'POST') {
+      const { allowed } = JSON.parse(await read(request)) as { allowed?: boolean }
+      const waiting = pending
+      pending = undefined
+      waiting?.(allowed === true)
+      response.writeHead(200, { 'content-type': 'application/json' })
+      response.end(JSON.stringify({ ok: waiting !== undefined }))
+      return
+    }
+
     if (url.pathname === '/api/chat' && request.method === 'POST') {
       await reply(request, response)
       return
@@ -271,6 +353,18 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     const user: Message = { role: 'user', content: text }
     store.append(session, user)
 
+    // A boundary the user just spoke, or one they just lifted. Said out loud either way:
+    // a rule that changed silently is a rule they will be surprised by later.
+    const standing = scope().boundaries ?? []
+    const spoken = heard(text)
+    if (spoken) {
+      store.kvSet(CORE, 'boundaries', [...standing, spoken])
+      say({ note: boundaryAck(spoken) })
+    } else if (standing.length > 0 && lifts(text)) {
+      store.kvSet(CORE, 'boundaries', [])
+      say({ note: 'Lifted. I can delete and change things again.' })
+    }
+
     const month = allowance(store)
     try {
       const result = await run({
@@ -282,6 +376,30 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
         secrets,
         session,
         paidAllowed: !month.stop,
+        /**
+         * The gate (M15-3). Built fresh per call, because the mode, the folders and the
+         * boundaries can all change while a task is running — and the point of a boundary
+         * spoken mid-task is that it takes effect on the next step, not the next task.
+         */
+        guard: async (call): Promise<Ruling> => {
+          const about = await tooling.about(call.name)
+          return rule(
+            {
+              tool: call.name,
+              ...(about?.annotations && { annotations: about.annotations }),
+              paths: pathsIn(call.args),
+              // ponytail: M3-6 adds servers nobody reviewed, and this is where they become
+              // `false`. Everything installed today came from this repo.
+              reviewed: true,
+            },
+            scope(),
+          )
+        },
+        approve: (ruling) =>
+          new Promise<boolean>((resolve) => {
+            pending = resolve
+            say({ ask: ruling.why })
+          }),
         on: {
           delta: (delta) => say({ delta }),
           note: (note) => say({ note }),
@@ -314,6 +432,10 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     } catch (error) {
       say({ error: said(error) })
     }
+    // Whatever ended the task, an unanswered question outlives nothing. Settling it as a
+    // no rather than leaving it is what keeps a stopped task from holding the next one.
+    pending?.(false)
+    pending = undefined
     response.end()
   }
 

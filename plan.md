@@ -117,7 +117,7 @@ Tick a box only when the task's acceptance criteria pass. `[GATE]` needs a human
 
 - [x] **M15-1** The agent loop
 - [x] **M15-2** Plugin tools reach the model
-- [ ] **M15-3** Permission modes and the never-touch list
+- [x] **M15-3** Permission modes and the never-touch list
 - [ ] **M15-4** The safety checker
 - [ ] **M15-5** The visible trace and the stop control
 - [ ] **M15-6** Step-trace trimming
@@ -1057,9 +1057,11 @@ The four modes, driven off MCP annotations per *The contract*. Folder scope thro
 ordinary folder browser, served to plugins as MCP `roots`; *Everywhere* exists and warns.
 
 The **fixed never-touch list** ships with Alexia and is not editable: credential stores,
-system directories, Alexia's own config. It is not overridden by any mode except explicit
-Full trust. This list is deterministic code — it is what stands between the user and a
-disaster when the checker is wrong.
+system directories, Alexia's own config. It is **not overridden by any mode, Full trust
+included** — corrected here from *"except explicit Full trust"*, which contradicted both
+Alexia.md's own mode table and wire-protocol.md §7 (D63). This list is deterministic code —
+it is what stands between the user and a disaster when the checker is wrong, and a floor
+with an off switch is not a floor.
 
 **Spoken boundaries count as blocks.** *"Don't delete anything"* holds until lifted — a strong
 default, not a hard guarantee, and the difference gets said out loud rather than implied.
@@ -1629,6 +1631,7 @@ Newest first. Every entry here is also in Alexia.md's decision log.
 
 | Date | Entry |
 |---|---|
+| 2026-08-27 | **D63** — the never-touch list has **no exceptions**, Full trust included. Alexia.md contradicted itself four lines apart and this file sided with the wrong half; both are corrected. Full trust removes prompts, not the floor. Also settled while building M15-3: paths are matched by segment rather than by string prefix, `pathsIn` reads absolute paths only and says why that limit is honest rather than pretending to be a sandbox, and a spoken boundary is quoted back verbatim and holds in every mode — including Full trust, because it is the user's own instruction and not a setting. |
 | 2026-08-27 | **D62** — **G5 answered: yes.** A 7–9B local model can genuinely plan, so `hard` work no longer skips this machine and Local mode is a real agent rather than a chat window. Two changes, not the one the plan expected: the shape-to-tier table went uniform and was deleted — a lookup returning the same answer for every key is drift with a type annotation — and `PLANNER`, a 7B floor in parameters, took over the job `tier` could not do, since every local model is `T0` at any size. Consequence worth stating: per-step tiering now bites in **Local** mode, where the plan runs on the 8B and the crank steps run on whatever else can call a tool. In cloud mode every step was already going cheapest-first, so there was never a saving there to find. |
 | 2026-08-27 | **D61** — the design pass is **deferred to M2-D1**, before the widgets that inherit it and after the features. D60's finding held; its sequencing did not. `docs/design.md` exists to be spent by M2-1, so M2-1 is its deadline, and a first cold-install test learns more about *what a person does when told to go and make an OpenRouter account* than about the frame around it. M1-D1 shrank to a holding theme — one dark achromatic palette, her face as icon and mark, a visible focus ring — and to the two structural bugs that were not taste: `form.hidden` defeated by a type selector, and the third mode card wrapping under the fold. |
 | 2026-08-27 | **D60** — the plan had no design task. M5-5's *"polished"* turns out to mean the flow and its timings, not the look, and M2-1's *"every plugin matches the theme"* names a theme nothing creates. Added **M1-D1**, before the first cold-install test: a restructure of the shell, plus a written `docs/design.md` for M2-1's widgets and M15-5's trace to inherit. Trust is not decoration in a product that asks for a key, a folder and a budget. |

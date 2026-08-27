@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+import type { Ruling } from './permissions.js'
 import { ProviderError, type ToolSpec } from './provider.js'
 import { route, send, shapeOf, type Pins, type Shape, type World } from './router.js'
 import type { SecretStore } from './secrets.js'
@@ -83,6 +84,13 @@ export interface RunOptions {
    */
   maxSteps?: number
   signal?: AbortSignal
+  /**
+   * May this call run? (M15-3.) The loop does not know what a permission is — it asks, and
+   * treats every answer as something to plan around.
+   */
+  guard?(call: { name: string; args: Record<string, unknown> }): Ruling | Promise<Ruling>
+  /** The user's decision on an `ask`. Absent means nobody is there to ask, so it is a no. */
+  approve?(ruling: { verdict: 'ask'; why: string }): Promise<boolean>
   on?: AgentEvents
 }
 
@@ -169,7 +177,7 @@ export async function run(options: RunOptions): Promise<RunResult> {
       steps.push(step)
       on?.step?.(step)
 
-      const outcome = await tools.call(call.name, step.args, options.signal)
+      const outcome = await permitted(step)
       step.outcome = outcome
       failed ||= !outcome.ok
       on?.done?.(step)
@@ -185,6 +193,30 @@ export async function run(options: RunOptions): Promise<RunResult> {
     // is invariant 4 — means the plan was wrong, and re-planning is the expensive step the
     // user is actually paying for. So a failure buys back the planning tier for one turn.
     shape = failed ? planning : 'tools'
+  }
+
+  /**
+   * The gate, and then the call.
+   *
+   * A refusal is an outcome, not an exception — the same as a tool that failed. *You are not
+   * allowed to do that* is information the model can plan around, and stopping the whole task
+   * on it would turn every careful permission setting into a broken assistant. The one thing
+   * it must never be is silent: what comes back is the reason, in the words the user would
+   * read, so the answer at the end can say what it could not do.
+   */
+  async function permitted(step: Step): Promise<ToolOutcome> {
+    const ruling = (await options.guard?.({ name: step.name, args: step.args })) ?? { verdict: 'run' }
+    if (ruling.verdict === 'blocked') return { ok: false, text: ruling.why }
+    if (ruling.verdict === 'ask') {
+      const said = await options.approve?.(ruling)
+      if (said !== true) {
+        return {
+          ok: false,
+          text: `Not allowed: ${ruling.why} The user did not approve it, so it did not run.`,
+        }
+      }
+    }
+    return tools.call(step.name, step.args, options.signal)
   }
 
   function finish(ended: RunResult['ended'], why?: string): RunResult {

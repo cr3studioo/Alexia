@@ -272,6 +272,31 @@ select {
   padding: 0.6rem 1.4rem;
 }
 
+/* The permission prompt. Above the composer, never over the trace — what is being decided
+   is what just happened on screen, so covering it would be the wrong shape entirely. */
+
+#prompt {
+  padding: 0.75rem 1rem;
+  border-top: 1px solid var(--line);
+  background: var(--panel);
+}
+
+#prompt p {
+  margin: 0 0 0.6rem;
+}
+
+.row {
+  display: flex;
+  gap: 0.5rem;
+}
+
+/* The refusing button is not the loud one, and it is not hidden either. */
+.quiet-button {
+  background: transparent;
+  color: var(--ink);
+  border: 1px solid var(--line);
+}
+
 /* The command list. Typing `/` shows it; it is the only documentation anybody will read. */
 
 #menu {

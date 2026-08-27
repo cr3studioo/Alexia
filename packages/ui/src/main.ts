@@ -33,8 +33,17 @@ interface Command {
   shadowed?: boolean
 }
 
+interface Permissions {
+  mode: string
+  modes: Record<string, string>
+  roots: string[]
+  everywhere: boolean
+  boundaries: { said: string; blocks: string }[]
+}
+
 interface State {
   setup: { done: boolean; name: string; mode: string }
+  permissions: Permissions
   messages: Turn[]
   spent: number
   cap?: number
@@ -51,6 +60,9 @@ const spendBadge = document.querySelector<HTMLElement>('#spend')!
 const form = document.querySelector<HTMLFormElement>('#ask')!
 const text = document.querySelector<HTMLTextAreaElement>('#text')!
 const button = form.querySelector('button')!
+const prompt = document.querySelector<HTMLElement>('#prompt')!
+const promptWhy = document.querySelector<HTMLElement>('#prompt-why')!
+const permission = document.querySelector<HTMLSelectElement>('#permission')!
 
 const money = (n: number): string => `$${n.toFixed(2)}`
 
@@ -144,7 +156,48 @@ async function load(): Promise<void> {
     if (turn.model) modelBadge.textContent = turn.model
   }
   spendBadge.textContent = state.cap === undefined ? money(state.spent) : `${money(state.spent)} of ${money(state.cap)}`
+  showPermissions(state.permissions)
   say(state.warning)
+}
+
+/**
+ * The permission control, filled from core's own labels rather than a copy of them here —
+ * two lists of four modes that have to agree is one list too many.
+ */
+function showPermissions(state: Permissions): void {
+  if (permission.options.length === 0) {
+    for (const [value, label] of Object.entries(state.modes)) permission.add(new Option(label, value))
+    permission.addEventListener('change', () => {
+      void fetch('/api/permissions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-alexia-token': token },
+        body: JSON.stringify({ mode: permission.value }),
+      })
+    })
+  }
+  permission.value = state.mode
+
+  // A standing boundary is the user's own sentence holding things back. It stays on screen
+  // while it applies, because a rule you cannot see is a rule you cannot find the end of.
+  const boundary = state.boundaries[0]
+  if (boundary) say(`Holding: “${boundary.said}”. Say so and I will lift it.`)
+}
+
+/** The permission prompt. One question at a time, and the answer goes straight back. */
+function askPermission(why: string): void {
+  promptWhy.textContent = why
+  prompt.hidden = false
+  const answer = (allowed: boolean) => () => {
+    prompt.hidden = true
+    void fetch('/api/approve', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-alexia-token': token },
+      body: JSON.stringify({ allowed }),
+    })
+  }
+  // `once` on both, because the pair is replaced wholesale for the next question.
+  document.querySelector('#allow')!.addEventListener('click', answer(true), { once: true })
+  document.querySelector('#deny')!.addEventListener('click', answer(false), { once: true })
 }
 
 /**
@@ -197,6 +250,12 @@ async function ask(question: string): Promise<void> {
     }
     // The one plain line before a charge, and the monthly warning, land in the same place.
     if (typeof event.note === 'string') say(event.note)
+    if (typeof event.ask === 'string') askPermission(event.ask)
+    const step = event.step as { n: number; name: string; ok?: boolean; text?: string } | undefined
+    if (step) {
+      // Every step visible as it happens, not a spinner (M15-5 makes this a real trace).
+      say(step.ok === undefined ? `Step ${String(step.n)}: ${step.name}…` : `Step ${String(step.n)}: ${step.name} — ${step.ok ? 'done' : 'failed'}`)
+    }
     if (typeof event.error === 'string') {
       answer.remove()
       bubble('refusal', event.error)
@@ -210,6 +269,7 @@ async function ask(question: string): Promise<void> {
         spendBadge.textContent = money(done.spent) + cap
       }
       if (done.warning) say(done.warning)
+      prompt.hidden = true
     }
   }
 }
