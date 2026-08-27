@@ -13,5 +13,11 @@
     ]
   },
   "alexia_protocol": 1,
-  "mcp_protocol": "2025-11-25"
+  "mcp_protocol": "2025-11-25",
+  "requires": [
+    {
+      "cap": "demo.greet",
+      "why": "to have something else do the greeting"
+    }
+  ]
 }

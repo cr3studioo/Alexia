@@ -5,6 +5,8 @@ import { describe, expect, test } from 'vitest'
 import {
   ALEXIA_METHODS,
   ErrorCode,
+  PERMISSIONS,
+  PROVIDES_META,
   isAlexiaMethod,
   KV_MAX_BYTES,
   SETTINGS_CHANGED,
@@ -29,7 +31,9 @@ describe('the specs and the code say the same thing', () => {
       .map((m) => m[0])
       .filter((n) => !n.endsWith('/'))
     expect(named.length).toBeGreaterThan(8) // the scanner is actually reading the specs
-    const unknown = [...new Set(named)].filter((n) => !isAlexiaMethod(n) && n !== SETTINGS_CHANGED)
+    // Two of them are not methods: one notification core sends down, and one `_meta` key.
+    const known = [SETTINGS_CHANGED, PROVIDES_META] as string[]
+    const unknown = [...new Set(named)].filter((n) => !isAlexiaMethod(n) && !known.includes(n))
     expect(unknown, 'documented but not implemented').toEqual([])
   })
 
@@ -41,6 +45,16 @@ describe('the specs and the code say the same thing', () => {
       .filter(({ code, name }) => ErrorCode[name] !== code)
     expect(wrong, 'documented with a different number, or not at all').toEqual([])
   })
+})
+
+test('the permission registry in the document is the one in the code', () => {
+  // The list is closed on purpose: a plugin cannot widen what it may ask for by inventing a
+  // name. That is only true while the document and the constant agree, so this compares
+  // them exactly — the section between the two headings, in order.
+  const doc = readFileSync(join(specDir, 'capabilities.md'), 'utf8')
+  const registry = doc.slice(doc.indexOf('## The permission registry'), doc.indexOf('## The service registry'))
+  const named = [...registry.matchAll(/^\| `([a-z][a-z._]*)` \|/gm)].map((m) => m[1])
+  expect(named).toEqual([...PERMISSIONS])
 })
 
 describe('the where grammar', () => {

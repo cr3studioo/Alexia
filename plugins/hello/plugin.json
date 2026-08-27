@@ -28,5 +28,8 @@
     "tables": [
       "greetings"
     ]
-  }
+  },
+  "provides": [
+    "demo.greet"
+  ]
 }

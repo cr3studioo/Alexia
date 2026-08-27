@@ -13,6 +13,9 @@ alexia.tool(
       required: ['who'],
     }),
     annotations: { readOnlyHint: true, openWorldHint: false },
+    // The runtime half of `provides`: this tool is what answers that capability. Whoever
+    // calls it learns nothing about who did — that is the invariant, in one line.
+    _meta: { 'alexia/provides': ['demo.greet'] },
   },
   async ({ who }) => {
     const { greeting } = await alexia.settings()

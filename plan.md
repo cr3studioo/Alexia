@@ -89,8 +89,8 @@ Tick a box only when the task's acceptance criteria pass. `[GATE]` needs a human
 - [x] **M0-3** `@alexia/sdk` — the plugin-author package
 - [x] **M0-4** `plugins/hello` — the plugin that answers
 - [x] **M0-5** `plugins/crasher` — the plugin that dies, three ways
-- [ ] **M0-6** `plugins/vanisher` — the plugin that disappears mid-call
-- [ ] **M0-7** Manifest loader and capability resolver
+- [x] **M0-6** `plugins/vanisher` — the plugin that disappears mid-call
+- [x] **M0-7** Manifest loader and capability resolver
 - [ ] **M0-8** The ten invariant checks, green in CI
 - [ ] **M0-9** Memory budget harness
 - [ ] **M0-G** **Done when:** delete a plugin folder while Alexia is running and nothing else notices
@@ -1504,6 +1504,7 @@ Newest first. Every entry here is also in Alexia.md's decision log.
 
 | Date | Entry |
 |---|---|
+| 2026-08-27 | **D59** — a capability is **declared** in the manifest and **bound** on the tool, in MCP's own `_meta` as `alexia/provides`. The manifest is what the library shows and what another plugin's `requires` resolves against before anything is running; the tool is what says it can answer *right now*. A plugin whose model has not downloaded cannot answer `voice.transcribe` and should not claim it can. |
 | 2026-08-27 | **D58** — a plugin's working directory is **not** its folder. Windows will not delete a directory that is a running process's cwd, and that is exactly the demo the project exists for. Measured both ways; core spawns with the cwd on a directory it owns and hands the folder over as `ALEXIA_PLUGIN_DIR`. |
 | 2026-08-27 | M0-4 needed core to *answer* `alexia/*`, so the minimum store — `node:sqlite`, namespaced tables, kv, settings, purge — landed here rather than at M1-1. M1-1 adds migrations, the platform data directory and the transaction helper; M1-3 adds the keychain. The wire contract and the namespace rule are what M0 has to prove, and both are now under test. |
 | 2026-08-27 | **D57** — an Alexia plugin speaks MCP `2025-11-25`, and `2026-07-28` is the revision core *also* accepts. That era removed the server-to-client request channel, and four of the five `alexia/*` methods are requests a plugin sends to core. Measured, not read: on the newer era they are dropped unanswered. The two-wide window still holds, pointing the other way. |

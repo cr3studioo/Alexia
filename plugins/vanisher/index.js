@@ -20,11 +20,36 @@ alexia.tool(
     new Promise((resolve, reject) => {
       const done = setTimeout(() => resolve({ content: [{ type: 'text', text: 'still here' }] }), ms)
       // Stop must always work: free what you allocated and do not answer a cancelled call.
-      ctx.signal.addEventListener('abort', () => {
+      ctx.mcpReq.signal.addEventListener('abort', () => {
         clearTimeout(done)
         reject(new Error('cancelled'))
       })
     }),
+)
+
+alexia.tool(
+  'greet_via_alexia',
+  {
+    description: 'Has something else do the greeting, without knowing what.',
+    inputSchema: fromJsonSchema({
+      type: 'object',
+      properties: { who: { type: 'string' } },
+      required: ['who'],
+    }),
+  },
+  async ({ who }) => {
+    try {
+      // By capability name. Not by plugin id, because there is no way to say one.
+      return await alexia.capability('demo.greet', { who })
+    } catch {
+      // Degrading is the author's job, and this sentence is the author's. Core will not
+      // write it, and will not hide the plugin for having nothing to call.
+      return {
+        content: [{ type: 'text', text: 'Nothing installed can greet anyone right now.' }],
+        isError: true,
+      }
+    }
+  },
 )
 
 await alexia.start()

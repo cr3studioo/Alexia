@@ -85,10 +85,13 @@ name and becomes a drop-in alternative rather than a competitor.
 
 | Name | Contract | First provided by |
 |---|---|---|
+| `demo.greet` | a name in, a greeting out | `plugins/hello` (M0) |
 | `voice.transcribe` | audio file in, text out | `plugins/voice` (M2) |
 | `voice.speak` | text in, audio played, nothing out | `plugins/voice` (M2) |
 
-Two entries, because two exist. **This table grows by pull request, never by a string
+Three entries, because three exist. `demo.greet` is real: `plugins/hello` provides it and
+`plugins/vanisher` requires it, which is how *delete the provider and the consumer keeps
+running* stays a test rather than a claim. **This table grows by pull request, never by a string
 somebody typed.** A name invented locally is a name the next plugin will spell differently,
 and then there are two capabilities that mean the same thing and no drop-in alternative for
 either.
@@ -108,6 +111,26 @@ either.
    waits for M4.
 
 ---
+
+## How a capability reaches a tool
+
+The manifest's `provides` is the **declaration** — what the library shows, what the registry
+indexes, and what another plugin's `requires` resolves against before either is running.
+
+The **binding** is on the tool, in MCP's own `_meta`:
+
+```jsonc
+{ "name": "transcribe",
+  "description": "…",
+  "_meta": { "alexia/provides": ["voice.transcribe"] } }
+```
+
+Two places, on purpose, and it is the same reason tools are not in the manifest: a plugin
+whose model has not finished downloading *cannot* answer `voice.transcribe` yet and should
+not claim it can. Declaring it in the manifest is a promise about the plugin; declaring it
+on the tool is a statement about right now. If a plugin declares a capability in its
+manifest and no running tool binds it, the call gets `-32050` — the same answer as if the
+plugin were not installed, which is exactly what the caller needs to hear.
 
 ## What a caller learns
 
