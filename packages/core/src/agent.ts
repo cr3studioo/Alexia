@@ -4,6 +4,7 @@ import { ProviderError, type ToolSpec } from './provider.js'
 import { route, send, shapeOf, type Pins, type Shape, type World } from './router.js'
 import type { SecretStore } from './secrets.js'
 import type { Message, Store } from './store.js'
+import { trim, type TrimOptions } from './trim.js'
 
 /**
  * Plan → act → observe → repeat.
@@ -83,6 +84,11 @@ export interface RunOptions {
    * model calling the same tool until the month's budget is gone.
    */
   maxSteps?: number
+  /**
+   * How much trace the model is shown (M15-6). Re-applied every step, because the trace
+   * grows under the loop — trimming once at the start would trim nothing.
+   */
+  trimming?: TrimOptions
   signal?: AbortSignal
   /**
    * May this call run? (M15-3.) The loop does not know what a permission is — it asks, and
@@ -140,7 +146,9 @@ export async function run(options: RunOptions): Promise<RunResult> {
       answer = await send(
         verdict.choices,
         {
-          messages: [system(available), ...messages],
+          // Trimmed here rather than in the store: what is kept is what a model is shown,
+          // and the history itself stays whole so a reload shows every step that happened.
+          messages: [system(available), ...trim(messages, options.trimming)],
           ...(available.length > 0 && { tools: available }),
           ...(options.signal && { signal: options.signal }),
         },
