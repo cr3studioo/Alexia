@@ -188,6 +188,45 @@ test('a rung that says 429 is the next rungs turn, and the charge is announced f
   ledger.close()
 })
 
+test('the hard stop takes the paid rungs off the table and says which wall it hit', async () => {
+  const secrets = memorySecrets()
+  const two = { ...beta, baseUrl: at }
+  await secrets.set(CORE, keyOf(two), 'sk-b')
+  refuse = new Set()
+
+  const ledger = new Store(':memory:')
+  await expect(
+    send([{ model: cheapPaid, provider: two }], { messages: asked('hello') }, ledger, secrets, {
+      paidAllowed: false,
+    }),
+  ).rejects.toMatchObject({ status: 402 })
+
+  // Not sent, so not counted, and nothing spent.
+  expect(ledger.requests('beta').minute).toBe(0)
+  expect(ledger.spend(0)).toBe(0)
+  ledger.close()
+})
+
+test('what an answer cost is recorded against whoever asked for it', async () => {
+  const secrets = memorySecrets()
+  const two = { ...beta, baseUrl: at }
+  await secrets.set(CORE, keyOf(two), 'sk-b')
+  refuse = new Set()
+
+  const ledger = new Store(':memory:')
+  const session = ledger.createSession('First')
+  await send([{ model: cheapPaid, provider: two }], { messages: asked('hello') }, ledger, secrets, {
+    session,
+    plugin: 'somebody',
+  })
+
+  // 10 tokens in at $0.20 a million. Small, but attributed three ways.
+  expect(ledger.spend(0)).toBeCloseTo(0.000_002)
+  expect(ledger.spend(0, { session })).toBeCloseTo(0.000_002)
+  expect(ledger.spendBy('plugin', 0)).toEqual([{ key: 'somebody', cost: expect.closeTo(0.000_002) }])
+  ledger.close()
+})
+
 test('every rung refusing is the caller problem, not a silent empty answer', async () => {
   const secrets = memorySecrets()
   const one = { ...alpha, baseUrl: at }

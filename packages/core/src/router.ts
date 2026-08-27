@@ -5,6 +5,7 @@ import { sent, type Rung } from './pool.js'
 import { chat, ProviderError, type ChatRequest, type Provider, type Usage } from './provider.js'
 import type { SecretStore } from './secrets.js'
 import type { Message, Store } from './store.js'
+import { costOf } from './usage.js'
 
 /**
  * Which model, and why that one.
@@ -187,10 +188,25 @@ export async function send(
   request: Omit<ChatRequest, 'model'>,
   store: Store,
   secrets: SecretStore,
-  hooks: { onDelta?: (text: string) => void; onNote?: (line: string) => void } = {},
+  hooks: {
+    onDelta?: (text: string) => void
+    onNote?: (line: string) => void
+    /** The hard stop (M1-9). False and the paid rungs are not rungs at all. */
+    paidAllowed?: boolean
+    /** Who this is for, so spend can be totalled per session and per plugin. */
+    session?: number
+    plugin?: string
+  } = {},
 ): Promise<Answer> {
   let last: unknown
+  let blocked = false
   for (const [at, choice] of choices.entries()) {
+    if (paid(choice.model.tier) && hooks.paidAllowed === false) {
+      // A cap that is reached does not quietly pick something worse, and it does not
+      // quietly spend either. It stops, and the caller says why.
+      blocked = true
+      continue
+    }
     // One plain line before the charge, not after it. Nobody is surprised by a bill from
     // something that did not say anything.
     if (paid(choice.model.tier)) {
@@ -208,6 +224,15 @@ export async function send(
         hooks.onDelta,
         secrets,
       )
+      store.recordUsage({
+        session: hooks.session,
+        plugin: hooks.plugin,
+        model: choice.model.id,
+        provider: choice.provider.id,
+        tokensIn: usage.in,
+        tokensOut: usage.out,
+        cost: costOf(choice.model, usage),
+      })
       return { message, usage, model: choice.model, provider: choice.provider }
     } catch (error) {
       last = error
@@ -216,6 +241,9 @@ export async function send(
       if (status === 429 || status >= 500) continue
       throw error
     }
+  }
+  if (blocked && last === undefined) {
+    throw new ProviderError(402, 'the monthly cap is reached — raise it in settings, or use a free model')
   }
   throw last ?? new ProviderError(503, 'nothing was available to ask')
 }

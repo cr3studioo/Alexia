@@ -68,6 +68,21 @@ const MIGRATIONS: string[] = [
      count INTEGER NOT NULL,
      PRIMARY KEY (provider, span, bucket)
    );`,
+
+  // 4 — what was spent, and by whom (M1-9). Per session, per model and per plugin, because
+  // "which plugin is costing me money" is a question with no other way to answer it.
+  `CREATE TABLE usage (
+     id INTEGER PRIMARY KEY,
+     at INTEGER NOT NULL,
+     session_id INTEGER,
+     plugin TEXT,
+     model TEXT NOT NULL,
+     provider TEXT NOT NULL,
+     tokens_in INTEGER NOT NULL,
+     tokens_out INTEGER NOT NULL,
+     cost REAL NOT NULL
+   );
+   CREATE INDEX usage_at ON usage (at);`,
 ]
 
 /**
@@ -452,6 +467,68 @@ export class Store {
       return row?.count ?? 0
     }
     return { minute: count(...SPANS[0]), day: count(...SPANS[1]) }
+  }
+
+  /**
+   * One answered request, in tokens and in money. No foreign key on the session on
+   * purpose: deleting a conversation must not quietly rewrite last month's total.
+   */
+  recordUsage(row: {
+    session?: number
+    plugin?: string
+    model: string
+    provider: string
+    tokensIn: number
+    tokensOut: number
+    cost: number
+    at?: number
+  }): void {
+    this.#db
+      .prepare(
+        'INSERT INTO usage (at, session_id, plugin, model, provider, tokens_in, tokens_out, cost)' +
+          ' VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      )
+      .run(
+        row.at ?? Date.now(),
+        row.session ?? null,
+        row.plugin ?? null,
+        row.model,
+        row.provider,
+        row.tokensIn,
+        row.tokensOut,
+        row.cost,
+      )
+  }
+
+  /** What has been spent since `since`, narrowed to one session, plugin or model. */
+  spend(since: number, filter: { session?: number; plugin?: string; model?: string } = {}): number {
+    const parts = ['at >= ?']
+    const params: (string | number)[] = [since]
+    for (const [column, value] of [
+      ['session_id', filter.session],
+      ['plugin', filter.plugin],
+      ['model', filter.model],
+    ] as const) {
+      if (value === undefined) continue
+      parts.push(`${column} = ?`)
+      params.push(value)
+    }
+    const row = this.#db
+      .prepare(`SELECT total(cost) AS spent FROM usage WHERE ${parts.join(' AND ')}`)
+      .get(...params) as { spent: number }
+    return row.spent
+  }
+
+  /** The same, grouped — which is what the spend panel is. */
+  spendBy(field: 'model' | 'plugin' | 'session', since: number): { key: string; cost: number }[] {
+    // Not interpolation of anything a caller typed: three names, mapped to three columns.
+    const column = { model: 'model', plugin: 'plugin', session: 'session_id' }[field]
+    return this.#db
+      .prepare(
+        `SELECT ${column} AS key, total(cost) AS cost FROM usage WHERE at >= ? AND ${column} IS NOT NULL` +
+          ` GROUP BY ${column} ORDER BY cost DESC`,
+      )
+      .all(since) as unknown as { key: string; cost: number }[]
   }
 
   /**

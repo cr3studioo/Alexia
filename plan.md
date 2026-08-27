@@ -105,7 +105,7 @@ Tick a box only when the task's acceptance criteria pass. `[GATE]` needs a human
 - [x] **M1-6** Free-tier pool adapter (self-hosted)
 - [x] **M1-7** Ollama provider (T0)
 - [x] **M1-8** The router — tiers, three axes, pins, 429 fallback
-- [ ] **M1-9** Usage, attribution and caps
+- [x] **M1-9** Usage, attribution and caps
 - [ ] **M1-10** Chat shell
 - [ ] **M1-11** First-run flow v1
 - [ ] **M1-12** Slash commands
