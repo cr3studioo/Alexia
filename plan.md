@@ -97,7 +97,7 @@ Tick a box only when the task's acceptance criteria pass. `[GATE]` needs a human
 
 ### M1 — Core minimum
 
-- [ ] **M1-1** Storage: SQLite, migrations, per-plugin namespaces
+- [x] **M1-1** Storage: SQLite, migrations, per-plugin namespaces
 - [ ] **M1-2** Sessions and message history
 - [ ] **M1-3** Settings store and `SecretStore`
 - [ ] **M1-4** Provider layer — one OpenAI-compatible interface
@@ -1504,6 +1504,7 @@ Newest first. Every entry here is also in Alexia.md's decision log.
 
 | Date | Entry |
 |---|---|
+| 2026-08-27 | M1-1: the database file is `alexia.db` under the **local** app-data directory on Windows, not the roaming one. Roaming profiles sync on logoff, and a synced live SQLite file with a WAL beside it is how histories get corrupted. Schema versioning is `PRAGMA user_version` with a forward-only migration list; a database from a newer build is refused rather than opened. |
 | 2026-08-27 | **D59** — a capability is **declared** in the manifest and **bound** on the tool, in MCP's own `_meta` as `alexia/provides`. The manifest is what the library shows and what another plugin's `requires` resolves against before anything is running; the tool is what says it can answer *right now*. A plugin whose model has not downloaded cannot answer `voice.transcribe` and should not claim it can. |
 | 2026-08-27 | **D58** — a plugin's working directory is **not** its folder. Windows will not delete a directory that is a running process's cwd, and that is exactly the demo the project exists for. Measured both ways; core spawns with the cwd on a directory it owns and hands the folder over as `ALEXIA_PLUGIN_DIR`. |
 | 2026-08-27 | M0-4 needed core to *answer* `alexia/*`, so the minimum store — `node:sqlite`, namespaced tables, kv, settings, purge — landed here rather than at M1-1. M1-1 adds migrations, the platform data directory and the transaction helper; M1-3 adds the keychain. The wire contract and the namespace rule are what M0 has to prove, and both are now under test. |

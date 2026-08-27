@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { IDENT, type Where } from '@alexia/protocol'
+import { mkdirSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { dirname, join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 
 /**
@@ -9,10 +12,35 @@ import { DatabaseSync } from 'node:sqlite'
  * The reason it exists this early: *purge means purge* is the transition worth testing
  * hardest (invariant 5), and a purge cannot be proved against storage that does not exist.
  *
- * ponytail: no migrations, no keychain, no transaction helper beyond the one purge needs.
- * M1-1 and M1-3 add those. What is here is the wire contract and the namespace rule, which
- * is what M0 has to prove.
+ * ponytail: no keychain yet. M1-3 adds it, and until it does nothing writes a secret here.
  */
+
+/**
+ * The platform's per-user application data directory — never beside the executable, so an
+ * update or a reinstall cannot take someone's history with it. On Windows that is the local
+ * one rather than the roaming one: a roaming profile syncing a live SQLite file is a
+ * corrupted database waiting for a slow network.
+ */
+export function dataDir(): string {
+  const home = homedir()
+  const base =
+    process.platform === 'win32' ? (process.env.LOCALAPPDATA ?? join(home, 'AppData', 'Local'))
+    : process.platform === 'darwin' ? join(home, 'Library', 'Application Support')
+    : (process.env.XDG_DATA_HOME ?? join(home, '.local', 'share'))
+  return join(base, 'Alexia')
+}
+
+/**
+ * Forward-only. Append, never edit: a migration that has already run on someone's machine is
+ * history, and editing one means two databases with the same version and different schemas.
+ * The index in this array is the version, so nothing is ever removed either.
+ */
+const MIGRATIONS: string[] = [
+  // 1 — the two tables core owns for everyone. Per-plugin tables are not here: they are
+  // created on first insert and dropped by purge, which is what storage.md promises.
+  `CREATE TABLE kv (ns TEXT, key TEXT, value TEXT, PRIMARY KEY (ns, key));
+   CREATE TABLE settings (plugin TEXT, key TEXT, value TEXT, PRIMARY KEY (plugin, key));`,
+]
 
 /** What SQLite actually stores. `encode` turns everything else into one of these. */
 type Value = string | number | null
@@ -103,14 +131,57 @@ export interface SelectQuery {
 export class Store {
   readonly #db: DatabaseSync
 
-  /** `path` is a file, or `:memory:`. Core decides where; a plugin never learns the path. */
-  constructor(path: string) {
+  /**
+   * `path` is a file, `:memory:`, or nothing — which means the real one, in the data
+   * directory. Core decides where; a plugin never learns the path.
+   */
+  constructor(path: string = join(dataDir(), 'alexia.db')) {
+    if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true })
     this.#db = new DatabaseSync(path)
     this.#db.exec('PRAGMA journal_mode = WAL')
-    this.#db.exec('CREATE TABLE IF NOT EXISTS kv (ns TEXT, key TEXT, value TEXT, PRIMARY KEY (ns, key))')
-    this.#db.exec(
-      'CREATE TABLE IF NOT EXISTS settings (plugin TEXT, key TEXT, value TEXT, PRIMARY KEY (plugin, key))',
-    )
+    this.#migrate()
+  }
+
+  /**
+   * Every migration this database has not run yet, each in its own transaction with the
+   * version it sets. A database written by a newer Alexia is refused rather than opened: an
+   * older build cannot know what a newer one added, and guessing costs someone their history.
+   */
+  #migrate(): void {
+    const { user_version: at } = this.#db.prepare('PRAGMA user_version').get() as {
+      user_version: number
+    }
+    if (at > MIGRATIONS.length) {
+      throw new Error(
+        `this database was written by a newer Alexia (schema ${at}, this build knows ${MIGRATIONS.length})`,
+      )
+    }
+    MIGRATIONS.slice(at).forEach((sql, i) => {
+      this.transaction(() => {
+        this.#db.exec(sql)
+        // A pragma value cannot be bound. This one is an array index, not anybody's input.
+        this.#db.exec(`PRAGMA user_version = ${at + i + 1}`)
+      })
+    })
+  }
+
+  /**
+   * `node:sqlite` has no transaction helper, so this is it: run `fn`, commit, roll back if it
+   * throws. Not nestable — SQLite refuses a `BEGIN` inside a `BEGIN`, loudly, which is the
+   * failure mode to want.
+   *
+   * ponytail: no savepoints. Add them the day two writers genuinely have to compose.
+   */
+  transaction<T>(fn: () => T): T {
+    this.#db.exec('BEGIN')
+    try {
+      const result = fn()
+      this.#db.exec('COMMIT')
+      return result
+    } catch (error) {
+      this.#db.exec('ROLLBACK')
+      throw error
+    }
   }
 
   close(): void {
@@ -230,16 +301,11 @@ export class Store {
     const tables = this.#db
       .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE ? ESCAPE '\\'")
       .all(`${prefix.replace(/_/g, '\\_')}%`) as { name: string }[]
-    this.#db.exec('BEGIN')
-    try {
+    this.transaction(() => {
       for (const { name } of tables) this.#db.exec(`DROP TABLE ${name}`)
       this.#db.prepare('DELETE FROM kv WHERE ns = ?').run(ns)
       this.#db.prepare('DELETE FROM settings WHERE plugin = ?').run(ns)
-      this.#db.exec('COMMIT')
-    } catch (error) {
-      this.#db.exec('ROLLBACK')
-      throw error
-    }
+    })
   }
 
   /** Every table in the file, for the purge check to diff against. */

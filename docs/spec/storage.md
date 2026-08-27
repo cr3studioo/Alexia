@@ -18,6 +18,17 @@ by core with WAL enabled. Plugins never see the path and never open it. `node:sq
 one built into Node — so there is no native module to compile on the machine of someone
 whose entire experience of Alexia is a double-click.
 
+The file is `alexia.db`, inside an `Alexia` folder in that directory: `%LOCALAPPDATA%` on
+Windows — the local one, not the roaming one, because a roaming profile syncing a live SQLite
+file is a corrupted database waiting for a slow network — `~/Library/Application Support` on
+macOS, and `$XDG_DATA_HOME` or `~/.local/share` on Linux. Never beside the executable, so an
+update or a reinstall cannot take someone's history with it.
+
+The schema is **forward-only**. `PRAGMA user_version` is the version, one migration per step,
+each in its own transaction, appended and never edited — a migration that has already run on
+someone's machine is history. A database written by a newer Alexia is refused rather than
+opened, because an older build cannot know what a newer one added.
+
 ## The namespace
 
 A plugin declares one in its manifest, and it must equal the plugin's `id`:
