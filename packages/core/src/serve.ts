@@ -10,6 +10,7 @@ import { asRuling, counted, freshTally, ModelChecker, type Tally } from './check
 import { commands, pins, run as runCommand } from './commands.js'
 import { installed, OLLAMA, running } from './ollama.js'
 import { usable } from './pool.js'
+import { ceilings, estimate, previewLine, setCeilings, worthAsking, type Ceilings } from './preview.js'
 import { Plugins } from './plugins.js'
 import {
   boundaryAck,
@@ -159,6 +160,8 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     }
   }
 
+  const limitsNow = (): Ceilings => ceilings(store)
+
   /** Every enabled plugin's manifest, which is where its commands come from (M1-12). */
   const manifests = () => plugins.ids.flatMap((id) => plugins.manifest(id) ?? [])
 
@@ -243,6 +246,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
           warning: warning(month),
           // The permission controls, and what is standing. Every one of these is a control
           // in the shell, not only a command — same rule as M1-12.
+          ceilings: limitsNow(),
           permissions: {
             mode: scope().mode,
             modes: MODE_LABELS,
@@ -328,6 +332,20 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
       return
     }
 
+    if (url.pathname === '/api/ceilings' && request.method === 'POST') {
+      const asked = JSON.parse(await read(request)) as Partial<Ceilings>
+      // Both ceilings editable, and the preview threshold with them — a leash you cannot
+      // shorten is not a leash, it is a decision somebody else made for you.
+      setCeilings(store, {
+        ...(typeof asked.steps === 'number' && asked.steps > 0 && { steps: Math.floor(asked.steps) }),
+        ...(typeof asked.monthly === 'number' && { monthly: asked.monthly }),
+        ...(typeof asked.askAbove === 'number' && asked.askAbove >= 0 && { askAbove: asked.askAbove }),
+      })
+      response.writeHead(200, { 'content-type': 'application/json' })
+      response.end(JSON.stringify(limitsNow()))
+      return
+    }
+
     if (url.pathname === '/api/stop' && request.method === 'POST') {
       // Works mid-step, always. An open permission question is settled as a no on the way
       // out, because a stopped task must not leave the next one waiting on it.
@@ -398,6 +416,23 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     }
 
     const month = allowance(store)
+    const limits = ceilings(store)
+
+    // Once, at the only moment the answer can still change anything. A cheap or free task
+    // never sees this, which is what keeps the question worth reading when it does appear.
+    const guess = estimate(store.history(session), (await world()).models[0])
+    if (worthAsking(guess, limits)) {
+      const allowed = await new Promise<boolean>((resolve) => {
+        pending = resolve
+        say({ ask: previewLine(guess) })
+      })
+      if (!allowed) {
+        say({ note: 'Stopped before starting. Nothing was spent.' })
+        response.end()
+        return
+      }
+    }
+
     const stop = new AbortController()
     task = stop
     try {
@@ -410,6 +445,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
         secrets,
         session,
         paidAllowed: !month.stop,
+        maxSteps: limits.steps,
         signal: stop.signal,
         /**
          * The gate (M15-3). Built fresh per call, because the mode, the folders and the

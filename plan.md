@@ -121,7 +121,7 @@ Tick a box only when the task's acceptance criteria pass. `[GATE]` needs a human
 - [x] **M15-4** The safety checker
 - [x] **M15-5** The visible trace and the stop control
 - [x] **M15-6** Step-trace trimming
-- [ ] **M15-7** Ceilings and the spend preview
+- [x] **M15-7** Ceilings and the spend preview
 - [ ] **M15-8** A tool vanishes mid-task
 - [ ] **M15-G** **Done when:** a multi-step task finishes on a free model, every step visible, stop works mid-step
 
