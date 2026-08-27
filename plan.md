@@ -93,7 +93,7 @@ Tick a box only when the task's acceptance criteria pass. `[GATE]` needs a human
 - [x] **M0-7** Manifest loader and capability resolver
 - [x] **M0-8** The ten invariant checks, green in CI
 - [x] **M0-9** Memory budget harness
-- [ ] **M0-G** **Done when:** delete a plugin folder while Alexia is running and nothing else notices
+- [x] **M0-G** **Done when:** delete a plugin folder while Alexia is running and nothing else notices
 
 ### M1 — Core minimum
 
