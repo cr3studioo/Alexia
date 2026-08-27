@@ -14,6 +14,13 @@ export interface SecretStore {
   delete(plugin: string, key: string): Promise<void>
 }
 
+/**
+ * Core's own scope, for the things that are not a plugin's — a provider key, at M1-4. It
+ * starts with an underscore, which a plugin id cannot: ids are lowercase letters, digits
+ * and hyphens, so nothing installable can ever collide with it.
+ */
+export const CORE = '_core'
+
 const SERVICE = 'alexia'
 const account = (plugin: string, key: string): string => `${plugin}/${key}`
 

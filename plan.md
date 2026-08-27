@@ -100,7 +100,7 @@ Tick a box only when the task's acceptance criteria pass. `[GATE]` needs a human
 - [x] **M1-1** Storage: SQLite, migrations, per-plugin namespaces
 - [x] **M1-2** Sessions and message history
 - [x] **M1-3** Settings store and `SecretStore`
-- [ ] **M1-4** Provider layer — one OpenAI-compatible interface
+- [x] **M1-4** Provider layer — one OpenAI-compatible interface
 - [ ] **M1-5** Model catalog: fetch, cache, daily diff, honesty flags
 - [ ] **M1-6** Free-tier pool adapter (self-hosted)
 - [ ] **M1-7** Ollama provider (T0)
