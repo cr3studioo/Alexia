@@ -9,8 +9,13 @@ import { stage } from '../staged.js'
 
 // Defends: the sentence the whole project is built on. A plugin's folder is deleted while a
 // call against it is in flight — not between calls, not while it is idle, at the worst
-// possible moment — and core notices, drops its tools, and says so. At M0 the loop is a
-// stub, so the *event* is what is proved here; M1.5 is what re-plans on it.
+// possible moment — and core notices, drops its tools, and says so. What is proved here is
+// the *event*: that core sees it by itself and cleans up after it.
+//
+// The other half arrived at M15-8 and lives in `replan.test.ts`: the same deletion, with a
+// real agent loop above it, re-planned around and the task finished. Two tests because they
+// fail for different reasons — this one when the watcher or the process handling breaks,
+// that one when the loop stops treating a failure as something to plan around.
 //
 // The Windows half of this is why the working directory is never the plugin's folder (D58):
 // a directory that is a running process's cwd cannot be deleted at all.
