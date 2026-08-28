@@ -60,6 +60,18 @@ export interface AlexiaPlugin {
 
   /** Every setting you declared, with the user's value or your default. */
   settings<T extends Record<string, unknown> = Record<string, unknown>>(): Promise<T>
+
+  /**
+   * Report yourself on the settings screen. `key` must be one of your own `status` widgets —
+   * the only kind this writes, because everything else on that screen is the user's answer
+   * and not yours to change.
+   *
+   * Core keeps it while you are stopped, so the screen is honest before your next spawn.
+   * A leading `●` reads as ready, `▲` as something to look at, `■` as idle. Only `▲` is
+   * coloured: on this screen a colour means something happened, and being ready is not
+   * something happening.
+   */
+  status(key: string, value: string): Promise<void>
   /** The user edited a setting while you were running. React or ignore, but do not exit. */
   onSettingsChanged(handler: (changed: Record<string, unknown>) => void): void
   host(): Promise<HostInfo>
@@ -70,6 +82,12 @@ export interface AlexiaPlugin {
   capability(cap: string, args?: Args): Promise<CallToolResult>
   readonly storage: Storage
   /**
+   * The context to pass is the one your handler was given — and **which argument that is
+   * depends on your tool**: a tool with an `inputSchema` is called `(args, ctx)`, and a tool
+   * without one is called `(ctx)`. Writing `(_args, ctx)` on a tool that takes no arguments
+   * hands you the context as `_args` and `undefined` as `ctx`, and in a plain-JavaScript
+   * plugin nothing will tell you.
+   *
    * Report progress on the call you are serving. Send it for anything over about two
    * seconds; a bar that moves is the difference between waiting and quitting. Silently does
    * nothing when the caller did not ask for progress.
@@ -138,6 +156,10 @@ export function plugin(options: PluginOptions = {}): AlexiaPlugin {
 
     settings: async <T extends Record<string, unknown>>() =>
       (await call('alexia/settings/get', {})).settings as T,
+
+    status: async (key, value) => {
+      await call('alexia/settings/set', { key, value })
+    },
     onSettingsChanged: (handler) =>
       server.server.setNotificationHandler(
         SETTINGS_CHANGED,

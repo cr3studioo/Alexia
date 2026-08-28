@@ -237,7 +237,11 @@ header {
    rule somebody has to remember: on this view the composer is not rendered at all. */
 
 body[data-view='first-run'] #chat,
-body[data-view='chat'] #first-run {
+body[data-view='first-run'] #settings,
+body[data-view='chat'] #first-run,
+body[data-view='chat'] #settings,
+body[data-view='settings'] #first-run,
+body[data-view='settings'] #chat {
   display: none;
 }
 
@@ -294,6 +298,252 @@ body[data-view='first-run'] header {
   margin-top: var(--space-6);
 }
 
+/* ---- the settings screen (M2-1) -------------------------------------------------------
+
+   One column, widgets in manifest order, no tabs and no grouping — a plugin with enough
+   settings to need tabs has a design problem a tab control would hide. */
+
+#settings {
+  overflow-y: auto;
+  padding: var(--space-5) var(--space-4) var(--space-6);
+}
+
+.view-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-4);
+  margin-bottom: var(--space-5);
+}
+
+.view-top .step-heading {
+  margin: 0;
+}
+
+.pane {
+  padding: var(--space-4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface-raised);
+}
+
+.pane + .pane,
+#problems {
+  margin-top: var(--space-4);
+}
+
+/* The first widget needs the same air from the chrome above it that the rest get from each
+   other. `.field + .field` gave it to every field except the one that mattered. */
+.pane .field {
+  margin-top: var(--space-5);
+}
+
+.pane-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.pane-head b {
+  font-size: var(--text-md);
+  font-weight: 600;
+}
+
+.pane-meta {
+  margin-left: auto;
+  font-size: var(--text-sm);
+  color: var(--ink-faint);
+}
+
+/* What the author asked for, in the author's own words. Core never rewrites these. */
+.asks-label {
+  margin: var(--space-4) 0 var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--ink-quiet);
+}
+
+.asks {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-2);
+}
+
+.asks li {
+  display: flex;
+  gap: var(--space-3);
+  align-items: baseline;
+  font-size: var(--text-sm);
+  color: var(--ink-quiet);
+}
+
+.asks code {
+  flex: none;
+  color: var(--ink);
+  font-size: var(--text-xs);
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+}
+
+/* A label beside a value rather than above it: a status and a progress bar are readings, not
+   questions. */
+.reading {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.reading .label {
+  margin-bottom: 0;
+}
+
+.reading .bar {
+  flex: 1;
+}
+
+.said.ready {
+  color: var(--ink);
+}
+
+.said.caution {
+  color: var(--caution);
+}
+
+.said.idle {
+  color: var(--ink-faint);
+}
+
+.range {
+  flex: none;
+  font-size: var(--text-sm);
+  color: var(--ink-quiet);
+}
+
+/* The toggle. The label is a statement that is true when it is on, so it reads as one
+   sentence and sits beside the control rather than above it. */
+.switch {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  cursor: pointer;
+}
+
+.switch input {
+  position: absolute;
+  opacity: 0;
+  width: var(--space-6);
+  height: var(--space-4);
+}
+
+.switch .track {
+  flex: none;
+  width: var(--space-6);
+  height: var(--space-4);
+  border-radius: var(--radius-full);
+  border: 1px solid var(--line-strong);
+  background: var(--surface-sunken);
+  position: relative;
+}
+
+.switch .track::after {
+  content: '';
+  position: absolute;
+  inset: 1px auto 1px 1px;
+  width: calc(var(--space-4) - 4px);
+  border-radius: var(--radius-full);
+  background: var(--ink-faint);
+}
+
+.switch input:checked + .track {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.switch input:checked + .track::after {
+  left: auto;
+  right: 1px;
+  background: var(--on-accent);
+}
+
+.switch input:focus-visible + .track {
+  outline: var(--ring) solid var(--focus);
+  outline-offset: var(--ring);
+}
+
+/* Two or three options is a segmented control; four or more is a dropdown. Core's decision,
+   which is why a plugin does not get to pick. */
+.segmented {
+  display: inline-flex;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.segment {
+  cursor: pointer;
+}
+
+.segment input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.segment span {
+  display: block;
+  padding: var(--space-2) var(--space-4);
+  font-size: var(--text-sm);
+  border-left: 1px solid var(--line);
+}
+
+.segment:first-child span {
+  border-left: 0;
+}
+
+.segment input:checked + span {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.segment input:focus-visible + span {
+  outline: var(--ring) solid var(--focus);
+  outline-offset: calc(var(--ring) * -1);
+}
+
+.checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3) var(--space-5);
+}
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  cursor: pointer;
+}
+
+.check input {
+  width: auto;
+  margin: 0;
+}
+
+/* The permission question for a button, asked beside the button. What is being decided is
+   what is on screen — the same rule the chat prompt follows. */
+.confirm {
+  margin-top: var(--space-3);
+  padding: var(--space-3);
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius-md);
+}
+
+.confirm p {
+  margin: 0 0 var(--space-3);
+}
+
 /* ---- fields: the anatomy the ten widgets inherit -------------------------------------
 
    label / control / hint / error, in that order, spaced from the same scale. M2-1 declares
@@ -303,7 +553,8 @@ body[data-view='first-run'] header {
   display: block;
 }
 
-.field > .label {
+.field > .label,
+.field .label {
   display: block;
   font-size: var(--text-base);
   margin-bottom: var(--space-2);
@@ -346,12 +597,19 @@ textarea:hover {
   color: var(--ink-faint);
 }
 
+/* Native checkboxes and radios are drawn by the browser; this is the one line that makes
+   them follow the theme rather than the operating system's default blue. */
+input {
+  accent-color: var(--accent);
+}
+
 /* Width belongs to the container, not to the control: a select in a field fills its column, a
    select in the header is as wide as its longest option. Setting it on the element itself is
    what made the header's two controls 1233px each and pushed the spend off the screen. */
 .field > input,
 .field > select,
-.field > textarea {
+.field > textarea,
+.pair > input {
   width: 100%;
 }
 
@@ -373,6 +631,11 @@ textarea:hover {
 
 .pair > input {
   flex: 1;
+}
+
+/* A number is a short answer. Full width, it reads as a text field somebody mislabelled. */
+.pair > input[type='number'] {
+  flex: 0 1 var(--measure-short);
 }
 
 /* ---- cards --------------------------------------------------------------------------- */

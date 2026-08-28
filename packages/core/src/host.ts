@@ -106,6 +106,26 @@ export class Host implements HostServices {
       case 'alexia/settings/get':
         return { settings: await this.#settings(manifest) }
 
+      case 'alexia/settings/set': {
+        const p = params as AlexiaParams<'alexia/settings/set'>
+        const declared = manifest.settings?.find((setting) => setting.key === p.key)
+        if (!declared) {
+          return fail(ErrorCode.SETTING_UNKNOWN, `${pluginId} did not declare a setting called "${p.key}"`)
+        }
+        // The narrowness is the whole design. A `status` is the plugin's own report of
+        // itself and nobody else writes it; everything else on this screen is the user's
+        // answer, and a plugin that could rewrite a toggle could quietly undo a decision the
+        // person made. That plugin would have to be trusted rather than read.
+        if (declared.type !== 'status') {
+          return fail(
+            ErrorCode.INVALID_PARAMS,
+            `${pluginId} may only write its own status settings; "${p.key}" is a ${declared.type}`,
+          )
+        }
+        store.setSetting(pluginId, p.key, p.value)
+        return {}
+      }
+
       case 'alexia/host/info':
         return this.#info(manifest)
 

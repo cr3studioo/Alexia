@@ -32,7 +32,7 @@ afterEach(async () => {
 })
 
 test('a plugin answers, reads its setting, and writes a row core can see', async () => {
-  expect((await plugin.listTools()).map((t) => t.name)).toEqual(['greet', 'greeted'])
+  expect((await plugin.listTools()).map((t) => t.name)).toEqual(['greet', 'greeted', 'warm_up'])
 
   // "Hello" is the manifest's default. Nothing was stored, and the plugin never learned
   // where the value came from — which is the point of core owning settings.
@@ -55,11 +55,19 @@ test('a password comes back to the plugin, and never out of the database', async
   const { settings } = (await host.alexia('hello', 'alexia/settings/get', {})) as {
     settings: Record<string, unknown>
   }
-  expect(settings).toEqual({ greeting: 'Hello', api_key: 'sk-not-a-real-key' })
+  // Every declared key, with the user's value or the manifest's default underneath it —
+  // including the `status` Hello wrote about itself, which comes back like any other.
+  expect(settings).toMatchObject({ greeting: 'Hello', api_key: 'sk-not-a-real-key', tone: 'plain' })
+  expect(Object.keys(settings).sort()).toEqual(
+    ['api_key', 'exclaim', 'extras', 'greeting', 'ready', 'tone', 'warm_up_ms'].sort(),
+  )
 
   // The database has never heard of it. That is invariant 5's secret half, asserted here
-  // where the settings table can be read directly.
-  expect(store.settings('hello')).toEqual({})
+  // where the settings table can be read directly — and asserted about the secret rather
+  // than about the whole table, because a `status` a plugin wrote about itself lives there
+  // too and an empty table stopped being the thing worth checking (M2-1).
+  expect(store.settings('hello')).not.toHaveProperty('api_key')
+  expect(JSON.stringify(store.settings('hello'))).not.toContain('sk-not-a-real-key')
 })
 
 test('the user changing a setting changes what the plugin says', async () => {

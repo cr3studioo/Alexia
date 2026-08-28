@@ -116,6 +116,24 @@ export const ALEXIA_METHODS = {
     result: z.object({ settings: z.record(ident, z.json()) }),
   },
 
+  /**
+   * Write one of your own `status` settings, and nothing else.
+   *
+   * `ui-schema.md` says a `status` widget is "read-only — the plugin drives it at runtime by
+   * writing to its own settings value", and until M2-1 there was no method that could. This
+   * is it, and the narrowness is the point: a plugin may write a `status`, which is its own
+   * read-only report of itself, and may not write a `toggle` the user set. A plugin that can
+   * quietly undo a person's decision is a plugin that has to be trusted rather than read, and
+   * the whole design is the other way round.
+   *
+   * Core remembers the value while you are not running, which is what makes the settings
+   * screen honest before your first spawn.
+   */
+  'alexia/settings/set': {
+    params: z.object({ key: ident, value: kvValue }),
+    result: OnlyMeta,
+  },
+
   'alexia/storage/insert': {
     params: table.extend({ row: Row }),
     result: z.object({ rowid: z.number() }),

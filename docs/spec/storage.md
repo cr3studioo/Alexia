@@ -46,7 +46,7 @@ therefore reachable by one glob, which is the point:
 | tables | `p_voice_*` | `DROP TABLE` per match |
 | key-value entries | `kv` rows where `ns = 'voice'` | `DELETE FROM kv WHERE ns = ?` |
 | settings | `settings` rows where `plugin = 'voice'` | `DELETE FROM settings WHERE plugin = ?` |
-| secrets | OS keychain, service `alexia`, account `voice/<key>` | one delete per `password` setting |
+| secrets | OS keychain, service `alexia`, account `voice.<key>` | one delete per `password` setting |
 | its directory | `<dataDir>/plugins/voice/` | recursive remove |
 | its skills | inside that directory | goes with it |
 | its commands | derived from the manifest, never stored | gone when the folder is |

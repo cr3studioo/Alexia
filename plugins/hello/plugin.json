@@ -27,6 +27,61 @@
       "key": "api_key",
       "label": "API key",
       "hint": "Nothing here uses it. Hello declares one so the keychain path is exercised."
+    },
+    {
+      "type": "choice",
+      "key": "tone",
+      "label": "Tone",
+      "options": [
+        "plain",
+        "warm",
+        "formal"
+      ],
+      "default": "plain",
+      "hint": "Three options, so core draws a segmented control rather than a dropdown."
+    },
+    {
+      "type": "toggle",
+      "key": "exclaim",
+      "label": "End the greeting with an exclamation mark",
+      "default": false
+    },
+    {
+      "type": "multi-choice",
+      "key": "extras",
+      "label": "Also mention",
+      "options": [
+        "the time",
+        "how many"
+      ],
+      "default": []
+    },
+    {
+      "type": "number",
+      "key": "warm_up_ms",
+      "label": "Warm-up time",
+      "min": 400,
+      "max": 5000,
+      "step": 100,
+      "default": 1600,
+      "hint": "How long the warm-up button pretends to work for."
+    },
+    {
+      "type": "status",
+      "key": "ready",
+      "label": "State"
+    },
+    {
+      "type": "progress",
+      "key": "warming",
+      "label": "Warming up"
+    },
+    {
+      "type": "action",
+      "key": "warm_up",
+      "label": "Warm up",
+      "tool": "warm_up",
+      "hint": "Calls Hello's own warm_up tool. It reports progress, which is what the bar above is for."
     }
   ],
   "storage": {

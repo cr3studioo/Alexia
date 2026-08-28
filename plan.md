@@ -130,7 +130,7 @@ Tick a box only when the task's acceptance criteria pass. `[GATE]` needs a human
 
 - [x] **M2-S1** Spike: Tauri tray + hotkey + overlay on Windows *(de-risking M5)*
 - [x] **M2-D1** The visual language *(deferred from M1 2026-08-27, D61)*
-- [ ] **M2-1** Declarative UI schema v1
+- [x] **M2-1** Declarative UI schema v1
 - [ ] **M2-2** Skills loader (agentskills.io)
 - [ ] **M2-3** `plugins/voice` — speech to text
 - [ ] **M2-4** `plugins/voice` — text to speech
@@ -1399,6 +1399,74 @@ the plugin never draws. A plugin cannot style itself wrong because it never styl
 Settings must render while the plugin process is **not running** — lazy spawn means that is
 the normal case. That is why the schema lives in the manifest.
 
+**Done 2026-08-28 (D68).** `packages/core/src/settings.ts` turns a manifest into a pane and an
+edit back into a checked value; `packages/ui/src/settings.ts` draws the ten; three endpoints
+join them. Every widget conforms to `docs/design.md` and declares no styles of its own.
+
+**It renders with nothing running, and that is asserted rather than hoped.** `GET
+/api/plugins` reads manifests, the store and the keychain and spawns nothing — the test says
+so, and a pane reports `running: false` because that is the ordinary state of a plugin under
+lazy spawn.
+
+**The sixth `alexia/*` method, argued and added.** `ui-schema.md` said a `status` is *"driven
+by the plugin at runtime by writing to its own settings value"* — and **no method could write
+one**. `alexia/settings/set` is it, and the narrowness is the design: **only your own `status`
+keys**. A key you did not declare is `SETTING_UNKNOWN`; a `toggle` you did declare is
+`INVALID_PARAMS`, with the reason. A plugin that could rewrite a toggle the user set could
+quietly undo a person's decision, and would have to be trusted rather than read.
+
+**What each of the ten does here:**
+
+| | |
+|---|---|
+| `text`, `password`, `number`, `toggle` | the ordinary four. A number's range renders beside it when both bounds are declared |
+| `choice` | two or three options is a segmented control, four or more a dropdown. **Core's decision, which is why an author does not get to pick** |
+| `multi-choice` | checkboxes on one line |
+| `path` | a typed path, checked against the disk by core — absolute, present, and the declared `kind`. The Browse button is disabled and says why: a native picker is the desktop app, at M5 |
+| `status` | three states and no legend, and **`●` is not green** — see D67. Ready is the normal state of a working plugin; the one that needs looking at is the one already coloured |
+| `progress` | fed by `notifications/progress` from the tool an `action` started, and **watched while the call is in flight**. A bar only ever seen at rest is a spinner with extra steps |
+| `action` | a tool call like any other, so the permission gate is the same one: destructive is asked about in every mode except Full trust, and the question is put **beside the button**, where the thing being decided is |
+
+**A password is never rendered.** The pane carries whether one is stored and the sentence
+naming the real store on this platform — core writes that line, because a plugin promising the
+wrong store would be lying on core's screen in core's voice. An empty value clears it: a
+screen where a secret can be replaced but never removed keeps secrets somebody has decided to
+stop trusting it with.
+
+**Hello grew from two widgets to nine, and drives three of them.** It is the plugin that
+proves the contract carries anything at all, so it is now also the reference for this screen:
+a real `status` over the new method, a real `action`, and a real bar fed by a real tool. The
+tenth, `path`, is not there because Hello has no honest use for one — the unit tests cover all
+ten from a manifest that does.
+
+**Three bugs found by building it, two of them nothing to do with M2-1:**
+
+1. **No secret has ever been storable.** `cross-keychain` refuses an account name containing
+   a slash, and `secrets.ts` built `<plugin>/<key>` — so **every keychain read and write threw,
+   in both directions, on any real machine**, including the provider key somebody pastes at
+   first run. Every test used `memorySecrets`, which has no such rule, and the first thing to
+   touch the real store was this screen. Now `<plugin>.<key>`, with the account format pinned
+   by a test, because the constraint lives outside this repo. See **D69**.
+2. **A tool with no `inputSchema` is handed the context as its *first* argument.** Hello's new
+   tool was written `(_args, ctx)` and got the context as `_args` and `undefined` as `ctx`, so
+   `alexia.progress` threw and the bar never moved. In a plain-JavaScript plugin nothing types
+   that for you, so the warning now lives in the SDK where the trap is.
+3. **A redraw ate its own answer.** Pressing the button redrew the pane list from the response,
+   which threw away the sentence it had just written into it — the one thing the person who
+   pressed it is waiting to read. And redrawing on a settings edit takes focus off the control
+   the keyboard is still on. Only `password` is redrawn now, because it is the only widget that
+   genuinely looks different once it is set.
+
+**Verified end to end** against the real loader and the real `plugins/` folder, in a headless
+browser: three panes drawn with nothing spawned, the nine fields, a segmented control, a
+toggle saved and read back through core, an out-of-range number refused with *"Warm-up time"
+must be at most 5000*, and the action pressed — bar at 13%, status amber at *▲ Warming up*,
+then hidden again at *● Warm* with the tool's own sentence beside the button.
+
+**Left for their own tasks:** install, enable, disable and delete are **M2-5**, so the pane has
+no Delete button yet; progress in the *chat* stream is **M2-6**; and `elicitation/create` — the
+question a plugin asks at the moment it needs an answer — has no UI yet either.
+
 ### M2-2 Skills loader
 
 agentskills.io, per P0-5. Scan skill folders, parse frontmatter with `gray-matter`, index
@@ -1825,6 +1893,8 @@ Newest first. Every entry here is also in Alexia.md's decision log.
 
 | Date | Entry |
 |---|---|
+| 2026-08-28 | **D69** — **no secret has ever actually been stored.** `cross-keychain` refuses an account name containing a slash, and `secrets.ts` had been building `<plugin>/<key>` since M1-3 — so every keychain read and write threw, in both directions, on any real machine. That includes the provider key a person pastes at first run, which means the one step first run exists for could not have worked. Nothing caught it because every test uses `memorySecrets`, which has no such rule; the first thing to touch the real store was M2-1's settings screen. The separator is now a dot, which is legal and still unambiguous — a plugin id cannot contain one and neither can a setting key — and `account()` is exported so a test can pin the format, because the constraint lives outside this repo and will not announce itself if it changes. |
+| 2026-08-28 | **D68** — **the ten widgets are rendered, and the `alexia/*` layer gained its sixth method to make one of them true.** M2-1. Core renders from the manifest and spawns nothing to do it, which is the whole reason the schema lives in `plugin.json`. `ui-schema.md` had promised that a `status` is driven by the plugin *writing to its own settings value* and **no method could write one** — so `alexia/settings/set` exists, and writes **only the caller's own `status` keys**: a plugin that could rewrite a `toggle` the user set could quietly undo a person's decision, and would have to be trusted rather than read. Two of core's decisions stay core's: two or three options is a segmented control and four is a dropdown, and an `action` goes through the same permission gate as any other tool call — asked beside the button, where the thing being decided is. A `password` is never rendered, only reported as set, with core's own sentence naming the store. `plugins/hello` grew to nine widgets and drives three of them, so the screen is proved against a real plugin rather than a fixture. |
 | 2026-08-28 | **D67** — **the visual language is written down, and both themes are a test.** `docs/design.md` is the deliverable M2-1's ten widgets conform to; `app.css` is rewritten from its tokens with no literal sizes, spaces or colours left. The header now distinguishes a control from a status from the number that matters, instead of rendering all three as identical pills. **First run is a view**, not a section — `data-view` swaps it and the composer is not rendered on it, so *never on screen together* is a fact about the DOM rather than a rule to remember — and the header is hidden there too, because it was drawing the mark and the name a second time sixty pixels below the first. Light and dark are built for their own grounds and held at 4.5:1 by `packages/ui/test/contrast.test.ts`, which reads `app.css` rather than keeping a second copy of the palette. Verified by driving headless Edge over CDP: nothing scrolls at 1280×800, and every focused element shows a ring under real key events. Two bugs found that way — a blanket `width: 100%` was making the header's dropdowns 1233px wide and pushing the spend off screen, and the first-run question's size was being set and then un-set by a later, equally specific rule. |
 | 2026-08-28 | **D66** — **M2-S1 answered: the Tauri overlay holds, and no workaround is needed.** 200 show/hide cycles on Tauri 2.11.5 / Windows 11, twice, with `WS_EX_TOPMOST` read off the `HWND` rather than taken from `is_always_on_top()` — the reported bug is the framework and the OS disagreeing, so the framework cannot be the witness. Tray and hotkey verified the same way, from outside the process. The real finding is the one failure that was not `alwaysOnTop`: **a blur in flight can hide the overlay a moment after the `show()` that was meant to open it.** Harmless in the harness once stragglers are attributed correctly; not harmless in the product, because *click away, change your mind, press the hotkey* is exactly that sequence — so **M5-2 owes blur-to-hide a guard against a blur older than the show it cancels**. Also banked for M5-1: `tauri-build` fails rather than skips without an `.ico`, and the global-shortcut plugin's error does not convert into `tauri::Error`. |
 | 2026-08-28 | **D65** — **the crude installer is pulled forward from M2-7 to M1-I1.** `pnpm package` builds `dist-app/Alexia/`: bundled core, a copied `node.exe`, the shell and the one native dependency, behind an `Alexia.cmd` that runs from wherever it was unzipped. It was built for cold-install test #1, which D64 then waived — so it is recorded for what it is rather than for the gate it missed, because **M2-8 cannot start its clock without it**. Neither `@yao-pkg/pkg` nor NSIS was needed; esbuild and a copy were. Windows only for now, which is what M2-7 keeps. Smoke-testing the packaged bundle also found a core bug and fixed it: the request target was resolved *against* an origin, so a leading `//` was protocol-relative — every path answered with the shell, and a bare `//` was a 500. |

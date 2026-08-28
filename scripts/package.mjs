@@ -90,7 +90,13 @@ mkdirSync(join(ui, 'dist', 'src'), { recursive: true })
 for (const file of ['index.html', 'app.css', 'alexia.png']) {
   cpSync(join(root, 'packages', 'ui', file), join(ui, file))
 }
-cpSync(join(root, 'packages', 'ui', 'dist', 'src', 'main.js'), join(ui, 'dist', 'src', 'main.js'))
+// Every compiled shell module, not just the entry point: `serve.ts` serves any `dist/src/
+// <name>.js` by name, and M2-1's settings screen is the second one. Naming them here would be
+// a list that goes stale the first time somebody adds a third.
+cpSync(join(root, 'packages', 'ui', 'dist', 'src'), join(ui, 'dist', 'src'), {
+  recursive: true,
+  filter: (from) => statSync(from).isDirectory() || from.endsWith('.js'),
+})
 
 // 4. The runtime. 89 MB of Node, which is most of what the tester downloads and the honest
 //    price of not asking them to install anything.

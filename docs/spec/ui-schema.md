@@ -155,10 +155,17 @@ manifest is wrong on somebody else's machine.
   Speech model      ● Ready (base, 142 MB)
 ```
 
-Read-only. **The plugin drives it at runtime** by writing to its own settings value; core
-renders whatever it last wrote and remembers it while the plugin is not running, so the
-screen is honest before first spawn. A leading `●` renders green, `▲` amber, `■` grey —
-three states, because a fourth would need a legend.
+Read-only to the user. **The plugin drives it at runtime** with
+[`alexia/settings/set`](./wire-protocol.md#alexiasettingsset), which is the only setting type
+that method will write; core renders whatever it last wrote and remembers it while the plugin
+is not running, so the screen is honest before first spawn.
+
+Three states, because a fourth would need a legend: a leading `●` is ready, `▲` is something
+the user should look at, `■` is idle or unknown. **`●` is not green.** `docs/design.md`
+settled that a colour on this screen means something happened, and amber and red are the only
+two — so ready renders in ordinary ink, `▲` in `--caution`, and `■` faint. Ready is the normal
+state of a working plugin and does not need to be announced in colour; the one that does is
+the one already coloured.
 
 ### `progress`
 
@@ -172,7 +179,9 @@ three states, because a fourth would need a legend.
 ```
 
 Driven by `notifications/progress` against the `progressToken` core gave you — not by
-writing a setting. Hidden entirely when there is no progress in flight. This widget is why
+writing a setting. Core sends a token with every tool call an `action` button starts, so the
+bar beside the button is fed by the work the button began. Hidden entirely when there is no
+progress in flight. This widget is why
 the five-minute setup budget survives a 142 MB download: **a bar that moves is the
 difference between waiting and quitting.**
 

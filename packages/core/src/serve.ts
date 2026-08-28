@@ -94,7 +94,8 @@ const STATIC: Record<string, [string, string]> = {
   '/': ['index.html', 'text/html; charset=utf-8'],
   '/app.css': ['app.css', 'text/css; charset=utf-8'],
   // The shell is TypeScript compiled by the same `tsc -b` as everything else. No bundler,
-  // because a chat window is not a build problem.
+  // because a chat window is not a build problem. Modules beyond the entry point are matched
+  // by MODULE below rather than listed here, one line each.
   '/main.js': [join('dist', 'src', 'main.js'), 'text/javascript; charset=utf-8'],
   // Her face: the header mark, the first-run mark and the tab icon, one file doing all
   // three. Everything above is text and gets the token substituted into it; this does not,
@@ -221,8 +222,13 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     // Found by the packaged build's smoke test, which was joining its URLs badly.
     const target = request.url ?? '/'
     const url = new URL(`http://127.0.0.1${target.startsWith('/') ? target : `/${target}`}`)
-    const asset = STATIC[url.pathname]
-    if (asset) {
+    // Any other compiled shell module, by name only. The pattern is the whole of the
+    // defence: no dots, no slashes, so there is nothing to climb out of `dist/src` with.
+    const module = /^\/([a-z][a-z0-9-]*)\.js$/.exec(url.pathname)
+    const asset =
+      STATIC[url.pathname] ??
+      (module ? ([join('dist', 'src', `${module[1]!}.js`), 'text/javascript; charset=utf-8'] as const) : undefined)
+    if (asset && existsSync(join(ui, asset[0]))) {
       const [file, type] = asset
       const bytes = readFileSync(join(ui, file))
       // Text assets carry the token; anything else is passed through untouched, because
@@ -374,6 +380,83 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
       waiting?.(allowed === true)
       response.writeHead(200, { 'content-type': 'application/json' })
       response.end(JSON.stringify({ ok: waiting !== undefined }))
+      return
+    }
+
+    /**
+     * Every installed plugin's settings pane, plus the folders that are not plugins (M2-1).
+     *
+     * A GET, and a cheap one: it reads manifests, the store and the keychain, and **spawns
+     * nothing**. That is the whole reason the widget schema lives in `plugin.json` — with
+     * lazy spawn, "not running" is the ordinary state of a plugin, and a screen that woke
+     * three processes to draw itself would wake them every time somebody looked.
+     */
+    if (url.pathname === '/api/plugins') {
+      response.writeHead(200, { 'content-type': 'application/json' })
+      response.end(JSON.stringify({ panes: await plugins.panes(), problems: plugins.problems }))
+      return
+    }
+
+    if (url.pathname === '/api/settings' && request.method === 'POST') {
+      const edit = JSON.parse(await read(request)) as { plugin?: string; key?: string; value?: unknown }
+      try {
+        await plugins.setSetting(edit.plugin ?? '', edit.key ?? '', edit.value)
+      } catch (error) {
+        // The refusal is a sentence about this value, written to be shown beside the control
+        // that produced it. It is an answer, not a stack trace.
+        response.writeHead(200, { 'content-type': 'application/json' })
+        response.end(JSON.stringify({ ok: false, why: error instanceof Error ? error.message : String(error) }))
+        return
+      }
+      response.writeHead(200, { 'content-type': 'application/json' })
+      response.end(JSON.stringify({ ok: true, panes: await plugins.panes() }))
+      return
+    }
+
+    /**
+     * An `action` button, pressed.
+     *
+     * The permission gate is the same one every tool call goes through: a destructive tool is
+     * asked about in every mode except Full trust, and the never-touch list is not negotiable
+     * in any of them. It is asked in two steps rather than by blocking, because this request
+     * carries no stream to ask down — the first call answers `ask`, the screen puts the
+     * question to the person, and the second call carries their answer. `blocked` has no
+     * second call: that is the difference between a question and a floor.
+     */
+    if (url.pathname === '/api/action' && request.method === 'POST') {
+      const press = JSON.parse(await read(request)) as { plugin?: string; key?: string; approved?: boolean }
+      const plugin = press.plugin ?? ''
+      const declared = plugins
+        .manifest(plugin)
+        ?.settings?.find((setting) => setting.key === press.key && setting.type === 'action')
+      if (declared?.type !== 'action') {
+        response.writeHead(200, { 'content-type': 'application/json' })
+        response.end(JSON.stringify({ ok: false, said: `There is no button called "${press.key ?? ''}".` }))
+        return
+      }
+
+      const about = await tooling.about(`${plugin}__${declared.tool}`)
+      const ruling = rule(
+        {
+          tool: declared.tool,
+          ...(about?.annotations && { annotations: about.annotations }),
+          reviewed: true,
+        },
+        scope(),
+      )
+      if (ruling.verdict === 'blocked' || (ruling.verdict === 'ask' && press.approved !== true)) {
+        response.writeHead(200, { 'content-type': 'application/json' })
+        response.end(
+          JSON.stringify(
+            ruling.verdict === 'blocked' ? { ok: false, said: ruling.why } : { ok: false, ask: ruling.why },
+          ),
+        )
+        return
+      }
+
+      const result = await plugins.action(plugin, declared.key)
+      response.writeHead(200, { 'content-type': 'application/json' })
+      response.end(JSON.stringify({ ...result, panes: await plugins.panes() }))
       return
     }
 

@@ -11,6 +11,8 @@
  * bill.
  */
 
+import { mountSettings } from './settings.js'
+
 interface Turn {
   role: 'system' | 'user' | 'assistant' | 'tool'
   content: string
@@ -102,7 +104,7 @@ function called(name: string): void {
  * whose `hidden` flags have to agree — and the one thing this shell must never do is show the
  * composer and first run at once, inviting a question it cannot answer yet.
  */
-function show(view: 'first-run' | 'chat'): void {
+function show(view: 'first-run' | 'chat' | 'settings'): void {
   document.body.dataset.view = view
 }
 
@@ -404,6 +406,20 @@ stop.addEventListener('click', () => {
   void fetch('/api/stop', { method: 'POST', headers: { 'x-alexia-token': token } }).finally(() => {
     stop.disabled = false
   })
+})
+
+// ---- the settings screen ---------------------------------------------------------------
+
+const settings = mountSettings(token)
+
+document.querySelector('#open-settings')!.addEventListener('click', () => {
+  show('settings')
+  settings.open()
+})
+
+document.querySelector('#close-settings')!.addEventListener('click', () => {
+  show('chat')
+  text.focus()
 })
 
 text.addEventListener('input', showMenu)

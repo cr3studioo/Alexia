@@ -35,6 +35,13 @@
         aria-label="What Alexia may do without asking"
       ></select>
 
+      <!-- Every plugin's settings, rendered by core from the manifest. A control, because
+           there is no command for it: a screen you cannot find is a screen that does not
+           exist. -->
+      <button id="open-settings" class="control" type="button" title="Plugins and their settings">
+        Plugins
+      </button>
+
       <!-- Which model answered, and what the month has cost. Both always on screen: the first
            is how you know where your words went, the second is how nobody is ever surprised
            by a bill. -->
@@ -107,6 +114,19 @@
         </div>
 
         <button id="begin" class="begin" type="button">Start</button>
+      </div>
+    </section>
+
+    <!-- The settings screen (M2-1). Ten widgets, declared in manifests, drawn here — and
+         drawn while every plugin is stopped, which with lazy spawn is the ordinary case. -->
+    <section id="settings" class="view">
+      <div class="centred">
+        <div class="view-top">
+          <h2 class="step-heading">Plugins</h2>
+          <button id="close-settings" class="quiet-button" type="button">Back</button>
+        </div>
+        <div id="panes"></div>
+        <div id="problems"></div>
       </div>
     </section>
 

@@ -12,6 +12,7 @@ import { readdirSync, readFileSync, realpathSync, rmSync, watch, type FSWatcher 
 import { join } from 'node:path'
 import { Host } from './host.js'
 import { keychain, type SecretStore } from './secrets.js'
+import { pane, refuse, write, type Pane, type Progress } from './settings.js'
 import type { Store } from './store.js'
 import { PluginProcess, type Timings } from './supervisor.js'
 
@@ -63,6 +64,10 @@ interface Entry {
 export class Plugins {
   readonly #entries = new Map<string, Entry>()
   readonly #problems: Problem[] = []
+  /** What each running plugin last said its tools were. Only ever filled from a live one. */
+  readonly #toolNames = new Map<string, string[]>()
+  /** One in-flight bar per plugin, for whatever an `action` started. */
+  readonly #progress = new Map<string, Progress>()
   readonly #host: Host
   readonly #secrets: SecretStore
   #watcher?: FSWatcher
@@ -81,7 +86,12 @@ export class Plugins {
       log: options.log,
       // A plugin saying its own tools changed lands in exactly the same place as core
       // noticing a folder appear or disappear. One event, one listener.
-      toolsChanged: (id) => options.onToolsChanged?.(id),
+      toolsChanged: (id) => {
+        // Whatever it said before is stale, and the pane must not keep showing a button as
+        // available because of a list from two minutes ago.
+        this.#toolNames.delete(id)
+        options.onToolsChanged?.(id)
+      },
     })
   }
 
@@ -179,6 +189,9 @@ export class Plugins {
     const lists = await Promise.all(
       [...this.#entries.values()].map(async (entry) => {
         const tools = await entry.process.listTools().catch(() => [])
+        // Remembered on the way past, so a settings pane can say whether an `action` button
+        // has a tool behind it without asking — and asking is what would spawn the plugin.
+        this.#toolNames.set(entry.manifest.id, tools.map((tool) => tool.name))
         return tools.map((tool) => ({ pluginId: entry.manifest.id, tool }))
       }),
     )
@@ -202,10 +215,44 @@ export class Plugins {
     throw new ProtocolError(ErrorCode.CAPABILITY_NOT_AVAILABLE, `nothing enabled provides ${cap}`)
   }
 
+  /** Whether a process is up, asked without starting one. Lazy spawn makes `false` normal. */
+  running(id: string): boolean {
+    return this.#entries.get(id)?.process.pid !== undefined
+  }
+
+  /**
+   * Every installed plugin's settings pane (M2-1).
+   *
+   * **Nothing here spawns anything.** The whole reason the widget schema lives in the
+   * manifest is that a settings screen has to draw itself while the processes are stopped,
+   * which — with lazy spawn — is the ordinary case rather than the corner one.
+   */
+  async panes(): Promise<Pane[]> {
+    const built: Pane[] = []
+    for (const id of this.ids) {
+      const manifest = this.manifest(id)
+      if (!manifest) continue
+      built.push(
+        await pane(manifest, {
+          store: this.options.store,
+          running: (of) => this.running(of),
+          tools: (of) => this.#toolNames.get(of),
+          progress: (of) => this.#progress.get(of),
+          hasSecret: async (of, key) => (await this.#secrets.get(of, key)) !== undefined,
+        }),
+      )
+    }
+    return built
+  }
+
   /**
    * The user changed a setting. **A `password` goes to the keychain and nowhere else** —
    * this is the only method that writes one, so the rule holds by construction rather than
    * by everybody remembering it.
+   *
+   * The value is checked against the declaration first, and the refusal is a sentence naming
+   * what was wrong. The screen shows it beside the control; "invalid" would tell somebody
+   * only that they have to guess again.
    *
    * A running plugin is told what changed; a stopped one reads the new value when it next
    * starts, which is why nothing is spawned here.
@@ -216,12 +263,70 @@ export class Plugins {
     if (!entry || !declared) {
       throw new ProtocolError(ErrorCode.INVALID_PARAMS, `${id} has no setting called "${key}"`)
     }
-    if (declared.type === 'password') {
-      await this.#secrets.set(id, key, String(value))
-    } else {
-      this.options.store.setSetting(id, key, value)
+    const wrong = refuse(declared, value)
+    if (wrong) throw new ProtocolError(ErrorCode.INVALID_PARAMS, wrong)
+
+    await write(id, declared, value, { store: this.options.store, secrets: this.#secrets })
+    // A cleared password is `null` rather than a missing key: the notification says what
+    // changed, and "there is no longer one" is a change a plugin has to be able to see.
+    const said = declared.type === 'password' && value === '' ? null : value
+    await entry.process.notify(SETTINGS_CHANGED, { changed: { [key]: said } })
+  }
+
+  /**
+   * Press an `action` button: call the plugin's own tool, with no arguments.
+   *
+   * A `progressToken` rides along, so a long job started from this screen feeds the bar
+   * beside the button rather than going silent — which is the whole reason `progress` is one
+   * of the ten. The permission gate is the caller's: an action is a tool call like any other
+   * and core asks before a destructive one, in every mode except Full trust.
+   */
+  async action(id: string, key: string, signal?: AbortSignal): Promise<{ ok: boolean; said: string }> {
+    const entry = this.#entries.get(id)
+    const declared = entry?.manifest.settings?.find((s) => s.key === key)
+    if (!entry || declared?.type !== 'action') {
+      throw new ProtocolError(ErrorCode.INVALID_PARAMS, `${id} has no button called "${key}"`)
     }
-    await entry.process.notify(SETTINGS_CHANGED, { changed: { [key]: value } })
+    try {
+      const result = await entry.process.callTool(declared.tool, undefined, {
+        ...(signal && { signal }),
+        onprogress: (update) => {
+          this.#progress.set(id, {
+            progress: update.progress,
+            ...(update.total !== undefined && { total: update.total }),
+            ...(update.message !== undefined && { message: update.message }),
+          })
+        },
+      })
+      const said = (result.content ?? [])
+        .map((block) => (block.type === 'text' ? block.text : `[${block.type}]`))
+        .join('\n')
+        .trim()
+      return { ok: result.isError !== true, said: said || (result.isError === true ? 'That did not work.' : 'Done.') }
+    } catch (error) {
+      return { ok: false, said: error instanceof Error ? error.message : String(error) }
+    } finally {
+      // The bar goes when the work does. A bar left at 97% is worse than no bar.
+      this.#progress.delete(id)
+      await this.#remember(id)
+    }
+  }
+
+  /**
+   * What a running plugin currently calls its tools, cached so drawing a settings pane never
+   * has to ask — and never has to spawn anything to find out.
+   */
+  async #remember(id: string): Promise<void> {
+    const entry = this.#entries.get(id)
+    if (!entry || entry.process.pid === undefined) {
+      this.#toolNames.delete(id)
+      return
+    }
+    try {
+      this.#toolNames.set(id, (await entry.process.listTools()).map((tool) => tool.name))
+    } catch {
+      this.#toolNames.delete(id)
+    }
   }
 
   /** What this plugin asked for that nothing provides. Its author's sentence, verbatim. */

@@ -88,8 +88,9 @@ channel entirely.** On `2026-07-28` a server cannot send its host a request. It 
 *answer* one with `input_required`, and the shapes it may ask for are MCP's own three:
 elicitation, sampling, roots.
 
-The `alexia/*` layer (§6) is five methods a plugin sends *to core*: its settings, its
-storage, another plugin's capability, the host it is running on. On `2026-07-28` every one
+The `alexia/*` layer (§6) is six methods a plugin sends *to core*: its settings, the one
+read-only status of its own it may write back, its storage, another plugin's capability, the
+host it is running on. On `2026-07-28` every one
 of them is dropped by a conforming client, unanswered. Measured, not assumed:
 
 ```
@@ -388,17 +389,18 @@ one the log panel always shows.
 
 ## 6. The `alexia/*` layer
 
-Five methods. Everything MCP covers is MCP; this is the remainder. **If you want a sixth,
+Six methods. Everything MCP covers is MCP; this is the remainder. **If you want a seventh,
 argue it against MCP first** — the whole value of adopting MCP evaporates one private
-extension at a time.
+extension at a time. The sixth was argued and won on 2026-08-28: see
+[`alexia/settings/set`](#alexiasettingsset).
 
-> **These require the `2025-11-25` era**, because four of the five are requests a plugin
+> **These require the `2025-11-25` era**, because five of the six are requests a plugin
 > sends to core and `2026-07-28` has no such direction. A server that speaks only the newer
 > revision still connects and its tools still work; it simply has no Alexia layer, and any
 > `alexia/*` request it sends is dropped unanswered. See
 > [§1.1](#11-two-eras-and-why-a-plugin-lives-on-the-older-one).
 
-All five are called **plugin → core**, except `alexia/settings/changed`, which is a
+All six are called **plugin → core**, except `alexia/settings/changed`, which is a
 notification core sends you.
 
 ### `alexia/settings/get`
@@ -414,6 +416,28 @@ You cannot read another plugin's settings, and there is no method to try.
 Every key you declared in `settings[]` is present, with the user's value or your `default`.
 A `password`-type setting comes back as the real secret, read from the OS keychain at the
 moment of the call — so do not cache it, and do not log it.
+
+### `alexia/settings/set`
+
+Write one of your own `status` settings. That is the whole of it.
+
+```jsonc
+// → { "jsonrpc":"2.0", "id":10, "method":"alexia/settings/set",
+//     "params": { "key": "model_state", "value": "● Ready (base, 142 MB)" } }
+// ← { "jsonrpc":"2.0", "id":10, "result": {} }
+```
+
+A `status` widget is read-only to the user and driven by you
+([`ui-schema.md`](./ui-schema.md#status)); this is how you drive it. Core remembers the value
+while you are not running, which is what makes the settings screen honest before your first
+spawn.
+
+**Only `status` keys, and only your own.** A key you did not declare is `SETTING_UNKNOWN`.
+A key you declared as anything else — a `toggle`, a `choice`, a `path` — is `INVALID_PARAMS`,
+and the message says which. The narrowness is the point: a `status` is your own report of
+yourself, and a plugin that could rewrite a `toggle` the user set could quietly undo a
+person's decision. A plugin that can do that has to be trusted rather than read, and this
+design is the other way round.
 
 ### `alexia/settings/changed`
 
