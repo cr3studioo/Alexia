@@ -6,6 +6,7 @@ import { afterAll, expect, test } from 'vitest'
 import { Plugins } from '../src/plugins.js'
 import { memorySecrets } from '../src/secrets.js'
 import { Store } from '../src/store.js'
+import { Skills } from '../src/skills.js'
 import { PluginTooling } from '../src/tooling.js'
 import { stage } from './staged.js'
 
@@ -22,9 +23,21 @@ const plugins = new Plugins({
   store,
   dataDir,
   secrets: memorySecrets(),
-  onToolsChanged: () => tooling.invalidate(),
+  onToolsChanged: () => {
+    tooling.invalidate()
+    skills.invalidate()
+  },
 })
-const tooling = new PluginTooling(plugins, (line) => logged.push(line))
+const skills = new Skills({
+  dir: join(dataDir, 'skills'),
+  bundled: () =>
+    plugins.ids.flatMap((id) => {
+      const folder = plugins.folder(id)
+      return folder === undefined ? []
+        : (plugins.manifest(id)?.skills ?? []).map((path) => ({ dir: join(folder, path), pluginId: id }))
+    }),
+})
+const tooling = new PluginTooling(plugins, (line) => logged.push(line), skills)
 plugins.load()
 
 afterAll(async () => {
@@ -74,6 +87,22 @@ test('a name nothing answers comes back with what there is instead', async () =>
   expect(outcome.text).toContain('hello__greet')
 })
 
+test('know-how rides the same list as capability, and reading it needs no permission', async () => {
+  const list = await tooling.list()
+  // One tool for every skill installed, not one per skill: the index is its description.
+  expect(list.filter((t) => t.name === 'skill')).toHaveLength(1)
+  expect(list.find((t) => t.name === 'skill')?.description).toContain('- greeting-well:')
+
+  // Text core already has on disk. Without this the default mode asks permission every time
+  // the model opens its own instructions.
+  expect(await tooling.about('skill')).toEqual({ annotations: { readOnlyHint: true, destructiveHint: false } })
+
+  const read = await tooling.call('skill', { name: 'greeting-well' })
+  expect(read.ok).toBe(true)
+  expect(read.text).toContain('A greeting is one line')
+  expect(read.text).not.toContain('description:')
+})
+
 test('deleting a plugin folder empties its half of the list, and nothing else notices', async () => {
   expect((await tooling.list()).some((t) => t.name.startsWith('hello'))).toBe(true)
 
@@ -88,4 +117,12 @@ test('deleting a plugin folder empties its half of the list, and nothing else no
   const outcome = await tooling.call('hello__greet', { who: 'Vaclav' })
   expect(outcome.ok).toBe(false)
   expect(outcome.text).toContain('hello__greet')
+})
+
+test('a skill bundled with a plugin goes when the plugin does', async () => {
+  // The folder above was deleted, and with it the only thing that knew this skill existed.
+  // Nothing to unregister, no index to invalidate by hand — the next read finds one folder
+  // fewer, which is the same mechanism as invariant 4 and the reason it holds for free.
+  expect(await tooling.about('skill')).toBeUndefined()
+  expect((await tooling.list()).map((t) => t.name)).not.toContain('skill')
 })

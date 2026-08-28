@@ -131,7 +131,7 @@ Tick a box only when the task's acceptance criteria pass. `[GATE]` needs a human
 - [x] **M2-S1** Spike: Tauri tray + hotkey + overlay on Windows *(de-risking M5)*
 - [x] **M2-D1** The visual language *(deferred from M1 2026-08-27, D61)*
 - [x] **M2-1** Declarative UI schema v1
-- [ ] **M2-2** Skills loader (agentskills.io)
+- [x] **M2-2** Skills loader (agentskills.io)
 - [ ] **M2-3** `plugins/voice` — speech to text
 - [ ] **M2-4** `plugins/voice` — text to speech
 - [ ] **M2-5** Full lifecycle: install, enable, disable, purge
@@ -1478,6 +1478,53 @@ Two arrival routes: bundled with a plugin (installs and purges with it) or insta
 standalone. Purge handles both; the marketplace never shows a bundled skill as independently
 installable.
 
+**Done 2026-08-28 (D70).** `packages/core/src/skills.ts` reads both routes, validates by
+agentskills.io's own rules and hands the model an index. `packages/ui/src/settings.ts` shows
+what loaded and what did not, on the screen that already existed for plugins.
+
+**The index is a tool description, not a system line — and there is one `skill` tool, not one
+per skill.** That decision is what made the rest small: `agent.ts` did not change at all, the
+~100 tokens per skill land where a model actually looks when it is choosing what to reach
+for, and levels 2 and 3 are the same call with a `file` argument instead of a second
+mechanism. Nothing installed means no tool at all, because a tool that lists nothing is a
+tool the model calls once to find out it was pointless.
+
+**Every one of the three disclosure levels is real, and the middle one is where the saving
+is.** The description of a skill is folded onto one line and the body is not in it — asserted,
+because *the index is cheap* is the entire argument for adopting this format, and a loader
+that quietly included the body would still pass every other test in the file.
+
+**Reading a skill needs no permission, and that had to be said out loud.** A tool core knows
+nothing about is not read-only until something says so — which is right — so `skill` declares
+`readOnlyHint` through the same `about()` the gate already asks. Without it, the default mode
+would ask the user for permission every time the model opened its own instructions. `about`
+and `call` agree with `list` about whether the tool exists at all: a gate answering for a tool
+nobody was offered is a gate answering for something that cannot happen.
+
+**A broken folder is shown with the reason. Six ways to be broken, all of them visible:** no
+readable `SKILL.md`, frontmatter that does not start at byte 0, no `name`, a `name` that is
+not the folder name, no `description`, and — the one the spec did not name — two skills
+answering to one name. The last is a `Problem` rather than a silent winner, because the model
+cannot ask for either of them by name and the one it would get is whichever was scanned first.
+
+**Two things fall out for free.** A bundled skill goes when its plugin does, through no code
+of its own: there is no registry row and no cached index, so the next read simply finds one
+folder fewer — the same mechanism as invariant 4, and what makes M2-5's purge a folder
+removal rather than a cleanup. And nothing spawns: the bundled route joins the manifest to
+`plugins.folder(id)`, so the list is right while every plugin is stopped.
+
+`plugins/hello` now bundles `skills/greeting-well`, with a `references/` file, so both the
+bundled route and level 3 are proved against a real plugin rather than a fixture.
+
+**Verified end to end** in headless Edge against the real `serve`, the real plugins folder
+and a real skills directory: two skills listed with the plugin one tagged *with hello*, the
+broken folder named with its reason, nothing spawned, and no horizontal overflow at 1280×800.
+
+**Left for their own tasks:** installing one is the skills marketplace (**M3-5**), which is
+also what will call `invalidate()` — the user's own skills directory is not watched, so a
+folder dropped in by hand is seen at the next restart or the next plugin change. Learned
+skills are **M4-5**.
+
 ### M2-3 Voice — speech to text
 
 `whisper.cpp` binary, spawned by the plugin process. **The plugin captures the microphone
@@ -1893,6 +1940,7 @@ Newest first. Every entry here is also in Alexia.md's decision log.
 
 | Date | Entry |
 |---|---|
+| 2026-08-28 | **D70** — **skills load, and the index is a tool description rather than a system line.** M2-2. One `skill` tool carries every installed skill's `name` and `description` in its own description — which is where a model looks when it is choosing what to reach for — and its body arrives only when the model calls it, a file under it only when it passes `file`. All three of agentskills.io's disclosure levels, and **`agent.ts` did not change at all**. Two rules were worth the extra lines: reading a skill declares `readOnlyHint` through the gate's existing `about()`, or the default permission mode would ask the user before the model could open its own instructions; and a folder that fails to load is shown with the reason, because *a skill that is not firing and is not visibly broken is the hardest thing in this system to debug*. Six ways to be broken are named, including one the spec did not — **two skills answering to one name**, which is a problem said out loud rather than a silent winner. A bundled skill goes when its plugin does through no code of its own: `name` and `description` are re-read from disk, so there is no index to fall out of step. `plugins/hello` now bundles one, so the bundled route is proved against a real plugin. |
 | 2026-08-28 | **D69** — **no secret has ever actually been stored.** `cross-keychain` refuses an account name containing a slash, and `secrets.ts` had been building `<plugin>/<key>` since M1-3 — so every keychain read and write threw, in both directions, on any real machine. That includes the provider key a person pastes at first run, which means the one step first run exists for could not have worked. Nothing caught it because every test uses `memorySecrets`, which has no such rule; the first thing to touch the real store was M2-1's settings screen. The separator is now a dot, which is legal and still unambiguous — a plugin id cannot contain one and neither can a setting key — and `account()` is exported so a test can pin the format, because the constraint lives outside this repo and will not announce itself if it changes. |
 | 2026-08-28 | **D68** — **the ten widgets are rendered, and the `alexia/*` layer gained its sixth method to make one of them true.** M2-1. Core renders from the manifest and spawns nothing to do it, which is the whole reason the schema lives in `plugin.json`. `ui-schema.md` had promised that a `status` is driven by the plugin *writing to its own settings value* and **no method could write one** — so `alexia/settings/set` exists, and writes **only the caller's own `status` keys**: a plugin that could rewrite a `toggle` the user set could quietly undo a person's decision, and would have to be trusted rather than read. Two of core's decisions stay core's: two or three options is a segmented control and four is a dropdown, and an `action` goes through the same permission gate as any other tool call — asked beside the button, where the thing being decided is. A `password` is never rendered, only reported as set, with core's own sentence naming the store. `plugins/hello` grew to nine widgets and drives three of them, so the screen is proved against a real plugin rather than a fixture. |
 | 2026-08-28 | **D67** — **the visual language is written down, and both themes are a test.** `docs/design.md` is the deliverable M2-1's ten widgets conform to; `app.css` is rewritten from its tokens with no literal sizes, spaces or colours left. The header now distinguishes a control from a status from the number that matters, instead of rendering all three as identical pills. **First run is a view**, not a section — `data-view` swaps it and the composer is not rendered on it, so *never on screen together* is a fact about the DOM rather than a rule to remember — and the header is hidden there too, because it was drawing the mark and the name a second time sixty pixels below the first. Light and dark are built for their own grounds and held at 4.5:1 by `packages/ui/test/contrast.test.ts`, which reads `app.css` rather than keeping a second copy of the palette. Verified by driving headless Edge over CDP: nothing scrolls at 1280×800, and every focused element shows a ring under real key events. Two bugs found that way — a blanket `width: 100%` was making the header's dropdowns 1233px wide and pushing the spend off screen, and the first-run question's size was being set and then un-set by a later, equally specific rule. |

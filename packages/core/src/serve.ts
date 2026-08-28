@@ -29,6 +29,7 @@ import {
 import { keyOf, PROVIDERS } from './provider.js'
 import { MODES } from './router.js'
 import { CORE, keychain, type SecretStore } from './secrets.js'
+import { Skills } from './skills.js'
 import { dataDir, Store, type Message } from './store.js'
 import { PluginTooling } from './tooling.js'
 import { allowance, warning } from './usage.js'
@@ -131,12 +132,32 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     dataDir: root,
     secrets,
     log: (id, line) => console.error(`[${id}] ${line}`),
-    onToolsChanged: () => tooling.invalidate(),
+    onToolsChanged: () => {
+      tooling.invalidate()
+      // A plugin arriving or going away takes its bundled skills with it, and the index the
+      // model is shown is a tool description built from that list.
+      skills.invalidate()
+    },
     // The folders the user chose, as MCP roots. A plugin is told where it may work by the
     // protocol's own mechanism rather than by anything Alexia invented.
     roots: () => rootsOf(scope()),
   })
-  const tooling = new PluginTooling(plugins, (line) => console.error(`[tools] ${line}`))
+  /**
+   * Know-how (M2-2). Two arrival routes and one format: folders the user installed on their
+   * own, and folders a plugin declared — which is why the bundled half is a function rather
+   * than a list. Deleting the plugin deletes its skills, and the next read simply finds
+   * fewer folders.
+   */
+  const skills = new Skills({
+    dir: join(root, 'skills'),
+    bundled: () =>
+      plugins.ids.flatMap((id) => {
+        const folder = plugins.folder(id)
+        return folder === undefined ? []
+          : (plugins.manifest(id)?.skills ?? []).map((path) => ({ dir: join(folder, path), pluginId: id }))
+      }),
+  })
+  const tooling = new PluginTooling(plugins, (line) => console.error(`[tools] ${line}`), skills)
   plugins.load()
   plugins.watch()
 
@@ -393,7 +414,16 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
      */
     if (url.pathname === '/api/plugins') {
       response.writeHead(200, { 'content-type': 'application/json' })
-      response.end(JSON.stringify({ panes: await plugins.panes(), problems: plugins.problems }))
+      response.end(
+        JSON.stringify({
+          panes: await plugins.panes(),
+          problems: plugins.problems,
+          skills: skills.all,
+          // Broken skills ride the same list as broken plugin folders, because they are the
+          // same sentence to the same person: this folder is here and is doing nothing.
+          skillProblems: skills.problems,
+        }),
+      )
       return
     }
 

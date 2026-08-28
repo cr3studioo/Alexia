@@ -4,9 +4,11 @@ import type { Tooling, ToolOutcome } from './agent.js'
 import type { Annotations } from './permissions.js'
 import type { Plugins } from './plugins.js'
 import type { ToolSpec } from './provider.js'
+import { SKILL_TOOL, type Skills } from './skills.js'
 
 /**
- * Every enabled plugin's `tools/list`, as one list the model can be handed.
+ * Everything the model may call: every enabled plugin's `tools/list`, plus core's own one
+ * for reading a skill (M2-2), as the single list the loop is handed.
  *
  * This is the join between the two halves of the project: the supervisor knows what is
  * running, the loop knows how to plan, and neither of them knows the other's vocabulary.
@@ -41,6 +43,12 @@ export class PluginTooling implements Tooling {
     private readonly plugins: Plugins,
     /** Where a tool with no description gets mentioned. It is a bug, not a style note. */
     private readonly log?: (line: string) => void,
+    /**
+     * Know-how (M2-2), which is core's own and belongs to no plugin. It is aggregated here
+     * rather than beside here so that there is exactly one list, one `about` and therefore
+     * one permission gate — a second `Tooling` would mean a second place to remember.
+     */
+    private readonly skills?: Skills,
   ) {}
 
   /**
@@ -57,7 +65,8 @@ export class PluginTooling implements Tooling {
   }
 
   async list(): Promise<ToolSpec[]> {
-    return (await this.#aggregate()).map((k) => k.spec)
+    const skill = this.skills?.tool
+    return [...(skill ? [skill] : []), ...(await this.#aggregate()).map((k) => k.spec)]
   }
 
   /**
@@ -65,7 +74,13 @@ export class PluginTooling implements Tooling {
    * core has never heard of it, which the gate reads the same way it reads a tool declaring
    * nothing: not safe until something says so.
    */
-  async about(name: string): Promise<{ pluginId: string; annotations?: Annotations } | undefined> {
+  async about(name: string): Promise<{ pluginId?: string; annotations?: Annotations } | undefined> {
+    // Reading a skill is reading text core already has on disk. Saying so is what keeps the
+    // default mode from asking permission every time the model opens its own instructions.
+    // `tool` is undefined when nothing is installed, so it is also the answer to whether
+    // `list` offered it — and a gate told about a tool nobody was offered is a gate
+    // answering for something that cannot happen.
+    if (name === SKILL_TOOL && this.skills?.tool) return { annotations: this.skills.annotations }
     const found = (await this.#aggregate()).find((k) => k.spec.name === name)
     return found && { pluginId: found.pluginId, ...(found.annotations && { annotations: found.annotations }) }
   }
@@ -79,6 +94,8 @@ export class PluginTooling implements Tooling {
    * invariant 4 with a real loop behind it, and it is the whole of M15-8's mechanism.
    */
   async call(name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<ToolOutcome> {
+    if (name === SKILL_TOOL && this.skills?.tool) return this.skills.read(args)
+
     let found = (await this.#aggregate()).find((k) => k.spec.name === name)
     if (!found) {
       // It may have appeared a moment ago — a plugin that just finished starting is the
@@ -87,7 +104,7 @@ export class PluginTooling implements Tooling {
       found = (await this.#aggregate()).find((k) => k.spec.name === name)
     }
     if (!found) {
-      const available = (await this.#aggregate()).map((k) => k.spec.name)
+      const available = (await this.list()).map((t) => t.name)
       return {
         ok: false,
         text:

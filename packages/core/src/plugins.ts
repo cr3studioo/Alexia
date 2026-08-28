@@ -113,6 +113,14 @@ export class Plugins {
   }
 
   /**
+   * The folder this plugin was installed from. Whatever it bundles — its skills (M2-2) —
+   * is inside it, which is also why purge removing this one folder is enough.
+   */
+  folder(id: string): string | undefined {
+    return this.#entries.get(id)?.dir
+  }
+
+  /**
    * Read the folder. Every plugin that validates loads, including one whose requirements
    * nothing satisfies — that plugin runs and explains itself, because a plugin that
    * silently vanished would be indistinguishable from one that was never installed.

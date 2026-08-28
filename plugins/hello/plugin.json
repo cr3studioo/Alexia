@@ -92,5 +92,8 @@
   },
   "provides": [
     "demo.greet"
+  ],
+  "skills": [
+    "skills/greeting-well"
   ]
 }

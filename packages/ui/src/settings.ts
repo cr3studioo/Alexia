@@ -64,6 +64,16 @@ interface Problem {
   reason: string
 }
 
+/** A skill's index entry (M2-2). There is nothing to configure — it is a folder of text. */
+interface Skill {
+  name: string
+  description: string
+  license?: string
+  dir: string
+  /** Set when it arrived with a plugin, which is what makes it not separately removable. */
+  pluginId?: string
+}
+
 const el = <K extends keyof HTMLElementTagNameMap>(
   tag: K,
   className?: string,
@@ -82,6 +92,7 @@ export function mountSettings(token: string): { open: () => void } {
   const view = document.querySelector<HTMLElement>('#settings')!
   const list = document.querySelector<HTMLElement>('#panes')!
   const broken = document.querySelector<HTMLElement>('#problems')!
+  const known = document.querySelector<HTMLElement>('#skills')!
 
   const send = async (path: string, body: unknown): Promise<Record<string, unknown>> =>
     (await (
@@ -95,8 +106,49 @@ export function mountSettings(token: string): { open: () => void } {
   async function load(): Promise<void> {
     const state = (await (
       await fetch('/api/plugins', { headers: { 'x-alexia-token': token } })
-    ).json()) as { panes: Pane[]; problems: Problem[] }
+    ).json()) as { panes: Pane[]; problems: Problem[]; skills: Skill[]; skillProblems: Problem[] }
     draw(state.panes, state.problems)
+    drawSkills(state.skills, state.skillProblems)
+  }
+
+  /** A folder that is there and doing nothing, and the only useful thing to say about it. */
+  function brokenRows(problems: Problem[], one: string, many: string): HTMLElement[] {
+    if (problems.length === 0) return []
+    return [
+      el('h3', 'step-heading', problems.length === 1 ? one : `${problems.length} ${many}`),
+      ...problems.map((problem) => {
+        const row = el('div', 'pane')
+        row.append(el('b', undefined, problem.dir), el('p', 'error', problem.reason))
+        return row
+      }),
+    ]
+  }
+
+  /**
+   * What Alexia knows how to do well, and what is sitting in the folder failing to load.
+   *
+   * The description is shown in full because it is the whole of a skill's discoverability —
+   * it is the sentence the model reads when deciding whether to open the skill at all, so
+   * whoever wrote it should be able to see exactly what the model sees.
+   */
+  function drawSkills(skills: Skill[], problems: Problem[]): void {
+    known.replaceChildren()
+    if (skills.length === 0 && problems.length === 0) return
+    known.append(el('h3', 'step-heading', 'Skills'))
+    for (const skill of skills) {
+      const row = el('section', 'pane')
+      const head = el('div', 'pane-head')
+      head.append(
+        el('b', undefined, skill.name),
+        ...(skill.pluginId === undefined ? [] : [el('span', 'pill', `with ${skill.pluginId}`)]),
+        ...(skill.license === undefined ? [] : [el('span', 'pane-meta', skill.license)]),
+      )
+      row.append(head, el('p', 'hint', skill.description))
+      known.append(row)
+    }
+    // A skill that is not firing and is not visibly broken is the hardest thing here to
+    // debug, so a folder that failed to load says so rather than simply not appearing.
+    known.append(...brokenRows(problems, 'One skill did not load', 'skills did not load'))
   }
 
   function draw(panes: Pane[], problems: Problem[]): void {
@@ -107,18 +159,7 @@ export function mountSettings(token: string): { open: () => void } {
 
     // A folder that is not a plugin is shown, never swallowed. Somebody put it there on
     // purpose and the reason it did not load is the only useful thing anyone can tell them.
-    broken.replaceChildren(
-      ...(problems.length === 0 ?
-        []
-      : [
-          el('h3', 'step-heading', problems.length === 1 ? 'One folder did not load' : `${problems.length} folders did not load`),
-          ...problems.map((problem) => {
-            const row = el('div', 'pane')
-            row.append(el('b', undefined, problem.dir), el('p', 'error', problem.reason))
-            return row
-          }),
-        ]),
-    )
+    broken.replaceChildren(...brokenRows(problems, 'One folder did not load', 'folders did not load'))
   }
 
   /** One plugin: core's chrome, then its declared widgets in manifest order. */
