@@ -78,6 +78,17 @@ export class Plugins {
   readonly #toolNames = new Map<string, string[]>()
   /** One in-flight bar per plugin, for whatever an `action` started. */
   readonly #progress = new Map<string, Progress>()
+  /**
+   * Shutdowns already under way for plugins this map no longer holds.
+   *
+   * A folder that disappears is stopped and forgotten in the same breath, and nobody waits
+   * for a process whose plugin has ceased to exist — there is nothing left to wait *for*.
+   * Except at quit: `stop()` promises that nothing this object started is still running, and
+   * without this set that promise was false for exactly the plugin the invariant is about.
+   * Measured on Windows: the vanished plugin outlived `await stop()` and still held its own
+   * working directory, so deleting the data directory it sits in failed with `EPERM`.
+   */
+  readonly #leaving = new Set<Promise<void>>()
   readonly #host: Host
   readonly #secrets: SecretStore
   #watcher?: FSWatcher
@@ -210,7 +221,7 @@ export class Plugins {
       found.add(entry.manifest.id)
       const existing = this.#entries.get(entry.manifest.id)
       if (existing && existing.dir === entry.dir && same(existing.manifest, entry.manifest)) continue
-      void existing?.process.stop()
+      if (existing) this.#release(existing.process)
       this.#entries.set(entry.manifest.id, {
         ...entry,
         process: new PluginProcess(entry.manifest, entry.dir, this.#host, this.options.timings),
@@ -227,7 +238,7 @@ export class Plugins {
     for (const [id, entry] of this.#entries) {
       if (found.has(id)) continue
       this.#entries.delete(id)
-      void entry.process.stop()
+      this.#release(entry.process)
       this.options.onToolsChanged?.(id)
     }
   }
@@ -443,6 +454,11 @@ export class Plugins {
     this.#entries.delete(id)
     if (this.#enabled.delete(id)) this.#persist()
     await entry?.process.stop()
+    // And anything already on its way out — including, in the one case that matters, *this*
+    // plugin, when its folder was deleted by hand before the delete button was pressed.
+    // `entry` is undefined there, so the line above waits for nothing, and the directory
+    // being removed below is the one that process is still sitting in.
+    await Promise.all(this.#leaving)
     this.options.store.purge(id)
     // Then the keychain, one entry per declared `password`.
     // ponytail: the key names come from the manifest, so a folder someone deleted by hand
@@ -456,11 +472,30 @@ export class Plugins {
     this.options.onToolsChanged?.(id)
   }
 
+  /**
+   * Stop a plugin nothing holds a reference to any more, without blocking on it.
+   *
+   * Deliberately not awaited by its callers: a folder disappearing must be noticed at the
+   * speed of the filesystem, not at the speed of a process agreeing to exit. `stop()` is
+   * where the wait happens instead.
+   */
+  #release(process: PluginProcess): void {
+    const leaving = process.stop().catch(() => {})
+    this.#leaving.add(leaving)
+    void leaving.then(() => this.#leaving.delete(leaving))
+  }
+
   async stop(): Promise<void> {
     this.#watcher?.close()
     this.#watcher = undefined
     clearTimeout(this.#pending)
-    await Promise.all([...this.#entries.values()].map((e) => e.process.stop()))
+    await Promise.all([
+      ...[...this.#entries.values()].map((e) => e.process.stop()),
+      // The ones already on their way out. Without these, quitting could leave a process
+      // running whose plugin core has forgotten — and forgotten is exactly why nothing else
+      // would ever stop it.
+      ...this.#leaving,
+    ])
   }
 
   /** One pass over the folder. A folder that is not a plugin is a problem, not a crash. */

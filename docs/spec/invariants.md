@@ -16,6 +16,7 @@
 pnpm invariants                                     # all of them
 pnpm vitest run --project invariants -t "no-hardcoded-paths"   # one of them
 pnpm check                                          # lint, types, unit tests, then these
+pnpm check:no-plugins                               # check 2, which `pnpm check` cannot run
 ```
 
 Every check is named after its file, so the `-t` string is the same as the filename minus
@@ -72,6 +73,14 @@ aside and runs core's entire test suite.
 
 A job, not an aspiration. The moment core needs a plugin to start, "delete the folder"
 becomes "delete the folder and hope".
+
+**The one check `pnpm check` cannot run**, because it runs with `plugins/` present — which is
+the single condition this check exists to remove. `pnpm check:no-plugins` moves the folder
+aside locally and puts it back whatever happens, and it exists because the CI job was **red
+for two milestones** without anybody finding out (D76): four test files that use the repo's
+own plugins as fixtures had never joined `needPlugins` in `vitest.config.ts`. An invariant
+that can only be run somewhere you do not look is not a check. Run it before a commit that
+adds a test which touches a plugin folder.
 
 ### 3 · `crasher-contained`
 

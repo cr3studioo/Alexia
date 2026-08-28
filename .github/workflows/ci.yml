@@ -26,7 +26,8 @@ jobs:
   # Invariant 2: core works with zero plugins installed. A job, not an aspiration — the
   # moment core needs a plugin to start, "delete the folder" becomes "delete the folder and
   # hope". The tests that use the repo's own plugins as fixtures step aside with them; see
-  # `needPlugins` in vitest.config.ts.
+  # `needPlugins` in vitest.config.ts. `pnpm check:no-plugins` is the same thing locally, and
+  # exists because this job was red for two milestones with nothing on a laptop able to say so.
   no-plugins:
     runs-on: ubuntu-latest
     steps:
