@@ -20,13 +20,26 @@
  *     alexia.mjs    core, bundled to one file
  *     *.node        the one native dependency that cannot be bundled
  *     ui/           the shell: index.html, app.css, main.js, her face
+ *     plugins/      the first-party plugins, bundled — something to install (M2-7)
  *
  * Data still goes to %LOCALAPPDATA%\Alexia and never beside the executable, which is what
  * makes "delete the folder" a clean uninstall of the program and not of the conversation.
+ *
+ * **Windows only, and that is a decision rather than an omission (M2-7, D75).** The other
+ * platforms are three small changes away — the runtime's filename, the launcher's extension,
+ * and the command that opens a browser — and the keyring's platform table already carries
+ * their slugs. What stops it is that a bundle nobody has run on a machine that never had
+ * Alexia is not a bundle anybody should be handed: `@napi-rs/keyring` reaches libsecret on
+ * Linux and the Keychain on macOS, and *whether the app starts at all* is exactly what a
+ * packaged build is supposed to answer. The line below fails loudly on an unsupported
+ * platform, which is the honest state. The day there is a machine to test on, this becomes
+ * a small commit rather than a hope.
  */
 import { build } from 'esbuild'
-import { cpSync, mkdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { spawn } from 'node:child_process'
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
+import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -65,7 +78,19 @@ await build({
   // per-platform package whose *entry point* is the binary — no `.node` in the specifier
   // for the first pattern to match, and a hard build error if it is left to be bundled.
   external: ['*.node', '@napi-rs/keyring-*'],
-  banner: { js: 'import{createRequire as __cr}from"node:module";const require=__cr(import.meta.url);' },
+  // `require` for the bundled CommonJS, and **`__filename` for one of them in particular.**
+  // `@napi-rs/keyring/index.js` opens with `createRequire(__filename)`, which is free in CJS
+  // and undefined in an ESM bundle — so the import threw, cross-keychain's native backend
+  // reported itself unsupported, and every secret quietly took the PowerShell route instead.
+  // Nothing said so. See D75.
+  //
+  // Only `__filename`: `__dirname` is already declared inside the bundle by a dependency
+  // that shims its own, and a second declaration is a syntax error rather than a shadow.
+  banner: {
+    js:
+      'import{createRequire as __cr}from"node:module";import{fileURLToPath as __ftp}from"node:url";' +
+      'const require=__cr(import.meta.url);const __filename=__ftp(import.meta.url);',
+  },
 })
 
 // 2. The one thing that cannot be bundled. `@napi-rs/keyring` is how a key reaches the
@@ -83,6 +108,13 @@ const source = entry(at, `@napi-rs/keyring-${slug}`)
 const native = basename(source)
 cpSync(source, join(out, native))
 
+// And the fallback's script, because a credential store with no second route is a credential
+// store that fails silently the day the first one moves. `cross-keychain` reaches it as
+// `<its own bundled location>/scripts/credman.ps1`, which after bundling is beside this file.
+const keychainDir = dirname(entry(join(root, 'packages', 'core'), 'cross-keychain'))
+mkdirSync(join(out, 'scripts'), { recursive: true })
+cpSync(join(keychainDir, 'scripts', 'credman.ps1'), join(out, 'scripts', 'credman.ps1'))
+
 // 3. The shell. Everything `serve.ts` serves statically, in the folder its third candidate
 //    looks in.
 const ui = join(out, 'ui')
@@ -98,11 +130,52 @@ cpSync(join(root, 'packages', 'ui', 'dist', 'src'), join(ui, 'dist', 'src'), {
   filter: (from) => statSync(from).isDirectory() || from.endsWith('.js'),
 })
 
-// 4. The runtime. 89 MB of Node, which is most of what the tester downloads and the honest
+// 4. Something to install (M2-7). The lifecycle at M2-5 installs from a folder somebody
+//    points at, and a packaged Alexia with no folder to point at makes *install → talk →
+//    delete* a thing you can only do with a checkout.
+//
+//    Each one is bundled exactly the way core is, for exactly the same reason: a plugin in
+//    this repo reaches its SDK through a pnpm symlink into a store that will not exist on the
+//    tester's machine. What ships is a folder holding a manifest, one file, and whatever it
+//    bundles — which is also what a registry download will look like at M3.
+//
+//    `crasher` and `vanisher` are not on this list and are not going to be: they exist to be
+//    broken, and handing somebody a plugin whose job is to die is not a demonstration.
+const SHIPPED = ['hello', 'voice']
+const plugins = join(out, 'plugins')
+for (const id of SHIPPED) {
+  const from = join(root, 'plugins', id)
+  const to = join(plugins, id)
+  mkdirSync(to, { recursive: true })
+  const manifest = JSON.parse(readFileSync(join(from, 'plugin.json'), 'utf8'))
+  // `$schema` points at a path in this repo, which is not somewhere the tester has. It is a
+  // convenience for whoever edits the file, and it does not travel.
+  delete manifest.$schema
+  writeFileSync(join(to, 'plugin.json'), JSON.stringify(manifest, null, 2))
+
+  // The entry point, and only the entry point: `entry.args` names the script, and everything
+  // it imports comes with it.
+  const script = (manifest.entry.args ?? []).find((arg) => arg.endsWith('.js'))
+  if (!script) throw new Error(`${id} has no script in entry.args to bundle.`)
+  await build({
+    entryPoints: [join(from, script)],
+    outfile: join(to, script),
+    bundle: true,
+    platform: 'node',
+    format: 'esm',
+    target: 'node24',
+    banner: { js: 'import{createRequire as __cr}from"node:module";const require=__cr(import.meta.url);' },
+  })
+
+  // Its skills, if it brought any (M2-2). They are text and they install and purge with it.
+  for (const skill of manifest.skills ?? []) cpSync(join(from, skill), join(to, skill), { recursive: true })
+}
+
+// 5. The runtime. 89 MB of Node, which is most of what the tester downloads and the honest
 //    price of not asking them to install anything.
 cpSync(process.execPath, join(out, 'node.exe'))
 
-// 5. Start it, then take them to it. `Silent is not fine`: the window stays, says where she
+// 6. Start it, then take them to it. `Silent is not fine`: the window stays, says where she
 //    is, and says what to do if the browser did not come up on its own.
 writeFileSync(
   join(out, 'boot.mjs'),
@@ -114,12 +187,17 @@ import { spawn } from 'node:child_process'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-// The native keyring, by absolute path. napi-rs checks this before every other route it
-// has, so the folder can be unzipped anywhere and the credential locker still works. It is
-// set before the import rather than after, which is why the import below is dynamic: a
-// static one is hoisted above every statement here, including this one.
+// The native keyring is found as a **sibling of alexia.mjs**, which is where it is copied,
+// and that works from wherever the folder was unzipped.
+//
+// It is deliberately *not* pointed at with \`NAPI_RS_NATIVE_LIBRARY_PATH\` (D75). That
+// variable is checked first, as its documentation says — and @napi-rs/keyring 1.3.0's loader
+// assigns the module it loads to an inner variable and then returns nothing, while its caller
+// writes the return value over that same variable. So setting it does not merely fail: it
+// takes the branch that would have worked out of reach, and the failure is silent, because
+// cross-keychain reads a missing native module as *this backend is not supported here* and
+// quietly spawns PowerShell for every secret instead.
 const here = dirname(fileURLToPath(import.meta.url))
-process.env.NAPI_RS_NATIVE_LIBRARY_PATH = join(here, '${native}')
 
 const { serve } = await import('./alexia.mjs')
 
@@ -129,6 +207,9 @@ console.log('')
 console.log('   ' + url)
 console.log('')
 console.log('Your browser should have opened. If it did not, copy that address into it.')
+console.log('')
+console.log('Plugins to install, from the Plugins screen — paste one of these paths:')
+console.log('   ' + join(here, 'plugins', 'voice'))
 console.log('Closing this window stops Alexia.')
 
 // Detached, and failure is not fatal: if no browser opens, the address above is still on
@@ -142,14 +223,75 @@ try {
 `,
 )
 
-// 6. The double-click itself. \`%~dp0\` is this file's own folder, so the whole thing runs
+// 7. The double-click itself. \`%~dp0\` is this file's own folder, so the whole thing runs
 //    from wherever it was unzipped — Desktop, Downloads, a stick.
 writeFileSync(
   join(out, 'Alexia.cmd'),
   ['@echo off', 'title Alexia', 'cd /d "%~dp0"', 'node.exe boot.mjs', 'pause', ''].join('\r\n'),
 )
 
+/**
+ * 8. Start what was just built and ask it one question.
+ *
+ * A packaged build is the one artefact nothing else in this repo exercises: a different
+ * module format, a different resolver and a different folder layout from anything the tests
+ * see. It hid three real bugs for a whole milestone, all in the same place and all silent,
+ * and running the thing is what found every one of them (D75).
+ *
+ * `/api/plugins` is the question because it reads manifests, the store *and* the keychain,
+ * which is the whole of what a fresh install touches before anybody types anything.
+ *
+ * ponytail: it proves the build starts, serves the shell and can reach **a** credential
+ * store. It cannot say **which** — the native module and the PowerShell fallback answer
+ * identically, and telling them apart would mean core reporting its own backend, which is a
+ * product change to satisfy a build script. The day a slow first run points back here, that
+ * is the thing to add.
+ */
+const home = mkdtempSync(join(tmpdir(), 'alexia-package-check-'))
+const app = spawn(join(out, 'node.exe'), ['boot.mjs'], {
+  cwd: out,
+  // Its own throwaway `%LOCALAPPDATA%`, so checking the build cannot touch a real install.
+  env: { ...process.env, LOCALAPPDATA: home },
+  stdio: ['ignore', 'pipe', 'pipe'],
+})
+let said = ''
+app.stdout.on('data', (chunk) => (said += String(chunk)))
+app.stderr.on('data', (chunk) => (said += String(chunk)))
+
+try {
+  const url = await new Promise((resolve, reject) => {
+    const gaveUp = setTimeout(() => reject(new Error(`it never said where it was:
+${said}`)), 30_000)
+    const look = setInterval(() => {
+      const found = /http:\/\/127\.0\.0\.1:\d+/.exec(said)
+      if (!found) return
+      clearInterval(look)
+      clearTimeout(gaveUp)
+      resolve(found[0])
+    }, 200)
+  })
+  const page = await (await fetch(url)).text()
+  const token = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/.exec(page)?.[0]
+  if (!token) throw new Error('the shell it served carries no token')
+  const answer = await (await fetch(new URL('/api/plugins', url), { headers: { 'x-alexia-token': token } })).text()
+  const state = JSON.parse(answer)
+  if (!Array.isArray(state.panes)) throw new Error(`/api/plugins answered ${answer.slice(0, 200)}`)
+  console.log('Started, served the shell and read the keychain.')
+} finally {
+  // Waited for, not just signalled: Windows will not let go of a directory a live process is
+  // sitting in, and removing it a millisecond early fails the build over nothing.
+  const gone = new Promise((resolve) => app.once('exit', resolve))
+  app.kill()
+  await gone
+  try {
+    rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })
+  } catch {
+    // A temp folder that outlives this script is untidy, not broken.
+  }
+}
+
 const mb = (path) => (statSync(path).size / 1024 / 1024).toFixed(1)
 console.log(`Packaged to ${out}`)
 console.log(`  alexia.mjs  ${mb(join(out, 'alexia.mjs'))} MB`)
 console.log(`  node.exe    ${mb(join(out, 'node.exe'))} MB`)
+for (const id of SHIPPED) console.log(`  plugins/${id}   ${mb(join(plugins, id, 'index.js'))} MB`)

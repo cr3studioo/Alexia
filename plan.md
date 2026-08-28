@@ -136,7 +136,7 @@ Tick a box only when the task's acceptance criteria pass. `[GATE]` needs a human
 - [x] **M2-4** `plugins/voice` — text to speech
 - [x] **M2-5** Full lifecycle: install, enable, disable, purge
 - [x] **M2-6** Streaming progress over the wire
-- [ ] **M2-7** The crude installer
+- [x] **M2-7** The crude installer
 - [ ] **M2-8** `[GATE]` Cold-install test #2
 - [ ] **M2-G** **Done when:** install → talk → delete leaves no residue and not one line changed in core
 
@@ -1735,6 +1735,51 @@ and it took neither `@yao-pkg/pkg` nor NSIS to do it. What is left here is the p
 need: the other platforms, and whatever M2-5's install/enable/disable lifecycle has to ship
 beside it.
 
+**Done 2026-08-28 (D75), and it earned its place by breaking.**
+
+**Something to install.** The package now carries `plugins/hello` and `plugins/voice`, each
+bundled the way core is and for the same reason — a plugin in this repo reaches its SDK
+through a pnpm symlink into a store the tester's machine does not have. A folder holding a
+manifest, one file and its skills is also what a registry download will look like at M3.
+`crasher` and `vanisher` are not on that list and will not be: handing somebody a plugin
+whose job is to die is not a demonstration.
+
+**Three bugs, all in the same place, all silent, and only running it found them.** The
+packaged build is the one artefact nothing else here exercises — a different module format, a
+different resolver, a different folder layout — and **the packaged app had never once reached
+the credential locker**:
+
+1. `@napi-rs/keyring` opens with `createRequire(__filename)`. Free in CommonJS, **undefined in
+   an ESM bundle** — so the import threw, `cross-keychain` read that as *this backend is not
+   supported here*, and every secret fell to the PowerShell route.
+2. That route's `credman.ps1` **was not shipped**, so behind the silent failure was nothing at
+   all. The settings screen answered a stack trace.
+3. `NAPI_RS_NATIVE_LIBRARY_PATH`, set by M1-I1's `boot.mjs` in good faith, is **checked first
+   and broken upstream in 1.3.0** — the loader assigns what it loads to an inner variable and
+   returns nothing, while its caller writes that return value over the same variable. Setting
+   it did not merely fail; it took the branch that *does* work out of reach.
+
+The fixes are one banner, one copied file and one deleted line. The native path is in use now,
+proved by hiding `credman.ps1` and watching a real secret round-trip anyway.
+
+**`pnpm package` now starts what it just built and asks it one question.** `/api/plugins`
+reads manifests, the store and the keychain — the whole of what a fresh install touches before
+anybody types anything — and the build fails if the answer is not JSON.
+
+**The other platforms are answered with a decision rather than with code.** macOS and Linux
+are three small changes away and the keyring's platform table already carries their slugs;
+what stops it is that nobody has run one. `@napi-rs/keyring` reaches libsecret on Linux and
+the Keychain on macOS, and *whether the app starts at all* is precisely what a packaged build
+exists to answer — the three bugs above are what that question looks like when it is asked
+honestly. The script fails loudly on an unsupported platform, which is the true state. The day
+there is a machine to test on, this is a small commit.
+
+**Verified**: the packaged folder, run with its own throwaway `%LOCALAPPDATA%`, installed
+Hello from the folder it shipped with, showed it *not enabled*, enabled it, picked up its
+bundled skill, stored and read back a real secret, ran its tool, and deleted it — leaving no
+pane, no skill, no extensions folder, no data directory and no key in the locker, with the
+folder it was installed from untouched.
+
 ### M2-8 `[GATE]` Cold-install test #2
 
 The first one with an installer. Time it. Compare against #1.
@@ -2100,6 +2145,7 @@ Newest first. Every entry here is also in Alexia.md's decision log.
 
 | Date | Entry |
 |---|---|
+| 2026-08-28 | **D75** — **the packaged app had never once reached the credential locker, and only running it found out.** M2-7. Three bugs, all in the same place and all silent. `@napi-rs/keyring` opens with `createRequire(__filename)` — free in CommonJS, **undefined in an ESM bundle** — so the import threw and `cross-keychain` read that as *this backend is not supported here*; the PowerShell fallback it chose instead had its script left out of the package, so behind the silent failure was nothing at all; and `NAPI_RS_NATIVE_LIBRARY_PATH`, which M1-I1 set in good faith because it is checked first, is **broken upstream in 1.3.0** — the loader assigns what it loads to an inner variable and returns nothing while its caller writes that return over the same variable, so setting it took the branch that works out of reach. One banner, one copied file, one deleted line. What this says about the project is the part worth keeping: **a packaged build is the one artefact nothing else here exercises**, so `pnpm package` now starts what it just built and asks it for `/api/plugins` — manifests, the store and the keychain, the whole of what a fresh install touches before anybody types anything. The package also carries `hello` and `voice`, bundled, because M2-5 installs from a folder somebody points at and an app with no folder to point at makes *install → talk → delete* something you can only do with a checkout. The other platforms are answered with a decision: three small changes away, and not claimed until a machine has run one. |
 | 2026-08-28 | **D74** — **progress reaches the trace, and it cost one optional argument.** M2-6. A plugin's `notifications/progress` now travels plugin → `Tooling.call` → an event on the running step → an SSE frame → a bar in the trace row that is already on screen. M2-1 had carried it to the settings screen; this is the route through the agent loop, which is where the work a person actually waits on happens. The plumbing is a fourth optional parameter on `Tooling.call` and nothing else: a `Tooling` that ignores it is still one, because a function of three parameters is assignable to one of four, so no fake in any test had to change. Two rules the building settled: **asking for progress is what creates the `progressToken`**, so a plugin that reports has somewhere to send it and one that does not never sends one — a caller never has to tell *no progress* from *no tool*; and **the bar appears when there is something to say and goes when the work does**, because one always present at zero is not believed when it moves and one left at 97% is worse than none. Verified by sampling the live shell every half second through a six-second tool call. |
 | 2026-08-28 | **D73** — **a folder appearing is not consent, so a plugin now arrives installed and not enabled.** M2-5. The lifecycle's four arrows are real and persisted, and the line that turned out to matter is the first one: files on disk is *installed*, and **nothing runs on the strength of a folder appearing** — somebody reads what it asked for, in its author's own words, and says yes. That made *enable* the moment the namespace exists, so `store.create` moved out of `load`: an installed-but-not-enabled plugin owns no tables, no process, no routing and no `action` button, and its bundled skills wait with it. **Disable keeps every last thing delete would take**, which is the whole argument for it being the action the screen offers first; delete sits behind a second press that has already said what goes. Install is crude on purpose — a folder somebody points at, validated where it stands and copied second so a folder that is not a plugin never reaches the directory core watches — because browsing a library is M3-2 and until there is a registry there is nowhere else for a plugin to come from. The answer survives a restart as one `kv` row, and purge takes it, so re-installing starts at the walkthrough rather than at a yes given to a different copy. Six tests had to start saying yes, which is the check working: invariant 5's comment had claimed *install and enable* while only ever installing, and it now proves there is nothing in the database between the two. |
 | 2026-08-28 | **D72** — **Alexia speaks, and the proof is that she can hear herself.** M2-4. `voice.speak` is *text in, audio played, nothing out*: Piper makes a WAV inside the plugin process and the operating system's own player plays it — no audio library, and a missing player fails with a sentence naming it. Verified by round trip: Piper said a line, `voice.transcribe` read it back one word off, and neither call named a plugin. **Hearing and speaking are two downloads and two bindings that move independently** — transcribing does not fetch a voice, speaking does not fetch a speech model, and `●` on the status line is reserved for both being ready, because halfway is a state the person watching has to be able to see. `speak` declares no `readOnlyHint`, for the same reason `listen` does not: making a noise in somebody's room is not read-only in any sense a person cares about. **Kokoro is deliberately not here.** It is the named quality upgrade and it costs an ONNX runtime plus a phonemizer in this plugin — exactly the dependency shape the whole thing has avoided, and which Piper ships inside its own 22 MB. The upgrade that costs nothing today is the voice choice; a real Kokoro option belongs at M4-6, where an ONNX runtime is already being paid for. |
