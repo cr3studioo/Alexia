@@ -133,7 +133,7 @@ Tick a box only when the task's acceptance criteria pass. `[GATE]` needs a human
 - [x] **M2-1** Declarative UI schema v1
 - [x] **M2-2** Skills loader (agentskills.io)
 - [x] **M2-3** `plugins/voice` — speech to text
-- [ ] **M2-4** `plugins/voice` — text to speech
+- [x] **M2-4** `plugins/voice` — text to speech
 - [ ] **M2-5** Full lifecycle: install, enable, disable, purge
 - [ ] **M2-6** Streaming progress over the wire
 - [ ] **M2-7** The crude installer
@@ -1593,6 +1593,40 @@ rather than a room.
 
 Piper by default; Kokoro as the quality upgrade. Registers `voice.speak`.
 
+**Done 2026-08-28 (D72).** `voice.speak` is *text in, audio played, nothing out*, exactly as
+`capabilities.md` defines it: Piper turns the sentence into a WAV inside the plugin process
+and the operating system's own player plays it. No audio library and none wanted — a WAV file
+and `SoundPlayer`, `afplay` or `aplay` is the whole of it, and a missing player fails with a
+sentence naming it rather than with a dependency somebody has to build.
+
+**The round trip is the verification.** Piper said *And so my fellow Americans, ask not what
+your country can do for you*, and Whisper — through `voice.transcribe`, by capability name —
+read back *and some of my fellow Americans, ask not what your country can do for you*. One
+word off, from the `base` model's ear rather than from Piper's mouth. Two plugins' worth of
+mechanism in one loop, and neither call named a plugin.
+
+**Two downloads, two bindings, and they move independently.** Hearing and speaking are
+separate files, so `voice.transcribe` and `voice.speak` bind separately — transcribing does
+not fetch a voice and saying one sentence does not fetch a speech model. Only the button
+fetches everything, because that is the one place somebody asked for all of it. The status
+line says which half is ready, and `●` is reserved for both: a plugin that can hear and not
+answer is halfway, and the person looking at that screen is the one deciding whether to wait.
+
+**`speak` declares no `readOnlyHint` either**, for the same reason `listen` does not. Making a
+noise in somebody's room is not read-only in any sense a person cares about.
+
+**The shared half came out into `fetching.js`.** Whisper and Piper need the same four moves —
+fetch a large file while saying how far along it is, unpack it, find what came out, spawn it —
+and the second one arriving is what proved it was one thing rather than two similar things.
+
+**Kokoro is not here, and that is a scope call rather than an oversight.** The parts list
+offers it as the quality upgrade; taking it means an ONNX runtime and a phonemizer in this
+plugin, which is precisely the dependency shape the whole thing has avoided — Piper ships
+both of those inside its own 22 MB and asks nothing of the machine. The upgrade path that
+costs nothing today is the voice choice: `amy`, `lessac` and `ryan`, one publisher, one
+language, every one of them run. **A real Kokoro option belongs with local media generation
+at M4-6**, where an ONNX runtime is already being paid for.
+
 ### M2-5 The full lifecycle
 
 ```
@@ -1995,6 +2029,7 @@ Newest first. Every entry here is also in Alexia.md's decision log.
 
 | Date | Entry |
 |---|---|
+| 2026-08-28 | **D72** — **Alexia speaks, and the proof is that she can hear herself.** M2-4. `voice.speak` is *text in, audio played, nothing out*: Piper makes a WAV inside the plugin process and the operating system's own player plays it — no audio library, and a missing player fails with a sentence naming it. Verified by round trip: Piper said a line, `voice.transcribe` read it back one word off, and neither call named a plugin. **Hearing and speaking are two downloads and two bindings that move independently** — transcribing does not fetch a voice, speaking does not fetch a speech model, and `●` on the status line is reserved for both being ready, because halfway is a state the person watching has to be able to see. `speak` declares no `readOnlyHint`, for the same reason `listen` does not: making a noise in somebody's room is not read-only in any sense a person cares about. **Kokoro is deliberately not here.** It is the named quality upgrade and it costs an ONNX runtime plus a phonemizer in this plugin — exactly the dependency shape the whole thing has avoided, and which Piper ships inside its own 22 MB. The upgrade that costs nothing today is the voice choice; a real Kokoro option belongs at M4-6, where an ONNX runtime is already being paid for. |
 | 2026-08-28 | **D71** — **voice works, and the capability binding earns its design on the first real plugin.** M2-3. `plugins/voice` fetches a pinned whisper.cpp build and a model with progress the whole way, spawns `whisper-cli` on a file and `whisper-stream` on the microphone, and puts **only text** on the wire — which is not a policy, it is where the code runs. Before the download, `voice.transcribe` is declared in the manifest and bound on no tool, so a caller gets `-32050`; after it, the binding appears and the capability answers. That is D59 happening rather than being described, and it was verified in that order. Three decisions worth keeping: **`listen` declares no `readOnlyHint`**, because read-only is true about the disk and wrong about the room, and an undeclared tool is one the gate stops on; **`whisper_path` is the tenth widget's first honest use** and also the whole non-Windows story; and **Windows' own `tar` is named explicitly**, because what is on `PATH` may be GNU tar, which cannot read zip and reads a drive letter as a hostname. Two bugs came out of it that were nothing to do with voice: **every invariant check had been reading past every first-party plugin** — the globs matched `.ts` and the plugins are JavaScript — and the first thing the widened check caught was an overclaiming sentence of mine. Purge was measured: 169 MB in, zero left. |
 | 2026-08-28 | **D70** — **skills load, and the index is a tool description rather than a system line.** M2-2. One `skill` tool carries every installed skill's `name` and `description` in its own description — which is where a model looks when it is choosing what to reach for — and its body arrives only when the model calls it, a file under it only when it passes `file`. All three of agentskills.io's disclosure levels, and **`agent.ts` did not change at all**. Two rules were worth the extra lines: reading a skill declares `readOnlyHint` through the gate's existing `about()`, or the default permission mode would ask the user before the model could open its own instructions; and a folder that fails to load is shown with the reason, because *a skill that is not firing and is not visibly broken is the hardest thing in this system to debug*. Six ways to be broken are named, including one the spec did not — **two skills answering to one name**, which is a problem said out loud rather than a silent winner. A bundled skill goes when its plugin does through no code of its own: `name` and `description` are re-read from disk, so there is no index to fall out of step. `plugins/hello` now bundles one, so the bundled route is proved against a real plugin. |
 | 2026-08-28 | **D69** — **no secret has ever actually been stored.** `cross-keychain` refuses an account name containing a slash, and `secrets.ts` had been building `<plugin>/<key>` since M1-3 — so every keychain read and write threw, in both directions, on any real machine. That includes the provider key a person pastes at first run, which means the one step first run exists for could not have worked. Nothing caught it because every test uses `memorySecrets`, which has no such rule; the first thing to touch the real store was M2-1's settings screen. The separator is now a dot, which is legal and still unambiguous — a plugin id cannot contain one and neither can a setting key — and `account()` is exported so a test can pin the format, because the constraint lives outside this repo and will not announce itself if it changes. |

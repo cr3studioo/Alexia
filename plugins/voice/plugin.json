@@ -3,7 +3,7 @@
   "manifest_version": 1,
   "id": "voice",
   "name": "Voice",
-  "summary": "Turns speech into text, with Whisper running on this machine.",
+  "summary": "Hears you and answers out loud, with Whisper and Piper running on this machine.",
   "version": "0.1.0",
   "license": "AGPL-3.0-only",
   "entry": {
@@ -20,6 +20,10 @@
       "why": "To hear you when you speak. The recording is turned into text here and the sound is not kept."
     },
     {
+      "cap": "audio.output",
+      "why": "To read an answer out loud through your speakers."
+    },
+    {
       "cap": "fs.read_scoped",
       "why": "To open a recording you point it at."
     },
@@ -29,15 +33,16 @@
     },
     {
       "cap": "net.download",
-      "why": "To fetch Whisper once from GitHub, and the speech model once from Hugging Face."
+      "why": "To fetch Whisper and Piper once from GitHub, and a speech model and a voice once from Hugging Face."
     },
     {
       "cap": "proc.spawn",
-      "why": "To run Whisper here rather than sending anything away to be listened to."
+      "why": "To run Whisper and Piper here rather than sending anything away to be listened to or read out."
     }
   ],
   "provides": [
-    "voice.transcribe"
+    "voice.transcribe",
+    "voice.speak"
   ],
   "settings": [
     {
@@ -63,11 +68,30 @@
       "hint": "More is faster until it is not. Four suits most machines."
     },
     {
+      "type": "choice",
+      "key": "voice",
+      "label": "Speaking voice",
+      "options": [
+        "amy",
+        "lessac",
+        "ryan"
+      ],
+      "default": "lessac",
+      "hint": "Amy and Lessac are 63 MB each. Ryan is 114 MB and the clearest of the three."
+    },
+    {
       "type": "path",
       "key": "whisper_path",
       "label": "Whisper program",
       "kind": "file",
       "hint": "Leave this empty and Alexia downloads one. Point it at your own whisper-cli if you have a build that suits this machine better."
+    },
+    {
+      "type": "path",
+      "key": "piper_path",
+      "label": "Piper program",
+      "kind": "file",
+      "hint": "The same again for speaking. Empty means Alexia fetches one; on a machine with no prebuilt Piper this is how you supply your own."
     },
     {
       "type": "status",
@@ -84,7 +108,7 @@
       "key": "install",
       "label": "Download now",
       "tool": "install",
-      "hint": "Fetches Whisper and the speech model. It happens on first use anyway; this is for getting it over with while you are looking."
+      "hint": "Fetches Whisper, Piper, the speech model and the voice. It happens on first use anyway; this is for getting it over with while you are looking."
     }
   ],
   "storage": {

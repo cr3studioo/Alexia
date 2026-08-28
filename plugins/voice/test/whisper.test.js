@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { expect, test } from 'vitest'
+import { VOICES, where as piperWhere } from '../piper.js'
 import { build, MODELS, passes, spoken, where } from '../whisper.js'
 
 /**
@@ -80,4 +81,25 @@ test('what one pass heard is not carried into the next', () => {
   read('### Transcription 1 START |\n\n[BLANK_AUDIO]\n\n### Transcription 1 END\n')
   // The second pass heard nothing, and must not be handed the first pass's sentence.
   expect(spoke).toEqual(['Hello.'])
+})
+
+test('every voice this plugin offers has a place to fetch it from and a size to warn about', () => {
+  expect(Object.keys(VOICES).sort()).toEqual(['amy', 'lessac', 'ryan'])
+  for (const [name, voice] of Object.entries(VOICES)) {
+    // The two halves Piper needs. A voice with no config loads as silence rather than as an
+    // error, which is the worst way for this to go wrong.
+    expect(voice.file, name).toMatch(/^[a-z]{2}_[A-Z]{2}-[a-z]+-(low|medium|high)$/)
+    expect(voice.at, name).toContain(voice.file.split('-')[1])
+    expect(voice.mb, name).toBeGreaterThan(0)
+  }
+})
+
+test('both programs and both models land inside the one directory a purge removes', () => {
+  const hearing = where('/somewhere/own', 'base')
+  const speaking = piperWhere('/somewhere/own', 'lessac')
+  for (const path of [hearing.bin, hearing.model, speaking.bin, speaking.model, speaking.config, speaking.wav]) {
+    // Invariant 5 in one assertion. Anything escaping `ownDir` is hundreds of megabytes left
+    // behind by a delete that reported success.
+    expect(path.split('\\').join('/'), path).toContain('/somewhere/own/')
+  }
 })

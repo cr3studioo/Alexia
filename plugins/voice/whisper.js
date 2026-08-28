@@ -1,18 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { spawn } from 'node:child_process'
-import { createWriteStream } from 'node:fs'
-import { mkdir, readdir, rename, rm, stat } from 'node:fs/promises'
+import { mkdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
-import { Readable } from 'node:stream'
-import { pipeline } from 'node:stream/promises'
+import { extract, fetchTo, find, lastLine, mb, run, there } from './fetching.js'
 
 /**
- * Getting Whisper onto this machine, and running it once it is here.
+ * Hearing, with whisper.cpp (M2-3).
  *
- * Everything in this file happens **inside the plugin process**, which is the whole point:
- * the binary is spawned here, the microphone is opened here, and what crosses the wire to
- * core is a sentence. Core has no idea any of this is happening, and would not be able to
- * find out.
+ * Two programs come out of one download: `whisper-cli`, which reads an audio file, and
+ * `whisper-stream`, which opens the microphone. Both are spawned **inside the plugin
+ * process**, which is the whole point — core spawns this plugin and reads JSON from a pipe,
+ * so what crosses that pipe is a sentence and there is no method by which core could ask for
+ * anything else.
  */
 
 /**
@@ -58,14 +57,6 @@ export const where = (ownDir, size) => ({
   bin: join(ownDir, 'whisper'),
   model: join(ownDir, 'models', (MODELS[size] ?? MODELS.base).file),
 })
-
-const there = async (path) => {
-  try {
-    return (await stat(path)).size > 0
-  } catch {
-    return false
-  }
-}
 
 /**
  * The two programs, wherever they ended up.
@@ -127,99 +118,13 @@ export async function install(ownDir, size, override, onProgress) {
 }
 
 /**
- * One file, streamed to disk, with the length checked at the end.
- *
- * A truncated model is the failure that actually happens on a domestic connection, and it
- * does not announce itself — whisper.cpp loads half a file and says something about tensors
- * instead of something about the network. Checking the length turns that into one sentence.
- *
- * ponytail: length only, no checksum. Checksums and signatures are M3-7, and that is where
- * the published digests and the verification path belong; this catches the dropped
- * connection, not a hostile mirror.
- */
-async function fetchTo(url, to, onProgress) {
-  const response = await fetch(url, { redirect: 'follow' })
-  if (!response.ok || !response.body) {
-    throw new Error(`${url} answered ${response.status} ${response.statusText}`)
-  }
-  const total = Number(response.headers.get('content-length') ?? 0)
-  let done = 0
-  const partial = `${to}.part`
-
-  await pipeline(
-    async function* () {
-      for await (const chunk of Readable.fromWeb(response.body)) {
-        done += chunk.byteLength
-        onProgress?.(done, total)
-        yield chunk
-      }
-    },
-    createWriteStream(partial),
-  )
-  if (total > 0 && done !== total) {
-    await rm(partial, { force: true })
-    throw new Error(`${url} stopped after ${mb(done)} of ${mb(total)} MB`)
-  }
-  // Renamed only once it is whole, so a download killed halfway is not mistaken for a file.
-  await rename(partial, to)
-}
-
-/**
- * The archiver, and on Windows the *right* one.
- *
- * Windows 10 and later ship bsdtar as `System32	ar.exe`, and it reads zip — so there is no
- * zip parser here and no dependency for one, which matters more than the line count because a
- * zip parser is a parser and this one would be reading a file off the internet.
- *
- * What is on `PATH` may not be that tar. Git for Windows puts GNU tar there, which cannot
- * read zip **and** reads a drive-lettered path as `host:path` — so it fails trying to resolve
- * a hostname one letter long, which is a confusing way to learn any of this. Asking the OS
- * for its own copy is one line and removes both problems.
- */
-const archiver = () => {
-  const root = process.env.SystemRoot
-  return process.platform === 'win32' && root ? join(root, 'System32', 'tar.exe') : 'tar'
-}
-
-function extract(archive, to) {
-  return new Promise((resolve, reject) => {
-    const tar = spawn(archiver(), ['-xf', archive, '-C', to], { stdio: ['ignore', 'ignore', 'pipe'] })
-    let said = ''
-    tar.stderr?.on('data', (chunk) => (said += String(chunk)))
-    tar.on('error', reject)
-    tar.on('close', (code) =>
-      code === 0 ? resolve() : reject(new Error(`could not unpack ${archive}: ${said.trim() || `tar exited ${code}`}`)),
-    )
-  })
-}
-
-/** Look for these names in a folder and one level under it. The releases nest by one. */
-async function find(dir, names) {
-  const found = {}
-  const look = async (at, depth) => {
-    let entries
-    try {
-      entries = await readdir(at, { withFileTypes: true })
-    } catch {
-      return
-    }
-    for (const entry of entries) {
-      if (entry.isDirectory() && depth > 0) await look(join(at, entry.name), depth - 1)
-      else if (names.includes(entry.name)) found[entry.name] ??= join(at, entry.name)
-    }
-  }
-  await look(dir, 2)
-  return found
-}
-
-/**
  * Whisper on a file, and nothing but the words back.
  *
  * `-np -nt` is what makes that true: everything whisper.cpp normally prints about backends
  * and tensors goes to stderr, and stdout is left holding the transcript alone.
  */
 export function transcribe({ cli, model, file, threads, signal }) {
-  return run(cli, ['-m', model, '-f', file, '-np', '-nt', '-l', 'auto', '-t', String(threads)], signal)
+  return run(cli, ['-m', model, '-f', file, '-np', '-nt', '-l', 'auto', '-t', String(threads)], { signal })
 }
 
 /**
@@ -298,21 +203,6 @@ export function passes(onSpeech) {
   }
 }
 
-/** Spawn, collect stdout, and turn a non-zero exit into the sentence stderr ended on. */
-function run(program, args, signal) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(program, args, { stdio: ['ignore', 'pipe', 'pipe'], signal })
-    let out = ''
-    let said = ''
-    child.stdout.on('data', (chunk) => (out += String(chunk)))
-    child.stderr.on('data', (chunk) => (said += String(chunk)))
-    child.on('error', reject)
-    child.on('close', (code) =>
-      code === 0 ? resolve(out.trim()) : reject(new Error(lastLine(said) || `${program} exited ${code}`)),
-    )
-  })
-}
-
 /**
  * What Whisper printed, as words rather than as a transcript file.
  *
@@ -334,8 +224,3 @@ export const spoken = (text) =>
 const TIMESTAMP = /^\[\d\d:\d\d:\d\d\.\d{3}\s*-->\s*\d\d:\d\d:\d\d\.\d{3}\]\s*/
 /** A whole line that is only a bracketed note. Whisper's way of saying it heard nothing. */
 const NON_SPEECH = /^[([][^\])]*[)\]]$/
-
-/** What a program that failed said last, which is almost always the useful part. */
-const lastLine = (text) => text.trim().split('\n').at(-1)?.trim() ?? ''
-
-const mb = (bytes) => Math.round(bytes / 1e5) / 10
