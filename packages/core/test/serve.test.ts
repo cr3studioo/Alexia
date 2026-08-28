@@ -47,6 +47,10 @@ test('the shell is served with the token baked into it', async () => {
 
   // The compiled shell, and no bundler in sight.
   expect((await fetch(new URL('/main.js', alexia.url))).status).toBe(200)
+
+  // Step 2 of Alexia.md's first run, in its own words. It is the first sentence anybody
+  // reads, it had drifted to "What should I call me?", and nothing was watching it.
+  expect(page).toContain('What should I call you?')
 })
 
 test('the one image core serves arrives as the bytes it was written as', async () => {

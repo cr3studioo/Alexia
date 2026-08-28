@@ -1021,6 +1021,24 @@ told to go and make an OpenRouter account — is not affected by any of it, and 
 is now M2-D1 regardless. M1-D1's holding theme is enough to run this on. Note in the results
 what was and was not designed at the time, so the trend across the four tests stays readable.
 
+**Before the test, two things fixed on the screen it measures.** Found by cold-starting the
+build against an empty data directory and reading what came back — which is the last cheap
+moment to do it, because after the test the rule is that you write it down and change nothing.
+
+1. **The first sentence was not a sentence.** The name step read *"What should I call me?"*
+   Alexia.md's first-run table gives step 2 as **"What should I call you?"** and that is now
+   what the shell says. A baseline whose first hesitation is a typo measures the typo.
+2. **The chosen name stopped at the header.** Renaming reached `.name` and nothing else, so
+   the composer still said *"Ask Alexia"* — the one box a person who has just renamed her
+   looks at. Alexia.md is explicit that the name is what they *"see everywhere"*; both now go
+   through one function. Verified in headless Edge: name `Ada`, composer `Ask Ada`.
+
+**Known and deliberate, and it belongs in the results rather than in the tester's column:**
+first run is steps 2, 3 and **4a** only — M1-11 scoped it that way. There is no step 4b, so
+**Local mode dead-ends**: `pull()` with progress exists in core from M1-7, but no shell spends
+it. cold-install.md's five-minute Local budget cannot be met by this build and should not be
+recorded as a failure of one. Combined is the path the test is for.
+
 ### M1-G — Done when
 
 > **You hold a real conversation, routed to a free model, with spend showing 0.00.**

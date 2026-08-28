@@ -87,6 +87,16 @@ function say(line?: string): void {
  * permission questions, because asking which folders an assistant may read before it has
  * been given a single task is a question with no meaning yet.
  */
+/**
+ * The chosen name, everywhere it is written down. Alexia.md is explicit that whatever gets
+ * typed at step 2 "becomes the name they see everywhere" — and the composer, which is the
+ * box a renamer looks at most, was the one place still saying "Ask Alexia" out loud.
+ */
+function called(name: string): void {
+  document.querySelector<HTMLElement>('.name')!.textContent = name
+  text.placeholder = `Ask ${name}`
+}
+
 function firstRun(state: State): void {
   const setup = document.querySelector<HTMLElement>('#setup')!
   const connect = document.querySelector<HTMLElement>('#connect')!
@@ -138,7 +148,7 @@ function firstRun(state: State): void {
     }).then(() => {
       setup.hidden = true
       form.hidden = false
-      document.querySelector<HTMLElement>('.name')!.textContent = name.value.trim() || 'Alexia'
+      called(name.value.trim() || 'Alexia')
       text.focus()
     })
   })
@@ -146,7 +156,7 @@ function firstRun(state: State): void {
 
 async function load(): Promise<void> {
   const state = (await (await fetch('/api/state', { headers: { 'x-alexia-token': token } })).json()) as State
-  document.querySelector<HTMLElement>('.name')!.textContent = state.setup.name
+  called(state.setup.name)
   known = state.commands
   document.querySelector<HTMLSelectElement>('#mode')!.value = state.setup.mode
   if (!state.setup.done) firstRun(state)
