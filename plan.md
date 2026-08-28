@@ -129,7 +129,7 @@ Tick a box only when the task's acceptance criteria pass. `[GATE]` needs a human
 ### M2 — Voice, the real proof
 
 - [x] **M2-S1** Spike: Tauri tray + hotkey + overlay on Windows *(de-risking M5)*
-- [ ] **M2-D1** The visual language *(deferred from M1 2026-08-27, D61)*
+- [x] **M2-D1** The visual language *(deferred from M1 2026-08-27, D61)*
 - [ ] **M2-1** Declarative UI schema v1
 - [ ] **M2-2** Skills loader (agentskills.io)
 - [ ] **M2-3** `plugins/voice` — speech to text
@@ -1336,6 +1336,50 @@ that drifts back within two milestones, and drift is the named failure mode.
 3. First run and the composer are never on screen together *(held from M1-D1)*.
 4. Every interactive element has a visible focus state; body text meets 4.5:1 in **both**
    themes.
+
+**Done 2026-08-28 (D67).** `docs/design.md` is the deliverable — type ramp, spacing scale,
+colour roles, shape, states, the hierarchy rule, every surface, and the anatomy the ten
+widgets inherit. `app.css` is one implementation of it, rewritten from tokens: no size, space
+or colour in that file is a literal any more.
+
+**The four things that were wrong are fixed, and two of them were structural:**
+
+| | |
+|---|---|
+| The header had no hierarchy | It has four kinds of thing now and they look like four kinds: identity, a **control** that looks pressable, a **status** with no box because there is nothing to press, and the **number that matters**, tabular, with `this month` beside it so it is never a bare figure |
+| No scale | A type ramp of six and a spacing scale of seven, with one rule that outranks the numbers: the gap inside a group is always smaller than the gap around it |
+| One theme only | Two, both built for their own ground rather than inverted, and **measured** — `packages/ui/test/contrast.test.ts` reads the declarations out of `app.css` and holds every text pair at 4.5:1 and every border and ring at 3:1. It also holds the two spellings of dark identical, because dark is written twice and two copies drift |
+| First run was a section | It is a view. `data-view` on `<body>` swaps it, and on it **the composer is not rendered at all** — which is how criterion 3 stops being a rule somebody has to remember and starts being a fact about the DOM |
+
+**The header is gone on first run too**, which was not on the list. With it present the mark
+and the name were being drawn twice, sixty pixels apart, and a spend of `$0.00` beside a model
+of *no model yet* is noise before there is either. A view that stands alone stands alone — and
+removing it is also what bought the room for the whole of first run to fit at 1280×800.
+
+**Verified, not eyeballed.** A scratchpad harness drives headless Edge over CDP with Node's
+own `WebSocket` — no dependency — because setting `prefers-color-scheme` is the whole point:
+*both themes are real* cannot be checked in a browser that will only ever show you one of them.
+It reports:
+
+- first run at 1280×800: **nothing scrolls**, three cards on one row, Start at 764 of 800
+- first run and the composer are never both on screen, in either direction
+- tabbed through with real key events: **10 of 10** focused elements show a ring, on both
+  views — `#name → the mode radios → #provider → #key → #begin`, and in chat
+  `Send → Stop → mode → permission → Allow → Not this time → the composer`
+- screenshots of both views in both themes, and the permission prompt, read by eye afterwards
+  for the things a measurement cannot see
+
+**Two real bugs it caught, which is why the screenshots were worth taking:**
+
+1. `input, select, textarea { width: 100% }` reached the **header's** two dropdowns and made
+   each of them 1233px wide, pushing the model and the spend off the side of the screen. Width
+   belongs to the container, not to the control. It is now a rule in `docs/design.md`.
+2. The first-run question was set to `--text-lg` and then quietly un-set: `.field > .label`
+   matches the same element, is equally specific, and comes later in the sheet.
+
+**Still not done, deliberately:** `--text-xl` has no user yet — the empty and error states are
+where it goes, and neither is designed. The ten widgets are M2-1; what exists here is the
+shared anatomy they inherit (`.field`, `.hint`, `.error`, `.pill`, `.bar`), not the widgets.
 5. No new dependency in `packages/ui`.
 6. `docs/design.md` exists, and the shell demonstrably follows it.
 
@@ -1781,6 +1825,7 @@ Newest first. Every entry here is also in Alexia.md's decision log.
 
 | Date | Entry |
 |---|---|
+| 2026-08-28 | **D67** — **the visual language is written down, and both themes are a test.** `docs/design.md` is the deliverable M2-1's ten widgets conform to; `app.css` is rewritten from its tokens with no literal sizes, spaces or colours left. The header now distinguishes a control from a status from the number that matters, instead of rendering all three as identical pills. **First run is a view**, not a section — `data-view` swaps it and the composer is not rendered on it, so *never on screen together* is a fact about the DOM rather than a rule to remember — and the header is hidden there too, because it was drawing the mark and the name a second time sixty pixels below the first. Light and dark are built for their own grounds and held at 4.5:1 by `packages/ui/test/contrast.test.ts`, which reads `app.css` rather than keeping a second copy of the palette. Verified by driving headless Edge over CDP: nothing scrolls at 1280×800, and every focused element shows a ring under real key events. Two bugs found that way — a blanket `width: 100%` was making the header's dropdowns 1233px wide and pushing the spend off screen, and the first-run question's size was being set and then un-set by a later, equally specific rule. |
 | 2026-08-28 | **D66** — **M2-S1 answered: the Tauri overlay holds, and no workaround is needed.** 200 show/hide cycles on Tauri 2.11.5 / Windows 11, twice, with `WS_EX_TOPMOST` read off the `HWND` rather than taken from `is_always_on_top()` — the reported bug is the framework and the OS disagreeing, so the framework cannot be the witness. Tray and hotkey verified the same way, from outside the process. The real finding is the one failure that was not `alwaysOnTop`: **a blur in flight can hide the overlay a moment after the `show()` that was meant to open it.** Harmless in the harness once stragglers are attributed correctly; not harmless in the product, because *click away, change your mind, press the hotkey* is exactly that sequence — so **M5-2 owes blur-to-hide a guard against a blur older than the show it cancels**. Also banked for M5-1: `tauri-build` fails rather than skips without an `.ico`, and the global-shortcut plugin's error does not convert into `tauri::Error`. |
 | 2026-08-28 | **D65** — **the crude installer is pulled forward from M2-7 to M1-I1.** `pnpm package` builds `dist-app/Alexia/`: bundled core, a copied `node.exe`, the shell and the one native dependency, behind an `Alexia.cmd` that runs from wherever it was unzipped. It was built for cold-install test #1, which D64 then waived — so it is recorded for what it is rather than for the gate it missed, because **M2-8 cannot start its clock without it**. Neither `@yao-pkg/pkg` nor NSIS was needed; esbuild and a copy were. Windows only for now, which is what M2-7 keeps. Smoke-testing the packaged bundle also found a core bug and fixed it: the request target was resolved *against* an origin, so a leading `//` was protocol-relative — every path answered with the shell, and a bare `//` was a 500. |
 | 2026-08-28 | **D64** — **cold-install test #1 is waived, not passed.** Owner's call, taken to get on with the product: M1-13's box is ticked so M2 can start, and the human half of it — a tester, a clock, no help — rolls into **M2-8**, where an installer exists and the protocol's stopwatch can start where it is meant to. The cost is named rather than hidden: no M1 row in the four-test trend, and `test/cold-install/results.md` carries a note saying test #1 did not happen instead of a fabricated row. **M1-G** is ticked in the same breath, carried by M15-G — a multi-step task on a free local model, spend 0.00, with the 429 fallback and the pin refusal held by `router.test.ts` rather than by a second sit-down. Both notes live in the task blocks so the tick is never read as a pass. |

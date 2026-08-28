@@ -97,15 +97,22 @@ function called(name: string): void {
   text.placeholder = `Ask ${name}`
 }
 
+/**
+ * Which of the two views is on screen. One attribute, because the alternative is two elements
+ * whose `hidden` flags have to agree — and the one thing this shell must never do is show the
+ * composer and first run at once, inviting a question it cannot answer yet.
+ */
+function show(view: 'first-run' | 'chat'): void {
+  document.body.dataset.view = view
+}
+
 function firstRun(state: State): void {
-  const setup = document.querySelector<HTMLElement>('#setup')!
   const connect = document.querySelector<HTMLElement>('#connect')!
   const provider = document.querySelector<HTMLSelectElement>('#provider')!
   const terms = document.querySelector<HTMLElement>('#terms')!
   const name = document.querySelector<HTMLInputElement>('#name')!
   const key = document.querySelector<HTMLInputElement>('#key')!
-  setup.hidden = false
-  form.hidden = true
+  show('first-run')
   name.value = state.setup.name
 
   for (const option of state.providers) {
@@ -146,8 +153,7 @@ function firstRun(state: State): void {
         ...(key.value.trim() && { provider: { id: provider.value, key: key.value.trim() } }),
       }),
     }).then(() => {
-      setup.hidden = true
-      form.hidden = false
+      show('chat')
       called(name.value.trim() || 'Alexia')
       text.focus()
     })

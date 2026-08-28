@@ -7,105 +7,136 @@
     <link rel="icon" href="/alexia.png" />
     <link rel="stylesheet" href="/app.css" />
   </head>
-  <body>
+  <!-- Two views, one at a time. `data-view` is the switch, which is what makes "first run and
+       the composer are never on screen together" structural: on the first-run view the
+       composer is not rendered at all, rather than hidden and hoping. -->
+  <body data-view="chat">
+    <!-- Identity, then controls, then status, then the number that matters. Four different
+         kinds of thing, and they used to be four identical pills — which made a dropdown you
+         can change look like a figure you cannot. -->
     <header>
-      <img class="logo" src="/alexia.png" alt="" width="256" height="256" />
+      <img class="mark" src="/alexia.png" alt="" width="256" height="256" />
       <span class="name">Alexia</span>
-      <!-- Which model answered, and what the month has cost. Both always on screen: the
-           first is how you know where your words went, the second is how nobody is ever
-           surprised by a bill. -->
+
       <!-- The UI equivalent of /local, /cloud and /combined. Every command has one: the
            commands are a shortcut for people who like them, never the only route. -->
-      <select id="mode" class="badge" title="Where the work happens">
+      <select id="mode" class="control" title="Where the work happens" aria-label="Where the work happens">
         <option value="local">Local</option>
         <option value="combined">Combined</option>
         <option value="cloud">Cloud</option>
       </select>
-      <!-- What Alexia may do unasked. A control, not only a setting page: this is the
-           number one thing a person changes after being surprised once. -->
-      <select id="permission" class="badge" title="What Alexia may do without asking"></select>
-      <span id="model" class="badge">no model yet</span>
-      <span id="spend" class="badge">$0.00</span>
+
+      <!-- What Alexia may do unasked. A control, not only a settings page: this is the number
+           one thing a person changes after being surprised once. -->
+      <select
+        id="permission"
+        class="control"
+        title="What Alexia may do without asking"
+        aria-label="What Alexia may do without asking"
+      ></select>
+
+      <!-- Which model answered, and what the month has cost. Both always on screen: the first
+           is how you know where your words went, the second is how nobody is ever surprised
+           by a bill. -->
+      <span id="model" class="status">no model yet</span>
+      <p class="money">
+        <span class="money-label">this month</span>
+        <span id="spend" class="money-value">$0.00</span>
+      </p>
     </header>
 
     <!-- First run: steps 2, 3 and 4a. No account, no tour, no permission questions — the
-         first thing anybody is asked is what to call it, and the second is where their
-         words are allowed to go. -->
-    <section id="setup" hidden>
-      <img class="mark" src="/alexia.png" alt="" width="256" height="256" />
+         first thing anybody is asked is what to call it, and the second is where their words
+         are allowed to go. -->
+    <section id="first-run" class="view">
+      <div class="centred">
+        <img class="opening" src="/alexia.png" alt="" width="256" height="256" />
 
-      <!-- Alexia.md's words, exactly: step 2 is "What should I call you?", prefilled and
-           skippable. It is the first sentence anybody reads, and the shell had it as
-           "What should I call me?" — which is not the spec's line and not a sentence. -->
-      <label class="field">
-        <span>What should I call you?</span>
-        <input id="name" value="Alexia" />
-      </label>
+        <!-- Alexia.md's words, exactly: step 2 is "What should I call you?", prefilled and
+             skippable. It is the first sentence anybody reads, and the shell had it as "What
+             should I call me?" — which is not the spec's line and not a sentence. -->
+        <div class="group">
+          <label class="field">
+            <span class="label ask-big">What should I call you?</span>
+            <input id="name" class="short" value="Alexia" />
+          </label>
+        </div>
 
-      <h2>How should I run?</h2>
-      <div class="cards">
-        <label class="card">
-          <input type="radio" name="mode" value="local" />
-          <b>Local</b>
-          <span
-            >Everything on this machine — text, speech, images. The best privacy there is,
-            and it needs a capable machine and a download of a few gigabytes.</span
-          >
-        </label>
-        <label class="card">
-          <input type="radio" name="mode" value="combined" checked />
-          <b>Combined <em>recommended</em></b>
-          <span
-            >The cloud does the thinking; your machine makes the images and the speech. Each
-            job goes to the side that is better at it, and it needs no download.</span
-          >
-          <small id="training"></small>
-        </label>
-        <label class="card">
-          <input type="radio" name="mode" value="cloud" />
-          <b>Cloud</b>
-          <span>Everything through APIs. For a machine that would rather not do the work.</span>
-        </label>
+        <div class="group">
+          <h2 class="step-heading">How should I run?</h2>
+          <div class="cards">
+            <label class="card">
+              <span class="card-head">
+                <input type="radio" name="mode" value="local" />
+                <b>Local</b>
+              </span>
+              <span
+                >Everything on this machine — text, speech, images. The best privacy there is,
+                and it needs a capable machine and a download of a few gigabytes.</span
+              >
+            </label>
+            <label class="card">
+              <span class="card-head">
+                <input type="radio" name="mode" value="combined" checked />
+                <b>Combined <em>recommended</em></b>
+              </span>
+              <span
+                >The cloud does the thinking; your machine makes the images and the speech.
+                Each job goes to the side that is better at it, and it needs no download.</span
+              >
+              <small id="training"></small>
+            </label>
+            <label class="card">
+              <span class="card-head">
+                <input type="radio" name="mode" value="cloud" />
+                <b>Cloud</b>
+              </span>
+              <span>Everything through APIs. For a machine that would rather not do the work.</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="group" id="connect">
+          <h2 class="step-heading">Connect a provider</h2>
+          <p class="hint">OpenRouter's free tier needs no card. You can also do this later.</p>
+          <div class="pair">
+            <select id="provider" aria-label="Provider"></select>
+            <input id="key" type="password" placeholder="Paste a key" autocomplete="off" aria-label="API key" />
+          </div>
+          <p class="hint" id="terms"></p>
+        </div>
+
+        <button id="begin" class="begin" type="button">Start</button>
       </div>
-
-      <div id="connect">
-        <h2>Connect a provider</h2>
-        <p class="quiet">OpenRouter's free tier needs no card. You can also do this later.</p>
-        <label class="field">
-          <select id="provider"></select>
-          <input id="key" type="password" placeholder="Paste a key" autocomplete="off" />
-        </label>
-        <p class="quiet" id="terms"></p>
-      </div>
-
-      <button id="begin" type="button">Start</button>
     </section>
 
-    <main id="log" aria-live="polite"></main>
+    <div id="chat" class="view">
+      <main id="log" aria-live="polite"></main>
 
-    <!-- The permission prompt. It sits above the composer rather than over the page: a
-         modal here would cover the trace, which is the thing being decided about. -->
-    <div id="prompt" hidden>
-      <p id="prompt-why"></p>
-      <div class="row">
-        <button id="allow" type="button">Allow once</button>
-        <button id="deny" type="button" class="quiet-button">Not this time</button>
+      <!-- The permission prompt. It sits above the composer rather than over the page: a
+           modal here would cover the trace, which is the thing being decided about. -->
+      <div id="prompt" hidden>
+        <p id="prompt-why"></p>
+        <div class="row">
+          <button id="allow" type="button">Allow once</button>
+          <button id="deny" type="button" class="quiet-button">Not this time</button>
+        </div>
       </div>
+
+      <p id="note" hidden></p>
+
+      <!-- Typing `/` lists what there is, with a line each. Nobody is going to read
+           documentation to find a command. -->
+      <ul id="menu" hidden></ul>
+
+      <form id="ask">
+        <textarea id="text" rows="1" placeholder="Ask Alexia" autofocus></textarea>
+        <button type="submit">Send</button>
+        <!-- Not a cancel that takes effect at the end of the step. It works while a tool call
+             is in flight, which is the only kind worth having. -->
+        <button id="stop" type="button" class="quiet-button" hidden>Stop</button>
+      </form>
     </div>
-
-    <p id="note" hidden></p>
-
-    <!-- Typing `/` lists what there is, with a line each. Nobody is going to read
-         documentation to find a command. -->
-    <ul id="menu" hidden></ul>
-
-    <form id="ask">
-      <textarea id="text" rows="1" placeholder="Ask Alexia" autofocus></textarea>
-      <button type="submit">Send</button>
-      <!-- Not a cancel that takes effect at the end of the step. It works while a tool call
-           is in flight, which is the only kind worth having. -->
-      <button id="stop" type="button" class="quiet-button" hidden>Stop</button>
-    </form>
 
     <script type="module" src="/main.js" data-token="__TOKEN__"></script>
   </body>

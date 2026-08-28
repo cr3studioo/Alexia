@@ -12,6 +12,9 @@
     },
     {
       "path": "./packages/ui"
+    },
+    {
+      "path": "./packages/ui/tsconfig.test.json"
     }
   ]
 }
