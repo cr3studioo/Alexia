@@ -78,9 +78,13 @@ export interface Serving {
  * how it ships, or straight from `src` under a TypeScript runner. Checked rather than
  * assumed — a wrong path here is a blank window, and it found me before the tests did,
  * because they were the ones passing the path in.
+ *
+ * `./ui` is the packaged build (M1-I1): one bundled file with the shell in a folder beside
+ * it. It is checked last because the repo layouts are the ones a developer hits, and first
+ * match wins either way — the packaged tree has no `../../ui` to be confused by.
  */
 function shell(): string {
-  const candidates = [join('..', '..', '..', 'ui'), join('..', '..', 'ui')].map((up) =>
+  const candidates = [join('..', '..', '..', 'ui'), join('..', '..', 'ui'), 'ui'].map((up) =>
     join(import.meta.dirname, up),
   )
   return candidates.find((dir) => existsSync(join(dir, 'index.html'))) ?? candidates[0]!
@@ -210,7 +214,13 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
   })
 
   async function handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
-    const url = new URL(request.url ?? '/', 'http://127.0.0.1')
+    // The request target read as a path and only as a path. Resolving it *against* an origin
+    // instead of pasting it onto one lets `//app.css` be a protocol-relative URL — host
+    // `app.css`, path `/`, so every path answers with the shell — and `//` on its own has no
+    // host at all and throws, which is a 500 for a request that should be a plain refusal.
+    // Found by the packaged build's smoke test, which was joining its URLs badly.
+    const target = request.url ?? '/'
+    const url = new URL(`http://127.0.0.1${target.startsWith('/') ? target : `/${target}`}`)
     const asset = STATIC[url.pathname]
     if (asset) {
       const [file, type] = asset

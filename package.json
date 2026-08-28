@@ -9,6 +9,7 @@
   },
   "scripts": {
     "start": "tsc -b && node packages/core/dist/src/serve.js",
+    "package": "tsc -b && node scripts/package.mjs",
     "lint": "eslint . && depcruise packages",
     "typecheck": "tsc -b",
     "test": "vitest run --project unit --passWithNoTests",
@@ -19,6 +20,7 @@
     "@eslint/js": "^10.0.1",
     "@types/node": "^26.4.0",
     "dependency-cruiser": "^18.2.0",
+    "esbuild": "^0.28.2",
     "eslint": "^10.9.1",
     "tsx": "^4.23.12",
     "typescript": "^6.0.3",

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { mkdirSync, mkdtempSync, statSync, writeFileSync } from 'node:fs'
+import { request as httpRequest } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, expect, test } from 'vitest'
@@ -72,6 +73,31 @@ test('a local server that spends money is not open to whatever else is on the ma
   expect(wrong.status).toBe(403)
 
   expect((await get('/api/state')).status).toBe(200)
+})
+
+/** A request target sent verbatim. `fetch` resolves its argument as a URL, which is exactly
+ * the thing being tested, so it cannot ask this question. */
+function raw(target: string): Promise<number> {
+  const port = Number(new URL(alexia.url).port)
+  return new Promise((resolve, reject) => {
+    const call = httpRequest({ host: '127.0.0.1', port, path: target }, (answer) => {
+      answer.resume()
+      resolve(answer.statusCode ?? 0)
+    })
+    call.on('error', reject)
+    call.end()
+  })
+}
+
+test('a request target that is not a path is refused, not answered and not a 500', async () => {
+  // Reading the target *against* an origin made a leading `//` protocol-relative: `//app.css`
+  // meant the host `app.css` at path `/`, so the shell came back for any path at all, and a
+  // bare `//` had no host to parse and became a 500. Neither is an answer; both are refusals.
+  expect(await raw('//app.css')).toBe(403)
+  expect(await raw('//')).toBe(403)
+
+  // And the path that is a path still is one.
+  expect(await raw('/app.css')).toBe(200)
 })
 
 test('a turn is kept even when the answer is a refusal', async () => {

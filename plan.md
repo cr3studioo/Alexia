@@ -110,8 +110,9 @@ Tick a box only when the task's acceptance criteria pass. `[GATE]` needs a human
 - [x] **M1-11** First-run flow v1
 - [x] **M1-12** Slash commands
 - [x] **M1-D1** Holding theme — black, grey, and a face *(reduced 2026-08-27, D61)*
-- [ ] **M1-13** `[GATE]` Cold-install test #1
-- [ ] **M1-G** **Done when:** a real conversation, routed to a free model, spend showing 0.00
+- [x] **M1-I1** The crude installer, a folder that double-clicks *(pulled forward from M2-7, 2026-08-28, D65)*
+- [x] **M1-13** `[GATE]` Cold-install test #1 *(gate waived 2026-08-28, D64 — the tester half moves to M2-8)*
+- [x] **M1-G** **Done when:** a real conversation, routed to a free model, spend showing 0.00 *(carried by M15-G, 2026-08-28, D64)*
 
 ### M1.5 — The loop and its rails *(inserted 2026-08-27 — see Change log)*
 
@@ -1006,6 +1007,52 @@ smallest thing that stops the shell looking unfinished, and two bugs found while
 colour roles written down, the light theme, `docs/design.md` itself, and the header hierarchy
 that still renders a control, a status and a number as three identical badges.
 
+### M1-I1 The crude installer
+
+*Pulled forward from **M2-7** on 2026-08-28 (D65).* Built for M1-13, which was then waived
+(D64) — so it is recorded on its own merits rather than on the gate's, because it is the
+thing that makes M2-8 runnable at all.
+
+It exists because of one sentence in `docs/cold-install.md` that was never going to be true:
+*hand them a terminal command*. A machine that has never had Alexia on it has no Node, no
+pnpm and no repo, so `pnpm start` there measures npm for twenty minutes and Alexia for none.
+Alexia.md settled the principle already — *"a build that person can double-click has to exist
+long before M5"*.
+
+`pnpm package` → `dist-app/Alexia/`, a folder that runs on a Windows box with nothing
+installed on it:
+
+| | |
+|---|---|
+| `Alexia.cmd` | the double-click. `cd /d "%~dp0"`, so it runs from wherever it was unzipped |
+| `node.exe` | the runtime, copied. 88 MB, which is most of what a tester downloads and the honest price of not asking them to install anything |
+| `alexia.mjs` | core, esbuild-bundled to one file. **ESM out** — `serve.ts` reads `import.meta.dirname` to find the shell, and a CJS bundle would quietly destroy it |
+| `keyring.win32-x64-msvc.node` | the one dependency a bundler can only leave alone. It is how a key reaches the Windows credential locker instead of the database, so it is not optional |
+| `ui/` | the shell, in the folder `serve.ts`'s third path candidate looks in |
+| `boot.mjs` | generated: start the server, print the address, then open a browser at it |
+
+Not signed, not pretty, no auto-update. *Ugly is fine. Silent is not* — the window stays up,
+says where she is, and says what to do if no browser came up on its own.
+
+Data still goes to `%LOCALAPPDATA%\Alexia` and never beside the executable, which is what
+makes *delete the folder* a clean uninstall of the program and not of the conversation.
+
+**Verified** by loading the packaged bundle the way `boot.mjs` does, against an empty data
+directory: the shell, stylesheet, script and image all served; `/api/state` 403 without the
+token and 200 with it; `alexia.db` and `cache/models.json` created from nothing; the native
+keyring loading out of the packaged folder; a clean close.
+
+**What that smoke test found in core, and what was fixed with it.** The server read its
+request target as `new URL(target, origin)`, which makes a leading `//` protocol-relative:
+`//app.css` parsed as the *host* `app.css` at path `/`, so the shell answered for every path,
+and a bare `//` had no host at all and came back a 500. The target is now pasted onto the
+origin rather than resolved against it, so a path that is not a path is refused like anything
+else that matches nothing. `serve.test.ts` holds it, over a raw `node:http` request — `fetch`
+resolves its argument as a URL and so cannot ask this question.
+
+**What M2-7 still owes:** a build that is not Windows-only, and whatever M2's plugin
+lifecycle needs shipped alongside it. The double-click part is done.
+
 ### M1-13 `[GATE]` Cold-install test #1
 
 The first real one. Follow `docs/cold-install.md` exactly. Do not help. Append to
@@ -1039,12 +1086,28 @@ first run is steps 2, 3 and **4a** only — M1-11 scoped it that way. There is n
 it. cold-install.md's five-minute Local budget cannot be met by this build and should not be
 recorded as a failure of one. Combined is the path the test is for.
 
+**Waived 2026-08-28 (D64) — not run, and the record says so.** Owner's call, to get on with
+M2: the build cold-starts clean against an empty data directory and the two bugs above are
+fixed, so the box is ticked and the half of this gate that needs a human — sit a tester down,
+time them, do not help — moves to **M2-8**, where there is an installer and the clock can
+start where `docs/cold-install.md` says it starts. Nothing was written into
+`test/cold-install/results.md` to close this: that file carries a note saying test #1 did not
+happen, and its first data row will be M2-8. What is lost is the M1 datum in a four-test
+trend. What is kept is a results file nobody has to second-guess.
+
 ### M1-G — Done when
 
 > **You hold a real conversation, routed to a free model, with spend showing 0.00.**
 
 Plus: the router demonstrably falls back on a 429 rather than failing, and refuses to violate
 a pin. **Stop here and report.**
+
+**Ticked 2026-08-28 (D64), carried by M15-G rather than re-run.** M15-G is strictly more than
+this gate asks for: a multi-step task on a free *local* model, every step visible, spend 0.00
+because nothing left the machine. The two extra clauses are covered by
+`packages/core/test/router.test.ts` — *"a rung that says 429 is the next rung's turn"* and
+*"a pin is never violated quietly"* — both green in `pnpm check`. No separate M1-G session was
+held, and the stop it asks for was spent on M15-G's report instead.
 
 ---
 
@@ -1306,9 +1369,19 @@ the whole product rests on cannot be measured until the end.
 `@yao-pkg/pkg` for the core binary, a minimal Tauri wrapper or a plain NSIS script for the
 double-click. Ugly is fine. Silent is not.
 
+**Mostly delivered early, at M1-I1 (D65).** `pnpm package` already produces a double-clickable
+Windows folder — bundled core, a copied `node.exe`, the shell and the one native dependency —
+and it took neither `@yao-pkg/pkg` nor NSIS to do it. What is left here is the part M1 did not
+need: the other platforms, and whatever M2-5's install/enable/disable lifecycle has to ship
+beside it.
+
 ### M2-8 `[GATE]` Cold-install test #2
 
 The first one with an installer. Time it. Compare against #1.
+
+**This is now the first one, full stop (D64).** #1 was waived, so there is no baseline to
+compare against — which makes M2-8 the row every later test is read against, and makes the
+"what was and was not designed at the time" note in the results non-optional.
 
 ### M2-G — Done when
 
@@ -1608,7 +1681,7 @@ Every `[GATE]` in one place, so none is a surprise.
 | Gate | What it needs from you |
 |---|---|
 | **P0-1** | Approve making the repo public, and the first push |
-| **M1-13** | Sit the tester down. Time them. Do not help. |
+| ~~**M1-13**~~ | Waived 2026-08-28 (D64). The tester session rolls into **M2-8**. |
 | **M2-8** | Same, with an installer |
 | **M3-8** | Same |
 | **M3-G** | Someone who is not you writes a plugin from the docs |
@@ -1667,6 +1740,8 @@ Newest first. Every entry here is also in Alexia.md's decision log.
 
 | Date | Entry |
 |---|---|
+| 2026-08-28 | **D65** — **the crude installer is pulled forward from M2-7 to M1-I1.** `pnpm package` builds `dist-app/Alexia/`: bundled core, a copied `node.exe`, the shell and the one native dependency, behind an `Alexia.cmd` that runs from wherever it was unzipped. It was built for cold-install test #1, which D64 then waived — so it is recorded for what it is rather than for the gate it missed, because **M2-8 cannot start its clock without it**. Neither `@yao-pkg/pkg` nor NSIS was needed; esbuild and a copy were. Windows only for now, which is what M2-7 keeps. Smoke-testing the packaged bundle also found a core bug and fixed it: the request target was resolved *against* an origin, so a leading `//` was protocol-relative — every path answered with the shell, and a bare `//` was a 500. |
+| 2026-08-28 | **D64** — **cold-install test #1 is waived, not passed.** Owner's call, taken to get on with the product: M1-13's box is ticked so M2 can start, and the human half of it — a tester, a clock, no help — rolls into **M2-8**, where an installer exists and the protocol's stopwatch can start where it is meant to. The cost is named rather than hidden: no M1 row in the four-test trend, and `test/cold-install/results.md` carries a note saying test #1 did not happen instead of a fabricated row. **M1-G** is ticked in the same breath, carried by M15-G — a multi-step task on a free local model, spend 0.00, with the 429 fallback and the pin refusal held by `router.test.ts` rather than by a second sit-down. Both notes live in the task blocks so the tick is never read as a pass. |
 | 2026-08-27 | **D63** — the never-touch list has **no exceptions**, Full trust included. Alexia.md contradicted itself four lines apart and this file sided with the wrong half; both are corrected. Full trust removes prompts, not the floor. Also settled while building M15-3: paths are matched by segment rather than by string prefix, `pathsIn` reads absolute paths only and says why that limit is honest rather than pretending to be a sandbox, and a spoken boundary is quoted back verbatim and holds in every mode — including Full trust, because it is the user's own instruction and not a setting. |
 | 2026-08-27 | **D62** — **G5 answered: yes.** A 7–9B local model can genuinely plan, so `hard` work no longer skips this machine and Local mode is a real agent rather than a chat window. Two changes, not the one the plan expected: the shape-to-tier table went uniform and was deleted — a lookup returning the same answer for every key is drift with a type annotation — and `PLANNER`, a 7B floor in parameters, took over the job `tier` could not do, since every local model is `T0` at any size. Consequence worth stating: per-step tiering now bites in **Local** mode, where the plan runs on the 8B and the crank steps run on whatever else can call a tool. In cloud mode every step was already going cheapest-first, so there was never a saving there to find. |
 | 2026-08-27 | **D61** — the design pass is **deferred to M2-D1**, before the widgets that inherit it and after the features. D60's finding held; its sequencing did not. `docs/design.md` exists to be spent by M2-1, so M2-1 is its deadline, and a first cold-install test learns more about *what a person does when told to go and make an OpenRouter account* than about the frame around it. M1-D1 shrank to a holding theme — one dark achromatic palette, her face as icon and mark, a visible focus ring — and to the two structural bugs that were not taste: `form.hidden` defeated by a type selector, and the third mode card wrapping under the fold. |

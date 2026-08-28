@@ -17,6 +17,9 @@ importers:
       dependency-cruiser:
         specifier: ^18.2.0
         version: 18.2.0
+      esbuild:
+        specifier: ^0.28.2
+        version: 0.28.2
       eslint:
         specifier: ^10.9.1
         version: 10.9.1
@@ -66,6 +69,8 @@ importers:
       '@modelcontextprotocol/server':
         specifier: 2.0.0
         version: 2.0.0
+
+  packages/ui: {}
 
   plugins/crasher:
     dependencies:
