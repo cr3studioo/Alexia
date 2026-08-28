@@ -13,6 +13,7 @@ const needPlugins = [
   'packages/core/test/plugins.test.ts',
   'packages/core/test/progress.test.ts',
   'packages/core/test/registry.test.ts',
+  'packages/conformance/test/conform.test.ts',
   'packages/core/test/replan.test.ts',
   'packages/core/test/shutdown.test.ts',
   'packages/core/test/skills.test.ts',
@@ -39,7 +40,13 @@ export default defineConfig({
           // The first-party plugins are JavaScript, and they hold real logic — a download,
           // a child process, a parser over another program's output. Their tests step aside
           // with `plugins/` when the core-alone job moves it, which is the right way round.
-          include: ['packages/*/test/**/*.test.ts', 'plugins/*/test/**/*.test.js'],
+          include: [
+            'packages/*/test/**/*.test.ts',
+            'plugins/*/test/**/*.test.js',
+            // The registry is deployed separately and is not in the pnpm workspace, but it
+            // is code in this repo and it holds the revoke button.
+            'registry/test/**/*.test.ts',
+          ],
           exclude: ['**/test/invariants/**', ...withoutPlugins],
         },
       },

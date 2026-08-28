@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Deploying this is outward-facing and needs a person: `pnpm --filter @alexia/registry deploy`
+# after `wrangler d1 create alexia` and `wrangler secret put ADMIN_TOKEN`.
+name = "alexia-registry"
+main = "dist/src/index.js"
+compatibility_date = "2026-07-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "alexia"
+# Filled in by `wrangler d1 create alexia`.
+database_id = ""

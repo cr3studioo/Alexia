@@ -1,0 +1,18 @@
+{
+  "name": "@alexia/conformance",
+  "version": "0.0.0",
+  "description": "The suite a plugin must pass: manifest, boot, handshake, tools, stdout, degradation, and everything it wrote going through the contract.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "exports": {
+    ".": "./dist/src/index.js"
+  },
+  "types": "./dist/src/index.d.ts",
+  "bin": {
+    "alexia-conformance": "./dist/src/cli.js"
+  },
+  "dependencies": {
+    "@alexia/protocol": "workspace:*",
+    "@modelcontextprotocol/client": "2.0.0"
+  }
+}

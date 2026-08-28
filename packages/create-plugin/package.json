@@ -1,0 +1,17 @@
+{
+  "name": "@alexia/create-plugin",
+  "version": "0.0.0",
+  "description": "npm create @alexia/plugin — a folder that runs, already correct about the three things that are easy to get wrong.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "exports": {
+    ".": "./dist/src/index.js"
+  },
+  "types": "./dist/src/index.d.ts",
+  "devDependencies": {
+    "@alexia/protocol": "workspace:*"
+  },
+  "bin": {
+    "create-plugin": "./dist/src/cli.js"
+  }
+}

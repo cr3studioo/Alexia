@@ -8,6 +8,7 @@ import { run, said } from './agent.js'
 import { Catalog } from './catalog.js'
 import { asRuling, counted, freshTally, ModelChecker, type Tally } from './checker.js'
 import { commands, pins, run as runCommand } from './commands.js'
+import { Library } from './library.js'
 import { installed, OLLAMA, running } from './ollama.js'
 import { usable } from './pool.js'
 import { ceilings, estimate, previewLine, setCeilings, worthAsking, type Ceilings } from './preview.js'
@@ -29,6 +30,7 @@ import {
 import { keyOf, PROVIDERS } from './provider.js'
 import { MODES } from './router.js'
 import { CORE, keychain, type SecretStore } from './secrets.js'
+import { addServer, markReviewed, unreviewed } from './servers.js'
 import { Skills } from './skills.js'
 import { dataDir, Store, type Message } from './store.js'
 import { PluginTooling } from './tooling.js'
@@ -119,6 +121,15 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
 
   const session = store.sessions()[0]?.id ?? store.createSession()
 
+  const extensions = options.pluginsDir ?? join(root, 'extensions')
+  const skillsDir = join(root, 'skills')
+  /**
+   * The library (M3-2). It downloads, checks a checksum and unpacks; it never enables
+   * anything, which is why every route below that installs ends by re-drawing the panes
+   * with the new plugin sitting in the *not enabled* state.
+   */
+  const library = new Library({ store, pluginsDir: extensions, skillsDir })
+
   /**
    * Everything installed, and the aggregate of what it can do (M15-2).
    *
@@ -127,7 +138,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
    * is invariant 4 meeting the agent loop, and what M15-8 tests.
    */
   const plugins = new Plugins({
-    dir: options.pluginsDir ?? join(root, 'extensions'),
+    dir: extensions,
     store,
     dataDir: root,
     secrets,
@@ -149,7 +160,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
    * fewer folders.
    */
   const skills = new Skills({
-    dir: join(root, 'skills'),
+    dir: skillsDir,
     bundled: () =>
       plugins.ids.flatMap((id) => {
         const folder = plugins.folder(id)
@@ -421,6 +432,9 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
           panes: await plugins.panes(),
           problems: plugins.problems,
           skills: skills.all,
+          // Which of these arrived through compatibility mode (M3-6). The pane draws the
+          // warning from this, and the *trust it* control that is the only way out.
+          unreviewed: [...unreviewed(store)],
           // Broken skills ride the same list as broken plugin folders, because they are the
           // same sentence to the same person: this folder is here and is doing nothing.
           skillProblems: skills.problems,
@@ -480,6 +494,125 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
       return
     }
 
+    /**
+     * The library (M3-2): what the registry lists, and what is already here.
+     *
+     * A network call, so it says what went wrong rather than answering an empty list — a
+     * library that silently shows nothing when the registry is unreachable is a library
+     * that looks broken and is not.
+     */
+    if (url.pathname === '/api/library') {
+      const installed = new Set(plugins.ids)
+      const here = new Set(skills.all.map((skill) => skill.name))
+      try {
+        const [available, offered, pulled] = await Promise.all([
+          library.plugins(),
+          library.skills().catch(() => []),
+          library.revoked().catch(() => ({ plugins: [], skills: [] })),
+        ])
+        response.writeHead(200, { 'content-type': 'application/json' })
+        response.end(
+          JSON.stringify({
+            ok: true,
+            registry: library.url,
+            // Whether a signature can be checked at all. `false` is shown, because an
+            // unverified signature is exactly as good as none and must not look better.
+            verifying: library.publisherKey !== undefined,
+            plugins: available.map((entry) => ({ ...entry, installed: installed.has(entry.id) })),
+            skills: offered.map((entry) => ({ ...entry, installed: here.has(entry.name) })),
+            // Only the ones this machine actually has. A list of everything ever withdrawn
+            // is a list nobody reads.
+            revoked: pulled.plugins.filter((row) => installed.has(row.id)),
+          }),
+        )
+      } catch (error) {
+        response.writeHead(200, { 'content-type': 'application/json' })
+        response.end(
+          JSON.stringify({
+            ok: false,
+            registry: library.url,
+            why: `Could not reach the registry: ${error instanceof Error ? error.message : String(error)}`,
+          }),
+        )
+      }
+      return
+    }
+
+    if (url.pathname === '/api/library/install' && request.method === 'POST') {
+      const asked = JSON.parse(await read(request)) as { id?: string; kind?: string }
+      const done =
+        asked.kind === 'skill' ?
+          await library.installSkill(asked.id ?? '')
+        : await library.install(asked.id ?? '')
+      if (done.ok) plugins.load()
+      skills.invalidate()
+      response.writeHead(200, { 'content-type': 'application/json' })
+      response.end(
+        JSON.stringify(
+          done.ok ?
+            {
+              ok: true,
+              said:
+                'name' in done ?
+                  `${done.name} is installed and Alexia can read it now.`
+                : `${done.id} is installed${done.signature === 'verified' ? ', signature checked' : done.signature === 'unverified' ? ' — it is signed, but no publisher key is configured to check against' : ''}. Read what it asked for, then enable it.`,
+              panes: await plugins.panes(),
+              skills: skills.all,
+            }
+          : { ok: false, said: done.why },
+        ),
+      )
+      return
+    }
+
+    /**
+     * MCP compatibility mode (M3-6): any MCP server, as a tool source.
+     *
+     * `add` probes it before writing a folder, so a typo'd command fails here with the
+     * operating system's own words. `trust` is the deliberate act that stops core treating
+     * every one of its tools as destructive — a decision with a person behind it, which is
+     * the only shape that answer should ever take.
+     */
+    if (url.pathname === '/api/server' && request.method === 'POST') {
+      const asked = JSON.parse(await read(request)) as {
+        id?: string
+        name?: string
+        run?: string
+        args?: string[]
+        action?: string
+      }
+      if (asked.action === 'trust') {
+        markReviewed(store, asked.id ?? '')
+        response.writeHead(200, { 'content-type': 'application/json' })
+        response.end(JSON.stringify({ ok: true, unreviewed: [...unreviewed(store)], panes: await plugins.panes() }))
+        return
+      }
+      const done = await addServer(
+        {
+          id: asked.id ?? '',
+          ...(asked.name !== undefined && { name: asked.name }),
+          run: asked.run ?? '',
+          ...(asked.args && { args: asked.args }),
+        },
+        { store, pluginsDir: extensions },
+      )
+      if (!('why' in done)) plugins.load()
+      response.writeHead(200, { 'content-type': 'application/json' })
+      response.end(
+        JSON.stringify(
+          'why' in done ?
+            { ok: false, said: done.why }
+          : {
+              ok: true,
+              said: `${done.id} answered — MCP ${done.speaks}, ${String(done.tools)} tool${done.tools === 1 ? '' : 's'}. Nobody has reviewed it, so every one of them will be asked about until you say otherwise.`,
+              panes: await plugins.panes(),
+              unreviewed: [...unreviewed(store)],
+            },
+        ),
+      )
+      return
+    }
+
     if (url.pathname === '/api/settings' && request.method === 'POST') {
       const edit = JSON.parse(await read(request)) as { plugin?: string; key?: string; value?: unknown }
       try {
@@ -523,7 +656,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
         {
           tool: declared.tool,
           ...(about?.annotations && { annotations: about.annotations }),
-          reviewed: true,
+          reviewed: !unreviewed(store).has(plugin),
         },
         scope(),
       )
@@ -636,9 +769,9 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
               tool: call.name,
               ...(about?.annotations && { annotations: about.annotations }),
               paths: pathsIn(call.args),
-              // ponytail: M3-6 adds servers nobody reviewed, and this is where they become
-              // `false`. Everything installed today came from this repo.
-              reviewed: true,
+              // M3-6. A tool from a server nobody reviewed is destructive whatever its own
+              // annotations claim — MCP's own guidance, and the gate reads it right here.
+              reviewed: about?.pluginId === undefined || !unreviewed(store).has(about.pluginId),
             },
             now,
           )

@@ -8,6 +8,12 @@
       "path": "./packages/sdk"
     },
     {
+      "path": "./packages/conformance"
+    },
+    {
+      "path": "./packages/create-plugin"
+    },
+    {
       "path": "./packages/core"
     },
     {
@@ -15,6 +21,9 @@
     },
     {
       "path": "./packages/ui/tsconfig.test.json"
+    },
+    {
+      "path": "./registry"
     }
   ]
 }

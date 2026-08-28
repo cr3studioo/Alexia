@@ -66,6 +66,41 @@ interface Problem {
   reason: string
 }
 
+/** One row of the registry (M3-2). The bytes are elsewhere; this says where and what to check. */
+interface Listing {
+  id: string
+  name: string
+  summary: string
+  version: string
+  license: string
+  author?: string
+  signature?: string
+  requires: { cap: string; why: string }[]
+  provides: string[]
+  installed: boolean
+}
+
+interface SkillListing {
+  id: string
+  name: string
+  description: string
+  license?: string
+  author?: string
+  installed: boolean
+}
+
+interface LibraryState {
+  ok: boolean
+  registry: string
+  why?: string
+  /** Whether a signature can be checked at all. False is shown, never quietly assumed fine. */
+  verifying?: boolean
+  plugins?: Listing[]
+  skills?: SkillListing[]
+  /** Withdrawn, and on this machine. The only revocations worth putting in front of anyone. */
+  revoked?: { id: string; revoked_reason: string }[]
+}
+
 /** A skill's index entry (M2-2). There is nothing to configure — it is a folder of text. */
 interface Skill {
   name: string
@@ -95,6 +130,9 @@ export function mountSettings(token: string): { open: () => void } {
   const list = document.querySelector<HTMLElement>('#panes')!
   const broken = document.querySelector<HTMLElement>('#problems')!
   const known = document.querySelector<HTMLElement>('#skills')!
+  const shelf = document.querySelector<HTMLElement>('#library')!
+  /** Which installed ids came from compatibility mode, so the pane can say so (M3-6). */
+  let unreviewed = new Set<string>()
 
   const send = async (path: string, body: unknown): Promise<Record<string, unknown>> =>
     (await (
@@ -108,9 +146,19 @@ export function mountSettings(token: string): { open: () => void } {
   async function load(): Promise<void> {
     const state = (await (
       await fetch('/api/plugins', { headers: { 'x-alexia-token': token } })
-    ).json()) as { panes: Pane[]; problems: Problem[]; skills: Skill[]; skillProblems: Problem[] }
+    ).json()) as {
+      panes: Pane[]
+      problems: Problem[]
+      skills: Skill[]
+      skillProblems: Problem[]
+      unreviewed?: string[]
+    }
+    unreviewed = new Set(state.unreviewed ?? [])
     draw(state.panes, state.problems)
     drawSkills(state.skills, state.skillProblems)
+    // The registry is a network call and the installed list is not. Drawn separately so a
+    // registry that is down never stops somebody reaching the plugins they already have.
+    void loadLibrary()
   }
 
   /**
@@ -148,6 +196,186 @@ export function mountSettings(token: string): { open: () => void } {
 
     row.append(path, add)
     box.append(el('label', undefined, 'Add a plugin'), row, said)
+    return box
+  }
+
+  /**
+   * The library (M3-2), the skills marketplace (M3-5) and compatibility mode (M3-6).
+   *
+   * Three ways something gets onto this machine and one screen holding all of them, because
+   * from the user's side they are one question: *what can Alexia do, and how do I get more
+   * of it?* What is deliberately not shared is the **word for each**: a plugin is code that
+   * runs here, a skill is text the model reads, an MCP server is neither reviewed nor ours.
+   * A badge nobody reads would be the wrong way to carry that difference, so each list says
+   * it in a sentence instead.
+   */
+  async function loadLibrary(): Promise<void> {
+    const state = (await (
+      await fetch('/api/library', { headers: { 'x-alexia-token': token } })
+    ).json()) as LibraryState
+    drawLibrary(state)
+  }
+
+  /** Install from the registry, then redraw everything — an install changes both lists. */
+  const fetchIn = async (id: string, kind: 'plugin' | 'skill', said: HTMLElement): Promise<void> => {
+    said.className = 'hint'
+    said.textContent = 'Downloading…'
+    const answer = (await send('/api/library/install', { id, kind })) as { ok?: boolean; said?: string }
+    said.className = answer.ok === true ? 'hint' : 'error'
+    said.textContent = answer.said ?? ''
+    if (answer.ok === true) await load()
+  }
+
+  function drawLibrary(state: LibraryState): void {
+    shelf.replaceChildren(el('h3', 'step-heading', 'Library'))
+
+    // Withdrawn, and on this machine. Loudest thing on the screen, above browsing, because
+    // it is the one row here that is about something already running.
+    for (const pulled of state.revoked ?? []) {
+      const row = el('section', 'pane')
+      row.append(
+        el('b', undefined, `${pulled.id} has been withdrawn from the registry`),
+        el('p', 'error', `${pulled.revoked_reason}. It is still installed here — disable or delete it below.`),
+      )
+      shelf.append(row)
+    }
+
+    if (!state.ok) {
+      // A registry that is down is not an empty registry, and must not look like one.
+      shelf.append(el('p', 'hint', state.why ?? `Could not reach ${state.registry}.`))
+      shelf.append(addingServer())
+      return
+    }
+
+    const available = (state.plugins ?? []).filter((entry) => !entry.installed)
+    if (available.length === 0) {
+      shelf.append(el('p', 'hint', `Nothing new at ${state.registry}.`))
+    }
+    for (const entry of available) {
+      const box = el('section', 'pane')
+      const head = el('div', 'pane-head')
+      head.append(
+        el('b', undefined, entry.name),
+        el('span', 'pane-meta', `${entry.version} · ${entry.license}${entry.author ? ` · ${entry.author}` : ''}`),
+      )
+      box.append(head, el('p', 'hint', entry.summary))
+
+      // Its author's own sentences, **before the download** rather than after it. The
+      // registry carries `requires` for exactly this reason: deciding whether to want
+      // something should not require already having it.
+      if (entry.requires.length > 0) {
+        const asked = el('ul', 'asks')
+        for (const need of entry.requires) {
+          const line = el('li')
+          line.append(el('code', undefined, need.cap), el('span', undefined, need.why))
+          asked.append(line)
+        }
+        box.append(el('p', 'asks-label', 'It will ask for:'), asked)
+      }
+
+      const said = el('p', 'hint')
+      const get = el('button', 'quiet-button', 'Install')
+      get.type = 'button'
+      get.addEventListener('click', () => {
+        get.disabled = true
+        void fetchIn(entry.id, 'plugin', said).finally(() => (get.disabled = false))
+      })
+      const row = el('div', 'row')
+      row.append(get)
+      // Signed and checkable, signed and not checkable, not signed. Three states and three
+      // sentences: an unverified signature is worth exactly as much as none, and a screen
+      // that showed them alike would be the lie.
+      if (entry.signature && state.verifying !== true) {
+        row.append(el('span', 'pill caution', 'signature not checked'))
+      } else if (entry.signature) {
+        row.append(el('span', 'pill', 'signed'))
+      }
+      box.append(row, said)
+      shelf.append(box)
+    }
+
+    // Know-how, kept visibly apart from capability. Worst case here is bad advice; worst
+    // case above is anything this machine can do.
+    const offered = (state.skills ?? []).filter((entry) => !entry.installed)
+    if (offered.length > 0) {
+      shelf.append(
+        el('h3', 'step-heading', 'Skills to install'),
+        el('p', 'hint', 'A skill is instructions Alexia reads. It runs no code and adds nothing Alexia could not already do.'),
+      )
+      for (const entry of offered) {
+        const box = el('section', 'pane')
+        const head = el('div', 'pane-head')
+        head.append(el('b', undefined, entry.name), el('span', 'pane-meta', entry.license ?? ''))
+        const said = el('p', 'hint')
+        const get = el('button', 'quiet-button', 'Install')
+        get.type = 'button'
+        get.addEventListener('click', () => {
+          get.disabled = true
+          void fetchIn(entry.id, 'skill', said).finally(() => (get.disabled = false))
+        })
+        box.append(head, el('p', 'hint', entry.description), get, said)
+        shelf.append(box)
+      }
+    }
+
+    shelf.append(addingServer())
+  }
+
+  /**
+   * Compatibility mode (M3-6): any MCP server, as a tool source.
+   *
+   * Two fields, because that is all an MCP server is — a name and a command line. The
+   * sentence under it is not decoration: what arrives this way is not an Alexia plugin,
+   * nobody has reviewed it, and every tool on it is treated as destructive until somebody
+   * says otherwise on its own pane.
+   */
+  function addingServer(): HTMLElement {
+    const box = el('div', 'field installing')
+    box.append(el('label', undefined, 'Add an MCP server'))
+    box.append(
+      el(
+        'p',
+        'hint',
+        'Any MCP server can be a tool source here. It is not an Alexia plugin and nobody has reviewed it, so Alexia asks before every one of its tools until you say otherwise.',
+      ),
+    )
+    const name = el('input')
+    name.type = 'text'
+    name.placeholder = 'A name, lowercase'
+    const command = el('input')
+    command.type = 'text'
+    command.placeholder = 'The command and its arguments'
+    const add = el('button', 'quiet-button', 'Add')
+    add.type = 'button'
+    const said = el('p', 'hint')
+
+    const submit = async (): Promise<void> => {
+      // Split on whitespace, which is what a person pastes. Quoting is a shell's job and
+      // there is no shell here — core spawns the program directly.
+      const words = command.value.trim().split(/\s+/).filter(Boolean)
+      if (!name.value.trim() || words.length === 0) return
+      add.disabled = true
+      said.className = 'hint'
+      said.textContent = 'Starting it once to see what it is…'
+      const answer = (await send('/api/server', {
+        id: name.value.trim(),
+        run: words[0],
+        args: words.slice(1),
+      })) as { ok?: boolean; said?: string }
+      said.className = answer.ok === true ? 'hint' : 'error'
+      said.textContent = answer.said ?? ''
+      add.disabled = false
+      if (answer.ok === true) {
+        name.value = ''
+        command.value = ''
+        await load()
+      }
+    }
+    add.addEventListener('click', () => void submit())
+
+    const row = el('div', 'row')
+    row.append(name, command, add)
+    box.append(row, said)
     return box
   }
 
@@ -224,6 +452,26 @@ export function mountSettings(token: string): { open: () => void } {
       el('span', 'pane-meta', `${pane.version} · ${pane.license}`),
     )
     box.append(head, el('p', 'hint', pane.summary))
+
+    // Compatibility mode (M3-6). The pill is not the whole of it: what matters is *what
+    // Alexia does differently*, so the sentence says that, and the way out is a decision
+    // with a person's hand on it rather than a setting that drifts.
+    if (unreviewed.has(pane.id)) {
+      head.append(el('span', 'pill caution', 'not reviewed'))
+      box.append(
+        el(
+          'p',
+          'hint',
+          'This came from an MCP server, not the Alexia registry. Nobody here has reviewed it, so every tool it offers is treated as if it changes things — Alexia asks first, in every mode but Full trust.',
+        ),
+      )
+      const trust = el('button', 'quiet-button', 'I have read what it does — trust it')
+      trust.type = 'button'
+      trust.addEventListener('click', () => {
+        void send('/api/server', { id: pane.id, action: 'trust' }).then(() => load())
+      })
+      box.append(trust)
+    }
 
     // The author's own sentences, verbatim. This is what a person reads when deciding
     // whether to keep a plugin, so core never rewrites it and never summarises it.
