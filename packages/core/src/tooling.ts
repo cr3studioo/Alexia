@@ -4,6 +4,7 @@ import type { Tooling, ToolOutcome } from './agent.js'
 import type { Annotations } from './permissions.js'
 import type { Plugins } from './plugins.js'
 import type { ToolSpec } from './provider.js'
+import type { Progress } from './settings.js'
 import { SKILL_TOOL, type Skills } from './skills.js'
 
 /**
@@ -93,7 +94,13 @@ export class PluginTooling implements Tooling {
    * observations, and the loop's next step is a re-plan around what this says. That is
    * invariant 4 with a real loop behind it, and it is the whole of M15-8's mechanism.
    */
-  async call(name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<ToolOutcome> {
+  async call(
+    name: string,
+    args: Record<string, unknown>,
+    signal?: AbortSignal,
+    onProgress?: (update: Progress) => void,
+  ): Promise<ToolOutcome> {
+    // Reading a skill is reading a file. There is nothing to report and nothing to wait for.
     if (name === SKILL_TOOL && this.skills?.tool) return this.skills.read(args)
 
     let found = (await this.#aggregate()).find((k) => k.spec.name === name)
@@ -121,7 +128,21 @@ export class PluginTooling implements Tooling {
     }
 
     try {
-      return read(await process.callTool(found.tool, args, signal ? { signal } : undefined))
+      // `onprogress` is what puts a `progressToken` on the request, so a plugin that reports
+      // has somewhere for it to go — and a plugin that does not simply never sends one.
+      return read(
+        await process.callTool(found.tool, args, {
+          ...(signal && { signal }),
+          ...(onProgress && {
+            onprogress: (update) =>
+              onProgress({
+                progress: update.progress,
+                ...(update.total !== undefined && { total: update.total }),
+                ...(update.message !== undefined && { message: update.message }),
+              }),
+          }),
+        }),
+      )
     } catch (error) {
       // Whatever went wrong, the model's next move is the same: read this and try
       // something else. A stack trace would be worse prompt text than a sentence.

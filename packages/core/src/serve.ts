@@ -660,6 +660,9 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
           delta: (delta) => say({ delta }),
           note: (note) => say({ note }),
           step: (step) => say({ step: { n: step.n, name: step.name, args: step.args } }),
+          // The same row, moving. A frame per update, because the whole point is that the
+          // screen is never more than a moment behind what the tool is doing (M2-6).
+          progress: (step) => say({ step: { n: step.n, name: step.name, progress: step.progress } }),
           done: (step) => say({ step: { n: step.n, name: step.name, ...step.outcome } }),
         },
       })

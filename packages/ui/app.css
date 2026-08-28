@@ -837,6 +837,7 @@ button[disabled] {
 
 .trace .step {
   display: flex;
+  flex-wrap: wrap;
   gap: var(--space-3);
   align-items: baseline;
   padding: var(--space-2) var(--space-3);
@@ -1015,4 +1016,11 @@ button[disabled] {
   display: block;
   height: 100%;
   background: var(--accent);
+}
+
+/* A step's own bar (M2-6). The row is a flex line of number, name and what it said; the bar
+   wraps onto its own line under all three rather than competing with them for width. */
+.trace .step > .bar {
+  flex-basis: 100%;
+  margin-top: var(--space-2);
 }

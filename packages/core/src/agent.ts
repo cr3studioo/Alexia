@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import type { Ruling } from './permissions.js'
 import { ProviderError, type ToolSpec } from './provider.js'
+// The shape `notifications/progress` arrives in. It belongs to neither module, and it is one
+// interface — a third file to hold it would be the abstraction, not the sharing.
+import type { Progress } from './settings.js'
 import { route, send, shapeOf, type Pins, type Shape, type World } from './router.js'
 import type { SecretStore } from './secrets.js'
 import type { Message, Store } from './store.js'
@@ -35,7 +38,19 @@ import { trim, type TrimOptions } from './trim.js'
 export interface Tooling {
   /** Everything callable right now, already namespaced. Re-asked every step, on purpose. */
   list(): Promise<ToolSpec[]>
-  call(name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<ToolOutcome>
+  /**
+   * Run one.
+   *
+   * `onProgress` is how a step that takes four minutes says so while it is taking them
+   * (M2-6). It is optional at both ends: a tool that reports nothing simply never calls it,
+   * and a `Tooling` that cannot carry it — a fake in a test — is still one of these.
+   */
+  call(
+    name: string,
+    args: Record<string, unknown>,
+    signal?: AbortSignal,
+    onProgress?: (update: Progress) => void,
+  ): Promise<ToolOutcome>
 }
 
 export interface ToolOutcome {
@@ -50,6 +65,8 @@ export interface Step {
   n: number
   name: string
   args: Record<string, unknown>
+  /** The last thing the tool said about how far along it is. Absent means it has said nothing. */
+  progress?: Progress
   /** Absent until it comes back. */
   outcome?: ToolOutcome
 }
@@ -61,6 +78,14 @@ export interface AgentEvents {
   note?(line: string): void
   /** A call is about to run. Fired before the work, because that is the point of a trace. */
   step?(step: Step): void
+  /**
+   * The same step, still running, with something new to say about how far along it is (M2-6).
+   *
+   * **Silence is what kills a first run, not time.** A step that will take four minutes and
+   * says nothing is indistinguishable from a step that has hung, and the person watching has
+   * only one way to find out which.
+   */
+  progress?(step: Step): void
   /** The same step, now with its outcome. */
   done?(step: Step): void
 }
@@ -224,7 +249,10 @@ export async function run(options: RunOptions): Promise<RunResult> {
         }
       }
     }
-    return tools.call(step.name, step.args, options.signal)
+    return tools.call(step.name, step.args, options.signal, (update) => {
+      step.progress = update
+      on?.progress?.(step)
+    })
   }
 
   function finish(ended: RunResult['ended'], why?: string): RunResult {

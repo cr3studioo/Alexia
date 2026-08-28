@@ -135,7 +135,7 @@ Tick a box only when the task's acceptance criteria pass. `[GATE]` needs a human
 - [x] **M2-3** `plugins/voice` — speech to text
 - [x] **M2-4** `plugins/voice` — text to speech
 - [x] **M2-5** Full lifecycle: install, enable, disable, purge
-- [ ] **M2-6** Streaming progress over the wire
+- [x] **M2-6** Streaming progress over the wire
 - [ ] **M2-7** The crude installer
 - [ ] **M2-8** `[GATE]` Cold-install test #2
 - [ ] **M2-G** **Done when:** install → talk → delete leaves no residue and not one line changed in core
@@ -1691,6 +1691,33 @@ before it will do anything.
 `notifications/progress` end to end, from the plugin through core to a progress bar that
 never goes silent. Silence is what kills a first run, not time.
 
+**Done 2026-08-28 (D74).** M2-1 carried progress to the settings screen; this is the other
+route — **through the agent loop**, which is where the work a person actually waits on
+happens. A plugin's `notifications/progress` now reaches `Tooling.call`, becomes an
+`AgentEvents.progress` on the running step, streams as its own frame, and moves a bar in the
+trace row that is already on screen.
+
+**One optional argument, and no new interface.** `Tooling.call` gained a fourth parameter; a
+`Tooling` that ignores it — every fake in every test — is still one, because a function of
+three parameters is assignable to one of four. That is the whole of the plumbing change, and
+it is why nothing else had to move.
+
+**The `progressToken` is created by asking for it.** `onprogress` is what puts one on the
+MCP request, so a plugin that reports has somewhere to send it and a plugin that does not
+never sends one. A caller must not have to tell *no progress* apart from *no tool*, and it
+does not: the callback simply never fires.
+
+**The bar appears when there is something to say and goes when the work does.** A bar always
+present at zero is a bar nobody believes when it finally moves, and one left at 97% is worse
+than none. A tool that reports only a message and no fraction gets its own words in the row
+instead — both beat a row sitting still.
+
+**Verified in the shell**, driving headless Edge against a scripted model that calls a
+six-second tool: sampled every half second the row read 13, 25, 38, 50, 63, 75, 88 per cent
+with *Warming up* beside it, then the bar gone and the tool's own sentence in its place. The
+unit test asserts the ordering that makes it true — every report arrives strictly **between**
+the step starting and the step finishing.
+
 ### M2-7 The crude installer
 
 Not signed, not pretty, no auto-update. Something your test person can double-click.
@@ -2073,6 +2100,7 @@ Newest first. Every entry here is also in Alexia.md's decision log.
 
 | Date | Entry |
 |---|---|
+| 2026-08-28 | **D74** — **progress reaches the trace, and it cost one optional argument.** M2-6. A plugin's `notifications/progress` now travels plugin → `Tooling.call` → an event on the running step → an SSE frame → a bar in the trace row that is already on screen. M2-1 had carried it to the settings screen; this is the route through the agent loop, which is where the work a person actually waits on happens. The plumbing is a fourth optional parameter on `Tooling.call` and nothing else: a `Tooling` that ignores it is still one, because a function of three parameters is assignable to one of four, so no fake in any test had to change. Two rules the building settled: **asking for progress is what creates the `progressToken`**, so a plugin that reports has somewhere to send it and one that does not never sends one — a caller never has to tell *no progress* from *no tool*; and **the bar appears when there is something to say and goes when the work does**, because one always present at zero is not believed when it moves and one left at 97% is worse than none. Verified by sampling the live shell every half second through a six-second tool call. |
 | 2026-08-28 | **D73** — **a folder appearing is not consent, so a plugin now arrives installed and not enabled.** M2-5. The lifecycle's four arrows are real and persisted, and the line that turned out to matter is the first one: files on disk is *installed*, and **nothing runs on the strength of a folder appearing** — somebody reads what it asked for, in its author's own words, and says yes. That made *enable* the moment the namespace exists, so `store.create` moved out of `load`: an installed-but-not-enabled plugin owns no tables, no process, no routing and no `action` button, and its bundled skills wait with it. **Disable keeps every last thing delete would take**, which is the whole argument for it being the action the screen offers first; delete sits behind a second press that has already said what goes. Install is crude on purpose — a folder somebody points at, validated where it stands and copied second so a folder that is not a plugin never reaches the directory core watches — because browsing a library is M3-2 and until there is a registry there is nowhere else for a plugin to come from. The answer survives a restart as one `kv` row, and purge takes it, so re-installing starts at the walkthrough rather than at a yes given to a different copy. Six tests had to start saying yes, which is the check working: invariant 5's comment had claimed *install and enable* while only ever installing, and it now proves there is nothing in the database between the two. |
 | 2026-08-28 | **D72** — **Alexia speaks, and the proof is that she can hear herself.** M2-4. `voice.speak` is *text in, audio played, nothing out*: Piper makes a WAV inside the plugin process and the operating system's own player plays it — no audio library, and a missing player fails with a sentence naming it. Verified by round trip: Piper said a line, `voice.transcribe` read it back one word off, and neither call named a plugin. **Hearing and speaking are two downloads and two bindings that move independently** — transcribing does not fetch a voice, speaking does not fetch a speech model, and `●` on the status line is reserved for both being ready, because halfway is a state the person watching has to be able to see. `speak` declares no `readOnlyHint`, for the same reason `listen` does not: making a noise in somebody's room is not read-only in any sense a person cares about. **Kokoro is deliberately not here.** It is the named quality upgrade and it costs an ONNX runtime plus a phonemizer in this plugin — exactly the dependency shape the whole thing has avoided, and which Piper ships inside its own 22 MB. The upgrade that costs nothing today is the voice choice; a real Kokoro option belongs at M4-6, where an ONNX runtime is already being paid for. |
 | 2026-08-28 | **D71** — **voice works, and the capability binding earns its design on the first real plugin.** M2-3. `plugins/voice` fetches a pinned whisper.cpp build and a model with progress the whole way, spawns `whisper-cli` on a file and `whisper-stream` on the microphone, and puts **only text** on the wire — which is not a policy, it is where the code runs. Before the download, `voice.transcribe` is declared in the manifest and bound on no tool, so a caller gets `-32050`; after it, the binding appears and the capability answers. That is D59 happening rather than being described, and it was verified in that order. Three decisions worth keeping: **`listen` declares no `readOnlyHint`**, because read-only is true about the disk and wrong about the room, and an undeclared tool is one the gate stops on; **`whisper_path` is the tenth widget's first honest use** and also the whole non-Windows story; and **Windows' own `tar` is named explicitly**, because what is on `PATH` may be GNU tar, which cannot read zip and reads a drive letter as a hostname. Two bugs came out of it that were nothing to do with voice: **every invariant check had been reading past every first-party plugin** — the globs matched `.ts` and the plugins are JavaScript — and the first thing the widened check caught was an overclaiming sentence of mine. Purge was measured: 169 MB in, zero left. |

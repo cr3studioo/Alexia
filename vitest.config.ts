@@ -11,6 +11,7 @@ import { defineConfig } from 'vitest/config'
 const needPlugins = [
   'packages/core/test/lifecycle.test.ts',
   'packages/core/test/plugins.test.ts',
+  'packages/core/test/progress.test.ts',
   'packages/core/test/registry.test.ts',
   'packages/core/test/supervisor.test.ts',
   'packages/core/test/invariants/01-core-names-no-plugin.test.ts',

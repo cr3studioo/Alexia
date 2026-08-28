@@ -247,7 +247,17 @@ async function* frames(body: ReadableStream<Uint8Array>): AsyncGenerator<Record<
  * rather than after it — a step nobody can see until it finishes is a spinner with extra
  * steps, and a spinner during a five-minute run is how trust goes.
  */
-function trace(): { step(n: number, name: string): void; done(n: number, ok: boolean, text: string): void } {
+interface Moving {
+  progress: number
+  total?: number
+  message?: string
+}
+
+function trace(): {
+  step(n: number, name: string): void
+  moving(n: number, update: Moving): void
+  done(n: number, ok: boolean, text: string): void
+} {
   let panel: HTMLElement | undefined
   const rows = new Map<number, HTMLElement>()
   return {
@@ -273,10 +283,40 @@ function trace(): { step(n: number, name: string): void; done(n: number, ok: boo
       rows.set(n, row)
       log.scrollTop = log.scrollHeight
     },
+    /**
+     * The row, moving (M2-6).
+     *
+     * **Silence is what kills a first run, not time.** A tool downloading 148 MB and saying
+     * nothing looks exactly like a tool that has hung, and a person watching has no way to
+     * tell them apart except by waiting or by giving up. The bar appears the moment there is
+     * something to say and not a moment before — a bar that is always there, at zero, is a
+     * bar nobody believes when it finally moves.
+     */
+    moving(n, update) {
+      const row = rows.get(n)
+      if (!row) return
+      const said = row.querySelector('.said')
+      // A tool that reports a fraction gets a bar; one that only says where it is gets its
+      // own words. Both are better than the row sitting still.
+      if (said && update.message) said.textContent = update.message
+      if (update.total === undefined || update.total <= 0) return
+      const done = Math.max(0, Math.min(100, Math.round((update.progress / update.total) * 100)))
+      let bar = row.querySelector<HTMLElement>('.bar > span')
+      if (!bar) {
+        const track = document.createElement('div')
+        track.className = 'bar'
+        bar = document.createElement('span')
+        track.append(bar)
+        row.append(track)
+      }
+      bar.style.width = `${done}%`
+    },
     done(n, ok, text) {
       const row = rows.get(n)
       if (!row) return
       row.className = ok ? 'step' : 'step failed'
+      // The work is over, so the bar goes. A bar left at 97% is worse than no bar.
+      row.querySelector('.bar')?.remove()
       // What came back, on one line. The full text is in the conversation the model reads;
       // this is the glance version, and a glance that scrolls is not a glance.
       const said = row.querySelector('.said')
@@ -315,9 +355,13 @@ async function ask(question: string): Promise<void> {
     // The one plain line before a charge, and the monthly warning, land in the same place.
     if (typeof event.note === 'string') say(event.note)
     if (typeof event.ask === 'string') askPermission(event.ask)
-    const step = event.step as { n: number; name: string; ok?: boolean; text?: string } | undefined
+    const step = event.step as
+      | { n: number; name: string; ok?: boolean; text?: string; progress?: Moving }
+      | undefined
     if (step) {
-      if (step.ok === undefined) {
+      if (step.progress) {
+        steps.moving(step.n, step.progress)
+      } else if (step.ok === undefined) {
         steps.step(step.n, step.name)
         // The answer bubble moves below the steps it came from, so the trace reads in the
         // order it happened rather than the order the elements were created.
