@@ -29,7 +29,10 @@ export default defineConfig({
       {
         test: {
           name: 'unit',
-          include: ['packages/*/test/**/*.test.ts'],
+          // The first-party plugins are JavaScript, and they hold real logic — a download,
+          // a child process, a parser over another program's output. Their tests step aside
+          // with `plugins/` when the core-alone job moves it, which is the right way round.
+          include: ['packages/*/test/**/*.test.ts', 'plugins/*/test/**/*.test.js'],
           exclude: ['**/test/invariants/**', ...withoutPlugins],
         },
       },

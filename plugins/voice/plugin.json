@@ -1,0 +1,97 @@
+{
+  "$schema": "../../docs/spec/plugin.schema.json",
+  "manifest_version": 1,
+  "id": "voice",
+  "name": "Voice",
+  "summary": "Turns speech into text, with Whisper running on this machine.",
+  "version": "0.1.0",
+  "license": "AGPL-3.0-only",
+  "entry": {
+    "run": "node",
+    "args": [
+      "index.js"
+    ]
+  },
+  "alexia_protocol": 1,
+  "mcp_protocol": "2025-11-25",
+  "requires": [
+    {
+      "cap": "audio.input",
+      "why": "To hear you when you speak. The recording is turned into text here and the sound is not kept."
+    },
+    {
+      "cap": "fs.read_scoped",
+      "why": "To open a recording you point it at."
+    },
+    {
+      "cap": "fs.own_dir",
+      "why": "To keep Whisper and the speech model in a folder of its own."
+    },
+    {
+      "cap": "net.download",
+      "why": "To fetch Whisper once from GitHub, and the speech model once from Hugging Face."
+    },
+    {
+      "cap": "proc.spawn",
+      "why": "To run Whisper here rather than sending anything away to be listened to."
+    }
+  ],
+  "provides": [
+    "voice.transcribe"
+  ],
+  "settings": [
+    {
+      "type": "choice",
+      "key": "model_size",
+      "label": "Speech model",
+      "options": [
+        "tiny",
+        "base",
+        "small"
+      ],
+      "default": "base",
+      "hint": "Bigger is more accurate and slower. Tiny is 75 MB, base 148 MB, small 488 MB."
+    },
+    {
+      "type": "number",
+      "key": "threads",
+      "label": "Processor threads",
+      "min": 1,
+      "max": 32,
+      "step": 1,
+      "default": 4,
+      "hint": "More is faster until it is not. Four suits most machines."
+    },
+    {
+      "type": "path",
+      "key": "whisper_path",
+      "label": "Whisper program",
+      "kind": "file",
+      "hint": "Leave this empty and Alexia downloads one. Point it at your own whisper-cli if you have a build that suits this machine better."
+    },
+    {
+      "type": "status",
+      "key": "ready",
+      "label": "State"
+    },
+    {
+      "type": "progress",
+      "key": "fetching",
+      "label": "Downloading"
+    },
+    {
+      "type": "action",
+      "key": "install",
+      "label": "Download now",
+      "tool": "install",
+      "hint": "Fetches Whisper and the speech model. It happens on first use anyway; this is for getting it over with while you are looking."
+    }
+  ],
+  "storage": {
+    "namespace": "voice",
+    "tables": [
+      "transcripts"
+    ],
+    "dir": true
+  }
+}

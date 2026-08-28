@@ -132,7 +132,7 @@ Tick a box only when the task's acceptance criteria pass. `[GATE]` needs a human
 - [x] **M2-D1** The visual language *(deferred from M1 2026-08-27, D61)*
 - [x] **M2-1** Declarative UI schema v1
 - [x] **M2-2** Skills loader (agentskills.io)
-- [ ] **M2-3** `plugins/voice` — speech to text
+- [x] **M2-3** `plugins/voice` — speech to text
 - [ ] **M2-4** `plugins/voice` — text to speech
 - [ ] **M2-5** Full lifecycle: install, enable, disable, purge
 - [ ] **M2-6** Streaming progress over the wire
@@ -1534,6 +1534,61 @@ property process isolation was bought for, and it is the first time it is visibl
 Model download over `notifications/progress`, because a 1.5 GB download with no feedback is
 indistinguishable from a hang.
 
+**Done 2026-08-28 (D71).** `plugins/voice` downloads a pinned whisper.cpp build and a model,
+spawns `whisper-cli` on a file and `whisper-stream` on the microphone, and returns text.
+Three tools: `transcribe`, `listen`, and `install` behind the settings screen's button.
+
+**D59's runtime binding is real for the first time, and it was worth the design.** Before
+anything is downloaded, `voice.transcribe` is declared in the manifest and **bound on no
+tool** — a caller gets `-32050`, the same answer as *not installed*, which is what it can
+actually plan around. The download finishes, `_meta` goes on, `tools/list_changed` fires, and
+the capability answers. Verified in that order, against the real supervisor: refused, 1 726
+progress frames, then `And so my fellow Americans…` returned by capability name with core
+never learning who spoke.
+
+**`listen` deliberately declares no `readOnlyHint`.** Reading a file somebody named is one
+thing; opening the microphone is a thing a person wants to be asked about, and an undeclared
+tool is one the gate stops on in every mode but Full trust. Read-only would have been true
+about the disk and wrong about the room.
+
+**The tenth widget is real.** M2-1 shipped `path` with no plugin that had an honest use for
+one. `whisper_path` is that use — somebody with a CUDA build should not be made to download a
+slower one — and it is also the entire non-Windows story, since only `win32-x64` has a
+prebuilt CLI here.
+
+**Four things found by building it:**
+
+1. **`tar` on Windows is not necessarily Windows' tar.** `System32	ar.exe` is bsdtar and
+   reads zip, which is why there is no zip parser in this repo. What is on `PATH` may be Git
+   for Windows' GNU tar, which cannot read zip **and** reads a drive-lettered path as
+   `host:path` — it failed trying to resolve a hostname one letter long. Named explicitly now.
+2. **Every invariant check had been reading past every first-party plugin.** `shippedSource`
+   matched `.ts` only, and the plugins are JavaScript — so the no-hardcoded-paths and
+   no-overclaiming checks had never seen `plugins/hello/index.js`. Widened to `plugins/*/*.js`,
+   and the first thing it caught was a sentence of mine in this very plugin: *the audio never
+   leaves this process*. True, and still the kind of claim this project does not make. It now
+   says what happens instead.
+3. **`whisper-stream` has no `--no-timestamps`.** Its file-reading sibling takes `-nt`; it does
+   not, so every line arrives wearing `[00:00:00.000 --> 00:00:04.000]`.
+4. **Silence is not empty.** A pass over a quiet room comes back as `[BLANK_AUDIO]` or
+   `[ Inaudible ]`, which handed on unedited is a model told that somebody said the words
+   *blank audio* — and, worse, an end to the wait on the first noise in the room.
+
+**Purge was measured, not assumed.** After a real download, Voice's own directory held 169 MB;
+`purge` left the data directory at zero. That is invariant 5 against a plugin that actually
+brings something heavy with it.
+
+**What was verified with a microphone and what was not.** The capture path runs end to end:
+SDL opens the default device at 16 kHz mono inside the plugin process, voice-activity passes
+fire on real room audio, and what comes back over the wire is a string. A *scripted spoken
+phrase* was not verified — playing audio through the speakers did not reach the microphone on
+this machine, and nobody spoke into it. The recognition half is proved instead by the file
+path, on a real recording. The parser between them — when to stop listening — is a unit test
+rather than a room.
+
+**Left for their own tasks:** `voice.speak` is **M2-4**; progress in the chat stream is
+**M2-6**; and the hotkey that makes `listen` a product rather than a tool is **M5-2**.
+
 ### M2-4 Voice — text to speech
 
 Piper by default; Kokoro as the quality upgrade. Registers `voice.speak`.
@@ -1940,6 +1995,7 @@ Newest first. Every entry here is also in Alexia.md's decision log.
 
 | Date | Entry |
 |---|---|
+| 2026-08-28 | **D71** — **voice works, and the capability binding earns its design on the first real plugin.** M2-3. `plugins/voice` fetches a pinned whisper.cpp build and a model with progress the whole way, spawns `whisper-cli` on a file and `whisper-stream` on the microphone, and puts **only text** on the wire — which is not a policy, it is where the code runs. Before the download, `voice.transcribe` is declared in the manifest and bound on no tool, so a caller gets `-32050`; after it, the binding appears and the capability answers. That is D59 happening rather than being described, and it was verified in that order. Three decisions worth keeping: **`listen` declares no `readOnlyHint`**, because read-only is true about the disk and wrong about the room, and an undeclared tool is one the gate stops on; **`whisper_path` is the tenth widget's first honest use** and also the whole non-Windows story; and **Windows' own `tar` is named explicitly**, because what is on `PATH` may be GNU tar, which cannot read zip and reads a drive letter as a hostname. Two bugs came out of it that were nothing to do with voice: **every invariant check had been reading past every first-party plugin** — the globs matched `.ts` and the plugins are JavaScript — and the first thing the widened check caught was an overclaiming sentence of mine. Purge was measured: 169 MB in, zero left. |
 | 2026-08-28 | **D70** — **skills load, and the index is a tool description rather than a system line.** M2-2. One `skill` tool carries every installed skill's `name` and `description` in its own description — which is where a model looks when it is choosing what to reach for — and its body arrives only when the model calls it, a file under it only when it passes `file`. All three of agentskills.io's disclosure levels, and **`agent.ts` did not change at all**. Two rules were worth the extra lines: reading a skill declares `readOnlyHint` through the gate's existing `about()`, or the default permission mode would ask the user before the model could open its own instructions; and a folder that fails to load is shown with the reason, because *a skill that is not firing and is not visibly broken is the hardest thing in this system to debug*. Six ways to be broken are named, including one the spec did not — **two skills answering to one name**, which is a problem said out loud rather than a silent winner. A bundled skill goes when its plugin does through no code of its own: `name` and `description` are re-read from disk, so there is no index to fall out of step. `plugins/hello` now bundles one, so the bundled route is proved against a real plugin. |
 | 2026-08-28 | **D69** — **no secret has ever actually been stored.** `cross-keychain` refuses an account name containing a slash, and `secrets.ts` had been building `<plugin>/<key>` since M1-3 — so every keychain read and write threw, in both directions, on any real machine. That includes the provider key a person pastes at first run, which means the one step first run exists for could not have worked. Nothing caught it because every test uses `memorySecrets`, which has no such rule; the first thing to touch the real store was M2-1's settings screen. The separator is now a dot, which is legal and still unambiguous — a plugin id cannot contain one and neither can a setting key — and `account()` is exported so a test can pin the format, because the constraint lives outside this repo and will not announce itself if it changes. |
 | 2026-08-28 | **D68** — **the ten widgets are rendered, and the `alexia/*` layer gained its sixth method to make one of them true.** M2-1. Core renders from the manifest and spawns nothing to do it, which is the whole reason the schema lives in `plugin.json`. `ui-schema.md` had promised that a `status` is driven by the plugin *writing to its own settings value* and **no method could write one** — so `alexia/settings/set` exists, and writes **only the caller's own `status` keys**: a plugin that could rewrite a `toggle` the user set could quietly undo a person's decision, and would have to be trusted rather than read. Two of core's decisions stay core's: two or three options is a segmented control and four is a dropdown, and an `action` goes through the same permission gate as any other tool call — asked beside the button, where the thing being decided is. A `password` is never rendered, only reported as set, with core's own sentence naming the store. `plugins/hello` grew to nine widgets and drives three of them, so the screen is proved against a real plugin rather than a fixture. |

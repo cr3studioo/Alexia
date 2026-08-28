@@ -30,6 +30,10 @@ export const shippedSource = [
   'packages/*/src/**/*.tsx',
   'plugins/*/src/**/*.ts',
   'plugins/*/*.ts',
+  // The first-party plugins are shipped source and they are written in JavaScript, which
+  // means every check in this folder had been reading past them. Top level only, so the
+  // glob does not walk into `node_modules`.
+  'plugins/*/*.js',
   'registry/src/**/*.ts',
 ]
 
