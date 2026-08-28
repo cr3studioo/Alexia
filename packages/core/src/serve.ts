@@ -153,8 +153,10 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     bundled: () =>
       plugins.ids.flatMap((id) => {
         const folder = plugins.folder(id)
-        return folder === undefined ? []
-          : (plugins.manifest(id)?.skills ?? []).map((path) => ({ dir: join(folder, path), pluginId: id }))
+        // A skill bundled with a plugin nobody has enabled is know-how about something
+        // Alexia cannot currently do. It arrives with the plugin and it waits with it.
+        if (folder === undefined || !plugins.enabled(id)) return []
+        return (plugins.manifest(id)?.skills ?? []).map((path) => ({ dir: join(folder, path), pluginId: id }))
       }),
   })
   const tooling = new PluginTooling(plugins, (line) => console.error(`[tools] ${line}`), skills)
@@ -423,6 +425,57 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
           // same sentence to the same person: this folder is here and is doing nothing.
           skillProblems: skills.problems,
         }),
+      )
+      return
+    }
+
+    /**
+     * The lifecycle, in one endpoint (M2-5).
+     *
+     * `enable` is the moment of consent — the screen has just shown what this plugin asked
+     * for, in its author's words — and `disable` is its cheap opposite: the process stops and
+     * everything it owns stays. `delete` is the one that removes things, which is why the
+     * screen puts it a step further back and why invariant 5 is the check that guards it.
+     */
+    if (url.pathname === '/api/plugin' && request.method === 'POST') {
+      const asked = JSON.parse(await read(request)) as { id?: string; action?: string }
+      const id = asked.id ?? ''
+      if (plugins.manifest(id) === undefined) {
+        response.writeHead(200, { 'content-type': 'application/json' })
+        response.end(JSON.stringify({ ok: false, said: `There is no plugin called “${id}”.` }))
+        return
+      }
+      if (asked.action === 'enable') plugins.enable(id)
+      else if (asked.action === 'disable') await plugins.disable(id)
+      else if (asked.action === 'delete') await plugins.purge(id)
+      else {
+        response.writeHead(200, { 'content-type': 'application/json' })
+        response.end(JSON.stringify({ ok: false, said: `“${asked.action ?? ''}” is not something to do to a plugin.` }))
+        return
+      }
+      skills.invalidate()
+      response.writeHead(200, { 'content-type': 'application/json' })
+      response.end(JSON.stringify({ ok: true, panes: await plugins.panes(), skills: skills.all }))
+      return
+    }
+
+    /**
+     * Install: a folder somebody points at, checked and copied in.
+     *
+     * Crude on purpose — the library that makes this a browse-and-click is M3-2, and until
+     * there is a registry there is nowhere else for a plugin to come from. It arrives
+     * **installed and not enabled**, so the next thing the person sees is what it asked for.
+     */
+    if (url.pathname === '/api/install' && request.method === 'POST') {
+      const { path } = JSON.parse(await read(request)) as { path?: string }
+      const done = plugins.install((path ?? '').trim())
+      response.writeHead(200, { 'content-type': 'application/json' })
+      response.end(
+        JSON.stringify(
+          'reason' in done ?
+            { ok: false, said: done.reason }
+          : { ok: true, id: done.id, said: `${done.id} is installed. Read what it asked for, then enable it.`, panes: await plugins.panes() },
+        ),
       )
       return
     }

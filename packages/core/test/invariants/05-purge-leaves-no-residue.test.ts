@@ -49,9 +49,15 @@ const snapshot = () => ({ tables: store.tables(), files: tree(dataDir) })
 test('purge-leaves-no-residue: install, enable, use, delete, and diff', async () => {
   const before = snapshot()
 
-  // Install and enable: the namespace and the directory come into existence here.
+  // Install: files on disk, and nothing else. A plugin nobody has said yes to owns no
+  // namespace, which is what makes the *Installed* box in M2-5's lifecycle diagram true.
   plugins.load()
   expect(plugins.ids).toEqual(['hello'])
+  expect(snapshot()).toEqual(before)
+
+  // Enable: the namespace comes into existence here, and not one moment earlier.
+  plugins.enable('hello')
+  expect(store.tables()).toContain('p_hello_greetings')
 
   // Use it, so there is something to remove. A row, a kv entry, a setting the user changed,
   // and the plugin's own directory — every row of the table in storage.md.

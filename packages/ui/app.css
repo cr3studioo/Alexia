@@ -338,6 +338,32 @@ body[data-view='first-run'] header {
   margin-top: var(--space-5);
 }
 
+/* Enable, disable, delete (M2-5). Set off from the widgets above it by a rule, because it is
+   about the plugin rather than about any setting in it. */
+.lifecycle {
+  margin-top: var(--space-5);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--line);
+}
+
+.lifecycle p {
+  margin: var(--space-3) 0 0;
+  max-width: var(--measure);
+}
+
+/* Two buttons of different weights, sitting on one line. Without this the quieter one rides
+   high, because its padding is smaller and the row aligns on the top edge. */
+.lifecycle .row {
+  align-items: center;
+}
+
+/* A full path is long. The box it goes in is as wide as the pane allows, and the button
+   keeps its own width. */
+.installing input {
+  flex: 1;
+  min-width: 0;
+}
+
 .pane-head {
   display: flex;
   align-items: baseline;

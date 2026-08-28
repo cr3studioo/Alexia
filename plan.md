@@ -134,7 +134,7 @@ Tick a box only when the task's acceptance criteria pass. `[GATE]` needs a human
 - [x] **M2-2** Skills loader (agentskills.io)
 - [x] **M2-3** `plugins/voice` — speech to text
 - [x] **M2-4** `plugins/voice` — text to speech
-- [ ] **M2-5** Full lifecycle: install, enable, disable, purge
+- [x] **M2-5** Full lifecycle: install, enable, disable, purge
 - [ ] **M2-6** Streaming progress over the wire
 - [ ] **M2-7** The crude installer
 - [ ] **M2-8** `[GATE]` Cold-install test #2
@@ -1642,6 +1642,50 @@ the `why` strings from the manifest, never capability identifiers.
 Purge is the transition to test hardest (invariant 5). A plugin that leaves residue has
 broken the invariant even though nothing visibly crashed.
 
+**Done 2026-08-28 (D73).** The four arrows are real, persisted and on the screen.
+`packages/core/test/lifecycle.test.ts` walks all of them; invariant 5 still owns the last one
+and now proves the first two as well.
+
+**The line that turned out to matter is between *installed* and *enabled*, and it is
+consent.** A folder appearing in the extensions directory — put there by the library, by a
+person, or by something neither of them noticed — **does not start running because it is
+there**. That is a change of default: until now, loading a manifest was the whole of it. Now a
+plugin arrives listed, described, and doing nothing, and the screen it arrives on is the
+walkthrough: the summary, what it asked for **in its author's own words**, and one button.
+Its settings are not drawn yet, because configuring something you have not agreed to run is
+a screen asking two questions at once.
+
+**Enable is the moment the namespace exists.** `store.create` moved out of `load` — an
+installed-but-not-enabled plugin owns no tables, which is what makes the *Installed* box in
+the diagram above literally true rather than a description of intent. A disabled plugin is
+absent from `tools()`, from capability routing and from its own `action` button, and its
+bundled skills wait with it.
+
+**Disable keeps every last thing delete would take** — tables, rows, settings, its directory,
+the 271 MB Voice spent twenty minutes downloading — which is the whole argument for it being
+the action offered first. Delete sits behind a second press that has already said what goes.
+
+**Install is a folder somebody points at**, validated where it stands and copied second, so a
+folder that is not a plugin never lands in the directory core watches. Crude, and named as
+such: browsing a library is **M3-2**, and until there is a registry there is nowhere else for
+a plugin to come from. It is enough for M2-G's *install → talk → delete* to be something a
+person does in the app rather than in Explorer.
+
+**Yes survives a restart**, because it is a person's answer and not a fact about this process:
+one `kv` row in core's namespace, read at construction. Purge takes it with the plugin, so
+re-installing later starts at the walkthrough again rather than at a yes somebody gave to a
+different copy.
+
+**Four tests had to start saying yes**, and that is the check working rather than a cost:
+`tooling`, `registry`, `replan`, `stop` and invariants 4 and 9 are all about plugins that
+*run*, so they now enable them in one line — the same line the settings screen sends.
+Invariant 5's comment had said *install and enable* while only ever installing; it now does
+both, and asserts there is nothing in the database between them.
+
+**Verified in headless Edge**: nothing installed, a path typed in, the walkthrough with six
+permissions in Voice's own sentences, Enable, eight widgets, then Delete explaining itself
+before it will do anything.
+
 ### M2-6 Streaming progress
 
 `notifications/progress` end to end, from the plugin through core to a progress bar that
@@ -2029,6 +2073,7 @@ Newest first. Every entry here is also in Alexia.md's decision log.
 
 | Date | Entry |
 |---|---|
+| 2026-08-28 | **D73** — **a folder appearing is not consent, so a plugin now arrives installed and not enabled.** M2-5. The lifecycle's four arrows are real and persisted, and the line that turned out to matter is the first one: files on disk is *installed*, and **nothing runs on the strength of a folder appearing** — somebody reads what it asked for, in its author's own words, and says yes. That made *enable* the moment the namespace exists, so `store.create` moved out of `load`: an installed-but-not-enabled plugin owns no tables, no process, no routing and no `action` button, and its bundled skills wait with it. **Disable keeps every last thing delete would take**, which is the whole argument for it being the action the screen offers first; delete sits behind a second press that has already said what goes. Install is crude on purpose — a folder somebody points at, validated where it stands and copied second so a folder that is not a plugin never reaches the directory core watches — because browsing a library is M3-2 and until there is a registry there is nowhere else for a plugin to come from. The answer survives a restart as one `kv` row, and purge takes it, so re-installing starts at the walkthrough rather than at a yes given to a different copy. Six tests had to start saying yes, which is the check working: invariant 5's comment had claimed *install and enable* while only ever installing, and it now proves there is nothing in the database between the two. |
 | 2026-08-28 | **D72** — **Alexia speaks, and the proof is that she can hear herself.** M2-4. `voice.speak` is *text in, audio played, nothing out*: Piper makes a WAV inside the plugin process and the operating system's own player plays it — no audio library, and a missing player fails with a sentence naming it. Verified by round trip: Piper said a line, `voice.transcribe` read it back one word off, and neither call named a plugin. **Hearing and speaking are two downloads and two bindings that move independently** — transcribing does not fetch a voice, speaking does not fetch a speech model, and `●` on the status line is reserved for both being ready, because halfway is a state the person watching has to be able to see. `speak` declares no `readOnlyHint`, for the same reason `listen` does not: making a noise in somebody's room is not read-only in any sense a person cares about. **Kokoro is deliberately not here.** It is the named quality upgrade and it costs an ONNX runtime plus a phonemizer in this plugin — exactly the dependency shape the whole thing has avoided, and which Piper ships inside its own 22 MB. The upgrade that costs nothing today is the voice choice; a real Kokoro option belongs at M4-6, where an ONNX runtime is already being paid for. |
 | 2026-08-28 | **D71** — **voice works, and the capability binding earns its design on the first real plugin.** M2-3. `plugins/voice` fetches a pinned whisper.cpp build and a model with progress the whole way, spawns `whisper-cli` on a file and `whisper-stream` on the microphone, and puts **only text** on the wire — which is not a policy, it is where the code runs. Before the download, `voice.transcribe` is declared in the manifest and bound on no tool, so a caller gets `-32050`; after it, the binding appears and the capability answers. That is D59 happening rather than being described, and it was verified in that order. Three decisions worth keeping: **`listen` declares no `readOnlyHint`**, because read-only is true about the disk and wrong about the room, and an undeclared tool is one the gate stops on; **`whisper_path` is the tenth widget's first honest use** and also the whole non-Windows story; and **Windows' own `tar` is named explicitly**, because what is on `PATH` may be GNU tar, which cannot read zip and reads a drive letter as a hostname. Two bugs came out of it that were nothing to do with voice: **every invariant check had been reading past every first-party plugin** — the globs matched `.ts` and the plugins are JavaScript — and the first thing the widened check caught was an overclaiming sentence of mine. Purge was measured: 169 MB in, zero left. |
 | 2026-08-28 | **D70** — **skills load, and the index is a tool description rather than a system line.** M2-2. One `skill` tool carries every installed skill's `name` and `description` in its own description — which is where a model looks when it is choosing what to reach for — and its body arrives only when the model calls it, a file under it only when it passes `file`. All three of agentskills.io's disclosure levels, and **`agent.ts` did not change at all**. Two rules were worth the extra lines: reading a skill declares `readOnlyHint` through the gate's existing `about()`, or the default permission mode would ask the user before the model could open its own instructions; and a folder that fails to load is shown with the reason, because *a skill that is not firing and is not visibly broken is the hardest thing in this system to debug*. Six ways to be broken are named, including one the spec did not — **two skills answering to one name**, which is a problem said out loud rather than a silent winner. A bundled skill goes when its plugin does through no code of its own: `name` and `description` are re-read from disk, so there is no index to fall out of step. `plugins/hello` now bundles one, so the bundled route is proved against a real plugin. |

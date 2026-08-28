@@ -8,10 +8,10 @@ import {
   type Root,
   type Tool,
 } from '@modelcontextprotocol/client'
-import { readdirSync, readFileSync, realpathSync, rmSync, watch, type FSWatcher } from 'node:fs'
-import { join } from 'node:path'
+import { cpSync, readdirSync, readFileSync, realpathSync, rmSync, watch, type FSWatcher } from 'node:fs'
+import { basename, join } from 'node:path'
 import { Host } from './host.js'
-import { keychain, type SecretStore } from './secrets.js'
+import { CORE, keychain, type SecretStore } from './secrets.js'
 import { pane, refuse, write, type Pane, type Progress } from './settings.js'
 import type { Store } from './store.js'
 import { PluginProcess, type Timings } from './supervisor.js'
@@ -64,6 +64,16 @@ interface Entry {
 export class Plugins {
   readonly #entries = new Map<string, Entry>()
   readonly #problems: Problem[] = []
+  /**
+   * The ids a person has said yes to (M2-5).
+   *
+   * **Installed is files on disk; enabled is this**, and the two are separate because the
+   * line between them is consent. A folder appearing in the extensions directory — put there
+   * by the library, by a person, or by something neither of them noticed — does not start
+   * running because it is there. Somebody reads what it asked for, in its author's words,
+   * and says yes.
+   */
+  readonly #enabled = new Set<string>()
   /** What each running plugin last said its tools were. Only ever filled from a live one. */
   readonly #toolNames = new Map<string, string[]>()
   /** One in-flight bar per plugin, for whatever an `action` started. */
@@ -75,6 +85,8 @@ export class Plugins {
 
   constructor(private readonly options: PluginsOptions) {
     this.#secrets = options.secrets ?? keychain
+    const said = options.store.kvGet(CORE, 'enabled')
+    if (Array.isArray(said)) for (const id of said) if (typeof id === 'string') this.#enabled.add(id)
     this.#host = new Host({
       store: options.store,
       dataDir: options.dataDir,
@@ -102,6 +114,67 @@ export class Plugins {
   /** Folders that could not be loaded, and why. The library shows these; nothing hides them. */
   get problems(): readonly Problem[] {
     return this.#problems
+  }
+
+  /** Whether the user has said yes to this one. Installed and not enabled is a real state. */
+  enabled(id: string): boolean {
+    return this.#enabled.has(id)
+  }
+
+  /**
+   * Yes.
+   *
+   * The tables its manifest declared are created **now** rather than at load, because an
+   * installed-but-not-enabled plugin owns nothing yet. That is what makes *disable* cheap and
+   * *delete* the only thing in this file that removes anything.
+   */
+  enable(id: string): void {
+    const entry = this.#entries.get(id)
+    if (!entry || this.#enabled.has(id)) return
+    this.#enabled.add(id)
+    this.#persist()
+    this.options.store.create(id, entry.manifest.storage?.tables)
+    this.options.onToolsChanged?.(id)
+  }
+
+  /**
+   * No, for now.
+   *
+   * The process stops and **everything it owns stays exactly where it is** — tables, settings,
+   * its directory, the model it spent twenty minutes downloading. That is why this is the
+   * action the screen offers first and why delete sits one step further back: changing your
+   * mind about a plugin should cost a click, not a download.
+   */
+  async disable(id: string): Promise<void> {
+    if (!this.#enabled.delete(id)) return
+    this.#persist()
+    await this.#entries.get(id)?.process.stop()
+    this.options.onToolsChanged?.(id)
+  }
+
+  /** The list survives a restart, because *yes* is an answer a person gave once. */
+  #persist(): void {
+    this.options.store.kvSet(CORE, 'enabled', [...this.#enabled].sort())
+  }
+
+  /**
+   * A folder becomes an installed plugin (M2-5).
+   *
+   * Validated where it stands and copied second, so a folder that is not a plugin never lands
+   * in the directory core watches — the alternative is a broken entry appearing in the list
+   * for as long as it takes somebody to notice. **Installed, not enabled:** what it asked for
+   * has not been read by anybody yet.
+   */
+  install(from: string): { id: string } | Problem {
+    const found = this.#one(from, basename(from))
+    if ('reason' in found) return found
+    const id = found.manifest.id
+    if (this.#entries.has(id)) {
+      return { dir: from, reason: `${id} is already installed. Delete it first to replace it.` }
+    }
+    cpSync(from, join(this.options.dir, id), { recursive: true })
+    this.load()
+    return { id }
   }
 
   manifest(id: string): Manifest | undefined {
@@ -142,7 +215,11 @@ export class Plugins {
         ...entry,
         process: new PluginProcess(entry.manifest, entry.dir, this.#host, this.options.timings),
       })
-      this.options.store.create(entry.manifest.id, entry.manifest.storage?.tables)
+      // Only for one the user already said yes to. A plugin that has never been enabled owns
+      // no tables, which is what makes the *Installed* box in the lifecycle diagram true.
+      if (this.#enabled.has(entry.manifest.id)) {
+        this.options.store.create(entry.manifest.id, entry.manifest.storage?.tables)
+      }
       this.options.onToolsChanged?.(entry.manifest.id)
     }
 
@@ -195,7 +272,7 @@ export class Plugins {
   /** What every enabled plugin can do right now, tagged with who answers. */
   async tools(): Promise<{ pluginId: string; tool: Tool }[]> {
     const lists = await Promise.all(
-      [...this.#entries.values()].map(async (entry) => {
+      [...this.#entries.values()].filter((e) => this.#enabled.has(e.manifest.id)).map(async (entry) => {
         const tools = await entry.process.listTools().catch(() => [])
         // Remembered on the way past, so a settings pane can say whether an `action` button
         // has a tool behind it without asking — and asking is what would spawn the plugin.
@@ -212,6 +289,7 @@ export class Plugins {
    */
   async capability(cap: string, args?: Record<string, unknown>): Promise<CallToolResult> {
     for (const entry of this.#entries.values()) {
+      if (!this.#enabled.has(entry.manifest.id)) continue
       if (!entry.manifest.provides?.includes(cap)) continue
       // The manifest is the declaration; the binding is on the tool, because a plugin whose
       // model has not downloaded yet cannot answer and should not claim to.
@@ -243,6 +321,7 @@ export class Plugins {
       built.push(
         await pane(manifest, {
           store: this.options.store,
+          enabled: (of) => this.enabled(of),
           running: (of) => this.running(of),
           tools: (of) => this.#toolNames.get(of),
           progress: (of) => this.#progress.get(of),
@@ -294,6 +373,11 @@ export class Plugins {
     const declared = entry?.manifest.settings?.find((s) => s.key === key)
     if (!entry || declared?.type !== 'action') {
       throw new ProtocolError(ErrorCode.INVALID_PARAMS, `${id} has no button called "${key}"`)
+    }
+    // Pressing a button is asking a plugin to do something, and a plugin nobody has said yes
+    // to does not do things. The screen disables the button; this is what makes that true.
+    if (!this.#enabled.has(id)) {
+      throw new ProtocolError(ErrorCode.INVALID_PARAMS, `${id} is not enabled.`)
     }
     try {
       const result = await entry.process.callTool(declared.tool, undefined, {
@@ -357,6 +441,7 @@ export class Plugins {
   async purge(id: string): Promise<void> {
     const entry = this.#entries.get(id)
     this.#entries.delete(id)
+    if (this.#enabled.delete(id)) this.#persist()
     await entry?.process.stop()
     this.options.store.purge(id)
     // Then the keychain, one entry per declared `password`.
@@ -390,32 +475,40 @@ export class Plugins {
       return []
     }
 
-    return names.flatMap((name): ({ manifest: Manifest; dir: string } | Problem)[] => {
-      const dir = join(this.options.dir, name)
-      let raw: unknown
-      try {
-        raw = JSON.parse(readFileSync(join(dir, 'plugin.json'), 'utf8'))
-      } catch {
-        // A folder with no readable manifest is not a plugin. Say so and move on.
-        return [{ dir, reason: `${name} has no readable plugin.json` }]
-      }
-      const parsed = Manifest.safeParse(raw)
-      if (!parsed.success) {
-        const first = parsed.error.issues[0]
-        return [{ dir, reason: `${name}'s plugin.json is not valid: ${first?.path.join('.')} ${first?.message}` }]
-      }
-      if (parsed.data.id !== name) {
-        // The folder name is the id everywhere else — in storage, in the keychain, in the
-        // library. One rule, mirroring agentskills.io, so authors learn it once.
-        return [{ dir, reason: `${name}'s plugin.json calls it "${parsed.data.id}"` }]
-      }
-      const unknown = (parsed.data.requires ?? []).filter(
-        (r) => r.cap.startsWith('fs.') || r.cap.startsWith('net.') || r.cap.startsWith('proc.'),
-      )
-      const bad = unknown.find((r) => !isPermission(r.cap))
-      if (bad) return [{ dir, reason: `${name} asks for "${bad.cap}", which is not a permission Alexia grants` }]
-      return [{ manifest: parsed.data, dir }]
-    })
+    return names.map((name) => this.#one(join(this.options.dir, name), name))
+  }
+
+  /**
+   * One folder, held to every rule.
+   *
+   * `install` and `load` share it deliberately: a folder that would not survive the loader
+   * must not be copied into the directory the loader watches, and the only way to be sure of
+   * that is for both of them to be asking the same question.
+   */
+  #one(dir: string, name: string): { manifest: Manifest; dir: string } | Problem {
+    let raw: unknown
+    try {
+      raw = JSON.parse(readFileSync(join(dir, 'plugin.json'), 'utf8'))
+    } catch {
+      // A folder with no readable manifest is not a plugin. Say so and move on.
+      return { dir, reason: `${name} has no readable plugin.json` }
+    }
+    const parsed = Manifest.safeParse(raw)
+    if (!parsed.success) {
+      const first = parsed.error.issues[0]
+      return { dir, reason: `${name}'s plugin.json is not valid: ${first?.path.join('.')} ${first?.message}` }
+    }
+    if (parsed.data.id !== name) {
+      // The folder name is the id everywhere else — in storage, in the keychain, in the
+      // library. One rule, mirroring agentskills.io, so authors learn it once.
+      return { dir, reason: `${name}'s plugin.json calls it "${parsed.data.id}"` }
+    }
+    const unknown = (parsed.data.requires ?? []).filter(
+      (r) => r.cap.startsWith('fs.') || r.cap.startsWith('net.') || r.cap.startsWith('proc.'),
+    )
+    const bad = unknown.find((r) => !isPermission(r.cap))
+    if (bad) return { dir, reason: `${name} asks for "${bad.cap}", which is not a permission Alexia grants` }
+    return { manifest: parsed.data, dir }
   }
 }
 

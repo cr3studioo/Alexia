@@ -56,6 +56,7 @@ test('memory-budget: core alone stays inside its budget', () => {
 
 test('memory-budget: an enabled plugin that nobody has used is not a process', async () => {
   plugins.load()
+  for (const id of plugins.ids) plugins.enable(id)
   expect(plugins.ids).toEqual(['hello'])
 
   // Enabled, loaded, listed in the library — and costing nothing. This is the half of the

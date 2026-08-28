@@ -54,6 +54,8 @@ export interface Pane {
   summary: string
   version: string
   license: string
+  /** Whether the user has said yes to it (M2-5). Not enabled is where a plugin arrives. */
+  enabled: boolean
   running: boolean
   requires: { cap: string; why: string }[]
   settings: Rendered[]
@@ -111,6 +113,44 @@ export function mountSettings(token: string): { open: () => void } {
     drawSkills(state.skills, state.skillProblems)
   }
 
+  /**
+   * Install: a folder somebody points at.
+   *
+   * Crude, and named as such — browsing a library is M3-2, and until there is a registry
+   * there is nowhere else for a plugin to come from. What it does is real: the folder is
+   * checked where it stands, copied in, and left **not enabled**, so the next thing on the
+   * screen is what it asked for.
+   */
+  function adding(): HTMLElement {
+    const box = el('div', 'field installing')
+    const row = el('div', 'row')
+    const path = el('input')
+    path.type = 'text'
+    path.placeholder = 'The full path of a plugin folder'
+    const add = el('button', 'quiet-button', 'Install')
+    add.type = 'button'
+    const said = el('p', 'hint')
+
+    const install = async () => {
+      if (!path.value.trim()) return
+      const answer = (await send('/api/install', { path: path.value.trim() })) as { ok?: boolean; said?: string }
+      said.className = answer.ok === true ? 'hint' : 'error'
+      said.textContent = answer.said ?? ''
+      if (answer.ok === true) {
+        path.value = ''
+        await load()
+      }
+    }
+    add.addEventListener('click', () => void install())
+    path.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') void install()
+    })
+
+    row.append(path, add)
+    box.append(el('label', undefined, 'Add a plugin'), row, said)
+    return box
+  }
+
   /** A folder that is there and doing nothing, and the only useful thing to say about it. */
   function brokenRows(problems: Problem[], one: string, many: string): HTMLElement[] {
     if (problems.length === 0) return []
@@ -154,21 +194,33 @@ export function mountSettings(token: string): { open: () => void } {
   function draw(panes: Pane[], problems: Problem[]): void {
     list.replaceChildren(...panes.map(paneOf))
     if (panes.length === 0 && problems.length === 0) {
-      list.append(el('p', 'hint', 'Nothing is installed yet. A plugin is a folder; adding one is M2-5.'))
+      list.append(el('p', 'hint', 'Nothing is installed yet. A plugin is a folder — point at one below.'))
     }
+    list.append(adding())
 
     // A folder that is not a plugin is shown, never swallowed. Somebody put it there on
     // purpose and the reason it did not load is the only useful thing anyone can tell them.
     broken.replaceChildren(...brokenRows(problems, 'One folder did not load', 'folders did not load'))
   }
 
-  /** One plugin: core's chrome, then its declared widgets in manifest order. */
+  /**
+   * One plugin, in whichever of its two states it is in (M2-5).
+   *
+   * **Not enabled is the walkthrough**: the summary, then what it asked for in its author's
+   * own words, then one button. Its settings are not drawn, because configuring something you
+   * have not agreed to run is a screen asking two questions at once — and the order in the
+   * lifecycle is enable, then configure.
+   */
   function paneOf(pane: Pane): HTMLElement {
     const box = el('section', 'pane')
     const head = el('div', 'pane-head')
     head.append(
       el('b', undefined, pane.name),
-      el('span', 'pill', pane.running ? 'running' : 'stopped'),
+      el(
+        'span',
+        pane.enabled ? 'pill' : 'pill caution',
+        pane.enabled ? (pane.running ? 'running' : 'stopped') : 'not enabled',
+      ),
       el('span', 'pane-meta', `${pane.version} · ${pane.license}`),
     )
     box.append(head, el('p', 'hint', pane.summary))
@@ -182,11 +234,64 @@ export function mountSettings(token: string): { open: () => void } {
         row.append(el('code', undefined, need.cap), el('span', undefined, need.why))
         asked.append(row)
       }
-      box.append(el('p', 'asks-label', 'It asked for:'), asked)
+      box.append(
+        el('p', 'asks-label', pane.enabled ? 'It asked for:' : 'Before you enable it, it is asking for:'),
+        asked,
+      )
     }
 
-    for (const declared of pane.settings) box.append(widget(pane, declared))
+    if (pane.enabled) for (const declared of pane.settings) box.append(widget(pane, declared))
+    box.append(lifecycle(pane))
     return box
+  }
+
+  /**
+   * Enable, disable, delete.
+   *
+   * **Disable is offered first and delete sits one step further back**, behind a second press
+   * that says what goes. Not caution for its own sake: disable is reversible and costs
+   * nothing, and delete takes the twenty-minute download with it.
+   */
+  function lifecycle(pane: Pane): HTMLElement {
+    const wrapper = el('div', 'lifecycle')
+    const row = el('div', 'row')
+    const said = el('p', 'hint')
+
+    const act = async (action: 'enable' | 'disable' | 'delete') => {
+      const answer = (await send('/api/plugin', { id: pane.id, action })) as { ok?: boolean; said?: string }
+      if (answer.ok === false) {
+        said.className = 'error'
+        said.textContent = answer.said ?? 'That did not work.'
+        return
+      }
+      // The whole screen, because enabling one plugin can satisfy another's requirement and
+      // deleting one takes its bundled skills with it.
+      await load()
+    }
+
+    const first = el('button', pane.enabled ? 'quiet-button' : 'begin', pane.enabled ? 'Disable' : 'Enable')
+    first.type = 'button'
+    first.addEventListener('click', () => void act(pane.enabled ? 'disable' : 'enable'))
+    row.append(first)
+
+    // Two presses, and the second one has already said what it is about to take.
+    const remove = el('button', 'quiet-button', 'Delete')
+    remove.type = 'button'
+    let armed = false
+    remove.addEventListener('click', () => {
+      if (!armed) {
+        armed = true
+        remove.textContent = 'Delete for good'
+        said.className = 'hint'
+        said.textContent = `This removes ${pane.name}, its settings, anything it stored and anything it downloaded. Disabling keeps all of it.`
+        return
+      }
+      void act('delete')
+    })
+    row.append(remove)
+
+    wrapper.append(row, said)
+    return wrapper
   }
 
   /**

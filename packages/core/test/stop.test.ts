@@ -30,6 +30,8 @@ const plugins = new Plugins({
 })
 const tooling = new PluginTooling(plugins)
 plugins.load()
+// Installed is files on disk; enabled is a person having said yes (M2-5).
+for (const id of plugins.ids) plugins.enable(id)
 
 afterAll(async () => {
   await plugins.stop()

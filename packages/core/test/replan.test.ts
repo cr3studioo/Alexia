@@ -35,6 +35,9 @@ const plugins = new Plugins({
 })
 const tooling = new PluginTooling(plugins)
 plugins.load()
+// Installed is files on disk; enabled is a person having said yes (M2-5). These tests are
+// about plugins that run, so they say yes — the same one line the settings screen sends.
+for (const id of plugins.ids) plugins.enable(id)
 plugins.watch()
 
 // Step one reaches for the plugin that is about to disappear. Step two is the re-plan.

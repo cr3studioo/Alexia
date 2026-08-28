@@ -138,10 +138,23 @@ test('a skill bundled with a plugin is found through the folder that plugin was 
     secrets: memorySecrets(),
   })
 
+  const ask = (path: string, body?: unknown) =>
+    fetch(new URL(path, alexia.url), {
+      headers: { 'x-alexia-token': alexia.token, 'content-type': 'application/json' },
+      ...(body !== undefined && { method: 'POST', body: JSON.stringify(body) }),
+    })
+
   try {
-    const state = (await (
-      await fetch(new URL('/api/plugins', alexia.url), { headers: { 'x-alexia-token': alexia.token } })
-    ).json()) as { skills: { name: string; pluginId?: string }[]; skillProblems: unknown[] }
+    // A skill bundled with a plugin nobody has said yes to is know-how about something Alexia
+    // cannot currently do, so it waits with the plugin (M2-5).
+    const waiting = (await (await ask('/api/plugins')).json()) as { skills: unknown[] }
+    expect(waiting.skills).toEqual([])
+    await ask('/api/plugin', { id: 'hello', action: 'enable' })
+
+    const state = (await (await ask('/api/plugins')).json()) as {
+      skills: { name: string; pluginId?: string }[]
+      skillProblems: unknown[]
+    }
     expect(state.skillProblems).toEqual([])
     expect(state.skills).toHaveLength(1)
     expect(state.skills[0]?.name).toBe('greeting-well')

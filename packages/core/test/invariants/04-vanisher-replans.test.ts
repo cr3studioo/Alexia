@@ -37,6 +37,9 @@ afterAll(async () => {
 
 test('vanisher-replans: a folder deleted mid-call, and core is the one that notices', async () => {
   plugins.load()
+  // Installed is files on disk; enabled is a person having said yes (M2-5). This check is
+  // about a plugin that is running, so it says yes first.
+  for (const id of plugins.ids) plugins.enable(id)
   plugins.watch()
   // Loading a plugin is itself a change of tools. Start counting from here.
   changed.length = 0

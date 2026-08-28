@@ -48,6 +48,12 @@ export interface Pane {
   summary: string
   version: string
   license: string
+  /**
+   * Whether the user has said yes to it (M2-5). Installed and not enabled is a real state,
+   * and it is the one a plugin arrives in — so the screen shows what it asked for and a
+   * button, rather than its settings.
+   */
+  enabled: boolean
   /** Whether a process is up. Not a promise that one will stay up — lazy spawn owns that. */
   running: boolean
   /** The author's own sentences, never rewritten: this is what the user reads. */
@@ -72,6 +78,8 @@ const DRIVEN = new Set(['status', 'progress', 'action'])
 
 export interface PaneOptions {
   store: Store
+  /** Whether the user has said yes to it (M2-5). Absent means yes, for callers with no view. */
+  enabled?(pluginId: string): boolean
   /** Whether a process is up, asked without starting one. */
   running(pluginId: string): boolean
   /** A running plugin's tool names, or undefined while it is stopped. Never spawns. */
@@ -93,6 +101,7 @@ export interface PaneOptions {
 /** One plugin's pane: its chrome, and its ten-widget form filled in. */
 export async function pane(manifest: Manifest, options: PaneOptions): Promise<Pane> {
   const stored = options.store.settings(manifest.id)
+  const enabled = options.enabled?.(manifest.id) ?? true
   const running = options.running(manifest.id)
   const tools = options.tools(manifest.id)
   const where = secretStoreName(options.platform)
@@ -135,6 +144,7 @@ export async function pane(manifest: Manifest, options: PaneOptions): Promise<Pa
     summary: manifest.summary,
     version: manifest.version,
     license: manifest.license,
+    enabled,
     running,
     requires: manifest.requires?.map((r) => ({ cap: r.cap, why: r.why })) ?? [],
     settings,

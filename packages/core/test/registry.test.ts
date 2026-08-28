@@ -34,6 +34,9 @@ const say = async (): Promise<string> => {
 
 test('two plugins, one calling what the other provides, by name only', async () => {
   plugins.load()
+// Installed is files on disk; enabled is a person having said yes (M2-5). These tests are
+// about plugins that run, so they say yes — the same one line the settings screen sends.
+for (const id of plugins.ids) plugins.enable(id)
   plugins.watch()
   expect(plugins.ids).toEqual(['hello', 'vanisher'])
   expect(plugins.problems).toEqual([])

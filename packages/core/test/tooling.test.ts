@@ -39,6 +39,9 @@ const skills = new Skills({
 })
 const tooling = new PluginTooling(plugins, (line) => logged.push(line), skills)
 plugins.load()
+// Installed is files on disk; enabled is a person having said yes (M2-5). These tests are
+// about plugins that run, so they say yes — the same one line the settings screen sends.
+for (const id of plugins.ids) plugins.enable(id)
 
 afterAll(async () => {
   await plugins.stop()
