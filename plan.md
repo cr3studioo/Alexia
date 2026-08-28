@@ -1795,6 +1795,40 @@ compare against — which makes M2-8 the row every later test is read against, a
 `git diff` across M2 shows zero changes under `packages/core/src` attributable to voice.
 **Stop here and report.**
 
+**Met 2026-08-28, pending M2-8.** Both halves, with the evidence.
+
+**Not one line — and it is stronger than the wording asks for.** The two voice commits
+(`1e891d8`, `e186cc7`) touch **no file under `packages/core/src` at all**. Not one attributable
+to voice; not one, full stop. Everything core gained across M2 belongs to a task about core:
+`settings.ts` and `host.ts`'s sixth method to M2-1, `skills.ts` to M2-2, the lifecycle in
+`plugins.ts` to M2-5, progress in `agent.ts` and `tooling.ts` to M2-6. What voice touched
+outside its own folder is three lines: an eslint global, a vitest include, and the invariant
+globs it widened by being the first JavaScript plugin any check had read.
+
+That matters because of *what* voice is. It downloads 240 MB, unpacks an archive, spawns two
+binaries, opens the microphone, plays audio, provides two capabilities and binds each of them
+only when its own files have arrived. Every hard mechanism this contract has, in one folder,
+and core did not learn a single thing about it.
+
+**Install → talk → delete, in the packaged app**, run with its own throwaway
+`%LOCALAPPDATA%` so nothing could lean on a checkout:
+
+| | |
+|---|---|
+| before | 4 files, 0 MB |
+| install | from the folder the app shipped with — **not enabled**, and the six things it asks for shown in its author's own sentences |
+| enable | tables created, tools listed, its bundled skill picked up |
+| talk | its own Download button, pressed: 273 MB fetched **inside the packaged app**, in 35 seconds, ending at *● Ready — base, lessac* |
+| delete | **0 MB.** Not a table, not a row, not a file, not a keychain entry |
+| after | the only things on disk that were not there before are core's own: a `cache/models.json` and an empty `extensions/`. The folder it was installed from is untouched |
+
+The *talk* half is proved twice more, at the level where the words actually are: through the
+real supervisor, `voice.transcribe` returned *And so my fellow Americans…* from a real
+recording, called **by capability name only**, with core never learning who answered; and
+`voice.speak` said a sentence out loud that `voice.transcribe` then read back.
+
+**What is left is M2-8**, which needs a person and a stopwatch.
+
 ---
 
 ## M3 — The plugin library
