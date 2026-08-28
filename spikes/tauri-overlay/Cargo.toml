@@ -1,0 +1,25 @@
+[package]
+name = "alexia-overlay-spike"
+version = "0.0.0"
+edition = "2021"
+license = "AGPL-3.0-only"
+publish = false
+description = "M2-S1. Does a Tauri overlay survive fifty show/hide cycles on Windows?"
+
+# Deliberately outside the pnpm workspace and outside `src-tauri/`. This is a question being
+# asked, not the app: M5-1 writes the real shell using whatever the answer turns out to be.
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# `tray-icon` for the tray, `image-png` so the icon can be embedded from a PNG rather than
+# routed through the bundler — the spike is never bundled.
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
+tauri-plugin-global-shortcut = "2"
+
+[target.'cfg(windows)'.dependencies]
+# The measurement, not the framework. Tauri's `is_always_on_top()` reports what Tauri set;
+# the bug under test is the OS disagreeing with that, so the check reads WS_EX_TOPMOST off
+# the window itself.
+windows = { version = "0.61", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }

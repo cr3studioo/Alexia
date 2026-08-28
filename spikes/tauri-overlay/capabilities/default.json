@@ -1,0 +1,6 @@
+{
+  "identifier": "default",
+  "description": "The spike's pages call nothing. Every window, hotkey and tray action happens in Rust, so the frontend needs no more than the core defaults.",
+  "windows": ["overlay", "decoy"],
+  "permissions": ["core:default"]
+}

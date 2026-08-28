@@ -128,7 +128,7 @@ Tick a box only when the task's acceptance criteria pass. `[GATE]` needs a human
 
 ### M2 — Voice, the real proof
 
-- [ ] **M2-S1** Spike: Tauri tray + hotkey + overlay on Windows *(de-risking M5)*
+- [x] **M2-S1** Spike: Tauri tray + hotkey + overlay on Windows *(de-risking M5)*
 - [ ] **M2-D1** The visual language *(deferred from M1 2026-08-27, D61)*
 - [ ] **M2-1** Declarative UI schema v1
 - [ ] **M2-2** Skills loader (agentskills.io)
@@ -539,6 +539,7 @@ Alexia/
     media/                                # M4 — local image and audio generation
 
   registry/                 # M3 — Hono + D1, deployed separately
+  spikes/                   # questions asked in code. Not shipped, not in the workspace
   src-tauri/                # M5 — Rust, and as little of it as possible
   test/
     cold-install/results.md # appended at every milestone, never edited
@@ -1235,6 +1236,46 @@ discover it does not work.
 
 **Done when** fifty show/hide cycles behave identically, or a workaround is written down.
 
+**Answered 2026-08-28 (D66): the bug does not bite here, and no workaround is needed.**
+`spikes/tauri-overlay/` — Tauri 2.11.5, `tauri-plugin-global-shortcut` 2.3.2, Windows 11
+26200, WebView2 151. Fifty was the bar; **200 cycles** were run, and `results.md` is the
+table. Every cycle: shown by `show()`, `WS_EX_TOPMOST` still set, focus taken, and hidden
+again by nothing but the blur handler. Two consecutive 200-cycle runs, both clean.
+
+Measured off the `HWND` rather than off `is_always_on_top()`, because the reported failure
+*is* Tauri and the OS disagreeing — a framework that reports what it asked for cannot be the
+witness to whether it got it. The tray and the hotkey are read the same way: each owns a
+message-only window (`tray_icon_app`, `global_hotkey_app`), and `check-hotkey.ps1` drives the
+whole manual half from outside the process — press `Ctrl+Alt+Space` with `keybd_event`, then
+ask Win32. Hidden and topmost before, visible and topmost after, hidden again on blur.
+
+**The one thing that did fail, and it is a finding about the product, not the spike.** At 200
+cycles the first attempt diverged once, at cycle 33: the overlay was shown and was gone again
+by the time it was measured, `WS_EX_TOPMOST` still set, exactly one blur counted. Nothing had
+gone wrong with `alwaysOnTop`. **A blur event from the previous cycle arrived just after the
+next `show()`, and the handler did what it is told to do.** The harness now waits out the
+stragglers so a blur is counted against the cycle that caused it, and 200 of 200 pass.
+
+That race is not an artifact of cycling fast. **M5-2 inherits it**: press the hotkey while a
+blur is in flight — which is exactly what *click away, change your mind, press the hotkey*
+looks like — and the overlay opens and shuts in the same breath. Blur-to-hide needs a guard
+against a blur that predates the show it is about to cancel. Written down here because M5-2's
+line is *"using whatever M2-S1 proved works"*, and this is the part it proved does not.
+
+**Three smaller things, so M5-1 does not rediscover them:**
+
+1. `tauri-build` **errors** on Windows without an `.ico` — it does not skip the resource, it
+   fails the build. Her portrait is committed as both a 64×64 RGBA PNG (the tray, embedded
+   with `include_bytes!`) and a 32bpp BMP-format `.ico` (the executable resource).
+2. `tauri_plugin_global_shortcut::Error` has no `From` into `tauri::Error`, so a `register()`
+   call cannot sit in a `tauri::Result` function. Box it.
+3. Teardown prints `Failed to unregister class Chrome_WidgetWin_0. Error = 1412` on every
+   exit. It is WebView2 noise after the work is done; noted so nobody reads it as a leak.
+
+**Where it lives:** `spikes/`, not `src-tauri/`. This is a question asked in code — 174 lines
+of Rust, more than invariant 10 allows the shipped app, which is the point of it being here
+and not there. M5-1 writes the real shell from the finding, not by moving the file.
+
 ### M2-D1 The visual language
 
 *Written 2026-08-27 as M1-D1 (D60); moved here the same day (D61) because this is where it is
@@ -1740,6 +1781,7 @@ Newest first. Every entry here is also in Alexia.md's decision log.
 
 | Date | Entry |
 |---|---|
+| 2026-08-28 | **D66** — **M2-S1 answered: the Tauri overlay holds, and no workaround is needed.** 200 show/hide cycles on Tauri 2.11.5 / Windows 11, twice, with `WS_EX_TOPMOST` read off the `HWND` rather than taken from `is_always_on_top()` — the reported bug is the framework and the OS disagreeing, so the framework cannot be the witness. Tray and hotkey verified the same way, from outside the process. The real finding is the one failure that was not `alwaysOnTop`: **a blur in flight can hide the overlay a moment after the `show()` that was meant to open it.** Harmless in the harness once stragglers are attributed correctly; not harmless in the product, because *click away, change your mind, press the hotkey* is exactly that sequence — so **M5-2 owes blur-to-hide a guard against a blur older than the show it cancels**. Also banked for M5-1: `tauri-build` fails rather than skips without an `.ico`, and the global-shortcut plugin's error does not convert into `tauri::Error`. |
 | 2026-08-28 | **D65** — **the crude installer is pulled forward from M2-7 to M1-I1.** `pnpm package` builds `dist-app/Alexia/`: bundled core, a copied `node.exe`, the shell and the one native dependency, behind an `Alexia.cmd` that runs from wherever it was unzipped. It was built for cold-install test #1, which D64 then waived — so it is recorded for what it is rather than for the gate it missed, because **M2-8 cannot start its clock without it**. Neither `@yao-pkg/pkg` nor NSIS was needed; esbuild and a copy were. Windows only for now, which is what M2-7 keeps. Smoke-testing the packaged bundle also found a core bug and fixed it: the request target was resolved *against* an origin, so a leading `//` was protocol-relative — every path answered with the shell, and a bare `//` was a 500. |
 | 2026-08-28 | **D64** — **cold-install test #1 is waived, not passed.** Owner's call, taken to get on with the product: M1-13's box is ticked so M2 can start, and the human half of it — a tester, a clock, no help — rolls into **M2-8**, where an installer exists and the protocol's stopwatch can start where it is meant to. The cost is named rather than hidden: no M1 row in the four-test trend, and `test/cold-install/results.md` carries a note saying test #1 did not happen instead of a fabricated row. **M1-G** is ticked in the same breath, carried by M15-G — a multi-step task on a free local model, spend 0.00, with the 429 fallback and the pin refusal held by `router.test.ts` rather than by a second sit-down. Both notes live in the task blocks so the tick is never read as a pass. |
 | 2026-08-27 | **D63** — the never-touch list has **no exceptions**, Full trust included. Alexia.md contradicted itself four lines apart and this file sided with the wrong half; both are corrected. Full trust removes prompts, not the floor. Also settled while building M15-3: paths are matched by segment rather than by string prefix, `pathsIn` reads absolute paths only and says why that limit is honest rather than pretending to be a sandbox, and a spoken boundary is quoted back verbatim and holds in every mode — including Full trust, because it is the user's own instruction and not a setting. |
