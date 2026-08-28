@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { CORE_CAPABILITIES } from '@alexia/protocol'
+import { ALEXIA_PROTOCOL_MAX, ALEXIA_PROTOCOL_MIN, CORE_CAPABILITIES } from '@alexia/protocol'
 import { randomUUID } from 'node:crypto'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
@@ -89,10 +89,15 @@ export interface Serving {
  * match wins either way — the packaged tree has no `../../ui` to be confused by.
  */
 function shell(): string {
-  const candidates = [join('..', '..', '..', 'ui'), join('..', '..', 'ui'), 'ui'].map((up) =>
+  // `./ui` first, because that is the packaged layout and the packaged layout is the one
+  // that ships. It used to be last, and under the desktop shell (M5-1) the walk upwards
+  // found `src-tauri/ui` — Tauri's own placeholder frontend — three directories above the
+  // bundle, and served that instead. The window came up with the wrong page and nothing
+  // said why. In the repo `./ui` simply does not exist, so nothing about that case changes.
+  const candidates = ['ui', join('..', '..', '..', 'ui'), join('..', '..', 'ui')].map((up) =>
     join(import.meta.dirname, up),
   )
-  return candidates.find((dir) => existsSync(join(dir, 'index.html'))) ?? candidates[0]!
+  return candidates.find((dir) => existsSync(join(dir, 'index.html'))) ?? candidates[1]!
 }
 
 const STATIC: Record<string, [string, string]> = {
@@ -573,6 +578,19 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
             // unverified signature is exactly as good as none and must not look better.
             verifying: library.publisherKey !== undefined,
             plugins: available.map((entry) => ({ ...entry, installed: installed.has(entry.id) })),
+            // What is here that has a newer version out (M5-4). The protocol window is
+            // applied inside `updates`, so nothing is offered that this Alexia could not
+            // then load — an update that bricks a working plugin is worse than no update.
+            updates: await library
+              .updates(
+                plugins.ids.flatMap((id) => {
+                  const manifest = plugins.manifest(id)
+                  return manifest ? [{ id, version: manifest.version }] : []
+                }),
+                { min: ALEXIA_PROTOCOL_MIN, max: ALEXIA_PROTOCOL_MAX },
+              )
+              .then((rows) => rows.map(({ id, from, to }) => ({ id, from, to })))
+              .catch(() => []),
             skills: offered.map((entry) => ({ ...entry, installed: here.has(entry.name) })),
             // Only the ones this machine actually has. A list of everything ever withdrawn
             // is a list nobody reads.
@@ -593,11 +611,18 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     }
 
     if (url.pathname === '/api/library/install' && request.method === 'POST') {
-      const asked = JSON.parse(await read(request)) as { id?: string; kind?: string }
+      const asked = JSON.parse(await read(request)) as { id?: string; kind?: string; update?: boolean }
+      // Updating stops the running process first. Replacing the folder underneath a live
+      // plugin on Windows fails on the files it has open, and the half-replaced folder that
+      // leaves behind is worse than the version it was replacing.
+      if (asked.update === true) await plugins.disable(asked.id ?? '')
       const done =
         asked.kind === 'skill' ?
           await library.installSkill(asked.id ?? '')
-        : await library.install(asked.id ?? '')
+        : await library.install(asked.id ?? '', undefined, asked.update === true)
+      // Back on, but only if it was on: an update is not consent to run something that was
+      // sitting there disabled.
+      if (asked.update === true && done.ok) plugins.enable(asked.id ?? '')
       if (done.ok) plugins.load()
       skills.invalidate()
       response.writeHead(200, { 'content-type': 'application/json' })

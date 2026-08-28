@@ -144,15 +144,51 @@ export class Library {
   }
 
   /**
+   * What is installed here that the registry has a newer version of (M5-4).
+   *
+   * **Two update paths, and this is the one for plugins that are not ours.** First-party
+   * plugins ride along with the app: they are inside the installer and a new Alexia brings
+   * new copies. Anything installed from the registry updates on its own schedule, which is
+   * the whole reason a third party can ship a fix without waiting for an Alexia release.
+   *
+   * The protocol check is what makes that safe. A plugin whose new version declares a
+   * contract this Alexia does not speak is **not offered**: offering it would be offering
+   * somebody a working plugin in exchange for a broken one, and the refusal at load time
+   * would come after the folder had already been replaced.
+   */
+  async updates(
+    here: readonly { id: string; version: string }[],
+    speaks: { min: number; max: number },
+  ): Promise<{ id: string; from: string; to: string; entry: Entry }[]> {
+    const available = await this.plugins()
+    const found: { id: string; from: string; to: string; entry: Entry }[] = []
+    for (const installed of here) {
+      const entry = available.find((row) => row.id === installed.id)
+      if (!entry) continue
+      if (!newer(entry.version, installed.version)) continue
+      if (entry.alexia_protocol < speaks.min || entry.alexia_protocol > speaks.max) continue
+      found.push({ id: entry.id, from: installed.version, to: entry.version, entry })
+    }
+    return found
+  }
+
+  /**
    * Install: fetch, check, unpack, and stop.
    *
    * The order is the safety. Nothing is written into the folder core watches until the
    * bytes have hashed to what the registry said they would — an archive that is unpacked
    * first and checked afterwards has already put files on the disk.
+   *
+   * `replace` is the update path (M5-4). It removes **the install folder and nothing else**
+   * — not the namespace, not the settings, not the plugin's own directory and whatever it
+   * spent twenty minutes downloading into it. That distinction is the entire difference
+   * between updating a plugin and deleting one and installing it again, and it is the
+   * reason this is a flag here rather than two calls from the caller.
    */
   async install(
     id: string,
     onProgress?: (done: number, total: number) => void,
+    replace = false,
   ): Promise<{ ok: true; id: string; signature: 'verified' | 'unverified' | 'none' } | { ok: false; why: string }> {
     const found = await this.entry(id).catch((error: unknown) => ({ why: String(error) }))
     if (!found) return { ok: false, why: `The registry has no plugin called “${id}”.` }
@@ -160,7 +196,8 @@ export class Library {
     if ('revoked' in found) {
       return { ok: false, why: `${id} has been withdrawn from the registry: ${found.revoked}` }
     }
-    if (existsSync(join(this.options.pluginsDir, found.id))) {
+    const to = join(this.options.pluginsDir, found.id)
+    if (existsSync(to) && !replace) {
       return { ok: false, why: `${found.name} is already installed. Delete it first to replace it.` }
     }
 
@@ -199,7 +236,11 @@ export class Library {
       }
 
       mkdirSync(this.options.pluginsDir, { recursive: true })
-      cpTree(root, join(this.options.pluginsDir, found.id))
+      // The old folder goes only now — after the bytes are here, checked and unpacked. An
+      // update that removed it first and then failed to download would have taken a working
+      // plugin away in exchange for nothing.
+      if (replace) rmSync(to, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })
+      cpTree(root, to)
       // Installed. Not enabled — nobody has read what it asked for yet, and that reading is
       // the whole of what consent means here.
       return { ok: true, id: found.id, signature: signature === 'verified' ? 'verified' : signature === 'none' ? 'none' : 'unverified' }
@@ -341,6 +382,23 @@ export function extract(archive: string, to: string): Promise<void> {
       : reject(new Error(`could not unpack the download: ${said.trim() || `tar exited ${String(code)}`}`)),
     )
   })
+}
+
+/**
+ * Is `candidate` a later version than `installed`?
+ *
+ * Numeric, part by part, because `0.10.0` is later than `0.9.0` and a string comparison
+ * says the opposite. A pre-release suffix is ignored rather than ordered: full semver
+ * precedence is a page of rules to decide whether `1.0.0-rc.2` beats `1.0.0-rc.10`, and the
+ * registry's own rule is simply that a publisher who wants an update out bumps a number.
+ */
+export function newer(candidate: string, installed: string): boolean {
+  const parts = (v: string) => v.split('-')[0]!.split('.').map((n) => Number(n) || 0)
+  const [a, b] = [parts(candidate), parts(installed)]
+  for (let i = 0; i < 3; i++) {
+    if ((a[i] ?? 0) !== (b[i] ?? 0)) return (a[i] ?? 0) > (b[i] ?? 0)
+  }
+  return false
 }
 
 /** The folder in an unpacked archive holding `file` — at the root, or one level down. */

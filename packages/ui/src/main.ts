@@ -11,6 +11,7 @@
  * bill.
  */
 
+import { autostart, dismiss, HOTKEY, inApp, setAutostart, tray } from './desktop.js'
 import { mountSettings } from './settings.js'
 
 interface Turn {
@@ -145,6 +146,25 @@ function firstRun(state: State): void {
   provider.addEventListener('change', showTerms)
   showTerms()
 
+  /**
+   * Step 5, and the whole of it: *it lives in the tray, this is how you summon it.*
+   *
+   * Said once, here, and never again — a tour is what this is instead of. In a browser the
+   * block is not shown at all, because a tray icon and a global hotkey are not things a
+   * browser has and telling somebody about them there would be a lie.
+   */
+  const desktop = document.querySelector<HTMLElement>('#desktop')!
+  const startsUp = document.querySelector<HTMLInputElement>('#autostart')!
+  if (inApp()) {
+    desktop.hidden = false
+    document.querySelector<HTMLElement>('#hotkey-line')!.textContent =
+      `Alexia lives in the tray from now on. Press ${HOTKEY} anywhere to talk to it, and Escape to put it away — a task that is running keeps running.`
+    // Checked by default and honoured on Start. A daemon that does not come back after a
+    // restart is a daemon somebody has to remember to launch, which is the thing it exists
+    // not to be.
+    void autostart().then((on) => (startsUp.checked = on ?? true))
+  }
+
   document.querySelector<HTMLElement>('#begin')!.addEventListener('click', () => {
     void fetch('/api/setup', {
       method: 'POST',
@@ -155,6 +175,7 @@ function firstRun(state: State): void {
         ...(key.value.trim() && { provider: { id: provider.value, key: key.value.trim() } }),
       }),
     }).then(() => {
+      if (inApp()) setAutostart(startsUp.checked)
       show('chat')
       called(name.value.trim() || 'Alexia')
       text.focus()
@@ -206,8 +227,12 @@ function showPermissions(state: Permissions): void {
 function askPermission(why: string): void {
   promptWhy.textContent = why
   prompt.hidden = false
+  // A task that stops to ask while the window is closed is the case the tray exists for:
+  // *needs you* is the one state somebody has to notice without looking for it.
+  tray('attention')
   const answer = (allowed: boolean) => () => {
     prompt.hidden = true
+    tray('working')
     void fetch('/api/approve', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-alexia-token': token },
@@ -510,6 +535,7 @@ async function ask(question: string): Promise<void> {
       if (done.warning) say(done.warning)
       prompt.hidden = true
       // A task that hit a limit says which one. Silence after a stop looks like a crash.
+      tray(done.ended === 'answered' || done.ended === undefined ? 'idle' : 'error')
       if (done.ended === 'stopped') say('Stopped.')
       if (done.ended === 'ceiling') say(`Stopped after ${String(done.steps ?? 0)} steps — that is the ceiling, not the end of the task.`)
     }
@@ -584,6 +610,18 @@ document.querySelector('#open-settings')!.addEventListener('click', () => {
   settings.open()
 })
 
+// The obvious way to turn it off, which is the half of "starts on login" that matters. It
+// reads the real answer rather than remembering what was chosen at first run: somebody may
+// have changed it in Windows, and a switch showing the wrong state is worse than none.
+if (inApp()) {
+  const row = document.querySelector<HTMLElement>('#desktop-settings')!
+  const box = document.querySelector<HTMLInputElement>('#autostart-setting')!
+  row.hidden = false
+  document.querySelector<HTMLElement>('#hotkey-setting')!.textContent = `Press ${HOTKEY} anywhere to talk to Alexia.`
+  void autostart().then((on) => (box.checked = on === true))
+  box.addEventListener('change', () => setAutostart(box.checked))
+}
+
 document.querySelector('#close-settings')!.addEventListener('click', () => {
   show('chat')
   text.focus()
@@ -604,8 +642,14 @@ form.addEventListener('submit', (event) => {
   }
   button.disabled = true
   stop.hidden = false
+  // The tray is the only answer to *is it running?* the target user has, so it says so for
+  // the whole of a task rather than only while a window happens to be open (M5-2).
+  tray('working')
   void ask(question)
-    .catch((error: unknown) => bubble('refusal', String(error)))
+    .catch((error: unknown) => {
+      bubble('refusal', String(error))
+      tray('error')
+    })
     .finally(() => {
       button.disabled = false
       stop.hidden = true
@@ -621,6 +665,13 @@ text.addEventListener('keydown', (event) => {
     event.preventDefault()
     form.requestSubmit()
   }
+})
+
+// Escape puts the overlay away, and **puts it away without cancelling anything**: the task
+// carries on and the tray goes on saying so. Stop is a separate control on purpose — a key
+// that both dismisses and cancels is a key somebody presses once and regrets (M5-2).
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape') dismiss()
 })
 
 await load()

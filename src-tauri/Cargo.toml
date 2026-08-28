@@ -1,0 +1,39 @@
+[package]
+name = "alexia"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-only"
+publish = false
+description = "Alexia — an assistant that runs on your own machine."
+
+# Deliberately outside the pnpm workspace. Everything Alexia does is on the other side of an
+# HTTP port; this crate starts that and draws a window round it.
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
+# `generate_context!` expands to code that names `serde_json` in this crate's root, so it has
+# to be a direct dependency even though nothing here mentions it.
+serde_json = "1"
+serde = { version = "1", features = ["derive"] }
+# The four things Rust is here for, and one plugin each. If a fifth appears, ask what it is
+# doing that core could not do behind the port.
+tauri-plugin-global-shortcut = "2"
+tauri-plugin-single-instance = "2"
+tauri-plugin-autostart = "2"
+tauri-plugin-updater = "2"
+# Spawning the core sidecar, and nothing else. No shell, no arbitrary commands: the
+# capability file allows exactly one binary by name.
+tauri-plugin-shell = "2"
+
+[profile.release]
+# A smaller installer is a shorter download in front of somebody who has not yet seen the
+# product work. `panic = "abort"` also means a crash is a crash rather than an unwind through
+# a webview.
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

@@ -141,7 +141,12 @@ cpSync(join(root, 'packages', 'ui', 'dist', 'src'), join(ui, 'dist', 'src'), {
 //
 //    `crasher` and `vanisher` are not on this list and are not going to be: they exist to be
 //    broken, and handing somebody a plugin whose job is to die is not a demonstration.
-const SHIPPED = ['hello', 'voice']
+//
+//    Everything here ships **installable, not installed**. The folder is where somebody
+//    points the Add a plugin box until there is a registry to browse — and even after they
+//    point at one, it arrives not enabled, because the screen has still to show what it
+//    asked for.
+const SHIPPED = ['hello', 'voice', 'telegram', 'computer', 'memory', 'persona', 'media', 'claude-code']
 const plugins = join(out, 'plugins')
 for (const id of SHIPPED) {
   const from = join(root, 'plugins', id)
@@ -201,7 +206,10 @@ const here = dirname(fileURLToPath(import.meta.url))
 
 const { serve } = await import('./alexia.mjs')
 
-const { url } = await serve()
+// The port is Alexia's own choice when nothing says otherwise, and the shell's choice when
+// something does: the desktop app (M5-1) picks a free port before it builds its windows, so
+// that they can be pointed somewhere without waiting for Node to boot.
+const { url } = await serve({ port: Number(process.env.ALEXIA_PORT) || 0 })
 console.log('Alexia is running.')
 console.log('')
 console.log('   ' + url)
@@ -215,10 +223,14 @@ console.log('Closing this window stops Alexia.')
 // Detached, and failure is not fatal: if no browser opens, the address above is still on
 // screen and the whole thing still works. A launcher that dies because it could not find a
 // browser would be worse than one that does nothing.
-try {
-  spawn('cmd', ['/c', 'start', '""', url], { detached: true, stdio: 'ignore' }).unref()
-} catch {
-  // No browser is not a failure. The address is on screen.
+// Not under the desktop shell, which has its own windows and does not want a browser
+// opening a second copy of the same conversation beside them.
+if (!process.env.ALEXIA_TAURI) {
+  try {
+    spawn('cmd', ['/c', 'start', '""', url], { detached: true, stdio: 'ignore' }).unref()
+  } catch {
+    // No browser is not a failure. The address is on screen.
+  }
 }
 `,
 )

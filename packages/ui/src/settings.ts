@@ -99,6 +99,8 @@ interface LibraryState {
   skills?: SkillListing[]
   /** Withdrawn, and on this machine. The only revocations worth putting in front of anyone. */
   revoked?: { id: string; revoked_reason: string }[]
+  /** Installed here, with a newer version out and loadable by this Alexia (M5-4). */
+  updates?: { id: string; from: string; to: string }[]
 }
 
 /** A skill's index entry (M2-2). There is nothing to configure — it is a folder of text. */
@@ -245,6 +247,40 @@ export function mountSettings(token: string): { open: () => void } {
       shelf.append(el('p', 'hint', state.why ?? `Could not reach ${state.registry}.`))
       shelf.append(addingServer())
       return
+    }
+
+    /**
+     * Updates (M5-4), above browsing because they are about something already here.
+     *
+     * Offered, not applied. An assistant that replaced a plugin's folder while somebody was
+     * mid-conversation with it would be an assistant that changed under them, and the only
+     * thing an update is allowed to be surprising about is that it exists.
+     */
+    for (const update of state.updates ?? []) {
+      const box = el('section', 'pane')
+      const said = el('p', 'hint')
+      const get = el('button', 'quiet-button', `Update to ${update.to}`)
+      get.type = 'button'
+      get.addEventListener('click', () => {
+        get.disabled = true
+        said.className = 'hint'
+        said.textContent = 'Downloading…'
+        void send('/api/library/install', { id: update.id, update: true })
+          .then(async (answer) => {
+            said.className = answer.ok === true ? 'hint' : 'error'
+            said.textContent = String(answer.said ?? '')
+            if (answer.ok === true) await load()
+          })
+          .finally(() => (get.disabled = false))
+      })
+      box.append(
+        el('b', undefined, `${update.id} ${update.from} → ${update.to}`),
+        // The sentence that makes an update safe to press: what it keeps.
+        el('p', 'hint', 'Its settings and anything it has stored or downloaded are kept.'),
+        get,
+        said,
+      )
+      shelf.append(box)
     }
 
     const available = (state.plugins ?? []).filter((entry) => !entry.installed)

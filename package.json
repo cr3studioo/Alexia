@@ -15,7 +15,10 @@
     "test": "vitest run --project unit --passWithNoTests",
     "invariants": "vitest run --project invariants",
     "check:no-plugins": "node scripts/no-plugins.mjs",
-    "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm invariants"
+    "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm invariants",
+    "sidecar": "tsc -b && node scripts/sidecar.mjs",
+    "tauri": "tauri",
+    "app": "pnpm sidecar && tauri build"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
@@ -26,6 +29,7 @@
     "tsx": "^4.23.12",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.68.0",
-    "vitest": "^4.1.11"
+    "vitest": "^4.1.11",
+    "@tauri-apps/cli": "^2.9.4"
   }
 }

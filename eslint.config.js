@@ -5,7 +5,20 @@ export default tseslint.config(
   // Build output, none of it written here. `dist-app` is what `pnpm package` bundles — the
   // same code twice, the second time without its types — and `target` is cargo's, where a
   // Tauri build leaves generated JavaScript that answers to nobody's style but its own.
-  { ignores: ['**/dist/**', '**/node_modules/**', '**/*.tsbuildinfo', 'dist-app/**', '**/target/**'] },
+  {
+    ignores: [
+      '**/dist/**',
+      '**/node_modules/**',
+      '**/*.tsbuildinfo',
+      'dist-app/**',
+      '**/target/**',
+      // What `scripts/sidecar.mjs` arranges for Tauri: the same bundle as `dist-app`, moved.
+      // `gen/` is Tauri's own generated schema output, and `binaries/` is a copy of Node.
+      'src-tauri/resources/**',
+      'src-tauri/binaries/**',
+      'src-tauri/gen/**',
+    ],
+  },
   js.configs.recommended,
   {
     // Plain .js and .mjs in this repo are always a Node program (a plugin entry point, a

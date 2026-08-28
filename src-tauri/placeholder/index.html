@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Alexia</title>
+  </head>
+  <!-- Tauri wants a frontend directory. Both real windows are pointed at core's own URL, so
+       nothing ever loads this — it exists because `frontendDist` is not optional and an empty
+       folder is not a build.
+
+       It is called `placeholder` and not `ui` for a reason that cost an afternoon: core finds
+       the shell by walking up from wherever it is running and taking the first `ui` folder
+       with an `index.html` in it, and from inside the bundle that walk reaches `src-tauri/ui`
+       before it reaches the real one. The page came up saying this, which was true and
+       useless. Two names that cannot collide is cheaper than a rule about which wins. -->
+  <body>
+    <p>Alexia is starting.</p>
+  </body>
+</html>

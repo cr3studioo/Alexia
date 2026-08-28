@@ -1,0 +1,93 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# The signed installer (M5-3).
+#
+# `[GATE]`. **This workflow does not run on a push.** Applying to a certificate programme and
+# publishing a signed binary are outward-facing acts with a person's name on them, so it is
+# started by hand and the signing step only does anything once the SignPath secrets exist.
+#
+# The two things worth knowing before pressing it:
+#
+# * The publisher will read **SignPath Foundation**, not Alexia. That is what a free
+#   certificate for an open-source project looks like, and it belongs in the release notes
+#   rather than in a support email three days later.
+# * An OV certificate meets SmartScreen only once reputation accumulates. Until then some
+#   people will see a warning — and **a SmartScreen warning in front of a non-technical user
+#   is precisely where setup dies**, which is the whole reason M5-6 exists.
+
+name: release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: The version to build, e.g. 0.1.0
+        required: true
+      sign:
+        description: Submit to SignPath. Leave off for an unsigned test build.
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+
+      - run: pnpm install --frozen-lockfile
+      # Green before signed. A release is the one build nobody gets to fix afterwards.
+      - run: pnpm check
+
+      # The core sidecar and its resources, from the same packaging script the crude
+      # installer uses — one build, checked by one smoke test, shipped two ways.
+      - run: node scripts/sidecar.mjs
+      - run: pnpm tauri build
+
+      - uses: actions/upload-artifact@v5
+        with:
+          name: alexia-windows-unsigned
+          path: src-tauri/target/release/bundle/nsis/*.exe
+
+      # SignPath signs an artifact this workflow already produced; it never sees the source
+      # and never holds a key this repository could leak. Skipped entirely on a test build.
+      - name: Sign
+        if: inputs.sign
+        uses: signpath/github-action-submit-signing-request@v1
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: alexia
+          signing-policy-slug: release-signing
+          github-artifact-id: ${{ steps.upload.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: signed
+
+      # `[GATE]` again, and deliberately the last one: publishing is the outward-facing act.
+      # A draft, so a person presses the button that makes it public.
+      - name: Draft the release
+        if: inputs.sign
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          tag_name: v${{ inputs.version }}
+          files: signed/*.exe
+          body: |
+            Alexia ${{ inputs.version }}.
+
+            **The publisher on this installer reads "SignPath Foundation".** That is the
+            certificate programme that signs open-source releases for free, and it is not a
+            sign that something is wrong.
+
+            Windows may still show a SmartScreen warning until this build accumulates
+            reputation. If you see one: More info, then Run anyway.
+
+            The plugin contract is unstable and will break between releases.

@@ -113,6 +113,20 @@
           <p class="hint" id="terms"></p>
         </div>
 
+        <!-- Step 5 lives here rather than as a screen of its own: Alexia is a tray-resident
+             daemon, so *it will be in the tray and this is how you summon it* is the one
+             thing a person has to be told once, and the only setting that goes with it. Both
+             are hidden entirely in a browser, where neither means anything. -->
+        <div class="group" id="desktop" hidden>
+          <h2 class="step-heading">One last thing</h2>
+          <p class="hint" id="hotkey-line"></p>
+          <label class="switch">
+            <input id="autostart" type="checkbox" checked />
+            <span class="track"></span>
+            <span>Start Alexia when I sign in</span>
+          </label>
+        </div>
+
         <button id="begin" class="begin" type="button">Start</button>
       </div>
     </section>
@@ -124,6 +138,16 @@
         <div class="view-top">
           <h2 class="step-heading">Plugins and skills</h2>
           <button id="close-settings" class="quiet-button" type="button">Back</button>
+        </div>
+        <!-- The obvious way to turn autostart off, which is the half of "starts on login"
+             that people actually need. Hidden in a browser, where it is not a real setting. -->
+        <div class="field" id="desktop-settings" hidden>
+          <label class="switch">
+            <input id="autostart-setting" type="checkbox" />
+            <span class="track"></span>
+            <span>Start Alexia when I sign in</span>
+          </label>
+          <p class="hint" id="hotkey-setting"></p>
         </div>
         <!-- The library (M3-2). Browsing is the route a person should reach for; the
              path box further down is the one that still works when there is no registry,

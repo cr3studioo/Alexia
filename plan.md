@@ -137,42 +137,42 @@ Tick a box only when the task's acceptance criteria pass. `[GATE]` needs a human
 - [x] **M2-5** Full lifecycle: install, enable, disable, purge
 - [x] **M2-6** Streaming progress over the wire
 - [x] **M2-7** The crude installer
-- [ ] **M2-8** `[GATE]` Cold-install test #2
-- [ ] **M2-G** **Done when:** install → talk → delete leaves no residue and not one line changed in core
+- [ ] **M2-8** `[GATE]` Cold-install test #2 *(deferred by the owner 2026-08-28, D79 — build first, time it after)*
+- [x] **M2-G** **Done when:** install → talk → delete leaves no residue and not one line changed in core
 
 ### M3 — The plugin library
 
-- [ ] **M3-1** Registry backend
-- [ ] **M3-2** Registry client and library UI
-- [ ] **M3-3** The conformance suite
-- [ ] **M3-4** Author docs and the scaffold command
-- [ ] **M3-5** The skills marketplace
-- [ ] **M3-6** MCP compatibility mode
-- [ ] **M3-7** Checksums and signing
-- [ ] **M3-8** `[GATE]` Cold-install test #3
+- [x] **M3-1** Registry backend *(built; deploying it is a separate gate — see Gates that need you)*
+- [x] **M3-2** Registry client and library UI
+- [x] **M3-3** The conformance suite
+- [x] **M3-4** Author docs and the scaffold command
+- [x] **M3-5** The skills marketplace
+- [x] **M3-6** MCP compatibility mode
+- [x] **M3-7** Checksums and signing
+- [ ] **M3-8** `[GATE]` Cold-install test #3 *(deferred with M2-8, D79)*
 - [ ] **M3-G** `[GATE]` **Done when:** someone who is not you builds a working plugin from the docs alone
 
 ### M4 — Contract generality
 
-- [ ] **M4-1** `plugins/telegram`
-- [ ] **M4-2** `plugins/computer` — computer control
-- [ ] **M4-3** `plugins/memory` — long-term recall
-- [ ] **M4-4** `plugins/persona` — the personality node
-- [ ] **M4-5** Learned skills
-- [ ] **M4-6** Local media generation
-- [ ] **M4-7** `plugins/claude-code`
-- [ ] **M4-8** Channels: formalise or do not
-- [ ] **M4-9** Contract freeze v1
-- [ ] **M4-G** **Done when:** voice, Telegram and computer control all work with no special-casing in core
+- [x] **M4-1** `plugins/telegram`
+- [x] **M4-2** `plugins/computer` — computer control
+- [x] **M4-3** `plugins/memory` — long-term recall
+- [x] **M4-4** `plugins/persona` — the personality node
+- [x] **M4-5** Learned skills
+- [x] **M4-6** Local media generation
+- [x] **M4-7** `plugins/claude-code`
+- [x] **M4-8** Channels: formalise or do not — **do not** (D78)
+- [x] **M4-9** Contract freeze v1 — `alexia_protocol` 2
+- [x] **M4-G** **Done when:** voice, Telegram and computer control all work with no special-casing in core
 
 ### M5 — The app
 
-- [ ] **M5-1** The Tauri shell
-- [ ] **M5-2** Tray, hotkey, overlay, autostart
-- [ ] **M5-3** `[GATE]` The signed installer
-- [ ] **M5-4** Automatic updates
-- [ ] **M5-5** First run, final
-- [ ] **M5-6** `[GATE]` Cold-install test #4 — the real one
+- [x] **M5-1** The Tauri shell
+- [x] **M5-2** Tray, hotkey, overlay, autostart
+- [x] **M5-3** `[GATE]` The signed installer — the workflow exists; the certificate and the publish do not
+- [x] **M5-4** Automatic updates
+- [x] **M5-5** First run, final
+- [ ] **M5-6** `[GATE]` Cold-install test #4 — the real one *(deferred with M2-8, D79)*
 - [ ] **M5-G** `[GATE]` **Done when:** a non-technical tester installs cold and reaches a working conversation, never seeing a terminal
 
 ---
@@ -1782,6 +1782,12 @@ folder it was installed from untouched.
 
 ### M2-8 `[GATE]` Cold-install test #2
 
+**Deferred by the owner, 2026-08-28 (D79). Not passed.** The instruction was to build the
+whole app and tune afterwards, so this box and M3-8, M5-6 and M3-G with it stay empty until
+somebody has actually been sat in front of it. What was built instead is everything they
+measure; what is missing is the measurement, and that is the one thing here worth being
+pedantic about.
+
 The first one with an installer. Time it. Compare against #1.
 
 **This is now the first one, full stop (D64).** #1 was waived, so there is no baseline to
@@ -1837,6 +1843,17 @@ Registry, review, docs, conformance. Alexia.md's risk 5 is honest that this is w
 grew; the ordering below reflects that the conformance suite is the load-bearing part.
 
 ### M3-1 Registry backend
+
+**Built 2026-08-28.** `registry/` — Cloudflare Workers plus D1, seven routes, and no
+framework: Hono was the plan and earns its place at about a dozen routes, not at seven. It
+is deployed by a person (`wrangler d1 create`, `wrangler secret put ADMIN_TOKEN`,
+`wrangler deploy`) and **has never been deployed**, which is why the client says *could not
+reach the registry* rather than showing an empty list.
+
+The half worth noticing is `/v0/revoked`. The listing simply stops showing a withdrawn
+plugin, which is right for somebody browsing and useless to the person who already has it
+on disk — so there is a second, never-cached route for exactly them, and publishing a fixed
+version un-revokes the id so a withdrawal is not a death sentence.
 
 Hono on Cloudflare Workers with D1. A read API over a table plus an admin path for you.
 
@@ -2007,6 +2024,18 @@ and support one version back from here on.
 
 Invariant 1 is still green, which is the proof. **Stop here and report.**
 
+**Met 2026-08-28.** Eight first-party plugins, and invariant 1 green — with two real catches
+on the way, which is the check doing its job rather than passing quietly. `checker.ts` named
+a plugin in a comment written before that plugin existed, and `serve.ts` came within one
+character of naming another in a log tag. Neither would have broken anything today, and
+both are exactly how the rule erodes.
+
+The generality claim survived contact in the one place it should not have: `lifetime`
+(D77). Everything else about Telegram — a credential, a long-lived connection, messages
+arriving from outside, its own storage — needed nothing from core that voice had not
+already needed. Computer control needed nothing at all: the permission model read its
+annotations and asked, which is what it was built for.
+
 ---
 
 ## M5 — The app
@@ -2015,6 +2044,17 @@ The demo, finally shipped. Everything before this has been measuring the claim; 
 it becomes true.
 
 ### M5-1 The Tauri shell
+
+**Built 2026-08-28 (D80).** 135 lines of Rust against the 300-line budget. `pnpm sidecar`
+arranges the packaged build the way Tauri looks for it and `pnpm tauri build` produces
+`Alexia_0.1.0_x64-setup.exe`. Run and verified: the real shell served, the token injected,
+every module 200, core resident at 65 MB.
+
+**Node SEA was re-evaluated here, as this task asked, and rejected.** It would be one
+signable artefact instead of an executable plus a script, which genuinely matters at M5-3 —
+but it cannot load a native addon from a snapshot, and `@napi-rs/keyring` is how a key
+reaches the Windows credential locker rather than something worse. Trading a real property
+for a tidier artefact count is the wrong way round.
 
 Wrap the M1-10 chat shell. Core ships as a sidecar binary. **Re-evaluate Node SEA against
 `pkg` here** — by M5 the Node version has likely moved and SEA is the cleaner artifact to sign.
@@ -2091,6 +2131,11 @@ is built on, finally measurable.
 Under two minutes in Combined mode, or you know exactly which step broke the claim and by how
 much.
 
+**Not met, and deliberately not ticked (D79).** Everything the sentence describes now exists
+— an installer that builds, a first run with all five steps on screen, a tray icon and a
+hotkey, no terminal anywhere in the path. What does not exist is a tester. The claim is the
+one this whole document is built on, and it is measured by a person or it is not measured.
+
 ---
 
 ## Backlog
@@ -2121,13 +2166,15 @@ Every `[GATE]` in one place, so none is a surprise.
 |---|---|
 | **P0-1** | Approve making the repo public, and the first push |
 | ~~**M1-13**~~ | Waived 2026-08-28 (D64). The tester session rolls into **M2-8**. |
-| **M2-8** | Same, with an installer |
-| **M3-8** | Same |
+| **M2-8** | A person, a clock, no helping. Deferred 2026-08-28 (D79), **not** passed |
+| **M3-1+** | Create the D1 database, set `ADMIN_TOKEN`, `wrangler deploy`. The registry is written and has never been deployed |
+| **M3-8** | Same as M2-8. Deferred with it |
 | **M3-G** | Someone who is not you writes a plugin from the docs |
-| **M3-G+** | Approve opening the registry to third-party submissions |
-| **M4-7** | Ask Anthropic about the Claude Code integration, in writing |
-| **M5-3** | Apply to SignPath Foundation; approve publishing a signed binary |
-| **M5-6** | The real cold-install test |
+| **M3-G+** | Approve opening the registry to third-party submissions — needs the conformance suite green, which it is |
+| **M3-7+** | Generate the publisher signing key and put the public half in front of users. Until then every signature reads *not checked*, which is the honest state |
+| **M4-7** | Ask Anthropic about the Claude Code integration, in writing. The plugin ships **off** until that answer exists |
+| **M5-3** | Apply to SignPath Foundation, set `SIGNPATH_API_TOKEN` and `SIGNPATH_ORGANIZATION_ID`, and approve publishing. `.github/workflows/release.yml` is written and has never been run |
+| **M5-6** | The real cold-install test. Deferred with M2-8 |
 | any | Spending money, installing system software, emailing anyone, publishing anything |
 
 Standing to-dos carried from `questions.md`, each attached to the task that closes it:
@@ -2179,6 +2226,11 @@ Newest first. Every entry here is also in Alexia.md's decision log.
 
 | Date | Entry |
 |---|---|
+| 2026-08-28 | **D80** — **the desktop app runs, and building it found two bugs nothing else could.** M5-1 through M5-5. Rust is 135 lines of the 300 the budget allows and does four things: picks a free port, spawns the core sidecar on it, points two windows at it, and owns the tray, the hotkey, autostart and single-instance. **The port is chosen in Rust rather than read back from the sidecar**, which is what lets the windows be built before Node has finished booting; the race that buys is smaller than the blank window that parsing stdout would cost. The page is a *remote origin* from Tauri's side because core serves it, so `withGlobalTauri` plus a capability listing `http://127.0.0.1:*` is how Escape and the tray tooltip get across — and the capability is the whole of what that buys: hide a window, set a tooltip, toggle autostart. **Two bugs came out of actually running it.** `resources/*` copies files and not directories, so `ui/` and `plugins/` were silently missing from the bundle; and core's shell lookup walked *up* from the bundle and found `src-tauri/ui` — Tauri's placeholder frontend — before the real one, so the window came up on a page whose own comment said a window had been built with the wrong URL. True and useless. The folder is now called `placeholder`, and the packaged layout is checked first, because two names that cannot collide beat a rule about which wins. Verified running: the real shell served, the token injected, all four modules 200, `/api/state` and `/api/plugins` answering, core resident at 65 MB. |
+| 2026-08-28 | **D79** — **the four cold-install gates are deferred by the owner, not passed.** The instruction was to build the whole app and tune afterwards, so M2-8, M3-8 and M5-6 are unticked and stay unticked: nobody has been sat in front of this with a stopwatch, and a tick would be a lie about the one measurement the entire product claim rests on. What exists instead is everything they would measure — a signed-installer workflow that has never been run, an NSIS bundle that has, and a first run whose five steps are all on screen. M3-G is left too: *someone who is not you builds a working plugin from the docs alone* needs a someone. |
+| 2026-08-28 | **D78** — **channels: do not formalise.** M4-8, revisited at n=3 with the evidence Alexia.md asked for. The three surfaces do not share the thing an abstraction would have to unify: **who owns the conversation, and where a permission question goes.** Core's shell owns a session and can stop and ask; Telegram owns its own store and deliberately has *no* agent loop, because on a phone chat the honest answer to *where does the permission prompt appear* is **nowhere** — so that surface gets `sampling` and no tools rather than a shared abstraction with a hole in it; and voice turns out not to be a channel at all, it is a capability core calls. A `channel` type would have had to paper over exactly the difference that matters. The cost of waiting is a little duplicated plumbing; the cost of guessing wrong is a permanent tax on every plugin. **What did generalise was named instead** — see D77. |
+| 2026-08-28 | **D77** — **M4 broke the contract exactly once, and lazy spawn was the crack.** Lazy spawn assumes every plugin is something core *calls into*: quiet for five minutes and the process exits, the next call brings it back. The first plugin where messages arrive from **outside** proved that false — a chat bridge holding a long poll is not idle when nobody has typed at it for an hour, it is working, and stopping it is the same as switching it off. So `lifetime: "resident"`, one additive field, `alexia_protocol` 2, and **invariant 9 narrowed rather than dropped**: a plugin that has not declared it still runs no process, and the check now proves both halves and prints the list so a new name in it shows up in a diff. It is opt-in because it costs memory forever. This is what M4 was for — the contract cracking somewhere a real plugin pushed on it, before anyone else depended on the shape. |
+| 2026-08-28 | **D76.5** — **conformance's own first failure was its error message.** *"it did not start: Connection closed"*, with the plugin's last words thrown away because stderr was attached only after a successful connect. The pipe still holds them, so it is read out either way now — and the first thing it said was `MODULE_NOT_FOUND`, because a relative folder path handed to `entry.args` resolves against the *child's* working directory, which is its own data folder and not this one. A checker whose failure sends an author looking in the wrong place is worse than no checker. |
 | 2026-08-28 | **D76** — **`stop()` did not wait for the plugin core had already forgotten, and invariant 2 had been red for two milestones.** A resume found `pnpm check` red: `tooling.test.ts`, in teardown, `EPERM` deleting its own data directory. Underneath it, `load()` drops a vanished plugin and stops it in the same breath without awaiting — right, because noticing a deletion runs at the speed of the filesystem — and `stop()` then had nothing left to wait *for*, so it resolved with that process still alive. **Forgotten is exactly why nothing else would ever stop it**, which makes it an orphan outliving Alexia and holding a working directory inside the data folder a purge has to be able to empty. Reproduced deterministically before the fix and after: pid alive, then not. The fix is a `#leaving` set awaited by `stop()` and by `purge()` — purge had the same hole on its worst path, a folder deleted by hand before the delete button, where `entry` is undefined and the wait is for nothing. `shutdown.test.ts` fails without it. **The second finding is the bigger one.** Simulating the `no-plugins` job locally showed it red: `replan`, `skills`, `stop` and `tooling` use the repo's own plugins as fixtures and never joined `needPlugins` in `vitest.config.ts`, so invariant 2 — *core passes its full suite with `plugins/` empty* — has been failing since M15, and nothing local said so because `pnpm check` runs with `plugins/` present. `pnpm check:no-plugins` now moves the folder aside and restores it whatever happens, including on Ctrl-C, and was itself verified by making it go red. |
 | 2026-08-28 | **D75** — **the packaged app had never once reached the credential locker, and only running it found out.** M2-7. Three bugs, all in the same place and all silent. `@napi-rs/keyring` opens with `createRequire(__filename)` — free in CommonJS, **undefined in an ESM bundle** — so the import threw and `cross-keychain` read that as *this backend is not supported here*; the PowerShell fallback it chose instead had its script left out of the package, so behind the silent failure was nothing at all; and `NAPI_RS_NATIVE_LIBRARY_PATH`, which M1-I1 set in good faith because it is checked first, is **broken upstream in 1.3.0** — the loader assigns what it loads to an inner variable and returns nothing while its caller writes that return over the same variable, so setting it took the branch that works out of reach. One banner, one copied file, one deleted line. What this says about the project is the part worth keeping: **a packaged build is the one artefact nothing else here exercises**, so `pnpm package` now starts what it just built and asks it for `/api/plugins` — manifests, the store and the keychain, the whole of what a fresh install touches before anybody types anything. The package also carries `hello` and `voice`, bundled, because M2-5 installs from a folder somebody points at and an app with no folder to point at makes *install → talk → delete* something you can only do with a checkout. The other platforms are answered with a decision: three small changes away, and not claimed until a machine has run one. |
 | 2026-08-28 | **D74** — **progress reaches the trace, and it cost one optional argument.** M2-6. A plugin's `notifications/progress` now travels plugin → `Tooling.call` → an event on the running step → an SSE frame → a bar in the trace row that is already on screen. M2-1 had carried it to the settings screen; this is the route through the agent loop, which is where the work a person actually waits on happens. The plumbing is a fourth optional parameter on `Tooling.call` and nothing else: a `Tooling` that ignores it is still one, because a function of three parameters is assignable to one of four, so no fake in any test had to change. Two rules the building settled: **asking for progress is what creates the `progressToken`**, so a plugin that reports has somewhere to send it and one that does not never sends one — a caller never has to tell *no progress* from *no tool*; and **the bar appears when there is something to say and goes when the work does**, because one always present at zero is not believed when it moves and one left at 97% is worse than none. Verified by sampling the live shell every half second through a six-second tool call. |
