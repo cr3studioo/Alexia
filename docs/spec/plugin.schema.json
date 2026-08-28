@@ -473,6 +473,13 @@
         "T2",
         "T3"
       ]
+    },
+    "lifetime": {
+      "type": "string",
+      "enum": [
+        "lazy",
+        "resident"
+      ]
     }
   },
   "required": [

@@ -1024,3 +1024,42 @@ button[disabled] {
   flex-basis: 100%;
   margin-top: var(--space-2);
 }
+
+/* Learned skills (M4-5). Two rows, and they are deliberately quiet: neither is the answer
+   the person is waiting for, and both have to be readable without competing with it.
+
+   The attribution sits inline with the conversation because that is the only moment where
+   somebody can tell whether what Alexia learned was right — a list in settings is where you
+   find that out too late. */
+.learned {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin: var(--space-2) 0;
+  padding: var(--space-2) var(--space-3);
+  border-left: 2px solid var(--line);
+  color: var(--ink-quiet);
+  font-size: var(--text-xs);
+  line-height: var(--leading-prose);
+}
+
+.learned textarea {
+  width: 100%;
+  min-height: 12rem;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: var(--text-xs);
+}
+
+/* The offer. Bordered rather than filled: it is a question, not an alert, and a task that
+   finished well should not end on something that looks like a warning. */
+.learn-offer {
+  margin: var(--space-3) 0;
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+}
+
+.learn-offer p {
+  margin: 0 0 var(--space-2);
+}

@@ -1,0 +1,78 @@
+{
+  "$schema": "../../docs/spec/plugin.schema.json",
+  "manifest_version": 1,
+  "id": "media",
+  "name": "Local image generation",
+  "summary": "Makes images on this machine with ComfyUI, so the picture-making half of Combined mode is real.",
+  "version": "0.1.0",
+  "license": "AGPL-3.0-only",
+  "entry": {
+    "run": "node",
+    "args": [
+      "index.js"
+    ]
+  },
+  "alexia_protocol": 1,
+  "mcp_protocol": "2025-11-25",
+  "requires": [
+    {
+      "cap": "net.request",
+      "why": "To talk to ComfyUI, which is running on this machine and listening on a local port."
+    },
+    {
+      "cap": "fs.own_dir",
+      "why": "To save the pictures it makes. They are deleted when you delete this plugin."
+    }
+  ],
+  "provides": [
+    "image.generate"
+  ],
+  "settings": [
+    {
+      "type": "text",
+      "key": "server",
+      "label": "ComfyUI address",
+      "default": "http://127.0.0.1:8188",
+      "hint": "Where ComfyUI is listening. Leave it as it is unless you started it on another port."
+    },
+    {
+      "type": "choice",
+      "key": "checkpoint",
+      "label": "Model",
+      "options": [
+        "auto"
+      ],
+      "default": "auto",
+      "hint": "Auto uses whatever checkpoint ComfyUI has loaded. The list fills in once it can reach ComfyUI."
+    },
+    {
+      "type": "number",
+      "key": "steps",
+      "label": "Steps",
+      "min": 4,
+      "max": 60,
+      "step": 1,
+      "default": 25,
+      "hint": "More steps is slower and usually better, up to a point. Twenty-five suits SDXL."
+    },
+    {
+      "type": "toggle",
+      "key": "vae_fp32",
+      "label": "Use the full-precision VAE",
+      "default": true,
+      "hint": "SDXL's half-precision VAE produces black images on many 8 GB cards. On costs a little VRAM and avoids that."
+    },
+    {
+      "type": "status",
+      "key": "state",
+      "label": "State"
+    }
+  ],
+  "storage": {
+    "namespace": "media",
+    "tables": [
+      "images"
+    ],
+    "dir": true
+  }
+}

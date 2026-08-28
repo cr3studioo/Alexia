@@ -1,0 +1,65 @@
+{
+  "$schema": "../../docs/spec/plugin.schema.json",
+  "manifest_version": 1,
+  "id": "telegram",
+  "name": "Telegram",
+  "summary": "Talk to Alexia from Telegram. Every message crosses Telegram's servers, and every reply says so.",
+  "version": "0.1.0",
+  "license": "AGPL-3.0-only",
+  "entry": {
+    "run": "node",
+    "args": [
+      "index.js"
+    ]
+  },
+  "alexia_protocol": 2,
+  "mcp_protocol": "2025-11-25",
+  "requires": [
+    {
+      "cap": "net.request",
+      "why": "To hold a connection open to Telegram and collect the messages you send it."
+    }
+  ],
+  "provides": [
+    "telegram.send"
+  ],
+  "settings": [
+    {
+      "type": "password",
+      "key": "bot_token",
+      "label": "Bot token",
+      "hint": "From @BotFather on Telegram. Send it /newbot and it hands you one. It goes to this machine's credential store, never to the database."
+    },
+    {
+      "type": "status",
+      "key": "state",
+      "label": "State"
+    },
+    {
+      "type": "status",
+      "key": "pairing_code",
+      "label": "Pairing code",
+      "hint": "Send this code to your bot from the Telegram account you want to allow. Nobody else is answered."
+    },
+    {
+      "type": "action",
+      "key": "unpair",
+      "label": "Forget who is allowed",
+      "tool": "unpair",
+      "hint": "Clears the allowed accounts and makes a new pairing code. Do this if the old one got out."
+    }
+  ],
+  "storage": {
+    "namespace": "telegram",
+    "tables": [
+      "chats"
+    ]
+  },
+  "commands": [
+    {
+      "name": "paired",
+      "summary": "Who is allowed to reach Alexia from Telegram"
+    }
+  ],
+  "lifetime": "resident"
+}

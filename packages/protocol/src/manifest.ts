@@ -15,9 +15,21 @@ import { z } from 'zod'
  *   validates with this one.
  */
 
-/** The Alexia contract revisions core speaks. Not MCP's — see `mcp_protocol`. */
+/**
+ * The Alexia contract revisions core speaks. Not MCP's — see `mcp_protocol`.
+ *
+ * **Frozen at 2 on 2026-08-28 (M4-9).** M4 was where the contract was expected to crack,
+ * and it cracked exactly once: lazy spawn assumed every plugin is something core calls
+ * into, and a plugin receiving messages from *outside* is not (D77). `lifetime` is the
+ * whole of the difference between 1 and 2, and it is additive — a plugin written against 1
+ * loads unchanged and simply has no opinion about being stopped.
+ *
+ * From here on, **one revision back is supported**. `MIN` is what makes that a promise
+ * rather than a habit, and raising it is what deprecating a revision looks like.
+ * `docs/spec/versions.md` is the migration note.
+ */
 export const ALEXIA_PROTOCOL_MIN = 1
-export const ALEXIA_PROTOCOL_MAX = 1
+export const ALEXIA_PROTOCOL_MAX = 2
 
 /**
  * The two MCP revisions core speaks, in preference order (D55, corrected by D57).
@@ -193,6 +205,23 @@ export const ManifestShape = z
 
     /** The cheapest router rung this plugin's work is safe on. */
     min_tier: z.enum(['T0', 'T1', 'T2', 'T3']).optional(),
+
+    /**
+     * Whether this plugin may be stopped when nothing is asking it anything.
+     *
+     * **The first thing M4 broke, and it broke for the reason M4 exists** (D77). Lazy spawn
+     * assumes every plugin is a thing core calls into: quiet for five minutes and the
+     * process exits, and the next call brings it back. That is true of every plugin written
+     * before this field and it is false of the first one where messages arrive from
+     * *outside* — a chat bridge holding a long poll is not idle when nobody has typed at it
+     * for an hour, it is working, and stopping it is the same as switching it off.
+     *
+     * `resident` is therefore a plugin saying *I hold something open*, and it costs real
+     * memory forever — so it is opt-in, it is visible in the library, and invariant 9 names
+     * it as the exception rather than quietly widening to accommodate it. Absent means
+     * `lazy`, which is what almost everything should be.
+     */
+    lifetime: z.enum(['lazy', 'resident']).optional(),
   })
   // Strict on purpose. A typo'd `provide` that is silently ignored is a plugin that asks
   // for nothing and fails at runtime, which is a far worse morning than a load error.
@@ -209,6 +238,14 @@ export const Manifest = ManifestShape.superRefine((m, ctx) => {
   // One namespace, one plugin, one thing to drop on purge.
   if (m.storage && m.storage.namespace !== m.id) {
     fail(['storage', 'namespace'], `storage.namespace must equal id ("${m.id}")`)
+  }
+
+  // A field that arrived in a later revision may only be used by a plugin that declared
+  // that revision. Without this the integer means nothing: a manifest could quietly use
+  // whatever core happens to understand today and break on the machine running yesterday's
+  // build — which is the exact failure `alexia_protocol` exists to make readable.
+  if (m.lifetime !== undefined && m.alexia_protocol < 2) {
+    fail(['lifetime'], 'lifetime arrived in alexia_protocol 2 — declare "alexia_protocol": 2 to use it')
   }
 
   if (/^([A-Za-z]:|[\\/])/.test(m.entry.run)) {

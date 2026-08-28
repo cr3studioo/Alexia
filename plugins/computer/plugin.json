@@ -1,0 +1,70 @@
+{
+  "$schema": "../../docs/spec/plugin.schema.json",
+  "manifest_version": 1,
+  "id": "computer",
+  "name": "Computer control",
+  "summary": "Lets Alexia see the screen, move the mouse and type. Anything a person at this keyboard could do.",
+  "version": "0.1.0",
+  "license": "AGPL-3.0-only",
+  "entry": {
+    "run": "node",
+    "args": [
+      "index.js"
+    ]
+  },
+  "alexia_protocol": 1,
+  "mcp_protocol": "2025-11-25",
+  "requires": [
+    {
+      "cap": "screen.capture",
+      "why": "To take a picture of your screen, so it can see what it is working with."
+    },
+    {
+      "cap": "input.control",
+      "why": "To move the mouse, click, and type on your keyboard as if you were doing it."
+    },
+    {
+      "cap": "proc.spawn",
+      "why": "To ask Windows itself to do those things, through PowerShell."
+    },
+    {
+      "cap": "fs.own_dir",
+      "why": "To put the screenshots somewhere. They are deleted when you delete this plugin."
+    }
+  ],
+  "provides": [
+    "computer.screenshot",
+    "computer.control"
+  ],
+  "settings": [
+    {
+      "type": "toggle",
+      "key": "allow_input",
+      "label": "Allow it to move the mouse and type",
+      "default": false,
+      "hint": "Off means it can look but not touch. Screenshots still work. Turn this on only while you are watching."
+    },
+    {
+      "type": "number",
+      "key": "keep_screenshots",
+      "label": "Screenshots to keep",
+      "min": 0,
+      "max": 200,
+      "step": 1,
+      "default": 20,
+      "hint": "Older ones are deleted. Zero keeps none after the call that made them."
+    },
+    {
+      "type": "status",
+      "key": "state",
+      "label": "State"
+    }
+  ],
+  "storage": {
+    "namespace": "computer",
+    "tables": [
+      "actions"
+    ],
+    "dir": true
+  }
+}

@@ -51,6 +51,14 @@ export interface Skill {
   dir: string
   /** The plugin it came with. Bundled skills are deleted with it and never installed alone. */
   pluginId?: string
+  /**
+   * Alexia wrote this one, from a task somebody watched happen (M4-5).
+   *
+   * It matters downstream because a learned skill **can be wrong**: it is attributed the
+   * moment it fires, with *edit* and *forget* beside it, and neither of those is offered
+   * for a skill a person deliberately installed.
+   */
+  learned?: boolean
 }
 
 export interface SkillsOptions {
@@ -120,6 +128,11 @@ export class Skills {
         required: ['name'],
       },
     }
+  }
+
+  /** Whether Alexia wrote this one itself. What the attribution line is drawn from. */
+  isLearned(name: string): boolean {
+    return this.all.find((skill) => skill.name === name)?.learned === true
   }
 
   /** Text on disk, and reading it changes nothing. The permission gate has to be told so. */
@@ -274,6 +287,14 @@ function parse(dir: string): Omit<Skill, 'pluginId'> | Problem {
   // skill portable. `allowed-tools` in particular: what a step may touch is decided by the
   // permission mode, the folder scope and the never-touch list, and a field in a text file
   // somebody downloaded is not joining that list.
+  // `metadata` is one of the fields the spec says to ignore, and mostly this does. The one
+  // key read out of it is Alexia's own mark on a skill it wrote — it rides in `metadata`
+  // rather than at the top level precisely so that a skill carrying it stays portable and
+  // means nothing anywhere else.
+  const metadata = data.metadata
+  const learned =
+    typeof metadata === 'object' && metadata !== null && (metadata as Record<string, unknown>).learned === true
+
   return {
     dir,
     name,
@@ -281,5 +302,6 @@ function parse(dir: string): Omit<Skill, 'pluginId'> | Problem {
     // a tool description one line per skill.
     description: description.trim().replace(/\s+/g, ' '),
     ...(typeof data.license === 'string' && { license: data.license }),
+    ...(learned && { learned: true }),
   }
 }

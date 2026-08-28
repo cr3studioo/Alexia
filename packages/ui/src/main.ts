@@ -326,6 +326,124 @@ function trace(): {
   }
 }
 
+/** POST to core with the token, and give back whatever it said. */
+const post = async (path: string, body: unknown): Promise<Record<string, unknown>> =>
+  (await (
+    await fetch(path, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-alexia-token': token },
+      body: JSON.stringify(body),
+    })
+  ).json()) as Record<string, unknown>
+
+/**
+ * *Using what I learned last time about…* (M4-5).
+ *
+ * In the conversation, at the moment the skill fires, because that is the only moment when
+ * a person can tell whether it was right. **Edit and forget are right there** — a learned
+ * skill that turns out to be wrong is found out here, and a settings list nobody opens is
+ * not somewhere you find that out in time.
+ */
+function attribute(name: string): void {
+  const row = document.createElement('div')
+  row.className = 'learned'
+  const line = document.createElement('span')
+  line.textContent = `Using what I learned last time about ${name}.`
+  row.append(line)
+
+  const edit = document.createElement('button')
+  edit.type = 'button'
+  edit.className = 'quiet-button'
+  edit.textContent = 'Edit'
+  edit.addEventListener('click', () => void editSkill(name, row))
+
+  const drop = document.createElement('button')
+  drop.type = 'button'
+  drop.className = 'quiet-button'
+  drop.textContent = 'Forget it'
+  drop.addEventListener('click', () => {
+    void post('/api/learn', { action: 'forget', name }).then((answer) => {
+      row.textContent = String(answer.said ?? 'Forgotten.')
+    })
+  })
+
+  row.append(edit, drop)
+  log.append(row)
+  log.scrollTop = log.scrollHeight
+}
+
+/** The skill's own text, editable in place. It is one Markdown file and it reads like one. */
+async function editSkill(name: string, row: HTMLElement): Promise<void> {
+  const answer = await post('/api/learn', { action: 'edit', name })
+  if (typeof answer.text !== 'string') {
+    row.textContent = String(answer.said ?? 'That is not editable.')
+    return
+  }
+  const box = document.createElement('div')
+  box.className = 'confirm'
+  const area = document.createElement('textarea')
+  area.rows = 12
+  area.value = answer.text
+  const save = document.createElement('button')
+  save.type = 'button'
+  save.textContent = 'Save'
+  save.addEventListener('click', () => {
+    void post('/api/learn', { action: 'edit', name, text: area.value }).then(() => box.remove())
+  })
+  const cancel = document.createElement('button')
+  cancel.type = 'button'
+  cancel.className = 'quiet-button'
+  cancel.textContent = 'Cancel'
+  cancel.addEventListener('click', () => box.remove())
+  const buttons = document.createElement('div')
+  buttons.className = 'row'
+  buttons.append(save, cancel)
+  box.append(area, buttons)
+  row.append(box)
+  log.scrollTop = log.scrollHeight
+}
+
+/**
+ * *Want me to remember how to do this?* (M4-5.)
+ *
+ * Offered, never assumed. Nothing is written and no model is called until the button is
+ * pressed — a feature that quietly distilled every task would quietly spend money on every
+ * task, and the distillation runs on the strongest rung there is.
+ */
+function offerToLearn(offer: { about?: string; outline?: string }): void {
+  const box = document.createElement('div')
+  box.className = 'learn-offer'
+  const line = document.createElement('p')
+  line.textContent = `That took some working out — ${offer.outline ?? ''}. Want me to remember how to do it?`
+  const said = document.createElement('p')
+  said.className = 'hint'
+
+  const yes = document.createElement('button')
+  yes.type = 'button'
+  yes.textContent = 'Remember this'
+  yes.addEventListener('click', () => {
+    yes.disabled = true
+    said.textContent = 'Writing it down…'
+    void post('/api/learn', {}).then((answer) => {
+      said.className = answer.ok === true ? 'hint' : 'error'
+      said.textContent = String(answer.said ?? '')
+      no.remove()
+    })
+  })
+  const no = document.createElement('button')
+  no.type = 'button'
+  no.className = 'quiet-button'
+  no.textContent = 'No need'
+  no.addEventListener('click', () => box.remove())
+
+  const buttons = document.createElement('div')
+  buttons.className = 'row'
+  buttons.append(yes, no)
+  box.append(line, buttons, said)
+  log.append(box)
+  log.scrollTop = log.scrollHeight
+}
+
 async function ask(question: string): Promise<void> {
   bubble('user', question)
   const steps = trace()
@@ -355,6 +473,11 @@ async function ask(question: string): Promise<void> {
     // The one plain line before a charge, and the monthly warning, land in the same place.
     if (typeof event.note === 'string') say(event.note)
     if (typeof event.ask === 'string') askPermission(event.ask)
+    // A learned skill just fired, and it can be wrong. Attribution goes where the work is
+    // happening, with the two things you would want at that moment beside it (M4-5).
+    if (typeof event.learned === 'string') attribute(event.learned)
+    const offer = event.learn as { about?: string; outline?: string } | undefined
+    if (offer) offerToLearn(offer)
     const step = event.step as
       | { n: number; name: string; ok?: boolean; text?: string; progress?: Moving }
       | undefined

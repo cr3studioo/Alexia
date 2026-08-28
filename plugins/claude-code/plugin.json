@@ -1,0 +1,71 @@
+{
+  "$schema": "../../docs/spec/plugin.schema.json",
+  "manifest_version": 1,
+  "id": "claude-code",
+  "name": "Claude Code",
+  "summary": "Hands a coding job to the Claude Code CLI you already have installed, using your own login.",
+  "version": "0.1.0",
+  "license": "AGPL-3.0-only",
+  "entry": {
+    "run": "node",
+    "args": [
+      "index.js"
+    ]
+  },
+  "alexia_protocol": 1,
+  "mcp_protocol": "2025-11-25",
+  "requires": [
+    {
+      "cap": "proc.spawn",
+      "why": "To run the claude program that is already installed on this machine."
+    },
+    {
+      "cap": "fs.read_scoped",
+      "why": "To work in a folder you have chosen. It reads and writes there, not anywhere else."
+    },
+    {
+      "cap": "fs.write_scoped",
+      "why": "Because writing code means changing files in that folder."
+    }
+  ],
+  "provides": [
+    "code.task"
+  ],
+  "settings": [
+    {
+      "type": "path",
+      "key": "project_dir",
+      "label": "Project folder",
+      "kind": "dir",
+      "hint": "The folder it may work in. It is run there, and it does not go outside it."
+    },
+    {
+      "type": "path",
+      "key": "claude_path",
+      "label": "The claude program",
+      "kind": "file",
+      "hint": "Leave empty and it looks on your PATH. Point at it if you installed it somewhere unusual."
+    },
+    {
+      "type": "number",
+      "key": "timeout_minutes",
+      "label": "Give up after",
+      "min": 1,
+      "max": 60,
+      "step": 1,
+      "default": 10,
+      "hint": "Minutes. A coding job that has not finished by then is stopped."
+    },
+    {
+      "type": "status",
+      "key": "state",
+      "label": "State"
+    }
+  ],
+  "storage": {
+    "namespace": "claude-code",
+    "tables": [
+      "runs"
+    ]
+  }
+}

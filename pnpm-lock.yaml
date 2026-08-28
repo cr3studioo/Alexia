@@ -90,6 +90,18 @@ importers:
 
   packages/ui: {}
 
+  plugins/claude-code:
+    dependencies:
+      '@alexia/sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
+
+  plugins/computer:
+    dependencies:
+      '@alexia/sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
+
   plugins/crasher:
     dependencies:
       '@alexia/sdk':
@@ -97,6 +109,30 @@ importers:
         version: link:../../packages/sdk
 
   plugins/hello:
+    dependencies:
+      '@alexia/sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
+
+  plugins/media:
+    dependencies:
+      '@alexia/sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
+
+  plugins/memory:
+    dependencies:
+      '@alexia/sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
+
+  plugins/persona:
+    dependencies:
+      '@alexia/sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
+
+  plugins/telegram:
     dependencies:
       '@alexia/sdk':
         specifier: workspace:*

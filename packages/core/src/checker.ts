@@ -94,9 +94,10 @@ export interface ModelCheckerOptions {
 /**
  * The checker as a model call.
  *
- * ponytail: the plan's third option is Claude Code when it is connected and is not the
- * worker. That is `plugins/claude-code` at M4-7 and there is nothing to call yet — when
- * there is, it slots in as another `Checker` and nothing here changes.
+ * ponytail: the plan's third option is a second opinion from whatever coding agent is
+ * connected, when it is not the one doing the work. The way in is a capability, not a name
+ * — that plugin exists at M4-7 and core still does not know what it is called — and when
+ * one is worth asking, it slots in as another `Checker` and nothing here changes.
  */
 export class ModelChecker implements Checker {
   constructor(private readonly options: ModelCheckerOptions) {}

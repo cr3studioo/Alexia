@@ -1,0 +1,58 @@
+{
+  "$schema": "../../docs/spec/plugin.schema.json",
+  "manifest_version": 1,
+  "id": "memory",
+  "name": "Long-term memory",
+  "summary": "Remembers things across conversations — what you told it last month, and where to find it again.",
+  "version": "0.1.0",
+  "license": "AGPL-3.0-only",
+  "entry": {
+    "run": "node",
+    "args": [
+      "index.js"
+    ]
+  },
+  "alexia_protocol": 1,
+  "mcp_protocol": "2025-11-25",
+  "requires": [],
+  "provides": [
+    "memory.remember",
+    "memory.recall"
+  ],
+  "settings": [
+    {
+      "type": "number",
+      "key": "recall_limit",
+      "label": "How much to bring back",
+      "min": 1,
+      "max": 20,
+      "step": 1,
+      "default": 6,
+      "hint": "How many remembered things a search returns at most. More is more context and more cost."
+    },
+    {
+      "type": "status",
+      "key": "state",
+      "label": "State"
+    },
+    {
+      "type": "action",
+      "key": "forget_all",
+      "label": "Forget everything",
+      "tool": "forget_all",
+      "hint": "Empties long-term memory. The conversation you are having now is not touched — that belongs to Alexia, not to this plugin."
+    }
+  ],
+  "storage": {
+    "namespace": "memory",
+    "tables": [
+      "facts"
+    ]
+  },
+  "commands": [
+    {
+      "name": "remembered",
+      "summary": "What Alexia remembers about you"
+    }
+  ]
+}

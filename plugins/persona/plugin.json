@@ -1,0 +1,51 @@
+{
+  "$schema": "../../docs/spec/plugin.schema.json",
+  "manifest_version": 1,
+  "id": "persona",
+  "name": "Personality",
+  "summary": "Gives Alexia a voice of your choosing. It changes how answers are phrased and never what they say.",
+  "version": "0.1.0",
+  "license": "AGPL-3.0-only",
+  "entry": {
+    "run": "node",
+    "args": [
+      "index.js"
+    ]
+  },
+  "alexia_protocol": 1,
+  "mcp_protocol": "2025-11-25",
+  "requires": [],
+  "provides": [
+    "persona.rephrase"
+  ],
+  "settings": [
+    {
+      "type": "choice",
+      "key": "voice",
+      "label": "Voice",
+      "options": [
+        "default",
+        "warm",
+        "brief",
+        "dry",
+        "formal",
+        "custom"
+      ],
+      "default": "default",
+      "hint": "Default is Alexia's own voice and costs nothing — no extra model call happens at all. Anything else adds one short call per answer."
+    },
+    {
+      "type": "text",
+      "key": "custom_voice",
+      "label": "Your own description",
+      "placeholder": "Blunt, no filler, dry humour when it fits",
+      "hint": "Used only when Voice is set to custom. Describe how to speak, not what to say."
+    },
+    {
+      "type": "status",
+      "key": "state",
+      "label": "State"
+    }
+  ],
+  "min_tier": "T0"
+}

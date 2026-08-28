@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+import { CORE_CAPABILITIES } from '@alexia/protocol'
 import { randomUUID } from 'node:crypto'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { join } from 'node:path'
@@ -9,6 +10,7 @@ import { Catalog } from './catalog.js'
 import { asRuling, counted, freshTally, ModelChecker, type Tally } from './checker.js'
 import { commands, pins, run as runCommand } from './commands.js'
 import { Library } from './library.js'
+import { distil, forget, learnable, outline, save, type Episode } from './learned.js'
 import { installed, OLLAMA, running } from './ollama.js'
 import { usable } from './pool.js'
 import { ceilings, estimate, previewLine, setCeilings, worthAsking, type Ceilings } from './preview.js'
@@ -28,10 +30,10 @@ import {
   type Scope,
 } from './permissions.js'
 import { keyOf, PROVIDERS } from './provider.js'
-import { MODES } from './router.js'
+import { MODES, route, send, shapeOf } from './router.js'
 import { CORE, keychain, type SecretStore } from './secrets.js'
 import { addServer, markReviewed, unreviewed } from './servers.js'
-import { Skills } from './skills.js'
+import { Skills, SKILL_TOOL } from './skills.js'
 import { dataDir, Store, type Message } from './store.js'
 import { PluginTooling } from './tooling.js'
 import { allowance, warning } from './usage.js'
@@ -152,6 +154,49 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     // The folders the user chose, as MCP roots. A plugin is told where it may work by the
     // protocol's own mechanism rather than by anything Alexia invented.
     roots: () => rootsOf(scope()),
+    /**
+     * A plugin asking the model something, over MCP's own `sampling/createMessage`.
+     *
+     * This is what a plugin holding a conversation of its own needs — a message arriving
+     * from outside has to be answered by something, and a plugin bundling its own model
+     * key would be a second place the user pays from and a second place their words go.
+     * So it goes through the same router as everything else, on the same rungs, under the
+     * same monthly cap.
+     *
+     * **The spend lands on the plugin that spent it.** That is the whole reason
+     * `usage.plugin` exists, and until something called this it was a column nothing wrote.
+     */
+    sample: async (pluginId, params) => {
+      const asked: Message[] = [
+        ...(params.systemPrompt === undefined ? [] : [{ role: 'system' as const, content: params.systemPrompt }]),
+        ...params.messages.map((turn) => ({
+          role: turn.role === 'assistant' ? ('assistant' as const) : ('user' as const),
+          // MCP lets one turn carry several blocks, and several kinds. A model reached over
+          // this path is a text one, so anything else is named rather than dropped — *the
+          // caller sent an image* is something to answer, and a blank is not.
+          content: [turn.content]
+            .flat()
+            .map((block) => (block.type === 'text' ? block.text : `[${block.type}]`))
+            .join('\n'),
+        })),
+      ]
+      const month = allowance(store)
+      const verdict = route({ messages: asked, shape: shapeOf({ messages: asked }) }, pins(store), await world())
+      if (!verdict.ok) throw new Error(verdict.why)
+      const answer = await send(
+        verdict.choices,
+        { messages: asked, ...(params.maxTokens !== undefined && { maxTokens: params.maxTokens }) },
+        store,
+        secrets,
+        { plugin: pluginId, paidAllowed: !month.stop },
+      )
+      return {
+        role: 'assistant',
+        content: { type: 'text', text: answer.message.content },
+        model: answer.model.id,
+        stopReason: 'endTurn',
+      }
+    },
   })
   /**
    * Know-how (M2-2). Two arrival routes and one format: folders the user installed on their
@@ -230,6 +275,15 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
    * `notifications/cancelled`. The plugin that ignores that is why `callMs` exists.
    */
   let task: AbortController | undefined
+
+  /**
+   * The last task worth learning from, waiting for an answer (M4-5).
+   *
+   * One, not a queue: the offer is made at the end of a task and answered before the next
+   * one starts, or it is not answered at all. A backlog of *do you want to remember this*
+   * from last Tuesday is a backlog nobody clears.
+   */
+  let lesson: Episode | undefined
 
   /**
    * The second opinion (M15-4). Local by default — a reviewer that ships what it is
@@ -613,6 +667,79 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
       return
     }
 
+    /**
+     * The answer to the offer (M4-5), and the two things a learned skill needs afterwards.
+     *
+     * `learn` distils the last episode into a skill and saves it. `forget` deletes one.
+     * `edit` rewrites one. All three are here rather than on the settings screen because
+     * all three are things a person wants to do **at the moment the skill fired**, which is
+     * in the middle of a conversation and not in a list.
+     */
+    if (url.pathname === '/api/learn' && request.method === 'POST') {
+      const asked = JSON.parse(await read(request)) as { action?: string; name?: string; text?: string }
+
+      if (asked.action === 'forget') {
+        const gone = forget(skillsDir, asked.name ?? '')
+        skills.invalidate()
+        response.writeHead(200, { 'content-type': 'application/json' })
+        response.end(JSON.stringify({ ok: gone, said: gone ? `Forgotten. ${asked.name ?? ''} is gone.` : 'There is no skill by that name.' }))
+        return
+      }
+
+      if (asked.action === 'edit') {
+        const skill = skills.all.find((one) => one.name === asked.name && one.learned === true)
+        if (!skill) {
+          response.writeHead(200, { 'content-type': 'application/json' })
+          // Only a learned one. A skill somebody installed belongs to whoever wrote it, and
+          // rewriting it in place would silently fork it under its own name.
+          response.end(JSON.stringify({ ok: false, said: 'That is not a skill Alexia wrote, so it is not editable here.' }))
+          return
+        }
+        if (typeof asked.text === 'string' && asked.text.trim() !== '') {
+          writeFileSync(join(skill.dir, 'SKILL.md'), asked.text.trim() + '\n')
+          skills.invalidate()
+          response.writeHead(200, { 'content-type': 'application/json' })
+          response.end(JSON.stringify({ ok: true, said: 'Saved.' }))
+          return
+        }
+        response.writeHead(200, { 'content-type': 'application/json' })
+        response.end(JSON.stringify({ ok: true, text: readFileSync(join(skill.dir, 'SKILL.md'), 'utf8') }))
+        return
+      }
+
+      const episode = lesson
+      lesson = undefined
+      if (!episode) {
+        response.writeHead(200, { 'content-type': 'application/json' })
+        response.end(JSON.stringify({ ok: false, said: 'There is nothing waiting to be learned.' }))
+        return
+      }
+      const month = allowance(store)
+      const learned = await distil(episode, {
+        store,
+        secrets,
+        pins: pins(store),
+        world,
+        paidAllowed: !month.stop,
+      })
+      if ('why' in learned) {
+        response.writeHead(200, { 'content-type': 'application/json' })
+        response.end(JSON.stringify({ ok: false, said: learned.why }))
+        return
+      }
+      save(skillsDir, learned)
+      skills.invalidate()
+      response.writeHead(200, { 'content-type': 'application/json' })
+      response.end(
+        JSON.stringify({
+          ok: true,
+          name: learned.name,
+          said: `Learned: ${learned.name}. ${learned.description}`,
+        }),
+      )
+      return
+    }
+
     if (url.pathname === '/api/settings' && request.method === 'POST') {
       const edit = JSON.parse(await read(request)) as { plugin?: string; key?: string; value?: unknown }
       try {
@@ -742,6 +869,25 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
       }
     }
 
+    /**
+     * The personality node (M4-4), and the two things about it that are the design.
+     *
+     * **It only exists when something provides it.** Default Alexia streams straight
+     * through with no extra call, so nobody pays for a feature they are not using — which
+     * is why this is a capability lookup off the manifests rather than a setting.
+     *
+     * **Only conversational output goes through it.** Everything else on this stream —
+     * a permission question, a note about a charge, a step in the trace, a refusal, an
+     * error — is written by core and reaches the screen untouched. Phrasing is the only
+     * thing a persona may change, and the things above are the ones where the phrasing
+     * *is* the fact.
+     *
+     * The cost is that the answer arrives at once rather than word by word: it cannot be
+     * restyled until it is finished. That is the trade for choosing a voice, and it is the
+     * reason the default does not pay it.
+     */
+    const styled = plugins.answers(CORE_CAPABILITIES.restyle)
+
     const stop = new AbortController()
     task = stop
     try {
@@ -790,9 +936,20 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
             say({ ask: ruling.why })
           }),
         on: {
-          delta: (delta) => say({ delta }),
+          // Held back only when something is going to restyle it. Otherwise this is the
+          // ordinary stream, unchanged, which is what most conversations get.
+          delta: (delta) => {
+            if (!styled) say({ delta })
+          },
           note: (note) => say({ note }),
-          step: (step) => say({ step: { n: step.n, name: step.name, args: step.args } }),
+          step: (step) => {
+            say({ step: { n: step.n, name: step.name, args: step.args } })
+            // Attribution, at the moment it fires (M4-5). A learned skill can be wrong, and
+            // the person finds out when it actually matters rather than in a settings list
+            // nobody opens — so *edit* and *forget* travel with this line.
+            const opened = step.name === SKILL_TOOL ? String(step.args.name ?? '') : ''
+            if (opened !== '' && skills.isLearned(opened)) say({ learned: opened })
+          },
           // The same row, moving. A frame per update, because the whole point is that the
           // screen is never more than a moment behind what the tool is doing (M2-6).
           progress: (step) => say({ step: { n: step.n, name: step.name, progress: step.progress } }),
@@ -810,6 +967,44 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
 
       const after = allowance(store)
       const last = result.messages.at(-1)
+
+      /**
+       * The restyle, if there is one — and its failure mode is the important part.
+       *
+       * A persona that is slow, broken, or has been deleted mid-task must not cost the
+       * user their answer. So anything that goes wrong here falls back to the words the
+       * model actually wrote, said plainly, and the person gets the answer they were
+       * waiting for rather than an error about a decoration.
+       */
+      if (styled && last?.role === 'assistant' && last.content.trim() !== '') {
+        let spoken = last.content
+        try {
+          const restyled = await plugins.capability(CORE_CAPABILITIES.restyle, { text: last.content })
+          const said = (restyled.content ?? [])
+            .map((block) => (block.type === 'text' ? block.text : ''))
+            .join('')
+            .trim()
+          if (restyled.isError !== true && said !== '') spoken = said
+        } catch (error) {
+          console.error(`[restyle] ${error instanceof Error ? error.message : String(error)}`)
+        }
+        say({ delta: spoken })
+      }
+
+      /**
+       * The offer (M4-5). Made only after a task where something was actually worked out,
+       * and made **once**, at the end, where the person has just watched it happen.
+       *
+       * It is held here rather than acted on: nothing is written, no model is called, and
+       * no money is spent until somebody says yes. A feature that quietly distilled every
+       * task would be a feature that quietly spent money on every task.
+       */
+      const episode = { task: text, steps: result.steps, answer: last?.content ?? '' }
+      if (result.ended === 'answered' && learnable(episode)) {
+        lesson = episode
+        say({ learn: { about: text.slice(0, 120), outline: outline(episode) } })
+      }
+
       say({
         done: {
           model: last?.model ?? '',

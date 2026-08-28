@@ -51,6 +51,9 @@ alexia.tool(
   {
     description:
       'Count how many people have been greeted so far, and return the number. Use when the user asks how many greetings have happened. Takes no arguments.',
+    // Counting rows changes nothing, and saying so is what keeps the default permission
+    // mode from stopping to ask about it. Conformance flags a tool that declares nothing.
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
   },
   async () => {
     const count = await alexia.storage.count('greetings')

@@ -22,6 +22,10 @@ export default tseslint.config(
         clearInterval: 'readonly',
         fetch: 'readonly',
         URL: 'readonly',
+        // Both are Node globals a plugin reaches for: `Buffer` for the bytes an image
+        // arrives as, `AbortController` for a loop that has to be stoppable.
+        Buffer: 'readonly',
+        AbortController: 'readonly',
       },
     },
   },

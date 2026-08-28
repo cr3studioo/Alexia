@@ -146,6 +146,9 @@ export class Plugins {
     this.#persist()
     this.options.store.create(id, entry.manifest.storage?.tables)
     this.options.onToolsChanged?.(id)
+    // A plugin that holds something open starts holding it now rather than at the first
+    // call, because for this kind the first call may never come (D77).
+    void entry.process.wake()
   }
 
   /**
@@ -230,6 +233,7 @@ export class Plugins {
       // no tables, which is what makes the *Installed* box in the lifecycle diagram true.
       if (this.#enabled.has(entry.manifest.id)) {
         this.options.store.create(entry.manifest.id, entry.manifest.storage?.tables)
+        void this.#entries.get(entry.manifest.id)?.process.wake()
       }
       this.options.onToolsChanged?.(entry.manifest.id)
     }
@@ -310,6 +314,25 @@ export class Plugins {
       if (tool) return entry.process.callTool(tool.name, args)
     }
     throw new ProtocolError(ErrorCode.CAPABILITY_NOT_AVAILABLE, `nothing enabled provides ${cap}`)
+  }
+
+  /**
+   * Is anything enabled promising to answer this capability?
+   *
+   * Read off the manifests, so it costs nothing and spawns nothing — which is the whole
+   * reason it exists separately from `capability()`. A caller that has to decide whether to
+   * take a different route entirely cannot find out by trying and catching: trying wakes a
+   * process, and catching happens after the work it was meant to replace.
+   *
+   * It answers the *promise*, not the runtime binding. A plugin whose model is still
+   * downloading says yes here and `-32050` there, and that is the right way round — the
+   * caller wants to know whether to plan around it, and the answer is *usually*.
+   */
+  answers(cap: string): boolean {
+    for (const entry of this.#entries.values()) {
+      if (this.#enabled.has(entry.manifest.id) && entry.manifest.provides?.includes(cap)) return true
+    }
+    return false
   }
 
   /** Whether a process is up, asked without starting one. Lazy spawn makes `false` normal. */

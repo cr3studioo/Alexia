@@ -415,11 +415,34 @@ export class PluginProcess {
     this.#idleTimer = undefined
   }
 
-  /** Idle shutdown: quiet for long enough and the process exits, invisibly. */
+  /**
+   * Idle shutdown: quiet for long enough and the process exits, invisibly.
+   *
+   * **Unless the plugin declared itself resident** (D77). A plugin holding a connection
+   * open is not idle when nobody has asked it anything — it is working, and the work is
+   * arriving from a direction lazy spawn cannot see.
+   */
   #touch(): void {
     clearTimeout(this.#idleTimer)
+    if (this.manifest.lifetime === 'resident') return
     if (this.#inFlight > 0 || !this.#session) return
     this.#idleTimer = setTimeout(() => void this.stop(), this.t.idleMs).unref()
+  }
+
+  /**
+   * Start it now, rather than at the first call.
+   *
+   * Only for a resident plugin, and only from the loader — everything else is still lazy.
+   * The failure is swallowed on purpose: a bridge whose credential is missing says so on
+   * its own settings pane, and bringing anything else down over it would be the wrong
+   * response to a plugin that is not set up yet.
+   */
+  async wake(): Promise<void> {
+    if (this.manifest.lifetime !== 'resident') return
+    await this.#ready().then(
+      () => undefined,
+      () => undefined,
+    )
   }
 
   async #track<T>(work: () => Promise<T>): Promise<T> {

@@ -10,7 +10,7 @@ import { Client, type Tool } from '@modelcontextprotocol/client'
 import { getDefaultEnvironment, StdioClientTransport } from '@modelcontextprotocol/client/stdio'
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { basename, join } from 'node:path'
+import { basename, join, resolve } from 'node:path'
 import { createInterface } from 'node:readline'
 import type { Readable } from 'node:stream'
 import { fakeHost } from './host.js'
@@ -70,7 +70,11 @@ export interface ConformOptions {
 const NAME_LIMIT = 64
 const SEPARATOR = '__'
 
-export async function conform(dir: string, options: ConformOptions = {}): Promise<Report> {
+export async function conform(given: string, options: ConformOptions = {}): Promise<Report> {
+  // Absolute from here on. The child's working directory is its own data folder, not this
+  // one, so a relative path handed to `entry.args` resolves against the wrong place and the
+  // plugin dies with MODULE_NOT_FOUND — which is what the stderr capture above found.
+  const dir = resolve(given)
   const checks: Check[] = []
   const add = (name: string, level: Level, detail: string): void => void checks.push({ name, level, detail })
   const folder = basename(dir)
@@ -157,14 +161,24 @@ export async function conform(dir: string, options: ConformOptions = {}): Promis
   for (const [method, schemas, handler] of host.handlers) client.setRequestHandler(method, schemas, handler)
 
   try {
+    let refused: unknown
     try {
       await client.connect(transport, { timeout: options.startMs ?? 20_000 })
     } catch (error) {
-      add('boots', 'fail', `it did not start: ${error instanceof Error ? error.message : String(error)}`)
-      return done(manifest.id, dir, checks)
+      refused = error
     }
+    // Attached whether or not the connection came up. **A plugin that died on startup is
+    // the one case where its own last words matter most**, and reporting only "Connection
+    // closed" sends an author looking in the wrong place — the pipe still holds whatever it
+    // managed to say, so it is read out either way.
     if (transport.stderr) {
       createInterface({ input: transport.stderr as Readable }).on('line', (line) => said.push(line))
+    }
+    if (refused !== undefined) {
+      await new Promise((resolve) => setTimeout(resolve, 100))
+      const why = refused instanceof Error ? refused.message : String(refused)
+      add('boots', 'fail', `it did not start: ${why}${said.length > 0 ? `\n        it said: ${said.join('\n        ')}` : ''}`)
+      return done(manifest.id, dir, checks)
     }
     const spoke = client.getNegotiatedProtocolVersion() ?? '(none)'
     add('boots', 'pass', `handshake in MCP ${spoke}`)
@@ -211,6 +225,14 @@ export async function conform(dir: string, options: ConformOptions = {}): Promis
     // What the manifest promised, against what the running process actually binds. A gap is
     // legitimate — a plugin whose model has not downloaded cannot answer yet — so this
     // reports rather than fails.
+    //
+    // Asked twice, with a settle in between. A plugin that binds after its first `await` is
+    // the ordinary shape, not a bug, and reporting the snapshot taken a millisecond after
+    // the handshake would flag every well-written plugin in the repo.
+    if ((manifest.provides ?? []).length > 0) {
+      await new Promise((resolve) => setTimeout(resolve, 750))
+      tools = await client.listTools().then((r) => r.tools, () => tools)
+    }
     const bound = new Set(
       tools.flatMap((tool) => {
         const declared = (tool._meta as Record<string, unknown> | undefined)?.[PROVIDES_META]
