@@ -244,6 +244,12 @@ function setupSettings(state: State): void {
         // Said out loud, because the box empties and nothing else on the screen moves.
         said.textContent = `Saved to the keychain. ${said.textContent}`
       })
+      // And said out loud when it does not: a key is the one thing somebody cannot check by
+      // looking, so a silent failure here is a person pasting the same key again forever.
+      .catch((error: unknown) => {
+        said.className = 'error'
+        said.textContent = `Not saved: ${error instanceof Error ? error.message : String(error)}`
+      })
       .finally(() => (save.disabled = false))
   }
   save.addEventListener('click', store)
@@ -433,14 +439,18 @@ function trace(): {
 }
 
 /** POST to core with the token, and give back whatever it said. */
-const post = async (path: string, body: unknown): Promise<Record<string, unknown>> =>
-  (await (
-    await fetch(path, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-alexia-token': token },
-      body: JSON.stringify(body),
-    })
-  ).json()) as Record<string, unknown>
+const post = async (path: string, body: unknown): Promise<Record<string, unknown>> => {
+  const answer = await fetch(path, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-alexia-token': token },
+    body: JSON.stringify(body),
+  })
+  // A 500 comes back as `text/plain`, so this used to reject inside `.json()` with a parse
+  // error nobody was catching — a save that failed looked exactly like a save that did
+  // nothing. Whatever core said about it is the sentence the screen can show.
+  if (!answer.ok) throw new Error((await answer.text()).trim() || `${path} failed (${answer.status})`)
+  return (await answer.json()) as Record<string, unknown>
+}
 
 /**
  * *Using what I learned last time about…* (M4-5).

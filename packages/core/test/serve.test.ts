@@ -4,7 +4,8 @@ import { request as httpRequest } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, expect, test } from 'vitest'
-import { memorySecrets } from '../src/secrets.js'
+import { keyOf, PROVIDERS } from '../src/provider.js'
+import { CORE, memorySecrets } from '../src/secrets.js'
 import { serve, type Serving } from '../src/serve.js'
 
 // The bridge between a webview and core: the shell it serves, the token that guards it, and
@@ -144,7 +145,7 @@ test('first run asks three things and then never asks again', async () => {
   const after = await read()
   expect(after.setup).toEqual({ done: true, name: 'Ada', mode: 'local' })
   // The key went to the keychain and nowhere near the database.
-  expect(await secrets.get('_core', 'provider/openrouter')).toBe('sk-users-own')
+  expect(await secrets.get(CORE, keyOf(PROVIDERS[0]!))).toBe('sk-users-own')
   // And the screen can say so without being able to read it back — which is what stops the
   // settings box looking identical whether or not somebody has already pasted a key.
   expect(after.providers.filter((p) => p.connected).map((p) => p.id)).toEqual(['openrouter'])
@@ -164,7 +165,7 @@ test('first run asks three things and then never asks again', async () => {
 
   const edited = await read()
   expect(edited.setup).toEqual({ done: true, name: 'Grace', mode: 'local' })
-  expect(await secrets.get('_core', 'provider/openrouter')).toBe('sk-the-second-one')
+  expect(await secrets.get(CORE, keyOf(PROVIDERS[0]!))).toBe('sk-the-second-one')
 
   await first.close()
 })

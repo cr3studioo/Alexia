@@ -6,7 +6,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, test } from 'vitest'
 import { Host } from '../src/host.js'
-import { account, ACCOUNT_ALLOWED, memorySecrets } from '../src/secrets.js'
+import { keyOf, PROVIDERS } from '../src/provider.js'
+import { account, ACCOUNT_ALLOWED, CORE, memorySecrets } from '../src/secrets.js'
 import { pane, refuse, secretStoreName, write, type Setting } from '../src/settings.js'
 import { Store } from '../src/store.js'
 
@@ -201,11 +202,16 @@ test('a keychain account name is one the keychain will actually accept', () => {
   // a rule about the string we build, checked against the character set that store allows.
   for (const [plugin, key] of [
     ['hello', 'api_key'],
-    ['_core', 'openrouter'],
     ['some-long-plugin-name', 'a_key_2'],
   ] as const) {
     expect(account(plugin, key)).toMatch(ACCOUNT_ALLOWED)
   }
+
+  // And the keys nothing here invents: every provider's, from the function that builds them.
+  // This line used to read `['_core', 'openrouter']` — a key typed out by hand, next to a
+  // `keyOf` that was returning `provider/openrouter`. It passed while the real account name
+  // threw, which is the whole of why a pasted key never reached the keychain.
+  for (const provider of PROVIDERS) expect(account(CORE, keyOf(provider))).toMatch(ACCOUNT_ALLOWED)
 
   // And it still splits exactly one way: neither alphabet contains a dot.
   expect(account('hello', 'api_key')).toBe('hello.api_key')

@@ -120,8 +120,16 @@ export const PROVIDERS: Provider[] = [
   },
 ]
 
-/** The keychain entry a provider's key lives in. Core's own scope, which no plugin id can be. */
-export const keyOf = (provider: Provider): string => `provider/${provider.id}`
+/**
+ * The keychain entry a provider's key lives in. Core's own scope, which no plugin id can be.
+ *
+ * **An underscore, not a slash.** `account()` in `secrets.ts` refuses anything outside
+ * `[A-Za-z0-9._@-]`, and this was building `provider/openrouter` — so `_core.provider/openrouter`
+ * threw on every read and every write, and the key somebody pasted into Settings went nowhere
+ * while the screen went on saying *no key yet*. The separator fix in `secrets.ts` did not reach
+ * here because the test that guards it hard-coded a key instead of asking this function for one.
+ */
+export const keyOf = (provider: Provider): string => `provider_${provider.id}`
 
 /** A tool as the model is told about it. The agent loop (M15-2) builds these from `tools/list`. */
 export interface ToolSpec {
