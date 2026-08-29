@@ -244,6 +244,12 @@ export async function send(
     /** Who this is for, so spend can be totalled per session and per plugin. */
     session?: number
     plugin?: string
+    /**
+     * Which run this charge belongs to (M7-2). Absent is a real answer, not a gap: the
+     * checker asked outside a task, or a distillation somebody said yes to afterwards, is a
+     * charge with no run and the ledger says so rather than guessing one.
+     */
+    run?: string
   } = {},
 ): Promise<Answer> {
   let last: unknown
@@ -284,7 +290,11 @@ export async function send(
       store.recordUsage({
         session: hooks.session,
         plugin: hooks.plugin,
+        run: hooks.run,
         model: choice.model.id,
+        // Who was asked for, which is the plan's first rung whether or not it answered. The
+        // two differ exactly when something fell back, and that is the cost worth explaining.
+        asked: choices[0]?.model.id ?? choice.model.id,
         provider: choice.provider.id,
         tokensIn: usage.in,
         tokensOut: usage.out,

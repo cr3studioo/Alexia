@@ -74,6 +74,10 @@ const ACTIVITY: Rendered = table({
   columns: [
     { key: 'task', label: 'What was asked' },
     { key: 'steps', label: 'Steps', align: 'right', hideNarrow: true },
+    // What *that* cost, on the row that says what it was (M7-2). The ledger could answer
+    // per session and per model before this and could not answer per run, which is the
+    // question anybody actually has when a number surprises them.
+    { key: 'cost', label: 'Cost', align: 'right' },
     { key: 'ended', label: 'How it ended' },
     { key: 'when', label: 'When', align: 'right', hideNarrow: true },
   ],

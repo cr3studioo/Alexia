@@ -64,9 +64,27 @@ export interface Run {
   asked?: string
   answered?: string
   steps: TraceStep[]
-  /** What this run cost, from the ledger — the difference across it, not a second tally. */
-  spent?: number
+  /**
+   * Every charge this run made, from the ledger, looked up by the run's own id (M7-2).
+   *
+   * **Not a second tally.** These are the `usage` rows themselves, so what the trace says a
+   * run cost and what the ledger says it cost cannot disagree — they are the same rows. It
+   * replaced a difference across the run, which two tasks overlapping in time would split
+   * between them, and which could say nothing at all about *which* call was the expensive one.
+   */
+  calls?: Charge[]
 }
+
+/** One model call and what it cost. `asked` differs from `model` when something fell back. */
+export interface Charge {
+  asked: string | null
+  model: string
+  provider: string
+  cost: number
+}
+
+/** What a run cost. Summed from its charges, so there is one number and one source for it. */
+export const spentOn = (run: Run): number => (run.calls ?? []).reduce((total, call) => total + call.cost, 0)
 
 export class Trace {
   readonly #runs: Run[] = []
@@ -119,11 +137,11 @@ export class Trace {
     found.ms = Date.now() - found.at
   }
 
-  end(ended: Run['ended'], extra: { why?: string; spent?: number } = {}): void {
+  end(ended: Run['ended'], extra: { why?: string; calls?: Charge[] } = {}): void {
     if (!this.#open) return
     this.#open.ended = ended
     if (extra.why !== undefined) this.#open.why = extra.why
-    if (extra.spent !== undefined) this.#open.spent = extra.spent
+    if (extra.calls !== undefined) this.#open.calls = extra.calls
     this.#open = undefined
   }
 }
@@ -141,13 +159,23 @@ export function asText(run: Run): string {
     `# ${run.task}`,
     '',
     `${when} · ${String(run.steps.length)} step${run.steps.length === 1 ? '' : 's'} · ${run.ended ?? 'unfinished'}`,
-    ...(run.spent !== undefined ? [`spent $${run.spent.toFixed(4)}`] : []),
+    ...(run.ended === undefined ? [] : [spendLine(run)]),
     // Both, and only when they differ — a line saying the same model twice is a line that
     // trains people to skip the line.
     ...(run.answered !== undefined && run.asked !== undefined && run.asked !== run.answered ?
       [`asked ${run.asked}, answered ${run.answered} — the router fell back`]
     : run.answered !== undefined ? [`model ${run.answered}`]
     : []),
+    // Every charge, in order, and what each one was for. This is the line somebody came here
+    // to read: a fallback costs more than the model on the badge, and this says which call.
+    ...(run.calls ?? []).map(
+      (call) =>
+        `  $${call.cost.toFixed(4)}  ${
+          call.asked !== null && call.asked !== call.model ?
+            `asked ${call.asked}, answered ${call.model} — fell back`
+          : call.model
+        }`,
+    ),
     ...(run.why !== undefined ? ['', run.why] : []),
   ]
 
@@ -161,4 +189,17 @@ export function asText(run: Run): string {
     if (step.text !== undefined && step.text !== '') lines.push('', step.text)
   }
   return lines.join('\n') + '\n'
+}
+
+/**
+ * What it cost, and the honest sentence when there is nothing to join.
+ *
+ * A run with no charges is not a free run — it is a run where no model call was recorded,
+ * which happens when the router refused before dispatch. `$0.0000` would read as *this was
+ * free*, which is a different claim and sometimes a wrong one.
+ */
+function spendLine(run: Run): string {
+  const calls = run.calls ?? []
+  if (calls.length === 0) return 'no model call was recorded against this run'
+  return `spent $${spentOn(run).toFixed(4)} across ${String(calls.length)} model call${calls.length === 1 ? '' : 's'}`
 }

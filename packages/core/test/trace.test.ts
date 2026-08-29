@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { expect, test } from 'vitest'
 import type { Step } from '../src/agent.js'
-import { asText, KEPT, Trace } from '../src/trace.js'
+import { asText, KEPT, spentOn, Trace } from '../src/trace.js'
 
 /**
  * The trace, with a memory (M6-5).
@@ -20,12 +20,13 @@ test('a run is what the loop did, in the order it did it', () => {
   trace.start('one', 'sort my downloads')
   trace.step(step(1, 'list_files'))
   trace.done(done(1, 'list_files', true))
-  trace.end('answered', { spent: 0.0021 })
+  trace.end('answered', { calls: [{ asked: 'free/text', model: 'free/text', provider: 'alpha', cost: 0.0021 }] })
 
   const [run] = trace.runs
   expect(run?.task).toBe('sort my downloads')
   expect(run?.ended).toBe('answered')
-  expect(run?.spent).toBe(0.0021)
+  // From the ledger's own rows rather than a second tally, so the two cannot disagree (M7-2).
+  expect(spentOn(run!)).toBe(0.0021)
   expect(run?.steps[0]).toMatchObject({ n: 1, name: 'list_files', ok: true })
   // Untrimmed: what the loop did, not what the model was shown (M15-6 owns the other one).
   expect(run?.steps[0]?.text).toBe('list_files said something')
@@ -93,11 +94,19 @@ test('an export is the run as a person would send it on', () => {
   trace.done(done(1, 'list_files', false))
   trace.step(step(2, 'list_files'))
   trace.done(done(2, 'list_files', true))
-  trace.end('answered', { spent: 0.5 })
+  trace.end('answered', {
+    calls: [
+      { asked: 'free/text', model: 'free/text', provider: 'alpha', cost: 0.2 },
+      // The fallback: asked for one and answered by another, which is the case where a
+      // cost is surprising and therefore the one the export has to explain.
+      { asked: 'free/text', model: 'paid/small', provider: 'beta', cost: 0.3 },
+    ],
+  })
 
   const text = asText(trace.runs[0]!)
   expect(text).toContain('# tidy the desktop')
-  expect(text).toContain('spent $0.5000')
+  expect(text).toContain('spent $0.5000 across 2 model calls')
+  expect(text).toContain('$0.3000  asked free/text, answered paid/small — fell back')
   // The arguments and the answers as they were — nothing summarised, because the second
   // thing anybody does with a bad run is send it to somebody who was not there.
   expect(text).toContain('args: {"which":1}')

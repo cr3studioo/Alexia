@@ -14,7 +14,7 @@ import { dataDir, Store } from '../src/store.js'
 const tmp = (): string => join(mkdtempSync(join(tmpdir(), 'alexia-store-')), 'data', 'alexia.db')
 
 /** How many migrations this build knows. Every fresh database should be at this version. */
-const MIGRATIONS = 4
+const MIGRATIONS = 5
 
 /** The schema version as SQLite holds it, read without going through `Store`. */
 function version(path: string): number {

@@ -9,7 +9,7 @@ import type { Skills } from './skills.js'
 import type { Searchable } from './palette.js'
 import type { Store } from './store.js'
 import type { PluginTooling } from './tooling.js'
-import { asText, type Trace } from './trace.js'
+import { asText, spentOn, type Trace } from './trace.js'
 
 /**
  * What core's own tables are made of (M6-4).
@@ -76,6 +76,9 @@ export function sources(options: SurfaceOptions): Record<string, Source> {
             // asked for is the one thing that makes a run hard to find again.
             task: run.task.length > 90 ? `${run.task.slice(0, 90)}…` : run.task,
             steps: run.steps.length,
+            // Four places, because a free run is $0.0000 and a cheap one is $0.0003, and
+            // rounding the second to the first is how a ledger stops being believed.
+            cost: run.ended === undefined ? '—' : `$${spentOn(run).toFixed(4)}`,
             ended: run.ended ?? 'still going',
             when: when(run.at),
           })),

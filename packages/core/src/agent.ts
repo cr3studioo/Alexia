@@ -110,6 +110,11 @@ export interface RunOptions {
   secrets: SecretStore
   /** Where the trace is written. Every message this produces is appended as it happens. */
   session: number
+  /**
+   * This task's id, so every charge it makes lands on a row that says which task made it
+   * (M7-2). A session is not a run: ten tasks in one sitting share a session.
+   */
+  run?: string
   /** The hard stop (M1-9). False and the paid rungs are not rungs at all. */
   paidAllowed?: boolean
   /**
@@ -190,6 +195,7 @@ export async function run(options: RunOptions): Promise<RunResult> {
         secrets,
         {
           session,
+          ...(options.run !== undefined && { run: options.run }),
           ...(options.paidAllowed !== undefined && { paidAllowed: options.paidAllowed }),
           ...(on?.delta && { onDelta: on.delta }),
           ...(on?.note && { onNote: on.note }),

@@ -192,7 +192,7 @@ Tick a box only when the task's acceptance criteria pass. `[GATE]` needs a human
 ### M7 — What version 1 knew *(inserted 2026-08-29 — see Change log)*
 
 - [x] **M7-1** Nothing leaves this machine unread — egress redaction
-- [ ] **M7-2** One id, four records
+- [x] **M7-2** One id, four records
 - [ ] **M7-3** Memory that captures without being asked
 - [ ] **M7-4** A voice that is yours — cloning, and the engine it costs
 - [ ] **M7-5** A button in Telegram, and somewhere else to land
@@ -2833,6 +2833,17 @@ hosted model, and the answer is `T0`, where nothing is stripped because nothing 
 
 ### M7-2 One id, four records
 
+**Built 2026-08-29 (D95).** Migration 5 adds two columns to `usage`: `run_id`, and `asked`
+— the router's first rung, beside the `model` that answered. `send()` writes both, the loop
+carries the id, and `serve.ts` hands the run's own id to `run()` **and to the checker**,
+because a review is spent because of a task and a run whose total omitted the reviews that
+made it safe would disagree with the ledger about the same task. `Run.spent` is gone:
+`trace.end` now takes the ledger's rows themselves, so the trace and the ledger cannot
+disagree — they are the same rows. The activity table grew a **Cost** column, declaratively,
+with no line of rendering (M6-4 holding). `correlate.test.ts` is the acceptance: two tasks in
+one session with different totals the session number cannot separate, a 429 fallback whose
+charge names both models, and a charge with no run at all.
+
 **A run's id is on the row that says what it spent, so "why did this cost that" is a lookup
 rather than an argument.**
 
@@ -2863,6 +2874,18 @@ put the id it already had on the rows that were missing it.
 
 **Acceptance.** A multi-step task runs; its trace row and its spend total are retrieved by one
 id and agree with each other. A fallback on 429 shows both model names against the cost.
+
+**Two things came out of building it.**
+
+- **The subtraction had to go, not just gain a column.** `Run.spent` was
+  *allowance-after minus allowance-before*, which two overlapping runs — one at the keyboard,
+  one from Telegram — would split between them, and which could never say *which call* was
+  the dear one. Replacing it with the rows themselves removed the second tally rather than
+  reconciling it, and `spentOn()` sums the same rows the ledger holds.
+- **The checker's spend belongs to the run.** It is a model call made *because of* a task, so
+  `CheckerContext` carries the run. Without it a task's total would quietly omit the reviews
+  that made it safe, and the acceptance — *they agree with each other* — would have been
+  passing on a smaller number than the truth.
 
 ### M7-3 Memory that captures without being asked
 
@@ -3227,6 +3250,7 @@ Newest first. Every entry here is also in Alexia.md's decision log.
 
 | Date | Entry |
 |---|---|
+| 2026-08-29 | **D95** — **a cost belongs to a run, and the trace stopped keeping its own tally.** M7-2. Two columns on `usage` — `run_id`, and `asked` beside the `model` that answered — written by `send()`, carried by the loop, handed down by `serve.ts`. **The restraint version 1 showed is the whole lesson**: it did not invent a second id scheme, it put the id it already had on the rows that were missing it, and that is what this is. **The subtraction had to go, not merely gain a column.** `Run.spent` was the allowance before the run subtracted from the allowance after, which two overlapping runs — one at the keyboard, one from Telegram — would split between them, and which could never say which *call* was the dear one. It is replaced by the ledger's own rows, so the trace and the ledger cannot disagree about a run: they are the same rows, and `spentOn()` sums them. **The checker's spend goes on the run too**, because a review is a model call made because of a task, and a total that omitted the reviews that made a task safe would have passed the acceptance on a number smaller than the truth. **The activity table grew a Cost column and nothing else changed** — declared like every other column, drawn by the same function, which is M6-4 still holding three tasks later. And the null case is a sentence rather than a zero: a run with no charges reads *no model call was recorded against this run*, because `$0.0000` is a different claim and sometimes a wrong one. |
 | 2026-08-29 | **D94** — **the payload is read before it goes, and the third exclusion has a test.** M7-1, G11 answered. `redact.ts` is sixteen regexes and one pass, called from `send()` one line above the only `chat()` in the repo — **there is one door out of this codebase**, and a test reads the source to say so, because a rule enforced at whichever call site somebody remembers is not enforced. Everything bound for anything but `T0` is stripped; `T0` is not, on the fact that only `ollama.ts` ever writes that tier. **The interesting half is what is deliberately allowed.** The owner's quote sits at the top of the file and *"the things how i operate, what i do, what i like"* is exclusion 3, so four behavioural sentences are asserted to arrive **whole** — a future session tightening this helpfully goes red rather than unnoticed, which is the only form a comment saying *do not broaden this* can take and be believed. Version 1's IBAN and card rows did not come across: it carried them for a rule of its own, and a pattern that eats any thirteen-digit run is a real cost paid against a payload the quote permits. **G11 is core's rule**, and building it supplied the argument the plan had not: a plugin never sees the outbound payload at all, so an opt-out would mean inventing a way to ask for one. The legitimate case is priced instead of denied — a plugin whose job is addresses gets them stripped on the way out, and its answer is `T0`, where nothing is stripped because nothing leaves. **And check 8 caught the first draft of the comment**: *"this is also where nothing leaves unread"* is precisely the overclaim `no-overclaiming-strings` exists to find, written into a privacy file by the session that had just read that check. It went red on a comment, which is the failure it was built for. |
 | 2026-08-29 | **D93** — **version 1 was read end to end, and it knew six things this repo does not.** M7 inserted. The first Alexia is still on this machine (the path is in M7's own header, deliberately, so nobody has to guess); M6 took its screen, and this is what was underneath — its `control/`, `core/` and `adapters/` compared against what is actually built here rather than against what anybody remembers building. **One of the six is a hole rather than a missing feature**: D51 makes free endpoints the default and nothing strips a credential or a location before a payload reaches one, which `core/redact.py` did in code, with the owner's own three exclusions and the third — *everything behavioural goes, deliberately* — quoted so a later session cannot tighten it into uselessness. The rest are ordered by what to build first rather than by size: **one id** on the spend row, because `usage` records a `session_id` and ten tasks in one sitting share it, so the panel can say what today cost and not what *that* cost; **memory that captures without being asked**, the largest, carrying four failures already paid for — a model marking twenty-four real memories duplicate and silently writing nothing, a forget undone twelve minutes later by a buffer nobody cleared, a queue frozen forever on one bad row, and a tombstone for the forget that matched nothing; **cloning**, which is the real user D89's `file` refusal was waiting for; **a button in Telegram**, because that plugin's own source says *you have no tools on this path* and means there is nowhere to ask; and **three execution tiers**, whose zero-cost bottom rung was guaranteed by the import graph rather than by a comment. **Four more are in the Backlog, not tasks**, all waiting on the same question: proactive messaging, a reliability scorecard, bounded self-healing, web-watch. That question is **G12 — may a plugin run on its own clock, and spend on it** — half-answered already by `resident` and `sampling`, and unanswered where it matters, since M15-7 counts what a task spends and a plugin waking every twelve minutes spends against no task at all. **Nothing is vendored and nothing is a submodule**: it is a Python app on the gateway this project replaced, so every path is named to be read for its reasons, and every task stands if the folder is gone. |
 | 2026-08-29 | **D92** — **the palette searches the panels themselves, and M6 is done.** M6-10. Ctrl+K from anywhere; Enter opens the tab the thing lives on with its name already in that panel's filter, which is what turns *the right tab* into *the right row*. *One search endpoint over each source's existing read path* turned out to be literal: it ranks the rows the tables show, so there is **no second index** and a skill that has just been forgotten is gone from the palette by the act that removed it — a test says so rather than an argument. A plugin's panel contributes its **name and not its contents**, because reaching inside one is a tool call and a palette that spawned every plugin on every keystroke would be a search box with a startup cost. Fifteen lines of ranking and no dependency, with ties broken by label so the same query gives the same order twice — a palette whose rows swap between keystrokes is one nobody trusts to press Enter on. **It navigates; it does not execute**, and the endpoint cannot: what comes back is a tab and a word. **M6-G was then run rather than asserted** — three plugin panels open, `plugins/memory` deleted, its tab gone, thirty-nine files in core and the shell read and the word in none of them; and on the same run a purge refused without a confirm, a run on the activity panel after the task that made it had ended, and a learned skill sitting at *waiting for you* until one yes. |

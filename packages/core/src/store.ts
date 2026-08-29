@@ -83,6 +83,15 @@ const MIGRATIONS: string[] = [
      cost REAL NOT NULL
    );
    CREATE INDEX usage_at ON usage (at);`,
+
+  // 5 — the run a charge belongs to, and the model that was asked for it (M7-2). A session
+  // is not a run: ten tasks in one sitting share a `session_id`, so without this the ledger
+  // can say what today cost and cannot say what *that* cost, which is the question anybody
+  // actually has. `asked` is the router's first choice and `model` is whoever answered —
+  // they differ on a 429 fallback, which is exactly when a cost is surprising.
+  `ALTER TABLE usage ADD COLUMN run_id TEXT;
+   ALTER TABLE usage ADD COLUMN asked TEXT;
+   CREATE INDEX usage_by_run ON usage (run_id);`,
 ]
 
 /**
@@ -476,7 +485,12 @@ export class Store {
   recordUsage(row: {
     session?: number
     plugin?: string
+    /** The task this was part of (M7-2). Absent for a call that belongs to no run. */
+    run?: string
+    /** Who answered. */
     model: string
+    /** Who the router asked for first. The same as `model` unless something fell back. */
+    asked?: string
     provider: string
     tokensIn: number
     tokensOut: number
@@ -485,19 +499,40 @@ export class Store {
   }): void {
     this.#db
       .prepare(
-        'INSERT INTO usage (at, session_id, plugin, model, provider, tokens_in, tokens_out, cost)' +
-          ' VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        'INSERT INTO usage (at, session_id, plugin, run_id, model, asked, provider, tokens_in, tokens_out, cost)' +
+          ' VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       )
       .run(
         row.at ?? Date.now(),
         row.session ?? null,
         row.plugin ?? null,
+        row.run ?? null,
         row.model,
+        row.asked ?? null,
         row.provider,
         row.tokensIn,
         row.tokensOut,
         row.cost,
       )
+  }
+
+  /**
+   * Every charge made for one run, oldest first (M7-2).
+   *
+   * The join the ledger could not do until it had the id: this is *what did that cost*,
+   * answered by lookup rather than by subtracting one running total from another. The old
+   * way was a difference across the run, which two overlapping runs — a Telegram task and
+   * one at the keyboard — would quietly split between them.
+   *
+   * An empty list means nothing was recorded against this run, which is a fact the caller
+   * says out loud rather than rendering as $0.0000.
+   */
+  callsIn(run: string): { asked: string | null; model: string; provider: string; cost: number }[] {
+    return this.#db
+      .prepare(
+        'SELECT asked, model, provider, cost FROM usage WHERE run_id = ? ORDER BY id',
+      )
+      .all(run) as unknown as { asked: string | null; model: string; provider: string; cost: number }[]
   }
 
   /** What has been spent since `since`, narrowed to one session, plugin or model. */

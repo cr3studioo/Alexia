@@ -1144,7 +1144,6 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     // than what the model was shown — M15-6 trims the second, and trimming this one because
     // of that would be one decision serving two jobs badly.
     const runId = randomUUID()
-    const before = allowance(store).spent
     trace.start(runId, text)
     try {
       const result = await run({
@@ -1155,6 +1154,9 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
         store,
         secrets,
         session,
+        // Every charge this task makes lands on a row carrying this id (M7-2), which is what
+        // turns *why did that cost £0.02* from an argument into a lookup.
+        run: runId,
         paidAllowed: !month.stop,
         maxSteps: limits.steps,
         signal: stop.signal,
@@ -1182,7 +1184,8 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
           if (ruling.verdict !== 'run' || now.mode !== 'watch') return ruling
 
           const step = { n: 0, name: call.name, args: call.args }
-          const review = await checker.review({ step, task: text, scope: now })
+          // The review is spent because of this task, so it lands on this task's rows.
+          const review = await checker.review({ step, task: text, scope: now, run: runId })
           tally = counted(tally, review)
           return asRuling(review, step, tally)
         },
@@ -1219,7 +1222,9 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
       })
       trace.end(result.ended, {
         ...(result.why !== undefined && { why: result.why }),
-        spent: allowance(store).spent - before,
+        // Looked up, not subtracted (M7-2). The old difference-across-the-run split its
+        // total with anything else spending at the same moment — a Telegram task, say.
+        calls: store.callsIn(runId),
       })
 
       if (result.ended === 'refused') {
@@ -1284,7 +1289,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     } catch (error) {
       // A run that threw is a run that ended, and the record says which — an entry left
       // open would read as *still going* to somebody looking at the panel afterwards.
-      trace.end('refused', { why: said(error), spent: allowance(store).spent - before })
+      trace.end('refused', { why: said(error), calls: store.callsIn(runId) })
       say({ error: said(error) })
     }
     // Whatever ended the task, an unanswered question outlives nothing. Settling it as a

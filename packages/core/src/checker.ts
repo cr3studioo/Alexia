@@ -67,6 +67,12 @@ export interface CheckerContext {
   /** What the user asked for, so the checker can tell *not asked for* from *asked for*. */
   task: string
   scope: Scope
+  /**
+   * The run being checked (M7-2). A review is spent *because of* a task, so it lands on that
+   * task's rows — otherwise a run's total would omit the reviews that made it safe, and the
+   * trace and the ledger would disagree about the same task.
+   */
+  run?: string
 }
 
 export interface Checker {
@@ -128,6 +134,7 @@ export class ModelChecker implements Checker {
         this.options.secrets,
         {
           ...(this.options.session !== undefined && { session: this.options.session }),
+          ...(context.run !== undefined && { run: context.run }),
           // The checker never spends money without being told to. A reviewer that quietly
           // costs more than the task is a reviewer people turn off.
           paidAllowed: placement === 'cloud',
