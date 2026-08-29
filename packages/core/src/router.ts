@@ -179,8 +179,35 @@ export function route(ask: Ask, pins: Pins, world: World): Verdict {
   return { ok: false, why: refusal(where, pins, pool, needsTools, shape) }
 }
 
+/**
+ * Cheapest first — and **the tie is the interesting part**, because the free tier is one
+ * enormous tie.
+ *
+ * Tier, then the two prices, was the whole comparator, and every free model matches on all
+ * three: `T1`, zero, zero. So the winner among twenty free models was **whichever the
+ * catalog happened to list first**, which is a property of a JSON feed rather than a
+ * judgement, and *Automatic* — plus the ★ on the models screen, which is defined as what
+ * Automatic would pick — inherited it.
+ *
+ * Found the way these things are found: a personality that reached the model intact and was
+ * ignored anyway. The free model at the front of the list could not hold a system prompt,
+ * and nothing in this function had an opinion about that.
+ *
+ * `weekly` is the axis, and it is already fetched. Its own comment is the argument — *a free
+ * model nobody sends anything to is a free model with a reason nobody wrote down* — and it
+ * is the only quality signal here that comes from outside this machine, so it cannot go
+ * stale the way a list of good models written into this file would.
+ *
+ * **A model whose provider publishes no figure sorts behind one that does**, which is the
+ * same way this codebase reads every other silence: `nsfwOk: 'unknown'` does not satisfy an
+ * uncensored pin either. Absent is not zero and is not last-because-bad — it is last because
+ * unknown, among models that were otherwise going to be ordered by a feed's whim.
+ */
 const cheapest = (a: Choice, b: Choice): number =>
-  rank(a.model.tier) - rank(b.model.tier) || a.model.priceIn - b.model.priceIn || a.model.priceOut - b.model.priceOut
+  rank(a.model.tier) - rank(b.model.tier) ||
+  a.model.priceIn - b.model.priceIn ||
+  a.model.priceOut - b.model.priceOut ||
+  (b.model.weekly ?? -1) - (a.model.weekly ?? -1)
 
 /**
  * Why there is nothing, in words that name the next action. This is the half of the

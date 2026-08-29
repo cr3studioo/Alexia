@@ -38,12 +38,17 @@ type Turn = { say: string } | { call: string; args?: string }
 let script: Turn[] = []
 /** Which model id served each step, in order. The per-step tiering assertions read this. */
 let served: string[] = []
+/** The last request as the provider received it. What the model was *shown*, not what we meant. */
+let body: { model: string; messages: { role: string; content: string }[] } | undefined
+/** The standing instruction as it went on the wire. A function, so a reset does not narrow it away. */
+const systemLine = (): string => body?.messages.find((m) => m.role === 'system')?.content ?? ''
 
 const server: Server = createServer((request, response) => {
   let raw = ''
   request.on('data', (chunk: Buffer) => (raw += chunk.toString()))
   request.on('end', () => {
-    served.push((JSON.parse(raw) as { model: string }).model)
+    body = JSON.parse(raw) as { model: string; messages: { role: string; content: string }[] }
+    served.push(body.model)
     const turn = script.shift() ?? { say: 'done' }
     const delta =
       'call' in turn ?
@@ -315,5 +320,48 @@ test('with nothing to call, the loop is one turn and says so to the model', asyn
   expect(result.ended).toBe('answered')
   expect(result.steps).toEqual([])
   expect(result.messages.map((m) => m.role)).toEqual(['assistant'])
+  store.close()
+})
+
+test('a personality reaches the model, and only ever after Alexia’s own instruction', async () => {
+  /**
+   * The test M4-4 shipped without, and the reason it needed one.
+   *
+   * The first personality node rewrote the *finished answer* instead, which meant every
+   * behavioural line in a real personality — *ask before anything with external
+   * consequence* — was inert by construction. It was replaced by this path, and nothing
+   * asserted the paragraph actually arrives: it is built in `system()`, handed to `send`,
+   * and mapped by `toWire`, and a break anywhere along there looks exactly like a model
+   * choosing to ignore it.
+   */
+  script = [{ say: 'Noted.' }]
+  served = []
+  body = undefined
+  const { store, session, world } = bench()
+
+  await run({
+    messages: start('hey'),
+    tools: tooling({ list: [] }),
+    pins,
+    world,
+    store,
+    secrets,
+    session,
+    personality: '# Chief of staff\n\nCall him Vacen. No emojis.',
+  })
+
+  const system = systemLine()
+  expect(system).toContain('Call him Vacen. No emojis.')
+  // After, never instead of. The four standing lines are the floor a model needs to drive
+  // the loop at all, and a personality that could replace them could turn the loop off.
+  expect(system.indexOf('You are Alexia')).toBeLessThan(system.indexOf('Chief of staff'))
+
+  // And with none chosen, the system line is exactly what it always was — the default is
+  // what most conversations get, so it is the half most worth pinning down.
+  script = [{ say: 'Noted.' }]
+  body = undefined
+  await run({ messages: start('hey'), tools: tooling({ list: [] }), pins, world, store, secrets, session })
+  expect(systemLine()).toContain('You are Alexia')
+  expect(systemLine()).not.toContain('Vacen')
   store.close()
 })

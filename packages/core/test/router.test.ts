@@ -75,6 +75,30 @@ test('the cheapest rung that can do the job, and nothing dearer', () => {
   ])
 })
 
+test('among free models, the tie breaks on what the world actually uses', () => {
+  // The free tier is one enormous tie: every one of these is T1, zero in, zero out. Before
+  // `weekly` was in the comparator the winner was whichever the catalog listed first, and
+  // that is a property of a JSON feed rather than a judgement — found when a personality
+  // reached the model intact and was ignored by the small model at the front of the list.
+  const popular = model({ id: 'free/popular', tier: 'T1', supportsTools: true, weekly: 3_385_079 })
+  const niche = model({ id: 'free/niche', tier: 'T1', supportsTools: true, weekly: 113 })
+  const silent = model({ id: 'free/silent', tier: 'T1', supportsTools: true })
+  const ask = { messages: asked('hello'), tools: [{ name: 'fs.list' }] }
+
+  // Listed worst-first on purpose: the catalog's order must not be what decides it.
+  const order = ids(route(ask, pins(), world({ models: [niche, silent, popular], local: [] })))
+  expect(order).toEqual(['free/popular', 'free/niche', 'free/silent'])
+
+  // A provider that publishes no figure is unknown rather than unused, and unknown loses to
+  // known-good — the same way `nsfwOk: 'unknown'` does not satisfy an uncensored pin. It
+  // never outranks price, though: silence is not a discount.
+  const paid = model({ id: 'paid/known', tier: 'T2', priceIn: 0.2, supportsTools: true, weekly: 9_000_000 })
+  expect(ids(route(ask, pins(), world({ models: [paid, silent], local: [] })))).toEqual([
+    'free/silent',
+    'paid/known',
+  ])
+})
+
 test('a plugin floor and the try-again-smarter hatch both raise the bar', () => {
   const ask = { messages: asked('capital of Norway'), minTier: 'T2' as const }
   expect(ids(route(ask, pins(), world()))).toEqual(['paid/small', 'paid/frontier'])
