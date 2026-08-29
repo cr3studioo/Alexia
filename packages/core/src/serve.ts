@@ -34,6 +34,7 @@ import { keyOf, PROVIDERS } from './provider.js'
 import { MODES, route, send, shapeOf } from './router.js'
 import { CORE, keychain, type SecretStore } from './secrets.js'
 import { addServer, markReviewed, unreviewed } from './servers.js'
+import { declaredWidgets } from './settings.js'
 import { Skills, SKILL_TOOL } from './skills.js'
 import { dataDir, Store, type Message } from './store.js'
 import { PluginTooling } from './tooling.js'
@@ -570,6 +571,21 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     }
 
     /**
+     * The control surface's tab list (M6-2).
+     *
+     * Assembled, never typed: core's own tabs, then one for every enabled plugin that
+     * declared a panel. The shell draws whatever comes back and knows the name of nothing —
+     * which is what makes deleting a folder take its tab with it, and what M6-G tests.
+     *
+     * A GET, and it spawns nothing, for the same reason `/api/plugins` does not.
+     */
+    if (url.pathname === '/api/panels') {
+      response.writeHead(200, { 'content-type': 'application/json' })
+      response.end(JSON.stringify({ tabs: await plugins.tabs() }))
+      return
+    }
+
+    /**
      * The lifecycle, in one endpoint (M2-5).
      *
      * `enable` is the moment of consent — the screen has just shown what this plugin asked
@@ -861,9 +877,10 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     if (url.pathname === '/api/action' && request.method === 'POST') {
       const press = sent as { plugin?: string; key?: string; approved?: boolean }
       const plugin = press.plugin ?? ''
-      const declared = plugins
-        .manifest(plugin)
-        ?.settings?.find((setting) => setting.key === press.key && setting.type === 'action')
+      const manifest = plugins.manifest(plugin)
+      // Either screen. A row action on a panel is an `action`, and it goes through the gate
+      // below rather than through a second one invented for panels (D83).
+      const declared = manifest && declaredWidgets(manifest).find((setting) => setting.key === press.key && setting.type === 'action')
       if (declared?.type !== 'action') {
         response.writeHead(200, { 'content-type': 'application/json' })
         response.end(JSON.stringify({ ok: false, said: `There is no button called "${press.key ?? ''}".` }))

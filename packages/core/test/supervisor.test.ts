@@ -32,7 +32,7 @@ function manifest(over: Partial<Manifest> = {}): Manifest {
     version: '0.1.0',
     license: 'AGPL-3.0-only',
     entry: { run: 'node', args: ['plugin.js'] },
-    alexia_protocol: 1,
+    alexia_protocol: 2,
     mcp_protocol: MCP_PINNED,
     ...over,
   }

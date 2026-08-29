@@ -42,6 +42,13 @@
         Plugins
       </button>
 
+      <!-- The control surface (M6-2). The questions that arrive on day thirty: what has this
+           been doing, what did I say yes to, what does it know. Records you read, which is a
+           different screen from values you change. -->
+      <button id="open-control" class="control" type="button" title="What Alexia has been doing, and what it knows">
+        Control
+      </button>
+
       <!-- Which model answered, and what the month has cost. Both always on screen: the first
            is how you know where your words went, the second is how nobody is ever surprised
            by a bill. -->
@@ -159,6 +166,26 @@
              file in it, so there is nothing to configure — only what is there and what is
              broken. Installing one is the skills marketplace, at M3-5. -->
         <div id="skills"></div>
+      </div>
+    </section>
+
+    <!-- The control surface (M6-2). Nothing in this markup names a tab: the strip is built
+         from what core sends, which is core's own tabs plus one for every enabled plugin
+         that declared a panel. Delete the plugin's folder and its tab goes with it. -->
+    <section id="control" class="view">
+      <div class="centred">
+        <div class="view-top">
+          <h2 class="step-heading">Control</h2>
+          <button id="close-control" class="quiet-button" type="button">Back</button>
+        </div>
+
+        <!-- Narrow: the strip collapses to the active tab's own name, and tapping it opens
+             the list. Nine tabs in a scrollable row is technically fine and awkward in
+             practice, and the overlay is narrower than any phone this was tested on. -->
+        <button id="tab-current" class="tab-current" type="button" aria-expanded="false" hidden></button>
+        <nav id="tabs" class="tabs" aria-label="Control panels"></nav>
+
+        <div id="panel"></div>
       </div>
     </section>
 

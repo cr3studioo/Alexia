@@ -3,6 +3,8 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, test } from 'vitest'
 import {
+  ALEXIA_PROTOCOL_MAX,
+  ALEXIA_PROTOCOL_MIN,
   Manifest,
   MCP_PINNED,
   pluginJsonSchema,
@@ -95,10 +97,23 @@ describe('and four more that would hurt later', () => {
 })
 
 describe('the two version checks', () => {
-  const base = { name: 'Voice', alexia_protocol: 1, mcp_protocol: MCP_PINNED }
+  const base = { name: 'Voice', alexia_protocol: ALEXIA_PROTOCOL_MAX, mcp_protocol: MCP_PINNED }
 
   test('the pinned pair loads', () => {
     expect(versionVerdict(base)).toEqual({ ok: true })
+  })
+
+  test('one revision back loads, which is the whole of the promise', () => {
+    expect(versionVerdict({ ...base, alexia_protocol: ALEXIA_PROTOCOL_MAX - 1 })).toEqual({ ok: true })
+  })
+
+  test('two revisions back is refused, in words that name the way out', () => {
+    // What raising `MIN` is *for*. It happened for the first time at 3 (D86), and the
+    // sentence has to send somebody to the plugin's update rather than to a stack trace.
+    const v = versionVerdict({ ...base, alexia_protocol: ALEXIA_PROTOCOL_MIN - 1 })
+    expect(v.ok).toBe(false)
+    expect(v.ok === false && v.reason).toContain('written for an older version')
+    expect(v.ok === false && v.reason).toContain('has an update')
   })
 
   test('a plugin from the future is refused in words a person can act on', () => {
@@ -112,6 +127,66 @@ describe('the two version checks', () => {
     expect(v.ok).toBe(false)
     expect(v.ok === false && v.reason).toContain('2025-11-25 and 2026-07-28')
     expect(v.ok === false && v.reason).toContain('2024-11-05')
+  })
+})
+
+describe('panel — a tab a plugin declares (M6-2, D86)', () => {
+  const withPanel = (panel: unknown, revision = 3): Record<string, unknown> => ({
+    ...structuredClone(voice),
+    alexia_protocol: revision,
+    panel,
+  })
+  const ok = { label: 'Voice', widgets: [{ key: 'clips', type: 'status', label: 'Clips' }] }
+
+  test('a plugin declares a tab the same way it declares settings', () => {
+    const r = Manifest.safeParse(withPanel(ok))
+    expect(r.success ? null : r.error.issues).toBe(null)
+  })
+
+  test('declaring one while claiming an older revision is a load error', () => {
+    // The rule `lifetime` established: an integer a manifest can quietly ignore is an
+    // integer that means nothing, and the machine running yesterday's build is where that
+    // gets found otherwise.
+    const r = Manifest.safeParse(withPanel(ok, 2))
+    expect(r.success).toBe(false)
+    expect(r.success === false && r.error.issues.map((i) => i.path.join('.'))).toContain('panel')
+  })
+
+  test('a panel with no widgets is not a panel', () => {
+    expect(Manifest.safeParse(withPanel({ label: 'Voice', widgets: [] })).success).toBe(false)
+  })
+
+  test('the widget rules are the widget rules, wherever they are declared', () => {
+    const bent = withPanel({
+      label: 'Voice',
+      widgets: [{ key: 'size', type: 'choice', label: 'Size', options: ['tiny'], default: 'enormous' }],
+    })
+    const r = Manifest.safeParse(bent)
+    expect(r.success).toBe(false)
+    // And the path points at what the author wrote, not at the list core happened to check.
+    expect(r.success === false && r.error.issues.map((i) => i.path.join('.'))).toContain('panel.widgets.0.default')
+  })
+
+  test('two widgets on one panel cannot share a key', () => {
+    const clash = withPanel({
+      label: 'Voice',
+      widgets: [
+        { key: 'clips', type: 'status', label: 'Clips' },
+        { key: 'clips', type: 'status', label: 'Clips again' },
+      ],
+    })
+    expect(Manifest.safeParse(clash).success).toBe(false)
+  })
+
+  test('a key declared on both screens is a load error, because it is one stored value', () => {
+    const shared = withPanel({
+      label: 'Voice',
+      // `download_state` is already a `progress` widget in the example's settings list.
+      widgets: [{ key: 'download_state', type: 'status', label: 'Download' }],
+    })
+    const r = Manifest.safeParse(shared)
+    expect(r.success).toBe(false)
+    expect(r.success === false && r.error.issues.map((i) => i.message).join()).toContain('one namespace')
   })
 })
 

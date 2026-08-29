@@ -4,6 +4,7 @@ import { ProtocolError, type CallToolResult, type CreateMessageRequestParams, ty
 import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { keychain, type SecretStore } from './secrets.js'
+import { declaredWidgets } from './settings.js'
 import { ALEXIA_VERSION, type HostServices } from './supervisor.js'
 import type { Store } from './store.js'
 
@@ -108,7 +109,9 @@ export class Host implements HostServices {
 
       case 'alexia/settings/set': {
         const p = params as AlexiaParams<'alexia/settings/set'>
-        const declared = manifest.settings?.find((setting) => setting.key === p.key)
+        // Either screen: a `status` a plugin drives is the same `status` whether the author
+        // put it in the settings pane or on its panel (D86).
+        const declared = declaredWidgets(manifest).find((setting) => setting.key === p.key)
         if (!declared) {
           return fail(ErrorCode.SETTING_UNKNOWN, `${pluginId} did not declare a setting called "${p.key}"`)
         }
@@ -190,7 +193,9 @@ export class Host implements HostServices {
   async #settings(manifest: Manifest): Promise<Record<string, unknown>> {
     const stored = this.options.store.settings(manifest.id)
     const settings: Record<string, unknown> = {}
-    for (const setting of manifest.settings ?? []) {
+    // Both screens, because this is a plugin reading its own declared values back and a
+    // widget it put on its panel is one of those (D86).
+    for (const setting of declaredWidgets(manifest)) {
       if (setting.type === 'password') {
         // Read now, from the keychain, and never from the database — which is what the
         // purge check proves rather than trusts. The plugin is told not to cache it.

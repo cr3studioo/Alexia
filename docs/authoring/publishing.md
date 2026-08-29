@@ -45,7 +45,7 @@ Send the maintainer the row:
   "author": "you",
   "url": "https://example.com/my-plugin-0.1.0.tgz",
   "sha256": "…64 hex characters…",
-  "alexia_protocol": 1,
+  "alexia_protocol": 3,
   "mcp_protocol": "2025-11-25",
   "requires": [{ "cap": "net.request", "why": "To ask a forecast service." }],
   "provides": ["weather.forecast"]

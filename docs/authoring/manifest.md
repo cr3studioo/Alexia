@@ -15,7 +15,7 @@ provide, what to purge.
 
   "entry": { "run": "node", "args": ["index.js"] },
 
-  "alexia_protocol": 1,           // ours: which Alexia contract you were written against
+  "alexia_protocol": 3,           // ours: which Alexia contract you were written against
   "mcp_protocol": "2025-11-25",   // MCP's: which revision you serve
 
   "requires": [
@@ -58,12 +58,15 @@ handshake and handled by the SDK. `alexia_protocol` is ours, an integer, bumped 
 `alexia/*` layer changes — and checked before you are spawned at all:
 
 ```
-you say alexia_protocol 1    Alexia speaks 1..3   ->  loads
-you say alexia_protocol 4    Alexia speaks 1..3   ->  "Coat Check needs a newer Alexia"
+you say alexia_protocol 3    Alexia speaks 2..3   ->  loads
+you say alexia_protocol 2    Alexia speaks 2..3   ->  loads — one revision back is supported
+you say alexia_protocol 1    Alexia speaks 2..3   ->  "Coat Check was written for an older version"
+you say alexia_protocol 4    Alexia speaks 2..3   ->  "Coat Check needs a newer Alexia"
 ```
 
 That refusal is what makes accepting third-party plugins survivable against a contract that
-is still moving.
+is still moving. Declare the current revision — the scaffold does — and read
+[`../spec/versions.md`](../spec/versions.md) when the floor rises.
 
 ## `requires`: two kinds, one syntax
 

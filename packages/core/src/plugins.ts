@@ -11,8 +11,9 @@ import {
 import { cpSync, readdirSync, readFileSync, realpathSync, rmSync, watch, type FSWatcher } from 'node:fs'
 import { basename, join } from 'node:path'
 import { Host } from './host.js'
+import { tabs, type Tab } from './panels.js'
 import { CORE, keychain, type SecretStore } from './secrets.js'
-import { pane, refuse, write, type Pane, type Progress } from './settings.js'
+import { declaredWidgets, pane, refuse, write, type Pane, type PaneOptions, type Progress } from './settings.js'
 import type { Store } from './store.js'
 import { PluginProcess, type Timings } from './supervisor.js'
 
@@ -352,18 +353,35 @@ export class Plugins {
     for (const id of this.ids) {
       const manifest = this.manifest(id)
       if (!manifest) continue
-      built.push(
-        await pane(manifest, {
-          store: this.options.store,
-          enabled: (of) => this.enabled(of),
-          running: (of) => this.running(of),
-          tools: (of) => this.#toolNames.get(of),
-          progress: (of) => this.#progress.get(of),
-          hasSecret: async (of, key) => (await this.#secrets.get(of, key)) !== undefined,
-        }),
-      )
+      built.push(await pane(manifest, this.#drawing()))
     }
     return built
+  }
+
+  /**
+   * The control surface's tab list (M6-2).
+   *
+   * Core's tabs plus one per enabled plugin that declared a panel. Core has no say in the
+   * second half beyond *is it enabled*, which is what makes deleting a folder take its tab
+   * with it — and what makes M6-G a test rather than a hope.
+   */
+  async tabs(): Promise<Tab[]> {
+    return tabs({
+      ...this.#drawing(),
+      manifests: this.ids.flatMap((id) => this.manifest(id) ?? []),
+    })
+  }
+
+  /** What both screens need to draw a declared widget, and neither of them spawns anything. */
+  #drawing(): PaneOptions {
+    return {
+      store: this.options.store,
+      enabled: (of) => this.enabled(of),
+      running: (of) => this.running(of),
+      tools: (of) => this.#toolNames.get(of),
+      progress: (of) => this.#progress.get(of),
+      hasSecret: async (of, key) => (await this.#secrets.get(of, key)) !== undefined,
+    }
   }
 
   /**
@@ -380,7 +398,9 @@ export class Plugins {
    */
   async setSetting(id: string, key: string, value: unknown): Promise<void> {
     const entry = this.#entries.get(id)
-    const declared = entry?.manifest.settings?.find((s) => s.key === key)
+    // Either screen: settings and `panel.widgets` are one namespace, because the value is
+    // stored once (D86). A widget the author put on the panel is not a second kind of thing.
+    const declared = entry && declaredWidgets(entry.manifest).find((s) => s.key === key)
     if (!entry || !declared) {
       throw new ProtocolError(ErrorCode.INVALID_PARAMS, `${id} has no setting called "${key}"`)
     }
@@ -404,7 +424,8 @@ export class Plugins {
    */
   async action(id: string, key: string, signal?: AbortSignal): Promise<{ ok: boolean; said: string }> {
     const entry = this.#entries.get(id)
-    const declared = entry?.manifest.settings?.find((s) => s.key === key)
+    // Either screen. A button on a panel is the same button (D86).
+    const declared = entry && declaredWidgets(entry.manifest).find((s) => s.key === key)
     if (!entry || declared?.type !== 'action') {
       throw new ProtocolError(ErrorCode.INVALID_PARAMS, `${id} has no button called "${key}"`)
     }

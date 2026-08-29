@@ -3,7 +3,7 @@ import { MCP_PINNED, MCP_REVISIONS } from '@alexia/protocol'
 import { expect, test } from 'vitest'
 import { negotiate } from '../src/handshake.js'
 
-const voice = { name: 'Voice', alexia_protocol: 1, mcp_protocol: MCP_PINNED }
+const voice = { name: 'Voice', alexia_protocol: 2, mcp_protocol: MCP_PINNED }
 
 test('both sides on the pin: the newest shared revision wins', () => {
   expect(negotiate(voice, [...MCP_REVISIONS])).toEqual({ ok: true, mcp: MCP_PINNED })

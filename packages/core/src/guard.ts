@@ -131,6 +131,12 @@ export const ROUTES: Readonly<Record<string, Route>> = {
     ),
   },
 
+  '/api/panels': {
+    otherwise: read(
+      'The control surface’s tab list: core’s own tabs, and one for every enabled plugin that declared a panel. Assembled from manifests and the store on every read, and it spawns nothing.',
+    ),
+  },
+
   '/api/plugin': {
     acts: {
       enable: safe(

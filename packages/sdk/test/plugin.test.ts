@@ -17,7 +17,7 @@ function folder(over: Partial<ManifestInput> = {}): string {
     version: '0.1.0',
     license: 'Apache-2.0',
     entry: { run: 'node', args: ['index.js'] },
-    alexia_protocol: 1,
+    alexia_protocol: 2,
     mcp_protocol: MCP_PINNED,
     ...over,
   }

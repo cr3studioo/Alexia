@@ -54,6 +54,33 @@ Three marks, no legend:
 Alexia remembers the value while you are stopped, so the screen is honest before your next
 spawn.
 
+
+## A panel: the same widgets, a different screen
+
+*Needs `"alexia_protocol": 3`.*
+
+```jsonc
+"panel": {
+  "label": "Voice",
+  "widgets": [
+    { "key": "which_voice", "type": "choice", "label": "Who speaks", "options": ["Ada", "Rowan"] },
+    { "key": "clips", "type": "status", "label": "Clips" }
+  ]
+}
+```
+
+That is a **tab on the control surface** — the screen a person opens to ask what Alexia has
+been doing and what it knows. Your tab is there because somebody enabled your plugin, and it
+goes when your folder does. Nothing in Alexia writes your tab's name down.
+
+Everything above still applies: the same widgets, the same rules, the same renderer. Use the
+settings pane for values somebody sets once and a panel for something they come back to look
+at — plus the one or two things they change while looking.
+
+**One namespace.** A key may appear in `settings` or in `panel.widgets`, not both: the value
+is stored once, so two declarations of it could disagree about its type. Declaring one twice
+is a load error.
+
 ## `action` and `progress` together
 
 An `action` button calls one of your tools with no arguments and carries a `progressToken`,

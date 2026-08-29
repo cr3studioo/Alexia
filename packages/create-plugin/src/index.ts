@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+import { ALEXIA_PROTOCOL_MAX, MCP_PINNED } from '@alexia/protocol'
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { createInterface } from 'node:readline/promises'
@@ -37,8 +38,10 @@ export const manifestFor = (a: Answers): Record<string, unknown> => ({
   version: '0.1.0',
   license: a.license,
   entry: { run: 'node', args: ['index.js'] },
-  alexia_protocol: 1,
-  mcp_protocol: '2025-11-25',
+  // The current revision, not the oldest one that loads. A scaffold that starts a plugin on
+  // the revision about to be deprecated hands its author a migration on day one.
+  alexia_protocol: ALEXIA_PROTOCOL_MAX,
+  mcp_protocol: MCP_PINNED,
   // Commented out rather than absent: the shape is right there when it is needed, and a
   // capability nobody asked for is a permission prompt nobody had to read.
   settings: [{ type: 'status', key: 'ready', label: 'State' }],

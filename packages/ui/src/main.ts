@@ -12,6 +12,7 @@
  */
 
 import { autostart, dismiss, HOTKEY, inApp, setAutostart, tray } from './desktop.js'
+import { mountControl } from './control.js'
 import { mountSettings } from './settings.js'
 
 interface Turn {
@@ -105,7 +106,7 @@ function called(name: string): void {
  * whose `hidden` flags have to agree — and the one thing this shell must never do is show the
  * composer and first run at once, inviting a question it cannot answer yet.
  */
-function show(view: 'first-run' | 'chat' | 'settings'): void {
+function show(view: 'first-run' | 'chat' | 'settings' | 'control'): void {
   document.body.dataset.view = view
 }
 
@@ -655,6 +656,20 @@ if (inApp()) {
 }
 
 document.querySelector('#close-settings')!.addEventListener('click', () => {
+  show('chat')
+  text.focus()
+})
+
+// ---- the control surface (M6-2) ---------------------------------------------------------
+
+const control = mountControl(token)
+
+document.querySelector('#open-control')!.addEventListener('click', () => {
+  show('control')
+  control.open()
+})
+
+document.querySelector('#close-control')!.addEventListener('click', () => {
   show('chat')
   text.focus()
 })

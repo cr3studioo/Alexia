@@ -28,7 +28,7 @@ const manifest = Manifest.parse({
   version: '0.1.0',
   license: 'AGPL-3.0-only',
   entry: { run: 'node', args: ['index.js'] },
-  alexia_protocol: 1,
+  alexia_protocol: 2,
   mcp_protocol: '2025-11-25',
   requires: [{ cap: 'audio.input', why: 'To hear you when you press the hotkey.' }],
   settings: [

@@ -230,18 +230,22 @@ header {
   font-variant-numeric: tabular-nums;
 }
 
-/* ---- the two views ------------------------------------------------------------------
+/* ---- the views ----------------------------------------------------------------------
 
    First run is a view, not a section of the chat page with a block swapped out. That is what
    makes "first run and the composer are never on screen together" structural rather than a
-   rule somebody has to remember: on this view the composer is not rendered at all. */
+   rule somebody has to remember: on this view the composer is not rendered at all.
 
-body[data-view='first-run'] #chat,
-body[data-view='first-run'] #settings,
-body[data-view='chat'] #first-run,
-body[data-view='chat'] #settings,
-body[data-view='settings'] #first-run,
-body[data-view='settings'] #chat {
+   Four of them now (M6-2). Written as "hide every view that is not this one" rather than as
+   a matrix: the matrix was twelve lines at three views and the fourth would have made it
+   twenty, and a list that grows by n every time is a list somebody eventually gets wrong by
+   one. Each view keeps its own `display` further down — `#chat` is a grid — which is why
+   this rule only ever says `none`. */
+
+body[data-view='first-run'] > .view:not(#first-run),
+body[data-view='chat'] > .view:not(#chat),
+body[data-view='settings'] > .view:not(#settings),
+body[data-view='control'] > .view:not(#control) {
   display: none;
 }
 
@@ -318,6 +322,84 @@ body[data-view='first-run'] header {
 
 .view-top .step-heading {
   margin: 0;
+}
+
+/* ---- the control surface (M6-2) -------------------------------------------------------
+
+   The tab strip, and the one thing the old dashboard got wrong here. Nine tabs in a
+   scrollable row was technically fine and awkward in practice: reaching the last one meant
+   dragging sideways past eight you did not want. Below `--narrow` the strip is replaced by
+   the active tab's own name, and tapping that name opens the list — which is what its owner
+   asked for, and what the overlay needs, being narrower than any phone this was tested on. */
+
+#control {
+  overflow-y: auto;
+  padding: var(--space-5) var(--space-4) var(--space-6);
+}
+
+.tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin-bottom: var(--space-5);
+  border-bottom: 1px solid var(--line);
+}
+
+.tab {
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: none;
+  color: var(--ink-quiet);
+  font: inherit;
+  cursor: pointer;
+}
+
+.tab:hover {
+  color: var(--ink);
+}
+
+/* The active tab is marked by weight and a rule under it, not by colour: colour on this
+   screen means something happened, and being where you are has not happened to you. */
+.tab.on {
+  color: var(--ink);
+  font-weight: 600;
+  border-bottom-color: var(--ink);
+}
+
+.tab-current {
+  display: block;
+  width: 100%;
+  margin-bottom: var(--space-4);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  color: var(--ink);
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+/* Opened from the narrow control, the list is a list rather than a row: eight names wrapped
+   into three lines is the thing that was awkward to read in the first place. */
+@media (max-width: 559px) {
+  .tabs {
+    flex-direction: column;
+    align-items: stretch;
+    border-bottom: 0;
+  }
+
+  .tab {
+    text-align: left;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .tab.on {
+    border-bottom-color: var(--ink);
+  }
 }
 
 .pane {

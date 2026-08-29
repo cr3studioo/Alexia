@@ -18,7 +18,7 @@ const plugin = (id: string, ...names: string[]): Manifest =>
     version: '0.1.0',
     license: 'AGPL-3.0-only',
     entry: { run: 'node', args: ['index.js'] },
-    alexia_protocol: 1,
+    alexia_protocol: 2,
     mcp_protocol: '2025-11-25',
     commands: names.map((name) => ({ name, summary: `does ${name}` })),
   })

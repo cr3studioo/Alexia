@@ -98,16 +98,35 @@ export interface PaneOptions {
   platform?: string
 }
 
-/** One plugin's pane: its chrome, and its ten-widget form filled in. */
-export async function pane(manifest: Manifest, options: PaneOptions): Promise<Pane> {
+/**
+ * Every widget this plugin declared, on either screen.
+ *
+ * `settings` and `panel.widgets` are one namespace (D86) because a widget's value is stored
+ * once. So *is this key declared* has one answer, and the two places that ask it — an edit
+ * arriving and a button being pressed — get it from here rather than each searching the list
+ * they happen to know about.
+ */
+export function declaredWidgets(manifest: Manifest): Setting[] {
+  return [...(manifest.settings ?? []), ...(manifest.panel?.widgets ?? [])]
+}
+
+/**
+ * A declared list of widgets, filled in with what core knows right now.
+ *
+ * Shared by the settings pane and the control-surface panel, because they are two views of
+ * one declaration and a second renderer would be a second set of rules about `password`.
+ */
+export async function render(
+  manifest: Manifest,
+  declaredList: readonly Setting[],
+  options: PaneOptions,
+): Promise<Rendered[]> {
   const stored = options.store.settings(manifest.id)
-  const enabled = options.enabled?.(manifest.id) ?? true
-  const running = options.running(manifest.id)
   const tools = options.tools(manifest.id)
   const where = secretStoreName(options.platform)
 
   const settings: Rendered[] = []
-  for (const declared of manifest.settings ?? []) {
+  for (const declared of declaredList) {
     if (declared.type === 'password') {
       // The secret itself is not put on the screen. What the screen needs is whether there is
       // one and which store holds it — the two facts a person actually wants, and neither of
@@ -137,17 +156,21 @@ export async function pane(manifest: Manifest, options: PaneOptions): Promise<Pa
     const value = stored[declared.key] ?? ('default' in declared ? declared.default : undefined)
     settings.push({ ...declared, ...(value !== undefined && { value }) })
   }
+  return settings
+}
 
+/** One plugin's pane: its chrome, and its ten-widget form filled in. */
+export async function pane(manifest: Manifest, options: PaneOptions): Promise<Pane> {
   return {
     id: manifest.id,
     name: manifest.name,
     summary: manifest.summary,
     version: manifest.version,
     license: manifest.license,
-    enabled,
-    running,
+    enabled: options.enabled?.(manifest.id) ?? true,
+    running: options.running(manifest.id),
     requires: manifest.requires?.map((r) => ({ cap: r.cap, why: r.why })) ?? [],
-    settings,
+    settings: await render(manifest, manifest.settings ?? [], options),
   }
 }
 

@@ -80,15 +80,16 @@ is rejected — it is right on your machine and wrong on everyone else's.
 ### The two versions
 
 ```jsonc
-"alexia_protocol": 1,          // ours: which Alexia contract you were written against
+"alexia_protocol": 3,          // ours: which Alexia contract you were written against
 "mcp_protocol": "2025-11-25"   // MCP's: which revision your server speaks
 ```
 
 They do different jobs and both are checked before you get a process.
 
-`alexia_protocol` is an integer that goes up when the `alexia/*` layer changes. Core speaks
-a range. Outside it, your plugin does not load and the user is told something they can act
-on:
+`alexia_protocol` is an integer that goes up when the `alexia/*` layer or this file changes.
+Core speaks a range — **2 to 3 today** — and one revision back is supported, which is what
+makes raising the floor a deprecation rather than a surprise. Outside the range your plugin
+does not load and the user is told something they can act on:
 
 ```
 Voice needs a newer Alexia.
@@ -203,6 +204,33 @@ collision never breaks a command that was already working.
 purge with you. Paths are relative and may not climb out of your folder. See
 [`skills.md`](./skills.md).
 
+### Panel
+
+```jsonc
+"panel": {
+  "label": "Voice",
+  "widgets": [
+    { "key": "which_voice", "type": "choice", "label": "Who speaks", "options": ["Ada", "Rowan"] }
+  ]
+}
+```
+
+*Arrived in `alexia_protocol` 3. Declaring it while claiming 2 is a load error.*
+
+A tab on the **control surface** — the screen that answers *what has this been doing, what
+did I say yes to, what does it know*. It appears because your plugin is installed and enabled
+and for no other reason, and it goes when your folder does. Core never writes your tab's name
+down anywhere; the list on that screen is assembled from manifests.
+
+The widgets are the widgets above, unchanged. A settings pane and a panel are two views of
+one declaration, and what separates them is what they are *for*: settings are values somebody
+changes, a panel is a record somebody reads, plus the one or two things they change while
+reading it.
+
+**`settings` and `panel.widgets` are one namespace.** A widget's value is stored once, so a
+key in both lists would be one value with two declarations that could disagree about its
+type. Declaring a key twice is a load error. Which screen a widget belongs on is your call.
+
 ### `min_tier`
 
 ```jsonc
@@ -262,7 +290,10 @@ and delete what you do not need.
 
 ## This will change
 
-The plugin contract is **unstable until M4** and breaking it is what M4 is for. When it
-breaks, `alexia_protocol` goes to `2` and a plugin declaring `1` gets the refusal message
-above rather than a crash. That mechanism is the entire reason third-party plugins can be
-accepted this early.
+The plugin contract broke at M4, which is what M4 was for: `alexia_protocol` went to `2` for
+`lifetime`, and to `3` at M6 for `panel`. Both were additive, and both were the mechanism
+working — a plugin outside the range gets the refusal message above rather than a crash,
+which is the entire reason third-party plugins could be accepted this early.
+
+`1` no longer loads. See [`versions.md`](./versions.md) for what each revision added and what
+updating costs.

@@ -215,10 +215,10 @@ is a manifest core cannot trust about anything else either.
 the range core speaks.
 
 ```
-plugin says: alexia_protocol 1     core speaks 1..3   ->  loads
-plugin says: alexia_protocol 3     core speaks 1..3   ->  loads
-plugin says: alexia_protocol 4     core speaks 1..3   ->  does not load, and says so
-plugin says: alexia_protocol 0     core speaks 1..3   ->  does not load, and says so
+plugin says: alexia_protocol 3     core speaks 2..3   ->  loads
+plugin says: alexia_protocol 2     core speaks 2..3   ->  loads
+plugin says: alexia_protocol 4     core speaks 2..3   ->  does not load, and says so
+plugin says: alexia_protocol 1     core speaks 2..3   ->  does not load, and says so
 ```
 
 Check two reads a file. It happens **before spawn**, so a plugin written for a newer Alexia

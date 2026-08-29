@@ -12,7 +12,7 @@
       "index.js"
     ]
   },
-  "alexia_protocol": 1,
+  "alexia_protocol": 2,
   "mcp_protocol": "2025-11-25",
   "requires": [
     {

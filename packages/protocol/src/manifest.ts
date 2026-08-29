@@ -27,9 +27,14 @@ import { z } from 'zod'
  * From here on, **one revision back is supported**. `MIN` is what makes that a promise
  * rather than a habit, and raising it is what deprecating a revision looks like.
  * `docs/spec/versions.md` is the migration note.
+ *
+ * **3 on 2026-08-29 (D86).** `panel` — a plugin declaring a tab on the control surface, the
+ * same way it declares settings. Additive again, and the promise being kept for the first
+ * time rather than described: `MIN` rises with `MAX`, so a manifest declaring 1 now says so
+ * in a sentence instead of loading.
  */
-export const ALEXIA_PROTOCOL_MIN = 1
-export const ALEXIA_PROTOCOL_MAX = 2
+export const ALEXIA_PROTOCOL_MIN = 2
+export const ALEXIA_PROTOCOL_MAX = 3
 
 /**
  * The two MCP revisions core speaks, in preference order (D55, corrected by D57).
@@ -222,6 +227,35 @@ export const ManifestShape = z
      * `lazy`, which is what almost everything should be.
      */
     lifetime: z.enum(['lazy', 'resident']).optional(),
+
+    /**
+     * A tab on the control surface, declared the same way settings are (M6-2, D86).
+     *
+     * **Core never types a plugin's name into the tab bar.** The list on that screen is
+     * assembled: core contributes the tabs whose data core owns, and every other one is
+     * here, in the manifest of a plugin that is installed and enabled — which is the whole
+     * reason it goes when the folder does. The previous Alexia's dashboard listed nine tabs
+     * by hand in one file and grew a 480-line panel for one vendor inside its own source
+     * tree; this field is the thing that makes that impossible rather than discouraged.
+     *
+     * The widgets are the settings widgets, unchanged, because a plugin that cannot style
+     * itself wrong on one screen must not be able to on another. What makes a panel not a
+     * settings pane is what it is *for*: settings are values you change, a panel is a record
+     * you read — and the one or two things you change *while* reading it.
+     *
+     * **`settings` and `panel.widgets` are one namespace.** A widget's value lives in the
+     * plugin's settings store either way, so a key declared in both lists would be one value
+     * with two declarations that could disagree about its type. Declaring a key twice is a
+     * load error; choosing which screen a widget belongs on is the author's job.
+     */
+    panel: z
+      .object({
+        /** What the tab says. Short — it sits in a row with everything else's. */
+        label: z.string().min(1).max(32),
+        widgets: z.array(setting).min(1),
+      })
+      .strict()
+      .optional(),
   })
   // Strict on purpose. A typo'd `provide` that is silently ignored is a plugin that asks
   // for nothing and fails at runtime, which is a far worse morning than a load error.
@@ -247,21 +281,33 @@ export const Manifest = ManifestShape.superRefine((m, ctx) => {
   if (m.lifetime !== undefined && m.alexia_protocol < 2) {
     fail(['lifetime'], 'lifetime arrived in alexia_protocol 2 — declare "alexia_protocol": 2 to use it')
   }
+  if (m.panel !== undefined && m.alexia_protocol < 3) {
+    fail(['panel'], 'panel arrived in alexia_protocol 3 — declare "alexia_protocol": 3 to use it')
+  }
 
   if (/^([A-Za-z]:|[\\/])/.test(m.entry.run)) {
     fail(['entry', 'run'], 'entry.run must be a command on PATH or a path relative to the plugin folder')
   }
 
-  m.settings?.forEach((s, i) => {
-    if (s.type === 'choice' && s.default !== undefined && !s.options.includes(s.default)) {
-      fail(['settings', i, 'default'], `default "${s.default}" is not one of options`)
-    }
-    if (s.type === 'multi-choice' && s.default) {
-      for (const d of s.default) {
-        if (!s.options.includes(d)) fail(['settings', i, 'default'], `default "${d}" is not one of options`)
+  // Both lists, because they hold the same widgets and a default that is not one of the
+  // options is the same bug wherever it is declared.
+  for (const [field, widgets] of [
+    ['settings', m.settings ?? []],
+    ['panel', m.panel?.widgets ?? []],
+  ] as const) {
+    // `panel.widgets`, so the path a reader is handed points at the thing they wrote.
+    const at = (i: number): (string | number)[] => (field === 'panel' ? ['panel', 'widgets', i] : [field, i])
+    widgets.forEach((s, i) => {
+      if (s.type === 'choice' && s.default !== undefined && !s.options.includes(s.default)) {
+        fail([...at(i), 'default'], `default "${s.default}" is not one of options`)
       }
-    }
-  })
+      if (s.type === 'multi-choice' && s.default) {
+        for (const d of s.default) {
+          if (!s.options.includes(d)) fail([...at(i), 'default'], `default "${d}" is not one of options`)
+        }
+      }
+    })
+  }
 
   m.skills?.forEach((p, i) => {
     if (/^([A-Za-z]:|[\\/])/.test(p) || p.split(/[\\/]/).includes('..')) {
@@ -269,8 +315,19 @@ export const Manifest = ManifestShape.superRefine((m, ctx) => {
     }
   })
 
+  // One namespace across both screens, because both write to one store: a key declared in
+  // `settings` and again in `panel.widgets` is one value with two declarations that can
+  // disagree about its type. Which screen a widget belongs on is the author's choice to make.
+  for (const d of new Set(
+    dupes([...(m.settings ?? []).map((s) => s.key), ...(m.panel?.widgets ?? []).map((w) => w.key)]),
+  )) {
+    fail(
+      [m.panel?.widgets.some((w) => w.key === d) === true ? 'panel' : 'settings'],
+      `"${d}" is declared twice — settings and panel are one namespace, because a widget's value is stored once`,
+    )
+  }
+
   for (const [field, names] of [
-    ['settings', (m.settings ?? []).map((s) => s.key)],
     ['commands', (m.commands ?? []).map((c) => c.name)],
     ['provides', m.provides ?? []],
     ['requires', (m.requires ?? []).map((r) => r.cap)],
