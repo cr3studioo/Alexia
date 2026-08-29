@@ -447,8 +447,19 @@ const post = async (path: string, body: unknown): Promise<Record<string, unknown
   })
   // A 500 comes back as `text/plain`, so this used to reject inside `.json()` with a parse
   // error nobody was catching — a save that failed looked exactly like a save that did
-  // nothing. Whatever core said about it is the sentence the screen can show.
-  if (!answer.ok) throw new Error((await answer.text()).trim() || `${path} failed (${answer.status})`)
+  // nothing. Whatever core said about it is the sentence the screen can show: a refusal
+  // puts it in `said`, a crash has only the plain text.
+  if (!answer.ok) {
+    const body = (await answer.text()).trim()
+    const said = ((): string => {
+      try {
+        return String((JSON.parse(body) as { said?: unknown }).said ?? body)
+      } catch {
+        return body
+      }
+    })()
+    throw new Error(said || `${path} failed (${answer.status})`)
+  }
   return (await answer.json()) as Record<string, unknown>
 }
 

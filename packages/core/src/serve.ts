@@ -621,6 +621,33 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
       if (chosen.mode && chosen.mode in MODES) store.kvSet(CORE, 'mode', chosen.mode)
       if (chosen.provider?.key) {
         const provider = PROVIDERS.find((p) => p.id === chosen.provider?.id)
+        /**
+         * A key is a token, and a token has no spaces in it. Anything else is a sentence
+         * that landed in the box by accident — and the one that lands there most is the
+         * screen's own hint, copied out to ask somebody why the key would not save and
+         * pasted back over the key. That is not hypothetical: it is how this check got
+         * written.
+         *
+         * The box is the only place this is catchable. A stored sentence is a valid string
+         * all the way down: it reaches the provider as a Bearer token, and the answer comes
+         * back as a 401 about a header, three screens from the paste that caused it and
+         * naming nothing a person could act on.
+         *
+         * Whitespace only, deliberately. Every provider here issues an opaque token, and no
+         * two agree on its length or prefix — a stricter rule would be guessing at formats
+         * that change without telling us, and rejecting somebody's real key is worse than
+         * accepting a wrong one.
+         */
+        if (/\s/.test(chosen.provider.key)) {
+          response.writeHead(400, { 'content-type': 'application/json' })
+          response.end(
+            JSON.stringify({
+              ok: false,
+              said: 'That does not look like a key — it has spaces in it. Copy the key itself and paste it again.',
+            }),
+          )
+          return
+        }
         // Straight to the keychain, never to the database — the same path a plugin's
         // password takes, and the same check proves it.
         if (provider) await secrets.set(CORE, keyOf(provider), chosen.provider.key)

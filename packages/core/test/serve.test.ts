@@ -167,6 +167,22 @@ test('first run asks three things and then never asks again', async () => {
   expect(edited.setup).toEqual({ done: true, name: 'Grace', mode: 'local' })
   expect(await secrets.get(CORE, keyOf(PROVIDERS[0]!))).toBe('sk-the-second-one')
 
+  // A sentence in the key box is refused here rather than at the provider. This exact string
+  // is the settings screen's own hint: somebody copied it to ask why their key would not
+  // save, then pasted the clipboard back over the key. It stored, and the next thing typed
+  // in the chat window came back as a 401 about a missing header.
+  const refused = await call('/api/setup', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      provider: { id: 'openrouter', key: 'No key yet for OpenRouter. Terms: https://openrouter.ai/terms' },
+    }),
+  })
+  expect(refused.status).toBe(400)
+  expect(((await refused.json()) as { said: string }).said).toMatch(/spaces/)
+  // And the key that was already there is still the key that is there.
+  expect(await secrets.get(CORE, keyOf(PROVIDERS[0]!))).toBe('sk-the-second-one')
+
   await first.close()
 })
 
