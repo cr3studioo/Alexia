@@ -83,7 +83,13 @@ export interface Rendered {
 
 /** Which screen is drawing, and how it answers the two questions a widget asks back. */
 export interface WidgetHost {
-  /** The plugin whose widget this is. Both write paths are keyed by it. */
+  /**
+   * The plugin whose widget this is, and `''` for one of core's own.
+   *
+   * It rides on every request this file makes, and core reads the empty string the same way
+   * the shell writes it: *nobody's plugin, so core's own data*. One field rather than a flag
+   * beside it, because a flag and a name that have to agree is one of them too many.
+   */
   plugin: string
   /**
    * Which screen. It only distinguishes `data-field` attributes — the settings pane and a
@@ -578,6 +584,10 @@ function rowOf(host: WidgetHost, declared: Rendered, row: Row, columns: Column[]
           plugin: host.plugin,
           key: action.key,
           row: row.id,
+          // The arming above *is* the confirm, so it is what carries it (M6-1). A press
+          // that was never armed carries nothing, and core's own destructive rows are
+          // refused — which is the guard doing its job to a caller that skipped the button.
+          ...(armed && { confirm: true }),
           ...(approved === true && { approved: true }),
         })
         if (typeof answer.ask === 'string') {

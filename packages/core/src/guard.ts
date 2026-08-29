@@ -221,8 +221,16 @@ export const ROUTES: Readonly<Record<string, Route>> = {
   },
 
   '/api/action': {
+    // Whose button it is. A press with no plugin is core acting on core's own data, and the
+    // ruling that guards the other kind has nothing to rule on.
+    act: (body) => (typeof body.plugin === 'string' && body.plugin !== '' ? undefined : 'core'),
+    acts: {
+      core: confirm(
+        'A row action on one of core’s own lists — forgetting a skill, and nothing else today. There is no plugin and so no tool call, which means the permission ruling that guards the other kind has nothing to rule on, and this is the gate instead.',
+      ),
+    },
     otherwise: safe(
-      'The one route that already asks. Every press goes through the same permission ruling a tool call gets: a destructive tool is asked about in every mode but Full trust, and the never-touch list is not negotiable in any of them (M15-3). A confirm here would be the same question twice.',
+      'A press on a plugin’s button or a row action on its table. Both go through the same permission ruling a tool call gets: a destructive tool is asked about in every mode but Full trust, and the never-touch list is not negotiable in any of them (M15-3). A confirm here would be the same question twice.',
     ),
   },
 

@@ -59,6 +59,16 @@ export interface Skill {
    * for a skill a person deliberately installed.
    */
   learned?: boolean
+  /**
+   * Learned skills only: the task it was distilled from, and the day (M6-4).
+   *
+   * Kept because the question somebody asks a week later is *where did this come from*, and
+   * the skill's own text cannot answer it — a model wrote that text. Both ride in
+   * `metadata`, which the skills spec says to ignore, so a skill carrying them stays
+   * portable and means nothing anywhere else.
+   */
+  learnedFrom?: string
+  learnedAt?: string
 }
 
 export interface SkillsOptions {
@@ -291,9 +301,13 @@ function parse(dir: string): Omit<Skill, 'pluginId'> | Problem {
   // key read out of it is Alexia's own mark on a skill it wrote — it rides in `metadata`
   // rather than at the top level precisely so that a skill carrying it stays portable and
   // means nothing anywhere else.
-  const metadata = data.metadata
-  const learned =
-    typeof metadata === 'object' && metadata !== null && (metadata as Record<string, unknown>).learned === true
+  const metadata = (typeof data.metadata === 'object' && data.metadata !== null ? data.metadata : {}) as Record<
+    string,
+    unknown
+  >
+  const learned = metadata.learned === true
+  const from = metadata.learned_from
+  const at = metadata.learned_at
 
   return {
     dir,
@@ -303,5 +317,10 @@ function parse(dir: string): Omit<Skill, 'pluginId'> | Problem {
     description: description.trim().replace(/\s+/g, ' '),
     ...(typeof data.license === 'string' && { license: data.license }),
     ...(learned && { learned: true }),
+    ...(learned && typeof from === 'string' && from !== '' && { learnedFrom: from }),
+    ...(learned && (typeof at === 'string' || at instanceof Date) && {
+      // `js-yaml` reads a bare `2026-08-29` as a Date. Both shapes end up as the same day.
+      learnedAt: at instanceof Date ? at.toISOString().slice(0, 10) : at,
+    }),
   }
 }

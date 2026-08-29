@@ -72,7 +72,8 @@ export function mountControl(token: string): { open: () => void } {
     screen: 'panel',
     send,
     root: () => body,
-    fresh: async () => (await read()).find((tab) => tab.plugin === plugin)?.widgets ?? [],
+    fresh: async () =>
+      (await read()).find((tab) => (plugin === '' ? tab.id === chosen : tab.plugin === plugin))?.widgets ?? [],
   })
 
   function draw(): void {
@@ -103,7 +104,14 @@ export function mountControl(token: string): { open: () => void } {
     body.replaceChildren(...(open ? panel(open) : [el('p', 'hint', 'There is nothing here yet.')]))
   }
 
-  /** One tab's contents. Core's own say what they will hold; a plugin's are its widgets. */
+  /**
+   * One tab's contents.
+   *
+   * **Core's tabs and a plugin's go through the same function**, which is the whole of what
+   * M6-4 was watching for: if either had needed a line of its own here, `table` would have
+   * been the wrong widget. Neither did. The only difference between them is whose name goes
+   * on the requests the widgets make, and for core's own that name is nobody's.
+   */
   function panel(tab: Tab): HTMLElement[] {
     if (tab.soon !== undefined) return [el('p', 'hint', tab.soon)]
 
@@ -113,11 +121,8 @@ export function mountControl(token: string): { open: () => void } {
     // plugin lately would teach people to ignore the one that is actually broken.
     if (tab.running === false) drawn.push(el('p', 'hint', 'Not running. It starts when something needs it.'))
 
-    const plugin = tab.plugin
-    if (plugin !== undefined) {
-      const at = host(plugin)
-      drawn.push(...(tab.widgets ?? []).map((declared) => widget(at, declared)))
-    }
+    const at = host(tab.plugin ?? '')
+    drawn.push(...(tab.widgets ?? []).map((declared) => widget(at, declared)))
     return drawn
   }
 

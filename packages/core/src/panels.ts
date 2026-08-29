@@ -20,7 +20,8 @@ import { render, type PaneOptions, type Rendered } from './settings.js'
  * **Nothing here spawns anything.** A panel draws from the manifest and the store, the same
  * way a settings pane does and for the same reason — with lazy spawn, *not running* is the
  * ordinary state of a plugin. Anything that genuinely needs the process is a tool call the
- * panel makes when somebody opens it, not a spawn at draw time.
+ * panel makes when somebody opens it, not a spawn at draw time. Core's own tabs work the
+ * same way: their tables declare their shape here and fetch their rows on open.
  */
 
 export interface Tab {
@@ -39,7 +40,7 @@ export interface Tab {
    * plugin lately would teach people to ignore the one that is actually broken.
    */
   running?: boolean
-  /** A plugin tab: its declared widgets, filled in. */
+  /** The declared widgets, filled in. Core's tabs and a plugin's are the same shape. */
   widgets?: Rendered[]
   /**
    * A core tab whose panel is not built yet: what it will hold, and which task builds it.
@@ -52,33 +53,103 @@ export interface Tab {
 }
 
 /**
+ * A `table` core owns, declared exactly the way a plugin declares one (M6-4).
+ *
+ * The point of writing them here rather than in the shell is the test M6-4 exists to run:
+ * *if any of these needs a line of bespoke rendering, `table` was the wrong widget.* They
+ * are configuration, and the shell draws them with the same function it draws a plugin's.
+ *
+ * `tool` on a row action names the operation core performs rather than an MCP tool. It is
+ * the same string as `key`, and the shell sends the key either way — a press on a core table
+ * reaches core's own dispatch, and a press on a plugin's reaches `rule()` and the plugin.
+ */
+const table = (declared: Extract<Rendered, { type: 'table' }>): Rendered => declared
+
+const SKILLS: Rendered = table({
+  type: 'table',
+  key: 'skills',
+  label: 'Installed',
+  rows: 'skills',
+  columns: [
+    { key: 'name', label: 'Name' },
+    { key: 'where', label: 'Where from' },
+    { key: 'state', label: 'State', hideNarrow: true },
+  ],
+  // One action, and it refuses on a bundled skill with a sentence rather than being absent:
+  // *it came with something, and it goes when that does* is the answer to the question the
+  // person is asking, and a missing button answers nothing.
+  rowActions: [{ key: 'forget_skill', label: 'Forget', tool: 'forget_skill', confirm: 'Forget {name}?' }],
+  detail: 'skill',
+  filter: true,
+})
+
+const LEARNED: Rendered = table({
+  type: 'table',
+  key: 'learned',
+  label: 'Written by Alexia',
+  hint: 'Distilled from a task you watched happen. A learned skill can be wrong, which is why it says what it came from.',
+  rows: 'learned',
+  columns: [
+    { key: 'name', label: 'Name' },
+    { key: 'from', label: 'Learned from' },
+    { key: 'when', label: 'When', align: 'right', hideNarrow: true },
+  ],
+  rowActions: [{ key: 'forget_skill', label: 'Forget', tool: 'forget_skill', confirm: 'Forget {name}?' }],
+  detail: 'skill',
+  filter: true,
+})
+
+const TOOLS: Rendered = table({
+  type: 'table',
+  key: 'tools',
+  label: 'Tools',
+  hint: 'Everything every enabled plugin puts in front of the model. Read-only: the plugins are the write path, and a second one here would be a parallel mechanism.',
+  rows: 'tools',
+  columns: [
+    { key: 'name', label: 'Tool' },
+    { key: 'kind', label: 'Kind', hideNarrow: true },
+  ],
+  detail: 'tool',
+  filter: true,
+  groupBy: 'plugin',
+})
+
+const LIBRARY: Rendered = table({
+  type: 'table',
+  key: 'library',
+  label: 'Installed',
+  hint: 'What is on this machine. Browsing, installing and removing are on the plugins screen, which owns the write path.',
+  rows: 'library',
+  columns: [
+    { key: 'name', label: 'Name' },
+    { key: 'version', label: 'Version', align: 'right', hideNarrow: true },
+    { key: 'state', label: 'State' },
+  ],
+  detail: 'plugin',
+  filter: true,
+})
+
+/**
  * The tabs whose data core owns, in the order they are read rather than built.
  *
  * *Activity* first because *what has this been doing* is the question that brings somebody
  * to this screen. The rest follow it: what it knows, what it can do, what is installed.
  */
-export const CORE_TABS: readonly { id: string; label: string; soon?: string }[] = [
+export const CORE_TABS: readonly { id: string; label: string; soon?: string; widgets?: Rendered[] }[] = [
   {
     id: 'activity',
     label: 'Activity',
     soon: 'What Alexia has been doing: the last few runs, every step, and what each one cost. The trace exists and streams already — this is the half that outlives the task that made it. M6-5.',
   },
-  {
-    id: 'skills',
-    label: 'Skills',
-    soon: 'Every skill installed, where it came from, and the ones Alexia wrote for itself. M6-4.',
-  },
-  {
-    id: 'tools',
-    label: 'Tools',
-    soon: 'Every tool every enabled plugin puts in front of the model — the only screen that answers what Alexia can actually do right now. M6-4.',
-  },
-  {
-    id: 'library',
-    label: 'Library',
-    soon: 'What is installed, what the registry has, and what has an update. It is on the plugins screen today and moves here with the skills list. M6-4.',
-  },
+  { id: 'skills', label: 'Skills', widgets: [SKILLS, LEARNED] },
+  { id: 'tools', label: 'Tools', widgets: [TOOLS] },
+  { id: 'library', label: 'Library', widgets: [LIBRARY] },
 ]
+
+/** Which core table a `rows` or `detail` name belongs to. Used to reject an unknown one. */
+export const CORE_TABLES: readonly string[] = CORE_TABS.flatMap((tab) =>
+  (tab.widgets ?? []).flatMap((widget) => (widget.type === 'table' ? [widget.key] : [])),
+)
 
 export interface TabOptions extends PaneOptions {
   /** Every installed plugin's manifest, enabled or not. The rule below is core's, not the caller's. */

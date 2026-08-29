@@ -68,15 +68,16 @@ const call = (path: string, body?: unknown): Promise<Response> =>
 
 const tabs = async (): Promise<Tab[]> => ((await (await call('/api/panels')).json()) as { tabs: Tab[] }).tabs
 
-test('core contributes the tabs whose data core owns, and says what each will hold', async () => {
+test('core contributes the tabs whose data core owns, and every one of them holds something', async () => {
   const list = await tabs()
   expect(list.filter((tab) => tab.from === 'core').map((tab) => tab.id)).toEqual(CORE_TABS.map((tab) => tab.id))
 
-  // A core tab whose panel is not built says so in a sentence. A blank tab is
-  // indistinguishable from a broken one, and a placeholder that looked like working
-  // software would be worse than either.
+  // Either a panel, or a sentence saying what it will hold and which task builds it. Never
+  // both and never neither: a blank tab is indistinguishable from a broken one, and a
+  // placeholder that looked like working software would be worse than either.
   for (const tab of list.filter((one) => one.from === 'core')) {
-    expect(typeof tab.soon, tab.id).toBe('string')
+    const built = (tab.widgets ?? []).length > 0
+    expect(built !== (typeof tab.soon === 'string'), tab.id).toBe(true)
   }
 })
 

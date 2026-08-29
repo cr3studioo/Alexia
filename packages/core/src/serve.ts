@@ -35,6 +35,7 @@ import { MODES, route, send, shapeOf } from './router.js'
 import { CORE, keychain, type SecretStore } from './secrets.js'
 import { addServer, markReviewed, unreviewed } from './servers.js'
 import { declaredAction, declaredTable } from './settings.js'
+import { actions as coreActions, sources as coreSources } from './surface.js'
 import { Skills, SKILL_TOOL } from './skills.js'
 import { dataDir, Store, type Message } from './store.js'
 import { PluginTooling } from './tooling.js'
@@ -318,6 +319,15 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
       scope(),
     )
   }
+
+  /**
+   * What core's own tabs are made of (M6-4). Built once, because every one of them reads
+   * something this closure already holds — and read fresh on every call, because a skills
+   * list that answered from a snapshot would be the one thing on this screen that lies.
+   */
+  const surface = { skills, tooling, plugins, skillsDir }
+  const ours = coreSources(surface)
+  const ourActions = coreActions(surface)
 
   const checker = new ModelChecker({ store, secrets, world, session })
   let tally: Tally = freshTally()
@@ -851,7 +861,9 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
         response.end(JSON.stringify({ ok: false, said: learned.why }))
         return
       }
-      save(skillsDir, learned)
+      // The task it came out of goes with it (M6-4): a week later, that is the only thing
+      // that can say where a skill Alexia wrote came from.
+      save(skillsDir, learned, episode.task)
       skills.invalidate()
       response.writeHead(200, { 'content-type': 'application/json' })
       response.end(
@@ -893,6 +905,23 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     if (url.pathname === '/api/action' && request.method === 'POST') {
       const press = sent as { plugin?: string; key?: string; row?: string; approved?: boolean }
       const plugin = press.plugin ?? ''
+
+      // A row action on one of core's own tables (M6-4). No plugin, so no `rule()` — the
+      // gate for core acting on core's own data is the route guard, which is why this one
+      // needs an explicit `confirm` and the plugin half does not (M6-1).
+      if (plugin === '') {
+        const act = ourActions[press.key ?? '']
+        response.writeHead(200, { 'content-type': 'application/json' })
+        response.end(
+          JSON.stringify(
+            act === undefined ?
+              { ok: false, said: `There is no button called "${press.key ?? ''}".` }
+            : await act(press.row ?? ''),
+          ),
+        )
+        return
+      }
+
       const manifest = plugins.manifest(plugin)
       // Either screen, and either kind. **A row action is an `action`** (D83): the same
       // lookup, the same gate, the same two steps. The only difference is that it carries
@@ -938,6 +967,20 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     if ((url.pathname === '/api/rows' || url.pathname === '/api/detail') && request.method === 'POST') {
       const asked = sent as { plugin?: string; key?: string; row?: string; approved?: boolean }
       const plugin = asked.plugin ?? ''
+
+      // Core's own tables (M6-4). They read what core already holds, so there is no process
+      // to start and nothing to ask permission for — the reading is the screen.
+      if (plugin === '') {
+        const source = ours[asked.key ?? '']
+        const answer =
+          source === undefined ? { said: `There is no list called "${asked.key ?? ''}".` }
+          : url.pathname === '/api/rows' ? { rows: await source.rows() }
+          : { text: (await source.detail?.(asked.row ?? '')) ?? 'There is nothing more to say about that.' }
+        response.writeHead(200, { 'content-type': 'application/json' })
+        response.end(JSON.stringify('said' in answer ? { ok: false, ...answer } : { ok: true, ...answer }))
+        return
+      }
+
       const manifest = plugins.manifest(plugin)
       const table = manifest && declaredTable(manifest, asked.key ?? '')
       const wanted = url.pathname === '/api/rows' ? table?.rows : table?.detail

@@ -180,7 +180,7 @@ Tick a box only when the task's acceptance criteria pass. `[GATE]` needs a human
 - [x] **M6-1** The route guard, and the check that keeps it
 - [x] **M6-2** The control view, and a tab list nobody writes by hand
 - [x] **M6-3** `table` — the eleventh widget, and the conversation the spec asked for
-- [ ] **M6-4** Skills, learned skills and tools — three panels, one widget
+- [x] **M6-4** Skills, learned skills and tools — three panels, one widget
 - [ ] **M6-5** The trace, with a memory
 - [ ] **M6-6** `plugins/voice` declares a panel — and the `file` question
 - [ ] **M6-7** `plugins/memory` declares a panel — and the `graph` question
@@ -2348,6 +2348,27 @@ is this schema's own bar for saying no:
 
 ### M6-4 Skills, learned skills and tools — three panels, one widget
 
+**Built 2026-08-29 (D87).** Four tables, one widget, and **not one line of bespoke rendering
+in the shell** — `control.ts` draws a core tab and a plugin's through the same function, and
+the only difference between them is whose name goes on the requests the widgets make. That
+was the test this task existed to run, and `table` passed it. Core's tables are declared in
+`panels.ts` exactly the way a plugin declares one, and `surface.ts` is four functions
+returning rows plus one that acts on a row. The Tools column that earns its place is **what
+the permission gate will do with each tool** — read from the same annotations `rule()` reads,
+with silence reported as silence. Broken folders are rows with reasons rather than absences,
+on both the skills list and the library one. And the one write path on the whole screen is
+*forget a skill*, guarded by M6-1 because core acting on core's own data has no `rule()` in
+front of it; a bundled skill is refused with the sentence rather than having no button, since
+a missing button answers nothing.
+
+**Edit did not survive, and that is the finding** (D87). It is bespoke rendering — a textarea
+is not one of the eleven — and this task was written to notice exactly that. Editing a learned
+skill stays where M4-5 put it: beside the attribution line at the moment it fires, which is
+also the moment a person can see what it did. The panel says what a skill was learned from
+instead, which is the question a week later, and `learned_from` is now written into the skill
+at distil time because nothing else could answer it.
+
+
 If M6-3 is right, these three are configuration. If any of them needs a line of bespoke
 rendering, M6-3 is wrong and this is where that shows up — which is why they are one task and
 not three.
@@ -2624,6 +2645,7 @@ Newest first. Every entry here is also in Alexia.md's decision log.
 
 | Date | Entry |
 |---|---|
+| 2026-08-29 | **D87** — **three panels, one widget, and the one thing that did not fit was the finding.** M6-4. Four core tables — installed skills, the ones Alexia wrote, every tool every enabled plugin offers, and what is on this machine — drawn by the same function that draws a plugin's panel, with **not one line of bespoke rendering** between them. That was the whole test: *if any of them needs a line of its own, `table` was the wrong widget*, which is why they were one task and not three. **What did not fit was `edit`.** A textarea is not one of the eleven, and the honest answer was to leave editing a learned skill where M4-5 put it — beside the attribution line at the moment it fires, which is also the only moment a person can see what it did — rather than grow the widget for one user or special-case the screen. The panel answers the week-later question instead: **what was this learned from**, written into the skill at distil time, because the skill's own text cannot say — a model wrote that text. A skill from before the record exists is shown as *not recorded*, never guessed, which is the catalog's honesty rule (M1-5) in a second place. Two rules from the old dashboard came across unchanged and are now load-bearing: **read-only unless this screen is the only owner** — the plugins screen owns installing and removing, `tooling.ts` reads the plugins, so the only write path here is *forget a skill* — and **a broken thing is a row with a reason, not an absence**. That one write path is guarded by M6-1 rather than by `rule()`, because core acting on core's own data has no tool call to rule on; and a bundled skill is refused with a sentence rather than having no button, because a missing button answers nothing. |
 | 2026-08-29 | **D83 built** — **the eleventh widget shipped, and it invented nothing.** M6-3. `table` is granted, and the two claims that made granting it cheap both held in code. **A row action is an `action`**: one lookup, one `rule()`, the same two-step question — it just carries the row it is about, and the question appears beside that row rather than under a button. And **rows arrive over MCP's own `structuredContent`**, `{ rows: [...] }` with a string `id` on each, because the protocol already has an envelope for structured tool output and inventing a second one is how a contract grows a dialect. It is the only widget that needs a running plugin, which is exactly the division M6-2 set up: the panel draws from the manifest while the process is stopped, and asks for its contents when a person opens it — through the same gate as any other call, so a `rows` tool that never declared itself read-only is asked about instead of quietly run. Three ways an author gets the answer wrong are three sentences naming what was expected, never a blank list. The refactor it forced pays for itself: **the permission ruling is written once now** and used by four callers, the copy made for `/api/command` a task earlier having already started to drift from its original. |
 | 2026-08-29 | **D86** — **a plugin declares its own tab, and that cost a contract revision.** M6-2. The control surface's tab list is **assembled**: core contributes the tabs whose data core owns, and every other one is a `panel` in the manifest of a plugin somebody enabled. There is no list of tabs anywhere that a person types into, which is the whole point — the previous dashboard listed nine by hand in one `App.tsx` and grew a 480-line panel for one text-to-speech vendor inside its own source tree, and a dashboard is where an architecture like this usually breaks because it is the one screen that has to know about everything at once. `panel` is a manifest field, so **`alexia_protocol` goes to 3** and `MIN` rises to 2 with it: the *one revision back* promise, kept for the first time rather than described, and the first-party plugins migrated by changing one character. Two things fell out of building it and both are better than what was there. **`settings` and `panel.widgets` are one namespace**, because a widget's value is stored once and two declarations of it could disagree about its type — so the same key twice is a load error and choosing the screen is the author's job. And **the widget renderer moved to one file** that both screens use; a second renderer would have been a second set of rules about where a `password` goes, and the two would have drifted on the day one of them was fixed. **Invariant 1 now reads `packages/ui` too**, added while it still passed trivially, which is the only time a rule is free — and it is what makes M6-G a check rather than a hope. |
 | 2026-08-29 | **D85** — **classifying the routes found the one route that was not classified anywhere: a slash command was a tool call with no gate in front of it.** M6-1, and it was the *reason per entry* that did it, not the list. Sixteen of the seventeen paths had a sentence that made them reversible or a sentence that made them dangerous. `/api/command` had neither, because it is two different things wearing one syntax: core's own commands set a mode or a pin — one word to change back, with the current value on screen beside the control — and **a plugin's command is a tool call under a short name**. That half was reaching `callTool` directly, while the identical call from an action button and the identical call from the agent loop both went through `rule()`. So it goes through the same ruling now, asked the way `/api/action` asks — this request carries no stream to put a question down, so the first call answers `ask` and the second carries the person's yes, and `blocked` still has no second call. Nothing about the two commands that exist changes: both declare `readOnlyHint`, so both still run unasked in the default mode. **The entry that could not be written is the finding.** Had the reason been optional, `/api/command` would have gone on the safe list with a path and no sentence, and the hole would still be there — which is the argument for the rule, made by the rule. |

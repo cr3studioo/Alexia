@@ -183,12 +183,18 @@ export function parse(said: string): Distilled | { why: string } {
  * than a person installing it — which is what the attribution line reads, and what makes
  * *forget* offerable on this one and not on a skill somebody chose.
  */
-export function save(skillsDir: string, learned: Distilled): string {
+export function save(skillsDir: string, learned: Distilled, from?: string): string {
   const dir = join(skillsDir, learned.name)
   mkdirSync(dir, { recursive: true })
+  // The task it came out of, kept with it (M6-4). A learned skill can be wrong, and the
+  // question somebody asks a week later is *where did this come from* — which is
+  // unanswerable from the skill's own text, because the model wrote that text. Quoted as a
+  // YAML string and stripped of line breaks, since it is one sentence a person typed.
+  const source = from?.replace(/\s+/g, ' ').trim().slice(0, 200)
   const marked = learned.document.replace(
     /^---\r?\n/,
-    `---\nmetadata:\n  ${LEARNED_META}: true\n  learned_at: ${new Date().toISOString().slice(0, 10)}\n`,
+    `---\nmetadata:\n  ${LEARNED_META}: true\n  learned_at: ${new Date().toISOString().slice(0, 10)}\n` +
+      (source ? `  learned_from: ${JSON.stringify(source)}\n` : ''),
   )
   writeFileSync(join(dir, 'SKILL.md'), `${marked}\n`)
   return dir
