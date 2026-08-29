@@ -28,8 +28,17 @@ import type { Store } from './store.js'
  *   of the registry that exists for people who are not currently browsing.
  */
 
-/** Where the list comes from. Overridable in settings, because a fork needs its own. */
-export const DEFAULT_REGISTRY = 'https://registry.alexia.dev'
+/**
+ * Where the list comes from. Overridable in settings, because a fork needs its own.
+ *
+ * A GitHub Pages site rather than `registry/`'s Worker, and the client cannot tell the
+ * difference: `#get` resolves a path and parses JSON, checking no content type and sending
+ * no auth, so four static files answer it exactly as a Worker does. `scripts/publish.mjs`
+ * writes those files. The Worker remains the right answer for a registry serving strangers,
+ * for one reason named there and here: its `/v0/revoked` is uncached, and a CDN's ten
+ * minutes is ten minutes of a kill switch not working.
+ */
+export const DEFAULT_REGISTRY = 'https://cr3studioo.github.io/alexia-registry'
 
 export interface Entry {
   id: string
@@ -110,18 +119,18 @@ export class Library {
   }
 
   async plugins(): Promise<Entry[]> {
-    const body = (await this.#get('/v0/plugins')) as { plugins?: Entry[] }
+    const body = (await this.#get('/v0/plugins.json')) as { plugins?: Entry[] }
     return (body.plugins ?? []).filter((entry) => ID.test(entry.id) && HEX64.test(entry.sha256))
   }
 
   async skills(): Promise<SkillEntry[]> {
-    const body = (await this.#get('/v0/skills')) as { skills?: SkillEntry[] }
+    const body = (await this.#get('/v0/skills.json')) as { skills?: SkillEntry[] }
     return (body.skills ?? []).filter((entry) => ID.test(entry.id) && HEX64.test(entry.sha256))
   }
 
   /** What has been pulled. Asked about what is already on disk, never cached. */
   async revoked(): Promise<{ plugins: Revocation[]; skills: Revocation[] }> {
-    const body = (await this.#get('/v0/revoked')) as { plugins?: Revocation[]; skills?: Revocation[] }
+    const body = (await this.#get('/v0/revoked.json')) as { plugins?: Revocation[]; skills?: Revocation[] }
     return { plugins: body.plugins ?? [], skills: body.skills ?? [] }
   }
 
@@ -134,7 +143,7 @@ export class Library {
    */
   async entry(id: string): Promise<Entry | { revoked: string } | undefined> {
     if (!ID.test(id)) return undefined
-    const response = await this.#fetch(new URL(`/v0/plugins/${id}`, this.url))
+    const response = await this.#fetch(new URL(`/v0/plugins/${id}.json`, this.url))
     if (response.status === 410) {
       const body = (await response.json().catch(() => ({}))) as { reason?: string }
       return { revoked: body.reason ?? 'withdrawn' }

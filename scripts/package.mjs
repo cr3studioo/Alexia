@@ -146,7 +146,18 @@ cpSync(join(root, 'packages', 'ui', 'dist', 'src'), join(ui, 'dist', 'src'), {
 //    points the Add a plugin box until there is a registry to browse — and even after they
 //    point at one, it arrives not enabled, because the screen has still to show what it
 //    asked for.
-const SHIPPED = ['hello', 'voice', 'telegram', 'computer', 'memory', 'persona', 'media', 'claude-code']
+//
+//    **Trimmed to one, now that there is a registry to browse (`scripts/publish.mjs`).**
+//    Eight of these shipped inside the installer and then sat in `resources\plugins\`
+//    costing 8.8 MB whether or not anybody wanted them — the exact opposite of *install only
+//    what you need*, and reachable only by pasting a path out of `%LOCALAPPDATA%`, which is
+//    not a thing the person this is built for will ever do. The rest come off the shelf now.
+//
+//    `hello` stays, and stays for the reason the list existed: it is the offline proof that
+//    installing works at all. A registry is a network call, and a first run behind a captive
+//    portal or a dead DNS entry should still be able to demonstrate *install → talk →
+//    delete* without one.
+const SHIPPED = ['hello']
 const plugins = join(out, 'plugins')
 for (const id of SHIPPED) {
   const from = join(root, 'plugins', id)
@@ -189,8 +200,6 @@ writeFileSync(
 // does in the repo, done here instead, plus the one thing a browser build has to do that
 // a Tauri window at M5 will not — put itself in front of the person who double-clicked.
 import { spawn } from 'node:child_process'
-import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
 
 // The native keyring is found as a **sibling of alexia.mjs**, which is where it is copied,
 // and that works from wherever the folder was unzipped.
@@ -202,8 +211,6 @@ import { fileURLToPath } from 'node:url'
 // takes the branch that would have worked out of reach, and the failure is silent, because
 // cross-keychain reads a missing native module as *this backend is not supported here* and
 // quietly spawns PowerShell for every secret instead.
-const here = dirname(fileURLToPath(import.meta.url))
-
 const { serve } = await import('./alexia.mjs')
 
 // The port is Alexia's own choice when nothing says otherwise, and the shell's choice when
@@ -216,8 +223,8 @@ console.log('   ' + url)
 console.log('')
 console.log('Your browser should have opened. If it did not, copy that address into it.')
 console.log('')
-console.log('Plugins to install, from the Plugins screen — paste one of these paths:')
-console.log('   ' + join(here, 'plugins', 'voice'))
+console.log('More plugins are on the Plugins screen. They download when you ask for them.')
+console.log('')
 console.log('Closing this window stops Alexia.')
 
 // Detached, and failure is not fatal: if no browser opens, the address above is still on

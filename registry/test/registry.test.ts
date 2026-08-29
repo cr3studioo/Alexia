@@ -121,3 +121,26 @@ test('skills are a separate list, and revoke the same way', async () => {
   await handle(post('/v0/admin/skills/sorting-downloads/revoke', { reason: 'it advised rm -rf' }), e)
   expect(((await (await handle(at('/v0/skills'), e)).json()) as { skills: unknown[] }).skills).toEqual([])
 })
+
+// The registry can also be a folder of static files (`scripts/publish.mjs`), where
+// `/v0/plugins` cannot be both the list and the directory holding each entry. The client
+// therefore asks for `.json`, and this Worker has to answer that spelling too — otherwise
+// pointing Alexia at a deployed registry instead of a static one would 404 on every path.
+test('the .json spelling reaches the same routes', async () => {
+  const e = env()
+  expect((await handle(post('/v0/admin/plugins', ENTRY), e)).status).toBe(200)
+
+  const list = (await (await handle(at('/v0/plugins.json'), e)).json()) as { plugins: (typeof ENTRY)[] }
+  expect(list.plugins).toHaveLength(1)
+
+  const one = (await (await handle(at('/v0/plugins/weather.json'), e)).json()) as typeof ENTRY
+  expect(one.id).toBe('weather')
+
+  expect((await handle(at('/v0/skills.json'), e)).status).toBe(200)
+  expect((await handle(at('/v0/revoked.json'), e)).status).toBe(200)
+
+  // And a revoked plugin still answers 410 through the new spelling, because that is the
+  // response `Library.entry` reads a withdrawal reason out of.
+  expect((await handle(post('/v0/admin/plugins/weather/revoke', { reason: 'withdrawn' }), e)).status).toBe(200)
+  expect((await handle(at('/v0/plugins/weather.json'), e)).status).toBe(410)
+})

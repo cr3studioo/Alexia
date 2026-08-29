@@ -78,10 +78,10 @@ function world(overrides: Partial<Entry> = {}, bytes?: Buffer): World {
 
   const fake: typeof globalThis.fetch = (input) => {
     const path = new URL(String(input)).pathname
-    if (path === '/v0/plugins') return Promise.resolve(Response.json({ plugins: [entry] }))
-    if (path === `/v0/plugins/${entry.id}`) return Promise.resolve(Response.json(entry))
-    if (path === '/v0/revoked') return Promise.resolve(Response.json({ plugins: [], skills: [] }))
-    if (path === '/v0/skills') return Promise.resolve(Response.json({ skills: [] }))
+    if (path === '/v0/plugins.json') return Promise.resolve(Response.json({ plugins: [entry] }))
+    if (path === `/v0/plugins/${entry.id}.json`) return Promise.resolve(Response.json(entry))
+    if (path === '/v0/revoked.json') return Promise.resolve(Response.json({ plugins: [], skills: [] }))
+    if (path === '/v0/skills.json') return Promise.resolve(Response.json({ skills: [] }))
     // The archive itself, from wherever the entry points.
     return Promise.resolve(new Response(new Uint8Array(served), { headers: { 'content-length': String(served.byteLength) } }))
   }

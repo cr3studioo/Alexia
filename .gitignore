@@ -4,3 +4,4 @@ dist-app/
 spikes/*/target/
 spikes/*/gen/
 *.tsbuildinfo
+dist-registry/

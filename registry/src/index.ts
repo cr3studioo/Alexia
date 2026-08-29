@@ -122,7 +122,17 @@ function admin(request: Request, env: Env): boolean {
 
 export async function handle(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url)
-  const path = url.pathname.replace(/\/+$/, '') || '/'
+  /**
+   * A trailing `.json` is stripped before routing, so `/v0/plugins` and `/v0/plugins.json`
+   * are the same request.
+   *
+   * The client asks for the second spelling because the registry can also be a folder of
+   * static files (`scripts/publish.mjs`), and there `/v0/plugins` cannot be both the list
+   * and the directory holding each entry — a filesystem has one namespace where REST has
+   * two. Answering both here is four characters, and it keeps this Worker a drop-in
+   * replacement for the static site rather than a fork of it.
+   */
+  const path = url.pathname.replace(/\/+$/, '').replace(/\.json$/, '') || '/'
   const db: D1Database = env.DB
 
   if (request.method === 'OPTIONS') {
