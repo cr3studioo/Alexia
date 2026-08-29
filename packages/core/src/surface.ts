@@ -125,9 +125,17 @@ export function sources(options: SurfaceOptions): Record<string, Source> {
      * fetched on the daily poll and cached, so this screen opens at the speed of a file read
      * whether or not the machine is online — the same rule the other four tables follow.
      *
-     * A model from a provider with no key is **shown**, and says it needs one. It is the
-     * question the screen exists to answer — *what would connecting Groq get me* — and a row
-     * that was simply absent answers it wrong.
+     * **Only what you can actually reach.** A provider with no key contributes nothing here.
+     *
+     * This screen used to list everything and mark the unreachable rows *needs a key*, on
+     * the argument that *what would connecting Groq get me* is a question worth answering.
+     * It is — but not at this price: one key gets you four hundred models and six providers
+     * you have never signed up to, so the answer arrived as eighty rows of noise wrapped
+     * around the twenty that can answer a question today. A chooser whose contents you
+     * cannot use is a catalogue, and nobody opens this tab to browse a catalogue.
+     *
+     * The question keeps its answer in the place that was always better for it: the settings
+     * screen, where the keys are, listing every provider and what connecting one costs.
      */
     models: {
       rows: async () => {
@@ -159,7 +167,8 @@ export function sources(options: SurfaceOptions): Record<string, Source> {
         )
         const best = would.ok ? would.choices[0]?.model.id : undefined
         return (
-          [...catalog.models]
+          catalog.models
+            .filter((model) => keyed.has(model.provider))
             .sort(
               (a, b) =>
                 // What it would pick, then what you have actually been using, then the order
@@ -191,7 +200,6 @@ export function sources(options: SurfaceOptions): Record<string, Source> {
                */
               state:
                 model.id === standing.model ? '◆ everything goes here'
-                : !keyed.has(model.provider) ? '■ needs a key'
                 : model.id === best ? '★ recommended'
                 : model.supportsTools ? `${OK} · tools`
                 : `${OK} · text only`,

@@ -182,7 +182,7 @@ const MODELS: Rendered = table({
     '"Tokens / week" is how much the whole world put through that model in the provider’s last published week, refreshed daily and again whenever you open this tab. ' +
     'Only OpenRouter publishes that figure today, so every other provider shows a dash there and its models are ordered by price instead — a dash means nobody says, not nobody uses it. ' +
     'Use sends every request to one model instead, until you press Automatic on any row to hand the choice back. The chosen row is marked and coloured. ' +
-    'A row saying "needs a key" belongs to a provider you have not connected — add its key in settings and its models become usable here. ' +
+    'Only providers you have connected are listed, so this is what you can actually send a request to right now — add a key in settings and that provider’s models appear here. ' +
     'Each provider publishes its own list and they do not agree on what to include, so a dash is something that provider does not say rather than a zero.',
   rows: 'models',
   columns: [

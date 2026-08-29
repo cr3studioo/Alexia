@@ -316,36 +316,28 @@ test('a list nobody declared is a sentence, not an empty table', async () => {
   expect(String(answer.said)).toContain('no list called')
 })
 
-test('the models panel offers what every provider publishes, and says which are reachable', async () => {
+test('the models panel lists what you can actually reach, and nothing else', async () => {
   const models = await rows('models')
-  // Recommended first, then what has been used, then cheapest: the top of a group is the
-  // useful end of it.
-  expect(models.map((row) => row.id)).toEqual(['openrouter/reachable', 'groq/unreachable'])
-  // What the world put through it, from the fixture cache. A provider that publishes no
-  // such figure shows a dash, which the sentence above the table explains rather than
-  // leaving to look like a bug.
-  expect(models.find((row) => row.id === 'openrouter/reachable')?.week).toBe('1.5M')
-  expect(models.find((row) => row.id === 'groq/unreachable')?.week).toBe('—')
+  // Only the connected provider's. A key for OpenRouter is not an invitation to browse the
+  // six providers you have never signed up to — one key would bury twenty usable rows under
+  // eighty you cannot send anything to.
+  expect(models.map((row) => row.id)).toEqual(['openrouter/reachable'])
 
-  // A model from a provider with no key is shown rather than hidden: *what would connecting
-  // Groq get me* is the question this screen exists to answer, and an absent row answers it
-  // wrong. It says what is missing instead.
-  expect(String(models.find((row) => row.id === 'groq/unreachable')?.state)).toContain('needs a key')
-  // The one Automatic would pick, asked of the router rather than decided here. It is the
-  // reachable, free, tool-capable one — which is the only candidate in this fixture.
-  expect(models.find((row) => row.id === 'openrouter/reachable')?.state).toBe('★ recommended')
+  // The one Automatic would pick, asked of the router rather than decided here.
+  expect(models[0]?.state).toBe('★ recommended')
 
+  // What the world put through it, from the fixture cache.
+  expect(models[0]?.week).toBe('1.5M')
   // Free is a word, not $0.00 — those are different claims, and one of them is the tier the
   // whole project runs on.
-  expect(models.find((row) => row.id === 'openrouter/reachable')?.price).toBe('free')
-  expect(models.find((row) => row.id === 'groq/unreachable')?.price).toBe('$2.00')
-  expect(models.find((row) => row.id === 'openrouter/reachable')?.context).toBe('33k')
+  expect(models[0]?.price).toBe('free')
+  expect(models[0]?.context).toBe('33k')
 
   // What expands under a row: the two flags nobody may guess at, repeated rather than
-  // rounded off, and the next action for a provider that is not connected.
-  const detail = String((await post('/api/detail', { key: 'models', row: 'groq/unreachable' })).text)
+  // rounded off.
+  const detail = String((await post('/api/detail', { key: 'models', row: 'openrouter/reachable' })).text)
   expect(detail).toContain('Trains on what you send it: unknown')
-  expect(detail).toContain('Add a key for groq')
+  expect(detail).toContain('1.5M tokens through this model last week')
 })
 
 test('choosing a model pins it, and Automatic gives the choice back', async () => {
@@ -363,8 +355,9 @@ test('choosing a model pins it, and Automatic gives the choice back', async () =
   // The chosen mark, which is what the shell colours and what the row is found by.
   expect((await rows('models')).find((row) => row.id === 'openrouter/reachable')?.state).toBe('◆ everything goes here')
 
-  // Refused where the person can act on it, rather than by the router three screens later
-  // saying the model "is not available right now".
+  // The guard stays even though no unreachable model is listed any more: rows are fetched
+  // and then pressed, and a key can be removed in between. A refusal here names what to do;
+  // the router three screens later would only say it "is not available right now".
   const cannot = await post('/api/action', { key: 'use_model', row: 'groq/unreachable' })
   expect(cannot.ok).toBe(false)
   expect(String(cannot.said)).toContain('no key yet')
