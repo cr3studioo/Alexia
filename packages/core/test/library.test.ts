@@ -142,15 +142,25 @@ test('signing: verified, bad, and the honest word for having no key', async () =
   const { publicKey, privateKey } = generateKeyPairSync('ed25519')
   const pem = publicKey.export({ type: 'spki', format: 'pem' }).toString()
 
-  const signed = world()
-  const signature = sign(null, Buffer.from(signed.entry.sha256, 'utf8'), privateKey).toString('base64')
-  signed.entry.signature = signature
+  /**
+   * Over *this* world's checksum, never a sibling's.
+   *
+   * Every `world()` packs its own archive and a tar carries the mtimes of the second it was
+   * packed in — so two of them hash alike only while both happen inside the same second.
+   * Signing one world's sha256 and installing another's therefore passed on an idle machine
+   * and failed on a loaded one, which is the worst way for a signature test to be wrong.
+   */
+  const signFor = (made: World): string =>
+    sign(null, Buffer.from(made.entry.sha256, 'utf8'), privateKey).toString('base64')
 
   // No key configured. The install still happens — the checksum gated it — and the word
   // for what was checked is `unverified`, which is exactly what it is worth.
+  const signed = world()
+  signed.entry.signature = signFor(signed)
   expect(await signed.library.install('weather')).toMatchObject({ ok: true, signature: 'unverified' })
 
-  const withKey = world({ signature })
+  const withKey = world()
+  withKey.entry.signature = signFor(withKey)
   withKey.library.publisherKey = pem
   expect(await withKey.library.install('weather')).toMatchObject({ ok: true, signature: 'verified' })
 

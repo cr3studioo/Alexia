@@ -20,7 +20,7 @@
 
       <!-- The UI equivalent of /local, /cloud and /combined. Every command has one: the
            commands are a shortcut for people who like them, never the only route. -->
-      <select id="mode" class="control" title="Where the work happens" aria-label="Where the work happens">
+      <select id="mode" class="control mode" title="Where the work happens" aria-label="Where the work happens">
         <option value="local">Local</option>
         <option value="combined">Combined</option>
         <option value="cloud">Cloud</option>
@@ -38,8 +38,8 @@
       <!-- Every plugin's settings, rendered by core from the manifest. A control, because
            there is no command for it: a screen you cannot find is a screen that does not
            exist. -->
-      <button id="open-settings" class="control" type="button" title="Plugins, their settings, and the skills installed">
-        Plugins
+      <button id="open-settings" class="control" type="button" title="What was asked at first run, plugins, and the skills installed">
+        Settings
       </button>
 
       <!-- The control surface (M6-2). The questions that arrive on day thirty: what has this
@@ -139,16 +139,57 @@
     </section>
 
     <!-- The settings screen (M2-1). Ten widgets, declared in manifests, drawn here — and
-         drawn while every plugin is stopped, which with lazy spawn is the ordinary case. -->
+         drawn while every plugin is stopped, which with lazy spawn is the ordinary case.
+         Above them, the answers first run took: a screen you saw once, for thirty seconds,
+         should not be the only place its questions can be answered. -->
     <section id="settings" class="view">
       <div class="centred">
         <div class="view-top">
-          <h2 class="step-heading">Plugins and skills</h2>
+          <h2 class="step-heading">Settings</h2>
           <button id="close-settings" class="quiet-button" type="button">Back</button>
+        </div>
+
+        <!-- The three questions first run asked, in the same order and the same words, with
+             their answers in them. First run is the only place they were editable, which
+             made every one of them a decision taken once by somebody who had used Alexia for
+             thirty seconds. Written by the same `/api/setup` the Start button writes. -->
+        <div class="group" id="setup-settings">
+          <label class="field">
+            <span class="label">What should I call you?</span>
+            <input id="name-setting" class="short" />
+          </label>
+          <label class="field">
+            <span class="label">How should I run?</span>
+            <!-- The header's picker and this one are the same control twice, and both go
+                 through `/local`, `/combined`, `/cloud` — so there is one writer and neither
+                 can show a mode the other has changed. -->
+            <select id="mode-setting" class="mode">
+              <option value="local">Local — everything on this machine</option>
+              <option value="combined">Combined — cloud thinks, this machine makes</option>
+              <option value="cloud">Cloud — everything through APIs</option>
+            </select>
+          </label>
+          <div class="field">
+            <span class="label">Connect a provider</span>
+            <div class="pair">
+              <select id="provider-setting" aria-label="Provider"></select>
+              <input
+                id="key-setting"
+                type="password"
+                placeholder="Paste a key"
+                autocomplete="off"
+                aria-label="API key"
+              />
+              <button id="save-key" class="quiet-button" type="button">Save</button>
+            </div>
+            <!-- Whether there is a key for the chosen provider, never the key itself: it went
+                 to the keychain and nothing here can read it back. -->
+            <p class="hint" id="key-said"></p>
+          </div>
         </div>
         <!-- The obvious way to turn autostart off, which is the half of "starts on login"
              that people actually need. Hidden in a browser, where it is not a real setting. -->
-        <div class="field" id="desktop-settings" hidden>
+        <div class="field group" id="desktop-settings" hidden>
           <label class="switch">
             <input id="autostart-setting" type="checkbox" />
             <span class="track"></span>
@@ -160,6 +201,7 @@
              path box further down is the one that still works when there is no registry,
              and the MCP form is the ten thousand servers Alexia inherits (M3-6). -->
         <div id="library"></div>
+        <h3 class="step-heading">Plugins</h3>
         <div id="panes"></div>
         <div id="problems"></div>
         <!-- Know-how, as opposed to capability (M2-2). A skill is a folder with a Markdown

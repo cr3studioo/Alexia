@@ -262,7 +262,23 @@ export class Plugins {
       // Only for one the user already said yes to. A plugin that has never been enabled owns
       // no tables, which is what makes the *Installed* box in the lifecycle diagram true.
       if (this.#enabled.has(entry.manifest.id)) {
-        this.options.store.create(entry.manifest.id, entry.manifest.storage?.tables)
+        try {
+          this.options.store.create(entry.manifest.id, entry.manifest.storage?.tables)
+        } catch (error) {
+          // **One folder must never take Alexia down.** This is the load-bearing invariant
+          // read the other way round, and `create` was the single call in this loop outside
+          // the problems list: a plugin whose storage could not be made threw out of `load`,
+          // out of `serve`, and the app did not start — with nothing on screen saying which
+          // folder, because there was no screen. It is a folder that did not load, and that
+          // is a row on the settings page like every other one.
+          this.#problems.push({
+            dir: entry.dir,
+            reason: `${entry.manifest.id} could not open its storage: ${error instanceof Error ? error.message : String(error)}`,
+          })
+          this.#release(this.#entries.get(entry.manifest.id)!.process)
+          this.#entries.delete(entry.manifest.id)
+          continue
+        }
         void this.#entries.get(entry.manifest.id)?.process.wake()
       }
       this.options.onToolsChanged?.(entry.manifest.id)

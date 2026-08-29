@@ -123,13 +123,17 @@ test('first run asks three things and then never asks again', async () => {
   const call = (path: string, init: RequestInit = {}) =>
     fetch(new URL(path, first.url), { ...init, headers: { 'x-alexia-token': first.token, ...init.headers } })
 
-  const before = (await (await call('/api/state')).json()) as {
-    setup: { done: boolean; name: string }
-    providers: { id: string; trainsOnYourData: string; terms?: string }[]
-  }
+  const read = async () =>
+    (await (await call('/api/state')).json()) as {
+      setup: { done: boolean; name: string }
+      providers: { id: string; trainsOnYourData: string; terms?: string; connected: boolean }[]
+    }
+
+  const before = await read()
   expect(before.setup).toEqual({ done: false, name: 'Alexia', mode: 'combined' })
   // What the mode picker is honest about: nobody has read these terms yet.
   expect(before.providers.every((p) => p.trainsOnYourData === 'unknown' && p.terms)).toBe(true)
+  expect(before.providers.some((p) => p.connected)).toBe(false)
 
   await call('/api/setup', {
     method: 'POST',
@@ -137,10 +141,30 @@ test('first run asks three things and then never asks again', async () => {
     body: JSON.stringify({ name: 'Ada', mode: 'local', provider: { id: 'openrouter', key: 'sk-users-own' } }),
   })
 
-  const after = (await (await call('/api/state')).json()) as { setup: { done: boolean; name: string } }
+  const after = await read()
   expect(after.setup).toEqual({ done: true, name: 'Ada', mode: 'local' })
   // The key went to the keychain and nowhere near the database.
   expect(await secrets.get('_core', 'provider/openrouter')).toBe('sk-users-own')
+  // And the screen can say so without being able to read it back — which is what stops the
+  // settings box looking identical whether or not somebody has already pasted a key.
+  expect(after.providers.filter((p) => p.connected).map((p) => p.id)).toEqual(['openrouter'])
+
+  // The settings screen writes the same route with one field at a time: a rename does not
+  // un-choose the mode, and a second key replaces the first rather than adding to it.
+  await call('/api/setup', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ name: 'Grace' }),
+  })
+  await call('/api/setup', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ provider: { id: 'openrouter', key: 'sk-the-second-one' } }),
+  })
+
+  const edited = await read()
+  expect(edited.setup).toEqual({ done: true, name: 'Grace', mode: 'local' })
+  expect(await secrets.get('_core', 'provider/openrouter')).toBe('sk-the-second-one')
 
   await first.close()
 })

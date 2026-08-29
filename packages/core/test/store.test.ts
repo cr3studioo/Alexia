@@ -154,3 +154,22 @@ test('a message cannot be appended to a conversation that does not exist', () =>
   expect(() => store.append(404, { role: 'user', content: 'hello?' })).toThrow()
   store.close()
 })
+
+test('a hyphenated plugin id has a table name, and purge still finds it', () => {
+  // A plugin id is `lowercase-with-hyphens` and a SQL identifier here is
+  // `lowercase_with_underscores`, so until these two agreed a hyphenated id had **no table
+  // name at all**: `claude-code` declared storage the manifest schema accepts, `create` threw
+  // inside `load`, and the process died before the port was ever opened. Purge had the same
+  // hole from the other end — the one namespace that could not be created also could not be
+  // dropped, which is invariant 5 quietly not holding.
+  const store = new Store(':memory:')
+  store.create('claude-code', ['runs'])
+  expect(store.tables()).toContain('p_claude_code_runs')
+
+  store.insert('claude-code', 'runs', { task: 'ship it' })
+  expect(store.select('claude-code', 'runs')).toMatchObject([{ task: 'ship it' }])
+
+  store.purge('claude-code')
+  expect(store.tables()).not.toContain('p_claude_code_runs')
+  store.close()
+})

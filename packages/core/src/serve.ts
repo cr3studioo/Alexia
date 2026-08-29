@@ -593,13 +593,19 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
           },
           // What the mode picker has to be honest about: nobody has read these terms yet,
           // and a flag that guesses would be worse than the awkward truth (D51).
-          providers: PROVIDERS.map((p) => ({
-            id: p.id,
-            name: p.name,
-            terms: p.terms,
-            trainsOnYourData: p.trainsOnYourData ?? 'unknown',
-            free: p.rpd !== undefined || p.rpm !== undefined,
-          })),
+          providers: await Promise.all(
+            PROVIDERS.map(async (p) => ({
+              id: p.id,
+              name: p.name,
+              terms: p.terms,
+              trainsOnYourData: p.trainsOnYourData ?? 'unknown',
+              free: p.rpd !== undefined || p.rpm !== undefined,
+              // Whether there is a key for it, never the key. The settings screen is where a
+              // key gets replaced, and a box that looks identical either way is a box nobody
+              // can tell they already filled in.
+              connected: p.keyless === true || (await secrets.get(CORE, keyOf(p)).catch(() => undefined)) !== undefined,
+            })),
+          ),
         }),
       )
       return

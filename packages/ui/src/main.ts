@@ -28,6 +28,8 @@ interface Provider {
   terms?: string
   trainsOnYourData: 'yes' | 'no' | 'unknown'
   free: boolean
+  /** Whether a key is already stored for it. Never the key — that went to the keychain. */
+  connected: boolean
 }
 
 interface Command {
@@ -185,11 +187,77 @@ function firstRun(state: State): void {
   })
 }
 
+/**
+ * The same three questions, on a screen you can go back to (M2-1).
+ *
+ * First run is thirty seconds long and it is the only place these were ever answerable —
+ * which made *what should I call you* and *where do my words go* decisions taken once, by
+ * somebody who had not yet used the thing. Nothing new is stored: this writes the identical
+ * `/api/setup` the Start button writes, and the mode goes through the same slash command the
+ * header's picker does.
+ */
+function setupSettings(state: State): void {
+  const name = document.querySelector<HTMLInputElement>('#name-setting')!
+  const provider = document.querySelector<HTMLSelectElement>('#provider-setting')!
+  const key = document.querySelector<HTMLInputElement>('#key-setting')!
+  const save = document.querySelector<HTMLButtonElement>('#save-key')!
+  const said = document.querySelector<HTMLElement>('#key-said')!
+
+  name.value = state.setup.name
+  // On `change`, so it saves when somebody has finished typing rather than on every letter —
+  // and blank means the default rather than an assistant with no name.
+  name.addEventListener('change', () => {
+    const chosen = name.value.trim() || 'Alexia'
+    name.value = chosen
+    void post('/api/setup', { name: chosen }).then(() => called(chosen))
+  })
+
+  for (const option of state.providers) {
+    provider.add(new Option(option.free ? `${option.name} — free tier` : option.name, option.id))
+  }
+
+  /**
+   * Whether there is a key for the chosen one, and its terms. The key itself is not here and
+   * cannot be: it went to the keychain, and a box that looked the same either way would have
+   * a person pasting a key they had already pasted to find out.
+   */
+  const connected = new Set(state.providers.filter((p) => p.connected).map((p) => p.id))
+  const describe = (): void => {
+    const picked = state.providers.find((p) => p.id === provider.value)
+    said.className = 'hint'
+    said.textContent =
+      (connected.has(provider.value) ?
+        `A key is stored for ${picked?.name ?? provider.value}. Pasting one replaces it. `
+      : `No key yet for ${picked?.name ?? provider.value}. `) + (picked?.terms ? `Terms: ${picked.terms}` : '')
+  }
+  provider.addEventListener('change', describe)
+  describe()
+
+  const store = (): void => {
+    if (!key.value.trim()) return
+    save.disabled = true
+    void post('/api/setup', { provider: { id: provider.value, key: key.value.trim() } })
+      .then(() => {
+        connected.add(provider.value)
+        key.value = ''
+        describe()
+        // Said out loud, because the box empties and nothing else on the screen moves.
+        said.textContent = `Saved to the keychain. ${said.textContent}`
+      })
+      .finally(() => (save.disabled = false))
+  }
+  save.addEventListener('click', store)
+  key.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') store()
+  })
+}
+
 async function load(): Promise<void> {
   const state = (await (await fetch('/api/state', { headers: { 'x-alexia-token': token } })).json()) as State
   called(state.setup.name)
   known = state.commands
-  document.querySelector<HTMLSelectElement>('#mode')!.value = state.setup.mode
+  for (const picker of modes) picker.value = state.setup.mode
+  setupSettings(state)
   if (!state.setup.done) firstRun(state)
 
   for (const turn of state.messages) {
@@ -568,7 +636,14 @@ async function ask(question: string): Promise<void> {
 // ---- commands: the shortcut half -----------------------------------------------------
 
 const menu = document.querySelector<HTMLElement>('#menu')!
-const mode = document.querySelector<HTMLSelectElement>('#mode')!
+/**
+ * Every mode picker on the page — the header's and the settings screen's.
+ *
+ * A list rather than two constants, because they are one setting shown twice and the day
+ * somebody adds a third is the day two of them start disagreeing. Every one of them writes
+ * through `/local`, `/combined`, `/cloud`, and core's answer sets all of them.
+ */
+const modes = document.querySelectorAll<HTMLSelectElement>('select.mode')
 let known: Command[] = []
 
 /**
@@ -587,7 +662,7 @@ async function command(input: string, approved?: boolean): Promise<void> {
     })
   ).json()) as { ok: boolean; note: string; ask?: string; setup: { mode: string } }
   bubble('refusal', ran.note)
-  mode.value = ran.setup.mode
+  for (const picker of modes) picker.value = ran.setup.mode
   if (ran.ask !== undefined) {
     askPermission(ran.ask, (allowed) => {
       if (allowed) void command(input, true)
@@ -676,7 +751,7 @@ document.querySelector('#close-control')!.addEventListener('click', () => {
 })
 
 text.addEventListener('input', showMenu)
-mode.addEventListener('change', () => void command(`/${mode.value}`))
+for (const picker of modes) picker.addEventListener('change', () => void command(`/${picker.value}`))
 
 form.addEventListener('submit', (event) => {
   event.preventDefault()

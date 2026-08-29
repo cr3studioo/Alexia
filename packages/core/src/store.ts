@@ -116,8 +116,23 @@ function ident(name: string): string {
   return name
 }
 
+/**
+ * A plugin id, as a SQL identifier.
+ *
+ * An id is `lowercase-with-hyphens` (`ID` in the manifest schema) and an identifier here is
+ * `lowercase_with_underscores` (`IDENT`) — so **a plugin whose id contains a hyphen had no
+ * table name at all**. One declared storage the schema accepts, `create` threw inside `load`,
+ * and it took the whole of `serve()` down before the port was open: the app did not start,
+ * and that plugin could not be purged either, because `purge` builds the same prefix.
+ *
+ * The mapping is one way and cannot collide: an id may not contain an underscore, so no two
+ * ids can arrive at the same name. Nothing migrates, because a hyphenated namespace has
+ * never successfully written a table.
+ */
+const namespace = (ns: string): string => ident(ns.replace(/-/g, '_'))
+
 /** `p_<namespace>_<table>`. The plugin says `transcripts` and never learns about the prefix. */
-const physical = (ns: string, table: string): string => `p_${ident(ns)}_${ident(table)}`
+const physical = (ns: string, table: string): string => `p_${namespace(ns)}_${ident(table)}`
 
 /** Objects and arrays are stored as JSON text, and come back as text. storage.md says so. */
 function encode(value: unknown): Value {
@@ -594,7 +609,7 @@ export class Store {
    * the directory afterwards, in that order and for the reason storage.md gives.
    */
   purge(ns: string): void {
-    const prefix = `p_${ident(ns)}_`
+    const prefix = `p_${namespace(ns)}_`
     const tables = this.#db
       .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE ? ESCAPE '\\'")
       .all(`${prefix.replace(/_/g, '\\_')}%`) as { name: string }[]
