@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { mkdir, rm } from 'node:fs/promises'
+import { mkdir, readdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { extract, fetchTo, find, mb, run, there } from './fetching.js'
 
@@ -47,15 +47,22 @@ const VOICE_HOST = 'https://huggingface.co/rhasspy/piper-voices/resolve/main'
 
 export const build = () => BUILDS[`${process.platform}-${process.arch}`]
 
-/** Everything Piper puts on disk, all of it under the one directory purge removes. */
+/**
+ * Everything Piper puts on disk, all of it under the one directory purge removes.
+ *
+ * A voice is a **file stem** in `voices/`. One of the three above resolves to its published
+ * name; anything else is taken as the stem itself, which is what makes a voice somebody
+ * added work exactly like one Alexia downloaded — the rest of this file cannot tell them
+ * apart, and does not need to.
+ */
 export const where = (ownDir, voice) => {
-  const chosen = VOICES[voice] ?? VOICES.lessac
+  const stem = VOICES[voice]?.file ?? voice
   return {
     bin: join(ownDir, 'piper'),
-    model: join(ownDir, 'voices', `${chosen.file}.onnx`),
+    model: join(ownDir, 'voices', `${stem}.onnx`),
     // Piper will not load a voice without its config, and the config is the half that
     // carries the sample rate — so a missing one is silence rather than an error.
-    config: join(ownDir, 'voices', `${chosen.file}.onnx.json`),
+    config: join(ownDir, 'voices', `${stem}.onnx.json`),
     wav: join(ownDir, 'spoken.wav'),
   }
 }
@@ -80,7 +87,9 @@ export async function ready(ownDir, voice, override) {
 export async function install(ownDir, voice, override, onProgress) {
   const { bin, model, config } = where(ownDir, voice)
   const spec = build()
-  const chosen = VOICES[voice] ?? VOICES.lessac
+  // A voice nobody published has nowhere to be downloaded from: its files are already on
+  // disk or the voice does not exist, and `ready` is the one that says which.
+  const chosen = VOICES[voice]
 
   if (!override && spec && !(await programs(ownDir, voice, undefined))) {
     await mkdir(bin, { recursive: true })
@@ -93,7 +102,7 @@ export async function install(ownDir, voice, override, onProgress) {
     await rm(archive, { force: true })
   }
 
-  if (!(await there(model)) || !(await there(config))) {
+  if (chosen && (!(await there(model)) || !(await there(config)))) {
     await mkdir(join(ownDir, 'voices'), { recursive: true })
     await fetchTo(`${VOICE_HOST}/${chosen.at}/${chosen.file}.onnx`, model, (done, total) =>
       onProgress?.(done, total, `Downloading the ${voice} voice — ${mb(done)} of ${mb(total)} MB`),
@@ -102,6 +111,35 @@ export async function install(ownDir, voice, override, onProgress) {
   }
 
   return programs(ownDir, voice, override)
+}
+
+/**
+ * Every voice this machine actually has, built in or not (M6-6).
+ *
+ * Read off the folder rather than from a list, so a voice somebody dropped in is found the
+ * same way one Alexia downloaded is — and so removing one is deleting two files and nothing
+ * else. The three published ones are always offered, downloaded or not, because *not
+ * downloaded* is a state a person can act on and an absence is not.
+ */
+export async function catalogue(ownDir) {
+  const stems = new Set()
+  try {
+    for (const name of await readdir(join(ownDir, 'voices'))) {
+      if (name.endsWith('.onnx')) stems.add(name.slice(0, -'.onnx'.length))
+    }
+  } catch {
+    // No folder yet, which is the ordinary state before the first download.
+  }
+
+  const published = new Map(Object.entries(VOICES).map(([id, one]) => [one.file, id]))
+  const found = []
+  for (const [id, one] of Object.entries(VOICES)) {
+    found.push({ id, mine: false, here: stems.has(one.file), mb: one.mb })
+  }
+  for (const stem of [...stems].sort()) {
+    if (!published.has(stem)) found.push({ id: stem, mine: true, here: true })
+  }
+  return found
 }
 
 /** Text in, a WAV file out. Piper reads what to say on stdin, which is why `run` takes input. */

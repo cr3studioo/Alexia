@@ -182,7 +182,7 @@ Tick a box only when the task's acceptance criteria pass. `[GATE]` needs a human
 - [x] **M6-3** `table` — the eleventh widget, and the conversation the spec asked for
 - [x] **M6-4** Skills, learned skills and tools — three panels, one widget
 - [x] **M6-5** The trace, with a memory
-- [ ] **M6-6** `plugins/voice` declares a panel — and the `file` question
+- [x] **M6-6** `plugins/voice` declares a panel — and the `file` question
 - [ ] **M6-7** `plugins/memory` declares a panel — and the `graph` question
 - [ ] **M6-8** `plugins/commitments` — the panel for a plugin core has never heard of
 - [ ] **M6-9** The consent ladder — pending, provenance, preauth
@@ -2433,6 +2433,34 @@ Four things come straight across from the predecessor, three of them small:
 
 ### M6-6 `plugins/voice` declares a panel — and the `file` question
 
+**Built 2026-08-29 (D89). `file` is refused, and the evidence is why.** The panel ships: a
+`table` of every voice this machine has, with *Speak in this* and *Remove* on the rows, and
+a `path` plus an `action` for bringing your own. It is the first tab core has never heard the
+name of, and core still has not — `panels.ts` does not contain the word.
+
+**The clip that motivated `file` is not a thing voice can do.** The predecessor's owner asked
+for *load 15 seconds of a voice and text*, and that was a cloning feature of a text-to-speech
+vendor this project deliberately did not take (M2-4, D72): **Piper does not clone from a
+recording.** What a person can genuinely do is bring a Piper voice they have already
+downloaded — which means they have already been to the file, know where it is, and `path` is
+an equal experience rather than a worse one. The single user turned out not to need the
+widget, which is exactly what deciding on evidence looks like when the evidence comes out the
+other way.
+
+**What was found on the way, and is worth keeping for whoever asks next.** A web page cannot
+fill a `path` from a picker: browsers will not tell a page where a file is, which is why
+`path` renders with a disabled *Browse…* button and always will. So *choosing a file* really
+is inexpressible in the schema — the case for `file` is structural, not convenience. It just
+has no user with a first-minute need yet, and one user with a convenient need is what the bar
+exists to refuse.
+
+**One thing moved rather than being added.** The `voice` `choice` setting is gone: a dropdown
+whose options are fixed in a manifest cannot list a voice that arrived afterwards, so the
+panel's list is the picker and the answer lives in the plugin's own key-value store. That is
+the namespace rule (D86) doing its job — pick a screen — and it is the first time a widget has
+moved because the panel was the better one.
+
+
 The first plugin-owned tab, and the one that decides `file`.
 
 What the panel is: the clips this machine has, which voice speaks, and a way to add one. The
@@ -2664,6 +2692,7 @@ Newest first. Every entry here is also in Alexia.md's decision log.
 
 | Date | Entry |
 |---|---|
+| 2026-08-29 | **D89** — **`file` is refused, and the single user is the reason.** M6-6, G7 answered. The panel ships either way and it did: a `table` of every voice this machine has, *Speak in this* and *Remove* on the rows, `path` plus an `action` for bringing your own — the first tab core has never heard the name of. What decided `file` is that **the use case that motivated it does not exist here.** The predecessor's owner asked for *load 15 seconds of a voice and text*; that is voice cloning, it belongs to a text-to-speech vendor this project refused at M2-4 for the dependency it costs, and **Piper does not clone from a recording**. What a person can actually do is bring a Piper voice they already downloaded — which means they have already been to the file and know where it is, and `path` is an equal first minute rather than a worse one. D83 deferred this so it could be decided on evidence; the evidence came out the other way, which is the deferral working rather than failing. **The structural finding is kept for whoever asks next**: a browser will not tell a page where a file is, so a `path` can never be filled by picking — which is why it renders with a disabled *Browse…* — and *choosing a file* is therefore genuinely inexpressible in the schema. That is a real argument, waiting on a real user. One user with a convenient need is what the bar exists to refuse. **And one widget moved rather than being added**: the `voice` `choice` setting is gone, because a dropdown whose options are fixed in a manifest cannot list a voice that arrived afterwards. The list is the picker now and the answer lives in the plugin's own store — the namespace rule (D86) doing what it is for. |
 | 2026-08-29 | **D88** — **the trace got a memory, and the two consumers stayed two.** M6-5. The live trace is a progress indicator: it exists while the task does and goes with it. `trace.ts` is the record — the **same event stream read by a second consumer**, keeping what the loop did rather than what the model was shown. Those are different on purpose (M15-6 collapses old steps and drops raw tool output once what was learned from it is recorded), and trimming the panel because the context was trimmed would be one decision serving two jobs badly. Five runs, in memory, gone on restart, with the predecessor's reason kept word for word: *restarting and finding an empty history is the honest behaviour for something that was never meant to be a permanent log* — a person who wants one exports it. Three small things came across and each is worth more than its size. **`backtrack`**: a step that begins while the one before it is in error is a retry, and saying so turns a flat list into an agent visibly recovering. **Two model labels**: asked-for and answering differ when the router falls back on a 429 (M1-8), and the header badge shows one — so a trace showing one too would make the fallback invisible in the one place it is explicable. That needed a new loop event, `turn`, carrying both; the router's plan already knew them and nothing had ever asked. And **export is one run as text in a file**, because *send it to somebody* is the sentence it exists for — with the detail on screen rendered by the same function, so what somebody reads is exactly what they send on. Exporting is also the guard's first declared-safe core row action: it adds a file and takes nothing away, and everything of core's not on that short list still needs a confirm. |
 | 2026-08-29 | **D87** — **three panels, one widget, and the one thing that did not fit was the finding.** M6-4. Four core tables — installed skills, the ones Alexia wrote, every tool every enabled plugin offers, and what is on this machine — drawn by the same function that draws a plugin's panel, with **not one line of bespoke rendering** between them. That was the whole test: *if any of them needs a line of its own, `table` was the wrong widget*, which is why they were one task and not three. **What did not fit was `edit`.** A textarea is not one of the eleven, and the honest answer was to leave editing a learned skill where M4-5 put it — beside the attribution line at the moment it fires, which is also the only moment a person can see what it did — rather than grow the widget for one user or special-case the screen. The panel answers the week-later question instead: **what was this learned from**, written into the skill at distil time, because the skill's own text cannot say — a model wrote that text. A skill from before the record exists is shown as *not recorded*, never guessed, which is the catalog's honesty rule (M1-5) in a second place. Two rules from the old dashboard came across unchanged and are now load-bearing: **read-only unless this screen is the only owner** — the plugins screen owns installing and removing, `tooling.ts` reads the plugins, so the only write path here is *forget a skill* — and **a broken thing is a row with a reason, not an absence**. That one write path is guarded by M6-1 rather than by `rule()`, because core acting on core's own data has no tool call to rule on; and a bundled skill is refused with a sentence rather than having no button, because a missing button answers nothing. |
 | 2026-08-29 | **D83 built** — **the eleventh widget shipped, and it invented nothing.** M6-3. `table` is granted, and the two claims that made granting it cheap both held in code. **A row action is an `action`**: one lookup, one `rule()`, the same two-step question — it just carries the row it is about, and the question appears beside that row rather than under a button. And **rows arrive over MCP's own `structuredContent`**, `{ rows: [...] }` with a string `id` on each, because the protocol already has an envelope for structured tool output and inventing a second one is how a contract grows a dialect. It is the only widget that needs a running plugin, which is exactly the division M6-2 set up: the panel draws from the manifest while the process is stopped, and asks for its contents when a person opens it — through the same gate as any other call, so a `rows` tool that never declared itself read-only is asked about instead of quietly run. Three ways an author gets the answer wrong are three sentences naming what was expected, never a blank list. The refactor it forced pays for itself: **the permission ruling is written once now** and used by four callers, the copy made for `/api/command` a task earlier having already started to drift from its original. |

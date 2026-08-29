@@ -212,12 +212,15 @@ the task that closes it.*
 
 ### Raised by planning the control surface (2026-08-29, M6)
 
-- [ ] **G7.** Is there an honest way to express *give me a file* in a schema whose whole point
-  is that a plugin never draws? `file` has exactly one user — voice, wanting a 15-second clip —
-  which is `ui-schema.md`'s own bar for refusing an eleventh widget. What makes it different
-  from every other refusal is that there is **no workaround inside the ten**: `path` asks a
-  person to go and find a `.wav` themselves, which is a worse first minute rather than an equal
-  one. *Decide at M6-6, with voice as the evidence — the same method M2-1 used.*
+- [x] **G7.** Is there an honest way to express *give me a file* in a schema whose whole point
+  is that a plugin never draws? **Answered 2026-08-29 (D89): no, and the single user is why.**
+  The 15-second clip was voice *cloning*, which belongs to the text-to-speech vendor refused at
+  M2-4 — Piper does not clone from a recording. What voice actually wants is a Piper voice
+  somebody already downloaded, so they have already been to the file and `path` is an equal
+  first minute rather than a worse one. The structural half is kept for whoever asks next: a
+  browser will not tell a page where a file is, so a `path` can never be filled by picking, and
+  *choosing a file* is genuinely inexpressible in the schema. That argument is real and is
+  waiting on a real user.
 - [ ] **G8.** Does a plugin ever get to draw something core cannot? The memory graph is the
   first real instance of Backlog item 4 — *a chart, a canvas or a map that genuinely cannot be
   a schema*. Three answers: a hand-written force layout (~100 lines, no dependency, ours to

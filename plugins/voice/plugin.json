@@ -12,7 +12,7 @@
       "index.js"
     ]
   },
-  "alexia_protocol": 2,
+  "alexia_protocol": 3,
   "mcp_protocol": "2025-11-25",
   "requires": [
     {
@@ -68,18 +68,6 @@
       "hint": "More is faster until it is not. Four suits most machines."
     },
     {
-      "type": "choice",
-      "key": "voice",
-      "label": "Speaking voice",
-      "options": [
-        "amy",
-        "lessac",
-        "ryan"
-      ],
-      "default": "lessac",
-      "hint": "Amy and Lessac are 63 MB each. Ryan is 114 MB and the clearest of the three."
-    },
-    {
       "type": "path",
       "key": "whisper_path",
       "label": "Whisper program",
@@ -109,6 +97,13 @@
       "label": "Download now",
       "tool": "install",
       "hint": "Fetches Whisper, Piper, the speech model and the voice. It happens on first use anyway; this is for getting it over with while you are looking."
+    },
+    {
+      "type": "path",
+      "key": "add_voice",
+      "label": "Add a voice",
+      "kind": "file",
+      "hint": "A Piper .onnx voice you have downloaded, with its .onnx.json beside it. Point at it here, then press Add on the Voice panel."
     }
   ],
   "storage": {
@@ -117,5 +112,53 @@
       "transcripts"
     ],
     "dir": true
+  },
+  "panel": {
+    "label": "Voice",
+    "widgets": [
+      {
+        "key": "voices",
+        "type": "table",
+        "label": "Voices",
+        "hint": "Which voice speaks, and what else this machine has. A published voice downloads the first time it is used.",
+        "rows": "voices",
+        "columns": [
+          {
+            "key": "name",
+            "label": "Voice"
+          },
+          {
+            "key": "where",
+            "label": "Where from",
+            "hideNarrow": true
+          },
+          {
+            "key": "state",
+            "label": "State"
+          }
+        ],
+        "rowActions": [
+          {
+            "key": "use_voice",
+            "label": "Speak in this",
+            "tool": "use_voice"
+          },
+          {
+            "key": "drop_voice",
+            "label": "Remove",
+            "tool": "drop_voice",
+            "confirm": "Remove {name}?"
+          }
+        ],
+        "filter": true
+      },
+      {
+        "key": "install_voice",
+        "type": "action",
+        "label": "Add the voice in the box",
+        "tool": "add_voice",
+        "hint": "Copies the file named in “Add a voice”, on the plugins screen, into Alexia. Piper does not clone a voice from a recording — this is for a voice you have already downloaded."
+      }
+    ]
   }
 }

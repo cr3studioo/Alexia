@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+import { copyFile, rm } from 'node:fs/promises'
+import { basename, dirname, join } from 'node:path'
 import { fromJsonSchema, log, plugin } from '@alexia/sdk'
 import * as piper from './piper.js'
 import * as whisper from './whisper.js'
@@ -22,14 +24,23 @@ const alexia = plugin()
 /** Set once at startup, so nothing has to spawn anything to answer a settings screen. */
 let own
 
-/** What the user chose, with the manifest's defaults filled in. */
+/**
+ * What the user chose, with the manifest's defaults filled in.
+ *
+ * **Which voice speaks is this plugin's own, not a setting** (M6-6). It used to be a `choice`
+ * over three fixed options, which stopped being the truth the moment a person could add one
+ * of their own — a dropdown whose options are fixed in a manifest cannot list a file that
+ * arrived afterwards. So the panel's list is the picker and the answer lives here, in the
+ * plugin's own key-value store, where it can name a voice nobody published.
+ */
 async function chosen() {
   const settings = await alexia.settings()
   const path = (key) =>
     typeof settings[key] === 'string' && settings[key] !== '' ? settings[key] : undefined
+  const picked = await alexia.storage.get('voice').catch(() => undefined)
   return {
     size: whisper.MODELS[settings.model_size] ? settings.model_size : 'base',
-    voice: piper.VOICES[settings.voice] ? settings.voice : 'lessac',
+    voice: typeof picked === 'string' && picked !== '' ? picked : 'lessac',
     threads: Number(settings.threads) || 4,
     hearing: path('whisper_path'),
     speaking: path('piper_path'),
@@ -67,9 +78,14 @@ function state(hears, speaks, size, voice, hearing, speaking) {
   if (hears && speaks) return `● Ready — ${size}, ${voice}`
   if (!whisper.build() && !hearing) return '▲ Point at a Whisper program'
   if (!piper.build() && !speaking) return '▲ Point at a Piper program'
-  if (hears) return `▲ Hearing only — the ${voice} voice is ${piper.VOICES[voice].mb} MB`
+  // A voice somebody added has no published size, and inventing one would be a number on
+  // a screen that means nothing.
+  const mb = piper.VOICES[voice]?.mb
+  if (hears) return mb === undefined ? `▲ Hearing only — ${voice} is not loading` : `▲ Hearing only — the ${voice} voice is ${mb} MB`
   if (speaks) return `▲ Speaking only — the ${size} model is ${whisper.MODELS[size].mb} MB`
-  return `■ Not downloaded — ${whisper.MODELS[size].mb + piper.VOICES[voice].mb + 30} MB`
+  return mb === undefined ?
+      `■ Not downloaded — the ${size} model is ${whisper.MODELS[size].mb} MB`
+    : `■ Not downloaded — ${whisper.MODELS[size].mb + mb + 30} MB`
 }
 
 /**
@@ -228,6 +244,133 @@ alexia.tool(
 )
 
 /**
+ * The panel (M6-6): every voice this machine has, which one speaks, and a way to add one.
+ *
+ * The old dashboard's owner asked for exactly this — *can you make it so that I can switch
+ * the voice?* — and what he wanted with it was a fifteen-second clip of his own voice. That
+ * is not what this is, and saying so is the honest part: Piper does not clone from a clip,
+ * and the vendor that does was refused at M2-4 for the dependency it costs. What a person
+ * can genuinely do is bring a Piper voice they downloaded, and that is what this adds.
+ */
+alexia.tool(
+  'voices',
+  {
+    description: 'List every speaking voice this machine has, which one is in use, and which are downloaded. Takes no arguments.',
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+  },
+  async () => {
+    const { voice } = await chosen()
+    const rows = (await piper.catalogue(own)).map((one) => ({
+      id: one.id,
+      name: one.id,
+      where: one.mine ? 'yours' : 'published',
+      // Two facts, and the row says both: whether it is the one that speaks, and whether it
+      // is actually here. The chosen voice not being downloaded yet is an ordinary state —
+      // it arrives on the first thing said in it — and a row claiming only the first would
+      // be the row somebody stares at wondering why nothing happens.
+      state:
+        one.id === voice && one.here ? '● speaking'
+        : one.id === voice ? `▲ speaking — arrives on first use${one.mb ? `, ${one.mb} MB` : ''}`
+        : one.here ? '● ready'
+        : `■ not downloaded${one.mb ? ` — ${one.mb} MB` : ''}`,
+    }))
+    return { content: [{ type: 'text', text: `${rows.length} voices` }], structuredContent: { rows } }
+  },
+)
+
+alexia.tool(
+  'use_voice',
+  {
+    description: 'Make one of the installed voices the one that speaks. Takes the voice’s id.',
+    inputSchema: fromJsonSchema({
+      type: 'object',
+      properties: { id: { type: 'string', description: 'Which voice.' } },
+      required: ['id'],
+    }),
+    annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  async ({ id }) => {
+    const known = (await piper.catalogue(own)).find((one) => one.id === id)
+    if (!known) return { isError: true, content: [{ type: 'text', text: `There is no voice called ${id}.` }] }
+    await alexia.storage.set('voice', id)
+    await bind()
+    // Downloading is not done here: a published voice that is not on disk yet arrives on the
+    // first thing said in it, the same as it always did.
+    return {
+      content: [
+        { type: 'text', text: known.here ? `${id} is speaking now.` : `${id} is speaking now, and downloads the first time it is used.` },
+      ],
+    }
+  },
+)
+
+alexia.tool(
+  'drop_voice',
+  {
+    description: 'Delete a voice you added. Takes the voice’s id. A published voice cannot be deleted this way.',
+    inputSchema: fromJsonSchema({
+      type: 'object',
+      properties: { id: { type: 'string', description: 'Which voice.' } },
+      required: ['id'],
+    }),
+    annotations: { destructiveHint: true, openWorldHint: false },
+  },
+  async ({ id }) => {
+    const known = (await piper.catalogue(own)).find((one) => one.id === id)
+    if (!known?.mine) {
+      return {
+        isError: true,
+        content: [
+          {
+            type: 'text',
+            text: `${id} is one of the published voices. Alexia downloads those, so removing one only means it is fetched again.`,
+          },
+        ],
+      }
+    }
+    const { model, config } = piper.where(own, id)
+    await rm(model, { force: true })
+    await rm(config, { force: true })
+    if ((await chosen()).voice === id) await alexia.storage.set('voice', 'lessac')
+    await bind()
+    return { content: [{ type: 'text', text: `${id} is gone. Lessac is speaking.` }] }
+  },
+)
+
+alexia.tool(
+  'add_voice',
+  {
+    description:
+      'Copy a Piper voice you have downloaded into Alexia, so it can speak in it. Reads the path in the “Add a voice” box. Takes no arguments.',
+    annotations: { openWorldHint: false },
+  },
+  async () => {
+    const settings = await alexia.settings()
+    const from = typeof settings.add_voice === 'string' ? settings.add_voice.trim() : ''
+    if (from === '') return { isError: true, content: [{ type: 'text', text: 'Point “Add a voice” at a Piper .onnx file first.' }] }
+    if (!from.endsWith('.onnx')) {
+      return { isError: true, content: [{ type: 'text', text: 'A Piper voice is a .onnx file, with its .onnx.json beside it.' }] }
+    }
+    const stem = basename(from, '.onnx')
+    const there = piper.where(own, stem)
+    try {
+      // Both halves or neither: Piper will not load a voice without its config, and the
+      // config is where the sample rate lives — so half a voice is silence, not an error.
+      await copyFile(from, there.model)
+      await copyFile(join(dirname(from), `${stem}.onnx.json`), there.config)
+    } catch (error) {
+      await rm(there.model, { force: true })
+      return {
+        isError: true,
+        content: [{ type: 'text', text: `Could not copy it: ${error.message}. A Piper voice is two files — ${stem}.onnx and ${stem}.onnx.json.` }],
+      }
+    }
+    await bind()
+    return { content: [{ type: 'text', text: `${stem} is here. Choose it in the list to speak in it.` }] }
+  },
+)
+
+/**
  * What was said, kept in this plugin's own namespace — which is also the point: it is one
  * `DROP TABLE` away, and deleting the folder takes it with it (invariant 5).
  */
@@ -240,6 +383,6 @@ await bind()
 // The model and the voice are the things that decide whether either capability is answerable
 // at all, so a change to any of them re-asks rather than assuming the last answer still holds.
 alexia.onSettingsChanged((changed) => {
-  if (['model_size', 'voice', 'whisper_path', 'piper_path'].some((key) => key in changed)) void bind()
+  if (['model_size', 'whisper_path', 'piper_path'].some((key) => key in changed)) void bind()
 })
 log.info(`${alexia.manifest.name} is ready`)
