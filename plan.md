@@ -196,8 +196,8 @@ Tick a box only when the task's acceptance criteria pass. `[GATE]` needs a human
 - [x] **M7-3** Memory that captures without being asked
 - [x] **M7-4** A voice that is yours — cloning, and the engine it costs
 - [x] **M7-5** A button in Telegram, and somewhere else to land
-- [ ] **M7-6** Three tiers, and the cheapest one has no model in it
-- [ ] **M7-G** **Done when:** a free-model request is provably stripped, a cost is traceable to the run that spent it, and Alexia remembers something nobody told it to
+- [x] **M7-6** Three tiers, and the cheapest one has no model in it
+- [x] **M7-G** **Done when:** a free-model request is provably stripped, a cost is traceable to the run that spent it, and Alexia remembers something nobody told it to
 
 ---
 
@@ -3189,6 +3189,17 @@ something a framework is genuinely better at.
 
 ### M7-6 Three tiers, and the cheapest one has no model in it
 
+**Built 2026-08-29 (D100).** `plugins/computer/replay.js` is the bottom two rungs: a
+whitelisted registry of six steps, `{step_id}` substitution so a decision's answer is what the
+next deterministic step acts on, and a plan checked whole **before** anything runs. **The
+zero-cost guarantee is structural and here it is stronger than the predecessor's** — that file
+imports `./windows.js` and nothing else, so there is no path to a model to be found; `ask` is
+passed in by the caller, and a script may be replayed with none at all. The recording cost
+nothing to build: every action was already written to the `actions` table for *what did it
+just do*, so *save that as a plan* is a read of a log rather than a second mechanism watching
+the same events. **The contract question it was going to raise did not arise**, and why is
+worth reading.
+
 **The same five clicks every day should not cost a model call every day.**
 
 Version 1 split execution by **how much model sits in the path**, and the names matter less
@@ -3231,6 +3242,47 @@ check that the module cannot reach the provider layer at all. A workflow with on
 point spends once, not once per step. Every step is something the permission ladder already
 knows how to rule on.
 
+**All three met, and each one twice — once as a property and once as a measurement.**
+
+- **Zero rows.** `replay.test.js` reads the imports: one, and it spawns PowerShell.
+  `tiers.test.ts` drives the real plugin process through the real `alexia/*` layer with a
+  `sample` that records every request, replays a saved plan, and finds the recorder empty and
+  `spend(0)` at zero. Not *cheap* — none.
+- **Once, not once per step.** A four-step plan with one decision asks exactly one question,
+  and the answer is substituted into the step after it. `free(plan)` is what the panel's
+  **What it costs** column reads, so the difference is on the row rather than in a document.
+- **Nothing the ladder cannot rule on.** A test holds the registry against the `do` tool's own
+  action list and allows exactly two extras — `focus`, which is a tool by name, and `wait`,
+  which touches nothing. A plan naming anything else is refused before the first step runs.
+
+**"This is the biggest contract question of the six" — and it turned out not to be one.**
+
+The plan expected *who stores it, who approves it, and what it may touch* to be M15-3 and M6-9
+questions wearing new clothes. They are not, because **this architecture had already answered
+them by accident**:
+
+- **Who stores it** — the plugin, in its own namespace, which a purge takes. There is nowhere
+  else a plugin can put anything.
+- **Who approves it** — the same gate as any other tool call. `replay_plan` is annotated
+  destructive and is asked about like everything else this plugin does; it asks **once for the
+  sequence rather than once per click**, which is the trade the lower rungs are made of and is
+  visible on the confirm.
+- **What it may touch** — only what the registry holds, and the registry holds only what this
+  plugin's own annotated tools already do.
+
+And the guarantee the plan said to take early and cheaply turned out to be **free here in a
+way it was not there.** Version 1 needed `script_engine.py` to avoid importing the gateway
+inside one process; a plugin cannot reach a model at all except by asking core for one, so
+*not asking* is the whole of the proof. The check is still written down, because the day
+somebody adds `import { plugin } from '@alexia/sdk'` to that file is the day the rung stops
+being free and nothing else would notice.
+
+**What was left out, and why.** No editor for a plan, and no `record` mode. A plan is JSON in
+the plugin's own store and the panel lists it, replays it and deletes it; writing one by hand
+is possible and building a screen for it is a workflow builder, which is a product rather than
+a rung. ponytail: the day somebody edits one and gets it wrong, the answer is a validate
+button over `check()`, which already exists and already says what is wrong in a sentence.
+
 ### M7-G — Done when
 
 > **A free-model request is provably stripped of a credential it contained, a cost is traceable
@@ -3241,6 +3293,29 @@ Three of the six, chosen because they are the three that are hard to fake. The g
 deliberately not *all six shipped*: M7-4 and M7-6 both hang on questions this milestone raises
 rather than answers, and a gate that waits on an unanswered question is a gate that gets
 waived.
+
+**Reached 2026-08-29, and run rather than asserted.** Eighteen tests across the three files
+that carry the three claims, in one pass:
+
+| The claim | Where it is measured | What it shows |
+|---|---|---|
+| **provably stripped** | `redact.test.ts` | one payload with an API key, an env assignment and a street address, driven through the real `send()` for `T1`, `T2` and `T3`: none of the three arrive, *"and remember I always run late"* does — and the same payload to a `T0` model arrives whole |
+| **traceable to its run** | `correlate.test.ts` | two tasks in one session with **different** totals a `session_id` cannot separate, and a 429 fallback whose charge names both models against the cost it explains |
+| **remembers, then forgets** | `noticing.test.ts` | a real plugin process: something said in passing is written down without `remember` being called and linked from the right place, then a *forget that* takes it out of the buffer as well as the notes — and the next pass does not bring it back |
+
+Three things beyond the gate's own sentence came out of running it, and all three are the sort
+that only appear when the claim is measured rather than described. **Check 8 caught the first
+draft of a comment** in the file about privacy, written by the session that had just read that
+check. **`AWS_SECRET_ACCESS_KEY=…` walked through the egress scan** — the keyword is in the
+middle, and the pattern demanded `=` immediately after it — found by M7-3's test rather than
+M7-1's. And **`store.select` threw on a declared table nothing had ever been written to**,
+which is the memory panel on a fresh install: `ORDER BY at` on a table with no columns is a
+crash, not an empty list. All three are fixed at the root.
+
+**All six shipped**, which the gate did not require and is worth recording separately from it:
+M7-4's live clone call is unverified for want of a key, and one line of its acceptance — *delete
+the plugin and the clone goes with it* — is **not met and written down rather than fudged**,
+because a cloned voice lives on an account rather than on this disk.
 
 
 ---
@@ -3407,6 +3482,8 @@ Newest first. Every entry here is also in Alexia.md's decision log.
 
 | Date | Entry |
 |---|---|
+| 2026-08-29 | **D101** — **M7 is reached, and the gate was run rather than asserted.** Eighteen tests across the three files carrying the three claims, in one pass: a payload with an API key, an env assignment and a street address driven through the real `send()` for `T1`, `T2` and `T3` with none of the three arriving and the behavioural sentence around them arriving whole; two tasks in one session with different totals a `session_id` cannot separate, and a 429 fallback naming both models against the cost; and a real plugin process writing down something nobody asked it to, linking it, then forgetting it out of the buffer as well as the notes so the next pass does not bring it back. **Three findings came out of measuring rather than describing**, and none of them was the thing being measured: check 8 caught the first draft of a comment in the privacy file, written by the session that had just read that check; `AWS_SECRET_ACCESS_KEY=…` walked through the egress scan because the keyword sits in the middle of the name, found by M7-3's test rather than M7-1's; and `store.select` threw on a declared table nothing had ever been written to — `ORDER BY at` with no columns is a crash rather than an empty list, which is the memory panel on a fresh install. All three fixed at the root. **All six shipped**, which the gate deliberately did not require: M7-4's live clone call is unverified for want of a key, and one line of its acceptance is not met and is written down as not met, because a cloned voice lives on somebody's account rather than on this disk. |
+| 2026-08-29 | **D100** — **the cheapest rung has no model in it, and the contract question never arrived.** M7-6. `replay.js` is a registry of six steps, `{step_id}` substitution so a decision's answer is what the next deterministic step acts on, and a plan validated whole before anything runs — because a sequence that half-ran has left the screen somewhere nobody planned for. **The zero-cost guarantee is structural and stronger here than in the predecessor**: that file imports `./windows.js` and nothing else, `ask` is handed in by the caller, and a script is replayed with none at all. Version 1 needed `script_engine.py` to avoid importing its gateway inside one process; **a plugin cannot reach a model except by asking core for one, so *not asking* is the whole proof** — and the check is written down anyway, because the day somebody adds the SDK to that file is the day the rung stops being free and nothing else would notice. **Recording cost nothing to build**: every action was already written to `actions` for the *what did it just do* question, so *save that as a plan* is a read of a log rather than a second mechanism watching the same events. **The plan called this the biggest contract question of the six and it turned out not to be one.** *Who stores it* — the plugin's own namespace, which a purge takes, because there is nowhere else it could. *Who approves it* — the same gate as any tool, asked once for the sequence rather than once per click, which is the trade the lower rungs are made of. *What it may touch* — only what the registry holds, and the registry holds only what this plugin's own annotated tools already do, which a test asserts against the tool's own action list. Three questions the architecture had already answered by accident. **No plan editor and no record mode**: a plan is JSON in the plugin's store, and a screen for editing one is a workflow builder — a product rather than a rung. |
 | 2026-08-29 | **D99** — **the yes can come from the phone, and it is one flag rather than a new method.** M7-5. `plugins/telegram`'s own line — *you have no tools on this path* — was the plugin being honest about a real limit: there was nowhere to ask a permission question from a phone, so rather than a task hanging on a prompt nobody could see, the path carried no tools at all. Two pieces lift it. **`ask.confirm`**, a core capability that is *a question and its options out, the chosen option back* — the ruling stays in core, and only the surface is new. And **`alexia/tools`, one optional key on a `sampling` request**, which turns a completion into the whole loop: the tool list, the gate, the trace, the ledger, on exactly the terms a task from the window gets. **A flag rather than `alexia/task/run`, and the contract's number does not move for it** — an Alexia that does not know the key ignores it and answers without tools, which is precisely what it did before, and *a change a plugin can see going wrong* is `versions.md`'s own bar for a bump. **`gate()` was extracted so both callers share one**, because two copies of a permission gate is two rulings waiting to disagree, and the acceptance is that a phone gets *the same ruling the app would have produced*. **The 64-byte cap is a property of the shape**: the action never travels, an eight-character token does, and the test proves it with a five-thousand-character action. **No ntfy fallback for a question** — ntfy has no buttons, so one sent down it would look answered to whoever sent it and never be; the fallback carries answers and errors and refuses anything with a button on it. **Voice notes needed nothing one way and a capability the other**: `voice.transcribe` has been in the registry since M2, while `voice.speak` is deliberately *nothing out*, so `voice.render` is new and bound only while a cloned voice is chosen — the one that returns the format a bubble takes. **One task at a time, said out loud**: the rest of `serve.ts` rests on one controller and one pending question, so a plugin asking while somebody is at the keyboard is refused rather than queued. And it is **still not grammY**, though this task wanted both of the things that were named as the day to take it: six calls of `fetch` instead of two. |
 | 2026-08-29 | **D98** — **a voice that is yours, and the engine it costs, said out loud.** M7-4, G10 answered. `plugins/voice` gained a second engine and an expression pass; **it is one plugin, and the contract decided that** — two plugins would both provide `voice.speak`, and `Plugins.capability()` returns whichever core loaded first, so *which voice is speaking* would depend on load order with nothing on any screen to say so. **And no engine setting either**, which G10 did not consider: a voice is already chosen in one place, so where it runs is a property of the voice rather than a second switch, and the state where the two disagree has no meaning. **M2-4's refusal of a cloud vendor is priced rather than overturned** — Piper still speaks unless somebody has picked a cloned voice, and picking one is the yes. **`file` was refused a second time on a new argument**: D89 said the clip could be recorded through `audio.input`, and it cannot — `whisper-stream` returns text, so a recorder would be a platform-specific capture path per operating system for one screen, and somebody cloning a voice already has the recording. Two refusals of `file`, two different reasons, neither the one expected. **Expression is filtered, not trusted**: an unrecognised marker is *spoken* rather than dropped, so the vocabulary is quoted from the vendor's published reference and the model's output is filtered against it afterwards — and an annotator that changed the words has its whole answer discarded, because a voice saying something slightly different from the screen is a bug nobody can see. With a Piper voice speaking it is **off and says why**. **One acceptance line is not met and is written down rather than fudged**: a cloned voice lives on an account, not on this disk, so deleting the plugin does not delete it. There is no pre-purge hook and adding one for a single plugin is what invariant 1 exists to prevent, so the tool says so at the moment it clones. **The live clone call is unverified** — no key on this machine — and the file says which shapes were run against the real API and which were not. |
 | 2026-08-29 | **D96** — **a plugin may work on its own clock, and on it spends nothing but free.** G12 answered at M7-3, and it had to be answered first because the task said not to build until it was. Half was already true — `resident` (D77) and `sampling`. The unanswered half was the ceiling, and the answer is that **the ceiling is a tier rather than a number**: M15-7's spend preview is what makes an expensive run somebody's decision, and when a timer wakes up there is nobody to show it to. So free tiers and this machine, always; a paid model never. **It is derived rather than declared**, which is the part worth keeping: `send()` reads *attributed to a plugin, belonging to no run* as *free only*, and M7-2's `run_id` is what made that sentence expressible a day earlier. One rule, in the same place M7-1 put one, instead of a flag at every call site — because a flag at a call site is a flag somebody forgets on the one that matters. The checker keeps its paid path by construction: it runs inside a task and carries that task's id. **This is a real tightening** — until today `sampling` could spend to the monthly cap, and a resident plugin waking every twelve minutes had nothing between it and the money. The refusal says which wall it hit, because *raise your cap* is the wrong advice here. **Backlog 7–10 are unblocked** and inherit the ceiling: proactive messaging, the reliability scorecard, bounded self-healing and web-watch may all wake on their own, and none of them may bill anybody for it. ponytail: no per-plugin allowance — the upgrade, if somebody wants their phone answered by a frontier model, is a monthly figure granted per plugin on the Library screen and read in the same place. |

@@ -2,6 +2,7 @@
 import { fromJsonSchema, log, plugin } from '@alexia/sdk'
 import { readdirSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
+import { check, free, MAX_STEPS, replay, STEPS } from './replay.js'
 import * as win from './windows.js'
 
 /**
@@ -43,9 +44,22 @@ async function mayTouch() {
   }
 }
 
-/** One row per thing done, in this plugin's own namespace. Deleting it takes the log too. */
-const noted = (what, detail) =>
-  alexia.storage.insert('actions', { what, detail: String(detail).slice(0, 500), at: Date.now() }).catch(() => {})
+/**
+ * One row per thing done, in this plugin's own namespace. Deleting it takes the log too.
+ *
+ * `step` is the same row as JSON (M7-6), which is what makes recording a sequence free: the
+ * log was already being written, so *save what just happened as a plan* is a read of it
+ * rather than a second mechanism watching the same events.
+ */
+const noted = (what, detail, step) =>
+  alexia.storage
+    .insert('actions', {
+      what,
+      detail: String(detail).slice(0, 500),
+      ...(step && { step: JSON.stringify(step) }),
+      at: Date.now(),
+    })
+    .catch(() => {})
 
 async function report() {
   const { allow_input: allow } = await settings()
@@ -327,8 +341,167 @@ const controller = alexia.tool(
     } catch (error) {
       return refuse(error.message)
     }
-    await noted(String(action), `${x ?? ''} ${y ?? ''} ${keys ?? ''}`.trim())
+    await noted(String(action), `${x ?? ''} ${y ?? ''} ${keys ?? ''}`.trim(), {
+      do: String(action),
+      ...(x !== undefined && { x }),
+      ...(y !== undefined && { y }),
+      ...(text !== undefined && { text }),
+      ...(keys !== undefined && { keys }),
+    })
     return { content: [{ type: 'text', text: `Did it: ${String(action)}.` }] }
+  },
+)
+
+/**
+ * The bottom two rungs (M7-6): a sequence saved, and a sequence replayed.
+ *
+ * **Recording is a read of a log that already existed.** Every action this plugin takes is
+ * written to `actions` for the *what did it just do* question, and a plan is the last few of
+ * those rows. No recorder, no second mechanism watching the same events, and nothing to keep
+ * in step with the first one.
+ */
+const plans = async () => (await alexia.storage.get('plans')) ?? {}
+
+alexia.tool(
+  'save_plan',
+  {
+    description:
+      'Save what was just done as a plan that can be replayed without a model. Takes a name ' +
+      'and, optionally, how many of the last actions to keep. Use after doing something the ' +
+      'user says they will want again.',
+    inputSchema: fromJsonSchema({
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'What to call it.' },
+        steps: { type: 'number', description: `How many of the last actions. Defaults to 10, at most ${String(MAX_STEPS)}.` },
+      },
+      required: ['name'],
+    }),
+    annotations: { destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  },
+  async ({ name, steps }) => {
+    const called = String(name ?? '').trim()
+    if (called === '') return refuse('A plan needs a name.')
+    const many = Math.min(MAX_STEPS, Math.max(1, Number(steps) || 10))
+    const rows = await alexia.storage.select('actions', { order: [['at', 'desc']], limit: many })
+    const plan = rows
+      .reverse()
+      .flatMap((row) => {
+        try {
+          return [JSON.parse(String(row.step))]
+        } catch {
+          // A row written before this existed, or one that was not a replayable action.
+          return []
+        }
+      })
+      .filter((step) => step && String(step.do) in STEPS)
+    const wrong = check(plan)
+    if (wrong) return refuse(`Nothing to save: ${wrong}.`)
+    await alexia.storage.set('plans', { ...(await plans()), [called]: plan })
+    return {
+      content: [
+        {
+          type: 'text',
+          text: `Saved “${called}” — ${String(plan.length)} step${plan.length === 1 ? '' : 's'}, and replaying it costs nothing.`,
+        },
+      ],
+    }
+  },
+)
+
+alexia.tool(
+  'plans',
+  {
+    description: 'List the saved plans, how many steps each has, and whether replaying one costs anything. Takes no arguments.',
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+  },
+  async () => {
+    const held = await plans()
+    const rows = Object.entries(held).map(([name, plan]) => ({
+      id: name,
+      name,
+      steps: plan.length,
+      // The line this whole task is about, on the row rather than in a document.
+      cost: free(plan) ? 'nothing — no model in the path' : 'one model call, at the decision',
+    }))
+    return { content: [{ type: 'text', text: `${rows.length} plans` }], structuredContent: { rows } }
+  },
+)
+
+alexia.tool(
+  'replay_plan',
+  {
+    description:
+      'Do a saved plan again. A plan with no decisions in it runs with no model at all. Takes ' +
+      'the plan’s name.',
+    inputSchema: fromJsonSchema({
+      type: 'object',
+      properties: { name: { type: 'string', description: 'Which plan.' } },
+      required: ['name'],
+    }),
+    // Every step in it is something this plugin's own tools do, and those are annotated
+    // honestly — so this one is too. The gate asks once for the sequence rather than once
+    // per click, which is the trade the middle and bottom rungs are made of.
+    annotations: { destructiveHint: true, openWorldHint: true },
+  },
+  async ({ name }, ctx) => {
+    if (!win.supported()) return unsupported()
+    const plan = (await plans())[String(name ?? '')]
+    if (!plan) return refuse(`There is no plan called “${String(name ?? '')}”.`)
+    try {
+      await mayTouch()
+      /**
+       * **The whole of what a decision costs, and it is passed in from here.**
+       *
+       * `replay.js` cannot reach a model — it imports `./windows.js` and nothing else — so
+       * this is the only way one enters, and a plan with no `ask` steps never reaches this
+       * line. A script is free by construction rather than by intention.
+       */
+      const done = await replay(plan, {
+        signal: ctx?.mcpReq?.signal,
+        ask: async (question) => {
+          const answer = await alexia.server.server.createMessage({
+            messages: [{ role: 'user', content: { type: 'text', text: question } }],
+            maxTokens: 200,
+          })
+          return answer.content?.type === 'text' ? answer.content.text.trim() : ''
+        },
+      })
+      await noted('replay', `${String(name)} — ${String(done.steps)} steps`)
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `${done.stopped ? 'Stopped after' : 'Did'} ${String(done.steps)} step${done.steps === 1 ? '' : 's'} of “${String(name)}”${free(plan) ? ', costing nothing' : ''}.`,
+          },
+        ],
+      }
+    } catch (error) {
+      return refuse(error.message)
+    }
+  },
+)
+
+alexia.tool(
+  'forget_plan',
+  {
+    description: 'Delete a saved plan. Takes its name.',
+    inputSchema: fromJsonSchema({
+      type: 'object',
+      properties: { name: { type: 'string', description: 'Which plan.' } },
+      required: ['name'],
+    }),
+    annotations: { destructiveHint: true, openWorldHint: false },
+  },
+  async ({ name }) => {
+    const held = await plans()
+    const called = String(name ?? '')
+    if (!(called in held)) return refuse(`There is no plan called “${called}”.`)
+    await alexia.storage.set(
+      'plans',
+      Object.fromEntries(Object.entries(held).filter(([one]) => one !== called)),
+    )
+    return { content: [{ type: 'text', text: `“${called}” is gone.` }] }
   },
 )
 

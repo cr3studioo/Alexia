@@ -21,6 +21,7 @@ const needPlugins = [
   'packages/conformance/test/conform.test.ts',
   'packages/core/test/replan.test.ts',
   'packages/core/test/shutdown.test.ts',
+  'packages/core/test/tiers.test.ts',
   'packages/core/test/skills.test.ts',
   'packages/core/test/stop.test.ts',
   'packages/core/test/supervisor.test.ts',

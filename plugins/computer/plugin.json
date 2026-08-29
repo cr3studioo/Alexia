@@ -12,7 +12,7 @@
       "index.js"
     ]
   },
-  "alexia_protocol": 2,
+  "alexia_protocol": 3,
   "mcp_protocol": "2025-11-25",
   "requires": [
     {
@@ -66,5 +66,48 @@
       "actions"
     ],
     "dir": true
+  },
+  "panel": {
+    "label": "Plans",
+    "widgets": [
+      {
+        "key": "saved_plans",
+        "type": "table",
+        "label": "Saved sequences",
+        "hint": "The same five clicks, without paying a model to work them out again. A plan with no decision in it has no model in its path at all.",
+        "rows": "plans",
+        "columns": [
+          {
+            "key": "name",
+            "label": "Plan"
+          },
+          {
+            "key": "steps",
+            "label": "Steps",
+            "align": "right",
+            "hideNarrow": true
+          },
+          {
+            "key": "cost",
+            "label": "What it costs"
+          }
+        ],
+        "rowActions": [
+          {
+            "key": "replay_plan",
+            "label": "Do it again",
+            "tool": "replay_plan",
+            "confirm": "Replay {name} now?"
+          },
+          {
+            "key": "forget_plan",
+            "label": "Delete",
+            "tool": "forget_plan",
+            "confirm": "Delete {name}?"
+          }
+        ],
+        "filter": true
+      }
+    ]
   }
 }
