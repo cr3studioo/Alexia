@@ -1,141 +1,246 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { fromJsonSchema, log, plugin } from '@alexia/sdk'
+import { brief, clean, nameFrom, unique, usable } from './writing.js'
 
 /**
- * The personality node (M4-4).
+ * The personality node (M4-4, revised 2026-08-29).
  *
- * **What is not here is the design.** Core sends conversational output through this and
- * nothing else — not a permission request, not an alert, not a mode switch, not code, not
- * an action. That exclusion list is enforced on the other side of the wire, in core's own
- * loop, because a permission prompt rewritten in a jaunty voice is a permission prompt
- * somebody misreads, and the place to make that impossible is the place that decides what
- * to send rather than the place that answers.
+ * **It used to rewrite the finished answer, and that was the wrong end of the pipe.** The
+ * evidence was a real personality somebody wrote: a page of chief-of-staff instructions —
+ * *raise the dates he set himself*, *ask before anything with external consequence*, *say
+ * so when he opens something new while something else is stalled* — handed to a node whose
+ * only input is one completed paragraph and whose instruction is *change the wording,
+ * never the content*. Every behavioural line in it was inert by construction, and the
+ * rewrite's own clamp made the honest answer *return it unchanged*, which is what it did.
  *
- * What is left for this plugin is a narrow, closed task: same facts, different words. So
- * it runs on the cheapest rung that can do it (`min_tier: T0`) — the same reason the safety
- * checker does — and the default voice unbinds the capability entirely, which means core
- * skips the call rather than making one that changes nothing.
+ * So a personality is now a **standing instruction**: core reads it once per task and
+ * appends it to the system prompt, in front of the decisions it is about. Three things
+ * fall out of that, all of them good — behaviour rules work, streaming comes back, and the
+ * second model call per answer is gone.
+ *
+ * What is left here is a library: write what you want in your own words, press Adapt, and
+ * a model turns it into the document. Switching is a row action, and nothing outside this
+ * folder knows any of these names — core asks for `persona.personality` and is handed a
+ * paragraph.
  */
 
 const alexia = plugin()
 
-/**
- * The instruction, per voice.
- *
- * Every one of them ends with the same two sentences, and they are the ones doing the
- * work: **change the wording, never the content**, and *if you cannot, return it
- * unchanged*. A model told only "be warm" will helpfully add a fact.
- */
-const VOICES = {
-  warm: 'Warm and encouraging. Friendly, never saccharine, never over-familiar.',
-  brief: 'As short as it can be and still complete. Cut hedging and preamble. Prefer plain words.',
-  dry: 'Understated and dry. Wry where it fits naturally, never at the expense of clarity.',
-  formal: 'Formal and precise. Complete sentences, no contractions, no exclamation marks.',
-}
-
-const RULES = [
-  'Rewrite the text below in that voice.',
-  'Change only the wording. Do not add, remove, correct or reinterpret anything it says.',
-  'Keep every number, name, path, command, quotation and code block exactly as written.',
-  'Keep the same structure — the same paragraphs, lists and line breaks.',
-  'If the text cannot be rewritten without changing what it says, return it exactly as it is.',
-  'Reply with the rewritten text and nothing else. No preamble, no quotation marks around it.',
-].join(' ')
-
 const settings = () => alexia.settings()
 
-/** The chosen voice as an instruction, or nothing when the default is chosen. */
-async function chosen() {
-  const { voice, custom_voice: own } = await settings()
-  if (voice === 'custom') {
-    const said = String(own ?? '').trim()
-    return said === '' ? undefined : said
-  }
-  return VOICES[voice]
-}
+/** Every saved personality, newest first. */
+const saved = () => alexia.storage.select('personalities', { order: [['at', 'desc']] })
+
+/** The one in use, if any. At most one row has `active`, and `use` is what keeps that true. */
+const active = async () =>
+  (await alexia.storage.select('personalities', { where: { active: 1 }, limit: 1 }))[0]
+
+const text = (said) => ({ content: [{ type: 'text', text: said }] })
+const nope = (said) => ({ isError: true, content: [{ type: 'text', text: said }] })
 
 async function report() {
-  const style = await chosen()
-  const { voice } = await settings()
+  const using = await active()
+  const count = (await saved()).length
   const state =
-    style === undefined ?
-      voice === 'custom' ?
-        '▲ Custom chosen, but no description written'
-      : '■ Alexia’s own voice — no extra model call'
-    : `● ${String(voice)}`
+    using ? `● ${String(using.name)}`
+    : count > 0 ? '■ Speaking plainly — none of them in use'
+    : '■ Nothing written yet'
   await alexia.status('state', state).catch(() => {})
 }
 
-const restyle = alexia.tool(
-  'rephrase',
+/**
+ * The capability, and the reason it is a tool rather than a setting core could read.
+ *
+ * Core asks for `persona.personality` and is handed a paragraph. It does not learn that a
+ * plugin called persona exists, that there is a list of them, or which one this is — which
+ * is the invariant. Delete the folder and core's own lookup comes back empty and Alexia
+ * speaks with the four lines she was born with.
+ */
+const standing = alexia.tool(
+  'personality',
   {
     description:
-      'Rewrite one answer in the personality the user chose. Changes wording only, never ' +
-      'content. Alexia calls this itself for conversational answers; there is no reason for ' +
-      'a model to call it directly.',
-    inputSchema: fromJsonSchema({
-      type: 'object',
-      properties: { text: { type: 'string', description: 'The answer to rewrite.' } },
-      required: ['text'],
-    }),
-    // It rewrites a string and returns it: no file is written, no row is stored, no state
-    // is changed. That is exactly what `readOnlyHint` is for. (The rewrite itself is a
-    // model call, and where that model runs is the privacy mode's business, not this
-    // annotation's.)
+      'The standing instruction Alexia is currently running with, or nothing when none is ' +
+      'chosen. Alexia reads this herself at the start of a task; there is no reason for a ' +
+      'model to call it.',
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
   },
-  async ({ text }) => {
-    const words = String(text ?? '')
-    const style = await chosen()
-    // Nothing to do, and saying so rather than making a call is the point of the default.
-    if (style === undefined || words.trim() === '') {
-      return { content: [{ type: 'text', text: words }] }
+  async () => text(String((await active())?.doc ?? '')),
+)
+
+/**
+ * Adapt (the button), and the whole of what it is for.
+ *
+ * Somebody who knows how they want to be spoken to should not also have to know how to
+ * write a system prompt. They type the four words they actually mean, and a model turns it
+ * into the document — once, at the moment they ask, on a rung that can write.
+ */
+alexia.tool(
+  'adapt',
+  {
+    description:
+      'Turn the description in Personality settings into a saved personality and start ' +
+      'using it. Takes no arguments — it reads the box on the settings screen.',
+    annotations: { destructiveHint: false, openWorldHint: false },
+  },
+  async (ctx) => {
+    const { custom_voice: described, save_as: called } = await settings()
+    const description = String(described ?? '').trim()
+    if (description === '') {
+      return nope('Write a line or two describing how she should be, then press Adapt.')
     }
 
+    alexia.progress(ctx, 1, 3, 'Reading what you wrote')
+    let said
     try {
       const answered = await alexia.server.server.createMessage({
-        messages: [{ role: 'user', content: { type: 'text', text: words } }],
-        systemPrompt: `You rewrite text in a given voice. The voice: ${style}. ${RULES}`,
-        // Room for the same text in slightly different words, and not much more. A cap
-        // this tight is also a cheap guard against a model that decides to elaborate.
-        maxTokens: Math.min(2000, Math.ceil(words.length / 2) + 200),
-        // The cheapest rung that can do this. Rephrasing is a narrow closed task and
-        // paying planning prices for it is how a personality becomes a line on a bill.
-        modelPreferences: { intelligencePriority: 0.2, speedPriority: 0.8, costPriority: 0.9 },
+        messages: [{ role: 'user', content: { type: 'text', text: brief(description) } }],
+        maxTokens: 1200,
+        // Writing, not rephrasing — this is the only call this plugin makes, and it makes
+        // it once per personality, so it is worth a rung that can actually write. The old
+        // node's cheapest-possible preference was right for a task that ran on every answer
+        // and wrong for this one.
+        modelPreferences: { intelligencePriority: 0.8, speedPriority: 0.3, costPriority: 0.3 },
       })
-      const said = answered.content?.type === 'text' ? answered.content.text.trim() : ''
-      // A rewrite that came back empty, or wildly longer than what went in, is a model that
-      // did something other than what it was asked. The original is always the safe answer.
-      if (said === '' || said.length > words.length * 3 + 200) {
-        log.warn('the rewrite did not look like a rewrite; keeping the original')
-        return { content: [{ type: 'text', text: words }] }
-      }
-      return { content: [{ type: 'text', text: said }] }
+      alexia.progress(ctx, 2, 3, 'Writing it')
+      said = answered.content?.type === 'text' ? answered.content.text : ''
     } catch (error) {
-      // Never cost somebody their answer over a decoration.
-      log.warn('could not rephrase', error)
-      return { content: [{ type: 'text', text: words }] }
+      log.warn('could not adapt', error)
+      return nope(`Could not write it: ${error instanceof Error ? error.message : String(error)}`)
+    }
+
+    const doc = clean(said)
+    if (!usable(doc)) {
+      return nope('That came back as something other than a personality. Try describing her again.')
+    }
+
+    const existing = await saved()
+    const name = unique(
+      nameFrom(called, description),
+      existing.map((row) => String(row.name)),
+    )
+    alexia.progress(ctx, 3, 3, 'Saving')
+    // Exactly one is in use, and the one just written is it. Switching is a row action; a
+    // person who pressed Adapt has already said which one they want.
+    await alexia.storage.update('personalities', { active: 0 }, { active: 1 })
+    await alexia.storage.insert('personalities', { name, doc, at: Date.now(), active: 1 })
+    await bind()
+    return text(`Saved as “${name}” and in use from your next message.\n\n${doc}`)
+  },
+)
+
+alexia.tool(
+  'personalities',
+  {
+    description: 'List every saved personality and say which one is in use. Takes no arguments.',
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+  },
+  async () => {
+    const rows = await saved()
+    return {
+      ...text(rows.length === 0 ? 'Nothing written yet' : `${rows.length} saved`),
+      structuredContent: {
+        rows: rows.map((row) => ({
+          id: String(row.rowid),
+          name: String(row.name),
+          using: row.active === 1 ? 'in use' : '',
+          written: new Date(Number(row.at)).toISOString().slice(0, 10),
+        })),
+      },
     }
   },
 )
 
+const byId = async (id) => {
+  const rowid = Number(id)
+  if (!Number.isInteger(rowid)) return undefined
+  return (await alexia.storage.select('personalities', { where: { rowid }, limit: 1 }))[0]
+}
+
+const one = {
+  type: 'object',
+  properties: { id: { type: 'string', description: 'Which saved personality.' } },
+  required: ['id'],
+}
+
+alexia.tool(
+  'use',
+  {
+    description:
+      'Start using one saved personality. Takes the row it is, and takes effect on the next thing said.',
+    inputSchema: fromJsonSchema(one),
+    annotations: { destructiveHint: false, openWorldHint: false },
+  },
+  async ({ id }) => {
+    const row = await byId(id)
+    if (!row) return nope('There is no saved personality with that id.')
+    await alexia.storage.update('personalities', { active: 0 }, { active: 1 })
+    await alexia.storage.update('personalities', { active: 1 }, { rowid: Number(row.rowid) })
+    await bind()
+    return text(`Using “${String(row.name)}” from your next message.`)
+  },
+)
+
+alexia.tool(
+  'plainly',
+  {
+    description: 'Stop using any personality. Nothing is deleted — Alexia goes back to her own voice.',
+    annotations: { destructiveHint: false, openWorldHint: false },
+  },
+  async () => {
+    await alexia.storage.update('personalities', { active: 0 }, { active: 1 })
+    await bind()
+    return text('Speaking plainly. All of them are still saved.')
+  },
+)
+
+alexia.tool(
+  'forget',
+  {
+    description: 'Delete one saved personality for good. Takes the row it is.',
+    inputSchema: fromJsonSchema(one),
+    annotations: { destructiveHint: true, openWorldHint: false },
+  },
+  async ({ id }) => {
+    const row = await byId(id)
+    if (!row) return nope('There is no saved personality with that id.')
+    await alexia.storage.delete('personalities', { rowid: Number(row.rowid) })
+    await bind()
+    return text(`“${String(row.name)}” is gone.`)
+  },
+)
+
+alexia.tool(
+  'about_personality',
+  {
+    description:
+      'The full text of one saved personality — exactly what Alexia is told. Takes the row it is.',
+    inputSchema: fromJsonSchema(one),
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+  },
+  async ({ id }) => {
+    const row = await byId(id)
+    if (!row) return nope('There is no saved personality with that id.')
+    return text(String(row.doc))
+  },
+)
+
 /**
- * The binding, and the reason it is a binding rather than a branch.
+ * The binding, and why it is a binding rather than a branch.
  *
- * On the default voice this capability is **not provided at all**, so core's own lookup
- * comes back empty and it streams the answer straight through with no extra call and no
- * extra wait. A plugin that answered and returned the input unchanged would still have
- * cost a round trip and still have turned streaming into a pause.
+ * With nothing in use this capability is **not provided at all**, so core's own lookup
+ * comes back empty and it never makes the call. A plugin that answered with an empty
+ * string would still have cost a spawn and a round trip to say nothing.
  */
 async function bind() {
-  const style = await chosen()
-  restyle.update({ _meta: style === undefined ? {} : { 'alexia/provides': ['persona.rephrase'] } })
+  const using = await active()
+  standing.update({ _meta: using ? { 'alexia/provides': ['persona.personality'] } : {} })
   await report()
 }
 
 await alexia.start()
 await bind()
-alexia.onSettingsChanged((changed) => {
-  if ('voice' in changed || 'custom_voice' in changed) void bind()
-})
+// Adapt, Use, Forget and Speak plainly all call `bind()` themselves. This is for the
+// settings screen, where the description can be edited without anything else happening.
+alexia.onSettingsChanged(() => void report())
 log.info(`${alexia.manifest.name} is ready`)

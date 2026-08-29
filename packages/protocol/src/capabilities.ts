@@ -51,14 +51,17 @@ export const isPermission = (cap: string): cap is Permission =>
  */
 export const CORE_CAPABILITIES = {
   /**
-   * Rewrite one conversational answer in a chosen voice (M4-4).
+   * The standing instruction a chosen personality adds to Alexia's own (M4-4, revised).
    *
-   * Nothing but phrasing may change. Core never sends code, an action, a permission
-   * request, an alert or a mode switch through this — the exclusion list is the good part
-   * of the design, because a permission prompt rewritten in a jaunty voice is a permission
-   * prompt somebody misreads.
+   * Read **once per task** and appended to the system prompt, which is the whole of the
+   * revision: the first build rewrote the finished answer instead, and a rewrite arrives
+   * after every decision it was meant to influence has already been made. A personality
+   * that says *ask before anything with external consequence* has to be in front of the
+   * model when it picks a tool, not in front of the sentence describing what it did.
+   *
+   * Nothing provides it → the stock four lines, unchanged, and streaming as normal.
    */
-  restyle: 'persona.rephrase',
+  personality: 'persona.personality',
   /**
    * Hand one finished exchange to whatever remembers things (M7-3).
    *

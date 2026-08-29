@@ -88,7 +88,7 @@ name and becomes a drop-in alternative rather than a competitor.
 | `demo.greet` | a name in, a greeting out | `plugins/hello` (M0) |
 | `voice.transcribe` | audio file in, text out | `plugins/voice` (M2) |
 | `voice.speak` | text in, audio played, nothing out | `plugins/voice` (M2) |
-| `persona.rephrase` | one conversational answer in, the same answer in a chosen voice out | `plugins/persona` (M4) |
+| `persona.personality` | nothing in, the chosen personality's standing instruction out — core appends it to the system prompt once per task | `plugins/persona` (M4) |
 | `memory.capture` | one finished exchange in, **nothing out** — core never reads it back | `plugins/memory` (M7) |
 | `ask.confirm` | a question and its options in, the chosen option out | `plugins/telegram` (M7) |
 | `voice.render` | text in, **audio bytes out** — for audio that has to go somewhere other than these speakers | `plugins/voice` (M7) |

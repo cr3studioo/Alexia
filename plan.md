@@ -157,7 +157,7 @@ Tick a box only when the task's acceptance criteria pass. `[GATE]` needs a human
 - [x] **M4-1** `plugins/telegram`
 - [x] **M4-2** `plugins/computer` — computer control
 - [x] **M4-3** `plugins/memory` — long-term recall
-- [x] **M4-4** `plugins/persona` — the personality node
+- [x] **M4-4** `plugins/persona` — the personality library (revised 2026-08-29, D103)
 - [x] **M4-5** Learned skills
 - [x] **M4-6** Local media generation
 - [x] **M4-7** `plugins/claude-code`
@@ -198,6 +198,10 @@ Tick a box only when the task's acceptance criteria pass. `[GATE]` needs a human
 - [x] **M7-5** A button in Telegram, and somewhere else to land
 - [x] **M7-6** Three tiers, and the cheapest one has no model in it
 - [x] **M7-G** **Done when:** a free-model request is provably stripped, a cost is traceable to the run that spent it, and Alexia remembers something nobody told it to
+
+### M8 — What the contract says and core does not do *(inserted 2026-08-29 — see Change log)*
+
+- [ ] **M8-1** `modelPreferences` and `min_tier` are honoured, or they stop being fields
 
 ---
 
@@ -1985,15 +1989,27 @@ core.
 
 ### M4-4 `plugins/persona`
 
-The personality node. Conversational output passes through it; **code, actions, permission
-requests, alerts, and mode switches bypass it entirely.** That exclusion list is the good part
-of the design: a permission prompt rewritten in a jaunty voice is a permission prompt someone
-misreads. Personality changes phrasing, never facts — and the things where phrasing *is* the
-fact are kept out of its reach.
+The personality library. **Revised 2026-08-29 (D103) after the first build shipped and the
+first real personality proved it could not work.** A personality is a *standing instruction*:
+core reads `persona.personality` once per task and appends it to the system prompt, in front
+of every decision the loop then makes.
 
-Runs only for a non-default persona. Default Alexia streams normally with no extra call and
-nobody pays for a feature they are not using. The pass runs on a small or local model, for
-the same reason the checker does: rephrasing is a narrow closed task.
+The first version rewrote the finished answer instead, under an instruction that forbade
+changing content. A personality somebody actually writes is behavioural — *raise the dates he
+set himself*, *ask before anything with external consequence* — and a rewrite pass sees one
+completed paragraph long after those decisions are made, so every line of it was inert by
+construction and *return it unchanged* was the model's correct answer. Behaviour rules work
+now, streaming comes back, and the second model call per answer is gone.
+
+**Nobody has to write a system prompt.** The settings pane takes rough notes, **Adapt** turns
+them into the document with one model call on a rung that can write, and it is saved under a
+name. As many as you like, switched from a list, `Speak plainly` to use none. That call is the
+opposite of the old one: rare and worth a real model, rather than per-answer and needing to be
+free.
+
+The adapter is told never to write a rule that skips the gate. It is a prompt and not an
+enforcement, which is enough only because `rule()` is code and runs whatever the system prompt
+believes.
 
 ### M4-5 Learned skills
 
@@ -3332,6 +3348,53 @@ because a cloned voice lives on an account rather than on this disk.
 
 ---
 
+## M8 — What the contract says and core does not do *(inserted 2026-08-29)*
+
+One task, found while revising M4-4. It is here rather than in the backlog because a field a
+plugin author sets and core ignores is not a missing feature — it is the contract being wrong
+about itself, and that is the thing this project has the least room for.
+
+### M8-1 `modelPreferences` and `min_tier` are honoured, or they stop being fields
+
+**Two declarations, both dead.** A plugin's `sampling/createMessage` may carry MCP's own
+`modelPreferences` — `intelligencePriority`, `speedPriority`, `costPriority` — and its manifest
+may declare `min_tier`. Core reads neither. `serve.ts`'s sampling handler routes with
+`route({ messages, shape }, pins, world)`: no `minTier`, and `params.modelPreferences` never
+looked at. `Ask.minTier` exists in the router and nothing anywhere sets it.
+
+**Found by writing a comment that was not true.** M4-4's rephrase node asked for
+`costPriority: 0.9` under a comment reading *the cheapest rung that can do this*, and the
+adapter that replaced it asked for `intelligencePriority: 0.8` under a comment about a rung
+that can write. Both ran on whatever the user's pin said, from the day each was written. The
+manifest's `min_tier: "T1"` on the same plugin is inert for the same reason. Nothing failed,
+nothing logged, and two plugin authors — the same one twice — believed a knob was connected.
+
+**The fix is small and the honest half is the naming.** Map the three priorities onto the axes
+the router already has — a preference is a *sort*, not a filter, so `intelligencePriority`
+above some line reverses `cheapest` exactly as `prefer: 'best'` already does, and nothing about
+pins, tiers or the free-only ceiling changes. Pass the asking plugin's `min_tier` as
+`Ask.minTier`, which the router has been ready for since M1-8. **If either turns out not to be
+worth honouring, delete the field instead** — a manifest key core ignores is worse than one
+that was never offered, because the first is a promise.
+
+**What it does not fix, and the reason that is a question rather than a task.** Even honoured,
+a plugin's own call cannot reach a paid model at all: *attributed to a plugin, belonging to no
+run* means free tiers and this machine (D96, G12), which is a deliberate ceiling and a good
+one. But M4-4's **Adapt** is a button a person pressed and watched a progress bar for, which is
+not a timer waking up at 3am — and it is the call that most wants a model that can write. That
+is **G13**, open in `questions.md`, and this task does not pre-empt it.
+
+**Acceptance**
+
+- A plugin asking with `intelligencePriority` high and one asking with `costPriority` high get
+  different models from the same pool, in a test, with pins that permit both.
+- A plugin whose manifest says `min_tier: "T2"` is never routed to a `T0` or `T1` model.
+- A model pin still wins outright over both. A preference is not a way past a pin.
+- The free-only ceiling for a run-less plugin call is unchanged, and its test still passes.
+- Any priority core decides not to honour is **gone from the schema**, not silently accepted.
+
+---
+
 ## Backlog
 
 Real, ordered, not scheduled. Nothing here blocks a milestone.
@@ -3501,6 +3564,7 @@ Newest first. Every entry here is also in Alexia.md's decision log.
 
 | Date | Entry |
 |---|---|
+| 2026-08-29 | **D103** — **a personality is a standing instruction, not a rewrite of the answer**, and **M8 opened on what the fix uncovered.** M4-4 shipped a node that rewrote finished output under an instruction forbidding any change of content. The first personality somebody actually wrote was behavioural — *raise the dates he set himself*, *ask before anything with external consequence* — so **every line of it was inert by construction**, and *return it unchanged* was the model's correct answer: the feature looked broken while working exactly as specified. Core now reads `persona.personality` once per task and appends it to the system prompt. **Behaviour rules work, streaming comes back, and the per-answer model call is gone**; the loss is that a voice can leak into functional output, which the old exclusion list made structurally impossible — except that core writes those categories itself, so a personality never reaches them. The plugin becomes a **library rather than a filter**: rough notes in, one model call, a named document out, as many as you like and switchable from a list; the adapter is told never to write a rule that skips the gate, which is a prompt and not an enforcement and is only enough because `rule()` is code. **Two dead fields fell out of writing it** — `modelPreferences` and manifest `min_tier` are both ignored on the sampling path, so the old node's *cheapest rung* comment and the new one's *a rung that can write* were each untrue the day they were written. That is **M8-1**; whether a button somebody pressed may spend like the task it is is **G13**. |
 | 2026-08-29 | **D102** — **quitting left the core running, and a second launch made two Alexias on one database.** Found on a real desktop rather than by a test, because Task Manager is the only place it shows: two `alexia-core.exe` alive with dead parents, each holding a port and the SQLite file open. The cause is one line — `spawn()` returns a handle and **dropping it does not stop the process** — so the tray's Quit ended the window and left the daemon behind. **The fix is two halves and neither replaces the other**, which is the part worth writing down because a later tidy-up would remove one: the shell kills the core on `RunEvent::Exit`, immediate and orderly and the path Quit takes; and the core watches its own parent and exits when it goes, which is slower and is the only one that survives a crash, an abort (`panic = "abort"` in the release profile) or somebody ending the process by hand. **What must not change is the tray** — closing a window hides it and Alexia carries on, because Alexia is a daemon and closing its window is putting it away rather than switching it off. The check asserts `prevent_close` and `single_instance` alongside the kill, so the two cannot be conflated. Fourteen lines of Rust, taking the file to 149 of its 300, and a watcher in the generated `boot.mjs` that costs nothing when the folder is run without the shell. **Not an eleventh invariant** (M6-1's reason, D82): the ten are the plugin contract, and this is the desktop shell's own correctness. ponytail: polling a parent pid rather than a Job Object, and the ceiling is stated — Windows may hand that pid to something else eventually, and the cost of being wrong is one surviving core, which is exactly today's behaviour. |
 | 2026-08-29 | **D101** — **M7 is reached, and the gate was run rather than asserted.** Eighteen tests across the three files carrying the three claims, in one pass: a payload with an API key, an env assignment and a street address driven through the real `send()` for `T1`, `T2` and `T3` with none of the three arriving and the behavioural sentence around them arriving whole; two tasks in one session with different totals a `session_id` cannot separate, and a 429 fallback naming both models against the cost; and a real plugin process writing down something nobody asked it to, linking it, then forgetting it out of the buffer as well as the notes so the next pass does not bring it back. **Three findings came out of measuring rather than describing**, and none of them was the thing being measured: check 8 caught the first draft of a comment in the privacy file, written by the session that had just read that check; `AWS_SECRET_ACCESS_KEY=…` walked through the egress scan because the keyword sits in the middle of the name, found by M7-3's test rather than M7-1's; and `store.select` threw on a declared table nothing had ever been written to — `ORDER BY at` with no columns is a crash rather than an empty list, which is the memory panel on a fresh install. All three fixed at the root. **All six shipped**, which the gate deliberately did not require: M7-4's live clone call is unverified for want of a key, and one line of its acceptance is not met and is written down as not met, because a cloned voice lives on somebody's account rather than on this disk. |
 | 2026-08-29 | **D100** — **the cheapest rung has no model in it, and the contract question never arrived.** M7-6. `replay.js` is a registry of six steps, `{step_id}` substitution so a decision's answer is what the next deterministic step acts on, and a plan validated whole before anything runs — because a sequence that half-ran has left the screen somewhere nobody planned for. **The zero-cost guarantee is structural and stronger here than in the predecessor**: that file imports `./windows.js` and nothing else, `ask` is handed in by the caller, and a script is replayed with none at all. Version 1 needed `script_engine.py` to avoid importing its gateway inside one process; **a plugin cannot reach a model except by asking core for one, so *not asking* is the whole proof** — and the check is written down anyway, because the day somebody adds the SDK to that file is the day the rung stops being free and nothing else would notice. **Recording cost nothing to build**: every action was already written to `actions` for the *what did it just do* question, so *save that as a plan* is a read of a log rather than a second mechanism watching the same events. **The plan called this the biggest contract question of the six and it turned out not to be one.** *Who stores it* — the plugin's own namespace, which a purge takes, because there is nowhere else it could. *Who approves it* — the same gate as any tool, asked once for the sequence rather than once per click, which is the trade the lower rungs are made of. *What it may touch* — only what the registry holds, and the registry holds only what this plugin's own annotated tools already do, which a test asserts against the tool's own action list. Three questions the architecture had already answered by accident. **No plan editor and no record mode**: a plan is JSON in the plugin's store, and a screen for editing one is a workflow builder — a product rather than a rung. |

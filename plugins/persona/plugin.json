@@ -3,8 +3,8 @@
   "manifest_version": 1,
   "id": "persona",
   "name": "Personality",
-  "summary": "Gives Alexia a voice of your choosing. It changes how answers are phrased and never what they say.",
-  "version": "0.1.0",
+  "summary": "Write Alexia a personality in your own words, save as many as you like, and switch between them.",
+  "version": "0.2.0",
   "license": "AGPL-3.0-only",
   "entry": {
     "run": "node",
@@ -16,30 +16,59 @@
   "mcp_protocol": "2025-11-25",
   "requires": [],
   "provides": [
-    "persona.rephrase"
+    "persona.personality"
   ],
   "settings": [
     {
-      "type": "choice",
-      "key": "voice",
-      "label": "Voice",
-      "options": [
-        "default",
-        "warm",
-        "brief",
-        "dry",
-        "formal",
-        "custom"
-      ],
-      "default": "default",
-      "hint": "Default is Alexia's own voice and costs nothing — no extra model call happens at all. Anything else adds one short call per answer."
+      "type": "text",
+      "key": "custom_voice",
+      "label": "Describe her in your own words",
+      "placeholder": "blunt, chief of staff, calls me Vacen, no emojis, chases the dates I set myself",
+      "hint": "Rough notes are the point. Adapt turns them into a proper personality — you do not have to write one."
     },
     {
       "type": "text",
-      "key": "custom_voice",
-      "label": "Your own description",
-      "placeholder": "Blunt, no filler, dry humour when it fits",
-      "hint": "Used only when Voice is set to custom. Describe how to speak, not what to say."
+      "key": "save_as",
+      "label": "Save it as",
+      "placeholder": "Chief of staff",
+      "hint": "The name it appears under below. Leave it empty and the wording above names it."
+    },
+    {
+      "type": "action",
+      "key": "adapt",
+      "label": "Adapt",
+      "tool": "adapt",
+      "hint": "One model call. It writes the personality, saves it, and starts using it."
+    },
+    {
+      "type": "progress",
+      "key": "adapting",
+      "label": "Adapting"
+    },
+    {
+      "type": "table",
+      "key": "saved",
+      "label": "Saved personalities",
+      "hint": "Use switches her over from the next thing you say. Open a row to read exactly what she is being told.",
+      "rows": "personalities",
+      "columns": [
+        { "key": "name", "label": "Name" },
+        { "key": "using", "label": "In use" },
+        { "key": "written", "label": "Written", "align": "right", "hideNarrow": true }
+      ],
+      "rowActions": [
+        { "key": "use", "label": "Use", "tool": "use" },
+        { "key": "forget", "label": "Forget", "tool": "forget", "confirm": "Forget {name}?" }
+      ],
+      "detail": "about_personality",
+      "filter": true
+    },
+    {
+      "type": "action",
+      "key": "plainly",
+      "label": "Speak plainly",
+      "tool": "plainly",
+      "hint": "Stops using any of them. Nothing is deleted, and Alexia goes back to her own voice."
     },
     {
       "type": "status",
@@ -47,5 +76,11 @@
       "label": "State"
     }
   ],
-  "min_tier": "T0"
+  "storage": {
+    "namespace": "persona",
+    "tables": [
+      "personalities"
+    ]
+  },
+  "min_tier": "T1"
 }

@@ -584,47 +584,47 @@ are the case that is true almost by construction.
 another. Since a persona is instructions rather than code — a system prompt and a tone — it
 is closest to **a skill that is always loaded rather than loaded on match**.
 
-**Mechanically, a persona is a node that output passes through.** *Decided 2026-08-27.*
-Everything Alexia says *conversationally* — answers, chat, explanations — goes through a
-personality node that renders it in the current voice. The node is itself a plugin, so
-switching persona is swapping a prompt, and deleting the plugin means Alexia speaks plainly.
+**Mechanically, a persona is a standing instruction.** *Decided 2026-08-27 as a rewrite
+node; reversed 2026-08-29 (D103) on evidence from the first real personality somebody wrote.*
+Core reads the chosen personality **once per task** and appends it to the system prompt, in
+front of every decision the loop then makes. The store is itself a plugin, so switching
+persona is swapping a paragraph, and deleting the plugin means Alexia speaks plainly.
 
-**What deliberately does not pass through it:**
-
-| Goes through personality | Bypasses it entirely |
-|---|---|
-| Answers and explanations | Code |
-| Chat and conversation | Actions the agent takes |
-| Information delivered to the user | Permission requests |
-| | Alerts and warnings |
-| | Model or mode switches |
-| | Anything else load-bearing |
-
-That exclusion list is the good part of this design. A permission prompt rewritten in a
-jaunty voice is a permission prompt someone misreads. **Personality is allowed to change
-phrasing and never facts** — and the things where phrasing *is* the fact are kept out of its
-reach entirely.
-
-> **The tension worth deciding before building it.** A node that rewrites finished output
-> means a *second model call on every conversational reply*. Two consequences: it costs extra
-> in cloud mode, in a product whose pitch is not paying for what you do not need; and it
-> **breaks streaming** — you cannot show text word by word if it has to be complete before
-> the rewrite starts, so replies buffer and then appear at once.
+> **What the first build did, and why it could not work.** The node rewrote the *finished*
+> answer: conversational output went through a second model call whose instruction was
+> *change the wording, never the content*, and everything load-bearing — code, actions,
+> permission requests, alerts, mode switches — bypassed it entirely. That exclusion list was
+> the good part of the design and it survives, for the reason it was written: a permission
+> prompt in a jaunty voice is a permission prompt somebody misreads.
 >
-> The alternative is injecting the persona into the *original* prompt: free, streams
-> normally, but the separation is less clean and the voice can leak into functional output.
->
-> A middle path exists: inject the persona into the prompt for conversational replies, and
-> generate the excluded categories separately so they never carry a voice in the first place.
-> Most of the intent, almost none of the cost. See E10.
+> What it could not survive was a real personality. The first one written by hand was a page
+> of chief-of-staff instructions — *raise the dates he set himself*, *ask before anything
+> with external consequence*, *say so when he opens something new while something else is
+> stalled* — and a rewrite pass sees one completed paragraph, long after every decision those
+> lines are about has been made. **Every behavioural line in it was inert by construction**,
+> and the pass's own clamp made *return it unchanged* the correct answer, which is what the
+> model did. The feature looked broken and was in fact working exactly as specified.
 
-**Decided 2026-08-27: rewrite, but only when a non-default persona is active.** Default
-Alexia streams normally with no extra call. The node engages only for someone who has chosen a
-persona, and accepts the tradeoff knowingly. Nobody pays for a feature they are not using.
+**The three things the reversal buys, and the one it costs.** Behaviour rules work, because
+they are in front of the model when it picks a tool. Streaming comes back, because there is
+nothing to wait for. The second model call per answer is gone, so a persona is free rather
+than the most expensive setting in the product. The cost is that the separation is less
+clean: the voice can leak into functional output, which the exclusion list used to make
+structurally impossible. **That was the right trade to lose.** The excluded categories are
+written by core and never by a model, so a personality cannot reach them anyway; and a
+permission question core wrote is the same sentence whatever the system prompt says.
 
-The personality pass should run on **a small or local model** —
-rephrasing is exactly the narrow, closed task small models handle well, the same reasoning
-that puts the safety checker on a local model.
+**Nobody has to write a system prompt.** The paste box takes rough notes — *blunt, chief of
+staff, calls me Vacen, no emojis, chases the dates I set myself* — and **Adapt** turns them
+into the document with one model call, on a rung that can write. Saved by name, as many as
+you like, switched from a list. A personality is instructions, so it is still closest to **a
+skill that is always loaded rather than loaded on match**; what changed is only which end of
+the pipe it is loaded into.
+
+**The one thing an adapted personality may never say** is a rule that turns the gate off —
+skip asking, hide what you did, ignore a limit. The adapter is told so. It is a prompt rather
+than an enforcement, and that is enough here only because the gate is code: `rule()` runs on
+every call whatever the system prompt believes.
 
 ### Learned skills — turning an expensive task into a cheap one
 
@@ -1483,6 +1483,7 @@ Newest first. Every entry is a question from `questions.md` that got answered.
 
 | Date | Decision | Notes |
 |---|---|---|
+| 2026-08-29 | **D103 — a personality is a standing instruction, not a rewrite of the answer** | Reverses the 2026-08-27 decision on evidence the build produced. The first real personality written by hand was behavioural — *raise the dates he set himself*, *ask before anything with external consequence* — and the rewrite node sees one finished paragraph under an instruction that forbids changing content, so **every behavioural line in it was inert by construction** and *return it unchanged* was the model's correct answer. Looked broken; was working as specified. Core now reads `persona.personality` once per task and appends it to the system prompt. **Three wins and one loss, and the loss is the cheap one**: rules work, streaming comes back, the per-answer model call is gone; the voice can now leak into functional output, which the old exclusion list made structurally impossible — except that core writes those categories itself, so a personality never reaches them. **The plugin becomes a library rather than a filter**: rough notes in, one model call on a rung that can write, a named document out, as many as you like and switchable from a list. The adapter is told never to write a rule that skips the gate; that is a prompt and not an enforcement, which is only enough because `rule()` is code. **Two dead fields fell out of writing it**: `modelPreferences` on a `sampling` request and `min_tier` in a manifest are both ignored on that path, so the old node's *cheapest rung* comment and the new one's *a rung that can write* were each untrue the day they were written — M8-1. Whether a call a person pressed a button for may spend like the task it is, rather than inheriting G12's timer ceiling, is **G13**. |
 | 2026-08-29 | **D102 — quitting left the core running, and a second launch made two Alexias on one database** | Found on a real desktop, which is the only place it shows. `spawn()` returns a handle and dropping it does not stop the process, so the tray's Quit ended the window and left the daemon holding a port and the SQLite file; the next launch put a second core beside it. **Two halves, and neither replaces the other**: the shell kills the core on `RunEvent::Exit` — orderly, and the path Quit takes — and the core watches its own parent and exits when it goes, which is the only one that survives a crash, an abort or Task Manager. **The tray is untouched**: closing a window still hides it, because Alexia is a daemon and closing its window is putting it away. The check asserts that alongside the kill, so the two cannot be conflated by a later tidy-up. Not an eleventh invariant (D82's reason). |
 | 2026-08-29 | **D101 — M7 is reached, and the gate was run rather than asserted** | The three claims that are hard to fake, measured in one pass: a payload carrying an API key, an env assignment and a street address reaches no third-party tier with any of the three in it and reaches a local model whole; two tasks in one sitting have different totals a session number cannot separate, and a 429 fallback names both models against the cost it explains; and a real plugin process writes down something nobody asked it to, links it, then forgets it out of the buffer as well as the notes. **Three findings came out of measuring rather than describing**, none of them the thing being measured — an overclaiming comment caught by the check that exists for it, a credential shape that walked through the egress scan because the keyword sits in the middle of the name, and a store that threw rather than returning nothing on a table written to for the first time. All fixed at the root. All six of M7 shipped; one line of M7-4's acceptance is recorded as not met rather than fudged. |
 | 2026-08-29 | **D100 — the cheapest rung has no model in it, and the contract question never arrived** | M7-6. The two rungs below *a model deciding every step*: a whitelisted registry of six steps, `{step_id}` substitution so a decision's answer is what the next deterministic step acts on, and a plan checked whole before anything runs. **The zero-cost guarantee is structural, and stronger here than in the predecessor** — the module imports one file and it spawns PowerShell; `ask` is handed in by the caller, so a script replays with none at all. Version 1 needed its script engine to avoid importing the gateway inside one process; **a plugin cannot reach a model except by asking core, so *not asking* is the whole proof** — and the check is written down anyway, because the day somebody adds the SDK to that file nothing else would notice. Recording cost nothing to build: the action log already existed, so *save that as a plan* is a read of it. **The biggest contract question of the six turned out not to be one**: who stores it is the plugin's own namespace, who approves it is the same gate asked once for the sequence rather than once per click, and what it may touch is only what the registry holds — which holds only what this plugin's annotated tools already do. |

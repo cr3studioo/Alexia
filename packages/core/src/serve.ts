@@ -455,6 +455,33 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     }
 
   /**
+   * The chosen personality, or nothing (M4-4).
+   *
+   * **Read once per task, not once per step.** It goes into the system prompt in front of
+   * every decision the loop makes, which is the whole reason it is here rather than on the
+   * finished answer — but a plugin woken twenty-four times to repeat one paragraph is a
+   * plugin somebody turns off.
+   *
+   * Nothing provides it, nothing is chosen, or whatever does provide it is having a bad
+   * day → the stock four lines, and a task that runs. A personality is a preference, and a
+   * preference must never be the reason an answer does not happen.
+   */
+  async function personality(): Promise<string | undefined> {
+    if (!plugins.answers(CORE_CAPABILITIES.personality)) return undefined
+    try {
+      const answered = await plugins.capability(CORE_CAPABILITIES.personality)
+      const said = (answered.content ?? [])
+        .map((block) => (block.type === 'text' ? block.text : ''))
+        .join('')
+        .trim()
+      return said === '' ? undefined : said
+    } catch (error) {
+      console.error(`[personality] ${error instanceof Error ? error.message : String(error)}`)
+      return undefined
+    }
+  }
+
+  /**
    * One task, asked for by a plugin (M7-5).
    *
    * Everything is the same as a task from the window except where the questions go: there is
@@ -476,6 +503,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     trace.start(runId, text)
     try {
       const month = allowance(store)
+      const chosen = await personality()
       const result = await run({
         messages,
         tools: tooling,
@@ -485,6 +513,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
         secrets,
         session,
         run: runId,
+        ...(chosen !== undefined && { personality: chosen }),
         // The spend lands on the plugin that asked, exactly as a plain `sampling` call's
         // does — and it is a run now, so it is a paid path like any other task (G12, D96).
         plugin: pluginId,
@@ -1337,25 +1366,6 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
       }
     }
 
-    /**
-     * The personality node (M4-4), and the two things about it that are the design.
-     *
-     * **It only exists when something provides it.** Default Alexia streams straight
-     * through with no extra call, so nobody pays for a feature they are not using — which
-     * is why this is a capability lookup off the manifests rather than a setting.
-     *
-     * **Only conversational output goes through it.** Everything else on this stream —
-     * a permission question, a note about a charge, a step in the trace, a refusal, an
-     * error — is written by core and reaches the screen untouched. Phrasing is the only
-     * thing a persona may change, and the things above are the ones where the phrasing
-     * *is* the fact.
-     *
-     * The cost is that the answer arrives at once rather than word by word: it cannot be
-     * restyled until it is finished. That is the trade for choosing a voice, and it is the
-     * reason the default does not pay it.
-     */
-    const styled = plugins.answers(CORE_CAPABILITIES.restyle)
-
     const stop = new AbortController()
     task = stop
     // A second consumer of the same stream (M6-5). What it keeps is what the loop did rather
@@ -1363,9 +1373,11 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     // of that would be one decision serving two jobs badly.
     const runId = randomUUID()
     trace.start(runId, text)
+    const chosen = await personality()
     try {
       const result = await run({
         messages: store.history(session),
+        ...(chosen !== undefined && { personality: chosen }),
         tools: tooling,
         pins: pins(store),
         world,
@@ -1386,11 +1398,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
             say({ ask: ruling.why })
           }),
         on: {
-          // Held back only when something is going to restyle it. Otherwise this is the
-          // ordinary stream, unchanged, which is what most conversations get.
-          delta: (delta) => {
-            if (!styled) say({ delta })
-          },
+          delta: (delta) => say({ delta }),
           note: (note) => say({ note }),
           turn: (models) => trace.turn(models),
           step: (step) => {
@@ -1428,29 +1436,6 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
 
       const after = allowance(store)
       const last = result.messages.at(-1)
-
-      /**
-       * The restyle, if there is one — and its failure mode is the important part.
-       *
-       * A persona that is slow, broken, or has been deleted mid-task must not cost the
-       * user their answer. So anything that goes wrong here falls back to the words the
-       * model actually wrote, said plainly, and the person gets the answer they were
-       * waiting for rather than an error about a decoration.
-       */
-      if (styled && last?.role === 'assistant' && last.content.trim() !== '') {
-        let spoken = last.content
-        try {
-          const restyled = await plugins.capability(CORE_CAPABILITIES.restyle, { text: last.content })
-          const said = (restyled.content ?? [])
-            .map((block) => (block.type === 'text' ? block.text : ''))
-            .join('')
-            .trim()
-          if (restyled.isError !== true && said !== '') spoken = said
-        } catch (error) {
-          console.error(`[restyle] ${error instanceof Error ? error.message : String(error)}`)
-        }
-        say({ delta: spoken })
-      }
 
       /**
        * The offer (M4-5). Made only after a task where something was actually worked out,

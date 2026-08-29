@@ -136,6 +136,13 @@ export interface RunOptions {
    * grows under the loop — trimming once at the start would trim nothing.
    */
   trimming?: TrimOptions
+  /**
+   * The chosen personality, already resolved (M4-4). Read once per task by whoever calls
+   * this, because a plugin asked every step is a plugin woken twenty-four times to say the
+   * same sentence — and a personality that changed halfway through a task would be worse
+   * than one that did not.
+   */
+  personality?: string
   signal?: AbortSignal
   /**
    * May this call run? (M15-3.) The loop does not know what a permission is — it asks, and
@@ -195,7 +202,7 @@ export async function run(options: RunOptions): Promise<RunResult> {
         {
           // Trimmed here rather than in the store: what is kept is what a model is shown,
           // and the history itself stays whole so a reload shows every step that happened.
-          messages: [system(available), ...trim(messages, options.trimming)],
+          messages: [system(available, options.personality), ...trim(messages, options.trimming)],
           ...(available.length > 0 && { tools: available }),
           ...(options.signal && { signal: options.signal }),
         },
@@ -314,8 +321,12 @@ function parse(raw: string): Record<string, unknown> {
  * instructions it half-follows, and everything a longer prompt would buy — what a tool
  * does, what it needs — belongs in the tool descriptions, where the model actually looks.
  * Nothing here claims a capability: what is true about tools is whatever `available` says.
+ *
+ * A personality goes **after** these lines and is the user's own words, kept whole. Later
+ * wins where the two disagree, which is the right way round: these four sentences are the
+ * floor a model needs to drive a loop, and everything above that is the user's call.
  */
-function system(available: ToolSpec[]): Message {
+function system(available: ToolSpec[], personality?: string): Message {
   const lines = [
     'You are Alexia, an assistant running on the user’s own machine.',
     available.length > 0 ?
@@ -324,7 +335,11 @@ function system(available: ToolSpec[]): Message {
     'When a tool fails, read the error and try a different approach rather than repeating the call.',
     'Stop calling tools and answer as soon as you can. Say what you did, briefly.',
   ]
-  return { role: 'system', content: lines.join(' ') }
+  const standing = lines.join(' ')
+  const said = personality?.trim() ?? ''
+  return { role: 'system', content: said === '' ? standing : `${standing}
+
+${said}` }
 }
 
 /** A provider error the loop could not route around, in the words the user gets. */

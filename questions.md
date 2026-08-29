@@ -275,6 +275,25 @@ are still open, and the last one is the largest contract question left.*
   `sampling` could spend to the monthly cap before this. **Backlog 7–10 are unblocked** and
   inherit the ceiling: they may wake, and they may not bill anybody for it.
 
+### Raised by fixing the personality node (2026-08-29, D103)
+
+*One question, and it is G12's ceiling meeting a case G12 did not have: a button.*
+
+- [ ] **G13.** **May a plugin's own call spend, when a person pressed the button that made
+  it?** G12 answered *a plugin on its own clock spends nothing but free* (D96), and the
+  derivation is the good part — *attributed to a plugin, belonging to no run* is a timer
+  waking at 3am with nobody to show a spend preview to. **Adapt is not that.** Somebody
+  opened a settings screen, typed a description, pressed a button and watched a progress bar,
+  and it is the one call in the product that most wants a model that can write. The same
+  shape is coming for every `action` widget any plugin ever declares. Three ways out, and
+  they are not equally good: give a button-initiated call a `run` id, which is honest —
+  it *is* a task somebody asked for — and costs nothing new, because M7-2's row already
+  carries one and M15-7's preview already knows what to do with it; or add a per-plugin
+  monthly allowance on the Library screen, which is a **second cap mechanism** and the thing
+  the `ponytail:` note in `router.ts` already says not to build first; or leave it, and accept
+  that anything a plugin does for you on its own is done by a free model however hard the work
+  is. Blocks nothing — M8-1 is worth doing either way, and Adapt works today on a free model.
+
 ## F. Project logistics
 
 - [x] **F1.** Solo, or a team?
