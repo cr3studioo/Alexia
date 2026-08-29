@@ -3339,8 +3339,15 @@ Real, ordered, not scheduled. Nothing here blocks a milestone.
 6. **A full window** — not ruled out, but the overlay is the primary surface.
 
 The next four came out of reading version 1 (M7). Each is real, each was lived with, and each
-waits on **G12** — *may a plugin run on its own clock, and spend on it.* Paths are in
+waited on **G12** — *may a plugin run on its own clock, and spend on it.* Paths are in
 `C:\Users\vacla\Documents\alexia version 1`, to read for the reasoning rather than the code.
+
+**G12 was answered on 2026-08-29 at M7-3 (D96), so all four are unblocked** — and all four
+inherit the ceiling it set. A plugin may wake on its own clock, and on it **it spends nothing
+but free**: the router reads *attributed to a plugin, belonging to no run* as *free tiers and
+this machine only*. That is not a limit any of the four has to implement or remember; it is
+the shape of `send()`. A proactive plugin waking every twelve minutes bills nobody by
+construction, which is the honest cap M15-7 could not give them and the reason they waited.
 
 7. **Proactive messaging** — Alexia speaking first, which this repo has no shape for at all.
    Four parts and the last two are what make it bearable: conditions polled on a timer
