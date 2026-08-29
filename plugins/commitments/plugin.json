@@ -1,0 +1,54 @@
+{
+  "$schema": "../../docs/spec/plugin.schema.json",
+  "manifest_version": 1,
+  "id": "commitments",
+  "name": "Commitments",
+  "summary": "Keeps track of what you said you would do, and whether you did it.",
+  "version": "0.1.0",
+  "license": "AGPL-3.0-only",
+  "entry": {
+    "run": "node",
+    "args": ["index.js"]
+  },
+  "alexia_protocol": 3,
+  "mcp_protocol": "2025-11-25",
+  "requires": [],
+  "settings": [
+    {
+      "type": "status",
+      "key": "standing",
+      "label": "Outstanding"
+    }
+  ],
+  "storage": {
+    "namespace": "commitments",
+    "tables": ["promises"]
+  },
+  "commands": [
+    {
+      "name": "promised",
+      "summary": "What you still owe"
+    }
+  ],
+  "panel": {
+    "label": "Commitments",
+    "widgets": [
+      {
+        "key": "ledger_list",
+        "type": "table",
+        "label": "What you said you would do",
+        "hint": "Read-only, on purpose. A commitment is recorded in the conversation where you said it, and closed the same way — a second way in from a table would be a parallel mechanism into a record whose whole value is that it only ever grows.",
+        "rows": "ledger",
+        "columns": [
+          { "key": "text", "label": "What" },
+          { "key": "whose", "label": "Whose", "hideNarrow": true },
+          { "key": "by", "label": "Due", "align": "right", "hideNarrow": true },
+          { "key": "state", "label": "State" }
+        ],
+        "detail": "about_commitment",
+        "filter": true,
+        "groupBy": "group"
+      }
+    ]
+  }
+}
