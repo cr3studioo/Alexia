@@ -179,7 +179,8 @@ const MODELS: Rendered = table({
   hint:
     'Normally Alexia picks a model per request — the cheapest one that can do the job, falling to the next when one is rate-limited. That is Automatic, and it is what happens when nothing here is chosen. ' +
     'The ★ is the one Automatic would pick right now for a request that needs tools: it is the router’s own answer rather than a second opinion, so it moves when your keys, the catalog or a rate limit move. ' +
-    '"Yours this week" is what you have actually sent through each model in the last seven days, counted on this machine. ' +
+    '"Tokens / week" is how much the whole world put through that model in the provider’s last published week, refreshed daily and again whenever you open this tab. ' +
+    'Only OpenRouter publishes that figure today, so every other provider shows a dash there and its models are ordered by price instead — a dash means nobody says, not nobody uses it. ' +
     'Use sends every request to one model instead, until you press Automatic on any row to hand the choice back. The chosen row is marked and coloured. ' +
     'A row saying "needs a key" belongs to a provider you have not connected — add its key in settings and its models become usable here. ' +
     'Each provider publishes its own list and they do not agree on what to include, so a dash is something that provider does not say rather than a zero.',
@@ -187,10 +188,10 @@ const MODELS: Rendered = table({
   columns: [
     { key: 'name', label: 'Model' },
     { key: 'price', label: 'Per 1M in', align: 'right' },
-    // Your own tokens, not the world's. OpenRouter shows a global figure on its site and
-    // publishes nothing like it from its API — so rather than invent one, this counts the
-    // thing Alexia already records about itself, which is the more useful number anyway.
-    { key: 'week', label: 'Yours this week', align: 'right' },
+    // How much the world put through it last week. Only one provider publishes this, which
+    // is why the sentence above the table says so — an empty column on six providers looks
+    // like a bug, and *nobody publishes this* is the fact that stops it looking like one.
+    { key: 'week', label: 'Tokens / week', align: 'right' },
     { key: 'context', label: 'Context', align: 'right', hideNarrow: true },
     { key: 'tier', label: 'Tier', align: 'right', hideNarrow: true },
     { key: 'state', label: 'State' },

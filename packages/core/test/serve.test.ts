@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { mkdirSync, mkdtempSync, statSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, statSync } from 'node:fs'
 import { request as httpRequest } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, expect, test } from 'vitest'
+import { noPolling } from './staged.js'
 import { keyOf, PROVIDERS } from '../src/provider.js'
 import { CORE, memorySecrets } from '../src/secrets.js'
 import { serve, type Serving } from '../src/serve.js'
@@ -16,7 +17,7 @@ import { serve, type Serving } from '../src/serve.js'
 const root = mkdtempSync(join(tmpdir(), 'alexia-serve-'))
 // A catalog fetched a moment ago, so starting the server does not reach for the network.
 mkdirSync(join(root, 'cache'), { recursive: true })
-writeFileSync(join(root, 'cache', 'models.json'), JSON.stringify({ fetchedAt: Date.now(), models: [] }))
+noPolling(root)
 
 const ui = join(import.meta.dirname, '..', '..', 'ui')
 const alexia: Serving = await serve({ dataDir: root, uiDir: ui, secrets: memorySecrets() })
@@ -118,7 +119,7 @@ test('a turn is kept even when the answer is a refusal', async () => {
 test('first run asks three things and then never asks again', async () => {
   const fresh = mkdtempSync(join(tmpdir(), 'alexia-first-'))
   mkdirSync(join(fresh, 'cache'), { recursive: true })
-  writeFileSync(join(fresh, 'cache', 'models.json'), JSON.stringify({ fetchedAt: Date.now(), models: [] }))
+  noPolling(fresh)
   const secrets = memorySecrets()
   const first = await serve({ dataDir: fresh, uiDir: ui, secrets })
   const call = (path: string, init: RequestInit = {}) =>

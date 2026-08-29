@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { readFileSync } from 'node:fs'
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, expect, test } from 'vitest'
+import { noPolling } from './staged.js'
 import { ROUTES, refuse, verdictOf, type Verdict } from '../src/guard.js'
 import { memorySecrets } from '../src/secrets.js'
 import { serve, type Serving } from '../src/serve.js'
@@ -139,7 +140,7 @@ test('refuse says what would have happened, and only for the requests that chang
 
 const root = mkdtempSync(join(tmpdir(), 'alexia-guard-'))
 mkdirSync(join(root, 'cache'), { recursive: true })
-writeFileSync(join(root, 'cache', 'models.json'), JSON.stringify({ fetchedAt: Date.now(), models: [] }))
+noPolling(root)
 
 const alexia: Serving = await serve({
   dataDir: root,

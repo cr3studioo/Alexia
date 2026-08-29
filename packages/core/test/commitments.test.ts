@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, expect, test } from 'vitest'
 import { memorySecrets } from '../src/secrets.js'
 import { serve, type Serving } from '../src/serve.js'
-import { stage } from './staged.js'
+import { noPolling, stage } from './staged.js'
 
 /**
  * The panel for a plugin core has never heard of (M6-8).
@@ -22,7 +22,7 @@ import { stage } from './staged.js'
 
 const root = mkdtempSync(join(tmpdir(), 'alexia-commitments-'))
 mkdirSync(join(root, 'cache'), { recursive: true })
-writeFileSync(join(root, 'cache', 'models.json'), JSON.stringify({ fetchedAt: Date.now(), models: [] }))
+noPolling(root)
 
 const from = stage('commitments')
 

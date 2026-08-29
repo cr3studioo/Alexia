@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, expect, test } from 'vitest'
 import { memorySecrets } from '../src/secrets.js'
 import { serve, type Serving } from '../src/serve.js'
-import { stage } from './staged.js'
+import { noPolling, stage } from './staged.js'
 
 /**
  * The two plugin-owned panels, end to end (M6-6, M6-7).
@@ -21,7 +21,7 @@ import { stage } from './staged.js'
 
 const root = mkdtempSync(join(tmpdir(), 'alexia-plugin-panels-'))
 mkdirSync(join(root, 'cache'), { recursive: true })
-writeFileSync(join(root, 'cache', 'models.json'), JSON.stringify({ fetchedAt: Date.now(), models: [] }))
+noPolling(root)
 
 const from = stage('voice', 'memory')
 

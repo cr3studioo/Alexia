@@ -2,6 +2,7 @@
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { PARSER } from '../src/catalog.js'
 
 const repo = join(import.meta.dirname, '..', '..', '..')
 
@@ -34,4 +35,22 @@ export function stage(...ids: string[]): string {
     }
   }
   return root
+}
+
+/**
+ * A model cache that reads as current, so `serve()` polls nothing.
+ *
+ * Every test that starts a server needs this, and until now every one of them wrote the same
+ * object literal by hand. That was not a fixture so much as a coincidence: it happened to
+ * satisfy whatever `Catalog` checked before fetching, and the day that check gained a second
+ * condition, ten suites quietly started calling seven live providers instead of failing.
+ *
+ * So the barrier is one function, and it is the parser's own constant that stamps it.
+ */
+export function noPolling(dataDir: string, models: unknown[] = []): void {
+  mkdirSync(join(dataDir, 'cache'), { recursive: true })
+  writeFileSync(
+    join(dataDir, 'cache', 'models.json'),
+    JSON.stringify({ fetchedAt: Date.now(), parsedBy: PARSER, models }),
+  )
 }

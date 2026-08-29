@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, expect, test } from 'vitest'
+import { noPolling } from './staged.js'
 import { CORE, memorySecrets } from '../src/secrets.js'
 import { serve, type Serving } from '../src/serve.js'
 
@@ -25,7 +26,7 @@ import { serve, type Serving } from '../src/serve.js'
 
 const root = mkdtempSync(join(tmpdir(), 'alexia-table-'))
 mkdirSync(join(root, 'cache'), { recursive: true })
-writeFileSync(join(root, 'cache', 'models.json'), JSON.stringify({ fetchedAt: Date.now(), models: [] }))
+noPolling(root)
 
 const extensions = mkdtempSync(join(tmpdir(), 'alexia-table-ext-'))
 const folder = join(extensions, 'shelf')

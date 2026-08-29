@@ -159,7 +159,11 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
   const poll = async (provider: Provider): Promise<void> => {
     void (await catalog.refresh(provider, undefined, await secrets.get(CORE, keyOf(provider)).catch(() => undefined)))
   }
-  for (const provider of PROVIDERS) void poll(provider)
+  /** Every provider, if its own list has aged out. Startup calls it; so does the Models tab. */
+  const pollAll = (): void => {
+    for (const provider of PROVIDERS) void poll(provider)
+  }
+  pollAll()
 
   const session = store.sessions()[0]?.id ?? store.createSession()
 
@@ -405,7 +409,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     return new Set(found.flat())
   }
 
-  const surface = { skills, tooling, plugins, skillsDir, trace, dataDir: root, store, catalog, connected, world }
+  const surface = { skills, tooling, plugins, skillsDir, trace, dataDir: root, store, catalog, connected, world, refresh: pollAll }
   const ours = coreSources(surface)
   const ourActions = coreActions(surface)
 

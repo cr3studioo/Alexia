@@ -19,6 +19,22 @@ export interface Provider {
   baseUrl: string
   /** Where its model list lives, relative to `baseUrl`. Not every provider has one. */
   models?: string
+  /**
+   * Where this provider publishes **how much the world is using each of its models** — an
+   * absolute URL, because it need not sit under `baseUrl` and on the one provider that has
+   * it, it does not.
+   *
+   * A row rather than a branch, so the day a second provider publishes one it is a line in
+   * this table and not a change to the catalog. Today exactly one does, which is the fact the
+   * Models screen states out loud rather than hiding behind an empty column.
+   *
+   * **Undocumented, and treated as such.** This is the endpoint openrouter.ai's own models
+   * page calls; it is not in their published API, which carries no usage figures at all and
+   * accepts `?order=top-weekly` while ignoring it. So it may change shape or vanish without
+   * notice, and everything downstream of it is optional: the catalog refresh that reads this
+   * succeeds when it fails, and the column simply has nothing in it.
+   */
+  usage?: string
   /** Sent with every request. A provider that wants attribution headers says so here. */
   headers?: Record<string, string>
   /** A local server, or one the user is already the endpoint of. No key, and none asked for. */
@@ -55,6 +71,9 @@ export const PROVIDERS: Provider[] = [
     // nothing and is the polite half of using somebody's free tier.
     headers: { 'HTTP-Referer': 'https://github.com/cr3studioo/Alexia', 'X-Title': 'Alexia' },
     terms: 'https://openrouter.ai/terms',
+    // Keyed by `canonical_slug`, which is what the public list calls the same model — 377 of
+    // the 396 rows join, and the ones that do not are models nobody has used yet.
+    usage: 'https://openrouter.ai/api/frontend/v1/models/find?order=top-weekly',
     trainsOnYourData: 'unknown',
     rpm: 20,
     rpd: 50, //                                 1,000 after a one-off $10 of credit

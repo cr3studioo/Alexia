@@ -37,11 +37,35 @@ export interface Model {
    * is `T0` whether it is 1B or 8B, and exactly one of those can plan (D62).
    */
   params?: number
+  /**
+   * Tokens through this model **everywhere**, over the provider's last published week.
+   *
+   * Not this machine's usage — the world's, which is the only version of this number that
+   * says anything you did not already know. It is the closest thing to a review a model has:
+   * a free model nobody sends anything to is a free model with a reason nobody wrote down.
+   *
+   * Absent rather than zero when the provider does not publish it, which is all of them but
+   * one. Zero would sort as *unused* and read as *bad*, and neither is what silence means.
+   */
+  weekly?: number
 }
 
 export interface Snapshot {
   fetchedAt: number
   models: Model[]
+  /**
+   * What version of {@link parse} wrote these rows.
+   *
+   * A cache is only as good as the reader that filled it, and this one gains fields: the day
+   * `weekly` was added, every model on every existing machine had a perfectly fresh snapshot
+   * with no such field in it, and the per-provider clock would have honoured that for a day —
+   * or indefinitely on a machine that is rarely open long enough to poll. So a snapshot
+   * written by an older parser is stale by definition, whatever its timestamp says.
+   *
+   * The models are kept and only the clocks are dropped, so the screen shows the old list
+   * until the new one lands rather than going empty while somebody is looking at it.
+   */
+  parsedBy?: number
   /**
    * When each provider's list was last fetched, by provider id.
    *
@@ -74,12 +98,25 @@ const DAY = 24 * 60 * 60 * 1000
  */
 const FRONTIER_USD_PER_MTOK = 1
 
+/**
+ * Bumped whenever {@link parse} learns to read a field it used to drop.
+ *
+ * Exported for the tests, which stamp their fixture caches with it. That is not a courtesy:
+ * a snapshot they hand `serve()` is the only thing standing between the suite and seven real
+ * providers, and a stamp they cannot see the value of is a barrier that quietly falls over
+ * the next time this number changes.
+ */
+export const PARSER = 2
+
 export class Catalog {
   #snapshot: Snapshot
 
   /** `file` is `<cacheDir>/models.json`. Missing, empty or corrupt all mean the same thing. */
   constructor(private readonly file: string) {
-    this.#snapshot = read(file) ?? { fetchedAt: 0, models: [] }
+    const found = read(file) ?? { fetchedAt: 0, models: [] }
+    // Written by a parser that did not know about a field this one reads: keep the rows,
+    // drop every clock, so the next poll is a real fetch rather than a shrug.
+    this.#snapshot = found.parsedBy === PARSER ? found : { ...found, fetchedAt: 0, at: undefined }
   }
 
   get models(): readonly Model[] {
@@ -141,7 +178,7 @@ export class Catalog {
         },
       })
       if (!response.ok) throw new Error(`${response.status}`)
-      models = parse(await response.json(), provider)
+      models = parse(await response.json(), provider, await popularity(provider))
     } catch (error) {
       return { added: [], removed: [], failed: `could not reach ${provider.name}: ${String(error)}` }
     }
@@ -165,6 +202,7 @@ export class Catalog {
       fetchedAt: now,
       models: [...kept, ...models],
       at: { ...this.#snapshot.at, [provider.id]: now },
+      parsedBy: PARSER,
     }
     write(this.file, this.#snapshot)
     return change
@@ -197,7 +235,7 @@ export function news(change: Change): string | undefined {
  * and a `0` there is the truth; a missing context window is not `0` tokens, it is not said,
  * and the screen prints those two differently.
  */
-function parse(payload: unknown, provider: Provider): Model[] {
+function parse(payload: unknown, provider: Provider, weekly: ReadonlyMap<string, number> = new Map()): Model[] {
   const data = (payload as { data?: unknown[] })?.data
   if (!Array.isArray(data)) return []
 
@@ -205,6 +243,8 @@ function parse(payload: unknown, provider: Provider): Model[] {
     const entry = raw as {
       id?: unknown
       name?: unknown
+      /** How the usage feed names the same model. Only OpenRouter sends one. */
+      canonical_slug?: unknown
       /** OpenRouter's name for it, then Groq's. Nobody else sends one. */
       context_length?: unknown
       context_window?: unknown
@@ -240,6 +280,8 @@ function parse(payload: unknown, provider: Provider): Model[] {
          */
         supportsTools: params.includes('tools'),
         modality: Array.isArray(modalities) ? modalities.map(String) : ['text'],
+        ...(typeof entry.canonical_slug === 'string' &&
+          weekly.has(entry.canonical_slug) && { weekly: weekly.get(entry.canonical_slug) }),
         // A moderated endpoint refuses; an unmoderated one does not. A provider that does
         // not say is not assumed either way.
         nsfwOk: typeof moderated === 'boolean' ? (moderated ? 'no' : 'yes') : 'unknown',
@@ -249,6 +291,44 @@ function parse(payload: unknown, provider: Provider): Model[] {
       },
     ]
   })
+}
+
+/**
+ * How much the world put through each of this provider's models last week.
+ *
+ * Every failure is the empty map, deliberately and at every level: no feed declared, the
+ * request refused, the shape changed, a row that makes no sense. This reads an endpoint
+ * nobody promised us — the one openrouter.ai's own models page calls, because their
+ * published API carries no usage figures and silently ignores the ordering parameter that
+ * would imply it does. So the catalog must be exactly as correct without it, and it is: the
+ * column is empty, the sort falls through to price, and nothing else notices.
+ *
+ * Keyed by the provider's own name for a model — `canonical_slug` in the public list, and
+ * `permaslug` in this one, which are the same string. The public `id` is not usable as a key:
+ * it drops the dated suffix and adds a `:free` variant that the usage feed does not carry.
+ */
+async function popularity(provider: Provider): Promise<ReadonlyMap<string, number>> {
+  const none = new Map<string, number>()
+  if (provider.usage === undefined) return none
+  try {
+    const response = await fetch(provider.usage, { headers: { accept: 'application/json' } })
+    if (!response.ok) return none
+    const body = (await response.json()) as { data?: { analytics?: unknown } }
+    const rows = body.data?.analytics
+    if (typeof rows !== 'object' || rows === null) return none
+
+    const found = new Map<string, number>()
+    for (const [slug, raw] of Object.entries(rows as Record<string, unknown>)) {
+      const row = raw as { total_prompt_tokens?: unknown; total_completion_tokens?: unknown }
+      // In and out together: "how much went through it" is one number to the person reading.
+      const total = Number(row.total_prompt_tokens ?? 0) + Number(row.total_completion_tokens ?? 0)
+      if (Number.isFinite(total) && total > 0) found.set(slug, total)
+    }
+    return found
+  } catch {
+    // Offline, or they took it away. Neither is an error worth failing a model list over.
+    return none
+  }
 }
 
 /** Prices arrive as strings, per token. Nobody thinks in those. */

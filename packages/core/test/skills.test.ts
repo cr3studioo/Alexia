@@ -6,7 +6,7 @@ import { afterAll, expect, test } from 'vitest'
 import { memorySecrets } from '../src/secrets.js'
 import { serve } from '../src/serve.js'
 import { Skills, SKILL_TOOL } from '../src/skills.js'
-import { stage } from './staged.js'
+import { noPolling, stage } from './staged.js'
 
 /**
  * The skills loader (M2-2). Three things are actually being checked here: that the index
@@ -129,7 +129,7 @@ test('a skill bundled with a plugin is found through the folder that plugin was 
   // loader knows which folder that is relative to. Nothing is spawned to find out.
   const data = mkdtempSync(join(tmpdir(), 'alexia-skills-serve-'))
   mkdirSync(join(data, 'cache'), { recursive: true })
-  writeFileSync(join(data, 'cache', 'models.json'), JSON.stringify({ fetchedAt: Date.now(), models: [] }))
+  noPolling(data)
   const staged = stage('hello')
   const alexia = await serve({
     dataDir: data,

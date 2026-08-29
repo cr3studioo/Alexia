@@ -6,7 +6,7 @@ import { afterAll, expect, test } from 'vitest'
 import { CORE_TABS, type Tab } from '../src/panels.js'
 import { memorySecrets } from '../src/secrets.js'
 import { serve, type Serving } from '../src/serve.js'
-import { stage } from './staged.js'
+import { noPolling, stage } from './staged.js'
 
 /**
  * The control surface's tab list, assembled (M6-2).
@@ -21,7 +21,7 @@ import { stage } from './staged.js'
 
 const root = mkdtempSync(join(tmpdir(), 'alexia-panels-'))
 mkdirSync(join(root, 'cache'), { recursive: true })
-writeFileSync(join(root, 'cache', 'models.json'), JSON.stringify({ fetchedAt: Date.now(), models: [] }))
+noPolling(root)
 
 /**
  * Two staged plugins: one that declares a panel and one that does not.

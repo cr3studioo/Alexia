@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, expect, test } from 'vitest'
+import { noPolling } from './staged.js'
 import { CORE_TABS } from '../src/panels.js'
 import { keyOf, PROVIDERS } from '../src/provider.js'
 import { CORE, memorySecrets } from '../src/secrets.js'
@@ -42,16 +43,10 @@ const model = (over: Record<string, unknown>): Record<string, unknown> => ({
   trainsOnYourData: 'unknown',
   ...over,
 })
-writeFileSync(
-  join(root, 'cache', 'models.json'),
-  JSON.stringify({
-    fetchedAt: Date.now(),
-    models: [
-      model({ id: 'openrouter/reachable', name: 'Reachable', provider: 'openrouter' }),
-      model({ id: 'groq/unreachable', name: 'Unreachable', provider: 'groq', priceIn: 2, tier: 'T3' }),
-    ],
-  }),
-)
+noPolling(root, [
+  model({ id: 'openrouter/reachable', name: 'Reachable', provider: 'openrouter', weekly: 1_500_000 }),
+  model({ id: 'groq/unreachable', name: 'Unreachable', provider: 'groq', priceIn: 2, tier: 'T3' }),
+])
 
 const skillsDir = join(root, 'skills')
 const skill = (name: string, front: string): void => {
@@ -326,8 +321,11 @@ test('the models panel offers what every provider publishes, and says which are 
   // Recommended first, then what has been used, then cheapest: the top of a group is the
   // useful end of it.
   expect(models.map((row) => row.id)).toEqual(['openrouter/reachable', 'groq/unreachable'])
-  // Nothing has been asked of anything yet, and a dash is what no tokens looks like.
-  expect(models.every((row) => row.week === '—')).toBe(true)
+  // What the world put through it, from the fixture cache. A provider that publishes no
+  // such figure shows a dash, which the sentence above the table explains rather than
+  // leaving to look like a bug.
+  expect(models.find((row) => row.id === 'openrouter/reachable')?.week).toBe('1.5M')
+  expect(models.find((row) => row.id === 'groq/unreachable')?.week).toBe('—')
 
   // A model from a provider with no key is shown rather than hidden: *what would connecting
   // Groq get me* is the question this screen exists to answer, and an absent row answers it

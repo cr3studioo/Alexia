@@ -225,3 +225,74 @@ test('a list that needs a key is fetched with one', async () => {
   expect(seen).toBe('Bearer sk-users-own')
   guarded.close()
 })
+
+test('how much the world uses a model, joined to the list by the name both feeds use', async () => {
+  const path = file()
+  // The usage feed, in the shape openrouter.ai's own models page reads: keyed by permaslug,
+  // with prompt and completion tokens counted separately.
+  const feed = createServer((_request, response) => {
+    response.writeHead(200, { 'content-type': 'application/json' })
+    response.end(
+      JSON.stringify({
+        data: {
+          analytics: {
+            'qwen/qwen3-8b-20260101': { total_prompt_tokens: 900, total_completion_tokens: 100 },
+            'someone/never-listed': { total_prompt_tokens: 5, total_completion_tokens: 5 },
+            // A row that makes no sense is skipped rather than fatal, like everything here.
+            'broken/row': { total_prompt_tokens: 'lots' },
+          },
+        },
+      }),
+    )
+  })
+  await new Promise<void>((resolve) => feed.listen(0, '127.0.0.1', resolve))
+  const watched: Provider = { ...provider, usage: `http://127.0.0.1:${(feed.address() as AddressInfo).port}/` }
+
+  // `canonical_slug` on the public list is `permaslug` on the usage feed. The public `id` is
+  // not usable as a key: it drops the dated suffix and can carry a `:free` variant.
+  payload = { data: [entry({ id: 'qwen/qwen3-8b:free', canonical_slug: 'qwen/qwen3-8b-20260101' })] }
+  const catalog = new Catalog(path)
+  await catalog.refresh(watched, 0)
+  expect(catalog.models[0]?.weekly).toBe(1000)
+
+  // A provider that publishes nothing leaves it absent rather than zero — zero sorts as
+  // unused and reads as bad, and neither is what silence means.
+  payload = { data: [entry({ id: 'plain/model', canonical_slug: 'plain/model-1' })] }
+  await catalog.refresh({ ...provider, id: 'quiet' }, 0)
+  expect(catalog.models.find((m) => m.provider === 'quiet')?.weekly).toBeUndefined()
+
+  feed.close()
+})
+
+test('a usage feed that is gone takes nothing with it', async () => {
+  const path = file()
+  payload = { data: [entry()] }
+  const catalog = new Catalog(path)
+  // Nothing is listening on port 1, which is the endpoint being withdrawn or the machine
+  // being offline. It reads an API nobody promised us, so the list has to survive it.
+  const change = await catalog.refresh({ ...provider, usage: 'http://127.0.0.1:1/' }, 0)
+  expect(change.failed).toBeUndefined()
+  expect(catalog.models).toHaveLength(1)
+  expect(catalog.models[0]?.weekly).toBeUndefined()
+})
+
+test('a cache written by an older parser is stale however fresh its timestamp is', async () => {
+  const path = file()
+  payload = { data: [entry()] }
+  await new Catalog(path).refresh(provider)
+
+  // Exactly the situation the day a field is added: a snapshot written minutes ago, by a
+  // reader that did not know about `weekly`. Left alone, the per-provider clock honours it
+  // for a day — or forever on a machine that is rarely open long enough to poll.
+  const { writeFileSync, readFileSync } = await import('node:fs')
+  const snapshot = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>
+  delete snapshot.parsedBy
+  writeFileSync(path, JSON.stringify(snapshot))
+
+  const upgraded = new Catalog(path)
+  // The rows survive, so the screen is not empty while the new list is on its way.
+  expect(upgraded.models).toHaveLength(1)
+  expect(upgraded.fetchedFrom(provider.id)).toBe(0)
+  payload = { data: [entry({ id: 'qwen/qwen3-30b:free' })] }
+  expect((await upgraded.refresh(provider)).added.map((m) => m.id)).toEqual(['qwen/qwen3-30b:free'])
+})

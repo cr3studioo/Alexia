@@ -66,6 +66,17 @@ export interface SurfaceOptions {
    * choose would be two routers, and the one nobody can see would win every time.
    */
   world(): Promise<World>
+  /**
+   * Ask every provider for its list again, if what is cached has aged out.
+   *
+   * Called when the Models table is opened, which is what makes the figures on it live
+   * rather than as old as the last restart. It is safe to call on every draw because
+   * `Catalog.refresh` declines anything younger than a day per provider — so this is a
+   * cheap no-op almost always, and a fetch exactly when somebody is looking at stale
+   * numbers. Nothing waits for it: the rows being returned are the cached ones, and the
+   * fetch lands in time for the next open.
+   */
+  refresh(): void
 }
 
 /** `▲` is the one mark that is coloured, because on this screen a colour means look at this. */
@@ -83,9 +94,6 @@ const count = (n: number): string =>
   : n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M`
   : n >= 1_000 ? `${(n / 1_000).toFixed(1)}k`
   : String(n)
-
-/** Seven days, which is the window somebody means by *lately*. */
-const WEEK = 7 * 24 * 60 * 60 * 1000
 
 /**
  * Dollars per million input tokens, or the word for what free means here.
@@ -123,6 +131,10 @@ export function sources(options: SurfaceOptions): Record<string, Source> {
      */
     models: {
       rows: async () => {
+        // Opening the list is the signal that somebody wants it current. Deliberately not
+        // awaited — a screen that blocked on seven providers would be a screen that opens
+        // slowly on a bad connection to show numbers it already had.
+        options.refresh()
         const standing = pins(store)
         const keyed = await options.connected()
         /**
@@ -146,10 +158,6 @@ export function sources(options: SurfaceOptions): Record<string, Source> {
           await options.world(),
         )
         const best = would.ok ? would.choices[0]?.model.id : undefined
-        // Tokens rather than money, and this week rather than all time: on a free tier the
-        // cost column is four hundred zeroes, and tokens are what a free model spends.
-        const lately = new Map(store.usedBy('model', Date.now() - WEEK).map((row) => [row.key, row]))
-
         return (
           [...catalog.models]
             .sort(
@@ -157,7 +165,10 @@ export function sources(options: SurfaceOptions): Record<string, Source> {
                 // What it would pick, then what you have actually been using, then the order
                 // the router itself walks them in. The top of each group is the useful end.
                 Number(b.id === best) - Number(a.id === best) ||
-                (lately.get(b.id)?.tokens ?? 0) - (lately.get(a.id)?.tokens ?? 0) ||
+                // Then what the world is actually using, which is the closest thing to a
+                // review a model has. Providers that publish nothing fall through to price,
+                // so their models are ordered as they always were rather than sunk.
+                (b.weekly ?? 0) - (a.weekly ?? 0) ||
                 a.priceIn - b.priceIn ||
                 a.name.localeCompare(b.name),
             )
@@ -168,7 +179,7 @@ export function sources(options: SurfaceOptions): Record<string, Source> {
               tier: model.tier,
               price: price(model.priceIn),
               context: window(model.context),
-              week: count(lately.get(model.id)?.tokens ?? 0),
+              week: model.weekly === undefined ? '—' : count(model.weekly),
               /**
                * `◆` is the chosen mark, and the shell colours it. The other two are the
                * marks every core table already speaks in — `■` for something that is not
@@ -198,14 +209,9 @@ export function sources(options: SurfaceOptions): Record<string, Source> {
             `${model.tier} · ${price(model.priceIn)} in, ${price(model.priceOut)} out, per million tokens`,
             `Context: ${window(model.context)} · takes ${model.modality.join(', ')}`,
             `Tools: ${model.supportsTools ? 'yes' : 'not according to its provider'}`,
-            // The record, in the units a free model spends. It is this machine's own usage
-            // table read back — a count of what was asked, never a copy of what was said.
-            ...(() => {
-              const used = store.usedBy('model', Date.now() - WEEK).find((row) => row.key === model.id)
-              return used === undefined ?
-                  ['You have not used this in the last week.']
-                : [`Used ${String(used.calls)} times this week — ${count(used.tokens)} tokens.`]
-            })(),
+            model.weekly === undefined ?
+              `${model.provider} does not publish how much its models are used.`
+            : `${count(model.weekly)} tokens through this model last week, across everyone using ${model.provider}.`,
             // The two flags nobody may guess at. Both say `unknown` until a person has read
             // the provider's terms, and the screen repeats that rather than rounding it off.
             `Trains on what you send it: ${model.trainsOnYourData}`,

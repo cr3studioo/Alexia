@@ -5,6 +5,7 @@ import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, expect, test } from 'vitest'
+import { noPolling } from './staged.js'
 import { keyOf, PROVIDERS, type Provider } from '../src/provider.js'
 import { CORE, memorySecrets } from '../src/secrets.js'
 import { serve, type Serving } from '../src/serve.js'
@@ -54,12 +55,7 @@ const stub: Provider = {
 }
 PROVIDERS.push(stub)
 
-mkdirSync(join(root, 'cache'), { recursive: true })
-writeFileSync(
-  join(root, 'cache', 'models.json'),
-  JSON.stringify({
-    fetchedAt: Date.now(),
-    models: [
+noPolling(root, [
       {
         id: 'stub/one',
         name: 'Stub One',
@@ -73,9 +69,7 @@ writeFileSync(
         nsfwOk: 'unknown',
         trainsOnYourData: 'unknown',
       },
-    ],
-  }),
-)
+])
 
 // The plugin, staged the way `staged.ts` stages a real one: the manifest here, the code
 // where it was written, so the entry is an absolute path.

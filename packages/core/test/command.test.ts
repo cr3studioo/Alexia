@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { afterAll, expect, test } from 'vitest'
 import { CORE, memorySecrets } from '../src/secrets.js'
 import { serve, type Serving } from '../src/serve.js'
-import { stage } from './staged.js'
+import { noPolling, stage } from './staged.js'
 
 /**
  * A slash command is two different things wearing one syntax, and the gate is the difference.
@@ -23,7 +23,7 @@ import { stage } from './staged.js'
 
 const root = mkdtempSync(join(tmpdir(), 'alexia-command-'))
 mkdirSync(join(root, 'cache'), { recursive: true })
-writeFileSync(join(root, 'cache', 'models.json'), JSON.stringify({ fetchedAt: Date.now(), models: [] }))
+noPolling(root)
 
 /**
  * Hello, with two commands added to its staged manifest.
