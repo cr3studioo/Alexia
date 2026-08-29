@@ -175,6 +175,20 @@ Tick a box only when the task's acceptance criteria pass. `[GATE]` needs a human
 - [ ] **M5-6** `[GATE]` Cold-install test #4 — the real one *(deferred with M2-8, D79)*
 - [ ] **M5-G** `[GATE]` **Done when:** a non-technical tester installs cold and reaches a working conversation, never seeing a terminal
 
+### M6 — The control surface *(inserted 2026-08-29 — see Change log)*
+
+- [x] **M6-1** The route guard, and the check that keeps it
+- [ ] **M6-2** The control view, and a tab list nobody writes by hand
+- [ ] **M6-3** `table` — the eleventh widget, and the conversation the spec asked for
+- [ ] **M6-4** Skills, learned skills and tools — three panels, one widget
+- [ ] **M6-5** The trace, with a memory
+- [ ] **M6-6** `plugins/voice` declares a panel — and the `file` question
+- [ ] **M6-7** `plugins/memory` declares a panel — and the `graph` question
+- [ ] **M6-8** `plugins/commitments` — the panel for a plugin core has never heard of
+- [ ] **M6-9** The consent ladder — pending, provenance, preauth
+- [ ] **M6-10** The command palette
+- [ ] **M6-G** **Done when:** delete `plugins/memory` with the control view open and its tab goes with it
+
 ---
 
 ## What changed on 2026-08-27, after Alexia.md was written
@@ -2138,6 +2152,349 @@ one this whole document is built on, and it is measured by a person or it is not
 
 ---
 
+## M6 — The control surface
+
+*Inserted 2026-08-29 (D81–D84). The evidence is a working predecessor rather than a guess:
+`alexia control` — the Python dashboard from the first Alexia, still running on this machine
+on `127.0.0.1:8771` — shipped nine panels over 237 commits and found out which ones a person
+actually opens. This milestone is that surface rebuilt on this contract, and the parts of it
+that were wrong here are named as loudly as the parts that were right.*
+
+**What the chat window cannot answer.** M1-10 gave Alexia one screen and M2-1 gave it a
+settings pane, and between them they answer *talk to it* and *configure one plugin*. Neither
+answers the questions that arrive on day thirty: **what has this thing been doing, what did I
+say yes to, what does it know, and which of these did I install?** Those are not settings. A
+setting is a value you change; these are records you read, and a screen that renders them is a
+different screen.
+
+### What the old dashboard used for what
+
+Read before writing any of the tasks below. The left column is what was actually built and
+lived with; the right is where it lands here, and **four of the seven do not belong to core at
+all** — which is the whole reason this milestone is shaped the way it is.
+
+| Old panel | What it read | Where it lands here | Owner |
+|---|---|---|---|
+| **Skills** | `SKILL.md` files the gateway scans, plus two sidecar records — provenance and pending-review | `skills.ts` (M2-2), the marketplace (M3-5) | **core** |
+| **Workflows** | `workflow_defs/*.json`; *"mirrors SkillsTab's own shape, since the lifecycle is identical by design"* | `learned.ts` (M4-5) — this project's word for the same thing is a **learned skill** | **core** |
+| **Tools** | `cli-hub list --json`, grouped by category, filtered client-side, read-only | `tooling.ts` — the tools plugins put in front of the model | **core** |
+| **Live Trace** | `trace_events.jsonl`, polled, grouped into runs, last five kept | the agent loop's own step events (M15-5, D74) | **core** |
+| **Memory Graph** | an Obsidian-style vault — notes, `[[wikilinks]]`, backlinks — drawn as a force graph | `plugins/memory` (M4-3) | **a plugin** |
+| **Voice** | upload a 15-second clip and a transcript, build a clone, pick which voice speaks | `plugins/voice` (M2-3, M2-4) | **a plugin** |
+| **Commitments** | `identity/commitments.jsonl`, the accountability ledger, read-only | **nothing yet** — see M6-8 | **a plugin that does not exist** |
+
+Two more were built there and are deliberately not rebuilt: **MCP Servers** is already M3-6's
+screen, and **Proactive** and the **mode badge** are `plugins/persona`'s business if they are
+anyone's.
+
+**The mistake worth not repeating.** All nine of those tabs were listed by hand in one
+`App.tsx`, and one of them — a 480-line panel for a single text-to-speech vendor — sat in the
+dashboard's own source tree. That is the monolith this project exists because of, arriving by
+the back door: not a feature you cannot remove, but a feature core cannot stop naming. **The
+tab list here is generated** (M6-2), and the three plugin-owned panels above are the proof.
+
+### What came across unchanged
+
+Three things the old dashboard got right on the first try, taken as they stand:
+
+- **Read-only unless this screen is the only owner.** Two of its panels open with the same
+  sentence — read-only *deliberately*, because the CLI already owns the write path and a
+  second one would be a parallel mechanism. It is a good rule and it holds here.
+- **Poll, never watch.** Written into the trace backend as a rule with a `grep` line proving
+  no filesystem watcher anywhere in the file. The vault changed every ten minutes; a watcher
+  would have been complexity bought for nothing.
+- **A missing module must not stop the app, and must not print a plausible-looking success
+  either.** Routers mounted lazily, each in its own `try`. The same shape core already uses
+  for a plugin that fails to load.
+
+---
+
+### M6-1 The route guard, and the check that keeps it
+
+**Built 2026-08-29 (D82, D85).** `packages/core/src/guard.ts` classifies all seventeen paths
+`serve.ts` answers — three read-only, eleven reversible with a reason each, three guarded —
+and `refuse()` runs **before dispatch**, so a confirm is not something a handler has to
+remember to ask for and a route nobody has classified is refused rather than run. The body is
+read and parsed once at the top for the same reason, which also turned malformed JSON from
+twelve independent 500s into one refusal. `guard.test.ts` walks the real routes out of the
+source in both directions — a route missing from the table and a table entry that is no
+longer a route are both red — and then makes the same requests over a live server, walking
+the guarded list rather than a copy of it. Verified going red by adding an unclassified
+`POST` handler and watching it fail by name. Writing the reasons is what found D85.
+
+**Every state-changing route is either guarded or declared safe with a written reason, and a
+test proves there is no third category.** Guarded means it refuses without an explicit
+`confirm`; declared safe means it is in a list, with a comment saying why it is reversible.
+
+`serve.ts` has twelve `POST` handlers today — install, enable, disable, purge, settings,
+ceilings, permissions, actions, learn, servers, setup, stop — and **no rule at all** about
+which of them can destroy something. The predecessor had exactly this problem, solved it, and
+left a note about the hole in its own solution:
+
+> `SAFE_STATE_CHANGES` is keyed by `(path, method)` **globally across every mounted router**
+> … `/{name}/approve` was declared safe for the skills router, where it only un-archives; the
+> MCP router's own `/{name}/approve` writes into the live gateway config and would be silently
+> waved through.
+
+Found, written down, not fixed. **It cannot reproduce in the same shape here** — core's router
+is one flat match on `url.pathname`, so a path is already globally unique — and that is worth
+saying out loud rather than discovering later if the router is ever split.
+
+- The declared-safe list carries a **reason per entry**, not just a path. An entry nobody can
+  justify in a sentence is an entry that should have been guarded.
+- The test walks **the real routes**, not a list copied beside them, so a route added tomorrow
+  is covered without anybody remembering this file exists.
+- **Not an eleventh invariant.** The ten are about the plugin contract — what survives a folder
+  being deleted. This is a safety property of core's own HTTP surface, so it joins `pnpm check`
+  on its own merits and the ten stay ten.
+
+### M6-2 The control view, and a tab list nobody writes by hand
+
+A third `data-view`, beside first-run and chat, reached from the header. The mechanism exists
+already (D67) and nothing about the chat window changes.
+
+**The tab list is assembled, never typed.** Core contributes the tabs whose data core owns —
+Activity, Skills, Tools, Library. Every other tab comes from a plugin that declared a `panel`
+in its manifest, the same way it declares settings, and it appears because the plugin is
+installed and enabled and for no other reason.
+
+> **The rule is M0's rule, one screen later.** If you are about to type `memory` inside
+> `packages/ui`, you have found a missing capability, not a shortcut. Deleting a plugin folder
+> takes its tab with it, and core never knew the tab's name.
+
+- A panel renders **while the plugin is not running**, for the same reason settings do — lazy
+  spawn makes not-running the ordinary case. Anything that needs the process is a tool call the
+  panel makes when someone opens it, not a spawn at draw time.
+- Enabled but not running is a **normal** state and reads as one; installed but not enabled has
+  no tab at all, because a folder appearing is not consent (D73).
+- **Narrow is a real case.** The old dashboard learned it the hard way: nine tabs in a
+  scrollable row was technically fine and awkward in practice, and the fix its owner asked for
+  was to tap the active tab's own name and get a list. The overlay is narrower than any phone
+  this was tested on, so the same treatment applies here at the same breakpoint.
+
+### M6-3 `table` — the eleventh widget, and the conversation the spec asked for
+
+`ui-schema.md` says an eleventh widget *"is a conversation — open an issue saying what the
+tenth could not do."* This is that conversation, held properly rather than skipped.
+
+**What the ten cannot do: a list of things with actions on each one.** Four of the seven panels
+above are the same object — rows, a few columns, a button or two per row, a filter, sometimes an
+expandable detail. The old dashboard wrote that object four times, and its own comment on the
+second one says so: *"mirrors SkillsTab.tsx's own shape, since the lifecycle is identical by
+design."* Four independent hand-written copies of one shape is the strongest argument for a
+widget this schema will ever get.
+
+```jsonc
+{ "key": "installed", "type": "table", "label": "Installed",
+  "rows": "list_things",                       // a tool call, or a core source
+  "columns": [
+    { "key": "name",  "label": "Name" },
+    { "key": "uses",  "label": "Uses", "align": "right", "hideNarrow": true }
+  ],
+  "rowActions": [{ "key": "remove", "label": "Remove", "tool": "remove_thing",
+                   "confirm": "Remove {name}?" }],
+  "detail": "explain_thing",                   // optional, expands under the row
+  "filter": true,                              // client-side, over declared columns
+  "groupBy": "category" }
+```
+
+- **A row action is an `action`.** It goes through the permission gate M2-1 already built, and
+  the question appears beside the row, where the thing being decided is. No second gate, no new
+  concept.
+- **`confirm` is the destructive half of M6-1**, on the same screen: a second press that has
+  already said what goes. The old dashboard's Delete → Confirm delete, which is a good pattern
+  because the first press costs nothing and the second one is unambiguous.
+- **Columns declare their own narrow behaviour.** Seven columns on a 375px screen forced
+  sideways scrolling to reach the Delete button — usable in the sense that the scroll stayed
+  inside the table, and not usable at all in the sense that matters.
+
+**Two more widgets are wanted and neither is granted here.** Both have exactly one user, which
+is this schema's own bar for saying no:
+
+| Wanted | Only user | Verdict |
+|---|---|---|
+| `file` | voice, for a 15-second clip | **Decide at M6-6, with voice as the evidence** — the same method M2-1 used. There is genuinely no way to express *give me an audio file* in the ten, which is a stronger argument than "it would be convenient" |
+| `graph` | memory, for a note graph | **Decide at M6-7.** This is Backlog item 4's exact case, and the memory panel ships as a `table` first so the question is answered by something already working |
+
+### M6-4 Skills, learned skills and tools — three panels, one widget
+
+If M6-3 is right, these three are configuration. If any of them needs a line of bespoke
+rendering, M6-3 is wrong and this is where that shows up — which is why they are one task and
+not three.
+
+- **Skills** — every installed skill, where it came from, whether it is enabled, and the six
+  ways it can be broken that M2-2 already names. Delete behind a confirm. A skill bundled with a
+  plugin says so and has no separate delete, because it goes when the plugin does.
+- **Learned skills** — the same table, plus what distinguishes them: **the task they were
+  learned from**, and *edit* and *forget* on the row. M4-5 already commits to attribution at
+  fire time; this is the same information at rest, and the place where a learned skill that
+  turned out to be wrong gets removed by somebody who noticed a week later.
+- **Tools** — read-only, grouped, filtered. Every tool every enabled plugin puts in front of
+  the model, which is the only screen in the product that answers *what can it actually do
+  right now*. Read-only because `tooling.ts` reads the plugins and the plugins are the write
+  path; a second one here would be a parallel mechanism.
+
+### M6-5 The trace, with a memory
+
+The trace exists (M15-5) and streams (D74), and it is **gone the moment the task is** — which
+makes it a progress indicator rather than a record. The panel is the record, and it is the
+same event stream read by a second consumer.
+
+> **Two consumers, one stream, and do not conflate them.** M15-6 trims the trace *for the
+> model's context* — old steps collapse, raw tool output is dropped once what was learned from
+> it is recorded. The panel is for a person looking at what happened, and wants the untrimmed
+> version. Trimming the panel because the context was trimmed would be one decision serving
+> two jobs badly.
+
+Four things come straight across from the predecessor, three of them small:
+
+- **`backtrack`** — a step that begins while the one before it is in error is a retry, and
+  saying so turns a flat list into an agent visibly recovering. Three lines, and it is the
+  difference between a log and a story.
+- **Asked-for model and answering model are two labels.** They differ, and here they differ for
+  a reason core creates: the router falls back on a 429 (M1-8). The header badge shows one
+  model; the trace should show both when they are not the same, or the fallback is invisible
+  in the one place it is explicable.
+- **Last five runs, in memory, gone on restart** — with its reason kept: *restarting and finding
+  an empty history is the honest behaviour for something that was never meant to be a permanent
+  log.* A person who wants one exports it.
+- **Export one run**, because the second thing anybody does with a bad run is send it to
+  somebody.
+
+### M6-6 `plugins/voice` declares a panel — and the `file` question
+
+The first plugin-owned tab, and the one that decides `file`.
+
+What the panel is: the clips this machine has, which voice speaks, and a way to add one. The
+old dashboard's owner asked for it in his own words — *"can you make it so that I can switch
+the voice? Maybe in the dashboard, like load 15 seconds of a voice and text"* — and what
+shipped was an **upload, not an in-browser recording**, deliberately: a file input needs no
+microphone permission prompt and no codec negotiation. That reasoning holds here and the
+overlay has a hotkey to protect.
+
+**If `file` is granted, it is base64 in a JSON body, not multipart.** The predecessor's reason
+was a Python dependency it did not want; ours is the same trade in a different language —
+core's `node:http` server has no multipart parser, and adding one for one widget buys a parser
+core otherwise never needs. The clip is small and single-user and local.
+
+**Whichever way `file` goes, the panel ships.** Without it, the list and the switch are a
+`table`, and adding a clip is a `path` — the tenth widget, pointing at a `.wav` already on
+disk. That is a worse first minute and a working panel, and it is the fallback if the eleventh
+widget conversation lands on no.
+
+### M6-7 `plugins/memory` declares a panel — and the `graph` question
+
+**The panel ships as a table**: what is remembered, when, what links to what, and a way to
+forget one row. `memory.recall` already answers most of it and `forget_all` already exists;
+what is missing is forgetting *one* thing, which is the entire reason a person opens this
+screen — *it remembered something wrong*.
+
+**Then, separately, the graph.** It is genuinely the nicest thing in the old dashboard and it
+cost the one heavy dependency that build allowed, fenced deliberately. Here it costs more: the
+page has no bundler and no framework, so a force layout is written by hand or not at all.
+
+This is **Backlog item 4** arriving with a real user, exactly as that entry said it would —
+*"only when a real plugin needs a chart, a canvas or a map and genuinely cannot be a schema."*
+Three ways to answer it, decided here with the table already working:
+
+1. **A hand-written force layout on a canvas.** Around a hundred lines, no dependency, and
+   entirely ours to maintain.
+2. **A `graph` widget in the schema** — core draws it, the plugin declares nodes and links.
+   Consistent with everything else, and a second widget with one user.
+3. **The sandboxed iframe**, for this case and not by default, which is what the backlog entry
+   actually proposes.
+
+The recommendation is **(1) if the layout is genuinely small, and otherwise (3)** — but the
+table ships first either way, so the graph is never the thing blocking a person from forgetting
+something the assistant got wrong.
+
+### M6-8 `plugins/commitments` — the panel for a plugin core has never heard of
+
+The seventh panel has **no owner in this project at all**, and that is why it is worth
+building. Everything else in M6 attaches to something core already ships, which means every
+one of them could be quietly special-cased and still pass. This one cannot: a plugin written
+after the panel mechanism, by someone reading the docs, with a tab core has never seen the
+name of.
+
+What it is, from the predecessor: an append-only ledger of things you said you would do —
+statement, deadline, whether you imposed it yourself, status, how many times it has nudged you.
+Its own comment calls it *"the accountability spine — the thing that makes pushing him more
+than noise."* It reads well as a plugin: a small store, one tool to add a row, one to close
+one, a panel to see them.
+
+**Read-only from the panel, on purpose**, matching the original: the assistant records a
+commitment during a conversation, and a second write path from a table would be a parallel
+mechanism into an append-only record.
+
+> This is `plugins/hello`'s job, at the level of a screen. Hello proves the wire carries
+> anything; this proves the control surface does.
+
+### M6-9 The consent ladder — pending, provenance, preauth
+
+Plugins already have this and skills do not. M2-5 settled that a folder appearing is not
+consent (D73), so a plugin arrives installed and not enabled and somebody says yes. **A skill
+arrives and is simply live** — including a learned skill, which is *written by a model, after a
+task, about what it thinks it just learned*. That is precisely the case the predecessor built
+this ladder for, and it labelled it in as many words: **AI-generated — pending review**.
+
+Three records, and the reason they are three rather than one is the part worth copying:
+
+| Record | Lifetime | What it answers |
+|---|---|---|
+| **pending** | transient | is this waiting for a human right now |
+| **provenance** | permanent, written once at creation | where did this come from — hand-written, bundled with a plugin, learned from a task, or installed from the marketplace |
+| **preauth** | consumed once | *yes, to this exact name*, said in advance |
+
+**Provenance is separate and permanent because the field that looks like it means something
+else.** The predecessor tried to read authorship out of a usage record and found the upstream
+field meant *is this curator-managed*; rows written before the marker existed were
+unrecoverable. Its answer is the one to copy: **a skill with no provenance entry is shown as
+unknown, not guessed.** Same discipline as the catalog's honesty flags (M1-5) — an absent fact
+is displayed as absent.
+
+And the checker sits under it, with two rules that are already this project's rules and are
+worth restating where the loop is:
+
+- **The checker is code, never a model.** Routing a self-authored skill through an LLM to check
+  it makes the checker itself the unauditable thing it exists to catch. `checker.ts` is
+  deterministic and stays that way.
+- **A revise-and-recheck loop asks the ceiling before it dispatches, not after.** A checker that
+  keeps failing and an author that keeps trying is a loop spawning fresh calls, which is the one
+  shape a post-hoc ceiling never catches. M15-7's ceilings are checked *before* each round, and
+  a separate round cap ends it independently.
+
+### M6-10 The command palette
+
+Ctrl+K, type, jump. Eight tabs is where a tab bar stops being navigation, and the predecessor
+added this at exactly that point.
+
+**One search endpoint over each source's existing read path** — skills, learned skills, trace
+runs, plugin panels — scored and merged. No second index to keep in sync with four sources of
+truth, and no dependency: exact beats starts-with beats substring beats subsequence is about
+fifteen lines, and it is ranking four short in-memory lists, not tuning relevance.
+
+**It navigates; it does not execute.** Slash commands already run things (M1-12), and M1-12's
+own rule is that every command has a UI equivalent. A palette that also executed would be a
+second command system with a different permission story. This one finds a thing and opens the
+tab it lives on.
+
+### M6-G — Done when
+
+> **Delete `plugins/memory` while the control view is open, and its tab goes with it —
+> and no file in `packages/core` or `packages/ui` contains the word `memory`.**
+
+The same test as M0-G and M2-G, one screen further in. A control surface is where an
+architecture like this usually breaks: the dashboard is the natural place to special-case
+things, because it is the one screen that has to know about everything at once. If the tab
+list survives a plugin being deleted mid-session, the contract held somewhere it genuinely
+could have failed.
+
+Plus, on the same run: every state-changing route guarded or declared (M6-1), a run visible in
+the trace panel after the task that made it has ended (M6-5), and a learned skill sitting in
+pending review until somebody says yes (M6-9).
+
+---
+
 ## Backlog
 
 Real, ordered, not scheduled. Nothing here blocks a milestone.
@@ -2217,6 +2574,17 @@ For `questions.md`. Each one came out of planning and none of them blocks starti
 - **G6.** What happens to the free-tier pool when a provider changes its terms mid-release?
   A kill switch for provider entries, the same way the registry has one for plugins?
   *Decide at M1-6.*
+- **G7.** Is there any honest way to express *give me a file* in a schema whose whole point is
+  that a plugin never draws? `file` has one user (voice, a 15-second clip), which is this
+  schema's own bar for refusing it — and unlike every other refusal, there is no workaround
+  inside the ten: `path` asks a person to go and find a `.wav` themselves. *Decide at M6-6,
+  with voice as the evidence — the same method M2-1 used.*
+- **G8.** Does a plugin ever get to draw something core cannot? The memory graph is the first
+  real case of Backlog item 4 — *a chart, a canvas or a map that genuinely cannot be a schema*
+  — and the three answers are a hand-written force layout, a `graph` widget with one user, or
+  the sandboxed iframe for this case and not by default. Whichever wins sets the precedent for
+  every plugin after it, so it is worth deciding on evidence rather than on the first one that
+  works. *Decide at M6-7, with the table already shipped so nothing is blocked on it.*
 
 ---
 
@@ -2226,6 +2594,11 @@ Newest first. Every entry here is also in Alexia.md's decision log.
 
 | Date | Entry |
 |---|---|
+| 2026-08-29 | **D85** — **classifying the routes found the one route that was not classified anywhere: a slash command was a tool call with no gate in front of it.** M6-1, and it was the *reason per entry* that did it, not the list. Sixteen of the seventeen paths had a sentence that made them reversible or a sentence that made them dangerous. `/api/command` had neither, because it is two different things wearing one syntax: core's own commands set a mode or a pin — one word to change back, with the current value on screen beside the control — and **a plugin's command is a tool call under a short name**. That half was reaching `callTool` directly, while the identical call from an action button and the identical call from the agent loop both went through `rule()`. So it goes through the same ruling now, asked the way `/api/action` asks — this request carries no stream to put a question down, so the first call answers `ask` and the second carries the person's yes, and `blocked` still has no second call. Nothing about the two commands that exist changes: both declare `readOnlyHint`, so both still run unasked in the default mode. **The entry that could not be written is the finding.** Had the reason been optional, `/api/command` would have gone on the safe list with a path and no sentence, and the hole would still be there — which is the argument for the rule, made by the rule. |
+| 2026-08-29 | **D84** — **the consent ladder reaches skills, and provenance is a separate permanent record.** M6-9. A plugin arrives installed and not enabled (D73) and a skill arrives simply live — including a **learned** skill, which is written by a model, after a task, about what it thinks it just learned. That is the exact case the predecessor labelled *AI-generated — pending review*, and it is the one place in this product where something the user never asked for starts working on its own. Three records rather than one, because they have three lifetimes: **pending** is transient, **provenance** is permanent and written once at creation, **preauth** is consumed once and means *yes, to this exact name*. Provenance is separate because the predecessor tried to read authorship out of a usage field and found it meant *is this curator-managed*, with rows written before the marker unrecoverable — so a skill with no provenance entry is shown as **unknown, not guessed**, the same discipline as the catalog's honesty flags. Two rules restated where the revise-and-recheck loop actually lives: the checker is **code, never a model**, because routing a self-authored skill through an LLM makes the checker itself the unauditable thing it exists to catch; and the loop asks the ceiling **before** each dispatch, since a checker that keeps failing and an author that keeps trying is a loop spawning fresh calls, the one shape a post-hoc ceiling never catches. |
+| 2026-08-29 | **D83** — **`table` is the eleventh widget, and `file` and `graph` are not — yet.** M6-3. `ui-schema.md` said an eleventh *"is a conversation"*; this is that conversation held rather than skipped. What the ten cannot express is **a list of things with actions on each one**, and the evidence is not a preference: the predecessor hand-wrote that same object four times, and the second one's own comment says *"mirrors SkillsTab.tsx's own shape, since the lifecycle is identical by design"*. Four independent copies of one shape is the strongest argument this schema will get. A row action **is** an `action` — same permission gate, question beside the row — so nothing new is invented for the destructive half. `file` and `graph` each have exactly one user, which is this schema's own bar for **no**, so both are deferred to the task where their only user is the evidence (M6-6, M6-7) rather than granted on the strength of sounding useful. |
+| 2026-08-29 | **D82** — **every state-changing route is guarded or declared safe, and it joins `pnpm check` rather than the ten.** M6-1. `serve.ts` has twelve `POST` handlers and no rule about which of them can destroy something. The predecessor solved this — refuse without an explicit `confirm`, or be in a list with a written reason, and a test that walks **the real routes** rather than a list copied beside them — and then left a note about the hole in its own answer: the safe-list was keyed by `(path, method)` globally, so one router's harmless `/approve` would silently wave through another's destructive one. **That cannot reproduce here** — core's router is one flat match on `url.pathname`, so paths are already unique — which is worth recording now in case the router is ever split. **Deliberately not an eleventh invariant.** The ten are about the plugin contract, what survives a folder being deleted; this is a safety property of core's own HTTP surface, and inflating a named set to hold an unrelated member would cost more than it buys. |
+| 2026-08-29 | **D81** — **the control surface exists, and its tab list is generated.** M6, inserted with a working predecessor as the evidence: `alexia control`, the first Alexia's Python dashboard, still running on this machine on `127.0.0.1:8771`, which shipped nine panels over 237 commits and found out which ones a person opens. The chat window answers *talk to it* and the settings pane answers *configure one plugin*; neither answers the day-thirty questions — **what has this been doing, what did I say yes to, what does it know, which of these did I install** — because those are records you read, not values you change. **Four of the seven panels do not belong to core**: memory, voice and commitments are plugins, and the predecessor listed all nine by hand in one `App.tsx` with a 480-line panel for a single text-to-speech vendor sitting in the dashboard's own source tree. That is this project's founding complaint arriving by the back door — not a feature you cannot remove, but a feature core cannot stop naming — so core contributes only the tabs whose data core owns, every other tab is declared by a plugin, and **M6-G is the same test as M0-G one screen further in**: delete `plugins/memory` mid-session and its tab goes with it. Three things came across unchanged because they were right the first time: read-only unless this screen is the sole owner, poll and never watch, and a broken module must not stop the app *or* print a plausible-looking success. |
 | 2026-08-28 | **D80** — **the desktop app runs, and building it found two bugs nothing else could.** M5-1 through M5-5. Rust is 135 lines of the 300 the budget allows and does four things: picks a free port, spawns the core sidecar on it, points two windows at it, and owns the tray, the hotkey, autostart and single-instance. **The port is chosen in Rust rather than read back from the sidecar**, which is what lets the windows be built before Node has finished booting; the race that buys is smaller than the blank window that parsing stdout would cost. The page is a *remote origin* from Tauri's side because core serves it, so `withGlobalTauri` plus a capability listing `http://127.0.0.1:*` is how Escape and the tray tooltip get across — and the capability is the whole of what that buys: hide a window, set a tooltip, toggle autostart. **Two bugs came out of actually running it.** `resources/*` copies files and not directories, so `ui/` and `plugins/` were silently missing from the bundle; and core's shell lookup walked *up* from the bundle and found `src-tauri/ui` — Tauri's placeholder frontend — before the real one, so the window came up on a page whose own comment said a window had been built with the wrong URL. True and useless. The folder is now called `placeholder`, and the packaged layout is checked first, because two names that cannot collide beat a rule about which wins. Verified running: the real shell served, the token injected, all four modules 200, `/api/state` and `/api/plugins` answering, core resident at 65 MB. |
 | 2026-08-28 | **D79** — **the four cold-install gates are deferred by the owner, not passed.** The instruction was to build the whole app and tune afterwards, so M2-8, M3-8 and M5-6 are unticked and stay unticked: nobody has been sat in front of this with a stopwatch, and a tick would be a lie about the one measurement the entire product claim rests on. What exists instead is everything they would measure — a signed-installer workflow that has never been run, an NSIS bundle that has, and a first run whose five steps are all on screen. M3-G is left too: *someone who is not you builds a working plugin from the docs alone* needs a someone. |
 | 2026-08-28 | **D78** — **channels: do not formalise.** M4-8, revisited at n=3 with the evidence Alexia.md asked for. The three surfaces do not share the thing an abstraction would have to unify: **who owns the conversation, and where a permission question goes.** Core's shell owns a session and can stop and ask; Telegram owns its own store and deliberately has *no* agent loop, because on a phone chat the honest answer to *where does the permission prompt appear* is **nowhere** — so that surface gets `sampling` and no tools rather than a shared abstraction with a hole in it; and voice turns out not to be a channel at all, it is a capability core calls. A `channel` type would have had to paper over exactly the difference that matters. The cost of waiting is a little duplicated plumbing; the cost of guessing wrong is a permanent tax on every plugin. **What did generalise was named instead** — see D77. |

@@ -9,6 +9,7 @@ import { defineConfig } from 'vitest/config'
  * forgets to join this list turns that job red, which is the right way round.
  */
 const needPlugins = [
+  'packages/core/test/command.test.ts',
   'packages/core/test/lifecycle.test.ts',
   'packages/core/test/plugins.test.ts',
   'packages/core/test/progress.test.ts',

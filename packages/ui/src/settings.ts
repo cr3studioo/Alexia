@@ -265,7 +265,8 @@ export function mountSettings(token: string): { open: () => void } {
         get.disabled = true
         said.className = 'hint'
         said.textContent = 'Downloading…'
-        void send('/api/library/install', { id: update.id, update: true })
+        // The button's own label is the confirmation — it names the version it is replacing.
+        void send('/api/library/install', { id: update.id, update: true, confirm: true })
           .then(async (answer) => {
             said.className = answer.ok === true ? 'hint' : 'error'
             said.textContent = String(answer.said ?? '')
@@ -504,7 +505,8 @@ export function mountSettings(token: string): { open: () => void } {
       const trust = el('button', 'quiet-button', 'I have read what it does — trust it')
       trust.type = 'button'
       trust.addEventListener('click', () => {
-        void send('/api/server', { id: pane.id, action: 'trust' }).then(() => load())
+        // Same again: *I have read what it does* is already the second press, said in words.
+        void send('/api/server', { id: pane.id, action: 'trust', confirm: true }).then(() => load())
       })
       box.append(trust)
     }
@@ -542,7 +544,15 @@ export function mountSettings(token: string): { open: () => void } {
     const said = el('p', 'hint')
 
     const act = async (action: 'enable' | 'disable' | 'delete') => {
-      const answer = (await send('/api/plugin', { id: pane.id, action })) as { ok?: boolean; said?: string }
+      // Delete is guarded on the wire (M6-1) and the second press is what carries the yes.
+      // Two separate things saying the same word: the button, because a person can misclick,
+      // and `confirm`, because core refuses a purge that nobody said out loud — including
+      // one asked for by something that never read this file.
+      const answer = (await send('/api/plugin', {
+        id: pane.id,
+        action,
+        ...(action === 'delete' && { confirm: true }),
+      })) as { ok?: boolean; said?: string }
       if (answer.ok === false) {
         said.className = 'error'
         said.textContent = answer.said ?? 'That did not work.'

@@ -166,6 +166,25 @@ notices it creeping.
 
 ---
 
+## What is not here, and why
+
+**The route guard is not the eleventh** (D82, M6-1). Every state-changing route in
+`serve.ts` is guarded — refused without an explicit `confirm` — or declared safe with a
+written reason, and `packages/core/test/guard.test.ts` walks the real routes to prove there
+is no third category. It has the shape of a check in this folder: it reads source, it fails
+on a route somebody forgot, it carries a test proving the scanner is reading the file at all.
+
+It is still not one of the ten. **The ten are about the plugin contract** — what survives a
+folder being deleted, what core is not allowed to know. The route guard is a safety property
+of core's own HTTP surface, which is a different subject, and inflating a named set to hold
+an unrelated member costs more than the tidiness buys: *the ten* stops meaning one thing.
+So it joins `pnpm check` as an ordinary test, on its own merits, and the ten stay ten.
+
+The same reasoning applies to whatever asks next. A check belongs in this folder when it
+defends the contract; everywhere else it is just a test, which is not a lesser thing.
+
+---
+
 ## Changing a check
 
 A check that is weakened to make a commit pass has stopped defending anything, and the

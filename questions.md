@@ -210,6 +210,22 @@ the task that closes it.*
   A kill switch for provider entries, the same way the registry has one for plugins?
   *Decide at M1-6.*
 
+### Raised by planning the control surface (2026-08-29, M6)
+
+- [ ] **G7.** Is there an honest way to express *give me a file* in a schema whose whole point
+  is that a plugin never draws? `file` has exactly one user — voice, wanting a 15-second clip —
+  which is `ui-schema.md`'s own bar for refusing an eleventh widget. What makes it different
+  from every other refusal is that there is **no workaround inside the ten**: `path` asks a
+  person to go and find a `.wav` themselves, which is a worse first minute rather than an equal
+  one. *Decide at M6-6, with voice as the evidence — the same method M2-1 used.*
+- [ ] **G8.** Does a plugin ever get to draw something core cannot? The memory graph is the
+  first real instance of Backlog item 4 — *a chart, a canvas or a map that genuinely cannot be
+  a schema*. Three answers: a hand-written force layout (~100 lines, no dependency, ours to
+  maintain), a `graph` widget with one user, or the sandboxed iframe for this case and not by
+  default. Whichever wins sets the precedent for every plugin after it, so it is worth deciding
+  on evidence rather than on whichever works first. *Decide at M6-7 — the memory panel ships as
+  a `table` first, so nothing is blocked while this is open.*
+
 ## F. Project logistics
 
 - [x] **F1.** Solo, or a team?

@@ -9,6 +9,7 @@ import { run, said } from './agent.js'
 import { Catalog } from './catalog.js'
 import { asRuling, counted, freshTally, ModelChecker, type Tally } from './checker.js'
 import { commands, pins, run as runCommand } from './commands.js'
+import { refuse, type Body } from './guard.js'
 import { Library } from './library.js'
 import { distil, forget, learnable, outline, save, type Episode } from './learned.js'
 import { installed, OLLAMA, running } from './ollama.js'
@@ -339,6 +340,40 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
       return
     }
 
+    /**
+     * The body, read and parsed once, here rather than in each handler — because the guard
+     * below has to see it before the route does, and a stream can only be drained once.
+     *
+     * Bad JSON is a refusal rather than a 500. It used to be one of those instead of the
+     * other in every handler independently, which is the same accident twelve times.
+     */
+    let sent: Body = {}
+    if (request.method !== 'GET' && request.method !== 'HEAD') {
+      try {
+        const parsed: unknown = JSON.parse(await read(request))
+        if (typeof parsed === 'object' && parsed !== null) sent = parsed as Body
+      } catch {
+        response.writeHead(400, { 'content-type': 'application/json' })
+        response.end(JSON.stringify({ ok: false, said: 'That request body is not JSON.' }))
+        return
+      }
+    }
+
+    /**
+     * Guarded, or declared safe with a written reason, and there is no third kind (M6-1).
+     *
+     * It runs *before* dispatch on purpose. A confirm each handler had to remember to ask
+     * for is a confirm the thirteenth handler will not ask for — this way a route that
+     * nobody has classified is refused rather than run, and `guard.test.ts` walks the real
+     * routes so the classification cannot quietly fall behind the file.
+     */
+    const refusal = refuse(url.pathname, request.method ?? 'GET', sent)
+    if (refusal) {
+      response.writeHead(refusal.status, { 'content-type': 'application/json' })
+      response.end(JSON.stringify({ ok: false, said: refusal.said, ...(refusal.confirmable && { confirm: true }) }))
+      return
+    }
+
     if (url.pathname === '/api/state') {
       const month = allowance(store)
       response.writeHead(200, { 'content-type': 'application/json' })
@@ -378,7 +413,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     }
 
     if (url.pathname === '/api/setup' && request.method === 'POST') {
-      const chosen = JSON.parse(await read(request)) as {
+      const chosen = sent as {
         name?: string
         mode?: keyof typeof MODES
         provider?: { id: string; key: string }
@@ -396,14 +431,37 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
       return
     }
 
+    /**
+     * A slash command (M1-12), and the gate it was missing.
+     *
+     * Core's own commands set a mode or a pin, and both are one word to change back. A
+     * plugin's command is something else entirely — **a tool call under a short name** — and
+     * it was reaching `callTool` with nothing in between, while the identical call from an
+     * action button and from the loop both went through `rule()`. Classifying this route for
+     * M6-1 is what found it: there was no sentence that made it safe, because it was not.
+     *
+     * Asked in two steps rather than by blocking, exactly as `/api/action` is: this request
+     * carries no stream to put a question down, so the first call answers `ask` and the
+     * second carries the person's yes. `blocked` has no second call.
+     */
     if (url.pathname === '/api/command' && request.method === 'POST') {
-      const { input } = JSON.parse(await read(request)) as { input?: string }
+      const { input, approved } = sent as { input?: string; approved?: boolean }
+      let asked: Ruling | undefined
       const ran = await runCommand(input ?? '', {
         store,
         manifests: manifests(),
         // A command is bound to the plugin tool of the same name — the whole binding, and
         // why a manifest declares a command with a name and a sentence and nothing else.
         call: async (plugin, tool) => {
+          const about = await tooling.about(`${plugin}__${tool}`)
+          const ruling = rule(
+            { tool, ...(about?.annotations && { annotations: about.annotations }), reviewed: !unreviewed(store).has(plugin) },
+            scope(),
+          )
+          if (ruling.verdict === 'blocked' || (ruling.verdict === 'ask' && approved !== true)) {
+            asked = ruling
+            throw new Error(ruling.why ?? `${tool} did not run.`)
+          }
           const process = plugins.process(plugin)
           if (!process) throw new Error(`${plugin} is not running`)
           const result = await process.callTool(tool)
@@ -416,12 +474,21 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
         },
       })
       response.writeHead(200, { 'content-type': 'application/json' })
-      response.end(JSON.stringify({ ...ran, setup: setup(), pins: { ...pins(store), placement: undefined } }))
+      response.end(
+        JSON.stringify({
+          ...ran,
+          // A question, not a refusal — the shell puts it to the person and sends the same
+          // command back with their answer. A `blocked` ruling never gets one.
+          ...(asked?.verdict === 'ask' && { ask: asked.why }),
+          setup: setup(),
+          pins: { ...pins(store), placement: undefined },
+        }),
+      )
       return
     }
 
     if (url.pathname === '/api/permissions' && request.method === 'POST') {
-      const asked = JSON.parse(await read(request)) as {
+      const asked = sent as {
         mode?: Mode
         roots?: string[]
         everywhere?: boolean
@@ -442,7 +509,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     }
 
     if (url.pathname === '/api/ceilings' && request.method === 'POST') {
-      const asked = JSON.parse(await read(request)) as Partial<Ceilings>
+      const asked = sent as Partial<Ceilings>
       // Both ceilings editable, and the preview threshold with them — a leash you cannot
       // shorten is not a leash, it is a decision somebody else made for you.
       setCeilings(store, {
@@ -467,7 +534,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     }
 
     if (url.pathname === '/api/approve' && request.method === 'POST') {
-      const { allowed } = JSON.parse(await read(request)) as { allowed?: boolean }
+      const { allowed } = sent as { allowed?: boolean }
       const waiting = pending
       pending = undefined
       waiting?.(allowed === true)
@@ -511,7 +578,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
      * screen puts it a step further back and why invariant 5 is the check that guards it.
      */
     if (url.pathname === '/api/plugin' && request.method === 'POST') {
-      const asked = JSON.parse(await read(request)) as { id?: string; action?: string }
+      const asked = sent as { id?: string; action?: string }
       const id = asked.id ?? ''
       if (plugins.manifest(id) === undefined) {
         response.writeHead(200, { 'content-type': 'application/json' })
@@ -540,7 +607,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
      * **installed and not enabled**, so the next thing the person sees is what it asked for.
      */
     if (url.pathname === '/api/install' && request.method === 'POST') {
-      const { path } = JSON.parse(await read(request)) as { path?: string }
+      const { path } = sent as { path?: string }
       const done = plugins.install((path ?? '').trim())
       response.writeHead(200, { 'content-type': 'application/json' })
       response.end(
@@ -611,7 +678,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     }
 
     if (url.pathname === '/api/library/install' && request.method === 'POST') {
-      const asked = JSON.parse(await read(request)) as { id?: string; kind?: string; update?: boolean }
+      const asked = sent as { id?: string; kind?: string; update?: boolean }
       // Updating stops the running process first. Replacing the folder underneath a live
       // plugin on Windows fails on the files it has open, and the half-replaced folder that
       // leaves behind is worse than the version it was replacing.
@@ -653,7 +720,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
      * the only shape that answer should ever take.
      */
     if (url.pathname === '/api/server' && request.method === 'POST') {
-      const asked = JSON.parse(await read(request)) as {
+      const asked = sent as {
         id?: string
         name?: string
         run?: string
@@ -701,7 +768,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
      * in the middle of a conversation and not in a list.
      */
     if (url.pathname === '/api/learn' && request.method === 'POST') {
-      const asked = JSON.parse(await read(request)) as { action?: string; name?: string; text?: string }
+      const asked = sent as { action?: string; name?: string; text?: string }
 
       if (asked.action === 'forget') {
         const gone = forget(skillsDir, asked.name ?? '')
@@ -766,7 +833,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     }
 
     if (url.pathname === '/api/settings' && request.method === 'POST') {
-      const edit = JSON.parse(await read(request)) as { plugin?: string; key?: string; value?: unknown }
+      const edit = sent as { plugin?: string; key?: string; value?: unknown }
       try {
         await plugins.setSetting(edit.plugin ?? '', edit.key ?? '', edit.value)
       } catch (error) {
@@ -792,7 +859,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
      * second call: that is the difference between a question and a floor.
      */
     if (url.pathname === '/api/action' && request.method === 'POST') {
-      const press = JSON.parse(await read(request)) as { plugin?: string; key?: string; approved?: boolean }
+      const press = sent as { plugin?: string; key?: string; approved?: boolean }
       const plugin = press.plugin ?? ''
       const declared = plugins
         .manifest(plugin)
@@ -829,7 +896,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     }
 
     if (url.pathname === '/api/chat' && request.method === 'POST') {
-      await reply(request, response)
+      await reply(sent, response)
       return
     }
 
@@ -850,8 +917,8 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
    * with the step events added — so a turn that happens to need no tools looks exactly as
    * it did, which is most of them.
    */
-  async function reply(request: IncomingMessage, response: ServerResponse): Promise<void> {
-    const { text } = JSON.parse(await read(request)) as { text?: string }
+  async function reply(sent: Body, response: ServerResponse): Promise<void> {
+    const { text } = sent as { text?: string }
     if (!text) {
       response.writeHead(400)
       response.end()

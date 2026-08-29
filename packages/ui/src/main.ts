@@ -223,8 +223,23 @@ function showPermissions(state: Permissions): void {
   if (boundary) say(`Holding: “${boundary.said}”. Say so and I will lift it.`)
 }
 
-/** The permission prompt. One question at a time, and the answer goes straight back. */
-function askPermission(why: string): void {
+/** The loop's own question, answered down the channel it is blocked on. */
+const settle = (allowed: boolean): void =>
+  void fetch('/api/approve', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-alexia-token': token },
+    body: JSON.stringify({ allowed }),
+  })
+
+/**
+ * The permission prompt. One question at a time, and the answer goes straight back.
+ *
+ * `settled` is a parameter because a slash command asks the same question from a different
+ * place: it has no stream to be blocked on, so its yes goes back as a second request rather
+ * than to `/api/approve`. One prompt, two ways of answering it — a second set of Allow and
+ * Deny buttons somewhere else would be the same question wearing a different face.
+ */
+function askPermission(why: string, settled: (allowed: boolean) => void = settle): void {
   promptWhy.textContent = why
   prompt.hidden = false
   // A task that stops to ask while the window is closed is the case the tray exists for:
@@ -233,11 +248,7 @@ function askPermission(why: string): void {
   const answer = (allowed: boolean) => () => {
     prompt.hidden = true
     tray('working')
-    void fetch('/api/approve', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-alexia-token': token },
-      body: JSON.stringify({ allowed }),
-    })
+    settled(allowed)
   }
   // `once` on both, because the pair is replaced wholesale for the next question.
   document.querySelector('#allow')!.addEventListener('click', answer(true), { once: true })
@@ -382,12 +393,22 @@ function attribute(name: string): void {
   edit.textContent = 'Edit'
   edit.addEventListener('click', () => void editSkill(name, row))
 
+  // Two presses, the same as deleting a plugin, and for the same reason: the skill came out
+  // of a task that has long since scrolled away, so nothing here regenerates it. The second
+  // press is what carries the `confirm` core refuses this without (M6-1).
   const drop = document.createElement('button')
   drop.type = 'button'
   drop.className = 'quiet-button'
   drop.textContent = 'Forget it'
+  let armed = false
   drop.addEventListener('click', () => {
-    void post('/api/learn', { action: 'forget', name }).then((answer) => {
+    if (!armed) {
+      armed = true
+      drop.textContent = 'Forget it for good'
+      line.textContent = `Forgetting ${name} deletes it. It was learned from a task that has gone, so it does not come back.`
+      return
+    }
+    void post('/api/learn', { action: 'forget', name, confirm: true }).then((answer) => {
       row.textContent = String(answer.said ?? 'Forgotten.')
     })
   })
@@ -548,17 +569,28 @@ const menu = document.querySelector<HTMLElement>('#menu')!
 const mode = document.querySelector<HTMLSelectElement>('#mode')!
 let known: Command[] = []
 
-/** Run one, from the input or from a control. Both go the same way in. */
-async function command(input: string): Promise<void> {
+/**
+ * Run one, from the input or from a control. Both go the same way in.
+ *
+ * A plugin's command is a tool call under a short name, so it meets the same permission
+ * ruling everything else does. When that ruling is *ask*, nothing has run: the question goes
+ * to the same prompt the loop uses, and a yes sends the identical command back carrying it.
+ */
+async function command(input: string, approved?: boolean): Promise<void> {
   const ran = (await (
     await fetch('/api/command', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-alexia-token': token },
-      body: JSON.stringify({ input }),
+      body: JSON.stringify({ input, ...(approved === true && { approved: true }) }),
     })
-  ).json()) as { ok: boolean; note: string; setup: { mode: string } }
+  ).json()) as { ok: boolean; note: string; ask?: string; setup: { mode: string } }
   bubble('refusal', ran.note)
   mode.value = ran.setup.mode
+  if (ran.ask !== undefined) {
+    askPermission(ran.ask, (allowed) => {
+      if (allowed) void command(input, true)
+    })
+  }
 }
 
 function showMenu(): void {
