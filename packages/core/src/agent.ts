@@ -76,6 +76,15 @@ export interface AgentEvents {
   delta?(text: string): void
   /** Core talking, not the model: a charge about to happen, a rung that ran out. */
   note?(line: string): void
+  /**
+   * Which model this turn asked for, and which one answered.
+   *
+   * **They differ, and here they differ for a reason core creates**: the router walks its
+   * plan and a rung that says 429 hands the turn to the next one (M1-8). Every other surface
+   * shows one model, so without this the fallback is invisible in the one place it could be
+   * explained — which is the trace (M6-5).
+   */
+  turn?(models: { asked: string; answered: string }): void
   /** A call is about to run. Fired before the work, because that is the point of a trace. */
   step?(step: Step): void
   /**
@@ -191,6 +200,9 @@ export async function run(options: RunOptions): Promise<RunResult> {
       if (options.signal?.aborted) return finish('stopped')
       throw error
     }
+
+    // The plan's first rung is what was asked for; `answer.model` is whoever took it.
+    on?.turn?.({ asked: verdict.choices[0]?.model.id ?? answer.model.id, answered: answer.model.id })
 
     messages.push(answer.message)
     added.push(answer.message)

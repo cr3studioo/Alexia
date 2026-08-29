@@ -65,6 +65,24 @@ export interface Tab {
  */
 const table = (declared: Extract<Rendered, { type: 'table' }>): Rendered => declared
 
+const ACTIVITY: Rendered = table({
+  type: 'table',
+  key: 'activity',
+  label: 'Runs',
+  hint: 'The last five, in memory. They go when Alexia restarts — this was never meant to be a permanent log, and export is how one outlives it.',
+  rows: 'activity',
+  columns: [
+    { key: 'task', label: 'What was asked' },
+    { key: 'steps', label: 'Steps', align: 'right', hideNarrow: true },
+    { key: 'ended', label: 'How it ended' },
+    { key: 'when', label: 'When', align: 'right', hideNarrow: true },
+  ],
+  // The second thing anybody does with a bad run is send it to somebody.
+  rowActions: [{ key: 'export_run', label: 'Export', tool: 'export_run' }],
+  detail: 'run',
+  filter: true,
+})
+
 const SKILLS: Rendered = table({
   type: 'table',
   key: 'skills',
@@ -136,11 +154,7 @@ const LIBRARY: Rendered = table({
  * to this screen. The rest follow it: what it knows, what it can do, what is installed.
  */
 export const CORE_TABS: readonly { id: string; label: string; soon?: string; widgets?: Rendered[] }[] = [
-  {
-    id: 'activity',
-    label: 'Activity',
-    soon: 'What Alexia has been doing: the last few runs, every step, and what each one cost. The trace exists and streams already — this is the half that outlives the task that made it. M6-5.',
-  },
+  { id: 'activity', label: 'Activity', widgets: [ACTIVITY] },
   { id: 'skills', label: 'Skills', widgets: [SKILLS, LEARNED] },
   { id: 'tools', label: 'Tools', widgets: [TOOLS] },
   { id: 'library', label: 'Library', widgets: [LIBRARY] },

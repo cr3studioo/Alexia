@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+import { mkdirSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { forget } from './learned.js'
 import type { Row } from './plugins.js'
 import { Plugins } from './plugins.js'
 import type { Skills } from './skills.js'
 import type { PluginTooling } from './tooling.js'
+import { asText, type Trace } from './trace.js'
 
 /**
  * What core's own tables are made of (M6-4).
@@ -34,13 +37,20 @@ export interface SurfaceOptions {
   plugins: Plugins
   /** Where the user's own skills live. A learned skill is a folder in it. */
   skillsDir: string
+  /** The last five runs (M6-5). In memory, so this is the only place they exist. */
+  trace: Trace
+  /** Alexia's own data directory. An exported run is written into it. */
+  dataDir: string
 }
 
 /** `▲` is the one mark that is coloured, because on this screen a colour means look at this. */
 const OK = '● ready'
 
+/** `2026-08-29 14:03`, which is what a person reads. Never a raw timestamp. */
+const when = (at: number): string => new Date(at).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' })
+
 export function sources(options: SurfaceOptions): Record<string, Source> {
-  const { skills, tooling, plugins } = options
+  const { skills, tooling, plugins, trace } = options
 
   /**
    * A skill's own text, which is the only thing there is to show about one.
@@ -55,6 +65,27 @@ export function sources(options: SurfaceOptions): Record<string, Source> {
   }
 
   return {
+    activity: {
+      rows: () =>
+        Promise.resolve(
+          trace.runs.map((run) => ({
+            id: run.id,
+            // Their own words, cut rather than summarised — a paraphrase of what somebody
+            // asked for is the one thing that makes a run hard to find again.
+            task: run.task.length > 90 ? `${run.task.slice(0, 90)}…` : run.task,
+            steps: run.steps.length,
+            ended: run.ended ?? 'still going',
+            when: when(run.at),
+          })),
+        ),
+      // The whole run, untrimmed, and the same text `export` writes. One renderer, so what
+      // somebody reads on screen is exactly what they send on.
+      detail: (id) => {
+        const run = trace.one(id)
+        return Promise.resolve(run === undefined ? 'That run has gone. They are kept in memory only.' : asText(run))
+      },
+    },
+
     skills: {
       rows: () =>
         Promise.resolve([
@@ -182,6 +213,27 @@ export function actions(
   options: SurfaceOptions,
 ): Record<string, (id: string) => Promise<{ ok: boolean; said: string }>> {
   return {
+    /**
+     * One run, written where a person can attach it to something (M6-5).
+     *
+     * A file rather than the clipboard, because the sentence this exists for is *send it to
+     * somebody* — and because a page cannot hand a viewer a file without the shell's help,
+     * while core writing one is three lines. The path is the answer.
+     */
+    export_run: (id) => {
+      const run = options.trace.one(id)
+      if (!run) return Promise.resolve({ ok: false, said: 'That run has gone. They are kept in memory only.' })
+      const dir = join(options.dataDir, 'exports')
+      const path = join(dir, `run-${new Date(run.at).toISOString().replace(/[:.]/g, '-')}.md`)
+      try {
+        mkdirSync(dir, { recursive: true })
+        writeFileSync(path, asText(run))
+        return Promise.resolve({ ok: true, said: `Written to ${path}` })
+      } catch (error) {
+        return Promise.resolve({ ok: false, said: `Could not write it: ${error instanceof Error ? error.message : String(error)}` })
+      }
+    },
+
     forget_skill: (name) => {
       const skill = options.skills.all.find((one) => one.name === name)
       if (skill?.pluginId !== undefined) {

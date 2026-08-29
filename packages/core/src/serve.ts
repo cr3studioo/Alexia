@@ -39,6 +39,7 @@ import { actions as coreActions, sources as coreSources } from './surface.js'
 import { Skills, SKILL_TOOL } from './skills.js'
 import { dataDir, Store, type Message } from './store.js'
 import { PluginTooling } from './tooling.js'
+import { Trace } from './trace.js'
 import { allowance, warning } from './usage.js'
 
 /**
@@ -325,7 +326,14 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
    * something this closure already holds — and read fresh on every call, because a skills
    * list that answered from a snapshot would be the one thing on this screen that lies.
    */
-  const surface = { skills, tooling, plugins, skillsDir }
+  /**
+   * The trace, with a memory (M6-5). Five runs, in memory, gone on restart — which is the
+   * honest behaviour for something that was never meant to be a permanent log. What outlives
+   * a restart is whatever somebody exported.
+   */
+  const trace = new Trace()
+
+  const surface = { skills, tooling, plugins, skillsDir, trace, dataDir: root }
   const ours = coreSources(surface)
   const ourActions = coreActions(surface)
 
@@ -1098,6 +1106,12 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
 
     const stop = new AbortController()
     task = stop
+    // A second consumer of the same stream (M6-5). What it keeps is what the loop did rather
+    // than what the model was shown — M15-6 trims the second, and trimming this one because
+    // of that would be one decision serving two jobs badly.
+    const runId = randomUUID()
+    const before = allowance(store).spent
+    trace.start(runId, text)
     try {
       const result = await run({
         messages: store.history(session),
@@ -1150,7 +1164,9 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
             if (!styled) say({ delta })
           },
           note: (note) => say({ note }),
+          turn: (models) => trace.turn(models),
           step: (step) => {
+            trace.step(step)
             say({ step: { n: step.n, name: step.name, args: step.args } })
             // Attribution, at the moment it fires (M4-5). A learned skill can be wrong, and
             // the person finds out when it actually matters rather than in a settings list
@@ -1161,8 +1177,15 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
           // The same row, moving. A frame per update, because the whole point is that the
           // screen is never more than a moment behind what the tool is doing (M2-6).
           progress: (step) => say({ step: { n: step.n, name: step.name, progress: step.progress } }),
-          done: (step) => say({ step: { n: step.n, name: step.name, ...step.outcome } }),
+          done: (step) => {
+            trace.done(step)
+            say({ step: { n: step.n, name: step.name, ...step.outcome } })
+          },
         },
+      })
+      trace.end(result.ended, {
+        ...(result.why !== undefined && { why: result.why }),
+        spent: allowance(store).spent - before,
       })
 
       if (result.ended === 'refused') {
@@ -1225,6 +1248,9 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
         },
       })
     } catch (error) {
+      // A run that threw is a run that ended, and the record says which — an entry left
+      // open would read as *still going* to somebody looking at the panel afterwards.
+      trace.end('refused', { why: said(error), spent: allowance(store).spent - before })
       say({ error: said(error) })
     }
     // Whatever ended the task, an unanswered question outlives nothing. Settling it as a

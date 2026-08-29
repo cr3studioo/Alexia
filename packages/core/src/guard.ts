@@ -70,6 +70,15 @@ export interface Route {
 const byAction = (body: Body): string | undefined => (typeof body.action === 'string' ? body.action : undefined)
 
 /**
+ * Core's own row actions that take nothing away.
+ *
+ * Deliberately a short allow-list rather than a list of the destructive ones: a core action
+ * added tomorrow and forgotten here is guarded, which is the wrong way round to be annoying
+ * and the right way round to be safe.
+ */
+const REVERSIBLE_CORE = new Set(['export_run'])
+
+/**
  * Every path core answers, in the order `serve.ts` matches them.
  *
  * The keys are checked against the real file rather than trusted, so a route added tomorrow
@@ -221,12 +230,23 @@ export const ROUTES: Readonly<Record<string, Route>> = {
   },
 
   '/api/action': {
-    // Whose button it is. A press with no plugin is core acting on core's own data, and the
-    // ruling that guards the other kind has nothing to rule on.
-    act: (body) => (typeof body.plugin === 'string' && body.plugin !== '' ? undefined : 'core'),
+    // Whose button it is, and — when it is core's own — which one.
+    //
+    // A press with a plugin behind it is guarded by the permission ruling. A press with none
+    // is core acting on core's own data, and there is nothing for that ruling to rule on, so
+    // this is the gate instead. Named exceptions are listed; **anything of core's not on the
+    // list needs a confirm**, which is what keeps the next one from arriving unguarded.
+    act: (body) => {
+      const plugin = typeof body.plugin === 'string' ? body.plugin : ''
+      if (plugin !== '') return undefined
+      return REVERSIBLE_CORE.has(typeof body.key === 'string' ? body.key : '') ? 'core-safe' : 'core'
+    },
     acts: {
       core: confirm(
-        'A row action on one of core’s own lists — forgetting a skill, and nothing else today. There is no plugin and so no tool call, which means the permission ruling that guards the other kind has nothing to rule on, and this is the gate instead.',
+        'A row action on one of core’s own lists — forgetting a skill, which deletes a folder. There is no plugin and so no tool call, which means the permission ruling that guards the other kind has nothing to rule on.',
+      ),
+      'core-safe': safe(
+        'One of core’s own row actions that takes nothing away — exporting a run to a file, which adds one and changes nothing that was already there. The list is short on purpose, and anything not on it is guarded.',
       ),
     },
     otherwise: safe(

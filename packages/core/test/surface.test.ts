@@ -210,6 +210,36 @@ test('the tools panel is every tool every enabled plugin offers, grouped by whoe
   expect(table?.type === 'table' && table.rowActions).toBeUndefined()
 })
 
+test('a run is on the activity panel after the task that made it has ended', async () => {
+  // The half M6-5 exists for, and the half M6-G checks on the same run: the live trace is
+  // gone the moment the task is, and this is the record that is not. Nothing is connected
+  // here, so the run ends in the router's refusal — which is a run like any other, and the
+  // one somebody is most likely to want to send to somebody else.
+  expect(await rows('activity')).toEqual([])
+
+  await fetch(new URL('/api/chat', alexia.url), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-alexia-token': alexia.token },
+    body: JSON.stringify({ text: 'sort my downloads' }),
+  }).then((answer) => answer.text())
+
+  const runs = await rows('activity')
+  expect(runs).toHaveLength(1)
+  expect(runs[0]?.task).toBe('sort my downloads')
+  expect(runs[0]?.ended).toBe('refused')
+
+  // The detail is the whole run, and it is the same text `export` writes — one renderer, so
+  // what somebody reads on screen is exactly what they send on.
+  const detail = await post('/api/detail', { key: 'activity', row: String(runs[0]?.id) })
+  expect(String(detail.text)).toContain('# sort my downloads')
+
+  // Exporting takes nothing away, so it is the one core row action that is not guarded.
+  const exported = await post('/api/action', { key: 'export_run', row: String(runs[0]?.id) })
+  expect(exported.ok).toBe(true)
+  expect(String(exported.said)).toContain('exports')
+  expect(readFileSync(String(exported.said).replace('Written to ', ''), 'utf8')).toContain('sort my downloads')
+})
+
 test('a list nobody declared is a sentence, not an empty table', async () => {
   const answer = await post('/api/rows', { key: 'imaginary' })
   expect(answer.ok).toBe(false)
