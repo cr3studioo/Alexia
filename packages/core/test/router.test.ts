@@ -3,7 +3,7 @@ import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { afterAll, expect, test } from 'vitest'
 import type { Model } from '../src/catalog.js'
-import { remaining } from '../src/pool.js'
+import { remaining, sent } from '../src/pool.js'
 import { keyOf, type Provider } from '../src/provider.js'
 import { MODES, route, send, shapeOf, type Pins, type World } from '../src/router.js'
 import { CORE, memorySecrets } from '../src/secrets.js'
@@ -34,6 +34,7 @@ const cheapPaid = model({ id: 'paid/small', tier: 'T2', priceIn: 0.2, supportsTo
 const frontier = model({ id: 'paid/frontier', tier: 'T3', priceIn: 5, supportsTools: true, provider: 'beta' })
 const localSmall = model({ id: 'qwen3:8b', tier: 'T0', provider: 'ollama', supportsTools: true })
 
+const noon = Date.UTC(2026, 7, 27, 12, 0, 0)
 const store = new Store(':memory:')
 const world = (over: Partial<World> = {}): World => ({
   models: [freeText, freeTools, cheapPaid, frontier],
@@ -132,16 +133,44 @@ test('a pin is never violated quietly, and the refusal says what to do', () => {
   ])
 })
 
-test('a provider with no key, or nothing left today, is not a rung', () => {
+test('a provider with no key is not a rung, and the sentence says only that', () => {
   const none = world({ rungs: [] })
   expect(ids(route({ messages: asked('hello') }, pins(), none))).toEqual([
-    'no provider is connected and nothing has anything left — add a key in settings, or install a local model and type /local',
+    'no provider is connected — add a key in settings, or install a local model and type /local',
+  ])
+
+  // Connected, and the catalog has not arrived. Not the same wall, and not the same fix:
+  // telling somebody to add the key they already added is the bug this splits.
+  const empty = world({ models: [] })
+  expect(ids(route({ messages: asked('hello') }, pins(), empty))).toEqual([
+    'no model list has arrived yet for the provider you connected — open the Models tab to fetch one, or check your connection',
   ])
 
   // Only beta is connected, so only beta's models are on the list.
   const half = world({ rungs: [remaining(store, beta)] })
   expect(ids(route({ messages: asked('hello') }, pins(), half))).toEqual(['paid/small', 'paid/frontier'])
 })
+
+test('a spent free tier costs the free models, not the key', () => {
+  // Alpha has used its day. What is exhausted is what alpha gives away, so alpha's paid
+  // models stay — and beta, which has headroom, is untouched. The bug this replaces read
+  // a spent tier as a disconnected provider and answered "no provider is connected" to
+  // somebody whose key was in the keychain.
+  const ledger = new Store(':memory:')
+  for (let i = 0; i < alpha.rpd!; i++) sent(ledger, alpha, noon + i * 61_000)
+  const at = noon + alpha.rpd! * 61_000
+  const drained = world({ rungs: [remaining(ledger, alpha, at), remaining(ledger, beta, at)] })
+
+  expect(ids(route({ messages: asked('hello') }, pins(), drained))).toEqual(['paid/small', 'paid/frontier'])
+
+  // And when honouring the ledger would leave nothing at all, it is not honoured: it is a
+  // guess at somebody else's published number — OpenRouter's own doubles on a $10 top-up —
+  // and asking for a 429 beats refusing while a working key sits there.
+  const alone = world({ models: [freeText, freeTools], rungs: [remaining(ledger, alpha, at)] })
+  expect(ids(route({ messages: asked('hello') }, pins(), alone))).toEqual(['free/text', 'free/tools'])
+  ledger.close()
+})
+
 
 test('the user naming a model is the end of the conversation', () => {
   const ask = { messages: asked('hello'), minTier: 'T3' as const }
@@ -205,10 +234,14 @@ test('a rung that says 429 is the next rungs turn, and the charge is announced f
   // Said before the request, not after the bill.
   expect(notes).toEqual(['The free models are used up, so this one goes to paid/small, which costs money.'])
 
-  // Both were counted: a request that came back 429 still counted against the tier that
-  // refused it, which is exactly what the pool has to know next time.
+  // The free one was counted even though it came back 429 — a refused request still spent
+  // the tier that refused it, which is exactly what the pool has to know next time.
   expect(ledger.requests('alpha').minute).toBe(1)
-  expect(ledger.requests('beta').minute).toBe(1)
+
+  // The paid one was not, because this ledger is a ledger of the *free* tier. A model
+  // billed to credit spends none of the daily allowance, and counting it there is how a key
+  // with money behind it talked itself out of its own pool halfway through a day.
+  expect(ledger.requests('beta').minute).toBe(0)
   ledger.close()
 })
 

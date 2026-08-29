@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import type { Model } from './catalog.js'
 import { OLLAMA } from './ollama.js'
-import { sent, type Rung } from './pool.js'
+import { sent, spent, type Rung } from './pool.js'
 import { chat, ProviderError, type ChatRequest, type Provider, type Usage } from './provider.js'
 import { redact, summarise } from './redact.js'
 import type { SecretStore } from './secrets.js'
@@ -142,17 +142,12 @@ export function shapeOf(ask: Ask): Shape {
  */
 export function route(ask: Ask, pins: Pins, world: World): Verdict {
   const where = pins.placement[ask.class ?? 'text']
-  const connected = new Map(world.rungs.map((rung) => [rung.provider.id, rung.provider]))
+  const connected = new Map(world.rungs.map((rung) => [rung.provider.id, rung]))
 
   // Local placement means local: a model on this machine, and nothing else. Cloud
   // placement means the APIs, which is what somebody choosing it asked for.
   const pool: Choice[] =
-    where === 'local' ?
-      world.local.map((model) => ({ model, provider: OLLAMA }))
-    : world.models.flatMap((model) => {
-        const provider = connected.get(model.provider)
-        return provider ? [{ model, provider }] : []
-      })
+    where === 'local' ? world.local.map((model) => ({ model, provider: OLLAMA })) : reachable(world, connected)
 
   if (pins.model) {
     // The user named one. Their choice, including past a flag nobody has verified.
@@ -176,7 +171,33 @@ export function route(ask: Ask, pins: Pins, world: World): Verdict {
     .sort(cheapest)
 
   if (choices.length > 0) return { ok: true, choices: pins.prefer === 'best' ? [...choices].reverse() : choices }
-  return { ok: false, why: refusal(where, pins, pool, needsTools, shape) }
+  return { ok: false, why: refusal(where, pins, pool, needsTools, shape, world) }
+}
+
+/**
+ * The hosted models that can actually be asked, and the two ways the free-tier ledger is
+ * allowed to narrow that — neither of which is *all of them*.
+ *
+ * **A spent tier is spent for free models.** The daily fifty is a limit on what a provider
+ * gives away, not on the key: the paid models on the same key are billed against credit and
+ * go on working. Dropping the provider whole is what produced the sentence this function
+ * exists to stop — *no provider is connected* said to somebody who had connected one.
+ *
+ * **And the ledger is a pre-check, not an authority.** It is this machine's copy of a number
+ * somebody else publishes, and it is deliberately the low one: OpenRouter's fifty a day
+ * becomes a thousand the moment you buy credit, and nothing here is told. So when honouring
+ * it would leave *nothing at all*, it is not honoured — asking and possibly collecting a 429
+ * beats refusing on a guess while a working key sits in the keychain, and the 429 already
+ * has somewhere to go ({@link send} walks to the next rung).
+ */
+function reachable(world: World, connected: ReadonlyMap<string, Rung>): Choice[] {
+  const rows = world.models.flatMap((model) => {
+    const rung = connected.get(model.provider)
+    if (!rung) return []
+    return [{ choice: { model, provider: rung.provider }, out: spent(rung) && !paid(model.tier) }]
+  })
+  const withHeadroom = rows.filter((row) => !row.out)
+  return (withHeadroom.length > 0 ? withHeadroom : rows).map((row) => row.choice)
 }
 
 /**
@@ -219,6 +240,7 @@ function refusal(
   pool: Choice[],
   needsTools: boolean,
   shape: Shape,
+  world: World,
 ): string {
   if (where === 'local') {
     if (pool.length === 0) return 'no local model is installed — install one, or type /cloud'
@@ -232,7 +254,13 @@ function refusal(
     return 'no local model fits this request — install a larger one, or type /cloud'
   }
   if (pool.length === 0) {
-    return 'no provider is connected and nothing has anything left — add a key in settings, or install a local model and type /local'
+    // Two different walls, and they used to share one sentence — which meant the one thing
+    // it told you to do was the one thing you had already done. A key that is in the
+    // keychain is never the missing piece, so it is never what this offers.
+    if (world.rungs.length === 0) {
+      return 'no provider is connected — add a key in settings, or install a local model and type /local'
+    }
+    return 'no model list has arrived yet for the provider you connected — open the Models tab to fetch one, or check your connection'
   }
   if (pins.uncensored) return 'no uncensored model is available from the providers you have connected'
   if (needsTools) return 'none of the models available to you can use tools'
@@ -329,7 +357,10 @@ export async function send(
       // surprise as a bill nobody announced.
       hooks.onNote?.(`Stripped before sending to ${choice.model.name}: ${summarise(outbound.kinds)}.`)
     }
-    sent(store, choice.provider)
+    // Against the **free tier**, which is the only allowance this ledger knows about. A paid
+    // request is billed to credit and spends none of it, and counting it here is how a key
+    // with money behind it talked itself out of the pool halfway through a day.
+    if (!paid(choice.model.tier)) sent(store, choice.provider)
     try {
       const { message, usage } = await chat(
         choice.provider,

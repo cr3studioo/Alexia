@@ -3,7 +3,7 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, test } from 'vitest'
-import { remaining, sent, usable } from '../src/pool.js'
+import { remaining, sent, spent, usable } from '../src/pool.js'
 import { keyOf, PROVIDERS, type Provider } from '../src/provider.js'
 import { CORE, memorySecrets } from '../src/secrets.js'
 import { Store } from '../src/store.js'
@@ -30,26 +30,40 @@ test('nothing is pooled without a key the user added themselves', async () => {
   store.close()
 })
 
-test('a tier that is spent is out of the pool until its window rolls over', async () => {
+test('a tier that is spent is marked spent, and stays in the pool as itself', async () => {
   const store = new Store(':memory:')
   const secrets = await connected('free-one', 'free-two')
-  const ids = async (at: number): Promise<string[]> =>
-    (await usable(store, secrets, [free, other], at)).map((r) => r.provider.id)
+  const pool = async (at: number): Promise<[string, boolean][]> =>
+    (await usable(store, secrets, [free, other], at)).map((r) => [r.provider.id, spent(r)])
 
-  // Two a minute. The third request inside the same minute has nowhere to go on this one.
+  // Two a minute. The third request inside the same minute has nowhere free to go on this
+  // one — so it is spent, and it is still a row, because what ran out is the free tier and
+  // not the key. Dropping the row is what told somebody with a key that none was connected.
   sent(store, free, noon)
   sent(store, free, noon + 1_000)
   expect(remaining(store, free, noon + 2_000)).toMatchObject({ minute: 0, day: 1 })
-  expect(await ids(noon + 2_000)).toEqual(['free-two'])
+  expect(await pool(noon + 2_000)).toEqual([
+    ['free-two', false],
+    ['free-one', true],
+  ])
 
   // The next minute is a new minute.
-  expect(await ids(noon + 61_000)).toEqual(['free-two', 'free-one'])
+  expect(await pool(noon + 61_000)).toEqual([
+    ['free-two', false],
+    ['free-one', false],
+  ])
 
   // But the day is still counting, and three is all it has.
   sent(store, free, noon + 61_000)
   expect(remaining(store, free, noon + 62_000)).toMatchObject({ minute: 1, day: 0 })
-  expect(await ids(noon + 62_000)).toEqual(['free-two'])
-  expect(await ids(noon + 25 * 60 * 60 * 1000)).toEqual(['free-two', 'free-one'])
+  expect(await pool(noon + 62_000)).toEqual([
+    ['free-two', false],
+    ['free-one', true],
+  ])
+  expect(await pool(noon + 25 * 60 * 60 * 1000)).toEqual([
+    ['free-two', false],
+    ['free-one', false],
+  ])
   store.close()
 })
 

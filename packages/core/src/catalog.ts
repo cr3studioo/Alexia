@@ -99,14 +99,17 @@ const DAY = 24 * 60 * 60 * 1000
 const FRONTIER_USD_PER_MTOK = 1
 
 /**
- * Bumped whenever {@link parse} learns to read a field it used to drop.
+ * Bumped whenever {@link parse} learns to read a field it used to drop — or, at 3, to drop a
+ * row it used to keep. Both change what a cached snapshot means, and a cache is only as good
+ * as the reader that filled it: every machine already holds five negative-priced rows that
+ * out-sort the free tier, and they leave on the next poll rather than on the next reinstall.
  *
  * Exported for the tests, which stamp their fixture caches with it. That is not a courtesy:
  * a snapshot they hand `serve()` is the only thing standing between the suite and seven real
  * providers, and a stamp they cannot see the value of is a barrier that quietly falls over
  * the next time this number changes.
  */
-export const PARSER = 2
+export const PARSER = 3
 
 export class Catalog {
   #snapshot: Snapshot
@@ -257,6 +260,19 @@ function parse(payload: unknown, provider: Provider, weekly: ReadonlyMap<string,
 
     const priceIn = perMillion(entry.pricing?.prompt)
     const priceOut = perMillion(entry.pricing?.completion)
+    /**
+     * **A negative price is not a price.** OpenRouter prices its own meta-routers —
+     * `openrouter/auto` and four siblings — at `-1`, which is their way of saying *varies,
+     * because this picks the model for you*. Read as a number it is minus a million dollars
+     * per million tokens, which sorts below free and therefore wins **every** automatic
+     * choice on the machine, ahead of all 104 genuinely free models.
+     *
+     * Skipped rather than clamped: zero would make it free, and it would go on winning the
+     * tie against every real free model. Routing to a router is Alexia handing back the one
+     * decision it exists to make, at a price it cannot show anybody in advance — so a row it
+     * cannot price is a row it does not carry.
+     */
+    if (priceIn < 0 || priceOut < 0) return []
     const params = Array.isArray(entry.supported_parameters) ? entry.supported_parameters : []
     const modalities = entry.architecture?.input_modalities
     const moderated = entry.top_provider?.is_moderated

@@ -41,9 +41,18 @@ export function remaining(store: Store, provider: Provider, at: number = Date.no
 export const spent = (rung: Rung): boolean => rung.minute <= 0 || rung.day <= 0
 
 /**
- * Every provider that can be asked right now: the user has added a key for it, and it has
- * requests left in both windows. Ordered by what has most of its day left, so the pool
- * spreads rather than exhausting one provider and then discovering the next.
+ * Every provider that can be asked: the user has added a key for it. Ordered by what has
+ * most of its day left, so the pool spreads rather than exhausting one provider and then
+ * discovering the next.
+ *
+ * **A spent tier is still a row here**, and that is the fix for the bug that said *no
+ * provider is connected* to somebody whose key was sitting in the keychain the whole time.
+ * This used to drop a spent provider entirely, which the router reads as *not connected* —
+ * so one free tier reaching its daily fifty took that provider's paid models with it, and
+ * the sentence on screen named the one thing the person had already done.
+ *
+ * What is spent is the **free tier**, not the key. {@link spent} says which, and the router
+ * decides what that costs: the free models, not the provider.
  *
  * ponytail: the ordering is a sort, not a scheduler. If spreading turns out to matter more
  * than latency, the fix is a weight on the row, not a component.
@@ -66,7 +75,6 @@ export async function usable(
   return connected
     .filter((provider) => provider !== undefined)
     .map((provider) => remaining(store, provider, at))
-    .filter((rung) => !spent(rung))
     .sort((a, b) => b.day - a.day || b.minute - a.minute)
 }
 

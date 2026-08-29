@@ -142,6 +142,23 @@ test('the day the endpoint changes shape is not the day this breaks', async () =
   status = 200
 })
 
+test('a price of minus one is not a price, and does not get to undercut the free tier', async () => {
+  const path = file()
+  // OpenRouter prices its own meta-routers at -1, meaning *varies, this picks for you*. Read
+  // as a number that is minus a million per million tokens, which sorts below zero — so the
+  // five of them beat all 104 genuinely free models to every automatic choice on the machine.
+  payload = {
+    data: [
+      entry({ id: 'openrouter/auto', pricing: { prompt: '-1', completion: '-1' } }),
+      entry({ id: 'openrouter/fusion', pricing: { prompt: '-1', completion: '0' } }),
+      entry({ id: 'qwen/qwen3-30b:free' }),
+    ],
+  }
+  const catalog = new Catalog(path)
+  expect((await catalog.refresh(provider)).added.map((m) => m.id)).toEqual(['qwen/qwen3-30b:free'])
+  expect(catalog.models.every((m) => m.priceIn >= 0 && m.priceOut >= 0)).toBe(true)
+})
+
 test('each provider has its own clock, so the second list asked for in a day is fetched', async () => {
   const path = file()
   const catalog = new Catalog(path)
