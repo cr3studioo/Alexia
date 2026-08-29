@@ -87,6 +87,9 @@ async function bind() {
   const speaks = cloud ? key !== undefined : own ? await piper.ready(own, voice, speaking) : false
   heard.update({ _meta: hears ? { 'alexia/provides': ['voice.transcribe'] } : {} })
   said.update({ _meta: speaks ? { 'alexia/provides': ['voice.speak'] } : {} })
+  // Only the cloud engine returns a format a message can carry, so the binding follows the
+  // chosen voice rather than the plugin being enabled.
+  rendered.update({ _meta: cloud && key !== undefined ? { 'alexia/provides': ['voice.render'] } : {} })
   await alexia
     .status('ready', state({ hears, speaks, size, voice, hearing, speaking, cloud, key, expressive }))
     .catch(() => {})
@@ -320,6 +323,50 @@ async function annotate(words, ctx) {
     return words
   }
 }
+
+/**
+ * The same words, as bytes rather than out of the speakers (M7-5).
+ *
+ * `voice.speak` is deliberately *text in, audio played, nothing out* — the sound is made
+ * here and stays here, which is a property worth keeping. This is the other thing somebody
+ * needs: a voice note to put in a message, which cannot be played on this machine's
+ * speakers and be in a chat at the same time.
+ *
+ * **It is bound only when the format is one a caller can use.** A cloned voice returns
+ * Ogg/Opus, which is exactly what a Telegram voice bubble wants. Piper returns WAV, and
+ * converting one to the other is ffmpeg — a dependency this plugin has gone to some trouble
+ * not to have — so with a Piper voice speaking this capability is simply not offered, and
+ * the caller sends words.
+ */
+const rendered = alexia.tool(
+  'render',
+  {
+    description:
+      'Turn text into audio and return the bytes, rather than playing it. Use when the audio ' +
+      'has to go somewhere other than these speakers — a voice note in a message, say.',
+    inputSchema: fromJsonSchema({
+      type: 'object',
+      properties: { text: { type: 'string', description: 'What to say.' } },
+      required: ['text'],
+    }),
+    annotations: { destructiveHint: false, openWorldHint: true },
+  },
+  async ({ text }, ctx) => {
+    const words = String(text ?? '').trim()
+    if (!words) return { isError: true, content: [{ type: 'text', text: 'There was nothing to say.' }] }
+    const picked = await chosen()
+    const id = fish.idOf(picked.voice)
+    if (id === undefined || !picked.key) {
+      return {
+        isError: true,
+        content: [{ type: 'text', text: 'Only a cloned voice returns audio a message can carry. Piper makes WAV, and converting it would mean ffmpeg.' }],
+      }
+    }
+    const marked = picked.expressive ? await annotate(words, ctx) : words
+    const audio = await fish.say(picked.key, { text: marked, id, format: 'opus', signal: ctx?.mcpReq?.signal })
+    return { content: [{ type: 'audio', data: audio.toString('base64'), mimeType: 'audio/ogg' }] }
+  },
+)
 
 alexia.tool(
   'install',

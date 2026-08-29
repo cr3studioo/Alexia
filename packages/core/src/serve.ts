@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { ALEXIA_PROTOCOL_MAX, ALEXIA_PROTOCOL_MIN, CORE_CAPABILITIES } from '@alexia/protocol'
+import { ALEXIA_PROTOCOL_MAX, ALEXIA_PROTOCOL_MIN, CORE_CAPABILITIES, TOOLS_META } from '@alexia/protocol'
 import { randomUUID } from 'node:crypto'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import type { CreateMessageResult } from '@modelcontextprotocol/client'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { join } from 'node:path'
@@ -211,6 +212,22 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
             .join('\n'),
         })),
       ]
+      /**
+       * *Use my tools, and ask me when you must* (M7-5).
+       *
+       * With the flag set this is not one completion, it is **the whole loop**: the tool
+       * list, the permission gate, the trace and the ledger, on exactly the terms a task
+       * started at the keyboard gets. The plugin that sets it is one holding a conversation
+       * somewhere else — a phone — and until now that path had no tools at all, because
+       * there was nowhere to ask a permission question. There is now.
+       *
+       * **A flag on this request rather than a new method.** An Alexia that does not know it
+       * ignores it and answers without tools, which is precisely what it did before the flag
+       * existed — so nothing a plugin can see goes wrong, and the contract's number does not
+       * move for it.
+       */
+      if (params._meta?.[TOOLS_META] === true) return asTask(pluginId, asked)
+
       const verdict = route({ messages: asked, shape: shapeOf({ messages: asked }) }, pins(store), await world())
       if (!verdict.ok) throw new Error(verdict.why)
       const answer = await send(
@@ -367,6 +384,115 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
 
   const checker = new ModelChecker({ store, secrets, world, session })
   let tally: Tally = freshTally()
+
+  /**
+   * May this call run? (M15-3.) One gate, and from M7-5 two callers.
+   *
+   * Built fresh per task rather than once, because the mode, the folders and the boundaries
+   * can all change while one is running — and the point of a boundary spoken mid-task is
+   * that it takes effect on the next step, not the next task.
+   *
+   * It is a function rather than a closure written twice because a task started from a phone
+   * has to meet **the same ruling the app would have produced**, and two copies of a
+   * permission gate is two rulings waiting to disagree.
+   */
+  const gate =
+    (text: string, run: string) =>
+    async (call: { name: string; args: Record<string, unknown> }): Promise<Ruling> => {
+      const about = await tooling.about(call.name)
+      const now = scope()
+      const ruling = rule(
+        {
+          tool: call.name,
+          ...(about?.annotations && { annotations: about.annotations }),
+          paths: pathsIn(call.args),
+          // M3-6. A tool from a server nobody reviewed is destructive whatever its own
+          // annotations claim — MCP's own guidance, and the gate reads it right here.
+          reviewed: about?.pluginId === undefined || !unreviewed(store).has(about.pluginId),
+        },
+        now,
+      )
+      // The fixed rules have already spoken. The checker is coverage on top of them and
+      // never instead of them, so it is only asked about something they would let run.
+      if (ruling.verdict !== 'run' || now.mode !== 'watch') return ruling
+
+      const step = { n: 0, name: call.name, args: call.args }
+      // The review is spent because of this task, so it lands on this task's rows (M7-2).
+      const review = await checker.review({ step, task: text, scope: now, run })
+      tally = counted(tally, review)
+      return asRuling(review, step, tally)
+    }
+
+  /**
+   * One task, asked for by a plugin (M7-5).
+   *
+   * Everything is the same as a task from the window except where the questions go: there is
+   * no stream to write an `ask` to, so a step that needs a yes goes out through
+   * {@link CORE_CAPABILITIES.ask} and waits for the answer to come back. With nothing
+   * providing it, a question nobody can be shown is a no — which is what it already was, and
+   * is why the tools were withheld on that path in the first place.
+   *
+   * **One task at a time**, which the rest of this file already assumes: one `AbortController`,
+   * one pending question. A plugin asking while somebody is working at the keyboard is told
+   * so rather than quietly queued behind them or, worse, run alongside them.
+   */
+  async function asTask(pluginId: string, messages: Message[]): Promise<CreateMessageResult> {
+    if (task) throw new Error('Alexia is already working on something. Try again when it has finished.')
+    const text = [...messages].reverse().find((m) => m.role === 'user')?.content ?? ''
+    const runId = randomUUID()
+    const stop = new AbortController()
+    task = stop
+    trace.start(runId, text)
+    try {
+      const month = allowance(store)
+      const result = await run({
+        messages,
+        tools: tooling,
+        pins: pins(store),
+        world,
+        store,
+        secrets,
+        session,
+        run: runId,
+        // The spend lands on the plugin that asked, exactly as a plain `sampling` call's
+        // does — and it is a run now, so it is a paid path like any other task (G12, D96).
+        plugin: pluginId,
+        paidAllowed: !month.stop,
+        maxSteps: limitsNow().steps,
+        signal: stop.signal,
+        guard: gate(text, runId),
+        /**
+         * The yes, from wherever the person is.
+         *
+         * Nothing provides it → the promise rejects → the answer is no, and the loop plans
+         * around a refusal the way it plans around any other. That is the honest failure and
+         * the one this path had before: a question that cannot be shown has been answered.
+         */
+        approve: async (ruling) => {
+          const asked = await plugins
+            .capability(CORE_CAPABILITIES.ask, { question: ruling.why, options: ['Yes', 'No'] })
+            .catch(() => undefined)
+          const said = (asked?.content ?? []).map((block) => (block.type === 'text' ? block.text : '')).join('')
+          return said.trim().toLowerCase() === 'yes'
+        },
+      })
+      trace.end(result.ended, {
+        ...(result.why !== undefined && { why: result.why }),
+        calls: store.callsIn(runId),
+      })
+      const last = result.messages.at(-1)
+      return {
+        role: 'assistant',
+        model: last?.model ?? '',
+        content: { type: 'text', text: result.why ?? last?.content ?? '' },
+      }
+    } catch (error) {
+      trace.end('refused', { why: said(error), calls: store.callsIn(runId) })
+      throw error
+    } finally {
+      task = undefined
+    }
+  }
 
   const server = createServer((request, response) => {
     void handle(request, response).catch((error: unknown) => {
@@ -1182,35 +1308,8 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
         paidAllowed: !month.stop,
         maxSteps: limits.steps,
         signal: stop.signal,
-        /**
-         * The gate (M15-3). Built fresh per call, because the mode, the folders and the
-         * boundaries can all change while a task is running — and the point of a boundary
-         * spoken mid-task is that it takes effect on the next step, not the next task.
-         */
-        guard: async (call): Promise<Ruling> => {
-          const about = await tooling.about(call.name)
-          const now = scope()
-          const ruling = rule(
-            {
-              tool: call.name,
-              ...(about?.annotations && { annotations: about.annotations }),
-              paths: pathsIn(call.args),
-              // M3-6. A tool from a server nobody reviewed is destructive whatever its own
-              // annotations claim — MCP's own guidance, and the gate reads it right here.
-              reviewed: about?.pluginId === undefined || !unreviewed(store).has(about.pluginId),
-            },
-            now,
-          )
-          // The fixed rules have already spoken. The checker is coverage on top of them and
-          // never instead of them, so it is only asked about something they would let run.
-          if (ruling.verdict !== 'run' || now.mode !== 'watch') return ruling
-
-          const step = { n: 0, name: call.name, args: call.args }
-          // The review is spent because of this task, so it lands on this task's rows.
-          const review = await checker.review({ step, task: text, scope: now, run: runId })
-          tally = counted(tally, review)
-          return asRuling(review, step, tally)
-        },
+        // The gate (M15-3), the same one a task started from a phone meets (M7-5).
+        guard: gate(text, runId),
         approve: (ruling) =>
           new Promise<boolean>((resolve) => {
             pending = resolve

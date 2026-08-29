@@ -46,7 +46,8 @@
   ],
   "provides": [
     "voice.transcribe",
-    "voice.speak"
+    "voice.speak",
+    "voice.render"
   ],
   "settings": [
     {

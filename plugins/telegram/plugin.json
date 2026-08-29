@@ -18,10 +18,15 @@
     {
       "cap": "net.request",
       "why": "To hold a connection open to Telegram and collect the messages you send it."
+    },
+    {
+      "cap": "fs.own_dir",
+      "why": "To hold a voice note for a moment while it is turned into words, then drop it."
     }
   ],
   "provides": [
-    "telegram.send"
+    "telegram.send",
+    "ask.confirm"
   ],
   "settings": [
     {
@@ -29,6 +34,20 @@
       "key": "bot_token",
       "label": "Bot token",
       "hint": "From @BotFather on Telegram. Send it /newbot and it hands you one. It goes to this machine's credential store, never to the database."
+    },
+    {
+      "type": "toggle",
+      "key": "voice_notes",
+      "label": "Answer with a voice note",
+      "default": false,
+      "hint": "Only works while a cloned voice is chosen in Voice — that is the one that makes the format a voice bubble takes. Otherwise replies are text."
+    },
+    {
+      "type": "text",
+      "key": "ntfy_topic",
+      "label": "ntfy topic, if Telegram is down",
+      "placeholder": "something-nobody-would-guess",
+      "hint": "A fallback and never a replacement: no buttons, no threading, and anyone who knows the topic can read it. Leave it empty and nothing is sent anywhere else."
     },
     {
       "type": "status",

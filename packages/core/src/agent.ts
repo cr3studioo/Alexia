@@ -115,6 +115,14 @@ export interface RunOptions {
    * (M7-2). A session is not a run: ten tasks in one sitting share a session.
    */
   run?: string
+  /**
+   * Who asked for it, when that is not the person at the keyboard (M7-5).
+   *
+   * Absent for a task from the window, which is nobody's plugin. Present when a plugin asked
+   * for one, so *which plugin is costing me money* keeps its answer on the path that did not
+   * exist when `usage.plugin` was added.
+   */
+  plugin?: string
   /** The hard stop (M1-9). False and the paid rungs are not rungs at all. */
   paidAllowed?: boolean
   /**
@@ -196,6 +204,7 @@ export async function run(options: RunOptions): Promise<RunResult> {
         {
           session,
           ...(options.run !== undefined && { run: options.run }),
+          ...(options.plugin !== undefined && { plugin: options.plugin }),
           ...(options.paidAllowed !== undefined && { paidAllowed: options.paidAllowed }),
           ...(on?.delta && { onDelta: on.delta }),
           ...(on?.note && { onNote: on.note }),

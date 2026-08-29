@@ -72,7 +72,36 @@ export const CORE_CAPABILITIES = {
    * That is a missing flourish, which is the bar for being here.
    */
   capture: 'memory.capture',
+  /**
+   * Ask a person a question when they are not at the keyboard, and wait for the answer (M7-5).
+   *
+   * **The ruling stays in core; only the surface is new.** The permission modes (M15-3) and
+   * the consent ladder (M6-9) decide *what* is asked and what the answer means; this is a
+   * second place the asking can happen — a phone, most obviously, when the task was started
+   * from one and there is no window open to answer in.
+   *
+   * Core works completely without it: with nothing providing it, a question nobody can be
+   * shown is a no, which is what it already was.
+   */
+  ask: 'ask.confirm',
 } as const
+
+/**
+ * The `_meta` key a plugin puts on a `sampling/createMessage` to say *use my tools, and ask
+ * me when you must* (M7-5).
+ *
+ * **A flag on the existing request rather than a new method**, and the reason is the one the
+ * versioning doc gives for what needs a revision bump: an Alexia that does not understand
+ * this ignores it and answers without tools, which is **exactly what it did before the flag
+ * existed**. A change a plugin cannot see going wrong is not a change to the contract's
+ * number — and `_meta` is MCP's own extension point, already carrying `alexia/provides`.
+ *
+ * What it turns on is the whole loop: the tool list, the permission gate, the trace and the
+ * ledger, on the same terms as a task started at the keyboard. What it does not change is
+ * who decides — a step that needs a yes still needs one, and {@link CORE_CAPABILITIES.ask}
+ * is where that question goes when there is no window to show it in.
+ */
+export const TOOLS_META = 'alexia/tools'
 
 /**
  * The `_meta` key a tool uses to say which capabilities it answers.

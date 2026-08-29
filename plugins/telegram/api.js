@@ -8,6 +8,12 @@
  * `sendMessage`, which is forty lines of `fetch`, and a long-polling loop somebody can
  * read in one sitting is worth more here than a framework's reconnect semantics. The day
  * this wants inline keyboards or file uploads, grammY is the sanctioned replacement.
+ *
+ * **M7-5 wanted both of those and it is still not grammY**, which is worth writing down
+ * rather than quietly not doing: a keyboard is one extra field on `sendMessage`, a press is
+ * one extra `allowed_updates` entry, and an upload is a `FormData`. Six calls rather than
+ * two. The sanction stands and the day it is taken will be a day this file is doing
+ * something a framework is better at than sixty lines of `fetch`, which it is not yet.
  */
 
 const BASE = 'https://api.telegram.org/bot'
@@ -47,10 +53,74 @@ export const me = (token, signal) => call(token, 'getMe', {}, signal)
  * previous batch was handled. Get that wrong and every restart replays the backlog.
  */
 export const updates = (token, offset, seconds, signal) =>
-  call(token, 'getUpdates', { offset, timeout: seconds, allowed_updates: ['message'] }, signal)
+  call(
+    token,
+    'getUpdates',
+    // Button presses arrive as their own update kind. Asking for messages only is what made
+    // a keyboard impossible rather than merely absent (M7-5).
+    { offset, timeout: seconds, allowed_updates: ['message', 'callback_query'] },
+    signal,
+  )
 
-export const send = (token, chatId, text, signal) =>
-  call(token, 'sendMessage', { chat_id: chatId, text, disable_web_page_preview: true }, signal)
+export const send = (token, chatId, text, signal, buttons) =>
+  call(
+    token,
+    'sendMessage',
+    {
+      chat_id: chatId,
+      text,
+      disable_web_page_preview: true,
+      ...(buttons && { reply_markup: { inline_keyboard: [buttons.map(({ label, data }) => ({ text: label, callback_data: data }))] } }),
+    },
+    signal,
+  )
+
+/**
+ * Telegram's cap on what a button may carry, and the reason the real action never goes on
+ * one: **64 bytes** (M7-5).
+ *
+ * A length check somebody has to remember is a length check somebody forgets, so the action
+ * is not shortened to fit — it never travels. What goes on the button is an opaque token of
+ * a fixed size, and the action it stands for is looked up on this side.
+ */
+export const CALLBACK_LIMIT = 64
+
+/**
+ * Acknowledge a press. Telegram shows a spinner on the button until this arrives, so
+ * skipping it looks exactly like a bot that has hung.
+ */
+export const answered = (token, queryId, text, signal) =>
+  call(token, 'answerCallbackQuery', { callback_query_id: queryId, ...(text && { text }) }, signal)
+
+/** Take the buttons off a message that has been answered, so it cannot be answered twice. */
+export const unbutton = (token, chatId, messageId, signal) =>
+  call(token, 'editMessageReplyMarkup', { chat_id: chatId, message_id: messageId, reply_markup: { inline_keyboard: [] } }, signal)
+
+/** Where a file Telegram is holding actually lives, so it can be fetched. */
+export const filePath = async (token, fileId, signal) => {
+  const file = await call(token, 'getFile', { file_id: fileId }, signal)
+  return `${BASE}${token}`.replace('/bot', '/file/bot') + `/${file.file_path}`
+}
+
+/**
+ * A voice bubble rather than a paragraph.
+ *
+ * `sendVoice` takes Ogg/Opus and nothing else — Telegram plays anything else as a file
+ * attachment, which is not what anybody meant by a voice note. So the caller checks the
+ * format before reaching this, and there is no conversion here: a converter is ffmpeg, and
+ * ffmpeg is a dependency this plugin has managed not to have.
+ */
+export async function sendVoice(token, chatId, ogg, signal) {
+  const form = new FormData()
+  form.set('chat_id', String(chatId))
+  form.set('voice', new Blob([ogg], { type: 'audio/ogg' }), 'reply.ogg')
+  const response = await fetch(`${BASE}${token}/sendVoice`, { method: 'POST', body: form, ...(signal && { signal }) })
+  const answer = await response.json().catch(() => ({}))
+  if (!response.ok || answer.ok !== true) {
+    throw new TelegramError(response.status, answer.description ?? `Telegram answered ${response.status}`)
+  }
+  return answer.result
+}
 
 /** Telegram's own cap. A longer answer is split rather than refused by the API mid-sentence. */
 export const LIMIT = 4096

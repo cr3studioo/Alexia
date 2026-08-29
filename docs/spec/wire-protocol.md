@@ -366,6 +366,33 @@ assume.
 > apply to a plugin's model use exactly as they apply to Alexia's own. If MCP removes them,
 > they become `alexia/*` methods — the contract a plugin author writes against does not move.
 
+#### `alexia/tools` — *use my tools, and ask me when you must*
+
+One optional key on the request's `_meta`, and it turns a completion into a **task**:
+
+```jsonc
+{ "method": "sampling/createMessage",
+  "params": {
+    "messages": [ … ],
+    "_meta": { "alexia/tools": true } } }
+```
+
+With it set, core runs its own agent loop rather than one round trip — the tool list every
+enabled plugin publishes, the permission gate, the trace, the ledger, on exactly the terms a
+task started in Alexia's own window gets. What comes back is still one assistant message.
+
+It exists for the plugin holding a conversation **somewhere other than the window** — a chat
+app, a phone. That path used to carry no tools at all, deliberately: a step needing permission
+had nowhere to ask, and a task hanging on a question nobody can see is worse than a task that
+never had tools. The somewhere is the `ask.confirm` capability
+([`capabilities.md`](./capabilities.md)); if nothing provides it, a question that cannot be
+shown is answered **no**, which is what it already was.
+
+**It is a flag rather than a method, and needs no revision of `alexia_protocol`.** An Alexia
+that does not know the key ignores it and answers without tools — precisely what it did before
+the key existed. Nothing a plugin can see goes wrong, which is the bar
+[`versions.md`](./versions.md) sets for moving the number.
+
 ### Elicitation
 
 `elicitation/create` is how a plugin asks the user a question — an API key, a folder, a

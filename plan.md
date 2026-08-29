@@ -195,7 +195,7 @@ Tick a box only when the task's acceptance criteria pass. `[GATE]` needs a human
 - [x] **M7-2** One id, four records
 - [x] **M7-3** Memory that captures without being asked
 - [x] **M7-4** A voice that is yours — cloning, and the engine it costs
-- [ ] **M7-5** A button in Telegram, and somewhere else to land
+- [x] **M7-5** A button in Telegram, and somewhere else to land
 - [ ] **M7-6** Three tiers, and the cheapest one has no model in it
 - [ ] **M7-G** **Done when:** a free-model request is provably stripped, a cost is traceable to the run that spent it, and Alexia remembers something nobody told it to
 
@@ -3113,6 +3113,18 @@ never reaches a message — and says in its own header what it does not prove.
 
 ### M7-5 A button in Telegram, and somewhere else to land
 
+**Built 2026-08-29 (D99).** The sentence this task was named after is gone from
+`plugins/telegram`: the path has tools now, because there is somewhere to ask. Two pieces —
+`ask.confirm`, a core capability that is *a question and its options out, the chosen option
+back*; and **one optional key on a `sampling` request**, `alexia/tools`, which turns a
+completion into the whole loop. **It is a flag rather than a new method and the contract's
+number does not move for it**: an Alexia that does not know the key ignores it and answers
+without tools, which is exactly what it did before the key existed. The 64-byte cap is a
+property of the shape rather than a check — the action never travels, an eight-character
+token does — and `asking.test.js` proves it with a five-thousand-character action. `ask.confirm`
+is bound only while somebody is paired, because a question sent where nobody will see it is a
+question core reads as a no.
+
 **A message that arrived from a phone can be answered from the phone — including the yes.**
 
 `plugins/telegram` is good and its own source names the gap in one line
@@ -3139,6 +3151,41 @@ constraint that would otherwise be a length check somebody forgets.
 **Acceptance.** A task started from Telegram that needs permission asks in Telegram, is
 answered with a button, and the answer reaches the same ruling the app would have produced. A
 callback token is opaque and shorter than 64 bytes with an action of any length.
+
+**Both halves are met, and the first one is measured end to end.** `asking.test.ts` stages a
+fixture plugin that starts a task with the flag, publishes a destructive tool for the gate to
+stop, and provides `ask.confirm` — then drives the whole thing through a real `serve()` with
+a scripted model. The question that arrives carries **core's own sentence**, because it is
+literally the same `rule()`: `gate()` was extracted so `/api/chat` and a plugin's task share
+one function, since two copies of a permission gate is two rulings waiting to disagree. A no
+comes back as *the user did not approve it* — an observation the model plans around, exactly
+as one from the window does.
+
+**Four decisions came out of building it.**
+
+- **A flag, not a method.** Adding `alexia/task/run` would have been honest and would have
+  cost a revision bump — and `versions.md`'s own bar is *a change a plugin can see going
+  wrong*. This cannot: an older Alexia ignores the key and gives today's behaviour. `_meta` is
+  MCP's own extension point and already carries `alexia/provides`.
+- **One task at a time, and it says so.** The rest of `serve.ts` rests on one
+  `AbortController` and one pending question. A plugin asking while somebody is working at
+  the keyboard is refused with a sentence rather than queued behind them or run alongside.
+- **No ntfy fallback for a question.** ntfy has no buttons, so a permission question sent
+  down it would look answered to whoever sent it and never be. A question that did not arrive
+  is better than one that cannot be answered — so the fallback carries answers and errors,
+  and refuses to carry anything with a button on it.
+- **Voice notes: one direction needed nothing, the other needed a capability.** Incoming was
+  already possible — `voice.transcribe` has been in the registry since M2 and a Telegram voice
+  message is a file with a path. Outgoing needed `voice.render` (*text in, audio bytes out*),
+  because `voice.speak` is deliberately *nothing out*. It is bound only while a cloned voice
+  is chosen: that is the one that returns Ogg/Opus, and converting WAV would mean ffmpeg.
+  With Piper speaking, replies are text — which is the ordinary case and not a failure.
+
+**Still not grammY**, and it is worth saying rather than quietly not doing: this task wanted
+both of the things `api.js` named as the day to take that dependency — inline keyboards and
+file uploads. They came to one extra field, one extra `allowed_updates` entry and a
+`FormData`. Six calls instead of two. The sanction stands for the day this file is doing
+something a framework is genuinely better at.
 
 ### M7-6 Three tiers, and the cheapest one has no model in it
 
@@ -3360,6 +3407,7 @@ Newest first. Every entry here is also in Alexia.md's decision log.
 
 | Date | Entry |
 |---|---|
+| 2026-08-29 | **D99** — **the yes can come from the phone, and it is one flag rather than a new method.** M7-5. `plugins/telegram`'s own line — *you have no tools on this path* — was the plugin being honest about a real limit: there was nowhere to ask a permission question from a phone, so rather than a task hanging on a prompt nobody could see, the path carried no tools at all. Two pieces lift it. **`ask.confirm`**, a core capability that is *a question and its options out, the chosen option back* — the ruling stays in core, and only the surface is new. And **`alexia/tools`, one optional key on a `sampling` request**, which turns a completion into the whole loop: the tool list, the gate, the trace, the ledger, on exactly the terms a task from the window gets. **A flag rather than `alexia/task/run`, and the contract's number does not move for it** — an Alexia that does not know the key ignores it and answers without tools, which is precisely what it did before, and *a change a plugin can see going wrong* is `versions.md`'s own bar for a bump. **`gate()` was extracted so both callers share one**, because two copies of a permission gate is two rulings waiting to disagree, and the acceptance is that a phone gets *the same ruling the app would have produced*. **The 64-byte cap is a property of the shape**: the action never travels, an eight-character token does, and the test proves it with a five-thousand-character action. **No ntfy fallback for a question** — ntfy has no buttons, so one sent down it would look answered to whoever sent it and never be; the fallback carries answers and errors and refuses anything with a button on it. **Voice notes needed nothing one way and a capability the other**: `voice.transcribe` has been in the registry since M2, while `voice.speak` is deliberately *nothing out*, so `voice.render` is new and bound only while a cloned voice is chosen — the one that returns the format a bubble takes. **One task at a time, said out loud**: the rest of `serve.ts` rests on one controller and one pending question, so a plugin asking while somebody is at the keyboard is refused rather than queued. And it is **still not grammY**, though this task wanted both of the things that were named as the day to take it: six calls of `fetch` instead of two. |
 | 2026-08-29 | **D98** — **a voice that is yours, and the engine it costs, said out loud.** M7-4, G10 answered. `plugins/voice` gained a second engine and an expression pass; **it is one plugin, and the contract decided that** — two plugins would both provide `voice.speak`, and `Plugins.capability()` returns whichever core loaded first, so *which voice is speaking* would depend on load order with nothing on any screen to say so. **And no engine setting either**, which G10 did not consider: a voice is already chosen in one place, so where it runs is a property of the voice rather than a second switch, and the state where the two disagree has no meaning. **M2-4's refusal of a cloud vendor is priced rather than overturned** — Piper still speaks unless somebody has picked a cloned voice, and picking one is the yes. **`file` was refused a second time on a new argument**: D89 said the clip could be recorded through `audio.input`, and it cannot — `whisper-stream` returns text, so a recorder would be a platform-specific capture path per operating system for one screen, and somebody cloning a voice already has the recording. Two refusals of `file`, two different reasons, neither the one expected. **Expression is filtered, not trusted**: an unrecognised marker is *spoken* rather than dropped, so the vocabulary is quoted from the vendor's published reference and the model's output is filtered against it afterwards — and an annotator that changed the words has its whole answer discarded, because a voice saying something slightly different from the screen is a bug nobody can see. With a Piper voice speaking it is **off and says why**. **One acceptance line is not met and is written down rather than fudged**: a cloned voice lives on an account, not on this disk, so deleting the plugin does not delete it. There is no pre-purge hook and adding one for a single plugin is what invariant 1 exists to prevent, so the tool says so at the moment it clones. **The live clone call is unverified** — no key on this machine — and the file says which shapes were run against the real API and which were not. |
 | 2026-08-29 | **D96** — **a plugin may work on its own clock, and on it spends nothing but free.** G12 answered at M7-3, and it had to be answered first because the task said not to build until it was. Half was already true — `resident` (D77) and `sampling`. The unanswered half was the ceiling, and the answer is that **the ceiling is a tier rather than a number**: M15-7's spend preview is what makes an expensive run somebody's decision, and when a timer wakes up there is nobody to show it to. So free tiers and this machine, always; a paid model never. **It is derived rather than declared**, which is the part worth keeping: `send()` reads *attributed to a plugin, belonging to no run* as *free only*, and M7-2's `run_id` is what made that sentence expressible a day earlier. One rule, in the same place M7-1 put one, instead of a flag at every call site — because a flag at a call site is a flag somebody forgets on the one that matters. The checker keeps its paid path by construction: it runs inside a task and carries that task's id. **This is a real tightening** — until today `sampling` could spend to the monthly cap, and a resident plugin waking every twelve minutes had nothing between it and the money. The refusal says which wall it hit, because *raise your cap* is the wrong advice here. **Backlog 7–10 are unblocked** and inherit the ceiling: proactive messaging, the reliability scorecard, bounded self-healing and web-watch may all wake on their own, and none of them may bill anybody for it. ponytail: no per-plugin allowance — the upgrade, if somebody wants their phone answered by a frontier model, is a monthly figure granted per plugin on the Library screen and read in the same place. |
 | 2026-08-29 | **D97** — **Alexia notices things now, and the switch is the binding.** M7-3, G9 answered. Core hands each finished exchange to a **new core capability** and forgets about it — `void`, caught, never awaited, because a memory that could delay an answer is one people turn off and one that could throw would break a conversation over a flourish. **Credentials are stripped on the way and location is not**: what may be written down is not what may be sent, an address is worth remembering and only dangerous when it leaves, and it is M7-1's own scan on the other door. **G9 was decided by the contract rather than by taste** — a second plugin cannot read the first's tables, so *recall* would see half the memory; running the cheap one only survives as a toggle. **The consent lives in the runtime binding**: the capability is bound only while capture is on, so with it off core resolves nothing and never hands the conversation over at all — a stronger promise than taking it and dropping it, and it needed no new mechanism. **One stage where the predecessor had two**, because its cheap triage existed to keep an expensive model off the volume and a plugin on its own clock cannot reach one; the property that mattered survives, since an empty buffer asks nothing. **Two layers of forget, not three** — its permanent raw log is a second copy of everything anybody ever said, which is a privacy cost paid for a feature nobody asked for. All four hard-won details are in: code overrules a model that claims a duplicate, the cascade clears the buffer first, a tombstone is written whether or not anything matched, and a batch that breaks the call is set aside after three tries and never discarded. **Building it turned up two bugs older than the task** — `AWS_SECRET_ACCESS_KEY=…` walked through M7-1's scan because the keyword is in the middle, and `store.select` threw on a declared table nothing had ever been written to, which is the memory panel on a fresh install. Both fixed at the root. **G8 has reopened with a real user**: these links are authored, which is the condition D90 named, and nothing was built on it — the refusal stands and now has something to be asked about. |

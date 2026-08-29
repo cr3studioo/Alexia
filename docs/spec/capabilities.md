@@ -90,8 +90,10 @@ name and becomes a drop-in alternative rather than a competitor.
 | `voice.speak` | text in, audio played, nothing out | `plugins/voice` (M2) |
 | `persona.rephrase` | one conversational answer in, the same answer in a chosen voice out | `plugins/persona` (M4) |
 | `memory.capture` | one finished exchange in, **nothing out** — core never reads it back | `plugins/memory` (M7) |
+| `ask.confirm` | a question and its options in, the chosen option out | `plugins/telegram` (M7) |
+| `voice.render` | text in, **audio bytes out** — for audio that has to go somewhere other than these speakers | `plugins/voice` (M7) |
 
-Five entries, because five exist. `demo.greet` is real: `plugins/hello` provides it and
+Seven entries, because seven exist. `demo.greet` is real: `plugins/hello` provides it and
 `plugins/vanisher` requires it, which is how *delete the provider and the consumer keeps
 running* stays a test rather than a claim. The last two are the ones **core itself** reaches
 for — they are also in `CORE_CAPABILITIES`, and the rule for being there is that core works
