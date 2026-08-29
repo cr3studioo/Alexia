@@ -149,9 +149,14 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
   const token = randomUUID()
 
   // The daily poll, such as it is: once at startup, and `refresh` itself declines to fetch
-  // anything younger than a day old.
-  const openrouter = PROVIDERS.find((p) => p.id === 'openrouter')
-  if (openrouter) void catalog.refresh(openrouter)
+  // anything younger than a day old — per provider, so asking for the second list in a day
+  // is a fetch rather than a shrug.
+  //
+  // Every provider, not just the one somebody happened to connect first. A model list is
+  // public, which is what lets first run show what is free before anybody has pasted a key,
+  // and it is what lets the Models tab show what a key would get you. A provider that is
+  // unreachable, or that wants a key for its list, leaves the cache exactly as it was.
+  for (const provider of PROVIDERS) void catalog.refresh(provider)
 
   const session = store.sessions()[0]?.id ?? store.createSession()
 
@@ -378,7 +383,26 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
    */
   const trace = new Trace()
 
-  const surface = { skills, tooling, plugins, skillsDir, trace, dataDir: root, store }
+  /**
+   * Which providers hold a key, asked once per read rather than once per row.
+   *
+   * The same question `/api/state` answers for the settings screen, and the same answer: a
+   * key is never read out of here, only counted. A keychain that refuses is *not connected*
+   * rather than an exception — this is a column on a table, and a locked credential store
+   * should grey a button, not empty the screen.
+   */
+  const connected = async (): Promise<ReadonlySet<string>> => {
+    const found = await Promise.all(
+      PROVIDERS.map(async (p) =>
+        p.keyless === true || (await secrets.get(CORE, keyOf(p)).catch(() => undefined)) !== undefined ?
+          [p.id]
+        : [],
+      ),
+    )
+    return new Set(found.flat())
+  }
+
+  const surface = { skills, tooling, plugins, skillsDir, trace, dataDir: root, store, catalog, connected }
   const ours = coreSources(surface)
   const ourActions = coreActions(surface)
 
@@ -569,6 +593,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
 
     if (url.pathname === '/api/state') {
       const month = allowance(store)
+      const keyed = await connected()
       response.writeHead(200, { 'content-type': 'application/json' })
       response.end(
         JSON.stringify({
@@ -603,7 +628,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
               // Whether there is a key for it, never the key. The settings screen is where a
               // key gets replaced, and a box that looks identical either way is a box nobody
               // can tell they already filled in.
-              connected: p.keyless === true || (await secrets.get(CORE, keyOf(p)).catch(() => undefined)) !== undefined,
+              connected: keyed.has(p.id),
             })),
           ),
         }),

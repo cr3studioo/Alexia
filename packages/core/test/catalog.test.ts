@@ -141,3 +141,60 @@ test('the day the endpoint changes shape is not the day this breaks', async () =
   expect(catalog.models).toHaveLength(1)
   status = 200
 })
+
+test('each provider has its own clock, so the second list asked for in a day is fetched', async () => {
+  const path = file()
+  const catalog = new Catalog(path)
+  const other: Provider = { ...provider, id: 'other', name: 'Other' }
+
+  payload = { data: [entry()] }
+  expect((await catalog.refresh(provider)).added).toHaveLength(1)
+
+  // The bug this replaced: one `fetchedAt` for the whole file meant the first fetch of the
+  // day told every other provider it was already fresh. Nobody noticed while one provider
+  // was polled; a screen offering a choice between them is nothing but noticing.
+  payload = { data: [entry({ id: 'other/model' })] }
+  expect((await catalog.refresh(other)).added.map((m) => m.id)).toEqual(['other/model'])
+  expect(catalog.models).toHaveLength(2)
+
+  // And each still declines its own second fetch inside the day.
+  expect((await catalog.refresh(provider)).added).toHaveLength(0)
+  expect(catalog.fetchedFrom('other')).toBeGreaterThan(0)
+  expect(catalog.fetchedFrom('never-asked')).toBe(0)
+})
+
+test('a cache from before the per-provider clock is honoured rather than re-fetched', async () => {
+  const path = file()
+  payload = { data: [entry()] }
+  await new Catalog(path).refresh(provider)
+
+  // Rewritten in the old shape: one timestamp, no map. Every provider reads it, so upgrading
+  // does not fetch seven lists on the first launch.
+  const { writeFileSync, readFileSync } = await import('node:fs')
+  const snapshot = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>
+  delete snapshot.at
+  writeFileSync(path, JSON.stringify(snapshot))
+
+  const upgraded = new Catalog(path)
+  expect(upgraded.fetchedFrom('anything-at-all')).toBe(upgraded.fetchedAt)
+  expect((await upgraded.refresh({ ...provider, id: 'other' })).added).toHaveLength(0)
+})
+
+test('a provider that publishes nothing but ids is still a list of models', async () => {
+  const path = file()
+  const catalog = new Catalog(path)
+  // Groq's shape, and roughly everyone's who is not OpenRouter: no pricing, no modalities,
+  // no capability list, and the context window under its own name. It used to arrive as a
+  // model with a context of zero, which sorts as unusable.
+  payload = { data: [{ id: 'llama-3.3-70b', object: 'model', owned_by: 'Meta', context_window: 131_072 }] }
+  await catalog.refresh(provider, 0)
+
+  const [model] = catalog.models
+  expect(model?.id).toBe('llama-3.3-70b')
+  expect(model?.context).toBe(131_072)
+  // Free, because nobody published a price and every one of these is a free tier. Not a
+  // guess about tools, though: unstated is false, and the Models tab is how somebody
+  // overrides that by hand.
+  expect(model?.tier).toBe('T1')
+  expect(model?.supportsTools).toBe(false)
+})

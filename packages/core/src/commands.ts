@@ -67,6 +67,17 @@ export function commands(manifests: readonly Manifest[] = []): Command[] {
 const chosen = (store: Store): Omit<Pins, 'placement'> =>
   (store.kvGet(CORE, 'pins') as Omit<Pins, 'placement'> | undefined) ?? {}
 
+/**
+ * Change one pin and leave the rest alone.
+ *
+ * Exported because the Models tab sets the same `model` pin the router reads, and a second
+ * writer with its own idea of the shape is how the two drift apart. One writer, two callers:
+ * a slash command below, and a row action on the panel.
+ */
+export function setPin(store: Store, change: Omit<Pins, 'placement'>): void {
+  store.kvSet(CORE, 'pins', { ...chosen(store), ...change })
+}
+
 /** The pins as they stand, which is what every request is routed against. */
 export function pins(store: Store): Pins {
   const mode = (store.kvGet(CORE, 'mode') as keyof typeof MODES | undefined) ?? 'combined'
@@ -100,7 +111,7 @@ export async function run(
     return { ok: true, note }
   }
   const pin = (change: Omit<Pins, 'placement'>, note: string): Ran => {
-    store.kvSet(CORE, 'pins', { ...chosen(store), ...change })
+    setPin(store, change)
     return { ok: true, note }
   }
 

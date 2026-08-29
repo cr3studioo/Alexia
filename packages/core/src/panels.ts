@@ -164,6 +164,37 @@ const LIBRARY: Rendered = table({
 })
 
 /**
+ * Which model, chosen by hand rather than by the router (the Models tab).
+ *
+ * Grouped by provider because that is the shape of the question — each one publishes a
+ * different list in a different format with different things left out, and putting them in
+ * one flat run would imply a comparability that is not there. The columns are the four
+ * facts a choice actually turns on: what it costs, how much it will read, and whether it
+ * can be reached at all.
+ */
+const MODELS: Rendered = table({
+  type: 'table',
+  key: 'models',
+  label: 'Models',
+  hint: 'Each provider publishes its own list, and they do not agree on what to include — a blank column is something that provider does not say, not a zero. Use pins every request to one model; Automatic gives the choice back to the router.',
+  rows: 'models',
+  columns: [
+    { key: 'name', label: 'Model' },
+    { key: 'price', label: 'Per 1M in', align: 'right' },
+    { key: 'context', label: 'Context', align: 'right', hideNarrow: true },
+    { key: 'tier', label: 'Tier', align: 'right', hideNarrow: true },
+    { key: 'state', label: 'State' },
+  ],
+  rowActions: [
+    { key: 'use_model', label: 'Use', tool: 'use_model' },
+    { key: 'automatic', label: 'Automatic', tool: 'automatic' },
+  ],
+  detail: 'model',
+  filter: true,
+  groupBy: 'provider',
+})
+
+/**
  * The tabs whose data core owns, in the order they are read rather than built.
  *
  * *Activity* first because *what has this been doing* is the question that brings somebody
@@ -173,6 +204,7 @@ export const CORE_TABS: readonly { id: string; label: string; soon?: string; wid
   { id: 'activity', label: 'Activity', widgets: [ACTIVITY] },
   { id: 'skills', label: 'Skills', widgets: [SKILLS, LEARNED] },
   { id: 'tools', label: 'Tools', widgets: [TOOLS] },
+  { id: 'models', label: 'Models', widgets: [MODELS] },
   { id: 'library', label: 'Library', widgets: [LIBRARY] },
 ]
 

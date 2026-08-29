@@ -76,7 +76,14 @@ const byAction = (body: Body): string | undefined => (typeof body.action === 'st
  * added tomorrow and forgotten here is guarded, which is the wrong way round to be annoying
  * and the right way round to be safe.
  */
-const REVERSIBLE_CORE = new Set(['export_run'])
+const REVERSIBLE_CORE = new Set([
+  'export_run',
+  // Choosing which model answers, and giving the choice back. Nothing is deleted and each
+  // one undoes the other, so a confirmation here would be a dialog in front of a preference
+  // — which is how people learn to click through the dialogs that matter.
+  'use_model',
+  'automatic',
+])
 
 /**
  * Every path core answers, in the order `serve.ts` matches them.

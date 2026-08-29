@@ -4,7 +4,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, expect, test } from 'vitest'
 import { CORE_TABS } from '../src/panels.js'
-import { memorySecrets } from '../src/secrets.js'
+import { keyOf, PROVIDERS } from '../src/provider.js'
+import { CORE, memorySecrets } from '../src/secrets.js'
 import { serve, type Serving } from '../src/serve.js'
 
 /**
@@ -24,7 +25,33 @@ import { serve, type Serving } from '../src/serve.js'
 
 const root = mkdtempSync(join(tmpdir(), 'alexia-surface-'))
 mkdirSync(join(root, 'cache'), { recursive: true })
-writeFileSync(join(root, 'cache', 'models.json'), JSON.stringify({ fetchedAt: Date.now(), models: [] }))
+/**
+ * Two models from two providers, one of which has a key. No `at` map, so the whole cache
+ * reads as fetched just now and the startup poll asks nobody anything — a panel test that
+ * went to the network would be a panel test that fails on a train.
+ */
+const model = (over: Record<string, unknown>): Record<string, unknown> => ({
+  name: 'A Model',
+  tier: 'T1',
+  priceIn: 0,
+  priceOut: 0,
+  context: 32_768,
+  supportsTools: true,
+  modality: ['text'],
+  nsfwOk: 'unknown',
+  trainsOnYourData: 'unknown',
+  ...over,
+})
+writeFileSync(
+  join(root, 'cache', 'models.json'),
+  JSON.stringify({
+    fetchedAt: Date.now(),
+    models: [
+      model({ id: 'openrouter/reachable', name: 'Reachable', provider: 'openrouter' }),
+      model({ id: 'groq/unreachable', name: 'Unreachable', provider: 'groq', priceIn: 2, tier: 'T3' }),
+    ],
+  }),
+)
 
 const skillsDir = join(root, 'skills')
 const skill = (name: string, front: string): void => {
@@ -71,11 +98,15 @@ writeFileSync(
   '---\nname: know\ndescription: Something that came with a plugin.\n---\n\nBody.\n',
 )
 
+// One provider connected and one not, which is the difference the Models tab is about.
+const secrets = memorySecrets()
+await secrets.set(CORE, keyOf(PROVIDERS.find((p) => p.id === 'openrouter')!), 'sk-users-own')
+
 const alexia: Serving = await serve({
   dataDir: root,
   uiDir: join(import.meta.dirname, '..', '..', 'ui'),
   pluginsDir: extensions,
-  secrets: memorySecrets(),
+  secrets,
 })
 
 afterAll(async () => {
@@ -288,4 +319,52 @@ test('a list nobody declared is a sentence, not an empty table', async () => {
   const answer = await post('/api/rows', { key: 'imaginary' })
   expect(answer.ok).toBe(false)
   expect(String(answer.said)).toContain('no list called')
+})
+
+test('the models panel offers what every provider publishes, and says which are reachable', async () => {
+  const models = await rows('models')
+  expect(models.map((row) => row.id)).toEqual(['openrouter/reachable', 'groq/unreachable'])
+
+  // A model from a provider with no key is shown rather than hidden: *what would connecting
+  // Groq get me* is the question this screen exists to answer, and an absent row answers it
+  // wrong. It says what is missing instead.
+  expect(String(models.find((row) => row.id === 'groq/unreachable')?.state)).toContain('needs a key')
+  expect(String(models.find((row) => row.id === 'openrouter/reachable')?.state)).not.toContain('needs a key')
+
+  // Free is a word, not $0.00 — those are different claims, and one of them is the tier the
+  // whole project runs on.
+  expect(models.find((row) => row.id === 'openrouter/reachable')?.price).toBe('free')
+  expect(models.find((row) => row.id === 'groq/unreachable')?.price).toBe('$2.00')
+  expect(models.find((row) => row.id === 'openrouter/reachable')?.context).toBe('33k')
+
+  // What expands under a row: the two flags nobody may guess at, repeated rather than
+  // rounded off, and the next action for a provider that is not connected.
+  const detail = String((await post('/api/detail', { key: 'models', row: 'groq/unreachable' })).text)
+  expect(detail).toContain('Trains on what you send it: unknown')
+  expect(detail).toContain('Add a key for groq')
+})
+
+test('choosing a model pins it, and Automatic gives the choice back', async () => {
+  const pinned = async (): Promise<unknown> =>
+    ((await (await fetch(new URL('/api/state', alexia.url), { headers: { 'x-alexia-token': alexia.token } })).json()) as {
+      pins: { model?: string }
+    }).pins.model
+
+  expect(await pinned()).toBeUndefined()
+
+  const chosen = await post('/api/action', { key: 'use_model', row: 'openrouter/reachable' })
+  expect(chosen.ok).toBe(true)
+  // The pin the router already treats as final. Nothing new was invented to hold this.
+  expect(await pinned()).toBe('openrouter/reachable')
+  expect(String((await rows('models')).find((row) => row.id === 'openrouter/reachable')?.state)).toContain('in use')
+
+  // Refused where the person can act on it, rather than by the router three screens later
+  // saying the model "is not available right now".
+  const cannot = await post('/api/action', { key: 'use_model', row: 'groq/unreachable' })
+  expect(cannot.ok).toBe(false)
+  expect(String(cannot.said)).toContain('no key yet')
+  expect(await pinned()).toBe('openrouter/reachable')
+
+  expect((await post('/api/action', { key: 'automatic', row: 'openrouter/reachable' })).ok).toBe(true)
+  expect(await pinned()).toBeUndefined()
 })

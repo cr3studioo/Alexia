@@ -42,6 +42,19 @@ export interface Model {
 export interface Snapshot {
   fetchedAt: number
   models: Model[]
+  /**
+   * When each provider's list was last fetched, by provider id.
+   *
+   * One clock per provider, because there used to be one for all of them: `refresh` compared
+   * `fetchedAt` against `maxAge` and returned early, so the *second* provider asked in a day
+   * was told its list was fresh when nothing had ever fetched it. With one provider polled at
+   * startup that was invisible. It stops being invisible the moment a screen offers a choice
+   * between providers, which is what the Models tab is.
+   *
+   * Optional because a cache written before this existed has no such map, and a provider
+   * missing from it reads as never fetched — which is what it is.
+   */
+  at?: Record<string, number>
 }
 
 /** What changed since the last fetch. The news line is built from this, and so is the UI. */
@@ -79,6 +92,25 @@ export class Catalog {
   }
 
   /**
+   * When this provider's list was last fetched. Zero means never, and the screen says so.
+   *
+   * A cache written before `at` existed has one timestamp for the whole file, so that is
+   * what every provider reads until the next write puts a real map there. It expires within
+   * the day like any other, so the upgrade costs at most one stale day and then heals — and
+   * it beats the alternative, which is treating a working cache as empty and fetching seven
+   * lists the moment somebody installs a new build.
+   *
+   * The fallback is on `at` being **absent**, never on a provider being missing from it. Once
+   * the map exists, a provider not in it has genuinely never been fetched — reading the
+   * file's own timestamp there would revive the single clock this replaced, because the
+   * first write moves `fetchedAt` to now for everybody.
+   */
+  fetchedFrom(provider: string): number {
+    const { at, fetchedAt } = this.#snapshot
+    return at === undefined ? fetchedAt : (at[provider] ?? 0)
+  }
+
+  /**
    * Fetch, unless what is cached is younger than `maxAge` — which is the daily poll, minus
    * a timer nothing owns yet. The app loop calls this on a schedule from M1-10.
    *
@@ -87,7 +119,7 @@ export class Catalog {
    */
   async refresh(provider: Provider, maxAge = DAY): Promise<Change> {
     if (!provider.models) return { added: [], removed: [], failed: `${provider.name} has no model list` }
-    if (Date.now() - this.#snapshot.fetchedAt < maxAge) return { added: [], removed: [] }
+    if (Date.now() - this.fetchedFrom(provider.id) < maxAge) return { added: [], removed: [] }
 
     let models: Model[]
     try {
@@ -116,7 +148,12 @@ export class Catalog {
     }
 
     const kept = this.#snapshot.models.filter((m) => m.provider !== provider.id)
-    this.#snapshot = { fetchedAt: Date.now(), models: [...kept, ...models] }
+    const now = Date.now()
+    this.#snapshot = {
+      fetchedAt: now,
+      models: [...kept, ...models],
+      at: { ...this.#snapshot.at, [provider.id]: now },
+    }
     write(this.file, this.#snapshot)
     return change
   }
@@ -133,7 +170,21 @@ export function news(change: Change): string | undefined {
   return `${count} new ${kind}model${count === 1 ? ' is' : 's are'} available.`
 }
 
-/** What the endpoint actually sent, read defensively. Anything unrecognisable is skipped. */
+/**
+ * What the endpoint actually sent, read defensively. Anything unrecognisable is skipped.
+ *
+ * **Two shapes, not one.** Everything here speaks OpenAI's `/models`, which guarantees only
+ * `data[].id`. OpenRouter then adds pricing, context, modalities and a moderation flag;
+ * Groq adds `context_window` and nothing else; Cerebras, Mistral and NVIDIA add nothing at
+ * all. This used to read OpenRouter's names only, so every other provider's models arrived
+ * priced at zero with a context of zero — which sorts as free and unusable, and is the
+ * catalog quietly saying *nothing here is worth asking* about five of the seven rows.
+ *
+ * So each field is read from whichever key the provider uses, and **absent stays absent**
+ * rather than becoming a zero that means something. Nobody publishes prices on a free tier,
+ * and a `0` there is the truth; a missing context window is not `0` tokens, it is not said,
+ * and the screen prints those two differently.
+ */
 function parse(payload: unknown, provider: Provider): Model[] {
   const data = (payload as { data?: unknown[] })?.data
   if (!Array.isArray(data)) return []
@@ -142,7 +193,9 @@ function parse(payload: unknown, provider: Provider): Model[] {
     const entry = raw as {
       id?: unknown
       name?: unknown
+      /** OpenRouter's name for it, then Groq's. Nobody else sends one. */
       context_length?: unknown
+      context_window?: unknown
       pricing?: { prompt?: unknown; completion?: unknown }
       architecture?: { input_modalities?: unknown }
       supported_parameters?: unknown
@@ -155,6 +208,7 @@ function parse(payload: unknown, provider: Provider): Model[] {
     const params = Array.isArray(entry.supported_parameters) ? entry.supported_parameters : []
     const modalities = entry.architecture?.input_modalities
     const moderated = entry.top_provider?.is_moderated
+    const context = [entry.context_length, entry.context_window].find((one) => typeof one === 'number')
 
     return [
       {
@@ -164,7 +218,14 @@ function parse(payload: unknown, provider: Provider): Model[] {
         tier: priceIn === 0 && priceOut === 0 ? 'T1' : priceIn < FRONTIER_USD_PER_MTOK ? 'T2' : 'T3',
         priceIn,
         priceOut,
-        context: typeof entry.context_length === 'number' ? entry.context_length : 0,
+        context: context ?? 0,
+        /**
+         * ponytail: only OpenRouter says. Everywhere else this reads false, so the router's
+         * tool filter skips those models unless somebody pins one by hand — which the Models
+         * tab is now the way to do. Guessing `true` would route real tool calls at a hunch;
+         * the upgrade is a `tools` probe per provider, cached beside this, when the auto path
+         * needs them.
+         */
         supportsTools: params.includes('tools'),
         modality: Array.isArray(modalities) ? modalities.map(String) : ['text'],
         // A moderated endpoint refuses; an unmoderated one does not. A provider that does

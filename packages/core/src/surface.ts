@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import type { Catalog } from './catalog.js'
+import { pins, setPin } from './commands.js'
 import { allow, forgetConsent } from './consent.js'
 import { forget } from './learned.js'
 import type { Row } from './plugins.js'
@@ -46,6 +48,15 @@ export interface SurfaceOptions {
   trace: Trace
   /** Alexia's own data directory. An exported run is written into it. */
   dataDir: string
+  /** What models exist, cached from each provider's own list (M6-4, Models tab). */
+  catalog: Catalog
+  /**
+   * The providers holding a key, as a set rather than a question per provider.
+   *
+   * One call, because the answer lives in the OS keychain and the alternative is one
+   * unlock per row on a table with several hundred of them.
+   */
+  connected(): Promise<ReadonlySet<string>>
 }
 
 /** `▲` is the one mark that is coloured, because on this screen a colour means look at this. */
@@ -54,8 +65,21 @@ const OK = '● ready'
 /** `2026-08-29 14:03`, which is what a person reads. Never a raw timestamp. */
 const when = (at: number): string => new Date(at).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' })
 
+/** `128k`, which is what a person reads. Never 131072, and never a bare 0 for *not said*. */
+const window = (tokens: number): string => (tokens > 0 ? `${String(Math.round(tokens / 1000))}k` : '—')
+
+/**
+ * Dollars per million input tokens, or the word for what free means here.
+ *
+ * Zero is printed as *free* rather than `$0.00` because those are different claims: one is a
+ * price and the other is the free tier this whole project is built on. A provider that does
+ * not publish prices at all lands here as zero too — which is true of every free tier in the
+ * table, and the column would rather say so than invent a number.
+ */
+const price = (usd: number): string => (usd === 0 ? 'free' : `$${usd.toFixed(2)}`)
+
 export function sources(options: SurfaceOptions): Record<string, Source> {
-  const { skills, tooling, plugins, trace } = options
+  const { skills, tooling, plugins, trace, catalog, store } = options
 
   /**
    * A skill's own text, which is the only thing there is to show about one.
@@ -67,6 +91,61 @@ export function sources(options: SurfaceOptions): Record<string, Source> {
   const skillText = (name: string): Promise<string> => Promise.resolve(skills.text(name))
 
   return {
+    /**
+     * Every model any provider will admit to, and which one is being used (the Models tab).
+     *
+     * The catalog is the only source. Nothing here asks a provider anything: the lists are
+     * fetched on the daily poll and cached, so this screen opens at the speed of a file read
+     * whether or not the machine is online — the same rule the other four tables follow.
+     *
+     * A model from a provider with no key is **shown**, and says it needs one. It is the
+     * question the screen exists to answer — *what would connecting Groq get me* — and a row
+     * that was simply absent answers it wrong.
+     */
+    models: {
+      rows: async () => {
+        const chosenModel = pins(store).model
+        const keyed = await options.connected()
+        return (
+          [...catalog.models]
+            // Cheapest first, which is the order the router itself walks them in.
+            .sort((a, b) => a.priceIn - b.priceIn || a.name.localeCompare(b.name))
+            .map((model) => ({
+              id: model.id,
+              name: model.name,
+              provider: model.provider,
+              tier: model.tier,
+              price: price(model.priceIn),
+              context: window(model.context),
+              state:
+                model.id === chosenModel ? `${OK.replace('ready', 'in use')}`
+                : !keyed.has(model.provider) ? '■ needs a key'
+                : model.supportsTools ? 'can use tools'
+                : 'text only',
+            }))
+        )
+      },
+      detail: async (id) => {
+        const model = catalog.models.find((one) => one.id === id)
+        if (!model) return 'That model is not in the catalog any more.'
+        const keyed = await options.connected()
+        return (
+          [
+            model.id,
+            '',
+            `${model.tier} · ${price(model.priceIn)} in, ${price(model.priceOut)} out, per million tokens`,
+            `Context: ${window(model.context)} · takes ${model.modality.join(', ')}`,
+            `Tools: ${model.supportsTools ? 'yes' : 'not according to its provider'}`,
+            // The two flags nobody may guess at. Both say `unknown` until a person has read
+            // the provider's terms, and the screen repeats that rather than rounding it off.
+            `Trains on what you send it: ${model.trainsOnYourData}`,
+            `Uncensored: ${model.nsfwOk}`,
+            ...(keyed.has(model.provider) ? [] : ['', `Add a key for ${model.provider} in settings to use this.`]),
+          ].join('\n')
+        )
+      },
+    },
+
     activity: {
       rows: () =>
         Promise.resolve(
@@ -302,7 +381,43 @@ export function actions(
     )
   }
 
+  /**
+   * *Use this one, and stop choosing for me* — the Models tab's whole purpose.
+   *
+   * It writes `pins.model`, which the router already treats as final: a named model wins
+   * outright, past the tier ladder and past a content flag nobody has verified. That branch
+   * was written for a slash command that does not exist yet and had no way to be reached.
+   * This is the way to reach it, and it adds no second notion of *chosen*.
+   *
+   * A model whose provider has no key is refused **here**, with the sentence naming what to
+   * do. The router would refuse it too, but three screens later and as *is not available
+   * right now*, which is true and useless.
+   */
+  const useModel = async (id: string): Promise<{ ok: boolean; said: string }> => {
+    const model = options.catalog.models.find((one) => one.id === id)
+    if (!model) return { ok: false, said: 'That model is not in the catalog any more.' }
+    if (!(await options.connected()).has(model.provider)) {
+      return {
+        ok: false,
+        said: `${model.name} comes from ${model.provider}, which has no key yet. Add one in settings and try again.`,
+      }
+    }
+    setPin(options.store, { model: id })
+    return { ok: true, said: `${model.name} it is. Everything goes to it until you choose Automatic.` }
+  }
+
   return {
+    use_model: useModel,
+    /**
+     * Back to the router choosing. On every row rather than only the pinned one, because a
+     * button that appears and disappears as the selection moves is a button people hunt for
+     * — and *stop pinning* means the same thing pressed anywhere.
+     */
+    automatic: () => {
+      setPin(options.store, { model: undefined })
+      return Promise.resolve({ ok: true, said: 'Back to automatic: the cheapest model that fits each request.' })
+    },
+
     /**
      * One run, written where a person can attach it to something (M6-5).
      *
