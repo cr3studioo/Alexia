@@ -96,7 +96,12 @@ const SKILLS: Rendered = table({
   // One action, and it refuses on a bundled skill with a sentence rather than being absent:
   // *it came with something, and it goes when that does* is the answer to the question the
   // person is asking, and a missing button answers nothing.
-  rowActions: [{ key: 'forget_skill', label: 'Forget', tool: 'forget_skill', confirm: 'Forget {name}?' }],
+  rowActions: [
+    // The other end of the consent ladder (M6-9). A skill nobody has said yes to is not in
+    // the model's index, and this is where the yes is given.
+    { key: 'allow_skill', label: 'Allow', tool: 'allow_skill', confirm: 'Let Alexia use {name}?' },
+    { key: 'forget_skill', label: 'Forget', tool: 'forget_skill', confirm: 'Forget {name}?' },
+  ],
   detail: 'skill',
   filter: true,
 })
@@ -110,9 +115,16 @@ const LEARNED: Rendered = table({
   columns: [
     { key: 'name', label: 'Name' },
     { key: 'from', label: 'Learned from' },
+    { key: 'state', label: 'State' },
     { key: 'when', label: 'When', align: 'right', hideNarrow: true },
   ],
-  rowActions: [{ key: 'forget_skill', label: 'Forget', tool: 'forget_skill', confirm: 'Forget {name}?' }],
+  // The same two keys as the list above. A row action is looked up by key, so declaring
+  // them twice on one screen would be a press with two meanings — hence `allow_here` and
+  // `forget_here`, which reach the same two operations.
+  rowActions: [
+    { key: 'allow_here', label: 'Allow', tool: 'allow_skill', confirm: 'Let Alexia use {name}?' },
+    { key: 'forget_here', label: 'Forget', tool: 'forget_skill', confirm: 'Forget {name}?' },
+  ],
   detail: 'skill',
   filter: true,
 })

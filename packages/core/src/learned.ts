@@ -28,6 +28,21 @@ import type { Message, Store } from './store.js'
  * - **A learned skill can be wrong**, so it is attributed the moment it fires, with *edit*
  *   and *forget* right there. Finding out in a settings list nobody opens is finding out
  *   too late.
+ *
+ * Two more, written down here because this is where a future version of this file would
+ * break them (M6-9, D84):
+ *
+ * - **The checker is code, never a model.** What is checked about a skill Alexia wrote is
+ *   checked by `skills.ts`'s parser and then by a person, on the panel, before it is in the
+ *   index at all. Routing a self-authored skill through an LLM to review it makes the
+ *   checker itself the unauditable thing it exists to catch, and *the model said it was
+ *   fine* is not a review.
+ * - **A revise-and-recheck loop asks the ceiling before it dispatches, not after.** There is
+ *   no such loop today — `distil` runs once and declines by returning nothing, which is the
+ *   cheapest correct shape. If one is ever added: an author that keeps trying and a checker
+ *   that keeps failing is a loop **spawning fresh calls**, which is the one shape a ceiling
+ *   checked afterwards never catches. Check M15-7's ceilings before each round, and bound
+ *   the rounds separately.
  */
 
 /** The frontmatter key that marks a skill as one Alexia wrote rather than one somebody installed. */

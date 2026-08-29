@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { allow, forgetConsent } from './consent.js'
 import { forget } from './learned.js'
 import type { Row } from './plugins.js'
 import { Plugins } from './plugins.js'
 import type { Skills } from './skills.js'
+import type { Store } from './store.js'
 import type { PluginTooling } from './tooling.js'
 import { asText, type Trace } from './trace.js'
 
@@ -33,6 +35,8 @@ export interface Source {
 
 export interface SurfaceOptions {
   skills: Skills
+  /** Where the consent ladder is kept (M6-9). */
+  store: Store
   tooling: PluginTooling
   plugins: Plugins
   /** Where the user's own skills live. A learned skill is a folder in it. */
@@ -55,14 +59,11 @@ export function sources(options: SurfaceOptions): Record<string, Source> {
   /**
    * A skill's own text, which is the only thing there is to show about one.
    *
-   * Read through `Skills.read`, the same path the model takes, so what a person sees on this
-   * screen is what the model was given — frontmatter stripped, folder boundary enforced. A
-   * second reader here would be a second answer to *what does this skill say*.
+   * The screen's reader rather than the model's: the same file, the same frontmatter
+   * stripped, the same folder boundary — but it can open one that is still **waiting for a
+   * person**, because reading it is how somebody decides whether to say yes (M6-9).
    */
-  const skillText = (name: string): Promise<string> => {
-    const read = skills.read({ name })
-    return Promise.resolve(read.text)
-  }
+  const skillText = (name: string): Promise<string> => Promise.resolve(skills.text(name))
 
   return {
     activity: {
@@ -104,8 +105,14 @@ export function sources(options: SurfaceOptions): Record<string, Source> {
               name: skill.name,
               // A bundled skill says whose it is, which is also why it has no separate
               // delete: it arrived with something and it goes when that does.
-              where: skill.pluginId === undefined ? 'installed here' : `with ${skill.pluginId}`,
-              state: OK,
+              where:
+                skill.pluginId !== undefined ? `with ${skill.pluginId}`
+                  // Where it came from, never guessed. A folder that appeared with nothing
+                  // written about it is *unknown*, which is a fact and not a shrug (M6-9).
+                : skill.provenance === 'installed' ? 'from the marketplace'
+                : skill.provenance === 'unknown' ? 'unknown'
+                : 'installed here',
+              state: skill.live === false ? '▲ waiting for you' : OK,
             })),
         ]),
       detail: skillText,
@@ -123,6 +130,9 @@ export function sources(options: SurfaceOptions): Record<string, Source> {
               // have it recovered, and guessing at it would be worse than the blank.
               from: skill.learnedFrom ?? 'not recorded',
               when: skill.learnedAt ?? '—',
+              // A model wrote it, after a task, about what it thinks it just learned. Until
+              // somebody says yes it is not in the index and cannot be read (M6-9, D84).
+              state: skill.live === false ? '▲ waiting for you' : OK,
             })),
         ),
       detail: skillText,
@@ -212,6 +222,41 @@ export function sources(options: SurfaceOptions): Record<string, Source> {
 export function actions(
   options: SurfaceOptions,
 ): Record<string, (id: string) => Promise<{ ok: boolean; said: string }>> {
+  /**
+   * *Yes* to a skill that is waiting (M6-9).
+   *
+   * The other end of the ladder, and the only place a person grants one: a skill nobody has
+   * said yes to is not in the model's index and cannot be read by it.
+   */
+  const allowSkill = (name: string): Promise<{ ok: boolean; said: string }> => {
+    const skill = options.skills.all.find((one) => one.name === name)
+    if (!skill) return Promise.resolve({ ok: false, said: `There is no skill called ${name}.` })
+    if (skill.live !== false) return Promise.resolve({ ok: true, said: `${name} was already allowed.` })
+    allow(options.store, name)
+    options.skills.invalidate()
+    return Promise.resolve({ ok: true, said: `${name} is live. Alexia can use it now.` })
+  }
+
+  const forgetSkill = (name: string): Promise<{ ok: boolean; said: string }> => {
+    const skill = options.skills.all.find((one) => one.name === name)
+    if (skill?.pluginId !== undefined) {
+      return Promise.resolve({
+        ok: false,
+        said: `${name} came with ${skill.pluginId}. It goes when that does — delete the plugin, or disable it.`,
+      })
+    }
+    const gone = forget(options.skillsDir, name)
+    // What was said about it goes with it, so a folder that turns up under that name
+    // tomorrow is a folder nobody has said yes to (M6-9).
+    if (gone) forgetConsent(options.store, name)
+    options.skills.invalidate()
+    return Promise.resolve(
+      gone ?
+        { ok: true, said: `Forgotten. ${name} is gone.` }
+      : { ok: false, said: `There is no skill called ${name}.` },
+    )
+  }
+
   return {
     /**
      * One run, written where a person can attach it to something (M6-5).
@@ -234,21 +279,12 @@ export function actions(
       }
     },
 
-    forget_skill: (name) => {
-      const skill = options.skills.all.find((one) => one.name === name)
-      if (skill?.pluginId !== undefined) {
-        return Promise.resolve({
-          ok: false,
-          said: `${name} came with ${skill.pluginId}. It goes when that does — delete the plugin, or disable it.`,
-        })
-      }
-      const gone = forget(options.skillsDir, name)
-      options.skills.invalidate()
-      return Promise.resolve(
-        gone ?
-          { ok: true, said: `Forgotten. ${name} is gone.` }
-        : { ok: false, said: `There is no skill called ${name}.` },
-      )
-    },
+    allow_skill: allowSkill,
+    forget_skill: forgetSkill,
+    // The learned list is a second table on the same screen, and a row action is looked up
+    // by key — so two keys reaching the same two operations, rather than one key with two
+    // possible meanings.
+    allow_here: allowSkill,
+    forget_here: forgetSkill,
   }
 }

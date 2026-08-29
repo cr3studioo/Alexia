@@ -136,6 +136,52 @@ only mechanism that works.
 
 ---
 
+## Consent: pending, provenance, preauth
+
+*Added 2026-08-29 (M6-9, D84).*
+
+A plugin arrives **installed and not enabled**, and somebody says yes — because a folder
+appearing is not consent (D73). A skill used to arrive and simply be live. That was a hole
+exactly where it matters most: a **learned** skill is written by a model, after a task, about
+what it thinks it just learned, and it is the one thing in this product that starts working
+without anybody asking for it.
+
+So a skill has to be said yes to before Alexia will use it. Three records, and they are three
+because they have three lifetimes:
+
+| Record | Lifetime | What it answers |
+|---|---|---|
+| **pending** | transient | is this waiting for a human right now |
+| **provenance** | permanent, written once at creation | where did this come from |
+| **preauth** | consumed once | *yes, to this exact name*, said in advance |
+
+**Pending is derived, not stored**: it is *not bundled and not yet allowed*. A transient fact
+with a row of its own is a row that outlives what it was about.
+
+**Provenance is permanent and separate**, because of the field that looks like it means
+something else. The predecessor tried to read authorship out of a usage record, found the
+upstream field meant *is this curator-managed*, and could not recover the rows written before
+the marker existed. So: **a skill with no provenance is shown as `unknown`, never guessed** —
+the same discipline as the model catalog's honesty flags.
+
+What each source gets:
+
+| Where it came from | Provenance | Live straight away? |
+|---|---|---|
+| Bundled with a plugin | `bundled` | **Yes** — enabling the plugin was the yes, with the author's own words on screen |
+| Installed from the marketplace | `installed` | **Yes** — pressing Install is a preauth: a yes to that exact name, said in advance and spent when the folder arrives |
+| Learned from a task | `learned` | **No.** Nobody asked for it |
+| A folder that appeared | `unknown` | **No** |
+
+**A skill that is waiting is not in the model's index and cannot be read by it.** That is the
+difference between a ladder and a label. The control surface shows it, marked, with its own
+text readable — because reading it is how somebody decides.
+
+**The checker is code, never a model.** What is checked about a skill Alexia wrote is checked
+by the parser above and then by a person. Routing a self-authored skill through an LLM to
+review it makes the checker itself the unauditable thing it exists to catch, and *the model
+said it was fine* is not a review.
+
 ## The invariant holds here for free
 
 Nothing in core names a skill, and nothing in a skill names a plugin — a skill refers to

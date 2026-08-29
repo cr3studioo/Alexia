@@ -3,9 +3,11 @@ import matter from 'gray-matter'
 import { readdirSync, readFileSync } from 'node:fs'
 import { basename, isAbsolute, join, relative, resolve } from 'node:path'
 import type { ToolOutcome } from './agent.js'
+import { live, met, provenanceOf, type Provenance } from './consent.js'
 import type { Annotations } from './permissions.js'
 import type { Problem } from './plugins.js'
 import type { ToolSpec } from './provider.js'
+import type { Store } from './store.js'
 
 /**
  * Know-how, as opposed to capability (M2-2, `docs/spec/skills.md`).
@@ -69,6 +71,17 @@ export interface Skill {
    */
   learnedFrom?: string
   learnedAt?: string
+  /** Where it came from, written once at arrival. Absent is shown as *unknown* (M6-9). */
+  provenance?: Provenance
+  /**
+   * Whether the model may be shown it (M6-9, D84).
+   *
+   * A skill used to arrive and simply be live, including one a model wrote about what it
+   * thinks it just learned. `false` means it is waiting for a person, and until then it is
+   * not in the index and cannot be read — which is the difference between a ladder and a
+   * label.
+   */
+  live?: boolean
 }
 
 export interface SkillsOptions {
@@ -76,6 +89,14 @@ export interface SkillsOptions {
   dir: string
   /** Skill folders declared by installed plugins, already resolved against the plugin folder. */
   bundled?(): { dir: string; pluginId: string }[]
+  /**
+   * Where the consent ladder is kept (M6-9).
+   *
+   * Optional, and its absence means *everything is live* — which is what a caller with no
+   * store is asking for and is what every test of the scanner itself wants. The store is
+   * how core runs it.
+   */
+  store?: Store
 }
 
 export class Skills {
@@ -98,8 +119,19 @@ export class Skills {
     this.#scanned = undefined
   }
 
+  /**
+   * Everything on disk, whether or not the model may see it.
+   *
+   * The screen reads this one, because *a skill is here and waiting for you* is exactly the
+   * thing a person needs to be shown. The model reads {@link tool}, which is the other list.
+   */
   get all(): readonly Skill[] {
     return this.#read().skills
+  }
+
+  /** The ones a person has said yes to. Everything the model is offered comes from here. */
+  get usable(): readonly Skill[] {
+    return this.#read().skills.filter((skill) => skill.live !== false)
   }
 
   /** Folders holding something that is not a loadable skill, and the sentence saying why. */
@@ -115,7 +147,9 @@ export class Skills {
    * calls once to find out it was pointless.
    */
   get tool(): ToolSpec | undefined {
-    const skills = this.all
+    // The usable ones, not all of them. A skill waiting for a person is not a skill the
+    // model gets to reach for — which is what makes the ladder a gate rather than a badge.
+    const skills = this.usable
     if (skills.length === 0) return undefined
     return {
       name: SKILL_TOOL,
@@ -158,11 +192,25 @@ export class Skills {
    * around the sentence that comes back.
    */
   read(args: Record<string, unknown>): ToolOutcome {
-    const skills = this.all
+    return this.#open(this.usable, args)
+  }
+
+  /**
+   * The same text, for the screen rather than for the model.
+   *
+   * It reads **every** skill on disk, including one that is still waiting for a person —
+   * because reading it is how somebody decides whether to say yes, and a review screen that
+   * could not show you the thing under review would be a screen asking you to guess.
+   */
+  text(name: string): string {
+    return this.#open(this.all, { name }).text
+  }
+
+  #open(skills: readonly Skill[], args: Record<string, unknown>): ToolOutcome {
     const wanted = typeof args.name === 'string' ? args.name : ''
-    const skill = skills.find((s) => s.name === wanted)
+    const skill = skills.find((one) => one.name === wanted)
     if (!skill) {
-      const names = skills.map((s) => s.name)
+      const names = skills.map((one) => one.name)
       return {
         ok: false,
         text:
@@ -223,7 +271,17 @@ export class Skills {
         })
         continue
       }
-      skills.push({ ...found, ...(source.pluginId !== undefined && { pluginId: source.pluginId }) })
+      const skill: Skill = { ...found, ...(source.pluginId !== undefined && { pluginId: source.pluginId }) }
+      // Meeting it is what spends a preauth and writes down where it came from — done here
+      // because core does not watch this directory, so *the first time it is read* is the
+      // earliest moment anything can know the folder exists (M6-9).
+      const store = this.options.store
+      if (store) {
+        met(store, skill)
+        skill.provenance = provenanceOf(store, skill.name) ?? 'unknown'
+        skill.live = live(store, skill)
+      }
+      skills.push(skill)
     }
     return { skills, problems }
   }

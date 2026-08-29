@@ -240,6 +240,26 @@ test('a run is on the activity panel after the task that made it has ended', asy
   expect(readFileSync(String(exported.said).replace('Written to ', ''), 'utf8')).toContain('sort my downloads')
 })
 
+test('a skill nobody said yes to waits on the screen, and says so', async () => {
+  // The consent ladder (M6-9, D84). A plugin has had this since M2-5; a skill arrived and
+  // was simply live. These two folders were put here by this test, which is exactly the
+  // case: nothing said where they came from, so nothing may assume anybody wanted them.
+  const listed = await rows('skills')
+  const one = listed.find((row) => row.name === 'know')
+  expect(one?.where).toBe('with shipper')
+  // Except the bundled one — enabling its plugin was the yes, with the author's own words
+  // on screen, and asking again would be asking twice.
+  expect(String(one?.state)).not.toContain('waiting')
+
+  const learned = await rows('learned')
+  const model = learned.find((row) => row.name === 'sorting-downloads')
+  expect(String(model?.state)).toContain('waiting for you')
+
+  const allowed = await post('/api/action', { key: 'allow_here', row: 'sorting-downloads', confirm: true })
+  expect(allowed.ok).toBe(true)
+  expect(String((await rows('learned')).find((row) => row.name === 'sorting-downloads')?.state)).not.toContain('waiting')
+})
+
 test('a list nobody declared is a sentence, not an empty table', async () => {
   const answer = await post('/api/rows', { key: 'imaginary' })
   expect(answer.ok).toBe(false)

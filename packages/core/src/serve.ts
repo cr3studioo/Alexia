@@ -9,6 +9,7 @@ import { run, said } from './agent.js'
 import { Catalog } from './catalog.js'
 import { asRuling, counted, freshTally, ModelChecker, type Tally } from './checker.js'
 import { commands, pins, run as runCommand } from './commands.js'
+import { preauthorise, record } from './consent.js'
 import { refuse, type Body } from './guard.js'
 import { Library } from './library.js'
 import { distil, forget, learnable, outline, save, type Episode } from './learned.js'
@@ -215,6 +216,10 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
    */
   const skills = new Skills({
     dir: skillsDir,
+    // The consent ladder (M6-9). Without a store every skill is live, which is what a
+    // caller with no store is asking for; core has one, so a skill nobody has said yes to
+    // waits — and the one this exists for is the skill a model wrote about itself.
+    store,
     bundled: () =>
       plugins.ids.flatMap((id) => {
         const folder = plugins.folder(id)
@@ -333,7 +338,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
    */
   const trace = new Trace()
 
-  const surface = { skills, tooling, plugins, skillsDir, trace, dataDir: root }
+  const surface = { skills, tooling, plugins, skillsDir, trace, dataDir: root, store }
   const ours = coreSources(surface)
   const ourActions = coreActions(surface)
 
@@ -733,6 +738,11 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
       // plugin on Windows fails on the files it has open, and the half-replaced folder that
       // leaves behind is worse than the version it was replacing.
       if (asked.update === true) await plugins.disable(asked.id ?? '')
+      // Pressing Install having read what it is *is* the yes — it just arrives before the
+      // folder does. Written before the download, because the answer is about the decision
+      // and not about whether the network worked; an unspent one is consumed by the folder
+      // that turns up under that name, and by nothing else (M6-9).
+      if (asked.kind === 'skill') preauthorise(store, asked.id ?? '')
       const done =
         asked.kind === 'skill' ?
           await library.installSkill(asked.id ?? '')
@@ -872,6 +882,10 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
       // The task it came out of goes with it (M6-4): a week later, that is the only thing
       // that can say where a skill Alexia wrote came from.
       save(skillsDir, learned, episode.task)
+      // Written at creation, which is the only moment anything knows this for certain
+      // (M6-9). No preauth is spent and none is written: **nobody asked for this skill**,
+      // which is the entire reason the ladder reaches skills at all.
+      record(store, learned.name, 'learned')
       skills.invalidate()
       response.writeHead(200, { 'content-type': 'application/json' })
       response.end(
