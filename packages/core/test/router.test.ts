@@ -218,12 +218,50 @@ test('what an answer cost is recorded against whoever asked for it', async () =>
   await send([{ model: cheapPaid, provider: two }], { messages: asked('hello') }, ledger, secrets, {
     session,
     plugin: 'somebody',
+    // A plugin's work *inside a task* still spends: somebody is at the keyboard and the
+    // preview was theirs to read. The run id is what says so — see the test below.
+    run: 'a-task',
   })
 
   // 10 tokens in at $0.20 a million. Small, but attributed three ways.
   expect(ledger.spend(0)).toBeCloseTo(0.000_002)
   expect(ledger.spend(0, { session })).toBeCloseTo(0.000_002)
   expect(ledger.spendBy('plugin', 0)).toEqual([{ key: 'somebody', cost: expect.closeTo(0.000_002) }])
+  ledger.close()
+})
+
+test('a plugin working on its own clock spends nothing but free', async () => {
+  // G12 (D96). A call attributed to a plugin and belonging to no run is one nobody asked
+  // for at the keyboard — a poll loop that found a message, a timer that woke up — and the
+  // spend preview that makes an expensive run somebody's decision has nobody to show itself
+  // to. So the ceiling is a tier rather than a number, and it is derived here rather than
+  // set at each call site, because a flag at a call site is a flag somebody forgets.
+  const secrets = memorySecrets()
+  const one = { ...alpha, baseUrl: at }
+  const two = { ...beta, baseUrl: at }
+  await secrets.set(CORE, keyOf(one), 'sk-a')
+  await secrets.set(CORE, keyOf(two), 'sk-b')
+  refuse = new Set()
+
+  const ledger = new Store(':memory:')
+  await expect(
+    send([{ model: cheapPaid, provider: two }], { messages: asked('anything') }, ledger, secrets, {
+      plugin: 'telegram',
+    }),
+  ).rejects.toMatchObject({
+    status: 402,
+    // Which wall, in words that name the next action. *Raise your cap* is the wrong advice
+    // here, and it is what the one message this used to have would have said.
+    message: expect.stringContaining('works on its own and does not spend money'),
+  })
+  expect(ledger.spend(0)).toBe(0)
+
+  // The free rung is not blocked, which is the half that makes this a ceiling rather than a
+  // ban: a phone still gets answered, on the models that cost nothing.
+  const free = await send([{ model: freeText, provider: one }], { messages: asked('anything') }, ledger, secrets, {
+    plugin: 'telegram',
+  })
+  expect(free.model.id).toBe('free/text')
   ledger.close()
 })
 

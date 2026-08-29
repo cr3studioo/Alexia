@@ -38,6 +38,11 @@ test('a credential goes and the sentence around it stays', () => {
   expect(bare.text).toBe('[redacted]')
   expect(bare.kinds).toEqual(['env assignment'])
 
+  // The same bug from the other end, found by M7-3's test rather than by this one: the
+  // keyword is in the *middle*, and a pattern demanding `=` right after it sees nothing.
+  expect(redactText('AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMIK7MDENGbPxRfiCY').text).toBe('[redacted]')
+  expect(redactText('set GITHUB_TOKEN_FOR_CI = abcdefghijklmnop').text).toBe('set [redacted]')
+
   for (const shape of [
     'sk-ant-api03-Zm9vYmFyYmF6cXV4Y29ycmdl',
     'ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8',

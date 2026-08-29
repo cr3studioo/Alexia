@@ -253,12 +253,35 @@ export async function send(
   } = {},
 ): Promise<Answer> {
   let last: unknown
-  let blocked = false
+  let blocked: string | undefined
+  /**
+   * **A plugin working on its own clock spends nothing but free** (G12, D96).
+   *
+   * A call attributed to a plugin and belonging to no run is one nobody asked for at the
+   * keyboard: a poll loop that found a message, a timer that woke up. M15-7's spend preview
+   * — the thing that makes an expensive run somebody's decision — has nobody to show itself
+   * to on that path, and the monthly cap is a bound on the total rather than on this. So
+   * the ceiling here is a **tier** rather than a number: free tiers and this machine.
+   *
+   * It is derived rather than declared, and that is the point. A flag at each call site is a
+   * flag somebody forgets on the one that matters; `run` is already on the row for M7-2, and
+   * *this call belongs to no task* is exactly what it says. The checker keeps its paid path
+   * because it runs inside a task and carries that task's id.
+   *
+   * ponytail: no per-plugin allowance. The day somebody wants their phone answered by a
+   * frontier model, the upgrade is a monthly figure granted per plugin on the Library screen
+   * and read here — not a second cap mechanism.
+   */
+  const onItsOwn = hooks.plugin !== undefined && hooks.run === undefined
   for (const [at, choice] of choices.entries()) {
-    if (paid(choice.model.tier) && hooks.paidAllowed === false) {
+    if (paid(choice.model.tier) && (hooks.paidAllowed === false || onItsOwn)) {
       // A cap that is reached does not quietly pick something worse, and it does not
-      // quietly spend either. It stops, and the caller says why.
-      blocked = true
+      // quietly spend either. It stops, and the caller says why — and which wall it was,
+      // because *raise your cap* is the wrong advice for the other one.
+      blocked =
+        onItsOwn ?
+          `${hooks.plugin ?? 'a plugin'} works on its own and does not spend money — connect a free provider, or install a local model`
+        : 'the monthly cap is reached — raise it in settings, or use a free model'
       continue
     }
     // One plain line before the charge, not after it. Nobody is surprised by a bill from
@@ -309,8 +332,6 @@ export async function send(
       throw error
     }
   }
-  if (blocked && last === undefined) {
-    throw new ProviderError(402, 'the monthly cap is reached — raise it in settings, or use a free model')
-  }
+  if (blocked !== undefined && last === undefined) throw new ProviderError(402, blocked)
   throw last ?? new ProviderError(503, 'nothing was available to ask')
 }

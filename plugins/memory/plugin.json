@@ -3,7 +3,7 @@
   "manifest_version": 1,
   "id": "memory",
   "name": "Long-term memory",
-  "summary": "Remembers things across conversations — what you told it last month, and where to find it again.",
+  "summary": "Remembers things across conversations — what you told it last month, and where to find it again. Can also write things down by itself, once you turn that on.",
   "version": "0.1.0",
   "license": "AGPL-3.0-only",
   "entry": {
@@ -17,7 +17,8 @@
   "requires": [],
   "provides": [
     "memory.remember",
-    "memory.recall"
+    "memory.recall",
+    "memory.capture"
   ],
   "settings": [
     {
@@ -31,9 +32,33 @@
       "hint": "How many remembered things a search returns at most. More is more context and more cost."
     },
     {
+      "type": "toggle",
+      "key": "capture",
+      "label": "Write things down by itself",
+      "default": false,
+      "hint": "Off, Alexia only remembers what it is told to. On, every finished exchange is kept briefly and turned into notes on a timer — nothing leaves this machine that would not have anyway, and credentials are stripped before it ever sees them."
+    },
+    {
+      "type": "number",
+      "key": "interval",
+      "label": "How often to sort through it",
+      "min": 1,
+      "max": 240,
+      "step": 1,
+      "default": 12,
+      "hint": "Minutes between passes. An empty buffer costs nothing — no model is called when there is nothing to sort."
+    },
+    {
       "type": "status",
       "key": "state",
       "label": "State"
+    },
+    {
+      "type": "action",
+      "key": "sort_now",
+      "label": "Sort through it now",
+      "tool": "sort_now",
+      "hint": "Do the next pass now instead of waiting for the timer. Does nothing if there is nothing waiting."
     },
     {
       "type": "action",
@@ -46,7 +71,9 @@
   "storage": {
     "namespace": "memory",
     "tables": [
-      "facts"
+      "facts",
+      "buffer",
+      "forgotten"
     ]
   },
   "commands": [
@@ -62,12 +89,16 @@
         "key": "remembered_list",
         "type": "table",
         "label": "Remembered",
-        "hint": "Everything Alexia has written down about you. Forgetting one is the reason this screen exists — it remembered something wrong, and this is where it goes.",
+        "hint": "Everything Alexia has written down about you, and whether you said it or it worked it out. Forgetting one is the reason this screen exists.",
         "rows": "memories",
         "columns": [
           {
             "key": "text",
             "label": "What"
+          },
+          {
+            "key": "from",
+            "label": "How it got here"
           },
           {
             "key": "when",
@@ -89,5 +120,6 @@
         "groupBy": "kind"
       }
     ]
-  }
+  },
+  "lifetime": "resident"
 }

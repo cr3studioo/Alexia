@@ -59,13 +59,23 @@ const SECRETS: [string, RegExp][] = [
   ['telegram token', /\b\d{8,12}:[A-Za-z0-9_-]{30,}\b/g],
   ['private key', /-----BEGIN(?: [A-Z]+)* PRIVATE KEY-----/g],
   ['jwt', /\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g],
-  // Anything secret-named being assigned a non-trivial value. The leading character class
-  // is load-bearing and was paid for: anchoring with a word boundary silently failed on
-  // every prefixed env var, because `_` is a word character and there is no boundary inside
-  // OPENROUTER_API_KEY or TELEGRAM_BOT_TOKEN — which is the most common real shape.
+  /**
+   * Anything secret-named being assigned a non-trivial value.
+   *
+   * **Both character classes are load-bearing and both were paid for.** The leading one:
+   * anchoring with a word boundary silently failed on every *prefixed* env var, because `_`
+   * is a word character and there is no boundary inside `OPENROUTER_API_KEY` — the most
+   * common real shape, sailing straight through. The trailing one is the same bug from the
+   * other end, found by M7-3's own test: `AWS_SECRET_ACCESS_KEY=…` has the keyword in the
+   * *middle*, and a pattern demanding `=` immediately after it does not see one of the most
+   * copied-and-pasted lines there is.
+   *
+   * It over-matches — `token_count = 123456789012` goes too. That is the safe direction and
+   * it is inside exclusion 1; the line that must never be broadened is the behavioural one.
+   */
   [
     'env assignment',
-    /[A-Za-z0-9_.-]*(?:api[_-]?key|secret|token|password|passwd|bearer|credential)\s*[:=]\s*["']?[A-Za-z0-9_\-./+]{12,}/gi,
+    /[A-Za-z0-9_.-]*(?:api[_-]?key|secret|token|password|passwd|bearer|credential)[A-Za-z0-9_.-]*\s*[:=]\s*["']?[A-Za-z0-9_\-./+]{12,}/gi,
   ],
 ]
 
@@ -113,6 +123,19 @@ const LOCATIONS: [string, RegExp][] = [
 /** Deliberately not here: IBANs and card numbers. See {@link redactText}. */
 const RULES: [string, RegExp][] = [...SECRETS, ...LOCATIONS]
 
+/**
+ * The credential half alone, for the other door (M7-3).
+ *
+ * What may be *written down* is not what may be *sent*. A street address is fine in memory
+ * — it is where the user lives, and a memory that could not hold it would be a worse memory
+ * — and it is not fine in a payload bound for somebody's training corpus. So the location
+ * rules stay on the egress door and the credential rules run on both, which is the same
+ * asymmetry `SecretStore` already draws between storing and transmitting.
+ */
+export function redactSecrets(text: string): { text: string; kinds: Kinds } {
+  return apply(SECRETS, text)
+}
+
 /** What was removed, and never what it was. Countable, so a note can say how much. */
 export type Kinds = string[]
 
@@ -125,9 +148,13 @@ export type Kinds = string[]
  * against a payload exclusion 3 says is allowed.
  */
 export function redactText(text: string): { text: string; kinds: Kinds } {
+  return apply(RULES, text)
+}
+
+function apply(rules: [string, RegExp][], text: string): { text: string; kinds: Kinds } {
   const kinds: Kinds = []
   let out = text
-  for (const [kind, pattern] of RULES) {
+  for (const [kind, pattern] of rules) {
     out = out.replace(pattern, (_match, ...rest: unknown[]) => {
       kinds.push(kind)
       // A rule with a capture group keeps it — that is the JSON key, whose value is what

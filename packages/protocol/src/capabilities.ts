@@ -59,6 +59,19 @@ export const CORE_CAPABILITIES = {
    * prompt somebody misreads.
    */
   restyle: 'persona.rephrase',
+  /**
+   * Hand one finished exchange to whatever remembers things (M7-3).
+   *
+   * Core does not decide what is worth keeping and never reads it back — it hands over what
+   * was just said and forgets about it. **Fire and forget, with no answer**, because a
+   * memory that could delay an answer is a memory people turn off, and one that could refuse
+   * an answer is a memory that can break a conversation.
+   *
+   * It sits on this list rather than in core because core is complete without it: nothing
+   * asks, nothing waits, and an Alexia with no memory plugin simply does not notice things.
+   * That is a missing flourish, which is the bar for being here.
+   */
+  capture: 'memory.capture',
 } as const
 
 /**

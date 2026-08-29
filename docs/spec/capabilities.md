@@ -88,10 +88,14 @@ name and becomes a drop-in alternative rather than a competitor.
 | `demo.greet` | a name in, a greeting out | `plugins/hello` (M0) |
 | `voice.transcribe` | audio file in, text out | `plugins/voice` (M2) |
 | `voice.speak` | text in, audio played, nothing out | `plugins/voice` (M2) |
+| `persona.rephrase` | one conversational answer in, the same answer in a chosen voice out | `plugins/persona` (M4) |
+| `memory.capture` | one finished exchange in, **nothing out** — core never reads it back | `plugins/memory` (M7) |
 
-Three entries, because three exist. `demo.greet` is real: `plugins/hello` provides it and
+Five entries, because five exist. `demo.greet` is real: `plugins/hello` provides it and
 `plugins/vanisher` requires it, which is how *delete the provider and the consumer keeps
-running* stays a test rather than a claim. **This table grows by pull request, never by a string
+running* stays a test rather than a claim. The last two are the ones **core itself** reaches
+for — they are also in `CORE_CAPABILITIES`, and the rule for being there is that core works
+completely when nothing provides them. **This table grows by pull request, never by a string
 somebody typed.** A name invented locally is a name the next plugin will spell differently,
 and then there are two capabilities that mean the same thing and no drop-in alternative for
 either.

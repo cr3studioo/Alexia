@@ -193,7 +193,7 @@ Tick a box only when the task's acceptance criteria pass. `[GATE]` needs a human
 
 - [x] **M7-1** Nothing leaves this machine unread — egress redaction
 - [x] **M7-2** One id, four records
-- [ ] **M7-3** Memory that captures without being asked
+- [x] **M7-3** Memory that captures without being asked
 - [ ] **M7-4** A voice that is yours — cloning, and the engine it costs
 - [ ] **M7-5** A button in Telegram, and somewhere else to land
 - [ ] **M7-6** Three tiers, and the cheapest one has no model in it
@@ -2889,6 +2889,17 @@ id and agree with each other. A fallback on 429 shows both model names against t
 
 ### M7-3 Memory that captures without being asked
 
+**Built 2026-08-29 (D96, D97).** Core hands each finished exchange to a **new core
+capability**, credentials stripped by M7-1's own scan on the way; `plugins/memory` buffers it
+at no cost and turns the pile into linked notes on its own clock. **G12 answered first,
+because the task said not to build until it was**: a plugin may run on its own clock, and on
+it spends nothing but free — derived in `send()` from *attributed to a plugin, belonging to
+no run*, which M7-2 had just made expressible. **G9 answered by the contract**: one plugin,
+because a second one could not read the first's namespace and *recall* would see half a
+memory. The four hard-won details are all in, each with the failure it prevents named beside
+it, and `noticing.test.ts` drives the real plugin process end to end with a scripted model
+where a free one would be.
+
 **Alexia writes something down because it was worth writing down, not because the model
 remembered to call a tool.**
 
@@ -2965,6 +2976,47 @@ plugin beside it.
 find it written down and linked from the right place. Say *forget that*, and it does not come
 back on the next tick. Delete `plugins/memory` and every note goes with it — invariant 5,
 unchanged.
+
+**What building it decided, and what it turned up.**
+
+- **G12 — yes, on its own clock, and it spends nothing but free.** The ceiling is a *tier*
+  rather than a number, because M15-7's spend preview — the thing that makes an expensive run
+  somebody's decision — has nobody to show itself to when a timer wakes up. It is **derived,
+  not declared**: `send()` reads *a plugin, and no run* as *free only*, so it is one rule in
+  the place M7-1 already put one rather than a flag at each call site somebody must remember.
+  The checker keeps its paid path because it runs inside a task and carries that task's id.
+  This is a real tightening: `sampling` could spend to the monthly cap before today.
+- **G9 — one plugin, and the contract decided it.** A second plugin *cannot read the first's
+  tables* — that is the namespace rule, not a preference — so *recall* would see half the
+  memory and a person would have two screens called Memory. Running the cheap one only stays
+  possible, as a switch rather than as a second folder.
+- **The switch is the binding, not a check.** `memory.capture` is bound on the tool **only
+  while capture is on**, so with it off core resolves nothing and never hands the exchange
+  over at all. Nothing new was needed: the runtime binding was always separate from the
+  manifest's declaration, for exactly this sort of reason.
+- **One stage where the predecessor had two.** Its cheap triage existed to keep an expensive
+  model off most of the volume, and a plugin on its own clock cannot reach one. The property
+  that mattered survives: an empty buffer asks nothing, so an idle Alexia costs nothing.
+- **Two layers of forget, not three.** The predecessor kept a permanent raw log behind its
+  buffer; a second copy of everything anybody ever said is a privacy cost paid for a feature
+  nobody asked for. The cascade is the buffer, then the notes, then a tombstone every time.
+- **`[]` and `null` are different answers**, and the test that found it is the one about
+  quarantine: an empty array is *nothing worth keeping* and drains the buffer, while prose,
+  a truncated array or an object is the model not answering and the rows keep their turn.
+  Treating the second as the first is how an hour of conversation disappears silently.
+- **Two bugs fell out, both older than this task.** `AWS_SECRET_ACCESS_KEY=…` walked straight
+  through M7-1's egress scan — the keyword is in the *middle*, and the pattern demanded `=`
+  immediately after it. And `store.select` **threw on a declared table nothing had ever been
+  written to**: `create` makes it with a `rowid` and no columns, so `ORDER BY at` on a fresh
+  install was a crash rather than an empty list — which is the memory panel on the one path
+  nobody tests. Both fixed at the root, with the reason written where the fix is.
+
+**G8 has reopened, exactly as written.** D90 refused a `graph` widget because *this* plugin's
+links would have to be inferred. They are authored now — the model names what a note belongs
+under, code drops any name it was not shown, and the link goes on both notes — which is the
+condition D90 named as the thing it was waiting for. **It is not being built here**: a widget
+is M6's work, the table still shows what this store has, and the recommendation in D90 stands.
+What has changed is that the question now has a real user.
 
 ### M7-4 A voice that is yours
 
@@ -3215,14 +3267,17 @@ For `questions.md`. Each one came out of planning and none of them blocks starti
   the sandboxed iframe for this case and not by default. Whichever wins sets the precedent for
   every plugin after it, so it is worth deciding on evidence rather than on the first one that
   works. *Decide at M6-7, with the table already shipped so nothing is blocked on it.*
-- **G8. Reopens at M7-3 if the vault ships.** D90 refused the graph because *this* plugin's
-  links would have to be inferred, and a picture of inferred similarity looks meaningful and
-  is not. A vault's links are **authored**, which is the condition D90 named. The refusal was
-  right and it is not overturned — it is waiting, exactly as written.
-- **G9.** Does memory-that-captures-by-itself replace `plugins/memory`, or stand beside it as
-  a second plugin? Replacing it makes one screen and one delete; standing beside it keeps a
-  memory you can read at a glance separate from one that grows on its own, and lets somebody
-  run the cheap one only. *Decide at M7-3, and note that invariant 5 has to hold either way.*
+- **G8. Reopened 2026-08-29 at M7-3, with a real user.** The vault shipped and its links are
+  **authored** — the model names what a note belongs under, code drops any name it was not
+  shown, and the link goes on both notes — which is the condition D90 named. The refusal is
+  not overturned and nothing was built: a widget is M6's work, and D90's recommendation (a
+  hand-written force layout if it is genuinely small, otherwise the sandboxed iframe) stands.
+  *Decide when somebody wants to look at the shape of their own memory and the table is not
+  enough — which is a question about use, and there is no use yet.*
+- **G9. Answered 2026-08-29 at M7-3 — one plugin (D97).** Not on the balance of screens: the
+  **contract decided it.** A second plugin cannot read the first's tables, so *recall* would
+  see half the memory and there would be two tabs called Memory with no way to join them.
+  Running the cheap one only survives as a switch, which is one toggle rather than one folder.
 - **G10.** Voice cloning needs an engine Piper is not. Second plugin, or an engine setting
   inside `plugins/voice`? A second plugin keeps the local-only promise literally true and
   deletable; a setting keeps one voice screen and one place a voice is chosen. *Decide at
@@ -3234,13 +3289,15 @@ For `questions.md`. Each one came out of planning and none of them blocks starti
   whose only purpose is to send more. The legitimate case is real and is priced rather than
   denied: a plugin whose job is credentials or addresses gets them stripped on the way to a
   hosted model, and its answer is `T0`, where nothing is stripped because nothing leaves.
-- **G12.** **May a plugin run on its own clock, and spend on it?** The largest contract
-  question left. Half is answered — `plugins/telegram` holds a poll loop under
-  `lifetime: "resident"` (D77), and `sampling` is a per-request capability. The unanswered
-  half is the ceiling: M15-7 counts what a *task* spends, and a plugin waking every twelve
-  minutes to call a model spends against no task at all. Without an answer there is no honest
-  spend panel and no honest cap. *Decide at M7-3 — it gates M7-3 and all four of Backlog
-  7–10.*
+- **G12. Answered 2026-08-29 at M7-3 — yes, and on its own clock it spends nothing but free
+  (D96).** The ceiling is a **tier rather than a number**, because M15-7's spend preview has
+  nobody to show itself to when a timer wakes up, and the monthly cap bounds the total rather
+  than this. **Derived, not declared**: `send()` reads *attributed to a plugin, belonging to
+  no run* as *free only*, which M7-2's `run_id` had just made expressible — one rule in the
+  place M7-1 already put one, rather than a flag at every call site. The checker keeps its
+  paid path because it runs inside a task and carries that task's id. A real tightening:
+  `sampling` could spend to the cap before this. **Backlog 7–10 are unblocked** and inherit
+  the same ceiling — a plugin on its own clock may wake, and may not bill anybody for it.
 
 ---
 
@@ -3250,6 +3307,8 @@ Newest first. Every entry here is also in Alexia.md's decision log.
 
 | Date | Entry |
 |---|---|
+| 2026-08-29 | **D96** — **a plugin may work on its own clock, and on it spends nothing but free.** G12 answered at M7-3, and it had to be answered first because the task said not to build until it was. Half was already true — `resident` (D77) and `sampling`. The unanswered half was the ceiling, and the answer is that **the ceiling is a tier rather than a number**: M15-7's spend preview is what makes an expensive run somebody's decision, and when a timer wakes up there is nobody to show it to. So free tiers and this machine, always; a paid model never. **It is derived rather than declared**, which is the part worth keeping: `send()` reads *attributed to a plugin, belonging to no run* as *free only*, and M7-2's `run_id` is what made that sentence expressible a day earlier. One rule, in the same place M7-1 put one, instead of a flag at every call site — because a flag at a call site is a flag somebody forgets on the one that matters. The checker keeps its paid path by construction: it runs inside a task and carries that task's id. **This is a real tightening** — until today `sampling` could spend to the monthly cap, and a resident plugin waking every twelve minutes had nothing between it and the money. The refusal says which wall it hit, because *raise your cap* is the wrong advice here. **Backlog 7–10 are unblocked** and inherit the ceiling: proactive messaging, the reliability scorecard, bounded self-healing and web-watch may all wake on their own, and none of them may bill anybody for it. ponytail: no per-plugin allowance — the upgrade, if somebody wants their phone answered by a frontier model, is a monthly figure granted per plugin on the Library screen and read in the same place. |
+| 2026-08-29 | **D97** — **Alexia notices things now, and the switch is the binding.** M7-3, G9 answered. Core hands each finished exchange to a **new core capability** and forgets about it — `void`, caught, never awaited, because a memory that could delay an answer is one people turn off and one that could throw would break a conversation over a flourish. **Credentials are stripped on the way and location is not**: what may be written down is not what may be sent, an address is worth remembering and only dangerous when it leaves, and it is M7-1's own scan on the other door. **G9 was decided by the contract rather than by taste** — a second plugin cannot read the first's tables, so *recall* would see half the memory; running the cheap one only survives as a toggle. **The consent lives in the runtime binding**: the capability is bound only while capture is on, so with it off core resolves nothing and never hands the conversation over at all — a stronger promise than taking it and dropping it, and it needed no new mechanism. **One stage where the predecessor had two**, because its cheap triage existed to keep an expensive model off the volume and a plugin on its own clock cannot reach one; the property that mattered survives, since an empty buffer asks nothing. **Two layers of forget, not three** — its permanent raw log is a second copy of everything anybody ever said, which is a privacy cost paid for a feature nobody asked for. All four hard-won details are in: code overrules a model that claims a duplicate, the cascade clears the buffer first, a tombstone is written whether or not anything matched, and a batch that breaks the call is set aside after three tries and never discarded. **Building it turned up two bugs older than the task** — `AWS_SECRET_ACCESS_KEY=…` walked through M7-1's scan because the keyword is in the middle, and `store.select` threw on a declared table nothing had ever been written to, which is the memory panel on a fresh install. Both fixed at the root. **G8 has reopened with a real user**: these links are authored, which is the condition D90 named, and nothing was built on it — the refusal stands and now has something to be asked about. |
 | 2026-08-29 | **D95** — **a cost belongs to a run, and the trace stopped keeping its own tally.** M7-2. Two columns on `usage` — `run_id`, and `asked` beside the `model` that answered — written by `send()`, carried by the loop, handed down by `serve.ts`. **The restraint version 1 showed is the whole lesson**: it did not invent a second id scheme, it put the id it already had on the rows that were missing it, and that is what this is. **The subtraction had to go, not merely gain a column.** `Run.spent` was the allowance before the run subtracted from the allowance after, which two overlapping runs — one at the keyboard, one from Telegram — would split between them, and which could never say which *call* was the dear one. It is replaced by the ledger's own rows, so the trace and the ledger cannot disagree about a run: they are the same rows, and `spentOn()` sums them. **The checker's spend goes on the run too**, because a review is a model call made because of a task, and a total that omitted the reviews that made a task safe would have passed the acceptance on a number smaller than the truth. **The activity table grew a Cost column and nothing else changed** — declared like every other column, drawn by the same function, which is M6-4 still holding three tasks later. And the null case is a sentence rather than a zero: a run with no charges reads *no model call was recorded against this run*, because `$0.0000` is a different claim and sometimes a wrong one. |
 | 2026-08-29 | **D94** — **the payload is read before it goes, and the third exclusion has a test.** M7-1, G11 answered. `redact.ts` is sixteen regexes and one pass, called from `send()` one line above the only `chat()` in the repo — **there is one door out of this codebase**, and a test reads the source to say so, because a rule enforced at whichever call site somebody remembers is not enforced. Everything bound for anything but `T0` is stripped; `T0` is not, on the fact that only `ollama.ts` ever writes that tier. **The interesting half is what is deliberately allowed.** The owner's quote sits at the top of the file and *"the things how i operate, what i do, what i like"* is exclusion 3, so four behavioural sentences are asserted to arrive **whole** — a future session tightening this helpfully goes red rather than unnoticed, which is the only form a comment saying *do not broaden this* can take and be believed. Version 1's IBAN and card rows did not come across: it carried them for a rule of its own, and a pattern that eats any thirteen-digit run is a real cost paid against a payload the quote permits. **G11 is core's rule**, and building it supplied the argument the plan had not: a plugin never sees the outbound payload at all, so an opt-out would mean inventing a way to ask for one. The legitimate case is priced instead of denied — a plugin whose job is addresses gets them stripped on the way out, and its answer is `T0`, where nothing is stripped because nothing leaves. **And check 8 caught the first draft of the comment**: *"this is also where nothing leaves unread"* is precisely the overclaim `no-overclaiming-strings` exists to find, written into a privacy file by the session that had just read that check. It went red on a comment, which is the failure it was built for. |
 | 2026-08-29 | **D93** — **version 1 was read end to end, and it knew six things this repo does not.** M7 inserted. The first Alexia is still on this machine (the path is in M7's own header, deliberately, so nobody has to guess); M6 took its screen, and this is what was underneath — its `control/`, `core/` and `adapters/` compared against what is actually built here rather than against what anybody remembers building. **One of the six is a hole rather than a missing feature**: D51 makes free endpoints the default and nothing strips a credential or a location before a payload reaches one, which `core/redact.py` did in code, with the owner's own three exclusions and the third — *everything behavioural goes, deliberately* — quoted so a later session cannot tighten it into uselessness. The rest are ordered by what to build first rather than by size: **one id** on the spend row, because `usage` records a `session_id` and ten tasks in one sitting share it, so the panel can say what today cost and not what *that* cost; **memory that captures without being asked**, the largest, carrying four failures already paid for — a model marking twenty-four real memories duplicate and silently writing nothing, a forget undone twelve minutes later by a buffer nobody cleared, a queue frozen forever on one bad row, and a tombstone for the forget that matched nothing; **cloning**, which is the real user D89's `file` refusal was waiting for; **a button in Telegram**, because that plugin's own source says *you have no tools on this path* and means there is nowhere to ask; and **three execution tiers**, whose zero-cost bottom rung was guaranteed by the import graph rather than by a comment. **Four more are in the Backlog, not tasks**, all waiting on the same question: proactive messaging, a reliability scorecard, bounded self-healing, web-watch. That question is **G12 — may a plugin run on its own clock, and spend on it** — half-answered already by `resident` and `sampling`, and unanswered where it matters, since M15-7 counts what a task spends and a plugin waking every twelve minutes spends against no task at all. **Nothing is vendored and nothing is a submodule**: it is a Python app on the gateway this project replaced, so every path is named to be read for its reasons, and every task stands if the folder is gone. |

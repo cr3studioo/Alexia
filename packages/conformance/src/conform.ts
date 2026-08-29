@@ -247,7 +247,7 @@ export async function conform(given: string, options: ConformOptions = {}): Prom
         unbound.length === 0 ? 'pass' : 'warn',
         unbound.length === 0 ?
           `every declared capability is bound to a tool: ${promised.join(', ')}`
-        : `declared but not bound to any tool right now: ${unbound.join(', ')}. Legitimate if it needs a download first; a bug otherwise`,
+        : `declared but not bound to any tool right now: ${unbound.join(', ')}. Legitimate if it needs a download first, or if it waits on a switch nobody has turned on; a bug otherwise`,
       )
     }
 

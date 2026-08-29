@@ -221,8 +221,11 @@ the task that closes it.*
   browser will not tell a page where a file is, so a `path` can never be filled by picking, and
   *choosing a file* is genuinely inexpressible in the schema. That argument is real and is
   waiting on a real user.
-- [x] **G8.** Does a plugin ever get to draw something core cannot? **Answered 2026-08-29
-  (D90): not yet, because the first real instance turned out not to be one.** `plugins/memory`
+- [~] **G8.** Does a plugin ever get to draw something core cannot? **Answered 2026-08-29
+  (D90): not yet, because the first real instance turned out not to be one — and reopened the
+  same day (D97) now that the vault's links are authored, which is the condition D90 named.
+  Nothing was built on the reopening: the refusal stands and now has something to be asked
+  about.** `plugins/memory`
   stores flat sentences with a category, not a graph. The predecessor's graph was over an
   Obsidian vault where the links were *authored*; here they would have to be *inferred*, and a
   graph of inferred similarity is a picture that looks meaningful and is not — worse than no
@@ -236,10 +239,13 @@ the task that closes it.*
 *The first Alexia read end to end (D93). These four came out of the comparison; three of them
 are still open, and the last one is the largest contract question left.*
 
-- [ ] **G9.** Does memory-that-captures-by-itself replace `plugins/memory`, or stand beside it
-  as a second plugin? Replacing it makes one screen and one delete; standing beside it keeps a
-  memory you can read at a glance separate from one that grows on its own, and lets somebody
-  run the cheap one only. *Decide at M7-3 — and invariant 5 has to hold either way.*
+- [x] **G9.** Does memory-that-captures-by-itself replace `plugins/memory`, or stand beside it
+  as a second plugin? **Answered 2026-08-29 (D97): one plugin, and the contract decided it.**
+  Not the balance of screens — a second plugin **cannot read the first's tables**, because that
+  is the namespace rule rather than a preference, so *recall* would see half the memory and
+  there would be two tabs called Memory with no way to join them. Running the cheap one only
+  survives as a switch, which is one toggle rather than one folder. Invariant 5 holds: the two
+  new tables are declared, so a purge takes them.
 - [ ] **G10.** Voice cloning needs an engine Piper is not. Second plugin, or an engine setting
   inside `plugins/voice`? A second plugin keeps the local-only promise literally true and
   deletable; a setting keeps one voice screen and one place a voice is chosen.
@@ -253,12 +259,16 @@ are still open, and the last one is the largest contract question left.*
   whose only purpose is to send more. The legitimate case is priced rather than denied: a
   plugin whose job is credentials or addresses gets them stripped on the way to a hosted
   model, and its answer is `T0`, where nothing is stripped because nothing leaves.
-- [ ] **G12.** **May a plugin run on its own clock, and spend on it?** Half is answered —
-  `plugins/telegram` holds a poll loop under `lifetime: "resident"` (D77) and `sampling` is a
-  per-request capability. The unanswered half is the ceiling: M15-7 counts what a *task*
-  spends, and a plugin waking every twelve minutes to call a model spends against no task at
-  all, so there is no honest spend panel and no honest cap without it. *Decide at M7-3 — it
-  gates M7-3 and all four of Backlog 7–10.*
+- [x] **G12.** **May a plugin run on its own clock, and spend on it?** **Answered 2026-08-29
+  (D96): yes to the clock, and on it it spends nothing but free.** The ceiling is a **tier
+  rather than a number**, because M15-7's spend preview is what makes an expensive run
+  somebody's decision and a timer waking up has nobody to show it to. **Derived rather than
+  declared**: the router reads *attributed to a plugin, belonging to no run* as *free only* —
+  one rule, in the place M7-1 already put one, instead of a flag at every call site. M7-2's
+  `run_id`, added the day before, is what made that sentence expressible. The checker keeps
+  its paid path because it runs inside a task and carries that task's id. A real tightening —
+  `sampling` could spend to the monthly cap before this. **Backlog 7–10 are unblocked** and
+  inherit the ceiling: they may wake, and they may not bill anybody for it.
 
 ## F. Project logistics
 
@@ -316,6 +326,9 @@ are still open, and the last one is the largest contract question left.*
   Hermes already does this against the agentskills.io standard. Raised E8, E9, C13.
 - **Model switching** — answered the context question; surfaced the Local-to-Cloud privacy
   trap, which reshaped how proactive detection has to work.
+- **G12, G9** — a plugin may work on its own clock and spends nothing but free while it does;
+  memory-that-notices is one plugin rather than two, because a second could not read the
+  first's tables. Reopened G8 with the real user D90 was waiting for.
 - **G11** — egress redaction is core's rule, with no way for a plugin to ask past it. The
   reason that settled it is that a plugin never sees the outbound payload in the first place.
 - **E8, C13, E7, C6** — agentskills.io adopted, learned-skill offer is a model judgement,

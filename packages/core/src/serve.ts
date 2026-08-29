@@ -32,6 +32,7 @@ import {
   type Scope,
 } from './permissions.js'
 import { keyOf, PROVIDERS } from './provider.js'
+import { redactSecrets } from './redact.js'
 import { MODES, route, send, shapeOf } from './router.js'
 import { CORE, keychain, type SecretStore } from './secrets.js'
 import { addServer, markReviewed, unreviewed } from './servers.js'
@@ -57,6 +58,25 @@ import { allowance, warning } from './usage.js'
  * required on every call, and the `Host` header checked so a name resolving to 127.0.0.1
  * cannot be used to reach it from a web page.
  */
+
+/**
+ * One finished exchange, in the shape the capture capability takes it (M7-3).
+ *
+ * **Credentials never make the trip.** The same scan the router runs on the way out (M7-1),
+ * on the other door — because a key pasted into a conversation is the one thing that must be
+ * in neither a payload nor a memory, and a plugin that never sees it cannot leak it.
+ *
+ * **Location is deliberately not stripped.** What may be *written down* is not what may be
+ * *sent*: where somebody lives is worth remembering and only dangerous when it leaves, and a
+ * memory that could not hold an address would be a worse memory for no gain. That asymmetry
+ * is the same one `SecretStore` already draws between storing and transmitting.
+ *
+ * Its own function so it is a thing that can be tested rather than an argument list buried
+ * in a handler — this is the one place core hands a conversation to a plugin.
+ */
+export function exchange(said: string, answered: string, at: number = Date.now()): Record<string, unknown> {
+  return { said: redactSecrets(said).text, answered: redactSecrets(answered).text, at }
+}
 
 export interface ServeOptions {
   dataDir?: string
@@ -191,7 +211,6 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
             .join('\n'),
         })),
       ]
-      const month = allowance(store)
       const verdict = route({ messages: asked, shape: shapeOf({ messages: asked }) }, pins(store), await world())
       if (!verdict.ok) throw new Error(verdict.why)
       const answer = await send(
@@ -199,7 +218,10 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
         { messages: asked, ...(params.maxTokens !== undefined && { maxTokens: params.maxTokens }) },
         store,
         secrets,
-        { plugin: pluginId, paidAllowed: !month.stop },
+        // No `run`, because there is no task: a plugin asked. **That is also the ceiling**
+        // — `send` reads *attributed to a plugin, belonging to no run* as *free tiers only*
+        // (G12, D96), so the rule is the router's rather than this call site's.
+        { plugin: pluginId },
       )
       return {
         role: 'assistant',
@@ -1273,6 +1295,28 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
       if (result.ended === 'answered' && learnable(episode)) {
         lesson = episode
         say({ learn: { about: text.slice(0, 120), outline: outline(episode) } })
+      }
+
+      /**
+       * What was just said, handed to whatever remembers things (M7-3).
+       *
+       * **Core does not decide what is worth keeping**, does not read it back, and does not
+       * wait for it. It hands over the exchange and moves on: a memory that could delay an
+       * answer is a memory people turn off, and one that could throw would break a
+       * conversation over a flourish. Nothing provides it → nothing happens, which is the
+       * bar for being a capability at all.
+       *
+       * **Credentials never make the trip.** The same scan the router runs on the way out
+       * (M7-1), on the other door — because what may be written down is not what may be
+       * sent, and a key pasted into a conversation is the one thing that must be in neither.
+       * Location is deliberately *not* stripped here: where somebody lives is a thing worth
+       * remembering, and it is only dangerous when it leaves.
+       */
+      if (result.ended === 'answered' && (last?.content.trim() ?? '') !== '') {
+        void plugins.capability(CORE_CAPABILITIES.capture, exchange(text, last?.content ?? '')).catch(() => {
+          // Nothing provides it, or whatever does is having a bad day. Either way this is
+          // not the user's problem and never becomes one.
+        })
       }
 
       say({

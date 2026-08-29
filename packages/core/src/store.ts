@@ -312,7 +312,26 @@ export class Store {
     return Number(statement.run(...Object.values(row).map(encode)).lastInsertRowid)
   }
 
+  /**
+   * A declared table nothing has ever been written to.
+   *
+   * `create` makes it with a `rowid` and no columns, because nothing knows what the columns
+   * are until a row arrives — which means **`ORDER BY at` on a fresh install is a crash**,
+   * not an empty list. It bit the memory panel on the one path nobody tests: enable the
+   * plugin, open the screen before anything has been remembered.
+   *
+   * Guarded here rather than at the four call sites, and narrowly: a table with no columns
+   * has no rows, so reading it, changing it and deleting from it are all *nothing*. A typo
+   * in a column name on a table that has rows still fails loudly, which is the half worth
+   * keeping.
+   */
+  #unwritten(ns: string, table: string): boolean {
+    const columns = this.#db.prepare(`PRAGMA table_info(${physical(ns, table)})`).all()
+    return columns.length <= 1
+  }
+
   select(ns: string, table: string, query: SelectQuery = {}): Row[] {
+    if (this.#unwritten(ns, table)) return []
     const clause = where(query.where)
     const order = (query.order ?? [])
       .map(([column, direction]) => `${ident(column)} ${direction === 'desc' ? 'DESC' : 'ASC'}`)
@@ -328,6 +347,7 @@ export class Store {
   }
 
   update(ns: string, table: string, set: Row, clause: Where): number {
+    if (this.#unwritten(ns, table)) return 0
     const name = this.#ensure(ns, table, set)
     const assignments = Object.keys(set).map((k) => `${ident(k)} = ?`)
     const filter = where(clause)
@@ -336,6 +356,7 @@ export class Store {
   }
 
   delete(ns: string, table: string, clause: Where | undefined): number {
+    if (this.#unwritten(ns, table)) return 0
     const filter = where(clause)
     return Number(
       this.#db.prepare(`DELETE FROM ${physical(ns, table)}${filter.sql}`).run(...filter.params).changes,
@@ -343,6 +364,7 @@ export class Store {
   }
 
   count(ns: string, table: string, clause?: Where): number {
+    if (this.#unwritten(ns, table)) return 0
     const filter = where(clause)
     const row = this.#db
       .prepare(`SELECT count(*) AS n FROM ${physical(ns, table)}${filter.sql}`)
