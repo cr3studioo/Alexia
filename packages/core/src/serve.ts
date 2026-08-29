@@ -32,7 +32,7 @@ import {
   type Ruling,
   type Scope,
 } from './permissions.js'
-import { keyOf, PROVIDERS } from './provider.js'
+import { keyOf, PROVIDERS, type Provider } from './provider.js'
 import { redactSecrets } from './redact.js'
 import { MODES, route, send, shapeOf } from './router.js'
 import { CORE, keychain, type SecretStore } from './secrets.js'
@@ -156,7 +156,10 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
   // public, which is what lets first run show what is free before anybody has pasted a key,
   // and it is what lets the Models tab show what a key would get you. A provider that is
   // unreachable, or that wants a key for its list, leaves the cache exactly as it was.
-  for (const provider of PROVIDERS) void catalog.refresh(provider)
+  const poll = async (provider: Provider): Promise<void> => {
+    void (await catalog.refresh(provider, undefined, await secrets.get(CORE, keyOf(provider)).catch(() => undefined)))
+  }
+  for (const provider of PROVIDERS) void poll(provider)
 
   const session = store.sessions()[0]?.id ?? store.createSession()
 
@@ -676,6 +679,11 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
         // Straight to the keychain, never to the database — the same path a plugin's
         // password takes, and the same check proves it.
         if (provider) await secrets.set(CORE, keyOf(provider), chosen.provider.key)
+        // And its list, now that there is something to ask with. Four of the six refuse an
+        // unauthenticated request, so this is the moment their models become knowable at
+        // all — waiting for the next restart would mean connecting a provider and finding
+        // the Models tab still empty, with nothing on screen saying why.
+        if (provider) void catalog.refresh(provider, 0, chosen.provider.key)
       }
       response.writeHead(200, { 'content-type': 'application/json' })
       response.end(JSON.stringify(setup()))

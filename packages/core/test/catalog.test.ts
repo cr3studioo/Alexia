@@ -198,3 +198,30 @@ test('a provider that publishes nothing but ids is still a list of models', asyn
   expect(model?.tier).toBe('T1')
   expect(model?.supportsTools).toBe(false)
 })
+
+test('a list that needs a key is fetched with one', async () => {
+  const path = file()
+  let seen: string | undefined
+  const guarded = createServer((request, response) => {
+    seen = request.headers.authorization
+    // Groq, Cerebras and Mistral all answer this to a bare request. Four of the six do.
+    if (seen === undefined) {
+      response.writeHead(401, { 'content-type': 'application/json' })
+      response.end(JSON.stringify({ error: 'Invalid API Key' }))
+      return
+    }
+    response.writeHead(200, { 'content-type': 'application/json' })
+    response.end(JSON.stringify({ data: [{ id: 'needs-a-key', context_window: 8_192 }] }))
+  })
+  await new Promise<void>((resolve) => guarded.listen(0, '127.0.0.1', resolve))
+  const needy: Provider = { ...provider, id: 'needy', baseUrl: `http://127.0.0.1:${(guarded.address() as AddressInfo).port}` }
+
+  const catalog = new Catalog(path)
+  // Without one it is a failed fetch, not a provider with no models.
+  expect((await catalog.refresh(needy, 0)).failed).toContain('could not reach')
+  expect(catalog.models).toHaveLength(0)
+
+  expect((await catalog.refresh(needy, 0, 'sk-users-own')).added.map((m) => m.id)).toEqual(['needs-a-key'])
+  expect(seen).toBe('Bearer sk-users-own')
+  guarded.close()
+})

@@ -117,16 +117,28 @@ export class Catalog {
    * A fetch that fails leaves the cache exactly as it was and says why in `failed`. Being
    * offline is an ordinary state for this, not an error worth throwing at anyone.
    */
-  async refresh(provider: Provider, maxAge = DAY): Promise<Change> {
+  async refresh(provider: Provider, maxAge = DAY, key?: string): Promise<Change> {
     if (!provider.models) return { added: [], removed: [], failed: `${provider.name} has no model list` }
     if (Date.now() - this.fetchedFrom(provider.id) < maxAge) return { added: [], removed: [] }
 
     let models: Model[]
     try {
-      // No key: a model list is public, and the first-run flow shows what is free before
-      // anyone has connected anything.
+      /**
+       * The key when there is one, and no key when there is not.
+       *
+       * This used to send nothing at all, on the stated grounds that a model list is public.
+       * That is true of two providers out of six. Measured: OpenRouter and NVIDIA answer
+       * 200 to a bare request; Groq says 401, Cerebras 403, Mistral 401, Google 404. So four
+       * of them were permanently absent from a catalog that had no way to say why — and the
+       * first-run screen showing what is free, which is the reason the unauthenticated
+       * request exists, is still exactly what happens before anybody has pasted anything.
+       */
       const response = await fetch(`${provider.baseUrl}${provider.models}`, {
-        headers: { accept: 'application/json', ...provider.headers },
+        headers: {
+          accept: 'application/json',
+          ...(key !== undefined && key !== '' && { authorization: `Bearer ${key}` }),
+          ...provider.headers,
+        },
       })
       if (!response.ok) throw new Error(`${response.status}`)
       models = parse(await response.json(), provider)
