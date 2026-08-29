@@ -94,7 +94,8 @@ export interface ModelCheckerOptions {
   placement?: 'local' | 'cloud'
   /** The model doing the work, so the reviewer is not the thing it is reviewing. */
   worker?: string
-  session?: number
+  /** Which conversation the review is charged to, asked per review — it moves (M8-2). */
+  session?: () => number
 }
 
 /**
@@ -133,7 +134,7 @@ export class ModelChecker implements Checker {
         this.options.store,
         this.options.secrets,
         {
-          ...(this.options.session !== undefined && { session: this.options.session }),
+          ...(this.options.session !== undefined && { session: this.options.session() }),
           ...(context.run !== undefined && { run: context.run }),
           // The checker never spends money without being told to. A reviewer that quietly
           // costs more than the task is a reviewer people turn off.

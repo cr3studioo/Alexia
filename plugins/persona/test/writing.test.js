@@ -20,6 +20,23 @@ test('the brief carries the description and forbids inventing around it', () => 
   expect(said).toMatch(/skip asking permission/)
 })
 
+test('the shape is a skeleton, because a worked example is a thing a model copies', () => {
+  // 2026-08-29, live: SHAPE was a complete chief-of-staff personality. Asked for a Victorian
+  // butler, a free model returned that example's headline, its role sentence and both of its
+  // bullets, with only *How you talk* replaced — so the name it was told never to invent
+  // reached the document from the instructions. Every personality would have been the same
+  // person wearing a different voice.
+  //
+  // The check is that the shape names nobody: no person, no role, no habit. Only headings
+  // and a bracket saying what belongs under each.
+  const body = SHAPE.split('\n').filter((line) => !line.startsWith('#'))
+  for (const line of body) {
+    expect(line === '' || line.startsWith('<'), line).toBe(true)
+  }
+  // And the instruction that goes with a skeleton rather than an example: fill it in.
+  expect(brief('anything')).toMatch(/replace each/)
+})
+
 test('code fences come off, because a model told not to use them still does', () => {
   expect(clean('```markdown\n# Chief of staff\n\nBe blunt.\n```')).toBe('# Chief of staff\n\nBe blunt.')
   expect(clean('```\n# Chief of staff\n```')).toBe('# Chief of staff')

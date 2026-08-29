@@ -77,6 +77,16 @@ export interface SurfaceOptions {
    * fetch lands in time for the next open.
    */
   refresh(): void
+  /**
+   * Which conversation is on screen, and how to move to another (M8-2).
+   *
+   * A getter rather than a number, because this file outlives any one of them: the whole
+   * point of the Chats tab is that the answer changes while it is open, and a number
+   * captured when the surface was built would be the conversation that happened to be open
+   * when Alexia started.
+   */
+  session(): number
+  openSession(id: number): void
 }
 
 /** `▲` is the one mark that is coloured, because on this screen a colour means look at this. */
@@ -118,6 +128,50 @@ export function sources(options: SurfaceOptions): Record<string, Source> {
   const skillText = (name: string): Promise<string> => Promise.resolve(skills.text(name))
 
   return {
+    /**
+     * Every conversation, and which one you are in (M8-2).
+     *
+     * **The only core table whose rows are the product rather than a report about it.** The
+     * other five say what Alexia has been doing; this one is what it was doing it about, and
+     * pressing a row is the only way back into a conversation that has scrolled out of a
+     * session.
+     *
+     * The title is the first thing the user said. Not a model-written summary: naming a
+     * conversation is a model call on a screen that opens at the speed of a file read, and
+     * *the one where I asked about the printer* is already on disk in the person's own words.
+     */
+    chats: {
+      rows: () => {
+        const open = options.session()
+        return Promise.resolve(
+          store.conversations().map((chat) => ({
+            id: String(chat.id),
+            title: chat.title,
+            turns: String(chat.messages),
+            when: when(chat.updatedAt),
+            state: chat.id === open ? '● open' : '',
+          })),
+        )
+      },
+      /**
+       * The conversation itself, which is the only thing there is to show about one — and
+       * the reason it is capped: a detail row that expands to four hundred turns is a page
+       * nobody can scroll past, and the way to read a whole conversation is to open it.
+       */
+      detail: (id) => {
+        const said = store
+          .history(Number(id))
+          .filter((turn) => turn.role === 'user' || turn.role === 'assistant')
+        const shown = said.slice(-12)
+        const lines = shown.map((turn) => `${turn.role === 'user' ? 'You' : 'Alexia'}: ${turn.content}`)
+        return Promise.resolve(
+          said.length === 0 ? 'Nothing has been said in this one yet.'
+          : (said.length > shown.length ? [`… ${String(said.length - shown.length)} earlier turns`, ...lines] : lines)
+              .join('\n\n'),
+        )
+      },
+    },
+
     /**
      * Every model any provider will admit to, and which one is being used (the Models tab).
      *
@@ -436,6 +490,53 @@ export function actions(
    * The other end of the ladder, and the only place a person grants one: a skill nobody has
    * said yes to is not in the model's index and cannot be read by it.
    */
+  /**
+   * A new conversation, and moving between them (M8-2).
+   *
+   * **Nothing is ever appended to a conversation you are not in**, which is the whole reason
+   * the open one is a variable in `serve.ts` rather than something each request carries: a
+   * task started before a switch finishes into the conversation it was started in, because
+   * that is the one the person watched it happen in.
+   *
+   * An empty conversation is reused rather than stacked. Pressing New twice in a row on a
+   * screen that has not been typed into would otherwise leave a row of identical empty
+   * chats, and the second press means the same thing as the first.
+   */
+  const newChat = (): Promise<{ ok: boolean; said: string }> => {
+    const open = options.session()
+    const empty = options.store.conversations().find((chat) => chat.messages === 0)
+    if (empty?.id === open) {
+      return Promise.resolve({ ok: true, said: 'You are already in a new chat — nothing has been said in this one.' })
+    }
+    options.openSession(empty?.id ?? options.store.createSession())
+    return Promise.resolve({ ok: true, said: 'New chat. Press Back and it is on screen.' })
+  }
+
+  const openChat = (id: string): Promise<{ ok: boolean; said: string }> => {
+    const chat = options.store.conversations().find((one) => String(one.id) === id)
+    if (!chat) return Promise.resolve({ ok: false, said: 'There is no conversation with that id.' })
+    options.openSession(chat.id)
+    return Promise.resolve({ ok: true, said: `Open: “${chat.title}”. Press Back and it is on screen.` })
+  }
+
+  /**
+   * Forgetting one, and the one rule that makes it safe: **you cannot delete the conversation
+   * you are in.** The messages go by `ON DELETE CASCADE`, so deleting the open one would
+   * leave every later append pointing at a session row that is not there.
+   */
+  const forgetChat = (id: string): Promise<{ ok: boolean; said: string }> => {
+    const chat = options.store.conversations().find((one) => String(one.id) === id)
+    if (!chat) return Promise.resolve({ ok: false, said: 'There is no conversation with that id.' })
+    if (chat.id === options.session()) {
+      return Promise.resolve({
+        ok: false,
+        said: 'That is the conversation you are in. Open another one first, or press New chat.',
+      })
+    }
+    options.store.deleteSession(chat.id)
+    return Promise.resolve({ ok: true, said: `“${chat.title}” is gone, and everything said in it.` })
+  }
+
   const allowSkill = (name: string): Promise<{ ok: boolean; said: string }> => {
     const skill = options.skills.all.find((one) => one.name === name)
     if (!skill) return Promise.resolve({ ok: false, said: `There is no skill called ${name}.` })
@@ -494,6 +595,9 @@ export function actions(
   }
 
   return {
+    new_chat: newChat,
+    open_chat: openChat,
+    forget_chat: forgetChat,
     use_model: useModel,
     /**
      * Back to the router choosing. On every row rather than only the pinned one, because a

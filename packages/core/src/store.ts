@@ -440,6 +440,40 @@ export class Store {
       .all() as unknown as Session[]
   }
 
+  /**
+   * Every conversation, as a list of them reads (M8-2).
+   *
+   * **One query rather than `sessions()` plus a `history()` per row**, which is what the
+   * screen would otherwise do and is the shape that quietly becomes slow: `history()` parses
+   * every message body of every conversation to find the first line of each.
+   *
+   * `title` is the first thing the user said, not a name anybody wrote or a model generated.
+   * A conversation is *the one where I asked about the printer*, and that is already on
+   * disk — writing a second, cleverer name for it would be a model call, a migration, and
+   * two things that can disagree about what a conversation is called.
+   */
+  conversations(): { id: number; title: string; messages: number; updatedAt: number }[] {
+    const rows = this.#db
+      .prepare(
+        'SELECT s.id, s.title, s.updated_at AS updatedAt,' +
+          ' (SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id) AS messages,' +
+          " (SELECT m.body FROM messages m WHERE m.session_id = s.id AND m.role = 'user'" +
+          '  ORDER BY m.id LIMIT 1) AS opening' +
+          ' FROM sessions s ORDER BY s.updated_at DESC, s.id DESC',
+      )
+      .all() as { id: number; title: string | null; updatedAt: number; messages: number; opening: string | null }[]
+    return rows.map((row) => {
+      const said = row.opening === null ? '' : String((JSON.parse(row.opening) as { content?: unknown }).content ?? '')
+      return {
+        id: Number(row.id),
+        // A conversation nobody has said anything in yet is the one you are about to have.
+        title: row.title ?? (said.trim() === '' ? 'New chat' : said.trim().replace(/\s+/g, ' ').slice(0, 80)),
+        messages: Number(row.messages),
+        updatedAt: Number(row.updatedAt),
+      }
+    })
+  }
+
   renameSession(id: number, title: string): void {
     this.#db.prepare('UPDATE sessions SET title = ? WHERE id = ?').run(title, id)
   }

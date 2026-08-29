@@ -258,20 +258,35 @@ function setupSettings(state: State): void {
   })
 }
 
-async function load(): Promise<void> {
-  const state = (await (await fetch('/api/state', { headers: { 'x-alexia-token': token } })).json()) as State
-  called(state.setup.name)
-  known = state.commands
-  for (const picker of modes) picker.value = state.setup.mode
-  setupSettings(state)
-  if (!state.setup.done) firstRun(state)
+const read = async (): Promise<State> =>
+  (await (await fetch('/api/state', { headers: { 'x-alexia-token': token } })).json()) as State
 
+/**
+ * The conversation on screen, painted from nothing.
+ *
+ * **It clears first**, which is the whole reason it is a function rather than the loop it
+ * used to be inside `load()`. Chats (M8-2) can change which conversation is open while this
+ * view is off screen, and a repaint that appended would show the new one underneath the old
+ * one — two conversations in one scroll, with no line between them.
+ */
+function paint(state: State): void {
+  log.replaceChildren()
   for (const turn of state.messages) {
     if (turn.role !== 'user' && turn.role !== 'assistant') continue
     bubble(turn.role, turn.content)
     if (turn.model) modelBadge.textContent = turn.model
   }
   spendBadge.textContent = state.cap === undefined ? money(state.spent) : `${money(state.spent)} of ${money(state.cap)}`
+}
+
+async function load(): Promise<void> {
+  const state = await read()
+  called(state.setup.name)
+  known = state.commands
+  for (const picker of modes) picker.value = state.setup.mode
+  setupSettings(state)
+  if (!state.setup.done) firstRun(state)
+  paint(state)
   showPermissions(state.permissions)
   say(state.warning)
 }
@@ -769,6 +784,10 @@ document.querySelector('#open-control')!.addEventListener('click', () => {
 document.querySelector('#close-control')!.addEventListener('click', () => {
   show('chat')
   text.focus()
+  // The Chats tab is behind this button (M8-2), so which conversation is open may have
+  // changed while it was on screen. Re-read rather than remember: the shell does not track
+  // the open conversation, and core is one localhost call away.
+  void read().then(paint)
 })
 
 text.addEventListener('input', showMenu)

@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, expect, test } from 'vitest'
 import { noPolling } from './staged.js'
+import { Manifest } from '@alexia/protocol'
 import { CORE_TABS } from '../src/panels.js'
 import { keyOf, PROVIDERS } from '../src/provider.js'
 import { CORE, memorySecrets } from '../src/secrets.js'
@@ -126,14 +127,36 @@ const post = async (path: string, body: unknown): Promise<Record<string, unknown
 const rows = async (key: string): Promise<Row[]> => ((await post('/api/rows', { key })).rows ?? []) as Row[]
 
 test('every core panel is a declaration and a function, with no shape of its own', async () => {
-  // The M6-4 test, stated as one assertion: a core tab holds tables and nothing else. The
-  // moment one of them needs a widget that is not one of the eleven, `table` was wrong.
+  /**
+   * The M6-4 test, and it moved once — deliberately, on 2026-08-29 (M8-2).
+   *
+   * It read *a core tab holds tables and nothing else*, which is stricter than the property
+   * its own next line names: **the moment one of them needs a widget that is not one of the
+   * eleven, `table` was wrong.** Chats needs a *New chat* button, and `action` is one of the
+   * eleven — the shell draws it with the same function it draws a plugin's, which is the
+   * thing being protected. What would break this is a core tab needing a twelfth widget, or
+   * one line of rendering that exists only for core, and both still fail here — the check is
+   * now the manifest schema itself, so *what a plugin may declare* and *what core declares*
+   * cannot drift apart into two lists that have to agree.
+   */
   const declared = CORE_TABS.flatMap((tab) => tab.widgets ?? [])
   expect(declared.length).toBeGreaterThan(0)
-  expect(declared.every((widget) => widget.type === 'table')).toBe(true)
+  const asPlugin = Manifest.safeParse({
+    manifest_version: 1,
+    id: 'not-a-plugin',
+    name: 'Core, pretending',
+    summary: 'Every widget core declares for itself, offered as a plugin would offer them.',
+    version: '0.0.0',
+    license: 'AGPL-3.0-only',
+    entry: { run: 'node', args: ['index.js'] },
+    alexia_protocol: 3,
+    mcp_protocol: '2025-11-25',
+    settings: declared,
+  })
+  expect(asPlugin.error?.issues ?? []).toEqual([])
 
-  // And each one names a source that answers.
-  for (const widget of declared) {
+  // And every table names a source that answers. An `action` has no rows and is not asked.
+  for (const widget of declared.filter((one) => one.type === 'table')) {
     const answer = await post('/api/rows', { key: widget.key })
     expect(answer.ok, widget.key).toBe(true)
   }
@@ -375,4 +398,40 @@ test('choosing a model pins it, and Automatic gives the choice back', async () =
   expect(String((await post('/api/action', { key: 'automatic', row: 'openrouter/reachable' })).said)).toContain(
     'Already automatic',
   )
+})
+
+test('chats: a new one, a way back into an old one, and the one you are in cannot be deleted', async () => {
+  const chats = async (): Promise<Row[]> => await rows('chats')
+  const openOne = (list: Row[]): Row | undefined => list.find((chat) => String(chat.state).includes('open'))
+
+  // Whatever this instance has been saying lives in one conversation, and it is the open one.
+  const before = await chats()
+  expect(before.length).toBeGreaterThan(0)
+  expect(openOne(before)).toBeDefined()
+  const first = openOne(before)!
+
+  // A new one is empty, open, and named for the fact that nothing has been said in it.
+  expect((await post('/api/action', { key: 'new_chat' })).ok).toBe(true)
+  const two = await chats()
+  expect(two.length).toBe(before.length + 1)
+  expect(openOne(two)?.title).toBe('New chat')
+  expect(openOne(two)?.id).not.toBe(first.id)
+
+  // Pressed again it does not stack: an empty chat is reused, because the second press means
+  // the same thing as the first and a column of identical empty rows is nobody's intent.
+  expect(String((await post('/api/action', { key: 'new_chat' })).said)).toContain('already in a new chat')
+  expect((await chats()).length).toBe(two.length)
+
+  // **The one you are in cannot be deleted.** Its messages go by ON DELETE CASCADE, so every
+  // later append would point at a session row that is not there.
+  const mine = openOne(await chats())!
+  const refused = await post('/api/action', { key: 'forget_chat', row: String(mine.id), confirm: true })
+  expect(refused.ok).toBe(false)
+  expect(String(refused.said)).toContain('conversation you are in')
+
+  // Back into the old one, and the empty one can go now that it is not the open one.
+  expect((await post('/api/action', { key: 'open_chat', row: String(first.id) })).ok).toBe(true)
+  expect(openOne(await chats())?.id).toBe(first.id)
+  expect((await post('/api/action', { key: 'forget_chat', row: String(mine.id), confirm: true })).ok).toBe(true)
+  expect((await chats()).map((chat) => chat.id)).not.toContain(mine.id)
 })

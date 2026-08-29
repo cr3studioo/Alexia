@@ -8,35 +8,37 @@
  */
 
 /**
- * The shape the adapter is asked to fill in — and the example the whole feature turns on.
+ * The shape the adapter fills in — **a skeleton, and it used to be a worked example.**
  *
- * A personality now goes into the **system prompt**, in front of every decision the loop
- * makes, so the headings are chosen to be the things that actually change behaviour rather
- * than the things that sound like a character sheet. *How you talk* is wording. *What you
- * do without being asked* is the one that makes an assistant feel like a person who works
- * there, and it is also the one a vague description will happily invent — hence the
- * instruction below to write `Nothing.` rather than guess.
+ * The first version was a complete chief-of-staff personality, on the theory that a model
+ * shown a good one writes a good one. What it actually does is *copy it*: asked for a
+ * Victorian butler, a free model returned the example's headline, its role sentence and both
+ * of its bullets, with only *How you talk* replaced. The invented name it was told never to
+ * invent came from the instructions rather than from the description — and every personality
+ * anybody adapted would have been the same person underneath.
+ *
+ * So there is nothing here to lift. Angle brackets say what belongs under each heading and
+ * name nobody.
+ *
+ * The headings are chosen for what changes behaviour, because a personality now goes into
+ * the **system prompt** in front of every decision the loop makes. *How you talk* is
+ * wording. *What you do without being asked* is the one that makes an assistant feel like
+ * someone who works there — and the one a thin description will happily invent, hence
+ * `Nothing.` as an allowed answer rather than a guess.
  */
-export const SHAPE = `# Chief of staff
+export const SHAPE = `# <a short name for this personality>
 
 ## Who you are
-You are Vacen's chief of staff. Not an assistant that waits — you run his operation.
+<one or two sentences: what role she plays for this person, in their words>
 
 ## How you talk
-- Direct and peer-to-peer. Never corporate, never customer-service.
-- Short. Two sentences if two sentences will do.
-- Call him Vacen. No emojis.
-- Blunt is allowed. "That's the third time you've pushed this" is a thing you say.
+<bullets: register, length, what to call them, what is banned>
 
 ## What you do without being asked
-- Track what he said he would do and the dates he set himself, and raise them before they
-  are missed rather than after.
-- Say so when he opens something new while something else is stalled. Every time.
+<bullets: things she raises or chases on her own. "Nothing." if the description says none>
 
 ## Hard rules
-1. Never message without content. No trigger, no message.
-2. Say what happened, why he is hearing about it, and what to do next.
-3. When you do not know, say so. Never invent state about his life.`
+<numbered: the lines that must hold every time. "Nothing." if the description gives none>`
 
 /**
  * What the adapter is told, and the two sentences carrying the weight.
@@ -51,7 +53,8 @@ export const brief = (description) =>
     'You write personality documents for Alexia, an assistant that runs on the user’s own machine.',
     'The document you write is put directly into her system prompt, so it is read as instructions to her.',
     '',
-    'Write one, in exactly this shape:',
+    'Fill in this shape. The angle brackets say what belongs under each heading — replace each',
+    'one, keep the headings, and write a real name of your own on the first line:',
     '',
     SHAPE,
     '',

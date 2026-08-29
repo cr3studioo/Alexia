@@ -87,6 +87,45 @@ const ACTIVITY: Rendered = table({
   filter: true,
 })
 
+/**
+ * Every conversation, and the way back into one (M8-2).
+ *
+ * **The only core tab that is not a report.** The other five say what Alexia has been doing;
+ * this one is the doing. It is a `table` like the rest — the widget was built for exactly
+ * this shape and a conversation list is the case it was always going to meet.
+ *
+ * *New chat* is a plain `action` above the table rather than a row action, because it is the
+ * one thing on this screen that is not about a row that already exists.
+ */
+const CHATS: Rendered[] = [
+  {
+    type: 'action',
+    key: 'new_chat',
+    label: 'New chat',
+    tool: 'new_chat',
+    hint: 'Starts an empty conversation and opens it. Pressing it twice does nothing the second time — an empty chat is reused rather than stacked.',
+  },
+  table({
+    type: 'table',
+    key: 'chats',
+    label: 'Conversations',
+    hint: 'Named by the first thing you said in each — Alexia does not write a title for them, because your own words are already on disk and a second name is a second thing that can be wrong. Open one and press Back to be in it. Forget takes everything said in it, and refuses on the one you are in.',
+    rows: 'chats',
+    columns: [
+      { key: 'title', label: 'Chat' },
+      { key: 'turns', label: 'Turns', align: 'right', hideNarrow: true },
+      { key: 'when', label: 'Last said', align: 'right', hideNarrow: true },
+      { key: 'state', label: 'State' },
+    ],
+    rowActions: [
+      { key: 'open_chat', label: 'Open', tool: 'open_chat' },
+      { key: 'forget_chat', label: 'Forget', tool: 'forget_chat', confirm: 'Forget “{title}” and everything in it?' },
+    ],
+    detail: 'chats',
+    filter: true,
+  }),
+]
+
 const SKILLS: Rendered = table({
   type: 'table',
   key: 'skills',
@@ -212,6 +251,9 @@ const MODELS: Rendered = table({
  * to this screen. The rest follow it: what it knows, what it can do, what is installed.
  */
 export const CORE_TABS: readonly { id: string; label: string; soon?: string; widgets?: Rendered[] }[] = [
+  // First, and ahead of *Activity*, because it is the only tab somebody opens mid-sentence:
+  // the others are read after the fact, and this one is a way back into what you were saying.
+  { id: 'chats', label: 'Chats', widgets: CHATS },
   { id: 'activity', label: 'Activity', widgets: [ACTIVITY] },
   { id: 'skills', label: 'Skills', widgets: [SKILLS, LEARNED] },
   { id: 'tools', label: 'Tools', widgets: [TOOLS] },

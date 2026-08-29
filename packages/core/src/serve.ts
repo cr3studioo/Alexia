@@ -165,7 +165,22 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
   }
   pollAll()
 
-  const session = store.sessions()[0]?.id ?? store.createSession()
+  /**
+   * The conversation on screen (M8-2), and the reason it is a variable.
+   *
+   * It used to be a `const` read once at startup: one conversation, for the life of the
+   * install, growing until `trim()` was the only thing standing between it and the context
+   * window. The Chats tab moves it, and everything that reads it — the transcript, an
+   * append, a spend row, the checker — reads it **per request** rather than holding the
+   * number it was born with, which is the whole of what makes switching work.
+   *
+   * A task already running keeps the conversation it started in: `reply()` closes over
+   * nothing, but the appends it makes happen while it runs, and finishing an answer into a
+   * conversation somebody has navigated away from is better than finishing it into one they
+   * are reading. **The switch takes effect on the next thing said**, which is what the
+   * button says it does.
+   */
+  let session = store.sessions()[0]?.id ?? store.createSession()
 
   const extensions = options.pluginsDir ?? join(root, 'extensions')
   const skillsDir = join(root, 'skills')
@@ -409,11 +424,18 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     return new Set(found.flat())
   }
 
-  const surface = { skills, tooling, plugins, skillsDir, trace, dataDir: root, store, catalog, connected, world, refresh: pollAll }
+  const surface = {
+    skills, tooling, plugins, skillsDir, trace, dataDir: root, store, catalog, connected, world,
+    refresh: pollAll,
+    session: () => session,
+    openSession: (id: number) => (session = id),
+  }
   const ours = coreSources(surface)
   const ourActions = coreActions(surface)
 
-  const checker = new ModelChecker({ store, secrets, world, session })
+  // The session is read when a review is charged rather than when the checker is built, so a
+  // review lands on the conversation it was spent for (M8-2).
+  const checker = new ModelChecker({ store, secrets, world, session: () => session })
   let tally: Tally = freshTally()
 
   /**

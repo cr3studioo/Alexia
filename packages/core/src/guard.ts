@@ -83,6 +83,11 @@ const REVERSIBLE_CORE = new Set([
   // — which is how people learn to click through the dialogs that matter.
   'use_model',
   'automatic',
+  // Starting a conversation and moving between them (M8-2). Nothing is written over and
+  // nothing is lost: the one you were in is still in the list, one press away. `forget_chat`
+  // is deliberately **not** here — it deletes a conversation and everything said in it.
+  'new_chat',
+  'open_chat',
 ])
 
 /**
