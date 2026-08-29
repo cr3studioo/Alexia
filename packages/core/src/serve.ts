@@ -36,7 +36,8 @@ import { MODES, route, send, shapeOf } from './router.js'
 import { CORE, keychain, type SecretStore } from './secrets.js'
 import { addServer, markReviewed, unreviewed } from './servers.js'
 import { declaredAction, declaredTable } from './settings.js'
-import { actions as coreActions, sources as coreSources } from './surface.js'
+import { search } from './palette.js'
+import { actions as coreActions, sources as coreSources, searchable } from './surface.js'
 import { Skills, SKILL_TOOL } from './skills.js'
 import { dataDir, Store, type Message } from './store.js'
 import { PluginTooling } from './tooling.js'
@@ -621,6 +622,25 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     if (url.pathname === '/api/panels') {
       response.writeHead(200, { 'content-type': 'application/json' })
       response.end(JSON.stringify({ tabs: await plugins.tabs() }))
+      return
+    }
+
+    /**
+     * The command palette (M6-10). Ctrl+K, type, jump.
+     *
+     * **One endpoint over each source's existing read path**, scored and merged. There is no
+     * second index to keep in step with four sources of truth, and no dependency — exact
+     * beats starts-with beats substring beats subsequence is fifteen lines, and this is
+     * ranking four short in-memory lists rather than tuning relevance.
+     *
+     * **It navigates; it does not execute.** What comes back is a tab and a word to filter
+     * by. Slash commands already run things, and a palette that also did would be a second
+     * command system with a different permission story.
+     */
+    if (url.pathname === '/api/search') {
+      const asked = url.searchParams.get('q') ?? ''
+      response.writeHead(200, { 'content-type': 'application/json' })
+      response.end(JSON.stringify({ hits: search(asked, await searchable(surface, await plugins.tabs())) }))
       return
     }
 

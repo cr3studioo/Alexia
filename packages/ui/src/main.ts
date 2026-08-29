@@ -13,6 +13,7 @@
 
 import { autostart, dismiss, HOTKEY, inApp, setAutostart, tray } from './desktop.js'
 import { mountControl } from './control.js'
+import { mountPalette } from './palette.js'
 import { mountSettings } from './settings.js'
 
 interface Turn {
@@ -714,10 +715,27 @@ text.addEventListener('keydown', (event) => {
   }
 })
 
+/**
+ * The command palette (M6-10). Ctrl+K from anywhere, including the chat window — a palette
+ * that only worked once you were already on the screen it navigates would be half a palette.
+ *
+ * It hands back a tab and the word that was typed, and opening the control view with both is
+ * the whole of what it does. It never runs anything.
+ */
+const palette = mountPalette(token, (tab, filter) => {
+  show('control')
+  control.open(tab, filter)
+})
+
 // Escape puts the overlay away, and **puts it away without cancelling anything**: the task
 // carries on and the tray goes on saying so. Stop is a separate control on purpose — a key
 // that both dismisses and cancels is a key somebody presses once and regrets (M5-2).
 document.addEventListener('keydown', (event) => {
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
+    event.preventDefault()
+    palette.open()
+    return
+  }
   if (event.key === 'Escape') dismiss()
 })
 

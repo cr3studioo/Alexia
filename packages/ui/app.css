@@ -402,6 +402,78 @@ body[data-view='first-run'] header {
   }
 }
 
+/* ---- the command palette (M6-10) -------------------------------------------------------
+
+   Over the page, near the top rather than centred: a list that grows downwards from where
+   you are already looking beats one that pushes itself off both edges of the viewport. */
+
+#palette {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  justify-content: center;
+  padding-top: 12vh;
+  background: rgb(0 0 0 / 35%);
+}
+
+.palette-box {
+  width: min(34rem, calc(100vw - var(--space-5)));
+  max-height: 70vh;
+  overflow-y: auto;
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface-raised);
+  box-shadow: 0 1rem 3rem rgb(0 0 0 / 25%);
+}
+
+#palette-input {
+  width: 100%;
+}
+
+#palette-hits {
+  margin: var(--space-3) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.hit {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+
+/* The selected row is marked by a background, not a colour: on these screens a colour means
+   something happened, and being under the cursor has not happened to anybody. */
+.hit.on {
+  background: var(--surface-sunk, rgb(127 127 127 / 12%));
+}
+
+.hit.empty {
+  color: var(--ink-quiet);
+  cursor: default;
+}
+
+/* What sort of thing, scanned down the left edge before anything is read across. */
+.hit-kind {
+  flex: 0 0 5.5rem;
+  color: var(--ink-faint);
+  font-size: var(--text-sm);
+}
+
+.hit-detail {
+  margin-left: auto;
+  color: var(--ink-faint);
+  font-size: var(--text-sm);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* ---- `table`, the eleventh widget (M6-3) -----------------------------------------------
 
    A wide table scrolls inside its own box and never sideways-scrolls the page. The old

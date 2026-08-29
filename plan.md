@@ -186,8 +186,8 @@ Tick a box only when the task's acceptance criteria pass. `[GATE]` needs a human
 - [x] **M6-7** `plugins/memory` declares a panel — and the `graph` question
 - [x] **M6-8** `plugins/commitments` — the panel for a plugin core has never heard of
 - [x] **M6-9** The consent ladder — pending, provenance, preauth
-- [ ] **M6-10** The command palette
-- [ ] **M6-G** **Done when:** delete `plugins/memory` with the control view open and its tab goes with it
+- [x] **M6-10** The command palette
+- [x] **M6-G** **Done when:** delete `plugins/memory` with the control view open and its tab goes with it
 
 ---
 
@@ -2623,6 +2623,27 @@ worth restating where the loop is:
 
 ### M6-10 The command palette
 
+**Built 2026-08-29 (D92).** Ctrl+K from anywhere, including the chat window — a palette that
+only worked once you were already on the screen it navigates would be half a palette. Enter
+opens the tab the thing lives on **with its name already typed into that panel's filter**,
+which is what turns *the right tab* into *the right row*.
+
+**One endpoint over each source's existing read path**, and that turned out to be literal:
+`searchable()` ranks the rows the panels themselves show. There is no second index, so a skill
+that has just been forgotten is gone from the palette by the act that removed it — proved by a
+test rather than argued. A plugin's panel contributes its **name and not its contents**,
+because reaching inside one means a tool call and a palette that spawned every installed
+plugin on every keystroke would be a search box with a startup cost.
+
+**Fifteen lines of ranking and no dependency**: exact, then starts-with, then substring, then
+subsequence, with ties broken by label so the same query gives the same order every time. A
+palette whose second and third rows swap between keystrokes is one nobody trusts to press
+Enter on.
+
+**It navigates; it does not execute**, and nothing in the endpoint can. What comes back is a
+tab and a word.
+
+
 Ctrl+K, type, jump. Eight tabs is where a tab bar stops being navigation, and the predecessor
 added this at exactly that point.
 
@@ -2637,6 +2658,22 @@ second command system with a different permission story. This one finds a thing 
 tab it lives on.
 
 ### M6-G — Done when
+
+**Reached 2026-08-29.** Run rather than asserted, against a real server with three
+plugin-declared panels open:
+
+```
+tabs: Activity · Skills · Tools · Library · Commitments · Memory · Voice
+delete plugins/memory  ->  Activity · Skills · Tools · Library · Commitments · Voice
+39 files in packages/core/src, packages/ui/src, index.html and app.css read: the word is in none
+```
+
+And the three on the same run. **M6-1**: a purge with no confirm refused with 409, a plugin's
+row action going to the permission ruling rather than the guard, an unclassified route failing
+closed. **M6-5**: nothing on the activity panel, a task, then that run on it after it had
+ended — and exported to a file. **M6-9**: a learned skill marked *waiting for you* and absent
+from the model's tool list, then live and indexed after one yes.
+
 
 > **Delete `plugins/memory` while the control view is open, and its tab goes with it —
 > and no file in `packages/core` or `packages/ui` contains the word `memory`.**
@@ -2752,6 +2789,7 @@ Newest first. Every entry here is also in Alexia.md's decision log.
 
 | Date | Entry |
 |---|---|
+| 2026-08-29 | **D92** — **the palette searches the panels themselves, and M6 is done.** M6-10. Ctrl+K from anywhere; Enter opens the tab the thing lives on with its name already in that panel's filter, which is what turns *the right tab* into *the right row*. *One search endpoint over each source's existing read path* turned out to be literal: it ranks the rows the tables show, so there is **no second index** and a skill that has just been forgotten is gone from the palette by the act that removed it — a test says so rather than an argument. A plugin's panel contributes its **name and not its contents**, because reaching inside one is a tool call and a palette that spawned every plugin on every keystroke would be a search box with a startup cost. Fifteen lines of ranking and no dependency, with ties broken by label so the same query gives the same order twice — a palette whose rows swap between keystrokes is one nobody trusts to press Enter on. **It navigates; it does not execute**, and the endpoint cannot: what comes back is a tab and a word. **M6-G was then run rather than asserted** — three plugin panels open, `plugins/memory` deleted, its tab gone, thirty-nine files in core and the shell read and the word in none of them; and on the same run a purge refused without a confirm, a run on the activity panel after the task that made it had ended, and a learned skill sitting at *waiting for you* until one yes. |
 | 2026-08-29 | **D84 built** — **a skill a model wrote now waits, and the three records stayed three.** M6-9. `Skills` grew a second list: `all` is what the screen shows and `usable` is what the model is offered, and **a skill nobody has said yes to is in neither the index nor anything the model can read**. That is the difference between a ladder and a label, and it was the whole of what was missing. Bundled is live because enabling the plugin was the yes; a marketplace install writes a **preauth** before the download, spent by the folder that turns up under that name and by nothing else; a learned skill gets `learned` written at creation and waits, because nobody asked for it. A folder that simply appeared is `unknown` — a fact, not a shrug. **Pending is derived rather than stored**, *not bundled and not yet allowed*, so there is no third place for it to disagree with the other two and no transient row outliving what it was about. Two things fell out of building it. **The screen needs its own reader**: a review screen that cannot open the thing under review is a screen asking you to guess, so `Skills.text` reads any skill on disk while `read` — the model's path — reads only the allowed ones. And **two tables on one screen cannot share a row-action key**, since a press is looked up by key; the learned list uses two keys of its own reaching the same two operations. The two rules under the ladder are now written in `learned.ts`, where a future version of that file would be the thing to break them. |
 | 2026-08-29 | **D91** — **the panel mechanism held for a plugin that did not exist when it was written.** M6-8. `plugins/commitments` is an append-only record of what you said you would do — statement, day, **whose idea it was**, state, and how many times it has been raised — with a read-only panel grouped into Overdue, Open and Closed. It **passed the conformance suite on the first run**, with no change to core, no change to the suite and nothing added to the schema. That is this task's whole reason: every other panel in M6 attaches to something core already ships, so any of them could have been quietly special-cased and still passed, and this one could not. The test that says so reads the six files where a name would have had to appear and asserts it is in none of them. Two decisions came out of writing it. **The panel is read-only**, because a commitment is recorded in the conversation where it was said and closed the same way, and a second way in from a table would be a parallel mechanism into a record whose value is that it only ever grows. And **a date is understood or it is not** — *next Tuesday* is something a model resolves and this plugin has no business guessing at, since a ledger that quietly picked a Tuesday would nudge on the wrong day and never be able to say why. It says so when it does not understand one, rather than dropping it. |
 | 2026-08-29 | **D90** — **the graph is refused, and the store is the reason.** M6-7, G8 answered. The memory panel ships as a table — everything remembered, grouped by what sort of thing it is, the whole sentence under the row, and **Forget** on it. That last one is why a person opens this screen at all, and it needed a new tool: `forget` already existed and takes *words from the thing to forget*, which is right in a conversation and wrong on a screen. On a screen somebody is **pointing at a row**, so `forget_one` takes the row and no best-match guess stands between what they pointed at and what goes. **Then the graph, and there is nothing to draw.** Backlog item 4 asks for *a chart, a canvas or a map that genuinely cannot be a schema*, and the real plugin turns out to store flat sentences with a category. The predecessor's graph was over an Obsidian vault where the links were **authored**; here they would have to be **inferred**, and a graph of inferred similarity is a picture that looks meaningful and is not — which is a worse failure than no picture, because nobody can tell. `groupBy` shows the structure this store actually has. The three answers stay open for whoever brings a plugin with real edges — a hand-written force layout, a `graph` widget, the sandboxed iframe — and so does the recommendation. **Two widget questions asked on evidence, two refusals, and neither for the reason expected**: `file` because its single user could not do the thing it was wanted for, `graph` because its single user has no graph. That is what deferring to the evidence is for. |

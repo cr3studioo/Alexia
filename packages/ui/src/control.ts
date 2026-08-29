@@ -29,7 +29,7 @@ interface Tab {
 /** Below this, the strip is one button showing the active tab's name. */
 const NARROW = 560
 
-export function mountControl(token: string): { open: () => void } {
+export function mountControl(token: string): { open: (tab?: string, filter?: string) => void } {
   const view = document.querySelector<HTMLElement>('#control')!
   const strip = document.querySelector<HTMLElement>('#tabs')!
   const current = document.querySelector<HTMLButtonElement>('#tab-current')!
@@ -50,6 +50,9 @@ export function mountControl(token: string): { open: () => void } {
 
   const read = async (): Promise<Tab[]> =>
     ((await (await fetch('/api/panels', { headers: { 'x-alexia-token': token } })).json()) as { tabs: Tab[] }).tabs
+
+  /** What the palette asked to be typed into the first filter on the panel it opened. */
+  let seeded: string | undefined
 
   async function load(): Promise<void> {
     tabs = await read()
@@ -102,6 +105,18 @@ export function mountControl(token: string): { open: () => void } {
     strip.hidden = narrow && strip.dataset.open !== 'true'
 
     body.replaceChildren(...(open ? panel(open) : [el('p', 'hint', 'There is nothing here yet.')]))
+
+    // The palette found a thing and opened the tab it lives on; typing its name into the
+    // filter is what turns *the right tab* into *the right row*. Spent once, so switching
+    // tabs afterwards does not carry somebody's old search with them.
+    if (seeded !== undefined) {
+      const filter = body.querySelector<HTMLInputElement>('.table-filter')
+      if (filter) {
+        filter.value = seeded
+        filter.dispatchEvent(new Event('input'))
+      }
+      seeded = undefined
+    }
   }
 
   /**
@@ -138,8 +153,10 @@ export function mountControl(token: string): { open: () => void } {
   })
 
   return {
-    open: () => {
+    open: (tab?: string, filter?: string) => {
       view.scrollTop = 0
+      if (tab !== undefined) chosen = tab
+      seeded = filter
       void load()
     },
   }

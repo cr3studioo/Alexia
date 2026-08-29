@@ -6,6 +6,7 @@ import { forget } from './learned.js'
 import type { Row } from './plugins.js'
 import { Plugins } from './plugins.js'
 import type { Skills } from './skills.js'
+import type { Searchable } from './palette.js'
 import type { Store } from './store.js'
 import type { PluginTooling } from './tooling.js'
 import { asText, type Trace } from './trace.js'
@@ -209,6 +210,47 @@ export function sources(options: SurfaceOptions): Record<string, Source> {
       },
     },
   }
+}
+
+/**
+ * Everything the palette can find, over the same reads the panels use (M6-10).
+ *
+ * **No second index.** These are the rows the tables themselves show, asked for the same way,
+ * so a skill that has just been forgotten is gone from the palette by the act that removed
+ * it and nothing has to be told twice.
+ *
+ * A plugin's panel contributes its **name** and not its contents. Reaching inside one means a
+ * tool call, and a palette that spawned every installed plugin on every keystroke would be a
+ * search box with a startup cost — which is the opposite of what Ctrl+K is for.
+ */
+export async function searchable(
+  options: SurfaceOptions,
+  tabs: readonly { id: string; label: string; from: string }[],
+): Promise<Searchable[]> {
+  const ours = sources(options)
+  const found: Searchable[] = tabs.map((tab) => ({
+    tab: tab.id,
+    kind: tab.from === 'core' ? 'panel' : 'plugin',
+    label: tab.label,
+  }))
+
+  /** Which table each row comes from, and what to call one of its rows on screen. */
+  const lists: [string, string, string, (row: Row) => string][] = [
+    ['activity', 'activity', 'run', (row) => String(row.task)],
+    ['skills', 'skills', 'skill', (row) => String(row.name)],
+    ['skills', 'learned', 'learned skill', (row) => String(row.name)],
+    ['tools', 'tools', 'tool', (row) => String(row.name)],
+    ['library', 'library', 'plugin', (row) => String(row.name)],
+  ]
+  for (const [tab, key, kind, label] of lists) {
+    const source = ours[key]
+    if (!source) continue
+    for (const row of await source.rows()) {
+      const detail = [row.from, row.plugin, row.where, row.state].filter((one) => typeof one === 'string').join(' · ')
+      found.push({ tab, kind, label: label(row), ...(detail !== '' && { detail }) })
+    }
+  }
+  return found
 }
 
 /**

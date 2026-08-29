@@ -146,6 +146,12 @@ export const ROUTES: Readonly<Record<string, Route>> = {
     ),
   },
 
+  '/api/search': {
+    otherwise: read(
+      'The command palette, over the same reads the panels use — no second index, and a plugin’s panel contributes its name rather than its contents, because reaching inside one would mean spawning it on every keystroke. It finds; it never runs anything.',
+    ),
+  },
+
   '/api/plugin': {
     acts: {
       enable: safe(

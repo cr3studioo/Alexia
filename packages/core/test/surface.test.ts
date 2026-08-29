@@ -260,6 +260,30 @@ test('a skill nobody said yes to waits on the screen, and says so', async () => 
   expect(String((await rows('learned')).find((row) => row.name === 'sorting-downloads')?.state)).not.toContain('waiting')
 })
 
+test('the palette searches the same reads the panels use, and answers with a tab', async () => {
+  const found = async (query: string): Promise<{ tab: string; kind: string; label: string }[]> =>
+    ((await (
+      await fetch(new URL(`/api/search?q=${encodeURIComponent(query)}`, alexia.url), {
+        headers: { 'x-alexia-token': alexia.token },
+      })
+    ).json()) as { hits: { tab: string; kind: string; label: string }[] }).hits
+
+  // A tab, by its own name.
+  expect((await found('Tools'))[0]).toMatchObject({ tab: 'tools', kind: 'panel' })
+
+  // A skill, from the same rows the skills table shows — no second index, so this is true
+  // by construction rather than by being kept in step.
+  expect((await found('sorting-downloads')).map((hit) => hit.kind)).toContain('learned skill')
+
+  // A run, which only exists because a task happened earlier in this file.
+  expect((await found('sort my downloads')).some((hit) => hit.tab === 'activity')).toBe(true)
+
+  // And a thing that has just been forgotten is gone from the palette by the act that
+  // removed it, because there was nothing else holding a copy.
+  await post('/api/action', { key: 'forget_skill', row: 'older-habit', confirm: true })
+  expect((await found('older-habit'))).toEqual([])
+})
+
 test('a list nobody declared is a sentence, not an empty table', async () => {
   const answer = await post('/api/rows', { key: 'imaginary' })
   expect(answer.ok).toBe(false)
