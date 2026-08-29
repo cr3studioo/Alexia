@@ -16,6 +16,9 @@
 //!   summons: always on top, never in the taskbar, gone when it loses focus.
 //! * The tray icon is the only answer to *is it running?* the target user has, so its four
 //!   states matter more than usual. The page sets them over IPC.
+//! * **Closing a window puts Alexia away; quitting takes the core with it.** Those are two
+//!   different things and the difference is the whole of the tray. The core outliving the
+//!   quit is what leaves a second Alexia on the same database next time — see `main`.
 //!
 //! What is **not** here, on purpose: no business logic, no model calls, no file handling, no
 //! parsing of anything the core says. If something needs deciding, it is decided on the
@@ -27,9 +30,10 @@ use std::sync::Mutex;
 use tauri::image::Image;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{TrayIcon, TrayIconBuilder};
-use tauri::{AppHandle, Manager, State, WebviewUrl, WebviewWindowBuilder, WindowEvent};
+use tauri::{AppHandle, Manager, RunEvent, State, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 use tauri_plugin_autostart::MacosLauncher;
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
+use tauri_plugin_shell::process::CommandChild;
 use tauri_plugin_shell::ShellExt;
 
 /// The summon. One combination, shown once at first run and then never again.
@@ -107,6 +111,10 @@ fn main() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(Mutex::<Option<TrayIcon>>::new(None))
+        // The core, held rather than dropped. `spawn` hands back a handle and dropping it
+        // does *not* stop the process — which is how quitting used to leave a core running
+        // with the database open, and the next launch made a second one beside it.
+        .manage(Mutex::<Option<CommandChild>>::new(None))
         .invoke_handler(tauri::generate_handler![tray_state, hide_overlay])
         .setup(move |app| {
             let handle = app.handle().clone();
@@ -128,7 +136,10 @@ fn main() {
                 // than a build step that flattens it, and it is one place rather than four
                 // path joins inside the core it starts.
                 .current_dir(app.path().resource_dir()?.join("resources"));
-            sidecar.spawn()?;
+            let (_events, child) = sidecar.spawn()?;
+            if let Ok(mut held) = handle.state::<Mutex<Option<CommandChild>>>().lock() {
+                *held = Some(child);
+            }
 
             let target: WebviewUrl = WebviewUrl::External(url.parse()?);
 
@@ -203,6 +214,22 @@ fn main() {
             }
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("Alexia did not start");
+        .build(tauri::generate_context!())
+        .expect("Alexia did not start")
+        // **Quit means quit.** Closing the main window hides it and the daemon carries on;
+        // that is the tray and it is untouched. This is the other exit — the tray's Quit,
+        // and every other way the app is asked to end — and it takes the core with it.
+        //
+        // A hard kill still cannot reach here, which is why `boot.mjs` watches its parent as
+        // well. Two halves, because neither covers the other's case: this one is immediate
+        // and orderly, that one survives this process being shot.
+        .run(|app, event| {
+            if let RunEvent::Exit = event {
+                if let Ok(mut held) = app.state::<Mutex<Option<CommandChild>>>().lock() {
+                    if let Some(core) = held.take() {
+                        let _ = core.kill();
+                    }
+                }
+            }
+        });
 }

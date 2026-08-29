@@ -238,6 +238,35 @@ if (!process.env.ALEXIA_TAURI) {
   } catch {
     // No browser is not a failure. The address is on screen.
   }
+} else {
+  /**
+   * Under the desktop shell the window is the owner, and this goes when it goes.
+   *
+   * The shell kills this on its own \`Quit\` and that is the orderly path — but it cannot
+   * reach a crash, an abort (the release profile is \`panic = "abort"\`) or somebody ending
+   * the process from Task Manager, and what survives all three is a core still holding the
+   * database. The next launch then makes a second one beside it, which is the thing nobody
+   * wants: **two Alexias on one database.**
+   *
+   * So the two halves are deliberate and neither replaces the other. The shell's kill is
+   * immediate and tidy; this is the one that survives the shell being shot.
+   *
+   * \`unref\` because the server is what keeps this process alive. This timer is a watcher,
+   * not a reason to stay.
+   *
+   * ponytail: polling, and a pid Windows may eventually hand to something else. A Job
+   * Object would be exact and is a page of Rust in a file whose line count is an invariant.
+   * The cost of being wrong here is one surviving core, which is today's behaviour.
+   */
+  const owner = process.ppid
+  setInterval(() => {
+    try {
+      // Signal 0 asks *is it there* and sends nothing.
+      process.kill(owner, 0)
+    } catch {
+      process.exit(0)
+    }
+  }, 5000).unref()
 }
 `,
 )
