@@ -43,7 +43,13 @@ function pack(id: string, extra: Record<string, unknown> = {}): { bytes: Buffer;
   )
   writeFileSync(join(folder, 'index.js'), '// nothing\n')
   const archive = join(staging, 'out.tgz')
-  spawnSync(archiver(), ['-czf', archive, '-C', staging, id])
+  // Checked rather than assumed. This suite has a rare red on this line under a full
+  // parallel run, and an ignored exit status turns whatever tar said into an unrelated
+  // assertion twenty lines later — which is how it stayed unexplained.
+  const packed = spawnSync(archiver(), ['-czf', archive, '-C', staging, id])
+  if (packed.status !== 0) {
+    throw new Error(`tar failed (${String(packed.status)}): ${packed.stderr?.toString() ?? String(packed.error)}`)
+  }
   const bytes = readFileSync(archive)
   return { bytes, sha256: createHash('sha256').update(bytes).digest('hex') }
 }

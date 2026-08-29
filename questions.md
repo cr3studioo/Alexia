@@ -231,6 +231,35 @@ the task that closes it.*
   real edges, and so does the recommendation: a hand-written force layout if it is genuinely
   small, otherwise the sandboxed iframe.
 
+### Raised by reading version 1 (2026-08-29, M7)
+
+*The first Alexia read end to end (D93). These four came out of the comparison; three of them
+are still open, and the last one is the largest contract question left.*
+
+- [ ] **G9.** Does memory-that-captures-by-itself replace `plugins/memory`, or stand beside it
+  as a second plugin? Replacing it makes one screen and one delete; standing beside it keeps a
+  memory you can read at a glance separate from one that grows on its own, and lets somebody
+  run the cheap one only. *Decide at M7-3 — and invariant 5 has to hold either way.*
+- [ ] **G10.** Voice cloning needs an engine Piper is not. Second plugin, or an engine setting
+  inside `plugins/voice`? A second plugin keeps the local-only promise literally true and
+  deletable; a setting keeps one voice screen and one place a voice is chosen.
+  *Decide at M7-4 — where D89's refusal of `file` gets asked again with a user that needs it.*
+- [x] **G11.** Is egress redaction core's rule, or a capability a plugin can ask past?
+  **Answered 2026-08-29 (D94): core's rule, and a plugin cannot ask.** No capability, no
+  manifest field, no setting. The bias going in was that *a redaction a plugin can decline is
+  a redaction the worst plugin declines*; building it added the structural half — **a plugin
+  never sees the outbound payload.** It hands core a tool result and core dispatches, so an
+  opt-out would first mean inventing a way to ask for one, which is a new contract surface
+  whose only purpose is to send more. The legitimate case is priced rather than denied: a
+  plugin whose job is credentials or addresses gets them stripped on the way to a hosted
+  model, and its answer is `T0`, where nothing is stripped because nothing leaves.
+- [ ] **G12.** **May a plugin run on its own clock, and spend on it?** Half is answered —
+  `plugins/telegram` holds a poll loop under `lifetime: "resident"` (D77) and `sampling` is a
+  per-request capability. The unanswered half is the ceiling: M15-7 counts what a *task*
+  spends, and a plugin waking every twelve minutes to call a model spends against no task at
+  all, so there is no honest spend panel and no honest cap without it. *Decide at M7-3 — it
+  gates M7-3 and all four of Backlog 7–10.*
+
 ## F. Project logistics
 
 - [x] **F1.** Solo, or a team?
@@ -287,6 +316,8 @@ the task that closes it.*
   Hermes already does this against the agentskills.io standard. Raised E8, E9, C13.
 - **Model switching** — answered the context question; surfaced the Local-to-Cloud privacy
   trap, which reshaped how proactive detection has to work.
+- **G11** — egress redaction is core's rule, with no way for a plugin to ask past it. The
+  reason that settled it is that a plugin never sees the outbound payload in the first place.
 - **E8, C13, E7, C6** — agentskills.io adopted, learned-skill offer is a model judgement,
   personality is a pass-through node that is itself a plugin, plugins can register commands.
   Raised E10 and E11.

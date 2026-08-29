@@ -191,7 +191,7 @@ Tick a box only when the task's acceptance criteria pass. `[GATE]` needs a human
 
 ### M7 — What version 1 knew *(inserted 2026-08-29 — see Change log)*
 
-- [ ] **M7-1** Nothing leaves this machine unread — egress redaction
+- [x] **M7-1** Nothing leaves this machine unread — egress redaction
 - [ ] **M7-2** One id, four records
 - [ ] **M7-3** Memory that captures without being asked
 - [ ] **M7-4** A voice that is yours — cloning, and the engine it costs
@@ -2756,6 +2756,18 @@ the hole M6-1 was built not to have.
 
 ### M7-1 Nothing leaves this machine unread
 
+**Built 2026-08-29 (D94).** `packages/core/src/redact.ts` is sixteen regexes and one pass,
+called from `send()` in `router.ts` one line above the only `chat()` in the repo. Everything
+bound for anything but `T0` is stripped; `T0` is not, because only `ollama.ts` ever writes
+that tier and a model on this machine is not a third party. The owner's three exclusions are
+quoted at the top of the file, and **the third one has a test** — four behavioural sentences
+that must arrive whole, so a session tightening this "helpfully" goes red rather than
+unnoticed. `redact.test.ts` drives the real payload through the real `send()` for `T1`, `T2`
+and `T3` and asserts the key and the street are gone and *"and remember I always run late"*
+is not, then reads the source to prove there is only one door for it to guard. Both halves
+verified going red. **Not an eleventh invariant**, for M6-1's reason (D82): the ten are the
+plugin contract, this is core's own dispatch.
+
 **Every payload bound for a third-party model is stripped of credentials and location first,
 in code, before dispatch — and everything else about the user goes, deliberately.**
 
@@ -2798,7 +2810,26 @@ street address through the router's free path and asserts that none of the three
 the surrounding sentence does; the same payload through the local path arrives whole. One
 invariant-style check that a redaction-free path to a third-party provider does not exist.
 
-**Open:** whose rule is this — core's, or a capability a plugin can ask past? → **G11**.
+**Three things came out of building it.**
+
+- **The variable's name is not the credential.** `OPENROUTER_API_KEY=sk-or-v1-…` loses the
+  value and keeps the name, because the key-shaped rule matches first. That is exclusion 3
+  working, not a gap: *which provider he uses* is behavioural, and the secret is gone.
+- **Financial shapes are deliberately absent**, though version 1 carried them. It carried them
+  for a rule of its own, and its card pattern eats any thirteen-to-nineteen digit run — a real
+  cost paid against a payload the quote allows. Three exclusions means three.
+- **Check 8 caught the first draft of the comment.** *"This is also where nothing leaves
+  unread"* is the overclaim shape `no-overclaiming-strings` exists to find, in a file about
+  privacy, written by the session that had just read that check. It went red on a comment,
+  which is exactly the failure it was built for.
+
+**Closed:** whose rule is this — core's, or a capability a plugin can ask past? → **G11
+answered (D94): core's rule.** There is no capability, no manifest field and no setting. A
+plugin never sees the outbound payload — it hands core a tool result and core dispatches —
+so opting out would mean inventing a way to ask, and *a redaction a plugin can decline is a
+redaction the worst plugin declines*. The legitimate case this costs is real and is priced:
+a plugin whose whole job is credentials or addresses gets them stripped on the way to a
+hosted model, and the answer is `T0`, where nothing is stripped because nothing leaves.
 
 ### M7-2 One id, four records
 
@@ -3173,10 +3204,13 @@ For `questions.md`. Each one came out of planning and none of them blocks starti
   inside `plugins/voice`? A second plugin keeps the local-only promise literally true and
   deletable; a setting keeps one voice screen and one place a voice is chosen. *Decide at
   M7-4 — and D89's refusal of `file` gets asked again with a user that needs it.*
-- **G11.** Is egress redaction core's rule, or a capability a plugin can ask past? Core's rule
-  means a plugin cannot leak by construction and cannot opt out for a legitimate reason
-  either. *Decide at M7-1. The bias is core's rule, because a redaction a plugin can decline
-  is a redaction the worst plugin declines.*
+- **G11. Answered 2026-08-29 at M7-1 — core's rule (D94).** No capability, no manifest field,
+  no setting. The bias held, and building it added a structural reason the plan did not have:
+  **a plugin never sees the outbound payload.** It hands core a tool result and core
+  dispatches, so an opt-out would first need a way to ask for one — a new contract surface
+  whose only purpose is to send more. The legitimate case is real and is priced rather than
+  denied: a plugin whose job is credentials or addresses gets them stripped on the way to a
+  hosted model, and its answer is `T0`, where nothing is stripped because nothing leaves.
 - **G12.** **May a plugin run on its own clock, and spend on it?** The largest contract
   question left. Half is answered — `plugins/telegram` holds a poll loop under
   `lifetime: "resident"` (D77), and `sampling` is a per-request capability. The unanswered
@@ -3193,6 +3227,7 @@ Newest first. Every entry here is also in Alexia.md's decision log.
 
 | Date | Entry |
 |---|---|
+| 2026-08-29 | **D94** — **the payload is read before it goes, and the third exclusion has a test.** M7-1, G11 answered. `redact.ts` is sixteen regexes and one pass, called from `send()` one line above the only `chat()` in the repo — **there is one door out of this codebase**, and a test reads the source to say so, because a rule enforced at whichever call site somebody remembers is not enforced. Everything bound for anything but `T0` is stripped; `T0` is not, on the fact that only `ollama.ts` ever writes that tier. **The interesting half is what is deliberately allowed.** The owner's quote sits at the top of the file and *"the things how i operate, what i do, what i like"* is exclusion 3, so four behavioural sentences are asserted to arrive **whole** — a future session tightening this helpfully goes red rather than unnoticed, which is the only form a comment saying *do not broaden this* can take and be believed. Version 1's IBAN and card rows did not come across: it carried them for a rule of its own, and a pattern that eats any thirteen-digit run is a real cost paid against a payload the quote permits. **G11 is core's rule**, and building it supplied the argument the plan had not: a plugin never sees the outbound payload at all, so an opt-out would mean inventing a way to ask for one. The legitimate case is priced instead of denied — a plugin whose job is addresses gets them stripped on the way out, and its answer is `T0`, where nothing is stripped because nothing leaves. **And check 8 caught the first draft of the comment**: *"this is also where nothing leaves unread"* is precisely the overclaim `no-overclaiming-strings` exists to find, written into a privacy file by the session that had just read that check. It went red on a comment, which is the failure it was built for. |
 | 2026-08-29 | **D93** — **version 1 was read end to end, and it knew six things this repo does not.** M7 inserted. The first Alexia is still on this machine (the path is in M7's own header, deliberately, so nobody has to guess); M6 took its screen, and this is what was underneath — its `control/`, `core/` and `adapters/` compared against what is actually built here rather than against what anybody remembers building. **One of the six is a hole rather than a missing feature**: D51 makes free endpoints the default and nothing strips a credential or a location before a payload reaches one, which `core/redact.py` did in code, with the owner's own three exclusions and the third — *everything behavioural goes, deliberately* — quoted so a later session cannot tighten it into uselessness. The rest are ordered by what to build first rather than by size: **one id** on the spend row, because `usage` records a `session_id` and ten tasks in one sitting share it, so the panel can say what today cost and not what *that* cost; **memory that captures without being asked**, the largest, carrying four failures already paid for — a model marking twenty-four real memories duplicate and silently writing nothing, a forget undone twelve minutes later by a buffer nobody cleared, a queue frozen forever on one bad row, and a tombstone for the forget that matched nothing; **cloning**, which is the real user D89's `file` refusal was waiting for; **a button in Telegram**, because that plugin's own source says *you have no tools on this path* and means there is nowhere to ask; and **three execution tiers**, whose zero-cost bottom rung was guaranteed by the import graph rather than by a comment. **Four more are in the Backlog, not tasks**, all waiting on the same question: proactive messaging, a reliability scorecard, bounded self-healing, web-watch. That question is **G12 — may a plugin run on its own clock, and spend on it** — half-answered already by `resident` and `sampling`, and unanswered where it matters, since M15-7 counts what a task spends and a plugin waking every twelve minutes spends against no task at all. **Nothing is vendored and nothing is a submodule**: it is a Python app on the gateway this project replaced, so every path is named to be read for its reasons, and every task stands if the folder is gone. |
 | 2026-08-29 | **D92** — **the palette searches the panels themselves, and M6 is done.** M6-10. Ctrl+K from anywhere; Enter opens the tab the thing lives on with its name already in that panel's filter, which is what turns *the right tab* into *the right row*. *One search endpoint over each source's existing read path* turned out to be literal: it ranks the rows the tables show, so there is **no second index** and a skill that has just been forgotten is gone from the palette by the act that removed it — a test says so rather than an argument. A plugin's panel contributes its **name and not its contents**, because reaching inside one is a tool call and a palette that spawned every plugin on every keystroke would be a search box with a startup cost. Fifteen lines of ranking and no dependency, with ties broken by label so the same query gives the same order twice — a palette whose rows swap between keystrokes is one nobody trusts to press Enter on. **It navigates; it does not execute**, and the endpoint cannot: what comes back is a tab and a word. **M6-G was then run rather than asserted** — three plugin panels open, `plugins/memory` deleted, its tab gone, thirty-nine files in core and the shell read and the word in none of them; and on the same run a purge refused without a confirm, a run on the activity panel after the task that made it had ended, and a learned skill sitting at *waiting for you* until one yes. |
 | 2026-08-29 | **D84 built** — **a skill a model wrote now waits, and the three records stayed three.** M6-9. `Skills` grew a second list: `all` is what the screen shows and `usable` is what the model is offered, and **a skill nobody has said yes to is in neither the index nor anything the model can read**. That is the difference between a ladder and a label, and it was the whole of what was missing. Bundled is live because enabling the plugin was the yes; a marketplace install writes a **preauth** before the download, spent by the folder that turns up under that name and by nothing else; a learned skill gets `learned` written at creation and waits, because nobody asked for it. A folder that simply appeared is `unknown` — a fact, not a shrug. **Pending is derived rather than stored**, *not bundled and not yet allowed*, so there is no third place for it to disagree with the other two and no transient row outliving what it was about. Two things fell out of building it. **The screen needs its own reader**: a review screen that cannot open the thing under review is a screen asking you to guess, so `Skills.text` reads any skill on disk while `read` — the model's path — reads only the allowed ones. And **two tables on one screen cannot share a row-action key**, since a press is looked up by key; the learned list uses two keys of its own reaching the same two operations. The two rules under the ladder are now written in `learned.ts`, where a future version of that file would be the thing to break them. |

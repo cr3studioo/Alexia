@@ -3,6 +3,7 @@ import type { Model } from './catalog.js'
 import { OLLAMA } from './ollama.js'
 import { sent, type Rung } from './pool.js'
 import { chat, ProviderError, type ChatRequest, type Provider, type Usage } from './provider.js'
+import { redact, summarise } from './redact.js'
 import type { SecretStore } from './secrets.js'
 import type { Message, Store } from './store.js'
 import { costOf } from './usage.js'
@@ -224,6 +225,11 @@ export interface Answer {
  * A rung that says 429 is not an error, it is the next rung's turn — and every request is
  * counted against its provider whether or not it worked, because a refused request still
  * counted against the tier that refused it.
+ *
+ * **This is also where a payload is read before it goes** (M7-1). Everything bound for
+ * anything but `T0` is stripped of credentials and location here, one line above the send,
+ * rather than at a call site somebody has to remember — a rule enforced by whoever remembers
+ * is not enforced. There is one `chat()` in this repo and it is below.
  */
 export async function send(
   choices: Choice[],
@@ -258,11 +264,20 @@ export async function send(
         : `The free models are used up, so this one goes to ${choice.model.name}, which costs money.`,
       )
     }
+    // `T0` means the model is on this machine (only `ollama.ts` ever writes it), so the
+    // payload is not going anywhere and stripping it would cost accuracy to protect against
+    // nothing. Everything else is a third party, free tiers most of all.
+    const outbound = choice.model.tier === 'T0' ? { messages: request.messages, kinds: [] } : redact(request.messages)
+    if (outbound.kinds.length > 0) {
+      // Enforcement that says so. Silently editing what somebody wrote is the same
+      // surprise as a bill nobody announced.
+      hooks.onNote?.(`Stripped before sending to ${choice.model.name}: ${summarise(outbound.kinds)}.`)
+    }
     sent(store, choice.provider)
     try {
       const { message, usage } = await chat(
         choice.provider,
-        { ...request, model: choice.model.id },
+        { ...request, messages: outbound.messages, model: choice.model.id },
         hooks.onDelta,
         secrets,
       )
