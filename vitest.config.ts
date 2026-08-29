@@ -12,6 +12,7 @@ const needPlugins = [
   'packages/core/test/command.test.ts',
   'packages/core/test/lifecycle.test.ts',
   'packages/core/test/panels.test.ts',
+  'packages/core/test/plugin-panels.test.ts',
   'packages/core/test/plugins.test.ts',
   'packages/core/test/progress.test.ts',
   'packages/core/test/registry.test.ts',

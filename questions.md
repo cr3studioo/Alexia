@@ -221,13 +221,15 @@ the task that closes it.*
   browser will not tell a page where a file is, so a `path` can never be filled by picking, and
   *choosing a file* is genuinely inexpressible in the schema. That argument is real and is
   waiting on a real user.
-- [ ] **G8.** Does a plugin ever get to draw something core cannot? The memory graph is the
-  first real instance of Backlog item 4 — *a chart, a canvas or a map that genuinely cannot be
-  a schema*. Three answers: a hand-written force layout (~100 lines, no dependency, ours to
-  maintain), a `graph` widget with one user, or the sandboxed iframe for this case and not by
-  default. Whichever wins sets the precedent for every plugin after it, so it is worth deciding
-  on evidence rather than on whichever works first. *Decide at M6-7 — the memory panel ships as
-  a `table` first, so nothing is blocked while this is open.*
+- [x] **G8.** Does a plugin ever get to draw something core cannot? **Answered 2026-08-29
+  (D90): not yet, because the first real instance turned out not to be one.** `plugins/memory`
+  stores flat sentences with a category, not a graph. The predecessor's graph was over an
+  Obsidian vault where the links were *authored*; here they would have to be *inferred*, and a
+  graph of inferred similarity is a picture that looks meaningful and is not — worse than no
+  picture, because nobody can tell. The table ships with `groupBy`, which shows the structure
+  this store actually has. **All three answers stay open** for whoever brings a plugin with
+  real edges, and so does the recommendation: a hand-written force layout if it is genuinely
+  small, otherwise the sandboxed iframe.
 
 ## F. Project logistics
 

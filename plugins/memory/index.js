@@ -154,6 +154,87 @@ alexia.tool(
   },
 )
 
+/**
+ * The panel (M6-7): what is remembered, and a way to forget one of them.
+ *
+ * **Forgetting one thing is the entire reason a person opens this screen.** `forget` already
+ * existed and takes *words from the thing to forget*, which is right for a conversation and
+ * wrong for a list: on a screen the person is pointing at a row, and the row knows exactly
+ * which one it is. So this takes the row and nothing else, and there is no best-match guess
+ * standing between what somebody pointed at and what goes.
+ */
+alexia.tool(
+  'memories',
+  {
+    description: 'List everything remembered, newest first, with what each one is and when it was written down. Takes no arguments.',
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+  },
+  async () => {
+    const rows = await alexia.storage.select('facts', { order: [['at', 'desc']], limit: 2000 })
+    return {
+      content: [{ type: 'text', text: `${rows.length} remembered` }],
+      structuredContent: {
+        rows: rows.map((row) => ({
+          // The rowid, which is what makes forgetting one of them unambiguous.
+          id: String(row.rowid),
+          text: String(row.text),
+          kind: String(row.kind ?? 'other'),
+          when: new Date(Number(row.at)).toISOString().slice(0, 10),
+        })),
+      },
+    }
+  },
+)
+
+alexia.tool(
+  'forget_one',
+  {
+    description: 'Forget exactly one remembered thing, by the row it is. Takes that row’s id.',
+    inputSchema: fromJsonSchema({
+      type: 'object',
+      properties: { id: { type: 'string', description: 'Which row.' } },
+      required: ['id'],
+    }),
+    annotations: { destructiveHint: true, openWorldHint: false },
+  },
+  async ({ id }) => {
+    const rowid = Number(id)
+    if (!Number.isInteger(rowid)) return { isError: true, content: [{ type: 'text', text: 'That is not a row.' }] }
+    const [going] = await alexia.storage.select('facts', { where: { rowid }, limit: 1 })
+    if (!going) return { isError: true, content: [{ type: 'text', text: 'That one is already gone.' }] }
+    await alexia.storage.delete('facts', { rowid })
+    await report()
+    return { content: [{ type: 'text', text: `Forgotten: ${String(going.text)}` }] }
+  },
+)
+
+alexia.tool(
+  'about_memory',
+  {
+    description: 'Say everything about one remembered thing. Takes that row’s id.',
+    inputSchema: fromJsonSchema({
+      type: 'object',
+      properties: { id: { type: 'string', description: 'Which row.' } },
+      required: ['id'],
+    }),
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+  },
+  async ({ id }) => {
+    const [row] = await alexia.storage.select('facts', { where: { rowid: Number(id) }, limit: 1 })
+    if (!row) return { isError: true, content: [{ type: 'text', text: 'That one is already gone.' }] }
+    // The sentence as it was written down, uncut. A column has to truncate; this does not,
+    // and the whole of a remembered thing is the thing worth reading before deleting it.
+    return {
+      content: [
+        {
+          type: 'text',
+          text: `${String(row.text)}\n\nWritten down ${new Date(Number(row.at)).toISOString().slice(0, 10)}, as ${String(row.kind ?? 'other')}.`,
+        },
+      ],
+    }
+  },
+)
+
 alexia.tool(
   'forget_all',
   {
