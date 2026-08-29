@@ -20,9 +20,9 @@ contract was still moving.
 sentence rather than crashing, exactly as written here while it was still hypothetical. The
 migration for a revision-1 plugin that uses nothing from 2 is one character.
 
-## 2 → 3 *(2026-08-29, M6-2)*
+## 2 → 3 *(2026-08-29, M6-2 and M6-3)*
 
-**One field.** `panel`.
+**One field and one widget.** `panel`, and `table`.
 
 A plugin declaring a tab on the control surface, the same way it declares settings (D86). The
 tab list on that screen is **assembled**: core contributes the tabs whose data core owns, and
@@ -52,6 +52,32 @@ things you change while reading it.
 plugin's own settings, so a key declared in both lists would be one value with two
 declarations that could disagree about its type. Declaring a key twice is a load error;
 choosing which screen a widget belongs on is yours.
+
+### `table`, the eleventh widget
+
+`ui-schema.md` promised that an eleventh widget *"is a conversation"*. That conversation was
+held here (D83) and the answer was yes, once: **a list of things with actions on each one**.
+The evidence was behavioural rather than aesthetic — the previous Alexia's dashboard
+hand-wrote that same object four times, its second copy admitting in a comment that it
+*"mirrors SkillsTab's own shape, since the lifecycle is identical by design"*.
+
+```jsonc
+{ "key": "installed", "type": "table", "label": "Installed",
+  "rows": "list_things",
+  "columns": [{ "key": "name", "label": "Name" }],
+  "rowActions": [{ "key": "remove", "label": "Remove", "tool": "remove_thing",
+                   "confirm": "Remove {name}?" }] }
+```
+
+Full field list in [`manifest.md`](./manifest.md#tables). Two things about it are contract
+rather than convenience: **a row action is an `action`** — the same permission gate, the
+question beside the row, no second concept — and **rows arrive over MCP's own
+`structuredContent`**, shaped `{ "rows": [ … ] }` with a string `id` on each, because Alexia
+adds no envelope of its own where the protocol already has one.
+
+`file` and `graph` were asked for in the same conversation and **refused**. Each had exactly
+one user, which is this schema's own bar for no, and both are attached to the task where
+their single user is the evidence rather than granted for sounding useful.
 
 **Nothing was removed and nothing changed meaning.** A manifest written against revision 2 is
 a valid revision 2 manifest and loads unchanged.

@@ -208,6 +208,18 @@ export const ROUTES: Readonly<Record<string, Route>> = {
     ),
   },
 
+  '/api/rows': {
+    otherwise: safe(
+      'A table asking for its contents. It calls the tool the author named, under the same permission ruling every tool call gets — a lister that has not declared itself read-only is asked about, in every mode but Full trust. Nothing core owns changes.',
+    ),
+  },
+
+  '/api/detail': {
+    otherwise: safe(
+      'What expands under one row of a table: the same call as the list above, about one thing rather than all of them, through the same ruling.',
+    ),
+  },
+
   '/api/action': {
     otherwise: safe(
       'The one route that already asks. Every press goes through the same permission ruling a tool call gets: a destructive tool is asked about in every mode but Full trust, and the never-touch list is not negotiable in any of them (M15-3). A confirm here would be the same question twice.',

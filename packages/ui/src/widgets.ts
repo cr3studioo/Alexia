@@ -29,6 +29,28 @@ export type WidgetType =
   | 'status'
   | 'progress'
   | 'action'
+  | 'table'
+
+/** A `table`'s column, as its author declared it. */
+export interface Column {
+  key: string
+  label: string
+  align?: 'left' | 'right'
+  /** Dropped below the narrow breakpoint, so the row actions stay reachable without scrolling. */
+  hideNarrow?: boolean
+}
+
+export interface RowAction {
+  key: string
+  label: string
+  /** A second press that has already said what goes, with `{column}` filled in from the row. */
+  confirm?: string
+}
+
+export interface Row {
+  id: string
+  [field: string]: unknown
+}
 
 export interface Rendered {
   type: WidgetType
@@ -51,6 +73,12 @@ export interface Rendered {
   reason?: string
   /** `progress`: what the plugin last reported. Absent means nothing is in flight. */
   live?: { progress: number; total?: number; message?: string }
+  /** `table`: everything about its shape. The rows themselves are fetched when it is drawn. */
+  columns?: Column[]
+  rowActions?: RowAction[]
+  detail?: string
+  filter?: boolean
+  groupBy?: string
 }
 
 /** Which screen is drawing, and how it answers the two questions a widget asks back. */
@@ -306,6 +334,11 @@ export function widget(host: WidgetHost, declared: Rendered): HTMLElement {
       break
     }
 
+    case 'table': {
+      field.append(el('span', 'label', declared.label), table(host, declared))
+      break
+    }
+
     case 'action': {
       const button = el('button', 'quiet-button', declared.label)
       button.type = 'button'
@@ -355,6 +388,235 @@ export function widget(host: WidgetHost, declared: Rendered): HTMLElement {
   field.append(problem)
   return field
 }
+
+/** Below this, columns marked `hideNarrow` are dropped and the actions get their own row. */
+const NARROW = 560
+
+/**
+ * The eleventh widget: a list of things with actions on each one (D83, M6-3).
+ *
+ * **The rows are fetched, not drawn.** Everything above renders from the manifest and the
+ * store, which is why a panel draws while its plugin is stopped. A table is the one that
+ * needs the process, so it asks for its contents when it appears — once, on open, because a
+ * person is looking at it.
+ */
+function table(host: WidgetHost, declared: Rendered): HTMLElement {
+  const box = el('div', 'table-box')
+  const said = el('p', 'hint', 'Loading…')
+  const scroll = el('div', 'table-scroll')
+  const columns = declared.columns ?? []
+  let rows: Row[] = []
+  let query = ''
+
+  const narrow = (): boolean => window.innerWidth < NARROW
+  const shown = (): Column[] => columns.filter((column) => !(narrow() && column.hideNarrow === true))
+
+  /** The filter, over the declared columns only. What is not on screen is not searched. */
+  const matching = (): Row[] => {
+    const needle = query.trim().toLowerCase()
+    if (needle === '') return rows
+    return rows.filter((row) =>
+      columns.some((column) => String(row[column.key] ?? '').toLowerCase().includes(needle)),
+    )
+  }
+
+  if (declared.filter === true) {
+    const search = el('input', 'table-filter')
+    search.type = 'search'
+    search.placeholder = `Filter ${declared.label.toLowerCase()}`
+    search.setAttribute('aria-label', `Filter ${declared.label}`)
+    search.addEventListener('input', () => {
+      query = search.value
+      paint()
+    })
+    box.append(search)
+  }
+  box.append(said, scroll)
+
+  /** One `<tbody>` per group, or one for everything when nothing groups it. */
+  function paint(): void {
+    const visible = matching()
+    said.hidden = rows.length > 0 && visible.length > 0
+    if (rows.length > 0 && visible.length === 0) {
+      said.hidden = false
+      said.textContent = 'Nothing matches that.'
+    }
+
+    const grid = el('table', 'grid')
+    const head = el('thead')
+    const headRow = el('tr')
+    for (const column of shown()) {
+      const cell = el('th', column.align === 'right' ? 'right' : undefined, column.label)
+      headRow.append(cell)
+    }
+    // One header cell for every action, unlabelled: the buttons say what they do.
+    if ((declared.rowActions ?? []).length > 0 || declared.detail !== undefined) headRow.append(el('th'))
+    head.append(headRow)
+    grid.append(head)
+
+    const groups =
+      declared.groupBy === undefined ?
+        [['', visible] as const]
+      : [
+          ...visible
+            .reduce((into, row) => {
+              const name = String(row[declared.groupBy!] ?? '—')
+              into.set(name, [...(into.get(name) ?? []), row])
+              return into
+            }, new Map<string, Row[]>())
+            .entries(),
+        ].sort(([a], [b]) => a.localeCompare(b))
+
+    for (const [name, group] of groups) {
+      const body = el('tbody')
+      if (name !== '') {
+        const heading = el('tr', 'group')
+        const cell = el('th', undefined, name)
+        cell.colSpan = shown().length + 1
+        heading.append(cell)
+        body.append(heading)
+      }
+      for (const row of group) body.append(rowOf(host, declared, row, shown()))
+      grid.append(body)
+    }
+
+    scroll.replaceChildren(grid)
+  }
+
+  async function load(): Promise<void> {
+    const answer = (await host.send('/api/rows', { plugin: host.plugin, key: declared.key })) as {
+      ok?: boolean
+      rows?: Row[]
+      said?: string
+      ask?: string
+    }
+    if (typeof answer.ask === 'string') {
+      // The same two steps an `action` takes. A list that needs permission asks for it in
+      // the place the list would have been, not somewhere else on the page.
+      said.textContent = ''
+      scroll.replaceChildren(
+        confirm(answer.ask, async (approved) => {
+          if (!approved) {
+            said.textContent = 'Not shown.'
+            return
+          }
+          const again = (await host.send('/api/rows', {
+            plugin: host.plugin,
+            key: declared.key,
+            approved: true,
+          })) as { ok?: boolean; rows?: Row[]; said?: string }
+          rows = again.ok === true ? (again.rows ?? []) : []
+          said.textContent = again.ok === true ? '' : String(again.said ?? 'That did not work.')
+          said.className = again.ok === true ? 'hint' : 'error'
+          paint()
+        }),
+      )
+      return
+    }
+    if (answer.ok !== true) {
+      said.className = 'error'
+      said.textContent = String(answer.said ?? 'That did not work.')
+      said.hidden = false
+      return
+    }
+    rows = answer.rows ?? []
+    said.className = 'hint'
+    said.textContent = rows.length === 0 ? 'Nothing here yet.' : ''
+    paint()
+  }
+
+  void load()
+  return box
+}
+
+/** One row, its cells, and whatever can be done to it. */
+function rowOf(host: WidgetHost, declared: Rendered, row: Row, columns: Column[]): HTMLElement {
+  const line = el('tr')
+  for (const column of columns) {
+    line.append(el('td', column.align === 'right' ? 'right tabular' : undefined, String(row[column.key] ?? '')))
+  }
+  if ((declared.rowActions ?? []).length === 0 && declared.detail === undefined) return line
+
+  const cell = el('td', 'row-actions')
+  const said = el('p', 'hint')
+  said.hidden = true
+
+  if (declared.detail !== undefined) {
+    const more = el('button', 'quiet-button', 'Details')
+    more.type = 'button'
+    let open = false
+    more.addEventListener('click', () => {
+      open = !open
+      more.textContent = open ? 'Hide' : 'Details'
+      if (!open) {
+        said.hidden = true
+        return
+      }
+      said.hidden = false
+      said.className = 'hint'
+      said.textContent = 'Loading…'
+      void host
+        .send('/api/detail', { plugin: host.plugin, key: declared.key, row: row.id })
+        .then((answer) => {
+          said.className = answer.ok === true ? 'hint' : 'error'
+          said.textContent = String((answer.ok === true ? answer.text : answer.said) ?? '')
+        })
+    })
+    cell.append(more)
+  }
+
+  for (const action of declared.rowActions ?? []) {
+    const button = el('button', 'quiet-button', action.label)
+    button.type = 'button'
+    let armed = action.confirm === undefined
+
+    /** Press it. The question — permission, or the author's own confirm — is beside the row. */
+    const press = async (approved?: boolean): Promise<void> => {
+      button.disabled = true
+      try {
+        const answer = await host.send('/api/action', {
+          plugin: host.plugin,
+          key: action.key,
+          row: row.id,
+          ...(approved === true && { approved: true }),
+        })
+        if (typeof answer.ask === 'string') {
+          cell.append(confirm(answer.ask, press))
+          return
+        }
+        said.hidden = false
+        said.className = answer.ok === true ? 'hint' : 'error'
+        said.textContent = String(answer.said ?? '')
+        if (answer.ok === true) line.classList.add('done')
+      } finally {
+        button.disabled = false
+      }
+    }
+
+    button.addEventListener('click', () => {
+      // The author's own confirm, which is the destructive half of M6-1 on this screen: the
+      // first press costs nothing and the second one has already said what goes.
+      if (!armed) {
+        armed = true
+        button.textContent = fill(action.confirm ?? '', row)
+        button.classList.add('armed')
+        return
+      }
+      void press()
+    })
+    cell.append(button)
+  }
+
+  cell.append(said)
+  line.append(cell)
+  return line
+}
+
+/** `Remove {name}?` with the row's own values in it. An unknown field is left as it was. */
+export const fill = (template: string, row: Row): string =>
+  template.replace(/\{([a-z][a-z0-9_]*)\}/gi, (whole, field: string) =>
+    row[field] === undefined ? whole : String(row[field]),
+  )
 
 /**
  * The permission question for an `action`, asked beside the button rather than over the

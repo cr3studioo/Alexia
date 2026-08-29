@@ -34,7 +34,7 @@ import { keyOf, PROVIDERS } from './provider.js'
 import { MODES, route, send, shapeOf } from './router.js'
 import { CORE, keychain, type SecretStore } from './secrets.js'
 import { addServer, markReviewed, unreviewed } from './servers.js'
-import { declaredWidgets } from './settings.js'
+import { declaredAction, declaredTable } from './settings.js'
 import { Skills, SKILL_TOOL } from './skills.js'
 import { dataDir, Store, type Message } from './store.js'
 import { PluginTooling } from './tooling.js'
@@ -299,6 +299,26 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
    * The tally lives here rather than in the checker because *this session* is what the
    * give-up rule counts, and the checker itself is stateless on purpose.
    */
+  /**
+   * The permission ruling for a tool a screen is about to call (M15-3).
+   *
+   * Four callers now — an action button, a row action, a slash command, and the two reads a
+   * `table` makes — and one gate, because *the same call through a different screen is the
+   * same call*. Written once rather than four times: the copy made for `/api/command` had
+   * already started drifting from the one it was copied from.
+   */
+  const rulingFor = async (plugin: string, tool: string): Promise<Ruling> => {
+    const about = await tooling.about(`${plugin}__${tool}`)
+    return rule(
+      {
+        tool,
+        ...(about?.annotations && { annotations: about.annotations }),
+        reviewed: !unreviewed(store).has(plugin),
+      },
+      scope(),
+    )
+  }
+
   const checker = new ModelChecker({ store, secrets, world, session })
   let tally: Tally = freshTally()
 
@@ -454,11 +474,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
         // A command is bound to the plugin tool of the same name — the whole binding, and
         // why a manifest declares a command with a name and a sentence and nothing else.
         call: async (plugin, tool) => {
-          const about = await tooling.about(`${plugin}__${tool}`)
-          const ruling = rule(
-            { tool, ...(about?.annotations && { annotations: about.annotations }), reviewed: !unreviewed(store).has(plugin) },
-            scope(),
-          )
+          const ruling = await rulingFor(plugin, tool)
           if (ruling.verdict === 'blocked' || (ruling.verdict === 'ask' && approved !== true)) {
             asked = ruling
             throw new Error(ruling.why ?? `${tool} did not run.`)
@@ -875,27 +891,20 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
      * second call: that is the difference between a question and a floor.
      */
     if (url.pathname === '/api/action' && request.method === 'POST') {
-      const press = sent as { plugin?: string; key?: string; approved?: boolean }
+      const press = sent as { plugin?: string; key?: string; row?: string; approved?: boolean }
       const plugin = press.plugin ?? ''
       const manifest = plugins.manifest(plugin)
-      // Either screen. A row action on a panel is an `action`, and it goes through the gate
-      // below rather than through a second one invented for panels (D83).
-      const declared = manifest && declaredWidgets(manifest).find((setting) => setting.key === press.key && setting.type === 'action')
-      if (declared?.type !== 'action') {
+      // Either screen, and either kind. **A row action is an `action`** (D83): the same
+      // lookup, the same gate, the same two steps. The only difference is that it carries
+      // the row it is about, and the question appears beside that row rather than a button.
+      const declared = manifest && declaredAction(manifest, press.key ?? '')
+      if (!declared) {
         response.writeHead(200, { 'content-type': 'application/json' })
         response.end(JSON.stringify({ ok: false, said: `There is no button called "${press.key ?? ''}".` }))
         return
       }
 
-      const about = await tooling.about(`${plugin}__${declared.tool}`)
-      const ruling = rule(
-        {
-          tool: declared.tool,
-          ...(about?.annotations && { annotations: about.annotations }),
-          reviewed: !unreviewed(store).has(plugin),
-        },
-        scope(),
-      )
+      const ruling = await rulingFor(plugin, declared.tool)
       if (ruling.verdict === 'blocked' || (ruling.verdict === 'ask' && press.approved !== true)) {
         response.writeHead(200, { 'content-type': 'application/json' })
         response.end(
@@ -906,9 +915,56 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
         return
       }
 
-      const result = await plugins.action(plugin, declared.key)
+      // A press that does not fit its declaration — a row action with no row, or a plain
+      // button handed one — is a sentence rather than a 500. The screen shows it beside the
+      // control, which is where somebody can do something about it.
+      const result = await plugins
+        .action(plugin, press.key ?? '', undefined, press.row)
+        .catch((error: unknown) => ({ ok: false, said: error instanceof Error ? error.message : String(error) }))
       response.writeHead(200, { 'content-type': 'application/json' })
       response.end(JSON.stringify({ ...result, panes: await plugins.panes() }))
+      return
+    }
+
+    /**
+     * A `table` filling itself in, and what expands under one of its rows (M6-3).
+     *
+     * **This is where a panel starts a process, and the only place it does.** Drawing the
+     * panel reads manifests and the store; opening it is a person asking for the contents,
+     * which is a tool call like any other and goes through the gate like any other. A `rows`
+     * tool that has not declared itself read-only is asked about — the author's problem to
+     * fix, and not core's to guess around.
+     */
+    if ((url.pathname === '/api/rows' || url.pathname === '/api/detail') && request.method === 'POST') {
+      const asked = sent as { plugin?: string; key?: string; row?: string; approved?: boolean }
+      const plugin = asked.plugin ?? ''
+      const manifest = plugins.manifest(plugin)
+      const table = manifest && declaredTable(manifest, asked.key ?? '')
+      const wanted = url.pathname === '/api/rows' ? table?.rows : table?.detail
+      if (wanted === undefined) {
+        response.writeHead(200, { 'content-type': 'application/json' })
+        response.end(JSON.stringify({ ok: false, said: `There is no list called "${asked.key ?? ''}".` }))
+        return
+      }
+
+      const ruling = await rulingFor(plugin, wanted)
+      if (ruling.verdict === 'blocked' || (ruling.verdict === 'ask' && asked.approved !== true)) {
+        response.writeHead(200, { 'content-type': 'application/json' })
+        response.end(
+          JSON.stringify(
+            ruling.verdict === 'blocked' ? { ok: false, said: ruling.why } : { ok: false, ask: ruling.why },
+          ),
+        )
+        return
+      }
+
+      const answer = await (
+        url.pathname === '/api/rows' ?
+          plugins.rows(plugin, asked.key ?? '')
+        : plugins.detail(plugin, asked.key ?? '', asked.row ?? '')
+      ).catch((error: unknown) => ({ why: error instanceof Error ? error.message : String(error) }))
+      response.writeHead(200, { 'content-type': 'application/json' })
+      response.end(JSON.stringify('why' in answer ? { ok: false, said: answer.why } : { ok: true, ...answer }))
       return
     }
 

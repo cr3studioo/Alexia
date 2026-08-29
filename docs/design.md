@@ -226,7 +226,7 @@ being decided is what just happened on screen; covering it would be the wrong sh
 
 ---
 
-## What the ten widgets inherit
+## What the widgets inherit
 
 M2-1 declares no styles. Every widget in [`spec/ui-schema.md`](./spec/ui-schema.md) is built
 from the same four parts, and this is the anatomy:

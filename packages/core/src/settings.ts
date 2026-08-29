@@ -74,7 +74,7 @@ export function secretStoreName(platform: string = process.platform): string {
 }
 
 /** Read-only widgets: the plugin drives them, the user cannot type into them. */
-const DRIVEN = new Set(['status', 'progress', 'action'])
+const DRIVEN = new Set(['status', 'progress', 'action', 'table'])
 
 export interface PaneOptions {
   store: Store
@@ -108,6 +108,32 @@ export interface PaneOptions {
  */
 export function declaredWidgets(manifest: Manifest): Setting[] {
   return [...(manifest.settings ?? []), ...(manifest.panel?.widgets ?? [])]
+}
+
+/**
+ * Every `action` this plugin declared, by key — the buttons and the row actions on its
+ * tables, which are the same thing pressed in a different place (D83).
+ *
+ * The manifest forbids two of them sharing a key, so this is a lookup rather than a search
+ * with a tie-break: a press has one meaning.
+ */
+export function declaredAction(
+  manifest: Manifest,
+  key: string,
+): { tool: string; row: boolean } | undefined {
+  for (const widget of declaredWidgets(manifest)) {
+    if (widget.type === 'action' && widget.key === key) return { tool: widget.tool, row: false }
+    if (widget.type !== 'table') continue
+    const found = widget.rowActions?.find((one) => one.key === key)
+    if (found) return { tool: found.tool, row: true }
+  }
+  return undefined
+}
+
+/** A table this plugin declared, by key. */
+export function declaredTable(manifest: Manifest, key: string): Extract<Setting, { type: 'table' }> | undefined {
+  const found = declaredWidgets(manifest).find((widget) => widget.key === key)
+  return found?.type === 'table' ? found : undefined
 }
 
 /**
@@ -183,9 +209,10 @@ export async function pane(manifest: Manifest, options: PaneOptions): Promise<Pa
  */
 export function refuse(declared: Setting, value: unknown): string | undefined {
   if (DRIVEN.has(declared.type)) {
-    return declared.type === 'action' ?
-        `"${declared.label}" is a button, not a value.`
-      : `"${declared.label}" is driven by the plugin, not by you.`
+    if (declared.type === 'action') return `"${declared.label}" is a button, not a value.`
+    // A table is edited a row at a time, through the actions its author declared on it.
+    if (declared.type === 'table') return `"${declared.label}" is a list, not a value.`
+    return `"${declared.label}" is driven by the plugin, not by you.`
   }
 
   switch (declared.type) {

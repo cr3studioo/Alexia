@@ -144,7 +144,7 @@ later for the filesystem and the shell, and nowhere else.
 ]
 ```
 
-There are **ten widget types and no eleventh**:
+There are **eleven widget types**. Ten, and then one — see the note below the table:
 
 | Type | Extra fields | For |
 |---|---|---|
@@ -158,13 +158,22 @@ There are **ten widget types and no eleventh**:
 | `status` | — | read-only text you drive at runtime |
 | `progress` | — | a bar you drive at runtime |
 | `action` | `tool` ✅ | a button that calls one of your tools with no arguments |
+| `table` | `rows` ✅, `columns` ✅, `rowActions`, `detail`, `filter`, `groupBy` | a list of things, with actions on each one — see [Tables](#tables) |
 
 Every widget takes `key` (lowercase, digits, underscores), `label`, and optional `hint`.
 
 **Why a fixed list and not a schema renderer.** A plugin cannot style itself wrong because
 it never styles itself. A general JSON-Schema form renderer re-opens that door, and adds
-175 KB to do it. If you genuinely need an eleventh widget, that is a conversation — open an
-issue and say what the tenth could not do.
+175 KB to do it. If you genuinely need a twelfth widget, that is a conversation — open an
+issue and say what the eleven could not do.
+
+**The eleventh was that conversation, held** (D83, 2026-08-29). `table` was granted because
+the previous Alexia's dashboard hand-wrote the same object four times, and the second copy's
+own comment admits it *"mirrors SkillsTab's own shape, since the lifecycle is identical by
+design"*. Four independent copies of one shape is the strongest case this schema will ever be
+handed. Two others were asked for in the same conversation and refused: a `file` picker and a
+`graph`, each with exactly one user, which is this schema's own bar for no. The bar is only
+worth having if it is applied when it is inconvenient.
 
 `path` takes no default and `password` takes no default, for the same underlying reason: a
 value baked into a manifest is a value that is wrong on someone else's machine, and in the
@@ -203,6 +212,48 @@ collision never breaks a command that was already working.
 `skills` are folders inside your plugin, in the agentskills.io format. They install and
 purge with you. Paths are relative and may not climb out of your folder. See
 [`skills.md`](./skills.md).
+
+### Tables
+
+```jsonc
+{ "key": "installed", "type": "table", "label": "Installed",
+  "rows": "list_things",                       // your tool, called with no arguments
+  "columns": [
+    { "key": "name", "label": "Name" },
+    { "key": "uses", "label": "Uses", "align": "right", "hideNarrow": true }
+  ],
+  "rowActions": [{ "key": "remove", "label": "Remove", "tool": "remove_thing",
+                   "confirm": "Remove {name}?" }],
+  "detail": "explain_thing",                   // optional, expands under the row
+  "filter": true,                              // a box, applied in the page
+  "groupBy": "category" }
+```
+
+*Arrived in `alexia_protocol` 3.*
+
+**`rows` is a tool of yours, called with no arguments.** It answers with MCP's own
+`structuredContent`, shaped `{ "rows": [ … ] }`, and **every row carries a string `id`** —
+that is the only field Alexia uses, because a row action and a detail are both *this row*.
+Everything else on a row belongs to the columns you declared. Get any of that wrong and the
+panel says so in a sentence naming what was expected; it never quietly shows an empty list.
+
+**This is the one widget that needs your process.** Everything else draws from the manifest
+and the store while you are stopped. A table asks for its contents when somebody opens the
+panel — once, because a person is looking at it — which is why `rows` should declare
+`readOnlyHint`. One that does not gets asked about before it will run, in every mode but Full
+trust, which is the permission gate doing its job to a lister that claimed nothing.
+
+**A row action is an `action`.** `tool` is called with `{ id }`, it goes through the same
+permission gate any tool call does, and the question appears beside the row. `confirm` is a
+second press that has already said what goes, with `{column}` filled in from the row — the
+first press costs nothing and the second one is unambiguous.
+
+**`hideNarrow` is not decoration.** Seven columns on a 375px screen put the Delete button
+past the edge: usable in the sense that the scroll stayed inside the table, and not usable at
+all in the sense that matters. Mark the columns you would drop first.
+
+Row action keys share the one widget namespace, so a `remove` here and a `remove` anywhere
+else in your manifest is a load error — a press has to have one meaning.
 
 ### Panel
 
@@ -262,7 +313,7 @@ mistake a real author makes:
 | a `requires` entry with no `why` | `requires.0.why` |
 | a `choice` whose `default` is not one of its `options` | `settings.0.default` |
 | `storage.namespace` that no longer matches `id` after a rename | `storage.namespace` |
-| `"type": "slider"` | not one of the ten widgets |
+| `"type": "slider"` | not one of the eleven widgets |
 | `"provide"` instead of `"provides"` | unrecognised key `provide` |
 | `"run": "C:\\Program Files\\node.exe"` | `entry.run` — relative or on PATH |
 | `"version": "v0.1"` | `version` — semantic versions only |

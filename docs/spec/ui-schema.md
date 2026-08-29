@@ -1,8 +1,8 @@
 # The declarative UI schema
 
 > **A plugin cannot style itself wrong because it never styles itself.** It declares what it
-> needs; core renders it. Ten widgets, one visual language, and a settings screen that looks
-> the same whoever wrote the plugin.
+> needs; core renders it. Eleven widgets, one visual language, and screens that look the same
+> whoever wrote the plugin.
 >
 > This document is the rendering half. The manifest half — every field, every constraint —
 > is [`manifest.md`](./manifest.md#settings). Where a widget's fields are listed there, they
@@ -25,9 +25,17 @@ renders them", and both were looked at and left. A general schema renderer accep
 nesting, arbitrary widgets and arbitrary layout hints — which re-opens the exact door this
 design closed, and adds about 175 KB to do it.
 
-Ten hand-written widgets is a smaller amount of code than the adapter would have been. **If
-you need an eleventh, that is a conversation** — open an issue saying what the tenth could
-not do. It is not a config option, and it is not a `"type": "custom"` with an escape hatch.
+Eleven hand-written widgets is a smaller amount of code than the adapter would have been.
+**If you need a twelfth, that is a conversation** — open an issue saying what the eleven
+could not do. It is not a config option, and it is not a `"type": "custom"` with an escape
+hatch.
+
+**The eleventh was that conversation, held rather than skipped** (D83, M6-3). This document
+promised one and then got one: `table`, *a list of things with actions on each one*, granted
+on behavioural evidence — the previous Alexia's dashboard hand-wrote that same object four
+times, and the second copy's own comment says so. `file` and `graph` were asked for at the
+same time and refused, because each had exactly one user, which is the bar written here. A
+bar that is only applied when it is convenient is not a bar.
 
 The shape of the declaration is borrowed from VS Code's `contributes.configuration`, which
 has been proving this exact idea at enormous scale for a decade. The shape, narrowed — not
@@ -35,7 +43,7 @@ the size.
 
 ---
 
-## The ten
+## The eleven
 
 Every widget takes `key`, `label`, and an optional `hint`. The hint renders under the
 control in smaller type; it is one sentence, and it says something the label does not.

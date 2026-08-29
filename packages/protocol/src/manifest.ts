@@ -143,6 +143,74 @@ const setting = z.discriminatedUnion('type', [
     hint: z.string().optional(),
     tool: z.string().min(1),
   }),
+  z.object({
+    /**
+     * The eleventh widget: **a list of things with actions on each one** (D83, M6-3).
+     *
+     * `ui-schema.md` promised that an eleventh "is a conversation — open an issue saying
+     * what the tenth could not do". This is the answer to that, and the evidence was
+     * behavioural rather than aesthetic: the previous Alexia's dashboard hand-wrote this
+     * exact object four times, and the second copy's own comment admits it *"mirrors
+     * SkillsTab's own shape, since the lifecycle is identical by design"*. Four independent
+     * copies of one shape is the strongest case this schema will ever be handed.
+     *
+     * **A row action is an `action`.** It goes through the permission gate M2-1 already
+     * built and the question appears beside the row, where the thing being decided is. No
+     * second gate and no new concept — which is what stopped this being a bigger idea than
+     * it needed to be.
+     */
+    type: z.literal('table'),
+    key: z.string().regex(IDENT),
+    label: z.string().min(1),
+    hint: z.string().optional(),
+    /**
+     * The tool that answers with the rows. Called with no arguments when somebody opens the
+     * panel — **not** while it is being drawn, because drawing must not start a process.
+     * It answers `structuredContent: { rows: [...] }`, and every row carries a string `id`.
+     */
+    rows: z.string().min(1),
+    columns: z
+      .array(
+        z
+          .object({
+            key: z.string().regex(IDENT),
+            label: z.string().min(1),
+            align: z.enum(['left', 'right']).optional(),
+            /**
+             * Dropped on a narrow screen. Seven columns on a 375px screen forced sideways
+             * scrolling to reach the Delete button — usable in the sense that the scroll
+             * stayed inside the table, and not usable at all in the sense that matters.
+             */
+            hideNarrow: z.boolean().optional(),
+          })
+          .strict(),
+      )
+      .min(1),
+    rowActions: z
+      .array(
+        z
+          .object({
+            key: z.string().regex(IDENT),
+            label: z.string().min(1),
+            /** Called with `{ id }` — the row's own. */
+            tool: z.string().min(1),
+            /**
+             * A second press that has already said what goes, with `{column}` filled in from
+             * the row. The old dashboard's Delete → Confirm delete, which is a good pattern
+             * because the first press costs nothing and the second one is unambiguous.
+             */
+            confirm: z.string().min(1).max(160).optional(),
+          })
+          .strict(),
+      )
+      .optional(),
+    /** A tool called with `{ id }`, whose text expands under the row. */
+    detail: z.string().min(1).optional(),
+    /** A filter box, applied in the page over the declared columns. */
+    filter: z.boolean().optional(),
+    /** A field to group rows under. It need not be a column — grouping is not showing. */
+    groupBy: z.string().regex(IDENT).optional(),
+  }),
 ])
 
 export const ManifestShape = z
@@ -318,9 +386,15 @@ export const Manifest = ManifestShape.superRefine((m, ctx) => {
   // One namespace across both screens, because both write to one store: a key declared in
   // `settings` and again in `panel.widgets` is one value with two declarations that can
   // disagree about its type. Which screen a widget belongs on is the author's choice to make.
-  for (const d of new Set(
-    dupes([...(m.settings ?? []).map((s) => s.key), ...(m.panel?.widgets ?? []).map((w) => w.key)]),
-  )) {
+  //
+  // A table's row actions are in it too. A row action *is* an `action` — pressed by key,
+  // through the same gate — so a second `remove` somewhere else would be a press with two
+  // possible meanings, and core would have to guess which.
+  const everyKey = [...(m.settings ?? []), ...(m.panel?.widgets ?? [])].flatMap((w) => [
+    w.key,
+    ...(w.type === 'table' ? (w.rowActions ?? []).map((a) => a.key) : []),
+  ])
+  for (const d of new Set(dupes(everyKey))) {
     fail(
       [m.panel?.widgets.some((w) => w.key === d) === true ? 'panel' : 'settings'],
       `"${d}" is declared twice — settings and panel are one namespace, because a widget's value is stored once`,

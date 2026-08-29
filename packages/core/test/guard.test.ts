@@ -25,12 +25,23 @@ import { serve, type Serving } from '../src/serve.js'
 
 const source = readFileSync(join(import.meta.dirname, '..', 'src', 'serve.ts'), 'utf8')
 
-/** Every `if` in `serve.ts` that answers a path, as the file actually writes them. */
-const handlers = [...source.matchAll(/url\.pathname === '([^']+)'(?<rest>[^\n{]*)/g)].map((found) => ({
-  path: found[1]!,
-  /** Whether that same condition also demands a POST. */
-  changes: /request\.method === 'POST'/.test(found.groups?.rest ?? ''),
-}))
+/**
+ * Every `if` in `serve.ts` that answers a path, as the file actually writes them.
+ *
+ * The window is *from the path to the opening brace* rather than the rest of the line. One
+ * `if` matches two paths — `/api/rows` and `/api/detail` are the same handler — and a
+ * line-wise reader consumed the second one inside the first one's match and never saw it.
+ * Reading to the brace also survives a condition that wraps.
+ */
+const handlers = [...source.matchAll(/url\.pathname === '([^']+)'/g)].map((found) => {
+  const from = found.index
+  const brace = source.indexOf('{', from)
+  return {
+    path: found[1]!,
+    /** Whether that same condition also demands a POST. */
+    changes: /request\.method === 'POST'/.test(source.slice(from, brace === -1 ? undefined : brace)),
+  }
+})
 
 const reason = (verdict: Verdict): string => (verdict.kind === 'confirm' ? verdict.what : verdict.why)
 

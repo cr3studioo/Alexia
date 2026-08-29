@@ -1,4 +1,4 @@
-# Settings: the ten widgets
+# Settings: the eleven widgets
 
 You declare; Alexia draws. **A plugin cannot style itself wrong because it never styles
 itself**, and the screen works while your process is stopped — which, with lazy spawn, is
@@ -16,6 +16,7 @@ the ordinary case.
 | `status` | your own report of yourself | read-only to the user, writable by you |
 | `progress` | a bar | hidden entirely when nothing is in flight |
 | `action` | a button that calls one of your tools with no arguments | `tool: "install"` |
+| `table` | a list of things, with actions on each one | `rows`, `columns`, and see below |
 
 ## Reading them
 
@@ -54,6 +55,45 @@ Three marks, no legend:
 Alexia remembers the value while you are stopped, so the screen is honest before your next
 spawn.
 
+
+## `table`: a list of things
+
+*Needs `"alexia_protocol": 3`.*
+
+```jsonc
+{ "key": "clips", "type": "table", "label": "Clips",
+  "rows": "list_clips",
+  "columns": [{ "key": "name", "label": "Name" },
+               { "key": "seconds", "label": "Length", "align": "right", "hideNarrow": true }],
+  "rowActions": [{ "key": "drop_clip", "label": "Delete", "tool": "delete_clip",
+                   "confirm": "Delete {name}?" }],
+  "filter": true }
+```
+
+`rows` names one of your tools. Alexia calls it with no arguments and reads MCP's own
+`structuredContent`:
+
+```js
+return {
+  content: [{ type: 'text', text: 'ok' }],
+  structuredContent: { rows: [{ id: 'a', name: 'Ada', seconds: 15 }] },
+}
+```
+
+**Every row needs a string `id`.** It is the only field Alexia uses — a row action and a
+detail are both *this row* — and everything else belongs to the columns you declared. If
+`structuredContent.rows` is missing, or a row has no `id`, the panel says exactly that
+rather than showing an empty list.
+
+**This is the one widget that needs your process running.** Everything else draws while you
+are stopped. A table asks for its contents when somebody opens the panel, so declare
+`readOnlyHint` on your `rows` tool — one that has not is asked about before it runs, which
+is the permission gate treating a lister that claimed nothing like anything else that
+claimed nothing.
+
+A `rowActions` tool is called with `{ id }` and goes through that same gate. `confirm` is a
+second press, with `{column}` filled in from the row. Mark with `hideNarrow` the columns you
+would drop first on a phone — the buttons are what has to stay reachable.
 
 ## A panel: the same widgets, a different screen
 

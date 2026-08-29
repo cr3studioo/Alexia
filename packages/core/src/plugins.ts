@@ -13,7 +13,17 @@ import { basename, join } from 'node:path'
 import { Host } from './host.js'
 import { tabs, type Tab } from './panels.js'
 import { CORE, keychain, type SecretStore } from './secrets.js'
-import { declaredWidgets, pane, refuse, write, type Pane, type PaneOptions, type Progress } from './settings.js'
+import {
+  declaredAction,
+  declaredTable,
+  declaredWidgets,
+  pane,
+  refuse,
+  write,
+  type Pane,
+  type PaneOptions,
+  type Progress,
+} from './settings.js'
 import type { Store } from './store.js'
 import { PluginProcess, type Timings } from './supervisor.js'
 
@@ -42,6 +52,25 @@ export interface PluginsOptions {
   onToolsChanged?(pluginId: string): void
   timings?: Timings
 }
+
+/**
+ * One row of a `table` (M6-3).
+ *
+ * `id` is the only field core requires, because it is the only one core uses: a row action
+ * and a detail are both *this row*, and everything else on the row belongs to the columns
+ * its author declared.
+ */
+export interface Row {
+  id: string
+  [field: string]: unknown
+}
+
+/** What a tool said, as one string. Its own words, whether or not it went well. */
+const said = (result: CallToolResult): string =>
+  (result.content ?? [])
+    .map((block) => (block.type === 'text' ? block.text : `[${block.type}]`))
+    .join('\n')
+    .trim()
 
 /** A folder that does not hold a loadable plugin, and the sentence explaining why. */
 export interface Problem {
@@ -422,12 +451,21 @@ export class Plugins {
    * of the ten. The permission gate is the caller's: an action is a tool call like any other
    * and core asks before a destructive one, in every mode except Full trust.
    */
-  async action(id: string, key: string, signal?: AbortSignal): Promise<{ ok: boolean; said: string }> {
+  async action(id: string, key: string, signal?: AbortSignal, row?: string): Promise<{ ok: boolean; said: string }> {
     const entry = this.#entries.get(id)
-    // Either screen. A button on a panel is the same button (D86).
-    const declared = entry && declaredWidgets(entry.manifest).find((s) => s.key === key)
-    if (!entry || declared?.type !== 'action') {
+    // Either screen, and either kind: a `action` widget, or a row action on a table. They
+    // are the same press through the same gate, which is the whole of D83's claim.
+    const declared = entry && declaredAction(entry.manifest, key)
+    if (!entry || !declared) {
       throw new ProtocolError(ErrorCode.INVALID_PARAMS, `${id} has no button called "${key}"`)
+    }
+    // A row action without a row is a press with nothing to act on, and one *with* a row on
+    // a button that takes none would be an argument its author never declared.
+    if (declared.row !== (row !== undefined)) {
+      throw new ProtocolError(
+        ErrorCode.INVALID_PARAMS,
+        declared.row ? `"${key}" acts on a row, and none was named.` : `"${key}" is not a row action.`,
+      )
     }
     // Pressing a button is asking a plugin to do something, and a plugin nobody has said yes
     // to does not do things. The screen disables the button; this is what makes that true.
@@ -435,7 +473,7 @@ export class Plugins {
       throw new ProtocolError(ErrorCode.INVALID_PARAMS, `${id} is not enabled.`)
     }
     try {
-      const result = await entry.process.callTool(declared.tool, undefined, {
+      const result = await entry.process.callTool(declared.tool, row === undefined ? undefined : { id: row }, {
         ...(signal && { signal }),
         onprogress: (update) => {
           this.#progress.set(id, {
@@ -445,16 +483,67 @@ export class Plugins {
           })
         },
       })
-      const said = (result.content ?? [])
-        .map((block) => (block.type === 'text' ? block.text : `[${block.type}]`))
-        .join('\n')
-        .trim()
-      return { ok: result.isError !== true, said: said || (result.isError === true ? 'That did not work.' : 'Done.') }
+      const spoke = said(result)
+      return { ok: result.isError !== true, said: spoke || (result.isError === true ? 'That did not work.' : 'Done.') }
     } catch (error) {
       return { ok: false, said: error instanceof Error ? error.message : String(error) }
     } finally {
       // The bar goes when the work does. A bar left at 97% is worse than no bar.
       this.#progress.delete(id)
+      await this.#remember(id)
+    }
+  }
+
+  /**
+   * A table's rows (M6-3), asked of the tool its author named.
+   *
+   * **This is the call a panel makes when somebody opens it**, and the reason drawing the
+   * panel spawns nothing: `/api/panels` reads manifests, and the process starts here, once,
+   * because a person is looking at the thing it answers.
+   *
+   * MCP's own `structuredContent` carries the rows. Alexia invents no envelope for it — the
+   * same reason the permission gate reads MCP's annotations rather than a field of ours.
+   */
+  async rows(id: string, key: string): Promise<{ rows: Row[] } | { why: string }> {
+    const entry = this.#entries.get(id)
+    const table = entry && declaredTable(entry.manifest, key)
+    if (!entry || !table) throw new ProtocolError(ErrorCode.INVALID_PARAMS, `${id} has no table called "${key}"`)
+    if (!this.#enabled.has(id)) throw new ProtocolError(ErrorCode.INVALID_PARAMS, `${id} is not enabled.`)
+
+    try {
+      const result = await entry.process.callTool(table.rows)
+      if (result.isError === true) return { why: said(result) || `${entry.manifest.name} could not list those.` }
+      const structured = result.structuredContent as { rows?: unknown } | undefined
+      const rows = structured?.rows
+      // Named rather than shrugged at. An author who gets this wrong reads a sentence saying
+      // exactly what was expected, which is the whole of what they need.
+      if (!Array.isArray(rows)) {
+        return { why: `"${table.rows}" answered without structuredContent.rows, so there is nothing to show.` }
+      }
+      const bad = rows.findIndex((row) => typeof row !== 'object' || row === null || typeof (row as Row).id !== 'string')
+      if (bad !== -1) return { why: `"${table.rows}" answered with a row that has no id (row ${String(bad + 1)}).` }
+      return { rows: rows as Row[] }
+    } catch (error) {
+      return { why: error instanceof Error ? error.message : String(error) }
+    } finally {
+      await this.#remember(id)
+    }
+  }
+
+  /** What expands under one row, from the tool the table declared for it. */
+  async detail(id: string, key: string, row: string): Promise<{ text: string } | { why: string }> {
+    const entry = this.#entries.get(id)
+    const table = entry && declaredTable(entry.manifest, key)
+    if (!entry || !table?.detail) throw new ProtocolError(ErrorCode.INVALID_PARAMS, `${id} has no detail for "${key}"`)
+    if (!this.#enabled.has(id)) throw new ProtocolError(ErrorCode.INVALID_PARAMS, `${id} is not enabled.`)
+
+    try {
+      const result = await entry.process.callTool(table.detail, { id: row })
+      const text = said(result)
+      return result.isError === true ? { why: text || 'That did not work.' } : { text }
+    } catch (error) {
+      return { why: error instanceof Error ? error.message : String(error) }
+    } finally {
       await this.#remember(id)
     }
   }

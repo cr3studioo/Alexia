@@ -179,7 +179,7 @@ Tick a box only when the task's acceptance criteria pass. `[GATE]` needs a human
 
 - [x] **M6-1** The route guard, and the check that keeps it
 - [x] **M6-2** The control view, and a tab list nobody writes by hand
-- [ ] **M6-3** `table` — the eleventh widget, and the conversation the spec asked for
+- [x] **M6-3** `table` — the eleventh widget, and the conversation the spec asked for
 - [ ] **M6-4** Skills, learned skills and tools — three panels, one widget
 - [ ] **M6-5** The trace, with a memory
 - [ ] **M6-6** `plugins/voice` declares a panel — and the `file` question
@@ -531,7 +531,7 @@ Alexia/
       manifest.md           # plugin.json v1
       capabilities.md       # the capability name registry
       storage.md            # namespaces and the purge contract
-      ui-schema.md          # the ten widgets
+      ui-schema.md          # the widgets, and what an eleventh had to argue
       skills.md             # the agentskills.io profile
       invariants.md         # the ten CI checks and what each one defends
     authoring/              # M3 — plugin author documentation
@@ -2288,6 +2288,22 @@ installed and enabled and for no other reason.
 
 ### M6-3 `table` — the eleventh widget, and the conversation the spec asked for
 
+**Built 2026-08-29 (D83).** Granted, and it kept the promises that made granting it cheap. A
+row action **is** an `action`: the same lookup, the same `rule()`, the same two steps — the
+only difference is that it carries the row it is about and the question appears beside that
+row. Rows arrive over MCP's own `structuredContent`, shaped `{ rows: [...] }` with a string
+`id` on each, because the protocol already has an envelope and Alexia adds none of its own.
+**It is the one widget that needs the process**, which is exactly the shape M6-2 asked for:
+the panel draws from the manifest while the plugin is stopped, and asks for its contents when
+somebody opens it. `/api/rows` and `/api/detail` go through the same gate as everything else,
+so a `rows` tool that has not declared itself read-only is asked about rather than quietly
+run. Three author mistakes get three sentences rather than an empty list: no
+`structuredContent`, a row with no `id` — named by row number — and a table nobody declared.
+The one refactor it forced was worth it on its own: **the permission ruling is now written
+once** in `serve.ts` and used by four callers, the copy made for `/api/command` having
+already begun to drift from the one it was copied from.
+
+
 `ui-schema.md` says an eleventh widget *"is a conversation — open an issue saying what the
 tenth could not do."* This is that conversation, held properly rather than skipped.
 
@@ -2608,6 +2624,7 @@ Newest first. Every entry here is also in Alexia.md's decision log.
 
 | Date | Entry |
 |---|---|
+| 2026-08-29 | **D83 built** — **the eleventh widget shipped, and it invented nothing.** M6-3. `table` is granted, and the two claims that made granting it cheap both held in code. **A row action is an `action`**: one lookup, one `rule()`, the same two-step question — it just carries the row it is about, and the question appears beside that row rather than under a button. And **rows arrive over MCP's own `structuredContent`**, `{ rows: [...] }` with a string `id` on each, because the protocol already has an envelope for structured tool output and inventing a second one is how a contract grows a dialect. It is the only widget that needs a running plugin, which is exactly the division M6-2 set up: the panel draws from the manifest while the process is stopped, and asks for its contents when a person opens it — through the same gate as any other call, so a `rows` tool that never declared itself read-only is asked about instead of quietly run. Three ways an author gets the answer wrong are three sentences naming what was expected, never a blank list. The refactor it forced pays for itself: **the permission ruling is written once now** and used by four callers, the copy made for `/api/command` a task earlier having already started to drift from its original. |
 | 2026-08-29 | **D86** — **a plugin declares its own tab, and that cost a contract revision.** M6-2. The control surface's tab list is **assembled**: core contributes the tabs whose data core owns, and every other one is a `panel` in the manifest of a plugin somebody enabled. There is no list of tabs anywhere that a person types into, which is the whole point — the previous dashboard listed nine by hand in one `App.tsx` and grew a 480-line panel for one text-to-speech vendor inside its own source tree, and a dashboard is where an architecture like this usually breaks because it is the one screen that has to know about everything at once. `panel` is a manifest field, so **`alexia_protocol` goes to 3** and `MIN` rises to 2 with it: the *one revision back* promise, kept for the first time rather than described, and the first-party plugins migrated by changing one character. Two things fell out of building it and both are better than what was there. **`settings` and `panel.widgets` are one namespace**, because a widget's value is stored once and two declarations of it could disagree about its type — so the same key twice is a load error and choosing the screen is the author's job. And **the widget renderer moved to one file** that both screens use; a second renderer would have been a second set of rules about where a `password` goes, and the two would have drifted on the day one of them was fixed. **Invariant 1 now reads `packages/ui` too**, added while it still passed trivially, which is the only time a rule is free — and it is what makes M6-G a check rather than a hope. |
 | 2026-08-29 | **D85** — **classifying the routes found the one route that was not classified anywhere: a slash command was a tool call with no gate in front of it.** M6-1, and it was the *reason per entry* that did it, not the list. Sixteen of the seventeen paths had a sentence that made them reversible or a sentence that made them dangerous. `/api/command` had neither, because it is two different things wearing one syntax: core's own commands set a mode or a pin — one word to change back, with the current value on screen beside the control — and **a plugin's command is a tool call under a short name**. That half was reaching `callTool` directly, while the identical call from an action button and the identical call from the agent loop both went through `rule()`. So it goes through the same ruling now, asked the way `/api/action` asks — this request carries no stream to put a question down, so the first call answers `ask` and the second carries the person's yes, and `blocked` still has no second call. Nothing about the two commands that exist changes: both declare `readOnlyHint`, so both still run unasked in the default mode. **The entry that could not be written is the finding.** Had the reason been optional, `/api/command` would have gone on the safe list with a path and no sentence, and the hole would still be there — which is the argument for the rule, made by the rule. |
 | 2026-08-29 | **D84** — **the consent ladder reaches skills, and provenance is a separate permanent record.** M6-9. A plugin arrives installed and not enabled (D73) and a skill arrives simply live — including a **learned** skill, which is written by a model, after a task, about what it thinks it just learned. That is the exact case the predecessor labelled *AI-generated — pending review*, and it is the one place in this product where something the user never asked for starts working on its own. Three records rather than one, because they have three lifetimes: **pending** is transient, **provenance** is permanent and written once at creation, **preauth** is consumed once and means *yes, to this exact name*. Provenance is separate because the predecessor tried to read authorship out of a usage field and found it meant *is this curator-managed*, with rows written before the marker unrecoverable — so a skill with no provenance entry is shown as **unknown, not guessed**, the same discipline as the catalog's honesty flags. Two rules restated where the revise-and-recheck loop actually lives: the checker is **code, never a model**, because routing a self-authored skill through an LLM makes the checker itself the unauditable thing it exists to catch; and the loop asks the ceiling **before** each dispatch, since a checker that keeps failing and an author that keeps trying is a loop spawning fresh calls, the one shape a post-hoc ceiling never catches. |

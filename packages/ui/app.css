@@ -402,6 +402,93 @@ body[data-view='first-run'] header {
   }
 }
 
+/* ---- `table`, the eleventh widget (M6-3) -----------------------------------------------
+
+   A wide table scrolls inside its own box and never sideways-scrolls the page. The old
+   dashboard's version was usable in that sense and not usable in the sense that matters —
+   seven columns on a 375px screen put the Delete button past the edge — so columns declare
+   their own narrow behaviour and the ones that stay are the ones you act on. */
+
+.table-box {
+  margin-top: var(--space-2);
+}
+
+.table-filter {
+  width: 100%;
+  margin-bottom: var(--space-3);
+}
+
+.table-scroll {
+  overflow-x: auto;
+}
+
+.grid {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+}
+
+.grid th,
+.grid td {
+  padding: var(--space-2) var(--space-3);
+  text-align: left;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+}
+
+.grid thead th {
+  font-weight: 600;
+  color: var(--ink-quiet);
+  white-space: nowrap;
+}
+
+.grid .right {
+  text-align: right;
+}
+
+/* A group heading is a row that is obviously not a row. */
+.grid tr.group th {
+  padding-top: var(--space-4);
+  font-weight: 600;
+  color: var(--ink);
+  border-bottom-color: var(--ink);
+}
+
+/* A row something has just happened to. It fades rather than vanishing: a list that
+   rearranges itself under the pointer is a list you press the wrong thing in. */
+.grid tr.done td {
+  opacity: 0.55;
+}
+
+.row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: baseline;
+  justify-content: flex-end;
+  border-bottom: 0;
+}
+
+.row-actions .hint,
+.row-actions .error {
+  flex-basis: 100%;
+  margin: 0;
+  text-align: right;
+}
+
+/* Armed: the second press. It is not red — a colour on this screen means something
+   happened, and being about to happen is not that — it is the changed word that carries it. */
+.row-actions .armed {
+  font-weight: 600;
+  border-color: var(--ink);
+}
+
+@media (max-width: 559px) {
+  .row-actions {
+    justify-content: flex-start;
+  }
+}
+
 .pane {
   padding: var(--space-4);
   border: 1px solid var(--line);
