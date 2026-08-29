@@ -1146,6 +1146,36 @@ core or the shell contains that plugin's name.
 > inside its own source tree. That is this document's founding complaint arriving by the back
 > door: not a feature you cannot remove, but a feature core cannot stop naming.
 
+### M7 — What version 1 knew
+
+*Added 2026-08-29 (D93).* The first Alexia read end to end — not its screen this time, which
+M6 already took, but the six things underneath it this repo has no answer to yet. Ordered by
+what to build first, not by size.
+
+- **Redaction** — credentials and location stripped before a payload reaches a third-party
+  model, in code and before dispatch, with everything behavioural allowed on purpose. This one
+  is a **hole**, not a missing feature: free endpoints are the default (D51) and nothing
+  guards what leaves.
+- **One id** on the spend row, so a cost is traceable to the run that spent it rather than to
+  the sitting it happened in
+- **Memory that captures without being asked** — greedy capture, slow consolidation, linked
+  notes, and a forget that clears the buffer first
+- **A voice cloned from fifteen seconds**, which Piper cannot do — and therefore the real user
+  D89's `file` refusal was waiting for
+- **A button in Telegram**, because there is nowhere to ask a permission question from a phone
+  and the plugin says so in its own source
+- **Three execution tiers**, where the cheapest has no model in the path and the import graph
+  is what guarantees it
+
+**Done when** a free-model request is provably stripped, a cost is traceable to its run, and
+Alexia remembers something nobody told it to — then forgets it and it stays forgotten.
+
+> **Read it for the reasons, not the code.** Version 1 is a Python app on the gateway this
+> project exists to replace; nothing is vendored and nothing becomes a submodule. What it has
+> that a fresh design does not is a record of what failed — a model that marked twenty-four
+> real memories as duplicates and silently wrote nothing, a forget undone twelve minutes later
+> by a buffer nobody cleared. Those are worth more than the source.
+
 ### Pull a rough installer forward to M2
 
 *Added 2026-08-27, once setup became the pitch.* There is a tension in the ordering above
@@ -1453,6 +1483,7 @@ Newest first. Every entry is a question from `questions.md` that got answered.
 
 | Date | Decision | Notes |
 |---|---|---|
+| 2026-08-29 | **D93 — version 1 was read end to end, and it knew six things this repo does not** | M7 added. M6 took the previous Alexia's screen; this is what was underneath it, found by comparing its `control/`, `core/` and `adapters/` against what is actually built here rather than against what anybody remembers building. **One of the six is a hole rather than a missing feature**: free endpoints are the default (D51), and nothing strips a credential or a location before a payload reaches one — which version 1 did in code, with three exclusions whose third is *everything behavioural goes, deliberately*, quoted verbatim so a later session cannot tighten it into uselessness. The other five, in build order: **one id** on the spend row, since `usage` carries a session and ten tasks in a sitting share it; **memory that captures without being asked**, the largest, and carrying four failures already paid for elsewhere; **cloning**, the real user D89's `file` refusal was waiting for; **a button in Telegram**, because that plugin's own source says *you have no tools on this path* and means there is nowhere to ask; and **three execution tiers**, whose free bottom rung was guaranteed by the import graph rather than by a comment. **Four more are Backlog rather than tasks** — proactive messaging, a reliability scorecard, bounded self-healing, web-watch — all waiting on **G12: may a plugin run on its own clock, and spend on it**, which `resident` and `sampling` half-answer and the ceiling does not. Nothing is vendored; every path is named to be read for its reasons, and every task stands if the folder is gone. |
 | 2026-08-29 | **D92 — the palette searches the panels themselves, and M6 is done** | M6-10. Ctrl+K from anywhere; Enter opens the tab the thing lives on, with its name already typed into that panel's filter. *One search endpoint over each source's existing read path* turned out to be literal — it ranks the rows the tables show, so there is **no second index**, and a skill that has just been forgotten is gone from the palette by the act that removed it. A plugin's panel contributes its **name, not its contents**: reaching inside one is a tool call, and a palette that spawned every plugin on every keystroke would be a search box with a startup cost. Fifteen lines of ranking, no dependency, ties broken by label so the same query gives the same order twice. **It navigates; it does not execute** — what comes back is a tab and a word. **M6-G was then run rather than asserted**: three plugin panels open, a plugin deleted, its tab gone with it, and the word absent from all thirty-nine files in core and the shell — with a purge refused without a confirm, a run outliving the task that made it, and a learned skill waiting for a yes, all on the same run. |
 | 2026-08-29 | **D84 built — a skill a model wrote now waits, and the three records stayed three** | M6-9. `Skills` grew a second list — `all` for the screen, `usable` for the model — and **a skill nobody has said yes to is in neither the index nor anything the model can read.** That is the difference between a ladder and a label. Bundled is live because enabling the plugin was the yes; a marketplace install writes a **preauth** before the download, spent by the folder that arrives under that name and nothing else; a learned skill is marked `learned` at creation and waits, because nobody asked for it; a folder that appeared is `unknown`, which is a fact rather than a shrug. **Pending is derived rather than stored** — *not bundled and not yet allowed* — so nothing transient gets a row that outlives it. Two findings from building it: the screen needs **its own reader**, because a review screen that cannot open the thing under review asks you to guess; and **two tables on one screen cannot share a row-action key**, since a press is looked up by key. The two rules under the ladder — the checker is code, never a model, and a revise-and-recheck loop asks the ceiling before it dispatches — are written into `learned.ts`, where a future version of that file is what would break them. |
 | 2026-08-29 | **D91 — the panel mechanism held for a plugin that did not exist when it was written** | M6-8. `plugins/commitments` is an append-only record of what you said you would do — statement, day, **whose idea it was**, state, how many times it has been raised — with a read-only panel. It **passed the conformance suite on the first run**, with no change to core, no change to the suite and nothing added to the schema. That is the task's reason for existing: every other panel in M6 attaches to something core already ships and could therefore have been special-cased into working, and this one could not. The check reads the six files where a name would have had to appear and finds it in none. Two decisions came out of writing it: **the panel is read-only**, because a commitment is recorded in the conversation where it was said and a second way in from a table would be a parallel mechanism into a record whose value is that it only grows; and **a date is understood or it is not**, because a ledger that quietly decided which Tuesday you meant would nudge on the wrong day and never say why. |

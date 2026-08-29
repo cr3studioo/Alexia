@@ -189,6 +189,16 @@ Tick a box only when the task's acceptance criteria pass. `[GATE]` needs a human
 - [x] **M6-10** The command palette
 - [x] **M6-G** **Done when:** delete `plugins/memory` with the control view open and its tab goes with it
 
+### M7 — What version 1 knew *(inserted 2026-08-29 — see Change log)*
+
+- [ ] **M7-1** Nothing leaves this machine unread — egress redaction
+- [ ] **M7-2** One id, four records
+- [ ] **M7-3** Memory that captures without being asked
+- [ ] **M7-4** A voice that is yours — cloning, and the engine it costs
+- [ ] **M7-5** A button in Telegram, and somewhere else to land
+- [ ] **M7-6** Three tiers, and the cheapest one has no model in it
+- [ ] **M7-G** **Done when:** a free-model request is provably stripped, a cost is traceable to the run that spent it, and Alexia remembers something nobody told it to
+
 ---
 
 ## What changed on 2026-08-27, after Alexia.md was written
@@ -2690,6 +2700,348 @@ pending review until somebody says yes (M6-9).
 
 ---
 
+## M7 — What version 1 knew
+
+*Inserted 2026-08-29 (D93). Same method as M6 and the same source: the first Alexia, still on
+this machine, **read rather than remembered**. M6 took its screen. This takes the six things
+underneath the screen that this repo has no answer to yet — found by reading its `control/`,
+`core/` and `adapters/` end to end and comparing against what is actually built here, rather
+than against what anybody remembers building.*
+
+### Where version 1 is, and the rule for reading it
+
+```
+C:\Users\vacla\Documents\alexia version 1
+```
+
+**Machine-local. Not in this repo, not a submodule, and never going to be.** It is a Python
+app built on a gateway this project exists to replace, and vendoring any of it would vendor
+that. **Read it for the reasons, not the code.** Every path named below is a file worth
+opening before writing the equivalent here, because each one was lived with long enough to
+have failed at least once, and the comment above the fix usually says how — the memory
+pipeline's own docstring records the exact day a model marked twenty-four real memories as
+duplicates and silently wrote nothing.
+
+If the folder has moved or the machine has changed, **every task below still stands**. The
+reasoning is written out here; the file is corroboration, not a dependency.
+
+### The mapping
+
+Six parts, ordered by **what to build first**, not by size. The largest is third.
+
+| # | What version 1 had | Where it lives there | Where it lands here |
+|---|---|---|---|
+| **M7-1** | Credentials and location stripped before anything reaches a third-party model | `core/redact.py` | **core**, before dispatch |
+| **M7-2** | One id joining the trace, the spend and the routing decision | `control/trace.py` → `correlate()`, `core/ledger.py`, `control/proactive.py` | **core** — a column, not a subsystem |
+| **M7-3** | Memory that wrote itself down without being asked, into linked notes | `control/memory_buffer.py`, `control/memory_consolidation.py`, `core/vault.py`, `control/forget.py`, `control/memory_graph.py`, `core/embeddings.py`, `config/memory_graph.toml` | **`plugins/memory`**, and a contract question |
+| **M7-4** | A voice cloned from fifteen seconds, marked up with emotion mid-sentence | `adapters/local_tts.py`, `adapters/fish_audio.py`, `core/voice_expression.py`, `core/voice_selection.py`, `control/voice.py`, `ui/control/src/FishAudioPanel.tsx` | **`plugins/voice`**, or a second one |
+| **M7-5** | Buttons on a Telegram message, and a second place for it to land | `adapters/messaging.py` | **`plugins/telegram`** |
+| **M7-6** | Three execution tiers, split by how much model sits in the loop | `core/script_engine.py`, `core/workflow_engine.py`, `control/workflows.py` | **`plugins/computer`**, beside `learned.ts` |
+
+**Four more were found and are deliberately not tasks.** They are real, they are in the
+Backlog with their paths, and all four wait on the same answer: **proactive messaging**
+(`core/triggers.py`, `core/proactive_queue.py`, `core/quiet_hours.py`,
+`core/frequency_ladder.py`), the **per-model reliability scorecard** (`core/reliability.py`),
+**bounded self-healing** (`core/self_heal.py`), and **web-watch with an ad blocker**
+(`core/web_watch.py`). Each needs **G12** — *may a plugin run on its own clock, and spend on
+it* — which is also the question standing under M7-3.
+
+**What is not coming across, and why.** The gateway coupling and everything in `ops/`, which
+is the architecture this project replaced. `core/cc_bridge.py`, because `plugins/claude-code`
+already is that. The mode badge and `/nsfw`, which are `plugins/persona`'s business — D81 said
+so and it still holds. And `control/route_guards.py`, whose own twenty-line comment documents
+the hole M6-1 was built not to have.
+
+---
+
+### M7-1 Nothing leaves this machine unread
+
+**Every payload bound for a third-party model is stripped of credentials and location first,
+in code, before dispatch — and everything else about the user goes, deliberately.**
+
+This is the one item on the list that is a **hole rather than a missing feature.** D51 makes
+free endpoints load-bearing: they are the default, they are how spend stays at 0.00, and their
+terms permit training on what they receive. M1-3 gave this repo a `SecretStore` so a token
+never reaches the database — **a different job entirely.** That guards what is *written*.
+Nothing guards what is *sent*, and today a conversation containing an API key goes to a free
+endpoint intact.
+
+**The policy is three exclusions, and the third one is the point.** From the predecessor's
+owner, in his own words, and worth keeping verbatim because the temptation is always to
+broaden it:
+
+> *"i dont care that it sends some information about me to the model just not passwords / env
+> variables. or anything that could leak my current location. but the things how i operate,
+> what i do, what i like etc. i dont care about that."*
+
+So: credentials and env values always stripped, anything revealing where he is always
+stripped, **and everything behavioural allowed on purpose.** Over-redacting the behavioural
+layer would gut the thing that makes Alexia worth running, and it is not what was asked for.
+A future session tightening this "helpfully" is the failure mode to guard against, which is
+why the quote goes in the file.
+
+- **It runs in the router, before the request leaves** — not at a call site somebody has to
+  remember. A rule enforced by whoever remembers is not enforced.
+- **It is enforcement, not instruction.** No prompt asking a model to be careful; a prompt
+  cannot be relied on to hold, and this one would be relied on for exactly the payloads where
+  it matters most.
+- **The ceiling is stated, not hidden.** Pattern matching is deliberately narrow, never
+  exhaustive — `core/redact.py` says so about itself. It catches the shapes credentials and
+  addresses actually take, and it will miss something. Saying so is the difference between a
+  filter and a promise.
+- **Local models are not redacted.** T0 runs on this machine; stripping there would cost
+  accuracy to protect against nothing, and privacy mode already withdraws `sampling`
+  (`packages/protocol/src/meta.ts`) where the user has asked for more than that.
+
+**Acceptance.** A test drives a payload carrying an API-key shape, an env assignment and a
+street address through the router's free path and asserts that none of the three arrive and
+the surrounding sentence does; the same payload through the local path arrives whole. One
+invariant-style check that a redaction-free path to a third-party provider does not exist.
+
+**Open:** whose rule is this — core's, or a capability a plugin can ask past? → **G11**.
+
+### M7-2 One id, four records
+
+**A run's id is on the row that says what it spent, so "why did this cost that" is a lookup
+rather than an argument.**
+
+The pieces are all built and none of them touch. `trace.ts` keeps five runs, each with an
+`id`. The `usage` table (`packages/core/src/store.ts`) records `at`, `session_id`, `plugin`,
+`model`, `provider`, tokens and cost, and `spend()` filters by session, plugin or model.
+**A session is not a run.** Ten tasks in one sitting share a `session_id`, so the panel can
+say what today cost and cannot say what *that* cost — which is the question anybody actually
+has, and the only one a ceiling refusal (M15-7) makes urgent.
+
+Version 1 solved this with one key on everything: `correlate()` in `control/trace.py` takes a
+`task_id` and returns the trace run, the spend rows, the routing decisions and the proactive
+message together. The plumbing was one field; the payoff was that clicking a message showed
+what produced it. **The lesson is the restraint** — it did not invent a second id scheme, it
+put the id it already had on the rows that were missing it.
+
+- **A column and a field, not a subsystem.** `run_id` on `usage`, written where the loop
+  already knows it.
+- **The router's decision goes with it** — which model was asked, which answered, and why
+  they differ. D88 already added a `turn` event carrying both names for the trace badge; the
+  same two names belong on the spend row, because a 429 fallback is exactly the case where a
+  cost is surprising.
+- **The activity panel row becomes clickable through.** M6-5 shows what a run did; this makes
+  it show what a run cost, on the same row, with no second lookup for a person to perform.
+- **Honest where there is nothing to join.** A model call with no run — a background one, if
+  G12 ever allows one — gets a null and says *no run recorded*, never an empty list that reads
+  like something is missing.
+
+**Acceptance.** A multi-step task runs; its trace row and its spend total are retrieved by one
+id and agree with each other. A fallback on 429 shows both model names against the cost.
+
+### M7-3 Memory that captures without being asked
+
+**Alexia writes something down because it was worth writing down, not because the model
+remembered to call a tool.**
+
+This is the largest of the six and the one with the most real reasoning behind it. M4-3
+shipped a memory plugin that works: a `facts` table, one sentence a row, ranked by keyword
+overlap with a recency tiebreak, and `forget_one` from the panel (D90). **What it cannot do is
+notice.** Everything in it arrives because the model chose, mid-conversation, to call
+`remember` — and a model that is busy answering will not.
+
+Version 1 ran two stages on a timer and the split is the whole design:
+
+1. **Capture, greedily and cheaply.** Every exchange written raw. A cheap model looked at them
+   five at a time and asked only *is any of this worth keeping* — a low bar, on purpose:
+   *"when in doubt, keep it."* An idle Alexia made zero calls, because the batch never filled.
+   → `control/memory_buffer.py`
+2. **Consolidate, slowly and well.** Every twelve minutes a stronger model turned the
+   survivors into short notes, decided where each belonged, and linked them.
+   → `control/memory_consolidation.py`
+
+**The bar for writing is on the floor; the filtering happens at read time.** A fact never
+written cannot be recalled; a trivial fact that was written costs almost nothing to skip past.
+That asymmetry is why capture is greedy — and it only works if retrieval is structured, which
+is the second half.
+
+**Linked notes, not a longer list.** `core/vault.py` is one small always-loaded hub and
+everything else reached by following `[[wikilinks]]`, so **recall cost stays flat as memory
+grows**. `search.js` already writes down its own ceiling — *hundreds of short sentences rather
+than millions* — and this is what removes it rather than raises it. A memory could sit under
+two parents at once (a person *and* a hobby) with no new machinery: one canonical note, one
+link appended to each parent.
+
+**D90 refused a `graph` widget because this plugin's links would have to be inferred.** That
+refusal was right and it stays right — but a vault has **authored** links, which is the exact
+condition D90 named as the thing it was waiting for. **If M7-3 ships, G8 reopens with a real
+user.** That is the deferral working, not a reversal.
+
+Four hard-won details, each fixing a failure that actually happened:
+
+- **Code overrules the model on duplicates.** Live, 2026-08-10: a batch of twenty-four real
+  candidates came back all marked duplicate. Valid JSON, nothing written, nothing crashed —
+  the worst shape a failure can take. The fix: the model must **name** the note it claims a
+  duplicate of, and code compares the candidate against that note's real on-disk text before
+  believing it. Plain word overlap, no embeddings, and explainable — *these two share fewer
+  than a third of their words* is an answer a person can check.
+- **The forget cascade, in order: buffer first, then notes, then the raw log.** The
+  predecessor's owner caught this himself: *"if I say forget something and in the buffer there
+  is the same thing… that gets remembered in 12 minutes, it kinda loses the point."* Today's
+  `forget_one` is correct precisely because there is no buffer. **Adding one without adding
+  this is the bug.**
+- **A tombstone every time, matched or not.** A forget that found nothing still gets recorded,
+  so nobody later has to wonder whether it silently no-opped. Losing memory quietly is the one
+  unrecoverable failure this kind of system has.
+- **Quarantine, not a stuck queue.** A candidate whose own content breaks the call is always
+  the head of the queue on the next pass, forever. After three attempts it is set aside —
+  never discarded — and the rest drains.
+
+Also there and worth taking cheaply: **certainty decay**, so an old unconfirmed fact fades
+rather than sitting as truth; and a **secret pre-scan on every write**, so nothing
+credential-shaped enters memory at all — the same scan M7-1 needs, on the other door.
+`core/embeddings.py` is the stated upgrade path when keyword recall measurably misses: a
+~25 MB quantised ONNX model, no torch and no server, with **every caller degrading to
+substring search** when it is unavailable rather than failing.
+
+**The contract question this raises is the real work.** A plugin that batches, waits twelve
+minutes and calls a model is doing **background work on its own clock, and spending on it**.
+Two thirds of that is already proven: `plugins/telegram` holds a poll loop open under
+`lifetime: "resident"` (D77), and `sampling` is a per-request capability the protocol already
+carries. The unproven third is the ceiling — M15-7 counts a task's spend, and nothing yet
+counts a plugin's spend against no task at all. **Do not build the pipeline before that is
+answered.** → **G12**, and **G9** for whether this replaces `plugins/memory` or is a second
+plugin beside it.
+
+**Acceptance.** Say something worth remembering, never call `remember`, wait one interval, and
+find it written down and linked from the right place. Say *forget that*, and it does not come
+back on the next tick. Delete `plugins/memory` and every note goes with it — invariant 5,
+unchanged.
+
+### M7-4 A voice that is yours
+
+**Record fifteen seconds, get a voice that sounds like it — which this repo currently cannot
+do, and said so.**
+
+D89 refused the `file` widget and named exactly this as the reason: *the use case that
+motivated it does not exist here*, because Piper does not clone from a recording. That was
+right on the evidence at the time. **M7-4 is the real user that refusal was waiting for.** If
+an engine that can clone ships, `file` gets asked again with a user that needs it — and it may
+still lose, since a fifteen-second clip could equally be recorded by the plugin through
+`audio.input`, which it already holds.
+
+The predecessor's owner asked for it in one sentence — *"load 15 seconds of a voice and text
+and ship it to Qwen"* — and `control/voice.py` plus `adapters/local_tts.py` are what answered
+it: upload clip and transcript, build a named clone, pick which voice speaks, delete one and
+have the selection fall back rather than dangle.
+
+**It also measured why a local-only answer hurts.** Local TTS loaded the model into VRAM on
+every single call: **10–30 s of load plus roughly 10 s per 20 words**, so a 500-character reply
+took two minutes to arrive. That is a measured number off a machine with the same 8 GB this
+plan's own facts table records, not a guess — and it is the honest argument for offering a
+second engine rather than a preference for the cloud.
+
+Two things ride along with that second engine:
+
+- **Expression markers.** `[emotion]` tags placed inline, mid-sentence, at no token or latency
+  cost — the difference between a voice and a reading. **They must be filtered against a fixed
+  vocabulary after generation**, because a model that invents `[sultry]` ships a literal
+  bracket into the audio: the engine speaks unrecognised text rather than dropping it.
+  `core/voice_expression.py` filters against a list quoted from the vendor's own published
+  reference, which is the part to copy.
+- **Ogg/Opus out of the box**, which is what a Telegram voice bubble wants — and therefore what
+  M7-5 wants.
+
+**Honest about what it costs.** M2-4 refused a cloud vendor for the dependency, and that
+refusal is not overturned by wanting a feature. This is why the shape is a question rather than
+a decision: a second plugin keeps `plugins/voice` local-only and honest, and an engine setting
+inside it keeps one voice screen. → **G10**.
+
+**Acceptance.** Fifteen seconds and a transcript in, a named voice out, that voice speaks the
+next reply. Delete the plugin and the clone goes with it. With the local engine selected,
+expression is **off and says so** rather than silently doing nothing.
+
+### M7-5 A button in Telegram, and somewhere else to land
+
+**A message that arrived from a phone can be answered from the phone — including the yes.**
+
+`plugins/telegram` is good and its own source names the gap in one line
+(`plugins/telegram/index.js:120`): *"You have no tools on this path, so answer from what you
+know or say what you would need."* That is the plugin being honest about a real limit —
+**there is nowhere to ask a permission question from Telegram**, so rather than a task hanging
+on a prompt nobody can see, the path carries no tools at all. Correct, and a ceiling.
+
+`adapters/messaging.py` shipped the mechanism that lifts it, and the hardening is the
+interesting part: Telegram caps `callback_data` at **64 bytes**, so the real action never goes
+inline. A short opaque token goes on the button and resolves server-side. **The limit cannot be
+exceeded by construction**, whatever the action's text — which is the right shape for a
+constraint that would otherwise be a length check somebody forgets.
+
+- **The consent ladder is what actually crosses.** M15-3's modes and M6-9's yes-before-use
+  already decide *what* is asked; this is a second place the asking can happen. The ruling
+  stays in core; only the surface is new.
+- **A fallback channel, and never a replacement.** Version 1 tried ntfy only when Telegram
+  itself was unreachable, and said in the file why it is not a substitute — no buttons, no
+  threading. *The message still landed somewhere* is worth having and worth not overselling.
+- **Voice notes both ways**, which is where M7-4 and this meet: Ogg/Opus is what the bubble
+  wants, and `voice.transcribe` already exists for the other direction.
+
+**Acceptance.** A task started from Telegram that needs permission asks in Telegram, is
+answered with a button, and the answer reaches the same ruling the app would have produced. A
+callback token is opaque and shorter than 64 bytes with an action of any length.
+
+### M7-6 Three tiers, and the cheapest one has no model in it
+
+**The same five clicks every day should not cost a model call every day.**
+
+Version 1 split execution by **how much model sits in the path**, and the names matter less
+than the line between them:
+
+| Tier | Model in the path | Cost |
+|---|---|---|
+| **skill** | orchestrates every step | full |
+| **workflow** | deterministic steps, a few decision points | partial |
+| **script** | none at all | ~none |
+
+**The zero-cost guarantee was structural, not a promise.** `core/script_engine.py` never
+imports the gateway or the spend ledger, so a script **cannot** bill even by accident — there
+is no code path from there to one. That is the trick worth stealing: a rule enforced by the
+import graph survives an edit that a comment does not.
+
+This repo has the top rung and the bottom one is missing. `learned.ts` (M4-5) is a model
+writing a skill for itself, and `plugins/computer` (M4-2) can drive the machine but only with a
+model deciding each step from a screenshot. **The middle and bottom rungs are the answer to
+"computer control is slow and expensive"** — most of what anybody wants it for is the same
+sequence every time, and paying a model to re-derive it is the waste.
+
+Two design rules came with it and both are about not accidentally building an interpreter:
+
+- **Steps come from a whitelisted registry, never a shell string in a JSON file.** A workflow
+  definition is data a person edits by hand; if running it executed arbitrary strings, editing
+  one would be writing code. The registry is the difference.
+- **A later step may reference an earlier step's actual result** (`{step_id}`), which is what
+  makes a decision point worth having — the model's answer is what the next deterministic step
+  acts on, not a waypoint between two clicks.
+
+**This is the biggest contract question of the six**, which is why it is last. A tier that runs
+without a model is a plugin executing a stored plan, and *who stores it, who approves it, and
+what it may touch* are all M15-3 and M6-9 questions wearing new clothes. **Do not start here.**
+The one thing to take early and cheaply is the import-graph guarantee, the day anything in this
+repo claims to be free.
+
+**Acceptance.** A recorded sequence replays with **zero** rows added to `usage`, proven by a
+check that the module cannot reach the provider layer at all. A workflow with one decision
+point spends once, not once per step. Every step is something the permission ladder already
+knows how to rule on.
+
+### M7-G — Done when
+
+> **A free-model request is provably stripped of a credential it contained, a cost is traceable
+> to the run that spent it, and Alexia remembers something nobody told it to remember — then
+> forgets it and it stays forgotten.**
+
+Three of the six, chosen because they are the three that are hard to fake. The gate is
+deliberately not *all six shipped*: M7-4 and M7-6 both hang on questions this milestone raises
+rather than answers, and a gate that waits on an unanswered question is a gate that gets
+waived.
+
+
+---
+
 ## Backlog
 
 Real, ordered, not scheduled. Nothing here blocks a milestone.
@@ -2707,6 +3059,35 @@ Real, ordered, not scheduled. Nothing here blocks a milestone.
    and genuinely cannot be a schema. For that case, not by default.
 5. **A Python plugin SDK** — a client library, not a rewrite, and where ML plugin authors live.
 6. **A full window** — not ruled out, but the overlay is the primary surface.
+
+The next four came out of reading version 1 (M7). Each is real, each was lived with, and each
+waits on **G12** — *may a plugin run on its own clock, and spend on it.* Paths are in
+`C:\Users\vacla\Documents\alexia version 1`, to read for the reasoning rather than the code.
+
+7. **Proactive messaging** — Alexia speaking first, which this repo has no shape for at all.
+   Four parts and the last two are what make it bearable: conditions polled on a timer
+   (`core/triggers.py`, `core/proactive_conditions.py`), a **draft-then-confirm queue** so
+   nothing ever sends unattended (`core/proactive_queue.py`), **quiet hours** as a hard
+   silence (`core/quiet_hours.py`), and a **frequency ladder** that self-throttles 1 → 2 → 3 →
+   5 messages a day on how you actually reacted (`core/frequency_ladder.py`). That last one is
+   the good idea — an assistant that notices it is being ignored and backs off on its own.
+   Plugin-shaped, and it needs M7-5 first: a message you cannot answer from your phone is a
+   notification, not a conversation.
+8. **A per-model reliability scorecard, on disk** (`core/reliability.py`) — success and
+   failure per model, surviving restart, so a model that has been degrading for three days
+   sinks toward the back of its own fallback chain before anyone notices. M1-8 already falls
+   back on 429 and 5xx; what it has no memory of is **which model keeps doing that**. Two
+   failure kinds tracked separately, because they are detected in different places: the call
+   never came back, and the call came back unusable.
+9. **Bounded self-healing** (`core/self_heal.py`) — a failure diagnosed by a model that
+   **proposes and never applies**, with a *hardcoded* list of files it may not even propose
+   touching: its own spend caps, its own redaction, its own guards. The bound is the whole
+   value: a system that can edit its own safety rails does not have any. Only interesting
+   once there is enough running to fail interestingly.
+10. **Web-watch with an ad blocker** (`core/web_watch.py`) — watch a URL, fire on meaningful
+    change, and the noise filtering is the part worth having: a block that changes on every
+    single poll is auto-suppressed, while an explicit selector — *watch the photo* — bypasses
+    both the ad filter and the suppressor, because it is the one thing somebody asked about.
 
 ---
 
@@ -2780,6 +3161,29 @@ For `questions.md`. Each one came out of planning and none of them blocks starti
   the sandboxed iframe for this case and not by default. Whichever wins sets the precedent for
   every plugin after it, so it is worth deciding on evidence rather than on the first one that
   works. *Decide at M6-7, with the table already shipped so nothing is blocked on it.*
+- **G8. Reopens at M7-3 if the vault ships.** D90 refused the graph because *this* plugin's
+  links would have to be inferred, and a picture of inferred similarity looks meaningful and
+  is not. A vault's links are **authored**, which is the condition D90 named. The refusal was
+  right and it is not overturned — it is waiting, exactly as written.
+- **G9.** Does memory-that-captures-by-itself replace `plugins/memory`, or stand beside it as
+  a second plugin? Replacing it makes one screen and one delete; standing beside it keeps a
+  memory you can read at a glance separate from one that grows on its own, and lets somebody
+  run the cheap one only. *Decide at M7-3, and note that invariant 5 has to hold either way.*
+- **G10.** Voice cloning needs an engine Piper is not. Second plugin, or an engine setting
+  inside `plugins/voice`? A second plugin keeps the local-only promise literally true and
+  deletable; a setting keeps one voice screen and one place a voice is chosen. *Decide at
+  M7-4 — and D89's refusal of `file` gets asked again with a user that needs it.*
+- **G11.** Is egress redaction core's rule, or a capability a plugin can ask past? Core's rule
+  means a plugin cannot leak by construction and cannot opt out for a legitimate reason
+  either. *Decide at M7-1. The bias is core's rule, because a redaction a plugin can decline
+  is a redaction the worst plugin declines.*
+- **G12.** **May a plugin run on its own clock, and spend on it?** The largest contract
+  question left. Half is answered — `plugins/telegram` holds a poll loop under
+  `lifetime: "resident"` (D77), and `sampling` is a per-request capability. The unanswered
+  half is the ceiling: M15-7 counts what a *task* spends, and a plugin waking every twelve
+  minutes to call a model spends against no task at all. Without an answer there is no honest
+  spend panel and no honest cap. *Decide at M7-3 — it gates M7-3 and all four of Backlog
+  7–10.*
 
 ---
 
@@ -2789,6 +3193,7 @@ Newest first. Every entry here is also in Alexia.md's decision log.
 
 | Date | Entry |
 |---|---|
+| 2026-08-29 | **D93** — **version 1 was read end to end, and it knew six things this repo does not.** M7 inserted. The first Alexia is still on this machine (the path is in M7's own header, deliberately, so nobody has to guess); M6 took its screen, and this is what was underneath — its `control/`, `core/` and `adapters/` compared against what is actually built here rather than against what anybody remembers building. **One of the six is a hole rather than a missing feature**: D51 makes free endpoints the default and nothing strips a credential or a location before a payload reaches one, which `core/redact.py` did in code, with the owner's own three exclusions and the third — *everything behavioural goes, deliberately* — quoted so a later session cannot tighten it into uselessness. The rest are ordered by what to build first rather than by size: **one id** on the spend row, because `usage` records a `session_id` and ten tasks in one sitting share it, so the panel can say what today cost and not what *that* cost; **memory that captures without being asked**, the largest, carrying four failures already paid for — a model marking twenty-four real memories duplicate and silently writing nothing, a forget undone twelve minutes later by a buffer nobody cleared, a queue frozen forever on one bad row, and a tombstone for the forget that matched nothing; **cloning**, which is the real user D89's `file` refusal was waiting for; **a button in Telegram**, because that plugin's own source says *you have no tools on this path* and means there is nowhere to ask; and **three execution tiers**, whose zero-cost bottom rung was guaranteed by the import graph rather than by a comment. **Four more are in the Backlog, not tasks**, all waiting on the same question: proactive messaging, a reliability scorecard, bounded self-healing, web-watch. That question is **G12 — may a plugin run on its own clock, and spend on it** — half-answered already by `resident` and `sampling`, and unanswered where it matters, since M15-7 counts what a task spends and a plugin waking every twelve minutes spends against no task at all. **Nothing is vendored and nothing is a submodule**: it is a Python app on the gateway this project replaced, so every path is named to be read for its reasons, and every task stands if the folder is gone. |
 | 2026-08-29 | **D92** — **the palette searches the panels themselves, and M6 is done.** M6-10. Ctrl+K from anywhere; Enter opens the tab the thing lives on with its name already in that panel's filter, which is what turns *the right tab* into *the right row*. *One search endpoint over each source's existing read path* turned out to be literal: it ranks the rows the tables show, so there is **no second index** and a skill that has just been forgotten is gone from the palette by the act that removed it — a test says so rather than an argument. A plugin's panel contributes its **name and not its contents**, because reaching inside one is a tool call and a palette that spawned every plugin on every keystroke would be a search box with a startup cost. Fifteen lines of ranking and no dependency, with ties broken by label so the same query gives the same order twice — a palette whose rows swap between keystrokes is one nobody trusts to press Enter on. **It navigates; it does not execute**, and the endpoint cannot: what comes back is a tab and a word. **M6-G was then run rather than asserted** — three plugin panels open, `plugins/memory` deleted, its tab gone, thirty-nine files in core and the shell read and the word in none of them; and on the same run a purge refused without a confirm, a run on the activity panel after the task that made it had ended, and a learned skill sitting at *waiting for you* until one yes. |
 | 2026-08-29 | **D84 built** — **a skill a model wrote now waits, and the three records stayed three.** M6-9. `Skills` grew a second list: `all` is what the screen shows and `usable` is what the model is offered, and **a skill nobody has said yes to is in neither the index nor anything the model can read**. That is the difference between a ladder and a label, and it was the whole of what was missing. Bundled is live because enabling the plugin was the yes; a marketplace install writes a **preauth** before the download, spent by the folder that turns up under that name and by nothing else; a learned skill gets `learned` written at creation and waits, because nobody asked for it. A folder that simply appeared is `unknown` — a fact, not a shrug. **Pending is derived rather than stored**, *not bundled and not yet allowed*, so there is no third place for it to disagree with the other two and no transient row outliving what it was about. Two things fell out of building it. **The screen needs its own reader**: a review screen that cannot open the thing under review is a screen asking you to guess, so `Skills.text` reads any skill on disk while `read` — the model's path — reads only the allowed ones. And **two tables on one screen cannot share a row-action key**, since a press is looked up by key; the learned list uses two keys of its own reaching the same two operations. The two rules under the ladder are now written in `learned.ts`, where a future version of that file would be the thing to break them. |
 | 2026-08-29 | **D91** — **the panel mechanism held for a plugin that did not exist when it was written.** M6-8. `plugins/commitments` is an append-only record of what you said you would do — statement, day, **whose idea it was**, state, and how many times it has been raised — with a read-only panel grouped into Overdue, Open and Closed. It **passed the conformance suite on the first run**, with no change to core, no change to the suite and nothing added to the schema. That is this task's whole reason: every other panel in M6 attaches to something core already ships, so any of them could have been quietly special-cased and still passed, and this one could not. The test that says so reads the six files where a name would have had to appear and asserts it is in none of them. Two decisions came out of writing it. **The panel is read-only**, because a commitment is recorded in the conversation where it was said and closed the same way, and a second way in from a table would be a parallel mechanism into a record whose value is that it only ever grows. And **a date is understood or it is not** — *next Tuesday* is something a model resolves and this plugin has no business guessing at, since a ledger that quietly picked a Tuesday would nudge on the wrong day and never be able to say why. It says so when it does not understand one, rather than dropping it. |
