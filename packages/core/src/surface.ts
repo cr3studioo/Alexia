@@ -3,6 +3,7 @@ import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Catalog } from './catalog.js'
 import { pins, setPin } from './commands.js'
+import { route, type World } from './router.js'
 import { allow, forgetConsent } from './consent.js'
 import { forget } from './learned.js'
 import type { Row } from './plugins.js'
@@ -57,6 +58,14 @@ export interface SurfaceOptions {
    * unlock per row on a table with several hundred of them.
    */
   connected(): Promise<ReadonlySet<string>>
+  /**
+   * What the router can see right now — the same gathering the chat uses.
+   *
+   * Here so *recommended* can be the router's own answer rather than a second opinion about
+   * models kept beside it. A screen that recommended something the thing would not itself
+   * choose would be two routers, and the one nobody can see would win every time.
+   */
+  world(): Promise<World>
 }
 
 /** `▲` is the one mark that is coloured, because on this screen a colour means look at this. */
@@ -67,6 +76,16 @@ const when = (at: number): string => new Date(at).toLocaleString(undefined, { da
 
 /** `128k`, which is what a person reads. Never 131072, and never a bare 0 for *not said*. */
 const window = (tokens: number): string => (tokens > 0 ? `${String(Math.round(tokens / 1000))}k` : '—')
+
+/** The same, for a running total: `1.2M` once thousands stop meaning anything. */
+const count = (n: number): string =>
+  n === 0 ? '—'
+  : n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M`
+  : n >= 1_000 ? `${(n / 1_000).toFixed(1)}k`
+  : String(n)
+
+/** Seven days, which is the window somebody means by *lately*. */
+const WEEK = 7 * 24 * 60 * 60 * 1000
 
 /**
  * Dollars per million input tokens, or the word for what free means here.
@@ -104,12 +123,44 @@ export function sources(options: SurfaceOptions): Record<string, Source> {
      */
     models: {
       rows: async () => {
-        const chosenModel = pins(store).model
+        const standing = pins(store)
         const keyed = await options.connected()
+        /**
+         * What Automatic would pick if nothing were pinned — which is what *recommended*
+         * means here, and the only definition of it that cannot drift.
+         *
+         * Not a list of good models kept in this file. Core does not name a vendor's model
+         * any more than it names a plugin, and a list like that is wrong within a season:
+         * the good free model of March is retired by June and the file remembers it
+         * forever. This asks the router, so the recommendation is the same rule the machine
+         * actually follows — cheapest that clears every pin — and it changes when the
+         * catalog, the keys or the rate limits change, without anybody editing anything.
+         *
+         * Asked as a request carrying tools, because that is the shape Alexia's own loop
+         * sends. Recommending something that cannot take a tool call would be recommending
+         * a model that fails on the second step of most real tasks.
+         */
+        const would = route(
+          { messages: [], tools: [{ name: 'a_tool' }] },
+          { ...standing, model: undefined },
+          await options.world(),
+        )
+        const best = would.ok ? would.choices[0]?.model.id : undefined
+        // Tokens rather than money, and this week rather than all time: on a free tier the
+        // cost column is four hundred zeroes, and tokens are what a free model spends.
+        const lately = new Map(store.usedBy('model', Date.now() - WEEK).map((row) => [row.key, row]))
+
         return (
           [...catalog.models]
-            // Cheapest first, which is the order the router itself walks them in.
-            .sort((a, b) => a.priceIn - b.priceIn || a.name.localeCompare(b.name))
+            .sort(
+              (a, b) =>
+                // What it would pick, then what you have actually been using, then the order
+                // the router itself walks them in. The top of each group is the useful end.
+                Number(b.id === best) - Number(a.id === best) ||
+                (lately.get(b.id)?.tokens ?? 0) - (lately.get(a.id)?.tokens ?? 0) ||
+                a.priceIn - b.priceIn ||
+                a.name.localeCompare(b.name),
+            )
             .map((model) => ({
               id: model.id,
               name: model.name,
@@ -117,6 +168,7 @@ export function sources(options: SurfaceOptions): Record<string, Source> {
               tier: model.tier,
               price: price(model.priceIn),
               context: window(model.context),
+              week: count(lately.get(model.id)?.tokens ?? 0),
               /**
                * `◆` is the chosen mark, and the shell colours it. The other two are the
                * marks every core table already speaks in — `■` for something that is not
@@ -127,8 +179,9 @@ export function sources(options: SurfaceOptions): Record<string, Source> {
                * do**, and the answer is that this model now answers everything.
                */
               state:
-                model.id === chosenModel ? '◆ everything goes here'
+                model.id === standing.model ? '◆ everything goes here'
                 : !keyed.has(model.provider) ? '■ needs a key'
+                : model.id === best ? '★ recommended'
                 : model.supportsTools ? `${OK} · tools`
                 : `${OK} · text only`,
             }))
@@ -145,6 +198,14 @@ export function sources(options: SurfaceOptions): Record<string, Source> {
             `${model.tier} · ${price(model.priceIn)} in, ${price(model.priceOut)} out, per million tokens`,
             `Context: ${window(model.context)} · takes ${model.modality.join(', ')}`,
             `Tools: ${model.supportsTools ? 'yes' : 'not according to its provider'}`,
+            // The record, in the units a free model spends. It is this machine's own usage
+            // table read back — a count of what was asked, never a copy of what was said.
+            ...(() => {
+              const used = store.usedBy('model', Date.now() - WEEK).find((row) => row.key === model.id)
+              return used === undefined ?
+                  ['You have not used this in the last week.']
+                : [`Used ${String(used.calls)} times this week — ${count(used.tokens)} tokens.`]
+            })(),
             // The two flags nobody may guess at. Both say `unknown` until a person has read
             // the provider's terms, and the screen repeats that rather than rounding it off.
             `Trains on what you send it: ${model.trainsOnYourData}`,

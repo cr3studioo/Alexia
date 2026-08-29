@@ -605,6 +605,12 @@ body[data-view='first-run'] header {
   font-weight: 600;
 }
 
+/* Would be chosen, as against is chosen: the same blue without the row's wash behind it,
+   because a page where two rows both look picked has told you nothing. */
+.grid td.is-suggested {
+  color: var(--chosen);
+}
+
 .grid td.is-caution {
   color: var(--caution);
 }

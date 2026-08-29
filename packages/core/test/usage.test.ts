@@ -76,3 +76,28 @@ test('the month is a month, and the cap knows where it stands in it', () => {
   expect(allowance(store, april)).toMatchObject({ spent: 0, warn: false, stop: false })
   store.close()
 })
+
+test('tokens per model, in a window, which is what a free tier actually spends', () => {
+  const store = new Store(':memory:')
+  const session = store.createSession('First')
+  store.recordUsage({ at: march, session, model: 'small', provider: 'p', tokensIn: 1000, tokensOut: 100, cost: 0 })
+  store.recordUsage({ at: april, session, model: 'small', provider: 'p', tokensIn: 500, tokensOut: 60, cost: 0 })
+  store.recordUsage({ at: april, session, model: 'big', provider: 'q', tokensIn: 40, tokensOut: 10, cost: 0 })
+
+  // In and out together, because "how much did I put through this" is one number to the
+  // person asking. Busiest first, which is the order the panel wants.
+  expect(store.usedBy('model', march)).toEqual([
+    { key: 'small', tokens: 1660, calls: 2 },
+    { key: 'big', tokens: 50, calls: 1 },
+  ])
+
+  // The window is the whole point: on a free tier every one of these cost $0.00, so the
+  // spend column cannot tell March from April and this has to.
+  expect(store.usedBy('model', april)).toEqual([
+    { key: 'small', tokens: 560, calls: 1 },
+    { key: 'big', tokens: 50, calls: 1 },
+  ])
+  expect(store.usedBy('provider', april).map((row) => row.key)).toEqual(['p', 'q'])
+  expect(store.usedBy('model', april + 1)).toEqual([])
+  store.close()
+})

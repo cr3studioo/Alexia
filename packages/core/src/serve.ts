@@ -405,7 +405,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     return new Set(found.flat())
   }
 
-  const surface = { skills, tooling, plugins, skillsDir, trace, dataDir: root, store, catalog, connected }
+  const surface = { skills, tooling, plugins, skillsDir, trace, dataDir: root, store, catalog, connected, world }
   const ours = coreSources(surface)
   const ourActions = coreActions(surface)
 

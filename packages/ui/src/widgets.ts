@@ -586,6 +586,9 @@ const MARKS: Record<string, string> = {
   // The one somebody picked. Not a warning and not an error — the third meaning, which is
   // *this is the row that is doing something*, and the only one worth a colour on a good day.
   '◆': 'is-chosen',
+  // The one that would be picked if nobody had. Same family as `◆` because it means the same
+  // kind of thing — look here — and the glyph carries the difference between *is* and *would*.
+  '★': 'is-suggested',
 }
 
 /** One row, its cells, and whatever can be done to it. */

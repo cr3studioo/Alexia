@@ -604,6 +604,26 @@ export class Store {
   }
 
   /**
+   * Tokens and calls per model since a moment — *what have I actually been using*.
+   *
+   * Separate from {@link spendBy} rather than folded into it, because they answer different
+   * questions and one of them has to stay cheap: the spend panel wants money, and money is
+   * the wrong axis for a free tier. Every model worth recommending on this machine costs
+   * exactly $0.00, and sorting four hundred of them by that tells you nothing. Tokens are
+   * what a free model spends, so tokens are what the record has to count.
+   */
+  usedBy(field: 'model' | 'provider', since: number): { key: string; tokens: number; calls: number }[] {
+    // Not interpolation of anything a caller typed: two names, mapped to two columns.
+    const column = { model: 'model', provider: 'provider' }[field]
+    return this.#db
+      .prepare(
+        `SELECT ${column} AS key, total(tokens_in + tokens_out) AS tokens, count(*) AS calls FROM usage` +
+          ` WHERE at >= ? GROUP BY ${column} ORDER BY tokens DESC`,
+      )
+      .all(since) as unknown as { key: string; tokens: number; calls: number }[]
+  }
+
+  /**
    * Purge means purge. Every table in the namespace, every kv entry, every setting — in one
    * transaction, so a crash halfway cannot leave half a plugin behind. The caller removes
    * the directory afterwards, in that order and for the reason storage.md gives.

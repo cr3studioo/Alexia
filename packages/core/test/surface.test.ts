@@ -323,13 +323,19 @@ test('a list nobody declared is a sentence, not an empty table', async () => {
 
 test('the models panel offers what every provider publishes, and says which are reachable', async () => {
   const models = await rows('models')
+  // Recommended first, then what has been used, then cheapest: the top of a group is the
+  // useful end of it.
   expect(models.map((row) => row.id)).toEqual(['openrouter/reachable', 'groq/unreachable'])
+  // Nothing has been asked of anything yet, and a dash is what no tokens looks like.
+  expect(models.every((row) => row.week === '—')).toBe(true)
 
   // A model from a provider with no key is shown rather than hidden: *what would connecting
   // Groq get me* is the question this screen exists to answer, and an absent row answers it
   // wrong. It says what is missing instead.
   expect(String(models.find((row) => row.id === 'groq/unreachable')?.state)).toContain('needs a key')
-  expect(String(models.find((row) => row.id === 'openrouter/reachable')?.state)).toBe('● ready · tools')
+  // The one Automatic would pick, asked of the router rather than decided here. It is the
+  // reachable, free, tool-capable one — which is the only candidate in this fixture.
+  expect(models.find((row) => row.id === 'openrouter/reachable')?.state).toBe('★ recommended')
 
   // Free is a word, not $0.00 — those are different claims, and one of them is the tier the
   // whole project runs on.
