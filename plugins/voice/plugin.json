@@ -3,7 +3,7 @@
   "manifest_version": 1,
   "id": "voice",
   "name": "Voice",
-  "summary": "Hears you and answers out loud, with Whisper and Piper running on this machine.",
+  "summary": "Hears you and answers out loud, with Whisper and Piper running on this machine — and, if you give it a key, a voice cloned from a clip of your own.",
   "version": "0.1.0",
   "license": "AGPL-3.0-only",
   "entry": {
@@ -38,6 +38,10 @@
     {
       "cap": "proc.spawn",
       "why": "To run Whisper and Piper here rather than sending anything away to be listened to or read out."
+    },
+    {
+      "cap": "net.request",
+      "why": "To reach fish.audio, and only once you have added a key and picked a cloned voice."
     }
   ],
   "provides": [
@@ -80,6 +84,33 @@
       "label": "Piper program",
       "kind": "file",
       "hint": "The same again for speaking. Empty means Alexia fetches one; on a machine with no prebuilt Piper this is how you supply your own."
+    },
+    {
+      "type": "password",
+      "key": "fish_key",
+      "label": "fish.audio key",
+      "hint": "Only needed to clone a voice from a recording, which Piper cannot do. Leave it empty and everything stays on this machine."
+    },
+    {
+      "type": "path",
+      "key": "clip",
+      "label": "A recording to clone",
+      "kind": "file",
+      "hint": "Fifteen seconds of the voice you want, as a .wav. Put the words that were said in the box below, then press Clone on the Voice panel."
+    },
+    {
+      "type": "text",
+      "key": "clip_text",
+      "label": "What the recording says",
+      "placeholder": "The exact words spoken in the clip.",
+      "hint": "A cloner told what was said makes a better voice than one guessing."
+    },
+    {
+      "type": "toggle",
+      "key": "expression",
+      "label": "Speak with expression",
+      "default": false,
+      "hint": "Marks a reply up with emotion before it is spoken. Costs one small model call per reply, and only works with a cloned voice — Piper has no expression at all."
     },
     {
       "type": "status",
@@ -158,6 +189,13 @@
         "label": "Add the voice in the box",
         "tool": "add_voice",
         "hint": "Copies the file named in “Add a voice”, on the plugins screen, into Alexia. Piper does not clone a voice from a recording — this is for a voice you have already downloaded."
+      },
+      {
+        "key": "clone_voice",
+        "type": "action",
+        "label": "Clone the voice in the recording",
+        "tool": "clone_voice",
+        "hint": "Uses the recording and the words named on the plugins screen. Needs a fish.audio key: the clip and its transcript leave this machine, and the voice lives on that account until you remove it here."
       }
     ]
   }

@@ -246,10 +246,15 @@ are still open, and the last one is the largest contract question left.*
   there would be two tabs called Memory with no way to join them. Running the cheap one only
   survives as a switch, which is one toggle rather than one folder. Invariant 5 holds: the two
   new tables are declared, so a purge takes them.
-- [ ] **G10.** Voice cloning needs an engine Piper is not. Second plugin, or an engine setting
-  inside `plugins/voice`? A second plugin keeps the local-only promise literally true and
-  deletable; a setting keeps one voice screen and one place a voice is chosen.
-  *Decide at M7-4 — where D89's refusal of `file` gets asked again with a user that needs it.*
+- [x] **G10.** Voice cloning needs an engine Piper is not. Second plugin, or an engine setting
+  inside `plugins/voice`? **Answered 2026-08-29 (D98): one plugin, and no engine setting
+  either.** The contract settled the first half — two plugins would both provide
+  `voice.speak`, and the resolver returns the first enabled provider it finds, so which voice
+  speaks would depend on load order with nothing to say so and no way to choose. The second
+  half the question did not ask: **a voice is already chosen in one place**, so where it runs
+  is a property of the voice rather than a switch that can disagree with it. **G7's `file` was
+  asked again and refused again** on a new argument — the clip cannot be recorded here,
+  because the only recorder this plugin has returns text rather than audio.
 - [x] **G11.** Is egress redaction core's rule, or a capability a plugin can ask past?
   **Answered 2026-08-29 (D94): core's rule, and a plugin cannot ask.** No capability, no
   manifest field, no setting. The bias going in was that *a redaction a plugin can decline is
@@ -326,6 +331,8 @@ are still open, and the last one is the largest contract question left.*
   Hermes already does this against the agentskills.io standard. Raised E8, E9, C13.
 - **Model switching** — answered the context question; surfaced the Local-to-Cloud privacy
   trap, which reshaped how proactive detection has to work.
+- **G10** — one voice plugin and no engine switch, because two providers of `voice.speak`
+  would be resolved by load order; `file` refused a second time, on a new reason.
 - **G12, G9** — a plugin may work on its own clock and spends nothing but free while it does;
   memory-that-notices is one plugin rather than two, because a second could not read the
   first's tables. Reopened G8 with the real user D90 was waiting for.

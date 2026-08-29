@@ -39,6 +39,10 @@ export default tseslint.config(
         // arrives as, `AbortController` for a loop that has to be stoppable.
         Buffer: 'readonly',
         AbortController: 'readonly',
+        // A multipart upload, without a dependency: `fetch` takes a `FormData` and a `Blob`
+        // is how a file goes into one. Both have been Node globals since 18.
+        FormData: 'readonly',
+        Blob: 'readonly',
       },
     },
   },

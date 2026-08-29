@@ -194,7 +194,7 @@ Tick a box only when the task's acceptance criteria pass. `[GATE]` needs a human
 - [x] **M7-1** Nothing leaves this machine unread — egress redaction
 - [x] **M7-2** One id, four records
 - [x] **M7-3** Memory that captures without being asked
-- [ ] **M7-4** A voice that is yours — cloning, and the engine it costs
+- [x] **M7-4** A voice that is yours — cloning, and the engine it costs
 - [ ] **M7-5** A button in Telegram, and somewhere else to land
 - [ ] **M7-6** Three tiers, and the cheapest one has no model in it
 - [ ] **M7-G** **Done when:** a free-model request is provably stripped, a cost is traceable to the run that spent it, and Alexia remembers something nobody told it to
@@ -3020,6 +3020,20 @@ What has changed is that the question now has a real user.
 
 ### M7-4 A voice that is yours
 
+**Built 2026-08-29 (D98).** `plugins/voice` grew a second engine — `fish.js` — and
+`expression.js` beside it. **G10 answered by the contract, not by taste**: a second plugin
+would mean two providers of `voice.speak`, and `Plugins.capability()` returns whichever core
+happened to load first, with nothing on any screen to say which is speaking. So it is one
+plugin, and there is **no engine switch either** — a voice is picked in one place and where
+it lives is a property of the voice. `cloud:` means yours; anything else is a Piper stem, and
+`speak` reads the id. **G7's `file` was asked again and lost again**, for a new reason: this
+plugin has no raw recorder, only `whisper-stream`, which returns text — so `path` is still
+the equal first minute and is the shape `add_voice` already used. Expression is filtered
+against the vendor's own published vocabulary after generation, and is **off with a sentence
+saying why** whenever a Piper voice is speaking. **The live clone call is unverified**: there
+is no key on this machine, the request shapes are tested against a stub, and the file says so
+in as many words.
+
 **Record fifteen seconds, get a voice that sounds like it — which this repo currently cannot
 do, and said so.**
 
@@ -3060,6 +3074,42 @@ inside it keeps one voice screen. → **G10**.
 **Acceptance.** Fifteen seconds and a transcript in, a named voice out, that voice speaks the
 next reply. Delete the plugin and the clone goes with it. With the local engine selected,
 expression is **off and says so** rather than silently doing nothing.
+
+**Where the acceptance was met, and the one place it could not be.**
+
+- **A clip and its words in, a named voice out, speaking the next reply** — built, and picked
+  automatically, because somebody who has just cloned their own voice wanted to hear it.
+- **Expression off and saying so** — the state line reads *expression is off, Piper has none*
+  whenever a local voice is speaking, rather than a switch that appears to work.
+- **Delete the plugin and the clone goes with it — this one is not true, and pretending
+  otherwise would be the lie.** A cloned voice lives on somebody's fish.audio account, not on
+  this disk. Purging takes the key, the selection, the folder and the namespace; the voice on
+  the account stays until **Remove** on the panel deletes it. There is no pre-purge hook in
+  the contract and adding one for a single plugin is exactly what invariant 1 exists to
+  prevent, so the honest answer is that the tool says this out loud at the moment it clones.
+
+**Three decisions came out of building it.**
+
+- **G10 — one plugin, and the contract decided it.** Two plugins would both provide
+  `voice.speak`; `Plugins.capability()` iterates and returns the first enabled provider that
+  binds it, so *which voice is speaking* would depend on load order with nothing to say so
+  and no way to choose. That ambiguity is worse than a summary that has to mention a key.
+- **No engine setting either, which the question did not consider.** A voice is chosen in one
+  place already, and where it runs is a property of the voice. A second switch would be a
+  second thing to keep in step with the first, and the state where they disagree — a local
+  voice with the cloud engine selected — has no meaning.
+- **`file` refused a second time, on a new argument.** D89's alternative was *record the clip
+  through `audio.input`, which the plugin already holds* — and it turns out not to be free:
+  Whisper's `whisper-stream` returns **text**, so a clip would mean a wav recorder per
+  operating system for one screen. Somebody cloning a voice already has the recording. That
+  is two refusals of `file` for two different reasons, and neither was the reason expected.
+
+**What is not verified.** The clone-creation request is written from the published shape and
+has **not been run against the live API from this repo**, because there is no key here. The
+synthesis and listing shapes were run live by the predecessor on 2026-08-13, and
+`s2.1-pro-free` is pinned because the vendor's default is paid and answers 402 on an account
+with no API credit. `fish.test.js` proves the request shapes, the error path and that a key
+never reaches a message — and says in its own header what it does not prove.
 
 ### M7-5 A button in Telegram, and somewhere else to land
 
@@ -3278,10 +3328,13 @@ For `questions.md`. Each one came out of planning and none of them blocks starti
   **contract decided it.** A second plugin cannot read the first's tables, so *recall* would
   see half the memory and there would be two tabs called Memory with no way to join them.
   Running the cheap one only survives as a switch, which is one toggle rather than one folder.
-- **G10.** Voice cloning needs an engine Piper is not. Second plugin, or an engine setting
-  inside `plugins/voice`? A second plugin keeps the local-only promise literally true and
-  deletable; a setting keeps one voice screen and one place a voice is chosen. *Decide at
-  M7-4 — and D89's refusal of `file` gets asked again with a user that needs it.*
+- **G10. Answered 2026-08-29 at M7-4 — one plugin, and no engine setting either (D98).** The
+  contract decided the first half: two plugins would both provide `voice.speak`, and
+  `Plugins.capability()` returns the first enabled provider it finds, so which voice speaks
+  would depend on load order with nothing to say so. The second half the question did not
+  ask — **a voice is already chosen in one place, so where it runs is a property of the voice
+  rather than a second switch** to keep in step with the first. `file` was asked again and
+  refused again on a new argument: the plugin has no raw recorder, only one that returns text.
 - **G11. Answered 2026-08-29 at M7-1 — core's rule (D94).** No capability, no manifest field,
   no setting. The bias held, and building it added a structural reason the plan did not have:
   **a plugin never sees the outbound payload.** It hands core a tool result and core
@@ -3307,6 +3360,7 @@ Newest first. Every entry here is also in Alexia.md's decision log.
 
 | Date | Entry |
 |---|---|
+| 2026-08-29 | **D98** — **a voice that is yours, and the engine it costs, said out loud.** M7-4, G10 answered. `plugins/voice` gained a second engine and an expression pass; **it is one plugin, and the contract decided that** — two plugins would both provide `voice.speak`, and `Plugins.capability()` returns whichever core loaded first, so *which voice is speaking* would depend on load order with nothing on any screen to say so. **And no engine setting either**, which G10 did not consider: a voice is already chosen in one place, so where it runs is a property of the voice rather than a second switch, and the state where the two disagree has no meaning. **M2-4's refusal of a cloud vendor is priced rather than overturned** — Piper still speaks unless somebody has picked a cloned voice, and picking one is the yes. **`file` was refused a second time on a new argument**: D89 said the clip could be recorded through `audio.input`, and it cannot — `whisper-stream` returns text, so a recorder would be a platform-specific capture path per operating system for one screen, and somebody cloning a voice already has the recording. Two refusals of `file`, two different reasons, neither the one expected. **Expression is filtered, not trusted**: an unrecognised marker is *spoken* rather than dropped, so the vocabulary is quoted from the vendor's published reference and the model's output is filtered against it afterwards — and an annotator that changed the words has its whole answer discarded, because a voice saying something slightly different from the screen is a bug nobody can see. With a Piper voice speaking it is **off and says why**. **One acceptance line is not met and is written down rather than fudged**: a cloned voice lives on an account, not on this disk, so deleting the plugin does not delete it. There is no pre-purge hook and adding one for a single plugin is what invariant 1 exists to prevent, so the tool says so at the moment it clones. **The live clone call is unverified** — no key on this machine — and the file says which shapes were run against the real API and which were not. |
 | 2026-08-29 | **D96** — **a plugin may work on its own clock, and on it spends nothing but free.** G12 answered at M7-3, and it had to be answered first because the task said not to build until it was. Half was already true — `resident` (D77) and `sampling`. The unanswered half was the ceiling, and the answer is that **the ceiling is a tier rather than a number**: M15-7's spend preview is what makes an expensive run somebody's decision, and when a timer wakes up there is nobody to show it to. So free tiers and this machine, always; a paid model never. **It is derived rather than declared**, which is the part worth keeping: `send()` reads *attributed to a plugin, belonging to no run* as *free only*, and M7-2's `run_id` is what made that sentence expressible a day earlier. One rule, in the same place M7-1 put one, instead of a flag at every call site — because a flag at a call site is a flag somebody forgets on the one that matters. The checker keeps its paid path by construction: it runs inside a task and carries that task's id. **This is a real tightening** — until today `sampling` could spend to the monthly cap, and a resident plugin waking every twelve minutes had nothing between it and the money. The refusal says which wall it hit, because *raise your cap* is the wrong advice here. **Backlog 7–10 are unblocked** and inherit the ceiling: proactive messaging, the reliability scorecard, bounded self-healing and web-watch may all wake on their own, and none of them may bill anybody for it. ponytail: no per-plugin allowance — the upgrade, if somebody wants their phone answered by a frontier model, is a monthly figure granted per plugin on the Library screen and read in the same place. |
 | 2026-08-29 | **D97** — **Alexia notices things now, and the switch is the binding.** M7-3, G9 answered. Core hands each finished exchange to a **new core capability** and forgets about it — `void`, caught, never awaited, because a memory that could delay an answer is one people turn off and one that could throw would break a conversation over a flourish. **Credentials are stripped on the way and location is not**: what may be written down is not what may be sent, an address is worth remembering and only dangerous when it leaves, and it is M7-1's own scan on the other door. **G9 was decided by the contract rather than by taste** — a second plugin cannot read the first's tables, so *recall* would see half the memory; running the cheap one only survives as a toggle. **The consent lives in the runtime binding**: the capability is bound only while capture is on, so with it off core resolves nothing and never hands the conversation over at all — a stronger promise than taking it and dropping it, and it needed no new mechanism. **One stage where the predecessor had two**, because its cheap triage existed to keep an expensive model off the volume and a plugin on its own clock cannot reach one; the property that mattered survives, since an empty buffer asks nothing. **Two layers of forget, not three** — its permanent raw log is a second copy of everything anybody ever said, which is a privacy cost paid for a feature nobody asked for. All four hard-won details are in: code overrules a model that claims a duplicate, the cascade clears the buffer first, a tombstone is written whether or not anything matched, and a batch that breaks the call is set aside after three tries and never discarded. **Building it turned up two bugs older than the task** — `AWS_SECRET_ACCESS_KEY=…` walked through M7-1's scan because the keyword is in the middle, and `store.select` threw on a declared table nothing had ever been written to, which is the memory panel on a fresh install. Both fixed at the root. **G8 has reopened with a real user**: these links are authored, which is the condition D90 named, and nothing was built on it — the refusal stands and now has something to be asked about. |
 | 2026-08-29 | **D95** — **a cost belongs to a run, and the trace stopped keeping its own tally.** M7-2. Two columns on `usage` — `run_id`, and `asked` beside the `model` that answered — written by `send()`, carried by the loop, handed down by `serve.ts`. **The restraint version 1 showed is the whole lesson**: it did not invent a second id scheme, it put the id it already had on the rows that were missing it, and that is what this is. **The subtraction had to go, not merely gain a column.** `Run.spent` was the allowance before the run subtracted from the allowance after, which two overlapping runs — one at the keyboard, one from Telegram — would split between them, and which could never say which *call* was the dear one. It is replaced by the ledger's own rows, so the trace and the ledger cannot disagree about a run: they are the same rows, and `spentOn()` sums them. **The checker's spend goes on the run too**, because a review is a model call made because of a task, and a total that omitted the reviews that made a task safe would have passed the acceptance on a number smaller than the truth. **The activity table grew a Cost column and nothing else changed** — declared like every other column, drawn by the same function, which is M6-4 still holding three tasks later. And the null case is a sentence rather than a zero: a run with no charges reads *no model call was recorded against this run*, because `$0.0000` is a different claim and sometimes a wrong one. |

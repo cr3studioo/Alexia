@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { copyFile, rm } from 'node:fs/promises'
+import { copyFile, rm, writeFile } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import { fromJsonSchema, log, plugin } from '@alexia/sdk'
+import * as expression from './expression.js'
+import * as fish from './fish.js'
 import * as piper from './piper.js'
 import * as whisper from './whisper.js'
 
@@ -44,7 +46,26 @@ async function chosen() {
     threads: Number(settings.threads) || 4,
     hearing: path('whisper_path'),
     speaking: path('piper_path'),
+    // The second engine (M7-4). **There is no engine switch**: a voice is picked in one
+    // place, and where it lives is a property of the voice rather than a second setting to
+    // keep in step with it. `cloud:` means somebody's own voice; anything else is a Piper
+    // stem, exactly as before.
+    key: path('fish_key'),
+    clip: path('clip'),
+    clipText: typeof settings.clip_text === 'string' ? settings.clip_text.trim() : '',
+    expressive: settings.expression === true,
   }
+}
+
+/** The voices on the account, if there is a key. An empty list is the ordinary state. */
+async function cloned(key, signal) {
+  if (!key) return []
+  return fish.mine(key, signal).catch((error) => {
+    // A bad key, or the API having a moment. Neither is a reason for the panel to be empty
+    // of the local voices too, so it is logged and the list is short.
+    log.info(String(error instanceof Error ? error.message : error))
+    return []
+  })
 }
 
 /**
@@ -58,12 +79,17 @@ async function chosen() {
  * two downloads and one of them can be finished while the other is not.
  */
 async function bind() {
-  const { size, voice, hearing, speaking } = await chosen()
+  const { size, voice, hearing, speaking, key, expressive } = await chosen()
   const hears = own ? await whisper.ready(own, size, hearing) : false
-  const speaks = own ? await piper.ready(own, voice, speaking) : false
+  // A cloned voice needs no file on this machine — the key is the whole of what makes it
+  // speakable, so `speaks` is true for one the moment there is a key to reach it with.
+  const cloud = fish.idOf(voice) !== undefined
+  const speaks = cloud ? key !== undefined : own ? await piper.ready(own, voice, speaking) : false
   heard.update({ _meta: hears ? { 'alexia/provides': ['voice.transcribe'] } : {} })
   said.update({ _meta: speaks ? { 'alexia/provides': ['voice.speak'] } : {} })
-  await alexia.status('ready', state(hears, speaks, size, voice, hearing, speaking)).catch(() => {})
+  await alexia
+    .status('ready', state({ hears, speaks, size, voice, hearing, speaking, cloud, key, expressive }))
+    .catch(() => {})
   return { hears, speaks }
 }
 
@@ -74,13 +100,26 @@ async function bind() {
  * is halfway, and the person looking at this screen is the one who has to decide whether to
  * wait. Only `▲` is coloured (D67): being ready is not something happening.
  */
-function state(hears, speaks, size, voice, hearing, speaking) {
-  if (hears && speaks) return `● Ready — ${size}, ${voice}`
+function state({ hears, speaks, size, voice, hearing, speaking, cloud, key, expressive }) {
+  /**
+   * **Expression is off and says so** when a local voice is speaking (M7-4).
+   *
+   * Piper has no expression control of any kind, and the predecessor proved the
+   * sampling-parameter workaround inert on this hardware. A switch that appears to work and
+   * does nothing is worse than one that is greyed out, so the state line carries the answer
+   * rather than leaving somebody to wonder why nothing changed.
+   */
+  const mood =
+    !expressive ? ''
+    : cloud ? ', with expression'
+    : ' — expression is off, Piper has none'
+  if (cloud && !key) return '▲ A cloned voice is picked and there is no fish.audio key'
+  if (hears && speaks) return `● Ready — ${size}, ${voice}${mood}`
   if (!whisper.build() && !hearing) return '▲ Point at a Whisper program'
   if (!piper.build() && !speaking) return '▲ Point at a Piper program'
   // A voice somebody added has no published size, and inventing one would be a number on
   // a screen that means nothing.
-  const mb = piper.VOICES[voice]?.mb
+  const mb = cloud ? undefined : piper.VOICES[voice]?.mb
   if (hears) return mb === undefined ? `▲ Hearing only — ${voice} is not loading` : `▲ Hearing only — the ${voice} voice is ${mb} MB`
   if (speaks) return `▲ Speaking only — the ${size} model is ${whisper.MODELS[size].mb} MB`
   return mb === undefined ?
@@ -215,11 +254,38 @@ const said = alexia.tool(
   async ({ text }, ctx) => {
     const words = String(text ?? '').trim()
     if (!words) return { isError: true, content: [{ type: 'text', text: 'There was nothing to say.' }] }
-    const { voice, speaking } = await chosen()
+    const picked = await chosen()
+    const { voice, speaking } = picked
+    const id = fish.idOf(voice)
+
+    if (id !== undefined) {
+      if (!picked.key) {
+        return {
+          isError: true,
+          content: [{ type: 'text', text: `${voice} is a cloned voice and there is no fish.audio key to reach it with.` }],
+        }
+      }
+      await alexia.status('ready', '▲ Speaking').catch(() => {})
+      try {
+        const marked = picked.expressive ? await annotate(words, ctx) : words
+        const audio = await fish.say(picked.key, { text: marked, id, signal: ctx.mcpReq.signal })
+        // Written where Piper writes its own, so one file is overwritten rather than
+        // accumulated and the purge that takes the folder takes this too.
+        const { wav } = piper.where(own, 'lessac')
+        await writeFile(wav, audio)
+        await piper.play(wav, ctx.mcpReq.signal)
+        return { content: [{ type: 'text', text: 'Said it, in your own voice.' }] }
+      } finally {
+        await bind()
+      }
+    }
+
     if (!(await piper.ready(own, voice, speaking))) await fetching(ctx, 'speaking')
     const found = await piper.programs(own, voice, speaking)
     await alexia.status('ready', '▲ Speaking').catch(() => {})
     try {
+      // Markers are not stripped from Piper's input for a reason: nothing puts them there.
+      // `annotate` is only ever reached on the path that can read them.
       const wav = await piper.say({ ...found, text: words, signal: ctx.mcpReq.signal })
       await piper.play(wav, ctx.mcpReq.signal)
       return { content: [{ type: 'text', text: `Said it, in ${voice}’s voice.` }] }
@@ -228,6 +294,32 @@ const said = alexia.tool(
     }
   },
 )
+
+/**
+ * The reply, marked up for delivery (M7-4).
+ *
+ * One small model call through `sampling`, which means it goes on the same rungs, under the
+ * same cap, and — since a plugin working on its own clock spends nothing but free (G12,
+ * D96) — on a free model or not at all. **Anything that goes wrong falls back to the plain
+ * words**, because losing the answer to decorate it would be the worst trade in the plugin.
+ */
+async function annotate(words, ctx) {
+  try {
+    const answer = await alexia.server.server.createMessage({
+      messages: [{ role: 'user', content: { type: 'text', text: expression.prompt(words) } }],
+      systemPrompt: 'You insert speech-delivery markers and change nothing else.',
+      maxTokens: 400,
+      ...(ctx?.mcpReq?.signal && { signal: ctx.mcpReq.signal }),
+    })
+    const said = answer.content?.type === 'text' ? answer.content.text : ''
+    // Filtered, not trusted. An unrecognised tag is *spoken* rather than dropped, so a model
+    // inventing one would ship a literal bracket into somebody's ears.
+    return expression.sanitize(said.trim(), words)
+  } catch (error) {
+    log.info(`speaking plainly: ${error instanceof Error ? error.message : String(error)}`)
+    return words
+  }
+}
 
 alexia.tool(
   'install',
@@ -252,6 +344,28 @@ alexia.tool(
  * and the vendor that does was refused at M2-4 for the dependency it costs. What a person
  * can genuinely do is bring a Piper voice they downloaded, and that is what this adds.
  */
+/**
+ * The cloned voices, in the shape the local ones already come in (M7-4).
+ *
+ * **One list, because a voice is picked in one place.** G10 asked whether cloning should be
+ * a second plugin, and the answer is here: two plugins would both provide `voice.speak`, and
+ * `Plugins.capability()` returns whichever one core happened to load first — with nothing on
+ * any screen to say which is speaking, and no way for a person to choose. That ambiguity is
+ * a worse outcome than a summary that has to mention a key.
+ *
+ * `here` is true because there is nothing to download; a cloned voice exists on an account
+ * rather than on this disk, which is also why removing one is a call and not a file delete.
+ */
+async function cloudVoices(key) {
+  return (await cloned(key)).map((one) => ({
+    id: `${fish.PREFIX}${one.id}`,
+    name: one.name,
+    cloud: true,
+    mine: true,
+    here: true,
+  }))
+}
+
 alexia.tool(
   'voices',
   {
@@ -259,11 +373,11 @@ alexia.tool(
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
   },
   async () => {
-    const { voice } = await chosen()
-    const rows = (await piper.catalogue(own)).map((one) => ({
+    const { voice, key } = await chosen()
+    const rows = [...(await piper.catalogue(own)), ...(await cloudVoices(key))].map((one) => ({
       id: one.id,
-      name: one.id,
-      where: one.mine ? 'yours' : 'published',
+      name: one.name ?? one.id,
+      where: one.cloud ? 'cloned, on fish.audio' : one.mine ? 'yours' : 'published',
       // Two facts, and the row says both: whether it is the one that speaks, and whether it
       // is actually here. The chosen voice not being downloaded yet is an ordinary state —
       // it arrives on the first thing said in it — and a row claiming only the first would
@@ -290,7 +404,8 @@ alexia.tool(
     annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   async ({ id }) => {
-    const known = (await piper.catalogue(own)).find((one) => one.id === id)
+    const { key } = await chosen()
+    const known = [...(await piper.catalogue(own)), ...(await cloudVoices(key))].find((one) => one.id === id)
     if (!known) return { isError: true, content: [{ type: 'text', text: `There is no voice called ${id}.` }] }
     await alexia.storage.set('voice', id)
     await bind()
@@ -316,6 +431,17 @@ alexia.tool(
     annotations: { destructiveHint: true, openWorldHint: false },
   },
   async ({ id }) => {
+    const { key } = await chosen()
+    const clone = fish.idOf(id)
+    if (clone !== undefined) {
+      if (!key) return { isError: true, content: [{ type: 'text', text: 'There is no fish.audio key, so there is nothing to remove it with.' }] }
+      // Gone from the account, not from a folder. The selection falls back rather than
+      // dangling: a chosen voice that no longer exists is silence with no explanation.
+      await fish.remove(key, clone)
+      if ((await chosen()).voice === id) await alexia.storage.set('voice', 'lessac')
+      await bind()
+      return { content: [{ type: 'text', text: `${id} is gone from fish.audio. Lessac is speaking.` }] }
+    }
     const known = (await piper.catalogue(own)).find((one) => one.id === id)
     if (!known?.mine) {
       return {
@@ -367,6 +493,63 @@ alexia.tool(
     }
     await bind()
     return { content: [{ type: 'text', text: `${stem} is here. Choose it in the list to speak in it.` }] }
+  },
+)
+
+/**
+ * Fifteen seconds and a transcript in, a voice out (M7-4).
+ *
+ * **The `file` widget was asked for again here and lost again** (G7, D89). D89 refused it
+ * because its only user could not do the thing it was wanted for; this is that user, and the
+ * answer is still `path` — because the alternative D89 named, *record the clip through
+ * `audio.input`*, turns out not to be free either. This plugin has no raw recorder: Whisper's
+ * `whisper-stream` listens and returns **text**, and putting a wav recorder in would mean a
+ * platform-specific capture path per operating system for one screen. Somebody cloning a
+ * voice already has the recording, so `path` is an equal first minute — the same shape
+ * `add_voice` above already uses, and one less mechanism.
+ *
+ * It is deliberately **not** something the model can decide to do: the clip and its words
+ * leave this machine, and that is a decision belonging to whoever pressed the button.
+ */
+alexia.tool(
+  'clone_voice',
+  {
+    description:
+      'Make a voice that sounds like a recording, using the file in the “A recording to clone” ' +
+      'box and the words in “What the recording says”. Needs a fish.audio key. Takes no arguments.',
+    // It reaches an API and it puts something on somebody's account, so it says both.
+    annotations: { destructiveHint: false, idempotentHint: false, openWorldHint: true },
+  },
+  async (ctx) => {
+    const { key, clip, clipText } = await chosen()
+    const refuse = (text) => ({ isError: true, content: [{ type: 'text', text }] })
+    if (!key) return refuse('Add a fish.audio key on the plugins screen first. Piper cannot clone a voice from a recording.')
+    if (!clip) return refuse('Point “A recording to clone” at a .wav of the voice you want.')
+    if (clipText === '') return refuse('Put the words that were said in the clip into “What the recording says”.')
+
+    const name = basename(clip).replace(/\.[^.]+$/, '') || 'my voice'
+    await alexia.status('ready', '▲ Cloning').catch(() => {})
+    try {
+      const made = await fish.clone(key, { name, wav: clip, transcript: clipText, signal: ctx?.mcpReq?.signal })
+      // Picked straight away. Somebody who has just cloned their own voice wanted to hear
+      // it, and making them find it in a list first is a step with no decision in it.
+      await alexia.storage.set('voice', `${fish.PREFIX}${made.id}`)
+      // Said out loud because it is the one thing about this that a delete cannot undo: the
+      // voice is on somebody's account, not on this disk, so removing the plugin does not
+      // remove it. **Remove** on the panel is what does.
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `${made.name} is cloned and speaking now. It lives on your fish.audio account — deleting this plugin will not remove it, but Remove on the Voice panel will.`,
+          },
+        ],
+      }
+    } catch (error) {
+      return refuse(`That did not work: ${error instanceof Error ? error.message : String(error)}`)
+    } finally {
+      await bind()
+    }
   },
 )
 
