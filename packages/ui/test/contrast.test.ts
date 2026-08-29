@@ -49,6 +49,8 @@ const TEXT: [string, string[]][] = [
   ['caution', ['surface', 'surface-raised']],
   ['danger', ['surface', 'surface-raised']],
   ['on-accent', ['accent']],
+  // The chosen row: its ink against the page, and against the wash it sits on.
+  ['chosen', ['surface', 'surface-raised', 'chosen-wash']],
 ]
 
 /**

@@ -117,11 +117,20 @@ export function sources(options: SurfaceOptions): Record<string, Source> {
               tier: model.tier,
               price: price(model.priceIn),
               context: window(model.context),
+              /**
+               * `◆` is the chosen mark, and the shell colours it. The other two are the
+               * marks every core table already speaks in — `■` for something that is not
+               * switched on, nothing at all for the ordinary case.
+               *
+               * *Everything goes here* rather than *in use*, because *in use* answers a
+               * question nobody asked. The one somebody has is **what did pressing that
+               * do**, and the answer is that this model now answers everything.
+               */
               state:
-                model.id === chosenModel ? `${OK.replace('ready', 'in use')}`
+                model.id === chosenModel ? '◆ everything goes here'
                 : !keyed.has(model.provider) ? '■ needs a key'
-                : model.supportsTools ? 'can use tools'
-                : 'text only',
+                : model.supportsTools ? `${OK} · tools`
+                : `${OK} · text only`,
             }))
         )
       },
@@ -403,7 +412,10 @@ export function actions(
       }
     }
     setPin(options.store, { model: id })
-    return { ok: true, said: `${model.name} it is. Everything goes to it until you choose Automatic.` }
+    return {
+      ok: true,
+      said: `Every request now goes to ${model.name}. Press Automatic on any row to hand the choice back.`,
+    }
   }
 
   return {
@@ -414,8 +426,15 @@ export function actions(
      * — and *stop pinning* means the same thing pressed anywhere.
      */
     automatic: () => {
+      const had = pins(options.store).model
       setPin(options.store, { model: undefined })
-      return Promise.resolve({ ok: true, said: 'Back to automatic: the cheapest model that fits each request.' })
+      return Promise.resolve({
+        ok: true,
+        said:
+          had === undefined ?
+            'Already automatic — no model is pinned, so each request goes to the cheapest one that fits it.'
+          : 'Back to automatic. Each request goes to the cheapest model that fits it, and no model is pinned.',
+      })
     },
 
     /**

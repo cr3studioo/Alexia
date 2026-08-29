@@ -329,7 +329,7 @@ test('the models panel offers what every provider publishes, and says which are 
   // Groq get me* is the question this screen exists to answer, and an absent row answers it
   // wrong. It says what is missing instead.
   expect(String(models.find((row) => row.id === 'groq/unreachable')?.state)).toContain('needs a key')
-  expect(String(models.find((row) => row.id === 'openrouter/reachable')?.state)).not.toContain('needs a key')
+  expect(String(models.find((row) => row.id === 'openrouter/reachable')?.state)).toBe('● ready · tools')
 
   // Free is a word, not $0.00 — those are different claims, and one of them is the tier the
   // whole project runs on.
@@ -356,7 +356,8 @@ test('choosing a model pins it, and Automatic gives the choice back', async () =
   expect(chosen.ok).toBe(true)
   // The pin the router already treats as final. Nothing new was invented to hold this.
   expect(await pinned()).toBe('openrouter/reachable')
-  expect(String((await rows('models')).find((row) => row.id === 'openrouter/reachable')?.state)).toContain('in use')
+  // The chosen mark, which is what the shell colours and what the row is found by.
+  expect((await rows('models')).find((row) => row.id === 'openrouter/reachable')?.state).toBe('◆ everything goes here')
 
   // Refused where the person can act on it, rather than by the router three screens later
   // saying the model "is not available right now".
@@ -365,6 +366,16 @@ test('choosing a model pins it, and Automatic gives the choice back', async () =
   expect(String(cannot.said)).toContain('no key yet')
   expect(await pinned()).toBe('openrouter/reachable')
 
-  expect((await post('/api/action', { key: 'automatic', row: 'openrouter/reachable' })).ok).toBe(true)
+  const back = await post('/api/action', { key: 'automatic', row: 'openrouter/reachable' })
+  expect(back.ok).toBe(true)
+  // The sentence says what automatic *is*, because "how do I undo this" is the question the
+  // press was asking and a bare "done" answers none of it.
+  expect(String(back.said)).toContain('cheapest model that fits')
   expect(await pinned()).toBeUndefined()
+
+  // Pressed again with nothing pinned it is not an error, and it does not pretend to have
+  // changed something: a button that lies about having acted is worse than one that repeats.
+  expect(String((await post('/api/action', { key: 'automatic', row: 'openrouter/reachable' })).said)).toContain(
+    'Already automatic',
+  )
 })

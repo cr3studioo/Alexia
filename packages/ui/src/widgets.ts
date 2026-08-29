@@ -341,7 +341,13 @@ export function widget(host: WidgetHost, declared: Rendered): HTMLElement {
     }
 
     case 'table': {
-      field.append(el('span', 'label', declared.label), table(host, declared))
+      // The hint goes **above** a table and below everything else. On every other widget it
+      // explains the control you have just used; on a table it explains the list, and a list
+      // is tall — so under it, the sentence telling somebody what the buttons do sat below
+      // four hundred rows, where nobody has ever read anything.
+      field.append(el('span', 'label', declared.label))
+      if (declared.hint) field.append(el('p', 'hint lede', declared.hint))
+      field.append(table(host, declared))
       break
     }
 
@@ -390,7 +396,9 @@ export function widget(host: WidgetHost, declared: Rendered): HTMLElement {
     }
   }
 
-  if (declared.hint && declared.type !== 'password') field.append(el('p', 'hint', declared.hint))
+  if (declared.hint && declared.type !== 'password' && declared.type !== 'table') {
+    field.append(el('p', 'hint', declared.hint))
+  }
   field.append(problem)
   return field
 }
@@ -439,10 +447,28 @@ function table(host: WidgetHost, declared: Rendered): HTMLElement {
   }
   box.append(said, scroll)
 
+  /**
+   * What a row action can do to the table it is in: say something that outlives the redraw,
+   * and ask for the rows again. Passed down rather than reached for, so a row still knows
+   * nothing about the table it is in beyond these two.
+   */
+  const surface = {
+    reload: () => load(),
+    say: (text: string, ok: boolean): void => {
+      announced = text
+      said.hidden = text === ''
+      said.className = ok ? 'hint said-ok' : 'error'
+      said.textContent = text
+    },
+  }
+
+  /** The last thing an action said, kept across the redraw that action asked for. */
+  let announced = ''
+
   /** One `<tbody>` per group, or one for everything when nothing groups it. */
   function paint(): void {
     const visible = matching()
-    said.hidden = rows.length > 0 && visible.length > 0
+    said.hidden = announced === '' && rows.length > 0 && visible.length > 0
     if (rows.length > 0 && visible.length === 0) {
       said.hidden = false
       said.textContent = 'Nothing matches that.'
@@ -482,7 +508,7 @@ function table(host: WidgetHost, declared: Rendered): HTMLElement {
         heading.append(cell)
         body.append(heading)
       }
-      for (const row of group) body.append(rowOf(host, declared, row, shown()))
+      for (const row of group) body.append(rowOf(host, declared, row, shown(), surface))
       grid.append(body)
     }
 
@@ -526,8 +552,16 @@ function table(host: WidgetHost, declared: Rendered): HTMLElement {
       return
     }
     rows = answer.rows ?? []
-    said.className = 'hint'
-    said.textContent = rows.length === 0 ? 'Nothing here yet.' : ''
+    if (announced !== '') {
+      // Whatever the last action said stays on screen: it is the answer to the press that
+      // asked for this very reload, and blanking it here would make the press look silent.
+      said.className = 'hint said-ok'
+      said.textContent = announced
+      said.hidden = false
+    } else {
+      said.className = 'hint'
+      said.textContent = rows.length === 0 ? 'Nothing here yet.' : ''
+    }
     paint()
   }
 
@@ -535,37 +569,89 @@ function table(host: WidgetHost, declared: Rendered): HTMLElement {
   return box
 }
 
+/**
+ * The marks a state column speaks in, and what each one means on screen.
+ *
+ * Read off the cell's first character rather than from any knowledge of which table this is
+ * — the same rule `status` already follows, applied to the eleventh widget. A column that
+ * says `▲ waiting for you` is telling the reader something is wrong with that row, and it
+ * said so in every core table long before anything coloured it.
+ *
+ * `●` is deliberately absent. *Ready* is the normal state of a working thing, and colouring
+ * the normal state is how a screen teaches people that its colours mean nothing.
+ */
+const MARKS: Record<string, string> = {
+  '▲': 'is-caution',
+  '■': 'is-idle',
+  // The one somebody picked. Not a warning and not an error — the third meaning, which is
+  // *this is the row that is doing something*, and the only one worth a colour on a good day.
+  '◆': 'is-chosen',
+}
+
 /** One row, its cells, and whatever can be done to it. */
-function rowOf(host: WidgetHost, declared: Rendered, row: Row, columns: Column[]): HTMLElement {
+function rowOf(
+  host: WidgetHost,
+  declared: Rendered,
+  row: Row,
+  columns: Column[],
+  table: { reload(): Promise<void>; say(text: string, ok: boolean): void },
+): DocumentFragment {
+  const out = document.createDocumentFragment()
   const line = el('tr')
   for (const column of columns) {
-    line.append(el('td', column.align === 'right' ? 'right tabular' : undefined, String(row[column.key] ?? '')))
+    const text = String(row[column.key] ?? '')
+    const state = MARKS[text.slice(0, 1)]
+    const cell = el(
+      'td',
+      [column.align === 'right' ? 'right tabular' : '', state ?? ''].filter(Boolean).join(' ') || undefined,
+      text,
+    )
+    line.append(cell)
   }
-  if ((declared.rowActions ?? []).length === 0 && declared.detail === undefined) return line
+  out.append(line)
+  if ((declared.rowActions ?? []).length === 0 && declared.detail === undefined) return out
+  // A row carrying the chosen mark anywhere is the chosen row, and reads like one.
+  if (columns.some((column) => String(row[column.key] ?? '').startsWith('◆'))) line.classList.add('chosen')
 
   const cell = el('td', 'row-actions')
   const said = el('p', 'hint')
   said.hidden = true
 
   if (declared.detail !== undefined) {
+    /**
+     * What expands under a row, as a row of its own across the full width.
+     *
+     * It used to be a paragraph inside the actions cell, which is the narrowest column on
+     * the screen and right-aligned — so six lines about a model arrived as a ragged stripe
+     * down the last inch of the table. Nothing about that was specific to one panel: every
+     * detail any table has ever shown was rendered there.
+     */
+    const drawer = el('tr', 'detail')
+    const into = el('td')
+    into.colSpan = columns.length + 1
+    const body = el('p', 'detail-text')
+    into.append(body)
+    drawer.append(into)
+    drawer.hidden = true
+    out.append(drawer)
+
     const more = el('button', 'quiet-button', 'Details')
     more.type = 'button'
+    more.setAttribute('aria-expanded', 'false')
     let open = false
     more.addEventListener('click', () => {
       open = !open
       more.textContent = open ? 'Hide' : 'Details'
-      if (!open) {
-        said.hidden = true
-        return
-      }
-      said.hidden = false
-      said.className = 'hint'
-      said.textContent = 'Loading…'
+      more.setAttribute('aria-expanded', String(open))
+      drawer.hidden = !open
+      if (!open) return
+      body.className = 'detail-text'
+      body.textContent = 'Loading…'
       void host
         .send('/api/detail', { plugin: host.plugin, key: declared.key, row: row.id })
         .then((answer) => {
-          said.className = answer.ok === true ? 'hint' : 'error'
-          said.textContent = String((answer.ok === true ? answer.text : answer.said) ?? '')
+          body.className = answer.ok === true ? 'detail-text' : 'detail-text error'
+          body.textContent = String((answer.ok === true ? answer.text : answer.said) ?? '')
         })
     })
     cell.append(more)
@@ -594,10 +680,24 @@ function rowOf(host: WidgetHost, declared: Rendered, row: Row, columns: Column[]
           cell.append(confirm(answer.ask, press))
           return
         }
+        if (answer.ok === true) {
+          /**
+           * The list, re-read. It used to fade the row to 55% and stop there, which said
+           * *something happened here* and nothing else: no way to tell what, no way to
+           * undo it, and a state column still showing what was true before the press. On a
+           * list where the action is a **choice** rather than a removal, that fade was the
+           * only feedback there was, and it looked like the row had been switched off.
+           *
+           * The sentence goes above the table, where it survives the redraw — the row it
+           * was written into may not exist a moment later.
+           */
+          table.say(String(answer.said ?? ''), true)
+          await table.reload()
+          return
+        }
         said.hidden = false
-        said.className = answer.ok === true ? 'hint' : 'error'
+        said.className = 'error'
         said.textContent = String(answer.said ?? '')
-        if (answer.ok === true) line.classList.add('done')
       } finally {
         button.disabled = false
       }
@@ -619,7 +719,7 @@ function rowOf(host: WidgetHost, declared: Rendered, row: Row, columns: Column[]
 
   cell.append(said)
   line.append(cell)
-  return line
+  return out
 }
 
 /** `Remove {name}?` with the row's own values in it. An unknown field is left as it was. */

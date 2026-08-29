@@ -176,7 +176,11 @@ const MODELS: Rendered = table({
   type: 'table',
   key: 'models',
   label: 'Models',
-  hint: 'Each provider publishes its own list, and they do not agree on what to include — a blank column is something that provider does not say, not a zero. Use pins every request to one model; Automatic gives the choice back to the router.',
+  hint:
+    'Normally Alexia picks a model per request — the cheapest one that can do the job, falling to the next when one is rate-limited. That is Automatic, and it is what happens when nothing here is chosen. ' +
+    'Use sends every request to one model instead, until you press Automatic on any row to hand the choice back. The chosen row is marked and coloured. ' +
+    'A row saying "needs a key" belongs to a provider you have not connected — add its key in settings and its models become usable here. ' +
+    'Each provider publishes its own list and they do not agree on what to include, so a dash is something that provider does not say rather than a zero.',
   rows: 'models',
   columns: [
     { key: 'name', label: 'Model' },
@@ -186,7 +190,7 @@ const MODELS: Rendered = table({
     { key: 'state', label: 'State' },
   ],
   rowActions: [
-    { key: 'use_model', label: 'Use', tool: 'use_model' },
+    { key: 'use_model', label: 'Use this', tool: 'use_model' },
     { key: 'automatic', label: 'Automatic', tool: 'automatic' },
   ],
   detail: 'model',
