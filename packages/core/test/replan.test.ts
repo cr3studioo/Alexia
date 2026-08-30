@@ -111,7 +111,7 @@ test('a plugin deleted mid-task makes the loop re-plan, and the task still finis
     messages: [{ role: 'user', content: 'take your time, then say hello' }],
     tools: tooling,
     pins: { placement: MODES.combined },
-    world: () => Promise.resolve({ models: [model], local: [], rungs: [{ provider: alpha, minute: 0, day: 0 }] }),
+    world: () => Promise.resolve({ models: [model], local: [], rungs: [{ provider: alpha, minute: 0, day: 0, month: 0 }] }),
     store,
     secrets,
     session,

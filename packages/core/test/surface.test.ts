@@ -6,6 +6,7 @@ import { afterAll, expect, test } from 'vitest'
 import { noPolling } from './staged.js'
 import { Manifest } from '@alexia/protocol'
 import { CORE_TABS } from '../src/panels.js'
+import { SPENDS } from '../src/surface.js'
 import { keyOf, PROVIDERS } from '../src/provider.js'
 import { CORE, memorySecrets } from '../src/secrets.js'
 import { serve, type Serving } from '../src/serve.js'
@@ -103,6 +104,15 @@ const alexia: Serving = await serve({
   uiDir: join(import.meta.dirname, '..', '..', 'ui'),
   pluginsDir: extensions,
   secrets,
+  /**
+   * **One connected provider and one not, and nothing else.**
+   *
+   * That difference is what the Models tab is about, and since the keyless floor landed the
+   * real table also carries four rows that are reachable with an empty keychain. They belong
+   * on the real screen and they would drown this one — nine rows nobody here connected, from
+   * providers whose lists this suite would go and fetch over the network.
+   */
+  providers: PROVIDERS.filter((p) => p.id === 'openrouter' || p.id === 'groq'),
 })
 
 afterAll(async () => {
@@ -128,19 +138,32 @@ const rows = async (key: string): Promise<Row[]> => ((await post('/api/rows', { 
 
 test('every core panel is a declaration and a function, with no shape of its own', async () => {
   /**
-   * The M6-4 test, and it moved once — deliberately, on 2026-08-29 (M8-2).
+   * The M6-4 test, and it has moved twice — both times deliberately, and both times because
+   * the sentence it was asserting was stricter than the property it was protecting.
    *
-   * It read *a core tab holds tables and nothing else*, which is stricter than the property
-   * its own next line names: **the moment one of them needs a widget that is not one of the
-   * eleven, `table` was wrong.** Chats needs a *New chat* button, and `action` is one of the
-   * eleven — the shell draws it with the same function it draws a plugin's, which is the
-   * thing being protected. What would break this is a core tab needing a twelfth widget, or
-   * one line of rendering that exists only for core, and both still fail here — the check is
-   * now the manifest schema itself, so *what a plugin may declare* and *what core declares*
-   * cannot drift apart into two lists that have to agree.
+   * It read *a core tab holds tables and nothing else* (2026-08-29, M8-2), then *everything
+   * core declares validates as a plugin's* — and D112 is the case that one could not survive
+   * honestly. **Every widget in the eleven is read-only from core's side.** A plugin's values
+   * are written through `/api/settings` against a manifest, and core has no manifest, so the
+   * Models tab could show what the router decided and had nowhere to decide it — which is how
+   * *recommended* ended up being a word covering a rule nobody could move.
+   *
+   * So the assertion is now the one that was always underneath: **a plugin may declare
+   * exactly the eleven, and core's own screen furniture is named here.** `ui-schema.md`'s bar
+   * for a twelfth is *more than one user*, this has one, and it is therefore not in the
+   * manifest schema and no plugin can ask for it. What still fails here is the thing that
+   * mattered all along — a core tab quietly growing a second private widget, or `control.ts`
+   * growing a line of rendering that names a tab.
    */
   const declared = CORE_TABS.flatMap((tab) => tab.widgets ?? [])
   expect(declared.length).toBeGreaterThan(0)
+
+  // Core's own, listed rather than counted: a second one cannot appear without this line
+  // changing, which is the whole of the protection.
+  const OURS = ['ladder']
+  const mine = declared.filter((one) => OURS.includes(one.type))
+  expect(mine.map((one) => one.key)).toEqual(['routing'])
+
   const asPlugin = Manifest.safeParse({
     manifest_version: 1,
     id: 'not-a-plugin',
@@ -151,13 +174,30 @@ test('every core panel is a declaration and a function, with no shape of its own
     entry: { run: 'node', args: ['index.js'] },
     alexia_protocol: 3,
     mcp_protocol: '2025-11-25',
-    settings: declared,
+    settings: declared.filter((one) => !OURS.includes(one.type)),
   })
   expect(asPlugin.error?.issues ?? []).toEqual([])
 
-  // And every table names a source that answers. An `action` has no rows and is not asked.
-  for (const widget of declared.filter((one) => one.type === 'table')) {
-    const answer = await post('/api/rows', { key: widget.key })
+  // And the schema refuses core's own when it is offered as a plugin's, which is the other
+  // half of the same claim: *not in the eleven* has to mean a plugin cannot declare it.
+  const asTheirs = Manifest.safeParse({
+    manifest_version: 1,
+    id: 'not-a-plugin',
+    name: 'A plugin, trying',
+    summary: 'Core’s own widget, offered by somebody who is not core.',
+    version: '0.0.0',
+    license: 'AGPL-3.0-only',
+    entry: { run: 'node', args: ['index.js'] },
+    alexia_protocol: 3,
+    mcp_protocol: '2025-11-25',
+    settings: mine,
+  })
+  expect(asTheirs.success).toBe(false)
+
+  // And every widget that names a rows source names one that answers. An `action` has no
+  // rows and is not asked.
+  for (const widget of declared.filter((one) => one.type === 'table' || one.type === 'ladder')) {
+    const answer = await post('/api/rows', { key: widget.rows })
     expect(answer.ok, widget.key).toBe(true)
   }
 })
@@ -363,6 +403,71 @@ test('the models panel lists what you can actually reach, and nothing else', asy
   expect(detail).toContain('1.5M tokens through this model last week')
 })
 
+/**
+ * The slider and the running order, from the screen's side (D112).
+ *
+ * The property worth holding is that **neither is a second opinion about models**. Both
+ * write the same pins the router reads, which is why the ★ moves when the slider does — it
+ * is defined as what the router would pick, and it was the only thing on this screen that
+ * had an opinion before there was anywhere to state one.
+ */
+test('the ladder writes the pins the router reads, and the ★ moves with it', async () => {
+  const standing = async (): Promise<{ spend?: string; order?: string[] }> =>
+    (
+      (await (await fetch(new URL('/api/state', alexia.url), { headers: { 'x-alexia-token': alexia.token } })).json()) as {
+        pins: { spend?: string; order?: string[] }
+      }
+    ).pins
+
+  // Every stop the screen offers is a value the action takes. A slider position that came
+  // back "is not one of free, mixed, paid" would be a control that looks fine and does
+  // nothing — the kind of break nobody finds until somebody presses exactly that one.
+  const ladder = CORE_TABS.flatMap((tab) => tab.widgets ?? []).find((one) => one.type === 'ladder')
+  expect(ladder?.type === 'ladder' && ladder.stops.map((stop) => stop.value)).toEqual([...SPENDS])
+  for (const stop of ladder?.type === 'ladder' ? ladder.stops : []) {
+    expect((await post('/api/action', { key: 'set_spend', row: stop.value })).ok, stop.value).toBe(true)
+  }
+
+  // The ladder's own rows: every model you can reach, with the position you gave it. Nothing
+  // is listed yet, which is the ordinary state and the one the screen opens in.
+  const before = await rows('routing')
+  expect(before.map((row) => row.id)).toEqual(['openrouter/reachable'])
+  expect(before[0]?.side).toBe('free')
+  expect(before[0]?.rank).toBe('')
+
+  // One list, sent whole. A move-up call per row would be four chances to land somewhere
+  // nobody asked for if one of them were dropped.
+  expect((await post('/api/action', { key: 'set_order', row: 'openrouter/reachable' })).ok).toBe(true)
+  expect((await standing()).order).toEqual(['openrouter/reachable'])
+  expect((await rows('routing'))[0]?.rank).toBe('1')
+
+  // A model that has left the catalog is dropped rather than refused: otherwise one row
+  // nobody can see makes the whole list unsaveable, with a sentence naming it.
+  expect((await post('/api/action', { key: 'set_order', row: 'gone/yesterday,openrouter/reachable' })).ok).toBe(true)
+  expect((await standing()).order).toEqual(['openrouter/reachable'])
+
+  // The slider. Only one provider is connected here and everything it offers is free, so
+  // *paid only* is a real wall — and the ★ goes with it, because the ★ is the router's
+  // answer rather than a decoration this screen keeps.
+  const paid = await post('/api/action', { key: 'set_spend', row: 'paid' })
+  expect(paid.ok).toBe(true)
+  expect(String(paid.said)).toContain('billed')
+  expect((await standing()).spend).toBe('paid')
+  expect((await rows('models'))[0]?.state).not.toContain('recommended')
+
+  // Not a value: a stop that does not exist is a sentence rather than a pin nobody can undo.
+  const nonsense = await post('/api/action', { key: 'set_spend', row: 'whatever' })
+  expect(nonsense.ok).toBe(false)
+  expect((await standing()).spend).toBe('paid')
+
+  // And back, because the middle is what Automatic always did — the two ends are the two
+  // things people wanted to be able to say, not a new default.
+  expect((await post('/api/action', { key: 'set_spend', row: 'mixed' })).ok).toBe(true)
+  expect((await post('/api/action', { key: 'set_order', row: '' })).ok).toBe(true)
+  expect((await standing()).order).toEqual([])
+  expect((await rows('models'))[0]?.state).toBe('★ recommended')
+})
+
 test('choosing a model pins it, and Automatic gives the choice back', async () => {
   const pinned = async (): Promise<unknown> =>
     ((await (await fetch(new URL('/api/state', alexia.url), { headers: { 'x-alexia-token': alexia.token } })).json()) as {
@@ -434,4 +539,29 @@ test('chats: a new one, a way back into an old one, and the one you are in canno
   expect(openOne(await chats())?.id).toBe(first.id)
   expect((await post('/api/action', { key: 'forget_chat', row: String(mine.id), confirm: true })).ok).toBe(true)
   expect((await chats()).map((chat) => chat.id)).not.toContain(mine.id)
+})
+
+test('/new is the same button, typed — and it says the window has to repaint', async () => {
+  const chats = async (): Promise<Row[]> => await rows('chats')
+  const openOne = (list: Row[]): Row | undefined => list.find((chat) => String(chat.state).includes('open'))
+
+  // Something has to have been said in the open one, or `/new` correctly reuses it.
+  await fetch(new URL('/api/chat', alexia.url), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-alexia-token': alexia.token },
+    body: JSON.stringify({ text: 'something, so this conversation is not empty' }),
+  }).then((answer) => answer.text())
+
+  const was = openOne(await chats())!
+  const ran = await post('/api/command', { input: '/new' })
+  expect(ran.ok).toBe(true)
+  // The shell is showing the conversation this just moved off, so it is told to repaint —
+  // without this the sentence lands under the turns it left behind.
+  expect(ran.moved).toBe(true)
+  expect(openOne(await chats())?.id).not.toBe(was.id)
+
+  // Twice is once, and the second time nothing moved, so nothing needs repainting.
+  const again = await post('/api/command', { input: '/new' })
+  expect(String(again.note)).toContain('already in a new chat')
+  expect(again.moved).toBeUndefined()
 })

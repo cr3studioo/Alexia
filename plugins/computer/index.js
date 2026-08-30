@@ -238,7 +238,8 @@ alexia.tool(
   {
     description:
       'Press a key or a combination — {ENTER}, {TAB}, {ESC}, {F5}, ^c for Ctrl+C, ^v for ' +
-      'Ctrl+V, %{F4} for Alt+F4. Use for anything that is not ordinary text.',
+      'Ctrl+V, %{F4} for Alt+F4, {WIN} for the Windows key on its own (this opens the start ' +
+      'menu) and {WIN}r for Windows+R. Use for anything that is not ordinary text.',
     inputSchema: fromJsonSchema({
       type: 'object',
       properties: {

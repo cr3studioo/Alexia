@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import type { Manifest } from '@alexia/protocol'
+import { pins } from './commands.js'
 import { render, type PaneOptions, type Rendered } from './settings.js'
 
 /**
@@ -196,13 +197,59 @@ const TOOLS: Rendered = table({
  * facts a choice actually turns on: what it costs, how much it will read, and whether it
  * can be reached at all.
  */
+/**
+ * The routing ladder, above the table (D112).
+ *
+ * **What *recommended* was hiding.** The ★ has always been the router's own answer rather
+ * than a second opinion, which made it honest and left it unmoveable: the rule behind it is
+ * *cheapest that fits*, and the word people read on the screen is *recommended*, which means
+ * free to one person and best to the one paying. So the setting everybody thought they were
+ * looking at did not exist, and the one that did was not on the screen.
+ *
+ * Two controls and no third. The slider says **which side of the price line may answer** —
+ * the question the word *recommended* was quietly answering for everybody — and the ladder
+ * under it says **in what order**, as a shortlist somebody drags rather than a catalog of
+ * four hundred rows with a number typed beside each. Everything left off it still answers,
+ * behind the list, exactly as before; a preference screen you have to finish is a preference
+ * screen nobody starts.
+ */
+const LADDER: Rendered = {
+  type: 'ladder',
+  key: 'routing',
+  label: 'What may answer, and in what order',
+  hint:
+    'The slider is the money question, and it is a wall rather than a preference: on the left nothing that costs money is ever asked, even when every free model is rate-limited — Alexia says so instead. ' +
+    'The middle is what Automatic always did, and it is the default: free first, paid only when the free rungs are gone, with one plain line before the first charge. ' +
+    'The lists under it are your own running order within each side. Drag to reorder, and anything you do not list still answers behind the ones you did, cheapest first — so an empty list is the same behaviour this screen had before you touched it.',
+  rows: 'routing',
+  stops: [
+    {
+      value: 'free',
+      label: 'Free only',
+      hint: 'Nothing is ever billed. When every free model is busy or too small, Alexia says so rather than reaching for one that costs money.',
+    },
+    {
+      value: 'mixed',
+      label: 'Free, then paid',
+      hint: 'The free models answer until they are rate-limited or cannot do the job, then the cheapest paid one does — and says one line before it charges you.',
+    },
+    {
+      value: 'paid',
+      label: 'Paid only',
+      hint: 'Every request is billed to a provider you connected. The free tiers are left alone, which is what you want when they are the thing making answers slow.',
+    },
+  ],
+  chose: 'set_spend',
+  ordered: 'set_order',
+}
+
 const MODELS: Rendered = table({
   type: 'table',
   key: 'models',
   label: 'Models',
   hint:
     'Normally Alexia picks a model per request — the cheapest one that can do the job, falling to the next when one is rate-limited. That is Automatic, and it is what happens when nothing here is chosen. ' +
-    'The ★ is the one Automatic would pick right now for a request that needs tools: it is the router’s own answer rather than a second opinion, so it moves when your keys, the catalog or a rate limit move. ' +
+    'The ★ is the one Automatic would pick right now for a request that needs tools: it is the router’s own answer rather than a second opinion, so it moves when your keys, the catalog, a rate limit — or the slider above — move. ' +
     '"Tokens / week" is how much the whole world put through that model in the provider’s last published week, refreshed daily and again whenever you open this tab. ' +
     'Only OpenRouter publishes that figure today, so every other provider shows a dash there and its models are ordered by price instead — a dash means nobody says, not nobody uses it. ' +
     'Use sends every request to one model instead, until you press Automatic on any row to hand the choice back. The chosen row is marked and coloured. ' +
@@ -247,7 +294,7 @@ export const CORE_TABS: readonly { id: string; label: string; soon?: string; wid
   { id: 'activity', label: 'Activity', widgets: [ACTIVITY] },
   { id: 'skills', label: 'Skills', widgets: [SKILLS, LEARNED] },
   { id: 'tools', label: 'Tools', widgets: [TOOLS] },
-  { id: 'models', label: 'Models', widgets: [MODELS] },
+  { id: 'models', label: 'Models', widgets: [LADDER, MODELS] },
 ]
 
 /** Which core table a `rows` or `detail` name belongs to. Used to reject an unknown one. */
@@ -281,5 +328,19 @@ export async function tabs(options: TabOptions): Promise<Tab[]> {
   // order. Nothing about install time is visible on this screen, so nothing should depend on it.
   theirs.sort((a, b) => a.label.localeCompare(b.label))
 
-  return [...CORE_TABS.map((tab) => ({ ...tab, from: 'core' as const })), ...theirs]
+  /**
+   * Core's tabs are declarations rather than a render pass — they hold no plugin's stored
+   * values, so there is nothing to fill in. The one exception is the ladder's own setting
+   * (D112), which is a pin rather than a plugin setting and so has nowhere else to arrive
+   * from: the rows come from `/api/rows` when the widget is drawn, and the slider's position
+   * has to be right on the first paint or the screen opens showing the wrong answer.
+   */
+  const standing = pins(options.store)
+  const live = (widget: Rendered): Rendered =>
+    widget.type === 'ladder' ? { ...widget, value: standing.spend ?? 'mixed' } : widget
+
+  return [
+    ...CORE_TABS.map((tab) => ({ ...tab, from: 'core' as const, widgets: tab.widgets?.map(live) })),
+    ...theirs,
+  ]
 }

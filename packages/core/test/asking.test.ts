@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, expect, test } from 'vitest'
 import { noPolling } from './staged.js'
-import { keyOf, PROVIDERS, type Provider } from '../src/provider.js'
+import { keyOf, type Provider } from '../src/provider.js'
 import { CORE, memorySecrets } from '../src/secrets.js'
 import { serve, type Serving } from '../src/serve.js'
 
@@ -53,7 +53,6 @@ const stub: Provider = {
   rpm: 1000,
   rpd: 1000,
 }
-PROVIDERS.push(stub)
 
 noPolling(root, [
       {
@@ -92,6 +91,9 @@ writeFileSync(
       { type: 'action', key: 'plain', label: 'Just ask', tool: 'plain' },
       { type: 'action', key: 'asked', label: 'What was asked', tool: 'asked' },
       { type: 'action', key: 'answer_no', label: 'Say no next time', tool: 'answer_no' },
+      { type: 'action', key: 'slash_new', label: 'Type /new', tool: 'slash_new' },
+      { type: 'action', key: 'slash_cheap', label: 'Type /cheap', tool: 'slash_cheap' },
+      { type: 'action', key: 'slash_help', label: 'Type /help', tool: 'slash_help' },
     ],
   }),
 )
@@ -103,12 +105,15 @@ const alexia: Serving = await serve({
   uiDir: join(import.meta.dirname, '..', '..', 'ui'),
   pluginsDir: from,
   secrets,
+  // **Only the stub.** Since the keyless floor landed, the real table always has four rows
+  // that answer with an empty keychain — so without this the router would quietly prefer one
+  // of them and this suite would be measuring somebody else's server over the real network.
+  providers: [stub],
 })
 
 afterAll(async () => {
   await alexia.close()
   models.close()
-  PROVIDERS.splice(PROVIDERS.indexOf(stub), 1)
   for (const path of [root, from]) rmSync(path, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
 })
 
@@ -170,4 +175,70 @@ test('and a no is a no, which is what nothing providing the asking already meant
   // lets a task plan around it — the same thing a no from the window does.
   const seen = served.join('\n')
   expect(seen).toContain('The user did not approve it')
+}, 30_000)
+
+test('and the whole exchange is a conversation on the Chats screen, in the plugin’s name', async () => {
+  /**
+   * Where a task started somewhere else is *written down*, which is the half M7-5 left out.
+   *
+   * It used to be written into whatever conversation the window happened to have open —
+   * so the replies to a message from a phone appeared inside somebody's unrelated chat,
+   * with nothing above them, because the turn that started it was appended by whoever
+   * received it and nothing had. One session per plugin puts both halves in one place and
+   * leaves the window's conversation alone.
+   */
+  const listed = (await post('/api/rows', { key: 'chats' })) as {
+    rows?: { id: string; title: string; turns: string }[]
+  }
+  const rows = listed.rows ?? []
+  const its = rows.find((row) => row.title === 'Asker')
+  expect(its, JSON.stringify(rows)).toBeDefined()
+
+  const said = String((await post('/api/detail', { key: 'chats', row: its!.id })).text)
+  // What was said to it, and what it said back — in that order, in one conversation.
+  expect(said.indexOf('tidy up')).toBeLessThan(said.indexOf('tidied'))
+  expect(said).toContain('left it alone')
+
+  // And the conversation the window is open on is still empty, which is the bug: none of
+  // this belonged there.
+  expect(rows.filter((row) => row.title !== 'Asker').every((row) => row.turns === '0')).toBe(true)
+}, 30_000)
+
+test('a slash command works where it was typed, and /new is the only way out of one chat', async () => {
+  /**
+   * The commands were reachable from one screen and nowhere else.
+   *
+   * So a phone could not change the mode, could not reach a plugin's own command, and —
+   * the one that matters — could not start a new conversation, which left every message
+   * anybody ever sent from one landing in the same chat carrying every message before it.
+   */
+  const before = (await post('/api/rows', { key: 'chats' })).rows as { id: string; title: string }[]
+  const mine = before.filter((row) => row.title === 'Asker')
+  expect(mine).toHaveLength(1)
+
+  // A core command, typed from a plugin, changes the same setting the window would.
+  const cheap = await press('slash_cheap')
+  expect(String(cheap.said)).toContain('Cheapest first')
+
+  // The list, because a place with no palette still needs one.
+  expect(String((await press('slash_help')).said)).toContain('/new —')
+
+  // And the one the whole command exists for.
+  expect(String((await press('slash_new')).said)).toContain('Started a new chat')
+
+  const after = (await post('/api/rows', { key: 'chats' })).rows as { id: string; title: string }[]
+  expect(after.filter((row) => row.title === 'Asker')).toHaveLength(2)
+
+  // Twice in a row is once: the second press means what the first did, exactly as the
+  // window's New chat button does.
+  expect(String((await press('slash_new')).said)).toContain('already a new chat')
+  const again = (await post('/api/rows', { key: 'chats' })).rows as { id: string; title: string }[]
+  expect(again.filter((row) => row.title === 'Asker')).toHaveLength(2)
+
+  // The next thing said lands in the new one, with none of the old one's turns in it.
+  script = [{ say: 'fresh' }]
+  await press('go')
+  const detail = String((await post('/api/detail', { key: 'chats', row: after.find((row) => !mine.some((old) => old.id === row.id) && row.title === 'Asker')!.id })).text)
+  expect(detail).toContain('fresh')
+  expect(detail).not.toContain('tidied')
 }, 30_000)

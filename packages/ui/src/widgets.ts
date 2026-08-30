@@ -30,6 +30,13 @@ export type WidgetType =
   | 'progress'
   | 'action'
   | 'table'
+  /**
+   * Core's own, and **not one a plugin may declare** (D112). The bar in `ui-schema.md` is
+   * *more than one user*, and this has exactly one — so it is not in the manifest schema and
+   * no plugin can ask for it. It is here because it is drawn by this file like everything
+   * else: one renderer, and the control surface still names no tab and no plugin.
+   */
+  | 'ladder'
 
 /** A `table`'s column, as its author declared it. */
 export interface Column {
@@ -79,6 +86,11 @@ export interface Rendered {
   detail?: string
   filter?: boolean
   groupBy?: string
+  /** `ladder`: the slider's stops, and the two actions it presses. `rows` is shared with `table`. */
+  rows?: string
+  stops?: { value: string; label: string; hint: string }[]
+  chose?: string
+  ordered?: string
 }
 
 /** Which screen is drawing, and how it answers the two questions a widget asks back. */
@@ -340,6 +352,15 @@ export function widget(host: WidgetHost, declared: Rendered): HTMLElement {
       break
     }
 
+    case 'ladder': {
+      // Same rule as a table's hint, and for the same reason: this widget is tall, and a
+      // sentence explaining a control does nothing under the thing it explains.
+      field.append(el('span', 'label', declared.label))
+      if (declared.hint) field.append(el('p', 'hint lede', declared.hint))
+      field.append(ladder(host, declared))
+      break
+    }
+
     case 'table': {
       // The hint goes **above** a table and below everything else. On every other widget it
       // explains the control you have just used; on a table it explains the list, and a list
@@ -396,7 +417,7 @@ export function widget(host: WidgetHost, declared: Rendered): HTMLElement {
     }
   }
 
-  if (declared.hint && declared.type !== 'password' && declared.type !== 'table') {
+  if (declared.hint && declared.type !== 'password' && declared.type !== 'table' && declared.type !== 'ladder') {
     field.append(el('p', 'hint', declared.hint))
   }
   field.append(problem)
@@ -750,5 +771,327 @@ export function confirm(why: string, again: (approved: boolean) => Promise<void>
   deny.addEventListener('click', () => box.remove())
   row.append(allow, deny)
   box.append(row)
+  return box
+}
+
+/**
+ * The routing ladder: what may answer, and in what order (D112).
+ *
+ * **Two controls, and the first one is a wall.** *Recommended* was a word covering a rule —
+ * cheapest that fits — and everybody read their own meaning into it, so the slider says the
+ * money question out loud and the ladder under it says the running order. Neither is a new
+ * mechanism: the slider presses an `action` with its value, the ladder presses one with the
+ * whole list, and both land on pins the router already reads.
+ *
+ * **The list is a shortlist, not the catalog.** Four hundred rows is not a thing anybody
+ * drags into order, and a screen that asks them to is a screen nobody finishes — so the
+ * columns start empty, everything unlisted still answers behind whatever is listed, and the
+ * only way in is the search box. The ordering is one flat list, free first and then paid,
+ * which is exactly the shape the router reads: the group is a property of the model, so a
+ * paid row dragged to the top of its own column is still behind every free one unless the
+ * slider says otherwise.
+ */
+function ladder(host: WidgetHost, declared: Rendered): HTMLElement {
+  const box = el('div', 'ladder')
+  const stops = declared.stops ?? []
+  const sides = [
+    { id: 'free', label: 'Free', empty: 'Nothing listed. The free models answer cheapest first.' },
+    { id: 'paid', label: 'Paid', empty: 'Nothing listed. The paid models answer cheapest first when it gets to them.' },
+  ]
+
+  let spend = typeof declared.value === 'string' ? declared.value : (stops[0]?.value ?? '')
+  let rows: Row[] = []
+  /** The user's own running order, by id — free ids first, then paid, which is what core stores. */
+  let order: string[] = []
+
+  const said = el('p', 'ladder-said')
+  said.hidden = true
+  const say = (text: string, ok: boolean): void => {
+    said.textContent = text
+    said.className = ok ? 'ladder-said' : 'ladder-said error'
+    said.hidden = text === ''
+  }
+
+  const press = async (key: string | undefined, value: string): Promise<void> => {
+    if (key === undefined) return
+    const answer = await host.send('/api/action', { plugin: host.plugin, key, row: value })
+    say(String(answer.said ?? ''), answer.ok === true)
+  }
+
+  const columns = new Map<string, HTMLElement>()
+  const lists = new Map<string, HTMLElement>()
+  const grid = el('div', 'ladder-cols')
+
+  for (const side of sides) {
+    const column = el('section', 'ladder-col')
+    column.dataset.side = side.id
+    const head = el('header', 'ladder-head')
+    head.append(el('span', 'ladder-name', side.label), el('span', 'ladder-count'))
+    const list = el('ol', 'ladder-list')
+    list.setAttribute('aria-label', `${side.label} models, in the order they are tried`)
+    const empty = el('p', 'ladder-empty', side.empty)
+    column.append(head, list, empty)
+    columns.set(side.id, column)
+    lists.set(side.id, list)
+    grid.append(column)
+  }
+
+  // ---- the slider --------------------------------------------------------------------------
+
+  /**
+   * Named stops on one track, with the pill sliding between them.
+   *
+   * Radios rather than a `range` input, because the three positions are three different
+   * decisions and not three amounts — and because a radio group is the one control that
+   * arrives with arrow keys, a screen reader and a label per stop already attached.
+   */
+  const track = el('div', 'grade')
+  track.setAttribute('role', 'radiogroup')
+  track.setAttribute('aria-label', declared.label)
+  track.style.setProperty('--stops', String(stops.length))
+  const thumb = el('span', 'grade-thumb')
+  thumb.setAttribute('aria-hidden', 'true')
+  track.append(thumb)
+
+  const explains = el('p', 'grade-hint')
+  const name = `${host.screen}-${host.plugin}-${declared.key}`
+
+  const slide = (): void => {
+    const at = Math.max(0, stops.findIndex((stop) => stop.value === spend))
+    // One custom property, and the transition is on the pill's transform. Nothing else about
+    // the control changes, so nothing reflows while it moves.
+    track.style.setProperty('--at', String(at))
+    explains.textContent = stops[at]?.hint ?? ''
+    // The side that is out of play is dimmed rather than removed: what you ordered is still
+    // what you ordered, and a column that vanished would read as the list being thrown away.
+    for (const [side, column] of columns) column.dataset.off = String(spend !== 'mixed' && spend !== side)
+  }
+
+  for (const stop of stops) {
+    const choice = el('label', 'grade-stop')
+    const input = el('input')
+    input.type = 'radio'
+    input.name = name
+    input.value = stop.value
+    input.checked = stop.value === spend
+    input.addEventListener('change', () => {
+      spend = stop.value
+      slide()
+      void press(declared.chose, stop.value)
+    })
+    choice.append(input, el('span', undefined, stop.label))
+    track.append(choice)
+  }
+
+  // ---- dragging ----------------------------------------------------------------------------
+
+  /** The chip being dragged, so a list knows whether the thing over it is one of its own. */
+  let held: HTMLElement | undefined
+
+  /** The first chip whose middle is below the pointer — the one the held chip goes in front of. */
+  const before = (list: HTMLElement, y: number): HTMLElement | undefined =>
+    [...list.querySelectorAll<HTMLElement>('.chip:not(.held)')].find((chip) => {
+      const at = chip.getBoundingClientRect()
+      return y < at.top + at.height / 2
+    })
+
+  for (const [side, list] of lists) {
+    list.addEventListener('dragover', (event) => {
+      // A chip belongs to the side its price puts it on, so a list only ever takes its own.
+      // Dropping across would be the screen offering to make a paid model free.
+      if (!held || held.dataset.side !== side) return
+      event.preventDefault()
+      const next = before(list, event.clientY)
+      if (next) list.insertBefore(held, next)
+      else list.append(held)
+    })
+  }
+
+  /** What the columns say now, read back out of the DOM after a drag has moved things. */
+  const readBack = (): string[] =>
+    sides.flatMap((side) =>
+      [...(lists.get(side.id)?.querySelectorAll<HTMLElement>('.chip') ?? [])].map((chip) => chip.dataset.id ?? ''),
+    )
+
+  /** One reorder, sent once. Four swaps would be four chances to land somewhere nobody asked for. */
+  const moved = (): void => {
+    order = readBack().filter((id) => id !== '')
+    paint()
+    void press(declared.ordered, order.join(','))
+  }
+
+  // ---- one chip ----------------------------------------------------------------------------
+
+  const chip = (row: Row, at: number): HTMLElement => {
+    const item = el('li', 'chip')
+    item.dataset.id = row.id
+    item.dataset.side = String(row.side)
+    item.draggable = true
+    item.tabIndex = 0
+    // The grip leads, because that is where a drag handle is on every list anybody has
+    // dragged before. Beside the × it read as a second button rather than an affordance.
+    item.append(el('span', 'chip-grip', '⠿'), el('span', 'chip-rank', String(at + 1)))
+    const what = el('span', 'chip-what')
+    what.append(
+      el('span', 'chip-name', String(row.name)),
+      el('span', 'chip-meta', `${String(row.provider)} · ${String(row.price)}`),
+    )
+    item.append(what)
+
+    const drop = el('button', 'chip-drop', '×')
+    drop.type = 'button'
+    drop.title = `Take ${String(row.name)} off the list`
+    drop.setAttribute('aria-label', `Take ${String(row.name)} off the list`)
+    drop.addEventListener('click', () => {
+      order = order.filter((id) => id !== row.id)
+      paint()
+      void press(declared.ordered, order.join(','))
+    })
+    item.append(drop)
+
+    item.addEventListener('dragstart', (event) => {
+      held = item
+      item.classList.add('held')
+      // Firefox and WebKit refuse to start a drag at all unless something is on the
+      // transfer. Nothing reads it — the held chip is the state — but without it this
+      // control simply does not move on two of the three engines the shell runs in.
+      event.dataTransfer?.setData('text/plain', row.id)
+    })
+    item.addEventListener('dragend', () => {
+      item.classList.remove('held')
+      held = undefined
+      moved()
+    })
+
+    /**
+     * The same reorder without a mouse.
+     *
+     * Not optional and not a nicety: drag-and-drop is the fast way and the arrow keys are the
+     * only way for some people. The focus follows the row, because a keyboard reorder that
+     * drops focus is a keyboard reorder you can do exactly once.
+     */
+    item.addEventListener('keydown', (event) => {
+      const step = event.key === 'ArrowUp' ? -1 : event.key === 'ArrowDown' ? 1 : 0
+      if (step === 0) return
+      const list = item.parentElement
+      const siblings = [...(list?.querySelectorAll<HTMLElement>('.chip') ?? [])]
+      const now = siblings.indexOf(item)
+      const next = now + step
+      if (list === null || next < 0 || next >= siblings.length) return
+      event.preventDefault()
+      if (step === -1) list.insertBefore(item, siblings[next] ?? null)
+      else list.insertBefore(item, siblings[next]?.nextElementSibling ?? null)
+      moved()
+      lists.get(String(row.side))?.querySelector<HTMLElement>(`[data-id="${CSS.escape(row.id)}"]`)?.focus()
+    })
+    return item
+  }
+
+  // ---- adding one ---------------------------------------------------------------------------
+
+  const search = el('input', 'ladder-search')
+  search.type = 'search'
+  search.placeholder = 'Search what you can reach, and add it to the order'
+  search.setAttribute('aria-label', 'Add a model to the order')
+  const hits = el('div', 'ladder-hits')
+  hits.hidden = true
+
+  /** Up to this many results. A search box that answers with three hundred rows is the list. */
+  const HITS = 6
+
+  const suggest = (): void => {
+    const needle = search.value.trim().toLowerCase()
+    if (needle === '') {
+      hits.replaceChildren()
+      hits.hidden = true
+      return
+    }
+    const found = rows
+      .filter((row) => !order.includes(row.id))
+      .filter((row) => `${String(row.name)} ${String(row.provider)}`.toLowerCase().includes(needle))
+      .slice(0, HITS)
+    hits.replaceChildren(
+      ...found.map((row) => {
+        const option = el('button', 'ladder-hit')
+        option.type = 'button'
+        option.append(
+          el('span', 'chip-name', String(row.name)),
+          // Which column it lands in, said as the thing that is about to happen. The side
+          // printed beside the price read as "free · free" on every free model — the same
+          // word twice, meaning two different things.
+          el(
+            'span',
+            'chip-meta',
+            `${String(row.provider)} · ${String(row.price)} · goes to ${row.side === 'paid' ? 'Paid' : 'Free'}`,
+          ),
+        )
+        option.addEventListener('click', () => {
+          // Appended to the end of its own side, which is the only place it can go: an entry
+          // that put itself at the front would be the screen choosing for you again.
+          order = [...order, row.id]
+          search.value = ''
+          suggest()
+          paint()
+          void press(declared.ordered, order.join(','))
+        })
+        return option
+      }),
+    )
+    if (found.length === 0) {
+      hits.append(el('p', 'ladder-empty', 'Nothing matches, or everything that does is already listed.'))
+    }
+    hits.hidden = false
+  }
+  search.addEventListener('input', suggest)
+
+  const clear = el('button', 'more', 'Clear the order')
+  clear.type = 'button'
+  clear.hidden = true
+  clear.addEventListener('click', () => {
+    order = []
+    paint()
+    void press(declared.ordered, '')
+  })
+
+  // ---- drawing it ---------------------------------------------------------------------------
+
+  function paint(): void {
+    const known = new Map(rows.map((row) => [row.id, row]))
+    // Whatever core kept, minus anything that has left the catalog since. This screen shows
+    // what will actually happen, and a row naming a model no provider offers will not.
+    order = order.filter((id) => known.has(id))
+    for (const side of sides) {
+      const mine = order
+        .map((id) => known.get(id))
+        .filter((row): row is Row => row !== undefined && String(row.side) === side.id)
+      const list = lists.get(side.id)
+      const column = columns.get(side.id)
+      list?.replaceChildren(...mine.map((row, at) => chip(row, at)))
+      const count = column?.querySelector('.ladder-count')
+      if (count) count.textContent = mine.length === 0 ? '' : String(mine.length)
+      const empty = column?.querySelector<HTMLElement>('.ladder-empty')
+      if (empty) empty.hidden = mine.length > 0
+    }
+    clear.hidden = order.length === 0
+  }
+
+  const load = async (): Promise<void> => {
+    const answer = await host.send('/api/rows', { plugin: host.plugin, key: declared.rows ?? '' })
+    rows = (answer.rows ?? []) as Row[]
+    // The order core is holding, read off the ranks it already puts on the rows — one read
+    // rather than a second endpoint saying the same thing in a different shape.
+    order = rows
+      .filter((row) => String(row.rank ?? '') !== '')
+      .sort((a, b) => Number(a.rank) - Number(b.rank))
+      .map((row) => row.id)
+    paint()
+    slide()
+  }
+
+  const adding = el('div', 'ladder-add')
+  adding.append(search, hits)
+  box.append(track, explains, grid, adding, clear, said)
+  slide()
+  void load()
   return box
 }

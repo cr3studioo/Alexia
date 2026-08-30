@@ -37,6 +37,18 @@ times, and the second copy's own comment says so. `file` and `graph` were asked 
 same time and refused, because each had exactly one user, which is the bar written here. A
 bar that is only applied when it is convenient is not a bar.
 
+**There is a twelfth, and it is not yours** (D112). Core's Models tab draws a `ladder` — the
+spend slider and the running order under it — and it is deliberately **not in the manifest
+schema**, so a plugin declaring one is refused by the same parser that refuses a misspelled
+`toggle`. It has exactly one user, which is the bar above, and the bar is not waived for the
+people who wrote it. What it answers is a gap only core has: **every widget core can declare
+for its own tabs is read-only.** A plugin's values are written through `/api/settings` against
+its manifest, and core has no manifest — so the screen that shows which model the router
+picked had nowhere to decide it, and *recommended* stayed a word covering a rule. It presses
+`/api/action` like a row action does, so it adds no write path and no gate, and it is drawn by
+the same renderer as everything on this page. If you want it, the answer is the one above:
+open an issue saying what the eleven could not do.
+
 The shape of the declaration is borrowed from VS Code's `contributes.configuration`, which
 has been proving this exact idea at enormous scale for a decade. The shape, narrowed — not
 the size.

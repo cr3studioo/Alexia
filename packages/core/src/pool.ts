@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { keyOf, PROVIDERS, type Provider } from './provider.js'
+import { anonymous, keyOf, PROVIDERS, type Provider } from './provider.js'
 import { CORE, type SecretStore } from './secrets.js'
 import type { Store } from './store.js'
 
@@ -23,9 +23,13 @@ import type { Store } from './store.js'
 /** A provider the user has connected, and how much of its free tier is left right now. */
 export interface Rung {
   provider: Provider
-  /** Requests left in the current minute and day. `Infinity` where nothing is published. */
+  /**
+   * Requests left in the current minute, day and month. `Infinity` where nothing is
+   * published, which is most rows for most of these.
+   */
   minute: number
   day: number
+  month: number
 }
 
 /** Whether a provider has anything left to give at this instant. */
@@ -35,10 +39,14 @@ export function remaining(store: Store, provider: Provider, at: number = Date.no
     provider,
     minute: provider.rpm === undefined ? Infinity : Math.max(0, provider.rpm - used.minute),
     day: provider.rpd === undefined ? Infinity : Math.max(0, provider.rpd - used.day),
+    // Counted in calls, because that is the unit the budget is written in. A long request
+    // and a one-word one spend exactly the same amount of it.
+    month:
+      provider.callsPerMonth === undefined ? Infinity : Math.max(0, provider.callsPerMonth - used.month),
   }
 }
 
-export const spent = (rung: Rung): boolean => rung.minute <= 0 || rung.day <= 0
+export const spent = (rung: Rung): boolean => rung.minute <= 0 || rung.day <= 0 || rung.month <= 0
 
 /**
  * Every provider that can be asked: the user has added a key for it. Ordered by what has
@@ -65,7 +73,7 @@ export async function usable(
 ): Promise<Rung[]> {
   const connected = await Promise.all(
     providers.map(async (provider) => {
-      if (provider.keyless) return provider
+      if (anonymous(provider)) return provider
       // Nothing is pooled without a key the user added themselves. No key, not in the pool.
       const key = await secrets.get(CORE, keyOf(provider)).catch(() => undefined)
       return key ? provider : undefined

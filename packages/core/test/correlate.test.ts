@@ -39,7 +39,9 @@ const model = (over: Partial<Model> & Pick<Model, 'id' | 'tier'>): Model => ({
 
 const free = model({ id: 'free/text', tier: 'T1' })
 // Paid, so a fallback to it is a charge somebody would notice and come here to explain.
-const paid = model({ id: 'paid/small', tier: 'T2', priceIn: 300, provider: 'beta' })
+// Four times the window of the free one, so it is a genuine step up rather than the same
+// answer for money — which the router refuses to buy on the automatic path.
+const paid = model({ id: 'paid/small', tier: 'T2', priceIn: 300, provider: 'beta', context: 128_000 })
 
 /** Model ids the scripted server refuses with a 429, which is the next rung's turn. */
 let refuse = new Set<string>()
@@ -96,7 +98,14 @@ function bench(): { store: Store; session: number; world(): Promise<World> } {
     store,
     session: store.createSession(),
     world: () =>
-      Promise.resolve({ models: [free, paid], local: [], rungs: [remaining(store, alpha), remaining(store, beta)] }),
+      Promise.resolve({
+        models: [free, paid],
+        local: [],
+        rungs: [remaining(store, alpha), remaining(store, beta)],
+        // These are about what the ledger writes down when money is spent, so there has to
+        // be an allowance for it to be spent out of.
+        today: { spent: 0, allowance: 1 },
+      }),
   }
 }
 

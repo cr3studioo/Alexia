@@ -292,5 +292,35 @@ export function mountRail(token: string, options: RailOptions): Rail {
     drawPlugins(gotPlugins.panes ?? [])
   }
 
+  /**
+   * The conversations, on their own, on a timer.
+   *
+   * **A conversation can now change while nobody is typing.** `refresh()` runs when a task
+   * finishes *in this window*, which was every way a conversation could change until a
+   * message from a phone became one — so a Telegram chat appeared in this list only after
+   * something else happened to redraw it, which is how it looked like it was not appearing
+   * at all. The list is one SQLite read, and nothing else here is polled.
+   *
+   * Only while the window is on screen: a tray icon costing a query every three seconds all
+   * day is the sort of thing that gets an app uninstalled.
+   *
+   * ponytail: a poll, because core has no channel that pushes to an idle shell — `/api/chat`
+   * is a stream per request and nothing else streams. A push beats three seconds; add one
+   * when something else needs it too.
+   */
+  const watch = (): void => {
+    window.setInterval(() => {
+      if (document.visibilityState !== 'visible') return
+      void rowsOf<ChatRow>('chats').then((got) => {
+        // Redrawn only when it actually changed, so a list somebody is reading does not
+        // rebuild itself under them every three seconds.
+        if (JSON.stringify(got) === JSON.stringify(chats)) return
+        chats = got
+        drawChats()
+      })
+    }, 3000)
+  }
+  watch()
+
   return { refresh }
 }

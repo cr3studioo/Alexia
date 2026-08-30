@@ -204,6 +204,7 @@ Tick a box only when the task's acceptance criteria pass. `[GATE]` needs a human
 - [ ] **M8-1** `modelPreferences` and `min_tier` are honoured, or they stop being fields
 - [x] **M8-2** More than one conversation, and a way back into one
 - [x] **M8-3** Settings is two pages, and every plugin has one of its own
+- [x] **M8-4** *Recommended* was a word covering a rule, and the rule was not on the screen
 
 ---
 
@@ -3476,6 +3477,70 @@ tabs, applied to a tab M6-2 wrote.
 
 ---
 
+### M8-4 *Recommended* was a word covering a rule, and the rule was not on the screen
+
+**Reported from use, not from reading.** The Models tab said *★ recommended* against one row
+and offered no way to disagree with it. The mark itself was honest — it is defined as what the
+router would pick, so it cannot drift — but *recommended* is a word people fill in for
+themselves: it means **free** to somebody on a free tier, **fast** to somebody waiting, and
+**best** to somebody paying. The rule underneath is *cheapest that clears every pin*, which is
+one of those three and never says so. So the setting everybody thought they were looking at
+did not exist, and the one that did had no control anywhere in the app.
+
+**The money question, said out loud.** A three-stop slider above the table: **free only**,
+**free then paid**, **paid only**. The middle is what Automatic always did and stays the
+default — the two ends are the two things people wanted to be able to say, not a new
+behaviour. It is a `spend` pin, filtered in `route()`, and **a wall rather than a preference**:
+*free only* that reaches for a paid model when every free rung is rate-limited is the setting
+not existing, which is the thing being fixed. When it empties the pool the refusal names the
+slider, because *add a key* said to somebody whose key is the reason there is anything here at
+all is D107's mistake a second time.
+
+**Only the cloud pool has a price line.** A model on this machine is free in a different sense
+— nothing is billed and nothing is throttled — so the axis is not applied to a local pool at
+all. *Paid only* under `/local` would otherwise empty it and refuse with a sentence that reads
+as a bug: you asked for local, and it told you nothing local costs enough.
+
+**Then the order, as a shortlist somebody drags.** Two columns, Free and Paid, each an ordered
+list of what to try first. Reordered by dragging or by arrow keys on a focused row, added from
+one search box, and **empty by default** — anything not listed still answers behind whatever
+is, cheapest first, so an untouched screen behaves exactly as it did. A catalog of four hundred
+rows with a number typed beside each is not a preference screen, it is a chore, and the version
+of this that asked for one would have been finished by nobody.
+
+**The group is a property of the model, not of the list.** A paid model dragged to the top of
+its own column still sorts behind every free one unless the slider says otherwise. Without that
+rule one drag would quietly turn the free tier off, which is the exact surprise the slider
+above it exists to prevent.
+
+**The twelfth widget, and it is not one.** `ui-schema.md`'s bar for a new widget is *more than
+one user*, and `file` and `graph` were refused on it — so `ladder` is **not** in the manifest
+schema and no plugin can declare it. What it answers is a gap in the eleven that only core has:
+**every widget core can declare for its own tabs is read-only.** A plugin's values are written
+through `/api/settings` against a manifest, and core has no manifest, so the Models tab could
+report what the router decided and had nowhere to decide it. It presses `/api/action` like a
+row action does — no new write path, no new gate — and it is drawn by the one renderer both
+screens share, so `control.ts` still names no tab and no plugin. The M6-4 test moved to say
+exactly that, with core's own list written out by name so a second one cannot appear quietly.
+
+**Acceptance**
+
+- The slider writes a pin the router reads, and the ★ moves when it moves — it is the router's
+  own answer, so the two cannot disagree. ✅ *(`surface.test.ts`)*
+- *Free only* removes the paid rows from the plan rather than sinking them, and its refusal
+  names the slider and never says *add a key*. ✅ *(`router.test.ts`)*
+- *Paid only* does not empty the local pool. ✅
+- The shortlist orders within a group and never across one, and an empty one is byte-for-byte
+  the old behaviour. ✅
+- A model that has left the catalog is dropped from the order rather than making it unsaveable
+  — and the unlisted rows tie rather than comparing `Infinity - Infinity`, which `Array.sort`
+  reads as *equal* in every direction at once. ✅
+- Reorderable by keyboard, with focus following the row. Every class the renderer writes has a
+  rule in the sheet, which is the failure this widget was big enough to make likely. ✅
+  *(`shell.test.ts`)*
+
+---
+
 ## Backlog
 
 Real, ordered, not scheduled. Nothing here blocks a milestone.
@@ -3645,6 +3710,10 @@ Newest first. Every entry here is also in Alexia.md's decision log.
 
 | Date | Entry |
 |---|---|
+| 2026-08-30 | **D112** — **the models screen said *recommended* and had no way to disagree with it.** The ★ was honest — it is defined as what the router would pick — but *recommended* means free to one person, fast to the next and best to the one paying, while the rule underneath is *cheapest that clears every pin*. So a three-stop slider now says the money question out loud (free only · free then paid · paid only), as a **wall rather than a preference**: *free only* that reaches for a paid model when the free rungs are gone is the setting not existing. It is not applied to a local pool, because only the cloud pool has a price line. Under it, the running order as a **shortlist somebody drags** — empty by default, everything unlisted still answering behind it, and the group is a property of the model so one drag cannot quietly turn the free tier off. `ladder` is **not** the twelfth widget: `ui-schema.md`'s bar is more than one user, so it is not in the manifest schema and no plugin can declare it. What it answers is that **every widget core can declare for its own tabs is read-only** — a plugin's values are written against a manifest and core has no manifest — so the Models tab could report what the router decided and had nowhere to decide it. |
+| 2026-08-30 | **D111** — **the commands lived on one screen, so the one place that needed them most had none.** `/new` did not exist anywhere: the window had a button, a phone had nothing, and every message sent from one landed in the same conversation carrying every message before it. Commands are answered on the sampling path — before the tools flag and before `asTask`, so `/new` works while a task runs — guarded to a single short line with a command-shaped word so a plugin's wrapped prompt beginning with a slash is not read as one. `/new` is a hook, because *here* is the window for one caller and its own conversation for another; the plugin end clears its own history, since core rotates what it writes down while the model is shown the plugin's. `/help` lists them, for a place with no palette. And the rail re-reads the conversations on a timer while the window is visible, because `refresh()` only ever fired when a task ended *in this window*. |
+| 2026-08-30 | **D110** — **the screenshot was refused by the antivirus, and two of the computer plugin's other three PowerShell calls were wrong on the shell Windows actually ships.** All three found by running it. `screenshot` came back `ScriptContainedMaliciousContent` — AMSI scans every script first, and the one-line capture-and-save is the shape every PowerShell screen-grabber was written in; isolated statement by statement, each half runs and the pair does not, so it is written out as a script a person would write and the block is now a sentence rather than an error id. `windows` used `ConvertTo-Json -AsArray`, which is PowerShell 7 and this is 5.1. `key` checked *braces round some letters*, so `{SUPER}` reached SendKeys and returned a bare `ArgumentException`; the check is the real keyword list now, and `{WIN}` / `{WIN}r` go to `keybd_event`, because SendKeys cannot hold one key across another. |
+| 2026-08-30 | **D109** — **a task started somewhere else was being written into whichever conversation the window had open.** Found in the database: two assistant replies with no question above them, because `asTask` passed the desktop's `session` to the loop — so a Telegram answer landed in an unrelated chat and the message that started it landed nowhere, the user's turn being appended by whoever received it and nothing having. One core session per plugin, looked up through `kv` so a deleted conversation starts a new one, titled with the plugin's name: a row on the Chats screen with no new screen and no new table. The plugin's own history stays in its own namespace, so invariant 5 is untouched. |
 | 2026-08-29 | **D105** — **a worked example is a thing a model copies, and the personality adapter was handing one over.** `SHAPE` was a complete chief-of-staff personality, on the theory that a model shown a good one writes a good one. Measured instead, on a free model, asked for a Victorian butler: back came the example's headline, its role sentence and **both of its bullets**, with only *How you talk* replaced — so a personality about a butler opened *You are Vacen's chief of staff*. The name the brief explicitly forbids inventing was reaching the document **from the instructions**, and every personality anybody adapted would have been the same person wearing a different voice. The shape is now a skeleton whose angle brackets say what belongs under each heading and name nobody, and the test asserts exactly that: no line of it outside a heading is anything but a bracket. Re-measured after: the same request produced *Punctilious Valet*, invented from the description, with no trace of the template. **Found by running the feature rather than by reading it** — the first version passed every test it had. |
 | 2026-08-29 | **D106** — **core had one conversation, and it was a `const`.** M8-2. `serve.ts` read `store.sessions()[0]` once at startup, so every install had a single transcript growing forever with no way to start a fresh one or return to an old one — while `createSession`, `deleteSession`, `history(id)` and a cascade had been in the store since M1, unused. The session became a variable read **per request** rather than held from boot, which is the whole of what makes switching work; the checker takes a getter for the same reason, so a review is charged to the conversation it was spent for. The screen is a `table` — a core tab like Activity, drawn by the same widget code as a plugin's — plus one `action` for *New chat*, which is not about a row. Three rules the tests hold: **the open conversation cannot be deleted** (its messages go by cascade, so every later append would dangle), an empty conversation is **reused rather than stacked**, and a task already running **finishes into the conversation it started in**. Titles are the first thing the user said, read in the same query that lists the conversations — a model-written name is a call on a screen that opens at the speed of a file read, and *the one where I asked about the printer* is already on disk. **The M6-4 assertion moved deliberately**: from *a core tab holds tables and nothing else* to the manifest schema itself, which is the property its own comment named, and which caught an empty column label core would not have accepted from a plugin. |
 | 2026-08-29 | **D107** — **a spent free tier is not a disconnected provider.** Reported as *no provider is connected and nothing has anything left* with an OpenRouter key sitting in the keychain, so the sentence named the one thing already done. The ledger read 51 against a published 50, and three separate wrongs turned that into nothing at all: `usable()` **dropped the spent provider from the pool**, which `route()` reads as *not connected*, taking 249 paid models on the same key down with the free ones; `sent()` **counted paid requests against the free tier** they are not billed to; and `refusal()` **merged two walls into one sentence**, offering *add a key* for a wall that is not about keys. A spent tier is now a row that is marked spent, costing the free models and not the key — and when honouring it would leave **nothing at all** it is not honoured, because it is this machine's copy of somebody else's number and deliberately the low one (fifty a day becomes a thousand on a $10 top-up, and nothing here is told). The pre-check stays: 104 free models on one provider means discovering a spent tier by 429 costs 104 round trips, which is what D51's ledger exists to avoid. **A fourth bug was hiding behind the refusal** — OpenRouter prices `openrouter/auto` and four siblings at `-1`, meaning *varies*, which `perMillion` reads as minus a million and `cheapest` sorts below free; unblocking the pool handed every automatic choice to a meta-router ahead of all 104 free models. D104's failure mode exactly, found the same way, by running it against the real cache. A row the catalog cannot price is a row it does not carry, and `PARSER` goes to 3 so the five already on disk leave on the next poll. |

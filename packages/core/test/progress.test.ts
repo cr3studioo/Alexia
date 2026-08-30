@@ -125,7 +125,7 @@ test('the loop turns it into events on the step, while the step is still running
     messages: [{ role: 'user', content: 'warm up' }],
     tools: tooling,
     pins: { placement: MODES.combined },
-    world: () => Promise.resolve({ models: [model], local: [], rungs: [{ provider: alpha, minute: 0, day: 0 }] }),
+    world: () => Promise.resolve({ models: [model], local: [], rungs: [{ provider: alpha, minute: 0, day: 0, month: 0 }] }),
     store,
     secrets,
     session,
