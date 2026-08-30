@@ -230,17 +230,17 @@ test('a bundled skill is refused with the reason, rather than having no button a
   expect(readFileSync(join(extensions, 'shipper', 'know', 'SKILL.md'), 'utf8')).toContain('Body.')
 })
 
-test('the library panel says what is installed and what state it is in, and nothing writes', async () => {
+test('the library read survives its tab, because the palette is what indexes it', async () => {
   const listed = await rows('library')
   const mine = listed.find((row) => row.id === 'shipper')
   expect(mine?.name).toBe('Shipper')
   expect(mine?.version).toBe('0.1.0')
   expect(String(mine?.state)).toContain('enabled')
 
-  // Read-only, deliberately: the plugins screen owns the write path, and a second one here
-  // would be a parallel mechanism.
-  const table = CORE_TABS.flatMap((tab) => tab.widgets ?? []).find((widget) => widget.key === 'library')
-  expect(table?.type === 'table' && table.rowActions).toBeUndefined()
+  // No tab of its own any more (M8-3). It was a read-only copy of a list the settings screen
+  // owns the write path for, and one list in two places is one of them being out of date —
+  // so the panel went and the read stayed, which is what the palette and the grid both use.
+  expect(CORE_TABS.flatMap((tab) => tab.widgets ?? []).map((widget) => widget.key)).not.toContain('library')
 
   const detail = await post('/api/detail', { key: 'library', row: 'shipper' })
   // The author's own sentence, verbatim.

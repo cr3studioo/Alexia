@@ -46,7 +46,7 @@ export interface Rail {
 export interface RailOptions {
   openPalette(): void
   openControl(tab?: string, filter?: string): void
-  openSettings(): void
+  openSettings(page?: 'general' | 'plugins'): void
   /** Repaint the conversation, because opening another one changes what the log holds. */
   reload(): Promise<void>
 }
@@ -217,12 +217,22 @@ export function mountRail(token: string, options: RailOptions): Rail {
 
   // ---- the plugins ------------------------------------------------------------------------
 
+  /** The way to the grid, which is where installing, configuring and deleting live (M8-3). */
+  const manage = (label: string): HTMLElement => {
+    const button = document.createElement('button')
+    button.type = 'button'
+    button.className = 'more'
+    button.textContent = label
+    button.addEventListener('click', () => options.openSettings('plugins'))
+    return button
+  }
+
   const drawPlugins = (panes: Pane[]): void => {
     if (panes.length === 0) {
       const none = document.createElement('p')
       none.className = 'nothing'
-      none.textContent = 'No plugins installed. The library is in Settings.'
-      plugins.replaceChildren(none)
+      none.textContent = 'No plugins installed.'
+      plugins.replaceChildren(none, manage('Find one'))
       return
     }
     plugins.replaceChildren(
@@ -245,6 +255,10 @@ export function mountRail(token: string, options: RailOptions): Rail {
         row.classList.add('switch')
         return row
       }),
+      // The rail is the switch and nothing else. Everything a plugin can be asked — what it
+      // needs, what it stores, whether it stays — is one press away rather than crammed into
+      // a column this narrow.
+      manage('All plugins'),
     )
   }
 

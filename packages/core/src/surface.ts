@@ -460,7 +460,9 @@ export async function searchable(
     ['skills', 'skills', 'skill', (row) => String(row.name)],
     ['skills', 'learned', 'learned skill', (row) => String(row.name)],
     ['tools', 'tools', 'tool', (row) => String(row.name)],
-    ['library', 'library', 'plugin', (row) => String(row.name)],
+    // Not a control tab: plugins live on the settings screen (M8-3), and the shell routes
+    // this one word there. The palette says where a thing is; it does not get a second index.
+    ['plugins', 'library', 'plugin', (row) => String(row.name)],
   ]
   for (const [tab, key, kind, label] of lists) {
     const source = ours[key]

@@ -224,11 +224,13 @@ except Full trust. Same rule as any other tool call, no exception for buttons.
 
 ## Layout
 
-Widgets render **in manifest order**, in one column, in the plugin's own settings pane.
+Widgets render **in manifest order**, in one column, on the plugin's own settings page.
 There is no grouping, no tabs, no sections and no `order` field: a plugin with enough
-settings to need tabs has a design problem that a tab control would hide.
+settings to need tabs has a design problem that a tab control would hide. Settings itself has
+two tabs, General and Plugins, and every plugin has a page of its own reached from a card on
+the second — but that is navigation *between* plugins, and it stops at the page's edge.
 
-The pane is core's chrome — plugin name, version, licence, the enable toggle, the
+The page is core's chrome — plugin name, version, licence, the enable toggle, the
 capabilities it asked for with each `why` beside it, and a **Delete** button. None of that is
 declared; all of it is rendered from the manifest.
 

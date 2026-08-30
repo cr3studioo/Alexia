@@ -203,6 +203,7 @@ Tick a box only when the task's acceptance criteria pass. `[GATE]` needs a human
 
 - [ ] **M8-1** `modelPreferences` and `min_tier` are honoured, or they stop being fields
 - [x] **M8-2** More than one conversation, and a way back into one
+- [x] **M8-3** Settings is two pages, and every plugin has one of its own
 
 ---
 
@@ -3430,6 +3431,48 @@ schema itself — core's widgets are parsed as a plugin's `settings` — so *wha
 declare* and *what core declares* cannot drift into two lists that have to agree. It caught a
 real defect on its first run: an empty column label core would not have accepted from a
 plugin.
+
+### M8-3 Settings is two pages, and every plugin has one of its own
+
+**The settings screen was one column with everything in it**, in this order: the three
+questions first run asked, the library, every installed plugin's whole pane — chrome,
+capability list, declared widgets and lifecycle — the folders that failed to load, and the
+skills. It worked at three plugins. It is a scroll at nine, and the plugin you came to change
+is behind four you did not.
+
+**Two tabs, and the tabs are between screens rather than inside one.** *General* is what first
+run asked plus the know-how installed; *Plugins* is a grid of cards. A plugin with enough
+settings to need tabs still has a design problem a tab control would hide — that rule is about
+one plugin's widgets and it has not moved. Finding the plugin you meant is a different problem
+from reading its settings once you have, and it was the unsolved one.
+
+**A card is name, what it does, whether it is installed, and the switch.** The switch is the
+only thing on a card that is not the card: the click handler asks *what was pressed* rather
+than every control asking not to bubble, which is one rule that still holds on the day a card
+grows a second control. Everywhere else is the way in to the plugin's own page, and the name
+is a real button so that way in exists for a keyboard too.
+
+**Only what is installed is on screen.** The registry's cards are behind a `details` — the
+disclosure the platform already has — because this is where somebody comes to change something
+they have, and a grid that opened on forty things they do not is a shop rather than a settings
+page. Pressing one asks *this plugin is not installed, do you want to install it?* on the card,
+with the author's own `requires` sentences under the question, because the registry carries
+them so that deciding whether to want something does not require already having it.
+
+**The bar sweeps rather than fills, and that is the honest shape.** One request goes out and
+comes back with the folder on disk; there is no percentage to report. Silence is what kills a
+first run rather than time, and a bar claiming a number it does not have is the other way to
+lose somebody. It stops at `prefers-reduced-motion`.
+
+**Installed is still not enabled** (D73). The card does not flip itself on — that would be
+consent nobody gave — so a finished install lands on the plugin's own page, which is the
+walkthrough, and where the yes is given.
+
+**The Library tab is gone from Activity**, which is the half of this that is a deletion. It
+was a read-only copy of a list the settings screen owns the write path for, and one list in
+two places is one of them being out of date. The `library` *read* stays, because the palette
+indexes it; what moved is the screen the palette opens. That is the same rule M6-2 set for
+tabs, applied to a tab M6-2 wrote.
 
 ---
 

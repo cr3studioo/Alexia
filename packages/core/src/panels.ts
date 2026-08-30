@@ -187,21 +187,6 @@ const TOOLS: Rendered = table({
   groupBy: 'plugin',
 })
 
-const LIBRARY: Rendered = table({
-  type: 'table',
-  key: 'library',
-  label: 'Installed',
-  hint: 'What is on this machine. Browsing, installing and removing are on the plugins screen, which owns the write path.',
-  rows: 'library',
-  columns: [
-    { key: 'name', label: 'Name' },
-    { key: 'version', label: 'Version', align: 'right', hideNarrow: true },
-    { key: 'state', label: 'State' },
-  ],
-  detail: 'plugin',
-  filter: true,
-})
-
 /**
  * Which model, chosen by hand rather than by the router (the Models tab).
  *
@@ -248,7 +233,12 @@ const MODELS: Rendered = table({
  * The tabs whose data core owns, in the order they are read rather than built.
  *
  * *Activity* first because *what has this been doing* is the question that brings somebody
- * to this screen. The rest follow it: what it knows, what it can do, what is installed.
+ * to this screen. The rest follow it: what it knows, and what it can do.
+ *
+ * **There is no Library tab here any more (M8-3).** It was a read-only copy of a list the
+ * settings screen owns the write path for, and one list in two places is one of them being
+ * out of date. `library` is still a source in `surface.ts`, because the palette indexes it —
+ * what moved is the screen it opens, not the read.
  */
 export const CORE_TABS: readonly { id: string; label: string; soon?: string; widgets?: Rendered[] }[] = [
   // First, and ahead of *Activity*, because it is the only tab somebody opens mid-sentence:
@@ -258,7 +248,6 @@ export const CORE_TABS: readonly { id: string; label: string; soon?: string; wid
   { id: 'skills', label: 'Skills', widgets: [SKILLS, LEARNED] },
   { id: 'tools', label: 'Tools', widgets: [TOOLS] },
   { id: 'models', label: 'Models', widgets: [MODELS] },
-  { id: 'library', label: 'Library', widgets: [LIBRARY] },
 ]
 
 /** Which core table a `rows` or `detail` name belongs to. Used to reject an unknown one. */

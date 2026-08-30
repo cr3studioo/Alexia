@@ -435,10 +435,13 @@ body[data-view='control'] .view:not(#control) {
   margin-top: var(--space-6);
 }
 
-/* ---- the settings screen (M2-1) -------------------------------------------------------
+/* ---- the settings screen (M2-1, M8-3) --------------------------------------------------
 
-   One column, widgets in manifest order, no tabs and no grouping — a plugin with enough
-   settings to need tabs has a design problem a tab control would hide. */
+   Two pages, General and Plugins, and one page per plugin behind the second. **The tabs are
+   between screens, never inside one**: a plugin's own widgets are still one column in
+   manifest order, because a plugin with enough settings to need tabs has a design problem a
+   tab control would hide. Finding the plugin you meant is a different problem from reading
+   its settings once you have. */
 
 #settings {
   overflow-y: auto;
@@ -455,6 +458,175 @@ body[data-view='control'] .view:not(#control) {
 
 .view-top .step-heading {
   margin: 0;
+}
+
+/* ---- the plugin grid (M8-3) ---------------------------------------------------------
+
+   A card each, on a grid that decides its own column count. `auto-fill` with a minimum
+   rather than a breakpoint: the same screen is a 1280px window and an overlay narrower than
+   a phone, and a media query would be a second place to keep those two widths in step.
+
+   The card is not a button, because it has one inside it. The whole surface is still the way
+   in — the click handler asks what was pressed — and the name is a real button so the way in
+   exists for a keyboard too. */
+
+.bento {
+  display: grid;
+  /* `min(...)` rather than a bare 15rem: the overlay is narrower than any phone this was
+     tested on, and a track with a minimum wider than its container is a page that scrolls
+     sideways. */
+  grid-template-columns: repeat(auto-fill, minmax(min(15rem, 100%), 1fr));
+  gap: var(--space-3);
+  margin-bottom: var(--space-5);
+}
+
+/* The empty answer is a sentence, not a card, so it takes the whole row rather than sitting
+   in one narrow column pretending to be the first plugin. */
+.bento > .hint {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+
+.bento-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface-raised);
+  cursor: pointer;
+}
+
+.bento-card:hover {
+  border-color: var(--line-strong);
+}
+
+/* The whole card is one target, so the ring goes round the card rather than round the word
+   inside it — a focus outline on the name would point at a quarter of what Enter presses. */
+.bento-card:has(.bento-open:focus-visible) {
+  outline: var(--ring) solid var(--focus);
+  outline-offset: var(--ring);
+}
+
+.bento-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.bento-open {
+  /* A long name gives way rather than pushing the switch off the card. The rail is a fixed
+     17rem at every width, so the stage can get very narrow before anything else gives. */
+  min-width: 0;
+  overflow-wrap: anywhere;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.bento-open:focus-visible {
+  outline: none;
+}
+
+.bento-what {
+  flex: 1;
+  margin: 0;
+  color: var(--ink-quiet);
+  font-size: var(--text-sm);
+  line-height: var(--leading-prose);
+}
+
+.bento-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+/* Fifteen rems is not room for a capability name beside a sentence about it, so inside a card
+   the two stack. Everywhere else they stay on one line — the question the list answers is
+   *what is it asking for*, and a column wide enough to scan is what makes that readable. */
+.bento-card .asks li {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-1);
+}
+
+/* Not installed is behind a disclosure, because this screen is where somebody comes to change
+   something they have. `details` is the platform's, so the keyboard behaviour is not ours. */
+#available-box {
+  margin-bottom: var(--space-5);
+}
+
+#available-box summary {
+  cursor: pointer;
+  color: var(--ink-quiet);
+  font-size: var(--text-sm);
+  margin-bottom: var(--space-3);
+}
+
+#plugin-filter {
+  margin-bottom: var(--space-4);
+}
+
+/* The rhythm rule, for two blocks the shell fills rather than the markup: the gap above a
+   heading is the gap between groups, and a `.group` is what usually carries it. Empty is not
+   a group, so it gets no gap either. */
+#skills:not(:empty),
+#skills-library:not(:empty) {
+  display: block;
+  margin-top: var(--space-6);
+}
+
+/* Two tabs, so the narrow rule the control strip needs does not apply here. Nine names
+   wrapped into three lines is what that rule exists for; General over Plugins in a column is
+   a list of two, which is worse than the row it replaced. */
+@media (max-width: 559px) {
+  #settings-tabs {
+    flex-direction: row;
+    border-bottom: 1px solid var(--line);
+  }
+
+  #settings-tabs .tab {
+    border-bottom: 2px solid transparent;
+  }
+
+  #settings-tabs .tab.on {
+    border-bottom-color: var(--ink);
+  }
+}
+
+/* An install has no percentage to report — one request goes out and comes back with the
+   folder already on disk — so this bar sweeps instead of filling. Same bar a plugin drives
+   with real numbers (M2-6); the only difference is that this one is honest about not having
+   any. */
+.bar.working > span {
+  width: 35%;
+  animation: sweep 1.2s ease-in-out infinite;
+}
+
+@keyframes sweep {
+  from {
+    transform: translateX(-100%);
+  }
+
+  to {
+    transform: translateX(286%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bar.working > span {
+    width: 100%;
+    animation: none;
+  }
 }
 
 /* ---- the control surface (M6-2) -------------------------------------------------------
