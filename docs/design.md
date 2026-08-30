@@ -31,17 +31,32 @@ So the frame is not decoration here. It is the thing that lets the sentences be 
 
 ## The type ramp
 
-One family, six sizes, three weights. Sizes are `rem` so they follow the browser, and the
-scale is a flat 1.2 — big enough to separate, small enough that a step never shouts.
+**Three faces, and none of them downloads.** A chat window that needs a webfont is a chat
+window that is wrong on a plane, and every kilobyte here is one the Tauri shell carries at M5.
+All three are already on the machine:
+
+| Token | Stack | What it is for |
+|---|---|---|
+| — | `ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif` | Body, messages, controls — everything unmarked |
+| `--serif` | `ui-serif, Georgia, 'Iowan Old Style', 'Times New Roman', serif` | The voice: her name, a conversation's title, the spend |
+| `--mono` | `ui-monospace, 'Cascadia Mono', 'SF Mono', 'DejaVu Sans Mono', monospace` | What a machine said: a tool name, a capability, an argument, a result |
+
+The split is the point. **A command must never look like prose.** When the live panel shows
+what was sent to a tool, the difference between Alexia's sentence and the tool's arguments is
+carried by the face before anybody reads a word — and the serif keeps identity and titles from
+competing with either.
+
+One family for the work, six sizes, three weights. Sizes are `rem` so they follow the browser,
+and the scale is a flat 1.2 — big enough to separate, small enough that a step never shouts.
 
 | Token | Size | Where |
 |---|---|---|
 | `--text-xs` | 0.75rem | the mode tag on a card, the step number |
-| `--text-sm` | 0.8125rem | hints, secondary lines, the trace |
+| `--text-sm` | 0.8125rem | hints, secondary lines, the rail, the live panel |
 | `--text-base` | 0.9375rem | body, messages, inputs — everything unmarked |
-| `--text-md` | 1.0625rem | section headings, the name in the header |
+| `--text-md` | 1.0625rem | section headings |
 | `--text-lg` | 1.375rem | the one question on a first-run step |
-| `--text-xl` | 1.75rem | reserved: the empty state, and nothing else yet |
+| `--text-xl` | 1.75rem | her name in the rail, and the empty state |
 
 Weights are `400`, `500` and `600`. There is no bold body text and no italic anywhere except
 where a browser puts it — emphasis in this product is a job for hierarchy, not for a heavier
@@ -86,42 +101,69 @@ Colours are named for **what they do**, never for what they are. There is no `--
 this sheet, because the moment there is, the light theme has to invert a name that means a
 shade and the meaning is lost.
 
+### The two grounds
+
+The palette is Delft: blue-and-white porcelain, and specifically **the painting that was on
+the pot rather than the pot**. Five colours, and the two themes are the same painting with the
+glaze and the paint changing places.
+
+| | Dark — *the cobalt ground* | Light — *the champagne ground* |
+|---|---|---|
+| `--surface` | `#030d1b` | `#efe4cf` |
+| `--surface-raised` | `#0a1b30` | `#fffbf3` |
+| `--surface-sunken` | `#05111e` | `#e8dcc4` |
+| `--ink` | `#ede7da` | `#12253d` |
+| `--accent` | `#e8d6b6` | `#18385f` |
+
+**Light is not dark inverted.** Each ramp is built for its own ground, so `--ink-quiet` is
+genuinely quiet on champagne rather than merely paler, and the raised and sunken surfaces are
+re-derived rather than mirrored. In the dark the page is deep cobalt and a panel is lighter
+than it; in the light the page is champagne and a panel is the glaze sitting on it.
+
+**Body ink is not the brightest thing available.** `--ink` is `#ede7da`, not the full
+`#fff9ef` — the pure glaze is kept for nothing, because a screenful of text set in it is what
+made the first pass of this palette hard to look at. If a heading ever needs to be brighter
+than the body, that is a hierarchy problem to solve with size and weight.
+
+### Colour is scarce, and it is split by meaning
+
 | Role | Job |
 |---|---|
-| `--surface` | the page |
-| `--surface-raised` | a thing sitting on the page: card, input, panel, menu |
-| `--surface-sunken` | the conversation's own ground, one step behind the page |
-| `--ink` | body text |
+| `--accent` | **you, and what you chose** — your own messages, the option you picked, the primary button, the mark, the painting |
+| `--on-accent` | text on `--accent` |
+| `--chosen` | **the machine, working** — a run in flight, progress, a plugin switched on, the live dot |
+| `--chosen-wash` | the ground a `--chosen` badge sits on |
+| `--caution` | it still works, but not the way you expected: a shadowed command, a step that failed |
+| `--danger` | it did not happen and will not: a refusal, a hard error |
+| `--focus` | the focus ring, and only the focus ring |
 | `--ink-quiet` | secondary text that is still meant to be read |
 | `--ink-faint` | text that is there when you look for it: placeholders, step numbers |
 | `--line` | a border between things |
-| `--line-strong` | a border that is also an edge — the header rule, a focused input |
-| `--accent` | what is yours and what is selected: your own messages, the chosen card, the primary button |
-| `--on-accent` | text on `--accent` |
-| `--focus` | the focus ring, and only the focus ring |
-| `--caution` | it still works, but not the way you expected: a shadowed command, a step that failed |
-| `--danger` | it did not happen and will not: a refusal, a hard error |
+| `--line-strong` | a border that is also an edge — a focused input, a dashed refusal |
 
-**Both themes are real.** Light is not dark inverted: each ramp is built for its own ground,
-so `--ink-quiet` is genuinely quiet on white rather than merely paler, and the raised and
-sunken surfaces are re-derived rather than mirrored — in light the page is off-white and a
-raised thing is pure white, in dark the page is near-black and a raised thing is lighter than
-it. Every pair in the table above is checked against WCAG at 4.5:1 for text and 3:1 for
-borders and rings, in both themes, by `packages/ui/test/contrast.test.ts` — which reads the
-declarations out of `app.css` rather than keeping a second copy of them. A palette that has to
-agree with a test in two places is a palette that will disagree with it in one.
+That split is the rule that matters, and it is the one this screen kept getting wrong. When
+the accent did every job at once — the button *and* your messages *and* six plugin switches
+*and* the labels — a warm colour at that chroma sat on a cold ground in a dozen places and the
+whole screen vibrated. **Two meanings, two colours.** Amber and red are the only other hues,
+which is what makes a colour on this screen always mean that something happened.
+
+`--wash` and `--accent-wash` carry hover states and tinted fills. They are `color-mix` off the
+tokens above rather than a second set of hexes nobody would keep in step, and they carry no
+text — which is why they are not in the contrast table.
+
+### Both themes are measured
+
+Every pair above is checked against WCAG at 4.5:1 for text and 3:1 for borders and rings, in
+both themes, by `packages/ui/test/contrast.test.ts` — which reads the declarations out of
+`app.css` rather than keeping a second copy of them. A palette that has to agree with a test
+in two places is a palette that will disagree with it in one.
 
 **The switch is the operating system.** `prefers-color-scheme`, with `color-scheme: light
-dark` so scrollbars and native controls come along. There is no theme toggle, deliberately:
-a toggle is a setting to persist, a control to keep in sync with a command, and a third state
+dark` so scrollbars and native controls come along. There is no theme toggle, deliberately: a
+toggle is a setting to persist, a control to keep in sync with a command, and a third state
 ("follow the system") to explain. Alexia is a tray-resident daemon that should look like the
 desktop it is sitting in. `[data-theme]` on the root element overrides it if that judgement
 ever changes — the hook is there, unused, and a control is all that would be missing.
-
-`--caution` is amber and `--danger` is red, and they are the **only** hues on the screen.
-Everything else is achromatic. That is not restraint for its own sake: it means a colour on
-this screen always means something happened, and the eye can be trained on two colours in a
-way it cannot be trained on nine.
 
 ---
 
@@ -130,9 +172,13 @@ way it cannot be trained on nine.
 | | |
 |---|---|
 | `--radius-sm` 0.375rem | tags, menu rows, small controls |
-| `--radius-md` 0.5rem | inputs, buttons |
-| `--radius-lg` 0.75rem | cards, message bubbles, panels |
-| `--radius-full` 999px | only where something is genuinely a pill: a status tag |
+| `--radius-md` 0.5rem | inputs, buttons, code blocks |
+| `--radius-lg` 0.75rem | panels, cards, message bubbles |
+| `--radius-full` 999px | **badges only** |
+
+`--radius-full` is the one worth spelling out. A pill is now the mark of a badge — *running*,
+*waiting on you*, which model answered — and nothing else. When containers and primary buttons
+were pills too, the badge stopped meaning anything.
 
 **No shadows.** Depth is carried by surface and border, which survives both themes without a
 second set of values and does not smear on a scaled display. One exception is allowed and it
@@ -140,6 +186,42 @@ is not used yet: something that genuinely floats above the page rather than sitt
 
 Borders are `1px` and always `--line`, except an edge that separates two regions of the app
 (`--line-strong`).
+
+---
+
+## The painting
+
+Delft brushwork rather than a Delft vase: what was on the pot, not the pot. It is the app icon
+and two foliate motifs, and it exists to make a careful sentence look like it was meant.
+
+**Three files, and they are masks rather than pictures.**
+
+| File | Where |
+|---|---|
+| `alexia-mark.svg` | the mark in the rail — the icon, filled, in a double-ringed medallion |
+| `alexia-band.svg` | one tile of a running scroll, repeated under the mark |
+| `alexia-panel.svg` | the panel behind the conversation — the figure as linework, with a spray and a peony framing her |
+
+A mask and not an `<img>`, because the painting has to take the theme's colour: champagne line
+on cobalt in the dark, cobalt line on champagne in the light, which is the icon's own polarity
+the second way round. An `<img>` cannot inherit a colour; a mask is alpha, and the element
+behind it is whatever `background` says. Every one is registered in `serve.ts`'s `STATIC` and
+copied by `scripts/package.mjs`, and `packages/ui/test/shell.test.ts` holds those three facts
+together — a mask that 404s is not a broken image with a border round it, it is a solid
+champagne rectangle over the conversation.
+
+**Three appearances and no more**: the mark, one band under it, one panel behind the
+conversation. Any more and it competes with a live trace, which is the thing on this screen
+people actually need to read.
+
+**In the backdrop the figure is stroked, never filled.** Filled, she is a heavy silhouette
+that fights the text at any opacity worth having; stroked, she is linework at the same weight
+as the flowers around her, which is what puts her behind the conversation rather than in it.
+She is also held at 55% of the flowers' opacity, so she recedes rather than matching them.
+
+`--paint` is the only lever — how strongly the brushwork shows through, and the only thing
+about it anybody would ever want to change. It is lower in the light theme than in the dark,
+because the same line reads louder on champagne than on cobalt.
 
 ---
 
@@ -186,43 +268,70 @@ indistinguishable from a figure you cannot.
 
 Each one has a job, and the job is what settles the layout.
 
+**The shell is three panels on a ground that is allowed to show between them.** Not three
+columns with rules between them: the gaps are the design. A panel that runs edge to edge
+against its neighbour needs a rule to separate them, and a screen of rules is what made the
+old header read as a stack of pills — here the ground does that job and costs nothing. The
+gutters carry a grip apiece, because the three widths are the reader's to set.
+
+**The rail** is identity, then which conversation, then the four things somebody changes:
+which model answers, where the work happens, what Alexia may do unasked, and which plugins are
+on. It is the one panel that never goes away — Settings and Control swap the middle out from
+under it. Everything in it opens **in place**: a popover anchored to a row in a column that
+scrolls is a popover that gets left behind. Nothing in it is a second source of truth, either;
+every list is core's own — the same `chats` and `models` tables the Control surface draws, the
+same `/api/plugins` the settings screen reads. The rail is a shorter route to them, never a
+parallel one.
+
+**The conversation** is her words as text on the panel, not a box on a box. A raised bubble on
+a raised surface is two borders and a fill to carry one sentence, and a screenful of them
+reads as a stack of cards rather than as somebody talking. Yours keep a shape, because on a
+page of her prose the thing worth finding is what you asked. A refusal is dashed and quiet.
+
+**The conversation says almost nothing about a tool call**: the names, and a way through. One
+line, and it is a control rather than a caption.
+
+**The live panel** has the rest, and it is the reason the trace left the log. One card for
+what is running, one for the steps, one for the step you have open — and that last one carries
+what the old trace could not: which plugin offers the tool, what that plugin holds and **the
+manifest's own sentence for why**, the arguments the model actually sent, and what came back.
+Nothing in it is invented. Where core does not say something — which single capability a given
+call used, as opposed to which the plugin holds — the panel says what it knows rather than
+guessing. A screen whose whole purpose is *this is what happened* cannot afford one confident
+wrong line.
+
+**The step rows appear before the work, not after it.** A step nobody can see until it finishes
+is a spinner with extra steps, and a spinner during a five-minute run is how trust goes. A
+failed row recolours its result and changes nothing else, because the panel is a log and a log
+that reflows is unreadable.
+
 **First run** is its own view, not the chat page with a block swapped out, and it carries its
-own identity: the header is gone entirely. A spend of `$0.00` and a model of *no model yet*
-are noise before there is either, and with the header present the mark and the name were being
-drawn twice, sixty pixels apart. The one question the view is really asking — *What should I
-call you?* — is set in `--text-lg`; the two after it are `--text-md` headings. The composer
-does not exist on this view at all, which is how *"first run and the composer are never on
-screen together"* stops being a rule somebody has to remember.
+own identity: the rail is gone entirely. A spend of `$0.00` and a model of *no model yet* are
+noise before there is either, and with the rail present the mark and the name were being drawn
+twice. The one question the view is really asking — *What should I call you?* — is set in
+`--text-lg`; the two after it are `--text-md` headings. The composer does not exist on this
+view at all, which is how *"first run and the composer are never on screen together"* stops
+being a rule somebody has to remember.
 
-The whole of it fits at 1280×800 with nothing scrolled: three mode cards on one row and the
-Start button above the fold. That is a measurement, not a hope — the harness that takes the
-screenshots reports `scrollHeight` against `clientHeight` for exactly this reason.
-
-**The conversation** sits on `--surface-sunken`, so the messages are the raised things. Yours
-are `--accent`, right; hers are `--surface-raised`, left; a refusal is dashed and quiet. Both
-are capped at `--measure`.
-
-**The composer** is pinned to the bottom with a `--line-strong` edge. It grows with the text
-to `40vh` and stops. The primary button is the only `--accent` button on the screen.
-
-**The step trace** is the hardest thing here to draw and the thing people will look at most.
-It is a panel of rows, one per step, each: a tabular number, the tool's name, and what came
-back on one line. The row appears **before** the work, not after — a step nobody can see until
-it finishes is a spinner with extra steps. A failed row turns its result text `--caution` and
-changes nothing else, because the panel is a log and a log that reflows is unreadable.
-
-**The header** is identity, then controls, then status, then the number. In that order, left
-to right, with the identity and the number as the two anchors.
+**The composer** is pinned to the bottom of the conversation panel. It grows with the text to
+`40vh` and stops. Its primary button is the only `--accent` fill on the screen.
 
 **The note line** (`#note`) carries the spend preview, the monthly warning, a standing
-boundary, and *Stopped.* It sits above the composer, `--text-sm`, `--ink-quiet`, with a rule
-above it. It is one line and it is never a toast — a message that disappears on a timer is a
-message the user is being tested on.
+boundary, and *Stopped.* It sits above the composer, `--text-sm`, `--ink-quiet`. It is one
+line and it is never a toast — a message that disappears on a timer is a message the user is
+being tested on.
 
-**The permission prompt** sits above the composer too, and never over the trace. What is
-being decided is what just happened on screen; covering it would be the wrong shape entirely.
+**The permission prompt** sits above the composer too, and never over the panel beside it.
+What is being decided is what the live panel is showing; covering either would be the wrong
+shape entirely.
 
-**Empty and error states** get `--text-xl`, centred, one sentence, and no illustration.
+**The spend** sits at the foot of the live panel, on the ground rather than in a card, with
+its label beside it. It is on screen whenever the conversation is, which is the whole of what
+*nobody is ever surprised by a bill* requires.
+
+**Empty and error states** get one sentence and no illustration. An empty panel says what
+empty means: *Nothing is running* is a fact, and a blank rectangle is a bug somebody is about
+to report.
 
 ---
 
@@ -250,6 +359,15 @@ true while this document is the single place the answer lives.
 
 ## The rules that do not bend
 
+- **Colour is split by meaning, and the split does not blur.** `--accent` is the user and
+  what they chose; `--chosen` is the machine working. A pass that reaches for the accent
+  because something needs to stand out is the pass that made this screen vibrate.
+- **The painting appears three times.** The mark, the band, the panel. It is stroked, it is
+  masked so it takes the theme's colour, and `--paint` is its only lever.
+- **Every id the shell asserts is in the markup**, and every id in the markup is reached for.
+  `packages/ui/test/shell.test.ts` holds both directions, because a renamed id is not a wrong
+  colour — it is `null.addEventListener` thrown while the module loads, and a blank window.
+- **No webfonts.** Three stacks, all already on the machine.
 - **The honest strings are load-bearing.** No pass over this screen may soften, shorten or
   bury the training-data line, the spend, or any refusal. A sentence that is awkward because
   it is true stays awkward. Invariant 8 enforces the first half of that; the second half is

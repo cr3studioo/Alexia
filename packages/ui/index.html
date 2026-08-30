@@ -7,68 +7,270 @@
     <link rel="icon" href="/alexia.png" />
     <link rel="stylesheet" href="/app.css" />
   </head>
-  <!-- Two views, one at a time. `data-view` is the switch, which is what makes "first run and
-       the composer are never on screen together" structural: on the first-run view the
-       composer is not rendered at all, rather than hidden and hoping. -->
+  <!-- Four views, one at a time. `data-view` is the switch, which is what makes "first run
+       and the composer are never on screen together" structural: on the first-run view the
+       shell is not rendered at all, rather than hidden and hoping. -->
   <body data-view="chat">
-    <!-- Identity, then controls, then status, then the number that matters. Four different
-         kinds of thing, and they used to be four identical pills — which made a dropdown you
-         can change look like a figure you cannot. -->
-    <header>
-      <img class="mark" src="/alexia.png" alt="" width="256" height="256" />
-      <span class="name">Alexia</span>
+    <!-- Three panels on a ground that is allowed to show between them. The rail never moves;
+         the middle is what changes. -->
+    <div id="shell">
+      <!-- Identity, then which conversation, then the four things somebody changes. The old
+           header's job turned on its side and given room: a control you can change, a status
+           the app is reporting and a number that matters are three different things, and
+           they used to be three identical pills in a row. -->
+      <aside id="rail" class="panel">
+        <div class="brand">
+          <span class="mark" aria-hidden="true"></span>
+          <span class="name">Alexia</span>
+        </div>
+        <span class="band" aria-hidden="true"></span>
 
-      <!-- The UI equivalent of /local, /cloud and /combined. Every command has one: the
-           commands are a shortcut for people who like them, never the only route. -->
-      <select id="mode" class="control mode" title="Where the work happens" aria-label="Where the work happens">
-        <option value="local">Local</option>
-        <option value="combined">Combined</option>
-        <option value="cloud">Cloud</option>
-      </select>
+        <button id="new-chat" type="button" title="Start an empty conversation">New chat</button>
 
-      <!-- What Alexia may do unasked. A control, not only a settings page: this is the number
-           one thing a person changes after being surprised once. -->
-      <select
-        id="permission"
-        class="control"
-        title="What Alexia may do without asking"
-        aria-label="What Alexia may do without asking"
-      ></select>
+        <!-- The command palette's own entry, for people who do not know the shortcut yet. A
+             shortcut nobody can discover is a feature for whoever wrote it. -->
+        <button id="find" class="rail-row" type="button">
+          <span class="what">Find a run, a skill, a tool</span>
+          <kbd>Ctrl K</kbd>
+        </button>
 
-      <!-- Every plugin's settings, rendered by core from the manifest. A control, because
-           there is no command for it: a screen you cannot find is a screen that does not
-           exist. -->
-      <button id="open-settings" class="control" type="button" title="What was asked at first run, plugins, and the skills installed">
-        Settings
-      </button>
+        <!-- The three most recent, and a way to the rest. Named by the first thing you said
+             in each — Alexia writes no title for them, because your own words are already on
+             disk and a second name is a second thing that can be wrong. -->
+        <div class="rail-group">
+          <p class="rail-label"><span>Recent</span><span class="count" id="recent-count"></span></p>
+          <div id="recent"></div>
+          <button id="recent-more" class="more" type="button" hidden></button>
+        </div>
 
-      <!-- The control surface (M6-2). The questions that arrive on day thirty: what has this
-           been doing, what did I say yes to, what does it know. Records you read, which is a
-           different screen from values you change. -->
-      <button id="open-control" class="control" type="button" title="What Alexia has been doing, and what it knows">
-        Control
-      </button>
+        <div class="rail-group">
+          <div class="rail-tabs" role="tablist">
+            <button id="tab-setup" class="on" type="button" role="tab" aria-selected="true">Setup</button>
+            <button id="tab-plugins" type="button" role="tab" aria-selected="false">Plugins</button>
+          </div>
 
-      <!-- Which model answered, and what the month has cost. Both always on screen: the first
-           is how you know where your words went, the second is how nobody is ever surprised
-           by a bill. -->
-      <span id="model" class="status">no model yet</span>
-      <p class="money">
-        <span class="money-label">this month</span>
-        <span id="spend" class="money-value">$0.00</span>
-      </p>
-    </header>
+          <div id="rail-setup">
+            <!-- Which model, chosen by hand rather than by the router. The list opens in
+                 place: a popover anchored to a row in a column that scrolls is a popover
+                 that gets left behind. -->
+            <button id="model-row" class="rail-row" type="button" aria-expanded="false">
+              <span class="what">Model</span>
+              <span class="value" id="model-value">Automatic</span>
+              <svg class="chev" width="12" height="12" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+                <path d="M5 8l5 5 5-5" />
+              </svg>
+            </button>
+            <div id="model-drop" class="drop" hidden></div>
+
+            <!-- The UI equivalent of /local, /cloud and /combined. Every command has one: the
+                 commands are a shortcut for people who like them, never the only route. -->
+            <label class="rail-group">
+              <span class="rail-label">Where it runs</span>
+              <select class="mode rail-select" title="Where the work happens" aria-label="Where the work happens">
+                <option value="local">Local</option>
+                <option value="combined">Combined</option>
+                <option value="cloud">Cloud</option>
+              </select>
+            </label>
+
+            <!-- What Alexia may do unasked. The number one thing a person changes after being
+                 surprised once, so it is a control on the rail and not a settings page. -->
+            <label class="rail-group">
+              <span class="rail-label">What she may do</span>
+              <select id="permission" class="rail-select" title="What Alexia may do without asking"></select>
+            </label>
+          </div>
+
+          <!-- Every installed plugin, and the switch that turns it off. Delete the folder and
+               the row goes with it — nothing here names one. -->
+          <div id="rail-plugins" hidden></div>
+        </div>
+
+        <div class="rail-foot">
+          <button id="open-control" class="quiet-button" type="button" title="What Alexia has been doing, and what it knows">
+            Activity
+          </button>
+          <button id="open-settings" class="quiet-button" type="button" title="What was asked at first run, plugins, and the skills installed">
+            Settings
+          </button>
+        </div>
+      </aside>
+
+      <div class="grip grip-a" aria-hidden="true"><span></span></div>
+
+      <!-- Whichever of the three screens is open. Settings and Control are the same panel
+           with something else in it, which is why neither draws its own frame. -->
+      <div id="stage" class="panel">
+        <div id="chat" class="view">
+          <span id="paint" aria-hidden="true"></span>
+
+          <div id="chat-top">
+            <h1 id="chat-title">New chat</h1>
+            <!-- Which model answered, so you know where your words went. -->
+            <span id="model" class="status">no model yet</span>
+          </div>
+
+          <main id="log" aria-live="polite"></main>
+
+          <!-- The permission prompt. It sits above the composer rather than over the page: a
+               modal here would cover what is being decided about. -->
+          <div id="prompt" hidden>
+            <p id="prompt-why"></p>
+            <div class="row">
+              <button id="allow" type="button">Allow once</button>
+              <button id="deny" type="button" class="quiet-button">Not this time</button>
+            </div>
+          </div>
+
+          <p id="note" hidden></p>
+
+          <!-- Typing `/` lists what there is, with a line each. Nobody is going to read
+               documentation to find a command. -->
+          <ul id="menu" hidden></ul>
+
+          <form id="ask">
+            <textarea id="text" rows="1" placeholder="Ask Alexia" autofocus></textarea>
+            <button type="submit">Send</button>
+            <!-- Not a cancel that takes effect at the end of the step. It works while a tool
+                 call is in flight, which is the only kind worth having. -->
+            <button id="stop" type="button" class="quiet-button" hidden>Stop</button>
+          </form>
+        </div>
+
+        <!-- The settings screen (M2-1). Ten widgets, declared in manifests, drawn here — and
+             drawn while every plugin is stopped, which with lazy spawn is the ordinary case.
+             Above them, the answers first run took: a screen you saw once, for thirty
+             seconds, should not be the only place its questions can be answered. -->
+        <section id="settings" class="view">
+          <div class="centred">
+            <div class="view-top">
+              <h2 class="step-heading">Settings</h2>
+              <button id="close-settings" class="quiet-button" type="button">Back</button>
+            </div>
+
+            <!-- The three questions first run asked, in the same order and the same words,
+                 with their answers in them. Written by the same `/api/setup` the Start button
+                 writes. -->
+            <div class="group">
+              <label class="field">
+                <span class="label">What should I call you?</span>
+                <input id="name-setting" class="short" />
+              </label>
+              <label class="field">
+                <span class="label">How should I run?</span>
+                <!-- The rail's picker and this one are the same control twice, and both go
+                     through `/local`, `/combined`, `/cloud` — so there is one writer and
+                     neither can show a mode the other has changed. -->
+                <select class="mode" aria-label="How should I run?">
+                  <option value="local">Local — everything on this machine</option>
+                  <option value="combined">Combined — cloud thinks, this machine makes</option>
+                  <option value="cloud">Cloud — everything through APIs</option>
+                </select>
+              </label>
+              <div class="field">
+                <span class="label">Connect a provider</span>
+                <div class="pair">
+                  <select id="provider-setting" aria-label="Provider"></select>
+                  <input
+                    id="key-setting"
+                    type="password"
+                    placeholder="Paste a key"
+                    autocomplete="off"
+                    aria-label="API key"
+                  />
+                  <button id="save-key" class="quiet-button" type="button">Save</button>
+                </div>
+                <!-- Whether there is a key for the chosen provider, never the key itself: it
+                     went to the keychain and nothing here can read it back. -->
+                <p class="hint" id="key-said"></p>
+              </div>
+            </div>
+            <!-- The obvious way to turn autostart off, which is the half of "starts on login"
+                 that people actually need. Hidden in a browser, where it is not a setting. -->
+            <div class="field group" id="desktop-settings" hidden>
+              <label class="switch">
+                <input id="autostart-setting" type="checkbox" />
+                <span class="track"></span>
+                <span>Start Alexia when I sign in</span>
+              </label>
+              <p class="hint" id="hotkey-setting"></p>
+            </div>
+            <!-- The library (M3-2). Browsing is the route a person should reach for; the path
+                 box further down is the one that still works when there is no registry, and
+                 the MCP form is the ten thousand servers Alexia inherits (M3-6). -->
+            <div id="library"></div>
+            <h3 class="step-heading">Plugins</h3>
+            <div id="panes"></div>
+            <div id="problems"></div>
+            <!-- Know-how, as opposed to capability (M2-2). A skill is a folder with a
+                 Markdown file in it, so there is nothing to configure — only what is there
+                 and what is broken. -->
+            <div id="skills"></div>
+          </div>
+        </section>
+
+        <!-- The control surface (M6-2). Nothing in this markup names a tab: the strip is
+             built from what core sends, which is core's own tabs plus one for every enabled
+             plugin that declared a panel. Delete the plugin's folder and its tab goes. -->
+        <section id="control" class="view">
+          <div class="centred">
+            <div class="view-top">
+              <h2 class="step-heading">Control</h2>
+              <button id="close-control" class="quiet-button" type="button">Back</button>
+            </div>
+
+            <!-- Narrow: the strip collapses to the active tab's own name, and tapping it
+                 opens the list. Nine tabs in a scrollable row is technically fine and awkward
+                 in practice, and the overlay is narrower than any phone this was tested on. -->
+            <button id="tab-current" class="tab-current" type="button" aria-expanded="false" hidden></button>
+            <nav id="tabs" class="tabs" aria-label="Control panels"></nav>
+
+            <div id="panel"></div>
+          </div>
+        </section>
+      </div>
+
+      <div class="grip grip-b" aria-hidden="true"><span></span></div>
+
+      <!-- What she is doing, and exactly how. The conversation says "computer.control" and
+           stops; everything else about a step is here — which plugin offers it, which
+           capability it needed and the manifest's own sentence for why, and what the tool
+           actually said. A person who wants to know what happened should not have to take
+           the chat's word for it. -->
+      <div id="live">
+        <div class="panel">
+          <p class="rail-label"><span>Running now</span><span class="count" id="running-count"></span></p>
+          <div id="running"></div>
+        </div>
+
+        <div class="panel">
+          <p class="rail-label"><span>Steps</span><span class="count" id="step-count"></span></p>
+          <div id="trace"></div>
+        </div>
+
+        <div class="panel grow">
+          <div class="detail-head" id="detail-head"></div>
+          <div class="detail-body" id="detail"></div>
+        </div>
+
+        <!-- The number that matters, and never a bare figure: the label is what stops "$0.00"
+             reading as decoration. Nobody is ever surprised by a bill. -->
+        <p class="money">
+          <span class="money-label">this month</span>
+          <span id="spend" class="money-value">$0.00</span>
+        </p>
+      </div>
+    </div>
 
     <!-- First run: steps 2, 3 and 4a. No account, no tour, no permission questions — the
          first thing anybody is asked is what to call it, and the second is where their words
-         are allowed to go. -->
+         are allowed to go. It carries its own identity, so the rail is gone entirely. -->
     <section id="first-run" class="view">
       <div class="centred">
         <img class="opening" src="/alexia.png" alt="" width="256" height="256" />
 
         <!-- Alexia.md's words, exactly: step 2 is "What should I call you?", prefilled and
-             skippable. It is the first sentence anybody reads, and the shell had it as "What
-             should I call me?" — which is not the spec's line and not a sentence. -->
+             skippable. It is the first sentence anybody reads. -->
         <div class="group">
           <label class="field">
             <span class="label ask-big">What should I call you?</span>
@@ -138,129 +340,8 @@
       </div>
     </section>
 
-    <!-- The settings screen (M2-1). Ten widgets, declared in manifests, drawn here — and
-         drawn while every plugin is stopped, which with lazy spawn is the ordinary case.
-         Above them, the answers first run took: a screen you saw once, for thirty seconds,
-         should not be the only place its questions can be answered. -->
-    <section id="settings" class="view">
-      <div class="centred">
-        <div class="view-top">
-          <h2 class="step-heading">Settings</h2>
-          <button id="close-settings" class="quiet-button" type="button">Back</button>
-        </div>
-
-        <!-- The three questions first run asked, in the same order and the same words, with
-             their answers in them. First run is the only place they were editable, which
-             made every one of them a decision taken once by somebody who had used Alexia for
-             thirty seconds. Written by the same `/api/setup` the Start button writes. -->
-        <div class="group" id="setup-settings">
-          <label class="field">
-            <span class="label">What should I call you?</span>
-            <input id="name-setting" class="short" />
-          </label>
-          <label class="field">
-            <span class="label">How should I run?</span>
-            <!-- The header's picker and this one are the same control twice, and both go
-                 through `/local`, `/combined`, `/cloud` — so there is one writer and neither
-                 can show a mode the other has changed. -->
-            <select id="mode-setting" class="mode">
-              <option value="local">Local — everything on this machine</option>
-              <option value="combined">Combined — cloud thinks, this machine makes</option>
-              <option value="cloud">Cloud — everything through APIs</option>
-            </select>
-          </label>
-          <div class="field">
-            <span class="label">Connect a provider</span>
-            <div class="pair">
-              <select id="provider-setting" aria-label="Provider"></select>
-              <input
-                id="key-setting"
-                type="password"
-                placeholder="Paste a key"
-                autocomplete="off"
-                aria-label="API key"
-              />
-              <button id="save-key" class="quiet-button" type="button">Save</button>
-            </div>
-            <!-- Whether there is a key for the chosen provider, never the key itself: it went
-                 to the keychain and nothing here can read it back. -->
-            <p class="hint" id="key-said"></p>
-          </div>
-        </div>
-        <!-- The obvious way to turn autostart off, which is the half of "starts on login"
-             that people actually need. Hidden in a browser, where it is not a real setting. -->
-        <div class="field group" id="desktop-settings" hidden>
-          <label class="switch">
-            <input id="autostart-setting" type="checkbox" />
-            <span class="track"></span>
-            <span>Start Alexia when I sign in</span>
-          </label>
-          <p class="hint" id="hotkey-setting"></p>
-        </div>
-        <!-- The library (M3-2). Browsing is the route a person should reach for; the
-             path box further down is the one that still works when there is no registry,
-             and the MCP form is the ten thousand servers Alexia inherits (M3-6). -->
-        <div id="library"></div>
-        <h3 class="step-heading">Plugins</h3>
-        <div id="panes"></div>
-        <div id="problems"></div>
-        <!-- Know-how, as opposed to capability (M2-2). A skill is a folder with a Markdown
-             file in it, so there is nothing to configure — only what is there and what is
-             broken. Installing one is the skills marketplace, at M3-5. -->
-        <div id="skills"></div>
-      </div>
-    </section>
-
-    <!-- The control surface (M6-2). Nothing in this markup names a tab: the strip is built
-         from what core sends, which is core's own tabs plus one for every enabled plugin
-         that declared a panel. Delete the plugin's folder and its tab goes with it. -->
-    <section id="control" class="view">
-      <div class="centred">
-        <div class="view-top">
-          <h2 class="step-heading">Control</h2>
-          <button id="close-control" class="quiet-button" type="button">Back</button>
-        </div>
-
-        <!-- Narrow: the strip collapses to the active tab's own name, and tapping it opens
-             the list. Nine tabs in a scrollable row is technically fine and awkward in
-             practice, and the overlay is narrower than any phone this was tested on. -->
-        <button id="tab-current" class="tab-current" type="button" aria-expanded="false" hidden></button>
-        <nav id="tabs" class="tabs" aria-label="Control panels"></nav>
-
-        <div id="panel"></div>
-      </div>
-    </section>
-
-    <div id="chat" class="view">
-      <main id="log" aria-live="polite"></main>
-
-      <!-- The permission prompt. It sits above the composer rather than over the page: a
-           modal here would cover the trace, which is the thing being decided about. -->
-      <div id="prompt" hidden>
-        <p id="prompt-why"></p>
-        <div class="row">
-          <button id="allow" type="button">Allow once</button>
-          <button id="deny" type="button" class="quiet-button">Not this time</button>
-        </div>
-      </div>
-
-      <p id="note" hidden></p>
-
-      <!-- Typing `/` lists what there is, with a line each. Nobody is going to read
-           documentation to find a command. -->
-      <ul id="menu" hidden></ul>
-
-      <form id="ask">
-        <textarea id="text" rows="1" placeholder="Ask Alexia" autofocus></textarea>
-        <button type="submit">Send</button>
-        <!-- Not a cancel that takes effect at the end of the step. It works while a tool call
-             is in flight, which is the only kind worth having. -->
-        <button id="stop" type="button" class="quiet-button" hidden>Stop</button>
-      </form>
-    </div>
-
-    <!-- The command palette (M6-10). Ctrl+K from anywhere. It finds a thing and opens the
-         tab it lives on with the word already typed into that panel's filter — it never runs
+    <!-- The command palette (M6-10). Ctrl+K from anywhere. It finds a thing and opens the tab
+         it lives on with the word already typed into that panel's filter — it never runs
          anything, because slash commands already do that and two command systems with two
          permission stories is one too many. -->
     <div id="palette" hidden>

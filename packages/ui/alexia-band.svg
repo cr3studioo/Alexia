@@ -1,0 +1,7 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 34 11" width="34" height="11">
+  <path d="M-1 9 C 4 9 4 2 11 2 C 18 2 18 9 25 9 C 31 9 31 2 35 2"
+        fill="none" stroke="#000" stroke-width="1"/>
+  <circle cx="11" cy="5.8" r="0.9"/>
+  <circle cx="25" cy="5.2" r="0.9"/>
+</svg>

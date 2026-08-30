@@ -134,10 +134,17 @@ const STATIC: Record<string, [string, string]> = {
   // because a chat window is not a build problem. Modules beyond the entry point are matched
   // by MODULE below rather than listed here, one line each.
   '/main.js': [join('dist', 'src', 'main.js'), 'text/javascript; charset=utf-8'],
-  // Her face: the header mark, the first-run mark and the tab icon, one file doing all
-  // three. Everything above is text and gets the token substituted into it; this does not,
-  // which is why the read below is bytes until the content type says otherwise.
+  // Her face: the first-run mark and the tab icon. Everything above is text and gets the
+  // token substituted into it; this does not, which is why the read below is bytes until the
+  // content type says otherwise.
   '/alexia.png': ['alexia.png', 'image/png'],
+  // The painting, as three masks rather than three pictures (docs/design.md). They are drawn
+  // in `currentColor`'s place — the element behind the mask carries the theme's own accent —
+  // which is what lets one file be champagne on cobalt and cobalt on champagne. SVG is not
+  // `text/`, so it passes through without the token substitution, like the PNG.
+  '/alexia-mark.svg': ['alexia-mark.svg', 'image/svg+xml'],
+  '/alexia-panel.svg': ['alexia-panel.svg', 'image/svg+xml'],
+  '/alexia-band.svg': ['alexia-band.svg', 'image/svg+xml'],
 }
 
 export async function serve(options: ServeOptions = {}): Promise<Serving> {

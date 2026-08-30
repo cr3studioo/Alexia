@@ -15,6 +15,8 @@ import { autostart, dismiss, HOTKEY, inApp, setAutostart, tray } from './desktop
 import { mountControl } from './control.js'
 import { mountPalette } from './palette.js'
 import { mountSettings } from './settings.js'
+import { mountLive } from './live.js'
+import { mountRail } from './rail.js'
 
 interface Turn {
   role: 'system' | 'user' | 'assistant' | 'tool'
@@ -102,6 +104,11 @@ function say(line?: string): void {
 function called(name: string): void {
   document.querySelector<HTMLElement>('.name')!.textContent = name
   text.placeholder = `Ask ${name}`
+  // And the label over every one of her messages, which the sheet draws rather than the
+  // shell. A custom property because `content` can read one and cannot read an ancestor's
+  // attribute — and a hardcoded "Alexia" there is exactly the sort of place a rename
+  // quietly does not reach.
+  document.documentElement.style.setProperty('--her', JSON.stringify(name))
 }
 
 /**
@@ -370,84 +377,42 @@ async function* frames(body: ReadableStream<Uint8Array>): AsyncGenerator<Record<
 }
 
 /**
- * The trace. One panel per task, one row per step, and the row appears **before** the work
- * rather than after it — a step nobody can see until it finishes is a spinner with extra
- * steps, and a spinner during a five-minute run is how trust goes.
+ * The trace, which no longer lives here.
+ *
+ * It used to be a panel in the log: one row per step, between two of her sentences. That was
+ * right when the log was the only surface there was, and wrong the moment there was a panel
+ * whose whole job is what she is doing — a wall of tool names in the middle of a conversation
+ * is the thing people said made this screen hard to read.
+ *
+ * So the conversation keeps one line — the names, and a way through — and `live.ts` has the
+ * rest: the arguments, the plugin, what it holds and why, and what came back.
  */
-interface Moving {
-  progress: number
-  total?: number
-  message?: string
-}
+const live = mountLive(token)
 
-function trace(): {
-  step(n: number, name: string): void
-  moving(n: number, update: Moving): void
-  done(n: number, ok: boolean, text: string): void
-} {
-  let panel: HTMLElement | undefined
-  const rows = new Map<number, HTMLElement>()
+/**
+ * The one line the conversation keeps about a run of tool calls.
+ *
+ * It is a control, not a caption: pressing it is how somebody gets from *she used something*
+ * to *here is exactly what she sent and exactly what it said*.
+ */
+function toolLine(): { saw(name: string): void } {
+  const chip = document.createElement('button')
+  chip.type = 'button'
+  chip.className = 'tools'
+  const names = document.createElement('span')
+  names.className = 'names'
+  const go = document.createElement('span')
+  go.className = 'go'
+  go.textContent = 'on the right'
+  chip.append(names, go)
+  chip.addEventListener('click', () => chip.scrollIntoView({ block: 'nearest' }))
+  const seen: string[] = []
   return {
-    step(n, name) {
-      panel ??= (() => {
-        const made = document.createElement('div')
-        made.className = 'trace'
-        log.append(made)
-        return made
-      })()
-      const row = document.createElement('div')
-      row.className = 'step running'
-      const count = document.createElement('span')
-      count.className = 'n'
-      count.textContent = String(n)
-      const what = document.createElement('span')
-      what.className = 'what'
-      what.textContent = name
-      const said = document.createElement('span')
-      said.className = 'said'
-      row.append(count, what, said)
-      panel.append(row)
-      rows.set(n, row)
-      log.scrollTop = log.scrollHeight
-    },
-    /**
-     * The row, moving (M2-6).
-     *
-     * **Silence is what kills a first run, not time.** A tool downloading 148 MB and saying
-     * nothing looks exactly like a tool that has hung, and a person watching has no way to
-     * tell them apart except by waiting or by giving up. The bar appears the moment there is
-     * something to say and not a moment before — a bar that is always there, at zero, is a
-     * bar nobody believes when it finally moves.
-     */
-    moving(n, update) {
-      const row = rows.get(n)
-      if (!row) return
-      const said = row.querySelector('.said')
-      // A tool that reports a fraction gets a bar; one that only says where it is gets its
-      // own words. Both are better than the row sitting still.
-      if (said && update.message) said.textContent = update.message
-      if (update.total === undefined || update.total <= 0) return
-      const done = Math.max(0, Math.min(100, Math.round((update.progress / update.total) * 100)))
-      let bar = row.querySelector<HTMLElement>('.bar > span')
-      if (!bar) {
-        const track = document.createElement('div')
-        track.className = 'bar'
-        bar = document.createElement('span')
-        track.append(bar)
-        row.append(track)
-      }
-      bar.style.width = `${done}%`
-    },
-    done(n, ok, text) {
-      const row = rows.get(n)
-      if (!row) return
-      row.className = ok ? 'step' : 'step failed'
-      // The work is over, so the bar goes. A bar left at 97% is worse than no bar.
-      row.querySelector('.bar')?.remove()
-      // What came back, on one line. The full text is in the conversation the model reads;
-      // this is the glance version, and a glance that scrolls is not a glance.
-      const said = row.querySelector('.said')
-      if (said) said.textContent = text.replace(/\s+/g, ' ').slice(0, 120)
+    saw(name) {
+      const short = name.slice(name.indexOf('__') + 2)
+      if (!seen.includes(short)) seen.push(short)
+      names.textContent = seen.join(', ')
+      if (!chip.isConnected) log.append(chip)
       log.scrollTop = log.scrollHeight
     },
   }
@@ -598,7 +563,8 @@ function offerToLearn(offer: { about?: string; outline?: string }): void {
 
 async function ask(question: string): Promise<void> {
   bubble('user', question)
-  const steps = trace()
+  const tools = toolLine()
+  live.begin(document.querySelector<HTMLElement>('#chat-title')?.textContent ?? 'This conversation')
   const answer = bubble('assistant')
   answer.textContent = '…'
   let started = false
@@ -631,18 +597,28 @@ async function ask(question: string): Promise<void> {
     const offer = event.learn as { about?: string; outline?: string } | undefined
     if (offer) offerToLearn(offer)
     const step = event.step as
-      | { n: number; name: string; ok?: boolean; text?: string; progress?: Moving }
+      | {
+          n: number
+          name: string
+          ok?: boolean
+          text?: string
+          args?: Record<string, unknown>
+          progress?: { progress: number; total?: number; message?: string }
+        }
       | undefined
     if (step) {
       if (step.progress) {
-        steps.moving(step.n, step.progress)
+        live.moving(step.n, step.progress)
       } else if (step.ok === undefined) {
-        steps.step(step.n, step.name)
-        // The answer bubble moves below the steps it came from, so the trace reads in the
-        // order it happened rather than the order the elements were created.
+        live.step(step.n, step.name, step.args)
+        // The conversation says only that a tool was used, and which. The panel beside it
+        // has the whole of it.
+        tools.saw(step.name)
+        // Her answer moves below the line it came after, so the log reads in the order it
+        // happened rather than the order the elements were created.
         log.append(answer)
       } else {
-        steps.done(step.n, step.ok, step.text ?? '')
+        live.done(step.n, step.ok, step.text ?? '')
       }
     }
     if (typeof event.error === 'string') {
@@ -663,6 +639,10 @@ async function ask(question: string): Promise<void> {
       prompt.hidden = true
       // A task that hit a limit says which one. Silence after a stop looks like a crash.
       tray(done.ended === 'answered' || done.ended === undefined ? 'idle' : 'error')
+      live.end()
+      // A conversation is named by the first thing you said in it, so the rail's list and
+      // the title above the log are both a turn out of date until this.
+      void rail.refresh()
       if (done.ended === 'stopped') say('Stopped.')
       if (done.ended === 'ceiling') say(`Stopped after ${String(done.steps ?? 0)} steps — that is the ceiling, not the end of the task.`)
     }
@@ -750,11 +730,6 @@ stop.addEventListener('click', () => {
 
 const settings = mountSettings(token)
 
-document.querySelector('#open-settings')!.addEventListener('click', () => {
-  show('settings')
-  settings.open()
-})
-
 // The obvious way to turn it off, which is the half of "starts on login" that matters. It
 // reads the real answer rather than remembering what was chosen at first run: somebody may
 // have changed it in Windows, and a switch showing the wrong state is worse than none.
@@ -775,11 +750,6 @@ document.querySelector('#close-settings')!.addEventListener('click', () => {
 // ---- the control surface (M6-2) ---------------------------------------------------------
 
 const control = mountControl(token)
-
-document.querySelector('#open-control')!.addEventListener('click', () => {
-  show('control')
-  control.open()
-})
 
 document.querySelector('#close-control')!.addEventListener('click', () => {
   show('chat')
@@ -854,4 +824,23 @@ document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape') dismiss()
 })
 
+/**
+ * The rail (M8-2 and after). Mounted last, because it hands work to the two screens and the
+ * palette, and a rail that could open a control surface that did not exist yet would be a
+ * button that does nothing on the first press and works on the second.
+ */
+const rail = mountRail(token, {
+  openPalette: () => palette.open(),
+  openControl: (tab, filter) => {
+    show('control')
+    control.open(tab, filter)
+  },
+  openSettings: () => {
+    show('settings')
+    settings.open()
+  },
+  reload: () => read().then(paint),
+})
+
 await load()
+await rail.refresh()

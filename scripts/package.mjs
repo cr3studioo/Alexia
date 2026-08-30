@@ -119,7 +119,14 @@ cpSync(join(keychainDir, 'scripts', 'credman.ps1'), join(out, 'scripts', 'credma
 //    looks in.
 const ui = join(out, 'ui')
 mkdirSync(join(ui, 'dist', 'src'), { recursive: true })
-for (const file of ['index.html', 'app.css', 'alexia.png']) {
+for (const file of [
+  'index.html',
+  'app.css',
+  'alexia.png',
+  'alexia-mark.svg',
+  'alexia-panel.svg',
+  'alexia-band.svg',
+]) {
   cpSync(join(root, 'packages', 'ui', file), join(ui, file))
 }
 // Every compiled shell module, not just the entry point: `serve.ts` serves any `dist/src/
