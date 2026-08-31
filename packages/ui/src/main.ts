@@ -17,11 +17,24 @@ import { mountPalette } from './palette.js'
 import { mountSettings } from './settings.js'
 import { mountLive } from './live.js'
 import { mountRail } from './rail.js'
+import { el } from './widgets.js'
 
 interface Turn {
   role: 'system' | 'user' | 'assistant' | 'tool'
   content: string
   model?: string
+}
+
+/**
+ * Which rung of the ladder answered, said as a state rather than a price (§8.4).
+ *
+ * Core decides this — it is read off the same two keys the router sorts by, so the sentence
+ * on screen cannot drift from the cascade it is describing. The shell only paints it.
+ */
+interface Bubble {
+  rung: number
+  says: string
+  state: 'green' | 'amber' | 'red'
 }
 
 interface Provider {
@@ -32,6 +45,18 @@ interface Provider {
   free: boolean
   /** Whether a key is already stored for it. Never the key — that went to the keychain. */
   connected: boolean
+  /** The published free tier, in whichever unit this one rations. Absent means not published. */
+  rpm?: number
+  rpd?: number
+  callsPerMonth?: number
+  /** When somebody last checked the row against the provider's own docs. */
+  verified?: string
+  /** What getting in costs that is not money, where that is more than an email. */
+  friction?: string
+  /** It answers without a key, which is the tier that makes skipping this screen work. */
+  keyless: boolean
+  /** Its account id goes in the URL, so what it wants pasted is `account_id:api_token`. */
+  account: boolean
 }
 
 interface Command {
@@ -57,6 +82,8 @@ interface State {
   spent: number
   cap?: number
   warning?: string
+  /** Today's spending against today's allowance — the number that decides whether the router may spend at all. */
+  today?: { spent: number; allowance: number }
   providers: Provider[]
   commands: Command[]
 }
@@ -65,6 +92,31 @@ const token = document.querySelector<HTMLElement>('[data-token]')?.dataset.token
 const log = document.querySelector<HTMLElement>('#log')!
 const note = document.querySelector<HTMLElement>('#note')!
 const modelBadge = document.querySelector<HTMLElement>('#model')!
+const rungBadge = document.querySelector<HTMLElement>('#rung')!
+
+/**
+ * **What Alexia can do right now**, beside the model that just did it.
+ *
+ * The rule this obeys is §8.4's: the bubble says what the assistant can *do*, not what it
+ * costs. *Just chat now* is worth reading; *currently paid* is not — nobody cares that an
+ * answer was billed, they care whether the thing can still pick a file up. Money already has
+ * its own badge two elements along, and putting a price in this one would be saying the same
+ * thing twice in the place reserved for the other thing.
+ *
+ * Hidden when there is nothing to say, which is every repaint of an old conversation: the
+ * stored turns remember which model answered and not what the world looked like at the time,
+ * and a stale state is worse than none.
+ */
+function wearing(bubble?: Bubble): void {
+  rungBadge.hidden = bubble === undefined
+  if (!bubble) {
+    rungBadge.removeAttribute('data-state')
+    rungBadge.textContent = ''
+    return
+  }
+  rungBadge.textContent = bubble.says
+  rungBadge.dataset.state = bubble.state
+}
 const spendBadge = document.querySelector<HTMLElement>('#spend')!
 const form = document.querySelector<HTMLFormElement>('#ask')!
 const text = document.querySelector<HTMLTextAreaElement>('#text')!
@@ -122,40 +174,49 @@ function show(view: 'first-run' | 'chat' | 'settings' | 'control'): void {
 
 function firstRun(state: State): void {
   const connect = document.querySelector<HTMLElement>('#connect')!
-  const provider = document.querySelector<HTMLSelectElement>('#provider')!
-  const terms = document.querySelector<HTMLElement>('#terms')!
   const name = document.querySelector<HTMLInputElement>('#name')!
-  const key = document.querySelector<HTMLInputElement>('#key')!
   show('first-run')
   name.value = state.setup.name
-
-  for (const option of state.providers) {
-    provider.add(new Option(option.free ? `${option.name} — free tier` : option.name, option.id))
-  }
-
-  // The honest trade, said out loud on the card that recommends itself. Nobody has read
-  // these terms yet, and "we have not checked" beats a confident wrong answer.
-  const unchecked = state.providers.filter((p) => p.trainsOnYourData === 'unknown').length
-  document.querySelector<HTMLElement>('#training')!.textContent =
-    unchecked > 0 ?
-      `Whether these providers train on what you send them is not yet checked — ${unchecked} of ${state.providers.length}. Alexia will say so rather than guess.`
-    : ''
 
   const chosen = (): string =>
     document.querySelector<HTMLInputElement>('input[name="mode"]:checked')?.value ?? 'combined'
 
-  const showTerms = (): void => {
-    const picked = state.providers.find((p) => p.id === provider.value)
-    // Local mode asks nobody for a key, so the whole step goes away rather than sitting
-    // there greyed out looking like something you got wrong.
+  /**
+   * **Skipping is what the button says, until a key exists** (§12.2, and §2 is the reason).
+   *
+   * Zero keys reaches a working conversation — that is the whole promise the rest of this
+   * project is built on — so the screen is not allowed to present leaving without one as the
+   * lesser path. A grey *skip* link under a loud *Start* says exactly that, quietly, to
+   * everybody who reads it; a primary button wearing the words instead says the opposite just
+   * as quietly. It is the same click either way, and the difference is the sentence a person
+   * takes with them.
+   */
+  const begin = document.querySelector<HTMLButtonElement>('#begin')!
+  const skipLine = document.querySelector<HTMLElement>('#skip-line')!
+  let keys = state.providers.filter((p) => p.connected).length
+  const standing = (): void => {
+    const none = keys === 0 && chosen() !== 'local'
+    begin.textContent = none ? 'Skip — start with no keys' : 'Start'
+    skipLine.textContent =
+      none ?
+        'Alexia answers with no key at all: some of the providers above ask for nothing, and a model on this machine does too. Keys make it faster, and Settings takes one whenever you want.'
+      : ''
+  }
+
+  const showWall = (): void => {
+    // Local mode asks nobody for a key, so the whole step goes away rather than sitting there
+    // greyed out looking like something you got wrong.
     connect.hidden = chosen() === 'local'
-    terms.textContent = picked?.terms ? `Terms: ${picked.terms}` : ''
+    standing()
   }
   for (const radio of document.querySelectorAll('input[name="mode"]')) {
-    radio.addEventListener('change', showTerms)
+    radio.addEventListener('change', showWall)
   }
-  provider.addEventListener('change', showTerms)
-  showTerms()
+  keyWall(state, () => {
+    keys += 1
+    standing()
+  })
+  showWall()
 
   /**
    * Step 5, and the whole of it: *it lives in the tray, this is how you summon it.*
@@ -176,22 +237,155 @@ function firstRun(state: State): void {
     void autostart().then((on) => (startsUp.checked = on ?? true))
   }
 
-  document.querySelector<HTMLElement>('#begin')!.addEventListener('click', () => {
-    void fetch('/api/setup', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-alexia-token': token },
-      body: JSON.stringify({
-        name: name.value.trim() || 'Alexia',
-        mode: chosen(),
-        ...(key.value.trim() && { provider: { id: provider.value, key: key.value.trim() } }),
-      }),
-    }).then(() => {
+  begin.addEventListener('click', () => {
+    // No key travels with this any more: a tile saves its own the moment it is pasted, so by
+    // the time anybody reaches this button the keychain already has whatever it is getting.
+    void post('/api/setup', { name: name.value.trim() || 'Alexia', mode: chosen() }).then(() => {
       if (inApp()) setAutostart(startsUp.checked)
       show('chat')
       called(name.value.trim() || 'Alexia')
       text.focus()
     })
   })
+}
+
+/**
+ * **The key wall** (§12.2), and the shape of it is the argument.
+ *
+ * Every provider is a tile of the same size. There is no fork at the top asking *OpenRouter
+ * or OmniRoute?* — that is a question about somebody else's plumbing, put to a person who has
+ * not used the thing yet, and it contradicts the two minutes the whole first run is allowed.
+ * The aggregators are tiles among many, sorted no differently.
+ *
+ * **What is on a face is what costs you something.** The published free-tier numbers, so the
+ * choice is between real quantities rather than between logos. What it takes to get in, where
+ * that is more than an email — a Telegram channel to join, an account id to go and find. And
+ * what it costs in privacy where anybody has actually checked, which for one provider here is
+ * *your prompts train it*. All three are things people currently discover three clicks into a
+ * signup, and discovering them there is what makes the minute feel wasted.
+ *
+ * **Nothing here is required.** {@link skipping} is the other half of this screen.
+ */
+function keyWall(state: State, saved: (id: string) => void): void {
+  const wall = document.querySelector<HTMLElement>('#wall')!
+  const keyless = state.providers.filter((p) => p.keyless).length
+  document.querySelector<HTMLElement>('#wall-hint')!.textContent =
+    keyless > 0 ?
+      `${String(keyless)} of these answer with no key at all. A key on any of the others makes Alexia faster, and none of them wants a card.`
+    : 'A key on any of these makes Alexia faster, and none of them wants a card.'
+
+  // The honest trade, said once under the wall rather than on twenty tiles: nobody has read
+  // most of these terms, and "we have not checked" beats a confident wrong answer.
+  const unchecked = state.providers.filter((p) => p.trainsOnYourData === 'unknown').length
+  document.querySelector<HTMLElement>('#training')!.textContent =
+    unchecked > 0 ?
+      `Whether ${String(unchecked)} of these ${String(state.providers.length)} providers train on what you send them is not yet checked. Alexia says so rather than guessing.`
+    : ''
+
+  for (const provider of state.providers) wall.append(tile(provider, saved))
+}
+
+/** The published free tier, in the unit the provider actually rations. */
+function allowance(provider: Provider): string {
+  const said = [
+    provider.rpm === undefined ? '' : `${String(provider.rpm)}/min`,
+    provider.rpd === undefined ? '' : `${String(provider.rpd)}/day`,
+    provider.callsPerMonth === undefined ? '' : `${String(provider.callsPerMonth)} calls/month`,
+  ].filter(Boolean)
+  return said.length > 0 ? said.join(' · ') : 'limits not published'
+}
+
+/**
+ * One tile: the name, what it gives, what it costs, and a box to paste a key into.
+ *
+ * The box is on the tile rather than one shared box under a dropdown, which is the change
+ * this screen is. A dropdown makes connecting two providers a thing you do twice without
+ * being able to see that you did it once; twenty boxes that each remember their own answer
+ * make it obvious.
+ */
+function tile(provider: Provider, saved: (id: string) => void): HTMLElement {
+  const card = el('div', 'tile')
+  card.dataset.provider = provider.id
+
+  const head = el('div', 'tile-head')
+  head.append(el('b', 'tile-name', provider.name))
+  if (provider.keyless) head.append(el('span', 'flag good', 'works with no key'))
+  if (provider.connected) head.append(el('span', 'flag good', 'key stored'))
+  card.append(head)
+
+  card.append(el('span', 'tile-free', allowance(provider)))
+
+  // The two costs that are not money, on the face. Friction first, because it is the one
+  // that decides whether somebody starts at all.
+  if (provider.friction) card.append(el('span', 'flag warn', provider.friction))
+  if (provider.account) card.append(el('span', 'flag warn', 'Needs your Account ID as well as a token'))
+  if (provider.trainsOnYourData === 'yes') card.append(el('span', 'flag warn', 'Trains on what you send it'))
+
+  const paste = el('input', 'tile-key') as HTMLInputElement
+  paste.type = 'password'
+  paste.autocomplete = 'off'
+  paste.placeholder = provider.account ? 'account_id:api_token' : 'Paste a key'
+  paste.setAttribute('aria-label', `API key for ${provider.name}`)
+  card.append(paste)
+
+  const said = el('span', 'tile-said')
+  card.append(said)
+
+  /**
+   * *How do I get one?*, per tile, and it opens in place.
+   *
+   * What it can honestly say is what the row knows: the exact limits, when somebody last
+   * checked them against the provider's own docs, and a link to those docs — which is where
+   * a key is minted. Three invented steps would read better and be wrong the week a signup
+   * flow changes, and a first-run screen that lies about a signup is worse than one that
+   * points at the page.
+   */
+  const how = el('details', 'tile-how')
+  how.append(el('summary', undefined, 'How do I get one?'))
+  const lines = [
+    `Free tier: ${allowance(provider)}.`,
+    provider.friction ?? '',
+    provider.account ? 'Cloudflare puts your account id in the URL, so paste it and the token together, separated by a colon.' : '',
+    provider.trainsOnYourData === 'yes' ? 'Its free tier logs prompts and answers for training.'
+    : provider.trainsOnYourData === 'no' ? 'It does not train on what you send it.'
+    : 'Whether it trains on what you send it is not checked yet.',
+    provider.verified ? `Last checked against its own docs on ${provider.verified}.` : '',
+  ].filter(Boolean)
+  for (const line of lines) how.append(el('p', 'hint', line))
+  if (provider.terms) {
+    const link = el('a', 'tile-link', 'Its limits and terms, and where the key comes from')
+    link.href = provider.terms
+    link.target = '_blank'
+    link.rel = 'noreferrer'
+    how.append(link)
+  }
+  card.append(how)
+
+  const store = (): void => {
+    const typed = paste.value.trim()
+    if (!typed) return
+    paste.disabled = true
+    void post('/api/setup', { provider: { id: provider.id, key: typed } })
+      .then(() => {
+        paste.value = ''
+        said.className = 'tile-said good'
+        said.textContent = 'Saved to the keychain.'
+        head.append(el('span', 'flag good', 'key stored'))
+        saved(provider.id)
+      })
+      // A key is the one thing nobody can check by looking, so a silent failure here is a
+      // person pasting the same key again forever.
+      .catch((error: unknown) => {
+        said.className = 'tile-said error'
+        said.textContent = `Not saved: ${error instanceof Error ? error.message : String(error)}`
+      })
+      .finally(() => (paste.disabled = false))
+  }
+  paste.addEventListener('change', store)
+  paste.addEventListener('keydown', (event) => {
+    if ((event as KeyboardEvent).key === 'Enter') store()
+  })
+  return card
 }
 
 /**
@@ -278,12 +472,31 @@ const read = async (): Promise<State> =>
  */
 function paint(state: State): void {
   log.replaceChildren()
+  // A repainted conversation knows which model answered and nothing about the rate limits of
+  // an hour ago, so the state badge goes rather than lying about the present.
+  wearing()
   for (const turn of state.messages) {
     if (turn.role !== 'user' && turn.role !== 'assistant') continue
     bubble(turn.role, turn.content)
     if (turn.model) modelBadge.textContent = turn.model
   }
-  spendBadge.textContent = state.cap === undefined ? money(state.spent) : `${money(state.spent)} of ${money(state.cap)}`
+  /**
+   * **The day, when there is an allowance; otherwise the month.**
+   *
+   * The daily figure is the one that answers *may this spend money right now* — the monthly
+   * cap is a bound on a total somebody is already choosing to run up. Somebody who has set no
+   * allowance is not spending automatically at all, so the month is the only number they
+   * have, and it stays.
+   */
+  const day = state.today
+  spendBadge.textContent =
+    day && day.allowance > 0 ? `${money(day.spent)} of ${money(day.allowance)} today`
+    : state.cap === undefined ? money(state.spent)
+    : `${money(state.spent)} of ${money(state.cap)}`
+  spendBadge.title =
+    day && day.allowance > 0 ?
+      `Spent ${money(day.spent)} of ${money(day.allowance)} today.`
+    : 'No daily allowance, so nothing is spent without you asking for it.'
 }
 
 async function load(): Promise<void> {
@@ -626,10 +839,11 @@ async function ask(question: string): Promise<void> {
       bubble('refusal', event.error)
     }
     const done = event.done as
-      | { model?: string; spent?: number; warning?: string; ended?: string; steps?: number }
+      | { model?: string; bubble?: Bubble; spent?: number; warning?: string; ended?: string; steps?: number }
       | undefined
     if (done) {
       if (done.model) modelBadge.textContent = done.model
+      wearing(done.bubble)
       if (typeof done.spent === 'number') {
         const shown = spendBadge.textContent ?? ''
         const cap = shown.includes(' of ') ? shown.slice(shown.indexOf(' of ')) : ''
@@ -676,7 +890,14 @@ async function command(input: string, approved?: boolean): Promise<void> {
       headers: { 'content-type': 'application/json', 'x-alexia-token': token },
       body: JSON.stringify({ input, ...(approved === true && { approved: true }) }),
     })
-  ).json()) as { ok: boolean; note: string; ask?: string; setup: { mode: string } }
+  ).json()) as { ok: boolean; note: string; ask?: string; moved?: boolean; setup: { mode: string } }
+  // `/new` moved the conversation out from under this window, so what is on screen is the
+  // last one's log. Repaint before saying anything, or the sentence lands under the turns
+  // it just left behind.
+  if (ran.moved === true) {
+    await read().then(paint)
+    void rail.refresh()
+  }
   bubble('refusal', ran.note)
   for (const picker of modes) picker.value = ran.setup.mode
   if (ran.ask !== undefined) {
@@ -808,6 +1029,14 @@ text.addEventListener('keydown', (event) => {
  * the whole of what it does. It never runs anything.
  */
 const palette = mountPalette(token, (tab, filter) => {
+  // Plugins live on the settings screen rather than the control surface (M8-3), so the one
+  // hit that is not a control tab opens the page it is actually on. The palette says where a
+  // thing lives; it does not get to be wrong about it because two screens exist.
+  if (tab === 'plugins') {
+    show('settings')
+    settings.open('plugins', filter)
+    return
+  }
   show('control')
   control.open(tab, filter)
 })
@@ -835,9 +1064,9 @@ const rail = mountRail(token, {
     show('control')
     control.open(tab, filter)
   },
-  openSettings: () => {
+  openSettings: (page) => {
     show('settings')
-    settings.open()
+    settings.open(page)
   },
   reload: () => read().then(paint),
 })

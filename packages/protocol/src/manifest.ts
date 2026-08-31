@@ -32,9 +32,16 @@ import { z } from 'zod'
  * same way it declares settings. Additive again, and the promise being kept for the first
  * time rather than described: `MIN` rises with `MAX`, so a manifest declaring 1 now says so
  * in a sentence instead of loading.
+ *
+ * **4 on 2026-08-31 (D115).** `graph` — a widget for rows that point at each other. Additive
+ * like the two before it, and **the floor did not rise with the ceiling this time.** The
+ * promise above is that one revision back is *supported*, and supporting two costs nothing:
+ * seven first-party plugins declare 2, use nothing from 3, and dropping them to make a point
+ * about deprecation would be breaking working software to keep a number tidy. Raising `MIN`
+ * is what deprecating a revision looks like, and there is nothing here worth deprecating.
  */
 export const ALEXIA_PROTOCOL_MIN = 2
-export const ALEXIA_PROTOCOL_MAX = 3
+export const ALEXIA_PROTOCOL_MAX = 4
 
 /**
  * The two MCP revisions core speaks, in preference order (D55, corrected by D57).
@@ -211,6 +218,45 @@ const setting = z.discriminatedUnion('type', [
     /** A field to group rows under. It need not be a column — grouping is not showing. */
     groupBy: z.string().regex(IDENT).optional(),
   }),
+  z.object({
+    /**
+     * The twelfth widget: **things that point at each other** (D115, M6-11).
+     *
+     * Refused twice before this, and both refusals were right at the time: `ui-schema.md`'s
+     * bar is *more than one user* (D83), and when it was asked again the one user had no
+     * edges to draw — flat sentences with a category, where a link would have to be inferred
+     * and a picture of inferred similarity looks meaningful and is not (D90). M7-3 gave that
+     * store **authored** links, which is the condition D90 named, and then somebody asked to
+     * look at the shape of their own memory, which is the use G8 was waiting for.
+     *
+     * **It is granted on what the alternatives cost rather than on a second user.** The other
+     * two answers were a bespoke canvas in the shell — which is core naming one plugin, this
+     * project's founding complaint arriving by the back door — and a sandboxed iframe, which
+     * is a plugin drawing its own pixels and every rule in `ui-schema.md` gone with it. A
+     * widget core draws for anybody who declares one is the only answer of the three that
+     * leaves the shell naming nobody.
+     *
+     * Deliberately barer than `table`. No columns, no grouping, no row actions: the fields a
+     * node needs are fixed by the contract — `id`, `label`, `links`, and an optional `mark` —
+     * because a graph offers no choices about column order that a reader would notice, and
+     * every knob here would be one more thing an author can get wrong.
+     */
+    type: z.literal('graph'),
+    key: z.string().regex(IDENT),
+    label: z.string().min(1),
+    hint: z.string().optional(),
+    /**
+     * The tool that answers with the nodes, called with no arguments when somebody opens the
+     * panel. It answers `structuredContent: { rows: [...] }` like a `table`'s does, and each
+     * row carries a string `id`, a `label`, a `links` array of the ids it points at, and an
+     * optional boolean `mark` — whatever this plugin's `hint` says the ring means.
+     */
+    rows: z.string().min(1),
+    /** A tool called with `{ id }`, whose text opens beside the map when a node is clicked. */
+    detail: z.string().min(1).optional(),
+    /** A filter box, applied in the page over the node labels. */
+    filter: z.boolean().optional(),
+  }),
 ])
 
 export const ManifestShape = z
@@ -352,6 +398,19 @@ export const Manifest = ManifestShape.superRefine((m, ctx) => {
   if (m.panel !== undefined && m.alexia_protocol < 3) {
     fail(['panel'], 'panel arrived in alexia_protocol 3 — declare "alexia_protocol": 3 to use it')
   }
+  // Same rule as the two above, and it is what stops a `graph` reaching a core that has never
+  // heard of one: an older Alexia would refuse the manifest as unparseable rather than saying
+  // which of the two of you is out of date, which is the whole job of this integer.
+  m.panel?.widgets.forEach((w, i) => {
+    if (w.type === 'graph' && m.alexia_protocol < 4) {
+      fail(['panel', 'widgets', i], 'graph arrived in alexia_protocol 4 — declare "alexia_protocol": 4 to use it')
+    }
+  })
+  m.settings?.forEach((w, i) => {
+    if (w.type === 'graph' && m.alexia_protocol < 4) {
+      fail(['settings', i], 'graph arrived in alexia_protocol 4 — declare "alexia_protocol": 4 to use it')
+    }
+  })
 
   if (/^([A-Za-z]:|[\\/])/.test(m.entry.run)) {
     fail(['entry', 'run'], 'entry.run must be a command on PATH or a path relative to the plugin folder')

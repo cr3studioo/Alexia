@@ -68,3 +68,70 @@ test('shell: the three painting assets are the ones the server serves', () => {
     expect(packager, `package.mjs does not copy ${file} into the packaged shell`).toContain(`'${file}'`)
   }
 })
+
+/**
+ * The other half of the same failure, one layer down: a class the renderer writes and the
+ * sheet has never heard of.
+ *
+ * Not a thrown error and not a blank window — it is a control that draws with no styling at
+ * all, which on a page this quiet looks like a layout bug rather than a typo. The ladder
+ * (D112) is the first widget with enough parts for that to be likely, and every widget
+ * already passed this the day it was written, so it costs nothing to keep true.
+ */
+test('shell: every class the widgets write has a rule in the sheet', () => {
+  const widgets = readFileSync(join(ui, 'src', 'widgets.ts'), 'utf8')
+  const written = new Set<string>()
+  for (const [, list] of widgets.matchAll(/el\('[a-z]+', '([a-zA-Z0-9 _-]+)'/g)) {
+    for (const one of list!.split(' ')) written.add(one)
+  }
+  for (const [, list] of widgets.matchAll(/className = '([a-zA-Z0-9 _-]+)'/g)) {
+    for (const one of list!.split(' ')) written.add(one)
+  }
+  for (const [, one] of widgets.matchAll(/classList\.(?:add|toggle)\('([a-zA-Z0-9_-]+)'\)/g)) written.add(one!)
+
+  expect(written.size).toBeGreaterThan(20)
+  const css = readFileSync(join(ui, 'app.css'), 'utf8')
+  const styled = new Set([...css.matchAll(/\.([a-zA-Z][\w-]*)/g)].map(([, one]) => one!))
+  expect([...written].filter((one) => !styled.has(one)).sort()).toEqual([])
+})
+
+/**
+ * §12.2's last bullet, and it is the one the rest of the project rests on: **skip must be
+ * loud.** Zero keys reaches a working conversation, so a first-run screen that presents
+ * leaving without one as the lesser path is telling everybody who reads it the opposite of
+ * what is true — quietly, and in the one place nobody goes back to.
+ *
+ * `11-answers-with-no-keys` walks that path end to end and proves an answer comes back. This
+ * is the other half of the same claim: that the screen says so.
+ */
+test('shell: skipping is the loud button, not a quiet way out of the screen', () => {
+  const main = source.find(({ file }) => file === 'main.ts')!.text
+
+  // The words are worn by the primary button itself. A separate control would be a second
+  // thing to style, and the second thing always ends up quieter.
+  expect(main).toMatch(/begin\.textContent =[\s\S]{0,80}Skip — start with no keys/)
+  expect(main).not.toContain("'#skip'")
+
+  // And it is the primary button: `.begin` is the loud one, `.quiet-button` is the other one,
+  // and this must never quietly become the other one.
+  expect(html).toContain('<button id="begin" class="begin" type="button">')
+  expect(html).not.toMatch(/id="begin"[^>]*quiet-button/)
+})
+
+test('shell: the key wall is every provider, and no fork between two of them', () => {
+  const main = source.find(({ file }) => file === 'main.ts')!.text
+
+  // §12.2: "OmniRoute and OpenRouter are tiles among many, not a fork." One loop over the
+  // whole list is what makes that true; a named row anywhere here is the fork coming back.
+  expect(main).toMatch(/for \(const provider of state\.providers\) wall\.append\(/)
+  expect(main).not.toMatch(/'(?:openrouter|omniroute)'/)
+
+  // Every face carries what a person is actually choosing between: the published free tier,
+  // what getting in costs beyond an email, and what it costs in privacy where anyone checked.
+  for (const shown of ['allowance(provider)', 'provider.friction', 'provider.account', "provider.trainsOnYourData === 'yes'"]) {
+    expect(main, `the tile does not show ${shown}`).toContain(shown)
+  }
+
+  // The dropdown-and-one-key-box this replaced is gone, rather than left behind next to it.
+  expect(html).not.toContain('id="provider"')
+})

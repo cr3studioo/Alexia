@@ -123,7 +123,32 @@ const remember = (chatId, role, text) =>
  * from and a second place their words go, and neither of those would show up in the spend
  * panel or the privacy mode.
  */
+/**
+ * A slash command, from the one place that had no way to type one.
+ *
+ * **Core runs it, not this plugin.** `/local`, `/cheap`, a plugin's own command and `/new`
+ * are core's, and a copy of them here would be a second list to keep in step with the first
+ * — so what goes over is the line as typed, and what comes back is core's own sentence.
+ *
+ * The one thing this end must do is `/new`: core rotates the conversation it writes down,
+ * and the history the model is *shown* is this plugin's, in its own namespace. Clearing it
+ * is what makes a new chat new; without it the words would keep arriving in the next one.
+ */
+async function command(token, chatId, text) {
+  if (/^\/new\b/i.test(text)) await alexia.storage.delete('chats', { chat_id: String(chatId) })
+  const result = await alexia.server.server.createMessage({
+    messages: [{ role: 'user', content: { type: 'text', text } }],
+    maxTokens: 400,
+    _meta: { 'alexia/tools': true },
+  })
+  const said = result.content?.type === 'text' ? result.content.text : ''
+  for (const part of chunk(said || 'Done.')) await say(token, chatId, part)
+}
+
 async function answer(token, chatId, text) {
+  // Not remembered and carrying no history: a command is an instruction to Alexia, not a
+  // turn in the conversation, and `/new` clears the conversation it would have been in.
+  if (text.startsWith('/')) return command(token, chatId, text)
   await remember(chatId, 'user', text)
   const turns = await history(chatId)
   // Where the permission questions go while this runs. Set before the call, because the
@@ -133,9 +158,12 @@ async function answer(token, chatId, text) {
   try {
     result = await alexia.server.server.createMessage({
       messages: turns.map((turn) => ({ role: turn.role, content: { type: 'text', text: turn.content } })),
+      // Context, not an identity. It used to open *You are Alexia* — a second system line
+      // landing after a chosen personality, which is the order in which the plain one wins.
+      // Core says who she is; this says only what core cannot know about where she is.
       systemPrompt:
-        'You are Alexia, answering over Telegram. Keep replies short — this is a phone. ' +
-        'You have tools, and anything needing permission will be asked in this chat.',
+        'This conversation is happening over Telegram. Keep replies short — this is a phone. ' +
+        'Anything needing permission will be asked in this chat.',
       maxTokens: 800,
       /**
        * *Use my tools, and ask me when you must* (M7-5).

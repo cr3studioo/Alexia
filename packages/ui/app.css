@@ -435,10 +435,13 @@ body[data-view='control'] .view:not(#control) {
   margin-top: var(--space-6);
 }
 
-/* ---- the settings screen (M2-1) -------------------------------------------------------
+/* ---- the settings screen (M2-1, M8-3) --------------------------------------------------
 
-   One column, widgets in manifest order, no tabs and no grouping — a plugin with enough
-   settings to need tabs has a design problem a tab control would hide. */
+   Two pages, General and Plugins, and one page per plugin behind the second. **The tabs are
+   between screens, never inside one**: a plugin's own widgets are still one column in
+   manifest order, because a plugin with enough settings to need tabs has a design problem a
+   tab control would hide. Finding the plugin you meant is a different problem from reading
+   its settings once you have. */
 
 #settings {
   overflow-y: auto;
@@ -455,6 +458,175 @@ body[data-view='control'] .view:not(#control) {
 
 .view-top .step-heading {
   margin: 0;
+}
+
+/* ---- the plugin grid (M8-3) ---------------------------------------------------------
+
+   A card each, on a grid that decides its own column count. `auto-fill` with a minimum
+   rather than a breakpoint: the same screen is a 1280px window and an overlay narrower than
+   a phone, and a media query would be a second place to keep those two widths in step.
+
+   The card is not a button, because it has one inside it. The whole surface is still the way
+   in — the click handler asks what was pressed — and the name is a real button so the way in
+   exists for a keyboard too. */
+
+.bento {
+  display: grid;
+  /* `min(...)` rather than a bare 15rem: the overlay is narrower than any phone this was
+     tested on, and a track with a minimum wider than its container is a page that scrolls
+     sideways. */
+  grid-template-columns: repeat(auto-fill, minmax(min(15rem, 100%), 1fr));
+  gap: var(--space-3);
+  margin-bottom: var(--space-5);
+}
+
+/* The empty answer is a sentence, not a card, so it takes the whole row rather than sitting
+   in one narrow column pretending to be the first plugin. */
+.bento > .hint {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+
+.bento-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface-raised);
+  cursor: pointer;
+}
+
+.bento-card:hover {
+  border-color: var(--line-strong);
+}
+
+/* The whole card is one target, so the ring goes round the card rather than round the word
+   inside it — a focus outline on the name would point at a quarter of what Enter presses. */
+.bento-card:has(.bento-open:focus-visible) {
+  outline: var(--ring) solid var(--focus);
+  outline-offset: var(--ring);
+}
+
+.bento-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.bento-open {
+  /* A long name gives way rather than pushing the switch off the card. The rail is a fixed
+     17rem at every width, so the stage can get very narrow before anything else gives. */
+  min-width: 0;
+  overflow-wrap: anywhere;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.bento-open:focus-visible {
+  outline: none;
+}
+
+.bento-what {
+  flex: 1;
+  margin: 0;
+  color: var(--ink-quiet);
+  font-size: var(--text-sm);
+  line-height: var(--leading-prose);
+}
+
+.bento-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+/* Fifteen rems is not room for a capability name beside a sentence about it, so inside a card
+   the two stack. Everywhere else they stay on one line — the question the list answers is
+   *what is it asking for*, and a column wide enough to scan is what makes that readable. */
+.bento-card .asks li {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-1);
+}
+
+/* Not installed is behind a disclosure, because this screen is where somebody comes to change
+   something they have. `details` is the platform's, so the keyboard behaviour is not ours. */
+#available-box {
+  margin-bottom: var(--space-5);
+}
+
+#available-box summary {
+  cursor: pointer;
+  color: var(--ink-quiet);
+  font-size: var(--text-sm);
+  margin-bottom: var(--space-3);
+}
+
+#plugin-filter {
+  margin-bottom: var(--space-4);
+}
+
+/* The rhythm rule, for two blocks the shell fills rather than the markup: the gap above a
+   heading is the gap between groups, and a `.group` is what usually carries it. Empty is not
+   a group, so it gets no gap either. */
+#skills:not(:empty),
+#skills-library:not(:empty) {
+  display: block;
+  margin-top: var(--space-6);
+}
+
+/* Two tabs, so the narrow rule the control strip needs does not apply here. Nine names
+   wrapped into three lines is what that rule exists for; General over Plugins in a column is
+   a list of two, which is worse than the row it replaced. */
+@media (max-width: 559px) {
+  #settings-tabs {
+    flex-direction: row;
+    border-bottom: 1px solid var(--line);
+  }
+
+  #settings-tabs .tab {
+    border-bottom: 2px solid transparent;
+  }
+
+  #settings-tabs .tab.on {
+    border-bottom-color: var(--ink);
+  }
+}
+
+/* An install has no percentage to report — one request goes out and comes back with the
+   folder already on disk — so this bar sweeps instead of filling. Same bar a plugin drives
+   with real numbers (M2-6); the only difference is that this one is honest about not having
+   any. */
+.bar.working > span {
+  width: 35%;
+  animation: sweep 1.2s ease-in-out infinite;
+}
+
+@keyframes sweep {
+  from {
+    transform: translateX(-100%);
+  }
+
+  to {
+    transform: translateX(286%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bar.working > span {
+    width: 100%;
+    animation: none;
+  }
 }
 
 /* ---- the control surface (M6-2) -------------------------------------------------------
@@ -768,6 +940,64 @@ body[data-view='control'] .view:not(#control) {
   color: var(--danger);
 }
 
+/* The map (D113). The canvas is the only surface in this sheet that paints itself, so what is
+   here is its frame and the note that opens beside it — the colours it draws with are read
+   off these same custom properties at paint time, which is what keeps one palette. */
+.graph-frame {
+  position: relative;
+  display: flex;
+  gap: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  overflow: hidden;
+}
+
+.graph-canvas {
+  flex: 1;
+  /* Tall enough to be a map rather than a strip, and short enough that the list underneath
+     is still visibly there — a picture filling the screen would hide the thing this panel
+     exists for, which is forgetting one row. */
+  height: 48vh;
+  min-height: 16rem;
+  min-width: 0;
+  cursor: grab;
+  touch-action: none;
+}
+
+.graph-note {
+  flex: 0 0 18rem;
+  max-width: 45%;
+  padding: var(--space-4);
+  overflow: auto;
+  border-left: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.graph-note-title {
+  margin: 0 0 var(--space-2);
+  font-weight: 600;
+  line-height: var(--leading-tight);
+}
+
+.graph-note .quiet-button {
+  margin-top: var(--space-3);
+}
+
+/* Narrow: the note is the whole frame rather than a column two inches wide beside a map that
+   is now one inch wide. Same breakpoint the tables use. */
+@media (max-width: 560px) {
+  .graph-frame:has(.graph-note:not([hidden])) .graph-canvas {
+    display: none;
+  }
+
+  .graph-note {
+    flex: 1;
+    max-width: none;
+    border-left: 0;
+  }
+}
+
 .row-actions {
   display: flex;
   flex-wrap: wrap;
@@ -1051,6 +1281,296 @@ body[data-view='control'] .view:not(#control) {
   margin: 0;
 }
 
+/* ---- the routing ladder (D112) --------------------------------------------------------
+
+   Core's own, on the Models tab: which side of the price line may answer, and in what
+   order. Two controls and no third, because the screen it replaced had none at all — the
+   ★ was the router's own answer and there was nowhere to argue with it.
+
+   The slider is a radio group wearing a track. Three positions are three decisions rather
+   than three amounts, so it is not an <input type=range>: what slides is a pill behind the
+   labels, and what actually changes is which radio is checked. */
+
+.ladder {
+  display: flex;
+  flex-direction: column;
+}
+
+.grade {
+  position: relative;
+  display: grid;
+  /* Equal columns, sized to the widest label rather than to a number somebody guessed.
+     `fit-content` makes every `1fr` resolve to the largest stop's max-content, which is what
+     keeps the pill's arithmetic — one column is one translate — true at any font. */
+  grid-template-columns: repeat(var(--stops, 3), 1fr);
+  width: fit-content;
+  max-width: 100%;
+  margin-top: var(--space-2);
+  padding: 3px;
+  background: var(--surface-sunken);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-full);
+}
+
+/* The one thing that moves. `--at` is the index of the chosen stop, so the transform is a
+   whole number of its own widths and the easing is the only judgement in here. */
+.grade-thumb {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  left: 3px;
+  width: calc((100% - 6px) / var(--stops, 3));
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  transform: translateX(calc(var(--at, 0) * 100%));
+  transition: transform 320ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+.grade-stop {
+  position: relative;
+  z-index: 1;
+  cursor: pointer;
+}
+
+.grade-stop input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.grade-stop span {
+  display: block;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-full);
+  font-size: var(--text-sm);
+  line-height: var(--leading-tight);
+  text-align: center;
+  color: var(--ink-quiet);
+  transition: color 200ms ease;
+}
+
+.grade-stop input:checked + span {
+  color: var(--on-accent);
+}
+
+.grade-stop input:focus-visible + span {
+  outline: var(--ring) solid var(--focus);
+  outline-offset: var(--ring);
+}
+
+/* What the position you are on actually does, in one sentence that changes with it. The
+   slider is a money control, and a money control that does not say what it means is a
+   money control people leave alone. */
+.grade-hint {
+  max-width: var(--measure);
+  margin: var(--space-3) 0 var(--space-5);
+  font-size: var(--text-sm);
+  line-height: var(--leading-prose);
+  color: var(--ink-quiet);
+}
+
+.ladder-cols {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(17rem, 100%), 1fr));
+  gap: var(--space-4);
+}
+
+.ladder-col {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  background: var(--surface-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  transition: opacity 200ms ease;
+}
+
+/* The side the slider has closed. Dimmed rather than removed: what you ordered is still what
+   you ordered, and a column that vanished would read as the list having been thrown away. */
+.ladder-col[data-off='true'] {
+  opacity: 0.45;
+}
+
+.ladder-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.ladder-name {
+  font-size: var(--text-xs);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+.ladder-count {
+  margin-left: auto;
+  font-size: var(--text-xs);
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.ladder-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  /* So a list with one row in it is still a target big enough to drop the second one into. */
+  min-height: var(--space-6);
+}
+
+.ladder-empty {
+  margin: 0;
+  padding: var(--space-1) 0;
+  font-size: var(--text-xs);
+  line-height: var(--leading-prose);
+  color: var(--ink-faint);
+}
+
+.chip {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: var(--wash);
+  cursor: grab;
+}
+
+.chip:hover {
+  border-color: var(--line);
+}
+
+.chip:focus-visible {
+  outline: var(--ring) solid var(--focus);
+  outline-offset: var(--ring);
+}
+
+/* The one being dragged, left in place at low contrast so the gap it came out of stays
+   visible — a row that disappears while you move it is a row you lose track of. */
+.chip.held {
+  opacity: 0.4;
+  cursor: grabbing;
+}
+
+.chip-rank {
+  flex: none;
+  width: 1.25rem;
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-faint);
+  text-align: right;
+}
+
+.chip-what {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  flex: 1;
+}
+
+.chip-name {
+  font-size: var(--text-sm);
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chip-meta {
+  font-size: var(--text-xs);
+  color: var(--ink-faint);
+}
+
+.chip-grip {
+  flex: none;
+  color: var(--ink-faint);
+  font-size: var(--text-xs);
+  cursor: grab;
+}
+
+.chip-drop {
+  flex: none;
+  padding: 0 var(--space-1);
+  border: 0;
+  background: none;
+  color: var(--ink-faint);
+  font: inherit;
+  font-size: var(--text-base);
+  line-height: 1;
+  cursor: pointer;
+}
+
+.chip-drop:hover {
+  color: var(--danger);
+}
+
+/* The only way onto the list, because the only other way is four hundred rows with a number
+   beside each — which is the thing this screen exists to stop being. */
+.ladder-add {
+  position: relative;
+  max-width: var(--measure-short);
+  margin-top: var(--space-4);
+}
+
+.ladder-search {
+  width: 100%;
+}
+
+.ladder-hits {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: var(--space-1);
+  padding: var(--space-1);
+  background: var(--surface-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+}
+
+.ladder-hit {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  align-items: flex-start;
+  width: 100%;
+  padding: var(--space-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.ladder-hit:hover {
+  background: var(--wash);
+}
+
+.ladder-said {
+  max-width: var(--measure);
+  margin: var(--space-3) 0 0;
+  font-size: var(--text-sm);
+  line-height: var(--leading-prose);
+  color: var(--ink-quiet);
+}
+
+/* The pill still moves — it is how you see which stop you landed on — but it stops sliding.
+   Motion that carries meaning is kept; motion that is decoration is not. */
+@media (prefers-reduced-motion: reduce) {
+  .grade-thumb,
+  .grade-stop span,
+  .ladder-col {
+    transition: none;
+  }
+}
+
 /* The permission question for a button, asked beside the button. What is being decided is
    what is on screen — the same rule the chat prompt follows. */
 .confirm {
@@ -1227,6 +1747,128 @@ input {
   margin: 0;
 }
 
+/* ---- the key wall (§12.2) --------------------------------------------------------------
+
+   A bento of equal tiles, and equal is the argument. The screen this replaced opened with a
+   dropdown whose first row was one aggregator and whose second was another, which is a fork
+   between two vendors' plumbing put to somebody who has not said hello yet. Here nobody is
+   first: every provider is the same rectangle, and what tells them apart is on the face —
+   how much it gives, what it costs to get in, what it costs in privacy.
+
+   Denser than `.cards` above it on purpose. Those are three choices to read; these are
+   twenty to scan, and a tile the size of a mode card would put the Start button four screens
+   down. The wall scrolls inside itself for the same reason. */
+
+.wall {
+  display: grid;
+  gap: var(--space-2);
+  grid-template-columns: repeat(auto-fill, minmax(13rem, 1fr));
+  max-height: 22rem;
+  overflow-y: auto;
+  margin-top: var(--space-3);
+  padding-right: var(--space-2);
+}
+
+.tile {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface-raised);
+}
+
+.tile:focus-within {
+  border-color: var(--accent);
+}
+
+.tile-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.tile-name {
+  font-size: var(--text-base);
+  font-weight: 600;
+}
+
+/* The number, and it is the second thing read after the name — so it is not a hint colour. */
+.tile-free {
+  font-size: var(--text-sm);
+  color: var(--ink);
+}
+
+/* What a tile is warning about is not decoration and does not get a decoration's weight: it
+   is a word in a box, at the size of the thing it qualifies. */
+.flag {
+  font-size: var(--text-xs);
+  line-height: var(--leading-tight);
+  padding: 0.1rem var(--space-2);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line);
+  color: var(--ink-quiet);
+  align-self: flex-start;
+}
+
+.flag.good {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.flag.warn {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.tile-key {
+  width: 100%;
+  margin-top: auto;
+}
+
+.tile-said {
+  font-size: var(--text-xs);
+  color: var(--ink-quiet);
+}
+
+.tile-said.good {
+  color: var(--accent);
+}
+
+.tile-said.error {
+  color: var(--danger);
+}
+
+/* It opens in place rather than in a dialog: what it says is four short lines about one
+   tile, and a modal for four lines is a modal somebody has to get back out of. */
+.tile-how {
+  font-size: var(--text-xs);
+}
+
+.tile-how > summary {
+  cursor: pointer;
+  color: var(--ink-quiet);
+}
+
+.tile-how .hint {
+  margin-top: var(--space-2);
+}
+
+.tile-link {
+  display: block;
+  margin-top: var(--space-2);
+  color: var(--accent);
+}
+
+/* The sentence under Start, when Start is wearing the words for skipping. Not smaller than
+   the rest of the hints and not greyer: it is the one promise this whole screen is here to
+   keep, and shrinking it is how a promise turns into small print. */
+#skip-line {
+  max-width: var(--measure);
+}
+
 /* ---- buttons ------------------------------------------------------------------------- */
 
 button {
@@ -1299,6 +1941,30 @@ button[disabled] {
 
 #chat-top .status {
   margin-left: auto;
+}
+
+/* The rung bubble (§8.4): which helper is answering, said as what it can still do. It sits
+   beside the model rather than inside it because they are two facts — where your words went,
+   and what you can expect of the thing they went to — and because one of them is coloured.
+
+   Green is the ordinary state and there is no green here, which is not an omission: this
+   palette has caution and danger and nothing else, because a colour on this screen always
+   means something happened. Fine is the absence of one, so a green rung is quiet ink and the
+   two that are not fine are the ones that carry a hue. */
+#chat-top #rung {
+  margin-left: var(--space-2);
+}
+
+#rung::before {
+  content: '· ';
+}
+
+#rung[data-state='amber'] {
+  color: var(--caution);
+}
+
+#rung[data-state='red'] {
+  color: var(--danger);
 }
 
 #log {

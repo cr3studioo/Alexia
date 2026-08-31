@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import type { Manifest } from '@alexia/protocol'
+import { report, verify, type Provider } from './provider.js'
 import { MODES, type Pins } from './router.js'
 import { CORE } from './secrets.js'
 import type { Store } from './store.js'
@@ -35,6 +36,16 @@ export interface Command {
  * this whole project is against.
  */
 const BUILT_IN: Command[] = [
+  /**
+   * The one command that is not a setting.
+   *
+   * It is first because it is the one anybody needs from a place with no buttons: a phone
+   * has no *New chat* to press, so without this every message anyone ever sends from one
+   * lands in the same conversation, carrying every message before it (D109 gave that
+   * conversation a home; this is how you leave it).
+   */
+  { name: 'new', summary: 'Start a new conversation. Nothing said before it comes with it.' },
+  { name: 'help', summary: 'List everything you can type here.' },
   { name: 'local', summary: 'Run everything on this machine.' },
   { name: 'combined', summary: 'The cloud thinks; this machine makes images and speech.' },
   { name: 'cloud', summary: 'Run everything through APIs.' },
@@ -42,6 +53,12 @@ const BUILT_IN: Command[] = [
   { name: 'sfw', summary: 'Back to the standard content policy.' },
   { name: 'cheap', summary: 'Prefer the cheapest model that can do the job.' },
   { name: 'best', summary: 'Prefer the strongest model available.' },
+  /**
+   * The fourth kind of command: not an axis, and not a setting. A free tier that has moved
+   * fails in a way that reads as Alexia being broken, so there has to be one thing to type
+   * that says which half of that it actually is.
+   */
+  { name: 'providers', summary: 'Check every provider: which answer, and how old each check is.' },
 ]
 
 /**
@@ -101,6 +118,16 @@ export async function run(
     store: Store
     manifests?: readonly Manifest[]
     call?(plugin: string, tool: string): Promise<string>
+    /**
+     * Start a fresh conversation *here*.
+     *
+     * A hook rather than something this file does, because *here* is different for every
+     * caller: the window rotates the conversation on screen, and a plugin rotates its own.
+     * Neither knows about the other, and this file knows about neither.
+     */
+    newChat?(): Promise<Ran>
+    /** The table to check, defaulting to all of it. A seam, so the test does not need a network. */
+    providers?: readonly Provider[]
   },
 ): Promise<Ran> {
   const word = input.trim().replace(/^\//, '').split(/\s+/)[0] ?? ''
@@ -116,6 +143,20 @@ export async function run(
   }
 
   switch (word) {
+    case 'new':
+      return (
+        (await context.newChat?.()) ?? {
+          ok: false,
+          note: 'there is nowhere to start a new conversation from here',
+        }
+      )
+    case 'help':
+      return {
+        ok: true,
+        note: commands(context.manifests)
+          .map((one) => `/${one.name} — ${one.summary}`)
+          .join('\n'),
+      }
     case 'local':
       return mode('local', 'Local: everything runs on this machine, including the models.')
     case 'combined':
@@ -130,6 +171,11 @@ export async function run(
       return pin({ prefer: 'cheap' }, 'Cheapest first, which is usually free.')
     case 'best':
       return pin({ prefer: 'best' }, 'Strongest first. This one can cost money.')
+    case 'providers':
+      // Reports, never acts. A row that did not answer today is a question for a person —
+      // disabling it here would hide the one thing worth knowing, and writing today's date
+      // over its `verified` would be a check nobody performed.
+      return { ok: true, note: report(await verify(context.providers)) }
   }
 
   // A plugin's, then — by the bare word it won, or by its namespaced form, which works

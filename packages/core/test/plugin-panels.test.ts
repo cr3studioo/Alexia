@@ -130,6 +130,51 @@ test('the memory panel forgets exactly the row it was pointed at', async () => {
   expect(left.map((row) => row.text)).toEqual(['He prefers short answers', 'Vaclav’s grant deadline is in March'])
 }, 20_000)
 
+test('the map is the same notes, with the links the sorter wrote (M6-11)', async () => {
+  // Two notes and a link between them, written the way the sorter writes them: a link is a
+  // note's *name*, and the panel needs something it can hand back to `about_memory`.
+  const at = Date.now()
+  alexia.store.insert('memory', 'facts', {
+    name: 'The grant',
+    text: 'The grant is the thing everything else this month hangs off',
+    kind: 'other',
+    links: '[]',
+    source: 'stated',
+    at,
+  })
+  alexia.store.insert('memory', 'facts', {
+    name: 'The grant deadline',
+    text: 'The grant deadline is in March',
+    kind: 'fact',
+    links: JSON.stringify(['The grant']),
+    // Worked out rather than said, which is what the ring on the map means.
+    source: 'inferred',
+    at: at + 1,
+  })
+
+  const tab = (await tabs()).find((one) => one.plugin === 'memory')
+  // Declared by the plugin, drawn by core: the shell has one more widget type and still no
+  // idea which plugin asked for one.
+  expect(tab?.widgets?.map((widget) => widget.type)).toEqual(['graph', 'table'])
+
+  const nodes = await rows('memory', 'remembered_map')
+  const child = nodes.find((row) => row.label === 'The grant deadline')
+  const parent = nodes.find((row) => row.label === 'The grant')
+  expect(child?.links).toEqual([String(parent?.id)])
+  expect(child?.mark).toBe(true)
+  expect(parent?.mark).toBe(false)
+
+  // Every link points at a node that is on the map. Half an edge is a lie about the shape,
+  // and the plugin drops one rather than drawing it to nowhere.
+  const there = new Set(nodes.map((row) => String(row.id)))
+  expect(nodes.flatMap((row) => row.links as string[]).filter((id) => !there.has(id))).toEqual([])
+
+  // The same tool the table's rows expand through, reached from a node instead of a row.
+  const detail = await post('/api/detail', { plugin: 'memory', key: 'remembered_map', row: String(child?.id) })
+  expect(detail.ok).toBe(true)
+  expect(String(detail.text)).toContain('Filed under: The grant')
+}, 20_000)
+
 test('a detail is the whole sentence, because a column has to truncate and this does not', async () => {
   const [one] = await rows('memory', 'remembered_list')
   const detail = await post('/api/detail', { plugin: 'memory', key: 'remembered_list', row: String(one?.id) })

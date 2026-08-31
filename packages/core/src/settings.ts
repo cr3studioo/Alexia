@@ -8,7 +8,7 @@ import type { Store } from './store.js'
 /**
  * The settings screen, from the manifest side (M2-1).
  *
- * **A plugin cannot style itself wrong because it never styles itself.** It declares ten
+ * **A plugin cannot style itself wrong because it never styles itself.** It declares twelve
  * possible widgets; this module turns those declarations plus the stored values into
  * something the shell can render, and turns an edit coming back the other way into a value
  * that is checked before it is kept.
@@ -22,8 +22,41 @@ import type { Store } from './store.js'
 /** One of the ten, as the manifest declares it. */
 export type Setting = NonNullable<Manifest['settings']>[number]
 
+/**
+ * **Core's own screen furniture, which a plugin may not declare** (D112).
+ *
+ * `docs/spec/ui-schema.md` sets the bar for a new widget — *one user is not enough*, and
+ * `file` and `graph` were both refused on exactly that — and this does not clear it, so it is
+ * not offered to plugins and is not in the manifest schema. (`graph` was granted two refusals
+ * later, on what the alternatives cost rather than on a second user — D115. This was not, and
+ * the difference is that a plugin has somewhere else to put a list of choices.) What it is
+ * instead is the answer to a gap the twelve genuinely have: **every widget core can declare
+ * for its own tabs is read-only.** `table` and `action` report and press; nothing in the set writes a core value,
+ * because a plugin's values are written through `/api/settings` against a manifest, and core
+ * has no manifest. So the Models tab could show what the router decided and could not offer
+ * anywhere to decide it.
+ *
+ * It talks through `/api/action` like a row action does, which is why it needs no new write
+ * path and no new gate. And it is still drawn by the one renderer both screens share, so the
+ * property M6-4 actually protects — *the shell names no tab and no plugin* — is untouched.
+ */
+export interface CoreWidget {
+  /** The routing ladder: the spend slider and the running order under it. */
+  type: 'ladder'
+  key: string
+  label: string
+  hint?: string
+  /** Which rows source answers with the models. Read the same way a `table`'s is. */
+  rows: string
+  /** The stops, left to right, and the action each one presses with its own value. */
+  stops: { value: string; label: string; hint: string }[]
+  /** The action that takes the slider's new value, and the one that takes the running order. */
+  chose: string
+  ordered: string
+}
+
 /** A declaration plus what core knows about it right now. The shell renders this and nothing else. */
-export type Rendered = Setting & {
+export type Rendered = (Setting | CoreWidget) & {
   /** The user's value, or the manifest's default. Never a password. */
   value?: unknown
   /** `password` only: whether one is stored, and the sentence saying where. */
@@ -74,7 +107,7 @@ export function secretStoreName(platform: string = process.platform): string {
 }
 
 /** Read-only widgets: the plugin drives them, the user cannot type into them. */
-const DRIVEN = new Set(['status', 'progress', 'action', 'table'])
+const DRIVEN = new Set(['status', 'progress', 'action', 'table', 'graph'])
 
 export interface PaneOptions {
   store: Store
@@ -130,10 +163,20 @@ export function declaredAction(
   return undefined
 }
 
-/** A table this plugin declared, by key. */
-export function declaredTable(manifest: Manifest, key: string): Extract<Setting, { type: 'table' }> | undefined {
+/**
+ * A widget this plugin declared that fetches its own contents, by key — a `table` or a
+ * `graph` (D115).
+ *
+ * One function rather than two because `/api/rows` and `/api/detail` ask the same two
+ * questions of both: *which tool answers with the contents*, and *which one says more about
+ * one of them*. A second lookup would be a second place to forget a widget type.
+ */
+export function declaredTable(
+  manifest: Manifest,
+  key: string,
+): Extract<Setting, { type: 'table' | 'graph' }> | undefined {
   const found = declaredWidgets(manifest).find((widget) => widget.key === key)
-  return found?.type === 'table' ? found : undefined
+  return found?.type === 'table' || found?.type === 'graph' ? found : undefined
 }
 
 /**

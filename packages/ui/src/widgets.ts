@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+import { COLD, DISTANCE, type Link, type Node, place, settle, step, WARM } from './force.js'
 
 /**
  * The widgets, rendered by core, declared by plugins (M2-1) — and now on two screens.
@@ -30,6 +31,18 @@ export type WidgetType =
   | 'progress'
   | 'action'
   | 'table'
+  /**
+   * The twelfth (D115). A `table` says what is there; this says **what points at what**, for
+   * a plugin whose rows carry links somebody authored rather than links a model guessed.
+   */
+  | 'graph'
+  /**
+   * Core's own, and **not one a plugin may declare** (D112). The bar in `ui-schema.md` is
+   * *more than one user*, and this has exactly one — so it is not in the manifest schema and
+   * no plugin can ask for it. It is here because it is drawn by this file like everything
+   * else: one renderer, and the control surface still names no tab and no plugin.
+   */
+  | 'ladder'
 
 /** A `table`'s column, as its author declared it. */
 export interface Column {
@@ -79,6 +92,11 @@ export interface Rendered {
   detail?: string
   filter?: boolean
   groupBy?: string
+  /** `ladder`: the slider's stops, and the two actions it presses. `rows` is shared with `table`. */
+  rows?: string
+  stops?: { value: string; label: string; hint: string }[]
+  chose?: string
+  ordered?: string
 }
 
 /** Which screen is drawing, and how it answers the two questions a widget asks back. */
@@ -340,6 +358,15 @@ export function widget(host: WidgetHost, declared: Rendered): HTMLElement {
       break
     }
 
+    case 'ladder': {
+      // Same rule as a table's hint, and for the same reason: this widget is tall, and a
+      // sentence explaining a control does nothing under the thing it explains.
+      field.append(el('span', 'label', declared.label))
+      if (declared.hint) field.append(el('p', 'hint lede', declared.hint))
+      field.append(ladder(host, declared))
+      break
+    }
+
     case 'table': {
       // The hint goes **above** a table and below everything else. On every other widget it
       // explains the control you have just used; on a table it explains the list, and a list
@@ -348,6 +375,15 @@ export function widget(host: WidgetHost, declared: Rendered): HTMLElement {
       field.append(el('span', 'label', declared.label))
       if (declared.hint) field.append(el('p', 'hint lede', declared.hint))
       field.append(table(host, declared))
+      break
+    }
+
+    case 'graph': {
+      // Above the picture for the same reason it is above a table: the sentence saying what
+      // the ring means is no use underneath something 60vh tall.
+      field.append(el('span', 'label', declared.label))
+      if (declared.hint) field.append(el('p', 'hint lede', declared.hint))
+      field.append(graph(host, declared))
       break
     }
 
@@ -387,6 +423,13 @@ export function widget(host: WidgetHost, declared: Rendered): HTMLElement {
         } finally {
           window.clearInterval(watching)
           await refreshDriven(host)
+          // And every list on this screen, because a button that changes what a list holds
+          // is most of what a button on these screens is for — *New chat* above the
+          // conversations, *Clone* above the voices, *Search* above the results. Each of
+          // those left the list beside it showing the answer to a question nobody was
+          // asking any more. Asking again is the table's own `load`, so the sentence this
+          // press just wrote survives it.
+          reloadTables(host)
           button.disabled = declared.available === false
         }
       }
@@ -396,11 +439,31 @@ export function widget(host: WidgetHost, declared: Rendered): HTMLElement {
     }
   }
 
-  if (declared.hint && declared.type !== 'password' && declared.type !== 'table') {
+  if (
+    declared.hint &&
+    declared.type !== 'password' &&
+    declared.type !== 'table' &&
+    declared.type !== 'graph' &&
+    declared.type !== 'ladder'
+  ) {
     field.append(el('p', 'hint', declared.hint))
   }
   field.append(problem)
   return field
+}
+
+/**
+ * *Ask for your rows again.* Dispatched at every table and map on the screen an `action` was
+ * pressed on — which is one plugin's page or one panel tab, never the whole window.
+ *
+ * An event rather than a registry: a table that has been drawn over is gone from the DOM and
+ * so hears nothing, which is the correct behaviour and is free here rather than being a list
+ * somebody has to remember to remove things from.
+ */
+const RELOAD = 'alexia:rows'
+
+const reloadTables = (host: WidgetHost): void => {
+  for (const box of host.root().querySelectorAll('.table-box')) box.dispatchEvent(new Event(RELOAD))
 }
 
 /** Below this, columns marked `hideNarrow` are dropped and the actions get their own row. */
@@ -565,6 +628,387 @@ function table(host: WidgetHost, declared: Rendered): HTMLElement {
     paint()
   }
 
+  box.addEventListener(RELOAD, () => void load())
+  void load()
+  return box
+}
+
+/**
+ * The twelfth widget: things that point at each other, on a canvas (D115, M6-11).
+ *
+ * **The only widget that draws pixels, and it still declares nothing about them.** A plugin
+ * names the tool that answers with the nodes and, if it has one, the tool that says more
+ * about one of them; the colours, the physics, the labels and the reach of the pointer are
+ * core's, exactly as they are for a `table`. Which is the whole reason this is a widget
+ * rather than the two other answers M6-7 weighed: a bespoke canvas in the shell would have
+ * put one plugin's name in this file, and an iframe would have handed a plugin the pixels.
+ *
+ * The arithmetic is `force.ts`, where it can be tested without a browser. What is here is
+ * the canvas, the pointer and the paint.
+ */
+function graph(host: WidgetHost, declared: Rendered): HTMLElement {
+  // `table-box` because that is what *asks for its rows again* is addressed to, and a map is
+  // asking the same question of the same tool. A second class would be a second thing to
+  // remember in `reloadTables`.
+  const box = el('div', 'table-box')
+  const said = el('p', 'hint', 'Loading…')
+  const frame = el('div', 'graph-frame')
+  const canvas = el('canvas', 'graph-canvas')
+  // A picture of a person's own memory, described for somebody who cannot see it. The reach
+  // of it is honest: what the canvas can say is how much is in it, and the detail beneath
+  // says the rest in words.
+  canvas.setAttribute('role', 'img')
+  const drawer = el('div', 'graph-note')
+  drawer.hidden = true
+  const noteTitle = el('p', 'graph-note-title')
+  const noteBody = el('p', 'detail-text')
+  const close = el('button', 'quiet-button', 'Close')
+  close.type = 'button'
+  close.addEventListener('click', () => {
+    drawer.hidden = true
+    chosen = undefined
+    paint()
+  })
+  drawer.append(noteTitle, noteBody, close)
+  frame.append(canvas, drawer)
+
+  let query = ''
+  if (declared.filter === true) {
+    const search = el('input', 'table-filter')
+    search.type = 'search'
+    search.placeholder = `Filter ${declared.label.toLowerCase()}`
+    search.setAttribute('aria-label', `Filter ${declared.label}`)
+    search.addEventListener('input', () => {
+      query = search.value.trim().toLowerCase()
+      build()
+    })
+    box.append(search)
+  }
+  box.append(said, frame)
+
+  /** Everything the tool last answered with, before the filter has had its say. */
+  let rows: Row[] = []
+  let nodes: Node[] = []
+  let links: Link[] = []
+  let alpha = 0
+  /** World → screen: a scale and an offset, moved by the wheel and by dragging the ground. */
+  let scale = 1
+  let panX = 0
+  let panY = 0
+  let hovered: Node | undefined
+  let chosen: Node | undefined
+  let held: Node | undefined
+  let panning: { x: number; y: number } | undefined
+  let drawing = false
+  /** Somebody has asked not to be shown motion: settle it in one go and paint the answer. */
+  const still = window.matchMedia('(prefers-reduced-motion: reduce)')
+
+  const linksOf = (row: Row): string[] =>
+    Array.isArray(row.links) ? row.links.map((one) => String(one)) : []
+
+  /** The rows, as a graph — filtered, and with any link to something not shown dropped. */
+  function build(): void {
+    const kept =
+      query === '' ? rows : (
+        rows.filter((row) => String(row.label ?? row.id).toLowerCase().includes(query))
+      )
+    const shown = new Set(kept.map((row) => String(row.id)))
+    // Positions survive a filter: a node that was on screen before stays where the eye left
+    // it, which is what makes typing into the filter read as *fewer things* rather than as a
+    // different picture each keystroke.
+    const before = new Map(nodes.map((node) => [node.id, node]))
+    nodes = kept.map((row) => {
+      const id = String(row.id)
+      const was = before.get(id)
+      return {
+        id,
+        label: String(row.label ?? id),
+        mark: row.mark === true,
+        x: was?.x ?? 0,
+        y: was?.y ?? 0,
+        vx: 0,
+        vy: 0,
+        degree: 0,
+      }
+    })
+    const by = new Map(nodes.map((node) => [node.id, node]))
+    links = []
+    for (const row of kept) {
+      const source = by.get(String(row.id))!
+      for (const id of linksOf(row)) {
+        const target = by.get(id)
+        // A link to something the filter is hiding, or to a row that is not there at all, is
+        // dropped rather than drawn to nowhere. Half an edge is a lie about the shape.
+        if (!target || !shown.has(id) || target === source) continue
+        source.degree += 1
+        target.degree += 1
+        links.push({ source, target })
+      }
+    }
+    if (before.size === 0 || nodes.every((node) => before.has(node.id) === false)) place(nodes)
+
+    chosen = chosen && by.get(chosen.id)
+    hovered = undefined
+    held = undefined
+    drawer.hidden = chosen === undefined
+    canvas.setAttribute(
+      'aria-label',
+      `${declared.label}: ${String(nodes.length)} things and ${String(links.length)} links, drawn as a map.`,
+    )
+    said.hidden = nodes.length > 0
+    said.textContent =
+      rows.length === 0 ? 'Nothing here yet.'
+      : nodes.length === 0 ? 'Nothing matches that.'
+      : ''
+    fit()
+    warm()
+  }
+
+  /** Everything in view, with room around it. Run once a layout has somewhere to be. */
+  function fit(): void {
+    if (nodes.length === 0) return
+    if (still.matches) settle(nodes, links)
+    const xs = nodes.map((node) => node.x)
+    const ys = nodes.map((node) => node.y)
+    const width = Math.max(...xs) - Math.min(...xs) + DISTANCE * 2
+    const height = Math.max(...ys) - Math.min(...ys) + DISTANCE * 2
+    const box = canvas.getBoundingClientRect()
+    scale = Math.min(3, Math.max(0.15, Math.min(box.width / width, box.height / height)))
+    panX = box.width / 2
+    panY = box.height / 2
+  }
+
+  /** Set it moving again — new data, a drag, a release. Nothing happens if motion is off. */
+  function warm(reheat = WARM): void {
+    if (still.matches) {
+      // Not while a node is under a finger: settling the whole graph on every pointermove is
+      // hundreds of ticks per pixel. It settles once, on release.
+      if (held === undefined) settle(nodes, links)
+      paint()
+      return
+    }
+    alpha = Math.max(alpha, reheat)
+    if (drawing) return
+    drawing = true
+    const tick = (): void => {
+      if (alpha > COLD) alpha = step(nodes, links, alpha)
+      paint()
+      // The canvas is gone from the document the moment a tab is switched, and a loop that
+      // kept painting into it would be this screen's only permanent cost.
+      if (canvas.isConnected && (alpha > COLD || held !== undefined)) {
+        requestAnimationFrame(tick)
+        return
+      }
+      drawing = false
+    }
+    requestAnimationFrame(tick)
+  }
+
+  /** The page's own palette, read off the canvas so the theme's switch needs no listener. */
+  const inks = (): ((name: string) => string) => {
+    const style = getComputedStyle(canvas)
+    return (name) => style.getPropertyValue(name).trim()
+  }
+  const at = (event: PointerEvent | WheelEvent): { x: number; y: number } => {
+    const box = canvas.getBoundingClientRect()
+    return { x: event.clientX - box.left, y: event.clientY - box.top }
+  }
+  const world = (point: { x: number; y: number }): { x: number; y: number } => ({
+    x: (point.x - panX) / scale,
+    y: (point.y - panY) / scale,
+  })
+  /** How big a node is drawn: a thing with ten links reads as a hub because it looks like one. */
+  const sizeOf = (node: Node): number => 3 + Math.min(5, node.degree)
+
+  function paint(): void {
+    const box = canvas.getBoundingClientRect()
+    const ratio = window.devicePixelRatio || 1
+    if (canvas.width !== Math.round(box.width * ratio) || canvas.height !== Math.round(box.height * ratio)) {
+      canvas.width = Math.round(box.width * ratio)
+      canvas.height = Math.round(box.height * ratio)
+    }
+    const pen = canvas.getContext('2d')
+    if (!pen) return
+    pen.setTransform(ratio, 0, 0, ratio, 0, 0)
+    pen.clearRect(0, 0, box.width, box.height)
+    pen.translate(panX, panY)
+    pen.scale(scale, scale)
+
+    const ink = inks()
+    pen.strokeStyle = ink('--line-strong')
+    pen.globalAlpha = 0.5
+    pen.lineWidth = 1 / scale
+    pen.beginPath()
+    for (const { source, target } of links) {
+      pen.moveTo(source.x, source.y)
+      pen.lineTo(target.x, target.y)
+    }
+    pen.stroke()
+    pen.globalAlpha = 1
+
+    const accent = ink('--accent')
+    const marked = ink('--chosen')
+    for (const node of nodes) {
+      pen.beginPath()
+      pen.arc(node.x, node.y, sizeOf(node), 0, 2 * Math.PI)
+      pen.fillStyle = accent
+      pen.fill()
+      // The ring is drawn *after* the node rather than instead of it, so *what sort of thing
+      // is this* and *where did it come from* stay two signals rather than fighting over one
+      // pixel — the predecessor's own lesson, and the reason its rings were rings.
+      if (node.mark === true) {
+        pen.beginPath()
+        pen.arc(node.x, node.y, sizeOf(node) + 3, 0, 2 * Math.PI)
+        pen.strokeStyle = marked
+        pen.lineWidth = 1.5 / scale
+        pen.stroke()
+      }
+      if (node === chosen) {
+        pen.beginPath()
+        pen.arc(node.x, node.y, sizeOf(node) + 6, 0, 2 * Math.PI)
+        pen.strokeStyle = accent
+        pen.lineWidth = 1 / scale
+        pen.stroke()
+      }
+    }
+
+    // Labels only where they can be read: everything when the map is zoomed in far enough to
+    // have room, and otherwise just the one under the pointer. A hundred names at arm's
+    // length is a grey smear, which is worse than no names at all.
+    pen.fillStyle = ink('--ink')
+    pen.font = `${String(11 / scale)}px system-ui, sans-serif`
+    pen.textAlign = 'center'
+    for (const node of nodes) {
+      if (scale < 0.8 && node !== hovered && node !== chosen) continue
+      pen.fillText(node.label, node.x, node.y - sizeOf(node) - 4 / scale)
+    }
+  }
+
+  /** The node under a point, or nothing. Generous by a few pixels, because a dot is small. */
+  function nodeAt(point: { x: number; y: number }): Node | undefined {
+    const spot = world(point)
+    let best: Node | undefined
+    let nearest = Infinity
+    for (const node of nodes) {
+      const away = Math.hypot(node.x - spot.x, node.y - spot.y)
+      if (away < nearest && away < sizeOf(node) + 6 / scale) {
+        nearest = away
+        best = node
+      }
+    }
+    return best
+  }
+
+  canvas.addEventListener('pointerdown', (event) => {
+    const point = at(event)
+    const found = nodeAt(point)
+    canvas.setPointerCapture(event.pointerId)
+    if (found) {
+      held = found
+      found.held = true
+      warm(0.3)
+      return
+    }
+    panning = { x: point.x - panX, y: point.y - panY }
+  })
+
+  canvas.addEventListener('pointermove', (event) => {
+    const point = at(event)
+    if (held) {
+      const spot = world(point)
+      held.x = spot.x
+      held.y = spot.y
+      warm(0.3)
+      return
+    }
+    if (panning) {
+      panX = point.x - panning.x
+      panY = point.y - panning.y
+      paint()
+      return
+    }
+    const found = nodeAt(point)
+    if (found === hovered) return
+    hovered = found
+    canvas.style.cursor = found ? 'pointer' : 'grab'
+    paint()
+  })
+
+  const release = (event: PointerEvent): void => {
+    const wasHeld = held
+    if (wasHeld) {
+      wasHeld.held = false
+      // Let go and the rest of the graph settles around where it was put, rather than
+      // snapping back — the same behaviour as dragging a node in the old dashboard.
+      held = undefined
+      warm(0.3)
+    }
+    panning = undefined
+    if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId)
+  }
+  canvas.addEventListener('pointerup', release)
+  canvas.addEventListener('pointercancel', release)
+
+  canvas.addEventListener('click', (event) => {
+    const found = nodeAt(at(event))
+    if (!found || declared.detail === undefined) return
+    chosen = found
+    drawer.hidden = false
+    noteTitle.textContent = found.label
+    noteBody.className = 'detail-text'
+    noteBody.textContent = 'Loading…'
+    paint()
+    void host.send('/api/detail', { plugin: host.plugin, key: declared.key, row: found.id }).then((answer) => {
+      noteBody.className = answer.ok === true ? 'detail-text' : 'detail-text error'
+      noteBody.textContent = String((answer.ok === true ? answer.text : answer.said) ?? '')
+    })
+  })
+
+  canvas.addEventListener(
+    'wheel',
+    (event) => {
+      event.preventDefault()
+      const point = at(event)
+      const before = world(point)
+      scale = Math.min(6, Math.max(0.1, scale * Math.exp(-event.deltaY * 0.002)))
+      // Whatever was under the pointer stays under the pointer, which is what makes a wheel
+      // feel like zooming rather than like the picture running away.
+      panX = point.x - before.x * scale
+      panY = point.y - before.y * scale
+      paint()
+    },
+    { passive: false },
+  )
+
+  const onResize = (): void => {
+    // The canvas is replaced whenever the panel is redrawn, and the listener would otherwise
+    // outlive every one of them.
+    if (canvas.isConnected) paint()
+    else window.removeEventListener('resize', onResize)
+  }
+  window.addEventListener('resize', onResize)
+
+  async function load(): Promise<void> {
+    const answer = (await host.send('/api/rows', { plugin: host.plugin, key: declared.key })) as {
+      ok?: boolean
+      rows?: Row[]
+      said?: string
+      ask?: string
+    }
+    if (answer.ok !== true) {
+      said.hidden = false
+      said.className = 'error'
+      // A map behind a permission question is a map nobody asked to see yet. It says so and
+      // stops, rather than half-drawing something — `table` is where the yes is given.
+      said.textContent = String(answer.ask ?? answer.said ?? 'That did not work.')
+      return
+    }
+    said.className = 'hint'
+    rows = answer.rows ?? []
+    build()
+  }
+
+  box.addEventListener(RELOAD, () => void load())
   void load()
   return box
 }
@@ -750,5 +1194,327 @@ export function confirm(why: string, again: (approved: boolean) => Promise<void>
   deny.addEventListener('click', () => box.remove())
   row.append(allow, deny)
   box.append(row)
+  return box
+}
+
+/**
+ * The routing ladder: what may answer, and in what order (D112).
+ *
+ * **Two controls, and the first one is a wall.** *Recommended* was a word covering a rule —
+ * cheapest that fits — and everybody read their own meaning into it, so the slider says the
+ * money question out loud and the ladder under it says the running order. Neither is a new
+ * mechanism: the slider presses an `action` with its value, the ladder presses one with the
+ * whole list, and both land on pins the router already reads.
+ *
+ * **The list is a shortlist, not the catalog.** Four hundred rows is not a thing anybody
+ * drags into order, and a screen that asks them to is a screen nobody finishes — so the
+ * columns start empty, everything unlisted still answers behind whatever is listed, and the
+ * only way in is the search box. The ordering is one flat list, free first and then paid,
+ * which is exactly the shape the router reads: the group is a property of the model, so a
+ * paid row dragged to the top of its own column is still behind every free one unless the
+ * slider says otherwise.
+ */
+function ladder(host: WidgetHost, declared: Rendered): HTMLElement {
+  const box = el('div', 'ladder')
+  const stops = declared.stops ?? []
+  const sides = [
+    { id: 'free', label: 'Free', empty: 'Nothing listed. The free models answer cheapest first.' },
+    { id: 'paid', label: 'Paid', empty: 'Nothing listed. The paid models answer cheapest first when it gets to them.' },
+  ]
+
+  let spend = typeof declared.value === 'string' ? declared.value : (stops[0]?.value ?? '')
+  let rows: Row[] = []
+  /** The user's own running order, by id — free ids first, then paid, which is what core stores. */
+  let order: string[] = []
+
+  const said = el('p', 'ladder-said')
+  said.hidden = true
+  const say = (text: string, ok: boolean): void => {
+    said.textContent = text
+    said.className = ok ? 'ladder-said' : 'ladder-said error'
+    said.hidden = text === ''
+  }
+
+  const press = async (key: string | undefined, value: string): Promise<void> => {
+    if (key === undefined) return
+    const answer = await host.send('/api/action', { plugin: host.plugin, key, row: value })
+    say(String(answer.said ?? ''), answer.ok === true)
+  }
+
+  const columns = new Map<string, HTMLElement>()
+  const lists = new Map<string, HTMLElement>()
+  const grid = el('div', 'ladder-cols')
+
+  for (const side of sides) {
+    const column = el('section', 'ladder-col')
+    column.dataset.side = side.id
+    const head = el('header', 'ladder-head')
+    head.append(el('span', 'ladder-name', side.label), el('span', 'ladder-count'))
+    const list = el('ol', 'ladder-list')
+    list.setAttribute('aria-label', `${side.label} models, in the order they are tried`)
+    const empty = el('p', 'ladder-empty', side.empty)
+    column.append(head, list, empty)
+    columns.set(side.id, column)
+    lists.set(side.id, list)
+    grid.append(column)
+  }
+
+  // ---- the slider --------------------------------------------------------------------------
+
+  /**
+   * Named stops on one track, with the pill sliding between them.
+   *
+   * Radios rather than a `range` input, because the three positions are three different
+   * decisions and not three amounts — and because a radio group is the one control that
+   * arrives with arrow keys, a screen reader and a label per stop already attached.
+   */
+  const track = el('div', 'grade')
+  track.setAttribute('role', 'radiogroup')
+  track.setAttribute('aria-label', declared.label)
+  track.style.setProperty('--stops', String(stops.length))
+  const thumb = el('span', 'grade-thumb')
+  thumb.setAttribute('aria-hidden', 'true')
+  track.append(thumb)
+
+  const explains = el('p', 'grade-hint')
+  const name = `${host.screen}-${host.plugin}-${declared.key}`
+
+  const slide = (): void => {
+    const at = Math.max(0, stops.findIndex((stop) => stop.value === spend))
+    // One custom property, and the transition is on the pill's transform. Nothing else about
+    // the control changes, so nothing reflows while it moves.
+    track.style.setProperty('--at', String(at))
+    explains.textContent = stops[at]?.hint ?? ''
+    // The side that is out of play is dimmed rather than removed: what you ordered is still
+    // what you ordered, and a column that vanished would read as the list being thrown away.
+    for (const [side, column] of columns) column.dataset.off = String(spend !== 'mixed' && spend !== side)
+  }
+
+  for (const stop of stops) {
+    const choice = el('label', 'grade-stop')
+    const input = el('input')
+    input.type = 'radio'
+    input.name = name
+    input.value = stop.value
+    input.checked = stop.value === spend
+    input.addEventListener('change', () => {
+      spend = stop.value
+      slide()
+      void press(declared.chose, stop.value)
+    })
+    choice.append(input, el('span', undefined, stop.label))
+    track.append(choice)
+  }
+
+  // ---- dragging ----------------------------------------------------------------------------
+
+  /** The chip being dragged, so a list knows whether the thing over it is one of its own. */
+  let held: HTMLElement | undefined
+
+  /** The first chip whose middle is below the pointer — the one the held chip goes in front of. */
+  const before = (list: HTMLElement, y: number): HTMLElement | undefined =>
+    [...list.querySelectorAll<HTMLElement>('.chip:not(.held)')].find((chip) => {
+      const at = chip.getBoundingClientRect()
+      return y < at.top + at.height / 2
+    })
+
+  for (const [side, list] of lists) {
+    list.addEventListener('dragover', (event) => {
+      // A chip belongs to the side its price puts it on, so a list only ever takes its own.
+      // Dropping across would be the screen offering to make a paid model free.
+      if (!held || held.dataset.side !== side) return
+      event.preventDefault()
+      const next = before(list, event.clientY)
+      if (next) list.insertBefore(held, next)
+      else list.append(held)
+    })
+  }
+
+  /** What the columns say now, read back out of the DOM after a drag has moved things. */
+  const readBack = (): string[] =>
+    sides.flatMap((side) =>
+      [...(lists.get(side.id)?.querySelectorAll<HTMLElement>('.chip') ?? [])].map((chip) => chip.dataset.id ?? ''),
+    )
+
+  /** One reorder, sent once. Four swaps would be four chances to land somewhere nobody asked for. */
+  const moved = (): void => {
+    order = readBack().filter((id) => id !== '')
+    paint()
+    void press(declared.ordered, order.join(','))
+  }
+
+  // ---- one chip ----------------------------------------------------------------------------
+
+  const chip = (row: Row, at: number): HTMLElement => {
+    const item = el('li', 'chip')
+    item.dataset.id = row.id
+    item.dataset.side = String(row.side)
+    item.draggable = true
+    item.tabIndex = 0
+    // The grip leads, because that is where a drag handle is on every list anybody has
+    // dragged before. Beside the × it read as a second button rather than an affordance.
+    item.append(el('span', 'chip-grip', '⠿'), el('span', 'chip-rank', String(at + 1)))
+    const what = el('span', 'chip-what')
+    what.append(
+      el('span', 'chip-name', String(row.name)),
+      el('span', 'chip-meta', `${String(row.provider)} · ${String(row.price)}`),
+    )
+    item.append(what)
+
+    const drop = el('button', 'chip-drop', '×')
+    drop.type = 'button'
+    drop.title = `Take ${String(row.name)} off the list`
+    drop.setAttribute('aria-label', `Take ${String(row.name)} off the list`)
+    drop.addEventListener('click', () => {
+      order = order.filter((id) => id !== row.id)
+      paint()
+      void press(declared.ordered, order.join(','))
+    })
+    item.append(drop)
+
+    item.addEventListener('dragstart', (event) => {
+      held = item
+      item.classList.add('held')
+      // Firefox and WebKit refuse to start a drag at all unless something is on the
+      // transfer. Nothing reads it — the held chip is the state — but without it this
+      // control simply does not move on two of the three engines the shell runs in.
+      event.dataTransfer?.setData('text/plain', row.id)
+    })
+    item.addEventListener('dragend', () => {
+      item.classList.remove('held')
+      held = undefined
+      moved()
+    })
+
+    /**
+     * The same reorder without a mouse.
+     *
+     * Not optional and not a nicety: drag-and-drop is the fast way and the arrow keys are the
+     * only way for some people. The focus follows the row, because a keyboard reorder that
+     * drops focus is a keyboard reorder you can do exactly once.
+     */
+    item.addEventListener('keydown', (event) => {
+      const step = event.key === 'ArrowUp' ? -1 : event.key === 'ArrowDown' ? 1 : 0
+      if (step === 0) return
+      const list = item.parentElement
+      const siblings = [...(list?.querySelectorAll<HTMLElement>('.chip') ?? [])]
+      const now = siblings.indexOf(item)
+      const next = now + step
+      if (list === null || next < 0 || next >= siblings.length) return
+      event.preventDefault()
+      if (step === -1) list.insertBefore(item, siblings[next] ?? null)
+      else list.insertBefore(item, siblings[next]?.nextElementSibling ?? null)
+      moved()
+      lists.get(String(row.side))?.querySelector<HTMLElement>(`[data-id="${CSS.escape(row.id)}"]`)?.focus()
+    })
+    return item
+  }
+
+  // ---- adding one ---------------------------------------------------------------------------
+
+  const search = el('input', 'ladder-search')
+  search.type = 'search'
+  search.placeholder = 'Search what you can reach, and add it to the order'
+  search.setAttribute('aria-label', 'Add a model to the order')
+  const hits = el('div', 'ladder-hits')
+  hits.hidden = true
+
+  /** Up to this many results. A search box that answers with three hundred rows is the list. */
+  const HITS = 6
+
+  const suggest = (): void => {
+    const needle = search.value.trim().toLowerCase()
+    if (needle === '') {
+      hits.replaceChildren()
+      hits.hidden = true
+      return
+    }
+    const found = rows
+      .filter((row) => !order.includes(row.id))
+      .filter((row) => `${String(row.name)} ${String(row.provider)}`.toLowerCase().includes(needle))
+      .slice(0, HITS)
+    hits.replaceChildren(
+      ...found.map((row) => {
+        const option = el('button', 'ladder-hit')
+        option.type = 'button'
+        option.append(
+          el('span', 'chip-name', String(row.name)),
+          // Which column it lands in, said as the thing that is about to happen. The side
+          // printed beside the price read as "free · free" on every free model — the same
+          // word twice, meaning two different things.
+          el(
+            'span',
+            'chip-meta',
+            `${String(row.provider)} · ${String(row.price)} · goes to ${row.side === 'paid' ? 'Paid' : 'Free'}`,
+          ),
+        )
+        option.addEventListener('click', () => {
+          // Appended to the end of its own side, which is the only place it can go: an entry
+          // that put itself at the front would be the screen choosing for you again.
+          order = [...order, row.id]
+          search.value = ''
+          suggest()
+          paint()
+          void press(declared.ordered, order.join(','))
+        })
+        return option
+      }),
+    )
+    if (found.length === 0) {
+      hits.append(el('p', 'ladder-empty', 'Nothing matches, or everything that does is already listed.'))
+    }
+    hits.hidden = false
+  }
+  search.addEventListener('input', suggest)
+
+  const clear = el('button', 'more', 'Clear the order')
+  clear.type = 'button'
+  clear.hidden = true
+  clear.addEventListener('click', () => {
+    order = []
+    paint()
+    void press(declared.ordered, '')
+  })
+
+  // ---- drawing it ---------------------------------------------------------------------------
+
+  function paint(): void {
+    const known = new Map(rows.map((row) => [row.id, row]))
+    // Whatever core kept, minus anything that has left the catalog since. This screen shows
+    // what will actually happen, and a row naming a model no provider offers will not.
+    order = order.filter((id) => known.has(id))
+    for (const side of sides) {
+      const mine = order
+        .map((id) => known.get(id))
+        .filter((row): row is Row => row !== undefined && String(row.side) === side.id)
+      const list = lists.get(side.id)
+      const column = columns.get(side.id)
+      list?.replaceChildren(...mine.map((row, at) => chip(row, at)))
+      const count = column?.querySelector('.ladder-count')
+      if (count) count.textContent = mine.length === 0 ? '' : String(mine.length)
+      const empty = column?.querySelector<HTMLElement>('.ladder-empty')
+      if (empty) empty.hidden = mine.length > 0
+    }
+    clear.hidden = order.length === 0
+  }
+
+  const load = async (): Promise<void> => {
+    const answer = await host.send('/api/rows', { plugin: host.plugin, key: declared.rows ?? '' })
+    rows = (answer.rows ?? []) as Row[]
+    // The order core is holding, read off the ranks it already puts on the rows — one read
+    // rather than a second endpoint saying the same thing in a different shape.
+    order = rows
+      .filter((row) => String(row.rank ?? '') !== '')
+      .sort((a, b) => Number(a.rank) - Number(b.rank))
+      .map((row) => row.id)
+    paint()
+    slide()
+  }
+
+  const adding = el('div', 'ladder-add')
+  adding.append(search, hits)
+  box.append(track, explains, grid, adding, clear, said)
+  slide()
+  void load()
   return box
 }

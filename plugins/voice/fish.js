@@ -117,20 +117,54 @@ export async function clone(key, { name, wav, transcript, signal }) {
 }
 
 /**
- * The voices on this account, which is the list this plugin's panel shows.
+ * One page of the vendor's catalogue, in this plugin's own shape.
  *
- * `self=true` rather than the whole public catalogue: browsing a marketplace of voices is a
- * screen of its own, and this one is *which of my voices speaks*.
+ * The same endpoint answers *my voices* and *everyone's*; what differs is the query, so it
+ * is one function rather than two that would drift.
  */
-export async function mine(key, signal) {
-  const response = await call('/model?self=true&page_size=100', { key, signal })
+async function listing(key, query, signal) {
+  const response = await call(`/model?${query}`, { key, signal })
   const payload = await response.json().catch(() => ({}))
   return (Array.isArray(payload.items) ? payload.items : [])
     // A model still training is listed and cannot speak, so offering one would be offering a
     // voice that fails at the moment somebody uses it.
     .filter((item) => item && (item.state === undefined || item.state === 'trained'))
-    .map((item) => ({ id: String(item._id ?? ''), name: String(item.title ?? '(untitled)') }))
+    .map((item) => ({
+      id: String(item._id ?? ''),
+      name: String(item.title ?? '(untitled)'),
+      tags: (Array.isArray(item.tags) ? item.tags : []).map(String),
+      likes: Number(item.like_count) || 0,
+      by: String(item.author?.nickname ?? ''),
+    }))
     .filter((one) => one.id !== '')
+}
+
+/** The voices on this account — the ones cloning put there. */
+export const mine = (key, signal) => listing(key, 'self=true&page_size=100', signal)
+
+/**
+ * The voices everybody else published (M7-4 left this out, and the predecessor had it).
+ *
+ * **Filtering is not optional in practice.** The catalogue is mostly not English — the
+ * predecessor sampled 300 live models and found 41% — so an unfiltered search answers with
+ * Spanish and Russian voices and reads as a bug rather than as breadth. That is why the
+ * panel defaults the language filter to on rather than to everything.
+ *
+ * **Tag casing matters and is fixed here rather than asked of the caller.** The vendor's
+ * real tags are lowercase and hyphenated (`character-voice`), confirmed by the same sample;
+ * a filter sending `Character Voice` matches nothing, which looks like an empty catalogue
+ * instead of a mistake.
+ */
+export async function search(key, { text, tags = [], languages = [], count = 5, signal } = {}) {
+  const query = new URLSearchParams([
+    ['page_size', String(Math.max(1, Math.min(50, Number(count) || 5)))],
+    ['page_number', '1'],
+    ['sort_by', 'score'],
+    ...(text ? [['title', text]] : []),
+    ...tags.map((tag) => ['tag', String(tag).trim().toLowerCase()]),
+    ...languages.map((one) => ['language', String(one).trim().toLowerCase()]),
+  ])
+  return listing(key, String(query), signal)
 }
 
 export async function remove(key, id, signal) {

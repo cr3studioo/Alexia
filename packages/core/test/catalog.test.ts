@@ -5,8 +5,8 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, expect, test } from 'vitest'
-import { Catalog, news } from '../src/catalog.js'
-import type { Provider } from '../src/provider.js'
+import { Catalog, news, SEEDED } from '../src/catalog.js'
+import { PROVIDERS, type Provider } from '../src/provider.js'
 
 // The catalog is a cache with a diff on it. What is worth testing is the unhappy half:
 // the endpoint changing shape, and the machine being offline.
@@ -61,13 +61,13 @@ test('what the endpoint says, in the shape the router asks questions in', async 
   const change = await catalog.refresh(provider)
 
   expect(change.failed).toBeUndefined()
-  expect(catalog.models.map((m) => [m.id, m.tier])).toEqual([
+  expect(catalog.fetched.map((m) => [m.id, m.tier])).toEqual([
     ['qwen/qwen3-8b:free', 'T1'], //          free is free
     ['anthropic/claude-opus-5', 'T3'], //     $5/Mtok in is frontier
     ['meta/llama-3-8b', 'T2'], //             two cents a million is small paid
   ])
 
-  expect(catalog.models[0]).toMatchObject({
+  expect(catalog.fetched[0]).toMatchObject({
     provider: 'test',
     priceIn: 0,
     context: 32_768,
@@ -77,7 +77,7 @@ test('what the endpoint says, in the shape the router asks questions in', async 
     trainsOnYourData: 'yes', //               from the provider row, never from the price
   })
   // A provider that does not say is not assumed either way.
-  expect(catalog.models[1]?.nsfwOk).toBe('unknown')
+  expect(catalog.fetched[1]?.nsfwOk).toBe('unknown')
   expect(news(change)).toBe('1 new free model is available.')
 })
 
@@ -108,7 +108,7 @@ test('the cache is what makes it work offline, and a fresh one is not re-fetched
   // A new process, the same cache file. Nothing is fetched: the poll is daily.
   payload = { data: [entry(), entry({ id: 'qwen/qwen3-30b:free' })] }
   const restarted = new Catalog(path)
-  expect(restarted.models.map((m) => m.id)).toEqual(['qwen/qwen3-8b:free'])
+  expect(restarted.fetched.map((m) => m.id)).toEqual(['qwen/qwen3-8b:free'])
   expect(await restarted.refresh(provider)).toEqual({ added: [], removed: [] })
   expect(restarted.fetchedAt).toBeGreaterThan(0)
 
@@ -116,7 +116,7 @@ test('the cache is what makes it work offline, and a fresh one is not re-fetched
   const offline = { ...provider, baseUrl: 'http://127.0.0.1:1' }
   const change = await restarted.refresh(offline, 0)
   expect(change.failed).toContain('could not reach')
-  expect(restarted.models.map((m) => m.id)).toEqual(['qwen/qwen3-8b:free'])
+  expect(restarted.fetched.map((m) => m.id)).toEqual(['qwen/qwen3-8b:free'])
 })
 
 test('the day the endpoint changes shape is not the day this breaks', async () => {
@@ -129,16 +129,16 @@ test('the day the endpoint changes shape is not the day this breaks', async () =
   payload = { data: [{ nonsense: true }, entry({ id: 'qwen/qwen3-30b:free', pricing: undefined })] }
   const change = await catalog.refresh(provider, 0)
   expect(change.added.map((m) => m.id)).toEqual(['qwen/qwen3-30b:free'])
-  expect(catalog.models).toHaveLength(1)
+  expect(catalog.fetched).toHaveLength(1)
 
   // Nothing usable at all reads as a shape change, not as a world with no models in it.
   payload = { data: 'surprise' }
   expect((await catalog.refresh(provider, 0)).failed).toContain('nothing usable')
-  expect(catalog.models).toHaveLength(1)
+  expect(catalog.fetched).toHaveLength(1)
 
   status = 500
   expect((await catalog.refresh(provider, 0)).failed).toContain('could not reach')
-  expect(catalog.models).toHaveLength(1)
+  expect(catalog.fetched).toHaveLength(1)
   status = 200
 })
 
@@ -156,7 +156,7 @@ test('a price of minus one is not a price, and does not get to undercut the free
   }
   const catalog = new Catalog(path)
   expect((await catalog.refresh(provider)).added.map((m) => m.id)).toEqual(['qwen/qwen3-30b:free'])
-  expect(catalog.models.every((m) => m.priceIn >= 0 && m.priceOut >= 0)).toBe(true)
+  expect(catalog.fetched.every((m) => m.priceIn >= 0 && m.priceOut >= 0)).toBe(true)
 })
 
 test('each provider has its own clock, so the second list asked for in a day is fetched', async () => {
@@ -172,7 +172,7 @@ test('each provider has its own clock, so the second list asked for in a day is 
   // was polled; a screen offering a choice between them is nothing but noticing.
   payload = { data: [entry({ id: 'other/model' })] }
   expect((await catalog.refresh(other)).added.map((m) => m.id)).toEqual(['other/model'])
-  expect(catalog.models).toHaveLength(2)
+  expect(catalog.fetched).toHaveLength(2)
 
   // And each still declines its own second fetch inside the day.
   expect((await catalog.refresh(provider)).added).toHaveLength(0)
@@ -206,7 +206,7 @@ test('a provider that publishes nothing but ids is still a list of models', asyn
   payload = { data: [{ id: 'llama-3.3-70b', object: 'model', owned_by: 'Meta', context_window: 131_072 }] }
   await catalog.refresh(provider, 0)
 
-  const [model] = catalog.models
+  const [model] = catalog.fetched
   expect(model?.id).toBe('llama-3.3-70b')
   expect(model?.context).toBe(131_072)
   // Free, because nobody published a price and every one of these is a free tier. Not a
@@ -236,7 +236,7 @@ test('a list that needs a key is fetched with one', async () => {
   const catalog = new Catalog(path)
   // Without one it is a failed fetch, not a provider with no models.
   expect((await catalog.refresh(needy, 0)).failed).toContain('could not reach')
-  expect(catalog.models).toHaveLength(0)
+  expect(catalog.fetched).toHaveLength(0)
 
   expect((await catalog.refresh(needy, 0, 'sk-users-own')).added.map((m) => m.id)).toEqual(['needs-a-key'])
   expect(seen).toBe('Bearer sk-users-own')
@@ -270,13 +270,13 @@ test('how much the world uses a model, joined to the list by the name both feeds
   payload = { data: [entry({ id: 'qwen/qwen3-8b:free', canonical_slug: 'qwen/qwen3-8b-20260101' })] }
   const catalog = new Catalog(path)
   await catalog.refresh(watched, 0)
-  expect(catalog.models[0]?.weekly).toBe(1000)
+  expect(catalog.fetched[0]?.weekly).toBe(1000)
 
   // A provider that publishes nothing leaves it absent rather than zero — zero sorts as
   // unused and reads as bad, and neither is what silence means.
   payload = { data: [entry({ id: 'plain/model', canonical_slug: 'plain/model-1' })] }
   await catalog.refresh({ ...provider, id: 'quiet' }, 0)
-  expect(catalog.models.find((m) => m.provider === 'quiet')?.weekly).toBeUndefined()
+  expect(catalog.fetched.find((m) => m.provider === 'quiet')?.weekly).toBeUndefined()
 
   feed.close()
 })
@@ -289,8 +289,8 @@ test('a usage feed that is gone takes nothing with it', async () => {
   // being offline. It reads an API nobody promised us, so the list has to survive it.
   const change = await catalog.refresh({ ...provider, usage: 'http://127.0.0.1:1/' }, 0)
   expect(change.failed).toBeUndefined()
-  expect(catalog.models).toHaveLength(1)
-  expect(catalog.models[0]?.weekly).toBeUndefined()
+  expect(catalog.fetched).toHaveLength(1)
+  expect(catalog.fetched[0]?.weekly).toBeUndefined()
 })
 
 test('a cache written by an older parser is stale however fresh its timestamp is', async () => {
@@ -308,8 +308,42 @@ test('a cache written by an older parser is stale however fresh its timestamp is
 
   const upgraded = new Catalog(path)
   // The rows survive, so the screen is not empty while the new list is on its way.
-  expect(upgraded.models).toHaveLength(1)
+  expect(upgraded.fetched).toHaveLength(1)
   expect(upgraded.fetchedFrom(provider.id)).toBe(0)
   payload = { data: [entry({ id: 'qwen/qwen3-30b:free' })] }
   expect((await upgraded.refresh(provider)).added.map((m) => m.id)).toEqual(['qwen/qwen3-30b:free'])
+})
+
+test('the written-down models are the ones somebody checked, and none of the dead ones', () => {
+  const ids = SEEDED.map((m) => m.id)
+
+  // Four catalogued Cloudflare ids return 400, 403 or 410. A dead row in a seed list is a
+  // rung that fails at the moment somebody needs it rather than when somebody could notice.
+  for (const dead of [
+    'llama-3.3-70b-instruct',
+    'llama-3.1-8b-instruct',
+    'gemma-3-12b-it',
+    'qwen2.5-coder-15b-instruct',
+  ]) {
+    expect(ids, dead).not.toContain(dead)
+    expect(ids.some((id) => id.endsWith(dead)), dead).toBe(false)
+  }
+
+  // Nara pins exactly three: on a zero-balance account those were the only ids that answered,
+  // and the rest of its published list is credit- or plan-gated.
+  expect(SEEDED.filter((m) => m.provider === 'nara')).toHaveLength(3)
+
+  // The keyless floor keeps its hands. Nobody but one provider publishes a tool-support flag,
+  // so a discovered row reads `false` — and without these two the agent loop has nothing left
+  // that can *do* anything once the keyed tiers are gone.
+  const hands = SEEDED.filter((m) => m.provider === 'ovhcloud' && m.supportsTools)
+  expect(hands.map((m) => m.id)).toEqual(['gpt-oss-120b', 'Meta-Llama-3_3-70B-Instruct'])
+
+  // Every written-down row is free and belongs to a provider that exists.
+  const known = new Set(PROVIDERS.map((p) => p.id))
+  for (const model of SEEDED) {
+    expect(known.has(model.provider), model.id).toBe(true)
+    expect([model.priceIn, model.priceOut], model.id).toEqual([0, 0])
+    expect(model.tier, model.id).toBe('T1')
+  }
 })

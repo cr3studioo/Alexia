@@ -103,11 +103,23 @@ test('a request target that is not a path is refused, not answered and not a 500
 })
 
 test('a turn is kept even when the answer is a refusal', async () => {
+  /**
+   * **The refusal had to move.** This used to be *nothing is connected*, which stopped being
+   * a state anybody can reach: the keyless floor is connected from the first second, which is
+   * the entire point of it. So the refusal tested here is the one that is still real with no
+   * network at all — Local mode on a machine with no Ollama — and what is being tested is
+   * unchanged: that the question survives an answer that never came.
+   */
+  await get('/api/setup', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ mode: 'local' }),
+  })
+
   const events = await stream('sort my downloads')
 
-  // Nothing is connected and there is no local model, so the router says so — and says it
-  // in words with an action in them, which is what reaches the screen unaltered.
-  expect(events.at(-1)?.error).toContain('add a key in settings')
+  // Said in words with an action in them, which is what reaches the screen unaltered.
+  expect(events.at(-1)?.error).toContain('install one, or type /cloud')
 
   // The question is in the history regardless. Losing what somebody typed because nothing
   // could answer it would be its own small betrayal.
@@ -133,9 +145,27 @@ test('first run asks three things and then never asks again', async () => {
 
   const before = await read()
   expect(before.setup).toEqual({ done: false, name: 'Alexia', mode: 'combined' })
-  // What the mode picker is honest about: nobody has read these terms yet.
-  expect(before.providers.every((p) => p.trainsOnYourData === 'unknown' && p.terms)).toBe(true)
-  expect(before.providers.some((p) => p.connected)).toBe(false)
+  /**
+   * What the mode picker is honest about. Two things changed here and both are the point.
+   *
+   * Nobody has read most of these terms, and the flag still says so. **One row says `yes`**,
+   * because somebody did read them and the answer was bad — a free tier that logs prompts for
+   * training. A guess would have been worse than either.
+   *
+   * And **something is connected before anybody has pasted anything**, which used to be
+   * impossible. That is the keyless floor: it is why a first evening reaches a conversation
+   * rather than a key wall.
+   */
+  const trains = Object.fromEntries(before.providers.map((p) => [p.id, p.trainsOnYourData]))
+  expect(trains['kilo-gateway']).toBe('yes')
+  expect(Object.values(trains).filter((one) => one !== 'unknown')).toEqual(['yes'])
+  expect(before.providers.filter((p) => p.connected).map((p) => p.id)).toEqual([
+    'ovhcloud',
+    'aihorde',
+    'uncloseai',
+    'kilo-gateway',
+    'llm7',
+  ])
 
   await call('/api/setup', {
     method: 'POST',
@@ -149,7 +179,16 @@ test('first run asks three things and then never asks again', async () => {
   expect(await secrets.get(CORE, keyOf(PROVIDERS[0]!))).toBe('sk-users-own')
   // And the screen can say so without being able to read it back — which is what stops the
   // settings box looking identical whether or not somebody has already pasted a key.
-  expect(after.providers.filter((p) => p.connected).map((p) => p.id)).toEqual(['openrouter'])
+  // The key they pasted joins the floor that was already there, rather than being the first
+  // thing on an empty list.
+  expect(after.providers.filter((p) => p.connected).map((p) => p.id)).toEqual([
+    'openrouter',
+    'ovhcloud',
+    'aihorde',
+    'uncloseai',
+    'kilo-gateway',
+    'llm7',
+  ])
 
   // The settings screen writes the same route with one field at a time: a rename does not
   // un-choose the mode, and a second key replaces the first rather than adding to it.
@@ -197,4 +236,30 @@ test('a reopened Alexia is the same conversation', async () => {
   // A new token every start, so yesterday's page cannot talk to today's Alexia.
   expect(again.token).not.toBe(alexia.token)
   await again.close()
+})
+
+test('the daily allowance is settable, and the number it produces reaches the screen', async () => {
+  // A new install spends nothing on its own, and says so in the figure the shell paints.
+  const before = (await (await get('/api/state')).json()) as { today: { spent: number; allowance: number } }
+  expect(before.today).toEqual({ spent: 0, allowance: 0 })
+
+  const set = await get('/api/ceilings', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ daily: 1 }),
+  })
+  expect(set.status).toBe(200)
+  expect((await set.json()) as { allowance: number }).toMatchObject({ spent: 0, allowance: 1 })
+
+  // And it stuck, which is the half that makes it a setting rather than a message.
+  const after = (await (await get('/api/state')).json()) as { today: { allowance: number } }
+  expect(after.today.allowance).toBe(1)
+
+  // Zero is a real value here and the default one, so it has to be settable back.
+  await get('/api/ceilings', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ daily: 0 }),
+  })
+  expect(((await (await get('/api/state')).json()) as { today: { allowance: number } }).today.allowance).toBe(0)
 })

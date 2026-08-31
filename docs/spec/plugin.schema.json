@@ -512,6 +512,43 @@
               "rows",
               "columns"
             ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "graph"
+              },
+              "key": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_]*$"
+              },
+              "label": {
+                "type": "string",
+                "minLength": 1
+              },
+              "hint": {
+                "type": "string"
+              },
+              "rows": {
+                "type": "string",
+                "minLength": 1
+              },
+              "detail": {
+                "type": "string",
+                "minLength": 1
+              },
+              "filter": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "type",
+              "key",
+              "label",
+              "rows"
+            ]
           }
         ]
       }
@@ -1014,6 +1051,43 @@
                   "label",
                   "rows",
                   "columns"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "const": "graph"
+                  },
+                  "key": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_]*$"
+                  },
+                  "label": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "hint": {
+                    "type": "string"
+                  },
+                  "rows": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "detail": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "filter": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "type",
+                  "key",
+                  "label",
+                  "rows"
                 ]
               }
             ]

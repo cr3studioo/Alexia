@@ -9,7 +9,7 @@ import { join } from 'node:path'
 import { run, said } from './agent.js'
 import { Catalog } from './catalog.js'
 import { asRuling, counted, freshTally, ModelChecker, type Tally } from './checker.js'
-import { commands, pins, run as runCommand } from './commands.js'
+import { commands, pins, type Ran, run as runCommand } from './commands.js'
 import { preauthorise, record } from './consent.js'
 import { refuse, type Body } from './guard.js'
 import { Library } from './library.js'
@@ -32,9 +32,9 @@ import {
   type Ruling,
   type Scope,
 } from './permissions.js'
-import { keyOf, PROVIDERS, type Provider } from './provider.js'
+import { anonymous, keyOf, PROVIDERS, type Provider } from './provider.js'
 import { redactSecrets } from './redact.js'
-import { MODES, route, send, shapeOf } from './router.js'
+import { MODES, route, send, shapeOf, type Bubble } from './router.js'
 import { CORE, keychain, type SecretStore } from './secrets.js'
 import { addServer, markReviewed, unreviewed } from './servers.js'
 import { declaredAction, declaredTable } from './settings.js'
@@ -44,7 +44,7 @@ import { Skills, SKILL_TOOL } from './skills.js'
 import { dataDir, Store, type Message } from './store.js'
 import { PluginTooling } from './tooling.js'
 import { Trace } from './trace.js'
-import { allowance, warning } from './usage.js'
+import { allowance, caps, setCaps, today, warning } from './usage.js'
 
 /**
  * The chat shell's other half: a loopback bridge between a webview and core.
@@ -95,6 +95,18 @@ export interface ServeOptions {
   pluginsDir?: string
   /** Zero — the default — takes whatever port is free, which is what a local app should do. */
   port?: number
+  /**
+   * The provider table this server may reach, defaulting to all of it.
+   *
+   * A seam rather than a setting. Since the keyless floor landed, *no provider is connected*
+   * is no longer a state a running Alexia can be in — four of these rows answer with an empty
+   * keychain — and a test that wanted a world containing only its own stub had no way to say
+   * so. It would silently route to a real provider over the real network, pass, and be
+   * measuring somebody else's server.
+   *
+   * The one test that is *supposed* to reach the real floor says so by not passing this.
+   */
+  providers?: Provider[]
   secrets?: SecretStore
 }
 
@@ -151,6 +163,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
   const root = options.dataDir ?? dataDir()
   const ui = options.uiDir ?? shell()
   const secrets = options.secrets ?? keychain
+  const providers = options.providers ?? PROVIDERS
   const store = new Store(join(root, 'alexia.db'))
   const catalog = new Catalog(join(root, 'cache', 'models.json'))
   const token = randomUUID()
@@ -168,7 +181,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
   }
   /** Every provider, if its own list has aged out. Startup calls it; so does the Models tab. */
   const pollAll = (): void => {
-    for (const provider of PROVIDERS) void poll(provider)
+    for (const provider of providers) void poll(provider)
   }
   pollAll()
 
@@ -260,6 +273,19 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
        * existed — so nothing a plugin can see goes wrong, and the contract's number does not
        * move for it.
        */
+      /**
+       * A slash command, wherever it was typed. Before the flag and before the loop: a
+       * command is not a question for a model, and `/new` in particular has to work while a
+       * task is running rather than queue behind one.
+       *
+       * **One short line, and a command-shaped word.** Not every plugin on this path is
+       * carrying something a person typed — some send text wrapped in a prompt of their own
+       * — and a wrapped prompt that happened to begin with a slash being answered *there is
+       * no /home* instead of being read would be a bug nobody would find for weeks.
+       */
+      const typed = [...asked].reverse().find((turn) => turn.role === 'user')?.content.trim() ?? ''
+      if (!typed.includes('\n') && /^\/[a-z][a-z0-9.-]*(?:\s|$)/i.test(typed)) return asCommand(pluginId, typed)
+
       if (params._meta?.[TOOLS_META] === true) return asTask(pluginId, asked)
 
       const verdict = route({ messages: asked, shape: shapeOf({ messages: asked }) }, pins(store), await world())
@@ -341,7 +367,10 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
   const world = async () => ({
     models: catalog.models,
     local: (await running()) ? await installed() : [],
-    rungs: await usable(store, secrets),
+    rungs: await usable(store, secrets, providers),
+    // Asked fresh with the rest of it, and for the same reason: an allowance can run out
+    // mid-sentence exactly the way a free tier can.
+    today: today(store),
   })
 
   /**
@@ -422,8 +451,8 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
    */
   const connected = async (): Promise<ReadonlySet<string>> => {
     const found = await Promise.all(
-      PROVIDERS.map(async (p) =>
-        p.keyless === true || (await secrets.get(CORE, keyOf(p)).catch(() => undefined)) !== undefined ?
+      providers.map(async (p) =>
+        anonymous(p) || (await secrets.get(CORE, keyOf(p)).catch(() => undefined)) !== undefined ?
           [p.id]
         : [],
       ),
@@ -431,11 +460,26 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     return new Set(found.flat())
   }
 
+  /**
+   * Whether money has been agreed to in this conversation (§9.5).
+   *
+   * Once per task is what the loop guarantees; **for the session** is what this adds, by
+   * being the same answer the next task finds. A router that asks about money on every
+   * request is a nag, and a nag is clicked through without being read.
+   *
+   * Cleared when a different conversation is opened, because consent given in one is not
+   * consent given in another.
+   */
+  let spending: boolean | undefined
+
   const surface = {
     skills, tooling, plugins, skillsDir, trace, dataDir: root, store, catalog, connected, world,
     refresh: pollAll,
     session: () => session,
-    openSession: (id: number) => (session = id),
+    openSession: (id: number) => {
+      spending = undefined
+      return (session = id)
+    },
   }
   const ours = coreSources(surface)
   const ourActions = coreActions(surface)
@@ -523,9 +567,105 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
    * one pending question. A plugin asking while somebody is working at the keyboard is told
    * so rather than quietly queued behind them or, worse, run alongside them.
    */
+  /**
+   * The conversation a plugin's messages belong to.
+   *
+   * **Not the one on screen.** A task started from a phone used to be written into whatever
+   * conversation the desktop window happened to be open on, so its replies appeared inside
+   * somebody else's chat with no question in front of them — and the message that started it
+   * appeared nowhere at all, because the user's turn is appended by whoever received it and
+   * nothing had. One session per plugin fixes both: the words land together, in the order
+   * they were said, in a row on the Chats screen named after the plugin that carried them.
+   *
+   * It is looked up rather than held, because a conversation the user deleted must not be
+   * appended to — the row is gone, and the next message starts a new one.
+   */
+  function conversation(pluginId: string): number {
+    const held = store.kvGet(CORE, `chat:${pluginId}`)
+    if (typeof held === 'number' && store.sessions().some((one) => one.id === held)) return held
+    const made = store.createSession(plugins.manifest(pluginId)?.name ?? pluginId)
+    store.kvSet(CORE, `chat:${pluginId}`, made)
+    return made
+  }
+
+  /**
+   * The tool behind a plugin's slash command, once something has ruled that it may run.
+   *
+   * Shared because there are two callers and one meaning: the window's `/api/command`, which
+   * asks the person in front of it, and a plugin's own command below, which asks wherever
+   * `ask.confirm` is answered. The ruling differs; what running it *is* does not.
+   */
+  async function commandTool(plugin: string, tool: string): Promise<string> {
+    const process = plugins.process(plugin)
+    if (!process) throw new Error(`${plugin} is not running`)
+    const result = await process.callTool(tool)
+    const said = (result.content ?? [])
+      .map((block) => (block.type === 'text' ? block.text : `[${block.type}]`))
+      .join('\n')
+      .trim()
+    if (result.isError === true) throw new Error(said || `${plugin} could not do that`)
+    return said || 'Done.'
+  }
+
+  /**
+   * A fresh conversation for a plugin — what `/new` means from a phone.
+   *
+   * The window has a button for this and a plugin has nowhere to put one, which is the whole
+   * reason the command exists. An empty one is not stacked on, for the same reason pressing
+   * *New chat* twice does not make two: the second press means what the first did.
+   */
+  function freshFor(pluginId: string): Promise<Ran> {
+    const open = conversation(pluginId)
+    if (store.history(open).length === 0) {
+      return Promise.resolve({ ok: true, note: 'This is already a new chat — nothing has been said in it.' })
+    }
+    store.kvSet(CORE, `chat:${pluginId}`, store.createSession(plugins.manifest(pluginId)?.name ?? pluginId))
+    return Promise.resolve({ ok: true, note: 'Started a new chat.' })
+  }
+
+  /**
+   * A slash command typed somewhere that is not the window.
+   *
+   * **The same commands, wherever they are typed.** They were reachable from one screen and
+   * nowhere else — so a phone could not change the mode, could not reach a plugin's command,
+   * and, the one that matters, could not start a new conversation. Every message anybody
+   * ever sent from one landed in the same chat carrying every message before it.
+   *
+   * Checked before the tools flag and before `asTask`, so a command is answered *while* a
+   * task is running rather than refused behind it: `/new` is wanted most exactly when
+   * something has gone wrong in the conversation you are in.
+   */
+  async function asCommand(pluginId: string, input: string): Promise<CreateMessageResult> {
+    const ran = await runCommand(input, {
+      store,
+      manifests: manifests(),
+      newChat: () => freshFor(pluginId),
+      call: async (plugin, tool) => {
+        const ruling = await rulingFor(plugin, tool)
+        if (ruling.verdict === 'blocked') throw new Error(ruling.why ?? `${tool} did not run.`)
+        if (ruling.verdict === 'ask') {
+          // The same yes, from the same place a task's questions go — and nothing providing
+          // it is a no, which is what a question nobody can see already meant (M7-5).
+          const asked = await plugins
+            .capability(CORE_CAPABILITIES.ask, { question: ruling.why, options: ['Yes', 'No'] })
+            .catch(() => undefined)
+          const said = (asked?.content ?? []).map((block) => (block.type === 'text' ? block.text : '')).join('')
+          if (said.trim().toLowerCase() !== 'yes') throw new Error('Not approved, so nothing ran.')
+        }
+        return commandTool(plugin, tool)
+      },
+    })
+    return { role: 'assistant', model: '', content: { type: 'text', text: ran.note }, stopReason: 'endTurn' }
+  }
+
   async function asTask(pluginId: string, messages: Message[]): Promise<CreateMessageResult> {
     if (task) throw new Error('Alexia is already working on something. Try again when it has finished.')
     const text = [...messages].reverse().find((m) => m.role === 'user')?.content ?? ''
+    // The same two lines `/api/chat` does before it runs anything: the turn that started
+    // this is written down before the answer to it is, or the transcript reads as Alexia
+    // talking to itself.
+    const its = conversation(pluginId)
+    if (text !== '') store.append(its, { role: 'user', content: text })
     const runId = randomUUID()
     const stop = new AbortController()
     task = stop
@@ -540,7 +680,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
         world,
         store,
         secrets,
-        session,
+        session: its,
         run: runId,
         ...(chosen !== undefined && { personality: chosen }),
         // The spend lands on the plugin that asked, exactly as a plain `sampling` call's
@@ -671,6 +811,9 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
           spent: month.spent,
           cap: month.cap,
           warning: warning(month),
+          // Today's side of the same question, and the one that decides whether the router
+          // may reach across the price line on its own at all.
+          today: today(store),
           // The permission controls, and what is standing. Every one of these is a control
           // in the shell, not only a command — same rule as M1-12.
           ceilings: limitsNow(),
@@ -684,12 +827,30 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
           // What the mode picker has to be honest about: nobody has read these terms yet,
           // and a flag that guesses would be worse than the awkward truth (D51).
           providers: await Promise.all(
-            PROVIDERS.map(async (p) => ({
+            providers.map(async (p) => ({
               id: p.id,
               name: p.name,
               terms: p.terms,
               trainsOnYourData: p.trainsOnYourData ?? 'unknown',
               free: p.rpd !== undefined || p.rpm !== undefined,
+              /**
+               * **What the key wall puts on a tile face** (§12.2): the published limits, the
+               * date somebody last checked them, and the two things that cost a person a
+               * minute before a key exists at all.
+               *
+               * Sent as the row has them rather than as a sentence, because the screen is
+               * where a number turns into words — and because a row with no limits published
+               * has to read as *not published* rather than as zero.
+               */
+              ...(p.rpm !== undefined && { rpm: p.rpm }),
+              ...(p.rpd !== undefined && { rpd: p.rpd }),
+              ...(p.callsPerMonth !== undefined && { callsPerMonth: p.callsPerMonth }),
+              ...(p.verified !== undefined && { verified: p.verified }),
+              ...(p.friction !== undefined && { friction: p.friction }),
+              /** Answers without a key at all, which is the tier the Skip button lands on. */
+              keyless: (p.auth ?? 'required') !== 'required',
+              /** Its account id goes in the URL, so the key it wants is `account_id:token`. */
+              account: p.baseUrl.includes('{account}'),
               // Whether there is a key for it, never the key. The settings screen is where a
               // key gets replaced, and a box that looks identical either way is a box nobody
               // can tell they already filled in.
@@ -710,7 +871,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
       if (chosen.name) store.kvSet(CORE, 'display_name', chosen.name)
       if (chosen.mode && chosen.mode in MODES) store.kvSet(CORE, 'mode', chosen.mode)
       if (chosen.provider?.key) {
-        const provider = PROVIDERS.find((p) => p.id === chosen.provider?.id)
+        const provider = providers.find((p) => p.id === chosen.provider?.id)
         /**
          * A key is a token, and a token has no spaces in it. Anything else is a sentence
          * that landed in the box by accident — and the one that lands there most is the
@@ -768,9 +929,20 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     if (url.pathname === '/api/command' && request.method === 'POST') {
       const { input, approved } = sent as { input?: string; approved?: boolean }
       let asked: Ruling | undefined
+      /** Whether the conversation on screen is no longer the one this window is showing. */
+      let moved = false
       const ran = await runCommand(input ?? '', {
         store,
         manifests: manifests(),
+        // The conversation on screen, which is the one whoever typed this is looking at —
+        // and the same action the Chats screen's button runs, rather than a second copy of
+        // *what a new conversation is* waiting to disagree with the first.
+        newChat: async () => {
+          const before = session
+          const said = await ourActions.new_chat!('')
+          moved = session !== before
+          return { ok: said.ok, note: said.said }
+        },
         // A command is bound to the plugin tool of the same name — the whole binding, and
         // why a manifest declares a command with a name and a sentence and nothing else.
         call: async (plugin, tool) => {
@@ -779,15 +951,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
             asked = ruling
             throw new Error(ruling.why ?? `${tool} did not run.`)
           }
-          const process = plugins.process(plugin)
-          if (!process) throw new Error(`${plugin} is not running`)
-          const result = await process.callTool(tool)
-          const said = (result.content ?? [])
-            .map((block) => (block.type === 'text' ? block.text : `[${block.type}]`))
-            .join('\n')
-            .trim()
-          if (result.isError === true) throw new Error(said || `${plugin} could not do that`)
-          return said || 'Done.'
+          return commandTool(plugin, tool)
         },
       })
       response.writeHead(200, { 'content-type': 'application/json' })
@@ -797,6 +961,10 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
           // A question, not a refusal — the shell puts it to the person and sends the same
           // command back with their answer. A `blocked` ruling never gets one.
           ...(asked?.verdict === 'ask' && { ask: asked.why }),
+          // `/new` moved the conversation out from under the window, so what is on screen
+          // is last conversation's log. The shell repaints rather than waiting for the next
+          // thing that happens to redraw it.
+          ...(moved ? { moved: true } : {}),
           setup: setup(),
           pins: { ...pins(store), placement: undefined },
         }),
@@ -826,7 +994,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     }
 
     if (url.pathname === '/api/ceilings' && request.method === 'POST') {
-      const asked = sent as Partial<Ceilings>
+      const asked = sent as Partial<Ceilings> & { daily?: number }
       // Both ceilings editable, and the preview threshold with them — a leash you cannot
       // shorten is not a leash, it is a decision somebody else made for you.
       setCeilings(store, {
@@ -834,8 +1002,17 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
         ...(typeof asked.monthly === 'number' && { monthly: asked.monthly }),
         ...(typeof asked.askAbove === 'number' && asked.askAbove >= 0 && { askAbove: asked.askAbove }),
       })
+      /**
+       * The daily allowance, edited on the same screen as the other two and stored with the
+       * spend ledger rather than with the leash — because it is not a limit on something
+       * already happening, it is the permission for it to happen at all. Zero is a real
+       * value here and the default one, so it is written whenever it is sent.
+       */
+      if (typeof asked.daily === 'number' && asked.daily >= 0) {
+        setCaps(store, { ...caps(store), daily: asked.daily })
+      }
       response.writeHead(200, { 'content-type': 'application/json' })
-      response.end(JSON.stringify(limitsNow()))
+      response.end(JSON.stringify({ ...limitsNow(), ...today(store) }))
       return
     }
 
@@ -1365,6 +1542,9 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     const user: Message = { role: 'user', content: text }
     store.append(session, user)
 
+    /** Which rung of §8.2's ladder actually answered, for the badge at the end (§8.4). */
+    let reached: Bubble | undefined
+
     // A boundary the user just spoke, or one they just lifted. Said out loud either way:
     // a rule that changed silently is a rule they will be surprised by later.
     const standing = scope().boundaries ?? []
@@ -1426,10 +1606,30 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
             pending = resolve
             say({ ask: ruling.why })
           }),
+        // The money question travels the same channel as a permission question, because it
+        // is the same shape: one question, held open, settled by the person at the screen.
+        money: {
+          get allowed(): boolean | undefined {
+            return spending
+          },
+          set allowed(answer: boolean | undefined) {
+            spending = answer
+          },
+          ask: (question) =>
+            new Promise<boolean>((resolve) => {
+              pending = resolve
+              say({ ask: question })
+            }),
+        },
         on: {
           delta: (delta) => say({ delta }),
           note: (note) => say({ note }),
-          turn: (models) => trace.turn(models),
+          turn: (models) => {
+            trace.turn(models)
+            // §8.4's badge. Held rather than sent per turn: the screen names one state at a
+            // time, and the one worth naming is the one the answer actually came from.
+            reached = models.bubble
+          },
           step: (step) => {
             trace.step(step)
             say({ step: { n: step.n, name: step.name, args: step.args } })
@@ -1505,6 +1705,10 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
       say({
         done: {
           model: last?.model ?? '',
+          // What state that leaves them in (§8.4) — what the assistant can *do*, never what it
+          // cost. The money has its own badge, and putting a price in this one is the thing
+          // that section says not to do.
+          ...(reached !== undefined && { bubble: reached }),
           spent: after.spent,
           warning: warning(after),
           steps: result.steps.length,
