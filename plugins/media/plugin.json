@@ -3,7 +3,7 @@
   "manifest_version": 1,
   "id": "media",
   "name": "Local image generation",
-  "summary": "Makes images on this machine with ComfyUI, so the picture-making half of Combined mode is real.",
+  "summary": "Makes images on this machine with ComfyUI, starting it if it is not already running, so the picture-making half of Combined mode is real.",
   "version": "0.1.0",
   "license": "AGPL-3.0-only",
   "entry": {
@@ -22,6 +22,10 @@
     {
       "cap": "fs.own_dir",
       "why": "To save the pictures it makes. They are deleted when you delete this plugin."
+    },
+    {
+      "cap": "proc.spawn",
+      "why": "To start ComfyUI for you, if it is installed on this machine and not already running."
     }
   ],
   "provides": [
@@ -34,6 +38,20 @@
       "label": "ComfyUI address",
       "default": "http://127.0.0.1:8188",
       "hint": "Where ComfyUI is listening. Leave it as it is unless you started it on another port."
+    },
+    {
+      "type": "text",
+      "key": "path",
+      "label": "Where ComfyUI is installed",
+      "placeholder": "C:\\Users\\you\\ComfyUI",
+      "hint": "The folder with main.py in it. Leave it empty and Alexia looks in the usual places."
+    },
+    {
+      "type": "toggle",
+      "key": "autostart",
+      "label": "Start ComfyUI when a picture is asked for",
+      "default": true,
+      "hint": "It takes about a minute the first time and stays running afterwards. Off means you start it yourself."
     },
     {
       "type": "choice",

@@ -54,13 +54,24 @@ name that is not here does not install.
 | `audio.output` | the speakers | "play sound" |
 | `screen.capture` | read the screen | "see your screen" |
 | `input.control` | move the pointer and press keys | "control your mouse and keyboard" |
-| `proc.spawn` | run a child process it ships | "run the programs it came with" |
+| `proc.spawn` | run a child process — one it ships, or one on this machine it names in `why` | "run the programs it came with", or "start *…*" |
 | `notify` | a desktop notification | "notify you" |
 
 `net.download` and `net.request` are separate on purpose. Almost every plugin that touches
 the network is fetching one model file, once, from one host — and *"download the speech
 model from huggingface.co"* is a sentence a person can agree to. *"Use the internet"* is
 not. **If a download is what you do, say `net.download` and name the host in `why`.**
+
+**`proc.spawn` is not only what a plugin brought with it.** It was written as *a child
+process it ships*, because every plugin that had one had downloaded it — and the first
+plugin that needed to start a program **already on the machine** did not fit the sentence.
+Widened rather than joined by a twelfth name: *spawn a process I shipped* and *spawn a
+process that is already here* are the same power, told apart only by where the file came
+from, and a permission that splits on that teaches nobody anything. What keeps it honest is
+the `why`, which is the line the user actually reads — *"to start ComfyUI for you, if it is
+installed on this machine and not already running"* is a sentence somebody can agree to, and
+*"run a program"* is not. **Naming the program is the bar**, the same way naming the host is
+the bar for `net.download`.
 
 There is no `fs.read_all`, and there will not be one. Filesystem reach outside the user's
 chosen roots is not a capability a plugin may ask for.
