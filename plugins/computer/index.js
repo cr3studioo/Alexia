@@ -446,9 +446,14 @@ alexia.tool(
     annotations: { destructiveHint: true, openWorldHint: true },
   },
   async ({ name }, ctx) => {
-    if (!win.supported()) return unsupported()
     const plan = (await plans())[String(name ?? '')]
     if (!plan) return refuse(`There is no plan called “${String(name ?? '')}”.`)
+    // A plan is data a person can hand-edit, so it is checked for what it holds before the
+    // platform gate — an unrunnable step is rejected as such on every OS, not hidden behind
+    // "Windows only" on the ones that cannot run it anyway.
+    const wrong = check(plan)
+    if (wrong) return refuse(wrong)
+    if (!win.supported()) return unsupported()
     try {
       await mayTouch()
       /**
