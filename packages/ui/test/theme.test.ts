@@ -108,9 +108,9 @@ test('theme: the two previews are served, packaged, and small', () => {
   for (const file of new Set(plates)) {
     expect(serve, `serve.ts does not serve /${file}, so the card would be an empty frame`).toContain(`'/${file}'`)
     expect(packager, `package.mjs does not copy ${file} into the packaged shell`).toContain(`'${file}'`)
-    // They are the card preview *and* the page background now, so they carry real pixels —
-    // 2400px wide. Still a cap rather than a target: the originals were three megabytes each,
-    // and the way that gets back in is somebody replacing a file rather than editing this line.
+    // They are the card preview *and* the page background now — the artwork at its own
+    // resolution rather than an upscale of a thumbnail. Still a cap rather than a target: the
+    // source PNGs are ~3MB, and the way that gets back in is a file swap, not editing this line.
     const bytes = statSync(join(ui, file)).size
     expect(bytes, `${file} is ${Math.round(bytes / 1024)}KB`).toBeLessThan(512 * 1024)
   }

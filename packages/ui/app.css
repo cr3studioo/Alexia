@@ -243,16 +243,17 @@ body[data-view='first-run'] #shell {
 }
 
 /* The panels, and the one shape they share. Frosted glass over the painting: the surface is
-   pulled back to --glass-tint so the ground shows through, `backdrop-filter` blurs and
-   saturates what is behind, and a shadow plus a lit top edge lift the sheet off the picture.
+   pulled back to --glass-tint so the ground shows through, `backdrop-filter` blurs what is
+   behind, and a shadow plus a lit top edge lift the sheet off the picture.
    (This reverses the old "no shadows" rule — a translucent panel with no shadow reads as a
    stain on the wallpaper rather than a pane in front of it.) */
 .panel {
   background: color-mix(in oklab, var(--surface-raised) var(--glass-tint), transparent);
-  /* Set by theme.ts from the same slider as --glass-tint: `blur(Npx) saturate(200%)`, or
-     `none` at the clear end. The fallback is the static default until the script runs. */
-  backdrop-filter: var(--glass-filter, blur(30px) saturate(200%));
-  -webkit-backdrop-filter: var(--glass-filter, blur(30px) saturate(200%));
+  /* Set by theme.ts from the same slider as --glass-tint: `blur(Npx)`, or `none` at the
+     clear end. Blur only — a `saturate` here repaints the ground more vivid under the pane.
+     The fallback is the static default until the script runs. */
+  backdrop-filter: var(--glass-filter, blur(30px));
+  -webkit-backdrop-filter: var(--glass-filter, blur(30px));
   border: 1px solid color-mix(in oklab, var(--line) 80%, transparent);
   border-radius: var(--radius-lg);
   box-shadow:

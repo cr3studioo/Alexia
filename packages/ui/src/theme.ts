@@ -87,8 +87,9 @@ export function mountTheme(chosen: Theme, keep: (theme: Theme) => void): void {
  * the theme control makes.
  *
  * The blur is not fixed either: it scales with the tint (`--glass-filter`), so sliding to
- * clear also takes the frost off rather than leaving a blurred pane of nothing. At 0 the
- * `backdrop-filter` is dropped entirely — `blur(0)` still runs the `saturate`.
+ * clear also takes the frost off rather than leaving a blurred pane of nothing. It is blur
+ * and nothing else — no `saturate`, which was quietly repainting the ground more vivid
+ * wherever a panel sat over it.
  */
 export const GLASS_MIN = 0
 export const GLASS_MAX = 100
@@ -103,7 +104,7 @@ export const clampGlass = (pct: number): number =>
 /** The `backdrop-filter` for a given tint. `index.html`'s head script inlines the same sum. */
 export const glassFilter = (pct: number): string => {
   const blur = Math.round(clampGlass(pct) * 0.5)
-  return blur === 0 ? 'none' : `blur(${blur}px) saturate(200%)`
+  return blur === 0 ? 'none' : `blur(${blur}px)`
 }
 
 export function applyGlass(pct: number): void {

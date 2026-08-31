@@ -22,7 +22,7 @@
         if (glass >= 0 && glass <= 100) {
           document.documentElement.style.setProperty('--glass-tint', glass + '%')
           var gb = Math.round(glass * 0.5)
-          document.documentElement.style.setProperty('--glass-filter', gb === 0 ? 'none' : 'blur(' + gb + 'px) saturate(200%)')
+          document.documentElement.style.setProperty('--glass-filter', gb === 0 ? 'none' : 'blur(' + gb + 'px)')
         }
       } catch (unavailable) {
         /* Storage off. One frame of the desktop's own theme, then core's answer. */
