@@ -3,8 +3,8 @@
   "manifest_version": 1,
   "id": "computer",
   "name": "Computer control",
-  "summary": "Lets Alexia see the screen, move the mouse and type. Anything a person at this keyboard could do.",
-  "version": "0.1.0",
+  "summary": "Lets Alexia see what is on screen, press things, move the mouse and type. Anything a person at this keyboard could do.",
+  "version": "0.2.0",
   "license": "AGPL-3.0-only",
   "entry": {
     "run": "node",
@@ -17,11 +17,11 @@
   "requires": [
     {
       "cap": "screen.capture",
-      "why": "To take a picture of your screen, so it can see what it is working with."
+      "why": "To see your screen — a picture of it, and the list of what is on it and where."
     },
     {
       "cap": "input.control",
-      "why": "To move the mouse, click, and type on your keyboard as if you were doing it."
+      "why": "To press things, move the mouse, click, and type on your keyboard as if you were doing it."
     },
     {
       "cap": "proc.spawn",
@@ -40,9 +40,9 @@
     {
       "type": "toggle",
       "key": "allow_input",
-      "label": "Allow it to move the mouse and type",
+      "label": "Allow it to press things, move the mouse and type",
       "default": false,
-      "hint": "Off means it can look but not touch. Screenshots still work. Turn this on only while you are watching."
+      "hint": "Off means it can look but not touch — no pressing, no pointer, no keyboard. Looking still works, and it is the useful half most of the time. Turn this on only while you are watching."
     },
     {
       "type": "number",

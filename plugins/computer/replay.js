@@ -34,9 +34,66 @@ import * as win from './windows.js'
  */
 
 /**
+ * Did the step before this one actually work?
+ *
+ * **The registry had six ways to act and no way to check**, and that is the hole this closes.
+ * A plan can do the wrong thing sixty times and report sixty successes, because nothing in it
+ * could observe — so *it did it ten times* was something a model asserted rather than something
+ * the plugin counted. A postcondition turns the second into the first, and it is the difference
+ * between a script somebody can trust with sixty steps and one they have to watch.
+ *
+ * **The reader is the accessibility tree, and that is what keeps this file free.** Not OCR: a
+ * document parser answers *what does this say* and the question here is *is the Save button
+ * there, and does the display say 42* — different questions, and only the control tree answers
+ * the second exactly. It lives in `./windows.js`, so this module still imports that and nothing
+ * else, and the test that reads the imports still proves a script cannot bill. An OCR fallback
+ * that reached for a model would break that, and the invariant is worth more than the fallback.
+ */
+async function postcondition(step, signal) {
+  const wrong = expectation(step, await win.readElement(targeted(step), signal))
+  if (wrong) throw new Error(wrong)
+}
+
+/** Which window and which control, from the three fields every screen-reading step carries. */
+const targeted = (step) => ({
+  ...(Number(step.pid) > 0 && { pid: Number(step.pid) }),
+  ...(typeof step.title === 'string' && step.title !== '' && { title: step.title }),
+  ...(typeof step.match === 'string' && step.match !== '' && { match: step.match }),
+})
+
+/**
+ * The judgement, separated from the reading that produced it.
+ *
+ * Apart so it can be tested without a screen. Every other rule in this file is provable on any
+ * machine — the import graph, the step registry, what a decision costs — and a postcondition
+ * whose *only* test needed a Windows desktop with the right window open would be the one rule
+ * nobody ever checked. The spawn stays in `windows.js`; the sentence is here.
+ */
+export function expectation(step, found) {
+  const named = String(step.match ?? 'that window')
+  // *And now it is gone* is as much a postcondition as *and now it is there* — closing a
+  // dialog is half of what a sequence of clicks does.
+  if (step.gone === true) {
+    return found.found ? `“${named}” is still on screen, and the plan expected it to be gone by now` : undefined
+  }
+  if (!found.found) {
+    return `there is no “${named}” on screen — the plan expected one, so the step before it did not do what it was supposed to`
+  }
+  if (step.says === undefined) return undefined
+  const wanted = String(step.says)
+  const said = String(found.text ?? '')
+  // Contains rather than equals, and case-insensitively: a display reads `= 42`, a status bar
+  // reads `Saved to Documents`, and a plan that had to spell either exactly would be a plan
+  // that breaks on a space.
+  return said.toLowerCase().includes(wanted.toLowerCase()) ? undefined : (
+      `“${named}” says “${said}”, and the plan expected “${wanted}”`
+    )
+}
+
+/**
  * What a step may be.
  *
- * Deliberately the same set as the `do` tool's actions plus the two that have no keyboard in
+ * Deliberately the same set as the `do` tool's actions plus the three that have no keyboard in
  * them, and a test holds the two lists together. A registry that could grow past what this
  * plugin's tools do would be a way to reach something nobody annotated.
  */
@@ -48,6 +105,38 @@ export const STEPS = {
   focus: (step, signal) => win.focus(Number(step.pid) || 0, signal),
   /** The one step that does nothing, and the one every real sequence needs. */
   wait: (step) => new Promise((resolve) => setTimeout(resolve, Math.min(30_000, Math.max(0, Number(step.ms) || 0)))),
+  /** The one step that changes nothing and can still stop the plan. See {@link postcondition}. */
+  expect: (step, signal) => postcondition(step, signal),
+  /**
+   * Press a control by **name** rather than by coordinate, through the control itself.
+   *
+   * The step worth having in a saved plan, because it is the one that does not go stale. A
+   * coordinate is a fact about where a window happened to be sitting on the afternoon somebody
+   * recorded it; a name is a fact about the application. Move the window, change the screen
+   * resolution, dock the laptop, and every `click` in a plan is now pressing whatever is at
+   * those pixels — while `press Save` is still pressing Save.
+   */
+  press: (step, signal) => pressing(step, signal),
+}
+
+async function pressing(step, signal) {
+  if (String(step.match ?? '') === '') throw new Error('a press step has to say which control it means')
+  const wrong = pressed(step, await win.invoke(targeted(step), signal))
+  if (wrong) throw new Error(wrong)
+}
+
+/** What a press came back with, judged — apart from the pressing, for {@link expectation}'s reason. */
+export function pressed(step, done) {
+  const named = String(step.match ?? '')
+  if (!done.found) return `there is no “${named}” on screen to press`
+  if (done.how === 'disabled') return `“${named}” is on screen and greyed out, so nothing was pressed`
+  // A control the application exposes no way to operate. Stopping here rather than quietly
+  // reaching for the mouse: a real click is a different permission and a different log line,
+  // and a plan that silently escalated would be the one thing this rung must not do.
+  if (done.how === 'none') {
+    return `“${named}” is on screen and exposes no way to be pressed. Use a click step with its coordinates instead.`
+  }
+  return undefined
 }
 
 /**
