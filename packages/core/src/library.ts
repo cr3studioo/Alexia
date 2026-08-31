@@ -441,7 +441,10 @@ export class Library {
       if (!response.ok) {
         throw new Error(
           response.status === 403 || response.status === 429 ?
-            `GitHub is rate-limiting this address (${String(response.status)}) — the quota is per network, not per app. The list below is the last one that arrived.`
+            // This message is only ever *read* when there is no remembered shelf to fall back
+            // to — a successful fallback shows the list and says nothing. So it must not
+            // promise a list below it; there is not one.
+            `GitHub is rate-limiting this address (${String(response.status)}). That quota is shared by everything on this network rather than being Alexia's own, and it resets within the hour.`
           : `GitHub answered ${String(response.status)} for ${source}`,
         )
       }
