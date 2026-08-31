@@ -4,7 +4,7 @@
   "id": "media",
   "name": "Local image generation",
   "summary": "Makes images on this machine with ComfyUI, starting it if it is not already running, so the picture-making half of Combined mode is real.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "license": "AGPL-3.0-only",
   "entry": {
     "run": "node",
