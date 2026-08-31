@@ -362,6 +362,10 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     // window and a tab pointed at the same core are one Alexia and should not disagree about
     // what colour it is.
     theme: (store.kvGet(CORE, 'theme') as string | undefined) ?? 'system',
+    // How opaque the frosted panels are, as a `--glass-tint` percentage (40–100). Stored
+    // here with the theme because it is the same kind of fact and a tab and the window
+    // should not disagree about it. 78 is the sheet's own default.
+    glass: (store.kvGet(CORE, 'glass') as number | undefined) ?? 78,
   })
 
   /**
@@ -888,6 +892,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
         name?: string
         mode?: keyof typeof MODES
         theme?: string
+        glass?: number
         provider?: { id: string; key: string }
       }
       if (chosen.name) store.kvSet(CORE, 'display_name', chosen.name)
@@ -897,6 +902,11 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
       // match neither override — light on a dark desktop, with nothing on any screen saying
       // why. The list is short enough to be the check.
       if (chosen.theme && THEMES.includes(chosen.theme)) store.kvSet(CORE, 'theme', chosen.theme)
+      // Clamped, not trusted: it reaches the page as a `--glass-tint` percentage, and a value
+      // outside 40–100 is either an unreadable pane or a solid one that nothing said to make.
+      if (typeof chosen.glass === 'number' && Number.isFinite(chosen.glass)) {
+        store.kvSet(CORE, 'glass', Math.min(100, Math.max(40, Math.round(chosen.glass))))
+      }
       if (chosen.provider?.key) {
         const provider = providers.find((p) => p.id === chosen.provider?.id)
         /**

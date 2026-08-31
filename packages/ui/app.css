@@ -197,8 +197,10 @@ body {
   display: grid;
   grid-template-rows: 1fr;
   /* The painting is the ground. --surface stays as the colour behind it while the bitmap
-     loads and anywhere `cover` cannot reach. */
-  background: var(--surface) var(--ground) center / cover no-repeat fixed;
+     loads and anywhere `cover` cannot reach. Not `fixed`: a fixed background in this engine
+     is re-rasterised at viewport size on every resize and comes back soft — and the body
+     never scrolls anyway, so `fixed` only ever cost quality here. */
+  background: var(--surface) var(--ground) center / cover no-repeat;
   color: var(--ink);
   font:
     var(--text-base) / var(--leading-prose) ui-sans-serif,
@@ -1848,6 +1850,24 @@ input {
    picture rather than as a selection unless the picture agrees with it. */
 .card.theme:has(input:checked) .plate {
   border-color: var(--accent);
+}
+
+/* How much of the painting comes through the panels, under the cards it belongs with. The
+   native slider already follows the theme through `accent-color`; this is only the row. */
+.glass-row {
+  margin-top: var(--space-3);
+}
+
+.glass-row > input[type='range'] {
+  width: 100%;
+  margin: var(--space-2) 0 0;
+}
+
+.glass-row .range-ends {
+  display: flex;
+  justify-content: space-between;
+  font-size: var(--text-sm);
+  color: var(--ink-quiet);
 }
 
 /* ---- the key wall (§12.2) --------------------------------------------------------------

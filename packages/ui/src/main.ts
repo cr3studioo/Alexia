@@ -15,7 +15,7 @@ import { autostart, dismiss, HOTKEY, inApp, setAutostart, tray } from './desktop
 import { mountControl } from './control.js'
 import { mountPalette } from './palette.js'
 import { mountSettings } from './settings.js'
-import { mountTheme, type Theme } from './theme.js'
+import { mountGlass, mountTheme, type Theme } from './theme.js'
 import { mountLive } from './live.js'
 import { mountRail } from './rail.js'
 import { el } from './widgets.js'
@@ -77,7 +77,7 @@ interface Permissions {
 }
 
 interface State {
-  setup: { done: boolean; name: string; mode: string; theme: Theme }
+  setup: { done: boolean; name: string; mode: string; theme: Theme; glass: number }
   permissions: Permissions
   messages: Turn[]
   spent: number
@@ -425,6 +425,12 @@ function setupSettings(state: State): void {
    */
   mountTheme(state.setup.theme, (theme) => {
     void post('/api/setup', { theme })
+  })
+
+  // The frost, on the same endpoint for the same reason — a fact about this install, not
+  // about this window. `theme.ts`'s mirror covers the launch a failed write would cost.
+  mountGlass(state.setup.glass, (glass) => {
+    void post('/api/setup', { glass })
   })
 
   for (const option of state.providers) {
