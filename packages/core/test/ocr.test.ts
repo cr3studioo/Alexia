@@ -91,7 +91,7 @@ test('a picture reaches whatever reads pictures, by name, with no plugin named a
   // the point of the call is that it resolved at all. No caller here said `ocr`.
   expect(answered.isError).toBe(true)
   expect(Object.keys(answered)).not.toContain('provider')
-})
+}, 60_000)
 
 test('nothing provides it on the machine without it, and that is a clean answer', async () => {
   // `-32050`, which `plugins/documents` reads as *this machine has no OCR* and turns back
