@@ -18,7 +18,7 @@ import {
   type World,
 } from './router.js'
 import type { SecretStore } from './secrets.js'
-import type { Message, Store } from './store.js'
+import { carries, textOf, type Message, type Store } from './store.js'
 import { budgetFor, trim, type TrimOptions } from './trim.js'
 import { dollars, type Today } from './usage.js'
 
@@ -66,10 +66,38 @@ export interface Tooling {
   ): Promise<ToolOutcome>
 }
 
+/**
+ * A file a tool made, and is handing back.
+ *
+ * **MCP's own `resource_link` is the whole of the wire for this** — a block type the
+ * standard already defines, arriving inside a `CallToolResult` that
+ * `packages/protocol/src/methods.ts` deliberately declines to re-read. So nothing new is
+ * sent, no `alexia/*` method is added, and `alexia_protocol` does not move: a plugin that
+ * emits none behaves exactly as it did, which is that file's own bar for not bumping.
+ *
+ * The gap this closes was already open and already costing something. A plugin that
+ * generates a picture finished its work and returned the path *as prose*; so did one that
+ * takes a screenshot. Both were correct and neither was usable — a person reading the answer
+ * got a sentence with a path in it, and no way to open, save or find the thing it named.
+ *
+ * (Which plugins those are is not core's business and is deliberately not written here —
+ * invariant 1, which caught the first draft of this very comment.)
+ */
+export interface Produced {
+  /** What to call it on screen. The file's own name unless the tool said otherwise. */
+  name: string
+  /** Absolute, on this machine. It never reaches a caller as something to ask core for. */
+  path: string
+  bytes: number
+  mime: string
+}
+
 export interface ToolOutcome {
   /** What the model reads back. A failure explains itself here rather than throwing. */
   text: string
   ok: boolean
+  /** Files the tool handed back, if it handed any back. Absent is the ordinary case. */
+  files?: Produced[]
 }
 
 /** One call the model made, and what came of it. The trace M15-5 draws is a list of these. */
@@ -358,7 +386,7 @@ export async function run(options: RunOptions): Promise<RunResult> {
    * So there is one system turn again: Alexia's floor, then the caller's context, then the
    * personality last, which is the order {@link system} already promised.
    */
-  const standing = options.messages.filter((m) => m.role === 'system').map((m) => m.content)
+  const standing = options.messages.filter((m) => m.role === 'system').map((m) => textOf(m))
   const messages = options.messages.filter((m) => m.role !== 'system')
   const added: Message[] = []
   const steps: Step[] = []
@@ -433,6 +461,21 @@ export async function run(options: RunOptions): Promise<RunResult> {
      */
     const upward: Pins = options.money?.allowed === false ? { ...pins, spend: 'free' } : pins
 
+    /**
+     * **What this conversation is carrying that words cannot stand in for** (§5.2, Q5).
+     *
+     * The filter this feeds has been in `route()` since Q5 with nothing setting it — built
+     * then rather than later on the argument that *a rule nobody can see is a rule nobody can
+     * disagree with*, and left with a comment saying it had no caller. This is the caller.
+     *
+     * It is re-read every step rather than decided once, because a picture can arrive in the
+     * middle of a task: a tool takes a screenshot at step four, and the model that has to
+     * look at it is chosen at step five. Asked of the *whole* conversation, not the last
+     * turn, since history is re-sent whole — a model that cannot see is no use on turn nine
+     * of a conversation whose turn one was a photograph.
+     */
+    const seeing = carries(messages)
+
     if (above === undefined && answered !== undefined) {
       const signal = struggling({
         steps,
@@ -445,6 +488,7 @@ export async function run(options: RunOptions): Promise<RunResult> {
         shape: planning,
         above: answered,
         ...(named.length > 0 && { tools: named }),
+        ...(seeing.length > 0 && { modality: seeing }),
       }
       if (signal !== undefined && route(upgrade, upward, now).ok) {
         above = answered
@@ -457,7 +501,12 @@ export async function run(options: RunOptions): Promise<RunResult> {
       }
     }
 
-    const plain: Ask = { messages, shape, ...(named.length > 0 && { tools: named }) }
+    const plain: Ask = {
+      messages,
+      shape,
+      ...(named.length > 0 && { tools: named }),
+      ...(seeing.length > 0 && { modality: seeing }),
+    }
     const ask: Ask = above !== undefined && shape === planning ? { ...plain, above } : plain
     let verdict = route(ask, ask === plain ? pins : upward, now)
     // A rung that has since run out can empty the upgrade's pool later in the same task, and

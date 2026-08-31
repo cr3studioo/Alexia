@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import type { Step } from './agent.js'
 import { route, send, type Pins, type World } from './router.js'
 import type { SecretStore } from './secrets.js'
-import type { Message, Store } from './store.js'
+import { textOf, type Message, type Store } from './store.js'
 
 /**
  * Learned skills (M4-5) — the best answer this project has to *an agent should not solve
@@ -163,7 +163,7 @@ export async function distil(
     const answer = await send(verdict.choices, { messages, maxTokens: 1200 }, context.store, context.secrets, {
       ...(context.paidAllowed !== undefined && { paidAllowed: context.paidAllowed }),
     })
-    said = answer.message.content.trim()
+    said = textOf(answer.message).trim()
   } catch (error) {
     return { why: error instanceof Error ? error.message : String(error) }
   }

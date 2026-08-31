@@ -14,6 +14,7 @@ const needPlugins = [
   'packages/core/test/documents.test.ts',
   'packages/core/test/lifecycle.test.ts',
   'packages/core/test/noticing.test.ts',
+  'packages/core/test/ocr.test.ts',
   'packages/core/test/panels.test.ts',
   'packages/core/test/plugin-panels.test.ts',
   'packages/core/test/plugins.test.ts',

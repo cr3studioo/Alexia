@@ -120,6 +120,9 @@ const shot = alexia.tool(
           type: 'text',
           text: `${to}\n${size.width}x${size.height} pixels. Coordinates for clicking are measured from the top left of this image.`,
         },
+        // So the person watching can see what Alexia saw. The path was already in the text
+        // above and was already useless to anybody not willing to go and find it.
+        alexia.file(to, { mime: 'image/png', description: 'What was on screen' }),
       ],
     }
   },

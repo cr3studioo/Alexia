@@ -2404,6 +2404,59 @@ button[disabled] {
   color: var(--ink-quiet);
 }
 
+/* A file a tool made, under the answer that made it. The mirror of `.read` above: that one is
+   what came in with the question, this is what went out with the answer. Open by default
+   rather than folded, because unlike an extracted document this is a thing the person now has
+   and the buttons are the entire point of drawing it. */
+.turn .made {
+  margin-top: var(--space-2);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--line);
+  font-size: var(--text-sm);
+}
+
+.turn .made-line {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.turn .made-name {
+  font-weight: 500;
+  word-break: break-word;
+}
+
+.turn .made-line small {
+  color: var(--ink-quiet);
+  font-size: var(--text-xs);
+}
+
+/* Wrapping rather than scrolling: four buttons on a narrow window become two rows, and a
+   row of controls that runs off the edge is a control nobody finds. */
+.turn .made-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.turn .made-buttons .quiet-button {
+  font-size: var(--text-xs);
+  padding: var(--space-1) var(--space-3);
+}
+
+/* Bounded, because a generated picture is whatever size it is and an answer should not become
+   six screens of one. It is a preview; Open is what shows it properly. */
+.turn .made-preview {
+  display: block;
+  max-width: 100%;
+  max-height: 18rem;
+  width: auto;
+  margin-bottom: var(--space-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+}
+
 /* ---- states the widgets share ------------------------------------------------------------
 
    `status` and `progress` from spec/ui-schema.md are the two widgets that are not inputs.

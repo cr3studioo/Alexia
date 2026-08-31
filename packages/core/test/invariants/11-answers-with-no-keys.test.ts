@@ -9,7 +9,7 @@ import { anonymous, keyOf, PROVIDERS } from '../../src/provider.js'
 import { MODES, route, send, type World } from '../../src/router.js'
 import { CORE, memorySecrets } from '../../src/secrets.js'
 import { serve } from '../../src/serve.js'
-import { Store } from '../../src/store.js'
+import { Store, textOf } from '../../src/store.js'
 import { noPolling } from '../staged.js'
 
 /**
@@ -98,7 +98,7 @@ test(
     )
 
     expect(answer.message.role).toBe('assistant')
-    expect(answer.message.content.trim().length, `${answer.model.id} answered with nothing`).toBeGreaterThan(0)
+    expect(textOf(answer.message).trim().length, `${answer.model.id} answered with nothing`).toBeGreaterThan(0)
     // Free, and it stayed free: a completion that cost money would be a different promise.
     expect(store.spend(0)).toBe(0)
   },

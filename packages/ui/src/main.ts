@@ -244,6 +244,140 @@ function showRead(turn: HTMLElement, attached: { name: string; text?: string; re
 }
 
 /**
+ * **A file a tool made, under the answer that made it, with something to press.**
+ *
+ * The mirror of `showRead` above, and the gap it closes was already costing something before
+ * this existed: the picture plugin finished generating an image and returned its *path*, in
+ * prose. Correct, and nothing a person could do anything with — the file was on their own
+ * disk and the only way to reach it was to read the sentence, select the path out of it, and
+ * go and find it in a file manager.
+ *
+ * **Four things, because people want different ones.** Open it now; save a copy somewhere
+ * they choose; find it where it already is; or take the path, which is what you want when
+ * the next thing you are doing is typing it into something else.
+ *
+ * Nothing here is given a path to send back. Every button carries the id core handed over,
+ * which is the whole reason the routes behind them cannot be pointed at somebody's keys.
+ */
+function showFiles(
+  turn: HTMLElement,
+  files: { id: string; name: string; bytes: number; mime: string; path: string; openable: boolean }[],
+): void {
+  for (const one of files) {
+    const row = document.createElement('div')
+    row.className = 'made'
+
+    const line = document.createElement('div')
+    line.className = 'made-line'
+    const name = document.createElement('span')
+    name.className = 'made-name'
+    name.textContent = one.name
+    const size = document.createElement('small')
+    size.textContent = size3(one.bytes)
+    line.append(name, size)
+
+    const buttons = document.createElement('div')
+    buttons.className = 'made-buttons'
+
+    /** One press, one sentence back if it did not work. */
+    const act = (label: string, run: () => Promise<void>): HTMLButtonElement => {
+      const button = document.createElement('button')
+      button.type = 'button'
+      button.className = 'quiet-button'
+      button.textContent = label
+      button.addEventListener('click', () => {
+        button.disabled = true
+        void run()
+          .catch((error: unknown) => say(String(error instanceof Error ? error.message : error)))
+          .finally(() => (button.disabled = false))
+      })
+      return button
+    }
+
+    const post = async (action: 'open' | 'reveal'): Promise<void> => {
+      const answered = (await (
+        await fetch('/api/file', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'x-alexia-token': token },
+          // `confirm` is the contract on the wire (`guard.ts`), and this button's own label
+          // is the confirmation — the person pressed *Open*, which is the whole question.
+          body: JSON.stringify({ id: one.id, action, confirm: true }),
+        })
+      ).json()) as { ok: boolean; said?: string }
+      if (!answered.ok) say(answered.said ?? 'That did not work.')
+    }
+
+    /**
+     * Saved through a blob rather than a link straight at the route.
+     *
+     * The route wants the session token in a header and a browser sends no headers when it
+     * follows a download link — so the alternative is the token in the URL, where it would
+     * land in history. Fetching it here costs one copy in memory and keeps it out.
+     */
+    const save = async (): Promise<void> => {
+      const answered = await fetch(`/api/file?id=${encodeURIComponent(one.id)}`, {
+        headers: { 'x-alexia-token': token },
+      })
+      if (!answered.ok) {
+        const why = (await answered.json()) as { said?: string }
+        say(why.said ?? `${one.name} could not be saved.`)
+        return
+      }
+      const href = URL.createObjectURL(await answered.blob())
+      const link = document.createElement('a')
+      link.href = href
+      link.download = one.name
+      link.click()
+      URL.revokeObjectURL(href)
+    }
+
+    if (one.openable) buttons.append(act('Open', () => post('open')))
+    buttons.append(
+      act('Save', save),
+      act('Show in folder', () => post('reveal')),
+      act('Copy path', async () => {
+        try {
+          await navigator.clipboard.writeText(one.path)
+          say(`Copied ${one.path}`)
+        } catch {
+          // A browser that will not give the page the clipboard. Showing the path is the
+          // next best thing, because it can at least be selected out of the line.
+          say(one.path)
+        }
+      }),
+    )
+
+    row.append(line, buttons)
+
+    // A picture is worth showing rather than naming. Same fetch as Save, so an image that
+    // has since been deleted simply does not appear rather than drawing a broken frame.
+    if (one.mime.startsWith('image/')) {
+      void fetch(`/api/file?id=${encodeURIComponent(one.id)}`, { headers: { 'x-alexia-token': token } })
+        .then(async (answered) => (answered.ok ? answered.blob() : undefined))
+        .then((blob) => {
+          if (!blob) return
+          const picture = document.createElement('img')
+          picture.className = 'made-preview'
+          picture.src = URL.createObjectURL(blob)
+          picture.alt = one.name
+          row.prepend(picture)
+        })
+        .catch(() => {
+          // Nothing to say. The row and its buttons are already there and all of them work.
+        })
+    }
+
+    turn.append(row)
+  }
+}
+
+/** Bytes, as a person would say them. */
+const size3 = (bytes: number): string =>
+  bytes < 1024 ? `${String(bytes)} B`
+  : bytes < 1024 * 1024 ? `${String(Math.round(bytes / 1024))} KB`
+  : `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+
+/**
  * The bytes, base64, in a JSON body — which is what `plan.md` settled long before there was
  * anything to upload: `node:http` has no multipart parser and adding one for this would buy
  * core a parser it otherwise never needs.
@@ -251,7 +385,73 @@ function showRead(turn: HTMLElement, attached: { name: string; text?: string; re
  * Chunked, because `btoa(String.fromCharCode(...bytes))` on a twenty-megabyte file is a
  * stack overflow rather than a string.
  */
-async function base64(file: File): Promise<string> {
+/**
+ * The long side a vision model actually looks at. Anything past this is tiled away by the
+ * model itself, so sending it is paying upload time for pixels nobody reads.
+ */
+const MOST_PIXELS = 1568
+
+/** Under this, and already small enough, a picture goes exactly as it is. */
+const LEAVE_ALONE = 1024 * 1024
+
+/**
+ * **A picture, made small enough to be worth sending.**
+ *
+ * Measured on a real attachment rather than guessed at: a 1672×941 illustration saved as PNG
+ * was **3.62 MB**, and the same image at JPEG quality 85 is **394 KB** — nine times smaller,
+ * for a picture the model was going to tile down anyway. That difference is most of the wait
+ * between pressing send and getting an answer, and all of it is spent uploading detail no
+ * model ever sees. It is re-sent with every later turn too, because history goes whole.
+ *
+ * ponytail: `createImageBitmap` and `OffscreenCanvas`, both of which every browser this runs
+ * in already has. No image library, nothing to bundle, and the work happens on the machine
+ * that already has the bytes in memory.
+ *
+ * **Three things it deliberately will not do.** It never touches anything that is not an
+ * image. It leaves a small picture exactly as it is — a crisp screenshot somebody wants text
+ * read out of stays pixel-for-pixel, because that is the case where lossy re-encoding costs
+ * something real. And it keeps the original whenever the re-encode comes out bigger, which
+ * happens with flat-coloured graphics that PNG is genuinely good at.
+ */
+async function smaller(file: File): Promise<{ blob: Blob; type: string; was?: number }> {
+  if (!file.type.startsWith('image/')) return { blob: file, type: file.type }
+  let bitmap: ImageBitmap
+  try {
+    bitmap = await createImageBitmap(file)
+  } catch {
+    // A format the browser cannot decode. It may still be one the model can read, so it goes
+    // as it is rather than being refused by the one part of this that was only an optimisation.
+    return { blob: file, type: file.type }
+  }
+  const longest = Math.max(bitmap.width, bitmap.height)
+  if (file.size <= LEAVE_ALONE && longest <= MOST_PIXELS) {
+    bitmap.close()
+    return { blob: file, type: file.type }
+  }
+
+  const scale = Math.min(1, MOST_PIXELS / longest)
+  const width = Math.round(bitmap.width * scale)
+  const height = Math.round(bitmap.height * scale)
+  const canvas = new OffscreenCanvas(width, height)
+  const context = canvas.getContext('2d')
+  if (!context) {
+    bitmap.close()
+    return { blob: file, type: file.type }
+  }
+  // JPEG has no transparency. Without this, every transparent pixel of a PNG arrives black,
+  // which on a logo or a diagram is the whole picture ruined rather than a bit of quality.
+  context.fillStyle = '#ffffff'
+  context.fillRect(0, 0, width, height)
+  context.drawImage(bitmap, 0, 0, width, height)
+  bitmap.close()
+
+  const jpeg = await canvas.convertToBlob({ type: 'image/jpeg', quality: 0.85 })
+  return jpeg.size < file.size ?
+      { blob: jpeg, type: 'image/jpeg', was: file.size }
+    : { blob: file, type: file.type }
+}
+
+async function base64(file: Blob): Promise<string> {
   const bytes = new Uint8Array(await file.arrayBuffer())
   let binary = ''
   for (let at = 0; at < bytes.length; at += 0x8000) {
@@ -953,13 +1153,39 @@ function offerToLearn(offer: { about?: string; outline?: string }): void {
 
 async function ask(question: string, files: File[] = []): Promise<void> {
   const said = bubble('user', question)
+  /** What each picture became on the way out, once it is known. See {@link smaller}. */
+  const shrank = new Map<string, string>()
+  let carried: HTMLElement | undefined
   // What the message carried, in the turn that carried it: the names now, and what was read
   // out of them the moment core says — folded away under this same turn.
   if (files.length > 0) {
-    const carried = document.createElement('small')
+    carried = document.createElement('small')
     carried.className = 'carried'
     carried.textContent = `📎 ${files.map((file) => file.name).join(', ')}`
     said.append(carried)
+    /**
+     * **A picture, shown in the turn that sent it.**
+     *
+     * The same argument `showRead` makes about extracted text, and it lands harder here: an
+     * image now goes to the model *as an image*, so what was sent is a thing the person can
+     * only check by looking at it. A filename is not that check — `dark.png` says nothing
+     * about what is in `dark.png`, and `redact.ts` cannot read a picture, so this is the only
+     * place the contents are ever in front of the person who sent them.
+     *
+     * Drawn from the local `File` rather than from anything core sends back. The bytes are
+     * already in this page — the user chose them a moment ago — so asking for them again
+     * would be a second copy of a photograph over a socket to save nothing.
+     */
+    for (const file of files.filter((one) => one.type.startsWith('image/'))) {
+      const shown = document.createElement('img')
+      shown.className = 'made-preview'
+      shown.alt = file.name
+      shown.src = URL.createObjectURL(file)
+      // Freed once it has been decoded. The element keeps the pixels; the blob URL is only
+      // the way in, and a page that never revokes one leaks every picture it ever showed.
+      shown.addEventListener('load', () => URL.revokeObjectURL(shown.src), { once: true })
+      said.append(shown)
+    }
   }
   const tools = toolLine()
   live.begin(document.querySelector<HTMLElement>('#chat-title')?.textContent ?? 'This conversation')
@@ -967,15 +1193,34 @@ async function ask(question: string, files: File[] = []): Promise<void> {
   answer.textContent = files.length > 0 ? 'Reading…' : '…'
   let started = false
 
+  /**
+   * Made small enough to send, before anything is sent.
+   *
+   * Hoisted out of the request body on purpose: the user's own bubble is already on screen by
+   * now, so re-encoding a photograph does not delay the message appearing — it delays only
+   * the send, which was going to be the slow part anyway and is now a great deal less slow.
+   */
+  const uploads =
+    files.length === 0 ? []
+    : await Promise.all(
+        files.map(async (file) => {
+          const { blob, type, was } = await smaller(file)
+          // Re-encoding somebody's picture is a real change to what was sent, and a change
+          // nobody is told about is the thing this codebase refuses everywhere else.
+          if (was !== undefined) shrank.set(file.name, `${readable(was)} → ${readable(blob.size)}`)
+          return { name: file.name, type, data: await base64(blob) }
+        }),
+      )
+  if (carried && shrank.size > 0) {
+    carried.textContent = `📎 ${files
+      .map((file) => `${file.name}${shrank.has(file.name) ? ` (${shrank.get(file.name)!})` : ''}`)
+      .join(', ')}`
+  }
+
   const response = await fetch('/api/chat', {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-alexia-token': token },
-    body: JSON.stringify({
-      text: question,
-      ...(files.length > 0 && {
-        files: await Promise.all(files.map(async (file) => ({ name: file.name, data: await base64(file) }))),
-      }),
-    }),
+    body: JSON.stringify({ text: question, ...(uploads.length > 0 && { files: uploads }) }),
   })
   if (!response.body) {
     answer.textContent = 'Alexia is not answering.'
@@ -1009,6 +1254,7 @@ async function ask(question: string, files: File[] = []): Promise<void> {
           text?: string
           args?: Record<string, unknown>
           progress?: { progress: number; total?: number; message?: string }
+          files?: { id: string; name: string; bytes: number; mime: string; path: string; openable: boolean }[]
         }
       | undefined
     if (step) {
@@ -1024,6 +1270,10 @@ async function ask(question: string, files: File[] = []): Promise<void> {
         log.append(answer)
       } else {
         live.done(step.n, step.ok, step.text ?? '')
+        // A file the step made goes in the conversation rather than in the live panel: the
+        // panel is a trace of what happened and closes, and this is a thing the person now
+        // has. It lands under the answer the way an attachment lands under the question.
+        if (step.files && step.files.length > 0) showFiles(answer, step.files)
       }
     }
     if (typeof event.error === 'string') {

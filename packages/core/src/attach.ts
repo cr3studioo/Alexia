@@ -28,6 +28,15 @@ import { basename, extname, join } from 'node:path'
 export interface Upload {
   name: string
   data: string
+  /**
+   * What the shell says these bytes are, when it knows better than the name does.
+   *
+   * It usually does not matter and is usually absent. It matters after the shell has
+   * re-encoded a picture to send it — a 3.6 MB PNG becomes a 394 KB JPEG and **keeps its
+   * name**, because `dark.png` is what the person attached and what they will call it. So
+   * the name no longer describes the bytes, and this is what does.
+   */
+  type?: string
 }
 
 /** One that made it to disk, ready to be handed to whatever reads documents. */
@@ -35,6 +44,8 @@ export interface Saved {
   name: string
   path: string
   bytes: number
+  /** What the shell said these bytes are, when it said. See {@link Upload.type}. */
+  type?: string
 }
 
 /**
@@ -110,7 +121,7 @@ export function receive(uploads: readonly Upload[], dir: string, at: number = Da
     // Unique per attachment, so two files called `scan.pdf` in one message do not become one.
     const path = join(dir, `${String(at)}-${String(n)}${extname(called).slice(0, 16)}`)
     writeFileSync(path, bytes)
-    kept.push({ name: called, path, bytes: bytes.length })
+    kept.push({ name: called, path, bytes: bytes.length, ...(upload.type && { type: String(upload.type) }) })
   }
   if (uploads.length > MOST_FILES) {
     refused.push(`Only the first ${String(MOST_FILES)} files were attached — that is the most one message may carry.`)

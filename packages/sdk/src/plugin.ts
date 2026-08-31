@@ -14,6 +14,8 @@ import {
 } from '@alexia/protocol'
 import { McpServer, type ServerContext, type StandardSchemaV1 } from '@modelcontextprotocol/server'
 import { StdioServerTransport } from '@modelcontextprotocol/server/stdio'
+import { basename } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { log } from './log.js'
 import { readManifest } from './manifest.js'
 
@@ -46,6 +48,15 @@ export interface Storage {
   get(key: string): Promise<Json | undefined>
   set(key: string, value: Json): Promise<void>
   remove(key: string): Promise<void>
+}
+
+/** One block of an MCP tool result. Shaped by MCP, not by this package. */
+export interface ResourceLink {
+  type: 'resource_link'
+  uri: string
+  name: string
+  mimeType?: string
+  description?: string
 }
 
 export interface AlexiaPlugin {
@@ -93,6 +104,29 @@ export interface AlexiaPlugin {
    * nothing when the caller did not ask for progress.
    */
   progress(ctx: ServerContext, progress: number, total?: number, message?: string): void
+
+  /**
+   * **Hand a file you made back to the person**, as one block in your tool result.
+   *
+   * ```js
+   * return { content: [{ type: 'text', text: 'Made it.' }, alexia.file(path)] }
+   * ```
+   *
+   * They get a row under the answer with the file on it — open it, save it, show it in a
+   * folder, copy where it is. Without this, a path in your result text is a path in a
+   * sentence, and there is nothing a person can press.
+   *
+   * **This is MCP's own `resource_link` and nothing of Alexia's**, which is why it is four
+   * lines here rather than a method on the wire. Alexia reads the block out of the result
+   * the standard already lets you put it in; a host that does not understand it shows your
+   * text and ignores this, which is exactly what happened before it existed.
+   *
+   * The path must be absolute and the file must already be written when you return — Alexia
+   * checks, and names a file that is not there as missing rather than offering it. Write it
+   * somewhere that survives the call: your own directory (`fs.own_dir`) is the obvious
+   * place, and it is deleted when the user deletes you, which is the right lifetime.
+   */
+  file(path: string, about?: { name?: string; mime?: string; description?: string }): ResourceLink
 
   /** The raw `alexia/*` call, typed against the protocol package. */
   call<M extends AlexiaMethod>(method: M, params: AlexiaParams<M>): Promise<AlexiaResult<M>>
@@ -179,6 +213,16 @@ export function plugin(options: PluginOptions = {}): AlexiaPlugin {
         })
         .catch((error: unknown) => log.warn('could not report progress', error))
     },
+    file: (path, about = {}) => ({
+      type: 'resource_link',
+      // `pathToFileURL` rather than `file://` and a template, because a Windows path has
+      // backslashes, a drive letter and quite possibly a space in it, and every one of those
+      // is a different way to write a URL by hand and get it wrong.
+      uri: pathToFileURL(path).href,
+      name: about.name ?? basename(path),
+      ...(about.mime !== undefined && { mimeType: about.mime }),
+      ...(about.description !== undefined && { description: about.description }),
+    }),
     call,
     start: () => server.connect(new StdioServerTransport()),
   }

@@ -5,7 +5,7 @@ import { sent, spent, type Rung } from './pool.js'
 import { anonymous, chat, ProviderError, type ChatRequest, type Provider, type Usage } from './provider.js'
 import { redact, summarise } from './redact.js'
 import type { SecretStore } from './secrets.js'
-import type { Message, Store } from './store.js'
+import { textOf, type Message, type Store } from './store.js'
 import { floor, PER_TOKEN, size, summary } from './trim.js'
 import { affordable, costOf, type Today } from './usage.js'
 
@@ -271,7 +271,8 @@ const HARD =
   /\b(refactor|debug|architect|design|prove|derive|optimi[sz]e|why does|step by step|plan (?:out|the))\b/i
 
 export function shapeOf(ask: Ask): Shape {
-  const last = [...ask.messages].reverse().find((m) => m.role === 'user')?.content ?? ''
+  const found = [...ask.messages].reverse().find((m) => m.role === 'user')
+  const last = found === undefined ? '' : textOf(found)
   if (HARD.test(last) || last.includes('```') || last.length > 400) return 'hard'
   if (ask.tools && ask.tools.length > 0) return 'tools'
   return 'simple'
@@ -811,6 +812,29 @@ export async function send(
         hooks.onDelta,
         secrets,
       )
+      /**
+       * **A rung that says nothing has not answered**, and until this it counted as one.
+       *
+       * The free tier is full of rows that are not chat models — a content-safety classifier,
+       * a preview that was withdrawn, a router alias pointing at nothing. They accept the
+       * request, return `200`, stream zero tokens, and close. Every check here passed: no
+       * throw, no error status, a `Message` with `content: ''`. So `send` returned it, the
+       * loop ended `answered`, and **the person got an empty bubble after a long wait** with
+       * nothing anywhere saying which model had done it or that anything had gone wrong.
+       *
+       * Found by attaching a picture, and it was never about pictures: those same models
+       * return nothing for a typed sentence too. What the image filter did was narrow the
+       * pool to a few hundred rows and put three of them at the top, which is how a fault
+       * that had always been there became the ordinary case.
+       *
+       * A tool call with no prose is a real answer and must not be caught by this — that is
+       * most of what the agent loop's turns look like.
+       */
+      const empty = textOf(message).trim() === '' && (message.calls?.length ?? 0) === 0
+      if (empty && at < choices.length - 1) {
+        last = new ProviderError(502, `${choice.model.name} answered with nothing`)
+        continue
+      }
       store.recordUsage({
         session: hooks.session,
         plugin: hooks.plugin,
@@ -827,9 +851,19 @@ export async function send(
       return { message, usage, model: choice.model, provider: choice.provider }
     } catch (error) {
       last = error
-      // Rate-limited, or the provider is having a moment. Either way the next rung can try.
       const status = error instanceof ProviderError ? error.status : 0
+      // Rate-limited, or the provider is having a moment. Either way the next rung can try.
       if (status === 429 || status >= 500) continue
+      /**
+       * **`403` is about this model, not about the request** — so it is a rung failure too.
+       *
+       * Real one, from the free tier: *"inkling:free is only available on agentic
+       * harnesses"*. A gate on one row of somebody's catalog, which threw and ended a task
+       * that four hundred other models could have answered. `401` stays fatal on purpose:
+       * that is a key that is wrong, every rung on that provider will say the same thing,
+       * and quietly moving on would hide the one problem the person can actually fix.
+       */
+      if (status === 403) continue
       throw error
     }
   }

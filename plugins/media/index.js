@@ -256,7 +256,13 @@ const made = alexia.tool(
     }
     await bind(signal)
     return {
-      content: [{ type: 'text', text: `${saved.join('\n')}\nMade here, with ${checkpoint}.` }],
+      content: [
+        { type: 'text', text: `${saved.join('\n')}\nMade here, with ${checkpoint}.` },
+        // The picture itself, not only its path. Until this line the answer to *make me an
+        // image* was a sentence containing a filename — correct, and nothing a person could
+        // press. Now it is a row under the answer with the picture on it.
+        ...saved.map((to) => alexia.file(to, { description: String(prompt) })),
+      ],
     }
   },
 )

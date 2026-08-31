@@ -281,6 +281,20 @@ export const ROUTES: Readonly<Record<string, Route>> = {
       'Sending a sentence is the product. Everything it can then do goes through the permission gate, the never-touch list and the ceilings, and the preview asks before an expensive task starts — a confirm on the message box would be a confirm on typing.',
     ),
   },
+
+  '/api/file': {
+    acts: {
+      reveal: safe(
+        'It opens a file manager with the file selected. Nothing runs, nothing changes, and the window it opens is one the person closes — this is the answer for everything Open refuses, so a refusal is never a dead end.',
+      ),
+      open: confirm(
+        'Opening hands the file to whatever this machine has registered for it, which for some kinds means running it. The file has to be one a tool offered during this session and its extension has to be one that is not a program — but the press itself is the last thing standing between a plugin writing a file and this machine executing it.',
+      ),
+    },
+    otherwise: read(
+      'The bytes of a file some tool made, by the id it was offered under. It reads one file off the disk and sends it; there is no path in the request, so there is nothing to point somewhere else. A POST with no act nobody has classified lands here and is refused, which is the right way round.',
+    ),
+  },
 }
 
 /** What a route is, for a given body. `undefined` means core does not serve this path. */

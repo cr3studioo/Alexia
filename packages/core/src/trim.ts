@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import type { Message } from './store.js'
+import { imagesIn, textOf, withText, type Message } from './store.js'
 
 /**
  * Keeping a long task inside a context window without losing what it learned.
@@ -109,7 +109,7 @@ function split(messages: Message[]): { head: Message[]; cycles: Cycle[] } {
   const cycles: Cycle[] = []
   let goal = 0
   /** A turn that spoke opened a new sub-goal; one that only acted is still serving the last. */
-  const tag = (message: Message): number => (message.content.trim() ? (goal += 1) : goal)
+  const tag = (message: Message): number => (textOf(message).trim() ? (goal += 1) : goal)
   for (const message of messages) {
     if (message.role === 'assistant' && (message.calls?.length ?? 0) > 0) {
       cycles.push({ assistant: message, results: [], goal: tag(message) })
@@ -307,7 +307,7 @@ function lines(cycles: Cycle[]): string[] {
   const groups = runs(cycles)
   return groups.flatMap((group, at) => {
     const narration = group.flatMap((cycle) =>
-      cycle.assistant.content.trim() ? [`Said: ${oneLine(cycle.assistant.content, 200)}`] : [],
+      textOf(cycle.assistant).trim() ? [`Said: ${oneLine(textOf(cycle.assistant), 200)}`] : [],
     )
     const steps = group.flatMap(told)
     const last = steps.at(-1)
@@ -343,7 +343,8 @@ function runs(cycles: Cycle[]): Cycle[][] {
 /** One line per call a cycle made, and whether it worked — which is the field that gets read. */
 const told = (cycle: Cycle): { line: string; ok: boolean }[] =>
   (cycle.assistant.calls ?? []).map((call) => {
-    const came = oneLine(cycle.results.find((r) => r.callId === call.id)?.content ?? '', 160)
+    const answered = cycle.results.find((r) => r.callId === call.id)
+    const came = oneLine(answered === undefined ? '' : textOf(answered), 160)
     const ok = worked(came)
     return {
       ok,
@@ -385,24 +386,26 @@ const worked = (said: string): boolean => said !== '' && !FAILED.test(said)
  * clipped like any other long output and never replaced by a note saying to run it again.
  */
 function shrink(cycle: Cycle, result: Message, limit: number): Message {
-  if (result.content.length <= limit) return result
+  const said = textOf(result)
+  if (said.length <= limit) return result
   const call = (cycle.assistant.calls ?? []).find((c) => c.id === result.callId)
   if (!call || !READS.test(call.name) || WRITES.test(call.name)) return clip(result, limit)
-  return {
-    ...result,
-    content: `${String(result.content.length)} characters, not carried — read it again with ${call.name}(${oneLine(call.arguments, 200)})`,
-  }
+  return withText(
+    result,
+    `${String(said.length)} characters, not carried — read it again with ${call.name}(${oneLine(call.arguments, 200)})`,
+  )
 }
 
 /** Long tool output, middle removed. The ends are where the useful part usually is. */
 function clip(message: Message, limit: number): Message {
-  if (message.content.length <= limit) return message
+  const said = textOf(message)
+  if (said.length <= limit) return message
   const half = Math.floor((limit - 40) / 2)
-  const cut = message.content.length - limit
-  return {
-    ...message,
-    content: `${message.content.slice(0, half)}\n… ${String(cut)} characters cut …\n${message.content.slice(-half)}`,
-  }
+  const cut = said.length - limit
+  // `withText`, so a turn that carried a picture keeps it. Slicing raw content in half would
+  // cut a `data:` URL down the middle and produce an image no provider can decode and no
+  // error message explains.
+  return withText(message, `${said.slice(0, half)}\n… ${String(cut)} characters cut …\n${said.slice(-half)}`)
 }
 
 const oneLine = (text: string, limit: number): string => {
@@ -410,6 +413,31 @@ const oneLine = (text: string, limit: number): string => {
   return flat.length <= limit ? flat : `${flat.slice(0, limit)}…`
 }
 
+/**
+ * **What a picture costs, in the unit this file counts in.**
+ *
+ * The trap this constant exists to avoid: a `data:` URL for a one-megabyte photograph is
+ * about 1.4 million characters, and a model charges roughly *fifteen hundred tokens* for it.
+ * Counting the string would make one screenshot look like four hundred thousand tokens of
+ * prose — so `fits()` would refuse every model on earth, and the trimmer would frantically
+ * collapse a conversation that was never too big. Counting it as nothing is the same mistake
+ * pointing the other way: `fits()` would promise a window the request then blows through, and
+ * the failure arrives as somebody else's 400 at step nine.
+ *
+ * ponytail: one number for every picture, not a per-provider tile calculation. Each of them
+ * counts tiles differently and the difference is a few hundred tokens, which is inside the
+ * slack `fits()` already leaves. The upgrade, if a real overflow shows up, is a per-provider
+ * number here, not a tokeniser.
+ */
+const IMAGE_WEIGHT = 5_000
+
 /** Rough size in characters. Tokens would need a tokeniser per model; this is close enough. */
 export const size = (messages: Message[]): number =>
-  messages.reduce((total, m) => total + m.content.length + (m.calls ?? []).reduce((n, c) => n + c.arguments.length + c.name.length, 0), 0)
+  messages.reduce(
+    (total, m) =>
+      total +
+      textOf(m).length +
+      imagesIn(m).length * IMAGE_WEIGHT +
+      (m.calls ?? []).reduce((n, c) => n + c.arguments.length + c.name.length, 0),
+    0,
+  )

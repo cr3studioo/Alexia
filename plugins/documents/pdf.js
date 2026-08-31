@@ -726,6 +726,115 @@ function pages(all) {
 }
 
 /**
+ * A picture, as a file some decoder will recognise.
+ *
+ * **A scanned page is one image, so there is nothing to render.** That is the whole reason
+ * this is thirty lines rather than a rasteriser: a scanner writes each page as a single
+ * image drawn to fill it, so getting the page back is getting that image back — not
+ * executing a content stream, not compositing, not knowing what a clipping path is. A PDF
+ * with a text layer never reaches here at all, because it was read.
+ *
+ * `DCTDecode` needs no work: those stream bytes already **are** a JPEG file, header and all,
+ * and the right move is to hand them over untouched. Flate is the other one worth having —
+ * it is what a screenshot pasted into a document and printed becomes — and it arrives as raw
+ * samples, so it gets the smallest container that describes them.
+ */
+function bmp(width, height, samples, channels) {
+  // Rows are padded to four bytes, which is the one rule about this format that catches
+  // everybody: a 3-pixel-wide image has 9 bytes of colour and a 12-byte row.
+  const stride = Math.ceil((width * 3) / 4) * 4
+  const out = Buffer.alloc(54 + stride * height)
+  out.write('BM', 0, 'latin1')
+  out.writeUInt32LE(out.length, 2)
+  out.writeUInt32LE(54, 10)
+  out.writeUInt32LE(40, 14)
+  out.writeInt32LE(width, 18)
+  // Negative, meaning top-down. A BMP is written bottom-up by default, and a page delivered
+  // upside down is one OCR reads as nothing at all rather than as an error.
+  out.writeInt32LE(-height, 22)
+  out.writeUInt16LE(1, 26)
+  out.writeUInt16LE(24, 28)
+  out.writeUInt32LE(stride * height, 34)
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const from = (y * width + x) * channels
+      const to = 54 + y * stride + x * 3
+      const red = samples[from]
+      // Blue, green, red — the order this format stores them in.
+      out[to] = channels === 1 ? red : samples[from + 2]
+      out[to + 1] = channels === 1 ? red : samples[from + 1]
+      out[to + 2] = red
+    }
+  }
+  return out
+}
+
+/** The filters that are a picture this cannot unpack, and what each of them is. */
+const UNREADABLE = {
+  '/JPXDecode': 'JPEG 2000',
+  '/JBIG2Decode': 'JBIG2',
+  '/CCITTFaxDecode': 'fax compression',
+  '/CCF': 'fax compression',
+  '/LZWDecode': 'LZW',
+}
+
+/**
+ * Every page's picture, for a PDF that turned out to be a photograph of one.
+ *
+ * Returns one entry per page that has exactly one image big enough to be the page — a logo
+ * in the corner of an otherwise-scanned page is not the page, and OCR'ing it would return a
+ * company name and nothing else. A page whose picture is in a format this cannot unwrap
+ * comes back with `why` instead of `bytes`, so the caller can say which page and what it is
+ * rather than dropping it.
+ */
+export function pageImages(bytes) {
+  const raw = bytes.toString('latin1')
+  const all = expand(objects(raw))
+  const found = []
+
+  for (const { resources } of pages(all)) {
+    const dict = resolve(all, resources) ?? resources
+    const xobjects = resolve(all, value(String(dict ?? ''), 'XObject')) ?? value(String(dict ?? ''), 'XObject')
+    const wanted = []
+    for (const at of references(xobjects)) {
+      const object = all.get(at)
+      if (!object || !/\/Subtype\s*\/Image\b/.test(object.dict)) continue
+      const width = Number(value(object.dict, 'Width') ?? 0)
+      const height = Number(value(object.dict, 'Height') ?? 0)
+      // Under this and it is a logo, a signature or a scanning artefact rather than a page.
+      if (width < 200 || height < 200) continue
+      wanted.push({ object, width, height })
+    }
+    if (wanted.length === 0) {
+      found.push({ why: 'there is no picture on it either' })
+      continue
+    }
+    // The biggest, because the page is the biggest thing on the page.
+    const { object, width, height } = wanted.sort((a, b) => b.width * b.height - a.width * a.height)[0]
+    const filters = String(value(object.dict, 'Filter') ?? '').match(/\/(\w+)/g) ?? []
+    const unreadable = filters.find((one) => UNREADABLE[one] !== undefined)
+
+    if (unreadable !== undefined) {
+      found.push({ why: `its picture is stored with ${UNREADABLE[unreadable]}, which this cannot unwrap` })
+    } else if (filters.includes('/DCTDecode') || filters.includes('/DCT')) {
+      // Already a JPEG file. Handing the stream over untouched is the whole of the work.
+      found.push({ bytes: object.stream, width, height })
+    } else {
+      const samples = decoded(object)
+      const grey = /\/DeviceGray\b/.test(object.dict)
+      const channels = grey ? 1 : 3
+      const depth = Number(value(object.dict, 'BitsPerComponent') ?? 8)
+      if (!samples || depth !== 8 || samples.length < width * height * channels) {
+        found.push({ why: 'its picture is in a form this cannot unwrap' })
+      } else {
+        found.push({ bytes: bmp(width, height, samples, channels), width, height })
+      }
+    }
+  }
+  return found
+}
+
+/**
  * A PDF's text layer, page by page.
  *
  * Returns `undefined` for the file that has pages and no words in them, which is the scan.

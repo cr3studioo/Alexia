@@ -417,3 +417,238 @@ two above stay on the table with their costs written down.
 6. **A `read_region(target)` and a cropped-OCR tier**, which §6.6 argues for and which is the
    natural next thing on the screen half — *"OCR a rectangle tier B handed you"*, never
    `ocr_screen()`, so the scoping is structural rather than a line in a description.
+---
+
+# Part two — the OCR tier, and files coming back
+
+*Added 2026-08-31, the same day. Part one above is unchanged and is still the record of what it
+records; this is the next two pieces of work, written in the same shape. §6 above listed the
+first — item 6 asked for the OCR tier — and nothing there anticipated the second.*
+
+## 7. The OCR tier (§6.2, and §6 item 6)
+
+### 7.1 What was decided, and on what argument
+
+> **Windows' own text recogniser, in a plugin of its own, under a new capability name that
+> `plugins/documents` asks for and never learns the answerer of.**
+
+**The engine was chosen by measurement, not from the shortlist.** §6.2 names `tesseract.js` and
+ONNX PaddleOCR. Neither was taken. `Windows.Media.Ocr` is a WinRT API on every Windows 10 and
+11 machine — the engine behind Snipping Tool's text actions — and it is reachable through the
+same PowerShell spawn `plugins/computer` already makes. Measured on the machine this was
+written on:
+
+| | |
+|---|---|
+| Cold call, spawn to answer | **423 ms** |
+| An A4 page at 300 dpi (2480x3508) | **144 ms** of recognition |
+| Downloaded, unpacked, or warmed up | **nothing** |
+
+Against that, §6.6's recorded cost for `tesseract.js` — *worker start-up plus 10-15 MB of
+language data, on a lazily-spawned, idle-stopped plugin* — is not a tuning problem, it is the
+whole of the objection, and here it disappears rather than being managed.
+
+**And the publish check decided it before the speed did.** `scripts/publish.mjs` bundles a
+plugin to one file; `pdfjs-dist` fails that because it reaches for its worker by path at run
+time, and `tesseract.js` reaches for its worker the same way. A string of PowerShell has no
+such path. That is D117's lesson taken in advance, for the second time in this repo.
+
+**The cost is stated rather than buried: this tier is Windows only.** macOS would need a
+Vision-framework sibling and Linux has no OS-level engine at all. On those platforms the plugin
+refuses by name and `document.extract` falls back to the sentence it already had. A
+cross-platform tier is `tesseract.js` with the costs above, and it is **a second plugin
+offering the same capability**, not a change to this one.
+
+### 7.2 The wiring, and why it is not a second `document.extract`
+
+Core resolves a capability by taking the **first** enabled plugin that provides it
+(`plugins.ts:354`), and there is no fallback when that one refuses. So an OCR plugin offering
+`document.extract` as a second provider would be a coin flip on load order, and whichever won
+would be wrong for half the files. Instead:
+
+**`image.ocr` — a picture in, the words in it out**, taking a path *or* the bytes. It is
+plugin-to-plugin; core never hears about it, which is what `capabilities.ts` means by *every
+other service capability is plugin-to-plugin*. `plugins/documents` declares it in `requires`
+and calls it exactly the way `vanisher` calls `demo.greet`.
+
+**`image.` rather than `document.`**, and the name is permanent once released. The same call
+reads a scanned page, a photographed receipt and a rectangle of somebody's screen, and only one
+of those is a document — `read_region` (§6 item 6) is the caller this shape was chosen for. It
+cuts against the spec's existing mention of a future `document.describe`, which is the honest
+argument for the other side.
+
+**Two argument shapes because there are two real callers.** A screenshot is already a file and
+travels as a path; a page pulled out of a PDF was never a file and travels as bytes. Making the
+second one write to disk first would mean giving a plugin that *only ever reads* a permission
+to write, which is a worse trade than six lines.
+
+### 7.3 The property that mattered most
+
+**OCR is reached for only on the path that was already a refusal.** `read()` runs unchanged; if
+it throws, and only then, the file is offered to `image.ocr`. So a born-digital document is
+read exactly as it was and never pays for recognition — measured at **4 ms** for a CSV against
+**1610 ms** for a scan in the same run — and `read.js` and `kinds.js` know nothing about any of
+this and stay testable with no wire in sight.
+
+**With nothing providing it, the refusals are unchanged word for word.** `-32050` is caught and
+read as *this machine has no OCR*, which is not a failure but the ordinary state of a machine
+without the plugin. `packages/core/test/ocr.test.ts` runs the same plugin twice — once beside a
+provider, once alone — and asserts the second one's answer is the sentence that shipped before
+OCR existed. That is invariant 4 in the direction nobody usually tests it: *delete the provider
+and the consumer goes back to what it said*, not merely *keeps running*.
+
+### 7.4 Reading order was the real work
+
+The engine returns lines in its own order, which is not reading order. On a two-column invoice
+what came back was every word correct and every relationship destroyed — the date floated five
+lines from the invoice number it sat beside, and three prices came loose from the three things
+they priced. **Nothing errors, and no reader of that output can tell.** It is §4's silent
+failure exactly, arriving from the tier that was supposed to fix it.
+
+The fix is that the engine also returns where each line is, and that was being thrown away.
+Lines are grouped into rows by **growing a band greedily** rather than bucketing on a fixed
+grid — a scan is never straight, and some row always straddles a fixed boundary — then sorted
+left to right within the row.
+
+Paragraph breaks are measured from **the page's own line spacing** rather than from glyph
+height. The first version used height and was wrong on the first real page: leading runs from
+about 1.2x the letter height in a dense scan to over 2x in a printed letter, so any multiple of
+the height that splits paragraphs in one document splits every single line in the other. The
+gap between consecutive rows *is* the leading, and the smallest gaps on a page are the ones
+inside its paragraphs — so the quarter mark is the line spacing, and anything half again bigger
+is a break.
+
+All of it is a pure function in `lines.js`, tested with no desktop, against the engine's real
+output rather than a tidied version of it.
+
+### 7.5 Where it lives
+
+| File | What it is |
+|---|---|
+| `plugins/ocr/windows.js` | **New.** The PowerShell spawn and the WinRT script. Four known failures answered with sentences rather than exceptions: no language installed, a language that is not installed, a picture past the 10,000-pixel ceiling, and a file that is not a picture. |
+| `plugins/ocr/lines.js` | **New.** Reading order. §7.4 is this file. |
+| `plugins/ocr/index.js` | **New.** The `read` tool bound to `image.ocr`, and a `languages` tool for after a refusal. |
+| `plugins/documents/pdf.js` | `pageImages()` — the page out of a scanned PDF. A scan **is** one image, so there is nothing to render: `DCTDecode` streams are already a JPEG file and are handed over untouched; Flate samples get a top-down BMP; fax and JPEG 2000 are refused **by name**, per page, rather than dropped. |
+| `plugins/documents/index.js` | The fallback, on the refusal path only. `0.1.0` to `0.2.0`. |
+| `docs/spec/capabilities.md` | The ninth registry row, by pull request as that file requires. |
+
+## 8. Handing a file back (not in `document_plan.md` at all)
+
+*Asked for while §7 was being built: a way for any plugin to send a file to the person, which
+they can open, save, or take the path of.*
+
+### 8.1 It is not a skill, and the gap was already live
+
+A skill here is text bundled with a plugin (M2-2). If *hand a file back* lived in one, every
+producing plugin would reimplement it and each would render differently. It is a wire shape
+plus a row in the conversation, which is **core's surface** — the same argument Q1 used to put
+upload in the composer rather than in a plugin widget.
+
+And it was already costing something before it was asked for. A plugin that generates a picture
+finished and returned its path **in prose**; so did one that takes a screenshot. Both correct,
+neither usable: the file sat on the person's own disk behind a sentence.
+
+### 8.2 The wire is MCP's, and nothing is added to Alexia's
+
+`resource_link` is a block MCP already defines, inside a `CallToolResult` that
+`packages/protocol/src/methods.ts` **deliberately declines to re-read** — *MCP owns this shape
+and grows it, and Alexia re-reading it would be Alexia reinterpreting MCP.* So the blocks
+already crossed the wire untouched; core simply stopped rendering them as `[resource_link]`.
+
+**No new method and no `alexia_protocol` bump.** A plugin that emits none behaves exactly as it
+did, which is that file's own bar for not bumping. The fixture that proves it emits the block
+**by hand rather than through the SDK helper**, so what passes is the standard rather than our
+own convenience.
+
+### 8.3 No route ever accepts a path
+
+The whole security design is one sentence. The shell is handed an **opaque id** and can ask for
+exactly the files some tool offered during this run of core. That is structural rather than
+validated: there is no path to traverse out of, no prefix to check and no `..` to normalise,
+because the string a caller sends is a **key into a map** and is never joined to anything. It
+is the shape §6.6 argues for elsewhere — a call that cannot express the dangerous request does
+not need to refuse it.
+
+`?id=` rather than `/api/file/<id>` for a reason about this repo rather than about REST:
+`guard.test.ts` walks `serve.ts` for literal path comparisons and demands a classification for
+each one. A variable path segment would slip past that scanner. **It caught the first draft of
+the comment explaining this**, which is a fair sign it reads the file rather than agreeing with
+itself.
+
+### 8.4 Open, and the part with teeth
+
+Four things, because people want different ones: **Open**, **Save**, **Show in folder**, and
+**Copy path**.
+
+Open hands the file to whatever the OS has registered for it, and for some kinds that means
+*running* it. The escalation is specific: a plugin holding no `proc.spawn` writes
+`invoice.pdf.bat`, offers it, and a person's press on a button labelled *Open* is what runs it
+— a plugin reaching a permission it was never granted, using somebody's click as the grant.
+
+Three layers, ranked honestly:
+
+1. **The id map.** Only a file some tool offered this session can be named at all.
+2. **`confirm` in `guard.ts`.** The wire contract, refused before the handler runs — which is
+   why it can be asserted against a real server without anything being spawned.
+3. **A deny list of executable extensions.** *ponytail: deny lists forget.* It is the third
+   layer and is not pretended to be the first. **Show in folder stays available for everything
+   Open refuses**, so a refusal is never a dead end: the person still reaches their own file,
+   in their own file manager, and decides for themselves.
+
+Saving goes through a blob the shell fetched rather than a link pointed at the route, because a
+browser sends no headers when it follows a download link and the alternative was the session
+token in a URL, where it would land in history.
+
+### 8.5 Where it lives
+
+| File | What it is |
+|---|---|
+| `packages/core/src/offered.ts` | **New.** The id registry, the type table, the deny list, and the `spawn` — arguments as an array, never a command line, so a filename with a quote in it has nothing to break out of. |
+| `packages/core/src/tooling.ts` | `outcomeOf` reads `resource_link` blocks. The model gets `[file: report.pdf]`; a file the tool **named and did not write** is said out loud and not offered, so the model's sentence and the row on screen agree about whether there is a file. |
+| `packages/core/src/agent.ts` | `Produced`, and `files` on `ToolOutcome`. |
+| `packages/core/src/serve.ts` | The registry, one route, and the id on the existing step event. |
+| `packages/core/src/guard.ts` | Three verdicts: reveal is safe, open is a confirm, and a POST carrying an act nobody declared lands on a read and is refused. |
+| `packages/ui/src/main.ts`, `packages/ui/app.css` | The row, the four controls, and an inline preview for a picture. |
+| `packages/sdk/src/plugin.ts` | `alexia.file(path)` — one line per producing plugin. |
+| `plugins/media`, `plugins/computer` | One line each, so the feature ships with two real users rather than none. |
+
+## 9. How part two was checked
+
+- `pnpm check` — **79 files, 629 tests green**, up from 74/593. `pnpm invariants` **30 green**,
+  including 11, which the brief warns is flaky and was not this time. `pnpm check:no-plugins`
+  green.
+- **Invariant 1 caught the first draft of a comment** in `agent.ts` that named two plugins in
+  order to explain the gap. The rule includes comments, and it was right to.
+- **A fresh `tsc -b --force` caught what the incremental one missed** — MCP requires `name` on a
+  `resource_link`, and a test fixture was omitting it.
+- **Conformance twice, for all four plugins**: from the checkout and again bundled to one file
+  the way `scripts/publish.mjs` does it. `plugins/ocr` passes bundled, which is the check
+  `tesseract.js` was expected to fail and the reason it was never installed.
+- **A real producer, committed.** `plugins/documents/test/scanned-page.pdf` is a page printed to
+  PDF by a browser from a JPEG — the shape a scanner writes. The suite's other fixtures are
+  built by the same hand as the reader, and a reader tested only against those agrees with
+  itself.
+- **The whole upload path by hand**, through core's own attach seam, three files at once: a
+  scanned PDF (1610 ms), a photographed invoice (645 ms) and a CSV (4 ms — it never touched
+  OCR). The composed message was printed and read.
+- **The file handoff by hand**, because a test that opens Explorer windows on somebody's desktop
+  is not a test: a real screenshot plugin's `resource_link` read by core, the id resolving, the
+  path **not** resolving, and a real Explorer window opening with the file selected. The windows
+  that opened were closed again.
+
+## 10. What is still open after part two
+
+1. **`read_region(target)`** (§6.6, and §6 item 6 above) — unchanged, and now unblocked: the
+   tier it needs exists and takes a path or bytes, which is the shape a cropped screenshot
+   arrives in.
+2. **A `D`-number and tasks in `plan.md`** — still §6 item 1, now covering two more pieces of
+   work.
+3. **Q4, Q7's other two options, Q10, Q11, and `document.describe`** — all untouched. The last
+   is the half of §4 that OCR does not answer: `image.ocr` returns the words in a picture and
+   cannot say what a photograph is *of*; handed a chart it returns the axis labels rather than
+   the point.
+4. **A non-Windows OCR tier**, which is `tesseract.js` and its costs, as a second plugin
+   offering `image.ocr` (§7.1).
+5. **The shell's file row has not been seen in the real app** by the person who asked for it.
+   Every piece under it is exercised over the wire — the id, the bytes, the type, the refusal —
+   but the four buttons have been driven by tests and by hand, not by a person in the window.

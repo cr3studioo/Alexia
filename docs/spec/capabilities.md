@@ -104,8 +104,9 @@ name and becomes a drop-in alternative rather than a competitor.
 | `ask.confirm` | a question and its options in, the chosen option out | `plugins/telegram` (M7) |
 | `voice.render` | text in, **audio bytes out** — for audio that has to go somewhere other than these speakers | `plugins/voice` (M7) |
 | `document.extract` | **a file in, markdown out** — what a document says | `plugins/documents` |
+| `image.ocr` | **a picture in, the words in it out** — a path or the bytes, text in reading order | `plugins/ocr` |
 
-Eight entries, because eight exist. `demo.greet` is real: `plugins/hello` provides it and
+Nine entries, because nine exist. `demo.greet` is real: `plugins/hello` provides it and
 `plugins/vanisher` requires it, which is how *delete the provider and the consumer keeps
 running* stays a test rather than a claim. Three of them are ones **core itself** reaches
 for — they are also in `CORE_CAPABILITIES`, and the rule for being there is that core works
@@ -129,6 +130,21 @@ accepted both would return an empty string for the second and let a model answer
 about a picture nobody read. So the extractor **refuses a picture by kind** and says which of
 the two would read it. A `document.describe` belongs in this table on the day something can
 provide it; a name with no provider is a promise, and this table is a record.
+
+`image.ocr` is the first half of that arriving, and it is **`image.` rather than `document.`
+on purpose**: the same call reads a scanned page, a photographed receipt and a rectangle of
+somebody's screen, and only one of those is a document. It is also the first row here that
+`plugins/documents` **requires** rather than provides — a plugin asking another plugin for
+something, with core resolving the name and neither of them learning who the other is. The
+property that matters is what happens when it is not there: `document.extract` catches the
+`-32050` and answers with the refusal it already had, *word for word*, so a machine with no
+OCR installed behaves exactly as it did before this row existed. There is a test that
+compares the two.
+
+The other half is still missing and still deliberately unnamed. `image.ocr` returns the words
+in a picture; it cannot say what a photograph is *of*, and handed a chart it returns the axis
+labels rather than the point. That is `document.describe`, it needs a model that can see, and
+core's `sample` still maps every non-text block to the literal string `[image]`.
 
 ---
 

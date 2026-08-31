@@ -4,7 +4,7 @@ import type { Ruling, Scope } from './permissions.js'
 import { route, send, type Pins, type World } from './router.js'
 import type { SecretStore } from './secrets.js'
 import { MODES } from './router.js'
-import type { Store } from './store.js'
+import { textOf, type Store } from './store.js'
 
 /**
  * A second model, asked whether a step is about to do something the user would not want.
@@ -142,7 +142,7 @@ export class ModelChecker implements Checker {
           plugin: 'checker',
         },
       )
-      return readAnswers(answer.message.content)
+      return readAnswers(textOf(answer.message))
     } catch (error) {
       return { flagged: false, unavailable: true, why: error instanceof Error ? error.message : String(error) }
     }

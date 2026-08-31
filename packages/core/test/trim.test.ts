@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { expect, test } from 'vitest'
-import type { Message } from '../src/store.js'
+import { textOf, type Message } from '../src/store.js'
 import { budgetFor, collapse, floor, size, summary, trim } from '../src/trim.js'
 
 // Two things are being protected here. One is the context window. The other is what a
@@ -40,7 +40,7 @@ test('recent steps stay verbatim and older ones become a summary', () => {
   const verbatim = trimmed.filter((m) => m.role === 'tool')
   expect(verbatim).toHaveLength(3)
   // The newest three, not the oldest three.
-  expect(verbatim.at(-1)?.content.startsWith('contents of n9')).toBe(true)
+  expect(textOf(verbatim.at(-1)!).startsWith('contents of n9')).toBe(true)
 
   const summary = trimmed.find((m) => m.role === 'system')
   expect(summary?.content).toContain('Earlier steps in this task')
@@ -82,7 +82,7 @@ test('a tool turn is never orphaned from the assistant turn that asked for it', 
 test('raw output is clipped in the middle, where the useful part is not', () => {
   const huge = 'START' + 'x'.repeat(5_000) + 'END'
   const trimmed = trim([task, ...cycle(1, 'files__read', '{}', huge)], { keepTurns: 4, perResult: 400 })
-  const said = trimmed.find((m) => m.role === 'tool')!.content
+  const said = textOf(trimmed.find((m) => m.role === 'tool')!)
 
   expect(said.length).toBeLessThan(600)
   expect(said.startsWith('START')).toBe(true)
@@ -168,7 +168,7 @@ test('the floor is the head plus the newest cycle, and nothing else', () => {
 // are facts about two calls sitting in the same trace. No model is asked anything here.
 
 /** What each tool turn says after the collapse, in order. The whole assertion, every time. */
-const after = (trace: Message[]): string[] => collapse(trace).filter((m) => m.role === 'tool').map((m) => m.content)
+const after = (trace: Message[]): string[] => collapse(trace).filter((m) => m.role === 'tool').map((m) => textOf(m))
 
 test('a call that errored and was retried successfully loses the error', () => {
   const trace = [
