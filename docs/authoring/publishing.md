@@ -76,8 +76,12 @@ Three rules, and each of them is load-bearing:
 - **The tag is `<id>-v<version>`.** Not required by anything that reads the release, and it is
   what makes a list of a hundred releases legible to a person.
 - **`--latest=false`.** Alexia updates *itself* from `releases/latest/download/latest.json`,
-  and GitHub's *latest* is whichever release was published most recently. A plugin release
-  claiming to be latest points every install's updater at a release with no installer on it.
+  so a plugin release that became *latest* would point every install's updater at a release
+  with no installer on it. Worth knowing exactly what the flag does, because it is less than
+  it sounds: it stops **this** release being promoted, and GitHub's fallback when *nothing*
+  has been explicitly promoted is still whichever release is newest. What actually holds the
+  pointer down is the app's own release, published with `make_latest: true`. The flag keeps
+  plugin releases from taking it; the app release is what claims it.
 
 ### The block in the release notes
 

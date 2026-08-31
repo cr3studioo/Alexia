@@ -22,10 +22,16 @@
  *   4. cuts the release, unless `--dry-run`.
  *
  * **`--latest=false` on every plugin release, and it is not cosmetic.** Alexia updates
- * itself from `releases/latest/download/latest.json` on this same repository, and GitHub's
- * *latest* is whichever release was published most recently. A plugin release that claimed it
- * would point the app's updater at a release with no installer on it — so plugin releases say
- * they are not the latest anything, and the app's own release is the only one that does.
+ * itself from `releases/latest/download/latest.json` on this same repository, and a plugin
+ * release that became *latest* would point the app's updater at a release with no installer
+ * on it.
+ *
+ * **It does less than the name suggests, and that is worth writing down**: it stops *this*
+ * release being promoted, and GitHub's fallback — when no release has been explicitly
+ * promoted — is still the newest by date. Measured on the first real publish: eleven releases
+ * cut with this flag, and `/releases/latest` answered with the last one anyway. What holds the
+ * pointer down is the app's own release carrying `make_latest: true`. This flag keeps the
+ * plugins from taking it back.
  *
  * Usage:
  *
