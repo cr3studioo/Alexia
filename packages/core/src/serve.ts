@@ -139,6 +139,15 @@ function shell(): string {
   return candidates.find((dir) => existsSync(join(dir, 'index.html'))) ?? candidates[1]!
 }
 
+/**
+ * The three answers to *which theme*, and the only three this endpoint will store.
+ *
+ * Written down twice — the other copy is `THEMES` in `packages/ui/src/theme.ts`, which cannot
+ * import this one because the shell has no dependencies and no Node in it (invariant 6). Two
+ * copies drift, so `packages/ui/test/theme.test.ts` reads both files and holds them equal.
+ */
+const THEMES = ['system', 'light', 'dark']
+
 const STATIC: Record<string, [string, string]> = {
   '/': ['index.html', 'text/html; charset=utf-8'],
   '/app.css': ['app.css', 'text/css; charset=utf-8'],
@@ -157,6 +166,12 @@ const STATIC: Record<string, [string, string]> = {
   '/alexia-mark.svg': ['alexia-mark.svg', 'image/svg+xml'],
   '/alexia-panel.svg': ['alexia-panel.svg', 'image/svg+xml'],
   '/alexia-band.svg': ['alexia-band.svg', 'image/svg+xml'],
+  // The two themes, as the two pictures they are. These are the one place the painting is
+  // *not* a mask: the settings screen is choosing which colours it takes, and a preview that
+  // recoloured with the current theme would show the same theme three times. Flat bitmaps,
+  // so like the PNG they go out as bytes with no token substituted into them.
+  '/theme-light.webp': ['theme-light.webp', 'image/webp'],
+  '/theme-dark.webp': ['theme-dark.webp', 'image/webp'],
 }
 
 export async function serve(options: ServeOptions = {}): Promise<Serving> {
@@ -341,6 +356,12 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     done: store.kvGet(CORE, 'mode') !== undefined,
     name: (store.kvGet(CORE, 'display_name') as string | undefined) ?? 'Alexia',
     mode: (store.kvGet(CORE, 'mode') as string | undefined) ?? 'combined',
+    // Which theme, and `system` when nobody has said — which is the answer first run gets and
+    // the answer somebody gets back after changing their mind twice. It is stored here rather
+    // than in the browser because it is a fact about this install, like the name: the desktop
+    // window and a tab pointed at the same core are one Alexia and should not disagree about
+    // what colour it is.
+    theme: (store.kvGet(CORE, 'theme') as string | undefined) ?? 'system',
   })
 
   /**
@@ -866,10 +887,16 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
       const chosen = sent as {
         name?: string
         mode?: keyof typeof MODES
+        theme?: string
         provider?: { id: string; key: string }
       }
       if (chosen.name) store.kvSet(CORE, 'display_name', chosen.name)
       if (chosen.mode && chosen.mode in MODES) store.kvSet(CORE, 'mode', chosen.mode)
+      // Checked against the list rather than kept as typed. The shell only ever sends one of
+      // three, and a fourth word stored here would reach the root element as `data-theme` and
+      // match neither override — light on a dark desktop, with nothing on any screen saying
+      // why. The list is short enough to be the check.
+      if (chosen.theme && THEMES.includes(chosen.theme)) store.kvSet(CORE, 'theme', chosen.theme)
       if (chosen.provider?.key) {
         const provider = providers.find((p) => p.id === chosen.provider?.id)
         /**

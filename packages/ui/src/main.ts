@@ -15,6 +15,7 @@ import { autostart, dismiss, HOTKEY, inApp, setAutostart, tray } from './desktop
 import { mountControl } from './control.js'
 import { mountPalette } from './palette.js'
 import { mountSettings } from './settings.js'
+import { mountTheme, type Theme } from './theme.js'
 import { mountLive } from './live.js'
 import { mountRail } from './rail.js'
 import { el } from './widgets.js'
@@ -76,7 +77,7 @@ interface Permissions {
 }
 
 interface State {
-  setup: { done: boolean; name: string; mode: string }
+  setup: { done: boolean; name: string; mode: string; theme: Theme }
   permissions: Permissions
   messages: Turn[]
   spent: number
@@ -411,6 +412,19 @@ function setupSettings(state: State): void {
     const chosen = name.value.trim() || 'Alexia'
     name.value = chosen
     void post('/api/setup', { name: chosen }).then(() => called(chosen))
+  })
+
+  /**
+   * Which painting is on the wall.
+   *
+   * Stored beside the name and the mode and written by the same endpoint, because it is the
+   * same kind of thing: an answer about this install that outlives the window it was given
+   * in. The screen changes on the press and the write goes after it — a theme that waited for
+   * a round trip would be a control that feels broken while it works — and a write that fails
+   * costs the next launch one frame, which `theme.ts`'s mirror has already covered.
+   */
+  mountTheme(state.setup.theme, (theme) => {
+    void post('/api/setup', { theme })
   })
 
   for (const option of state.providers) {

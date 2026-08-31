@@ -6,6 +6,19 @@
     <title>Alexia</title>
     <link rel="icon" href="/alexia.png" />
     <link rel="stylesheet" href="/app.css" />
+    <!-- The theme, before the first paint. Core knows which one was chosen and answers in
+         milliseconds, and the page still paints before the answer lands — so reading it from
+         `/api/state` is a flash of the other theme on every single launch. `src/theme.ts`
+         leaves a copy here for this one block to read; core remains the truth and corrects
+         it the moment it replies. The key is written down twice, and that is the other one. -->
+    <script>
+      try {
+        var remembered = localStorage.getItem('alexia.theme')
+        if (remembered === 'light' || remembered === 'dark') document.documentElement.dataset.theme = remembered
+      } catch (unavailable) {
+        /* Storage off. One frame of the desktop's own theme, then core's answer. */
+      }
+    </script>
   </head>
   <!-- Four views, one at a time. `data-view` is the switch, which is what makes "first run
        and the composer are never on screen together" structural: on the first-run view the
@@ -191,6 +204,52 @@
                   <!-- Whether there is a key for the chosen provider, never the key itself: it
                        went to the keychain and nothing here can read it back. -->
                   <p class="hint" id="key-said"></p>
+                </div>
+              </div>
+              <!-- Which painting is on the wall. `docs/design.md` held for a while that there
+                   was no toggle and that the switch was the operating system; the operating
+                   system is still the default and is still the first card, and it is now one
+                   answer of three rather than the only one. Each card is the theme itself
+                   rather than a swatch of it — the two themes are one painting with the glaze
+                   and the paint changing places, so the painting is the honest preview. -->
+              <div class="field group">
+                <span class="label" id="theme-label">Which theme?</span>
+                <!-- Named, because three cards each holding a radio is a group with no name on
+                     it otherwise: a screen reader reaches the second one and says "Light, radio
+                     button, two of three" with nothing anywhere saying two of three *what*. -->
+                <div class="cards" role="radiogroup" aria-labelledby="theme-label">
+                  <label class="card theme">
+                    <!-- Both halves, because that is what following the desktop means:
+                         whichever of these two it is set to now, and the other one later. -->
+                    <span class="plate split" aria-hidden="true">
+                      <img src="/theme-light.webp" alt="" width="480" height="273" loading="lazy" />
+                      <img src="/theme-dark.webp" alt="" width="480" height="273" loading="lazy" />
+                    </span>
+                    <span class="card-head">
+                      <input type="radio" name="theme" value="system" />
+                      <b>System</b>
+                    </span>
+                    <span>Whatever this desktop is set to, and it follows when that changes.</span>
+                  </label>
+                  <label class="card theme">
+                    <!-- No alt text on any of the three: the card's own name is what a screen
+                         reader should read, and "a painting of the light theme" helps nobody
+                         who cannot see the painting. -->
+                    <img class="plate" src="/theme-light.webp" alt="" width="480" height="273" loading="lazy" />
+                    <span class="card-head">
+                      <input type="radio" name="theme" value="light" />
+                      <b>Light</b>
+                    </span>
+                    <span>Cobalt on champagne, whatever the desktop is doing.</span>
+                  </label>
+                  <label class="card theme">
+                    <img class="plate" src="/theme-dark.webp" alt="" width="480" height="273" loading="lazy" />
+                    <span class="card-head">
+                      <input type="radio" name="theme" value="dark" />
+                      <b>Dark</b>
+                    </span>
+                    <span>The same painting after dusk — champagne on cobalt.</span>
+                  </label>
                 </div>
               </div>
               <!-- The obvious way to turn autostart off, which is the half of "starts on login"

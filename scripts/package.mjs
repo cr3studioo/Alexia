@@ -126,6 +126,10 @@ for (const file of [
   'alexia-mark.svg',
   'alexia-panel.svg',
   'alexia-band.svg',
+  // The two theme previews. Not masks like the three above — flat pictures of the two
+  // palettes, which is what the settings screen is choosing between.
+  'theme-light.webp',
+  'theme-dark.webp',
 ]) {
   cpSync(join(root, 'packages', 'ui', file), join(ui, file))
 }
