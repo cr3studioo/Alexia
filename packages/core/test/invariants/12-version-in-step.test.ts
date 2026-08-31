@@ -37,7 +37,10 @@ test('version-in-step: the Tauri config carries it too', () => {
 test('version-in-step: the lockfile is not left behind', () => {
   // Cargo rewrites this on the next build, which is exactly the problem: a lockfile that
   // disagrees is a diff nobody reviewed turning up in the release commit.
-  const found = /name = "alexia"\nversion = "([^"]+)"/.exec(read('src-tauri/Cargo.lock'))?.[1]
+  // `\r?\n`, because this is the only pattern here that spans a line break — and git hands CI a
+  // checkout with CRLF in it. It passed on the machine it was written on and failed on the
+  // first build that mattered, which is the whole reason a release runs the suite.
+  const found = /name = "alexia"\r?\nversion = "([^"]+)"/.exec(read('src-tauri/Cargo.lock'))?.[1]
   expect(found, `src-tauri/Cargo.lock says ${String(found)}`).toBe(APP_VERSION)
 })
 
