@@ -362,10 +362,10 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     // window and a tab pointed at the same core are one Alexia and should not disagree about
     // what colour it is.
     theme: (store.kvGet(CORE, 'theme') as string | undefined) ?? 'system',
-    // How opaque the frosted panels are, as a `--glass-tint` percentage (40–100). Stored
+    // How opaque the frosted panels are, as a `--glass-tint` percentage (20–100). Stored
     // here with the theme because it is the same kind of fact and a tab and the window
-    // should not disagree about it. 78 is the sheet's own default.
-    glass: (store.kvGet(CORE, 'glass') as number | undefined) ?? 78,
+    // should not disagree about it. 60 is the sheet's own default.
+    glass: (store.kvGet(CORE, 'glass') as number | undefined) ?? 60,
   })
 
   /**
@@ -905,7 +905,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
       // Clamped, not trusted: it reaches the page as a `--glass-tint` percentage, and a value
       // outside 40–100 is either an unreadable pane or a solid one that nothing said to make.
       if (typeof chosen.glass === 'number' && Number.isFinite(chosen.glass)) {
-        store.kvSet(CORE, 'glass', Math.min(100, Math.max(40, Math.round(chosen.glass))))
+        store.kvSet(CORE, 'glass', Math.min(100, Math.max(20, Math.round(chosen.glass))))
       }
       if (chosen.provider?.key) {
         const provider = providers.find((p) => p.id === chosen.provider?.id)

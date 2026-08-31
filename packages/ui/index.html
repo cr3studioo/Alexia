@@ -16,9 +16,9 @@
         var remembered = localStorage.getItem('alexia.theme')
         if (remembered === 'light' || remembered === 'dark') document.documentElement.dataset.theme = remembered
         // Same reasoning for the panel glass: a value that waited for /api/state would be one
-        // frame of the default frost on every launch. 40..100, matching src/theme.ts.
+        // frame of the default frost on every launch. 20..100, matching src/theme.ts.
         var glass = parseInt(localStorage.getItem('alexia.glass'), 10)
-        if (glass >= 40 && glass <= 100) document.documentElement.style.setProperty('--glass-tint', glass + '%')
+        if (glass >= 20 && glass <= 100) document.documentElement.style.setProperty('--glass-tint', glass + '%')
       } catch (unavailable) {
         /* Storage off. One frame of the desktop's own theme, then core's answer. */
       }
@@ -258,7 +258,7 @@
                    painting through. Applied live on input; saved on release. -->
               <div class="field group glass-row">
                 <label class="label" for="glass">Panel glass</label>
-                <input id="glass" type="range" min="40" max="100" step="1" />
+                <input id="glass" type="range" min="20" max="100" step="1" />
                 <span class="range-ends" aria-hidden="true">
                   <span>clear</span><span>solid</span>
                 </span>

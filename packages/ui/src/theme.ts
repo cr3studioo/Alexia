@@ -81,12 +81,14 @@ export function mountTheme(chosen: Theme, keep: (theme: Theme) => void): void {
  * the store is the truth, `localStorage` is the copy the head script paints from before the
  * network answers, and `index.html` carries the key a second time.
  *
- * The floor is 40 rather than 0 because below it the conversation is text on a photograph —
+ * The floor is 20 rather than 0 because below it the conversation is text on a photograph —
  * `contrast.test.ts` guarantees the palette, not the wallpaper behind a see-through panel.
+ * The heavy `backdrop-filter` blur is what keeps even the floor legible: it turns the
+ * painting into a colour field before any text sits over it.
  */
-export const GLASS_MIN = 40
+export const GLASS_MIN = 20
 export const GLASS_MAX = 100
-export const GLASS_DEFAULT = 78
+export const GLASS_DEFAULT = 60
 
 /** Where the head script looks. Written down twice; `index.html` is the other. */
 export const REMEMBERED_GLASS = 'alexia.glass'

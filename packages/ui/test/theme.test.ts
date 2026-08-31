@@ -57,7 +57,7 @@ test('theme: the panel-glass mirror uses one key and one range end to end', () =
 
   const min = Number(/GLASS_MIN = (\d+)/.exec(shell)?.[1])
   const max = Number(/GLASS_MAX = (\d+)/.exec(shell)?.[1])
-  expect([min, max]).toEqual([40, 100])
+  expect([min, max]).toEqual([20, 100])
   // The slider offers exactly that range, and the head script guards exactly it.
   expect(html).toMatch(new RegExp(`id="glass"[^>]*min="${min}"[^>]*max="${max}"`))
   expect(head).toContain(`glass >= ${min} && glass <= ${max}`)
