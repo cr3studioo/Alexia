@@ -1238,10 +1238,41 @@ the thing that quietly eats the project:
 > is how solo maintainers burn out, and it is much harder to walk back later than to state
 > now.
 
-### Updates: independent, with yours riding along
+### Updates: every plugin on its own schedule, and the app on its own
 
-Third-party plugins update on their own schedule with a protocol version check. The plugins
-you maintain ship with the app, so they are always current.
+*Rewritten 2026-08-31 (D118, D119). What it said before is kept below, because the reason it
+changed is the useful part.*
+
+**It used to say:** third-party plugins update on their own schedule with a protocol version
+check, and the plugins you maintain ship with the app, so they are always current. Two update
+paths sharing most of their code, and the only real difference is where the version list comes
+from.
+
+**The second half of that was wrong**, and it was wrong in a way that only shows up once the
+installer exists. *Ships with the app* means every capability is bytes in a download that
+somebody has to accept before they have any idea whether they want it; it means a fix to one
+plugin waits for an Alexia release; and it means the plugins we wrote are privileged over
+everybody else's by the mechanism rather than by merit — which is the founding complaint of
+this project, arriving by the back door. Eight plugins did ship inside the installer for one
+milestone. They cost 8.8 MB, sat in `resources\plugins\`, and were reachable only by pasting
+a path out of `%LOCALAPPDATA%`.
+
+**So: nothing ships inside the installer.** Alexia arrives able to hold a conversation, and
+every capability is a download — ours on exactly the same footing as anybody else's, through
+exactly the same shelf. There is one update path now instead of two, and it is the one that
+was already built.
+
+**The shelf is GitHub Releases.** A plugin version is a release: the `.tgz` is an asset on it,
+and the entry is a fenced block in the notes. Publishing is `gh release create`, so *a
+developer cuts a release and users see the plugin* is one step rather than a step and a
+deploy. The registry described above — own API, own database, a kill switch — was the right
+answer to a question that was never asked, because the account and the card it needed were a
+gate that never got passed and the library screen drew *nothing new* for two milestones. The
+client still speaks that layout and `scripts/publish.mjs --pages` still emits it, for the one
+thing GitHub cannot do: **revocation reaches somebody who already installed it.** Deleting a
+release stops every future install and tells nobody.
+
+**Compatibility is now two questions, because it has to be.**
 
 ```
 plugin says: needs protocol >= 2
@@ -1250,16 +1281,26 @@ core speaks: protocol 3      -> loads normally
 plugin says: needs protocol >= 4
 core speaks: protocol 3      -> does not load, and says
                                 "Voice needs a newer Alexia"
+
+plugin says: min_app 0.2.0
+this build:  0.1.9           -> not on the shelf, not offered as an
+                                update, and refused if asked anyway
 ```
 
-**This is what rescues accepting plugins early against a contract that is still moving.**
-When it breaks at M4, plugins built against the old version do not crash the app — they
-decline to load and explain why. A clean refusal with a reason is a completely different
-experience from a broken assistant, and it is the difference between an annoyed
-contributor and a lost one.
+`alexia_protocol` is the shape of the contract; `min_app` is the build. A capability that
+arrived in 0.2.0 is not a new revision, so a plugin needing it handshakes perfectly on 0.1.9
+and does nothing useful — which is a thing that could not happen while everything shipped in
+one installer, and is the first thing that happens once plugins move. The screen says *two
+plugins and one plugin update need a newer Alexia* rather than listing names nobody can act
+on, because the number is the part that is actionable.
 
-Cost: two update paths to build and keep in step. They share most of their code; the only
-real difference is where the version list comes from.
+**And the app updates itself, in one press.** A newer release is offered at startup — once, in
+a strip along the bottom, never a dialog over a conversation — and *Update now* downloads the
+installer, checks a signature over it, runs it silently and restarts. Nobody opens a browser,
+nobody finds a `setup.exe`, nobody clicks through an installer. That is not a nicety: **the
+shelf is only as good as the newest Alexia people are actually running**, and a plugin that
+declares `min_app` is invisible to everybody who did not get round to updating. An app that
+updates itself is what makes a compatibility floor a thing an author can rely on.
 
 ---
 
@@ -1492,6 +1533,8 @@ Newest first. Every entry is a question from `questions.md` that got answered.
 
 | Date | Decision | Notes |
 |---|---|---|
+| 2026-08-31 | **D119 — Alexia updates itself, in one press, or the compatibility floor is a fiction** | The other half of D118 and not a nicety beside it: a shelf is only as good as the newest Alexia people are actually running, and a plugin that declares `min_app` is invisible to everybody who never got round to updating. **`tauri-plugin-updater` was already a dependency and had never worked** — `pubkey` was the empty string, the endpoint pointed at a domain nobody owns, and `active`/`dialog` in the config are **Tauri v1 keys that v2 silently ignores**, so nothing was ever checked and nothing would have installed if it had been. What was missing was a keypair, a `latest.json`, and one call. All three exist now: the check runs once at startup, the offer is a strip along the bottom rather than a dialog over a conversation, and *Update now* downloads, verifies a minisign signature over the installer, runs NSIS with `/S /R` and restarts. **There is no success branch to write** — the plugin exits the process the moment the installer is launched, because a running Alexia holds the files being replaced — so the only UI is the failure one, with a manual link behind it. **The order in the release workflow is the argued part.** Authenticode rewrites the installer, so a minisign signature taken at build time describes bytes that no longer exist and every update would be refused on every machine with an error nobody can act on. Build → SignPath → `tauri signer sign` → `latest.json`, and it is the only order that works. And the app's release is the one marked latest, which is why `publish.mjs` cuts every plugin release with `--latest=false`: the updater reads `releases/latest/download/latest.json`, and a plugin release claiming to be latest points every install at a release with no installer on it. |
+| 2026-08-31 | **D118 — nothing ships inside the installer, and the shelf is GitHub Releases** | Reverses *the plugins you maintain ship with the app, so they are always current* — the one line of the distribution decision that only shows up as wrong once an installer exists. Shipping them means every capability is bytes somebody accepts before knowing whether they want it, a fix waits for an Alexia release, and **our plugins are privileged over everybody else's by the mechanism rather than by merit**, which is this document's founding complaint arriving by the back door. Eight of them did ship for one milestone: 8.8 MB in `resources\plugins\`, reachable only by pasting a path out of `%LOCALAPPDATA%`. `hello` stayed one milestone longer as the offline proof that installing works, and it is gone too — that was an argument about the developers rather than about the user. **What replaced it is a step of first run**: read the shelf, show what this build can run with each plugin's own `requires` sentences under it, install what was ticked. The tick is the consent D73 is about, and it is the one screen where a person is choosing several at once. **The shelf is GitHub Releases** because *a developer cuts a release and users see the plugin* has to be one step: the `.tgz` is an asset, the entry is a fenced block in the notes, and one API call reads the whole shelf. The registry this document specified — own API, own database, instant revocation — was never deployed, because the account and the card were a gate nobody passed, and the library screen drew *nothing new* for two milestones. Its client is kept, and `--pages` still emits it, for the one thing GitHub cannot do: **a revocation that reaches somebody who already installed it.** Deleting a release stops future installs and tells nobody. **`min_app` is the new field and the reason is structural**: `alexia_protocol` describes the shape of the contract, not the build, so a plugin needing a capability that arrived in 0.2.0 handshakes perfectly on 0.1.9 and does nothing — a failure that could not exist while everything shipped together. One check (`versionVerdict`) in three places, so nothing is offered that cannot install and nothing installs that cannot load, and the screen says *two plugins and one plugin update need a newer Alexia* rather than naming things nobody can act on. |
 | 2026-08-31 | **D117 — the picture plugin starts ComfyUI, and a permission grew a sentence** | Reverses the first version of `plugins/media`, whose answer to the commonest situation it was ever in — *ComfyUI is not running* — was **correct and useless**: *start it and try again, it is a separate program, and Alexia does not start it for you*. An assistant that can see what is wrong, knows how to fix it, and hands the chore back is the first complaint in this document wearing a different hat. So it starts it: `launch.js` finds the install (the `path` setting first, then a budgeted two-deep walk of the obvious folders), works out which Python that install was made with, and spawns `main.py`. **The permission widened rather than multiplied.** `proc.spawn` was written as *a child process it ships*, because every plugin that had one had downloaded it; this is the first that starts a program already on the machine, and *spawn what I shipped* and *spawn what is already here* are the same power told apart by where a file came from. The `why` is what stays honest, and naming the program is now the bar, exactly as naming the host is the bar for `net.download`. **It is detached, and that is the argued part.** This plugin is lazily spawned and stopped after five idle minutes; ComfyUI takes far longer than that to come up, so tying one to the other means paying the start again after every pause. It outlives the plugin, its pid is written down, and **Alexia never kills a ComfyUI it did not start** — a running server plus a pid we recorded is the only thing `stop_comfyui` will end. The wait is ninety seconds, **deliberately shorter than a slow start**, because core allows a tool call two minutes and a wait that outlives the call says nothing to anybody: past it the answer is *still loading, ask again in a minute*, which is true, and the next call finds it up. That bound is not theoretical — the install this was built against took **six minutes**, all of it custom nodes and a registry fetch, and a plugin that had waited for it would have died at two. Two findings on the way, both from actually making a picture rather than from reading the code. The venv beside the install is the only Python with PyTorch in it, and using the one on `PATH` gets *no module named torch* on a machine where ComfyUI works perfectly. And `VAEDecodeTiled` — **the default path, the one the fp16 black-image fix turns on** — has gained three required inputs since this graph was written, so ComfyUI refused every graph with a 400 and **the plugin had never made an image at all**. It stayed invisible because the refusal's body was thrown away: ComfyUI names the node, the input and the reason in it, and the client printed *400 Bad Request*. Both fixed, both tested, and the body is now read. |
 | 2026-08-31 | **D116 — the theme switch is a control after all, and the hook left for it was already half a theme** | Reverses D67's *there is no theme toggle, deliberately*. That reasoning was about the usual case — a tray-resident daemon should look like the desktop it is sitting in — and it is still the default and still the first card; what it was not is an answer for somebody whose desktop is dark at every hour and who wants champagne anyway. The three costs D67 priced turned out to be one kv entry on an endpoint that already existed, one screen that already had the questions on it, and a third state that needs no explaining because it is the first card and it is called *System*. **Three and not two**: *follow the desktop* has to stay sayable after a theme has been forced once, or the switch is one-way and the way back is remembering which way the desktop was pointing. `system` is the **absence** of `[data-theme]`, because that is what the sheet already meant by it. Two things came out of building it that were never taste. **The hook was half a theme**: `[data-theme='dark']` carried the fifteen colours and not `--paint`, the washes or `color-scheme`, so forcing dark on a light desktop got the dark palette with the light theme's brushwork opacity and a white scrollbar down the side — invisible in a review of either block, visible only in the difference between them, and now held by `theme.test.ts`. **And the preference had to beat the network**: core answers in milliseconds and the page still paints first, so a theme read from `/api/state` is a flash of the other one on every launch; the store stays the truth and a script in the page head reads a `localStorage` mirror early enough to matter. The cards are the two paintings themselves rather than swatches — the one place in the product the painting is not a mask, because here the colour is what is being chosen and a preview that took the current theme would show it to you three times. Verified by driving headless Edge over all six combinations of three choices and both desktops. |
 | 2026-08-31 | **D115 — the twelfth widget, and the map somebody finally had a use for** | M6-11, and G8 answered on the third asking. `graph` was refused at M6-3 on this schema's own bar — *one user is not enough* — and refused again at M6-7 on a better argument: the memory store held flat sentences with a category, so the edges would have had to be **inferred**, and a picture of inferred similarity looks meaningful and is not, which is a worse failure than no picture because nobody can tell. M7-3 made those links **authored**, and G8 named the condition for reopening it: *when somebody wants to look at the shape of their own memory*. Somebody did. **It still has one user and it was granted anyway, on what the alternatives cost.** M6-7 wrote down three ways to draw a map: a hand-written force layout, a widget, a sandboxed iframe. The first puts a canvas built for one plugin inside core's own shell, which is core naming a plugin — the founding complaint arriving by the back door, and exactly the predecessor's 480-line vendor panel. The third hands a plugin the pixels, and the palette, the labels, the focus ring and the contrast go with them. **Only the widget leaves the shell naming nobody**, so what shipped is the first option drawn inside the third's rules: `packages/ui/src/force.ts`, d3-force's own constants, no dependency, pure arithmetic — and therefore tested in a suite that has no browser. A plugin declares four fields on a node and no colours at all; `mark` draws its ring in `--chosen` **after** the node rather than instead of it, so *what this is* and *where it came from* stay two signals rather than fighting over one pixel. `alexia_protocol` 4, and **the floor stayed at 2**: raising `MIN` is what deprecating a revision looks like, and breaking seven working plugins to keep a number tidy is not a deprecation. **Retuned the same day, from a screenshot of a real one.** Shipping d3's own constants was the mistake — they are for a few dozen dots with nothing written on them — and sixty-three labelled notes drew a hairball whose hub could be dragged across the screen while nothing followed. Four causes, none of them about taste: the layout **recentred itself every tick**, moving whatever was under the cursor and undoing part of every drag; nothing kept two circles apart, because repulsion is a force and overlap is a fact about the picture, so it is a position now; a drag **cooled while it was still being made**, where d3 holds the temperature up for as long as a node is held; and every label was drawn, which is the same as drawing none, so a name claims a rectangle and loses it to whatever is being pointed at. `force.ts` has no DOM in it, so the real graph was laid out headless and the numbers read off rather than eyeballed: 0 overlapping pairs, 0.10 ms a tick, and a hub dragged 985 units now takes its neighbours a median of 562 with it. Two of those are tests. One data bug fell out of it — every edge was in the set twice, because both notes name each other, so every spring pulled twice as hard as the physics was tuned for. |

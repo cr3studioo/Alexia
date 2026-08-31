@@ -3059,3 +3059,51 @@ kbd {
   font-size: var(--text-sm);
   color: var(--ink-faint);
 }
+
+/* ---- a newer Alexia (D117) ----------------------------------------------------------------
+
+   A strip along the bottom rather than a dialog over the middle. An update is news, not an
+   interruption: the thing somebody was doing when it arrived is still the more important
+   thing on screen, and a modal that stops a conversation to announce a download is exactly
+   the behaviour this project exists not to have. It sits above everything because it belongs
+   to the program rather than to a screen, and it is never rendered in a browser at all. */
+.update-bar {
+  position: fixed;
+  inset: auto var(--space-4) var(--space-4) auto;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  max-width: min(30rem, calc(100vw - 2 * var(--space-4)));
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  color: var(--ink);
+  font-size: var(--text-sm);
+  box-shadow: 0 0.5rem 1.5rem color-mix(in oklab, var(--ink) 18%, transparent);
+}
+
+.update-bar > span {
+  flex: 1;
+}
+
+/* The failure half. Hidden until there is one, and then it is the whole point of the strip. */
+.update-bar > a {
+  color: var(--ink-quiet);
+}
+
+/* First run's plugin picker (D116). The rows are the `.card` the mode chooser uses, so a
+   checkbox list of plugins looks like the radio list two blocks above it rather than like a
+   fourth kind of control invented for this screen. */
+#shelf .card em {
+  font-style: normal;
+  color: var(--ink-faint);
+}
+
+#shelf .asks {
+  margin: var(--space-2) 0 0;
+  padding-left: var(--space-4);
+  color: var(--ink-faint);
+  font-size: var(--text-xs);
+}

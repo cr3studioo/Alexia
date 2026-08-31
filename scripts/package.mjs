@@ -20,7 +20,6 @@
  *     alexia.mjs    core, bundled to one file
  *     *.node        the one native dependency that cannot be bundled
  *     ui/           the shell: index.html, app.css, main.js, her face
- *     plugins/      the first-party plugins, bundled — something to install (M2-7)
  *
  * Data still goes to %LOCALAPPDATA%\Alexia and never beside the executable, which is what
  * makes "delete the folder" a clean uninstall of the program and not of the conversation.
@@ -37,7 +36,7 @@
  */
 import { build } from 'esbuild'
 import { spawn } from 'node:child_process'
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { cpSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
@@ -141,62 +140,26 @@ cpSync(join(root, 'packages', 'ui', 'dist', 'src'), join(ui, 'dist', 'src'), {
   filter: (from) => statSync(from).isDirectory() || from.endsWith('.js'),
 })
 
-// 4. Something to install (M2-7). The lifecycle at M2-5 installs from a folder somebody
-//    points at, and a packaged Alexia with no folder to point at makes *install → talk →
-//    delete* a thing you can only do with a checkout.
-//
-//    Each one is bundled exactly the way core is, for exactly the same reason: a plugin in
-//    this repo reaches its SDK through a pnpm symlink into a store that will not exist on the
-//    tester's machine. What ships is a folder holding a manifest, one file, and whatever it
-//    bundles — which is also what a registry download will look like at M3.
-//
-//    `crasher` and `vanisher` are not on this list and are not going to be: they exist to be
-//    broken, and handing somebody a plugin whose job is to die is not a demonstration.
-//
-//    Everything here ships **installable, not installed**. The folder is where somebody
-//    points the Add a plugin box until there is a registry to browse — and even after they
-//    point at one, it arrives not enabled, because the screen has still to show what it
-//    asked for.
-//
-//    **Trimmed to one, now that there is a registry to browse (`scripts/publish.mjs`).**
-//    Eight of these shipped inside the installer and then sat in `resources\plugins\`
-//    costing 8.8 MB whether or not anybody wanted them — the exact opposite of *install only
-//    what you need*, and reachable only by pasting a path out of `%LOCALAPPDATA%`, which is
-//    not a thing the person this is built for will ever do. The rest come off the shelf now.
-//
-//    `hello` stays, and stays for the reason the list existed: it is the offline proof that
-//    installing works at all. A registry is a network call, and a first run behind a captive
-//    portal or a dead DNS entry should still be able to demonstrate *install → talk →
-//    delete* without one.
-const SHIPPED = ['hello']
-const plugins = join(out, 'plugins')
-for (const id of SHIPPED) {
-  const from = join(root, 'plugins', id)
-  const to = join(plugins, id)
-  mkdirSync(to, { recursive: true })
-  const manifest = JSON.parse(readFileSync(join(from, 'plugin.json'), 'utf8'))
-  // `$schema` points at a path in this repo, which is not somewhere the tester has. It is a
-  // convenience for whoever edits the file, and it does not travel.
-  delete manifest.$schema
-  writeFileSync(join(to, 'plugin.json'), JSON.stringify(manifest, null, 2))
-
-  // The entry point, and only the entry point: `entry.args` names the script, and everything
-  // it imports comes with it.
-  const script = (manifest.entry.args ?? []).find((arg) => arg.endsWith('.js'))
-  if (!script) throw new Error(`${id} has no script in entry.args to bundle.`)
-  await build({
-    entryPoints: [join(from, script)],
-    outfile: join(to, script),
-    bundle: true,
-    platform: 'node',
-    format: 'esm',
-    target: 'node24',
-    banner: { js: 'import{createRequire as __cr}from"node:module";const require=__cr(import.meta.url);' },
-  })
-
-  // Its skills, if it brought any (M2-2). They are text and they install and purge with it.
-  for (const skill of manifest.skills ?? []) cpSync(join(from, skill), join(to, skill), { recursive: true })
-}
+/**
+ * 4. **Nothing.** No plugin ships inside this build (D118).
+ *
+ * There used to be a list here, and it went from eight names to one to none. The eight were
+ * copied in so that *install → talk → delete* was demonstrable without a registry, and they
+ * sat in `resources\plugins\` costing 8.8 MB whether or not anybody wanted them — reachable
+ * only by pasting a path out of `%LOCALAPPDATA%`, which is not a thing the person this is
+ * built for will ever do. `hello` stayed one milestone longer as the offline proof that
+ * installing works at all.
+ *
+ * It is gone too, because *offline proof* was the last argument for shipping code somebody
+ * did not ask for, and it was an argument about the developers rather than about them. What
+ * replaced it is a step of first run that reads the shelf and asks *what should it be able to
+ * do?* — which is a better answer to the same question, since it offers thirteen plugins
+ * rather than one and installs only what was ticked.
+ *
+ * The consequence, said plainly: **a first run with no network reaches a conversation and
+ * nothing else.** That is the honest shape of a product whose plugins are downloads, and the
+ * screen says so rather than hiding it.
+ */
 
 // 5. The runtime. 89 MB of Node, which is most of what the tester downloads and the honest
 //    price of not asking them to install anything.
@@ -234,7 +197,7 @@ console.log('   ' + url)
 console.log('')
 console.log('Your browser should have opened. If it did not, copy that address into it.')
 console.log('')
-console.log('More plugins are on the Plugins screen. They download when you ask for them.')
+console.log('Everything Alexia can do is a plugin, and they are on the Plugins screen.')
 console.log('')
 console.log('Closing this window stops Alexia.')
 
@@ -353,4 +316,3 @@ const mb = (path) => (statSync(path).size / 1024 / 1024).toFixed(1)
 console.log(`Packaged to ${out}`)
 console.log(`  alexia.mjs  ${mb(join(out, 'alexia.mjs'))} MB`)
 console.log(`  node.exe    ${mb(join(out, 'node.exe'))} MB`)
-for (const id of SHIPPED) console.log(`  plugins/${id}   ${mb(join(plugins, id, 'index.js'))} MB`)

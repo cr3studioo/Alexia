@@ -7,7 +7,7 @@
  * the way `tauri build` looks for them:
  *
  *   src-tauri/binaries/alexia-core-<target triple>.exe   the runtime, as the sidecar
- *   src-tauri/resources/                                  alexia.mjs, boot.mjs, ui/, plugins/
+ *   src-tauri/resources/                                  alexia.mjs, boot.mjs, ui/
  *
  * The split is Tauri's, not ours: an `externalBin` lands beside the executable and gets the
  * triple appended, while `resources` land in a directory of their own. `main.rs` bridges the
@@ -60,8 +60,10 @@ const suffix = host.includes('windows') ? '.exe' : ''
 cpSync(join(packaged, `node${suffix}`), join(binaries, `alexia-core-${host}${suffix}`))
 
 // 3. Everything the sidecar reads once it is running. `Alexia.cmd` and the runtime itself do
-//    not come: the launcher is the app now, and the runtime is above.
-for (const name of ['alexia.mjs', 'boot.mjs', 'ui', 'plugins', 'scripts']) {
+//    not come: the launcher is the app now, and the runtime is above. Neither do plugins —
+//    there are none to copy (D118), and every one of them arrives as a download into
+//    `%LOCALAPPDATA%\Alexia\extensions` instead.
+for (const name of ['alexia.mjs', 'boot.mjs', 'ui', 'scripts']) {
   const from = join(packaged, name)
   if (existsSync(from)) cpSync(from, join(resources, name), { recursive: true })
 }

@@ -6,7 +6,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, expect, test } from 'vitest'
-import { Library, type Entry } from '../src/library.js'
+import { Library, offerable, type Entry } from '../src/library.js'
 import { Store } from '../src/store.js'
 
 // M3-2 and M3-7. The library downloads somebody else's bytes and puts them in the folder
@@ -122,6 +122,10 @@ test('a withdrawn plugin is refused with the registry’s reason', async () => {
     skillsDir: join(dir, 'skills'),
     fetch: () => Promise.resolve(Response.json({ error: 'revoked', reason: 'it read the whole home directory' }, { status: 410 })),
   })
+  // A static registry, deliberately: the 410 is that layout's kill switch, and it is the
+  // reason `publishing.md` still names it as the right answer for a registry serving
+  // strangers. Deleting a GitHub release stops new installs and reaches nobody who has one.
+  library.url = 'https://registry.invalid'
   const done = await library.install('weather')
   expect(done.ok).toBe(false)
   expect('why' in done && done.why).toMatch(/withdrawn.*read the whole home directory/)
@@ -178,4 +182,117 @@ test('installing twice is refused rather than overwriting what is there', async 
   const again = await library.install('weather')
   expect(again.ok).toBe(false)
   expect('why' in again && again.why).toMatch(/already installed/)
+})
+
+// ---- the shelf is GitHub Releases (D118) ------------------------------------------------
+
+/** A release as GitHub returns one, with the block `publish.mjs` writes into the body. */
+function release(entry: Partial<Entry> & { id: string; version: string; sha256: string }, extra = ''): unknown {
+  const block = {
+    name: entry.id,
+    summary: 'Something to install.',
+    license: 'Apache-2.0',
+    alexia_protocol: 2,
+    mcp_protocol: '2025-11-25',
+    requires: [],
+    provides: [],
+    ...entry,
+  }
+  return {
+    tag_name: `${entry.id}-v${entry.version}`,
+    published_at: '2026-08-30T12:00:00Z',
+    body: `${extra}\n\`\`\`alexia\n${JSON.stringify(block)}\n\`\`\`\n`,
+    assets: [
+      { name: `${entry.id}-${entry.version}.tgz`, browser_download_url: `https://example.invalid/${entry.id}.tgz` },
+    ],
+  }
+}
+
+/** A world whose registry is a repository, and whose releases are whatever is passed in. */
+function releases(rows: unknown[], bytes: Buffer): { library: Library; extensions: string } {
+  const dir = mkdtempSync(join(root, 'gh-'))
+  const extensions = join(dir, 'extensions')
+  const fake: typeof globalThis.fetch = (input) => {
+    if (String(input).startsWith('https://api.github.com/')) return Promise.resolve(Response.json(rows))
+    return Promise.resolve(
+      new Response(new Uint8Array(bytes), { headers: { 'content-length': String(bytes.byteLength) } }),
+    )
+  }
+  const library = new Library({
+    store: new Store(':memory:'),
+    pluginsDir: extensions,
+    skillsDir: join(dir, 'skills'),
+    fetch: fake,
+  })
+  library.url = 'github:cr3studioo/Alexia'
+  return { library, extensions }
+}
+
+test('a release is a plugin, and the asset is where the bytes come from', async () => {
+  const packed = pack('weather')
+  const { library, extensions } = releases([release({ id: 'weather', version: '0.1.0', sha256: packed.sha256 })], packed.bytes)
+
+  const shelf = await library.plugins()
+  expect(shelf).toHaveLength(1)
+  // Never the block's own idea of where the bytes are: whatever is offered is on the release
+  // that offered it, so the two cannot be made to point in different directions.
+  expect(shelf[0]!.url).toBe('https://example.invalid/weather.tgz')
+
+  expect(await library.install('weather')).toMatchObject({ ok: true, id: 'weather' })
+  expect(existsSync(join(extensions, 'weather', 'plugin.json'))).toBe(true)
+})
+
+test('a release with no block is not a plugin — which is how the app’s own installers stay off the shelf', async () => {
+  const packed = pack('weather')
+  const { library } = releases(
+    [
+      { tag_name: 'v0.2.0', body: 'Alexia 0.2.0.', assets: [{ name: 'Alexia_0.2.0_x64-setup.exe', browser_download_url: 'https://example.invalid/setup.exe' }] },
+      release({ id: 'weather', version: '0.1.0', sha256: packed.sha256 }),
+    ],
+    packed.bytes,
+  )
+  expect((await library.plugins()).map((row) => row.id)).toEqual(['weather'])
+})
+
+test('two releases of one plugin: the later version is the one on the shelf', async () => {
+  const packed = pack('weather')
+  const { library } = releases(
+    [
+      // Newest-first is GitHub's order by date, and a release cut to fix last month's notes
+      // would sit at the top of it. The version is what decides, not the position.
+      release({ id: 'weather', version: '0.9.0', sha256: packed.sha256 }),
+      release({ id: 'weather', version: '0.10.0', sha256: packed.sha256 }),
+    ],
+    packed.bytes,
+  )
+  expect((await library.plugins())[0]!.version).toBe('0.10.0')
+})
+
+test('a plugin that needs a newer Alexia is not offered, and refuses to install if asked anyway', async () => {
+  const packed = pack('weather')
+  const { library, extensions } = releases(
+    [release({ id: 'weather', version: '0.1.0', sha256: packed.sha256, min_app: '99.0.0' })],
+    packed.bytes,
+  )
+  const shelf = await library.plugins()
+  expect(offerable(shelf[0]!)).toBe('newer-app')
+
+  // The gate is asked again at the moment of install, because a row can sit on a screen for
+  // an hour: hiding it on one screen is not the same as refusing it.
+  const done = await library.install('weather')
+  expect(done.ok).toBe(false)
+  expect('why' in done && done.why).toMatch(/needs Alexia 99\.0\.0 or later/)
+  expect(existsSync(join(extensions, 'weather'))).toBe(false)
+})
+
+test('an update that needs a newer Alexia is reported rather than offered', async () => {
+  const packed = pack('weather')
+  const { library } = releases(
+    [release({ id: 'weather', version: '2.0.0', sha256: packed.sha256, min_app: '99.0.0' })],
+    packed.bytes,
+  )
+  const [update] = await library.updates([{ id: 'weather', version: '0.1.0' }])
+  // It is a real update and this build cannot take it. Both halves travel, because the
+  // screen's sentence is "one plugin update needs a newer Alexia" and neither half says that.
+  expect(update).toMatchObject({ id: 'weather', from: '0.1.0', to: '2.0.0', offer: 'newer-app' })
 })

@@ -1,53 +1,50 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 /**
- * The registry, as files (M3-1's other half).
+ * Publishing a plugin (M3-1, rewritten by D118).
  *
- * `registry/` is a Cloudflare Worker over D1, and deploying it needs an account, a database
- * and a person with a card. That gate is real and it has never been passed, so the library
- * screen has always drawn `Nothing new at …` — a marketplace with nothing on the shelf.
+ * **A plugin version is a GitHub Release.** The `.tgz` is an asset on it and the entry
+ * Alexia reads is a fenced ```alexia block in the release notes, so publishing is one
+ * `gh release create` and there is no index to regenerate, no site to deploy, and nothing
+ * that can be stale between cutting a release and somebody seeing the plugin. That is the
+ * property the previous two shapes did not have: `registry/`'s Cloudflare Worker needed an
+ * account, a database and a card — a gate that was never passed, so the library screen drew
+ * *Nothing new at …* for two milestones — and the GitHub Pages site that replaced it needed
+ * a second repository, a deploy, and a commit for every publish.
  *
- * **The client never needed the Worker.** `Library.#get` resolves a path against a base URL
- * and calls `.json()` on what comes back; it checks no content type, sends no auth and asks
- * for nothing a static file cannot answer. `Library.url` is a kv entry, already overridable,
- * already commented *"so a fork points at its own"*. So the four paths the client reads —
+ * What this script does, in order:
  *
- *     /v0/plugins.json        every plugin, the shelf
- *     /v0/skills.json         standalone skills, a separate shelf on purpose
- *     /v0/revoked.json        the half of the registry for people not currently browsing
- *     /v0/plugins/<id>.json   one entry, re-read at the moment of install
+ *   1. validates each `plugin.json` against the loader's own schema — a manifest that would
+ *      not load is not a thing to put on a shelf, and finding out here costs a second rather
+ *      than a download and a support message;
+ *   2. bundles each plugin the way `package.mjs` bundles core, because a plugin in this repo
+ *      reaches its SDK through a pnpm symlink into a store no downloader has;
+ *   3. packs a `.tgz`, hashes it, and writes the release body around that hash;
+ *   4. cuts the release, unless `--dry-run`.
  *
- * — can be four files in a GitHub Pages site, and publishing becomes `git push`. No Worker,
- * no D1, no `ADMIN_TOKEN`, no bill. The Worker stays in the tree and stays correct; this is
- * the same registry with a filesystem where the database was.
- *
- * **The `.json` is not decoration.** A filesystem has one namespace where REST has two, so
- * `/v0/plugins` cannot be both the list and the folder holding each entry — the first run of
- * this script died on exactly that (`EISDIR`). The client asks for `.json` and the Worker
- * strips it before routing, so both spellings reach the same place and neither host is a
- * special case.
- *
- * **What is lost, said plainly.** The Worker sets `cache-control: no-store` on `/v0/revoked`
- * because *"the whole value of a revocation is that it is not five minutes late"*. Pages sits
- * behind a CDN that caches for roughly ten minutes, so the kill switch gets that much slower.
- * It still works — `Library.install` refuses on `'revoked' in found`, reading the per-plugin
- * file, so a revoked entry blocks the install without needing the Worker's 410 — but it is
- * slower, and a registry serving strangers should go back to the Worker for that one reason.
- *
- * **The bytes are not here.** A registry entry is a name, a URL and a checksum; the checksum
- * is what is trusted, not the host. So the `.tgz` files can sit in the same Pages site (the
- * default: one push publishes everything) or anywhere else `--base` points at — a Release, a
- * bucket, another domain — and nothing about the security story changes.
+ * **`--latest=false` on every plugin release, and it is not cosmetic.** Alexia updates
+ * itself from `releases/latest/download/latest.json` on this same repository, and GitHub's
+ * *latest* is whichever release was published most recently. A plugin release that claimed it
+ * would point the app's updater at a release with no installer on it — so plugin releases say
+ * they are not the latest anything, and the app's own release is the only one that does.
  *
  * Usage:
  *
- *     node scripts/publish.mjs --repo cr3studioo/alexia-registry
- *     node scripts/publish.mjs --repo owner/name --base https://…/releases/download/v1
+ *     node scripts/publish.mjs                      # every plugin, to cr3studioo/Alexia
+ *     node scripts/publish.mjs --only documents     # one of them
+ *     node scripts/publish.mjs --dry-run            # build and print, publish nothing
+ *     node scripts/publish.mjs --pages --repo o/n   # the static layout instead (see below)
  *
- * Then commit the contents of `dist-registry/` to that repo and enable Pages on it. Point
- * Alexia at it once, in Settings, or change DEFAULT_REGISTRY.
+ * A tag that already exists is skipped rather than overwritten: a published version is
+ * somebody else's download now, and republishing one silently changes the bytes under a
+ * checksum a machine may already have written down. Bump the version in `plugin.json`.
+ *
+ * **`--pages` keeps the static layout alive**, four JSON files under `/v0/` for a GitHub
+ * Pages site or the Worker in `registry/`. It is still the right answer for a registry
+ * serving strangers, for one reason: its `/v0/revoked.json` is a kill switch that reaches
+ * people who already installed something, and deleting a GitHub release reaches nobody.
  */
 import { build } from 'esbuild'
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -76,16 +73,18 @@ const flag = (name, fallback) => {
   return at === -1 ? fallback : args[at + 1]
 }
 
-const repo = flag('repo')
-if (!repo || !/^[\w.-]+\/[\w.-]+$/.test(repo)) {
-  console.error('publish.mjs needs --repo owner/name — the GitHub repo that will serve the registry.')
-  console.error('  node scripts/publish.mjs --repo cr3studioo/alexia-registry')
+const repo = flag('repo', 'cr3studioo/Alexia')
+if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) {
+  console.error(`--repo wants owner/name, not "${repo}".`)
   process.exit(1)
 }
 const [owner, name] = repo.split('/')
+const pages = args.includes('--pages')
+const dry = args.includes('--dry-run')
+const only = flag('only')
 const out = flag('out', join(root, 'dist-registry'))
 const site = `https://${owner}.github.io/${name}`
-/** Where the `.tgz` files will be readable from. The site itself unless told otherwise. */
+/** Where the `.tgz` files are readable from, in `--pages` mode. Releases name their own. */
 const base = flag('base', `${site}/tgz`)
 const author = flag('author')
 
@@ -137,7 +136,12 @@ const revokedPlugins = revoked.plugins ?? {}
 const ids = readdirSync(join(root, 'plugins'), { withFileTypes: true })
   .filter((e) => e.isDirectory() && !NEVER.has(e.name))
   .map((e) => e.name)
+  .filter((id) => only === undefined || id === only)
   .sort()
+if (ids.length === 0) {
+  console.error(only ? `No plugin called "${only}" in plugins/.` : 'No plugins to publish.')
+  process.exit(1)
+}
 
 const staging = mkdtempSync(join(tmpdir(), 'alexia-publish-'))
 const entries = []
@@ -213,13 +217,18 @@ for (const id of ids) {
     sha256,
     alexia_protocol: manifest.alexia_protocol,
     mcp_protocol: manifest.mcp_protocol,
+    // The Alexia builds it declared it runs on (D118). Absent means any, and stays absent
+    // rather than being filled in with today's version — a range nobody asked for is a
+    // plugin that falls off the shelf the next time the app is released.
+    ...(manifest.min_app ? { min_app: manifest.min_app } : {}),
+    ...(manifest.max_app ? { max_app: manifest.max_app } : {}),
     // The author's own sentences, verbatim. The screen draws these before it downloads
     // anything, so a `why` rewritten here would be a rewritten reason on a consent screen.
     requires: manifest.requires ?? [],
     provides: manifest.provides ?? [],
     updated_at: now,
   }
-  entries.push(entry)
+  entries.push({ ...entry, tgz, tag: `${id}-v${manifest.version}`, title: `${manifest.name} ${manifest.version}` })
 
   // `/v0/plugins/<id>` — re-read at the moment of install, which is where a revocation
   // published five minutes ago gets to stop one.
@@ -233,41 +242,155 @@ for (const id of ids) {
 
 rmSync(staging, { recursive: true, force: true })
 
-// The shelf. A revoked plugin is off it — it stays reachable at its own path so that
-// somebody who already installed it is told why, which is the whole point of keeping the row.
-writeFileSync(
-  join(v0, 'plugins.json'),
-  JSON.stringify({ plugins: entries.filter((e) => !revokedPlugins[e.id]) }, null, 2),
-)
+/**
+ * Every field the client reads, and nothing this script keeps for itself.
+ *
+ * `url` is dropped deliberately rather than forgotten: on a release the asset *is* the url,
+ * and a block carrying one as well would be a second answer to the same question, able to
+ * point somewhere else. `--pages` puts it back, because there the JSON is all there is.
+ */
+const MINE = new Set(['tgz', 'tag', 'title', 'url'])
+const blockOf = (entry) => Object.fromEntries(Object.entries(entry).filter(([key]) => !MINE.has(key)))
 
 /**
- * Standalone skills, deliberately a separate list (M3-5).
+ * The release body: a sentence for a person, then the block for Alexia.
  *
- * Empty, and emitted anyway: `Library.skills()` throws on a non-ok response, and an empty
- * shelf is a different thing from a registry that cannot be reached. Nothing in this repo is
- * a standalone skill yet — the ones that exist arrive bundled inside a plugin and are
- * covered by that plugin's own yes.
+ * Both audiences on one page on purpose. Somebody who lands on the release from a search
+ * should be able to read what the plugin is and what it will ask for without installing
+ * anything, and that is the same information the block carries — so the prose is generated
+ * from the manifest rather than written twice and allowed to drift.
  */
-writeFileSync(join(v0, 'skills.json'), JSON.stringify({ skills: [] }, null, 2))
+const notesFor = (entry) => {
+  const asks =
+    entry.requires.length === 0 ?
+      'It asks for nothing.'
+    : ['It asks for:', ...entry.requires.map((need) => `- \`${need.cap}\` — ${need.why}`)].join('\n')
+  const range =
+    entry.min_app ? `
+Needs Alexia ${entry.min_app} or later.` : ''
+  return [
+    entry.summary,
+    '',
+    asks,
+    range,
+    '',
+    'Install it from the Plugins screen inside Alexia rather than by hand — that is the path',
+    'that checks the download against the checksum below before anything is unpacked.',
+    '',
+    '```alexia',
+    JSON.stringify(blockOf(entry), null, 2),
+    '```',
+  ].join('\n')
+}
 
-writeFileSync(
-  join(v0, 'revoked.json'),
-  JSON.stringify(
-    {
-      plugins: Object.entries(revokedPlugins).map(([id, why]) => ({ id, revoked_at: now, revoked_reason: why })),
-      skills: Object.entries(revoked.skills ?? {}).map(([id, why]) => ({ id, revoked_at: now, revoked_reason: why })),
-    },
-    null,
-    2,
-  ),
+if (pages) {
+  // ---- the static layout, for a Pages site or the Worker in `registry/` -------------------
+  // The shelf. A revoked plugin is off it — it stays reachable at its own path so that
+  // somebody who already installed it is told why, which is the whole point of keeping the row.
+  writeFileSync(
+    join(v0, 'plugins.json'),
+    // `url` back on, because in this layout the JSON is all there is — there is no release
+    // asset to read it off.
+    JSON.stringify(
+      { plugins: entries.filter((e) => !revokedPlugins[e.id]).map((e) => ({ ...blockOf(e), url: e.url })) },
+      null,
+      2,
+    ),
+  )
+
+  /**
+   * Standalone skills, deliberately a separate list (M3-5).
+   *
+   * Empty, and emitted anyway: `Library.skills()` throws on a non-ok response, and an empty
+   * shelf is a different thing from a registry that cannot be reached. Nothing in this repo is
+   * a standalone skill yet — the ones that exist arrive bundled inside a plugin and are
+   * covered by that plugin's own yes.
+   */
+  writeFileSync(join(v0, 'skills.json'), JSON.stringify({ skills: [] }, null, 2))
+
+  writeFileSync(
+    join(v0, 'revoked.json'),
+    JSON.stringify(
+      {
+        plugins: Object.entries(revokedPlugins).map(([id, why]) => ({ id, revoked_at: now, revoked_reason: why })),
+        skills: Object.entries(revoked.skills ?? {}).map(([id, why]) => ({ id, revoked_at: now, revoked_reason: why })),
+      },
+      null,
+      2,
+    ),
+  )
+
+  console.log('')
+  console.log(`${entries.length} plugin(s) → ${out}`)
+  console.log('')
+  console.log('Next:')
+  console.log(`  1. Commit everything in that folder to https://github.com/${repo}`)
+  console.log(`  2. Settings → Pages → deploy from the branch root`)
+  console.log(`  3. Check it: curl ${site}/v0/plugins.json`)
+  console.log('')
+  console.log(`Point Alexia at ${site} in Settings — the default source is github:${repo}.`)
+  process.exit(0)
+}
+
+// ---- releases ----------------------------------------------------------------------------
+
+/**
+ * `gh`, because the alternative is a token in an environment variable and three REST calls
+ * with a multipart upload in the middle of them. `gh` is already how a release gets cut by
+ * hand, it already holds the credential, and a publisher who has not got it is one line away
+ * from having it.
+ */
+const gh = (argv, quiet) => {
+  const done = spawnSync('gh', argv, { encoding: 'utf8', stdio: quiet ? 'pipe' : ['ignore', 'pipe', 'inherit'] })
+  if (done.error) {
+    console.error('gh is not on PATH. Install the GitHub CLI (https://cli.github.com) and run `gh auth login`.')
+    process.exit(1)
+  }
+  return done
+}
+
+if (!dry && gh(['auth', 'status'], true).status !== 0) {
+  console.error('gh is not signed in. Run `gh auth login` first.')
+  process.exit(1)
+}
+
+let cut = 0
+for (const entry of entries) {
+  if (dry) {
+    console.log('')
+    console.log(`--- ${entry.tag} (dry run, nothing published) ---`)
+    console.log(notesFor(entry))
+    continue
+  }
+  // A published version is somebody else's download now. Republishing a tag would change the
+  // bytes under a checksum a machine may already have written down, so an existing tag is a
+  // skip and a sentence rather than a `--clobber`.
+  if (gh(['release', 'view', entry.tag, '--repo', repo], true).status === 0) {
+    console.log(`${entry.tag} is already published — bump the version in plugin.json to publish again.`)
+    continue
+  }
+  const notes = join(out, `${entry.tag}.md`)
+  writeFileSync(notes, notesFor(entry))
+  const made = gh([
+    'release', 'create', entry.tag,
+    entry.tgz,
+    '--repo', repo,
+    '--title', entry.title,
+    '--notes-file', notes,
+    // See the header: the app's own updater reads `releases/latest`, and a plugin release
+    // claiming to be latest would point it at a release with no installer on it.
+    '--latest=false',
+  ])
+  if (made.status !== 0) {
+    console.error(`Could not publish ${entry.tag}.`)
+    process.exit(1)
+  }
+  cut += 1
+}
+
+console.log('')
+console.log(
+  dry ? `${entries.length} plugin(s) built into ${out}. Nothing was published.`
+  : `${cut} release(s) published to https://github.com/${repo}/releases`,
 )
-
-console.log('')
-console.log(`${entries.length} plugin(s) → ${out}`)
-console.log('')
-console.log('Next:')
-console.log(`  1. Commit everything in that folder to https://github.com/${repo}`)
-console.log(`  2. Settings → Pages → deploy from the branch root`)
-console.log(`  3. Check it: curl ${site}/v0/plugins.json`)
-console.log('')
-console.log(`Alexia reads it from ${site} — set that in Settings, or leave DEFAULT_REGISTRY pointing there.`)
+console.log(`Alexia reads them from github:${repo} — the default source.`)

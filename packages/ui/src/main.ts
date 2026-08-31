@@ -11,7 +11,7 @@
  * bill.
  */
 
-import { autostart, dismiss, HOTKEY, inApp, setAutostart, tray } from './desktop.js'
+import { autostart, dismiss, HOTKEY, inApp, installUpdate, setAutostart, tray, updateAvailable } from './desktop.js'
 import { mountControl } from './control.js'
 import { mountPalette } from './palette.js'
 import { mountSettings } from './settings.js'
@@ -595,15 +595,25 @@ function firstRun(state: State): void {
     void autostart().then((on) => (startsUp.checked = on ?? true))
   }
 
+  // What it can do, read off the shelf while the rest of first run is being answered (D118).
+  const shelf = shelfStep()
+
   begin.addEventListener('click', () => {
     // No key travels with this any more: a tile saves its own the moment it is pasted, so by
     // the time anybody reaches this button the keychain already has whatever it is getting.
-    void post('/api/setup', { name: name.value.trim() || 'Alexia', mode: chosen() }).then(() => {
-      if (inApp()) setAutostart(startsUp.checked)
-      show('chat')
-      called(name.value.trim() || 'Alexia')
-      text.focus()
-    })
+    begin.disabled = true
+    void post('/api/setup', { name: name.value.trim() || 'Alexia', mode: chosen() })
+      // The plugins picked above, installed **before the screen changes**. Handing somebody
+      // the conversation and then filling their assistant in behind it would make the first
+      // thing they typed land on an Alexia that could not yet do what they had just asked for.
+      .then(() => shelf.install())
+      .then(() => {
+        if (inApp()) setAutostart(startsUp.checked)
+        show('chat')
+        called(name.value.trim() || 'Alexia')
+        text.focus()
+      })
+      .finally(() => (begin.disabled = false))
   })
 }
 
@@ -1006,6 +1016,161 @@ function toolLine(): { saw(name: string): void } {
       log.scrollTop = log.scrollHeight
     },
   }
+}
+
+// ---- first run: what it can do (D118) -------------------------------------------------------
+
+/** One plugin on the shelf, as first run needs it. `/api/library` says more; this is the part. */
+interface Shelved {
+  id: string
+  name: string
+  summary: string
+  version: string
+  installed: boolean
+  requires: { cap: string; why: string }[]
+}
+
+/**
+ * The step that exists because nothing ships inside the installer any more (D118).
+ *
+ * Alexia arrives able to hold a conversation and do nothing else, and every capability is a
+ * download. That is the right trade — *install only what you need*, and a plugin author who
+ * does not wait for an Alexia release — but it has one cost, and it lands exactly here: a
+ * person who is never shown the shelf never finds out that the thing reads documents.
+ *
+ * So the shelf is a step of first run rather than a screen somebody might visit. What is on
+ * it is what **this build can run**: `/api/library` has already dropped anything needing a
+ * newer Alexia, so nothing here can be checked and then fail to install.
+ *
+ * **The tick is the consent.** Each row carries the author's own `requires` sentences, which
+ * is the same thing the Plugins page shows before an install and the same rule as everywhere
+ * else in this project: the question is asked where the thing being decided is. Nothing is
+ * ticked by default — an installer that pre-selects is an installer choosing for you.
+ *
+ * A shelf that cannot be reached is one grey line, and Start still works. Somebody on a
+ * captive portal gets an assistant, not a wall.
+ */
+function shelfStep(): { install: () => Promise<void> } {
+  const group = document.querySelector<HTMLElement>('#choose')!
+  const hint = document.querySelector<HTMLElement>('#choose-hint')!
+  const list = document.querySelector<HTMLElement>('#shelf')!
+  // Under the list it is about, rather than in the line under the Start button: what is being
+  // downloaded belongs beside the ticks that asked for it.
+  const said = document.querySelector<HTMLElement>('#choose-said')!
+  const boxes: HTMLInputElement[] = []
+
+  void fetch('/api/library', { headers: { 'x-alexia-token': token } })
+    .then(async (answer) => answer.json() as Promise<{ ok?: boolean; why?: string; plugins?: Shelved[] }>)
+    .then((read) => {
+      group.hidden = false
+      const shown = (read.plugins ?? []).filter((entry) => !entry.installed)
+      if (read.ok !== true || shown.length === 0) {
+        hint.textContent =
+          read.ok !== true ?
+            `${read.why ?? 'The plugin list could not be reached.'} You can install plugins later from Settings.`
+          : 'Nothing new to add right now. Settings has the full list whenever you want it.'
+        return
+      }
+      hint.textContent =
+        'Alexia can hold a conversation on its own. Everything else is a plugin, and these download when you tick them. You can add or remove any of them later.'
+      for (const entry of shown) {
+        const row = el('label', 'card')
+        const head = el('span', 'card-head')
+        const box = el('input') as HTMLInputElement
+        box.type = 'checkbox'
+        box.value = entry.id
+        boxes.push(box)
+        head.append(box, el('b', undefined, entry.name), el('em', undefined, entry.version))
+        row.append(head, el('span', undefined, entry.summary))
+        // What it will ask for, in its author's words, beside the tick that agrees to it.
+        if (entry.requires.length > 0) {
+          const asks = el('ul', 'asks')
+          for (const need of entry.requires) asks.append(el('li', undefined, need.why))
+          row.append(asks)
+        }
+        list.append(row)
+      }
+    })
+    .catch(() => {
+      group.hidden = false
+      hint.textContent = 'The plugin list could not be reached. You can install plugins later from Settings.'
+    })
+
+  return {
+    /**
+     * Install what was ticked, one at a time, saying which one is happening.
+     *
+     * Sequential rather than parallel: each of these unpacks an archive into the folder core
+     * watches, and four at once is four loaders racing on one directory for no gain a person
+     * could see. A failure is reported and the rest still go — one plugin that would not
+     * download is not a reason to hand somebody none of the four they asked for.
+     */
+    install: async (): Promise<void> => {
+      const wanted = boxes.filter((box) => box.checked).map((box) => box.value)
+      const failed: string[] = []
+      for (const [at, id] of wanted.entries()) {
+        said.textContent = `Installing ${id} (${String(at + 1)} of ${String(wanted.length)})…`
+        const done = (await post('/api/library/install', { id, enable: true }).catch(() => ({ ok: false }))) as {
+          ok?: boolean
+        }
+        if (done.ok !== true) failed.push(id)
+      }
+      said.textContent = failed.length > 0 ? `${failed.join(', ')} did not install. Settings can try again.` : ''
+    },
+  }
+}
+
+// ---- a newer Alexia (D119) -----------------------------------------------------------------
+
+/**
+ * Offer the update, and then get out of the way.
+ *
+ * **One check, at startup, and never again while the window is open.** Alexia is a daemon
+ * that stays up for weeks, so the tempting thing is an hourly poll — and the thing that
+ * would actually reach a person is a strip appearing over their conversation at four in the
+ * afternoon because a release happened. The check is at the moment somebody has just
+ * launched the program, which is the one moment restarting it costs nothing.
+ *
+ * Nothing is shown when there is no update, when the check fails, or in a browser. Failure
+ * is silent by design: nobody asked for this check, so nobody is owed a report of it going
+ * wrong — {@link updateAvailable} says why.
+ */
+async function offerUpdate(): Promise<void> {
+  const found = await updateAvailable()
+  if (!found) return
+
+  const bar = document.querySelector<HTMLElement>('#update-bar')!
+  const said = document.querySelector<HTMLElement>('#update-said')!
+  const now = document.querySelector<HTMLButtonElement>('#update-now')!
+  const manual = document.querySelector<HTMLAnchorElement>('#update-manual')!
+
+  said.textContent = `Alexia ${found.version} is out. This is ${found.currentVersion}.`
+  bar.hidden = false
+
+  now.addEventListener('click', () => {
+    now.disabled = true
+    said.textContent = `Downloading Alexia ${found.version}…`
+    void installUpdate(found.rid, (done, total) => {
+      // A percentage where the server said how big it is, bytes where it did not. Neither
+      // is a spinner: this replaces the program somebody is looking at, and *how far along*
+      // is the question they will actually have.
+      said.textContent =
+        total !== undefined && total > 0 ?
+          `Downloading Alexia ${found.version}… ${String(Math.round((done / total) * 100))}%`
+        : `Downloading Alexia ${found.version}… ${String(Math.round(done / 1e6))} MB`
+    })
+      // There is no success branch. `installUpdate` launches the installer and the plugin
+      // exits this process, so the window is gone before a `.then` could run — see its own
+      // comment. What lands here is a download that failed or an installer that would not
+      // start, and both leave a program that is still working and a person owed a sentence.
+      .catch((error: unknown) => {
+        said.className = 'error'
+        said.textContent = `The update did not go through: ${error instanceof Error ? error.message : String(error)}`
+        now.disabled = false
+        now.textContent = 'Try again'
+        manual.hidden = false
+      })
+  })
 }
 
 /** POST to core with the token, and give back whatever it said. */
@@ -1524,3 +1689,5 @@ const rail = mountRail(token, {
 
 await load()
 await rail.refresh()
+// Last, and never awaited by anything: an update offer must not be able to hold up a window.
+void offerUpdate()

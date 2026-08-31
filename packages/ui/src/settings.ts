@@ -75,6 +75,10 @@ interface LibraryState {
   revoked?: { id: string; revoked_reason: string }[]
   /** Installed here, with a newer version out and loadable by this Alexia (M5-4). */
   updates?: { id: string; from: string; to: string }[]
+  /** What this build is, so the sentence about a newer one can say what it is newer than. */
+  app?: string
+  /** How much of the shelf is out of reach until Alexia itself is updated (D118). */
+  needsNewerApp?: { plugins: number; updates: number }
 }
 
 /** A skill's index entry (M2-2). There is nothing to configure — it is a folder of text. */
@@ -435,6 +439,16 @@ export function mountSettings(token: string): {
   /** The last library read, for the two sentences a card says about a signature. */
   let library: LibraryState | undefined
 
+  /**
+   * What to call the shelf on screen.
+   *
+   * `github:cr3studioo/Alexia` is how the source is stored and not a thing to put in front of
+   * anybody: the two sentences it appears in are both about something having gone wrong or
+   * being empty, which is exactly when a person wants somewhere they can go and look.
+   */
+  const named = (source: string): string =>
+    source.startsWith('github:') ? `github.com/${source.slice('github:'.length)}` : source
+
   function drawLibrary(read: LibraryState): void {
     library = read
     listings = read.plugins ?? []
@@ -486,10 +500,39 @@ export function mountSettings(token: string): {
       shelf.append(box)
     }
 
-    // A registry that is down is not an empty registry, and must not look like one.
-    if (!read.ok) shelf.append(el('p', 'hint', read.why ?? `Could not reach ${read.registry}.`))
+    /**
+     * What this build cannot be offered (D118).
+     *
+     * A count and a reason, never a list of names. Naming plugins somebody cannot install is
+     * a shop window for a shop that is shut — and the number is the part that is actionable,
+     * because it is what turns *update Alexia* from housekeeping into something that gets
+     * them a thing they want. It sits above the shelf for the same reason the update rows do:
+     * it is about the state this machine is in, not about anything on offer.
+     */
+    const behind = read.needsNewerApp
+    if (behind && behind.plugins + behind.updates > 0) {
+      const count = (n: number, one: string, many: string): string =>
+        n === 1 ? `one ${one}` : `${String(n)} ${many}`
+      const parts = [
+        behind.plugins > 0 ? count(behind.plugins, 'plugin', 'plugins') : '',
+        behind.updates > 0 ? count(behind.updates, 'plugin update', 'plugin updates') : '',
+      ].filter(Boolean)
+      const box = el('section', 'pane')
+      box.append(
+        el('b', undefined, `${parts.join(' and ')} need a newer Alexia`),
+        el(
+          'p',
+          'hint',
+          `This is Alexia ${read.app ?? ''}. They are not shown below, because installing one would put a plugin here that cannot load. Alexia offers its own update when there is one.`,
+        ),
+      )
+      shelf.append(box)
+    }
+
+    // A shelf that is down is not an empty shelf, and must not look like one.
+    if (!read.ok) shelf.append(el('p', 'hint', read.why ?? `Could not reach ${named(read.registry)}.`))
     else if (listings.every((entry) => entry.installed)) {
-      shelf.append(el('p', 'hint', `Nothing new at ${read.registry}.`))
+      shelf.append(el('p', 'hint', `Nothing new at ${named(read.registry)}.`))
     }
 
     shelf.append(adding(), addingServer())

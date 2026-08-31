@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { z } from 'zod'
+import { APP_VERSION, newer } from './version.js'
 
 /**
  * `plugin.json` v1 — the file core reads **before the plugin process exists**.
@@ -284,6 +285,24 @@ export const ManifestShape = z
     /** MCP's. Pinned by the plugin, negotiated at `server/discover`. */
     mcp_protocol: z.string().regex(MCP_REVISION, 'an MCP revision date, e.g. 2026-07-28'),
 
+    /**
+     * The Alexia builds this plugin runs on (D118).
+     *
+     * **The field that a shelf needs and `alexia_protocol` cannot supply.** The integer above
+     * describes the *shape* of the contract; these describe the *build*. A plugin that calls
+     * a capability which arrived in 0.2.0 speaks protocol 2 perfectly well and still does
+     * nothing useful on 0.1.9, and before plugins were distributed on their own schedule that
+     * gap did not exist — everything shipped inside one installer, so the app you had was the
+     * app every plugin was built against.
+     *
+     * Both are optional and absent means *any*, which is the right answer for almost every
+     * plugin: a range is a promise, and narrowing one that did not need narrowing takes a
+     * working plugin off somebody's shelf. `max_app` in particular is for a plugin that is
+     * known broken above some version, not for one nobody has got round to testing.
+     */
+    min_app: z.string().regex(SEMVER, 'semantic version, e.g. 0.2.0').optional(),
+    max_app: z.string().regex(SEMVER, 'semantic version, e.g. 0.2.0').optional(),
+
     requires: z
       .array(
         z
@@ -471,10 +490,33 @@ export const Manifest = ManifestShape.superRefine((m, ctx) => {
 
 export type Manifest = z.infer<typeof Manifest>
 
-/** Whether core will load this manifest's declared contract versions, and why not. */
-export function versionVerdict(m: Pick<Manifest, 'name' | 'alexia_protocol' | 'mcp_protocol'>):
-  | { ok: true }
-  | { ok: false; reason: string } {
+/**
+ * Whether core will load this manifest's declared contract versions, and why not.
+ *
+ * Both halves of compatibility, in one place on purpose: the shelf asks this before
+ * offering a download and the loader asks it before spawning a process, and two functions
+ * would be two chances for the sentence a user reads to differ from the reason they were
+ * refused. `app` is a seam for the tests — everything real passes {@link APP_VERSION}.
+ */
+export function versionVerdict(
+  m: Pick<Manifest, 'name' | 'alexia_protocol' | 'mcp_protocol'> & { min_app?: string; max_app?: string },
+  app: string = APP_VERSION,
+): { ok: true } | { ok: false; reason: string } {
+  // The declared build range first, because it is the one an author writes deliberately —
+  // and its refusal names a version number, which is more use than a protocol integer to
+  // somebody deciding whether to update.
+  if (m.min_app !== undefined && newer(m.min_app, app)) {
+    return {
+      ok: false,
+      reason: `${m.name} needs Alexia ${m.min_app} or later, and this is ${app}.\nUpdate Alexia, or install an earlier version of ${m.name}.`,
+    }
+  }
+  if (m.max_app !== undefined && newer(app, m.max_app)) {
+    return {
+      ok: false,
+      reason: `${m.name} says it runs on Alexia ${m.max_app} and earlier, and this is ${app}.\nCheck whether ${m.name} has an update.`,
+    }
+  }
   if (m.alexia_protocol > ALEXIA_PROTOCOL_MAX) {
     return {
       ok: false,
