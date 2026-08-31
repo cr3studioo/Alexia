@@ -81,12 +81,16 @@ export function mountTheme(chosen: Theme, keep: (theme: Theme) => void): void {
  * the store is the truth, `localStorage` is the copy the head script paints from before the
  * network answers, and `index.html` carries the key a second time.
  *
- * The floor is 20 rather than 0 because below it the conversation is text on a photograph —
- * `contrast.test.ts` guarantees the palette, not the wallpaper behind a see-through panel.
- * The heavy `backdrop-filter` blur is what keeps even the floor legible: it turns the
- * painting into a colour field before any text sits over it.
+ * The floor is 0: all the way clear is the panel reduced to its border and shadow, with the
+ * ground running straight behind the text. `contrast.test.ts` guarantees the palette, not the
+ * wallpaper behind a see-through panel, so that end is the reader's own call — the same bet
+ * the theme control makes.
+ *
+ * The blur is not fixed either: it scales with the tint (`--glass-filter`), so sliding to
+ * clear also takes the frost off rather than leaving a blurred pane of nothing. At 0 the
+ * `backdrop-filter` is dropped entirely — `blur(0)` still runs the `saturate`.
  */
-export const GLASS_MIN = 20
+export const GLASS_MIN = 0
 export const GLASS_MAX = 100
 export const GLASS_DEFAULT = 60
 
@@ -96,9 +100,16 @@ export const REMEMBERED_GLASS = 'alexia.glass'
 export const clampGlass = (pct: number): number =>
   Math.min(GLASS_MAX, Math.max(GLASS_MIN, Math.round(Number.isFinite(pct) ? pct : GLASS_DEFAULT)))
 
+/** The `backdrop-filter` for a given tint. `index.html`'s head script inlines the same sum. */
+export const glassFilter = (pct: number): string => {
+  const blur = Math.round(clampGlass(pct) * 0.5)
+  return blur === 0 ? 'none' : `blur(${blur}px) saturate(200%)`
+}
+
 export function applyGlass(pct: number): void {
   const clamped = clampGlass(pct)
   document.documentElement.style.setProperty('--glass-tint', `${clamped}%`)
+  document.documentElement.style.setProperty('--glass-filter', glassFilter(clamped))
   try {
     localStorage.setItem(REMEMBERED_GLASS, String(clamped))
   } catch {

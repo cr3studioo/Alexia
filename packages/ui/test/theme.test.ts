@@ -57,12 +57,20 @@ test('theme: the panel-glass mirror uses one key and one range end to end', () =
 
   const min = Number(/GLASS_MIN = (\d+)/.exec(shell)?.[1])
   const max = Number(/GLASS_MAX = (\d+)/.exec(shell)?.[1])
-  expect([min, max]).toEqual([20, 100])
+  expect([min, max]).toEqual([0, 100])
   // The slider offers exactly that range, and the head script guards exactly it.
   expect(html).toMatch(new RegExp(`id="glass"[^>]*min="${min}"[^>]*max="${max}"`))
   expect(head).toContain(`glass >= ${min} && glass <= ${max}`)
   // Core clamps to the same window before it stores.
   expect(serve).toContain(`Math.min(${max}, Math.max(${min}, Math.round(chosen.glass)))`)
+
+  // The blur scales with the tint, and the head script inlines the same sum glassFilter()
+  // uses — a mismatch is one frame of the wrong frost, then the module overwrites it.
+  const mult = /glassFilter[^]*?\* ([\d.]+)\)/.exec(shell)?.[1]
+  expect(mult).toBe('0.5')
+  expect(head).toContain(`Math.round(glass * ${mult})`)
+  // .panel reads the variable the module sets, with a static fallback for the first paint.
+  expect(css).toMatch(/backdrop-filter:\s*var\(--glass-filter,/)
 })
 
 test('theme: forcing a theme carries everything the desktop-preference query carries', () => {
