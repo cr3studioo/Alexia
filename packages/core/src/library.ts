@@ -396,6 +396,27 @@ export class Library {
   #held?: { source: string; at: number; shelf: Shelf }
 
   /**
+   * The last shelf that arrived, kept across restarts — and handed back when a read fails.
+   *
+   * **Written after the first real publish rate-limited this machine within the hour.**
+   * GitHub allows sixty unauthenticated requests an hour *per address*, and that address is
+   * shared with everything else on it: another tool, another session, a second person on the
+   * same network. Alexia's own share is four an hour, and it still arrived at a 403 — so a
+   * client that treats a failed read as an empty shelf is a Plugins screen that goes blank
+   * because somebody else was busy.
+   *
+   * A day-old list of plugins is very nearly as good as a fresh one: a plugin published this
+   * morning is missing until the next read, and everything else works. An empty screen is
+   * not nearly as good as anything.
+   */
+  #remembered(source: string): Shelf | undefined {
+    const said = this.options.store.kvGet(CORE, 'shelf')
+    if (typeof said !== 'object' || said === null) return undefined
+    const kept = said as { source?: string; shelf?: Shelf }
+    return kept.source === source ? kept.shelf : undefined
+  }
+
+  /**
    * Every release of the repository, read as a shelf.
    *
    * One request for the whole thing, which is what makes a release body the right place for
@@ -410,20 +431,30 @@ export class Library {
     const source = `${repo.owner}/${repo.repo}`
     const held = this.#held
     if (held && held.source === source && Date.now() - held.at <= maxAge) return held.shelf
-    const response = await this.#fetch(`https://api.github.com/repos/${source}/releases?per_page=100`, {
-      // No token, ever. This reads public releases, and a library that wanted a GitHub
-      // credential to show somebody a list would be asking for something it does not need.
-      headers: { accept: 'application/vnd.github+json', 'user-agent': 'Alexia' },
-    })
-    if (!response.ok) {
-      throw new Error(
-        response.status === 403 || response.status === 429 ?
-          `GitHub is rate-limiting this address (${String(response.status)}). The shelf will work again shortly.`
-        : `GitHub answered ${String(response.status)} for ${source}`,
-      )
+    let shelf: Shelf
+    try {
+      const response = await this.#fetch(`https://api.github.com/repos/${source}/releases?per_page=100`, {
+        // No token, ever. This reads public releases, and a library that wanted a GitHub
+        // credential to show somebody a list would be asking for something it does not need.
+        headers: { accept: 'application/vnd.github+json', 'user-agent': 'Alexia' },
+      })
+      if (!response.ok) {
+        throw new Error(
+          response.status === 403 || response.status === 429 ?
+            `GitHub is rate-limiting this address (${String(response.status)}) — the quota is per network, not per app. The list below is the last one that arrived.`
+          : `GitHub answered ${String(response.status)} for ${source}`,
+        )
+      }
+      shelf = readReleases((await response.json()) as Release[])
+    } catch (error) {
+      // Stale beats empty. Only when there is something to be stale *with* — a first run
+      // that has never reached GitHub has nothing to show and says so.
+      const kept = this.#remembered(source)
+      if (!kept) throw error
+      return kept
     }
-    const shelf = readReleases((await response.json()) as Release[])
     this.#held = { source, at: Date.now(), shelf }
+    this.options.store.kvSet(CORE, 'shelf', { source, at: Date.now(), shelf })
     return shelf
   }
 

@@ -296,3 +296,47 @@ test('an update that needs a newer Alexia is reported rather than offered', asyn
   // screen's sentence is "one plugin update needs a newer Alexia" and neither half says that.
   expect(update).toMatchObject({ id: 'weather', from: '0.1.0', to: '2.0.0', offer: 'newer-app' })
 })
+
+test('a rate-limited read shows the last shelf that arrived, not an empty one', async () => {
+  // The failure this was written from: sixty unauthenticated requests an hour is a limit on
+  // the *address*, so Alexia can be well inside its own share and still be refused because
+  // something else on the network was not. A blank Plugins screen would be the wrong answer
+  // to somebody else's traffic.
+  const packed = pack('weather')
+  const store = new Store(':memory:')
+  const dir = mkdtempSync(join(root, 'stale-'))
+  const shelf = [release({ id: 'weather', version: '0.1.0', sha256: packed.sha256 })]
+
+  let refuse = false
+  const fake: typeof globalThis.fetch = () =>
+    Promise.resolve(
+      refuse ? new Response('rate limited', { status: 403 }) : Response.json(shelf),
+    )
+  const of = (): Library => {
+    const library = new Library({ store, pluginsDir: join(dir, 'e'), skillsDir: join(dir, 's'), fetch: fake })
+    library.url = 'github:cr3studioo/Alexia'
+    return library
+  }
+
+  expect((await of().plugins()).map((row) => row.id)).toEqual(['weather'])
+
+  // A second core — a restart, a day later, and GitHub saying no. Its own memory is empty,
+  // so what it answers with has to have come off the store.
+  refuse = true
+  expect((await of().plugins()).map((row) => row.id)).toEqual(['weather'])
+})
+
+test('a first run that has never reached GitHub says so rather than showing nothing', async () => {
+  // The other half of the rule above: stale beats empty, and *nothing* is not stale. A shelf
+  // that has never been read has no last-known state to fall back to, and pretending it is an
+  // empty shelf would be telling somebody there are no plugins.
+  const dir = mkdtempSync(join(root, 'cold-'))
+  const library = new Library({
+    store: new Store(':memory:'),
+    pluginsDir: join(dir, 'e'),
+    skillsDir: join(dir, 's'),
+    fetch: () => Promise.resolve(new Response('rate limited', { status: 403 })),
+  })
+  library.url = 'github:cr3studioo/Alexia'
+  await expect(library.plugins()).rejects.toThrow(/rate-limiting/)
+})

@@ -145,8 +145,9 @@ The checksum gates the install in all three cases.
 
 ## Withdrawing a plugin
 
-Delete the release. It disappears from every shelf within fifteen minutes — that is how long
-a listing is cached — and every install after that fails.
+Delete the release. It disappears from a shelf on the next read — listings are cached fifteen
+minutes, and longer if GitHub is refusing that machine, because Alexia shows the last list
+that arrived rather than an empty screen. Every install after that read fails.
 
 **It reaches nobody who already installed it**, and that is a real limitation rather than an
 oversight. The static registry layout (`--pages`, or the Worker in `registry/`) has a
