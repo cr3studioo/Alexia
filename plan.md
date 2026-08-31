@@ -231,6 +231,40 @@ not keyboard-reachable, so anything a person must *act* on belongs on the table 
 a node reads the whole note. Delete `plugins/memory` and the map goes with the tab — M6-G,
 unchanged, with one more widget on the screen it deletes.
 
+**Then it was looked at, and the first tuning was wrong in four places.** Shipping d3's own
+constants was the mistake: they are for a few dozen dots with nothing written on them, and the
+first real graph — sixty-three notes, one hub carrying thirty-nine of the hundred and forty
+edges — drew a hairball with the names in a heap. Reported from use, with a screenshot, and
+each cause is worth writing down because none of them is about taste:
+
+1. **The layout recentred itself every tick**, shifting every node by the centroid's own
+   movement — *including whatever was under the cursor*. So a drag was partly undone as fast
+   as it was made, which is the reported symptom: *the rest don't move at all or very
+   slightly*. It is a weak pull toward the middle now, which shapes without ever moving a held
+   node.
+2. **Nothing kept two circles apart.** Repulsion is a force and falls off with distance; it
+   gives up long before two nodes touch. Overlap is a fact about the picture rather than a
+   force, so it is resolved as a position, halved between the pair — and the held one does not
+   give way, because that is where a hand put it.
+3. **A drag cooled like anything else.** d3 holds `alphaTarget` up while a node is held; this
+   warmed once per pointer move and cooled between them. Now the loop hands `step` the
+   temperature it is heading for, and a long drag ends as lively as it started.
+4. **Every label was drawn.** Which is the same as drawing none. Each name claims a rectangle
+   in screen space now and loses it to whatever is being pointed at, then to what that touches,
+   then to the busiest node; zooming in spreads the rectangles and the rest appear.
+
+**Measured rather than eyeballed** — `force.ts` is arithmetic with no DOM in it, so the real
+sixty-three-note graph was laid out headless and the numbers read off: 0 overlapping pairs
+(was dozens), 875 × 657 world units at 0.10 ms a tick, and **dragging the hub 985 units over
+sixty frames now moves its neighbours a median of 562 units** where before they barely moved.
+Two of those are tests rather than a note in a document: *no two nodes are left on top of each
+other*, and *dragging a hub drags what hangs off it*.
+
+**One data bug fell out of it.** Every edge was in the set twice — both notes name each other,
+which is exactly what this plugin's own writer does — so every spring pulled twice as hard as
+the physics was tuned for and every line was drawn twice. Deduped by pair where the graph is
+built.
+
 ### M7 — What version 1 knew *(inserted 2026-08-29 — see Change log)*
 
 - [x] **M7-1** Nothing leaves this machine unread — egress redaction

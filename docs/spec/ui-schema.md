@@ -279,15 +279,29 @@ decision about how it looks is core's. Field list in
 
 What core owns, and what a plugin therefore cannot get wrong:
 
-- **The physics.** A force layout with d3-force's own constants, so a graph settles into the
-  shape a person recognises rather than a different one each release. Drag a node and the rest
-  settles around where you put it; scroll to zoom; drag the ground to pan.
+- **The physics.** A hand-written force layout — repulsion, springs, a weak pull toward the
+  middle, and a collision pass that keeps two circles from ever touching. Drag a node and the
+  rest follows it; scroll to zoom; drag the ground to pan. **It was tuned against a real graph
+  rather than against d3's defaults**, which are for a few dozen dots with nothing written on
+  them: sixty-three labelled notes drew a hairball, and dragging the hub everything hung off
+  moved almost nothing. Four things fixed it, and each is a rule worth keeping — the layout is
+  never recentred (it moved whatever a hand was holding), overlap is resolved as a position
+  rather than as a force, links rest three times further apart because a node is drawn with a
+  name beside it, and **a drag holds the temperature up for as long as it lasts**, which is
+  d3's `alphaTarget` and the whole difference between a graph that follows a hand and one that
+  stiffens under it.
 - **The colours**, which are the page's own and stay scarce (`docs/design.md`). A node is
   drawn in the accent, a `mark` adds a ring in `--chosen` **after** the node rather than
   instead of it — so *what this is* and *where it came from* stay two signals rather than
   fighting over one pixel — and links are drawn in the line colour at half strength.
-- **The labels.** All of them once the map is zoomed in far enough to have room, and otherwise
-  only the one under the pointer. A hundred names at arm's length is a grey smear.
+- **The labels.** Each name claims a rectangle, and a name whose rectangle is already taken is
+  not drawn — in an order that decides who wins: whatever is being pointed at, then what it
+  touches, then the busiest. Zooming in spreads the rectangles and the rest appear, which is
+  the gesture somebody makes to read one anyway. **Drawing every label is the same as drawing
+  none**, which is what a screenshot of sixty-three notes showed.
+- **What is being pointed at.** Hovering a node brings its own links forward and quietens
+  everything else. On a graph with a hub through the middle, that is the only thing that
+  answers *what is this one joined to* — no layout does.
 - **Motion, and not having any.** `prefers-reduced-motion` settles the layout in one pass and
   paints the answer once. Nothing on this screen animates at somebody who asked it not to.
 - **The empty and the filtered-empty case**, in the widget's own voice: *nothing here yet*

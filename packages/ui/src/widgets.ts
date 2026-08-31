@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { COLD, DISTANCE, type Link, type Node, place, settle, step, WARM } from './force.js'
+import { COLD, DISTANCE, HELD, type Link, type Node, place, radius, settle, step, WARM } from './force.js'
 
 /**
  * The widgets, rendered by core, declared by plugins (M2-1) — and now on two screens.
@@ -700,6 +700,12 @@ function graph(host: WidgetHost, declared: Rendered): HTMLElement {
   let held: Node | undefined
   let panning: { x: number; y: number } | undefined
   let drawing = false
+  /** Each node's neighbours, for the quietening on hover. */
+  const near = new Map<string, string[]>()
+  /** Whether somebody has moved the camera themselves. After that it is theirs, not ours. */
+  let touched = false
+  /** Whether the settled layout has been framed once. A spiral is not the shape it ends up. */
+  let framed = false
   /** Somebody has asked not to be shown motion: settle it in one go and paint the answer. */
   const still = window.matchMedia('(prefers-reduced-motion: reduce)')
 
@@ -733,6 +739,9 @@ function graph(host: WidgetHost, declared: Rendered): HTMLElement {
     })
     const by = new Map(nodes.map((node) => [node.id, node]))
     links = []
+    // One edge per pair. Two notes that name each other are one link on the screen, and
+    // counting it twice pulled every spring twice as hard as the physics was tuned for.
+    const drawn = new Set<string>()
     for (const row of kept) {
       const source = by.get(String(row.id))!
       for (const id of linksOf(row)) {
@@ -740,10 +749,20 @@ function graph(host: WidgetHost, declared: Rendered): HTMLElement {
         // A link to something the filter is hiding, or to a row that is not there at all, is
         // dropped rather than drawn to nowhere. Half an edge is a lie about the shape.
         if (!target || !shown.has(id) || target === source) continue
+        const pair = source.id < target.id ? `${source.id}:${target.id}` : `${target.id}:${source.id}`
+        if (drawn.has(pair)) continue
+        drawn.add(pair)
         source.degree += 1
         target.degree += 1
         links.push({ source, target })
       }
+    }
+    // Who touches whom, so hovering one thing can quieten everything it has nothing to do
+    // with. Built once here rather than searched for on every frame.
+    near.clear()
+    for (const { source, target } of links) {
+      near.set(source.id, [...(near.get(source.id) ?? []), target.id])
+      near.set(target.id, [...(near.get(target.id) ?? []), source.id])
     }
     if (before.size === 0 || nodes.every((node) => before.has(node.id) === false)) place(nodes)
 
@@ -760,8 +779,16 @@ function graph(host: WidgetHost, declared: Rendered): HTMLElement {
       rows.length === 0 ? 'Nothing here yet.'
       : nodes.length === 0 ? 'Nothing matches that.'
       : ''
-    fit()
+    // Not once somebody has moved the camera themselves: a filter is *fewer things*, and
+    // reframing the view under a person typing into a box is the picture jumping at them.
+    if (!touched) fit()
     warm()
+  }
+
+  /** How much wider than tall the canvas is. The layout is told, so it fills the frame. */
+  function shape(): number {
+    const box = canvas.getBoundingClientRect()
+    return box.height > 0 ? Math.min(4, Math.max(0.25, box.width / box.height)) : 1
   }
 
   /** Everything in view, with room around it. Run once a layout has somewhere to be. */
@@ -791,7 +818,15 @@ function graph(host: WidgetHost, declared: Rendered): HTMLElement {
     if (drawing) return
     drawing = true
     const tick = (): void => {
-      if (alpha > COLD) alpha = step(nodes, links, alpha)
+      // Heading for a standstill, unless a hand is on it — d3's `alphaTarget`, and the whole
+      // difference between a graph that follows your hand and one that stiffens under it.
+      if (alpha > COLD) alpha = step(nodes, links, alpha, held === undefined ? 0 : HELD, shape())
+      // The spiral it starts from is not the shape it ends in, so it frames itself once when
+      // it stops moving — and never again, because after that the view is somebody else's.
+      if (alpha <= COLD && !framed && !touched) {
+        framed = true
+        fit()
+      }
       paint()
       // The canvas is gone from the document the moment a tab is switched, and a loop that
       // kept painting into it would be this screen's only permanent cost.
@@ -817,8 +852,13 @@ function graph(host: WidgetHost, declared: Rendered): HTMLElement {
     x: (point.x - panX) / scale,
     y: (point.y - panY) / scale,
   })
-  /** How big a node is drawn: a thing with ten links reads as a hub because it looks like one. */
-  const sizeOf = (node: Node): number => 3 + Math.min(5, node.degree)
+  /** How big a node is drawn — the same radius the layout keeps its neighbours clear of. */
+  const sizeOf = (node: Node): number => radius(node)
+  /** Where a node is on the screen rather than in the world. Labels are measured in pixels. */
+  const project = (node: Node): { x: number; y: number } => ({ x: node.x * scale + panX, y: node.y * scale + panY })
+  /** A name long enough to cross the whole map is a name nobody reads to the end of anyway. */
+  const trim = (label: string): string => (label.length > 34 ? `${label.slice(0, 33)}…` : label)
+  const LABEL = 12
 
   function paint(): void {
     const box = canvas.getBoundingClientRect()
@@ -831,24 +871,52 @@ function graph(host: WidgetHost, declared: Rendered): HTMLElement {
     if (!pen) return
     pen.setTransform(ratio, 0, 0, ratio, 0, 0)
     pen.clearRect(0, 0, box.width, box.height)
+
+    const ink = inks()
+    const accent = ink('--accent')
+    const marked = ink('--chosen')
+
+    /**
+     * What is being looked at, and what it touches.
+     *
+     * The thing a reader actually wants from a picture like this is *what is this one joined
+     * to*, and on sixty-three notes with a hub through the middle no amount of layout answers
+     * it. Pointing at something does: its own links come forward and everything else goes
+     * quiet, which costs one set and two extra paths.
+     */
+    const lit = hovered ?? chosen
+    const family = lit === undefined ? undefined : new Set([lit.id, ...(near.get(lit.id) ?? [])])
+
+    pen.save()
     pen.translate(panX, panY)
     pen.scale(scale, scale)
 
-    const ink = inks()
-    pen.strokeStyle = ink('--line-strong')
-    pen.globalAlpha = 0.5
+    // Two paths rather than one per link: the quiet ones, then the ones being looked at.
     pen.lineWidth = 1 / scale
+    pen.strokeStyle = ink('--line-strong')
+    pen.globalAlpha = family === undefined ? 0.4 : 0.12
     pen.beginPath()
     for (const { source, target } of links) {
+      if (lit !== undefined && (source === lit || target === lit)) continue
       pen.moveTo(source.x, source.y)
       pen.lineTo(target.x, target.y)
     }
     pen.stroke()
-    pen.globalAlpha = 1
+    if (lit !== undefined) {
+      pen.strokeStyle = accent
+      pen.globalAlpha = 0.9
+      pen.lineWidth = 1.5 / scale
+      pen.beginPath()
+      for (const { source, target } of links) {
+        if (source !== lit && target !== lit) continue
+        pen.moveTo(source.x, source.y)
+        pen.lineTo(target.x, target.y)
+      }
+      pen.stroke()
+    }
 
-    const accent = ink('--accent')
-    const marked = ink('--chosen')
     for (const node of nodes) {
+      pen.globalAlpha = family === undefined || family.has(node.id) ? 1 : 0.25
       pen.beginPath()
       pen.arc(node.x, node.y, sizeOf(node), 0, 2 * Math.PI)
       pen.fillStyle = accent
@@ -858,30 +926,67 @@ function graph(host: WidgetHost, declared: Rendered): HTMLElement {
       // pixel — the predecessor's own lesson, and the reason its rings were rings.
       if (node.mark === true) {
         pen.beginPath()
-        pen.arc(node.x, node.y, sizeOf(node) + 3, 0, 2 * Math.PI)
+        pen.arc(node.x, node.y, sizeOf(node) + 3.5, 0, 2 * Math.PI)
         pen.strokeStyle = marked
         pen.lineWidth = 1.5 / scale
         pen.stroke()
       }
-      if (node === chosen) {
+      if (node === chosen || node === lit) {
         pen.beginPath()
-        pen.arc(node.x, node.y, sizeOf(node) + 6, 0, 2 * Math.PI)
+        pen.arc(node.x, node.y, sizeOf(node) + 7, 0, 2 * Math.PI)
         pen.strokeStyle = accent
-        pen.lineWidth = 1 / scale
+        pen.lineWidth = 1.5 / scale
         pen.stroke()
       }
     }
+    pen.globalAlpha = 1
+    pen.restore()
 
-    // Labels only where they can be read: everything when the map is zoomed in far enough to
-    // have room, and otherwise just the one under the pointer. A hundred names at arm's
-    // length is a grey smear, which is worse than no names at all.
-    pen.fillStyle = ink('--ink')
-    pen.font = `${String(11 / scale)}px system-ui, sans-serif`
+    /**
+     * The names, in screen pixels and only where one fits.
+     *
+     * **Drawing every label is the same as drawing none**, which is what the first pass did
+     * and what a screenshot of sixty-three notes shows: a grey smear with a graph behind it.
+     * So each name claims a rectangle, and a name whose rectangle is taken is not drawn — in
+     * an order that decides who wins: whatever is being pointed at, then what it touches, then
+     * the busiest. Zooming in spreads the rectangles and the rest appear, which is the same
+     * gesture somebody makes to read one anyway.
+     */
+    pen.font = `${String(LABEL)}px system-ui, -apple-system, sans-serif`
     pen.textAlign = 'center'
-    for (const node of nodes) {
-      if (scale < 0.8 && node !== hovered && node !== chosen) continue
-      pen.fillText(node.label, node.x, node.y - sizeOf(node) - 4 / scale)
+    pen.textBaseline = 'bottom'
+    pen.lineJoin = 'round'
+    const ground = ink('--surface-raised')
+    const bright = ink('--ink')
+    const quiet = ink('--ink-quiet')
+    const rank = (node: Node): number =>
+      (node === lit ? 1e6 : 0) + (family?.has(node.id) === true ? 1e5 : 0) + node.degree
+    const taken: { left: number; right: number; top: number; bottom: number }[] = []
+    for (const node of [...nodes].sort((a, b) => rank(b) - rank(a))) {
+      const spot = project(node)
+      const label = trim(node.label)
+      const width = pen.measureText(label).width
+      const bottom = spot.y - sizeOf(node) * scale - 5
+      const room = { left: spot.x - width / 2 - 3, right: spot.x + width / 2 + 3, top: bottom - LABEL, bottom }
+      if (room.right < 0 || room.left > box.width || room.bottom < 0 || room.top > box.height) continue
+      if (
+        taken.some(
+          (one) => room.left < one.right && room.right > one.left && room.top < one.bottom && room.bottom > one.top,
+        )
+      ) {
+        continue
+      }
+      taken.push(room)
+      pen.globalAlpha = family === undefined || family.has(node.id) ? 1 : 0.3
+      // The ground, painted round the letters rather than behind them: a filled box would
+      // cover the links it sits on, and a name over a line is unreadable without one.
+      pen.strokeStyle = ground
+      pen.lineWidth = 3
+      pen.strokeText(label, spot.x, bottom)
+      pen.fillStyle = node === lit || node === chosen ? bright : quiet
+      pen.fillText(label, spot.x, bottom)
     }
+    pen.globalAlpha = 1
   }
 
   /** The node under a point, or nothing. Generous by a few pixels, because a dot is small. */
@@ -906,10 +1011,14 @@ function graph(host: WidgetHost, declared: Rendered): HTMLElement {
     if (found) {
       held = found
       found.held = true
-      warm(0.3)
+      canvas.style.cursor = 'grabbing'
+      // HELD rather than a one-off nudge: the loop keeps handing this back to `step` as the
+      // temperature it is heading for, so a long drag ends as lively as it started.
+      warm(HELD)
       return
     }
     panning = { x: point.x - panX, y: point.y - panY }
+    canvas.style.cursor = 'grabbing'
   })
 
   canvas.addEventListener('pointermove', (event) => {
@@ -918,12 +1027,14 @@ function graph(host: WidgetHost, declared: Rendered): HTMLElement {
       const spot = world(point)
       held.x = spot.x
       held.y = spot.y
-      warm(0.3)
+      warm(HELD)
       return
     }
     if (panning) {
       panX = point.x - panning.x
       panY = point.y - panning.y
+      // Somebody has framed it themselves now, so nothing here reframes it again.
+      touched = true
       paint()
       return
     }
@@ -941,9 +1052,10 @@ function graph(host: WidgetHost, declared: Rendered): HTMLElement {
       // Let go and the rest of the graph settles around where it was put, rather than
       // snapping back — the same behaviour as dragging a node in the old dashboard.
       held = undefined
-      warm(0.3)
+      warm(HELD)
     }
     panning = undefined
+    canvas.style.cursor = hovered === undefined ? 'grab' : 'pointer'
     if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId)
   }
   canvas.addEventListener('pointerup', release)
@@ -970,6 +1082,7 @@ function graph(host: WidgetHost, declared: Rendered): HTMLElement {
       event.preventDefault()
       const point = at(event)
       const before = world(point)
+      touched = true
       scale = Math.min(6, Math.max(0.1, scale * Math.exp(-event.deltaY * 0.002)))
       // Whatever was under the pointer stays under the pointer, which is what makes a wheel
       // feel like zooming rather than like the picture running away.
