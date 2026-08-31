@@ -1005,8 +1005,8 @@ body[data-view='control'] .view:not(#control) {
   /* Tall enough to be a map rather than a strip, and short enough that the list underneath
      is still visibly there — a picture filling the screen would hide the thing this panel
      exists for, which is forgetting one row. */
-  height: 48vh;
-  min-height: 16rem;
+  height: 56vh;
+  min-height: 20rem;
   min-width: 0;
   cursor: grab;
   touch-action: none;
