@@ -45,6 +45,8 @@ let body: { model: string; messages: { role: string; content: string }[] } | und
 const systemLine = (): string => body?.messages.find((m) => m.role === 'system')?.content ?? ''
 /** How many tool turns the last request showed the model. A function, for the same reason. */
 const shownTurns = (): number => body?.messages.filter((m) => m.role === 'tool').length ?? 0
+/** How many system turns went out. A function, or `body = undefined` narrows it to nothing. */
+const systemTurns = (): number => body?.messages.filter((m) => m.role === 'system').length ?? 0
 
 const server: Server = createServer((request, response) => {
   let raw = ''
@@ -376,6 +378,37 @@ test('a personality reaches the model, and only ever after Alexia’s own instru
   await run({ messages: start('hey'), tools: tooling({ list: [] }), pins, world, store, secrets, session })
   expect(systemLine()).toContain('You are Alexia')
   expect(systemLine()).not.toContain('Vacen')
+  store.close()
+})
+
+test('a caller’s own system prompt lands in front of the personality, not after it', async () => {
+  /**
+   * The bug this exists for, found on a phone. A plugin holding a conversation elsewhere
+   * sends a `systemPrompt` with its task (M7-5), and it used to arrive as a *second* system
+   * message — so every step showed the model a personality and then a plain *you are
+   * Alexia* from the plugin, and later wins. On Telegram, the one surface with no settings
+   * screen to check, that looked exactly like a personality that had never been saved.
+   */
+  script = [{ say: 'Noted.' }]
+  body = undefined
+  const { store, session, world } = bench()
+
+  await run({
+    messages: [{ role: 'system', content: 'This conversation is happening over Telegram.' }, ...start('hey')],
+    tools: tooling({ list: [] }),
+    pins,
+    world,
+    store,
+    secrets,
+    session,
+    personality: '# Chief of staff\n\nCall him Vacen. No emojis.',
+  })
+
+  // One system turn, in one order: Alexia’s floor, the caller’s context, the personality.
+  expect(systemTurns()).toBe(1)
+  const line = systemLine()
+  expect(line.indexOf('You are Alexia')).toBeLessThan(line.indexOf('over Telegram'))
+  expect(line.indexOf('over Telegram')).toBeLessThan(line.indexOf('Vacen'))
   store.close()
 })
 

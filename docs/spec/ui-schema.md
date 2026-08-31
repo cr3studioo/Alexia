@@ -1,7 +1,7 @@
 # The declarative UI schema
 
 > **A plugin cannot style itself wrong because it never styles itself.** It declares what it
-> needs; core renders it. Eleven widgets, one visual language, and screens that look the same
+> needs; core renders it. Twelve widgets, one visual language, and screens that look the same
 > whoever wrote the plugin.
 >
 > This document is the rendering half. The manifest half — every field, every constraint —
@@ -9,8 +9,8 @@
 > are not repeated here.
 >
 > **Two screens, one renderer, since M6-2.** These widgets are also what a plugin's `panel`
-> declares — its tab on the control surface. Everything below is true on both: the same ten,
-> the same rules, the same file drawing them. What differs is what each screen is *for*, and
+> declares — its tab on the control surface. Everything below is true on both: the same
+> twelve, the same rules, the same file drawing them. What differs is what each screen is *for*, and
 > that difference is in [`manifest.md`](./manifest.md#panel) rather than here, because
 > nothing about the rendering changes.
 >
@@ -25,8 +25,8 @@ renders them", and both were looked at and left. A general schema renderer accep
 nesting, arbitrary widgets and arbitrary layout hints — which re-opens the exact door this
 design closed, and adds about 175 KB to do it.
 
-Eleven hand-written widgets is a smaller amount of code than the adapter would have been.
-**If you need a twelfth, that is a conversation** — open an issue saying what the eleven
+Twelve hand-written widgets is a smaller amount of code than the adapter would have been.
+**If you need a thirteenth, that is a conversation** — open an issue saying what the twelve
 could not do. It is not a config option, and it is not a `"type": "custom"` with an escape
 hatch.
 
@@ -37,7 +37,25 @@ times, and the second copy's own comment says so. `file` and `graph` were asked 
 same time and refused, because each had exactly one user, which is the bar written here. A
 bar that is only applied when it is convenient is not a bar.
 
-**There is a twelfth, and it is not yours** (D112). Core's Models tab draws a `ladder` — the
+**The twelfth was the same conversation, held twice more** (D115, M6-11). `graph` was refused
+again at M6-7, and on a better argument than the bar: its one user stored flat sentences with
+a category, so the edges would have had to be *inferred*, and a picture of inferred similarity
+looks meaningful and is not — which is a worse failure than no picture, because nobody can
+tell. M7-3 gave that store **authored** links, and then somebody asked to look at the shape of
+their own memory, which is the use the refusal was waiting for.
+
+**It still has one user, and it was granted anyway, on what the alternatives cost.** The three
+ways to draw a map were written down at M6-7: a hand-written force layout, this widget, or a
+sandboxed iframe. The first means core's own shell holding a canvas built for one plugin —
+which is core naming a plugin, the thing invariant 1 exists to stop, and the previous Alexia's
+480-line vendor panel arriving by the back door. The third hands a plugin the pixels and every
+rule on this page goes with them: the labels, the focus ring, the contrast, the palette. **A
+widget is the only one of the three where the shell still names nobody and the page still owns
+the look.** The layout itself is the first option, drawn inside the third's rules rather than
+instead of them — about a hundred and fifty lines of arithmetic in `packages/ui/src/force.ts`,
+no dependency, and tested without a browser because it is only arithmetic.
+
+**There is one more, and it is not yours** (D112). Core's Models tab draws a `ladder` — the
 spend slider and the running order under it — and it is deliberately **not in the manifest
 schema**, so a plugin declaring one is refused by the same parser that refuses a misspelled
 `toggle`. It has exactly one user, which is the bar above, and the bar is not waived for the
@@ -47,7 +65,7 @@ its manifest, and core has no manifest — so the screen that shows which model 
 picked had nowhere to decide it, and *recommended* stayed a word covering a rule. It presses
 `/api/action` like a row action does, so it adds no write path and no gate, and it is drawn by
 the same renderer as everything on this page. If you want it, the answer is the one above:
-open an issue saying what the eleven could not do.
+open an issue saying what the twelve could not do.
 
 The shape of the declaration is borrowed from VS Code's `contributes.configuration`, which
 has been proving this exact idea at enormous scale for a decade. The shape, narrowed — not
@@ -55,7 +73,7 @@ the size.
 
 ---
 
-## The eleven
+## The twelve
 
 Every widget takes `key`, `label`, and an optional `hint`. The hint renders under the
 control in smaller type; it is one sentence, and it says something the label does not.
@@ -231,6 +249,54 @@ tool genuinely is not there.
 
 If the tool's annotations say it is destructive, core asks before calling it, in every mode
 except Full trust. Same rule as any other tool call, no exception for buttons.
+
+### `graph`
+
+```jsonc
+{ "key": "shape", "type": "graph", "label": "The shape of it",
+  "rows": "list_notes", "detail": "about_note", "filter": true,
+  "hint": "A ring means Alexia worked that one out rather than being told it." }
+```
+
+```
+  The shape of it
+  A ring means Alexia worked that one out rather than being told it.
+  ┌──────────────────────────────────────────┬─────────────────────┐
+  │            ○───────●                     │  The grant deadline │
+  │           ╱        │                     │                     │
+  │       (●)──────────●────○                │  The grant deadline │
+  │                    │                     │  is in March.       │
+  │                    ○                     │  Filed under: The   │
+  │                                          │  grant.      Close  │
+  └──────────────────────────────────────────┴─────────────────────┘
+```
+
+The only widget that paints pixels, and it still declares none of them. A plugin names the
+tool that answers with the nodes and, if it has one, the tool that says more about a single
+node; the fields on a row are fixed by the contract (`id`, `label`, `links`, `mark`) and every
+decision about how it looks is core's. Field list in
+[`manifest.md`](./manifest.md#graphs).
+
+What core owns, and what a plugin therefore cannot get wrong:
+
+- **The physics.** A force layout with d3-force's own constants, so a graph settles into the
+  shape a person recognises rather than a different one each release. Drag a node and the rest
+  settles around where you put it; scroll to zoom; drag the ground to pan.
+- **The colours**, which are the page's own and stay scarce (`docs/design.md`). A node is
+  drawn in the accent, a `mark` adds a ring in `--chosen` **after** the node rather than
+  instead of it — so *what this is* and *where it came from* stay two signals rather than
+  fighting over one pixel — and links are drawn in the line colour at half strength.
+- **The labels.** All of them once the map is zoomed in far enough to have room, and otherwise
+  only the one under the pointer. A hundred names at arm's length is a grey smear.
+- **Motion, and not having any.** `prefers-reduced-motion` settles the layout in one pass and
+  paints the answer once. Nothing on this screen animates at somebody who asked it not to.
+- **The empty and the filtered-empty case**, in the widget's own voice: *nothing here yet*
+  reads differently from *nothing matches that*, and both beat an empty canvas.
+
+**Its reach is honest about what a canvas cannot do.** It carries the node and link counts as
+its label for a reader who cannot see it, and the detail beside it is ordinary text — but a
+map is not keyboard-reachable, and a plugin whose data a person must be able to *act* on
+should put a `table` beside it, which is where a row has a button and a name.
 
 ---
 

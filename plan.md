@@ -187,7 +187,49 @@ Tick a box only when the task's acceptance criteria pass. `[GATE]` needs a human
 - [x] **M6-8** `plugins/commitments` — the panel for a plugin core has never heard of
 - [x] **M6-9** The consent ladder — pending, provenance, preauth
 - [x] **M6-10** The command palette
+- [x] **M6-11** `graph` — the twelfth widget, and the map the table could not draw
 - [x] **M6-G** **Done when:** delete `plugins/memory` with the control view open and its tab goes with it
+
+### M6-11 `graph` — the twelfth widget, and the map the table could not draw
+
+**Built 2026-08-31 (D115). G8 answered, on the third asking.** The memory panel draws the
+notes as a force graph: every remembered thing a node, every link the sorter wrote an edge,
+drag to move, scroll to zoom, click to read the whole of one beside the map. The table is
+still under it, because forgetting one row is still why a person opens this screen.
+
+**Three refusals stand and none of them is overturned.** D83 refused `graph` on the bar — one
+user — and D90 refused it again on something better: the store held flat sentences, so the
+edges would have been *inferred*, and a picture of inferred similarity looks meaningful and is
+not. M7-3 made the links **authored**, which is the condition D90 named, and G8 said the rest:
+*decide when somebody wants to look at the shape of their own memory*. Somebody did.
+
+**It was granted on what the alternatives cost, and it still has one user.** M6-7 wrote the
+three answers down: a hand-written force layout, a `graph` widget, a sandboxed iframe. The
+first puts a canvas built for one plugin inside core's own shell — which is core naming a
+plugin, and the previous Alexia's 480-line vendor panel arriving by the back door. The third
+hands a plugin the pixels, and the palette, the labels, the focus ring and the contrast go
+with them. **Only the widget leaves the shell naming nobody.** So the answer is the first
+option drawn inside the third's rules: `packages/ui/src/force.ts`, about a hundred and fifty
+lines of d3-force's own constants, no dependency, and pure arithmetic — which is why it is
+tested without a browser, in a suite that has none.
+
+**`alexia_protocol` 4, and the floor stayed at 2.** The integer exists so an old core says
+*which of us is out of date* instead of refusing a manifest it cannot parse, so `graph`
+declared at 3 is a load error with that sentence in it. Raising `MIN` is what deprecating a
+revision looks like, and seven first-party plugins declare 2 and use nothing from 3 —
+breaking them to keep a number tidy is not a deprecation, it is tidying.
+
+**What the widget refuses to let a plugin decide.** Nodes, links, a label, and one boolean
+`mark` — no columns, no grouping, no row actions, no colours. A table's columns are choices a
+reader notices; a map's are not. The palette stays scarce (`docs/design.md`): a node is the
+accent, `mark` adds a ring in `--chosen` **after** the node rather than instead of it, so
+*what this is* and *where it came from* stay two signals. `prefers-reduced-motion` settles the
+layout in one pass and paints it once. And the honest limit is written next to it: a canvas is
+not keyboard-reachable, so anything a person must *act* on belongs on the table beside it.
+
+**Acceptance.** Open Control → Memory and the map is there, settling, draggable, and clicking
+a node reads the whole note. Delete `plugins/memory` and the map goes with the tab — M6-G,
+unchanged, with one more widget on the screen it deletes.
 
 ### M7 — What version 1 knew *(inserted 2026-08-29 — see Change log)*
 
@@ -3674,6 +3716,15 @@ For `questions.md`. Each one came out of planning and none of them blocks starti
   hand-written force layout if it is genuinely small, otherwise the sandboxed iframe) stands.
   *Decide when somebody wants to look at the shape of their own memory and the table is not
   enough — which is a question about use, and there is no use yet.*
+- **G8. Answered 2026-08-31 at M6-11 — a `graph` widget, and the layout is ours (D115).** The
+  use arrived, which is what the deferral was waiting for. **Both halves of the
+  recommendation, rather than one of them**: the hand-written force layout is what draws it,
+  and it is drawn *inside* the schema rather than beside it. The iframe lost on what it costs
+  — a plugin holding the pixels is a plugin holding the palette, the labels, the focus ring
+  and the contrast — and a bespoke canvas in the shell lost on invariant 1, because a canvas
+  built for one plugin is core naming one. **The precedent this sets for every plugin after
+  it**: no, a plugin does not get to draw something core cannot, and when the twelve widgets
+  genuinely cannot express something, the thirteenth is a conversation, not an escape hatch.
 - **G9. Answered 2026-08-29 at M7-3 — one plugin (D97).** Not on the balance of screens: the
   **contract decided it.** A second plugin cannot read the first's tables, so *recall* would
   see half the memory and there would be two tabs called Memory with no way to join them.
@@ -3710,6 +3761,7 @@ Newest first. Every entry here is also in Alexia.md's decision log.
 
 | Date | Entry |
 |---|---|
+| 2026-08-31 | **D115** — **the twelfth widget, and the map somebody finally had a use for.** M6-11, G8 answered on the third asking. `graph` was refused at M6-3 on the bar (*one user is not enough*) and refused again at M6-7 on a better argument — the store held flat sentences, so the edges would have been **inferred**, and a picture of inferred similarity looks meaningful and is not. M7-3 made the links **authored**, and G8 said the rest: *decide when somebody wants to look at the shape of their own memory*. Somebody did. **It still has one user, and it was granted on what the alternatives cost.** The three answers M6-7 wrote down were a hand-written force layout, a widget, and a sandboxed iframe: the first puts a canvas built for one plugin inside core's own shell, which is core naming a plugin and the predecessor's 480-line vendor panel arriving by the back door; the third hands a plugin the pixels, and the palette, the labels, the focus ring and the contrast go with them. **Only the widget leaves the shell naming nobody**, so the answer is the first option drawn inside the third's rules — `force.ts`, d3-force's own constants, no dependency, pure arithmetic and therefore tested in a suite with no browser. The plugin declares four fields on a node and no colours: `mark` rings in `--chosen` **after** the node rather than instead of it, so *what this is* and *where it came from* stay two signals. `alexia_protocol` 4, and **the floor stayed at 2** — raising `MIN` is what deprecating a revision looks like, and breaking seven working plugins to keep a number tidy is not a deprecation. |
 | 2026-08-30 | **D112** — **the models screen said *recommended* and had no way to disagree with it.** The ★ was honest — it is defined as what the router would pick — but *recommended* means free to one person, fast to the next and best to the one paying, while the rule underneath is *cheapest that clears every pin*. So a three-stop slider now says the money question out loud (free only · free then paid · paid only), as a **wall rather than a preference**: *free only* that reaches for a paid model when the free rungs are gone is the setting not existing. It is not applied to a local pool, because only the cloud pool has a price line. Under it, the running order as a **shortlist somebody drags** — empty by default, everything unlisted still answering behind it, and the group is a property of the model so one drag cannot quietly turn the free tier off. `ladder` is **not** the twelfth widget: `ui-schema.md`'s bar is more than one user, so it is not in the manifest schema and no plugin can declare it. What it answers is that **every widget core can declare for its own tabs is read-only** — a plugin's values are written against a manifest and core has no manifest — so the Models tab could report what the router decided and had nowhere to decide it. |
 | 2026-08-30 | **D111** — **the commands lived on one screen, so the one place that needed them most had none.** `/new` did not exist anywhere: the window had a button, a phone had nothing, and every message sent from one landed in the same conversation carrying every message before it. Commands are answered on the sampling path — before the tools flag and before `asTask`, so `/new` works while a task runs — guarded to a single short line with a command-shaped word so a plugin's wrapped prompt beginning with a slash is not read as one. `/new` is a hook, because *here* is the window for one caller and its own conversation for another; the plugin end clears its own history, since core rotates what it writes down while the model is shown the plugin's. `/help` lists them, for a place with no palette. And the rail re-reads the conversations on a timer while the window is visible, because `refresh()` only ever fired when a task ended *in this window*. |
 | 2026-08-30 | **D110** — **the screenshot was refused by the antivirus, and two of the computer plugin's other three PowerShell calls were wrong on the shell Windows actually ships.** All three found by running it. `screenshot` came back `ScriptContainedMaliciousContent` — AMSI scans every script first, and the one-line capture-and-save is the shape every PowerShell screen-grabber was written in; isolated statement by statement, each half runs and the pair does not, so it is written out as a script a person would write and the block is now a sentence rather than an error id. `windows` used `ConvertTo-Json -AsArray`, which is PowerShell 7 and this is 5.1. `key` checked *braces round some letters*, so `{SUPER}` reached SendKeys and returned a bare `ArgumentException`; the check is the real keyword list now, and `{WIN}` / `{WIN}r` go to `keybd_event`, because SendKeys cannot hold one key across another. |

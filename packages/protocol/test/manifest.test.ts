@@ -178,6 +178,21 @@ describe('panel — a tab a plugin declares (M6-2, D86)', () => {
     expect(Manifest.safeParse(clash).success).toBe(false)
   })
 
+  test('a graph is refused on revision 3, and drawn on 4 (D115)', () => {
+    const map = {
+      label: 'Voice',
+      widgets: [{ key: 'shape', type: 'graph', label: 'The shape of it', rows: 'list_things' }],
+    }
+    // The same rule `panel` and `lifetime` set: an older core would refuse this manifest as
+    // unparseable, which tells an author nothing about which end is out of date.
+    const old = Manifest.safeParse(withPanel(map, 3))
+    expect(old.success).toBe(false)
+    expect(old.success === false && old.error.issues.map((i) => i.message).join()).toContain('alexia_protocol": 4')
+
+    const now = Manifest.safeParse(withPanel(map, 4))
+    expect(now.success ? null : now.error.issues).toBe(null)
+  })
+
   test('a key declared on both screens is a load error, because it is one stored value', () => {
     const shared = withPanel({
       label: 'Voice',

@@ -55,7 +55,7 @@ server in the world can be added to Alexia as a tool source without being a plug
 | [tools.md](./tools.md) | Writing tools, and writing their descriptions |
 | [lifecycle.md](./lifecycle.md) | Install, enable, disable, delete — and what each one costs |
 | [storage.md](./storage.md) | Your namespace, and what purge takes |
-| [settings.md](./settings.md) | The eleven widgets, and the one you may write yourself |
+| [settings.md](./settings.md) | The twelve widgets, and the one you may write yourself |
 | [capabilities.md](./capabilities.md) | Asking for what another plugin provides |
 | [skills.md](./skills.md) | Shipping know-how alongside capability |
 | [publishing.md](./publishing.md) | Conformance, checksums, signing, and the registry |

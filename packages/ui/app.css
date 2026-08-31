@@ -940,6 +940,64 @@ body[data-view='control'] .view:not(#control) {
   color: var(--danger);
 }
 
+/* The map (D113). The canvas is the only surface in this sheet that paints itself, so what is
+   here is its frame and the note that opens beside it — the colours it draws with are read
+   off these same custom properties at paint time, which is what keeps one palette. */
+.graph-frame {
+  position: relative;
+  display: flex;
+  gap: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  overflow: hidden;
+}
+
+.graph-canvas {
+  flex: 1;
+  /* Tall enough to be a map rather than a strip, and short enough that the list underneath
+     is still visibly there — a picture filling the screen would hide the thing this panel
+     exists for, which is forgetting one row. */
+  height: 48vh;
+  min-height: 16rem;
+  min-width: 0;
+  cursor: grab;
+  touch-action: none;
+}
+
+.graph-note {
+  flex: 0 0 18rem;
+  max-width: 45%;
+  padding: var(--space-4);
+  overflow: auto;
+  border-left: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.graph-note-title {
+  margin: 0 0 var(--space-2);
+  font-weight: 600;
+  line-height: var(--leading-tight);
+}
+
+.graph-note .quiet-button {
+  margin-top: var(--space-3);
+}
+
+/* Narrow: the note is the whole frame rather than a column two inches wide beside a map that
+   is now one inch wide. Same breakpoint the tables use. */
+@media (max-width: 560px) {
+  .graph-frame:has(.graph-note:not([hidden])) .graph-canvas {
+    display: none;
+  }
+
+  .graph-note {
+    flex: 1;
+    max-width: none;
+    border-left: 0;
+  }
+}
+
 .row-actions {
   display: flex;
   flex-wrap: wrap;

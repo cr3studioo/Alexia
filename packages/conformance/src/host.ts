@@ -91,9 +91,18 @@ export function fakeHost(options: FakeHostOptions): FakeHost {
       }
     })
 
+  /**
+   * Both screens, because a plugin reading its own values back does not know which one a
+   * widget was declared on — and core does not either (D86). A harness that only knew about
+   * `settings` would hand `undefined` to a plugin that reads a box on its own panel, and
+   * pass it, and the same plugin would work in the product. A test bench disagreeing with
+   * the thing it stands in for is worse than no bench.
+   */
+  const declaredWidgets = [...(manifest.settings ?? []), ...(manifest.panel?.widgets ?? [])]
+
   const settings = (): Record<string, unknown> => {
     const values: Record<string, unknown> = {}
-    for (const declared of manifest.settings ?? []) {
+    for (const declared of declaredWidgets) {
       // A `password` has no default and nobody has typed one, which is the honest state of
       // a plugin nobody has configured — and the state its first run has to survive.
       if (declared.type === 'password') continue
@@ -125,7 +134,7 @@ export function fakeHost(options: FakeHostOptions): FakeHost {
         return { settings: settings() }
 
       case 'alexia/settings/set': {
-        const declared = manifest.settings?.find((s) => s.key === p.key)
+        const declared = declaredWidgets.find((s) => s.key === p.key)
         // The narrowness is the design: a plugin reports itself, and never rewrites an
         // answer the user gave. Core refuses the same way, in the same words.
         if (!declared) {

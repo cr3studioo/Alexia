@@ -158,9 +158,12 @@ async function answer(token, chatId, text) {
   try {
     result = await alexia.server.server.createMessage({
       messages: turns.map((turn) => ({ role: turn.role, content: { type: 'text', text: turn.content } })),
+      // Context, not an identity. It used to open *You are Alexia* — a second system line
+      // landing after a chosen personality, which is the order in which the plain one wins.
+      // Core says who she is; this says only what core cannot know about where she is.
       systemPrompt:
-        'You are Alexia, answering over Telegram. Keep replies short — this is a phone. ' +
-        'You have tools, and anything needing permission will be asked in this chat.',
+        'This conversation is happening over Telegram. Keep replies short — this is a phone. ' +
+        'Anything needing permission will be asked in this chat.',
       maxTokens: 800,
       /**
        * *Use my tools, and ask me when you must* (M7-5).

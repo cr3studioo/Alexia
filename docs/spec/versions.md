@@ -5,9 +5,9 @@ handshake, handled by the SDK. **`alexia_protocol` is ours**: an integer, bumped
 `alexia/*` layer or the manifest changes, and checked *before your process is spawned*.
 
 ```
-you say alexia_protocol 2    Alexia speaks 2..3   ->  loads
-you say alexia_protocol 1    Alexia speaks 2..3   ->  "X was written for an older version"
-you say alexia_protocol 4    Alexia speaks 2..3   ->  "X needs a newer Alexia"
+you say alexia_protocol 3    Alexia speaks 2..4   ->  loads
+you say alexia_protocol 1    Alexia speaks 2..4   ->  "X was written for an older version"
+you say alexia_protocol 5    Alexia speaks 2..4   ->  "X needs a newer Alexia"
 ```
 
 ## The promise, from v2 onwards
@@ -19,6 +19,47 @@ contract was still moving.
 **It was kept at 3, on 2026-08-29.** Plugins declaring 1 stopped loading and said so in a
 sentence rather than crashing, exactly as written here while it was still hypothetical. The
 migration for a revision-1 plugin that uses nothing from 2 is one character.
+
+## 3 → 4 *(2026-08-31, M6-11)*
+
+**One widget.** `graph`.
+
+A `table` says what is there; a `graph` says **what points at what** — nodes, edges, and a
+force layout core draws (D115). It reads the same `rows` tool a table does, over the same
+`structuredContent`, and adds three optional fields to a row: `label`, `links` (an array of
+the **ids** it points at) and `mark` (a ring, whose meaning your `hint` gives).
+
+```jsonc
+{
+  "alexia_protocol": 4,
+  "panel": {
+    "label": "Memory",
+    "widgets": [
+      { "key": "shape", "type": "graph", "label": "The shape of it",
+        "rows": "memory_graph", "detail": "about_memory", "filter": true }
+    ]
+  }
+}
+```
+
+Full field list in [`manifest.md`](./manifest.md#graphs); what core draws and what it refuses
+to let you decide is in [`ui-schema.md`](./ui-schema.md#graph).
+
+**The floor did not rise this time**, and that is a decision rather than an oversight. The
+promise above is that one revision back is *supported* — supporting two costs nothing, and
+seven first-party plugins declare 2 and use nothing from 3. Dropping them to keep a number
+tidy would be breaking working software to make a point about deprecation. Raising `MIN` is
+what deprecating a revision looks like, and there is nothing here worth deprecating yet.
+
+**Nothing was removed and nothing changed meaning.** A manifest written against revision 2 or
+3 is still valid and loads unchanged.
+
+### If you are updating a plugin
+
+**You want a `graph`.** Set `"alexia_protocol": 4` and declare one. Declaring it while still
+saying `3` is a load error, the same rule `panel` and `lifetime` set — an older Alexia would
+otherwise refuse your manifest as unparseable, which tells you nothing about which end is out
+of date.
 
 ## 2 → 3 *(2026-08-29, M6-2 and M6-3)*
 
@@ -77,7 +118,8 @@ adds no envelope of its own where the protocol already has one.
 
 `file` and `graph` were asked for in the same conversation and **refused**. Each had exactly
 one user, which is this schema's own bar for no, and both are attached to the task where
-their single user is the evidence rather than granted for sounding useful.
+their single user is the evidence rather than granted for sounding useful. `graph` was refused
+a second time at M6-7 and granted at M6-11 — see *3 → 4* above for what changed.
 
 **Nothing was removed and nothing changed meaning.** A manifest written against revision 2 is
 a valid revision 2 manifest and loads unchanged.

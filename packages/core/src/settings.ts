@@ -8,7 +8,7 @@ import type { Store } from './store.js'
 /**
  * The settings screen, from the manifest side (M2-1).
  *
- * **A plugin cannot style itself wrong because it never styles itself.** It declares ten
+ * **A plugin cannot style itself wrong because it never styles itself.** It declares twelve
  * possible widgets; this module turns those declarations plus the stored values into
  * something the shell can render, and turns an edit coming back the other way into a value
  * that is checked before it is kept.
@@ -25,11 +25,13 @@ export type Setting = NonNullable<Manifest['settings']>[number]
 /**
  * **Core's own screen furniture, which a plugin may not declare** (D112).
  *
- * `docs/spec/ui-schema.md` sets the bar for a twelfth widget — *one user is not enough*, and
- * `file` and `graph` were refused on exactly that — and this does not clear it, so it is not
- * offered to plugins and is not in the manifest schema. What it is instead is the answer to a
- * gap the eleven genuinely have: **every widget core can declare for its own tabs is
- * read-only.** `table` and `action` report and press; nothing in the set writes a core value,
+ * `docs/spec/ui-schema.md` sets the bar for a new widget — *one user is not enough*, and
+ * `file` and `graph` were both refused on exactly that — and this does not clear it, so it is
+ * not offered to plugins and is not in the manifest schema. (`graph` was granted two refusals
+ * later, on what the alternatives cost rather than on a second user — D115. This was not, and
+ * the difference is that a plugin has somewhere else to put a list of choices.) What it is
+ * instead is the answer to a gap the twelve genuinely have: **every widget core can declare
+ * for its own tabs is read-only.** `table` and `action` report and press; nothing in the set writes a core value,
  * because a plugin's values are written through `/api/settings` against a manifest, and core
  * has no manifest. So the Models tab could show what the router decided and could not offer
  * anywhere to decide it.
@@ -105,7 +107,7 @@ export function secretStoreName(platform: string = process.platform): string {
 }
 
 /** Read-only widgets: the plugin drives them, the user cannot type into them. */
-const DRIVEN = new Set(['status', 'progress', 'action', 'table'])
+const DRIVEN = new Set(['status', 'progress', 'action', 'table', 'graph'])
 
 export interface PaneOptions {
   store: Store
@@ -161,10 +163,20 @@ export function declaredAction(
   return undefined
 }
 
-/** A table this plugin declared, by key. */
-export function declaredTable(manifest: Manifest, key: string): Extract<Setting, { type: 'table' }> | undefined {
+/**
+ * A widget this plugin declared that fetches its own contents, by key — a `table` or a
+ * `graph` (D115).
+ *
+ * One function rather than two because `/api/rows` and `/api/detail` ask the same two
+ * questions of both: *which tool answers with the contents*, and *which one says more about
+ * one of them*. A second lookup would be a second place to forget a widget type.
+ */
+export function declaredTable(
+  manifest: Manifest,
+  key: string,
+): Extract<Setting, { type: 'table' | 'graph' }> | undefined {
   const found = declaredWidgets(manifest).find((widget) => widget.key === key)
-  return found?.type === 'table' ? found : undefined
+  return found?.type === 'table' || found?.type === 'graph' ? found : undefined
 }
 
 /**

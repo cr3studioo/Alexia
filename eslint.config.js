@@ -35,6 +35,9 @@ export default tseslint.config(
         clearInterval: 'readonly',
         fetch: 'readonly',
         URL: 'readonly',
+        // Its companion, and the reason a query string with repeated keys is three lines
+        // rather than an escaping routine somebody has to get right.
+        URLSearchParams: 'readonly',
         // Both are Node globals a plugin reaches for: `Buffer` for the bytes an image
         // arrives as, `AbortController` for a loop that has to be stoppable.
         Buffer: 'readonly',

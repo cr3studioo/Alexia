@@ -41,7 +41,7 @@
     },
     {
       "cap": "net.request",
-      "why": "To reach fish.audio, and only once you have added a key and picked a cloned voice."
+      "why": "To browse the voices published on fish.audio and to speak in one, and only once you have added a key."
     }
   ],
   "provides": [
@@ -176,6 +176,11 @@
             "tool": "use_voice"
           },
           {
+            "key": "try_voice",
+            "label": "Hear it",
+            "tool": "hear_voice"
+          },
+          {
             "key": "drop_voice",
             "label": "Remove",
             "tool": "drop_voice",
@@ -197,6 +202,104 @@
         "label": "Clone the voice in the recording",
         "tool": "clone_voice",
         "hint": "Uses the recording and the words named on the plugins screen. Needs a fish.audio key: the clip and its transcript leave this machine, and the voice lives on that account until you remove it here."
+      },
+      {
+        "key": "find",
+        "type": "text",
+        "label": "Find a voice",
+        "placeholder": "spongebob",
+        "hint": "A name to look for among the voices published on fish.audio. Leave it empty to see what the filters alone turn up."
+      },
+      {
+        "key": "find_langs",
+        "type": "multi-choice",
+        "label": "Language",
+        "options": [
+          "en",
+          "es",
+          "zh",
+          "fr",
+          "de",
+          "ja",
+          "ru",
+          "pt",
+          "ar",
+          "ko"
+        ],
+        "default": [
+          "en"
+        ],
+        "hint": "Language codes. Most of the catalogue is not English, so leaving all of them off answers in languages you cannot judge."
+      },
+      {
+        "key": "find_tags",
+        "type": "multi-choice",
+        "label": "Kind of voice",
+        "options": [
+          "female",
+          "male",
+          "young",
+          "middle-aged",
+          "old",
+          "conversational",
+          "character-voice",
+          "narration",
+          "storytelling",
+          "energetic",
+          "calm",
+          "expressive",
+          "confident",
+          "warm",
+          "deep"
+        ],
+        "hint": "The vendor's own words for its voices. Several together narrow it."
+      },
+      {
+        "key": "find_now",
+        "type": "action",
+        "label": "Search fish.audio",
+        "tool": "search_voices",
+        "hint": "Asks again with whatever is in the boxes above, and fills the list below."
+      },
+      {
+        "key": "catalogue",
+        "type": "table",
+        "label": "Voices on fish.audio",
+        "hint": "The top five for what you searched. Hear one, then keep it — a kept voice joins the list above and can speak, without ever being downloaded.",
+        "rows": "search_voices",
+        "columns": [
+          {
+            "key": "name",
+            "label": "Voice"
+          },
+          {
+            "key": "tags",
+            "label": "Sounds like",
+            "hideNarrow": true
+          },
+          {
+            "key": "likes",
+            "label": "Likes",
+            "align": "right",
+            "hideNarrow": true
+          },
+          {
+            "key": "state",
+            "label": "State"
+          }
+        ],
+        "rowActions": [
+          {
+            "key": "hear_voice",
+            "label": "Hear it",
+            "tool": "hear_voice"
+          },
+          {
+            "key": "keep_voice",
+            "label": "Keep",
+            "tool": "keep_voice"
+          }
+        ]
       }
     ]
   }

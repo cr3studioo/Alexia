@@ -346,7 +346,20 @@ const WHY: Record<Struggle, string> = {
 export async function run(options: RunOptions): Promise<RunResult> {
   const { store, secrets, session, tools, pins, on } = options
   const ceiling = options.maxSteps ?? MAX_STEPS
-  const messages = [...options.messages]
+  /**
+   * A caller's own standing lines, lifted out of the trace and into the one system turn.
+   *
+   * A plugin holding a conversation somewhere else sends a `systemPrompt` with its task
+   * (M7-5), and it arrived as a **second `system` message after the first** — so a chosen
+   * personality was followed, every single step, by a plain *you are Alexia* from the
+   * plugin, and later wins. It read exactly like a personality being ignored, and on the
+   * one surface where nobody can open the settings screen to check.
+   *
+   * So there is one system turn again: Alexia's floor, then the caller's context, then the
+   * personality last, which is the order {@link system} already promised.
+   */
+  const standing = options.messages.filter((m) => m.role === 'system').map((m) => m.content)
+  const messages = options.messages.filter((m) => m.role !== 'system')
   const added: Message[] = []
   const steps: Step[] = []
 
@@ -541,7 +554,7 @@ export async function run(options: RunOptions): Promise<RunResult> {
         {
           // Trimmed here rather than in the store: what is kept is what a model is shown,
           // and the history itself stays whole so a reload shows every step that happened.
-          messages: [system(available, options.personality), ...trim(messages, trimming)],
+          messages: [system(available, options.personality, standing), ...trim(messages, trimming)],
           ...(available.length > 0 && { tools: available }),
           ...(billable && { maxTokens: options.maxTokens ?? REPLY_CEILING }),
           ...(options.signal && { signal: options.signal }),
@@ -683,8 +696,13 @@ function parse(raw: string): Record<string, unknown> {
  * A personality goes **after** these lines and is the user's own words, kept whole. Later
  * wins where the two disagree, which is the right way round: these four sentences are the
  * floor a model needs to drive a loop, and everything above that is the user's call.
+ *
+ * `caller` is a plugin's own `systemPrompt` (M7-5) and sits **between** the two, for the
+ * same reason and in the same direction: it is context core cannot know — *this is a phone*
+ * — and it is not the user saying how they want to be spoken to. Sent as a second `system`
+ * message, which is how it used to arrive, it landed after the personality and won.
  */
-function system(available: ToolSpec[], personality?: string): Message {
+function system(available: ToolSpec[], personality?: string, caller: string[] = []): Message {
   const lines = [
     'You are Alexia, an assistant running on the user’s own machine.',
     available.length > 0 ?
@@ -693,11 +711,8 @@ function system(available: ToolSpec[], personality?: string): Message {
     'When a tool fails, read the error and try a different approach rather than repeating the call.',
     'Stop calling tools and answer as soon as you can. Say what you did, briefly.',
   ]
-  const standing = lines.join(' ')
-  const said = personality?.trim() ?? ''
-  return { role: 'system', content: said === '' ? standing : `${standing}
-
-${said}` }
+  const parts = [lines.join(' '), ...caller.map((one) => one.trim()), personality?.trim() ?? '']
+  return { role: 'system', content: parts.filter((part) => part !== '').join('\n\n') }
 }
 
 /**
