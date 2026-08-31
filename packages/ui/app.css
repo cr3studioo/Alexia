@@ -67,8 +67,16 @@
    contrast.test.ts reads these very declarations and checks every pair that carries text at
    4.5:1 and every border and ring at 3:1. "Both themes are real" is a test, not a claim.
 
-   The switch is the operating system. [data-theme] overrides it if that judgement ever
-   changes — the hook is here, unused, and a control is all that would be missing. */
+   The switch is the operating system by default, and [data-theme] on the root element is
+   what the settings screen sets when somebody says otherwise. Three states and not two:
+   absent is the desktop's own answer, and it has to stay reachable after a theme has been
+   forced once or the control is one-way.
+
+   Everything the media query carries, the attribute carries too — the washes, --paint, and
+   color-scheme, which is what makes the scrollbars and the native menus come along. They
+   used to be in the query alone, so the hook was already half a theme before anything used
+   it. contrast.test.ts holds the two palettes equal; theme.test.ts holds everything else in
+   these blocks equal, which is the half that had already drifted. */
 
 :root {
   color-scheme: light dark;
@@ -98,6 +106,14 @@
   /* The painting: how strongly the brushwork shows through. One number, because it is the
      only thing anybody would ever want to turn down. */
   --paint: 0.16;
+
+  /* The painting itself, as the ground the panels are laid on — the same bitmap the Settings
+     card previews. Switched with the theme, so the two blocks below carry it too. */
+  --ground: url('/theme-light.webp');
+
+  /* How much of the panel is still surface and how much is the ground coming through the
+     frost. One number, like --paint: turn it up for solid, down for glass. */
+  --glass-tint: 60%;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -117,10 +133,21 @@
   --danger: #e58d7e;
   --chosen: #7fa6d4;
   --chosen-wash: #16293f;
+  --ground: url('/theme-dark.webp');
   }
 }
 
+/* Forced light, which is only ever asked for on a dark desktop. It needs no palette — the
+   block above is already it, and the dark override declines to apply to this attribute — so
+   what is left is the half a palette cannot state: which colours the browser draws its own
+   furniture in. */
+:root[data-theme='light'] {
+  color-scheme: light;
+}
+
 :root[data-theme='dark'] {
+  color-scheme: dark;
+
   --surface: #030d1b;
   --surface-raised: #0a1b30;
   --surface-sunken: #05111e;
@@ -136,6 +163,11 @@
   --danger: #e58d7e;
   --chosen: #7fa6d4;
   --chosen-wash: #16293f;
+
+  --wash: color-mix(in oklab, var(--ink) 6%, transparent);
+  --accent-wash: color-mix(in oklab, var(--accent) 10%, transparent);
+  --paint: 0.2;
+  --ground: url('/theme-dark.webp');
 }
 
 @media (prefers-color-scheme: dark) {
@@ -164,7 +196,11 @@ body {
   height: 100vh;
   display: grid;
   grid-template-rows: 1fr;
-  background: var(--surface);
+  /* The painting is the ground. --surface stays as the colour behind it while the bitmap
+     loads and anywhere `cover` cannot reach. Not `fixed`: a fixed background in this engine
+     is re-rasterised at viewport size on every resize and comes back soft — and the body
+     never scrolls anyway, so `fixed` only ever cost quality here. */
+  background: var(--surface) var(--ground) center / cover no-repeat;
   color: var(--ink);
   font:
     var(--text-base) / var(--leading-prose) ui-sans-serif,
@@ -206,12 +242,23 @@ body[data-view='first-run'] #shell {
   display: none;
 }
 
-/* The panels, and the one shape they share. No shadows: depth is a hairline and one step of
-   surface, which survives both grounds without a second set of values. */
+/* The panels, and the one shape they share. Frosted glass over the painting: the surface is
+   pulled back to --glass-tint so the ground shows through, `backdrop-filter` blurs what is
+   behind, and a shadow plus a lit top edge lift the sheet off the picture.
+   (This reverses the old "no shadows" rule — a translucent panel with no shadow reads as a
+   stain on the wallpaper rather than a pane in front of it.) */
 .panel {
-  background: var(--surface-raised);
-  border: 1px solid var(--line);
+  background: color-mix(in oklab, var(--surface-raised) var(--glass-tint), transparent);
+  /* Set by theme.ts from the same slider as --glass-tint: `blur(Npx)`, or `none` at the
+     clear end. Blur only — a `saturate` here repaints the ground more vivid under the pane.
+     The fallback is the static default until the script runs. */
+  backdrop-filter: var(--glass-filter, blur(30px));
+  -webkit-backdrop-filter: var(--glass-filter, blur(30px));
+  border: 1px solid color-mix(in oklab, var(--line) 80%, transparent);
   border-radius: var(--radius-lg);
+  box-shadow:
+    0 10px 40px -12px rgb(0 0 0 / 25%),
+    inset 0 1px 0 0 color-mix(in oklab, #fff 30%, transparent);
   min-height: 0;
 }
 
@@ -1747,6 +1794,85 @@ input {
   margin: 0;
 }
 
+/* ---- the theme cards ------------------------------------------------------------------
+
+   The one place in this product where a picture is the right control. Everywhere else the
+   painting is a mask taking the theme's colour (`.band`, `.mark`); here it is two flat
+   images, because what is being chosen *is* the colour, and a preview that recoloured with
+   the current theme would show you the theme you already have three times over.
+
+   They are the only bitmaps on the page after her face: 33KB each at 480px wide, which is a
+   card at its widest on a 2× display and not a pixel more. `loading="lazy"` keeps both off
+   the wire until somebody opens Settings, which is the one screen they are on. */
+
+.card .plate {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  /* The `height` attribute in the markup is a presentational hint, and a hint that lands is a
+     used value — so `aspect-ratio` was being ignored and the plates were drawn 273px tall
+     whatever their width. `auto` is what hands the height back to the ratio. The attributes
+     stay, because they are what a browser reserves space from before the sheet is parsed. */
+  height: auto;
+  object-fit: cover;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  margin-bottom: var(--space-3);
+  /* The card is the swatch, so the plate must not also be a light rectangle sitting on a
+     dark one while it loads. */
+  background: var(--surface-sunken);
+}
+
+/* Following the desktop is not a third look, it is *these two, whichever the desktop says* —
+   so the card shows both, cut corner to corner. No seam between them: the two grounds are
+   cream and navy, and a line drawn there would be a fourth colour explaining something the
+   images have already said. */
+.card .plate.split {
+  position: relative;
+  overflow: hidden;
+}
+
+.card .plate.split img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.card .plate.split img:first-child {
+  clip-path: polygon(0 0, 100% 0, 0 100%);
+}
+
+.card .plate.split img:last-child {
+  clip-path: polygon(100% 0, 100% 100%, 0 100%);
+}
+
+/* The chosen one is already ringed by `.card:has(input:checked)`. This is the rest of it: the
+   plate's own border joins in, because at this size the ring reads as a frame around a
+   picture rather than as a selection unless the picture agrees with it. */
+.card.theme:has(input:checked) .plate {
+  border-color: var(--accent);
+}
+
+/* How much of the painting comes through the panels, under the cards it belongs with. The
+   native slider already follows the theme through `accent-color`; this is only the row. */
+.glass-row {
+  margin-top: var(--space-3);
+}
+
+.glass-row > input[type='range'] {
+  width: 100%;
+  margin: var(--space-2) 0 0;
+}
+
+.glass-row .range-ends {
+  display: flex;
+  justify-content: space-between;
+  font-size: var(--text-sm);
+  color: var(--ink-quiet);
+}
+
 /* ---- the key wall (§12.2) --------------------------------------------------------------
 
    A bento of equal tiles, and equal is the argument. The screen this replaced opened with a
@@ -2630,29 +2756,9 @@ kbd {
    SVG in `currentColor`, so it recolours with the theme — champagne line on cobalt in the
    dark, cobalt line on champagne in the light, which is the app icon's own polarity.
 
-   It appears three times and no more: the mark, one band under it, and one panel behind the
-   conversation. `--paint` is the only lever, because how loud it is is the only thing anyone
-   would ever want to change about it. */
-
-#paint {
-  position: absolute;
-  right: -4rem;
-  top: 2rem;
-  width: 40rem;
-  max-width: 90%;
-  aspect-ratio: 640 / 700;
-  background: var(--accent);
-  -webkit-mask: url('/alexia-panel.svg') top right / contain no-repeat;
-  mask: url('/alexia-panel.svg') top right / contain no-repeat;
-  opacity: var(--paint);
-  pointer-events: none;
-  z-index: 0;
-}
-
-#chat > *:not(#paint) {
-  position: relative;
-  z-index: 1;
-}
+   The panel behind the conversation was dropped: with the theme bitmap as the ground and the
+   panels frosted over it, a second painting on the chat panel was a picture on a picture. So
+   it appears twice now — the mark, and one band under it. */
 
 .band {
   display: block;

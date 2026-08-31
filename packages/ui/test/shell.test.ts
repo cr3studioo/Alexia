@@ -50,13 +50,13 @@ test('shell: every id in the markup is reached for', () => {
   expect([...ids].filter((id) => !used.has(id)).sort()).toEqual([])
 })
 
-test('shell: the three painting assets are the ones the server serves', () => {
+test('shell: the painting assets are the ones the server serves', () => {
   // A mask that 404s is not a broken image with a border round it — it is an element painted
   // in the accent colour with no mask at all, which is a solid champagne rectangle over the
   // conversation. Silent, and very visible.
   const css = readFileSync(join(ui, 'app.css'), 'utf8')
   const masked = new Set([...css.matchAll(/mask:\s*url\('\/([\w.-]+)'\)/g)].map(([, file]) => file!))
-  expect([...masked].sort()).toEqual(['alexia-band.svg', 'alexia-mark.svg', 'alexia-panel.svg'])
+  expect([...masked].sort()).toEqual(['alexia-band.svg', 'alexia-mark.svg'])
 
   const serve = readFileSync(join(ui, '..', 'core', 'src', 'serve.ts'), 'utf8')
   for (const file of masked) {
