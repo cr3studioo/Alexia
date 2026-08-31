@@ -105,7 +105,7 @@ export const ROUTES: Readonly<Record<string, Route>> = {
 
   '/api/setup': {
     otherwise: safe(
-      'Three first-run values, each written by the screen that shows it and each writable again. The only thing it can replace is a provider key, and only with one somebody has just typed into the box beside it.',
+      'The first-run answers plus the theme, each written by the screen that shows it and each writable again. The only thing it can replace is a provider key, and only with one somebody has just typed into the box beside it.',
     ),
   },
 

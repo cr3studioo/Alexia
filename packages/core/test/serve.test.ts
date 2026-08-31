@@ -127,12 +127,16 @@ test('first run asks three things and then never asks again', async () => {
 
   const read = async () =>
     (await (await call('/api/state')).json()) as {
-      setup: { done: boolean; name: string }
+      setup: { done: boolean; name: string; theme: string }
       providers: { id: string; trainsOnYourData: string; terms?: string; connected: boolean }[]
     }
 
   const before = await read()
-  expect(before.setup).toEqual({ done: false, name: 'Alexia', mode: 'combined' })
+  // Theme is not one of the three and is never asked at first run — it arrives already
+  // answered, and `system` is the answer, which is the behaviour there was before there was a
+  // control. It is on this endpoint because it is the same kind of value: a fact about this
+  // install that the settings screen can change and change back.
+  expect(before.setup).toEqual({ done: false, name: 'Alexia', mode: 'combined', theme: 'system' })
   // What the mode picker is honest about: nobody has read these terms yet.
   expect(before.providers.every((p) => p.trainsOnYourData === 'unknown' && p.terms)).toBe(true)
   expect(before.providers.some((p) => p.connected)).toBe(false)
@@ -144,7 +148,7 @@ test('first run asks three things and then never asks again', async () => {
   })
 
   const after = await read()
-  expect(after.setup).toEqual({ done: true, name: 'Ada', mode: 'local' })
+  expect(after.setup).toEqual({ done: true, name: 'Ada', mode: 'local', theme: 'system' })
   // The key went to the keychain and nowhere near the database.
   expect(await secrets.get(CORE, keyOf(PROVIDERS[0]!))).toBe('sk-users-own')
   // And the screen can say so without being able to read it back — which is what stops the
@@ -165,7 +169,7 @@ test('first run asks three things and then never asks again', async () => {
   })
 
   const edited = await read()
-  expect(edited.setup).toEqual({ done: true, name: 'Grace', mode: 'local' })
+  expect(edited.setup).toEqual({ done: true, name: 'Grace', mode: 'local', theme: 'system' })
   expect(await secrets.get(CORE, keyOf(PROVIDERS[0]!))).toBe('sk-the-second-one')
 
   // A sentence in the key box is refused here rather than at the provider. This exact string
@@ -183,6 +187,29 @@ test('first run asks three things and then never asks again', async () => {
   expect(((await refused.json()) as { said: string }).said).toMatch(/spaces/)
   // And the key that was already there is still the key that is there.
   expect(await secrets.get(CORE, keyOf(PROVIDERS[0]!))).toBe('sk-the-second-one')
+
+  /**
+   * The theme, on the same endpoint and with the same rule: one field at a time, and nothing
+   * else moves. It is checked against the three rather than kept as typed — a fourth word
+   * reaches the root element as `data-theme`, matches neither override, and is light on a
+   * dark desktop with nothing anywhere saying why.
+   */
+  const chose = async (theme: unknown) => {
+    await call('/api/setup', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ theme }),
+    })
+    return (await read()).setup
+  }
+  expect((await chose('dark')).theme).toBe('dark')
+  // Following the desktop stays reachable after a theme has been forced once. A control that
+  // could only be turned on is a control somebody has to remember their way out of.
+  expect((await chose('system')).theme).toBe('system')
+  const kept = await chose('midnight')
+  expect(kept.theme).toBe('system')
+  // And a refused theme changes nothing else on an endpoint that writes four things.
+  expect(kept.name).toBe('Grace')
 
   await first.close()
 })

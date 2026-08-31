@@ -158,12 +158,35 @@ both themes, by `packages/ui/test/contrast.test.ts` — which reads the declarat
 `app.css` rather than keeping a second copy of them. A palette that has to agree with a test
 in two places is a palette that will disagree with it in one.
 
-**The switch is the operating system.** `prefers-color-scheme`, with `color-scheme: light
-dark` so scrollbars and native controls come along. There is no theme toggle, deliberately: a
-toggle is a setting to persist, a control to keep in sync with a command, and a third state
-("follow the system") to explain. Alexia is a tray-resident daemon that should look like the
-desktop it is sitting in. `[data-theme]` on the root element overrides it if that judgement
-ever changes — the hook is there, unused, and a control is all that would be missing.
+**The switch is the operating system, and now it is also a control.** The default is
+`prefers-color-scheme` with `color-scheme: light dark`, because Alexia is a tray-resident
+daemon that should look like the desktop it is sitting in — that has not changed and it is
+still what a fresh install does. What changed is that it stopped being the *only* answer.
+This document argued against a toggle on the grounds that it costs a setting to persist, a
+control to keep in sync and a third state to explain; the first two turned out to be one kv
+entry and one screen, and the third is not an explanation, it is the first card. `[data-theme]`
+on the root element is the hook this paragraph left behind, and `packages/ui/src/theme.ts` is
+what drives it.
+
+Three states, in this order: **System**, **Light**, **Dark**. *Follow the desktop* has to stay
+sayable after somebody has forced a theme once, or the switch is one-way and the only route
+back is remembering which way the desktop happened to be pointing. `system` is spelled as the
+**absence** of the attribute rather than as a third word, because that is what the sheet's
+`:root:not([data-theme='light'])` already means.
+
+Everything the media query carries, the attribute carries too — the washes, `--paint`, and
+`color-scheme`, which is what takes the scrollbars and the native menus along. That is not
+housekeeping: the hook sat unused for long enough to become half a theme, so a forced dark
+theme was the dark palette with the light theme's brushwork opacity on it and a white
+scrollbar down the side. `packages/ui/test/theme.test.ts` is what holds the two spellings
+together now, the same way `contrast.test.ts` holds the two spellings of the palette.
+
+**The cards are the paintings, and they are the one place the painting is not a mask.**
+Everywhere else it is stroked SVG taking the theme's own colour; on this screen the colour is
+what is being chosen, so a preview that recoloured with the current theme would show you the
+theme you already have, three times. Two flat images, cut corner to corner on the System card
+because following the desktop is not a third look — it is these two, whichever the desktop
+says.
 
 ---
 

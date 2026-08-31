@@ -67,8 +67,16 @@
    contrast.test.ts reads these very declarations and checks every pair that carries text at
    4.5:1 and every border and ring at 3:1. "Both themes are real" is a test, not a claim.
 
-   The switch is the operating system. [data-theme] overrides it if that judgement ever
-   changes — the hook is here, unused, and a control is all that would be missing. */
+   The switch is the operating system by default, and [data-theme] on the root element is
+   what the settings screen sets when somebody says otherwise. Three states and not two:
+   absent is the desktop's own answer, and it has to stay reachable after a theme has been
+   forced once or the control is one-way.
+
+   Everything the media query carries, the attribute carries too — the washes, --paint, and
+   color-scheme, which is what makes the scrollbars and the native menus come along. They
+   used to be in the query alone, so the hook was already half a theme before anything used
+   it. contrast.test.ts holds the two palettes equal; theme.test.ts holds everything else in
+   these blocks equal, which is the half that had already drifted. */
 
 :root {
   color-scheme: light dark;
@@ -120,7 +128,17 @@
   }
 }
 
+/* Forced light, which is only ever asked for on a dark desktop. It needs no palette — the
+   block above is already it, and the dark override declines to apply to this attribute — so
+   what is left is the half a palette cannot state: which colours the browser draws its own
+   furniture in. */
+:root[data-theme='light'] {
+  color-scheme: light;
+}
+
 :root[data-theme='dark'] {
+  color-scheme: dark;
+
   --surface: #030d1b;
   --surface-raised: #0a1b30;
   --surface-sunken: #05111e;
@@ -136,6 +154,10 @@
   --danger: #e58d7e;
   --chosen: #7fa6d4;
   --chosen-wash: #16293f;
+
+  --wash: color-mix(in oklab, var(--ink) 6%, transparent);
+  --accent-wash: color-mix(in oklab, var(--accent) 10%, transparent);
+  --paint: 0.2;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -1225,6 +1247,67 @@ input {
 .card input {
   flex: none;
   margin: 0;
+}
+
+/* ---- the theme cards ------------------------------------------------------------------
+
+   The one place in this product where a picture is the right control. Everywhere else the
+   painting is a mask taking the theme's colour (`#paint`, `.band`, `.mark`); here it is two
+   flat images, because what is being chosen *is* the colour, and a preview that recoloured
+   with the current theme would show you the theme you already have three times over.
+
+   They are the only bitmaps on the page after her face: 33KB each at 480px wide, which is a
+   card at its widest on a 2× display and not a pixel more. `loading="lazy"` keeps both off
+   the wire until somebody opens Settings, which is the one screen they are on. */
+
+.card .plate {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  /* The `height` attribute in the markup is a presentational hint, and a hint that lands is a
+     used value — so `aspect-ratio` was being ignored and the plates were drawn 273px tall
+     whatever their width. `auto` is what hands the height back to the ratio. The attributes
+     stay, because they are what a browser reserves space from before the sheet is parsed. */
+  height: auto;
+  object-fit: cover;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  margin-bottom: var(--space-3);
+  /* The card is the swatch, so the plate must not also be a light rectangle sitting on a
+     dark one while it loads. */
+  background: var(--surface-sunken);
+}
+
+/* Following the desktop is not a third look, it is *these two, whichever the desktop says* —
+   so the card shows both, cut corner to corner. No seam between them: the two grounds are
+   cream and navy, and a line drawn there would be a fourth colour explaining something the
+   images have already said. */
+.card .plate.split {
+  position: relative;
+  overflow: hidden;
+}
+
+.card .plate.split img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.card .plate.split img:first-child {
+  clip-path: polygon(0 0, 100% 0, 0 100%);
+}
+
+.card .plate.split img:last-child {
+  clip-path: polygon(100% 0, 100% 100%, 0 100%);
+}
+
+/* The chosen one is already ringed by `.card:has(input:checked)`. This is the rest of it: the
+   plate's own border joins in, because at this size the ring reads as a frame around a
+   picture rather than as a selection unless the picture agrees with it. */
+.card.theme:has(input:checked) .plate {
+  border-color: var(--accent);
 }
 
 /* ---- buttons ------------------------------------------------------------------------- */
