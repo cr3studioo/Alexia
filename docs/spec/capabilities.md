@@ -103,15 +103,32 @@ name and becomes a drop-in alternative rather than a competitor.
 | `memory.capture` | one finished exchange in, **nothing out** — core never reads it back | `plugins/memory` (M7) |
 | `ask.confirm` | a question and its options in, the chosen option out | `plugins/telegram` (M7) |
 | `voice.render` | text in, **audio bytes out** — for audio that has to go somewhere other than these speakers | `plugins/voice` (M7) |
+| `document.extract` | **a file in, markdown out** — what a document says | `plugins/documents` |
 
-Seven entries, because seven exist. `demo.greet` is real: `plugins/hello` provides it and
+Eight entries, because eight exist. `demo.greet` is real: `plugins/hello` provides it and
 `plugins/vanisher` requires it, which is how *delete the provider and the consumer keeps
-running* stays a test rather than a claim. The last two are the ones **core itself** reaches
+running* stays a test rather than a claim. Three of them are ones **core itself** reaches
 for — they are also in `CORE_CAPABILITIES`, and the rule for being there is that core works
 completely when nothing provides them. **This table grows by pull request, never by a string
 somebody typed.** A name invented locally is a name the next plugin will spell differently,
 and then there are two capabilities that mean the same thing and no drop-in alternative for
 either.
+
+`document.extract` is the newest and it is the clearest example of why the column on the
+right says *first* provided by. What ships in the box is a text-layer reader: no Python, no
+model, no network, and an honest refusal for a scan, a photograph or a screenshot. A stronger
+extractor — one that recognises the words in a picture of a page — is a **second plugin
+offering this same name**, and core cannot tell the difference, because core resolves it by
+capability and never by plugin id. That is the whole mechanism, and it is why the answer to
+*not every model can read a document* is the answer already given to *not every model can
+hear*.
+
+**It is deliberately not two names yet.** *Read the words off a scan* and *describe a
+screenshot* are different jobs with different answers, and a single capability that quietly
+accepted both would return an empty string for the second and let a model answer confidently
+about a picture nobody read. So the extractor **refuses a picture by kind** and says which of
+the two would read it. A `document.describe` belongs in this table on the day something can
+provide it; a name with no provider is a promise, and this table is a record.
 
 ---
 

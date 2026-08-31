@@ -7,6 +7,16 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import type { AddressInfo } from 'node:net'
 import { join } from 'node:path'
 import { run, said } from './agent.js'
+import {
+  discard,
+  MOST_FILES,
+  noteFor,
+  receive,
+  withDocuments,
+  type Reading,
+  type Saved,
+  type Upload,
+} from './attach.js'
 import { Catalog } from './catalog.js'
 import { asRuling, counted, freshTally, ModelChecker, type Tally } from './checker.js'
 import { commands, pins, type Ran, run as runCommand } from './commands.js'
@@ -1559,6 +1569,91 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
   }
 
   /**
+   * The attachments on one message, read and then thrown away.
+   *
+   * **Core carries the bytes and a plugin reads them**, and the seam is a capability name.
+   * That is the same answer already given to *not every model can hear* — `voice.transcribe`
+   * is *audio file in, text out* and this is *file in, markdown out* — and it is why nothing
+   * in this function knows what is installed. With nothing providing it, an attachment still
+   * arrives and still appears in the conversation, saying that nothing could read it.
+   *
+   * Every file gets a line under the composer whether it was read or not, because the failure
+   * worth designing against here is the quiet one: a model answering about a document that
+   * never reached it, with nothing on screen to say so.
+   */
+  async function documents(
+    text: string,
+    uploads: Upload[],
+    say: (event: Record<string, unknown>) => void,
+  ): Promise<string> {
+    const { kept, refused } = receive(uploads, join(root, 'uploads'))
+    const readings: Reading[] = []
+    try {
+      for (const one of kept) readings.push(await extracted(one))
+    } finally {
+      // Written, read, gone. The extracted text is in the conversation and the original is
+      // already on the user's own disk; a third copy accumulating beside the database is a
+      // second place their documents live, for nothing.
+      discard(kept)
+    }
+    // **One line, not one per file.** The note under the composer is a single line by
+    // design — a message that scrolls away or overwrites itself is a message the user is
+    // being tested on — so four attachments say four things in one sentence rather than
+    // three of them being replaced by the fourth before anybody read them.
+    const lines = [...refused, ...readings.map(noteFor)]
+    if (lines.length > 0) say({ note: lines.join(' ') })
+    /**
+     * **What was actually read, sent to the screen as well as to the model.**
+     *
+     * The finding this answers is the sharpest one about uploads: an extracted document is a
+     * far larger surface than a chat turn — more of it, skewed towards the personal and the
+     * official — and **nobody reads the extracted markdown before it is sent**. In a typed
+     * turn the user wrote the words and knows what is in them; in an attached payslip they do
+     * not, and until this line there was nothing anywhere that would have shown them.
+     *
+     * It does not change the policy, which is the owner's and is quoted verbatim in
+     * `redact.ts`. It changes whether the thing the policy is applied to can be looked at, and
+     * that is a different question with a cheaper answer: send it, fold it away, and let
+     * anybody who wants to open it.
+     */
+    if (readings.length > 0) say({ attached: readings })
+    return withDocuments(text, readings)
+  }
+
+  /**
+   * One file, through whatever provides `document.extract`.
+   *
+   * It reads the **text** and nothing else. There is a `structuredContent` on that answer and
+   * it would make a nicer sentence — *2 pages* rather than a character count — and reading it
+   * would be core learning the shape one provider happens to return. The contract in the
+   * registry is one line long, and this stays inside it so a second extractor is a drop-in.
+   */
+  async function extracted(one: Saved): Promise<Reading> {
+    if (!plugins.answers(CORE_CAPABILITIES.extract)) {
+      return {
+        name: one.name,
+        refusal: 'Nothing installed here reads documents. The library has one — install it and attach this again.',
+      }
+    }
+    try {
+      const answered = await plugins.capability(CORE_CAPABILITIES.extract, { file: one.path })
+      const read = answered.content
+        .flatMap((block) => (block.type === 'text' ? [block.text] : []))
+        .join('\n')
+        .trim()
+      if (answered.isError === true || read === '') {
+        // The reader's own sentence, which is written to say which wall this is. Passing it
+        // through unchanged is the difference between *that is a scan and nothing here does
+        // OCR* and *could not read file*.
+        return { name: one.name, refusal: read === '' ? 'Whatever reads documents here said nothing about it.' : read }
+      }
+      return { name: one.name, text: read, about: `${read.length.toLocaleString('en-GB')} characters` }
+    } catch (error) {
+      return { name: one.name, refusal: said(error) }
+    }
+  }
+
+  /**
    * One task: the user's line in, and however many steps it takes to answer it.
    *
    * Not one turn any more (M15-1). What the shell gets is the same stream it always got,
@@ -1566,17 +1661,31 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
    * it did, which is most of them.
    */
   async function reply(sent: Body, response: ServerResponse): Promise<void> {
-    const { text } = sent as { text?: string }
-    if (!text) {
+    const { text: typed, files } = sent as { text?: string; files?: Upload[] }
+    const uploads = Array.isArray(files) ? files.slice(0, MOST_FILES) : []
+    // A file with nothing typed is a whole message — *here, read this* — so the line is
+    // required only when it is the only thing there is.
+    if (!typed && uploads.length === 0) {
       response.writeHead(400)
       response.end()
       return
     }
+    const text = String(typed ?? '')
 
     response.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store' })
     const say = (event: Record<string, unknown>): void => void response.write(`data: ${JSON.stringify(event)}\n\n`)
 
-    const user: Message = { role: 'user', content: text }
+    /**
+     * The documents, read before anything else happens.
+     *
+     * **`text` stays what the person typed** and only `content` grows, which is the load-
+     * bearing half of this: the permission gate, the boundary sentences and the offer to
+     * learn all read `text`, and every one of them would be wrong to read a document. A file
+     * containing the words *delete everything* is not somebody asking for anything.
+     */
+    const content = uploads.length === 0 ? text : await documents(text, uploads, say)
+
+    const user: Message = { role: 'user', content }
     store.append(session, user)
 
     /** Which rung of §8.2's ladder actually answered, for the badge at the end (§8.4). */

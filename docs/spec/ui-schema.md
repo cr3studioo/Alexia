@@ -55,6 +55,19 @@ the look.** The layout itself is the first option, drawn inside the third's rule
 instead of them — about a hundred and fifty lines of arithmetic in `packages/ui/src/force.ts`,
 no dependency, and tested without a browser because it is only arithmetic.
 
+**`file` got its real user, and it is still not a widget.** The refusal was recorded three
+times on three different arguments, the last of them ending *"that argument is waiting on a
+real user."* Uploading a document is that user — it is the whole of a feature rather than a
+convenience — and what it produced is **a control in the composer**, which is core's own
+surface, not a thirteenth widget. The two are different grants with different blast radii: the
+composer is one control on one screen that core draws and core owns, and a `file` widget is a
+thing *any* plugin may declare on a settings pane. Granting the first does not carry the second,
+and nothing about the second has changed — it still has no user, and a bar that is waived
+because a neighbouring case was granted is not a bar. The path obstacle is also unmoved and is
+the reason the composer route works at all: **a browser will not tell a page where a file is**,
+so a `path` can never be filled by picking — but drag-and-drop and paste hand the webview
+*bytes*, with no path involved, and bytes are all an upload ever needed.
+
 **There is one more, and it is not yours** (D112). Core's Models tab draws a `ladder` — the
 spend slider and the running order under it — and it is deliberately **not in the manifest
 schema**, so a plugin declaring one is refused by the same parser that refuses a misspelled

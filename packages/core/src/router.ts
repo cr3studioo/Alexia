@@ -137,6 +137,24 @@ export interface Ask {
    * crank is not planning, and that difference is where the cost saving lives.
    */
   shape?: Shape
+  /**
+   * **What this request carries besides words** — `image`, `audio` — matched against the
+   * `modality` the catalog already collects for every model.
+   *
+   * That field has existed since the catalog did. It is read off OpenRouter's
+   * `input_modalities`, guessed from the `VL` in an OVHcloud id, and taken from Ollama's own
+   * capability list — and until this line it was **displayed and never filtered on**. The
+   * models screen printed *takes text, image* under a row and nothing else ever asked.
+   *
+   * **It has no caller yet, and that is the point of adding it now.** Nothing can put a
+   * picture in a `Message` — `content` is a `string`, at the store, through `trim.ts` and at
+   * the provider boundary — so today there is nothing to route wrong. The day either half of
+   * document reading lands, sending a picture to a model that cannot see one is a 400 from
+   * somebody else's server arriving at step nine with no explanation attached. This is the
+   * same argument, and the same shape, as the spend pin the slider added to this function:
+   * *a rule nobody can see is a rule nobody can disagree with.*
+   */
+  modality?: readonly string[]
 }
 
 export interface Choice {
@@ -289,6 +307,8 @@ export function route(ask: Ask, pins: Pins, world: World): Verdict {
   const shape = ask.shape ?? shapeOf(ask)
   const floor = ask.minTier ?? 'T0'
   const needsTools = shape === 'tools' || (ask.tools?.length ?? 0) > 0
+  /** Anything beyond words. `text` is every model's answer, so asking about it says nothing. */
+  const carried = (ask.modality ?? []).filter((kind) => kind !== 'text')
   /**
    * The spend axis is about the price line, and **only the cloud pool has one**.
    *
@@ -355,6 +375,10 @@ export function route(ask: Ask, pins: Pins, world: World): Verdict {
       .filter((c) => rank(c.model.tier) >= rank(floor))
       .filter((c) => ask.above === undefined || rank(c.model.tier) > rank(ask.above))
       .filter((c) => !needsTools || c.model.supportsTools)
+      // What the request carries, against what the model can be given. A model that says
+      // nothing about a modality is not offering it — the same way `nsfwOk: 'unknown'` does
+      // not satisfy an uncensored pin.
+      .filter((c) => carried.every((kind) => c.model.modality.includes(kind)))
       // A window too small for the trace drops out of the pool exactly the way a spent free
       // tier does. `Model.context` has existed since the catalog did and was never once read,
       // and this is the filter whose absence would break the keyless floor first: the models
@@ -385,7 +409,7 @@ export function route(ask: Ask, pins: Pins, world: World): Verdict {
   const sidegrade = !capped && automatic && fitting(spend, true).length > 0
   return {
     ok: false,
-    why: refusal(where, pins, pool, needsTools, shape, world, spend, ask.messages, priced, sidegrade),
+    why: refusal(where, pins, pool, needsTools, shape, world, spend, ask.messages, priced, sidegrade, carried),
   }
 }
 
@@ -586,7 +610,23 @@ function refusal(
   messages: Message[],
   capped: boolean,
   sidegrade: boolean,
+  carried: string[],
 ): string {
+  /**
+   * The wall a picture hits, named before every other one.
+   *
+   * It is asked first for the same reason the context wall is: every sentence below would
+   * send somebody to fix a different thing — add a key, move the slider, install a model —
+   * and none of those makes a model that cannot see able to see. `image` and `audio` are
+   * spelled as the nouns a person uses rather than as the catalog's field names.
+   */
+  const unseen = carried.filter((kind) => !pool.some((c) => c.model.modality.includes(kind)))
+  if (unseen.length > 0 && pool.length > 0) {
+    const said = unseen.map((kind) => (kind === 'image' ? 'a picture' : kind === 'audio' ? 'sound' : kind)).join(' or ')
+    return where === 'local' ?
+        `no model installed on this machine can be given ${said} — install one that can, or type /cloud`
+      : `none of the models available to you can be given ${said} — connect a provider that offers one, or install a local model that can`
+  }
   /**
    * The wall whose fix is neither a key nor a slider nor an install of the usual kind: the
    * conversation is simply longer than anything reachable can read. Asked early, because

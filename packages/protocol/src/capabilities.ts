@@ -87,6 +87,27 @@ export const CORE_CAPABILITIES = {
    * shown is a no, which is what it already was.
    */
   ask: 'ask.confirm',
+  /**
+   * **A file in, markdown out** — what an attached document says.
+   *
+   * The same sentence `voice.transcribe` already is, with a different noun. *Not every model
+   * can read a document* is the same problem as *not every model can hear*, and it has the
+   * same answer: do not ask the model, ask a capability. Core carries the bytes, because the
+   * composer is core's own surface and a plugin cannot add a control to it; reading them is
+   * a plugin's, because there are several ways to do it and every one of them should be
+   * deletable.
+   *
+   * It sits here rather than in core for the reason this whole list exists: what ships in
+   * the box reads a text layer and refuses a scan, and a stronger extractor is a second
+   * plugin offering **this same name** — a drop-in alternative rather than a competitor.
+   * Naming a plugin instead would make that impossible.
+   *
+   * Core works completely without it. With nothing providing it an attached file is still
+   * named in the conversation and still on disk; what is missing is a reading of it, and the
+   * note under the composer says exactly that. A missing flourish, which is the bar for
+   * being here.
+   */
+  extract: 'document.extract',
 } as const
 
 /**

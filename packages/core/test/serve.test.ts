@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { mkdirSync, mkdtempSync, statSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, statSync } from 'node:fs'
 import { request as httpRequest } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -30,11 +30,11 @@ const get = (path: string, init: RequestInit = {}): Promise<Response> =>
   })
 
 /** The `data:` frames of one answer, collected. */
-async function stream(text: string): Promise<Record<string, unknown>[]> {
+async function stream(text: string, files?: { name: string; data: string }[]): Promise<Record<string, unknown>[]> {
   const response = await get('/api/chat', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ text }),
+    body: JSON.stringify({ text, ...(files && { files }) }),
   })
   return (await response.text())
     .split('\n')
@@ -289,4 +289,54 @@ test('the daily allowance is settable, and the number it produces reaches the sc
     body: JSON.stringify({ daily: 0 }),
   })
   expect(((await (await get('/api/state')).json()) as { today: { allowance: number } }).today.allowance).toBe(0)
+})
+
+test('an attachment with nothing to read it says so, and the message still goes', async () => {
+  /**
+   * **Invariant 1, on the newest path in the file.** Nothing is installed under this server's
+   * data directory, so nothing provides `document.extract` — and an attachment still arrives,
+   * still lands in the conversation, and still says in words what happened to it. Core does
+   * not know what reads a document and there is no branch here that could.
+   *
+   * The failure this is written against is the quiet one: a model answering about a file that
+   * never reached it, with nothing on screen to say so.
+   */
+  const events = await stream('what does this say?', [
+    { name: 'lease.pdf', data: Buffer.from('%PDF-1.4 not really').toString('base64') },
+  ])
+  const notes = events.flatMap((event) => (typeof event.note === 'string' ? [event.note] : []))
+  expect(notes.some((line) => line.includes('lease.pdf was not read'))).toBe(true)
+
+  // And what was read — or was not — goes to the screen as well as into the message. Nobody
+  // reads an extracted document before it is sent, and an attachment is a far larger surface
+  // than a typed sentence; this is the half of that which is cheap to fix.
+  const attached = events.flatMap((event) => (event.attached ? [event.attached] : [])).at(0) as
+    | { name: string; text?: string; refusal?: string }[]
+    | undefined
+  expect(attached?.map((one) => one.name)).toEqual(['lease.pdf'])
+  expect(attached?.[0]?.text).toBeUndefined()
+  expect(attached?.[0]?.refusal).toMatch(/Nothing installed here reads documents/)
+
+  const state = (await (await get('/api/state')).json()) as { messages: { content: string }[] }
+  const said = state.messages.at(-1)?.content ?? ''
+  expect(said).toContain('what does this say?')
+  expect(said).toContain('[attached: lease.pdf — not read.')
+
+  // And the file itself does not stay. It exists for one capability call and no longer —
+  // a folder of everybody's documents beside the database is not something to accumulate.
+  expect(existsSync(join(root, 'uploads')) ? readdirSync(join(root, 'uploads')) : []).toEqual([])
+})
+
+test('a file with nothing typed beside it is a whole message', async () => {
+  await stream('', [{ name: 'notes.txt', data: Buffer.from('hello').toString('base64') }])
+  const state = (await (await get('/api/state')).json()) as { messages: { content: string }[] }
+  expect(state.messages.at(-1)?.content.startsWith('[attached: notes.txt')).toBe(true)
+
+  // Neither, though, is still nothing to answer.
+  const empty = await get('/api/chat', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ text: '' }),
+  })
+  expect(empty.status).toBe(400)
 })

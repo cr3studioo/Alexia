@@ -11,6 +11,7 @@ import { defineConfig } from 'vitest/config'
 const needPlugins = [
   'packages/core/test/command.test.ts',
   'packages/core/test/commitments.test.ts',
+  'packages/core/test/documents.test.ts',
   'packages/core/test/lifecycle.test.ts',
   'packages/core/test/noticing.test.ts',
   'packages/core/test/panels.test.ts',

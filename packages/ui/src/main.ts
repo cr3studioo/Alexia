@@ -143,6 +143,163 @@ function say(line?: string): void {
   note.hidden = !line
 }
 
+// ---- attachments (D-documents) ------------------------------------------------------------
+
+/**
+ * What is coming with the next message.
+ *
+ * **The composer is core's own surface and this control belongs to it.** A plugin cannot add
+ * one and should not be able to; what a plugin adds is the *reading* of what arrives, under a
+ * capability name core resolves without knowing who answers. So this half is here, in the
+ * shell, and it knows nothing about documents beyond the fact that a file has a name.
+ *
+ * Three ways in, because people use all three and none of them is the obvious one: drop it on
+ * the conversation, paste it, or press Attach. **None of them involves a path** — a webview is
+ * handed bytes, which is exactly why the file widget the manifest schema refused three times
+ * is not what this is. There is nothing here for a plugin to declare.
+ */
+const attachedList = document.querySelector<HTMLElement>('#attached')!
+const filePicker = document.querySelector<HTMLInputElement>('#file')!
+const chatView = document.querySelector<HTMLElement>('#chat')!
+
+/** The files themselves, until the message goes. Nothing is read until then. */
+let carrying: File[] = []
+
+function drawAttached(): void {
+  attachedList.replaceChildren(
+    ...carrying.map((file, at) => {
+      const row = document.createElement('li')
+      const name = document.createElement('b')
+      name.textContent = file.name
+      const size = document.createElement('span')
+      size.textContent = readable(file.size)
+      const off = document.createElement('button')
+      off.type = 'button'
+      off.textContent = '✕'
+      off.title = `Do not send ${file.name}`
+      off.setAttribute('aria-label', `Do not send ${file.name}`)
+      off.addEventListener('click', () => {
+        carrying.splice(at, 1)
+        drawAttached()
+      })
+      row.append(name, size, off)
+      return row
+    }),
+  )
+  attachedList.hidden = carrying.length === 0
+}
+
+const readable = (bytes: number): string =>
+  bytes < 1024 ? `${String(bytes)} B`
+  : bytes < 1024 * 1024 ? `${String(Math.round(bytes / 1024))} KB`
+  : `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+
+/** The ceiling core enforces, said here too so the refusal arrives before the send does. */
+const MOST_FILES = 8
+
+function carry(files: Iterable<File>): void {
+  for (const file of files) {
+    if (carrying.length >= MOST_FILES) {
+      say(`${String(MOST_FILES)} files is the most one message can carry.`)
+      break
+    }
+    // A folder dropped on a webview arrives as an entry with no type and no size. There is
+    // nothing to send, and saying so beats attaching a zero-byte nothing.
+    if (file.size === 0) {
+      say(`${file.name} is empty, or is a folder. Nothing was attached.`)
+      continue
+    }
+    carrying.push(file)
+  }
+  drawAttached()
+  text.focus()
+}
+
+/**
+ * **What was actually read out of each file, foldable, under the turn that carried it.**
+ *
+ * A chat turn is a sentence somebody typed and knows the contents of. An attached document is
+ * a page of things they did not type — and the honest observation about uploads is that
+ * nobody reads the extracted text before it goes. This does not change what is sent or what is
+ * stripped on the way out; it changes whether the person who attached it can see what they
+ * attached, which up to here they could not.
+ *
+ * Closed by default, because the answer they asked for is what they came for and a wall of
+ * their own lease above it is not.
+ */
+function showRead(turn: HTMLElement, attached: { name: string; text?: string; refusal?: string }[]): void {
+  for (const one of attached) {
+    const box = document.createElement('details')
+    box.className = 'read'
+    const summary = document.createElement('summary')
+    summary.textContent =
+      one.text === undefined ?
+        `${one.name} — not read`
+      : `${one.name} — ${one.text.length.toLocaleString('en-GB')} characters read`
+    const body = document.createElement('pre')
+    body.textContent = one.text ?? one.refusal ?? ''
+    box.append(summary, body)
+    turn.append(box)
+  }
+}
+
+/**
+ * The bytes, base64, in a JSON body — which is what `plan.md` settled long before there was
+ * anything to upload: `node:http` has no multipart parser and adding one for this would buy
+ * core a parser it otherwise never needs.
+ *
+ * Chunked, because `btoa(String.fromCharCode(...bytes))` on a twenty-megabyte file is a
+ * stack overflow rather than a string.
+ */
+async function base64(file: File): Promise<string> {
+  const bytes = new Uint8Array(await file.arrayBuffer())
+  let binary = ''
+  for (let at = 0; at < bytes.length; at += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(at, at + 0x8000))
+  }
+  return btoa(binary)
+}
+
+filePicker.addEventListener('change', () => {
+  carry(filePicker.files ?? [])
+  // Cleared, or picking the same file twice in a row fires no event the second time.
+  filePicker.value = ''
+})
+
+// Paste. A screenshot pasted here is refused by whatever reads documents rather than here —
+// the shell does not decide what is readable, and a refusal that names the reason is better
+// than one that names a file extension.
+text.addEventListener('paste', (event) => {
+  const files = [...(event.clipboardData?.files ?? [])]
+  if (files.length === 0) return
+  event.preventDefault()
+  carry(files)
+})
+
+// Drop, anywhere on the conversation. Aiming at a strip above the composer is a thing people
+// miss, and a target nobody can find is a feature nobody has.
+for (const kind of ['dragenter', 'dragover'] as const) {
+  chatView.addEventListener(kind, (event) => {
+    if (!(event.dataTransfer?.types ?? []).includes('Files')) return
+    event.preventDefault()
+    chatView.classList.add('dropping')
+  })
+}
+for (const kind of ['dragleave', 'drop'] as const) {
+  chatView.addEventListener(kind, () => chatView.classList.remove('dropping'))
+}
+chatView.addEventListener('drop', (event) => {
+  const files = [...(event.dataTransfer?.files ?? [])]
+  if (files.length === 0) return
+  event.preventDefault()
+  carry(files)
+})
+// The window's own handler, so a file dropped anywhere else opens nothing. A webview that
+// navigates to a PDF because somebody missed the pane has thrown the conversation away.
+for (const kind of ['dragover', 'drop'] as const) {
+  window.addEventListener(kind, (event) => event.preventDefault())
+}
+
 /**
  * First run, steps 2 to 4a: what to call it, where the work happens, and — only if that
  * answer involves somebody else's computer — a key. Nothing else. No account, no tour, no
@@ -794,18 +951,31 @@ function offerToLearn(offer: { about?: string; outline?: string }): void {
   log.scrollTop = log.scrollHeight
 }
 
-async function ask(question: string): Promise<void> {
-  bubble('user', question)
+async function ask(question: string, files: File[] = []): Promise<void> {
+  const said = bubble('user', question)
+  // What the message carried, in the turn that carried it: the names now, and what was read
+  // out of them the moment core says — folded away under this same turn.
+  if (files.length > 0) {
+    const carried = document.createElement('small')
+    carried.className = 'carried'
+    carried.textContent = `📎 ${files.map((file) => file.name).join(', ')}`
+    said.append(carried)
+  }
   const tools = toolLine()
   live.begin(document.querySelector<HTMLElement>('#chat-title')?.textContent ?? 'This conversation')
   const answer = bubble('assistant')
-  answer.textContent = '…'
+  answer.textContent = files.length > 0 ? 'Reading…' : '…'
   let started = false
 
   const response = await fetch('/api/chat', {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-alexia-token': token },
-    body: JSON.stringify({ text: question }),
+    body: JSON.stringify({
+      text: question,
+      ...(files.length > 0 && {
+        files: await Promise.all(files.map(async (file) => ({ name: file.name, data: await base64(file) }))),
+      }),
+    }),
   })
   if (!response.body) {
     answer.textContent = 'Alexia is not answering.'
@@ -823,6 +993,8 @@ async function ask(question: string): Promise<void> {
     }
     // The one plain line before a charge, and the monthly warning, land in the same place.
     if (typeof event.note === 'string') say(event.note)
+    const attached = event.attached as { name: string; text?: string; refusal?: string }[] | undefined
+    if (attached) showRead(said, attached)
     if (typeof event.ask === 'string') askPermission(event.ask)
     // A learned skill just fired, and it can be wrong. Attribution goes where the work is
     // happening, with the two things you would want at that moment beside it (M4-5).
@@ -1007,19 +1179,28 @@ for (const picker of modes) picker.addEventListener('change', () => void command
 form.addEventListener('submit', (event) => {
   event.preventDefault()
   const question = text.value.trim()
-  if (!question) return
-  text.value = ''
-  menu.hidden = true
+  // A file with nothing typed beside it is a whole message — *here, read this* — so the line
+  // is required only when it is the only thing there is.
+  if (!question && carrying.length === 0) return
   if (question.startsWith('/')) {
+    // A command is not a question for a model and never carries a document. Attachments stay
+    // where they are, so `/new` typed with a file waiting does not quietly throw it away.
+    text.value = ''
+    menu.hidden = true
     void command(question)
     return
   }
+  const files = carrying
+  carrying = []
+  drawAttached()
+  text.value = ''
+  menu.hidden = true
   button.disabled = true
   stop.hidden = false
   // The tray is the only answer to *is it running?* the target user has, so it says so for
   // the whole of a task rather than only while a window happens to be open (M5-2).
   tray('working')
-  void ask(question)
+  void ask(question, files)
     .catch((error: unknown) => {
       bubble('refusal', String(error))
       tray('error')

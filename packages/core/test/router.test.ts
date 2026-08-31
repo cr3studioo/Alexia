@@ -752,6 +752,38 @@ test('a window too small for the trace drops out of the pool, like a spent free 
   ])
 })
 
+test('a request carrying a picture only reaches models that can be given one', () => {
+  // The catalog has collected `modality` since it existed and nothing ever filtered on it —
+  // it was printed under a model row on the Models screen and that was the whole of its use.
+  // Nothing can put a picture in a message yet, so this is a rule ahead of its user: the day
+  // one can, the alternative to this filter is a 400 from somebody else's server.
+  const seeing = model({ id: 'free/sees', tier: 'T1', supportsTools: true, modality: ['text', 'image'] })
+  const both = world({ models: [freeText, freeTools, seeing] })
+
+  expect(ids(route({ messages: asked('what is in this'), modality: ['image'] }, pins(), both))).toEqual(['free/sees'])
+  // And `text` says nothing about anybody, so asking for it changes nothing.
+  expect(ids(route({ messages: asked('hello'), modality: ['text'] }, pins(), both))).toEqual([
+    'free/tools',
+    'free/sees',
+    'free/text',
+  ])
+})
+
+test('nothing that can see is its own refusal, and it names the fix', () => {
+  // Said before every other wall, because every other sentence sends somebody to do
+  // something — add a key, move the slider — that does not make a model able to see.
+  const blind = world({ models: [freeText, freeTools], local: [localSmall], today: { spent: 0, allowance: 0 } })
+  const asking = { messages: asked('what is in this'), modality: ['image'] }
+  expect(ids(route(asking, pins(), blind))[0]).toMatch(/can be given a picture/)
+  expect(ids(route(asking, pins({ placement: MODES.local }), blind))[0]).toMatch(/installed on this machine/)
+  // A model on this machine that *can* be given one is the same answer as a hosted one:
+  // this is a property of the row, not of where the row lives.
+  const seeingHere = model({ id: 'qwen2.5vl:7b', tier: 'T0', provider: 'ollama', modality: ['text', 'image'] })
+  expect(ids(route(asking, pins({ placement: MODES.local }), world({ local: [localSmall, seeingHere] })))).toEqual([
+    'qwen2.5vl:7b',
+  ])
+})
+
 test('the filter measures the floor, not the whole trace', () => {
   // A long-running task: one enormous early cycle that trimming will summarise away, and a
   // small newest one. What the window has to hold is the head plus that newest cycle — the
