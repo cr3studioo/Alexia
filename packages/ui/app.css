@@ -606,17 +606,31 @@ body[data-view='control'] .view:not(#control) {
   gap: var(--space-1);
 }
 
-/* Not installed is behind a disclosure, because this screen is where somebody comes to change
-   something they have. `details` is the platform's, so the keyboard behaviour is not ours. */
-#available-box {
-  margin-bottom: var(--space-5);
+/* Not installed, in the same grid as what is (D120).
+
+   **Dimmed, not greyed out.** A disabled control is one you cannot use, and these are the only
+   cards on the screen that are entirely *for* using — so the difference is carried by a dashed
+   edge and a lighter ground, both of which say "outline" rather than "broken", while the text
+   keeps its full contrast because it is what somebody reads to decide. Hovering brings it all
+   the way up: the card is a live target and behaves like one. */
+.bento-card.dim {
+  border-style: dashed;
+  background: color-mix(in oklab, var(--surface-raised) 55%, transparent);
 }
 
-#available-box summary {
-  cursor: pointer;
-  color: var(--ink-quiet);
+.bento-card.dim:hover,
+.bento-card.dim:has(.confirm) {
+  border-style: solid;
+  background: var(--surface-raised);
+}
+
+/* The label that explains the dimming, across the whole grid. Without it a paler card is a
+   card somebody reads as failed rather than as available. */
+.bento-label {
+  grid-column: 1 / -1;
+  margin: var(--space-3) 0 0;
   font-size: var(--text-sm);
-  margin-bottom: var(--space-3);
+  color: var(--ink-quiet);
 }
 
 #plugin-filter {

@@ -309,14 +309,12 @@
                   placeholder="Filter plugins"
                   aria-label="Filter plugins"
                 />
+                <!-- Everything, installed or not, in one grid (D120). What is not installed
+                     is dimmed and says so, because *what can it do* and *what could it do* are
+                     one question asked about one kind of thing — and a disclosure below the
+                     grid, which is where these used to live, is a good hiding place for the
+                     one thing somebody who has just deleted a plugin came here to undo. -->
                 <div id="bento" class="bento"></div>
-                <!-- Not installed, and therefore not shown until somebody asks. `details` is
-                     the disclosure the platform already has; a second one written here would
-                     be keyboard behaviour re-implemented for no reason. -->
-                <details id="available-box" hidden>
-                  <summary>Plugins you have not installed</summary>
-                  <div id="available" class="bento"></div>
-                </details>
                 <div id="problems"></div>
                 <div id="library"></div>
               </div>

@@ -105,8 +105,6 @@ export function mountSettings(token: string): {
   const grids = document.querySelector<HTMLElement>('#plugin-grids')!
   const sheet = document.querySelector<HTMLElement>('#plugin-detail')!
   const installed = document.querySelector<HTMLElement>('#bento')!
-  const offeredBox = document.querySelector<HTMLDetailsElement>('#available-box')!
-  const offered = document.querySelector<HTMLElement>('#available')!
   const search = document.querySelector<HTMLInputElement>('#plugin-filter')!
   const broken = document.querySelector<HTMLElement>('#problems')!
   const known = document.querySelector<HTMLElement>('#skills')!
@@ -257,6 +255,18 @@ export function mountSettings(token: string): {
     }
 
     const shown = panes.filter((pane) => matches(pane.name, pane.summary))
+    /**
+     * What is not here, in the same grid as what is (D120).
+     *
+     * It used to be a collapsed `details` under the grid, on the argument that this screen is
+     * where somebody comes to change something they *have*, and a page opening on forty things
+     * they do not is a shop. The argument was sound and the placement was still wrong: the
+     * first person to delete a plugin and want it back could not find where plugins come from,
+     * which is the one journey that starts on this screen and cannot be completed anywhere
+     * else. Dimmed and labelled costs nothing at eleven plugins, and if the shelf ever is
+     * forty, the filter box above is already how somebody finds one.
+     */
+    const available = listings.filter((entry) => !entry.installed && matches(entry.name, entry.summary))
     installed.replaceChildren(
       ...shown.map((pane) =>
         card({ ...pane, installed: true }, [toggle(pane)], () => {
@@ -264,16 +274,18 @@ export function mountSettings(token: string): {
           draw()
         }),
       ),
+      // A row of its own across the grid, so the dimming is explained rather than left to be
+      // inferred — a card that is merely paler is a card somebody thinks is broken.
+      ...(available.length > 0 ?
+        [el('p', 'bento-label', available.length === 1 ? 'Not installed — one plugin you can add' : `Not installed — ${String(available.length)} plugins you can add`)]
+      : []),
+      ...available.map(offer),
     )
-    if (panes.length === 0) {
-      installed.append(
-        el('p', 'hint', 'Nothing is installed yet. Open the list below, or point at a folder.'),
-      )
-    } else if (shown.length === 0) {
-      installed.append(el('p', 'hint', `Nothing installed matches “${search.value.trim()}”.`))
+    if (panes.length === 0 && available.length === 0) {
+      installed.append(el('p', 'hint', 'Nothing is installed yet, and the shelf could not be read. A folder on disk still works.'))
+    } else if (shown.length === 0 && available.length === 0) {
+      installed.append(el('p', 'hint', `Nothing matches “${search.value.trim()}”.`))
     }
-
-    drawOffered()
 
     // A folder that is not a plugin is shown, never swallowed. Somebody put it there on
     // purpose and the reason it did not load is the only useful thing anyone can tell them.
@@ -283,19 +295,6 @@ export function mountSettings(token: string): {
   }
 
   // ---- what is not here yet ----------------------------------------------------------------
-
-  /**
-   * The registry's cards, behind a disclosure because **only what is installed is shown by
-   * default**: this screen is where somebody comes to change something they have, and a grid
-   * that opened on forty things they do not is a shop rather than a settings page.
-   */
-  function drawOffered(): void {
-    const shown = listings.filter((entry) => !entry.installed && matches(entry.name, entry.summary))
-    offeredBox.hidden = shown.length === 0
-    offeredBox.querySelector('summary')!.textContent =
-      shown.length === 1 ? 'One plugin you have not installed' : `${String(shown.length)} plugins you have not installed`
-    offered.replaceChildren(...shown.map(offer))
-  }
 
   /**
    * A card for something that is not here yet.
@@ -313,6 +312,7 @@ export function mountSettings(token: string): {
       // A question whose answer is below the fold is a question nobody answers.
       asked.scrollIntoView({ block: 'nearest' })
     })
+    box.classList.add('dim')
     return box
   }
 
@@ -452,6 +452,8 @@ export function mountSettings(token: string): {
   function drawLibrary(read: LibraryState): void {
     library = read
     listings = read.plugins ?? []
+    // The grid holds the shelf now, so a library read is a redraw of it (D120).
+    draw()
     shelf.replaceChildren()
 
     // Withdrawn, and on this machine. Loudest thing on the screen, above everything else,
@@ -532,11 +534,10 @@ export function mountSettings(token: string): {
     // A shelf that is down is not an empty shelf, and must not look like one.
     if (!read.ok) shelf.append(el('p', 'hint', read.why ?? `Could not reach ${named(read.registry)}.`))
     else if (listings.every((entry) => entry.installed)) {
-      shelf.append(el('p', 'hint', `Nothing new at ${named(read.registry)}.`))
+      shelf.append(el('p', 'hint', `Everything on ${named(read.registry)} is installed.`))
     }
 
     shelf.append(adding(), addingServer())
-    drawOffered()
     drawOfferedSkills(read)
   }
 
