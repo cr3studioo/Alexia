@@ -327,3 +327,259 @@ export const focus = (pid, signal) =>
       `[Microsoft.VisualBasic.Interaction]::AppActivate(${Math.round(pid)});`,
     signal,
   )
+
+// ---- the control tree ---------------------------------------------------------------------
+
+/**
+ * **UI Automation: the tier above OCR, and the one this plugin was missing.**
+ *
+ * The `screenshot` tool returns a path and a resolution. Nothing reads the pixels — not this
+ * plugin, not core, not a model — so `click`'s own description, *use after taking a screenshot
+ * and working out where the thing you want actually is*, describes something the tool surface
+ * cannot do. The loop is: take a picture it cannot see, then click coordinates it cannot
+ * derive.
+ *
+ * The fix is not OCR. **A document parser answers *what does this say*; a screen needs *is the
+ * Save button there, and where*** — and those are different questions. Windows already answers
+ * the second one exactly: every control's name, its role, its automation id and its rectangle
+ * **in screen coordinates**, which is precisely what a click needs and precisely what a
+ * picture does not carry.
+ *
+ * The economics are not close either. A screenshot spends a large number of tokens encoding a
+ * picture a model then has to interpret; the control tree is compact text that states each
+ * element's role and name outright.
+ *
+ * **And it fits this file's own rule, one assembly over.** `UIAutomationClient` and
+ * `UIAutomationTypes` are .NET assemblies present on every Windows machine — no native module,
+ * no rebuild per Node version, nothing to download. Reading the control tree is *seeing the
+ * screen*, which is what `screen.capture` already grants and what its sentence already says,
+ * so it needs no twelfth permission either.
+ *
+ * **Where it is blind, and it is blind in named places.** `BoundingRectangle` comes back empty
+ * for anything not currently displaying, and a control that draws itself — a game, a canvas, a
+ * PDF inside a viewer, a remote desktop — exposes one element for the whole surface. Those
+ * rows come back with no coordinates rather than with wrong ones, and a reader that believed
+ * a rectangle unconditionally would click nothing and report success.
+ */
+
+/** The two assemblies, and the one P/Invoke. Every script below opens with this. */
+const UIA = [
+  'Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes',
+  'Add-Type -Namespace Alexia -Name Screen -MemberDefinition ' +
+    '\'[DllImport("user32.dll")] public static extern System.IntPtr GetForegroundWindow();\'',
+  '$auto = [System.Windows.Automation.AutomationElement]',
+  '$walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker',
+  // `ControlType.Button` says the same thing as `Button` and costs eleven characters a row,
+  // on a list that is read by something charged by the token.
+  "function kindOf($info) { $info.ControlType.ProgrammaticName -replace '^ControlType\\.','' }",
+].join('\n')
+
+/**
+ * Which window to look at, as a script fragment leaving `$start` set.
+ *
+ * Three ways, in the order a caller is likely to know them: a process id from the `windows`
+ * tool, a window title from the same place, or — with neither — whatever is in front. The
+ * last is the useful default, because *the thing the user is looking at* is what almost every
+ * request is about.
+ */
+function targeting({ pid, title } = {}) {
+  if (Number(pid) > 0) {
+    return [
+      `$cond = New-Object System.Windows.Automation.PropertyCondition($auto::ProcessIdProperty, ${String(Math.round(Number(pid)))})`,
+      '$start = $auto::RootElement.FindFirst([System.Windows.Automation.TreeScope]::Children, $cond)',
+    ].join('\n')
+  }
+  if (typeof title === 'string' && title.trim() !== '') {
+    // Walked rather than matched with a `PropertyCondition`, because UIA's own conditions are
+    // equality only and nobody types a window title exactly.
+    return [
+      `$wanted = ${quoted(title.trim())}`,
+      '$start = $null',
+      '$one = $walker.GetFirstChild($auto::RootElement)',
+      'while ($null -ne $one -and $null -eq $start) {',
+      '  try { if ($one.Current.Name -like "*$wanted*") { $start = $one } } catch { }',
+      '  $one = $walker.GetNextSibling($one)',
+      '}',
+    ].join('\n')
+  }
+  return '$start = $auto::FromHandle([Alexia.Screen]::GetForegroundWindow())'
+}
+
+/** How many nodes one walk may visit. A tree is a tree; a browser's is a large one. */
+const VISIT = 2500
+
+/** The breadth-first walk itself, shared by all three readers below. */
+const WALK = [
+  '$queue = New-Object System.Collections.Queue',
+  '$queue.Enqueue($start)',
+  '$seen = 0',
+].join('\n')
+
+/**
+ * Every control that can be addressed, breadth first, with where it is on screen.
+ *
+ * Breadth first rather than depth: the things a person means are near the top of a window,
+ * and a depth-first walk that hits the cap spends it all inside the first toolbar.
+ *
+ * A row with no name **and** no automation id is not emitted, because there is no way to ask
+ * for it later — but it is still walked through, because its children may well be named. The
+ * point is a list somebody can act on, not a picture of the tree.
+ */
+export function elements({ pid, title, match, limit = 60 } = {}, signal) {
+  const most = Math.min(300, Math.max(1, Math.round(Number(limit) || 60)))
+  const wanted = typeof match === 'string' && match.trim() !== '' ? match.trim() : undefined
+  return run(
+    [
+      UIA,
+      targeting({ pid, title }),
+      'if ($null -eq $start) { Write-Output "[]"; exit }',
+      `$wantedText = ${wanted === undefined ? '$null' : quoted(wanted)}`,
+      '$rows = New-Object System.Collections.ArrayList',
+      WALK,
+      `while ($queue.Count -gt 0 -and $rows.Count -lt ${String(most)} -and $seen -lt ${String(VISIT)}) {`,
+      '  $node = $queue.Dequeue()',
+      '  $seen = $seen + 1',
+      '  try { $info = $node.Current } catch { continue }',
+      '  $child = $walker.GetFirstChild($node)',
+      '  while ($null -ne $child) { $queue.Enqueue($child); $child = $walker.GetNextSibling($child) }',
+      '  if ($info.Name -eq "" -and $info.AutomationId -eq "") { continue }',
+      '  if ($null -ne $wantedText -and -not ($info.Name -like "*$wantedText*" -or $info.AutomationId -like "*$wantedText*")) { continue }',
+      '  $r = $info.BoundingRectangle',
+      // The documented empty rectangle: an element that is not displaying reports infinities,
+      // and rounding one of those is an overflow rather than a coordinate.
+      '  $ok = -not ([double]::IsInfinity($r.X) -or [double]::IsNaN($r.X) -or $r.Width -le 0)',
+      '  $row = New-Object psobject',
+      '  $row | Add-Member NoteProperty name ([string]$info.Name)',
+      '  $row | Add-Member NoteProperty type (kindOf $info)',
+      '  $row | Add-Member NoteProperty id ([string]$info.AutomationId)',
+      // The middle of the control, because that is what a click wants. The edges are where
+      // borders and rounded corners live.
+      '  $row | Add-Member NoteProperty x $(if ($ok) { [math]::Round($r.X + $r.Width / 2) } else { $null })',
+      '  $row | Add-Member NoteProperty y $(if ($ok) { [math]::Round($r.Y + $r.Height / 2) } else { $null })',
+      '  $row | Add-Member NoteProperty w $(if ($ok) { [math]::Round($r.Width) } else { $null })',
+      '  $row | Add-Member NoteProperty h $(if ($ok) { [math]::Round($r.Height) } else { $null })',
+      '  $row | Add-Member NoteProperty off ([bool]$info.IsOffscreen)',
+      '  [void]$rows.Add($row)',
+      '}',
+      'ConvertTo-Json @($rows) -Compress -Depth 3',
+    ].join('\n'),
+    signal,
+  ).then((out) => {
+    if (!out) return []
+    const list = JSON.parse(out)
+    return Array.isArray(list) ? list : [list]
+  })
+}
+
+/**
+ * What one control **says**, which is the question a postcondition actually asks.
+ *
+ * *What number is in the calculator display* needs no OCR: that display is an element and its
+ * value comes back as text. The general form is the point — **if a person can select the text,
+ * an element holds it**, and reading it that way is both cheaper and exact. OCR is for the
+ * pixels nobody can select, which is a narrower set than it first appears.
+ *
+ * Three places a control keeps its words, in the order a control is likely to use them: the
+ * value it holds, the text it displays, and failing both its own name.
+ */
+export function readElement({ pid, title, match } = {}, signal) {
+  return run(
+    [
+      UIA,
+      targeting({ pid, title }),
+      'if ($null -eq $start) { ConvertTo-Json @{ found = $false } -Compress; exit }',
+      `$wantedText = ${typeof match === 'string' && match.trim() !== '' ? quoted(match.trim()) : '$null'}`,
+      '$found = $null',
+      WALK,
+      `while ($queue.Count -gt 0 -and $null -eq $found -and $seen -lt ${String(VISIT)}) {`,
+      '  $node = $queue.Dequeue()',
+      '  $seen = $seen + 1',
+      '  try { $info = $node.Current } catch { continue }',
+      '  $child = $walker.GetFirstChild($node)',
+      '  while ($null -ne $child) { $queue.Enqueue($child); $child = $walker.GetNextSibling($child) }',
+      // With nothing to match on, the window itself is the answer — which is how *what does
+      // this window say* works without anybody naming a control inside it.
+      '  if ($null -eq $wantedText) { $found = $node }',
+      '  elseif ($info.Name -like "*$wantedText*" -or $info.AutomationId -like "*$wantedText*") { $found = $node }',
+      '}',
+      'if ($null -eq $found) { ConvertTo-Json @{ found = $false } -Compress; exit }',
+      '$said = $null',
+      '$pattern = $null',
+      // ValuePattern is what an edit box, a slider and a calculator display all use.
+      'if ($found.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$pattern)) { $said = $pattern.Current.Value }',
+      'if ([string]::IsNullOrEmpty($said)) {',
+      '  if ($found.TryGetCurrentPattern([System.Windows.Automation.TextPattern]::Pattern, [ref]$pattern)) { $said = $pattern.DocumentRange.GetText(4000) }',
+      '}',
+      'if ([string]::IsNullOrEmpty($said)) { $said = $found.Current.Name }',
+      '$r = $found.Current.BoundingRectangle',
+      '$ok = -not ([double]::IsInfinity($r.X) -or [double]::IsNaN($r.X) -or $r.Width -le 0)',
+      'ConvertTo-Json @{',
+      '  found = $true',
+      '  text = [string]$said',
+      '  name = [string]$found.Current.Name',
+      '  type = (kindOf $found.Current)',
+      '  x = $(if ($ok) { [math]::Round($r.X + $r.Width / 2) } else { $null })',
+      '  y = $(if ($ok) { [math]::Round($r.Y + $r.Height / 2) } else { $null })',
+      '} -Compress',
+    ].join('\n'),
+    signal,
+  ).then((out) => JSON.parse(out || '{"found":false}'))
+}
+
+/**
+ * Press a control **through the control itself**, with no pointer and no keystroke.
+ *
+ * This is the near-term answer to *could Alexia have a second mouse, so she can work while I
+ * do*, and it is a better answer than the question hoped for. Windows was built single-pointer:
+ * the window-message system has no field saying which mouse generated an event, so however many
+ * are plugged in, applications see one — and no arrangement of software gives a second cursor
+ * to other programs. But a UI Automation pattern acts on the control **directly**. Nothing
+ * moves, nothing is typed, and nothing contends for the cursor, so most of the need dissolves
+ * rather than being solved.
+ *
+ * The fallback order is Microsoft's own, from `winappCli`: `Invoke`, then `Toggle`, then
+ * `SelectionItem`, then `ExpandCollapse`. Where none of them exists this stops and hands back
+ * the point the control says is clickable, rather than reaching for the mouse itself — because
+ * a real click is the one step that needs the input toggle, and that is the caller's ruling to
+ * make and the caller's log to write.
+ */
+export function invoke({ pid, title, match } = {}, signal) {
+  return run(
+    [
+      UIA,
+      targeting({ pid, title }),
+      'if ($null -eq $start) { ConvertTo-Json @{ found = $false } -Compress; exit }',
+      `$wantedText = ${quoted(String(match ?? '').trim())}`,
+      '$found = $null',
+      WALK,
+      `while ($queue.Count -gt 0 -and $null -eq $found -and $seen -lt ${String(VISIT)}) {`,
+      '  $node = $queue.Dequeue()',
+      '  $seen = $seen + 1',
+      '  try { $info = $node.Current } catch { continue }',
+      '  $child = $walker.GetFirstChild($node)',
+      '  while ($null -ne $child) { $queue.Enqueue($child); $child = $walker.GetNextSibling($child) }',
+      '  if ($node -ne $start -and ($info.Name -like "*$wantedText*" -or $info.AutomationId -like "*$wantedText*")) { $found = $node }',
+      '}',
+      'if ($null -eq $found) { ConvertTo-Json @{ found = $false } -Compress; exit }',
+      'if (-not $found.Current.IsEnabled) { ConvertTo-Json @{ found = $true; how = "disabled"; name = [string]$found.Current.Name } -Compress; exit }',
+      '$pattern = $null',
+      '$how = $null',
+      'if ($found.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern, [ref]$pattern)) { $pattern.Invoke(); $how = "invoke" }',
+      'elseif ($found.TryGetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern, [ref]$pattern)) { $pattern.Toggle(); $how = "toggle" }',
+      'elseif ($found.TryGetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern, [ref]$pattern)) { $pattern.Select(); $how = "select" }',
+      'elseif ($found.TryGetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern, [ref]$pattern)) { $pattern.Expand(); $how = "expand" }',
+      'if ($null -eq $how) {',
+      // No pattern at all. The point comes back so the caller can decide whether to spend the
+      // input permission on it, rather than this reaching for the mouse on its own.
+      '  $point = New-Object System.Windows.Point',
+      '  $has = $found.TryGetClickablePoint([ref]$point)',
+      '  ConvertTo-Json @{ found = $true; how = "none"; name = [string]$found.Current.Name;',
+      '    x = $(if ($has) { [math]::Round($point.X) } else { $null });',
+      '    y = $(if ($has) { [math]::Round($point.Y) } else { $null }) } -Compress',
+      '  exit',
+      '}',
+      'ConvertTo-Json @{ found = $true; how = $how; name = [string]$found.Current.Name } -Compress',
+    ].join('\n'),
+    signal,
+  ).then((out) => JSON.parse(out || '{"found":false}'))
+}

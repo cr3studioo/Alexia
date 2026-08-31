@@ -1,0 +1,47 @@
+{
+  "$schema": "../../docs/spec/plugin.schema.json",
+  "manifest_version": 1,
+  "id": "documents",
+  "name": "Documents",
+  "summary": "Reads a document you give her — PDF, Word, Excel, PowerPoint, OpenDocument, EPUB, web pages, spreadsheets, notes and code — and hands back what it says.",
+  "version": "0.2.0",
+  "license": "AGPL-3.0-only",
+  "entry": {
+    "run": "node",
+    "args": [
+      "index.js"
+    ]
+  },
+  "alexia_protocol": 3,
+  "mcp_protocol": "2025-11-25",
+  "requires": [
+    {
+      "cap": "fs.read_scoped",
+      "why": "To open the document you attached, or one you point it at. It only ever reads."
+    },
+    {
+      "cap": "image.ocr",
+      "why": "If something here can read the words in a picture, to use it for a scan. Without it, a scan is refused."
+    }
+  ],
+  "provides": [
+    "document.extract"
+  ],
+  "settings": [
+    {
+      "type": "number",
+      "key": "max_characters",
+      "label": "Most characters to send",
+      "min": 2000,
+      "max": 600000,
+      "step": 1000,
+      "default": 160000,
+      "hint": "A long book is bigger than any model can read at once. Past this it is cut, and the text says where."
+    },
+    {
+      "type": "status",
+      "key": "state",
+      "label": "State"
+    }
+  ]
+}

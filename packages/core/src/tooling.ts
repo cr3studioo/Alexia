@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import type { CallToolResult } from '@modelcontextprotocol/client'
-import type { Tooling, ToolOutcome } from './agent.js'
+import { statSync } from 'node:fs'
+import { basename } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import type { Produced, Tooling, ToolOutcome } from './agent.js'
 import type { Annotations } from './permissions.js'
 import type { Plugins } from './plugins.js'
 import type { ToolSpec } from './provider.js'
@@ -130,7 +133,7 @@ export class PluginTooling implements Tooling {
     try {
       // `onprogress` is what puts a `progressToken` on the request, so a plugin that reports
       // has somewhere for it to go — and a plugin that does not simply never sends one.
-      return read(
+      return outcomeOf(
         await process.callTool(found.tool, args, {
           ...(signal && { signal }),
           ...(onProgress && {
@@ -188,19 +191,68 @@ export class PluginTooling implements Tooling {
 }
 
 /**
+ * One `resource_link` block, as a file on this machine — or nothing, if it does not name one.
+ *
+ * **Only `file:` URIs, and only ones that are there.** A `resource_link` may point at
+ * anything with a URI, and core's answer to *the tool handed back an https:// address* is
+ * that it is a link and the text already says so. What this is for is the narrower case that
+ * had no answer at all: a plugin made a file, on this disk, and wants the person to have it.
+ *
+ * The existence check is here rather than at registration because **this function writes the
+ * sentence the model reads**, and the model's sentence and the row on screen have to agree
+ * about whether there is a file. A tool that names a file it did not manage to write says so
+ * in the text, and no row appears offering to open it.
+ */
+function produced(block: Record<string, unknown>): Produced | undefined {
+  const uri = String(block.uri ?? '')
+  if (!uri.startsWith('file:')) return undefined
+  try {
+    const path = fileURLToPath(uri)
+    const found = statSync(path)
+    if (!found.isFile()) return undefined
+    return {
+      name: String(block.name ?? '') || basename(path),
+      path,
+      bytes: found.size,
+      mime: String(block.mimeType ?? '') || 'application/octet-stream',
+    }
+  } catch {
+    // A malformed URI, or a file the tool named and did not write. Either way there is
+    // nothing to hand anybody, and the caller says so instead of offering it.
+    return undefined
+  }
+}
+
+/**
  * An MCP result as the model reads it. Text blocks are the whole of what a model can use
  * here; anything else is named rather than dropped silently, because *the tool returned an
  * image* is something to plan around and an empty string is not.
+ *
+ * A `resource_link` is named **and** kept. The model gets `[file: report.pdf]`, which is all
+ * it can act on — `Message.content` is a string and the bytes were never going to fit in it
+ * — and the file itself goes up to the shell, which can do rather more with it than say its
+ * name.
  */
-function read(result: CallToolResult): ToolOutcome {
-  const parts = (result.content ?? []).map((block) =>
-    block.type === 'text' ? block.text : `[${block.type}]`,
-  )
+export function outcomeOf(result: CallToolResult): ToolOutcome {
+  const files: Produced[] = []
+  const parts = (result.content ?? []).map((block) => {
+    if (block.type === 'text') return block.text as string
+    if (block.type === 'resource_link') {
+      const one = produced(block)
+      if (one !== undefined) {
+        files.push(one)
+        return `[file: ${one.name}]`
+      }
+      return `[file: ${String(block.name ?? block.uri ?? 'unnamed')} — not written]`
+    }
+    return `[${block.type}]`
+  })
   const text = parts.join('\n').trim()
   return {
     ok: result.isError !== true,
     // A tool that succeeded and said nothing did happen, and the model needs to be told
     // that rather than handed a blank it will read as a failure.
     text: text || (result.isError === true ? 'The tool failed and said nothing.' : 'Done.'),
+    ...(files.length > 0 && { files }),
   }
 }

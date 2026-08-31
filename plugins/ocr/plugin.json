@@ -1,0 +1,48 @@
+{
+  "$schema": "../../docs/spec/plugin.schema.json",
+  "manifest_version": 1,
+  "id": "ocr",
+  "name": "Text in pictures",
+  "summary": "Reads the words in a picture — a scan, a photograph of a page, a screenshot — using the text recognition already built into Windows. Nothing to download.",
+  "version": "0.1.0",
+  "license": "AGPL-3.0-only",
+  "entry": {
+    "run": "node",
+    "args": [
+      "index.js"
+    ]
+  },
+  "alexia_protocol": 3,
+  "mcp_protocol": "2025-11-25",
+  "requires": [
+    {
+      "cap": "proc.spawn",
+      "why": "To ask Windows' own text recognition to read the picture, through PowerShell. Nothing else is started."
+    },
+    {
+      "cap": "fs.read_scoped",
+      "why": "To open the picture you pointed at. It only ever reads."
+    },
+    {
+      "cap": "fs.own_dir",
+      "why": "Somewhere to put a picture another plugin hands over, for the moment it takes to read it. It is deleted after."
+    }
+  ],
+  "provides": [
+    "image.ocr"
+  ],
+  "settings": [
+    {
+      "type": "text",
+      "key": "language",
+      "label": "Language to read in",
+      "placeholder": "en-GB",
+      "hint": "Leave it empty and it uses the languages you already have set for Windows. The State line below says which ones this machine can read; adding another is Settings, then Time and language."
+    },
+    {
+      "type": "status",
+      "key": "state",
+      "label": "State"
+    }
+  ]
+}

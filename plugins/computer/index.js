@@ -99,8 +99,10 @@ const shot = alexia.tool(
   {
     description:
       'Take a picture of the whole screen and save it, returning the file path and the size ' +
-      'in pixels. Use before clicking or typing, to see what is actually on screen, and ' +
-      'after, to check what happened. Takes no arguments.',
+      'in pixels. Nothing here reads the picture — for what is on screen and where, use the ' +
+      'elements tool, which returns names and coordinates. Reach for this when a window draws ' +
+      'its own controls and elements comes back empty, or when a person has asked for a ' +
+      'screenshot. Takes no arguments.',
     // Looking changes nothing. This is the one tool here that can honestly say so, and it
     // is why "look but not touch" is a useful state rather than a disabled plugin.
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
@@ -118,6 +120,9 @@ const shot = alexia.tool(
           type: 'text',
           text: `${to}\n${size.width}x${size.height} pixels. Coordinates for clicking are measured from the top left of this image.`,
         },
+        // So the person watching can see what Alexia saw. The path was already in the text
+        // above and was already useless to anybody not willing to go and find it.
+        alexia.file(to, { mime: 'image/png', description: 'What was on screen' }),
       ],
     }
   },
@@ -147,8 +152,9 @@ alexia.tool(
   {
     description:
       'Move the pointer to a screen coordinate and click. Coordinates are measured from the ' +
-      'top left of the screenshot. Use after taking a screenshot and working out where the ' +
-      'thing you want actually is.',
+      'top left of the screen. Get them from the elements tool, which says where each control ' +
+      'is. Prefer the press tool where the thing has a name: it needs no coordinates, it ' +
+      'cannot miss, and it does not take the pointer away from whoever is using it.',
     inputSchema: fromJsonSchema({
       type: 'object',
       properties: {
@@ -285,6 +291,209 @@ alexia.tool(
     }
     await noted('focus', pid)
     return { content: [{ type: 'text', text: `Focused ${Math.round(pid)}.` }] }
+  },
+)
+
+/**
+ * **Seeing, as opposed to taking a picture.**
+ *
+ * `screenshot` returns a path and a resolution, and nothing has ever read the pixels — so
+ * `click`'s own description, *use after taking a screenshot and working out where the thing
+ * you want actually is*, asks for something the tool surface could not do. These three close
+ * that loop, and they do it with the accessibility tree rather than with OCR, because the
+ * question a screen gets asked is not *what does this say* but *is the button there, and
+ * where*. Only one of the two has an exact answer, and it is free.
+ *
+ * `screen.capture` already covers it: reading the control tree **is** seeing the screen, which
+ * is what that permission grants and what its sentence already says.
+ */
+const where = ({ pid, title, match }) => ({
+  ...(Number(pid) > 0 && { pid: Number(pid) }),
+  ...(typeof title === 'string' && title.trim() !== '' && { title }),
+  ...(typeof match === 'string' && match.trim() !== '' && { match }),
+})
+
+/** The three arguments every one of these takes, written once. */
+const targeting = {
+  pid: { type: 'number', description: 'Which window, by the process id from the windows tool. Leave out for whatever is in front.' },
+  title: { type: 'string', description: 'Which window, by part of its title. Leave out for whatever is in front.' },
+}
+
+alexia.tool(
+  'elements',
+  {
+    description:
+      'List the controls in a window — every button, box, list and label — with its name, ' +
+      'what kind of control it is, and where the middle of it is on screen. Use this instead ' +
+      'of a screenshot when the question is where something is or whether it is there: it ' +
+      'gives the coordinates a click needs, which a picture does not. Defaults to the window ' +
+      'in front.',
+    inputSchema: fromJsonSchema({
+      type: 'object',
+      properties: {
+        ...targeting,
+        match: { type: 'string', description: 'Only controls whose name or id contains this.' },
+        limit: { type: 'number', description: 'How many at most. Defaults to 60.' },
+      },
+    }),
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+  },
+  async ({ pid, title, match, limit }, ctx) => {
+    if (!win.supported()) return unsupported()
+    let rows
+    try {
+      rows = await win.elements({ ...where({ pid, title, match }), limit }, ctx?.mcpReq?.signal)
+    } catch (error) {
+      return refuse(error.message)
+    }
+    if (rows.length === 0) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text:
+              'Nothing there names itself. Either that window is not the one you meant, or it ' +
+              'draws its own controls — a game, a canvas, a document inside a viewer, a remote ' +
+              'desktop — and there is nothing in it to ask. A screenshot is the fallback for those.',
+          },
+        ],
+      }
+    }
+    const said = rows
+      .map((row) => {
+        const at = row.x === null || row.y === null ? 'not on screen right now' : `${row.x},${row.y}`
+        const named = row.name === '' ? row.id : row.name
+        return `${named}  [${row.type}]  ${at}${row.off ? '  (hidden)' : ''}`
+      })
+      .join('\n')
+    await noted('elements', `${String(rows.length)} controls`)
+    return {
+      content: [{ type: 'text', text: `${said}\n\nCoordinates are the middle of each control, on the screen as a whole.` }],
+      structuredContent: { rows },
+    }
+  },
+)
+
+alexia.tool(
+  'read',
+  {
+    description:
+      'Read what one control says — the number in a calculator display, the text in a box, ' +
+      'the label on a status bar. Use when the question is what something says rather than ' +
+      'where it is. If a person could select the text, this returns it exactly; it is not OCR ' +
+      'and it cannot read words that were painted rather than written.',
+    inputSchema: fromJsonSchema({
+      type: 'object',
+      properties: {
+        ...targeting,
+        match: { type: 'string', description: 'Which control, by part of its name or id. Leave out for the window itself.' },
+      },
+    }),
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+  },
+  async ({ pid, title, match }, ctx) => {
+    if (!win.supported()) return unsupported()
+    let found
+    try {
+      found = await win.readElement(where({ pid, title, match }), ctx?.mcpReq?.signal)
+    } catch (error) {
+      return refuse(error.message)
+    }
+    if (!found.found) return refuse(`There is nothing called “${String(match ?? '')}” on screen.`)
+    return {
+      content: [{ type: 'text', text: found.text === '' ? `“${found.name}” is there and says nothing.` : found.text }],
+      structuredContent: found,
+    }
+  },
+)
+
+alexia.tool(
+  'check',
+  {
+    description:
+      'Check that something is true on screen — that a control is there, that it says a ' +
+      'particular thing, or that it has gone. Use after doing something, to make sure it ' +
+      'actually worked, rather than assuming it did. Checking once and then saving the ' +
+      'sequence as a plan is how a repeated job gets checked every time without a model.',
+    inputSchema: fromJsonSchema({
+      type: 'object',
+      properties: {
+        ...targeting,
+        match: { type: 'string', description: 'Which control, by part of its name or id.' },
+        says: { type: 'string', description: 'What it has to say. Left out, being there at all is the check.' },
+        gone: { type: 'boolean', description: 'Check that it is *not* there — a dialog that should have closed.' },
+      },
+      required: ['match'],
+    }),
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+  },
+  async ({ pid, title, match, says, gone }, ctx) => {
+    if (!win.supported()) return unsupported()
+    const step = {
+      do: 'expect',
+      match: String(match ?? ''),
+      ...(Number(pid) > 0 && { pid: Number(pid) }),
+      ...(typeof title === 'string' && title.trim() !== '' && { title }),
+      ...(says !== undefined && { says: String(says) }),
+      ...(gone === true && { gone: true }),
+    }
+    try {
+      await STEPS.expect(step, ctx?.mcpReq?.signal)
+    } catch (error) {
+      // A failed check is a refusal rather than a `false`, because the caller that ignores a
+      // `false` is the caller this exists to catch.
+      return refuse(error.message)
+    }
+    // Written to the log in the shape a plan holds, which is what makes `save_plan` pick it
+    // up: record the check once, and every replay from then on checks itself.
+    await noted('check', step.match, step)
+    return { content: [{ type: 'text', text: `Checked: ${describe(step)}.` }] }
+  },
+)
+
+const describe = (step) =>
+  step.gone === true ? `“${step.match}” is gone`
+  : step.says === undefined ? `“${step.match}” is there`
+  : `“${step.match}” says ${step.says}`
+
+alexia.tool(
+  'press',
+  {
+    description:
+      'Press a control by name — a button, a checkbox, a menu item, a list row — without ' +
+      'using the mouse at all. Prefer this to clicking: it needs no coordinates, it cannot ' +
+      'miss, and it does not take the pointer away from whoever is using it. Falls back to ' +
+      'saying so when the control offers no way to be pressed, so a click can be used instead.',
+    inputSchema: fromJsonSchema({
+      type: 'object',
+      properties: {
+        ...targeting,
+        match: { type: 'string', description: 'Which control, by part of its name or id.' },
+      },
+      required: ['match'],
+    }),
+    // It presses buttons in somebody's applications. There is no honest annotation but this
+    // one, and the fact that no pointer moves does not make it less of an action.
+    annotations: { destructiveHint: true, openWorldHint: true },
+  },
+  async ({ pid, title, match }, ctx) => {
+    if (!win.supported()) return unsupported()
+    const step = {
+      do: 'press',
+      match: String(match ?? ''),
+      ...(Number(pid) > 0 && { pid: Number(pid) }),
+      ...(typeof title === 'string' && title.trim() !== '' && { title }),
+    }
+    try {
+      // Gated with the mouse and the keyboard, deliberately. It reaches the application by a
+      // different road, and *look but not touch* is about the touching rather than the road.
+      await mayTouch()
+      await STEPS.press(step, ctx?.mcpReq?.signal)
+    } catch (error) {
+      return refuse(error.message)
+    }
+    await noted('press', step.match, step)
+    return { content: [{ type: 'text', text: `Pressed “${step.match}”, without moving the pointer.` }] }
   },
 )
 
@@ -465,6 +674,23 @@ alexia.tool(
        */
       const done = await replay(plan, {
         signal: ctx?.mcpReq?.signal,
+        /**
+         * **What tells a person that Alexia is driving, right now.**
+         *
+         * This plugin's stated safety model is a sentence in its own settings — *turn this on
+         * only while you are watching* — and until this line it gave a watcher nothing to
+         * watch. The Plans panel records what happened afterwards; nothing marked what was
+         * happening. A replay in particular is the case that needs it most, because the
+         * permission gate asks **once** for a sequence that then presses sixty things.
+         *
+         * It is the progress channel MCP already has, which core already streams to the live
+         * panel a frame at a time, so what is on screen is never more than a moment behind
+         * what the mouse is doing. Nothing new, nothing to miss, and no window of its own.
+         */
+        onStep: (n, what) => {
+          alexia.progress(ctx, n, plan.length, `${String(name)}: ${what}`)
+          void alexia.status('state', `▲ Driving — step ${String(n)} of ${String(plan.length)} of “${String(name)}”`).catch(() => {})
+        },
         ask: async (question) => {
           const answer = await alexia.server.server.createMessage({
             messages: [{ role: 'user', content: { type: 'text', text: question } }],
@@ -483,7 +709,15 @@ alexia.tool(
         ],
       }
     } catch (error) {
+      // Including a failed `expect`. A postcondition that does not hold stops the sequence
+      // where it stopped being true, and says which check it was — which is the whole reason
+      // the step exists: sixty successes reported by something that could not observe are
+      // sixty claims, and this is the one that turns them into a count.
       return refuse(error.message)
+    } finally {
+      // The indicator goes back, whatever happened. A state that says *driving* after it has
+      // stopped is worse than no state at all.
+      await report()
     }
   },
 )

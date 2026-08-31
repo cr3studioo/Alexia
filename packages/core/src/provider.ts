@@ -860,11 +860,30 @@ export async function chat(
   }
 }
 
-/** A stored message, in the shape every OpenAI-compatible endpoint takes. */
+/**
+ * A stored message, in the shape every OpenAI-compatible endpoint takes.
+ *
+ * **A string stays a string**, and that is not laziness. The content-array form is universally
+ * accepted for chat completions but not universally accepted *everywhere* — some endpoints,
+ * and some local servers, are fussier about it on a system turn than the spec says they
+ * should be. Every turn that is only words goes out exactly as it always did, and the array
+ * appears only when there is genuinely something in the turn that is not text. A change no
+ * provider can see is a change no provider can break on.
+ */
 function toWire(message: Message): Record<string, unknown> {
   return {
     role: message.role,
-    content: message.content,
+    content:
+      typeof message.content === 'string' ?
+        message.content
+      : message.content.map((part) =>
+          part.type === 'image' ?
+            // The OpenAI-shaped spelling, which is what every endpoint in `PROVIDERS` speaks.
+            // `url` carries the whole `data:` URL, media type included, so nothing here has
+            // to know or guess what kind of picture it is.
+            { type: 'image_url', image_url: { url: part.url ?? '' } }
+          : { type: 'text', text: part.text ?? '' },
+        ),
     ...(message.calls && {
       tool_calls: message.calls.map((c) => ({
         id: c.id,

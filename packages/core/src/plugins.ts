@@ -381,6 +381,27 @@ export class Plugins {
     return false
   }
 
+  /**
+   * What is **here and switched off** that would answer this — by display name, for a sentence.
+   *
+   * The distinction `answers()` alone cannot make, and it is the difference between a refusal
+   * somebody can act on and one that sends them somewhere with no answer at the end of it.
+   * *Nothing here reads documents, install one from the library* is wrong twice over when the
+   * reader is sitting in the list with its switch off: the verb is wrong, and on a machine
+   * whose registry was never deployed the library it points at is empty.
+   *
+   * **Naming the plugin here is not invariant 1.** That rule is about a plugin id written into
+   * core's source, where it would hardcode a dependency; this is a name read off a manifest at
+   * run time, which is what the settings screen has always done. Core still resolves by
+   * capability and still cannot tell which plugin answered one.
+   */
+  couldAnswer(cap: string): string[] {
+    return [...this.#entries.values()]
+      .filter((entry) => !this.#enabled.has(entry.manifest.id) && entry.manifest.provides?.includes(cap))
+      .map((entry) => entry.manifest.name)
+      .sort()
+  }
+
   /** Whether a process is up, asked without starting one. Lazy spawn makes `false` normal. */
   running(id: string): boolean {
     return this.#entries.get(id)?.process.pid !== undefined

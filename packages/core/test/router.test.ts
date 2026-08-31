@@ -215,6 +215,10 @@ test('the user naming a model is the end of the conversation', () => {
 // ---- and the half that actually sends -----------------------------------------------------
 
 let refuse = new Set<string>()
+/** Models that answer `200` and stream nothing — the free tier is full of them. */
+let mute = new Set<string>()
+/** Models that refuse this caller specifically, the way a gated free row does. */
+let gated = new Set<string>()
 const server: Server = createServer((request, response) => {
   let raw = ''
   request.on('data', (chunk: Buffer) => (raw += chunk.toString()))
@@ -223,6 +227,25 @@ const server: Server = createServer((request, response) => {
     if (refuse.has(asked)) {
       response.writeHead(429, { 'content-type': 'text/plain' })
       response.end('slow down')
+      return
+    }
+    if (gated.has(asked)) {
+      response.writeHead(403, { 'content-type': 'text/plain' })
+      response.end(`${asked} is only available on agentic harnesses`)
+      return
+    }
+    if (mute.has(asked)) {
+      response.writeHead(200, { 'content-type': 'text/event-stream' })
+      response.end(
+        `data: ${JSON.stringify({ choices: [{ delta: { content: '' } }] })}
+
+` +
+          `data: ${JSON.stringify({ usage: { prompt_tokens: 10, completion_tokens: 0 } })}
+
+data: [DONE]
+
+`,
+      )
       return
     }
     response.writeHead(200, { 'content-type': 'text/event-stream' })
@@ -752,6 +775,38 @@ test('a window too small for the trace drops out of the pool, like a spent free 
   ])
 })
 
+test('a request carrying a picture only reaches models that can be given one', () => {
+  // The catalog has collected `modality` since it existed and nothing ever filtered on it —
+  // it was printed under a model row on the Models screen and that was the whole of its use.
+  // Nothing can put a picture in a message yet, so this is a rule ahead of its user: the day
+  // one can, the alternative to this filter is a 400 from somebody else's server.
+  const seeing = model({ id: 'free/sees', tier: 'T1', supportsTools: true, modality: ['text', 'image'] })
+  const both = world({ models: [freeText, freeTools, seeing] })
+
+  expect(ids(route({ messages: asked('what is in this'), modality: ['image'] }, pins(), both))).toEqual(['free/sees'])
+  // And `text` says nothing about anybody, so asking for it changes nothing.
+  expect(ids(route({ messages: asked('hello'), modality: ['text'] }, pins(), both))).toEqual([
+    'free/tools',
+    'free/sees',
+    'free/text',
+  ])
+})
+
+test('nothing that can see is its own refusal, and it names the fix', () => {
+  // Said before every other wall, because every other sentence sends somebody to do
+  // something — add a key, move the slider — that does not make a model able to see.
+  const blind = world({ models: [freeText, freeTools], local: [localSmall], today: { spent: 0, allowance: 0 } })
+  const asking = { messages: asked('what is in this'), modality: ['image'] }
+  expect(ids(route(asking, pins(), blind))[0]).toMatch(/can be given a picture/)
+  expect(ids(route(asking, pins({ placement: MODES.local }), blind))[0]).toMatch(/installed on this machine/)
+  // A model on this machine that *can* be given one is the same answer as a hosted one:
+  // this is a property of the row, not of where the row lives.
+  const seeingHere = model({ id: 'qwen2.5vl:7b', tier: 'T0', provider: 'ollama', modality: ['text', 'image'] })
+  expect(ids(route(asking, pins({ placement: MODES.local }), world({ local: [localSmall, seeingHere] })))).toEqual([
+    'qwen2.5vl:7b',
+  ])
+})
+
 test('the filter measures the floor, not the whole trace', () => {
   // A long-running task: one enormous early cycle that trimming will summarise away, and a
   // small newest one. What the window has to hold is the head plus that newest cycle — the
@@ -1017,5 +1072,96 @@ test('a paid model no better than the free one that ran out is not bought', () =
   expect(
     ids(route({ messages: asked('hello'), tools: [{ name: 'fs.list' }] }, pins({ spend: 'paid' }), drained)),
   ).toEqual(['paid/same'])
+  ledger.close()
+})
+
+test('a rung that answers with nothing is not an answer, and the next one gets its turn', async () => {
+  /**
+   * Found by attaching a picture to a real Alexia, and it was never about pictures.
+   *
+   * The free tier carries rows that are not chat models — a content-safety classifier, a
+   * withdrawn preview, an alias pointing at nothing. Measured, on the real catalog: three of
+   * them answered `200`, streamed zero tokens and closed, **for a typed sentence as much as
+   * for an image**. Every check passed: no throw, no error status, a `Message` with an empty
+   * `content`. So `send` returned it, the loop ended `answered`, and the person got an empty
+   * bubble after a hundred seconds with nothing anywhere saying what had happened.
+   *
+   * What the image filter did was narrow the pool to a few hundred rows and put three of
+   * those at the top — turning a fault that had always been there into the ordinary case.
+   */
+  const secrets = memorySecrets()
+  const one = { ...alpha, baseUrl: at }
+  const two = { ...beta, baseUrl: at }
+  await secrets.set(CORE, keyOf(one), 'sk-a')
+  await secrets.set(CORE, keyOf(two), 'sk-b')
+
+  refuse = new Set()
+  mute = new Set(['free/text'])
+  gated = new Set()
+  const ledger = new Store(':memory:')
+
+  const answer = await send(
+    [
+      { model: freeText, provider: one },
+      { model: cheapPaid, provider: two },
+    ],
+    { messages: asked('hello'), maxTokens: 200 },
+    ledger,
+    secrets,
+    {},
+  )
+
+  expect(answer.model.id).toBe(cheapPaid.id)
+  expect(answer.message.content).toBe('here')
+  // And the silent one is not billed for having said nothing.
+  expect(ledger.callsIn('')).not.toContain(freeText.id)
+  mute = new Set()
+  ledger.close()
+})
+
+test('the last rung is allowed to be the empty one, because a blank beats a crash', async () => {
+  // The other side of it. Falling through the *whole* plan on an empty answer would turn a
+  // model having a quiet moment into a task that failed outright — so the last rung answers
+  // whatever it said, and the caller sees an empty reply rather than an exception.
+  const secrets = memorySecrets()
+  const one = { ...alpha, baseUrl: at }
+  await secrets.set(CORE, keyOf(one), 'sk-a')
+
+  refuse = new Set()
+  mute = new Set(['free/text'])
+  const ledger = new Store(':memory:')
+  const answer = await send([{ model: freeText, provider: one }], { messages: asked('hello') }, ledger, secrets, {})
+  expect(answer.message.content).toBe('')
+  mute = new Set()
+  ledger.close()
+})
+
+test('a model gated to somebody else is a rung failure, not the end of the task', async () => {
+  // Real, from the free tier: *"inkling:free is only available on agentic harnesses"*. A gate
+  // on one row of somebody's catalog used to throw and end a task that four hundred other
+  // models could have answered.
+  const secrets = memorySecrets()
+  const one = { ...alpha, baseUrl: at }
+  const two = { ...beta, baseUrl: at }
+  await secrets.set(CORE, keyOf(one), 'sk-a')
+  await secrets.set(CORE, keyOf(two), 'sk-b')
+
+  refuse = new Set()
+  mute = new Set()
+  gated = new Set(['free/text'])
+  const ledger = new Store(':memory:')
+
+  const answer = await send(
+    [
+      { model: freeText, provider: one },
+      { model: cheapPaid, provider: two },
+    ],
+    { messages: asked('hello'), maxTokens: 200 },
+    ledger,
+    secrets,
+    {},
+  )
+  expect(answer.model.id).toBe(cheapPaid.id)
+  gated = new Set()
   ledger.close()
 })

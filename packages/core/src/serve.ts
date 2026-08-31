@@ -7,6 +7,16 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import type { AddressInfo } from 'node:net'
 import { join } from 'node:path'
 import { run, said } from './agent.js'
+import {
+  discard,
+  MOST_FILES,
+  noteFor,
+  receive,
+  withDocuments,
+  type Reading,
+  type Saved,
+  type Upload,
+} from './attach.js'
 import { Catalog } from './catalog.js'
 import { asRuling, counted, freshTally, ModelChecker, type Tally } from './checker.js'
 import { commands, pins, type Ran, run as runCommand } from './commands.js'
@@ -14,6 +24,7 @@ import { preauthorise, record } from './consent.js'
 import { refuse, type Body } from './guard.js'
 import { Library } from './library.js'
 import { distil, forget, learnable, outline, save, type Episode } from './learned.js'
+import { mimeOf, Offers, openable, reach } from './offered.js'
 import { installed, OLLAMA, running } from './ollama.js'
 import { usable } from './pool.js'
 import { ceilings, estimate, previewLine, setCeilings, worthAsking, type Ceilings } from './preview.js'
@@ -41,7 +52,7 @@ import { declaredAction, declaredTable } from './settings.js'
 import { search } from './palette.js'
 import { actions as coreActions, sources as coreSources, searchable } from './surface.js'
 import { Skills, SKILL_TOOL } from './skills.js'
-import { dataDir, Store, type Message } from './store.js'
+import { dataDir, Store, textOf, type Message, type Part } from './store.js'
 import { PluginTooling } from './tooling.js'
 import { Trace } from './trace.js'
 import { allowance, caps, setCaps, today, warning } from './usage.js'
@@ -148,6 +159,28 @@ function shell(): string {
  */
 const THEMES = ['system', 'light', 'dark']
 
+/**
+ * MCP's content blocks, as the parts a stored message is made of.
+ *
+ * The narrowing worth stating: **a string comes back when a string is all there was**, which
+ * is nearly always. Every turn that is only words is stored and sent exactly as it was before
+ * any of this existed, so the shape a provider sees is unchanged for the overwhelming
+ * majority of traffic and the array is not a tax everybody pays for a feature few use.
+ *
+ * MCP hands an image over as base64 plus its media type, in two fields; a provider wants one
+ * `data:` URL. That reassembly is the whole of what this does that a `map` would not.
+ */
+function asParts(blocks: { type: string; text?: string; data?: string; mimeType?: string }[]): string | Part[] {
+  if (blocks.every((block) => block.type === 'text')) return blocks.map((block) => block.text ?? '').join('\n')
+  return blocks.map((block) =>
+    block.type === 'image' && typeof block.data === 'string' ?
+      { type: 'image' as const, url: `data:${block.mimeType ?? 'image/png'};base64,${block.data}` }
+      // Audio, a resource, something MCP adds next year. Named rather than dropped: *the
+      // caller sent audio* is something a model can answer about, and a blank is not.
+    : { type: 'text' as const, text: block.type === 'text' ? (block.text ?? '') : `[${block.type}]` },
+  )
+}
+
 const STATIC: Record<string, [string, string]> = {
   '/': ['index.html', 'text/html; charset=utf-8'],
   '/app.css': ['app.css', 'text/css; charset=utf-8'],
@@ -227,6 +260,15 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
   const library = new Library({ store, pluginsDir: extensions, skillsDir })
 
   /**
+   * The files tools have handed back, for as long as this core is up.
+   *
+   * Here rather than in the store on purpose — see `offered.ts`. A row that survived a
+   * restart would be a button promising a file core has not looked at since, and a download
+   * that fails is worse than one that was never offered.
+   */
+  const offers = new Offers()
+
+  /**
    * Everything installed, and the aggregate of what it can do (M15-2).
    *
    * The loop asks `tooling.list()` on every step and this cache answers it, so a folder
@@ -265,13 +307,19 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
         ...(params.systemPrompt === undefined ? [] : [{ role: 'system' as const, content: params.systemPrompt }]),
         ...params.messages.map((turn) => ({
           role: turn.role === 'assistant' ? ('assistant' as const) : ('user' as const),
-          // MCP lets one turn carry several blocks, and several kinds. A model reached over
-          // this path is a text one, so anything else is named rather than dropped — *the
-          // caller sent an image* is something to answer, and a blank is not.
-          content: [turn.content]
-            .flat()
-            .map((block) => (block.type === 'text' ? block.text : `[${block.type}]`))
-            .join('\n'),
+          /**
+           * MCP lets one turn carry several blocks, and several kinds.
+           *
+           * This used to flatten every one of them to the literal string `[image]`, on the
+           * true-at-the-time grounds that *a model reached over this path is a text one*. It
+           * is not any more, so a plugin holding a picture — a screenshot it just took, a
+           * page it just scanned — can hand it over and have it *seen*, and the router picks
+           * a model that can see it.
+           *
+           * Anything that is neither text nor an image is still named rather than dropped:
+           * *the caller sent audio* is something a model can answer about, and a blank is not.
+           */
+          content: asParts([turn.content].flat()),
         })),
       ]
       /**
@@ -298,7 +346,8 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
        * — and a wrapped prompt that happened to begin with a slash being answered *there is
        * no /home* instead of being read would be a bug nobody would find for weeks.
        */
-      const typed = [...asked].reverse().find((turn) => turn.role === 'user')?.content.trim() ?? ''
+      const lastAsked = [...asked].reverse().find((turn) => turn.role === 'user')
+      const typed = lastAsked === undefined ? '' : textOf(lastAsked).trim()
       if (!typed.includes('\n') && /^\/[a-z][a-z0-9.-]*(?:\s|$)/i.test(typed)) return asCommand(pluginId, typed)
 
       if (params._meta?.[TOOLS_META] === true) return asTask(pluginId, asked)
@@ -317,7 +366,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
       )
       return {
         role: 'assistant',
-        content: { type: 'text', text: answer.message.content },
+        content: { type: 'text', text: textOf(answer.message) },
         model: answer.model.id,
         stopReason: 'endTurn',
       }
@@ -685,12 +734,14 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
 
   async function asTask(pluginId: string, messages: Message[]): Promise<CreateMessageResult> {
     if (task) throw new Error('Alexia is already working on something. Try again when it has finished.')
-    const text = [...messages].reverse().find((m) => m.role === 'user')?.content ?? ''
+    const started = [...messages].reverse().find((m) => m.role === 'user')
+    const text = started === undefined ? '' : textOf(started)
     // The same two lines `/api/chat` does before it runs anything: the turn that started
     // this is written down before the answer to it is, or the transcript reads as Alexia
-    // talking to itself.
+    // talking to itself. The *whole* turn is stored — a picture in it included — while
+    // `text` stays the words, because the gate, the trace and the ledger all read that.
     const its = conversation(pluginId)
-    if (text !== '') store.append(its, { role: 'user', content: text })
+    if (started !== undefined) store.append(its, { role: 'user', content: started.content })
     const runId = randomUUID()
     const stop = new AbortController()
     task = stop
@@ -738,7 +789,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
       return {
         role: 'assistant',
         model: last?.model ?? '',
-        content: { type: 'text', text: result.why ?? last?.content ?? '' },
+        content: { type: 'text', text: result.why ?? (last === undefined ? '' : textOf(last)) },
       }
     } catch (error) {
       trace.end('refused', { why: said(error), calls: store.callsIn(runId) })
@@ -1543,6 +1594,71 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
       return
     }
 
+    /**
+     * A file some tool made, on its way back to the person who asked for it.
+     *
+     * **The id is the whole design.** There is no path in either request, so there is no
+     * traversal to defend against and no prefix to check: the string a caller sends is a key
+     * into a map of files that tools offered during this run, and a key that is not in it is
+     * a 404. A path could be pointed at anything on the disk; this cannot be pointed at all.
+     *
+     * `?id=` rather than `/api/file/<id>` for a reason that is about this repo rather than
+     * about REST: `guard.test.ts` walks this file for the literal path comparisons below and
+     * demands a classification for each one it finds. A path with a variable segment in it
+     * would slip past that scanner — and a route the guard cannot see is exactly the hole
+     * that test exists to close. It caught this comment quoting the pattern, which is a fair
+     * indication it is reading the file rather than agreeing with itself.
+     */
+    if (url.pathname === '/api/file') {
+      const wanted = offers.get(request.method === 'GET' ? url.searchParams.get('id') : sent.id)
+      if (wanted === undefined) {
+        response.writeHead(404, { 'content-type': 'application/json' })
+        response.end(JSON.stringify({ ok: false, said: 'That file is not one anything offered here.' }))
+        return
+      }
+      if (request.method === 'GET') {
+        let bytes: Buffer
+        try {
+          bytes = readFileSync(wanted.path)
+        } catch {
+          // It was there when the tool offered it and it is not there now — moved, deleted,
+          // or on a drive that has been unplugged. That is a fact about the file rather than
+          // an error in the request, and the shell says so on the row.
+          response.writeHead(410, { 'content-type': 'application/json' })
+          response.end(JSON.stringify({ ok: false, said: `${wanted.name} is no longer where it was made.` }))
+          return
+        }
+        response.writeHead(200, {
+          'content-type': wanted.mime === 'application/octet-stream' ? mimeOf(wanted.name) : wanted.mime,
+          'content-length': String(bytes.length),
+          // The shell saves through a blob it fetched, so this header is for anything that
+          // reaches the route directly — and for the name being right when it does.
+          'content-disposition': `attachment; filename="${wanted.name.replace(/[^\w. -]/g, '_')}"`,
+          'cache-control': 'no-store',
+        })
+        response.end(bytes)
+        return
+      }
+      const how = sent.action === 'open' ? 'open' : 'reveal'
+      if (how === 'open' && !openable(wanted.name)) {
+        // Refused, and pointed at the thing that does work. A refusal that leaves somebody
+        // with no way to reach their own file would be answering a safety question with a
+        // usability failure.
+        response.writeHead(409, { 'content-type': 'application/json' })
+        response.end(
+          JSON.stringify({
+            ok: false,
+            said: `${wanted.name} is the sort of file that runs when it is opened, so Alexia will not open it for you. Show in folder still works, and from there it is your decision.`,
+          }),
+        )
+        return
+      }
+      reach(wanted.path, how)
+      response.writeHead(200, { 'content-type': 'application/json' })
+      response.end(JSON.stringify({ ok: true }))
+      return
+    }
+
     if (url.pathname === '/api/chat' && request.method === 'POST') {
       await reply(sent, response)
       return
@@ -1559,6 +1675,153 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
   }
 
   /**
+   * The attachments on one message, read and then thrown away.
+   *
+   * **Core carries the bytes and a plugin reads them**, and the seam is a capability name.
+   * That is the same answer already given to *not every model can hear* — `voice.transcribe`
+   * is *audio file in, text out* and this is *file in, markdown out* — and it is why nothing
+   * in this function knows what is installed. With nothing providing it, an attachment still
+   * arrives and still appears in the conversation, saying that nothing could read it.
+   *
+   * Every file gets a line under the composer whether it was read or not, because the failure
+   * worth designing against here is the quiet one: a model answering about a document that
+   * never reached it, with nothing on screen to say so.
+   */
+  async function documents(
+    text: string,
+    uploads: Upload[],
+    say: (event: Record<string, unknown>) => void,
+  ): Promise<string | Part[]> {
+    const { kept, refused } = receive(uploads, join(root, 'uploads'))
+    const readings: Reading[] = []
+    /** The pictures, which go to the model as pictures rather than as a reading of them. */
+    const pictures: Part[] = []
+    const seen: string[] = []
+    try {
+      for (const one of kept) {
+        /**
+         * **A picture is sent, not read** — and choosing between those two is the whole of
+         * what this branch decides.
+         *
+         * Until the wire could carry an image there was one answer to every attachment:
+         * extract text, and refuse when there was none to extract. There are two now, and
+         * they are for different files. A scanned page wants recognition — exact characters,
+         * cheap, no model. A screenshot or a photograph wants *sight*, and OCR over one
+         * returns button labels and a timestamp in no order, which is §4's silent failure.
+         *
+         * So a picture goes as a picture, and **nothing here also runs OCR over it**. The
+         * model can call whatever reads documents itself when it decides it wants the exact
+         * text — which is the right way round, because it is the only participant that knows
+         * whether the question was *what does this say* or *what is this*.
+         */
+        // What the shell said, when it said — a re-encoded picture keeps its old name and
+        // no longer matches it. The name is the fallback, which is every other case.
+        const mime = one.type ?? mimeOf(one.name)
+        if (mime.startsWith('image/')) {
+          pictures.push({ type: 'image', url: `data:${mime};base64,${readFileSync(one.path).toString('base64')}` })
+          seen.push(one.name)
+          continue
+        }
+        readings.push(await extracted(one))
+      }
+    } finally {
+      // Written, read, gone. The extracted text is in the conversation and the original is
+      // already on the user's own disk; a third copy accumulating beside the database is a
+      // second place their documents live, for nothing.
+      discard(kept)
+    }
+    // **One line, not one per file.** The note under the composer is a single line by
+    // design — a message that scrolls away or overwrites itself is a message the user is
+    // being tested on — so four attachments say four things in one sentence rather than
+    // three of them being replaced by the fourth before anybody read them.
+    const lines = [
+      ...refused,
+      ...seen.map((name) => `${name} went as a picture, for the model to look at.`),
+      ...readings.map(noteFor),
+    ]
+    if (lines.length > 0) say({ note: lines.join(' ') })
+    /**
+     * **What was actually read, sent to the screen as well as to the model.**
+     *
+     * The finding this answers is the sharpest one about uploads: an extracted document is a
+     * far larger surface than a chat turn — more of it, skewed towards the personal and the
+     * official — and **nobody reads the extracted markdown before it is sent**. In a typed
+     * turn the user wrote the words and knows what is in them; in an attached payslip they do
+     * not, and until this line there was nothing anywhere that would have shown them.
+     *
+     * It does not change the policy, which is the owner's and is quoted verbatim in
+     * `redact.ts`. It changes whether the thing the policy is applied to can be looked at, and
+     * that is a different question with a cheaper answer: send it, fold it away, and let
+     * anybody who wants to open it.
+     */
+    if (readings.length > 0) say({ attached: readings })
+
+    /**
+     * The words, and then the pictures.
+     *
+     * Named in the text as well as carried as parts, because a model handed three images and
+     * a sentence has no way to tell which is `chart.png` and which is `receipt.jpg` — the
+     * parts arrive in order and carry no filenames. The name is how the user refers to it and
+     * therefore how the answer has to refer to it back.
+     */
+    const said = withDocuments(text, readings)
+    if (pictures.length === 0) return said
+    const named = seen.map((name) => `[attached: ${name} — a picture, in this message]`).join('\n')
+    return [{ type: 'text', text: [said, named].filter((part) => part !== '').join('\n\n') }, ...pictures]
+  }
+
+  /**
+   * One file, through whatever provides `document.extract`.
+   *
+   * It reads the **text** and nothing else. There is a `structuredContent` on that answer and
+   * it would make a nicer sentence — *2 pages* rather than a character count — and reading it
+   * would be core learning the shape one provider happens to return. The contract in the
+   * registry is one line long, and this stays inside it so a second extractor is a drop-in.
+   */
+  async function extracted(one: Saved): Promise<Reading> {
+    if (!plugins.answers(CORE_CAPABILITIES.extract)) {
+      /**
+       * Three states, not one, and the old sentence collapsed them into the rarest.
+       *
+       * It said *nothing installed here reads documents, the library has one — install it*,
+       * which is wrong in the commonest case by a long way: the reader **is** installed and
+       * is sitting in the list with its switch off, so *install* is the wrong verb and the
+       * library is the wrong screen. Worse on a machine whose registry was never deployed,
+       * where the library it sends somebody to is empty — a refusal that names a wall, points
+       * at a door, and the door opens onto nothing.
+       *
+       * Core cannot promise anything about the library, because core cannot see it from here.
+       * It can say exactly what is true: what is here and off, or that there is nothing, and
+       * which screen either of those is fixed on.
+       */
+      const off = plugins.couldAnswer(CORE_CAPABILITIES.extract)
+      return {
+        name: one.name,
+        refusal:
+          off.length > 0 ?
+            `${off.join(' and ')} can read this and ${off.length > 1 ? 'are' : 'is'} switched off. Turn ${off.length > 1 ? 'them' : 'it'} on in Settings, then Plugins, and attach this again.`
+          : 'Nothing installed here reads documents. Settings, then Plugins, is where one is added.',
+      }
+    }
+    try {
+      const answered = await plugins.capability(CORE_CAPABILITIES.extract, { file: one.path })
+      const read = answered.content
+        .flatMap((block) => (block.type === 'text' ? [block.text] : []))
+        .join('\n')
+        .trim()
+      if (answered.isError === true || read === '') {
+        // The reader's own sentence, which is written to say which wall this is. Passing it
+        // through unchanged is the difference between *that is a scan and nothing here does
+        // OCR* and *could not read file*.
+        return { name: one.name, refusal: read === '' ? 'Whatever reads documents here said nothing about it.' : read }
+      }
+      return { name: one.name, text: read, about: `${read.length.toLocaleString('en-GB')} characters` }
+    } catch (error) {
+      return { name: one.name, refusal: said(error) }
+    }
+  }
+
+  /**
    * One task: the user's line in, and however many steps it takes to answer it.
    *
    * Not one turn any more (M15-1). What the shell gets is the same stream it always got,
@@ -1566,17 +1829,31 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
    * it did, which is most of them.
    */
   async function reply(sent: Body, response: ServerResponse): Promise<void> {
-    const { text } = sent as { text?: string }
-    if (!text) {
+    const { text: typed, files } = sent as { text?: string; files?: Upload[] }
+    const uploads = Array.isArray(files) ? files.slice(0, MOST_FILES) : []
+    // A file with nothing typed is a whole message — *here, read this* — so the line is
+    // required only when it is the only thing there is.
+    if (!typed && uploads.length === 0) {
       response.writeHead(400)
       response.end()
       return
     }
+    const text = String(typed ?? '')
 
     response.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store' })
     const say = (event: Record<string, unknown>): void => void response.write(`data: ${JSON.stringify(event)}\n\n`)
 
-    const user: Message = { role: 'user', content: text }
+    /**
+     * The documents, read before anything else happens.
+     *
+     * **`text` stays what the person typed** and only `content` grows, which is the load-
+     * bearing half of this: the permission gate, the boundary sentences and the offer to
+     * learn all read `text`, and every one of them would be wrong to read a document. A file
+     * containing the words *delete everything* is not somebody asking for anything.
+     */
+    const content = uploads.length === 0 ? text : await documents(text, uploads, say)
+
+    const user: Message = { role: 'user', content }
     store.append(session, user)
 
     /** Which rung of §8.2's ladder actually answered, for the badge at the end (§8.4). */
@@ -1681,7 +1958,24 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
           progress: (step) => say({ step: { n: step.n, name: step.name, progress: step.progress } }),
           done: (step) => {
             trace.done(step)
-            say({ step: { n: step.n, name: step.name, ...step.outcome } })
+            /**
+             * A file the tool made, given an id and sent to the screen.
+             *
+             * The model already has what it can use — `[file: report.pdf]`, in the outcome
+             * text — because `Message.content` is a string and the bytes were never going
+             * anywhere near it. This is the other half: the person who asked gets a row they
+             * can open, save, find or copy the path of, which until now was a sentence
+             * containing a path and nothing else.
+             */
+            const files = step.outcome === undefined ? [] : offers.keep(step.outcome.files ?? [])
+            say({
+              step: {
+                n: step.n,
+                name: step.name,
+                ...step.outcome,
+                ...(files.length > 0 && { files: files.map((one) => ({ ...one, openable: openable(one.name) })) }),
+              },
+            })
           },
         },
       })
@@ -1711,7 +2005,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
        * no money is spent until somebody says yes. A feature that quietly distilled every
        * task would be a feature that quietly spent money on every task.
        */
-      const episode = { task: text, steps: result.steps, answer: last?.content ?? '' }
+      const episode = { task: text, steps: result.steps, answer: last === undefined ? '' : textOf(last) }
       if (result.ended === 'answered' && learnable(episode)) {
         lesson = episode
         say({ learn: { about: text.slice(0, 120), outline: outline(episode) } })
@@ -1732,8 +2026,9 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
        * Location is deliberately *not* stripped here: where somebody lives is a thing worth
        * remembering, and it is only dangerous when it leaves.
        */
-      if (result.ended === 'answered' && (last?.content.trim() ?? '') !== '') {
-        void plugins.capability(CORE_CAPABILITIES.capture, exchange(text, last?.content ?? '')).catch(() => {
+      const answered = last === undefined ? '' : textOf(last)
+      if (result.ended === 'answered' && answered.trim() !== '') {
+        void plugins.capability(CORE_CAPABILITIES.capture, exchange(text, answered)).catch(() => {
           // Nothing provides it, or whatever does is having a bad day. Either way this is
           // not the user's problem and never becomes one.
         })

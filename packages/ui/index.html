@@ -150,7 +150,18 @@
                documentation to find a command. -->
           <ul id="menu" hidden></ul>
 
+          <!-- What is coming with the next message. Above the composer rather than inside
+               it, because a file being carried is a thing to see and remove, not a thing to
+               type into. Empty and hidden until something is dropped, pasted or picked. -->
+          <ul id="attached" hidden></ul>
+
           <form id="ask">
+            <!-- A label, not a button: the input it opens has to be a real file input, and a
+                 real file input is the only control that can hand a webview bytes. -->
+            <label id="attach" class="quiet-button" title="Attach a document">
+              Attach
+              <input id="file" type="file" multiple hidden />
+            </label>
             <textarea id="text" rows="1" placeholder="Ask Alexia" autofocus></textarea>
             <button type="submit">Send</button>
             <!-- Not a cancel that takes effect at the end of the step. It works while a tool

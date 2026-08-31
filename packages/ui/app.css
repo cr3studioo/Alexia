@@ -2309,6 +2309,154 @@ button[disabled] {
   flex: none;
 }
 
+/* The attach control is a `label`, so it needs the button's own alignment rather than the
+   baseline a label would otherwise take. */
+#ask #attach {
+  flex: none;
+  cursor: pointer;
+}
+
+/* ---- what is coming with the next message ------------------------------------------------
+
+   One row per file, above the composer, each with the one control that matters: take it off
+   again. It is a list rather than chips inside the text box because the name of a document is
+   long and the thing a person needs to check is that it is the right one. */
+
+#attached {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: 0;
+  padding: var(--space-3) var(--space-4) 0;
+  background: var(--surface);
+}
+
+#attached li {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2) var(--space-1) var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-full);
+  font-size: var(--text-sm);
+  color: var(--ink-quiet);
+  max-width: 100%;
+}
+
+#attached li b {
+  font-weight: 500;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#attached li button {
+  border: none;
+  background: none;
+  padding: 0 var(--space-1);
+  color: var(--ink-faint);
+  cursor: pointer;
+  line-height: 1;
+}
+
+#attached li button:hover {
+  color: var(--caution);
+}
+
+/* Somewhere to drop one. The whole chat pane, because aiming at a strip above the composer
+   is a thing people miss — and a target nobody can find is a feature nobody has. */
+#chat.dropping {
+  outline: 2px dashed var(--line-strong);
+  outline-offset: calc(-1 * var(--space-2));
+}
+
+/* What a message carried, in the bubble, after it was sent. */
+.turn .carried {
+  display: block;
+  margin-top: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--ink-quiet);
+}
+
+/* And what was read out of it. Closed by default — the answer is what they came for, and a
+   wall of their own lease above it is not — but reachable, which it was not before. */
+.turn .read {
+  margin-top: var(--space-2);
+  font-size: var(--text-sm);
+  border-top: 1px solid var(--line);
+  padding-top: var(--space-2);
+}
+
+.turn .read summary {
+  cursor: pointer;
+  color: var(--ink-quiet);
+}
+
+.turn .read pre {
+  margin: var(--space-2) 0 0;
+  max-height: 22rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: var(--text-xs);
+  color: var(--ink-quiet);
+}
+
+/* A file a tool made, under the answer that made it. The mirror of `.read` above: that one is
+   what came in with the question, this is what went out with the answer. Open by default
+   rather than folded, because unlike an extracted document this is a thing the person now has
+   and the buttons are the entire point of drawing it. */
+.turn .made {
+  margin-top: var(--space-2);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--line);
+  font-size: var(--text-sm);
+}
+
+.turn .made-line {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.turn .made-name {
+  font-weight: 500;
+  word-break: break-word;
+}
+
+.turn .made-line small {
+  color: var(--ink-quiet);
+  font-size: var(--text-xs);
+}
+
+/* Wrapping rather than scrolling: four buttons on a narrow window become two rows, and a
+   row of controls that runs off the edge is a control nobody finds. */
+.turn .made-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.turn .made-buttons .quiet-button {
+  font-size: var(--text-xs);
+  padding: var(--space-1) var(--space-3);
+}
+
+/* Bounded, because a generated picture is whatever size it is and an answer should not become
+   six screens of one. It is a preview; Open is what shows it properly. */
+.turn .made-preview {
+  display: block;
+  max-width: 100%;
+  max-height: 18rem;
+  width: auto;
+  margin-bottom: var(--space-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+}
+
 /* ---- states the widgets share ------------------------------------------------------------
 
    `status` and `progress` from spec/ui-schema.md are the two widgets that are not inputs.

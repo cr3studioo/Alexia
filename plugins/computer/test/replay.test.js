@@ -2,7 +2,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { expect, test } from 'vitest'
-import { check, DECIDE, free, MAX_STEPS, replay, STEPS } from '../replay.js'
+import { check, DECIDE, expectation, free, MAX_STEPS, pressed, replay, STEPS } from '../replay.js'
 
 /**
  * The two rungs below a model deciding every step (M7-6).
@@ -87,6 +87,60 @@ test('a decision spends once, and what it answered is what the next step acts on
   }
 })
 
+test('a plan can check itself, and a check that fails stops it', async () => {
+  /**
+   * **The hole this closes.** The registry was six ways to act and no way to observe, so a
+   * plan could do the wrong thing sixty times and report sixty successes — *it did it ten
+   * times* was something a model asserted rather than something the plugin counted.
+   *
+   * The reading is a spawn and lives in `windows.js`; the judgement is here, so this is
+   * provable on a machine with no desktop in it. That split is the point: a postcondition
+   * whose only test needed the right window open on Windows would be the one rule nobody
+   * ever ran.
+   */
+  const there = { found: true, text: '= 42', name: 'Display' }
+  expect(expectation({ match: 'Display' }, there)).toBeUndefined()
+  expect(expectation({ match: 'Display', says: '42' }, there)).toBeUndefined()
+  // Contains, and case-insensitively: a display reads `= 42` and a plan that had to spell
+  // that exactly is a plan that breaks on a space.
+  expect(expectation({ match: 'Display', says: 'saved' }, { found: true, text: 'Saved to Documents' })).toBeUndefined()
+
+  expect(expectation({ match: 'Display', says: '43' }, there)).toMatch(/says “= 42”.*expected “43”/)
+  expect(expectation({ match: 'Save' }, { found: false })).toMatch(/did not do what it was supposed to/)
+  // And the other half of a postcondition: the dialog that should have closed.
+  expect(expectation({ match: 'Save as', gone: true }, { found: false })).toBeUndefined()
+  expect(expectation({ match: 'Save as', gone: true }, there)).toMatch(/still on screen/)
+})
+
+test('a check is free, and stops the sequence where it stopped being true', async () => {
+  // No model in the path: `expect` reads the control tree, which is milliseconds and no
+  // tokens. A plan that checks itself is still a script.
+  const plan = [{ do: 'wait', ms: 0 }, { do: 'expect', match: 'Saved' }, { do: 'wait', ms: 0 }]
+  expect(free(plan)).toBe(true)
+  expect(check(plan)).toBeUndefined()
+
+  const ran = []
+  const was = STEPS.expect
+  STEPS.expect = () => Promise.reject(new Error('there is no “Saved” on screen'))
+  try {
+    await expect(replay(plan, { onStep: (n, what) => ran.push(what) })).rejects.toThrow(/no “Saved” on screen/)
+  } finally {
+    STEPS.expect = was
+  }
+  // It got as far as the check and no further. A sequence that carried on past a failed
+  // postcondition would be the six-ways-to-act registry again with a comment on it.
+  expect(ran).toEqual(['wait', 'expect'])
+})
+
+test('a control that cannot be pressed says so rather than reaching for the mouse', () => {
+  expect(pressed({ match: 'Save' }, { found: true, how: 'invoke' })).toBeUndefined()
+  expect(pressed({ match: 'Save' }, { found: false })).toMatch(/no “Save” on screen/)
+  expect(pressed({ match: 'Save' }, { found: true, how: 'disabled' })).toMatch(/greyed out/)
+  // The escalation this refuses to make on its own: a real click is a different permission
+  // and a different line in the log, so it is offered rather than taken.
+  expect(pressed({ match: 'Canvas' }, { found: true, how: 'none' })).toMatch(/Use a click step/)
+})
+
 test('a step that is not in the registry is refused before anything runs', async () => {
   // A plan is data somebody edits by hand. If replaying one executed arbitrary strings,
   // editing one would be writing code, and every plan would be a permission question nobody
@@ -116,8 +170,23 @@ test('the registry holds nothing this plugin could not already do', () => {
   const actions = [...declared.matchAll(/'([a-z]+)'/g)].map((one) => one[1])
   expect(actions.length).toBeGreaterThan(0)
 
-  // `focus` and `wait` are the two extras, and both are tools of their own — `focus` is one
-  // by name, and `wait` touches nothing at all.
-  expect(Object.keys(STEPS).filter((one) => !actions.includes(one)).sort()).toEqual(['focus', 'wait'])
-  expect(index).toContain("'focus',")
+  /**
+   * Four extras, and every one of them is a tool of its own with its own annotation.
+   *
+   * `focus` and `wait` were the original two — one is a tool by name, the other touches
+   * nothing at all. `press` and `expect` are the two the accessibility tree bought: `press`
+   * is the `press` tool, annotated destructive like every other way of acting, and `expect`
+   * is the `check` tool, annotated read-only because a postcondition changes nothing.
+   *
+   * They are deliberately *not* in the `do` tool's list. That tool is the one entry point
+   * another plugin uses to ask for computer control, and its enum is *do one thing on the
+   * screen* — a check is not doing, and a control pressed by name is not a coordinate.
+   */
+  expect(Object.keys(STEPS).filter((one) => !actions.includes(one)).sort()).toEqual([
+    'expect',
+    'focus',
+    'press',
+    'wait',
+  ])
+  for (const named of ["'focus',", "'press',", "'check',"]) expect(index).toContain(named)
 })
