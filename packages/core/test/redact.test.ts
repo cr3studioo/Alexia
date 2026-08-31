@@ -142,7 +142,8 @@ async function through(tier: Model['tier']): Promise<{ arrived: string; notes: s
   const notes: string[] = []
   sentBodies.length = 0
   const choice: Choice = { model: model(tier), provider }
-  await send([choice], { messages: [{ role: 'user', content: PAYLOAD }] }, store, secrets, {
+  // A bound on the reply: this walks the paid tiers too, and `send` will not bill without one.
+  await send([choice], { messages: [{ role: 'user', content: PAYLOAD }], maxTokens: 200 }, store, secrets, {
     onNote: (line) => notes.push(line),
   })
   return { arrived: sentBodies[0]?.messages[0]?.content ?? '', notes }

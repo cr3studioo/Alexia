@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, expect, test } from 'vitest'
-import { clone, FORMATS, HOST, idOf, mine, MODEL, PREFIX, remove, say } from '../fish.js'
+import { clone, FORMATS, HOST, idOf, mine, MODEL, PREFIX, remove, say, search } from '../fish.js'
 
 /**
  * The second engine (M7-4), against a stub that answers the way the vendor does.
@@ -54,7 +54,7 @@ const server = createServer((request, response) => {
     response.end(
       JSON.stringify({
         items: [
-          { _id: 'a', title: 'Mine', state: 'trained' },
+          { _id: 'a', title: 'Mine', state: 'trained', tags: ['warm', 'deep'], like_count: 12, author: { nickname: 'someone' } },
           // Listed by the API and unable to speak. Offering it would offer a voice that
           // fails at the moment somebody uses it.
           { _id: 'b', title: 'Still training', state: 'training' },
@@ -107,10 +107,38 @@ test('a clip and its words go up as one form, and the voice comes back named', a
 })
 
 test('only a trained voice is offered, and one is removed by name', async () => {
-  expect(await mine('sk-secret')).toEqual([{ id: 'a', name: 'Mine' }])
+  expect(await mine('sk-secret')).toEqual([
+    { id: 'a', name: 'Mine', tags: ['warm', 'deep'], likes: 12, by: 'someone' },
+  ])
   seen.length = 0
   await remove('sk-secret', 'a')
   expect(seen[0]).toMatchObject({ method: 'DELETE', url: '/model/a' })
+})
+
+test('a catalogue search asks for one tag and one language per filter, lowercased', async () => {
+  seen.length = 0
+  const results = await search('sk-secret', {
+    text: 'spongebob',
+    // As a person would have them off a chip, and as the vendor will not accept them: its
+    // real tags are lowercase and hyphenated, and a mismatched one matches nothing at all,
+    // which reads as an empty catalogue rather than as a mistake.
+    tags: ['Character-Voice', 'warm'],
+    languages: ['EN'],
+    count: 5,
+  })
+  expect(results[0]).toMatchObject({ id: 'a', name: 'Mine', likes: 12 })
+
+  const asked = new URL(seen[0].url, 'http://x')
+  expect(asked.pathname).toBe('/model')
+  // Repeated keys rather than a comma-joined one: that is the shape the vendor's filter
+  // takes, and one `tag=a,b` matches a tag literally called "a,b".
+  expect(asked.searchParams.getAll('tag')).toEqual(['character-voice', 'warm'])
+  expect(asked.searchParams.getAll('language')).toEqual(['en'])
+  expect(asked.searchParams.get('title')).toBe('spongebob')
+  expect(asked.searchParams.get('page_size')).toBe('5')
+  // Not the account's own list — that is the other question, and the same endpoint answers
+  // both, so the one thing separating them must actually be absent.
+  expect(asked.searchParams.get('self')).toBeNull()
 })
 
 test('markers are passed through untouched, and the family rides in the header', async () => {

@@ -26,7 +26,34 @@ export interface Caps {
    * is also a bad surprise, so this one is turned on deliberately.
    */
   hardStop?: boolean
+  /**
+   * **Dollars a day the router may spend on its own.** The permission that turns automatic
+   * spending on, and it starts at nothing.
+   *
+   * Not a second monthly cap. `monthly` is a ceiling on a total somebody is already choosing
+   * to run up; this is the difference between a router that may reach for a paid model
+   * without being asked and one that may not. With it at zero the app behaves exactly as
+   * *free only* does, and the first thing anyone does with it is set it to the price of a
+   * coffee — which is how people think about this, rather than in dollars per million
+   * tokens.
+   *
+   * **Daily rather than monthly**, for two reasons that are both about blast radius: the
+   * free tiers this bridges reset daily, so the thing it stands in for has the same period —
+   * and an agent loop can burn a month's budget in an hour, where a day's is a day's.
+   */
+  daily?: number
 }
+
+/**
+ * What the allowance is until somebody sets one: **nothing**.
+ *
+ * The whole of the fix. `mixed` has always been the default and `mixed` filtered nothing, so
+ * the moment free was filtered out — no tools, an `above` pin, a spent tier — a paid model
+ * was chosen and billed with no cap, no confirmation and no budget, and the free-tier
+ * exhaustion path led straight into it. Zero here means that path now ends where the free
+ * tiers do, and money starts being spent on the day the user says so and not before.
+ */
+export const DAILY_DEFAULT = 0
 
 // One kv entry rather than three settings rows: a handful of numbers that are always read
 // together is exactly what kv is for (storage.md).
@@ -61,10 +88,42 @@ export function allowance(store: Store, at: number = Date.now()): Allowance {
   }
 }
 
+/** Today's spending against today's allowance. Both in dollars. */
+export interface Today {
+  spent: number
+  allowance: number
+}
+
+/**
+ * Where the day stands. A UTC calendar day, for the same reason the month is one: being off
+ * by hours on a spending boundary is not something anybody will notice, and two different
+ * definitions of *today* in one file would be.
+ */
+export function today(store: Store, at: number = Date.now()): Today {
+  const now = new Date(at)
+  return {
+    spent: store.spend(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())),
+    allowance: caps(store).daily ?? DAILY_DEFAULT,
+  }
+}
+
+/**
+ * Is there room left in today's allowance?
+ *
+ * **Absent is no.** A caller that did not gather the day's figures does not thereby get to
+ * spend money — money is the one axis where forgetting has to fail closed, because every
+ * other rung failure is free and this is the only step that cannot be taken back.
+ */
+export const affordable = (today: Today | undefined): boolean =>
+  today !== undefined && today.spent < today.allowance
+
+/** Money, as it is written everywhere it is shown. One place, so two screens cannot disagree. */
+export const dollars = (n: number): string => `$${n.toFixed(2)}`
+
 /** The line to show when the month is getting expensive. Nothing when it is not. */
 export function warning(allowance: Allowance): string | undefined {
   if (allowance.cap === undefined || !allowance.warn) return undefined
-  const money = (n: number): string => `$${n.toFixed(2)}`
+  const money = dollars
   return allowance.stop ?
       `${money(allowance.spent)} of your ${money(allowance.cap)} monthly cap is spent — paid models are paused until you raise it.`
     : `${money(allowance.spent)} of your ${money(allowance.cap)} monthly cap is spent.`

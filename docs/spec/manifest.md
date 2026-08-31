@@ -144,7 +144,7 @@ later for the filesystem and the shell, and nowhere else.
 ]
 ```
 
-There are **eleven widget types**. Ten, and then one — see the note below the table:
+There are **twelve widget types**. Ten, and then two — see the notes below the table:
 
 | Type | Extra fields | For |
 |---|---|---|
@@ -159,13 +159,14 @@ There are **eleven widget types**. Ten, and then one — see the note below the 
 | `progress` | — | a bar you drive at runtime |
 | `action` | `tool` ✅ | a button that calls one of your tools with no arguments |
 | `table` | `rows` ✅, `columns` ✅, `rowActions`, `detail`, `filter`, `groupBy` | a list of things, with actions on each one — see [Tables](#tables) |
+| `graph` | `rows` ✅, `detail`, `filter` | things that point at each other, drawn as a map — see [Graphs](#graphs) |
 
 Every widget takes `key` (lowercase, digits, underscores), `label`, and optional `hint`.
 
 **Why a fixed list and not a schema renderer.** A plugin cannot style itself wrong because
 it never styles itself. A general JSON-Schema form renderer re-opens that door, and adds
 175 KB to do it. If you genuinely need a twelfth widget, that is a conversation — open an
-issue and say what the eleven could not do.
+issue and say what the twelve could not do.
 
 **The eleventh was that conversation, held** (D83, 2026-08-29). `table` was granted because
 the previous Alexia's dashboard hand-wrote the same object four times, and the second copy's
@@ -174,6 +175,16 @@ design"*. Four independent copies of one shape is the strongest case this schema
 handed. Two others were asked for in the same conversation and refused: a `file` picker and a
 `graph`, each with exactly one user, which is this schema's own bar for no. The bar is only
 worth having if it is applied when it is inconvenient.
+
+**The twelfth was granted two refusals later** (D115, 2026-08-31). `graph` was asked for at
+M6-3 and refused on the bar, asked again at M6-7 and refused for a better reason — its one
+user stored flat sentences, so the links would have been *inferred*, and a picture of inferred
+similarity looks meaningful and is not. Authored links arrived at M7-3, somebody asked to look
+at the shape of their own memory, and the argument that carried it was **what the alternatives
+cost**: the other two ways to draw a map were a bespoke canvas in core's own shell, which
+means core naming one plugin, and a sandboxed iframe, which means a plugin drawing its own
+pixels and every rule on this page gone with it. It still has one user. That is written down
+rather than argued away.
 
 `path` takes no default and `password` takes no default, for the same underlying reason: a
 value baked into a manifest is a value that is wrong on someone else's machine, and in the
@@ -255,6 +266,41 @@ all in the sense that matters. Mark the columns you would drop first.
 Row action keys share the one widget namespace, so a `remove` here and a `remove` anywhere
 else in your manifest is a load error — a press has to have one meaning.
 
+### Graphs
+
+```jsonc
+{ "key": "shape", "type": "graph", "label": "The shape of it",
+  "hint": "A ring means Alexia worked that one out rather than being told it.",
+  "rows": "list_notes",                        // your tool, called with no arguments
+  "detail": "about_note",                      // optional, opens beside the map
+  "filter": true }                             // a box, applied in the page over the labels
+```
+
+*Arrived in `alexia_protocol` 4. Declaring one while claiming 3 is a load error.*
+
+**A `table` says what is there; a `graph` says what points at what.** Same `rows` tool, same
+`structuredContent: { "rows": [ … ] }`, same string `id` on every row — so a plugin that
+already has a table has most of a map. What a graph reads on top of the `id`:
+
+| Field | |
+|---|---|
+| `label` | what the node is called. Falls back to the `id`. |
+| `links` | an array of the **ids** this node points at. A link to an id that is not in the answer is dropped rather than drawn to nowhere. |
+| `mark` | optional boolean. Draws a ring around the node; your `hint` is where you say what the ring means. |
+
+**No columns, no grouping, no row actions**, and that is deliberate rather than unfinished. A
+table's columns are choices a reader notices; a map's are not, so the fields above are fixed
+by the contract and there is nothing here to get wrong. Anything a person needs to *do* to one
+of these things belongs on a table beside it, where the row is unambiguous and has a button.
+
+**Links must be authored, not guessed.** This widget was refused once for exactly that reason:
+a graph of inferred similarity looks meaningful and is not, and nobody looking at it can tell.
+If your edges come out of a model's judgement rather than out of something somebody wrote, a
+table grouped by category is the honest picture.
+
+Core owns the drawing — the physics, the colours, the labels, the pointer, and settling it
+without motion for a reader who asked for that. See [`ui-schema.md`](./ui-schema.md#graph).
+
 ### Panel
 
 ```jsonc
@@ -313,7 +359,7 @@ mistake a real author makes:
 | a `requires` entry with no `why` | `requires.0.why` |
 | a `choice` whose `default` is not one of its `options` | `settings.0.default` |
 | `storage.namespace` that no longer matches `id` after a rename | `storage.namespace` |
-| `"type": "slider"` | not one of the eleven widgets |
+| `"type": "slider"` | not one of the twelve widgets |
 | `"provide"` instead of `"provides"` | unrecognised key `provide` |
 | `"run": "C:\\Program Files\\node.exe"` | `entry.run` — relative or on PATH |
 | `"version": "v0.1"` | `version` — semantic versions only |

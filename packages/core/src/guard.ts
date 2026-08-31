@@ -83,6 +83,10 @@ const REVERSIBLE_CORE = new Set([
   // — which is how people learn to click through the dialogs that matter.
   'use_model',
   'automatic',
+  // The slider and the running order (D112). Both are preferences, both are one press from
+  // being put back, and neither deletes anything — the same argument as the two above.
+  'set_spend',
+  'set_order',
   // Starting a conversation and moving between them (M8-2). Nothing is written over and
   // nothing is lost: the one you were in is still in the list, one press away. `forget_chat`
   // is deliberately **not** here — it deletes a conversation and everything said in it.

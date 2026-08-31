@@ -313,6 +313,47 @@ alexia.tool(
   },
 )
 
+/**
+ * The same notes, as a map (M6-11).
+ *
+ * **This is what the links were for.** `recall` follows them one hop and the table shows what
+ * each note is filed under; neither answers *what shape is any of this in* — which is the
+ * question somebody has when they open a memory screen and start scrolling. The nodes are the
+ * notes, the edges are the links the sorter wrote, and the ring is the notes nobody said out
+ * loud.
+ *
+ * Ids rather than names on the wire: a name is what a link is written as, and the panel needs
+ * something it can hand back to `about_memory`. A link to a name with no note behind it is
+ * dropped rather than drawn — `forgetting` mends both ends of a link, so one that is still
+ * dangling is a note that never arrived.
+ */
+alexia.tool(
+  'memory_graph',
+  {
+    description:
+      'Everything remembered as a map: each note, and what it is filed under. Takes no arguments.',
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+  },
+  async () => {
+    const rows = await notes()
+    const ids = new Map(rows.map((row) => [nameOf(row), String(row.rowid)]))
+    return {
+      content: [{ type: 'text', text: `${rows.length} remembered` }],
+      structuredContent: {
+        rows: rows.map((row) => ({
+          id: String(row.rowid),
+          label: nameOf(row),
+          links: linksOf(row)
+            .map((name) => ids.get(name))
+            .filter((id) => id !== undefined && id !== String(row.rowid)),
+          // Worked out rather than said, which is the one a person might want to argue with.
+          mark: row.source === INFERRED,
+        })),
+      },
+    }
+  },
+)
+
 alexia.tool(
   'forget_one',
   {

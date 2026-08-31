@@ -24,7 +24,7 @@ export const OLLAMA: Provider = {
   // Its OpenAI-compatible face. Deliberately not in `PROVIDERS`: that table is the hosted
   // pool, and a local runner that is not installed must never look like an available rung.
   baseUrl: `${HOST}/v1`,
-  keyless: true,
+  auth: 'none',
   // The one provider where this is a fact rather than a reading of somebody's terms: the
   // model is on this machine and the request goes to loopback.
   trainsOnYourData: 'no',

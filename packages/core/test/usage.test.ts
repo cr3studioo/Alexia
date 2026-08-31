@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { expect, test } from 'vitest'
 import type { Model } from '../src/catalog.js'
-import { allowance, costOf, setCaps, warning } from '../src/usage.js'
+import { affordable, allowance, caps, costOf, setCaps, today, warning } from '../src/usage.js'
 import { Store } from '../src/store.js'
 
 // M1-9. Money, and the three questions asked of it: what did this conversation cost, what
@@ -77,3 +77,29 @@ test('the month is a month, and the cap knows where it stands in it', () => {
   store.close()
 })
 
+test('the day starts with nothing allowed, and the allowance is what changes that', () => {
+  const store = new Store(':memory:')
+  const noon = Date.UTC(2026, 2, 14, 12)
+
+  // A new install. `mixed` is still the default setting, and it now behaves as free does.
+  expect(today(store, noon)).toEqual({ spent: 0, allowance: 0 })
+  expect(affordable(today(store, noon))).toBe(false)
+
+  setCaps(store, { ...caps(store), daily: 1 })
+  expect(affordable(today(store, noon))).toBe(true)
+
+  // Spent to the line is spent — and the day is a day, so yesterday's is not counted
+  // against today's.
+  store.recordUsage({ at: noon, model: 'm', provider: 'p', tokensIn: 1, tokensOut: 1, cost: 0.4 })
+  expect(today(store, noon)).toEqual({ spent: 0.4, allowance: 1 })
+  expect(affordable(today(store, noon))).toBe(true)
+
+  store.recordUsage({ at: noon, model: 'm', provider: 'p', tokensIn: 1, tokensOut: 1, cost: 0.6 })
+  expect(affordable(today(store, noon))).toBe(false)
+
+  // The next day is a fresh one. This is the reason it is daily and not monthly: an agent
+  // loop can burn a month in an hour, and the free tiers it stands in for reset on this
+  // clock too.
+  expect(affordable(today(store, noon + 24 * 3_600_000))).toBe(true)
+  store.close()
+})

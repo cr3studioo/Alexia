@@ -1,12 +1,19 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 /**
- * The settings screen: every plugin's chrome, and its declared widgets (M2-1).
+ * The settings screen: what first run asked, and every plugin's chrome (M2-1, M8-3).
  *
  * **A plugin cannot style itself wrong because it never styles itself.** The widgets
  * themselves are drawn by `widgets.ts`, which the control surface uses as well — one
  * renderer, because two would drift on the day one of them was fixed. What lives here is the
  * screen around them: what is installed, what it asked for, and the lifecycle.
+ *
+ * **Two pages and one card each behind them (M8-3).** General is the three questions first
+ * run asked plus the know-how on this machine; Plugins is a grid of cards, one per plugin,
+ * and a page of its own behind every card. The list of panes it used to be worked at three
+ * plugins and was a scroll at nine — a plugin's settings are the thing you came for, and
+ * having to scroll past four other plugins' to reach them is the screen doing the finding
+ * badly. Nothing here names a plugin: every card is whatever is in the folder.
  *
  * No Node in here, ever (invariant 6).
  */
@@ -80,14 +87,34 @@ interface Skill {
   pluginId?: string
 }
 
-export function mountSettings(token: string): { open: () => void } {
+/** Which of the two pages is on screen. The card page is a state of the second, not a third. */
+type Page = 'general' | 'plugins'
+
+export function mountSettings(token: string): {
+  open: (page?: Page, filter?: string) => void
+} {
   const view = document.querySelector<HTMLElement>('#settings')!
-  const list = document.querySelector<HTMLElement>('#panes')!
+  const general = document.querySelector<HTMLElement>('#general')!
+  const pluginsPage = document.querySelector<HTMLElement>('#plugins-page')!
+  const tabGeneral = document.querySelector<HTMLButtonElement>('#settings-tab-general')!
+  const tabPlugins = document.querySelector<HTMLButtonElement>('#settings-tab-plugins')!
+  const grids = document.querySelector<HTMLElement>('#plugin-grids')!
+  const sheet = document.querySelector<HTMLElement>('#plugin-detail')!
+  const installed = document.querySelector<HTMLElement>('#bento')!
+  const offeredBox = document.querySelector<HTMLDetailsElement>('#available-box')!
+  const offered = document.querySelector<HTMLElement>('#available')!
+  const search = document.querySelector<HTMLInputElement>('#plugin-filter')!
   const broken = document.querySelector<HTMLElement>('#problems')!
   const known = document.querySelector<HTMLElement>('#skills')!
+  const toLearn = document.querySelector<HTMLElement>('#skills-library')!
   const shelf = document.querySelector<HTMLElement>('#library')!
-  /** Which installed ids came from compatibility mode, so the pane can say so (M3-6). */
+  /** Which installed ids came from compatibility mode, so the page can say so (M3-6). */
   let unreviewed = new Set<string>()
+  /** The last read of each list, so a redraw is a redraw rather than a second fetch. */
+  let panes: Pane[] = []
+  let listings: Listing[] = []
+  /** Whose page is open. Undefined is the grid, and a plugin that goes takes it with it. */
+  let chosen: string | undefined
 
   const send = async (path: string, body: unknown): Promise<Record<string, unknown>> =>
     (await (
@@ -109,7 +136,9 @@ export function mountSettings(token: string): { open: () => void } {
     plugin,
     screen: 'settings',
     send,
-    root: () => list,
+    // A plugin's widgets are only ever on its own page, which is the only thing on screen
+    // when they are drawn — so a redraw looks there rather than anywhere a grid ever was.
+    root: () => sheet,
     fresh: async () => {
       const state = (await (
         await fetch('/api/plugins', { headers: { 'x-alexia-token': token } })
@@ -129,20 +158,233 @@ export function mountSettings(token: string): { open: () => void } {
       unreviewed?: string[]
     }
     unreviewed = new Set(state.unreviewed ?? [])
-    draw(state.panes, state.problems)
+    panes = state.panes
+    draw(state.problems)
     drawSkills(state.skills, state.skillProblems)
     // The registry is a network call and the installed list is not. Drawn separately so a
     // registry that is down never stops somebody reaching the plugins they already have.
     void loadLibrary()
   }
 
+  // ---- the two pages ----------------------------------------------------------------------
+
+  function pick(page: Page): void {
+    general.hidden = page !== 'general'
+    pluginsPage.hidden = page !== 'plugins'
+    for (const [tab, on] of [
+      [tabGeneral, page === 'general'],
+      [tabPlugins, page === 'plugins'],
+    ] as const) {
+      tab.classList.toggle('on', on)
+      tab.setAttribute('aria-current', on ? 'page' : 'false')
+    }
+    view.scrollTop = 0
+  }
+
+  tabGeneral.addEventListener('click', () => pick('general'))
+  tabPlugins.addEventListener('click', () => pick('plugins'))
+
+  /** Filtering is a redraw of what is already read — there is nothing here to fetch again. */
+  search.addEventListener('input', () => draw())
+
+  const matches = (name: string, summary: string): boolean => {
+    const asked = search.value.trim().toLowerCase()
+    return asked === '' || `${name} ${summary}`.toLowerCase().includes(asked)
+  }
+
+  // ---- the grid ---------------------------------------------------------------------------
+
+  /**
+   * The switch, and the only thing on a card that is not the card.
+   *
+   * Everywhere else on a card is the way in to the plugin's own page, so the click handler
+   * asks *what was pressed* rather than every control asking not to bubble — one rule, which
+   * still holds on the day a card grows a second control.
+   */
+  function toggle(pane: Pane): HTMLElement {
+    const row = el('label', 'switch')
+    const box = el('input')
+    box.type = 'checkbox'
+    box.checked = pane.enabled
+    box.setAttribute('aria-label', `Enable ${pane.name}`)
+    const track = el('span', 'track')
+    box.addEventListener('change', () => {
+      box.disabled = true
+      // The whole screen, because enabling one plugin can satisfy another's requirement.
+      void send('/api/plugin', { id: pane.id, action: box.checked ? 'enable' : 'disable' }).then(() => load())
+    })
+    row.append(box, track)
+    return row
+  }
+
+  /** Name, what it does, whether it is here, and — when it is — the switch. */
+  function card(
+    what: { name: string; summary: string; version: string; license: string; installed: boolean },
+    controls: HTMLElement[],
+    press: () => void,
+  ): HTMLElement {
+    const box = el('article', 'bento-card')
+    const head = el('div', 'bento-head')
+    const name = el('button', 'bento-open', what.name)
+    name.type = 'button'
+    head.append(name, ...controls)
+    const foot = el('div', 'bento-foot')
+    foot.append(
+      el('span', what.installed ? 'pill' : 'pill caution', what.installed ? 'installed' : 'not installed'),
+      el('span', 'pane-meta', `${what.version} · ${what.license}`),
+    )
+    box.append(head, el('p', 'bento-what', what.summary), foot)
+    box.addEventListener('click', (event) => {
+      if ((event.target as HTMLElement).closest('.switch') === null) press()
+    })
+    return box
+  }
+
+  function draw(problems?: Problem[]): void {
+    // A plugin whose folder has gone takes its page with it — the same line the control
+    // surface has for a tab, one screen over, and for the same reason.
+    if (chosen !== undefined && !panes.some((pane) => pane.id === chosen)) chosen = undefined
+
+    grids.hidden = chosen !== undefined
+    sheet.hidden = chosen === undefined
+    if (chosen !== undefined) {
+      drawPage(panes.find((pane) => pane.id === chosen)!)
+      return
+    }
+
+    const shown = panes.filter((pane) => matches(pane.name, pane.summary))
+    installed.replaceChildren(
+      ...shown.map((pane) =>
+        card({ ...pane, installed: true }, [toggle(pane)], () => {
+          chosen = pane.id
+          draw()
+        }),
+      ),
+    )
+    if (panes.length === 0) {
+      installed.append(
+        el('p', 'hint', 'Nothing is installed yet. Open the list below, or point at a folder.'),
+      )
+    } else if (shown.length === 0) {
+      installed.append(el('p', 'hint', `Nothing installed matches “${search.value.trim()}”.`))
+    }
+
+    drawOffered()
+
+    // A folder that is not a plugin is shown, never swallowed. Somebody put it there on
+    // purpose and the reason it did not load is the only useful thing anyone can tell them.
+    if (problems !== undefined) {
+      broken.replaceChildren(...brokenRows(problems, 'One folder did not load', 'folders did not load'))
+    }
+  }
+
+  // ---- what is not here yet ----------------------------------------------------------------
+
+  /**
+   * The registry's cards, behind a disclosure because **only what is installed is shown by
+   * default**: this screen is where somebody comes to change something they have, and a grid
+   * that opened on forty things they do not is a shop rather than a settings page.
+   */
+  function drawOffered(): void {
+    const shown = listings.filter((entry) => !entry.installed && matches(entry.name, entry.summary))
+    offeredBox.hidden = shown.length === 0
+    offeredBox.querySelector('summary')!.textContent =
+      shown.length === 1 ? 'One plugin you have not installed' : `${String(shown.length)} plugins you have not installed`
+    offered.replaceChildren(...shown.map(offer))
+  }
+
+  /**
+   * A card for something that is not here yet.
+   *
+   * **The question is asked on the card and answered beside it** — the same rule the chat
+   * prompt and every `action` follow, because what is being decided is what is on screen. The
+   * author's own `requires` sentences come with it, which is the whole reason the registry
+   * carries them: deciding whether to want something should not require already having it.
+   */
+  function offer(entry: Listing): HTMLElement {
+    const box: HTMLElement = card({ ...entry, installed: false }, [], () => {
+      if (box.querySelector('.confirm') !== null) return
+      const asked = ask(entry)
+      box.append(asked)
+      // A question whose answer is below the fold is a question nobody answers.
+      asked.scrollIntoView({ block: 'nearest' })
+    })
+    return box
+  }
+
+  function ask(entry: Listing): HTMLElement {
+    const asked = el('div', 'confirm')
+    asked.append(el('p', undefined, 'This plugin is not installed. Do you want to install it?'))
+
+    if (entry.requires.length > 0) {
+      const wants = el('ul', 'asks')
+      for (const need of entry.requires) {
+        const line = el('li')
+        line.append(el('code', undefined, need.cap), el('span', undefined, need.why))
+        wants.append(line)
+      }
+      asked.append(el('p', 'asks-label', 'It will ask for:'), wants)
+    }
+
+    // Signed and checkable, signed and not checkable, not signed. Three states and three
+    // sentences: an unverified signature is worth exactly as much as none, and a screen that
+    // showed them alike would be the lie.
+    if (entry.signature !== undefined && entry.signature !== '') {
+      asked.append(
+        library?.verifying === true ?
+          el('span', 'pill', 'signed')
+        : el('span', 'pill caution', 'signature not checked'),
+      )
+    }
+
+    const said = el('p', 'hint')
+    const row = el('div', 'row')
+    const yes = el('button', undefined, 'Install')
+    yes.type = 'button'
+    const no = el('button', 'quiet-button', 'Not now')
+    no.type = 'button'
+    no.addEventListener('click', () => asked.remove())
+    yes.addEventListener('click', () => {
+      row.remove()
+      // No percentage to show: one POST goes out and comes back with the folder on disk. A
+      // bar that sweeps says *this is happening* without claiming to know how far along it
+      // is, and silence is what kills a first run rather than time (Alexia.md, first run).
+      const bar = el('div', 'bar working')
+      bar.append(el('span'))
+      asked.append(bar)
+      said.className = 'hint'
+      said.textContent = `Downloading ${entry.name}…`
+      void fetchIn(entry.id, 'plugin', said).then(() => {
+        bar.remove()
+        // Installed and **not enabled** is where a plugin arrives (D73), so the next thing
+        // on screen is its own page — which is the walkthrough, and where the yes is given.
+        // A card that flipped itself on would be consent nobody gave.
+        if (panes.some((pane) => pane.id === entry.id)) {
+          chosen = entry.id
+          draw()
+        }
+      })
+    })
+    row.append(yes, no)
+    asked.append(row, said)
+    return asked
+  }
+
+  /** Install from the registry, then redraw everything — an install changes both lists. */
+  const fetchIn = async (id: string, kind: 'plugin' | 'skill', said: HTMLElement): Promise<void> => {
+    const answer = (await send('/api/library/install', { id, kind })) as { ok?: boolean; said?: string }
+    said.className = answer.ok === true ? 'hint' : 'error'
+    said.textContent = answer.said ?? ''
+    if (answer.ok === true) await load()
+  }
+
   /**
    * Install: a folder somebody points at.
    *
-   * Crude, and named as such — browsing a library is M3-2, and until there is a registry
-   * there is nowhere else for a plugin to come from. What it does is real: the folder is
-   * checked where it stands, copied in, and left **not enabled**, so the next thing on the
-   * screen is what it asked for.
+   * Crude, and named as such — browsing the library is the route above, and this is the one
+   * that still works when there is no registry. What it does is real: the folder is checked
+   * where it stands, copied in, and left **not enabled**, so the next thing on the screen is
+   * what it asked for.
    */
   function adding(): HTMLElement {
     const box = el('div', 'field installing')
@@ -177,59 +419,46 @@ export function mountSettings(token: string): { open: () => void } {
   /**
    * The library (M3-2), the skills marketplace (M3-5) and compatibility mode (M3-6).
    *
-   * Three ways something gets onto this machine and one screen holding all of them, because
-   * from the user's side they are one question: *what can Alexia do, and how do I get more
-   * of it?* What is deliberately not shared is the **word for each**: a plugin is code that
-   * runs here, a skill is text the model reads, an MCP server is neither reviewed nor ours.
-   * A badge nobody reads would be the wrong way to carry that difference, so each list says
-   * it in a sentence instead.
+   * Three ways something gets onto this machine. The plugins go into the grid above, because
+   * from the user's side *what can Alexia do* and *what could it do* are one question asked
+   * about one kind of thing. What stays down here is what is not a card: something withdrawn,
+   * something with an update, a folder on disk, and an MCP server that is neither reviewed
+   * nor ours. Skills are on the other page, because a skill is not a plugin.
    */
   async function loadLibrary(): Promise<void> {
-    const state = (await (
+    const answer = (await (
       await fetch('/api/library', { headers: { 'x-alexia-token': token } })
     ).json()) as LibraryState
-    drawLibrary(state)
+    drawLibrary(answer)
   }
 
-  /** Install from the registry, then redraw everything — an install changes both lists. */
-  const fetchIn = async (id: string, kind: 'plugin' | 'skill', said: HTMLElement): Promise<void> => {
-    said.className = 'hint'
-    said.textContent = 'Downloading…'
-    const answer = (await send('/api/library/install', { id, kind })) as { ok?: boolean; said?: string }
-    said.className = answer.ok === true ? 'hint' : 'error'
-    said.textContent = answer.said ?? ''
-    if (answer.ok === true) await load()
-  }
+  /** The last library read, for the two sentences a card says about a signature. */
+  let library: LibraryState | undefined
 
-  function drawLibrary(state: LibraryState): void {
-    shelf.replaceChildren(el('h3', 'step-heading', 'Library'))
+  function drawLibrary(read: LibraryState): void {
+    library = read
+    listings = read.plugins ?? []
+    shelf.replaceChildren()
 
-    // Withdrawn, and on this machine. Loudest thing on the screen, above browsing, because
-    // it is the one row here that is about something already running.
-    for (const pulled of state.revoked ?? []) {
+    // Withdrawn, and on this machine. Loudest thing on the screen, above everything else,
+    // because it is the one row here that is about something already running.
+    for (const pulled of read.revoked ?? []) {
       const row = el('section', 'pane')
       row.append(
         el('b', undefined, `${pulled.id} has been withdrawn from the registry`),
-        el('p', 'error', `${pulled.revoked_reason}. It is still installed here — disable or delete it below.`),
+        el('p', 'error', `${pulled.revoked_reason}. It is still installed here — disable or delete it on its own page.`),
       )
       shelf.append(row)
     }
 
-    if (!state.ok) {
-      // A registry that is down is not an empty registry, and must not look like one.
-      shelf.append(el('p', 'hint', state.why ?? `Could not reach ${state.registry}.`))
-      shelf.append(addingServer())
-      return
-    }
-
     /**
-     * Updates (M5-4), above browsing because they are about something already here.
+     * Updates (M5-4), above the folder box because they are about something already here.
      *
      * Offered, not applied. An assistant that replaced a plugin's folder while somebody was
      * mid-conversation with it would be an assistant that changed under them, and the only
      * thing an update is allowed to be surprising about is that it exists.
      */
-    for (const update of state.updates ?? []) {
+    for (const update of read.updates ?? []) {
       const box = el('section', 'pane')
       const said = el('p', 'hint')
       const get = el('button', 'quiet-button', `Update to ${update.to}`)
@@ -257,78 +486,50 @@ export function mountSettings(token: string): { open: () => void } {
       shelf.append(box)
     }
 
-    const available = (state.plugins ?? []).filter((entry) => !entry.installed)
-    if (available.length === 0) {
-      shelf.append(el('p', 'hint', `Nothing new at ${state.registry}.`))
+    // A registry that is down is not an empty registry, and must not look like one.
+    if (!read.ok) shelf.append(el('p', 'hint', read.why ?? `Could not reach ${read.registry}.`))
+    else if (listings.every((entry) => entry.installed)) {
+      shelf.append(el('p', 'hint', `Nothing new at ${read.registry}.`))
     }
+
+    shelf.append(adding(), addingServer())
+    drawOffered()
+    drawOfferedSkills(read)
+  }
+
+  /**
+   * Know-how, kept visibly apart from capability, and on the other page for the same reason.
+   * Worst case here is bad advice; worst case on the Plugins page is anything this machine
+   * can do.
+   */
+  function drawOfferedSkills(read: LibraryState): void {
+    const available = (read.skills ?? []).filter((entry) => !entry.installed)
+    toLearn.replaceChildren()
+    if (available.length === 0) return
+    toLearn.append(
+      el('h3', 'step-heading', 'Skills to install'),
+      el(
+        'p',
+        'hint',
+        'A skill is instructions Alexia reads. It runs no code and adds nothing Alexia could not already do.',
+      ),
+    )
     for (const entry of available) {
       const box = el('section', 'pane')
       const head = el('div', 'pane-head')
-      head.append(
-        el('b', undefined, entry.name),
-        el('span', 'pane-meta', `${entry.version} · ${entry.license}${entry.author ? ` · ${entry.author}` : ''}`),
-      )
-      box.append(head, el('p', 'hint', entry.summary))
-
-      // Its author's own sentences, **before the download** rather than after it. The
-      // registry carries `requires` for exactly this reason: deciding whether to want
-      // something should not require already having it.
-      if (entry.requires.length > 0) {
-        const asked = el('ul', 'asks')
-        for (const need of entry.requires) {
-          const line = el('li')
-          line.append(el('code', undefined, need.cap), el('span', undefined, need.why))
-          asked.append(line)
-        }
-        box.append(el('p', 'asks-label', 'It will ask for:'), asked)
-      }
-
+      head.append(el('b', undefined, entry.name), el('span', 'pane-meta', entry.license ?? ''))
       const said = el('p', 'hint')
       const get = el('button', 'quiet-button', 'Install')
       get.type = 'button'
       get.addEventListener('click', () => {
         get.disabled = true
-        void fetchIn(entry.id, 'plugin', said).finally(() => (get.disabled = false))
+        said.className = 'hint'
+        said.textContent = 'Downloading…'
+        void fetchIn(entry.id, 'skill', said).finally(() => (get.disabled = false))
       })
-      const row = el('div', 'row')
-      row.append(get)
-      // Signed and checkable, signed and not checkable, not signed. Three states and three
-      // sentences: an unverified signature is worth exactly as much as none, and a screen
-      // that showed them alike would be the lie.
-      if (entry.signature && state.verifying !== true) {
-        row.append(el('span', 'pill caution', 'signature not checked'))
-      } else if (entry.signature) {
-        row.append(el('span', 'pill', 'signed'))
-      }
-      box.append(row, said)
-      shelf.append(box)
+      box.append(head, el('p', 'hint', entry.description), get, said)
+      toLearn.append(box)
     }
-
-    // Know-how, kept visibly apart from capability. Worst case here is bad advice; worst
-    // case above is anything this machine can do.
-    const offered = (state.skills ?? []).filter((entry) => !entry.installed)
-    if (offered.length > 0) {
-      shelf.append(
-        el('h3', 'step-heading', 'Skills to install'),
-        el('p', 'hint', 'A skill is instructions Alexia reads. It runs no code and adds nothing Alexia could not already do.'),
-      )
-      for (const entry of offered) {
-        const box = el('section', 'pane')
-        const head = el('div', 'pane-head')
-        head.append(el('b', undefined, entry.name), el('span', 'pane-meta', entry.license ?? ''))
-        const said = el('p', 'hint')
-        const get = el('button', 'quiet-button', 'Install')
-        get.type = 'button'
-        get.addEventListener('click', () => {
-          get.disabled = true
-          void fetchIn(entry.id, 'skill', said).finally(() => (get.disabled = false))
-        })
-        box.append(head, el('p', 'hint', entry.description), get, said)
-        shelf.append(box)
-      }
-    }
-
-    shelf.append(addingServer())
   }
 
   /**
@@ -337,7 +538,7 @@ export function mountSettings(token: string): { open: () => void } {
    * Two fields, because that is all an MCP server is — a name and a command line. The
    * sentence under it is not decoration: what arrives this way is not an Alexia plugin,
    * nobody has reviewed it, and every tool on it is treated as destructive until somebody
-   * says otherwise on its own pane.
+   * says otherwise on its own page.
    */
   function addingServer(): HTMLElement {
     const box = el('div', 'field installing')
@@ -429,31 +630,27 @@ export function mountSettings(token: string): { open: () => void } {
     known.append(...brokenRows(problems, 'One skill did not load', 'skills did not load'))
   }
 
-  function draw(panes: Pane[], problems: Problem[]): void {
-    list.replaceChildren(...panes.map(paneOf))
-    if (panes.length === 0 && problems.length === 0) {
-      list.append(el('p', 'hint', 'Nothing is installed yet. A plugin is a folder — point at one below.'))
-    }
-    list.append(adding())
-
-    // A folder that is not a plugin is shown, never swallowed. Somebody put it there on
-    // purpose and the reason it did not load is the only useful thing anyone can tell them.
-    broken.replaceChildren(...brokenRows(problems, 'One folder did not load', 'folders did not load'))
-  }
+  // ---- one plugin's own page ----------------------------------------------------------------
 
   /**
-   * One plugin, in whichever of its two states it is in (M2-5).
+   * One plugin, in whichever of its two states it is in (M2-5) — and on a page of its own.
    *
    * **Not enabled is the walkthrough**: the summary, then what it asked for in its author's
    * own words, then one button. Its settings are not drawn, because configuring something you
    * have not agreed to run is a screen asking two questions at once — and the order in the
    * lifecycle is enable, then configure.
    */
-  function paneOf(pane: Pane): HTMLElement {
-    const box = el('section', 'pane')
+  function drawPage(pane: Pane): void {
+    const top = el('div', 'view-top')
+    const back = el('button', 'quiet-button', '← All plugins')
+    back.type = 'button'
+    back.addEventListener('click', () => {
+      chosen = undefined
+      draw()
+    })
     const head = el('div', 'pane-head')
     head.append(
-      el('b', undefined, pane.name),
+      el('h3', 'step-heading', pane.name),
       el(
         'span',
         pane.enabled ? 'pill' : 'pill caution',
@@ -461,7 +658,10 @@ export function mountSettings(token: string): { open: () => void } {
       ),
       el('span', 'pane-meta', `${pane.version} · ${pane.license}`),
     )
-    box.append(head, el('p', 'hint', pane.summary))
+    top.append(head, back)
+
+    const box = el('div')
+    box.append(top, el('p', 'hint', pane.summary))
 
     // Compatibility mode (M3-6). The pill is not the whole of it: what matters is *what
     // Alexia does differently*, so the sentence says that, and the way out is a decision
@@ -487,21 +687,22 @@ export function mountSettings(token: string): { open: () => void } {
     // The author's own sentences, verbatim. This is what a person reads when deciding
     // whether to keep a plugin, so core never rewrites it and never summarises it.
     if (pane.requires.length > 0) {
-      const asked = el('ul', 'asks')
+      const wants = el('ul', 'asks')
       for (const need of pane.requires) {
         const row = el('li')
         row.append(el('code', undefined, need.cap), el('span', undefined, need.why))
-        asked.append(row)
+        wants.append(row)
       }
       box.append(
         el('p', 'asks-label', pane.enabled ? 'It asked for:' : 'Before you enable it, it is asking for:'),
-        asked,
+        wants,
       )
     }
 
     if (pane.enabled) for (const declared of pane.settings) box.append(widget(host(pane.id), declared))
     box.append(lifecycle(pane))
-    return box
+    sheet.replaceChildren(box)
+    view.scrollTop = 0
   }
 
   /**
@@ -531,8 +732,9 @@ export function mountSettings(token: string): { open: () => void } {
         said.textContent = answer.said ?? 'That did not work.'
         return
       }
-      // The whole screen, because enabling one plugin can satisfy another's requirement and
-      // deleting one takes its bundled skills with it.
+      // Deleting one takes its bundled skills with it, and a plugin that has gone has no
+      // page — `draw` drops the selection rather than leaving a page about nothing.
+      if (action === 'delete') chosen = undefined
       await load()
     }
 
@@ -561,10 +763,17 @@ export function mountSettings(token: string): { open: () => void } {
     return wrapper
   }
 
-
   return {
-    open: () => {
+    open: (page?: Page, filter?: string) => {
       view.scrollTop = 0
+      // The palette found a plugin and this is the page it lives on; typing its name into
+      // the filter is what turns *the right page* into *the right card*.
+      if (filter !== undefined) search.value = filter
+      if (page !== undefined) {
+        // Coming in from outside lands on the grid, never on whichever page was open last.
+        if (page === 'plugins') chosen = undefined
+        pick(page)
+      }
       void load()
     },
   }

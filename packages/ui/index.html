@@ -119,8 +119,10 @@
 
           <div id="chat-top">
             <h1 id="chat-title">New chat</h1>
-            <!-- Which model answered, so you know where your words went. -->
+            <!-- Which model answered, so you know where your words went, and what state
+                 that leaves you in: what Alexia can still *do*, never what it cost. -->
             <span id="model" class="status">no model yet</span>
+            <span id="rung" class="status rung" hidden></span>
           </div>
 
           <main id="log" aria-live="polite"></main>
@@ -150,10 +152,10 @@
           </form>
         </div>
 
-        <!-- The settings screen (M2-1). Ten widgets, declared in manifests, drawn here — and
-             drawn while every plugin is stopped, which with lazy spawn is the ordinary case.
-             Above them, the answers first run took: a screen you saw once, for thirty
-             seconds, should not be the only place its questions can be answered. -->
+        <!-- The settings screen (M2-1), in two pages (M8-3). General is what first run asked
+             and the know-how that is installed; Plugins is every plugin as a card, and one
+             card each behind it. The tab strip is the control surface's, reused rather than
+             copied — a second tab control would be a second set of states to keep in step. -->
         <section id="settings" class="view">
           <div class="centred">
             <div class="view-top">
@@ -161,111 +163,138 @@
               <button id="close-settings" class="quiet-button" type="button">Back</button>
             </div>
 
-            <!-- The three questions first run asked, in the same order and the same words,
-                 with their answers in them. Written by the same `/api/setup` the Start button
-                 writes. -->
-            <div class="group">
-              <label class="field">
-                <span class="label">What should I call you?</span>
-                <input id="name-setting" class="short" />
-              </label>
-              <label class="field">
-                <span class="label">How should I run?</span>
-                <!-- The rail's picker and this one are the same control twice, and both go
-                     through `/local`, `/combined`, `/cloud` — so there is one writer and
-                     neither can show a mode the other has changed. -->
-                <select class="mode" aria-label="How should I run?">
-                  <option value="local">Local — everything on this machine</option>
-                  <option value="combined">Combined — cloud thinks, this machine makes</option>
-                  <option value="cloud">Cloud — everything through APIs</option>
-                </select>
-              </label>
-              <div class="field">
-                <span class="label">Connect a provider</span>
-                <div class="pair">
-                  <select id="provider-setting" aria-label="Provider"></select>
-                  <input
-                    id="key-setting"
-                    type="password"
-                    placeholder="Paste a key"
-                    autocomplete="off"
-                    aria-label="API key"
-                  />
-                  <button id="save-key" class="quiet-button" type="button">Save</button>
+            <nav id="settings-tabs" class="tabs" aria-label="Settings">
+              <button id="settings-tab-general" class="tab on" type="button" aria-current="page">General</button>
+              <button id="settings-tab-plugins" class="tab" type="button" aria-current="false">Plugins</button>
+            </nav>
+
+            <div id="general">
+              <!-- The three questions first run asked, in the same order and the same words,
+                   with their answers in them. Written by the same `/api/setup` the Start button
+                   writes. -->
+              <div class="group">
+                <label class="field">
+                  <span class="label">What should I call you?</span>
+                  <input id="name-setting" class="short" />
+                </label>
+                <label class="field">
+                  <span class="label">How should I run?</span>
+                  <!-- The rail's picker and this one are the same control twice, and both go
+                       through `/local`, `/combined`, `/cloud` — so there is one writer and
+                       neither can show a mode the other has changed. -->
+                  <select class="mode" aria-label="How should I run?">
+                    <option value="local">Local — everything on this machine</option>
+                    <option value="combined">Combined — cloud thinks, this machine makes</option>
+                    <option value="cloud">Cloud — everything through APIs</option>
+                  </select>
+                </label>
+                <div class="field">
+                  <span class="label">Connect a provider</span>
+                  <div class="pair">
+                    <select id="provider-setting" aria-label="Provider"></select>
+                    <input
+                      id="key-setting"
+                      type="password"
+                      placeholder="Paste a key"
+                      autocomplete="off"
+                      aria-label="API key"
+                    />
+                    <button id="save-key" class="quiet-button" type="button">Save</button>
+                  </div>
+                  <!-- Whether there is a key for the chosen provider, never the key itself: it
+                       went to the keychain and nothing here can read it back. -->
+                  <p class="hint" id="key-said"></p>
                 </div>
-                <!-- Whether there is a key for the chosen provider, never the key itself: it
-                     went to the keychain and nothing here can read it back. -->
-                <p class="hint" id="key-said"></p>
               </div>
+              <!-- Which painting is on the wall. `docs/design.md` held for a while that there
+                   was no toggle and that the switch was the operating system; the operating
+                   system is still the default and is still the first card, and it is now one
+                   answer of three rather than the only one. Each card is the theme itself
+                   rather than a swatch of it — the two themes are one painting with the glaze
+                   and the paint changing places, so the painting is the honest preview. -->
+              <div class="field group">
+                <span class="label" id="theme-label">Which theme?</span>
+                <!-- Named, because three cards each holding a radio is a group with no name on
+                     it otherwise: a screen reader reaches the second one and says "Light, radio
+                     button, two of three" with nothing anywhere saying two of three *what*. -->
+                <div class="cards" role="radiogroup" aria-labelledby="theme-label">
+                  <label class="card theme">
+                    <!-- Both halves, because that is what following the desktop means:
+                         whichever of these two it is set to now, and the other one later. -->
+                    <span class="plate split" aria-hidden="true">
+                      <img src="/theme-light.webp" alt="" width="480" height="273" loading="lazy" />
+                      <img src="/theme-dark.webp" alt="" width="480" height="273" loading="lazy" />
+                    </span>
+                    <span class="card-head">
+                      <input type="radio" name="theme" value="system" />
+                      <b>System</b>
+                    </span>
+                    <span>Whatever this desktop is set to, and it follows when that changes.</span>
+                  </label>
+                  <label class="card theme">
+                    <!-- No alt text on any of the three: the card's own name is what a screen
+                         reader should read, and "a painting of the light theme" helps nobody
+                         who cannot see the painting. -->
+                    <img class="plate" src="/theme-light.webp" alt="" width="480" height="273" loading="lazy" />
+                    <span class="card-head">
+                      <input type="radio" name="theme" value="light" />
+                      <b>Light</b>
+                    </span>
+                    <span>Cobalt on champagne, whatever the desktop is doing.</span>
+                  </label>
+                  <label class="card theme">
+                    <img class="plate" src="/theme-dark.webp" alt="" width="480" height="273" loading="lazy" />
+                    <span class="card-head">
+                      <input type="radio" name="theme" value="dark" />
+                      <b>Dark</b>
+                    </span>
+                    <span>The same painting after dusk — champagne on cobalt.</span>
+                  </label>
+                </div>
+              </div>
+              <!-- The obvious way to turn autostart off, which is the half of "starts on login"
+                   that people actually need. Hidden in a browser, where it is not a setting. -->
+              <div class="field group" id="desktop-settings" hidden>
+                <label class="switch">
+                  <input id="autostart-setting" type="checkbox" />
+                  <span class="track"></span>
+                  <span>Start Alexia when I sign in</span>
+                </label>
+                <p class="hint" id="hotkey-setting"></p>
+              </div>
+              <!-- Know-how, as opposed to capability (M2-2). A skill is a folder with a
+                   Markdown file in it, so there is nothing to configure — only what is there,
+                   what is broken, and what else there is to have. Both halves are here rather
+                   than one being filed under Plugins: a skill is not a plugin. -->
+              <div id="skills"></div>
+              <div id="skills-library"></div>
             </div>
 
-            <!-- Which painting is on the wall. `docs/design.md` held for a while that there
-                 was no toggle and that the switch was the operating system; the operating
-                 system is still the default and is still the first card, and it is now one
-                 answer of three rather than the only one. Each card is the theme itself
-                 rather than a swatch of it — the two themes are one painting with the glaze
-                 and the paint changing places, so the painting is the honest preview. -->
-            <div class="field group">
-              <span class="label" id="theme-label">Which theme?</span>
-              <!-- Named, because three cards each holding a radio is a group with no name on
-                   it otherwise: a screen reader reaches the second one and says "Light, radio
-                   button, two of three" with nothing anywhere saying two of three *what*. -->
-              <div class="cards" role="radiogroup" aria-labelledby="theme-label">
-                <label class="card theme">
-                  <!-- Both halves, because that is what following the desktop means:
-                       whichever of these two it is set to now, and the other one later. -->
-                  <span class="plate split" aria-hidden="true">
-                    <img src="/theme-light.webp" alt="" width="480" height="273" loading="lazy" />
-                    <img src="/theme-dark.webp" alt="" width="480" height="273" loading="lazy" />
-                  </span>
-                  <span class="card-head">
-                    <input type="radio" name="theme" value="system" />
-                    <b>System</b>
-                  </span>
-                  <span>Whatever this desktop is set to, and it follows when that changes.</span>
-                </label>
-                <label class="card theme">
-                  <!-- No alt text on any of the three: the card's own name is what a screen
-                       reader should read, and "a painting of the light theme" helps nobody
-                       who cannot see the painting. -->
-                  <img class="plate" src="/theme-light.webp" alt="" width="480" height="273" loading="lazy" />
-                  <span class="card-head">
-                    <input type="radio" name="theme" value="light" />
-                    <b>Light</b>
-                  </span>
-                  <span>Cobalt on champagne, whatever the desktop is doing.</span>
-                </label>
-                <label class="card theme">
-                  <img class="plate" src="/theme-dark.webp" alt="" width="480" height="273" loading="lazy" />
-                  <span class="card-head">
-                    <input type="radio" name="theme" value="dark" />
-                    <b>Dark</b>
-                  </span>
-                  <span>The same painting after dusk — champagne on cobalt.</span>
-                </label>
+            <div id="plugins-page" hidden>
+              <!-- The grid, and the one card blown up. Two children of one page rather than a
+                   view of their own, so Back from a plugin lands on the grid and Back from the
+                   grid lands in the conversation — one meaning per press. -->
+              <div id="plugin-grids">
+                <input
+                  id="plugin-filter"
+                  class="table-filter"
+                  type="search"
+                  placeholder="Filter plugins"
+                  aria-label="Filter plugins"
+                />
+                <div id="bento" class="bento"></div>
+                <!-- Not installed, and therefore not shown until somebody asks. `details` is
+                     the disclosure the platform already has; a second one written here would
+                     be keyboard behaviour re-implemented for no reason. -->
+                <details id="available-box" hidden>
+                  <summary>Plugins you have not installed</summary>
+                  <div id="available" class="bento"></div>
+                </details>
+                <div id="problems"></div>
+                <div id="library"></div>
               </div>
+              <div id="plugin-detail" hidden></div>
             </div>
-            <!-- The obvious way to turn autostart off, which is the half of "starts on login"
-                 that people actually need. Hidden in a browser, where it is not a setting. -->
-            <div class="field group" id="desktop-settings" hidden>
-              <label class="switch">
-                <input id="autostart-setting" type="checkbox" />
-                <span class="track"></span>
-                <span>Start Alexia when I sign in</span>
-              </label>
-              <p class="hint" id="hotkey-setting"></p>
-            </div>
-            <!-- The library (M3-2). Browsing is the route a person should reach for; the path
-                 box further down is the one that still works when there is no registry, and
-                 the MCP form is the ten thousand servers Alexia inherits (M3-6). -->
-            <div id="library"></div>
-            <h3 class="step-heading">Plugins</h3>
-            <div id="panes"></div>
-            <div id="problems"></div>
-            <!-- Know-how, as opposed to capability (M2-2). A skill is a folder with a
-                 Markdown file in it, so there is nothing to configure — only what is there
-                 and what is broken. -->
-            <div id="skills"></div>
           </div>
         </section>
 
@@ -360,7 +389,6 @@
                 >The cloud does the thinking; your machine makes the images and the speech.
                 Each job goes to the side that is better at it, and it needs no download.</span
               >
-              <small id="training"></small>
             </label>
             <label class="card">
               <span class="card-head">
@@ -372,14 +400,16 @@
           </div>
         </div>
 
+        <!-- The key wall (§12.2). Every provider is a tile of the same size and the same
+             shape: no fork at screen one between one vendor's plumbing and another's, because
+             that asks somebody to choose between two things they have not heard of before
+             they have said hello. Each face carries the published free-tier numbers, what it
+             costs to get in, and what it costs in privacy where that is known. -->
         <div class="group" id="connect">
-          <h2 class="step-heading">Connect a provider</h2>
-          <p class="hint">OpenRouter's free tier needs no card. You can also do this later.</p>
-          <div class="pair">
-            <select id="provider" aria-label="Provider"></select>
-            <input id="key" type="password" placeholder="Paste a key" autocomplete="off" aria-label="API key" />
-          </div>
-          <p class="hint" id="terms"></p>
+          <h2 class="step-heading">Add a key, or don't</h2>
+          <p class="hint" id="wall-hint"></p>
+          <div id="wall" class="wall"></div>
+          <p class="hint" id="training"></p>
         </div>
 
         <!-- Step 5 lives here rather than as a screen of its own: Alexia is a tray-resident
@@ -396,7 +426,12 @@
           </label>
         </div>
 
+        <!-- Skipping is not a second, quieter button beside this one — it *is* this one,
+             wearing the words for it until a key exists. A grey link under a loud primary
+             would be the screen saying that leaving without a key is the lesser path, and it
+             is the supported one. -->
         <button id="begin" class="begin" type="button">Start</button>
+        <p class="hint" id="skip-line"></p>
       </div>
     </section>
 

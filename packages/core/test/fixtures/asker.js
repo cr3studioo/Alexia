@@ -47,6 +47,26 @@ server.registerTool(
   },
 )
 
+/**
+ * A slash command typed where there is no window — the shape a message from a phone has.
+ *
+ * The same `sampling` call `go` makes, carrying a line beginning with a slash rather than a
+ * sentence: a command has to reach core through the path a plugin already has, or it is a
+ * command that exists on one screen only.
+ */
+const typed = (line) => async () => {
+  const answer = await server.server.createMessage({
+    messages: [{ role: 'user', content: { type: 'text', text: line } }],
+    maxTokens: 200,
+    _meta: { 'alexia/tools': true },
+  })
+  return text(answer.content?.type === 'text' ? answer.content.text : '')
+}
+
+server.registerTool('slash_new', { description: 'Types /new.', annotations: { openWorldHint: true } }, typed('/new'))
+server.registerTool('slash_cheap', { description: 'Types /cheap.', annotations: { openWorldHint: true } }, typed('/cheap'))
+server.registerTool('slash_help', { description: 'Types /help.', annotations: { openWorldHint: true } }, typed('/help'))
+
 server.registerTool(
   'wipe',
   {

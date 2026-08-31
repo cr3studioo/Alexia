@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import type { Catalog } from './catalog.js'
+import type { Catalog, Model } from './catalog.js'
 import { pins, setPin } from './commands.js'
-import { route, type World } from './router.js'
+import { route, type Spend, type World } from './router.js'
 import { allow, forgetConsent } from './consent.js'
 import { forget } from './learned.js'
 import type { Row } from './plugins.js'
@@ -115,6 +115,27 @@ const count = (n: number): string =>
  */
 const price = (usd: number): string => (usd === 0 ? 'free' : `$${usd.toFixed(2)}`)
 
+/**
+ * Which side of the price line a model is on — the one fact the ladder groups by (D112).
+ *
+ * `tier` is the authority rather than the price, because the two can disagree and the tier is
+ * the thing every other rule in the router reads: `T2` and `T3` are billed to credit, `T0`
+ * and `T1` are not. A `T2` a provider happens to publish at zero today is still a paid row,
+ * and putting it in the free column would be the screen promising something the router does
+ * not.
+ */
+const sideOf = (model: Model): 'free' | 'paid' => (model.tier === 'T2' || model.tier === 'T3' ? 'paid' : 'free')
+
+/**
+ * The three stops, left to right — the values the slider is allowed to send.
+ *
+ * Written here and not in `panels.ts` because this is the end that refuses one: a stop
+ * declared on the screen that this list does not know about is a slider position that says
+ * *“whatever” is not one of free, mixed, paid* when you press it, which is a control that
+ * looks fine and does nothing. The two are held together by a test rather than by care.
+ */
+export const SPENDS: readonly Spend[] = ['free', 'mixed', 'paid']
+
 export function sources(options: SurfaceOptions): Record<string, Source> {
   const { skills, tooling, plugins, trace, catalog, store } = options
 
@@ -220,14 +241,18 @@ export function sources(options: SurfaceOptions): Record<string, Source> {
           await options.world(),
         )
         const best = would.ok ? would.choices[0]?.model.id : undefined
+        const listed = standing.order ?? []
         return (
           catalog.models
             .filter((model) => keyed.has(model.provider))
             .sort(
               (a, b) =>
-                // What it would pick, then what you have actually been using, then the order
-                // the router itself walks them in. The top of each group is the useful end.
+                // What it would pick, then the running order the user wrote themselves (D112),
+                // then what you have actually been using, then the order the router walks
+                // them in. The top of the list is the useful end.
                 Number(b.id === best) - Number(a.id === best) ||
+                (listed.indexOf(a.id) === -1 ? listed.length : listed.indexOf(a.id)) -
+                  (listed.indexOf(b.id) === -1 ? listed.length : listed.indexOf(b.id)) ||
                 // Then what the world is actually using, which is the closest thing to a
                 // review a model has. Providers that publish nothing fall through to price,
                 // so their models are ordered as they always were rather than sunk.
@@ -281,6 +306,46 @@ export function sources(options: SurfaceOptions): Record<string, Source> {
             ...(keyed.has(model.provider) ? [] : ['', `Add a key for ${model.provider} in settings to use this.`]),
           ].join('\n')
         )
+      },
+    },
+
+    /**
+     * The ladder: what may answer, and in what order (D112, the Models tab).
+     *
+     * **The same rows the table above it draws**, cut to what a running order is about — a
+     * name, what it costs, and which side of the price line it is on. It is a separate read
+     * rather than a flag on the table's rows because the two answer different questions:
+     * the table is *what exists*, and this is *what I said*, which is a list of five things
+     * on a machine where four hundred exist.
+     *
+     * `rank` is the position in the user's own shortlist, or empty for everything that is
+     * not in it. Everything is returned either way: the unlisted rows are what the search
+     * box adds from, and a picker whose contents are a second fetch is a picker that is
+     * empty for the first half-second somebody uses it.
+     */
+    routing: {
+      rows: async () => {
+        const standing = pins(store)
+        const keyed = await options.connected()
+        const listed = standing.order ?? []
+        return catalog.models
+          .filter((model) => keyed.has(model.provider))
+          .map((model) => ({
+            id: model.id,
+            name: model.name,
+            provider: model.provider,
+            price: price(model.priceIn),
+            side: sideOf(model),
+            // A number a person counts from, not an array index. Empty is *not on the list*,
+            // which is the ordinary state of almost every row here.
+            rank: listed.indexOf(model.id) === -1 ? '' : String(listed.indexOf(model.id) + 1),
+            tools: model.supportsTools ? 'tools' : 'text only',
+          }))
+          .sort(
+            (a, b) =>
+              (a.rank === '' ? Number.MAX_SAFE_INTEGER : Number(a.rank)) -
+                (b.rank === '' ? Number.MAX_SAFE_INTEGER : Number(b.rank)) || a.name.localeCompare(b.name),
+          )
       },
     },
 
@@ -460,7 +525,9 @@ export async function searchable(
     ['skills', 'skills', 'skill', (row) => String(row.name)],
     ['skills', 'learned', 'learned skill', (row) => String(row.name)],
     ['tools', 'tools', 'tool', (row) => String(row.name)],
-    ['library', 'library', 'plugin', (row) => String(row.name)],
+    // Not a control tab: plugins live on the settings screen (M8-3), and the shell routes
+    // this one word there. The palette says where a thing is; it does not get a second index.
+    ['plugins', 'library', 'plugin', (row) => String(row.name)],
   ]
   for (const [tab, key, kind, label] of lists) {
     const source = ours[key]
@@ -509,7 +576,10 @@ export function actions(
       return Promise.resolve({ ok: true, said: 'You are already in a new chat — nothing has been said in this one.' })
     }
     options.openSession(empty?.id ?? options.store.createSession())
-    return Promise.resolve({ ok: true, said: 'New chat. Press Back and it is on screen.' })
+    // Said the same way wherever it was asked for: this is the Chats screen's button and
+    // also `/new`, typed into the conversation it is about to replace, where *press Back*
+    // would be an instruction to leave a screen nobody is on.
+    return Promise.resolve({ ok: true, said: 'Started a new chat. Anything you say now goes into it.' })
   }
 
   const openChat = (id: string): Promise<{ ok: boolean; said: string }> => {
@@ -594,11 +664,61 @@ export function actions(
     }
   }
 
+  /**
+   * The slider (D112). Three stops, and the middle one is what Automatic always did.
+   *
+   * It writes a pin like every other axis does, so there is no second notion of *which
+   * models may answer* — the router reads one list of pins, and the ★ on the table below
+   * moves because it is defined as what the router would pick.
+   */
+  const setSpend = (choice: string): Promise<{ ok: boolean; said: string }> => {
+    if (!(SPENDS as readonly string[]).includes(choice)) {
+      return Promise.resolve({ ok: false, said: `“${choice}” is not one of ${SPENDS.join(', ')}.` })
+    }
+    setPin(options.store, { spend: choice as Spend })
+    return Promise.resolve({
+      ok: true,
+      said:
+        choice === 'free' ?
+          'Free only. Nothing that costs money will be asked, and if every free model is busy Alexia says so rather than reaching for a bill.'
+        : choice === 'paid' ?
+          'Paid only. Every request is billed to the provider you connected, and the free tiers are left alone.'
+        : 'Free first, then paid. The free models answer until they are rate-limited or too small, and Alexia says one line before the first charge.',
+    })
+  }
+
+  /**
+   * The running order, dragged rather than numbered.
+   *
+   * One string of ids rather than a move-up call per row: a reorder is one thing a person
+   * did, and sending it as four separate swaps is four chances to end up somewhere nobody
+   * asked for if one of them is dropped. Empty clears it, which is the *reset* button.
+   *
+   * **Unknown ids are dropped rather than refused.** A model that left the catalog since the
+   * screen was drawn would otherwise make the whole list unsaveable, with a sentence about a
+   * row the person cannot see.
+   */
+  const setOrder = (list: string): Promise<{ ok: boolean; said: string }> => {
+    const wanted = list.split(',').map((one) => one.trim()).filter((one) => one !== '')
+    const known = new Set(options.catalog.models.map((model) => model.id))
+    const order = wanted.filter((id) => known.has(id))
+    setPin(options.store, { order })
+    return Promise.resolve({
+      ok: true,
+      said:
+        order.length === 0 ?
+          'Order cleared. Every model falls back to cheapest-first within whatever the slider allows.'
+        : `${String(order.length)} in your own order. Everything else still answers, behind them.`,
+    })
+  }
+
   return {
     new_chat: newChat,
     open_chat: openChat,
     forget_chat: forgetChat,
     use_model: useModel,
+    set_spend: setSpend,
+    set_order: setOrder,
     /**
      * Back to the router choosing. On every row rather than only the pinned one, because a
      * button that appears and disappears as the selection moves is a button people hunt for

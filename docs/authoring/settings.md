@@ -1,4 +1,4 @@
-# Settings: the eleven widgets
+# Settings: the twelve widgets
 
 You declare; Alexia draws. **A plugin cannot style itself wrong because it never styles
 itself**, and the screen works while your process is stopped — which, with lazy spawn, is
@@ -17,6 +17,7 @@ the ordinary case.
 | `progress` | a bar | hidden entirely when nothing is in flight |
 | `action` | a button that calls one of your tools with no arguments | `tool: "install"` |
 | `table` | a list of things, with actions on each one | `rows`, `columns`, and see below |
+| `graph` | things that point at each other, drawn as a map | `rows`, and see below |
 
 ## Reading them
 
@@ -94,6 +95,42 @@ claimed nothing.
 A `rowActions` tool is called with `{ id }` and goes through that same gate. `confirm` is a
 second press, with `{column}` filled in from the row. Mark with `hideNarrow` the columns you
 would drop first on a phone — the buttons are what has to stay reachable.
+
+## `graph`: things that point at each other
+
+*Needs `"alexia_protocol": 4`.*
+
+```jsonc
+{ "key": "shape", "type": "graph", "label": "The shape of it",
+  "hint": "A ring means Alexia worked that one out rather than being told it.",
+  "rows": "list_notes", "detail": "about_note", "filter": true }
+```
+
+Same `rows` tool as a table, same `structuredContent`, same string `id`. Three more fields on
+a row, and no columns to declare:
+
+```js
+return {
+  content: [{ type: 'text', text: '2 notes' }],
+  structuredContent: {
+    rows: [
+      { id: '1', label: 'The grant', links: [], mark: false },
+      // `links` holds ids, not labels. One pointing at an id you did not return is dropped.
+      { id: '2', label: 'The grant deadline', links: ['1'], mark: true },
+    ],
+  },
+}
+```
+
+`mark` draws a ring around a node and your `hint` is where you say what it means. Everything
+else — the physics, the colours, the labels, zoom, drag, and settling without motion for
+somebody who asked for that — is Alexia's.
+
+**Only draw links somebody wrote.** If your edges come from a model deciding two things look
+similar, a table grouped by category is the honest picture: a graph of guesses looks
+meaningful and nobody looking at it can tell that it is not. And a map is not
+keyboard-reachable, so if a person needs to *act* on one of these things, put a `table` beside
+it — that is where a row has a name and a button.
 
 ## A panel: the same widgets, a different screen
 

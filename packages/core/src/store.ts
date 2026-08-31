@@ -95,15 +95,27 @@ const MIGRATIONS: string[] = [
 ]
 
 /**
- * The two windows a free tier is rationed by, and how long each lasts.
+ * The three windows a free tier is rationed by, and which bucket an instant falls in.
+ *
+ * A bucket rather than a length, because the third one is not a length: a **calendar** month
+ * is 28 to 31 days and a thirty-day approximation drifts a day out of step every other month,
+ * which on a thousand-calls-a-month budget is a thousand calls arriving in the wrong month.
+ * Numbering it `year * 12 + month` keeps it monotonic, which is what the pruning below reads.
  *
  * ponytail: the day is a UTC day, and a provider whose quota resets at some other hour will
  * disagree for a few hours after the boundary. The cost of being wrong is one 429 and a
  * fallback that already exists; the fix, if it ever matters, is a reset hour on the row.
  */
 export const SPANS = [
-  ['minute', 60_000],
-  ['day', 24 * 60 * 60 * 1000],
+  ['minute', (at: number): number => Math.floor(at / 60_000)],
+  ['day', (at: number): number => Math.floor(at / (24 * 60 * 60 * 1000))],
+  [
+    'month',
+    (at: number): number => {
+      const when = new Date(at)
+      return when.getUTCFullYear() * 12 + when.getUTCMonth()
+    },
+  ],
 ] as const
 
 /** What SQLite actually stores. `encode` turns everything else into one of these. */
@@ -521,8 +533,8 @@ export class Store {
   /** One more request sent to this provider, counted in both windows at once. */
   recordRequest(provider: string, at: number = Date.now()): void {
     this.transaction(() => {
-      for (const [span, size] of SPANS) {
-        const bucket = Math.floor(at / size)
+      for (const [span, bucketOf] of SPANS) {
+        const bucket = bucketOf(at)
         this.#db
           .prepare(
             'INSERT INTO provider_usage (provider, span, bucket, count) VALUES (?, ?, ?, 1)' +
@@ -538,15 +550,20 @@ export class Store {
     })
   }
 
-  /** How many requests have gone to this provider inside the current minute, and day. */
-  requests(provider: string, at: number = Date.now()): { minute: number; day: number } {
-    const count = (span: string, size: number): number => {
+  /**
+   * How many requests have gone to this provider inside the current minute, day and month.
+   *
+   * **Requests, not tokens.** Some free tiers are rationed in calls — a thousand a month,
+   * whatever is in them — and there is no arithmetic that turns a token budget into that one.
+   */
+  requests(provider: string, at: number = Date.now()): { minute: number; day: number; month: number } {
+    const count = (span: string, bucketOf: (at: number) => number): number => {
       const row = this.#db
         .prepare('SELECT count FROM provider_usage WHERE provider = ? AND span = ? AND bucket = ?')
-        .get(provider, span, Math.floor(at / size)) as { count: number } | undefined
+        .get(provider, span, bucketOf(at)) as { count: number } | undefined
       return row?.count ?? 0
     }
-    return { minute: count(...SPANS[0]), day: count(...SPANS[1]) }
+    return { minute: count(...SPANS[0]), day: count(...SPANS[1]), month: count(...SPANS[2]) }
   }
 
   /**

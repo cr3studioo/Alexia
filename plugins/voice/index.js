@@ -54,8 +54,36 @@ async function chosen() {
     clip: path('clip'),
     clipText: typeof settings.clip_text === 'string' ? settings.clip_text.trim() : '',
     expressive: settings.expression === true,
+    // What the panel's search boxes hold. They are a question rather than a preference,
+    // which is why they live beside the list they filter and not on the settings screen.
+    find: typeof settings.find === 'string' ? settings.find.trim() : '',
+    tags: Array.isArray(settings.find_tags) ? settings.find_tags : [],
+    langs: Array.isArray(settings.find_langs) ? settings.find_langs : [],
   }
 }
+
+/**
+ * The published voices somebody kept (M7-4 had only the ones cloning made).
+ *
+ * A voice on the catalogue needs nothing on this disk and nothing on the account — the id
+ * is the whole of what makes it speakable — so keeping one is a line in this plugin's own
+ * store rather than a copy of anything. Which also means **removing one only removes the
+ * line**: it stays published, and saying otherwise would be the lie M7-4 already refused to
+ * tell about a clone.
+ */
+async function kept() {
+  const saved = await alexia.storage.get('kept').catch(() => undefined)
+  return Array.isArray(saved) ? saved.filter((one) => one && typeof one.id === 'string') : []
+}
+
+/**
+ * What the last search found, by id.
+ *
+ * A row action carries `{ id }` and nothing else, so Keep would otherwise have no name to
+ * write down — and asking the vendor again for a row that is on screen is a second call to
+ * learn something this process was told a moment ago.
+ */
+const lastFound = new Map()
 
 /** The voices on the account, if there is a key. An empty list is the ordinary state. */
 async function cloned(key, signal) {
@@ -404,13 +432,20 @@ alexia.tool(
  * rather than on this disk, which is also why removing one is a call and not a file delete.
  */
 async function cloudVoices(key) {
-  return (await cloned(key)).map((one) => ({
+  const account = (await cloned(key)).map((one) => ({
     id: `${fish.PREFIX}${one.id}`,
     name: one.name,
     cloud: true,
-    mine: true,
+    owned: true,
     here: true,
   }))
+  const already = new Set(account.map((one) => one.id))
+  // A voice somebody kept that turns out to be their own is one voice, listed once, and the
+  // account's own answer is the truer of the two.
+  const saved = (await kept())
+    .filter((one) => !already.has(one.id))
+    .map((one) => ({ id: one.id, name: one.name ?? one.id, cloud: true, here: true }))
+  return [...account, ...saved]
 }
 
 alexia.tool(
@@ -424,7 +459,10 @@ alexia.tool(
     const rows = [...(await piper.catalogue(own)), ...(await cloudVoices(key))].map((one) => ({
       id: one.id,
       name: one.name ?? one.id,
-      where: one.cloud ? 'cloned, on fish.audio' : one.mine ? 'yours' : 'published',
+      where:
+        one.cloud ? (one.owned ? 'cloned, on fish.audio' : 'kept from fish.audio')
+        : one.mine ? 'yours'
+        : 'published',
       // Two facts, and the row says both: whether it is the one that speaks, and whether it
       // is actually here. The chosen voice not being downloaded yet is an ordinary state —
       // it arrives on the first thing said in it — and a row claiming only the first would
@@ -436,6 +474,140 @@ alexia.tool(
         : `■ not downloaded${one.mb ? ` — ${one.mb} MB` : ''}`,
     }))
     return { content: [{ type: 'text', text: `${rows.length} voices` }], structuredContent: { rows } }
+  },
+)
+
+/**
+ * The catalogue everybody else publishes (the predecessor's own Voice tab, arriving here).
+ *
+ * **The rows are the search**, which is why this one tool is both the table's `rows` and the
+ * button's `tool`: the query, the tags and the languages are widgets beside the list, and a
+ * press is the only thing that means *ask again*. A second tool that searched and a first
+ * that listed would be two things that could disagree about what is on screen.
+ *
+ * Five, because that is a screenful somebody reads rather than scrolls, and the catalogue is
+ * ranked — the sixth result is rarely the one.
+ */
+alexia.tool(
+  'search_voices',
+  {
+    description:
+      'Search the voices published on fish.audio, using the words and filters on the Voice panel. Returns the top few. Takes no arguments.',
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
+  },
+  async (ctx) => {
+    const { key, find, tags, langs } = await chosen()
+    if (!key) {
+      return {
+        isError: true,
+        content: [{ type: 'text', text: 'Add a fish.audio key on the plugins screen to browse the voices published there.' }],
+      }
+    }
+    const held = new Set((await kept()).map((one) => one.id))
+    const results = await fish.search(key, {
+      text: find,
+      tags,
+      languages: langs,
+      count: 5,
+      signal: ctx?.mcpReq?.signal,
+    })
+    lastFound.clear()
+    const rows = results.map((one) => {
+      const id = `${fish.PREFIX}${one.id}`
+      lastFound.set(id, one.name)
+      return {
+        id,
+        name: one.name,
+        tags: one.tags.slice(0, 4).join(' · '),
+        likes: String(one.likes),
+        state: held.has(id) ? '● kept' : '■ not kept',
+      }
+    })
+    return {
+      content: [{ type: 'text', text: rows.length === 0 ? 'Nothing matched that.' : `${rows.length} voices found.` }],
+      structuredContent: { rows },
+    }
+  },
+)
+
+alexia.tool(
+  'keep_voice',
+  {
+    description:
+      'Keep one of the voices found on fish.audio, so it joins the list and can be chosen. Takes the voice’s id.',
+    inputSchema: fromJsonSchema({
+      type: 'object',
+      properties: { id: { type: 'string', description: 'Which voice.' } },
+      required: ['id'],
+    }),
+    annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  async ({ id }) => {
+    if (fish.idOf(id) === undefined) {
+      return { isError: true, content: [{ type: 'text', text: `${id} is not a fish.audio voice.` }] }
+    }
+    const held = await kept()
+    if (held.some((one) => one.id === id)) return { content: [{ type: 'text', text: 'That one is already in the list.' }] }
+    const name = lastFound.get(id)
+    if (name === undefined) {
+      // Rather than writing the id down as a name. A row whose name is a hex string is a row
+      // nobody can pick out of a list, and the fix is one press of Search.
+      return { isError: true, content: [{ type: 'text', text: 'Search again, then keep the voice from the row it appears on.' }] }
+    }
+    await alexia.storage.set('kept', [...held, { id, name }])
+    await bind()
+    return { content: [{ type: 'text', text: `${name} is in the list. Choose it to speak in it.` }] }
+  },
+)
+
+/**
+ * What it sounds like, before it is the voice that answers.
+ *
+ * **Spoken rather than played back.** The vendor publishes a sample clip per voice, and the
+ * predecessor put an `<audio>` element on it — but a plugin here does not draw its own
+ * controls, and the clip's format is whatever its author uploaded, which the operating
+ * system's own player may or may not open. One short sentence through the engine that would
+ * actually be speaking costs a free call and answers the real question: *what will this
+ * sound like when it is answering me.*
+ */
+alexia.tool(
+  'hear_voice',
+  {
+    description: 'Say one short sentence in a voice without making it the one that speaks. Takes the voice’s id.',
+    inputSchema: fromJsonSchema({
+      type: 'object',
+      properties: { id: { type: 'string', description: 'Which voice.' } },
+      required: ['id'],
+    }),
+    annotations: { destructiveHint: false, openWorldHint: true },
+  },
+  async ({ id }, ctx) => {
+    const words = 'This is what I sound like.'
+    const { key, speaking } = await chosen()
+    const clone = fish.idOf(id)
+    await alexia.status('ready', '▲ Speaking').catch(() => {})
+    try {
+      if (clone !== undefined) {
+        if (!key) return { isError: true, content: [{ type: 'text', text: 'That voice lives on fish.audio and there is no key to reach it with.' }] }
+        const { wav } = piper.where(own, 'lessac')
+        await writeFile(wav, await fish.say(key, { text: words, id: clone, signal: ctx?.mcpReq?.signal }))
+        await piper.play(wav, ctx?.mcpReq?.signal)
+        return { content: [{ type: 'text', text: `That is ${id}.` }] }
+      }
+      // Deliberately not a download. A button that says *hear it* should not spend 60 MB and
+      // a minute to answer; the voice arrives the first time it is actually asked to speak.
+      if (!(await piper.ready(own, id, speaking))) {
+        return {
+          isError: true,
+          content: [{ type: 'text', text: `${id} is not downloaded yet. Choose it and it arrives the first time it speaks.` }],
+        }
+      }
+      const there = await piper.programs(own, id, speaking)
+      await piper.play(await piper.say({ ...there, text: words, signal: ctx?.mcpReq?.signal }), ctx?.mcpReq?.signal)
+      return { content: [{ type: 'text', text: `That is ${id}.` }] }
+    } finally {
+      await bind()
+    }
   },
 )
 
@@ -480,6 +652,17 @@ alexia.tool(
   async ({ id }) => {
     const { key } = await chosen()
     const clone = fish.idOf(id)
+    // A kept voice first, because it is the one case where removing is *forgetting*: it
+    // belongs to whoever published it, this machine holds only a line saying it is in the
+    // list, and calling the vendor's delete for it would be asking to delete somebody
+    // else's voice.
+    const held = await kept()
+    if (held.some((one) => one.id === id)) {
+      await alexia.storage.set('kept', held.filter((one) => one.id !== id))
+      if ((await chosen()).voice === id) await alexia.storage.set('voice', 'lessac')
+      await bind()
+      return { content: [{ type: 'text', text: `${id} is out of the list. It is still published on fish.audio.` }] }
+    }
     if (clone !== undefined) {
       if (!key) return { isError: true, content: [{ type: 'text', text: 'There is no fish.audio key, so there is nothing to remove it with.' }] }
       // Gone from the account, not from a folder. The selection falls back rather than
