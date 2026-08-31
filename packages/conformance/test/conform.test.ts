@@ -16,6 +16,16 @@ afterAll(() => rmSync(staging, { recursive: true, force: true, maxRetries: 10, r
 const level = (checks: { name: string; level: string }[], name: string): string | undefined =>
   checks.find((c) => c.name === name)?.level
 
+// **Every test here gets the same 60 second budget, including the ones that refuse early.**
+// Two of them had it and three did not, on the theory that a plugin rejected before spawn is
+// quick — and it is, on a warm machine. On a cold Windows runner the first `conform` in a
+// process pays for the module graph, the manifest schema and a temp tree it has just copied,
+// and vitest's 5 second default is not a bound on any of that: it is a bound on how busy the
+// runner happens to be. This suite failed a release build on the *first* of the three, having
+// passed the same commit twice, which is the signature of a timeout that is measuring the
+// wrong thing. The budget is not a fix for slowness; it is the admission that these tests
+// were never timing anything.
+
 test('the repo’s own plugin conforms', async () => {
   // `hello` is the plugin M0 wrote to answer, so it is the one this suite has to agree
   // with. If conformance and the reference plugin disagree, one of them is wrong.
@@ -34,7 +44,7 @@ test('a plugin whose folder and id disagree does not get a process', async () =>
   expect(report.ok).toBe(false)
   expect(report.checks).toHaveLength(1)
   expect(report.checks[0]?.detail).toMatch(/folder is called "renamed"/)
-})
+}, 60_000)
 
 test('an invalid manifest fails before anything is spawned', async () => {
   const dir = join(staging, 'broken')
@@ -43,7 +53,7 @@ test('an invalid manifest fails before anything is spawned', async () => {
   const report = await conform(dir)
   expect(report.ok).toBe(false)
   expect(report.checks[0]?.name).toBe('manifest')
-})
+}, 60_000)
 
 test('a folder with no manifest is not a plugin', async () => {
   const dir = join(staging, 'empty')
@@ -51,7 +61,7 @@ test('a folder with no manifest is not a plugin', async () => {
   const report = await conform(dir)
   expect(report.ok).toBe(false)
   expect(report.checks[0]?.detail).toMatch(/no readable plugin.json/)
-})
+}, 60_000)
 
 test('a plugin that dies on a missing dependency is caught', async () => {
   // vanisher's whole purpose is a dependency that is not there. Under this suite nothing
