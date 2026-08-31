@@ -106,6 +106,14 @@
   /* The painting: how strongly the brushwork shows through. One number, because it is the
      only thing anybody would ever want to turn down. */
   --paint: 0.16;
+
+  /* The painting itself, as the ground the panels are laid on — the same bitmap the Settings
+     card previews. Switched with the theme, so the two blocks below carry it too. */
+  --ground: url('/theme-light.webp');
+
+  /* How much of the panel is still surface and how much is the ground coming through the
+     frost. One number, like --paint: turn it up for solid, down for glass. */
+  --glass-tint: 78%;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -125,6 +133,7 @@
   --danger: #e58d7e;
   --chosen: #7fa6d4;
   --chosen-wash: #16293f;
+  --ground: url('/theme-dark.webp');
   }
 }
 
@@ -158,6 +167,7 @@
   --wash: color-mix(in oklab, var(--ink) 6%, transparent);
   --accent-wash: color-mix(in oklab, var(--accent) 10%, transparent);
   --paint: 0.2;
+  --ground: url('/theme-dark.webp');
 }
 
 @media (prefers-color-scheme: dark) {
@@ -186,7 +196,9 @@ body {
   height: 100vh;
   display: grid;
   grid-template-rows: 1fr;
-  background: var(--surface);
+  /* The painting is the ground. --surface stays as the colour behind it while the bitmap
+     loads and anywhere `cover` cannot reach. */
+  background: var(--surface) var(--ground) center / cover no-repeat fixed;
   color: var(--ink);
   font:
     var(--text-base) / var(--leading-prose) ui-sans-serif,
@@ -228,12 +240,20 @@ body[data-view='first-run'] #shell {
   display: none;
 }
 
-/* The panels, and the one shape they share. No shadows: depth is a hairline and one step of
-   surface, which survives both grounds without a second set of values. */
+/* The panels, and the one shape they share. Frosted glass over the painting: the surface is
+   pulled back to --glass-tint so the ground shows through, `backdrop-filter` blurs and
+   saturates what is behind, and a shadow plus a lit top edge lift the sheet off the picture.
+   (This reverses the old "no shadows" rule — a translucent panel with no shadow reads as a
+   stain on the wallpaper rather than a pane in front of it.) */
 .panel {
-  background: var(--surface-raised);
-  border: 1px solid var(--line);
+  background: color-mix(in oklab, var(--surface-raised) var(--glass-tint), transparent);
+  backdrop-filter: blur(22px) saturate(180%);
+  -webkit-backdrop-filter: blur(22px) saturate(180%);
+  border: 1px solid color-mix(in oklab, var(--line) 65%, transparent);
   border-radius: var(--radius-lg);
+  box-shadow:
+    0 10px 40px -12px rgb(0 0 0 / 25%),
+    inset 0 1px 0 0 color-mix(in oklab, #fff 30%, transparent);
   min-height: 0;
 }
 
@@ -1772,9 +1792,9 @@ input {
 /* ---- the theme cards ------------------------------------------------------------------
 
    The one place in this product where a picture is the right control. Everywhere else the
-   painting is a mask taking the theme's colour (`#paint`, `.band`, `.mark`); here it is two
-   flat images, because what is being chosen *is* the colour, and a preview that recoloured
-   with the current theme would show you the theme you already have three times over.
+   painting is a mask taking the theme's colour (`.band`, `.mark`); here it is two flat
+   images, because what is being chosen *is* the colour, and a preview that recoloured with
+   the current theme would show you the theme you already have three times over.
 
    They are the only bitmaps on the page after her face: 33KB each at 480px wide, which is a
    card at its widest on a 2× display and not a pixel more. `loading="lazy"` keeps both off
@@ -2713,29 +2733,9 @@ kbd {
    SVG in `currentColor`, so it recolours with the theme — champagne line on cobalt in the
    dark, cobalt line on champagne in the light, which is the app icon's own polarity.
 
-   It appears three times and no more: the mark, one band under it, and one panel behind the
-   conversation. `--paint` is the only lever, because how loud it is is the only thing anyone
-   would ever want to change about it. */
-
-#paint {
-  position: absolute;
-  right: -4rem;
-  top: 2rem;
-  width: 40rem;
-  max-width: 90%;
-  aspect-ratio: 640 / 700;
-  background: var(--accent);
-  -webkit-mask: url('/alexia-panel.svg') top right / contain no-repeat;
-  mask: url('/alexia-panel.svg') top right / contain no-repeat;
-  opacity: var(--paint);
-  pointer-events: none;
-  z-index: 0;
-}
-
-#chat > *:not(#paint) {
-  position: relative;
-  z-index: 1;
-}
+   The panel behind the conversation was dropped: with the theme bitmap as the ground and the
+   panels frosted over it, a second painting on the chat panel was a picture on a picture. So
+   it appears twice now — the mark, and one band under it. */
 
 .band {
   display: block;
