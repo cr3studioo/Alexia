@@ -394,6 +394,34 @@ for (const entry of entries) {
   cut += 1
 }
 
+/**
+ * Put the *latest* label back on the app, whatever GitHub thinks (D118).
+ *
+ * `--latest=false` above stops each plugin release being promoted, and that turned out not to
+ * be the same thing as leaving the pointer alone: with nothing explicitly promoted, GitHub
+ * answers `/releases/latest` with whichever release is newest, and eleven plugin releases in
+ * a row duly took it. The app's own release now carries `make_latest: true`, which should
+ * hold — *should* being the word this is here to remove.
+ *
+ * So: after publishing, the newest `vN.N.N` release is re-asserted as latest. It costs one
+ * API call, it is idempotent, and what it protects is the URL every installed Alexia asks for
+ * its updates — a pointer that has silently moved to a plugin release is an update path that
+ * stops working with nothing on screen to say why.
+ */
+if (!dry && cut > 0) {
+  const app = JSON.parse(
+    gh(['api', `repos/${repo}/releases`, '--jq', '[.[] | select(.tag_name | test("^v[0-9]")) | {id, tag_name}]'], true)
+      .stdout || '[]',
+  )[0]
+  if (app) {
+    gh(['api', '-X', 'PATCH', `repos/${repo}/releases/${app.id}`, '-f', 'make_latest=true'], true)
+    const now = gh(['api', `repos/${repo}/releases/latest`, '--jq', '.tag_name'], true).stdout.trim()
+    console.log(`Latest release is ${now}${now === app.tag_name ? '' : ` — expected ${app.tag_name}`}`)
+  } else {
+    console.log('No app release to mark latest yet. The first one to be published claims it.')
+  }
+}
+
 console.log('')
 console.log(
   dry ? `${entries.length} plugin(s) built into ${out}. Nothing was published.`
