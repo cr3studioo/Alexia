@@ -15,6 +15,15 @@
       try {
         var remembered = localStorage.getItem('alexia.theme')
         if (remembered === 'light' || remembered === 'dark') document.documentElement.dataset.theme = remembered
+        // Same reasoning for the panel glass: a value that waited for /api/state would be one
+        // frame of the default frost on every launch. 0..100, and the blur sum here matches
+        // glassFilter() in src/theme.ts.
+        var glass = parseInt(localStorage.getItem('alexia.glass'), 10)
+        if (glass >= 0 && glass <= 100) {
+          document.documentElement.style.setProperty('--glass-tint', glass + '%')
+          var gb = Math.round(glass * 0.5)
+          document.documentElement.style.setProperty('--glass-filter', gb === 0 ? 'none' : 'blur(' + gb + 'px)')
+        }
       } catch (unavailable) {
         /* Storage off. One frame of the desktop's own theme, then core's answer. */
       }
@@ -115,8 +124,6 @@
            with something else in it, which is why neither draws its own frame. -->
       <div id="stage" class="panel">
         <div id="chat" class="view">
-          <span id="paint" aria-hidden="true"></span>
-
           <div id="chat-top">
             <h1 id="chat-title">New chat</h1>
             <!-- Which model answered, so you know where your words went, and what state
@@ -251,6 +258,15 @@
                     <span>The same painting after dusk — champagne on cobalt.</span>
                   </label>
                 </div>
+              </div>
+              <!-- How far the painting comes through the panels. Right next to the theme it is
+                   painting through. Applied live on input; saved on release. -->
+              <div class="field group glass-row">
+                <label class="label" for="glass">Panel glass</label>
+                <input id="glass" type="range" min="0" max="100" step="1" />
+                <span class="range-ends" aria-hidden="true">
+                  <span>clear</span><span>solid</span>
+                </span>
               </div>
               <!-- The obvious way to turn autostart off, which is the half of "starts on login"
                    that people actually need. Hidden in a browser, where it is not a setting. -->

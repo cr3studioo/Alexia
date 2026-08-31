@@ -51,15 +51,65 @@ export function graph({ prompt, negative, checkpoint, steps, width, height, seed
       inputs: { samples: ['3', 0], vae: ['4', 2] },
     },
     ...(fp32 && {
-      8: { class_type: 'VAEDecodeTiled', inputs: { samples: ['3', 0], vae: ['4', 2], tile_size: 512 } },
+      8: {
+        class_type: 'VAEDecodeTiled',
+        // Every one of these is *required* by the node, and a graph missing one is refused
+        // outright with a 400 — which is how this was found, because `tile_size` alone was
+        // all it sent and this is the **default** path. The two temporal inputs are for
+        // video VAEs and do nothing to a still image; they are here because the node asks
+        // for them, and ComfyUI's own defaults are what they are set to.
+        inputs: { samples: ['3', 0], vae: ['4', 2], tile_size: 512, overlap: 64, temporal_size: 64, temporal_overlap: 8 },
+      },
     }),
     9: { class_type: 'SaveImage', inputs: { filename_prefix: 'alexia', images: ['8', 0] } },
   }
 }
 
+/**
+ * What ComfyUI said in the body of a refusal.
+ *
+ * It is the whole of the useful information and the first version of this file threw it
+ * away: a rejected graph is a 400 whose body names the node, the input and the reason, and
+ * *ComfyUI answered 400 Bad Request* is a sentence nobody can act on. Reading it turned a
+ * day's guessing into one line.
+ */
+const why = async (response) => {
+  try {
+    const body = await response.json()
+    const nodes = Object.entries(body?.node_errors ?? {}).map(
+      ([id, node]) =>
+        `${node?.class_type ?? `node ${id}`}: ${(node?.errors ?? [])
+          .map((one) => [one.message, one.details].filter(Boolean).join(' — '))
+          .join('; ')}`,
+    )
+    const said = [body?.error?.message, ...nodes].filter(Boolean).join(' — ')
+    return said ? ` — ${said}` : ''
+  } catch {
+    return ''
+  }
+}
+
 const json = async (response) => {
-  if (!response.ok) throw new Error(`ComfyUI answered ${response.status} ${response.statusText}`)
+  if (!response.ok) throw new Error(`ComfyUI answered ${response.status} ${response.statusText}${await why(response)}`)
   return response.json()
+}
+
+/**
+ * Which of the installed checkpoints somebody meant.
+ *
+ * Checkpoint names are filenames people did not choose — `hassakuXLIllustrious_v22.safetensors`
+ * — so *anything asking for a model by name has to match loosely or it will never match*. An
+ * exact name wins, then a name that contains what was asked for, and nothing else counts: a
+ * near-miss silently answered with a different model is how a request for an anime picture
+ * comes back photographic, which is worse than being told the name was wrong.
+ */
+export function pick(available, wanted) {
+  const asked = String(wanted ?? '').trim().toLowerCase()
+  if (!asked) return undefined
+  return (
+    available.find((one) => one.toLowerCase() === asked) ??
+    available.find((one) => one.toLowerCase().includes(asked))
+  )
 }
 
 /** Is it there, and what has it got? One call that answers both. */

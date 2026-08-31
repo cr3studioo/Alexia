@@ -75,3 +75,59 @@ export function mountTheme(chosen: Theme, keep: (theme: Theme) => void): void {
     })
   }
 }
+
+/**
+ * How opaque the frosted panels are, as a `--glass-tint` percentage. Same story as the theme:
+ * the store is the truth, `localStorage` is the copy the head script paints from before the
+ * network answers, and `index.html` carries the key a second time.
+ *
+ * The floor is 0: all the way clear is the panel reduced to its border and shadow, with the
+ * ground running straight behind the text. `contrast.test.ts` guarantees the palette, not the
+ * wallpaper behind a see-through panel, so that end is the reader's own call — the same bet
+ * the theme control makes.
+ *
+ * The blur is not fixed either: it scales with the tint (`--glass-filter`), so sliding to
+ * clear also takes the frost off rather than leaving a blurred pane of nothing. It is blur
+ * and nothing else — no `saturate`, which was quietly repainting the ground more vivid
+ * wherever a panel sat over it.
+ */
+export const GLASS_MIN = 0
+export const GLASS_MAX = 100
+export const GLASS_DEFAULT = 60
+
+/** Where the head script looks. Written down twice; `index.html` is the other. */
+export const REMEMBERED_GLASS = 'alexia.glass'
+
+export const clampGlass = (pct: number): number =>
+  Math.min(GLASS_MAX, Math.max(GLASS_MIN, Math.round(Number.isFinite(pct) ? pct : GLASS_DEFAULT)))
+
+/** The `backdrop-filter` for a given tint. `index.html`'s head script inlines the same sum. */
+export const glassFilter = (pct: number): string => {
+  const blur = Math.round(clampGlass(pct) * 0.5)
+  return blur === 0 ? 'none' : `blur(${blur}px)`
+}
+
+export function applyGlass(pct: number): void {
+  const clamped = clampGlass(pct)
+  document.documentElement.style.setProperty('--glass-tint', `${clamped}%`)
+  document.documentElement.style.setProperty('--glass-filter', glassFilter(clamped))
+  try {
+    localStorage.setItem(REMEMBERED_GLASS, String(clamped))
+  } catch {
+    // A cache. One frame of the default frost on the next launch is the whole cost.
+  }
+}
+
+/**
+ * The slider, beside the theme cards it paints through. `input` applies it live — the screen
+ * is the preview — and `change` (pointer released, arrow key settled) is the one that writes,
+ * so a drag is one save and not one per pixel.
+ */
+export function mountGlass(chosen: number, keep: (pct: number) => void): void {
+  applyGlass(chosen)
+  const slider = document.querySelector<HTMLInputElement>('#glass')
+  if (!slider) return
+  slider.value = String(clampGlass(chosen))
+  slider.addEventListener('input', () => applyGlass(Number(slider.value)))
+  slider.addEventListener('change', () => keep(clampGlass(Number(slider.value))))
+}

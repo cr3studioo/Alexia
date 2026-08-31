@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { expect, test } from 'vitest'
-import { graph } from '../comfy.js'
+import { graph, pick } from '../comfy.js'
 
 // The graph is the whole of what this plugin knows about diffusion, and one wire in the
 // wrong place is a black image with no error anywhere. That failure is the reason the
@@ -28,6 +28,30 @@ test('the full-precision decode is the one that avoids the black image', () => {
   expect(built(true)[8].inputs.vae).toEqual(['4', 2])
 })
 
+test('the tiled decode sends every input the node requires', () => {
+  // Found by trying to make a picture: `VAEDecodeTiled` requires four numbers, this sent
+  // one, and ComfyUI refuses the whole graph with a 400 naming the three that are missing.
+  // It is the **default** path, so until this was fixed the plugin could not make an image
+  // at all on a current ComfyUI. The temporal pair are for video VAEs and do nothing to a
+  // still — they are here because the node asks for them.
+  expect(Object.keys(built(true)[8].inputs).sort()).toEqual(
+    ['overlap', 'samples', 'temporal_overlap', 'temporal_size', 'tile_size', 'vae'],
+  )
+})
+
 test('the same seed and prompt give the same graph', () => {
   expect(JSON.stringify(built(true))).toBe(JSON.stringify(built(true)))
+})
+
+test('a model is picked by any part of the name nobody wants to type', () => {
+  // Checkpoint filenames are not names people chose, and asking for one exactly is asking
+  // for a typo. What must not happen is a near-miss quietly answered with another model:
+  // that is how a request for anime comes back photographic and nobody can tell why.
+  const have = ['CyberRealisticPony_V18.0_F16.safetensors', 'hassakuXLIllustrious_v22.safetensors']
+  expect(pick(have, 'hassaku')).toBe(have[1])
+  expect(pick(have, 'HASSAKU')).toBe(have[1])
+  expect(pick(have, have[0])).toBe(have[0])
+  expect(pick(have, 'flux')).toBeUndefined()
+  expect(pick(have, '')).toBeUndefined()
+  expect(pick(have, undefined)).toBeUndefined()
 })

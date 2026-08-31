@@ -139,7 +139,7 @@ test('first run asks three things and then never asks again', async () => {
 
   const read = async () =>
     (await (await call('/api/state')).json()) as {
-      setup: { done: boolean; name: string; theme: string }
+      setup: { done: boolean; name: string; theme: string; glass: number }
       providers: { id: string; trainsOnYourData: string; terms?: string; connected: boolean }[]
     }
 
@@ -148,7 +148,7 @@ test('first run asks three things and then never asks again', async () => {
   // answered, and `system` is the answer, which is the behaviour there was before there was a
   // control. It is on this endpoint because it is the same kind of value: a fact about this
   // install that the settings screen can change and change back.
-  expect(before.setup).toEqual({ done: false, name: 'Alexia', mode: 'combined', theme: 'system' })
+  expect(before.setup).toEqual({ done: false, name: 'Alexia', mode: 'combined', theme: 'system', glass: 60 })
   /**
    * What the mode picker is honest about. Two things changed here and both are the point.
    *
@@ -178,7 +178,7 @@ test('first run asks three things and then never asks again', async () => {
   })
 
   const after = await read()
-  expect(after.setup).toEqual({ done: true, name: 'Ada', mode: 'local', theme: 'system' })
+  expect(after.setup).toEqual({ done: true, name: 'Ada', mode: 'local', theme: 'system', glass: 60 })
   // The key went to the keychain and nowhere near the database.
   expect(await secrets.get(CORE, keyOf(PROVIDERS[0]!))).toBe('sk-users-own')
   // And the screen can say so without being able to read it back — which is what stops the
@@ -208,7 +208,7 @@ test('first run asks three things and then never asks again', async () => {
   })
 
   const edited = await read()
-  expect(edited.setup).toEqual({ done: true, name: 'Grace', mode: 'local', theme: 'system' })
+  expect(edited.setup).toEqual({ done: true, name: 'Grace', mode: 'local', theme: 'system', glass: 60 })
   expect(await secrets.get(CORE, keyOf(PROVIDERS[0]!))).toBe('sk-the-second-one')
 
   // A sentence in the key box is refused here rather than at the provider. This exact string

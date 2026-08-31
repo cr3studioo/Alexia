@@ -46,6 +46,33 @@ test('theme: the head script and the module use the same storage key', () => {
   expect(head).toContain(`localStorage.getItem('${key!}')`)
 })
 
+test('theme: the panel-glass mirror uses one key and one range end to end', () => {
+  // Same failure as the theme key, one control over: the head script paints the frost before
+  // the network answers, so a key it reads that the module never writes is a mirror that is
+  // never read. And the clamp is written in three places — bound them here.
+  const glassKey = /REMEMBERED_GLASS = '([^']+)'/.exec(shell)?.[1]
+  expect(glassKey).toBeTruthy()
+  const head = html.slice(0, html.indexOf('</head>'))
+  expect(head).toContain(`localStorage.getItem('${glassKey!}')`)
+
+  const min = Number(/GLASS_MIN = (\d+)/.exec(shell)?.[1])
+  const max = Number(/GLASS_MAX = (\d+)/.exec(shell)?.[1])
+  expect([min, max]).toEqual([0, 100])
+  // The slider offers exactly that range, and the head script guards exactly it.
+  expect(html).toMatch(new RegExp(`id="glass"[^>]*min="${min}"[^>]*max="${max}"`))
+  expect(head).toContain(`glass >= ${min} && glass <= ${max}`)
+  // Core clamps to the same window before it stores.
+  expect(serve).toContain(`Math.min(${max}, Math.max(${min}, Math.round(chosen.glass)))`)
+
+  // The blur scales with the tint, and the head script inlines the same sum glassFilter()
+  // uses — a mismatch is one frame of the wrong frost, then the module overwrites it.
+  const mult = /glassFilter[^]*?\* ([\d.]+)\)/.exec(shell)?.[1]
+  expect(mult).toBe('0.5')
+  expect(head).toContain(`Math.round(glass * ${mult})`)
+  // .panel reads the variable the module sets, with a static fallback for the first paint.
+  expect(css).toMatch(/backdrop-filter:\s*var\(--glass-filter,/)
+})
+
 test('theme: forcing a theme carries everything the desktop-preference query carries', () => {
   // The bug this exists for, found in the hook before anything drove it: `[data-theme='dark']`
   // set the fifteen colours and not `--paint` or the washes, so a forced dark theme was a
@@ -81,10 +108,10 @@ test('theme: the two previews are served, packaged, and small', () => {
   for (const file of new Set(plates)) {
     expect(serve, `serve.ts does not serve /${file}, so the card would be an empty frame`).toContain(`'/${file}'`)
     expect(packager, `package.mjs does not copy ${file} into the packaged shell`).toContain(`'${file}'`)
-    // They are the only bitmaps on this page after her face, and they are decoration for one
-    // screen. A cap rather than a target: the originals were three megabytes each, and the
-    // way that gets back in is somebody replacing a file rather than editing this line.
+    // They are the card preview *and* the page background now — the artwork at its own
+    // resolution rather than an upscale of a thumbnail. Still a cap rather than a target: the
+    // source PNGs are ~3MB, and the way that gets back in is a file swap, not editing this line.
     const bytes = statSync(join(ui, file)).size
-    expect(bytes, `${file} is ${Math.round(bytes / 1024)}KB`).toBeLessThan(64 * 1024)
+    expect(bytes, `${file} is ${Math.round(bytes / 1024)}KB`).toBeLessThan(512 * 1024)
   }
 })
