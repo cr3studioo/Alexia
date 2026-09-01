@@ -4,7 +4,7 @@
   "id": "media",
   "name": "Local image generation",
   "summary": "Makes images on this machine with ComfyUI, starting it if it is not already running, so the picture-making half of Combined mode is real.",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "license": "AGPL-3.0-only",
   "entry": {
     "run": "node",
@@ -26,6 +26,10 @@
     {
       "cap": "proc.spawn",
       "why": "To start ComfyUI for you, if it is installed on this machine and not already running."
+    },
+    {
+      "cap": "fs.read_scoped",
+      "why": "To read the workflow file you exported from ComfyUI, so it can be saved where ComfyUI keeps them. It only ever reads."
     }
   ],
   "provides": [
@@ -54,14 +58,11 @@
       "hint": "It takes about a minute the first time and stays running afterwards. Off means you start it yourself."
     },
     {
-      "type": "choice",
+      "type": "text",
       "key": "checkpoint",
       "label": "Model",
-      "options": [
-        "auto"
-      ],
-      "default": "auto",
-      "hint": "Auto uses whatever checkpoint ComfyUI has loaded. The list fills in once it can reach ComfyUI."
+      "placeholder": "auto",
+      "hint": "Any part of a checkpoint’s filename is enough — typing hassaku finds hassakuXLIllustrious_v22. Leave it empty for whichever ComfyUI has. Ask Alexia to list the models to see the names."
     },
     {
       "type": "number",
@@ -89,7 +90,8 @@
   "storage": {
     "namespace": "media",
     "tables": [
-      "images"
+      "images",
+      "runs"
     ],
     "dir": true
   }

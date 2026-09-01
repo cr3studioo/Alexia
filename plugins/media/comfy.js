@@ -112,6 +112,19 @@ export function pick(available, wanted) {
   )
 }
 
+/**
+ * What somebody typed in the Model box — or nothing, which is most of the time.
+ *
+ * `auto` is not a filename and must never be matched as one. It was the single option of the
+ * dropdown this box replaced, so it is the value an existing install has saved, and it has to
+ * go on meaning *whichever ComfyUI has* rather than start matching any checkpoint whose name
+ * happens to contain those four letters.
+ */
+export function named(said) {
+  const asked = String(said ?? '').trim()
+  return asked.toLowerCase() === 'auto' ? '' : asked
+}
+
 /** Is it there, and what has it got? One call that answers both. */
 export async function checkpoints(server, signal) {
   const info = await json(await fetch(`${server}/object_info/CheckpointLoaderSimple`, { signal }))
@@ -144,16 +157,16 @@ export async function queue(server, prompt, clientId, signal) {
  * to sixty seconds, and a queue in front of it can make that minutes. What is not bounded
  * is what happens after a stop — `signal` reaches the fetch, and the loop ends with it.
  */
-export async function wait(server, id, { signal, onProgress, timeoutMs = 15 * 60_000 } = {}) {
+export async function wait(server, id, { signal, onProgress, timeoutMs = 15 * 60_000, expect = 'image' } = {}) {
   const until = Date.now() + timeoutMs
   for (let tick = 0; Date.now() < until; tick++) {
     if (signal?.aborted) throw new Error('Stopped.')
     const history = await json(await fetch(`${server}/history/${id}`, { signal }))
     const done = history?.[id]
     if (done) {
-      const images = Object.values(done.outputs ?? {}).flatMap((node) => node.images ?? [])
-      if (images.length === 0) throw new Error('ComfyUI finished and produced no image.')
-      return images
+      const made = outputs(done)
+      if (made.files.length === 0 && made.text.length === 0) throw new Error(`ComfyUI finished and produced no ${expect}.`)
+      return made
     }
     // The queue position, which is the only honest thing to say while waiting: "still
     // queued behind two" is information, and a spinner is not.
@@ -172,8 +185,8 @@ export async function wait(server, id, { signal, onProgress, timeoutMs = 15 * 60
   throw new Error('ComfyUI did not finish in time.')
 }
 
-/** Fetch one finished image's bytes. */
-export async function image(server, { filename, subfolder = '', type = 'output' }, signal) {
+/** Fetch one finished output's bytes. Any kind — `/view` serves whatever the node wrote. */
+export async function download(server, { filename, subfolder = '', type = 'output' }, signal) {
   const url = new URL(`${server}/view`)
   url.searchParams.set('filename', filename)
   url.searchParams.set('subfolder', subfolder)
@@ -181,4 +194,57 @@ export async function image(server, { filename, subfolder = '', type = 'output' 
   const response = await fetch(url, { signal })
   if (!response.ok) throw new Error(`could not read the image back: ${response.status}`)
   return Buffer.from(await response.arrayBuffer())
+}
+
+/** The output keys ComfyUI writes a list of files under. */
+export const KINDS = ['images', 'gifs', 'audio', 'video', 'files']
+
+/**
+ * What a finished run produced, whatever kind of thing that is.
+ *
+ * `generate` only ever had to find images. A workflow does not: one of the three saved on this
+ * machine renders audio, and the folder named for image-to-video is empty only because that
+ * workflow has not been built yet. So outputs are read by the shape ComfyUI writes them in — a
+ * list of `{filename, subfolder, type}` under some key — rather than by the one key that used
+ * to matter.
+ */
+export function outputs(done) {
+  const nodes = Object.values(done?.outputs ?? {})
+  return {
+    files: nodes
+      .flatMap((node) => KINDS.flatMap((kind) => (Array.isArray(node?.[kind]) ? node[kind] : [])))
+      .filter((one) => typeof one?.filename === 'string'),
+    // `ShowText` and its like put strings here. On these workflows that is the prompt the graph
+    // actually built out of the plain English, which is the one thing a person cannot otherwise
+    // see — the picture is the only other evidence it ran at all.
+    text: nodes
+      .flatMap((node) => (Array.isArray(node?.text) ? node.text : []))
+      .map(String)
+      .filter((one) => one.trim() !== ''),
+  }
+}
+
+/**
+ * Every node class this install has, and what each one takes.
+ *
+ * The whole of it, which is a megabyte or two on an install carrying twenty-six custom node
+ * packs — so it is fetched when a workflow is about to be read and not on every call. It answers
+ * two questions nothing else can: **is this class installed** (a graph naming one that is not is
+ * a 400 whose body nobody reads), and **is that title the author's or the class's own**, because
+ * an untitled node exports its display name and there is no other way to tell.
+ */
+export async function classes(server, signal) {
+  return await json(await fetch(`${server}/object_info`, { signal }))
+}
+
+/**
+ * Stop what ComfyUI is rendering.
+ *
+ * `signal` reaches the fetch and ends the poll, which is where this stopped before: the job kept
+ * rendering, on a graphics card nobody was waiting for. Answers 200 with nothing in it, and
+ * interrupting an empty queue is not an error.
+ */
+export async function interrupt(server, signal) {
+  const response = await fetch(`${server}/interrupt`, { method: 'POST', signal })
+  return response.ok
 }

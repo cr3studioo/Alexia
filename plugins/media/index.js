@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { fromJsonSchema, log, plugin } from '@alexia/sdk'
 import { Buffer } from 'node:buffer'
-import { writeFileSync } from 'node:fs'
-import { join } from 'node:path'
-import { checkpoints, graph, image, pick, queue, wait } from './comfy.js'
+import { readFileSync, writeFileSync } from 'node:fs'
+import { basename, join } from 'node:path'
+import { checkpoints, classes, download, graph, interrupt, named, pick, queue, wait } from './comfy.js'
 import { alive, awake, install, loopback, port, ready, start, stop, tail } from './launch.js'
+import { API_SUFFIX, FOLDER, apply, isApi, knobs, missing, read, reseed, saved, write } from './workflows.js'
 
 /**
  * Local image generation (M4-6).
@@ -50,14 +51,23 @@ const logFile = () => join(own ?? '.', 'comfyui.log')
 async function look(signal) {
   try {
     available = await checkpoints(await where(), signal)
-    return available.length > 0 ?
-        { ok: true, said: `● Ready — ${available.length} model${available.length === 1 ? '' : 's'}` }
-      : { ok: false, said: '▲ ComfyUI is running but has no checkpoint installed' }
+    if (available.length === 0) return { ok: false, said: '▲ ComfyUI is running but has no checkpoint installed' }
+    const many = `${available.length} model${available.length === 1 ? '' : 's'}`
+    // A model named in the settings that is not installed is the one thing this screen can
+    // catch and nothing else will: pictures still come out, painted by a different model,
+    // and they look like the plugin working. Naming it here costs a line and a colour.
+    const asked = await preferred()
+    return asked && !pick(available, asked) ?
+        { ok: true, said: `▲ Ready — ${many}, and none of them is “${asked}”. Pictures use ${available[0]}.` }
+      : { ok: true, said: `● Ready — ${many}` }
   } catch {
     available = []
     return { ok: false, said: `■ ComfyUI is not answering at ${await where()}` }
   }
 }
+
+/** The model the settings screen asks for, if it asks for one. `named` says what counts. */
+const preferred = async () => named((await settings()).checkpoint)
 
 /**
  * Where ComfyUI lives on this machine.
@@ -167,8 +177,8 @@ async function wake(signal, ctx) {
  * perfectly and getting it wrong. A name in the call is how the asker says which.
  */
 async function chosen(wanted) {
-  const { checkpoint, steps, vae_fp32: fp32 } = await settings()
-  const picked = pick(available, wanted) ?? (available.includes(checkpoint) ? checkpoint : available[0])
+  const { steps, vae_fp32: fp32 } = await settings()
+  const picked = pick(available, wanted) ?? pick(available, await preferred()) ?? available[0]
   return { checkpoint: picked, steps: Number(steps) || 25, fp32: fp32 !== false }
 }
 
@@ -240,14 +250,14 @@ const made = alexia.tool(
     })
 
     const id = await queue(server, built, 'alexia', signal)
-    const found = await wait(server, id, {
+    const found = await awaiting(server, id, {
       signal,
       onProgress: (message, tick) => alexia.progress(ctx, tick, 0, message),
     })
 
     const saved = []
-    for (const one of found) {
-      const bytes = await image(server, one, signal)
+    for (const one of found.files) {
+      const bytes = await download(server, one, signal)
       const to = join(own, `${Date.now()}-${one.filename}`)
       writeFileSync(to, Buffer.from(bytes))
       saved.push(to)
@@ -283,6 +293,356 @@ alexia.tool(
     const state = await bind(ctx?.mcpReq?.signal)
     return {
       content: [{ type: 'text', text: available.length > 0 ? available.join('\n') : state.said }],
+    }
+  },
+)
+
+/**
+ * Every node class this install has, cached for a few minutes.
+ *
+ * It is a megabyte or two on a machine carrying twenty-six custom node packs, and every question
+ * about a workflow needs it: *is this class installed*, and *is that title the author's own or
+ * the class's*. The plugin is stopped after five idle minutes so the cache cannot outlive the
+ * process by much; the ceiling is here for the case where somebody installs a node pack and
+ * restarts ComfyUI while Alexia stays up.
+ */
+let known
+async function nodes(signal) {
+  if (known && Date.now() - known.at < 5 * 60_000) return known.classes
+  known = { classes: await classes(await where(), signal), at: Date.now() }
+  return known.classes
+}
+
+/** The one sentence that fixes every state a workflow can be in short of running. */
+const EXPORT_IT =
+  'In ComfyUI: Workflow → Export (API). Then give Alexia the file it saves — add_workflow takes its path.'
+
+const ago = (at) => {
+  const days = Math.floor((Date.now() - Number(at)) / 86_400_000)
+  return (
+    days < 1 ? 'today'
+    : days === 1 ? 'yesterday'
+    : days < 60 ? `${days} days ago`
+    : `${Math.round(days / 30)} months ago`
+  )
+}
+
+/** Where a workflow stands, in the words of the thing that has to change for it to run. */
+function standing(row) {
+  if (!row.export) return `not exported. ${EXPORT_IT}`
+  if (!row.workflow) return 'exported, though the workflow it came from is no longer saved here.'
+  if (row.stale) return `edited ${ago(row.editedAt)}, exported ${ago(row.exportedAt)} — so the export is behind. ${EXPORT_IT}`
+  return 'ready to run.'
+}
+
+/**
+ * One knob, as a line somebody can act on.
+ *
+ * A combo's options are filenames on this machine and there can be a hundred of them, so the
+ * list is cut and the count says what was cut. Nothing is guessed from it either way: a value
+ * that is not on the list is refused by name rather than quietly replaced.
+ */
+function describe(knob) {
+  const kind =
+    knob.options ?
+      `one of ${knob.options.slice(0, 12).join(', ')}${knob.options.length > 12 ? `, and ${knob.options.length - 12} more` : ''}`
+    : knob.type
+  return `  ${knob.field} (${kind}) — ${knob.title}`
+}
+
+/**
+ * Wait for a job, and stop it if the waiting stops.
+ *
+ * `signal` used to reach only the fetch: the poll ended and **the job carried on rendering**, on
+ * a graphics card nobody was waiting for and with the next request queued behind it. `/interrupt`
+ * is a call this plugin never made. It is made without the signal, because the signal is the
+ * thing that just aborted.
+ */
+async function awaiting(server, id, options) {
+  try {
+    return await wait(server, id, options)
+  } catch (error) {
+    if (options?.signal?.aborted) await interrupt(server).catch(() => {})
+    throw error
+  }
+}
+
+/** Which saved workflow somebody meant. The names are long and nobody types one whole. */
+async function which(server, wanted, signal) {
+  const rows = await saved(server, signal)
+  const found = pick(
+    rows.map((one) => one.name),
+    wanted,
+  )
+  return { rows, row: rows.find((one) => one.name === found) }
+}
+
+/** ComfyUI up, by whatever means are allowed. The two workflow tools open the same way. */
+async function reachable(ctx) {
+  const signal = ctx?.mcpReq?.signal
+  const state = await bind(signal)
+  return state.ok ? state : await wake(signal, ctx)
+}
+
+const refuse = (text) => ({ isError: true, content: [{ type: 'text', text }] })
+
+alexia.tool(
+  'workflows',
+  {
+    description:
+      'List the ComfyUI workflows saved on this machine, and for each one the fields ' +
+      'run_workflow takes. Takes no arguments. Call this before run_workflow — a workflow’s ' +
+      'fields are named by whoever built it and are different for every workflow. It also says ' +
+      'which workflows cannot run yet and what would fix that.',
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+  },
+  async (ctx) => {
+    const signal = ctx?.mcpReq?.signal
+    const state = await reachable(ctx)
+    if (!state.ok) return refuse(state.said)
+    const server = await where()
+    const rows = await saved(server, signal)
+    if (rows.length === 0) {
+      return { content: [{ type: 'text', text: 'ComfyUI has no workflows saved on this machine.' }] }
+    }
+    const spec = await nodes(signal).catch(() => ({}))
+    const said = []
+    for (const row of rows) {
+      said.push(`${row.name} — ${standing(row)}`)
+      if (!row.export) continue
+      try {
+        const graph = await read(server, row.export, signal)
+        if (!isApi(graph)) {
+          said.push('  That file is the editor’s own save rather than an API export, so it cannot be queued.')
+          continue
+        }
+        const absent = missing(graph, spec)
+        if (absent.length > 0) {
+          said.push(`  It needs ${absent.join(', ')}, which ${absent.length === 1 ? 'is' : 'are'} not installed here.`)
+        }
+        const found = knobs(graph, spec)
+        said.push(
+          ...(found.length > 0 ? found.map(describe) : (
+            ['  No fields — nothing in it is titled, so it runs exactly as exported.']
+          )),
+        )
+      } catch (error) {
+        said.push(`  Could not read the export: ${String(error?.message ?? error)}`)
+      }
+    }
+    return { content: [{ type: 'text', text: said.join('\n') }] }
+  },
+)
+
+alexia.tool(
+  'run_workflow',
+  {
+    description:
+      'Run one of the ComfyUI workflows saved on this machine — the whole pipeline its author ' +
+      'built, with its LoRAs, ControlNet, reference images and its own settings, rather than the ' +
+      'plain one generate uses. Call workflows first: it names each workflow and the fields this ' +
+      'takes for it, which are different every time because the person who built it chose them. ' +
+      'Whatever it makes — a picture, a sound, a video — is handed straight to the user, so say ' +
+      'what you made rather than where it was saved. Can take minutes.',
+    inputSchema: fromJsonSchema({
+      type: 'object',
+      properties: {
+        workflow: { type: 'string', description: 'Which workflow. Any part of its name is enough.' },
+        values: {
+          type: 'object',
+          description:
+            'The workflow’s own fields, by the names workflows gives for it. Anything left out ' +
+            'keeps the value it was exported with. Write these the way the field’s description ' +
+            'asks — a field called plain English wants a sentence, not a tag list.',
+          additionalProperties: true,
+        },
+        seed: {
+          type: 'number',
+          description:
+            'Same seed and same fields gives the same result. Omit for a new one — an export ' +
+            'carries whatever seed the editor last showed, so omitting this is what the editor’s ' +
+            'own randomise does.',
+        },
+        stale: {
+          type: 'boolean',
+          description:
+            'Run it even though the workflow was edited after it was exported. The export is ' +
+            'what runs, so this means knowingly running the older version. Only when the user says so.',
+        },
+      },
+      required: ['workflow'],
+    }),
+    annotations: { destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  },
+  async ({ workflow, values, seed, stale }, ctx) => {
+    const signal = ctx?.mcpReq?.signal
+    const state = await reachable(ctx)
+    if (!state.ok) return refuse(state.said)
+    if (!own) return refuse('Alexia has not given this plugin a folder to work in.')
+    const server = await where()
+
+    const { rows, row } = await which(server, workflow, signal)
+    if (!row) {
+      return refuse(
+        rows.length === 0 ?
+          'ComfyUI has no workflows saved on this machine.'
+        : `There is no workflow here called ${String(workflow)}. What there is: ${rows.map((one) => one.name).join(', ')}`,
+      )
+    }
+    if (!row.export) return refuse(`${row.name} has not been exported for the API, so there is nothing to queue. ${EXPORT_IT}`)
+    // The one failure nothing downstream catches: a stale export runs, and what comes back is a
+    // picture rather than an error. Refusing costs a menu click; not refusing costs the trust in
+    // every picture after it, because none of them can be told apart from a right one.
+    if (row.stale && stale !== true) {
+      return refuse(
+        `${row.name} was edited ${ago(row.editedAt)} and last exported ${ago(row.exportedAt)}, so the export is behind ` +
+          `the workflow. Running it would quietly use the older version. ${EXPORT_IT} Or pass stale: true to run the ` +
+          'older one on purpose.',
+      )
+    }
+
+    const graph = await read(server, row.export, signal)
+    if (!isApi(graph)) return refuse(`${row.export} is the editor’s own save rather than an API export. ${EXPORT_IT}`)
+    const spec = await nodes(signal)
+    const absent = missing(graph, spec)
+    if (absent.length > 0) {
+      return refuse(
+        `${row.name} needs ${absent.join(', ')}, which ${absent.length === 1 ? 'is' : 'are'} not installed here. ` +
+          `Install the node pack ${absent.length === 1 ? 'it comes' : 'they come'} from and it will run.`,
+      )
+    }
+
+    const found = knobs(graph, spec)
+    const given = { ...(values ?? {}) }
+    const strange = Object.keys(given).filter((field) => !found.some((knob) => knob.field === field))
+    if (strange.length > 0) {
+      return refuse(
+        `${row.name} has no field called ${strange.join(', ')}. It takes: ` +
+          `${found.map((knob) => knob.field).join(', ') || 'nothing — it runs exactly as exported'}.`,
+      )
+    }
+    for (const knob of found) {
+      if (!knob.options || !Object.hasOwn(given, knob.field)) continue
+      // A combo's options are filenames again, so the same loose match `generate` uses applies —
+      // and the same refusal, because a near miss answered with a different LoRA is a picture
+      // nobody can explain.
+      const chose = pick(knob.options, String(given[knob.field]))
+      if (!chose) {
+        return refuse(`${knob.field} has nothing here called ${String(given[knob.field])}. It takes one of: ${knob.options.join(', ')}`)
+      }
+      given[knob.field] = chose
+    }
+
+    const rolled = Number.isFinite(Number(seed)) ? Number(seed) : Math.floor(Math.random() * 2 ** 31)
+    const built = reseed(apply(graph, found, given), rolled)
+    const id = await queue(server, built, 'alexia', signal)
+    const made = await awaiting(server, id, {
+      signal,
+      expect: 'output',
+      onProgress: (message, tick) => alexia.progress(ctx, tick, 0, message),
+    })
+
+    const kept = []
+    for (const one of made.files) {
+      const bytes = await download(server, one, signal)
+      const to = join(own, `${Date.now()}-${one.filename}`)
+      writeFileSync(to, Buffer.from(bytes))
+      kept.push(to)
+      await alexia.storage.insert('runs', { workflow: row.name, path: to, seed: rolled, at: Date.now() }).catch(() => {})
+    }
+    await bind(signal)
+    return {
+      content: [
+        { type: 'text', text: `Ran ${row.name}${kept.length === 0 ? ', which produced no file' : ''}. Seed ${rolled}.` },
+        // What the graph made of what it was given. On these workflows that is the prompt an
+        // Ollama node wrote out of the plain English, and it is the only way to see why a
+        // picture came out the way it did — the alternative is guessing at somebody else's graph.
+        ...(made.text.length > 0 ? [{ type: 'text', text: `The workflow reported: ${made.text.join(' / ')}` }] : []),
+        ...kept.map((to) => alexia.file(to, { description: row.name })),
+      ],
+    }
+  },
+)
+
+alexia.tool(
+  'add_workflow',
+  {
+    description:
+      'Save a ComfyUI API export so run_workflow can use it. Takes the path of the file ComfyUI ' +
+      'wrote when the user chose Workflow → Export (API) — usually in their Downloads folder. ' +
+      'Use when the user has just exported a workflow, or when workflows says one is not ' +
+      'exported or its export is behind. Refuses anything that is not an API export.',
+    inputSchema: fromJsonSchema({
+      type: 'object',
+      properties: {
+        file: { type: 'string', description: 'The path of the exported .json file.' },
+        name: {
+          type: 'string',
+          description:
+            'What to file it under. Defaults to the file’s own name, which is what ComfyUI names ' +
+            'the export — matching the workflow, which is what pairs the two.',
+        },
+      },
+      required: ['file'],
+    }),
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  async ({ file, name }, ctx) => {
+    const signal = ctx?.mcpReq?.signal
+    const path = String(file ?? '').trim()
+    if (path === '') return refuse('Which file? This needs the path of the export ComfyUI saved.')
+    let doc
+    try {
+      doc = JSON.parse(readFileSync(path, 'utf8'))
+    } catch (error) {
+      return refuse(
+        error?.code === 'ENOENT' ? `There is no file at ${path}.`
+          : `${basename(path)} could not be read as JSON: ${String(error?.message ?? error)}`,
+      )
+    }
+    // The whole point of this tool is that the wrong export is easy to make: *Export* and
+    // *Export (API)* sit next to each other in the same menu and both save a `.json`. Told apart
+    // by shape, which is a fact about the file, rather than by which menu entry it came from.
+    if (!isApi(doc)) {
+      return refuse(
+        `${basename(path)} is the editor’s own save rather than an API export — it has nodes and links in it ` +
+          'where an API export has node ids and class names. In ComfyUI these are two entries in the same menu: ' +
+          'the one to use is Workflow → Export (API).',
+      )
+    }
+    const state = await reachable(ctx)
+    if (!state.ok) return refuse(state.said)
+    const server = await where()
+
+    const called = String(name ?? '').trim() || basename(path).replace(/\.api\.json$|\.json$/i, '')
+    const to = `${FOLDER}/${called}${API_SUFFIX}`
+    await write(server, to, JSON.stringify(doc), signal)
+
+    const { row } = await which(server, called, signal)
+    const spec = await nodes(signal).catch(() => ({}))
+    const absent = missing(doc, spec)
+    const found = knobs(doc, spec)
+    return {
+      content: [
+        {
+          type: 'text',
+          text: [
+            `Saved as ${called}, next to the workflow it came from. run_workflow can use it now.`,
+            row?.workflow ? undefined : (
+              `Nothing here is called ${called}.json, so it is not paired with a saved workflow — which means ` +
+                'Alexia cannot tell when it goes out of date.'
+            ),
+            absent.length > 0 ?
+              `It needs ${absent.join(', ')}, which ${absent.length === 1 ? 'is' : 'are'} not installed here, so it will not run yet.`
+            : undefined,
+            found.length > 0 ? `Its fields: ${found.map((knob) => knob.field).join(', ')}.` : (
+              'Nothing in it is titled, so it takes no fields and runs exactly as exported.'
+            ),
+          ]
+            .filter(Boolean)
+            .join(' '),
+        },
+      ],
     }
   },
 )
@@ -352,6 +712,9 @@ await bind()
 alexia.onSettingsChanged((changed) => {
   // `path` moves where it would be started from, so a cached search result is stale.
   if ('path' in changed) where_it_is = undefined
+  // A different address is a different install, with its own node packs. Nothing about the one
+  // that was cached is true of it, and a workflow bound against the wrong one binds silently.
+  if ('server' in changed) known = undefined
   if ('server' in changed || 'checkpoint' in changed || 'path' in changed || 'autostart' in changed) void bind()
 })
 log.info(`${alexia.manifest.name} is ready`)
