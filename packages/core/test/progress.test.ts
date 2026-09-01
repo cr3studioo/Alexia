@@ -13,7 +13,7 @@ import { MODES } from '../src/router.js'
 import { CORE, memorySecrets } from '../src/secrets.js'
 import type { Progress } from '../src/settings.js'
 import { Store } from '../src/store.js'
-import { PluginTooling } from '../src/tooling.js'
+import { PluginTooling, stagesOf } from '../src/tooling.js'
 import { stage } from './staged.js'
 
 /**
@@ -154,3 +154,52 @@ test('the loop turns it into events on the step, while the step is still running
   // step rather than from the event sees the same number.
   expect(result.steps[0]?.progress?.progress).toBe(moved.at(-1)?.progress.progress)
 }, 30_000)
+
+test('a plugin can send the shape of the job, and every frame of it arrives checked', async () => {
+  const seen: Progress[] = []
+  const outcome = await tooling.call('hello__warm_up', {}, undefined, (update) => seen.push(update))
+  expect(outcome.ok).toBe(true)
+
+  // Real frames from a real plugin over a real pipe, the same as the bar above — this is the
+  // half that rides under `_meta`, so a passthrough that quietly dropped it would look
+  // exactly like a plugin that sent nothing.
+  const shaped = seen.filter((update) => update.stages !== undefined)
+  expect(shaped.length).toBeGreaterThan(1)
+
+  const last = shaped.at(-1)!.stages!
+  expect(last).toHaveLength(4)
+  expect(last.map((stage) => stage.label)).toEqual(['Kettle', 'Cups', 'Pouring', 'Serving'])
+  // It ends finished, and it did not start that way: a strip that is always full is a strip
+  // that is not being driven by anything.
+  expect(last.every((stage) => stage.state === 'done')).toBe(true)
+  expect(shaped.at(0)!.stages!.some((stage) => stage.state !== 'done')).toBe(true)
+  // Exactly one thing is live at a time, which is what makes the strip readable.
+  for (const update of shaped) {
+    expect(update.stages!.filter((stage) => stage.state === 'running').length).toBeLessThanOrEqual(1)
+  }
+}, 30_000)
+
+/**
+ * The guard on the way in, which is the whole of core's opinion about this field.
+ *
+ * A stage's `state` becomes a class name in the shell and its `label` becomes text, so this
+ * is a trust boundary rather than a parse. It refuses the whole strip rather than dropping
+ * the bad entry: a pipeline with a step missing is a wrong picture, where no pipeline at all
+ * is the bar every plugin already gets.
+ */
+test('a malformed strip is refused whole, not repaired', () => {
+  expect(stagesOf([{ state: 'running' }])).toEqual([{ state: 'running' }])
+  expect(stagesOf(undefined)).toBeUndefined()
+  expect(stagesOf([])).toBeUndefined()
+  expect(stagesOf('running')).toBeUndefined()
+  // One bad state in an otherwise good strip takes the strip with it.
+  expect(stagesOf([{ state: 'done' }, { state: 'melting' }])).toBeUndefined()
+  expect(stagesOf([{ state: 'done' }, null])).toBeUndefined()
+  // Numbers that are not numbers are dropped, and the stage survives: a segment with no
+  // fraction is drawn empty, which is honest, where `NaN%` is a broken element.
+  expect(stagesOf([{ state: 'running', progress: Number.NaN, total: 'lots' }])).toEqual([{ state: 'running' }])
+  // A label is somebody else's text and is cut rather than trusted to be short.
+  expect(stagesOf([{ state: 'done', label: 'x'.repeat(500) }])!.at(0)!.label).toHaveLength(80)
+  // A plugin cannot make the shell draw a thousand elements a second.
+  expect(stagesOf(Array.from({ length: 500 }, () => ({ state: 'done' })))).toHaveLength(64)
+})

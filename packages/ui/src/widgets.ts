@@ -37,6 +37,11 @@ export type WidgetType =
    */
   | 'graph'
   /**
+   * The thirteenth. A `graph` says what points at what; this says **what it looks like**, for a
+   * plugin that has made something there was previously nowhere to put.
+   */
+  | 'image'
+  /**
    * Core's own, and **not one a plugin may declare** (D112). The bar in `ui-schema.md` is
    * *more than one user*, and this has exactly one — so it is not in the manifest schema and
    * no plugin can ask for it. It is here because it is drawn by this file like everything
@@ -92,6 +97,8 @@ export interface Rendered {
   detail?: string
   filter?: boolean
   groupBy?: string
+  /** `image`: one picture rather than a grid — *the thing happening now* rather than *everything*. */
+  single?: boolean
   /** `ladder`: the slider's stops, and the two actions it presses. `rows` is shared with `table`. */
   rows?: string
   stops?: { value: string; label: string; hint: string }[]
@@ -387,6 +394,13 @@ export function widget(host: WidgetHost, declared: Rendered): HTMLElement {
       break
     }
 
+    case 'image': {
+      field.append(el('span', 'label', declared.label))
+      if (declared.hint) field.append(el('p', 'hint lede', declared.hint))
+      field.append(pictures(host, declared))
+      break
+    }
+
     case 'action': {
       const button = el('button', 'quiet-button', declared.label)
       button.type = 'button'
@@ -444,6 +458,7 @@ export function widget(host: WidgetHost, declared: Rendered): HTMLElement {
     declared.type !== 'password' &&
     declared.type !== 'table' &&
     declared.type !== 'graph' &&
+    declared.type !== 'image' &&
     declared.type !== 'ladder'
   ) {
     field.append(el('p', 'hint', declared.hint))
@@ -646,6 +661,128 @@ function table(host: WidgetHost, declared: Rendered): HTMLElement {
  * The arithmetic is `force.ts`, where it can be tested without a browser. What is here is
  * the canvas, the pointer and the paint.
  */
+/**
+ * The thirteenth widget: pictures a plugin has made (`alexia_protocol` 5).
+ *
+ * **A plugin says what the pictures are. Everything about how they look is here.** Size, fit,
+ * the shape of the gap while one loads, what happens to one that has been deleted since, and
+ * what any of it does in the dark — those are the decisions that make a page look like one
+ * page, and a widget that let an author choose them would be a sandboxed iframe with extra
+ * steps.
+ *
+ * **A source is a path or it is nothing.** A `data:` URL is passed through for something held
+ * in memory; anything else is fetched through `/api/plugin-file`, which will only read inside
+ * the asking plugin’s own folder. So a row pointing at somebody’s documents does not draw a
+ * picture of them — it draws the gap, with its caption, which is the same thing a deleted file
+ * draws and needs no separate explaining.
+ */
+function pictures(host: WidgetHost, declared: Rendered): HTMLElement {
+  // `table-box` for the same reason `graph` uses it: *ask for your rows again* is addressed to
+  // this class, and a second one would be a second thing to remember in `reloadTables`.
+  const box = el('div', 'table-box')
+  const said = el('p', 'hint', 'Loading…')
+  const grid = el('div', declared.single === true ? 'image-one' : 'image-grid')
+  const drawer = el('div', 'graph-note')
+  drawer.hidden = true
+  const noteTitle = el('p', 'graph-note-title')
+  const noteBody = el('p', 'detail-text')
+  const close = el('button', 'quiet-button', 'Close')
+  close.type = 'button'
+  close.addEventListener('click', () => {
+    drawer.hidden = true
+  })
+  drawer.append(noteTitle, noteBody, close)
+  box.append(said, grid, drawer)
+
+  let rows: Row[] = []
+
+  /** Where the shell should fetch this one from, or nothing if it is not a picture at all. */
+  const source = (row: Row): string | undefined => {
+    const src = String(row.src ?? '').trim()
+    if (src === '') return undefined
+    if (src.startsWith('data:')) return src
+    return `/api/plugin-file?plugin=${encodeURIComponent(host.plugin)}&path=${encodeURIComponent(src)}`
+  }
+
+  const paint = (): void => {
+    grid.replaceChildren()
+    if (rows.length === 0) {
+      said.textContent = 'Nothing here yet.'
+      said.hidden = false
+      return
+    }
+    said.hidden = true
+    for (const row of rows) {
+      const cell = el('figure', 'image-cell')
+      const from = source(row)
+      const caption = String(row.caption ?? '')
+      if (from === undefined) {
+        cell.append(el('div', 'image-gap'))
+      } else {
+        const picture = el('img', 'image-shot') as HTMLImageElement
+        picture.loading = 'lazy'
+        picture.decoding = 'async'
+        picture.src = from
+        // Its own words where there are any. A caption is what a person reads; `alt` is what
+        // somebody who cannot see it reads, and they are not always the same sentence.
+        picture.alt = String(row.alt ?? caption ?? '')
+        // **A file that has gone is a gap, not a broken picture.** It was there when the plugin
+        // listed it; it is not now. That is a fact about the file rather than an error, and a
+        // torn-page icon says neither.
+        picture.addEventListener('error', () => {
+          const gap = el('div', 'image-gap')
+          gap.title = 'This file is no longer where it was made.'
+          picture.replaceWith(gap)
+        })
+        cell.append(picture)
+      }
+      if (caption !== '') cell.append(el('figcaption', 'image-caption', caption))
+      if (declared.detail !== undefined) {
+        cell.classList.add('image-openable')
+        cell.tabIndex = 0
+        cell.setAttribute('role', 'button')
+        const open = (): void => {
+          void (async () => {
+            noteTitle.textContent = caption || 'This one'
+            noteBody.textContent = 'Loading…'
+            drawer.hidden = false
+            const answer = await host.send('/api/detail', {
+              plugin: host.plugin,
+              key: declared.detail ?? '',
+              row: String(row.id ?? ''),
+            })
+            noteBody.textContent = String(answer.text ?? answer.said ?? 'There is nothing more to say about that.')
+          })()
+        }
+        cell.addEventListener('click', open)
+        cell.addEventListener('keydown', (event) => {
+          if ((event as KeyboardEvent).key === 'Enter' || (event as KeyboardEvent).key === ' ') {
+            event.preventDefault()
+            open()
+          }
+        })
+      }
+      grid.append(cell)
+    }
+  }
+
+  const load = async (): Promise<void> => {
+    const answer = await host.send('/api/rows', { plugin: host.plugin, key: declared.rows ?? '' })
+    rows = (answer.rows ?? []) as Row[]
+    if (answer.ok === false) {
+      said.textContent = String(answer.said ?? 'That did not answer.')
+      said.hidden = false
+      grid.replaceChildren()
+      return
+    }
+    paint()
+  }
+
+  box.addEventListener(RELOAD, () => void load())
+  void load()
+  return box
+}
+
 function graph(host: WidgetHost, declared: Rendered): HTMLElement {
   // `table-box` because that is what *asks for its rows again* is addressed to, and a map is
   // asking the same question of the same tool. A second class would be a second thing to

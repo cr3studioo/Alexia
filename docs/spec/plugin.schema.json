@@ -557,6 +557,43 @@
               "label",
               "rows"
             ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "image"
+              },
+              "key": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_]*$"
+              },
+              "label": {
+                "type": "string",
+                "minLength": 1
+              },
+              "hint": {
+                "type": "string"
+              },
+              "rows": {
+                "type": "string",
+                "minLength": 1
+              },
+              "detail": {
+                "type": "string",
+                "minLength": 1
+              },
+              "single": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "type",
+              "key",
+              "label",
+              "rows"
+            ]
           }
         ]
       }
@@ -1088,6 +1125,43 @@
                     "minLength": 1
                   },
                   "filter": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "type",
+                  "key",
+                  "label",
+                  "rows"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "const": "image"
+                  },
+                  "key": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_]*$"
+                  },
+                  "label": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "hint": {
+                    "type": "string"
+                  },
+                  "rows": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "detail": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "single": {
                     "type": "boolean"
                   }
                 },

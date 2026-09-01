@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import type { Manifest } from '@alexia/protocol'
+import type { Manifest, Stage } from '@alexia/protocol'
 import { existsSync, statSync } from 'node:fs'
 import { isAbsolute } from 'node:path'
 import type { SecretStore } from './secrets.js'
@@ -73,6 +73,26 @@ export interface Progress {
   progress: number
   total?: number
   message?: string
+  /**
+   * A picture of the thing being made, while it is being made.
+   *
+   * A `data:` URL and never a path: it is a frame that exists for a second and is replaced, so
+   * writing each one to disk to serve it back would be a file per step of every render. It is
+   * capped where it is produced rather than here — a progress channel is not a transport, and a
+   * plugin sending megabytes through one is the thing that would make this a bad idea.
+   *
+   * Generic on purpose. Core has no notion of diffusion; it knows only that some work can show
+   * itself midway, which is true of a render, a download preview and a page being laid out.
+   */
+  preview?: string
+  /**
+   * The job's own steps, in the order the plugin runs them.
+   *
+   * The bar above says how far through *everything* is; this says how many parts there are,
+   * which one is live, and how far that one has got on its own. A plugin that has one step
+   * sends nothing here and gets the bar, which is every plugin before this existed.
+   */
+  stages?: Stage[]
 }
 
 export interface Pane {

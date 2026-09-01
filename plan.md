@@ -281,6 +281,26 @@ built.
 - [x] **M8-2** More than one conversation, and a way back into one
 - [x] **M8-3** Settings is two pages, and every plugin has one of its own
 - [x] **M8-4** *Recommended* was a word covering a rule, and the rule was not on the screen
+- [x] **M8-5** The workflows a person built, run from Alexia *(inserted 2026-09-01 — see Change log)*
+
+### M9 — Local media generation, as a product *(inserted 2026-09-01 — see [`comfyui_engine_plan.md`](./comfyui_engine_plan.md))*
+
+Twenty-four owner answers and an approved plan. **Roughly sixty per cent of this is core, not
+plugin** — a thirteenth widget, a recursive sub-library, richer trace entries, one new lifecycle
+event. Sequenced so nothing waits on something later.
+
+- [~] **M9-0a** A **verifying converter** instead (D134) — measured at 6 of 45 templates, refusing the rest by name. The hidden webview is still what would get the other 39, and is not built
+- [x] **M9-0b** Websocket progress — per-step, matched `client_id`, and a test that a message *arrived*
+- [x] **M9-1a** Renamed *Local media generation*; id and namespace stay `media`
+- [x] **M9-1b** `generate` runs the starter workflow file instead of the graph literal
+- [x] **M9-1c** The install hand-off, and a card that states its size before it is pressed
+- [x] **M9-1d** Hardware tiering, the model download, `--extra-model-paths-config`
+- [ ] **M9-1e** The no-GPU card — *coming soon* sentence done in `tier.js`; the **dimming** is core and is not
+- [x] **M9-1f** Lifecycle: up once started, down on conversation-ended, clean uninstall
+- [~] **M9-2** The **catalogue and its search** are done (`catalog.js`, `find_workflow`); the bento grid, the lifecycle and the drop zone need C2, and **installing needs M9-0a**
+- [x] **M9-3** The `image` widget (D132), the Pictures tab, and a trace entry that shows its work — the forming picture (D135) and the pipeline (D136). **The diagram is an ordered strip rather than a node-link graph**, which dissolved §7.3's two losses instead of working around them
+- [x] **M9-4** Last-run memory, VRAM pre-flight, the model-choice skill, fast defaults
+- [ ] **M9-G** **Done when:** a machine that has never seen ComfyUI installs the plugin, asks for a picture, and watches it happen
 
 ---
 
@@ -3640,6 +3660,138 @@ exactly that, with core's own list written out by name so a second one cannot ap
   rule in the sheet, which is the failure this widget was big enough to make likely. ✅
   *(`shell.test.ts`)*
 
+### M8-5 The workflows a person built, run from Alexia
+
+**Built 2026-09-01 (D123–D128), from [`comfyui_plan.md`](./comfyui_plan.md).** Asked for from
+use: *"the quick photo gen is cool but we dont have any settings that are normal in comfyui
+workflows"*. It was accurate. `plugins/media` sent a seven-node SDXL graph built fresh in
+`comfy.js:26`, with `cfg` frozen at 7 and `dpmpp_2m`/`karras` welded in, **no LoRA node in it at
+all**, and no ControlNet, IPAdapter, img2img or second pass. The machine it faces has six
+checkpoints, thirteen LoRAs and twenty-six custom node packs, and the plugin could reach one
+checkpoint per call and none of the rest of it.
+
+**The complaint restated accurately, because the obvious reading is wrong.** It is not that
+Alexia sees one safetensors file — `models` lists all six and `pick()` matches them loosely. It
+is that **only a checkpoint could ever load**, and everything that makes a workflow a workflow
+was unreachable.
+
+**The wall is two JSON formats that look alike.** What ComfyUI's editor saves is its own
+document — `nodes`, `links`, `groups`, `widgets_values`, positions. What `POST /prompt` eats is a
+flat map of node id to `{class_type, inputs}`. **There is no server-side converter**: every
+`@routes` handler in `server.py` and `app/user_manager.py` was read looking for one, and the
+conversion lives in the frontend's `graphToPrompt`, which is never exposed over HTTP.
+
+So the export is the contract (**D123**). Re-implementing the conversion is possible in
+principle — `/object_info` gives the widget order `widgets_values` indexes into — and it fails on
+the graphs it would be built for, three of five obstacles being present in the workflows saved on
+this machine: `Power Lora Loader (rgthree)` stores an array of **objects** with a header sentinel
+where widget order says scalars; `LoRA Stacker` and `Eff. Loader SDXL` have a widget **count**
+driven by another widget, so the array length is not derivable from `/object_info` at all; and a
+bypassed node must be removed *and its links bridged through matching types*. A converter that
+handles the plain cases and fails on those is worse than none, because it fails silently and
+specifically on the interesting graphs.
+
+**One plugin, not two (D124), and the reason is in core rather than in taste.**
+`plugins.ts:351` routes a capability by name only — a `for` loop over `#entries`, first enabled
+provider wins, and *the result does not say who answered and there is no way to ask*. Two plugins
+declaring `image.generate` would hand Combined mode whichever iterated first. Corroborating:
+across all thirteen plugins, **no capability has two providers**, which is not coincidence. And
+the anti-double-start guard is a pid written to `alexia.storage`, namespaced `p_media_*` — a
+second plugin gets `p_comfyui_*` and **cannot see that ComfyUI is already running**, which
+re-opens the failure `index.js` names in its own comment: *two ComfyUIs on one graphics card is
+the worst end available here*. On an 8 GB card with the fp16 black-image failure already
+documented, that is not theoretical.
+
+**A node its author titled is a node they meant (D125).** The alternative was an `alexia:`
+prefix, and the evidence settled it: in `Photo Reference (Pose + Style)` **sixteen of twenty
+nodes keep their default title** and the four that do not are exactly the knobs — the checkpoint,
+the plain-English box, the fixed tags, and the display showing what the two became. `Simple SDXL
++ LoRA` carries three of those titles word for word. The prefix would have meant re-titling every
+knob of every workflow before any of them could run.
+
+**Two things in the capture turned out to be wrong, and both were load-bearing.**
+
+1. `comfyui_plan.md` §4.1 said primitive nodes have no `class_type` and must be inlined into
+   their consumer. **`PrimitiveStringMultiline` is a real backend node** in 0.27
+   (`comfy_extras/nodes_primitive.py`, `node_id="PrimitiveStringMultiline"`), so it survives the
+   export as an ordinary node carrying its title. That is the node holding the tags, so the whole
+   feature turned on it.
+2. §7.1 assumed a title on a node means somebody typed one. **API format carries `_meta.title`
+   on every node**, and an untitled one exports the class's *display name* — `Load Checkpoint`,
+   not `CheckpointLoaderSimple`. So presence proves nothing and the test is *different from what
+   it would have been*, which is why binding needs `/object_info` and cannot be done on the graph
+   alone. `titled()` is four lines and would have been a silent bug.
+
+**A stale export is refused (D126).** The cost of consuming an export is that editing the
+workflow and not re-exporting leaves Alexia running the old graph — and what comes back is a
+*picture*, not an error, so nothing downstream can catch it. The project's habit is the honest
+sentence over the refusal and this is the case that habit is weakest against, so the refusal wins
+and names the one menu click that fixes it. `stale: true` runs the old one on purpose.
+
+**Knobs live in the tool schema, never in the settings pane.** `host.ts:122` refuses any plugin
+write to a widget that is not a `status`, and the reasoning there is sound — *a plugin that could
+rewrite a toggle could quietly undo a decision the person made*. Which is also why the `Model`
+dropdown was a false promise on a shipped screen (**D127**): `choice` options are fixed in the
+manifest, so a hint reading *the list fills in once it can reach ComfyUI* could never come true.
+It is a text box now, matched loosely by the `pick()` that was already there, and the status line
+says so when the name matches nothing installed.
+
+**What it added.** `workflows.js` — the listing, the pairing, the staleness arithmetic, the API
+format test, the title binding, the knob naming. Three tools: `workflows` (what is saved, what
+runs, and each workflow's own fields), `run_workflow` (**declaring no capability**, so `generate`
+stays the sole `image.generate` provider and adding this cannot destabilise Combined mode), and
+`add_workflow`, which takes the file ComfyUI just saved and files it where ComfyUI keeps them —
+one drag instead of a rename in Explorer and a convention to remember. Four endpoints this plugin
+never called are now called: `/userdata` for the listing and its modified times, `/userdata/{file}`
+both ways, `/object_info` whole, and **`/interrupt`, which closes a real leak** — `signal` reached
+only the fetch, so a stopped call ended the poll and left the job rendering.
+
+**Three smaller things fell out of the same read.**
+
+- **A seed baked into an export runs twice identically.** `control_after_generate` — *randomize*
+  on all three of these workflows — is a frontend widget and does not survive the export, so the
+  graph carries whatever number the editor last showed. Re-rolling by default is what the editor
+  does; a seed that was asked for wins.
+- **Outputs are read by shape, not by the one key that used to matter.** One of the three saved
+  workflows renders **audio**, and the folder named for image-to-video is empty only because that
+  workflow is not built yet. `images`, `gifs`, `audio`, `video`, `files` — and `text`, which is
+  how the prompt an Ollama node actually wrote comes back, the one thing a person could not
+  otherwise see.
+- **The tags stay the graph's to write (D128).** `Photo Reference` runs its plain English through
+  `OllamaGenerateV2` with a system prompt its author tuned. Alexia fills the plain-English box and
+  the fixed-tags box and stays out of it — two prompt-rewriters in one pipeline is a result nobody
+  can explain.
+
+**What is not built, and is not pretended to be.** The §7.2 heuristics for graphs nobody has
+titled: an untitled `Empty Latent Image` is *not* exposed, which is a tested limit rather than an
+oversight. Reference images through `POST /upload/image`. Per-workflow typed tools, which would
+need the knobs cached in storage to survive a boot with ComfyUI switched off. And the
+client-supplied `prompt_id` that would make a retry idempotent instead of double-queueing.
+
+**Acceptance**
+
+- `pnpm check` green: lint, depcruise, types, 660 unit tests, 34 invariants. ✅
+- The conformance suite run against `plugins/media` passes all nine checks — boots, 7 tools all
+  described and reachable, `image.generate` still bound, purges clean. ✅
+- The knobs of a real exported `Photo Reference` are exactly `load_model`, `plain_english` and
+  `fixed_tags`; the titled display node and the untitled latent size are both excluded, and both
+  exclusions are tests rather than notes. ✅
+- A workflow edited after its export is refused by name, and the refusal says what to press. ✅
+- A graph is never turned in place, and re-running one does not return the identical picture. ✅
+- `encodeURIComponent` of a path with spaces and brackets routes to a `{file}` handler, checked
+  against **aiohttp 3.14.1 out of ComfyUI's own venv** rather than assumed. ✅
+- **Run against the live ComfyUI on this machine, and it made a picture.** ✅ `/object_info`
+  (2,173 classes), `/userdata` listing, `POST` and `GET` of a filename carrying spaces and
+  brackets, `/prompt`, `/history`, `/view`, and the file deleted afterwards. The binding was run
+  against **the real `Photo Reference` and the real `/object_info`** rather than the fixture, and
+  bound exactly `load_model`, `plain_english`, `fixed_tags` — with the untitled sampler and the
+  titled display both correctly left out.
+- **What is still untested is ComfyUI's own *Export (API)* menu.** The one rule it turns on was
+  confirmed in the frontend bundle — `_meta:{title:e.title}`, which litegraph answers with the
+  custom title where there is one and the class's display title where there is not — and the
+  titles were reproduced from that rule rather than exported. Running the real exporter on a real
+  workflow is the test that has not happened.
+
 ---
 
 ## Backlog
@@ -3821,6 +3973,20 @@ Newest first. Every entry here is also in Alexia.md's decision log.
 
 | Date | Entry |
 |---|---|
+| 2026-09-02 | **D136** — **the pipeline is a strip rather than a graph — and both things §7.3 wrote off come back.** `comfyui_engine_plan.md` §7.3 named two losses and said neither should be papered over: **`mark` is one boolean, so per-node percentages cannot be drawn**, and **the force layout is tuned for a relationship graph while a workflow is a pipeline** — *a real mismatch, not a tuning problem*. Both were consequences of one assumption, that the diagram would be the `graph` widget. **Neither survives dropping it.** A pipeline has one dimension, so drawn as segments in execution order it needs no layout at all, and each segment having its own width *is* the per-stage percentage the boolean could not carry. So `alexia/stages` rides the progress notification beside D135's `alexia/preview`: no widget change, no `force.ts` change, no `alexia_protocol` bump, and the memory plugin's cloud is untouched — a stages mode on a canvas widget with no second user would have been the larger diff and the worse picture. **The order is the plugin's and core never sorts it**, which was measured rather than assumed: `progress_state` names only the nodes that have *started* — the first frame of a real render named exactly one — so a strip built from the socket would grow a segment at a time and draw the reporting rather than the pipeline. The plugin owns the graph and lays it out with Kahn's before anything runs; two nodes at the same depth may fill in an order ComfyUI does not run them in, which is a fair reading of a pipeline that has no order between them. The per-node data is real and was read off `comfy_execution/progress.py`: `pending`, `running`, `finished`, `error`, each with its own `value` and `max`. **No names are drawn on it.** Five fit across a 25.5rem rail and twenty-five do not, and a strip that fails exactly where a pipeline got interesting is the wrong trade — the line above already says *KSampler — step 12 of 20*, so the strip adds the shape and the label goes on `title`. Core refuses a malformed strip **whole** rather than drawing part of one, caps it at 64 and cuts a label at 80, because a `state` becomes a class name and a label becomes text: a pipeline with a step missing is a wrong picture, where no pipeline is the bar every plugin already gets. **Two things were found by running it rather than reasoning about it.** A finished job never closed its own strip — `/history` ends a job before the socket's last `progress_state`, and a real render stopped on `█████▶·` with the picture already saved, an unfinished pipeline under a row reading *done*; a successful wait now sends the closing frame itself. And **D135's picture was laid out wrong the moment it shipped**: a rail row is a flex line of text, so a 14rem image beside the step name left the name nothing and pushed the status off the edge. Rendering it in a browser showed in one screenshot what the working data path had hidden. The work — picture and pipeline — now goes on its own line beneath the row. **And `progress()`'s fifth argument became `{ preview, stages }`** rather than growing a sixth positional: four optional slots in a row was already the limit, and nothing had shipped against it yet. |
+| 2026-09-01 | **D135** — **the picture, while it is still being made — and the one-word setting that made the socket look broken.** D129 opened the websocket and read the three JSON messages off ComfyUI's source; the **binary** frames on that same socket are the picture as it stands, in two layouts also read off `server.py` rather than documentation — `send_image` (event 1) is `[event][1 = JPEG or 2 = PNG][the image]`, and event 4, sent only to a client that asked for it by feature flag, is `[event][length][JSON][the image]` with the mimetype in the JSON. **The first attempt received zero of them, and nothing was wrong with the code**: `--preview-method` defaults to `none`, so ComfyUI computes no preview and the socket that D129 proved was listening had nothing to hear — the same silence-that-reads-as-a-slow-card shape as D129's `client_id` bug, one layer further out. ComfyUI-Manager no longer offers a runtime override for it (its own startup line names PR #11261 and points at the CLI option), so **the flag at launch is the only lever** and `launch.js` now passes it. **`latent2rgb` rather than `auto`**: `auto` prefers TAESD, a model that has to be downloaded and then decoded once per preview *on the card already busy generating*, while `latent2rgb` is a matrix multiply on a latent that is already in memory — a rougher picture for almost nothing, which is the right trade for something glanced at while waiting. **A `data:` URL and never a path**, because a frame exists for a second and is replaced, and writing each to disk to serve it back would be a file per step of every render; capped at 400 KB where it is produced, because a progress channel is not a transport. It rides under `_meta['alexia/preview']` — the same door `alexia/tools` and `alexia/files` go through — so **there is no protocol bump**: an Alexia that has never heard of a preview draws the bar and ignores the rest. Core drops anything that is not a `data:image/` URL, checked at the boundary *and* again in the shell, because this is the one field a plugin fills that becomes an `img` source and it does not get to name a path or a host. The shell keeps **one** element and replaces it, rather than appending: a render sends one of these a second and a filmstrip is the wrong picture of a thing that has a single current state. **Measured on a 20-step render: 16 frames, JPEG, 35 KB growing to 98 KB** as it sharpens. |
+| 2026-09-01 | **D134** — **a converter that refuses instead of guessing — and the measurement that says how far it gets.** D123 refused to re-implement `graphToPrompt` because *a converter that handles the plain cases and fails on these is worse than none, because it fails silently and specifically on the interesting graphs*. Every word of that stands. **What changed is that silence is not the only option**: widget order is not a heuristic but `/object_info`'s own `input_order`, with a slot inserted after any widget marked `control_after_generate` — so the expected number of values is a *number*, and comparing it with the array's length is arithmetic. Every uncertainty is a refusal that names the node: a bypassed node, a Reroute, a subgraph, an uninstalled class, a count that does not add up. **Then it was measured against all 45 templates this card can run, and it converts 6.** Twenty-five stop on a subgraph — which §4.1 predicted as *not in these three, but one save away* — thirteen on a widget count, one on a Primitive. **That figure is the finding rather than a disappointment**: a hand-written conversion recovers about one workflow in seven and the rest still need the frontend that has always owned this, so D123's refusal is now vindicated by numbers instead of by argument. Six with proof beats none, and `add_workflow` tries before it refuses rather than sending everybody back to a menu. **It also found a bug in shipped code**: this install spells a combo two ways at once — older nodes put the option list where the type goes, V3 nodes say `COMBO` and move the list into the options — and `workflows.js` read only the first, so a V3 node's field came back as free text with no list behind it, which looks like it works and quietly stops validating what somebody typed. |
+| 2026-09-01 | **D133** — **ComfyUI ships the workflow catalogue, and the honest number is not the big one.** `GET /templates/index.json` on the running server answers with 468 grouped entries carrying a title, description, tags, the models each needs, **how much video memory it wants**, and whether it is open source — so nothing has to be scraped, mirrored or kept current, and it moves when ComfyUI moves. RunComfy was checked and is not a source: sign-in for everything, no public API, redistribution terms unstated. **Two numbers in the plan were wrong and both were too flattering**, read off the local pip manifest instead of the live index: it is 468 rather than 484, and **255 of them call paid services rather than 103** — more than half. Worse, of the 213 open-source ones only **45 fit an 8.5 GB card**, and four of those make images. So the catalogue filters on the machine before it ranks on the words, and the sentence it leads with is the count about *your* card rather than the total: *468 workflows* to somebody who can run 45 is accurate and misleading at once. **The search needed a floor, found by using it**: without one, *read this out loud* came back with depth estimation and an anime model — entries sharing a stray word with a paragraph. A tag hit or better, **or** three words matching a description, because *make a picture from words* and *Text to Image* share no word at all and a three-word agreement is not coincidence. Finding works; **installing does not yet** — the templates are editor format, so it names the entry and the one menu click rather than pretending. |
+| 2026-09-01 | **D132** — **`image`, the thirteenth widget, and `alexia_protocol` 5.** The twelve could describe a picture and could not show one. **This is not the `file` widget refused twice at D89** — that was a plugin asking somebody to *choose* a file, which a browser genuinely cannot express; this is a plugin that has *made* something and has nowhere to put it. Granted the way `graph` was, on what the alternatives cost: the shell drawing pictures for one named plugin is this project's founding complaint arriving by the back door, and a sandboxed iframe hands over the palette and the focus ring with the pixels. **And it arrives with three users where D115 was uneasy about having one** — a gallery, a thumbnail on a library item, and a preview of something still being made. A plugin says what the pictures are and what each is called; size, fit, the gap while one loads, the alt text and the dark-mode behaviour are all core's. **The route is the safety and it needed its own boundary**: `/api/file` serves what a *tool result* offered, from a list core wrote down, but a widget's rows are paths the **plugin** chooses — so `/api/plugin-file` will read inside the asking plugin's own folder and nowhere else, with `realpath` on both sides before the comparison, because `..` and a symlink are the two ways a path that reads as inside points outside and a string prefix test catches neither. First user is the picture plugin's **Pictures** panel, which puts the folder's size on screen beside it: keeping every picture for ever is a decision, and a folder that only grows out of sight is the dishonest version of it. |
+| 2026-09-01 | **D131** — **a conversation ending is something a plugin can be told.** `plugins/media` starts ComfyUI detached and lets it outlive the plugin on purpose — loading PyTorch and a checkpoint costs the better part of a minute, and this plugin is stopped after five idle minutes, so tying them together would mean paying that minute after every pause. The cost of that decision was that **nothing ever said *stop***: a graphics card stayed occupied all night because somebody asked for one picture at lunchtime. Starting a new conversation is the clearest signal a person gives that they have finished, and it is the only one that arrives without anybody remembering a command. So `alexia/conversation/ended` is broadcast to every running plugin. **It carries nothing about the conversation** — not its id, not what was said, not how it ended — because a plugin has no business knowing, and one that could tell two conversations apart could keep a record of them. Nothing is spawned to hear it, nothing waits for an answer, and ignoring it is correct for almost every plugin; the picture plugin stops the ComfyUI **it** started, under the same two conditions `stop_comfyui` uses, because finishing a chat is not permission to close somebody else's program. Fired from `surface.ts`'s own `newChat`, below its early return, so pressing New twice does not announce an ending that did not happen. |
+| 2026-09-01 | **D130** — **the picture plugin is called *Local media generation* now.** §13.5 of `comfyui_plan.md` deferred this until a workflow that is not a picture actually ran; `comfyui_engine_plan.md` makes that certain rather than likely — the catalogue has voice and video in it by design, and one of the three workflows saved on this machine renders audio. The engine is named in the summary rather than the title, so the card reads for the person the setup promise is written for and still says *ComfyUI* to anyone looking for it. **The id and the storage namespace stay `media`**, because `store.ts:141` migrates neither and a rename that moved them would orphan every picture already made. |
+| 2026-09-01 | **D129** — **the websocket, adopted — and `comfy.js:11` argued the other way on purpose.** That comment chose polling `/history` over the socket: *a dependency and a reconnect story less for a job that takes twenty seconds*, at the cost of progress in whole images rather than steps — and it named its own successor, *the websocket is the upgrade and it is the only thing that would change here*. Per-step progress is websocket-only (`main.py:437`, `execution.py:494`, `comfy_execution/progress.py:184`), and a person watching a thirty-second render wants to know it is at step 12 of 20 rather than that something is happening. **`/history` still decides the job is finished**; the socket only makes the waiting legible, is opened per job, is allowed to fail, and degrades to precisely the old behaviour — which is the reconnect story the original comment was avoiding, and there isn't one. **The bug this was built around is silent and is now structurally impossible.** ComfyUI sends every progress message to the queueing client and nobody else, keyed by the socket's `clientId` query parameter (`server.py:273`) — so a socket opened with one id and a prompt queued with another connects, handshakes, and receives nothing, which is indistinguishable from a slow graphics card. There is one `CLIENT_ID` per process used by both, and `queue()` no longer accepts one, so a caller cannot get it wrong because a caller is not asked. Its test asserts a message **arrived**, not that a socket opened, and was checked by deliberately mismatching the ids and watching it fail. The trace panel shows the plugin's sentence *and* the percentage now rather than replacing the first with the second — `43%` said less than *KSampler — step 12 of 20*, and that is generic rather than about this plugin. |
+| 2026-09-01 | **D128** — **the workflow's own rewriter writes the tags, and Alexia writes plain English.** `Photo Reference` runs a plain-English box through `OllamaGenerateV2` with a danbooru system prompt its author tuned, and Alexia has a model of its own — so both could write the prompt and **doing both is the failure**: the model writes a prompt, the graph rewrites it, and a bad result has two places to have come from. The graph keeps it, because a workflow's own vocabulary surviving is half of what this was built for, and the field is named after the author's own title, which is what tells the model to write a sentence rather than tags. |
+| 2026-09-01 | **D127** — **the Model dropdown was a promise the contract cannot keep.** `plugins/media` shipped a `choice` widget offering `auto` under the hint *the list fills in once it can reach ComfyUI*, on a machine with six checkpoints installed. It cannot: `choice` options are fixed in the manifest and `host.ts:122` refuses any plugin write to a widget that is not a `status` — deliberately, because *a plugin that could rewrite a toggle could quietly undo a decision the person made*. Nothing in `index.js` even attempted it. It is a `text` box now, matched by the loose `pick()` that already existed, so typing `hassaku` finds `hassakuXLIllustrious_v22`; `auto` keeps meaning *whichever ComfyUI has* because it is the value every existing install has saved. **And the state line names a miss** — a model that is not installed still paints a picture, with a different model, and looks exactly like the plugin working. The other way out was plugin-supplied widget options, which is a spec change reopening what `host.ts:122` closed on purpose, and it should be argued on its own merits rather than because ComfyUI wants it. |
+| 2026-09-01 | **D126** — **a stale export is refused, and the refusal names the menu click.** Consuming an export (D123) means a workflow edited and not re-exported leaves Alexia running the older graph — and what comes back is a **picture, not an error**, so nothing downstream can catch it and every later picture is indistinguishable from a right one. This project's habit is the honest sentence over the refusal, and this is the case that habit is weakest against, so the refusal wins. ComfyUI's own listing carries the modified time of every file, so *which of these two is newer* is arithmetic rather than a guess. `stale: true` runs the old one knowingly. |
+| 2026-09-01 | **D125** — **a node its author titled is a node they meant.** The proposal was an `alexia:` prefix claiming a node explicitly; the evidence chose the other reading. In `Photo Reference (Pose + Style)` sixteen of twenty nodes keep their default title and the four that do not are exactly the knobs, and `Simple SDXL + LoRA` carries three of those titles word for word — the owner already titles what they mean. The prefix would have required re-titling every knob of every workflow before one could run. **The trap is that presence proves nothing**: API format carries `_meta.title` on *every* node, and an untitled one exports the class's display name — `Load Checkpoint`, not `CheckpointLoaderSimple` — so the test is *different from what it would have been*, which is why binding needs `/object_info` and cannot be done on the graph alone. The knobs land in the **tool schema**, never the settings pane, for the reason at `host.ts:122`. |
+| 2026-09-01 | **D124** — **one plugin, not two**, and the reason is in core rather than in taste. A second `comfyui` plugin declaring `image.generate` alongside `media` would be resolved by `plugins.ts:351`, which routes **by name only** — a `for` loop over `#entries`, first enabled provider wins, and *the result does not say who answered and there is no way to ask*. Combined mode would get whichever iterated first and nobody could steer it; across all thirteen plugins **no capability has two providers**, which is load-bearing rather than coincidence. Worse, the anti-double-start guard is a pid in `alexia.storage`, namespaced `p_media_*`, and a second plugin gets `p_comfyui_*` and **cannot see that ComfyUI is already running** — which re-opens the failure `index.js` names in its own comment, *two ComfyUIs on one graphics card is the worst end available here*, and makes `stop_comfyui`'s promise unkeepable in both directions. The real argument for splitting is that *"Local image generation"* does not describe something that runs an audio workflow; that is a naming problem, and renaming waits until a second workflow actually needs it. |
+| 2026-09-01 | **D123** — **ComfyUI's API export is the contract; `graphToPrompt` is not re-implemented.** The editor's saved workflow and what `POST /prompt` accepts are two JSON formats that look alike, and **there is no server-side converter** — every `@routes` handler in `server.py` and `app/user_manager.py` was read looking for one. Re-implementing it is possible in principle and fails on the graphs it would be built for, three of the five obstacles being present in the workflows on this machine: `Power Lora Loader (rgthree)` stores an array of *objects* where widget order says scalars, `LoRA Stacker` has a widget **count** driven by another widget so the length is not derivable from `/object_info`, and a bypassed node must be removed *and its links bridged through matching types*. A converter that handles the plain cases and fails on those is worse than none, because it fails silently and specifically on the interesting graphs. So the frontend — the only thing that has ever done this correctly — does the conversion, once per workflow, from a menu entry. **One finding corrects the capture that argued this**: `PrimitiveStringMultiline` is a real backend node in 0.27 rather than a frontend primitive, so it survives the export carrying its title, and it is the node holding the tags this whole feature is about. |
 | 2026-09-01 | **D122** — **a file a task made reaches a phone, not only the window.** `document_plan_final.md` §8 gave a tool a way to hand a file back: a `resource_link` block, a row under the answer to open or save it, and the model told only `[file: name]`. That row is a `/api/file` route, and a channel plugin runs in **its own process** with no token and no way to reach it — so *make me an image* over Telegram was still a sentence with a path in it, which is the transcript that started this. Core now reads the bytes for a plugin-initiated task (`result.steps` → `Produced` → base64, the same door and the same 25 MB/40 MB ceilings as an upload) and returns them on the sampling result's `_meta` under `alexia/files` — a key an older Alexia ignores, exactly like `alexia/tools` before it. Telegram sends a raster image as a photo for the inline preview and everything else as a document, with a photo Telegram rejects falling through to a document rather than not arriving; `api.js` grew the `FormData` upload its own comment has predicted since M7-5. **And `plugins/media`'s text dropped the path** — the picture is a row now, and a model that reads the save location back to somebody who cannot open it is the bug D117's transcript showed. The window path is unchanged: it still takes the files off the step trace and needs no `_meta`. |
 | 2026-09-01 | **D121** — **an About page: the version, who made it, and the update controls.** *Which version am I running* had no answer anywhere on screen. A third settings tab now carries it, read from `/api/state` so it answers with the network down. The update block is deliberately three separate things — *Check now* asks GitHub this second, *Update now* appears only when there is something, and the switch governs **looking** rather than installing. That wording is the point: nothing here installs itself without a press, and turning the looking off is a supported way to stay on a version rather than a mistake. Default is on. |
 | 2026-09-01 | **D120** — **not-installed plugins join the grid, dimmed.** Reported from use an hour after D118: somebody deleted a plugin, went to put it back, and could not find where plugins come from. They were in a collapsed `details` under the grid — placed on a sound argument about a shelf of forty, applied to a shelf of eleven, and it cost the one journey that starts on that screen and finishes nowhere else. One grid now: installed, a labelled row, then the rest with a dashed edge and a lighter ground. Dimmed, not disabled — full text contrast, and hover brings it up — because these are the only cards on the page that exist to be pressed. |

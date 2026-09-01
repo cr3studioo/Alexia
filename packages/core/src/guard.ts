@@ -248,6 +248,12 @@ export const ROUTES: Readonly<Record<string, Route>> = {
     ),
   },
 
+  '/api/plugin-file': {
+    otherwise: safe(
+      'The bytes of a picture an `image` widget is showing. It reads and nothing else — and it will only read inside the asking plugin’s **own** folder, resolved through the real path first so that a `..` or a symlink pointing outside is refused rather than followed. A plugin naming a file it does not own gets a 403 and the widget draws a gap.',
+    ),
+  },
+
   '/api/detail': {
     otherwise: safe(
       'What expands under one row of a table: the same call as the list above, about one thing rather than all of them, through the same ruling.',

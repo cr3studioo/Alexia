@@ -40,9 +40,13 @@ import { APP_VERSION, newer } from './version.js'
  * seven first-party plugins declare 2, use nothing from 3, and dropping them to make a point
  * about deprecation would be breaking working software to keep a number tidy. Raising `MIN`
  * is what deprecating a revision looks like, and there is nothing here worth deprecating.
+ *
+ * **5 on 2026-09-01.** `image` — a widget for pictures a plugin has made. Additive, and the
+ * floor stays at 2 for the same reason it did last time: nothing below is worth deprecating,
+ * and the plugins declaring 2 still work.
  */
 export const ALEXIA_PROTOCOL_MIN = 2
-export const ALEXIA_PROTOCOL_MAX = 4
+export const ALEXIA_PROTOCOL_MAX = 5
 
 /**
  * The two MCP revisions core speaks, in preference order (D55, corrected by D57).
@@ -258,6 +262,54 @@ const setting = z.discriminatedUnion('type', [
     /** A filter box, applied in the page over the node labels. */
     filter: z.boolean().optional(),
   }),
+
+  z.object({
+    /**
+     * `image` — the thirteenth, and the second that paints pixels.
+     *
+     * **The twelve could describe a picture and could not show one.** `file` was refused twice
+     * (D89) and the refusal still stands: that was about a plugin asking somebody to *choose* a
+     * file, which a browser cannot express, and this is the opposite direction — a plugin that
+     * has made something and has nowhere to put it.
+     *
+     * **Granted the way `graph` was: on what the alternatives cost.** The other two answers were
+     * the shell drawing a picture for one named plugin, which is this project's founding
+     * complaint arriving by the back door, and a sandboxed iframe, which hands a plugin the
+     * pixels and the palette and the focus ring with them. A widget core draws for anybody who
+     * declares one is again the only answer that leaves the shell naming nobody.
+     *
+     * **And it arrives with three users rather than one**, which D115 was uneasy about: a
+     * gallery of what a generator has made, the thumbnail on an item in a plugin's own library,
+     * and a preview of something being worked on while it is still being worked on.
+     *
+     * Barer than `table` for the same reason `graph` is. A plugin says what the pictures are
+     * and what each one is called. **How big, how they sit, what fills the gap while one loads,
+     * what a screen reader says, and what any of it does in the dark are core's**, because they
+     * are the decisions that make a page look like one page.
+     */
+    type: z.literal('image'),
+    key: z.string().regex(IDENT),
+    label: z.string().min(1),
+    hint: z.string().optional(),
+    /**
+     * The tool that answers with the pictures, called with no arguments when the panel opens.
+     *
+     * It answers `structuredContent: { rows: [...] }` the way a `table`'s does. A row carries a
+     * string `id`, a `src` — an absolute path to a file, or a `data:` URL for something held in
+     * memory — and an optional `caption` and `alt`. A row whose `src` cannot be read draws as a
+     * gap with its caption, rather than as a broken picture or as nothing at all.
+     */
+    rows: z.string().min(1),
+    /** A tool called with `{ id }`, whose text opens beside the picture when one is clicked. */
+    detail: z.string().min(1).optional(),
+    /**
+     * One picture rather than a grid.
+     *
+     * The difference between *here is everything you have made* and *here is the one thing
+     * happening now*, which are different screens and should not be one widget pretending.
+     */
+    single: z.boolean().optional(),
+  }),
 ])
 
 export const ManifestShape = z
@@ -421,11 +473,17 @@ export const Manifest = ManifestShape.superRefine((m, ctx) => {
   // heard of one: an older Alexia would refuse the manifest as unparseable rather than saying
   // which of the two of you is out of date, which is the whole job of this integer.
   m.panel?.widgets.forEach((w, i) => {
+    if (w.type === 'image' && m.alexia_protocol < 5) {
+      fail(['panel', 'widgets', i], 'image arrived in alexia_protocol 5 — declare "alexia_protocol": 5 to use it')
+    }
     if (w.type === 'graph' && m.alexia_protocol < 4) {
       fail(['panel', 'widgets', i], 'graph arrived in alexia_protocol 4 — declare "alexia_protocol": 4 to use it')
     }
   })
   m.settings?.forEach((w, i) => {
+    if (w.type === 'image' && m.alexia_protocol < 5) {
+      fail(['settings', i], 'image arrived in alexia_protocol 5 — declare "alexia_protocol": 5 to use it')
+    }
     if (w.type === 'graph' && m.alexia_protocol < 4) {
       fail(['settings', i], 'graph arrived in alexia_protocol 4 — declare "alexia_protocol": 4 to use it')
     }

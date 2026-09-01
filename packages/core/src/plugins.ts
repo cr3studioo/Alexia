@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { ErrorCode, isPermission, Manifest, PROVIDES_META, SETTINGS_CHANGED } from '@alexia/protocol'
+import { CONVERSATION_ENDED, ErrorCode, isPermission, Manifest, PROVIDES_META, SETTINGS_CHANGED } from '@alexia/protocol'
 import {
   ProtocolError,
   type CallToolResult,
@@ -478,6 +478,36 @@ export class Plugins {
     // changed, and "there is no longer one" is a change a plugin has to be able to see.
     const said = declared.type === 'password' && value === '' ? null : value
     await entry.process.notify(SETTINGS_CHANGED, { changed: { [key]: said } })
+  }
+
+  /**
+   * Where this plugin's own directory is.
+   *
+   * Asked rather than rebuilt, because `<dataDir>/plugins/<id>` written down in a second place
+   * is a second answer waiting to disagree with the first — and the thing that reads it is a
+   * boundary check, which is exactly where two answers must not exist.
+   */
+  ownDir(id: string): string {
+    return this.#host.ownDir(id)
+  }
+
+  /**
+   * Tell every running plugin that the conversation is over.
+   *
+   * **Broadcast, and to whoever happens to be running.** Nothing is spawned to hear it — a
+   * plugin that is not up is not holding anything, so waking one to say *let go* would be the
+   * opposite of the point. Nobody is asked to react and nothing waits for an answer; a plugin
+   * that throws or is mid-shutdown does not hold up a new conversation.
+   *
+   * Core names no plugin here. It says the thing that happened and lets whoever cares decide
+   * what that means for them.
+   */
+  async ended(): Promise<void> {
+    await Promise.allSettled(
+      [...this.#entries.values()]
+        .filter((entry) => entry.process !== undefined)
+        .map((entry) => entry.process!.notify(CONVERSATION_ENDED, {})),
+    )
   }
 
   /**

@@ -2,6 +2,8 @@
 import {
   ALEXIA_METHODS,
   MCP_PINNED,
+  CONVERSATION_ENDED,
+  ConversationEnded,
   SETTINGS_CHANGED,
   SettingsChanged,
   type AlexiaMethod,
@@ -10,7 +12,10 @@ import {
   type CallToolResult,
   type HostInfo,
   type Manifest,
+  type Stage,
   type Where,
+  PREVIEW_META,
+  STAGES_META,
 } from '@alexia/protocol'
 import { McpServer, type ServerContext, type StandardSchemaV1 } from '@modelcontextprotocol/server'
 import { StdioServerTransport } from '@modelcontextprotocol/server/stdio'
@@ -50,6 +55,28 @@ export interface Storage {
   remove(key: string): Promise<void>
 }
 
+/**
+ * What a long call can show about itself while it runs, beyond a number.
+ *
+ * An options bag rather than two more positional arguments: `progress(ctx, 12, 20, 'sampling',
+ * shot, steps)` is four optional slots in a row, and the fifth thing anybody wants to send
+ * would make it five. Both fields are extensions an older Alexia ignores.
+ */
+export interface Work {
+  /**
+   * **A picture of the work while it is still work** — a `data:` URL, replaced by the next one
+   * and never stored. Keep them small: this is sent on every frame, and a progress channel is
+   * not a transport.
+   */
+  preview?: string
+  /**
+   * **The job's own steps, in the order you run them.** The bar says how far through
+   * everything is; this says how many parts there are and which one is live. Order is yours
+   * and is never re-sorted — see {@link Stage}.
+   */
+  stages?: Stage[]
+}
+
 /** One block of an MCP tool result. Shaped by MCP, not by this package. */
 export interface ResourceLink {
   type: 'resource_link'
@@ -85,6 +112,17 @@ export interface AlexiaPlugin {
   status(key: string, value: string): Promise<void>
   /** The user edited a setting while you were running. React or ignore, but do not exit. */
   onSettingsChanged(handler: (changed: Record<string, unknown>) => void): void
+  /**
+   * The conversation somebody was having is over — they started a new one, or closed it.
+   *
+   * **Let go of anything expensive you were holding for it.** You are told nothing about the
+   * conversation itself, on purpose; the only information here is that keeping something warm
+   * for it has stopped being useful. Most plugins should ignore this. It is for the ones holding
+   * a graphics card, a model in memory, or a process somebody else's machine is paying for.
+   *
+   * Do not exit, and do not treat it as a shutdown: another conversation may start immediately.
+   */
+  onConversationEnded(handler: () => void): void
   host(): Promise<HostInfo>
   /**
    * Call something another plugin provides, by capability name. You never learn who
@@ -102,8 +140,13 @@ export interface AlexiaPlugin {
    * Report progress on the call you are serving. Send it for anything over about two
    * seconds; a bar that moves is the difference between waiting and quitting. Silently does
    * nothing when the caller did not ask for progress.
+   *
+   * `work` is the optional half: what the job looks like, and what shape it has. Both ride
+   * under `_meta`, so an Alexia that has never heard of either draws the bar and ignores the
+   * rest — send them only where seeing them is the point, because they cost bandwidth on
+   * every frame and a bar already answers *is this working, and how long*.
    */
-  progress(ctx: ServerContext, progress: number, total?: number, message?: string): void
+  progress(ctx: ServerContext, progress: number, total?: number, message?: string, work?: Work): void
 
   /**
    * **Hand a file you made back to the person**, as one block in your tool result.
@@ -200,16 +243,31 @@ export function plugin(options: PluginOptions = {}): AlexiaPlugin {
         { params: SettingsChanged },
         ({ changed }) => handler(changed),
       ),
+    onConversationEnded: (handler) =>
+      server.server.setNotificationHandler(CONVERSATION_ENDED, { params: ConversationEnded }, () => handler()),
     host: () => call('alexia/host/info', {}),
     capability: (cap, args) => call('alexia/capability/call', { cap, arguments: args }),
     storage,
-    progress: (ctx, progress, total, message) => {
+    progress: (ctx, progress, total, message, work) => {
       const progressToken = ctx.mcpReq._meta?.progressToken
       if (progressToken === undefined) return
+      // Under `_meta`, so an Alexia that has never heard of either still draws the bar — the
+      // same door `alexia/tools` and `alexia/files` go through. One bag, so a plugin sending
+      // both does not pay for two.
+      const meta = {
+        ...(work?.preview !== undefined && { [PREVIEW_META]: work.preview }),
+        ...(work?.stages !== undefined && { [STAGES_META]: work.stages }),
+      }
       void ctx.mcpReq
         .notify({
           method: 'notifications/progress',
-          params: { progressToken, progress, total, message },
+          params: {
+            progressToken,
+            progress,
+            total,
+            message,
+            ...(Object.keys(meta).length > 0 && { _meta: meta }),
+          },
         })
         .catch((error: unknown) => log.warn('could not report progress', error))
     },

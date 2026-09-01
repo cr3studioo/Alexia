@@ -3121,3 +3121,154 @@ kbd {
   color: var(--ink-faint);
   font-size: var(--text-xs);
 }
+
+/* The thirteenth widget (alexia_protocol 5). A plugin says what the pictures are; every
+   decision below is core's, which is the whole reason it is a widget and not an iframe. */
+
+.image-grid {
+  display: grid;
+  /* Auto-fill rather than a fixed count: the same rule reads as four across on a wide window
+     and two on a narrow one, without a breakpoint per screen anybody has to maintain. */
+  grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr));
+  gap: var(--space-3);
+}
+
+.image-one {
+  display: block;
+}
+
+.image-cell {
+  margin: 0;
+  min-width: 0;
+}
+
+.image-shot,
+.image-gap {
+  display: block;
+  width: 100%;
+  /* Square, so a grid of portraits and landscapes is still a grid. `contain` rather than
+     `cover` in the single case, because the one picture somebody is watching should be whole
+     rather than well-cropped. */
+  aspect-ratio: 1;
+  object-fit: cover;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+}
+
+.image-one .image-shot,
+.image-one .image-gap {
+  aspect-ratio: auto;
+  max-height: 40vh;
+  object-fit: contain;
+}
+
+/* A file that has gone, and a row that never pointed at one, draw the same thing: a quiet
+   space where a picture would be. A torn-page icon says *something is broken*, and nothing
+   is — it was there when the plugin listed it and it is not there now. */
+.image-gap {
+  background: repeating-linear-gradient(
+    45deg,
+    var(--surface-raised),
+    var(--surface-raised) 6px,
+    var(--surface) 6px,
+    var(--surface) 12px
+  );
+}
+
+.image-caption {
+  margin: var(--space-1) 0 0;
+  color: var(--ink-faint);
+  font-size: var(--text-xs);
+  line-height: var(--leading-tight);
+  /* Two lines, then an ellipsis. A prompt can be a paragraph, and a caption that grows to fit
+     one turns an even grid into a ragged column. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.image-openable {
+  cursor: pointer;
+}
+
+.image-openable:focus-visible {
+  outline: 2px solid var(--chosen);
+  outline-offset: 2px;
+  border-radius: var(--radius-md);
+}
+
+/* ---- a step that shows its work ------------------------------------------------------
+
+   A rail row is a line of text. A picture set beside the name is a flex item that takes the
+   width it is given and leaves the name none — so the work goes on a line of its own,
+   underneath, and only for the steps that have any. */
+.rail-row:has(.step-work) {
+  flex-wrap: wrap;
+}
+
+.step-work {
+  flex-basis: 100%;
+  min-width: 0;
+}
+
+/* The pipeline, left to right, each segment filling as its own stage does. No names on it:
+   five would fit across this rail and twenty-five would not, and the line above already says
+   which stage is running. What this adds is the shape — how many, and how far along. */
+.step-stages {
+  display: flex;
+  gap: 2px;
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.step-stages li {
+  flex: 1;
+  height: 3px;
+  border-radius: var(--radius-full);
+  background: var(--line);
+  overflow: hidden;
+}
+
+.step-stages li::after {
+  content: '';
+  display: block;
+  height: 100%;
+  width: var(--fill, 0%);
+  border-radius: inherit;
+  /* Finished work recedes. It is present, and it is not what anybody is looking at. */
+  background: var(--line-strong);
+}
+
+.step-stages li.done::after {
+  width: 100%;
+}
+
+/* The running one is the whole point of the strip, and three pixels cannot be made bolder —
+   so it is the loudest colour instead, in both palettes. */
+.step-stages li.running::after {
+  background: var(--accent);
+}
+
+.step-stages li.failed::after {
+  width: 100%;
+  background: var(--danger);
+}
+
+/* The work as it stands. One element, replaced in place — a render sends one of these a
+   second, and keeping them would build a filmstrip of something that has a single current
+   state. Its own size, never the row's: `flex-basis` on the picture itself would set its
+   width and stretch it. */
+.step-preview {
+  display: block;
+  max-width: 100%;
+  max-height: 13rem;
+  margin: var(--space-2) auto 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  /* It sharpens over the steps, so a hard swap reads as flicker. */
+  transition: opacity 120ms ease;
+}

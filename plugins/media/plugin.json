@@ -2,9 +2,9 @@
   "$schema": "../../docs/spec/plugin.schema.json",
   "manifest_version": 1,
   "id": "media",
-  "name": "Local image generation",
-  "summary": "Makes images on this machine with ComfyUI, starting it if it is not already running, so the picture-making half of Combined mode is real.",
-  "version": "0.2.1",
+  "name": "Local media generation",
+  "summary": "Makes pictures, sound and video on this machine with ComfyUI, starting it if it is not already running, so the media-making half of Combined mode is real.",
+  "version": "0.3.0",
   "license": "AGPL-3.0-only",
   "entry": {
     "run": "node",
@@ -12,7 +12,7 @@
       "index.js"
     ]
   },
-  "alexia_protocol": 2,
+  "alexia_protocol": 5,
   "mcp_protocol": "2025-11-25",
   "requires": [
     {
@@ -26,6 +26,14 @@
     {
       "cap": "proc.spawn",
       "why": "To start ComfyUI for you, if it is installed on this machine and not already running."
+    },
+    {
+      "cap": "net.download",
+      "why": "To download one image model, if this machine has none. It is kept in this plugin’s folder."
+    },
+    {
+      "cap": "fs.read_scoped",
+      "why": "To read the workflow file you exported from ComfyUI, so it can be saved where ComfyUI keeps them. It only ever reads."
     }
   ],
   "provides": [
@@ -54,14 +62,11 @@
       "hint": "It takes about a minute the first time and stays running afterwards. Off means you start it yourself."
     },
     {
-      "type": "choice",
+      "type": "text",
       "key": "checkpoint",
       "label": "Model",
-      "options": [
-        "auto"
-      ],
-      "default": "auto",
-      "hint": "Auto uses whatever checkpoint ComfyUI has loaded. The list fills in once it can reach ComfyUI."
+      "placeholder": "auto",
+      "hint": "Any part of a checkpoint’s filename is enough — typing hassaku finds hassakuXLIllustrious_v22. Leave it empty for whichever ComfyUI has. Ask Alexia to list the models to see the names."
     },
     {
       "type": "number",
@@ -81,6 +86,12 @@
       "hint": "SDXL's half-precision VAE produces black images on many 8 GB cards. On costs a little VRAM and avoids that."
     },
     {
+      "type": "action",
+      "key": "setup",
+      "label": "Set up local generation",
+      "tool": "setup"
+    },
+    {
       "type": "status",
       "key": "state",
       "label": "State"
@@ -89,8 +100,30 @@
   "storage": {
     "namespace": "media",
     "tables": [
-      "images"
+      "images",
+      "runs"
     ],
     "dir": true
+  },
+  "skills": [
+    "skills/picture-prompts"
+  ],
+  "panel": {
+    "label": "Pictures",
+    "widgets": [
+      {
+        "key": "made",
+        "type": "image",
+        "label": "Made here",
+        "hint": "Everything this machine has made, newest first. Nothing is ever deleted to make room — the size below is what that costs. Click one to see what made it.",
+        "rows": "pictures",
+        "detail": "about_picture"
+      },
+      {
+        "key": "disk",
+        "type": "status",
+        "label": "On disk"
+      }
+    ]
   }
 }
