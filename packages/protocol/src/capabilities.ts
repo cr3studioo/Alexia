@@ -137,3 +137,16 @@ export const TOOLS_META = 'alexia/tools'
  * claim to until it can.
  */
 export const PROVIDES_META = 'alexia/provides'
+
+/**
+ * The `_meta` key core puts on a `sampling/createMessage` **result** to hand a channel
+ * plugin the files a task made.
+ *
+ * The window reads a tool's `resource_link` off the step trace and draws a row with the file
+ * on it (D119). A channel plugin — Telegram — is in another process and cannot reach the
+ * `/api/file` route that row uses, so core reads the bytes and returns them here:
+ * `[{ name, mime, data }]`, `data` base64, the same shape `voice.render` already hands back
+ * an Ogg in. A flag a plugin cannot see going wrong, like the two above: an Alexia that does
+ * not set it delivers the words alone, which is every channel before this existed.
+ */
+export const FILES_META = 'alexia/files'

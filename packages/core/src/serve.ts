@@ -1,15 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { APP_VERSION, CORE_CAPABILITIES, TOOLS_META } from '@alexia/protocol'
+import { APP_VERSION, CORE_CAPABILITIES, FILES_META, TOOLS_META } from '@alexia/protocol'
 import { randomUUID } from 'node:crypto'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import type { CreateMessageResult } from '@modelcontextprotocol/client'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { join } from 'node:path'
-import { run, said } from './agent.js'
+import { run, said, type Produced } from './agent.js'
 import {
   discard,
   MOST_FILES,
+  MOST_PER_FILE,
+  MOST_TOGETHER,
   noteFor,
   receive,
   withDocuments,
@@ -808,10 +810,15 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
         calls: store.callsIn(runId),
       })
       const last = result.messages.at(-1)
+      const carried = carry(result.steps.flatMap((step) => step.outcome?.files ?? []))
       return {
         role: 'assistant',
         model: last?.model ?? '',
         content: { type: 'text', text: result.why ?? (last === undefined ? '' : textOf(last)) },
+        // The files the task made, for a channel that cannot reach `/api/file` from its own
+        // process (D122). The window takes them off the step trace instead and needs no
+        // `_meta`. A key an older Alexia ignores, exactly like the tools flag before it.
+        ...(carried.length > 0 && { _meta: { [FILES_META]: carried } }),
       }
     } catch (error) {
       trace.end('refused', { why: said(error), calls: store.callsIn(runId) })
@@ -819,6 +826,30 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     } finally {
       task = undefined
     }
+  }
+
+  /**
+   * Read what a task's tools wrote, so a channel plugin can send it on (D122).
+   *
+   * Same ceilings as an upload and for the same reason — a base64 body is one string in
+   * memory whichever door it goes through. A file that is gone, or over the bar, is dropped:
+   * the answer's words still arrive, and it is the words that carried the meaning.
+   */
+  function carry(files: readonly Produced[]): { name: string; mime: string; data: string }[] {
+    const out: { name: string; mime: string; data: string }[] = []
+    let together = 0
+    for (const file of files.slice(0, MOST_FILES)) {
+      try {
+        const bytes = readFileSync(file.path)
+        if (bytes.length === 0 || bytes.length > MOST_PER_FILE) continue
+        if (together + bytes.length > MOST_TOGETHER) break
+        together += bytes.length
+        out.push({ name: file.name, mime: file.mime, data: bytes.toString('base64') })
+      } catch {
+        // The tool named a file that is no longer there. Not this path's problem to explain.
+      }
+    }
+    return out
   }
 
   const server = createServer((request, response) => {

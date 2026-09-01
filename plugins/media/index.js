@@ -176,10 +176,11 @@ const made = alexia.tool(
   'generate',
   {
     description:
-      'Make an image on this machine from a description, and save it. Returns the file path. ' +
-      'Use when the user asks for a picture, an illustration, a logo or a mock-up. Starts ' +
-      'ComfyUI first if it is not already running. Takes twenty seconds to a few minutes ' +
-      'depending on the machine, and reports progress.',
+      'Make an image on this machine from a description. The picture is handed straight to ' +
+      'the user, so say what you made — do not describe where it was saved. Use when the ' +
+      'user asks for a picture, an illustration, a logo or a mock-up. Starts ComfyUI first ' +
+      'if it is not already running. Takes twenty seconds to a few minutes depending on the ' +
+      'machine, and reports progress.',
     inputSchema: fromJsonSchema({
       type: 'object',
       properties: {
@@ -257,10 +258,11 @@ const made = alexia.tool(
     await bind(signal)
     return {
       content: [
-        { type: 'text', text: `${saved.join('\n')}\nMade here, with ${checkpoint}.` },
-        // The picture itself, not only its path. Until this line the answer to *make me an
-        // image* was a sentence containing a filename — correct, and nothing a person could
-        // press. Now it is a row under the answer with the picture on it.
+        { type: 'text', text: `Made here, with ${checkpoint}.` },
+        // The picture itself, not its path. The answer to *make me an image* used to open
+        // with the filename — correct, nothing a person could press, and read straight back
+        // to them by a model that could not see the difference. It is a row under the answer
+        // now, on the window or as a photo over a channel, and the model is told only that.
         ...saved.map((to) => alexia.file(to, { description: String(prompt) })),
       ],
     }

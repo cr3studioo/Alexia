@@ -94,6 +94,7 @@ writeFileSync(
       { type: 'action', key: 'slash_new', label: 'Type /new', tool: 'slash_new' },
       { type: 'action', key: 'slash_cheap', label: 'Type /cheap', tool: 'slash_cheap' },
       { type: 'action', key: 'slash_help', label: 'Type /help', tool: 'slash_help' },
+      { type: 'action', key: 'go_paint', label: 'Start one that paints', tool: 'go_paint' },
     ],
   }),
 )
@@ -202,6 +203,26 @@ test('and the whole exchange is a conversation on the Chats screen, in the plugi
   // And the conversation the window is open on is still empty, which is the bug: none of
   // this belonged there.
   expect(rows.filter((row) => row.title !== 'Asker').every((row) => row.turns === '0')).toBe(true)
+}, 30_000)
+
+test('a file a task makes comes back to the channel that asked (D122)', async () => {
+  // The scripted model calls the paint tool, then answers. Core reads the file the tool
+  // handed back and returns the bytes on the result's `_meta`, because this plugin cannot
+  // reach the `/api/file` route the window uses.
+  script = [{ call: 'asker__paint' }, { say: 'here is your sunset' }]
+  const done = await press('go_paint')
+  expect(done.ok, String(done.said)).toBe(true)
+
+  const carried = JSON.parse(String(done.said)) as { name: string; mime: string; data: string }[]
+  expect(carried).toHaveLength(1)
+  expect(carried[0]!.name).toBe('sunset.png')
+  expect(carried[0]!.mime).toBe('image/png')
+  expect(Buffer.from(carried[0]!.data, 'base64').toString()).toBe('PNGSUN')
+
+  // The model got a sentence naming the file, never the bytes.
+  const seen = served.join('\n')
+  expect(seen).toContain('[file: sunset.png]')
+  expect(seen).not.toContain(Buffer.from('PNGSUN').toString('base64'))
 }, 30_000)
 
 test('a slash command works where it was typed, and /new is the only way out of one chat', async () => {
