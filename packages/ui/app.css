@@ -3199,14 +3199,73 @@ kbd {
   border-radius: var(--radius-md);
 }
 
-/* A step showing its work while it is still working. One element per step, replaced in place —
-   a render sends one of these a second, and keeping them would build a filmstrip of something
-   that has a single current state. */
+/* ---- a step that shows its work ------------------------------------------------------
+
+   A rail row is a line of text. A picture set beside the name is a flex item that takes the
+   width it is given and leaves the name none — so the work goes on a line of its own,
+   underneath, and only for the steps that have any. */
+.rail-row:has(.step-work) {
+  flex-wrap: wrap;
+}
+
+.step-work {
+  flex-basis: 100%;
+  min-width: 0;
+}
+
+/* The pipeline, left to right, each segment filling as its own stage does. No names on it:
+   five would fit across this rail and twenty-five would not, and the line above already says
+   which stage is running. What this adds is the shape — how many, and how far along. */
+.step-stages {
+  display: flex;
+  gap: 2px;
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.step-stages li {
+  flex: 1;
+  height: 3px;
+  border-radius: var(--radius-full);
+  background: var(--line);
+  overflow: hidden;
+}
+
+.step-stages li::after {
+  content: '';
+  display: block;
+  height: 100%;
+  width: var(--fill, 0%);
+  border-radius: inherit;
+  /* Finished work recedes. It is present, and it is not what anybody is looking at. */
+  background: var(--line-strong);
+}
+
+.step-stages li.done::after {
+  width: 100%;
+}
+
+/* The running one is the whole point of the strip, and three pixels cannot be made bolder —
+   so it is the loudest colour instead, in both palettes. */
+.step-stages li.running::after {
+  background: var(--accent);
+}
+
+.step-stages li.failed::after {
+  width: 100%;
+  background: var(--danger);
+}
+
+/* The work as it stands. One element, replaced in place — a render sends one of these a
+   second, and keeping them would build a filmstrip of something that has a single current
+   state. Its own size, never the row's: `flex-basis` on the picture itself would set its
+   width and stretch it. */
 .step-preview {
   display: block;
-  max-width: 14rem;
-  max-height: 14rem;
-  margin: var(--space-2) 0;
+  max-width: 100%;
+  max-height: 13rem;
+  margin: var(--space-2) auto 0;
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
   background: var(--surface-raised);

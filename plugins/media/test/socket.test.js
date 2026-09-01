@@ -2,7 +2,7 @@
 import { createHash } from 'node:crypto'
 import { createServer } from 'node:http'
 import { afterAll, beforeAll, expect, test } from 'vitest'
-import { CLIENT_ID, preview, queue, wait } from '../comfy.js'
+import { CLIENT_ID, order, preview, queue, shape, wait } from '../comfy.js'
 
 /**
  * The step counter, against a server that speaks the protocol ComfyUI speaks.
@@ -171,4 +171,91 @@ test('anything that is not a preview frame is ignored rather than guessed at', (
   // Metadata that is not JSON.
   const broken = Buffer.concat([Buffer.from([0, 0, 0, 4]), Buffer.from([0, 0, 0, 3]), Buffer.from('not', 'utf8')])
   expect(preview(new Uint8Array(broken))).toBeUndefined()
+})
+
+/**
+ * The order the strip is drawn in, which cannot come from the socket.
+ *
+ * `progress_state` names only the nodes that have already started — the first frame of a real
+ * render named exactly one — so a strip built from it would grow a segment at a time and draw
+ * the reporting rather than the pipeline. The graph is ours, so the order comes from there.
+ */
+test('the pipeline is laid out from the graph, before anything has run', () => {
+  // The starter workflow's shape: two encoders feeding one sampler, in the order ComfyUI's own
+  // export happens to list them, which is not the order it runs them in.
+  const graph = {
+    7: { class_type: 'SaveImage', inputs: { images: ['6', 0] } },
+    6: { class_type: 'VAEDecode', inputs: { samples: ['5', 0], vae: ['4', 2] } },
+    5: { class_type: 'KSampler', inputs: { model: ['4', 0], positive: ['2', 0], negative: ['3', 0], seed: 1 } },
+    4: { class_type: 'CheckpointLoaderSimple', inputs: { ckpt_name: 'sd.safetensors' } },
+    3: { class_type: 'CLIPTextEncode', inputs: { clip: ['4', 1], text: 'blurry' } },
+    2: { class_type: 'CLIPTextEncode', inputs: { clip: ['4', 1], text: 'a lantern' } },
+  }
+  const laid = order(graph)
+  expect(laid).toHaveLength(6)
+  // Nothing is drawn before what it needs. This is the whole property — the exact order
+  // between the two encoders is genuinely arbitrary and is not asserted.
+  const at = (id) => laid.indexOf(id)
+  for (const [node, needs] of [['5', ['2', '3', '4']], ['6', ['5', '4']], ['7', ['6']]]) {
+    for (const need of needs) expect(at(need)).toBeLessThan(at(node))
+  }
+  // Deterministic, so the same graph draws the same picture every time it is opened.
+  expect(order(graph)).toEqual(laid)
+  // A value that looks like a link but points at no node is a value somebody typed.
+  expect(order({ 1: { inputs: { size: [512, 0] } } })).toEqual(['1'])
+  // A cycle cannot be laid out and is broken rather than dropped: ComfyUI refuses such a graph
+  // long before this, and a diagram missing a box is worse than one in an odd order.
+  expect(order({ a: { inputs: { x: ['b', 0] } }, b: { inputs: { y: ['a', 0] } } }).sort()).toEqual(['a', 'b'])
+})
+
+test('a node the socket has not mentioned is waiting, not missing', () => {
+  const ids = ['4', '5', '6']
+  // Exactly what a real `progress_state` looked like mid-render: the finished ones, the one
+  // running, and no mention at all of what has not started.
+  const states = {
+    4: { state: 'finished', value: 1, max: 1 },
+    5: { state: 'running', value: 12, max: 20 },
+  }
+  expect(shape(ids, states, (id) => ({ 4: 'Load Checkpoint', 5: 'KSampler' })[id])).toEqual([
+    { state: 'done', label: 'Load Checkpoint', progress: 1, total: 1 },
+    { state: 'running', label: 'KSampler', progress: 12, total: 20 },
+    { state: 'waiting' },
+  ])
+  // Every state ComfyUI has, read off `comfy_execution/progress.py` rather than guessed.
+  const each = { p: { state: 'pending' }, r: { state: 'running' }, f: { state: 'finished' }, e: { state: 'error' } }
+  expect(shape(['p', 'r', 'f', 'e'], each).map((one) => one.state)).toEqual(['waiting', 'running', 'done', 'failed'])
+  // Nothing said at all is a strip of waiting segments, which is what a queued job looks like.
+  expect(shape(ids, undefined).every((one) => one.state === 'waiting')).toBe(true)
+})
+
+/**
+ * The frame after the last one, which is the one nothing sends.
+ *
+ * `/history` decides a job is over, and it says so before the socket's final `progress_state`
+ * arrives. A real render ended on six of seven stages with the picture already saved — a strip
+ * sitting unfinished under a row that read *done*.
+ */
+test('a finished job closes its own strip', async () => {
+  const quiet = createServer((request, response) => {
+    const url = new URL(request.url, 'http://127.0.0.1')
+    response.writeHead(200, { 'content-type': 'application/json' })
+    if (url.pathname === '/queue') return response.end(JSON.stringify({ queue_running: [], queue_pending: [] }))
+    return response.end(JSON.stringify({ 'job-3': { outputs: { 9: { images: [{ filename: 'done.png' }] } } } }))
+  })
+  await new Promise((resolve) => quiet.listen(0, '127.0.0.1', resolve))
+  const to = `http://127.0.0.1:${quiet.address().port}`
+  const said = []
+  await wait(to, 'job-3', {
+    stages: ['1', '2', '3'],
+    label: (id) => `Step ${id}`,
+    onProgress: (message, done, total, work) => said.push(work?.stages),
+  })
+  await new Promise((resolve) => quiet.close(resolve))
+  // Nothing ever reported a node — this server has no socket at all — so the only strip that
+  // can exist is the closing one, and it is complete.
+  expect(said.at(-1)).toEqual([
+    { state: 'done', label: 'Step 1' },
+    { state: 'done', label: 'Step 2' },
+    { state: 'done', label: 'Step 3' },
+  ])
 })

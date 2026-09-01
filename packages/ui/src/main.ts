@@ -16,7 +16,7 @@ import { mountControl } from './control.js'
 import { mountPalette } from './palette.js'
 import { mountSettings } from './settings.js'
 import { mountGlass, mountTheme, type Theme } from './theme.js'
-import { mountLive } from './live.js'
+import { mountLive, type Stage } from './live.js'
 import { mountRail } from './rail.js'
 import { el } from './widgets.js'
 
@@ -1437,7 +1437,7 @@ async function ask(question: string, files: File[] = []): Promise<void> {
           ok?: boolean
           text?: string
           args?: Record<string, unknown>
-          progress?: { progress: number; total?: number; message?: string; preview?: string }
+          progress?: { progress: number; total?: number; message?: string; preview?: string; stages?: Stage[] }
           files?: { id: string; name: string; bytes: number; mime: string; path: string; openable: boolean }[]
         }
       | undefined

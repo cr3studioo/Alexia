@@ -184,6 +184,10 @@ export function listen(server, id, onStep) {
     if (data.prompt_id !== undefined && data.prompt_id !== id) return
     if (said.type === 'progress') onStep({ value: Number(data.value), max: Number(data.max), node: String(data.node ?? '') })
     else if (said.type === 'executing' && data.node) onStep({ node: String(data.node) })
+    // Every node's own bar, and the only message that carries one. It is cumulative and it
+    // names only the nodes that have started, so it says which are done and how far the
+    // running one has got — never how many there are. That comes from the graph.
+    else if (said.type === 'progress_state' && data.nodes) onStep({ states: data.nodes })
   })
   return () => {
     try {
@@ -212,6 +216,72 @@ export async function queue(server, prompt, signal) {
   return answered.prompt_id
 }
 
+/** Numeric where ComfyUI's ids are numbers, and stable either way. */
+const byId = (a, b) => Number(a) - Number(b) || a.localeCompare(b)
+
+/**
+ * The graph's nodes in an order somebody can read left to right.
+ *
+ * **ComfyUI decides its own execution order and only reveals it as it goes** — the first
+ * `progress_state` named one node, and the rest arrived as they started. A strip built from
+ * that would grow a segment at a time and be a picture of the reporting rather than of the
+ * pipeline, so the order is worked out from the graph before anything runs, which is possible
+ * only because this is a graph we built.
+ *
+ * Kahn's, ties broken by id so that the same graph always draws the same picture. Two nodes at
+ * the same depth — the two text encoders of the starter workflow — may therefore fill in an
+ * order ComfyUI does not run them in, which is a fair reading of a pipeline that genuinely has
+ * no order between them.
+ *
+ * A cycle cannot be laid out and is broken by taking the lowest id rather than by dropping it:
+ * ComfyUI refuses such a graph before it ever gets here, and a diagram missing a box would be
+ * a worse answer than a diagram in an odd order.
+ */
+export function order(prompt) {
+  const ids = Object.keys(prompt ?? {})
+  const needs = new Map(ids.map((id) => [id, new Set()]))
+  for (const id of ids) {
+    for (const value of Object.values(prompt[id]?.inputs ?? {})) {
+      // A link is `[nodeId, slot]`. Anything else is a value somebody typed into the box.
+      if (Array.isArray(value) && prompt[String(value[0])] !== undefined) needs.get(id).add(String(value[0]))
+    }
+  }
+  const out = []
+  const left = new Set(ids)
+  while (left.size > 0) {
+    const ready = [...left].filter((id) => [...needs.get(id)].every((need) => !left.has(need))).sort(byId)
+    const take = ready.length > 0 ? ready : [...left].sort(byId).slice(0, 1)
+    for (const id of take) {
+      out.push(id)
+      left.delete(id)
+    }
+  }
+  return out
+}
+
+/** What ComfyUI calls a node's state (`comfy_execution/progress.py`), in the shell's words. */
+const STATES = { pending: 'waiting', running: 'running', finished: 'done', error: 'failed' }
+
+/**
+ * The pipeline as the shell draws it: every node of the graph, in order, with whatever the
+ * socket has said about each.
+ *
+ * A node the socket has not mentioned is waiting — `progress_state` lists only what has
+ * started, so absence is the answer rather than a gap.
+ */
+export function shape(ids, states, label) {
+  return ids.map((id) => {
+    const at = states?.[id]
+    const named = label?.(id)
+    return {
+      state: STATES[at?.state] ?? 'waiting',
+      ...(named ? { label: named } : {}),
+      ...(Number.isFinite(at?.value) ? { progress: at.value } : {}),
+      ...(Number.isFinite(at?.max) ? { total: at.max } : {}),
+    }
+  })
+}
+
 /**
  * Wait for it, reporting as it goes.
  *
@@ -219,13 +289,34 @@ export async function queue(server, prompt, signal) {
  * to sixty seconds, and a queue in front of it can make that minutes. What is not bounded
  * is what happens after a stop — `signal` reaches the fetch, and the loop ends with it.
  */
-export async function wait(server, id, { signal, onProgress, timeoutMs = 15 * 60_000, expect = 'image', label } = {}) {
+export async function wait(server, id, { signal, onProgress, timeoutMs = 15 * 60_000, expect = 'image', label, stages } = {}) {
   const until = Date.now() + timeoutMs
   let step
   let shown
+  let drawn
   const hush = listen(server, id, (at) => {
     step = { ...step, ...at }
   })
+  /**
+   * The optional half of a progress report, and **only what has changed**.
+   *
+   * The same frame sent twice is bytes with no picture in them, and a render sends far more
+   * preview frames than it sends step counts. The strip is compared the same way and for the
+   * same reason: most ticks it is the identical seven segments.
+   */
+  const work = () => {
+    const said = {}
+    if (step?.preview !== shown) said.preview = shown = step?.preview
+    if (stages !== undefined) {
+      const now = shape(stages, step?.states, label)
+      const text = JSON.stringify(now)
+      if (text !== drawn) {
+        drawn = text
+        said.stages = now
+      }
+    }
+    return said.preview === undefined && said.stages === undefined ? undefined : said
+  }
   try {
   for (let tick = 0; Date.now() < until; tick++) {
     if (signal?.aborted) throw new Error('Stopped.')
@@ -234,6 +325,22 @@ export async function wait(server, id, { signal, onProgress, timeoutMs = 15 * 60
     if (done) {
       const made = outputs(done)
       if (made.files.length === 0 && made.text.length === 0) throw new Error(`ComfyUI finished and produced no ${expect}.`)
+      // **The last frame nobody sends.** `/history` is what decides a job is over, and it says
+      // so before the socket's final `progress_state` arrives — so the strip stopped one stage
+      // short and sat there unfinished under a row that already read *done*. Measured, not
+      // guessed: a real render ended on `█████▶·` with the picture already saved.
+      //
+      // Every stage is finished because the graph ran, which is what `/history` returning an
+      // output means — including any node ComfyUI never reported because it served it from
+      // cache.
+      if (stages !== undefined) {
+        onProgress?.(
+          label?.(step?.node) ?? 'Done',
+          stages.length,
+          stages.length,
+          { stages: shape(stages, Object.fromEntries(stages.map((id) => [id, { state: 'finished' }])), label) },
+        )
+      }
       return made
     }
     // The queue position, which is the only honest thing to say while waiting: "still
@@ -252,9 +359,7 @@ export async function wait(server, id, { signal, onProgress, timeoutMs = 15 * 60
       : 'Waiting for ComfyUI',
       stepping ? step.value : tick,
       stepping ? step.max : 0,
-      // Only when it has changed. The same frame sent again is a byte cost with no picture in
-      // it, and a render sends more of these than it sends step counts.
-      step?.preview !== shown ? ((shown = step?.preview), shown) : undefined,
+      work(),
     )
     await new Promise((resolve) => setTimeout(resolve, 1000))
   }

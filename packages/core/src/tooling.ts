@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+import { PREVIEW_META, type Stage, STAGES_META } from '@alexia/protocol'
 import type { CallToolResult } from '@modelcontextprotocol/client'
 import { statSync } from 'node:fs'
 import { basename } from 'node:path'
@@ -31,6 +32,38 @@ import { SKILL_TOOL, type Skills } from './skills.js'
 /** The provider-side limit on a function name, and the reason a long one is dropped. */
 const NAME_LIMIT = 64
 const SEPARATOR = '__'
+
+/** How many steps of a pipeline are worth drawing. Past this it is a texture, not a diagram. */
+const STAGES_MAX = 64
+
+/** A label long enough to be a paragraph is not a label. */
+const LABEL_MAX = 80
+
+/**
+ * The stages a plugin sent, or nothing at all.
+ *
+ * Everything here becomes elements in the shell, so each field is checked rather than
+ * trusted: an unrecognised `state` would otherwise land in a class name, and `label` is text
+ * somebody else wrote. **Anything malformed drops the whole strip** rather than drawing part
+ * of one — a pipeline with a step missing is a wrong picture, where no pipeline at all is
+ * just the bar, which is what every plugin already gets.
+ */
+export function stagesOf(said: unknown): Stage[] | undefined {
+  if (!Array.isArray(said) || said.length === 0) return undefined
+  const out: Stage[] = []
+  for (const one of said.slice(0, STAGES_MAX)) {
+    if (typeof one !== 'object' || one === null) return undefined
+    const { label, state, progress, total } = one as Record<string, unknown>
+    if (state !== 'waiting' && state !== 'running' && state !== 'done' && state !== 'failed') return undefined
+    out.push({
+      state,
+      ...(typeof label === 'string' && { label: label.slice(0, LABEL_MAX) }),
+      ...(typeof progress === 'number' && Number.isFinite(progress) && { progress }),
+      ...(typeof total === 'number' && Number.isFinite(total) && { total }),
+    })
+  }
+  return out
+}
 
 interface Known {
   pluginId: string
@@ -139,18 +172,21 @@ export class PluginTooling implements Tooling {
           ...(signal && { signal }),
           ...(onProgress && {
             onprogress: (update) => {
-              // An extension key an older core ignores, the same shape `alexia/tools` and
-              // `alexia/files` already use. A plugin that sends nothing here is unaffected, and
-              // a preview that is not a `data:` URL is dropped rather than passed on — this is
+              // Extension keys an older core ignores, the same shape `alexia/tools` and
+              // `alexia/files` already use. A plugin that sends nothing here is unaffected.
+              const meta = (update as { _meta?: Record<string, unknown> })._meta
+              // A preview that is not a `data:` URL is dropped rather than passed on: this is
               // the one field a plugin fills that ends up in an `img`, so it does not get to
               // name a path or a host.
-              const shown = (update as { _meta?: Record<string, unknown> })._meta?.['alexia/preview']
+              const shown = meta?.[PREVIEW_META]
               const preview = typeof shown === 'string' && shown.startsWith('data:image/') ? shown : undefined
+              const stages = stagesOf(meta?.[STAGES_META])
               onProgress({
                 progress: update.progress,
                 ...(update.total !== undefined && { total: update.total }),
                 ...(update.message !== undefined && { message: update.message }),
                 ...(preview !== undefined && { preview }),
+                ...(stages !== undefined && { stages }),
               })
             },
           }),

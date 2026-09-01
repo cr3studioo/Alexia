@@ -17,12 +17,27 @@
  * wrong line.
  */
 
+/**
+ * One step of a long job, in the order the plugin runs them.
+ *
+ * Declared here rather than imported because the shell ships as plain modules with no
+ * bundler — the same reason `Moving` restates the wire shape instead of sharing core's.
+ */
+export interface Stage {
+  label?: string
+  state: 'waiting' | 'running' | 'done' | 'failed'
+  progress?: number
+  total?: number
+}
+
 export interface Moving {
   progress: number
   total?: number
   message?: string
   /** A picture of the work while it is still work. A `data:` URL, replaced by the next one. */
   preview?: string
+  /** The job's own steps. The plugin's order, drawn left to right and never re-sorted. */
+  stages?: Stage[]
 }
 
 export interface Live {
@@ -51,8 +66,14 @@ interface Row {
   text?: string
   element: HTMLElement
   said: HTMLElement
-  /** Made on the first preview frame and reused after, because a step has one current state. */
-  shot?: HTMLImageElement
+  /**
+   * The second line a step gets once it shows its work: the pipeline, then the picture.
+   *
+   * Made once, by whichever arrives first, with both elements in place and hidden — so the
+   * order on screen is the order decided here rather than whichever message ComfyUI happened
+   * to send first.
+   */
+  work?: { strip: HTMLOListElement; shot: HTMLImageElement }
 }
 
 /**
@@ -62,6 +83,51 @@ interface Row {
 const bare = (name: string): string => {
   const cut = name.indexOf('__')
   return cut === -1 ? name : name.slice(cut + 2)
+}
+
+/**
+ * The second line of a step that is showing its work, made on demand.
+ *
+ * Both elements exist from the first call and start hidden, so *pipeline above picture* is
+ * settled here rather than by whichever of the two messages happens to arrive first. It is
+ * appended to the row, after the words, because a rail row is a line of text and a picture
+ * set beside the name shrinks the name to nothing.
+ */
+const working = (row: Row): { strip: HTMLOListElement; shot: HTMLImageElement } =>
+  (row.work ??= (() => {
+    const box = document.createElement('div')
+    box.className = 'step-work'
+    const strip = document.createElement('ol')
+    strip.className = 'step-stages'
+    strip.hidden = true
+    const shot = document.createElement('img')
+    shot.className = 'step-preview'
+    shot.alt = 'What this step has made so far'
+    shot.decoding = 'async'
+    shot.hidden = true
+    box.append(strip, shot)
+    row.element.append(box)
+    return { strip, shot }
+  })())
+
+/**
+ * One stage of the strip.
+ *
+ * The name goes on `title` and nowhere else: five names fit across this rail and twenty-five
+ * do not, and the line above already says which stage is running. What the strip adds is the
+ * shape — how many there are, which one is live, and how far that one has got.
+ */
+const segment = (stage: Stage): HTMLLIElement => {
+  const li = document.createElement('li')
+  // `waiting` is the empty bar itself, so it needs no class of its own.
+  if (stage.state !== 'waiting') li.className = stage.state
+  if (stage.label !== undefined) li.title = stage.label
+  const total = stage.total ?? 0
+  if (stage.state === 'running' && total > 0) {
+    const far = Math.max(0, Math.min(100, Math.round(((stage.progress ?? 0) / total) * 100)))
+    li.style.setProperty('--fill', `${String(far)}%`)
+  }
+  return li
 }
 
 export function mountLive(token: string): Live {
@@ -292,15 +358,22 @@ export function mountLive(token: string): Live {
       // state. Only ever a `data:` URL, checked here as well as at the boundary, because this
       // is the one place a plugin's string becomes something the shell loads.
       if (update.preview?.startsWith('data:image/')) {
-        row.shot ??= (() => {
-          const shot = document.createElement('img')
-          shot.className = 'step-preview'
-          shot.alt = 'What this step has made so far'
-          shot.decoding = 'async'
-          row.said.before(shot)
-          return shot
-        })()
-        row.shot.src = update.preview
+        const { shot } = working(row)
+        shot.src = update.preview
+        shot.hidden = false
+      }
+      // **The shape of the job**, in the plugin's own order. Rebuilt rather than patched: it
+      // is a handful of elements once a second, and a strip that is rebuilt cannot hold a
+      // stale state from a stage that has gone away.
+      if (update.stages !== undefined && update.stages.length > 0) {
+        const { strip } = working(row)
+        strip.replaceChildren(...update.stages.map(segment))
+        const done = update.stages.filter((stage) => stage.state === 'done').length
+        strip.setAttribute(
+          'aria-label',
+          `${String(update.stages.length)} stages, ${String(done)} done.`,
+        )
+        strip.hidden = false
       }
       if (update.message !== undefined) row.said.textContent = update.message
       if (update.total === undefined || update.total <= 0) return

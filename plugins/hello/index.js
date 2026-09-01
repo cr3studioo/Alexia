@@ -80,10 +80,28 @@ alexia.tool(
   async (ctx) => {
     const { warm_up_ms: total = 1600 } = await alexia.settings()
     const steps = 8
+    // The optional half of the contract, and the reason this tool exists: the bar says how far
+    // along everything is, and `stages` says how many parts there are and which one is live.
+    // A real plugin names its own — these are a kettle because this one warms up.
+    const parts = ['Kettle', 'Cups', 'Pouring', 'Serving']
+    const per = steps / parts.length
     await alexia.status('ready', '▲ Warming up')
     for (let step = 1; step <= steps; step++) {
       await new Promise((done) => setTimeout(done, total / steps))
-      alexia.progress(ctx, step, steps, step < steps ? 'Warming up' : 'Warm')
+      const at = Math.min(parts.length - 1, Math.floor((step - 1) / per))
+      alexia.progress(ctx, step, steps, step < steps ? 'Warming up' : 'Warm', {
+        stages: parts.map((label, one) => ({
+          label,
+          state:
+            step === steps ? 'done'
+            : one < at ? 'done'
+            : one === at ? 'running'
+            : 'waiting',
+          // Only the running one can say how far it has got on its own; the others are
+          // already the whole of themselves, or none of it.
+          ...(one === at && step < steps ? { progress: ((step - 1) % per) + 1, total: per } : {}),
+        })),
+      })
     }
     await alexia.status('ready', '● Warm')
     return { content: [{ type: 'text', text: `Warm, after ${total} ms.` }] }

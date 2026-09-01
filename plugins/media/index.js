@@ -3,7 +3,7 @@ import { fromJsonSchema, log, plugin } from '@alexia/sdk'
 import { Buffer } from 'node:buffer'
 import { readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
-import { checkpoints, classes, download, interrupt, named, pick, queue, stats, templates, wait } from './comfy.js'
+import { checkpoints, classes, download, interrupt, named, order, pick, queue, stats, templates, wait } from './comfy.js'
 import { alive, awake, install, loopback, port, ready, start, stop, tail } from './launch.js'
 import { API_SUFFIX, FOLDER, apply, isApi, knobs, missing, read, reseed, saved, write } from './workflows.js'
 import { api as starterGraph, editor as starterDoc, STARTER } from './starter.js'
@@ -275,7 +275,10 @@ const made = alexia.tool(
     const found = await awaiting(server, id, {
       signal,
       label: naming(built),
-      onProgress: (message, done, total, shown) => alexia.progress(ctx, done, total, message, shown),
+      // The pipeline, worked out from the graph rather than waited for: ComfyUI only names a
+      // node once it has started, and a strip that grew as it went would draw the reporting.
+      stages: order(built),
+      onProgress: (message, done, total, work) => alexia.progress(ctx, done, total, message, work),
     })
 
     const saved = []
@@ -643,7 +646,8 @@ alexia.tool(
       signal,
       expect: 'output',
       label: naming(built),
-      onProgress: (message, done, total, shown) => alexia.progress(ctx, done, total, message, shown),
+      stages: order(built),
+      onProgress: (message, done, total, work) => alexia.progress(ctx, done, total, message, work),
     })
 
     const kept = []

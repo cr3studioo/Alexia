@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import type { Manifest } from '@alexia/protocol'
+import type { Manifest, Stage } from '@alexia/protocol'
 import { existsSync, statSync } from 'node:fs'
 import { isAbsolute } from 'node:path'
 import type { SecretStore } from './secrets.js'
@@ -85,6 +85,14 @@ export interface Progress {
    * itself midway, which is true of a render, a download preview and a page being laid out.
    */
   preview?: string
+  /**
+   * The job's own steps, in the order the plugin runs them.
+   *
+   * The bar above says how far through *everything* is; this says how many parts there are,
+   * which one is live, and how far that one has got on its own. A plugin that has one step
+   * sends nothing here and gets the bar, which is every plugin before this existed.
+   */
+  stages?: Stage[]
 }
 
 export interface Pane {
