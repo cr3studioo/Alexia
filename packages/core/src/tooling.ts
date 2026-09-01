@@ -4,6 +4,7 @@ import { statSync } from 'node:fs'
 import { basename } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Produced, Tooling, ToolOutcome } from './agent.js'
+import { mimeOf } from './offered.js'
 import type { Annotations } from './permissions.js'
 import type { Plugins } from './plugins.js'
 import type { ToolSpec } from './provider.js'
@@ -210,11 +211,15 @@ function produced(block: Record<string, unknown>): Produced | undefined {
     const path = fileURLToPath(uri)
     const found = statSync(path)
     if (!found.isFile()) return undefined
+    const name = String(block.name ?? '') || basename(path)
     return {
-      name: String(block.name ?? '') || basename(path),
+      name,
       path,
       bytes: found.size,
-      mime: String(block.mimeType ?? '') || 'application/octet-stream',
+      // The block's own type when it gave one; otherwise read it off the name. A plugin that
+      // omits `mimeType` on a `.png` should still get a picture shown in place, not a row
+      // that only offers to open it — and `sendPhoto` on the Telegram side reads the same.
+      mime: String(block.mimeType ?? '') || mimeOf(name),
     }
   } catch {
     // A malformed URI, or a file the tool named and did not write. Either way there is
