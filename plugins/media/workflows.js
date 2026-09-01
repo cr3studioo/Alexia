@@ -281,6 +281,98 @@ const coerce = (value, type) =>
  * The graph with the knobs turned. The original is never touched — a graph is read once and run
  * many times, and a run that mutated it would carry into the next one.
  */
+/**
+ * The prompt boxes, worked out from the graph's own wiring rather than from anybody's titles.
+ *
+ * **D128 is right and this does not weaken it.** A field is offered because its author named
+ * the box, because a title is how an author says *this is the knob* — and that is what
+ * {@link knobs} does. But ComfyUI's own catalogue templates rename nothing, so every one of
+ * them arrives with no fields at all and runs with whatever prompt its author baked in. That
+ * makes *install this and run it against what I asked for* impossible for the entire
+ * catalogue, which is the one journey D137's `install_workflow` exists to serve.
+ *
+ * So this is the fallback, and it is a derivation rather than a guess:
+ *
+ *  - **A sampler is a node taking both a `positive` and a `negative` conditioning link.** That
+ *    is read off the graph's shape, not off a list of class names — a hardcoded `KSampler`
+ *    would miss every custom sampler, and this install has several.
+ *  - **Which is which is stated by the node that consumes them**, so nothing has to be inferred
+ *    from the words inside the box.
+ *  - **The text box is found by its declared type** — `STRING` with `multiline` — out of
+ *    `/object_info`, the same source {@link knobs} reads for everything else.
+ *
+ * **Every uncertainty returns nothing rather than a guess.** Two samplers and it cannot say
+ * which pipeline somebody meant; a conditioning node with no text box, or with two, and it
+ * cannot say which one carries the prompt. Offering the wrong box would put somebody's words
+ * into a field that changes nothing, which is the failure that looks like it worked.
+ */
+export function wired(graph, classes) {
+  const samplers = Object.entries(graph ?? {}).filter(
+    ([, one]) => linked(one?.inputs?.positive) && linked(one?.inputs?.negative),
+  )
+  if (samplers.length !== 1) return []
+  const [, sampler] = samplers[0]
+  const found = []
+  for (const [slot, field, title] of [
+    ['positive', 'prompt', 'What to make'],
+    ['negative', 'avoid', 'What to avoid'],
+  ]) {
+    const at = String(sampler.inputs[slot][0])
+    const node = graph?.[at]
+    if (!node) continue
+    const spec = classes?.[node.class_type]
+    const boxes = Object.entries(node.inputs ?? {}).filter(
+      ([input, value]) => !linked(value) && typeof value === 'string' && shape(spec, input).multiline === true,
+    )
+    if (boxes.length !== 1) continue
+    found.push({ node: at, input: boxes[0][0], field, title, value: boxes[0][1], type: 'string', multiline: true })
+  }
+  /**
+   * The checkpoint, by walking the sampler's model chain to whatever chooses a file.
+   *
+   * **A catalogue template names a model this machine almost certainly does not have.** SDXL
+   * Turbo asks for `sd_xl_turbo_1.0_fp16.safetensors`; this card holds six other checkpoints and
+   * none of them is that, so the install succeeds and the run dies on a 400 from ComfyUI. Being
+   * able to point it at a model you own is the difference between a shelf and a list.
+   *
+   * The walk is the graph's own: follow `model` while it is a link, because that is how LoRA and
+   * patch loaders chain, and stop at the node that has a combo input instead. A combo's options
+   * come from `/object_info`, so what is offered is what this install actually has — which is
+   * also why the list is never hardcoded (D134 found two spellings of it live on one machine).
+   */
+  let at = sampler.inputs.model
+  const seen = new Set()
+  while (linked(at) && !seen.has(String(at[0]))) {
+    const id = String(at[0])
+    seen.add(id)
+    const node = graph?.[id]
+    if (!node) break
+    const spec = classes?.[node.class_type]
+    const combos = Object.entries(node.inputs ?? {}).filter(
+      ([input, value]) => !linked(value) && Array.isArray(shape(spec, input).options),
+    )
+    if (combos.length === 1) {
+      found.push({
+        node: id,
+        input: combos[0][0],
+        field: 'model',
+        title: 'Model',
+        value: combos[0][1],
+        ...shape(spec, combos[0][0]),
+      })
+      break
+    }
+    // More than one file to choose and no way to say which is the checkpoint, so it says none.
+    if (combos.length > 1) break
+    at = node.inputs?.model
+  }
+
+  // **Without the positive box there is nothing worth offering.** Handing back `avoid` alone
+  // says the workflow can be steered when the thing it makes cannot be — somebody sets what to
+  // avoid, the baked-in prompt runs anyway, and the result looks like the field was ignored.
+  return found.some((one) => one.field === 'prompt') ? found : []
+}
+
 export function apply(graph, found, values) {
   const built = structuredClone(graph)
   for (const knob of found) {

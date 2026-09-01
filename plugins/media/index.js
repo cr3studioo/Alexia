@@ -5,7 +5,7 @@ import { readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import { checkpoints, classes, download, interrupt, named, order, pick, queue, stats, template, templates, wait } from './comfy.js'
 import { alive, awake, install, loopback, port, ready, start, stop, tail } from './launch.js'
-import { API_SUFFIX, FOLDER, apply, isApi, knobs, missing, read, remove, reseed, saved, write } from './workflows.js'
+import { API_SUFFIX, FOLDER, apply, isApi, knobs, missing, read, remove, reseed, saved, wired, write } from './workflows.js'
 import { api as starterGraph, editor as starterDoc, STARTER } from './starter.js'
 import { measure, tight } from './sizing.js'
 import { fetchModel, have } from './models.js'
@@ -485,6 +485,22 @@ async function reachable(ctx) {
  * here, so the title wins over the class name and the class name over the id — *Load Model —
  * step 12 of 28* is a sentence about somebody’s own pipeline rather than about a graph.
  */
+/**
+ * What a workflow offers to be set, and whether anybody named it.
+ *
+ * **Titled boxes always win** — D128, because a title is the author saying *this is the knob*,
+ * and a graph with its own vocabulary keeps it. The wiring is read only when a workflow names
+ * nothing at all, which is every one of ComfyUI's own catalogue templates: without this they
+ * install and then run with whatever prompt their author baked in, and *install this and run it
+ * against what I asked for* is impossible for the whole catalogue.
+ */
+const fields = (graph, spec) => {
+  const named = knobs(graph, spec)
+  if (named.length > 0) return { found: named, derived: false }
+  const found = wired(graph, spec)
+  return { found, derived: found.length > 0 }
+}
+
 const naming = (built) => (node) => {
   const one = built?.[node]
   return String(one?._meta?.title ?? one?.class_type ?? '').trim() || undefined
@@ -532,13 +548,19 @@ alexia.tool(
         if (absent.length > 0) {
           said.push(`  It needs ${absent.join(', ')}, which ${absent.length === 1 ? 'is' : 'are'} not installed here.`)
         }
-        const found = knobs(graph, spec)
-        seen.fields = found.length > 0 ? found.map((one) => one.field).join(', ') : 'none'
+        const { found, derived } = fields(graph, spec)
+        seen.fields =
+          found.length === 0 ? 'none'
+          : derived ? `${found.map((one) => one.field).join(', ')} (from its wiring)`
+          : found.map((one) => one.field).join(', ')
         said.push(
           ...(found.length > 0 ? found.map(describe) : (
             ['  No fields — nothing in it is titled, so it runs exactly as exported.']
           )),
         )
+        // Where the field came from changes how much to trust its name, so it is said rather
+        // than left for somebody to notice.
+        if (derived) said.push('  Nothing in it is titled, so these were read off its wiring.')
       } catch (error) {
         seen.fields = 'unreadable'
         said.push(`  Could not read the export: ${String(error?.message ?? error)}`)
@@ -626,7 +648,7 @@ alexia.tool(
       )
     }
 
-    const found = knobs(graph, spec)
+    const { found } = fields(graph, spec)
     const given = { ...(values ?? {}) }
     const strange = Object.keys(given).filter((field) => !found.some((knob) => knob.field === field))
     if (strange.length > 0) {
@@ -747,7 +769,7 @@ alexia.tool(
     const { row } = await which(server, called, signal)
     const spec = await nodes(signal).catch(() => ({}))
     const absent = missing(doc, spec)
-    const found = knobs(doc, spec)
+    const { found, derived } = fields(doc, spec)
     return {
       content: [
         {
@@ -765,9 +787,11 @@ alexia.tool(
             absent.length > 0 ?
               `It needs ${absent.join(', ')}, which ${absent.length === 1 ? 'is' : 'are'} not installed here, so it will not run yet.`
             : undefined,
-            found.length > 0 ? `Its fields: ${found.map((knob) => knob.field).join(', ')}.` : (
-              'Nothing in it is titled, so it takes no fields and runs exactly as exported.'
-            ),
+            found.length === 0 ?
+              'Nothing in it is titled and its wiring did not say, so it takes no fields and runs exactly as exported.'
+            : derived ?
+              `Nothing in it is titled, so its fields were read off its wiring: ${found.map((knob) => knob.field).join(', ')}.`
+            : `Its fields: ${found.map((knob) => knob.field).join(', ')}.`,
           ]
             .filter(Boolean)
             .join(' '),
@@ -1008,7 +1032,8 @@ alexia.tool(
     await write(server, `${FOLDER}/${entry.name}${API_SUFFIX}`, JSON.stringify(got.graph), signal)
 
     const absent = missing(got.graph, spec)
-    const found = knobs(got.graph, spec)
+    const { found, derived } = fields(got.graph, spec)
+    const wants = found.find((one) => one.field === 'model')
     return {
       content: [
         {
@@ -1020,16 +1045,29 @@ alexia.tool(
             : undefined,
             entry.vram ? `Its author says it wants ${(entry.vram / 1e9).toFixed(1)} GB of video memory.` : undefined,
             absent.length > 0 ? `Nodes this ComfyUI does not have: ${absent.join(', ')}.` : undefined,
-            found.length > 0 ?
-              `What you can set: ${found.map((one) => one.field).join(', ')}.`
-              // **Measured, and it is the normal case for a catalogue entry.** D128 surfaces only
-              // the fields whose nodes the workflow's author renamed, because a title is how an
-              // author says *this is the knob*. ComfyUI's own templates leave every node at its
-              // default name, so they arrive with none — it runs, with whatever its author baked
-              // in, and saying that plainly beats offering settings that are not there.
-            : 'It exposes no settings — ComfyUI’s own templates do not name their fields, so it runs ' +
-              'with whatever its author put in it. To steer it, open it in ComfyUI, rename the boxes ' +
-              'you want to control, and export it again with add_workflow.',
+            // **The model it names is usually one this machine does not have, and swapping it is
+            // not free.** Measured: SDXL Turbo installed cleanly, took the prompt it was given,
+            // ran against another SDXL checkpoint and produced grey mush — because a Turbo
+            // workflow is one step at guidance 1, which is tuned to its own distilled model. So
+            // the substitution is offered and the cost is stated: a tool that quietly returns a
+            // ruined picture is worse than one that says this may not work.
+            wants && !wants.options?.includes(wants.value) ?
+              `It was built around ${String(wants.value)}, which is not on this machine. You can point it at one of ` +
+                `yours instead — but a workflow is tuned to its model, steps and guidance included, so the ` +
+                'result may be poor. Downloading the one it names is the reliable way.'
+            : undefined,
+            // **The normal case for a catalogue entry is the derived one.** D128 offers only the
+            // fields whose nodes an author renamed, and ComfyUI’s own templates rename nothing — so
+            // without the wiring every one of them would install and then ignore what was asked
+            // for. Where it came from is said, because a name read off a wire deserves less
+            // trust than one somebody chose.
+            found.length === 0 ?
+              'It exposes no settings and its wiring did not say — it runs with whatever its author put in ' +
+              'it. To steer it, open it in ComfyUI, rename the boxes you want to control, and export it ' +
+              'again with add_workflow.'
+            : derived ?
+              `Nothing in it is titled, so its fields were read off its wiring: ${found.map((one) => one.field).join(', ')}.`
+            : `What you can set: ${found.map((one) => one.field).join(', ')}.`,
           ]
             .filter(Boolean)
             .join('\n'),

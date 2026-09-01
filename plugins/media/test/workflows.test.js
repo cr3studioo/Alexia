@@ -2,7 +2,7 @@
 import { createServer } from 'node:http'
 import { afterAll, beforeAll, expect, test } from 'vitest'
 import { outputs } from '../comfy.js'
-import { apply, isApi, knobs, missing, pair, read, reseed, saved, slug, titled, write } from '../workflows.js'
+import { apply, isApi, knobs, missing, pair, read, reseed, saved, slug, titled, wired, write } from '../workflows.js'
 
 /**
  * `Photo Reference (Pose + Style)`, as ComfyUI would export it for the API — trimmed to the
@@ -247,4 +247,59 @@ test('workflows are listed, read and written over ComfyUI’s own API, names and
 
 test('a file that is not there says so in ComfyUI’s own words', async () => {
   await expect(read(at, 'workflows/nothing.api.json')).rejects.toThrow(/404.*File not found/s)
+})
+
+/**
+ * The fallback that makes ComfyUI's own catalogue usable at all.
+ *
+ * Its templates rename nothing, so `knobs` offers zero fields for every one of them and they
+ * would install and then ignore whatever was asked for. This reads the graph's own wiring
+ * instead — and refuses on every ambiguity, because putting somebody's words into a box that
+ * changes nothing is the failure that looks like it worked.
+ */
+const TEXT = { input: { required: { text: ['STRING', { multiline: true }] } } }
+const spec = {
+  CLIPTextEncode: TEXT,
+  KSampler: { input: { required: { seed: ['INT', {}] } } },
+  CheckpointLoaderSimple: { input: { required: {} } },
+}
+const wiredGraph = () => ({
+  1: { class_type: 'CheckpointLoaderSimple', inputs: { ckpt_name: 'sd.safetensors' } },
+  2: { class_type: 'CLIPTextEncode', inputs: { clip: ['1', 1], text: 'a lantern in fog' } },
+  3: { class_type: 'CLIPTextEncode', inputs: { clip: ['1', 1], text: 'blurry' } },
+  4: { class_type: 'KSampler', inputs: { model: ['1', 0], positive: ['2', 0], negative: ['3', 0], seed: 1 } },
+})
+
+test('the prompt boxes are read off the wiring when nobody named them', () => {
+  const graph = wiredGraph()
+  // Nothing here is titled, so the titled route offers nothing at all — which is the whole
+  // reason this exists rather than a preference between the two.
+  expect(knobs(graph, spec)).toEqual([])
+  const found = wired(graph, spec)
+  expect(found.map((one) => one.field)).toEqual(['prompt', 'avoid'])
+  // Which is which is stated by the sampler that consumes them, never inferred from the words.
+  expect(found.find((one) => one.field === 'prompt')).toMatchObject({ node: '2', input: 'text' })
+  expect(found.find((one) => one.field === 'avoid')).toMatchObject({ node: '3', input: 'text' })
+  // And they are the same shape `apply` already takes, so somebody's words reach the graph.
+  const built = apply(graph, found, { prompt: 'a lighthouse in a storm' })
+  expect(built['2'].inputs.text).toBe('a lighthouse in a storm')
+  expect(built['3'].inputs.text).toBe('blurry')
+})
+
+test('every ambiguity says nothing rather than guessing', () => {
+  // Two samplers: it cannot know which pipeline somebody meant.
+  const two = wiredGraph()
+  two['5'] = { class_type: 'KSampler', inputs: { model: ['1', 0], positive: ['2', 0], negative: ['3', 0], seed: 2 } }
+  expect(wired(two, spec)).toEqual([])
+
+  // A conditioning node with two text boxes: it cannot know which one is the prompt.
+  const both = wiredGraph()
+  both['2'].inputs.style = 'painterly'
+  expect(wired(both, { ...spec, CLIPTextEncode: { input: { required: { text: ['STRING', { multiline: true }], style: ['STRING', { multiline: true }] } } } })).toEqual([])
+
+  // A single-line box is a name or a filename, not a prompt, so it is not offered.
+  expect(wired(wiredGraph(), { ...spec, CLIPTextEncode: { input: { required: { text: ['STRING', {}] } } } })).toEqual([])
+
+  // Nothing sampler-shaped at all.
+  expect(wired({ 1: { class_type: 'SaveImage', inputs: { images: ['2', 0] } } }, spec)).toEqual([])
 })
