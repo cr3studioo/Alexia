@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { Buffer } from 'node:buffer'
+import { randomUUID } from 'node:crypto'
 
 /**
  * ComfyUI, over its own HTTP API.
@@ -9,61 +10,17 @@ import { Buffer } from 'node:buffer'
  * SDXL text-to-image pipeline, and anything a person can build in ComfyUI's editor can be
  * substituted for it later without this plugin learning anything new.
  *
- * ponytail: no websocket. ComfyUI's progress arrives over one, and polling `/history` every
- * second is a dependency and a reconnect story less for a job that takes twenty seconds. The
- * cost is progress in whole images rather than in steps. If a queue of long jobs makes that
- * unbearable, the websocket is the upgrade and it is the only thing that would change here.
- */
-
-/**
- * The pipeline, as a graph.
+ * **The websocket, adopted — and this comment used to argue the other way.** It said polling
+ * `/history` was a dependency and a reconnect story less, at the cost of progress in whole images
+ * rather than steps, and that *the websocket is the upgrade and it is the only thing that would
+ * change here*. That was right for what it was deciding and it is what changed: per-step progress
+ * is websocket-only, and a person watching a thirty-second render wants to know it is at step 12.
  *
- * Node 8 is the decode and node 4 the checkpoint; **the VAE wiring is why `vae_fp32`
- * exists**. SDXL's own VAE overflows in fp16 on a lot of 8 GB cards and the symptom is a
- * black image with no error anywhere, which is among the least debuggable failures in this
- * whole project. Forcing the decode to full precision costs a little VRAM and removes it.
+ * **`/history` is still what decides the job is finished.** The socket only makes the waiting
+ * legible — it is opened per job, it is allowed to fail, and everything degrades to exactly the
+ * old behaviour when it does. That is the reconnect story the original comment was avoiding: there
+ * isn't one, because nothing depends on the socket staying up.
  */
-export function graph({ prompt, negative, checkpoint, steps, width, height, seed, fp32 }) {
-  return {
-    3: {
-      class_type: 'KSampler',
-      inputs: {
-        seed,
-        steps,
-        cfg: 7,
-        sampler_name: 'dpmpp_2m',
-        scheduler: 'karras',
-        denoise: 1,
-        model: ['4', 0],
-        positive: ['6', 0],
-        negative: ['7', 0],
-        latent_image: ['5', 0],
-      },
-    },
-    4: { class_type: 'CheckpointLoaderSimple', inputs: { ckpt_name: checkpoint } },
-    5: { class_type: 'EmptyLatentImage', inputs: { width, height, batch_size: 1 } },
-    6: { class_type: 'CLIPTextEncode', inputs: { text: prompt, clip: ['4', 1] } },
-    7: { class_type: 'CLIPTextEncode', inputs: { text: negative, clip: ['4', 1] } },
-    8: {
-      class_type: 'VAEDecode',
-      // `VAEDecodeTiled` at full precision is the workaround that actually holds on 8 GB:
-      // it decodes in tiles, so peak VRAM is a tile rather than the whole image.
-      inputs: { samples: ['3', 0], vae: ['4', 2] },
-    },
-    ...(fp32 && {
-      8: {
-        class_type: 'VAEDecodeTiled',
-        // Every one of these is *required* by the node, and a graph missing one is refused
-        // outright with a 400 — which is how this was found, because `tile_size` alone was
-        // all it sent and this is the **default** path. The two temporal inputs are for
-        // video VAEs and do nothing to a still image; they are here because the node asks
-        // for them, and ComfyUI's own defaults are what they are set to.
-        inputs: { samples: ['3', 0], vae: ['4', 2], tile_size: 512, overlap: 64, temporal_size: 64, temporal_overlap: 8 },
-      },
-    }),
-    9: { class_type: 'SaveImage', inputs: { filename_prefix: 'alexia', images: ['8', 0] } },
-  }
-}
 
 /**
  * What ComfyUI said in the body of a refusal.
@@ -132,13 +89,73 @@ export async function checkpoints(server, signal) {
   return Array.isArray(found) ? found : []
 }
 
+/**
+ * Who Alexia is, to ComfyUI — one id for this process, and the same one twice on purpose.
+ *
+ * **This is the whole of the trap.** Every progress message ComfyUI sends goes to
+ * `server_instance.client_id` and nobody else (`main.py:437`, and the socket table is keyed by
+ * the `clientId` query parameter at `server.py:273`). So the socket and the queued prompt must
+ * carry *the same* id — and when they do not, the socket connects, stays silent, and the whole
+ * feature reads as ComfyUI being slow. There is no error to see.
+ *
+ * So it is one constant used by both, rather than a string passed to each. A caller cannot get
+ * this wrong because a caller is not asked. It is per process rather than a literal, so two
+ * Alexias pointed at one ComfyUI do not read each other’s progress.
+ */
+export const CLIENT_ID = `alexia-${randomUUID()}`
+
+/**
+ * The step counter, over the socket that is the only thing carrying it.
+ *
+ * Opened per job and allowed to fail: a socket that never connects, drops, or answers rubbish
+ * leaves `wait` polling exactly as it did before, which is why this needs no reconnect story.
+ * Binary frames are preview images and are ignored here — those are their own decision, and a
+ * widget that could show one does not exist yet.
+ */
+export function listen(server, id, onStep) {
+  let socket
+  try {
+    const url = new URL(server)
+    url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
+    url.pathname = '/ws'
+    url.searchParams.set('clientId', CLIENT_ID)
+    socket = new WebSocket(url)
+  } catch {
+    return () => {}
+  }
+  // Nothing here throws into the caller. A progress bar is not worth failing a render for.
+  socket.addEventListener('error', () => {})
+  socket.addEventListener('message', (event) => {
+    if (typeof event.data !== 'string') return
+    let said
+    try {
+      said = JSON.parse(event.data)
+    } catch {
+      return
+    }
+    const data = said?.data ?? {}
+    // ComfyUI talks to one client about everything it is doing, including jobs somebody queued
+    // from a browser tab. Only this job’s messages mean anything here.
+    if (data.prompt_id !== undefined && data.prompt_id !== id) return
+    if (said.type === 'progress') onStep({ value: Number(data.value), max: Number(data.max), node: String(data.node ?? '') })
+    else if (said.type === 'executing' && data.node) onStep({ node: String(data.node) })
+  })
+  return () => {
+    try {
+      socket.close()
+    } catch {
+      /* already gone */
+    }
+  }
+}
+
 /** Queue a graph. What comes back is the id to ask about. */
-export async function queue(server, prompt, clientId, signal) {
+export async function queue(server, prompt, signal) {
   const answered = await json(
     await fetch(`${server}/prompt`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ prompt, client_id: clientId }),
+      body: JSON.stringify({ prompt, client_id: CLIENT_ID }),
       signal,
     }),
   )
@@ -157,8 +174,13 @@ export async function queue(server, prompt, clientId, signal) {
  * to sixty seconds, and a queue in front of it can make that minutes. What is not bounded
  * is what happens after a stop — `signal` reaches the fetch, and the loop ends with it.
  */
-export async function wait(server, id, { signal, onProgress, timeoutMs = 15 * 60_000, expect = 'image' } = {}) {
+export async function wait(server, id, { signal, onProgress, timeoutMs = 15 * 60_000, expect = 'image', label } = {}) {
   const until = Date.now() + timeoutMs
+  let step
+  const hush = listen(server, id, (at) => {
+    step = { ...step, ...at }
+  })
+  try {
   for (let tick = 0; Date.now() < until; tick++) {
     if (signal?.aborted) throw new Error('Stopped.')
     const history = await json(await fetch(`${server}/history/${id}`, { signal }))
@@ -174,15 +196,23 @@ export async function wait(server, id, { signal, onProgress, timeoutMs = 15 * 60
       await fetch(`${server}/queue`, { signal }),
     ).catch(() => ({}))
     const ahead = pending.findIndex((item) => item[1] === id)
+    // Queue position first, because *two jobs ahead* explains a wait that steps cannot — nothing
+    // is stepping yet. Once it is running the socket has better words than this loop ever had.
+    const stepping = Number.isFinite(step?.max) && step.max > 0
     onProgress?.(
       ahead > 0 ? `${ahead} job${ahead === 1 ? '' : 's'} ahead in the queue`
+      : stepping ? `${label?.(step.node) ?? 'Generating'} — step ${step.value} of ${step.max}`
       : running.some((item) => item[1] === id) ? 'Generating'
       : 'Waiting for ComfyUI',
-      tick,
+      stepping ? step.value : tick,
+      stepping ? step.max : 0,
     )
     await new Promise((resolve) => setTimeout(resolve, 1000))
   }
   throw new Error('ComfyUI did not finish in time.')
+  } finally {
+    hush()
+  }
 }
 
 /** Fetch one finished output's bytes. Any kind — `/view` serves whatever the node wrote. */
@@ -235,6 +265,29 @@ export function outputs(done) {
  */
 export async function classes(server, signal) {
   return await json(await fetch(`${server}/object_info`, { signal }))
+}
+
+/**
+ * The workflows ComfyUI ships, as a catalogue it serves itself.
+ *
+ * No scraping and no mirror: this is on the machine already, it arrives with ComfyUI, and it
+ * moves when ComfyUI moves. `GET /templates/{name}.json` fetches one.
+ */
+export async function templates(server, signal) {
+  const response = await fetch(`${server}/templates/index.json`, { signal })
+  if (!response.ok) return []
+  return await response.json()
+}
+
+/**
+ * What the machine has — the card, its memory, and how much of it is free right now.
+ *
+ * Two questions turn on this: whether a heavy job has room (a decode that runs out does not
+ * always throw — it can return a black image), and, later, which size of model an install
+ * should fetch. `vram_free` moves; `vram_total` does not.
+ */
+export async function stats(server, signal) {
+  return await json(await fetch(`${server}/system_stats`, { signal }))
 }
 
 /**

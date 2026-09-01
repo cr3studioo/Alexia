@@ -2,6 +2,8 @@
 import {
   ALEXIA_METHODS,
   MCP_PINNED,
+  CONVERSATION_ENDED,
+  ConversationEnded,
   SETTINGS_CHANGED,
   SettingsChanged,
   type AlexiaMethod,
@@ -85,6 +87,17 @@ export interface AlexiaPlugin {
   status(key: string, value: string): Promise<void>
   /** The user edited a setting while you were running. React or ignore, but do not exit. */
   onSettingsChanged(handler: (changed: Record<string, unknown>) => void): void
+  /**
+   * The conversation somebody was having is over — they started a new one, or closed it.
+   *
+   * **Let go of anything expensive you were holding for it.** You are told nothing about the
+   * conversation itself, on purpose; the only information here is that keeping something warm
+   * for it has stopped being useful. Most plugins should ignore this. It is for the ones holding
+   * a graphics card, a model in memory, or a process somebody else's machine is paying for.
+   *
+   * Do not exit, and do not treat it as a shutdown: another conversation may start immediately.
+   */
+  onConversationEnded(handler: () => void): void
   host(): Promise<HostInfo>
   /**
    * Call something another plugin provides, by capability name. You never learn who
@@ -200,6 +213,8 @@ export function plugin(options: PluginOptions = {}): AlexiaPlugin {
         { params: SettingsChanged },
         ({ changed }) => handler(changed),
       ),
+    onConversationEnded: (handler) =>
+      server.server.setNotificationHandler(CONVERSATION_ENDED, { params: ConversationEnded }, () => handler()),
     host: () => call('alexia/host/info', {}),
     capability: (cap, args) => call('alexia/capability/call', { cap, arguments: args }),
     storage,

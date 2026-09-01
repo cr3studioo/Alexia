@@ -105,6 +105,26 @@ export const SETTINGS_CHANGED = 'alexia/settings/changed'
 export const SettingsChanged = z.object({ changed: z.record(ident, z.json()) })
 
 /**
+ * Core → every plugin, when the conversation somebody was having is over.
+ *
+ * **It carries nothing about the conversation, and that is deliberate.** Not its id, not its
+ * messages, not how it ended — a plugin has no business knowing what was said, and a plugin that
+ * could tell one conversation from another could keep a record of them. What this says is only
+ * *whatever you were holding for that, you can let go of now*.
+ *
+ * It exists because holding something expensive across a conversation is reasonable and holding
+ * it forever is not. A local model runner keeping a graphics card warm between two pictures is
+ * being helpful; keeping it warm all night because nobody said stop is not. Starting a new
+ * conversation is the clearest signal a person ever gives that they have finished, and until
+ * this there was no way for them to give it.
+ *
+ * **Nobody has to react.** It is a notification, it is broadcast to every running plugin, and
+ * ignoring it is the correct behaviour for almost all of them.
+ */
+export const CONVERSATION_ENDED = 'alexia/conversation/ended'
+export const ConversationEnded = z.object({})
+
+/**
  * Every `alexia/*` request, its params and its result. A supervisor dispatches off this
  * table, which is why it is one object and not twelve exported pairs.
  */

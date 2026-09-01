@@ -196,7 +196,15 @@ function shape(spec, input) {
   // A list where a type name would be is ComfyUI's combo, and the options *are* the type. This
   // is why a sampler or scheduler list must never be hardcoded: a custom node pack adds its own
   // and a frozen enum would refuse a value this install accepts.
+  //
+  // **There are two spellings and both are live on one install.** Older nodes put the list where
+  // the type goes; V3 nodes say `COMBO` and move the list into the options. Reading only the
+  // first meant a V3 node's field came back as free text with no list behind it — which looks
+  // like it works and quietly stops validating what somebody typed.
   if (Array.isArray(kind)) return { type: 'string', options: kind.map(String) }
+  if (String(kind ?? '').toUpperCase() === 'COMBO' && Array.isArray(opts.options)) {
+    return { type: 'string', options: opts.options.map(String) }
+  }
   const named = String(kind ?? '').toUpperCase()
   if (named === 'INT' || named === 'FLOAT') return { type: 'number', min: opts.min, max: opts.max }
   if (named === 'BOOLEAN') return { type: 'boolean' }

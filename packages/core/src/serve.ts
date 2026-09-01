@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { APP_VERSION, CORE_CAPABILITIES, FILES_META, TOOLS_META } from '@alexia/protocol'
 import { randomUUID } from 'node:crypto'
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import type { CreateMessageResult } from '@modelcontextprotocol/client'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { join } from 'node:path'
+import { join, sep } from 'node:path'
 import { run, said, type Produced } from './agent.js'
 import {
   discard,
@@ -578,6 +578,10 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
       spending = undefined
       return (session = id)
     },
+    // Broadcast, to whoever is running and cares. Nothing is spawned to hear it and nothing
+    // waits for it — a new conversation must not be held up by a plugin letting go of a
+    // graphics card.
+    ended: () => void plugins.ended(),
   }
   const ours = coreSources(surface)
   const ourActions = coreActions(surface)
@@ -1704,6 +1708,52 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
      * that test exists to close. It caught this comment quoting the pattern, which is a fair
      * indication it is reading the file rather than agreeing with itself.
      */
+    /**
+     * A picture an `image` widget is showing (D115's successor, `alexia_protocol` 5).
+     *
+     * **The boundary is the whole route.** `/api/file` serves what a *tool result* offered, by
+     * id, which is a list core wrote down. A widget's rows are different: the plugin names the
+     * paths, and serving whatever it names would turn this into a general file reader that any
+     * plugin can point anywhere — at the keychain database, at somebody’s documents — and have
+     * the shell fetch with its own token.
+     *
+     * So the only thing this will read is a file **inside the asking plugin’s own directory**,
+     * which is the one place it already has. `realpath` before the comparison, because `..` and
+     * a symlink are the two ways a path that looks inside points outside, and a prefix test on
+     * the string alone catches neither.
+     */
+    if (url.pathname === '/api/plugin-file' && request.method === 'GET') {
+      const id = url.searchParams.get('plugin') ?? ''
+      const wanted = url.searchParams.get('path') ?? ''
+      const deny = (code: number, said: string): void => {
+        response.writeHead(code, { 'content-type': 'application/json' })
+        response.end(JSON.stringify({ ok: false, said }))
+      }
+      if (!plugins.manifest(id)) return deny(404, 'There is no plugin by that name.')
+      let real: string
+      try {
+        // `realpath` on both sides before the comparison. `..` and a symlink are the two ways a
+        // path that reads as inside points outside, and a prefix test on the raw string catches
+        // neither — which is the difference between a widget and a file reader.
+        const root = realpathSync(plugins.ownDir(id))
+        real = realpathSync(wanted)
+        if (real !== root && !real.startsWith(root + sep)) {
+          return deny(403, 'A plugin may only show files from its own folder.')
+        }
+      } catch {
+        return deny(404, 'That file is not there.')
+      }
+
+      try {
+        const bytes = readFileSync(real)
+        response.writeHead(200, { 'content-type': mimeOf(real), 'cache-control': 'private, max-age=60' })
+        response.end(bytes)
+      } catch {
+        deny(410, 'That file is no longer where it was.')
+      }
+      return
+    }
+
     if (url.pathname === '/api/file') {
       const wanted = offers.get(request.method === 'GET' ? url.searchParams.get('id') : sent.id)
       if (wanted === undefined) {

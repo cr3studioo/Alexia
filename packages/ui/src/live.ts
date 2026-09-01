@@ -286,7 +286,10 @@ export function mountLive(token: string): Live {
       if (update.message !== undefined) row.said.textContent = update.message
       if (update.total === undefined || update.total <= 0) return
       const done = Math.max(0, Math.min(100, Math.round((update.progress / update.total) * 100)))
-      row.said.textContent = `${String(done)}%`
+      // Both, when there is both. A percentage alone replaced sentences a plugin had gone to
+      // some trouble for — *KSampler — step 12 of 28* says which stage of somebody's own
+      // pipeline is running, and `43%` says only how much of it is left.
+      row.said.textContent = update.message ? `${update.message} · ${String(done)}%` : `${String(done)}%`
     },
 
     done(n, ok, text) {

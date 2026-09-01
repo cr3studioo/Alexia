@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { spawn } from 'node:child_process'
-import { openSync } from 'node:fs'
+import { mkdirSync, openSync, writeFileSync } from 'node:fs'
 import { readFile, readdir, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { dirname, join, parse } from 'node:path'
+import { dirname, join, parse, sep } from 'node:path'
 
 /**
  * Starting ComfyUI, rather than waiting for somebody else to.
@@ -191,12 +191,46 @@ export function port(server) {
  * parent has exited has nowhere to write, and when a start fails the last line of that file
  * is the whole of the explanation.
  */
-export async function start(dir, { at, log, env = {} } = {}) {
+/**
+ * Tell ComfyUI to also look in Alexia's own folder for models.
+ *
+ * **This is what makes a clean uninstall possible without hiding the model.** A model downloaded
+ * into somebody's ComfyUI folder is a six-gigabyte file Alexia cannot honestly remove when the
+ * plugin is deleted — invariant 3 says a plugin leaves no residue. Kept in the plugin's own
+ * folder it purges with everything else, but ComfyUI's editor would never see it, so a workflow
+ * opened by hand could not select it.
+ *
+ * `--extra-model-paths-config` settles both. ComfyUI reads the folder as if it were its own, and
+ * **nothing is written into the person's install** — the file lives on Alexia's side and is
+ * passed on the command line, so an uninstall takes the configuration with the models.
+ *
+ * `is_default` is deliberately absent: these paths are searched, not preferred, so ComfyUI's own
+ * downloads keep going where that person expects them.
+ */
+export function paths(own) {
+  const base = own.split(sep).join('/')
+  for (const one of ['checkpoints', 'loras', 'vae']) mkdirSync(join(own, 'models', one), { recursive: true })
+  const file = join(own, 'extra_model_paths.yaml')
+  writeFileSync(
+    file,
+    // Hand-written rather than a YAML dependency: it is four lines of key and value, and
+    // forward slashes because a backslash in a YAML scalar is a question nobody needs to ask.
+    ['alexia:', `    base_path: ${base}`, '    checkpoints: models/checkpoints/', '    loras: models/loras/', '    vae: models/vae/', ''].join(
+      '\n',
+    ),
+    'utf8',
+  )
+  return file
+}
+
+export async function start(dir, { at, log, own, env = {} } = {}) {
   const exe = await python(dir)
   const out = openSync(log, 'w')
+  // Alexia's own models folder, offered to ComfyUI without writing anything into its install.
+  const extra = own ? ['--extra-model-paths-config', paths(own)] : []
   // `--disable-auto-launch` because a browser window opening by itself is the desktop
   // equivalent of shouting: somebody asked for a picture, not for ComfyUI's editor.
-  const child = spawn(exe, ['main.py', '--port', String(at), '--disable-auto-launch'], {
+  const child = spawn(exe, ['main.py', '--port', String(at), '--disable-auto-launch', ...extra], {
     cwd: dir,
     detached: true,
     stdio: ['ignore', out, out],

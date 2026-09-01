@@ -3121,3 +3121,80 @@ kbd {
   color: var(--ink-faint);
   font-size: var(--text-xs);
 }
+
+/* The thirteenth widget (alexia_protocol 5). A plugin says what the pictures are; every
+   decision below is core's, which is the whole reason it is a widget and not an iframe. */
+
+.image-grid {
+  display: grid;
+  /* Auto-fill rather than a fixed count: the same rule reads as four across on a wide window
+     and two on a narrow one, without a breakpoint per screen anybody has to maintain. */
+  grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr));
+  gap: var(--space-3);
+}
+
+.image-one {
+  display: block;
+}
+
+.image-cell {
+  margin: 0;
+  min-width: 0;
+}
+
+.image-shot,
+.image-gap {
+  display: block;
+  width: 100%;
+  /* Square, so a grid of portraits and landscapes is still a grid. `contain` rather than
+     `cover` in the single case, because the one picture somebody is watching should be whole
+     rather than well-cropped. */
+  aspect-ratio: 1;
+  object-fit: cover;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+}
+
+.image-one .image-shot,
+.image-one .image-gap {
+  aspect-ratio: auto;
+  max-height: 40vh;
+  object-fit: contain;
+}
+
+/* A file that has gone, and a row that never pointed at one, draw the same thing: a quiet
+   space where a picture would be. A torn-page icon says *something is broken*, and nothing
+   is — it was there when the plugin listed it and it is not there now. */
+.image-gap {
+  background: repeating-linear-gradient(
+    45deg,
+    var(--surface-raised),
+    var(--surface-raised) 6px,
+    var(--surface) 6px,
+    var(--surface) 12px
+  );
+}
+
+.image-caption {
+  margin: var(--space-1) 0 0;
+  color: var(--ink-faint);
+  font-size: var(--text-xs);
+  line-height: var(--leading-tight);
+  /* Two lines, then an ellipsis. A prompt can be a paragraph, and a caption that grows to fit
+     one turns an even grid into a ragged column. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.image-openable {
+  cursor: pointer;
+}
+
+.image-openable:focus-visible {
+  outline: 2px solid var(--chosen);
+  outline-offset: 2px;
+  border-radius: var(--radius-md);
+}

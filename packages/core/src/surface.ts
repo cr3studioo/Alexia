@@ -87,6 +87,12 @@ export interface SurfaceOptions {
    */
   session(): number
   openSession(id: number): void
+  /**
+   * A conversation just ended, so anything held for it can be let go of.
+   *
+   * Optional, because this object is built in tests that have no plugins to tell.
+   */
+  ended?(): void
 }
 
 /** `▲` is the one mark that is coloured, because on this screen a colour means look at this. */
@@ -576,6 +582,11 @@ export function actions(
       return Promise.resolve({ ok: true, said: 'You are already in a new chat — nothing has been said in this one.' })
     }
     options.openSession(empty?.id ?? options.store.createSession())
+    // **Whatever anybody was holding for the last conversation, they can let go of now.** Here
+    // rather than in either caller, because this is the one place both the button and `/new`
+    // pass through — and below the early return above, so pressing New twice does not announce
+    // an ending that did not happen. Nothing waits for it and no plugin is named.
+    options.ended?.()
     // Said the same way wherever it was asked for: this is the Chats screen's button and
     // also `/new`, typed into the conversation it is about to replace, where *press Back*
     // would be an instruction to leave a screen nobody is on.
