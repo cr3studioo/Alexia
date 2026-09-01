@@ -1437,7 +1437,7 @@ async function ask(question: string, files: File[] = []): Promise<void> {
           ok?: boolean
           text?: string
           args?: Record<string, unknown>
-          progress?: { progress: number; total?: number; message?: string }
+          progress?: { progress: number; total?: number; message?: string; preview?: string }
           files?: { id: string; name: string; bytes: number; mime: string; path: string; openable: boolean }[]
         }
       | undefined

@@ -112,6 +112,43 @@ export const CLIENT_ID = `alexia-${randomUUID()}`
  * Binary frames are preview images and are ignored here — those are their own decision, and a
  * widget that could show one does not exist yet.
  */
+/**
+ * A preview frame, out of the bytes ComfyUI sends it as.
+ *
+ * Two layouts, both big-endian and both read off `server.py` rather than documentation. The
+ * plain one (`send_image`, event 1) is `[event][1 = JPEG or 2 = PNG][the image]`. The one with
+ * metadata (event 4, sent only to a client that asked for it by feature flag) is
+ * `[event][length][JSON][the image]`, the JSON carrying the mimetype.
+ *
+ * Returns a `data:` URL because that is what it is for: a frame that exists for a second and is
+ * replaced. Writing each one to disk to serve it back would be a file per step of every render.
+ */
+export function preview(bytes) {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+  if (view.byteLength < 8) return undefined
+  const event = view.getUint32(0)
+  if (event === 1) {
+    const mime = view.getUint32(4) === 2 ? 'image/png' : 'image/jpeg'
+    return `data:${mime};base64,${Buffer.from(bytes.subarray(8)).toString('base64')}`
+  }
+  if (event === 4) {
+    const length = view.getUint32(4)
+    if (8 + length > view.byteLength) return undefined
+    try {
+      const said = JSON.parse(Buffer.from(bytes.subarray(8, 8 + length)).toString('utf8'))
+      const kind = String(said?.image_type ?? 'image/jpeg')
+      const mime = kind.includes('/') ? kind : `image/${kind.toLowerCase()}`
+      return `data:${mime};base64,${Buffer.from(bytes.subarray(8 + length)).toString('base64')}`
+    } catch {
+      return undefined
+    }
+  }
+  return undefined
+}
+
+/** Big enough that sending it through a progress channel would be the wrong thing to do. */
+const TOO_BIG = 400_000
+
 export function listen(server, id, onStep) {
   let socket
   try {
@@ -124,9 +161,17 @@ export function listen(server, id, onStep) {
     return () => {}
   }
   // Nothing here throws into the caller. A progress bar is not worth failing a render for.
+  socket.binaryType = 'arraybuffer'
   socket.addEventListener('error', () => {})
   socket.addEventListener('message', (event) => {
-    if (typeof event.data !== 'string') return
+    // A binary frame is the picture as it stands. It carries no `prompt_id`, so it belongs to
+    // whatever this client last queued — which is this job, because the socket is per job.
+    if (typeof event.data !== 'string') {
+      if (event.data.byteLength > TOO_BIG) return
+      const shown = preview(new Uint8Array(event.data))
+      if (shown) onStep({ preview: shown })
+      return
+    }
     let said
     try {
       said = JSON.parse(event.data)
@@ -177,6 +222,7 @@ export async function queue(server, prompt, signal) {
 export async function wait(server, id, { signal, onProgress, timeoutMs = 15 * 60_000, expect = 'image', label } = {}) {
   const until = Date.now() + timeoutMs
   let step
+  let shown
   const hush = listen(server, id, (at) => {
     step = { ...step, ...at }
   })
@@ -206,6 +252,9 @@ export async function wait(server, id, { signal, onProgress, timeoutMs = 15 * 60
       : 'Waiting for ComfyUI',
       stepping ? step.value : tick,
       stepping ? step.max : 0,
+      // Only when it has changed. The same frame sent again is a byte cost with no picture in
+      // it, and a render sends more of these than it sends step counts.
+      step?.preview !== shown ? ((shown = step?.preview), shown) : undefined,
     )
     await new Promise((resolve) => setTimeout(resolve, 1000))
   }

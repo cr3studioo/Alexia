@@ -2,7 +2,7 @@
 import { createHash } from 'node:crypto'
 import { createServer } from 'node:http'
 import { afterAll, beforeAll, expect, test } from 'vitest'
-import { CLIENT_ID, queue, wait } from '../comfy.js'
+import { CLIENT_ID, preview, queue, wait } from '../comfy.js'
 
 /**
  * The step counter, against a server that speaks the protocol ComfyUI speaks.
@@ -136,4 +136,39 @@ test('a socket that never connects leaves the old polling behaviour exactly as i
   const made = await wait(to, 'job-2', { onProgress: (message) => said.push(message) })
   expect(made.files.map((one) => one.filename)).toEqual(['still.png'])
   await new Promise((resolve) => quiet.close(resolve))
+})
+
+test('a preview frame is read out of the bytes ComfyUI sends it as', () => {
+  // Both layouts, packed exactly as `server.py` packs them: big-endian, event first. Read off
+  // the source rather than documentation, because this is the kind of thing docs lag on.
+  const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0])
+  const plain = Buffer.concat([Buffer.from([0, 0, 0, 1]), Buffer.from([0, 0, 0, 1]), jpeg])
+  expect(preview(new Uint8Array(plain))).toBe(`data:image/jpeg;base64,${jpeg.toString('base64')}`)
+
+  // Type 2 is PNG, in the same slot.
+  const png = Buffer.concat([Buffer.from([0, 0, 0, 1]), Buffer.from([0, 0, 0, 2]), jpeg])
+  expect(preview(new Uint8Array(png))).toMatch(/^data:image\/png;base64,/)
+
+  // The metadata layout: a length, the JSON, then the image. Sent only to a client that asked
+  // for it by feature flag, and handled anyway because asking is one line away.
+  const meta = Buffer.from(JSON.stringify({ image_type: 'image/webp' }), 'utf8')
+  const withMeta = Buffer.concat([
+    Buffer.from([0, 0, 0, 4]),
+    Buffer.from([0, 0, 0, meta.length]),
+    meta,
+    jpeg,
+  ])
+  expect(preview(new Uint8Array(withMeta))).toBe(`data:image/webp;base64,${jpeg.toString('base64')}`)
+})
+
+test('anything that is not a preview frame is ignored rather than guessed at', () => {
+  // This is the one plugin-supplied string that becomes something the shell loads into an
+  // `img`, so everything uncertain about it stops here.
+  expect(preview(new Uint8Array([0, 0, 0, 1]))).toBeUndefined()
+  expect(preview(new Uint8Array([0, 0, 0, 9, 0, 0, 0, 1, 1, 2]))).toBeUndefined()
+  // A metadata length that runs past the end of the buffer.
+  expect(preview(new Uint8Array([0, 0, 0, 4, 0, 0, 0, 200, 1, 2]))).toBeUndefined()
+  // Metadata that is not JSON.
+  const broken = Buffer.concat([Buffer.from([0, 0, 0, 4]), Buffer.from([0, 0, 0, 3]), Buffer.from('not', 'utf8')])
+  expect(preview(new Uint8Array(broken))).toBeUndefined()
 })

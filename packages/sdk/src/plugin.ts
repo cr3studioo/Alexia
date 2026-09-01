@@ -115,8 +115,13 @@ export interface AlexiaPlugin {
    * Report progress on the call you are serving. Send it for anything over about two
    * seconds; a bar that moves is the difference between waiting and quitting. Silently does
    * nothing when the caller did not ask for progress.
+   *
+   * **`preview` is a picture of the work, while it is still work** — a `data:` URL, replaced by
+   * the next one and never stored. It rides under `_meta`, so an Alexia that has never heard of
+   * it draws the bar and ignores the rest. Send one only where seeing it is the point: it costs
+   * bandwidth on every frame, and a bar already answers *is this working and how long*.
    */
-  progress(ctx: ServerContext, progress: number, total?: number, message?: string): void
+  progress(ctx: ServerContext, progress: number, total?: number, message?: string, preview?: string): void
 
   /**
    * **Hand a file you made back to the person**, as one block in your tool result.
@@ -218,13 +223,21 @@ export function plugin(options: PluginOptions = {}): AlexiaPlugin {
     host: () => call('alexia/host/info', {}),
     capability: (cap, args) => call('alexia/capability/call', { cap, arguments: args }),
     storage,
-    progress: (ctx, progress, total, message) => {
+    progress: (ctx, progress, total, message, preview) => {
       const progressToken = ctx.mcpReq._meta?.progressToken
       if (progressToken === undefined) return
       void ctx.mcpReq
         .notify({
           method: 'notifications/progress',
-          params: { progressToken, progress, total, message },
+          params: {
+            progressToken,
+            progress,
+            total,
+            message,
+            // Under `_meta`, so an Alexia that has never heard of a preview ignores it and
+            // still draws the bar — the same door `alexia/tools` and `alexia/files` go through.
+            ...(preview !== undefined && { _meta: { 'alexia/preview': preview } }),
+          },
         })
         .catch((error: unknown) => log.warn('could not report progress', error))
     },

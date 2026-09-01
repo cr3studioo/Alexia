@@ -73,6 +73,18 @@ export interface Progress {
   progress: number
   total?: number
   message?: string
+  /**
+   * A picture of the thing being made, while it is being made.
+   *
+   * A `data:` URL and never a path: it is a frame that exists for a second and is replaced, so
+   * writing each one to disk to serve it back would be a file per step of every render. It is
+   * capped where it is produced rather than here — a progress channel is not a transport, and a
+   * plugin sending megabytes through one is the thing that would make this a bad idea.
+   *
+   * Generic on purpose. Core has no notion of diffusion; it knows only that some work can show
+   * itself midway, which is true of a render, a download preview and a page being laid out.
+   */
+  preview?: string
 }
 
 export interface Pane {

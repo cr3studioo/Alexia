@@ -21,6 +21,8 @@ export interface Moving {
   progress: number
   total?: number
   message?: string
+  /** A picture of the work while it is still work. A `data:` URL, replaced by the next one. */
+  preview?: string
 }
 
 export interface Live {
@@ -49,6 +51,8 @@ interface Row {
   text?: string
   element: HTMLElement
   said: HTMLElement
+  /** Made on the first preview frame and reused after, because a step has one current state. */
+  shot?: HTMLImageElement
 }
 
 /**
@@ -283,6 +287,21 @@ export function mountLive(token: string): Live {
     moving(n, update) {
       const row = rows.get(n)
       if (!row) return
+      // **The work, while it is still work.** One element, reused: a render sends one of these
+      // a second, and appending them would build a filmstrip of a thing that has one current
+      // state. Only ever a `data:` URL, checked here as well as at the boundary, because this
+      // is the one place a plugin's string becomes something the shell loads.
+      if (update.preview?.startsWith('data:image/')) {
+        row.shot ??= (() => {
+          const shot = document.createElement('img')
+          shot.className = 'step-preview'
+          shot.alt = 'What this step has made so far'
+          shot.decoding = 'async'
+          row.said.before(shot)
+          return shot
+        })()
+        row.shot.src = update.preview
+      }
       if (update.message !== undefined) row.said.textContent = update.message
       if (update.total === undefined || update.total <= 0) return
       const done = Math.max(0, Math.min(100, Math.round((update.progress / update.total) * 100)))

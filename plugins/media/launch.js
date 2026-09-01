@@ -228,9 +228,16 @@ export async function start(dir, { at, log, own, env = {} } = {}) {
   const out = openSync(log, 'w')
   // Alexia's own models folder, offered to ComfyUI without writing anything into its install.
   const extra = own ? ['--extra-model-paths-config', paths(own)] : []
+  // **Previews are off unless asked for** — `--preview-method` defaults to `none`, which is why
+  // watching a render produced a bar and no picture. `latent2rgb` rather than `auto`: `auto`
+  // prefers TAESD, which is a model that has to be downloaded and a decode per preview on the
+  // card already busy generating, while `latent2rgb` is a matrix multiply on the latent that is
+  // already in memory. It is a rougher picture and it costs almost nothing, which is the right
+  // trade for something somebody glances at while waiting.
+  const previews = ['--preview-method', 'latent2rgb']
   // `--disable-auto-launch` because a browser window opening by itself is the desktop
   // equivalent of shouting: somebody asked for a picture, not for ComfyUI's editor.
-  const child = spawn(exe, ['main.py', '--port', String(at), '--disable-auto-launch', ...extra], {
+  const child = spawn(exe, ['main.py', '--port', String(at), '--disable-auto-launch', ...previews, ...extra], {
     cwd: dir,
     detached: true,
     stdio: ['ignore', out, out],

@@ -275,7 +275,7 @@ const made = alexia.tool(
     const found = await awaiting(server, id, {
       signal,
       label: naming(built),
-      onProgress: (message, done, total) => alexia.progress(ctx, done, total, message),
+      onProgress: (message, done, total, shown) => alexia.progress(ctx, done, total, message, shown),
     })
 
     const saved = []
@@ -643,7 +643,7 @@ alexia.tool(
       signal,
       expect: 'output',
       label: naming(built),
-      onProgress: (message, done, total) => alexia.progress(ctx, done, total, message),
+      onProgress: (message, done, total, shown) => alexia.progress(ctx, done, total, message, shown),
     })
 
     const kept = []

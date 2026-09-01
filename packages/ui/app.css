@@ -3198,3 +3198,18 @@ kbd {
   outline-offset: 2px;
   border-radius: var(--radius-md);
 }
+
+/* A step showing its work while it is still working. One element per step, replaced in place —
+   a render sends one of these a second, and keeping them would build a filmstrip of something
+   that has a single current state. */
+.step-preview {
+  display: block;
+  max-width: 14rem;
+  max-height: 14rem;
+  margin: var(--space-2) 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  /* It sharpens over the steps, so a hard swap reads as flicker. */
+  transition: opacity 120ms ease;
+}

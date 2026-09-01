@@ -138,12 +138,21 @@ export class PluginTooling implements Tooling {
         await process.callTool(found.tool, args, {
           ...(signal && { signal }),
           ...(onProgress && {
-            onprogress: (update) =>
+            onprogress: (update) => {
+              // An extension key an older core ignores, the same shape `alexia/tools` and
+              // `alexia/files` already use. A plugin that sends nothing here is unaffected, and
+              // a preview that is not a `data:` URL is dropped rather than passed on — this is
+              // the one field a plugin fills that ends up in an `img`, so it does not get to
+              // name a path or a host.
+              const shown = (update as { _meta?: Record<string, unknown> })._meta?.['alexia/preview']
+              const preview = typeof shown === 'string' && shown.startsWith('data:image/') ? shown : undefined
               onProgress({
                 progress: update.progress,
                 ...(update.total !== undefined && { total: update.total }),
                 ...(update.message !== undefined && { message: update.message }),
-              }),
+                ...(preview !== undefined && { preview }),
+              })
+            },
           }),
         }),
       )
