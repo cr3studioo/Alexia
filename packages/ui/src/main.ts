@@ -77,7 +77,9 @@ interface Permissions {
 }
 
 interface State {
-  setup: { done: boolean; name: string; mode: string; theme: Theme; glass: number }
+  setup: { done: boolean; name: string; mode: string; theme: Theme; glass: number; updates?: boolean }
+  /** What this build is, for the About page — sent with every state read (D121). */
+  app?: string
   permissions: Permissions
   messages: Turn[]
   spent: number
@@ -892,10 +894,17 @@ async function load(): Promise<void> {
   known = state.commands
   for (const picker of modes) picker.value = state.setup.mode
   setupSettings(state)
+  // The About page's two facts, from the same read: the version and whether to look for a
+  // newer one. Both are core's answer rather than the page's, so the window and a tab pointed
+  // at the same core cannot disagree about them.
+  settings.about({ app: state.app, updates: state.setup.updates })
   if (!state.setup.done) firstRun(state)
   paint(state)
   showPermissions(state.permissions)
   say(state.warning)
+  // Last, and never awaited: an update offer must not be able to hold up a window. `load`
+  // runs once, at boot, which is the only moment restarting to take an update costs nothing.
+  void offerUpdate(state.setup.updates !== false)
 }
 
 /**
@@ -1135,7 +1144,11 @@ function shelfStep(): { install: () => Promise<void> } {
  * is silent by design: nobody asked for this check, so nobody is owed a report of it going
  * wrong — {@link updateAvailable} says why.
  */
-async function offerUpdate(): Promise<void> {
+async function offerUpdate(automatic: boolean): Promise<void> {
+  // Somebody who has turned this off has said they want to stay where they are, and a strip
+  // appearing anyway would be the setting doing nothing. Settings, then About, still has a
+  // *Check now* that asks this second — turning the looking off is not turning it away.
+  if (!automatic) return
   const found = await updateAvailable()
   if (!found) return
 
@@ -1689,5 +1702,4 @@ const rail = mountRail(token, {
 
 await load()
 await rail.refresh()
-// Last, and never awaited by anything: an update offer must not be able to hold up a window.
-void offerUpdate()
+

@@ -184,6 +184,7 @@
             <nav id="settings-tabs" class="tabs" aria-label="Settings">
               <button id="settings-tab-general" class="tab on" type="button" aria-current="page">General</button>
               <button id="settings-tab-plugins" class="tab" type="button" aria-current="false">Plugins</button>
+              <button id="settings-tab-about" class="tab" type="button" aria-current="false">About</button>
             </nav>
 
             <div id="general">
@@ -319,6 +320,42 @@
                 <div id="library"></div>
               </div>
               <div id="plugin-detail" hidden></div>
+            </div>
+
+            <!-- About (D121). What this is, who made it, and the one decision a person has to
+                 be able to take back: whether Alexia looks for a newer version of itself. The
+                 update controls live here rather than on General because they are about the
+                 program, not about the assistant — and because *which version am I running*
+                 had no answer anywhere on screen until this page existed. -->
+            <div id="about-page" hidden>
+              <div class="group">
+                <h3 class="step-heading">Alexia <span id="about-version">—</span></h3>
+                <p class="hint">
+                  Made by cr3studioo. AGPL-3.0 for the app, Apache-2.0 for the plugin SDK — so
+                  anyone can write a plugin without legal advice, and nobody can close the app
+                  itself back up.
+                </p>
+                <p class="hint">
+                  <a href="https://github.com/cr3studioo/Alexia" target="_blank" rel="noreferrer">The source</a>
+                  ·
+                  <a href="https://github.com/cr3studioo/Alexia/releases" target="_blank" rel="noreferrer">Every release</a>
+                </p>
+              </div>
+
+              <div class="group">
+                <h3 class="step-heading">Updates</h3>
+                <p class="hint" id="about-update-said">Checking…</p>
+                <div class="row">
+                  <button id="check-updates" class="quiet-button" type="button">Check now</button>
+                  <button id="take-update" class="begin" type="button" hidden>Update now</button>
+                </div>
+                <label class="switch" id="auto-updates-row">
+                  <input id="auto-updates" type="checkbox" checked />
+                  <span class="track"></span>
+                  <span>Look for a newer version when Alexia starts</span>
+                </label>
+                <p class="hint" id="auto-updates-hint"></p>
+              </div>
             </div>
           </div>
         </section>

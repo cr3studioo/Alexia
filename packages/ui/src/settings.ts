@@ -18,6 +18,7 @@
  * No Node in here, ever (invariant 6).
  */
 
+import { inApp, installUpdate, updateAvailable, type Update } from './desktop.js'
 import { el, widget, type Rendered, type WidgetHost } from './widgets.js'
 
 export type { Rendered } from './widgets.js'
@@ -91,17 +92,21 @@ interface Skill {
   pluginId?: string
 }
 
-/** Which of the two pages is on screen. The card page is a state of the second, not a third. */
-type Page = 'general' | 'plugins'
+/** Which page is on screen. A plugin's own page is a state of `plugins`, not a fourth. */
+type Page = 'general' | 'plugins' | 'about'
 
 export function mountSettings(token: string): {
   open: (page?: Page, filter?: string) => void
+  /** Fed from `/api/state`, because the version and the update preference are core's answer. */
+  about: (state: { app?: string; updates?: boolean }) => void
 } {
   const view = document.querySelector<HTMLElement>('#settings')!
   const general = document.querySelector<HTMLElement>('#general')!
   const pluginsPage = document.querySelector<HTMLElement>('#plugins-page')!
+  const aboutPage = document.querySelector<HTMLElement>('#about-page')!
   const tabGeneral = document.querySelector<HTMLButtonElement>('#settings-tab-general')!
   const tabPlugins = document.querySelector<HTMLButtonElement>('#settings-tab-plugins')!
+  const tabAbout = document.querySelector<HTMLButtonElement>('#settings-tab-about')!
   const grids = document.querySelector<HTMLElement>('#plugin-grids')!
   const sheet = document.querySelector<HTMLElement>('#plugin-detail')!
   const installed = document.querySelector<HTMLElement>('#bento')!
@@ -173,9 +178,11 @@ export function mountSettings(token: string): {
   function pick(page: Page): void {
     general.hidden = page !== 'general'
     pluginsPage.hidden = page !== 'plugins'
+    aboutPage.hidden = page !== 'about'
     for (const [tab, on] of [
       [tabGeneral, page === 'general'],
       [tabPlugins, page === 'plugins'],
+      [tabAbout, page === 'about'],
     ] as const) {
       tab.classList.toggle('on', on)
       tab.setAttribute('aria-current', on ? 'page' : 'false')
@@ -184,6 +191,7 @@ export function mountSettings(token: string): {
   }
 
   tabGeneral.addEventListener('click', () => pick('general'))
+  tabAbout.addEventListener('click', () => pick('about'))
   tabPlugins.addEventListener('click', () => pick('plugins'))
 
   /** Filtering is a redraw of what is already read — there is nothing here to fetch again. */
@@ -807,7 +815,106 @@ export function mountSettings(token: string): {
     return wrapper
   }
 
+  // ---- About (D121) -----------------------------------------------------------------------
+
+  /**
+   * What this is, who made it, and the one decision about updating that is a person's to take.
+   *
+   * **The page exists because "which version am I running" had no answer on screen.** It was
+   * in the binary, in the release notes and in an error message about plugins needing a newer
+   * Alexia, and nowhere a person would look — so the first line of this page is the number,
+   * read from `/api/state` rather than from the shelf, because the network being down is
+   * exactly when somebody asks.
+   *
+   * **Three separate things, said as three things.** *Check now* asks GitHub this second, for
+   * somebody who has heard there is a release and does not want to restart to find out.
+   * *Update now* appears only when there is one. The switch governs **looking**, not
+   * installing — nothing here has ever installed itself without a press, and the sentence
+   * under the switch says which of the two it is turning off, because "auto-update" is a
+   * phrase people reasonably read as *it will change under me*.
+   */
+  function mountAbout(): { show: (state: { app?: string; updates?: boolean }) => void } {
+    const version = document.querySelector<HTMLElement>('#about-version')!
+    const said = document.querySelector<HTMLElement>('#about-update-said')!
+    const check = document.querySelector<HTMLButtonElement>('#check-updates')!
+    const take = document.querySelector<HTMLButtonElement>('#take-update')!
+    const auto = document.querySelector<HTMLInputElement>('#auto-updates')!
+    const autoRow = document.querySelector<HTMLElement>('#auto-updates-row')!
+    const autoHint = document.querySelector<HTMLElement>('#auto-updates-hint')!
+    let found: Update | undefined
+
+    /** The whole update block is about a program replacing itself, which a browser tab cannot. */
+    const desktop = inApp()
+
+    const offer = (update: Update | undefined, checked: boolean): void => {
+      found = update
+      take.hidden = update === undefined
+      said.className = 'hint'
+      said.textContent =
+        update ? `Alexia ${update.version} is available. You have ${update.currentVersion}.`
+        : checked ? 'This is the newest version.'
+        : ''
+    }
+
+    check.addEventListener('click', () => {
+      check.disabled = true
+      said.className = 'hint'
+      said.textContent = 'Asking GitHub…'
+      void updateAvailable()
+        .then((update) => offer(update, true))
+        .finally(() => (check.disabled = false))
+    })
+
+    take.addEventListener('click', () => {
+      if (!found) return
+      take.disabled = true
+      void installUpdate(found.rid, (done, total) => {
+        said.textContent =
+          total !== undefined && total > 0 ?
+            `Downloading… ${String(Math.round((done / total) * 100))}%`
+          : `Downloading… ${String(Math.round(done / 1e6))} MB`
+      })
+        // No success branch: the installer replaces this program and the window goes with it.
+        .catch((error: unknown) => {
+          said.className = 'error'
+          said.textContent = `The update did not go through: ${error instanceof Error ? error.message : String(error)}. The releases page above has the installer.`
+          take.disabled = false
+        })
+    })
+
+    auto.addEventListener('change', () => {
+      autoHint.textContent = wording(auto.checked)
+      void send('/api/setup', { updates: auto.checked })
+    })
+
+    const wording = (on: boolean): string =>
+      on ?
+        'Alexia asks GitHub once, at startup, and shows a strip if there is something newer. It never installs anything on its own — that is always this button, or the one in the strip.'
+      : 'Alexia will not look on its own. You stay on this version until you press Check now.'
+
+    return {
+      show: (state) => {
+        version.textContent = state.app ?? '—'
+        auto.checked = state.updates !== false
+        autoHint.textContent = wording(auto.checked)
+        if (!desktop) {
+          // In a browser there is no program to replace, and a dead button is worse than none.
+          check.hidden = true
+          take.hidden = true
+          autoRow.hidden = true
+          autoHint.textContent = ''
+          said.textContent = 'Alexia updates itself in the desktop app. This is a browser tab, so there is nothing here to replace.'
+          return
+        }
+        offer(undefined, false)
+      },
+    }
+  }
+
+  const about = mountAbout()
+
   return {
+    about: about.show,
     open: (page?: Page, filter?: string) => {
       view.scrollTop = 0
       // The palette found a plugin and this is the page it lives on; typing its name into

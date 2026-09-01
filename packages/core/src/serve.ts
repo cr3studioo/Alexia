@@ -426,6 +426,17 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     // the border). Stored here with the theme because it is the same kind of fact and a tab
     // and the window should not disagree about it. 60 is the sheet's own default.
     glass: (store.kvGet(CORE, 'glass') as number | undefined) ?? 60,
+    /**
+     * Whether Alexia looks for a newer version of itself when it starts (D121).
+     *
+     * **On unless somebody says otherwise, and sayable in one place.** An assistant that
+     * quietly stops updating is one running last month's bugs on purpose, so the default is
+     * to look — and *a person who wants to stay where they are* is a real answer rather than
+     * a mistake, which is why it is a stored preference and not a hidden flag. It gates the
+     * *looking*, not the installing: nothing has ever installed itself here without somebody
+     * pressing a button, and the About page says so in those words.
+     */
+    updates: (store.kvGet(CORE, 'updates_auto') as boolean | undefined) ?? true,
   })
 
   /**
@@ -890,6 +901,14 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
       response.end(
         JSON.stringify({
           setup: setup(),
+          /**
+           * What this build is (D121).
+           *
+           * Sent with every state read rather than fetched from the shelf, because the About
+           * page must be able to answer *which version am I running* with the network down —
+           * which is exactly when somebody is most likely to be asking.
+           */
+          app: APP_VERSION,
           // Everything you could type right now, and the pins those commands set. The
           // shell shows both as controls: a command is a shortcut, never the only route.
           commands: commands(manifests()),
@@ -955,6 +974,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
         mode?: keyof typeof MODES
         theme?: string
         glass?: number
+        updates?: boolean
         provider?: { id: string; key: string }
       }
       if (chosen.name) store.kvSet(CORE, 'display_name', chosen.name)
@@ -969,6 +989,10 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
       if (typeof chosen.glass === 'number' && Number.isFinite(chosen.glass)) {
         store.kvSet(CORE, 'glass', Math.min(100, Math.max(0, Math.round(chosen.glass))))
       }
+      // Whether to look for a newer Alexia at startup (D121). Stored beside the theme because
+      // it is the same kind of fact: an answer about this install that outlives the window it
+      // was given in.
+      if (typeof chosen.updates === 'boolean') store.kvSet(CORE, 'updates_auto', chosen.updates)
       if (chosen.provider?.key) {
         const provider = providers.find((p) => p.id === chosen.provider?.id)
         /**
