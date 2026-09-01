@@ -193,6 +193,16 @@ test('the bytes come back by that id, named, and not as something to render in p
   expect(answered.headers.get('content-disposition')).toContain('notes.md')
 }, 30_000)
 
+test('a resource_link with no mimeType still gets a type off its name, so a picture shows in place', async () => {
+  // `maker` hands back a `resource_link` with a name and no `mimeType` — the ordinary case
+  // for a plugin using the SDK helper without passing one. The step's file has to carry a
+  // real type regardless, or the shell offers a row to open rather than showing the picture,
+  // and the Telegram side sends it as a document rather than a photo.
+  script = [{ call: 'maker__make', args: { name: 'chart.png' } }, { say: 'There.' }]
+  const [file] = filesIn((await turn('draw a chart')).events)
+  expect(file!.mime).toBe('image/png')
+}, 30_000)
+
 test('a file the tool named and never wrote is not offered, and the model is told', async () => {
   script = [{ call: 'maker__make', args: { name: 'ghost.txt', skip: true } }, { say: 'Hmm.' }]
   const { events } = await turn('make a ghost')

@@ -1368,7 +1368,13 @@ async function ask(question: string, files: File[] = []): Promise<void> {
   const tools = toolLine()
   live.begin(document.querySelector<HTMLElement>('#chat-title')?.textContent ?? 'This conversation')
   const answer = bubble('assistant')
-  answer.textContent = files.length > 0 ? 'Reading…' : '…'
+  /**
+   * Her words go in a text node of their own, not straight onto the bubble — because a file
+   * a step made is appended to the same bubble by `showFiles`, and `answer.textContent = ''`
+   * on the first token would take the picture with it. The node stays; only its data moves.
+   */
+  const prose = document.createTextNode(files.length > 0 ? 'Reading…' : '…')
+  answer.replaceChildren(prose)
   let started = false
 
   /**
@@ -1401,17 +1407,17 @@ async function ask(question: string, files: File[] = []): Promise<void> {
     body: JSON.stringify({ text: question, ...(uploads.length > 0 && { files: uploads }) }),
   })
   if (!response.body) {
-    answer.textContent = 'Alexia is not answering.'
+    prose.data = 'Alexia is not answering.'
     return
   }
 
   for await (const event of frames(response.body)) {
     if (typeof event.delta === 'string') {
       if (!started) {
-        answer.textContent = ''
+        prose.data = ''
         started = true
       }
-      answer.textContent += event.delta
+      prose.data += event.delta
       log.scrollTop = log.scrollHeight
     }
     // The one plain line before a charge, and the monthly warning, land in the same place.

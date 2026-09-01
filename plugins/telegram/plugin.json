@@ -4,7 +4,7 @@
   "id": "telegram",
   "name": "Telegram",
   "summary": "Talk to Alexia from Telegram. Every message crosses Telegram's servers, and every reply says so.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "license": "AGPL-3.0-only",
   "entry": {
     "run": "node",
