@@ -434,6 +434,20 @@ export async function templates(server, signal) {
 }
 
 /**
+ * One workflow out of that catalogue, in the editor's own format.
+ *
+ * Editor format is what is served, always — `nodes` and `links` rather than `class_type` — so
+ * nothing that comes back here can be queued as it stands. That is D123's whole problem and
+ * `convert.js` is the answer, which is why this returns the document rather than a promise
+ * that it is usable.
+ */
+export async function template(server, name, signal) {
+  const response = await fetch(`${server}/templates/${encodeURIComponent(name)}.json`, { signal })
+  if (!response.ok) throw new Error(`ComfyUI has no workflow file for ${name}.`)
+  return await response.json()
+}
+
+/**
  * What the machine has — the card, its memory, and how much of it is free right now.
  *
  * Two questions turn on this: whether a heavy job has room (a decode that runs out does not

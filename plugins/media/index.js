@@ -3,14 +3,14 @@ import { fromJsonSchema, log, plugin } from '@alexia/sdk'
 import { Buffer } from 'node:buffer'
 import { readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
-import { checkpoints, classes, download, interrupt, named, order, pick, queue, stats, templates, wait } from './comfy.js'
+import { checkpoints, classes, download, interrupt, named, order, pick, queue, stats, template, templates, wait } from './comfy.js'
 import { alive, awake, install, loopback, port, ready, start, stop, tail } from './launch.js'
 import { API_SUFFIX, FOLDER, apply, isApi, knobs, missing, read, reseed, saved, write } from './workflows.js'
 import { api as starterGraph, editor as starterDoc, STARTER } from './starter.js'
 import { measure, tight } from './sizing.js'
 import { fetchModel, have } from './models.js'
 import { reading, vram } from './tier.js'
-import { describe as line, flatten, runnable, search, shelf } from './catalog.js'
+import { describe as line, flatten, pickEntry, runnable, search, shelf } from './catalog.js'
 import { convert } from './convert.js'
 
 /**
@@ -919,13 +919,112 @@ alexia.tool(
             `${hits.length} of ComfyUI’s own workflows look like “${String(asked)}”:`,
             ...hits.map((one) => `  • ${line(one)}`),
             '',
-            // The honest end of the chain. Finding it is done; installing it is not.
-            'Alexia cannot install one yet — ComfyUI ships these in its editor’s format, and turning ' +
-              'one into something that can be queued is a conversion only ComfyUI’s own editor does. ' +
-              'To use one: open it in ComfyUI (Workflow → Browse Templates), then Workflow → Export (API), ' +
-              'and hand Alexia the file with add_workflow.',
+            'Say which one and install_workflow will set it up. Some cannot be converted outside ' +
+              'ComfyUI’s own editor — that is refused by name rather than guessed at, and the way ' +
+              'round it is Workflow → Export (API) there, then add_workflow.',
             counts.said,
           ].join('\n'),
+        },
+      ],
+    }
+  },
+)
+
+alexia.tool(
+  'install_workflow',
+  {
+    description:
+      'Install one of the workflows ComfyUI ships, by the title find_workflow showed, so ' +
+      'run_workflow can use it. Use straight after find_workflow when the user picks one. It only ' +
+      'ever saves a JSON file — it never downloads or installs node packs, so a workflow needing a ' +
+      'node this machine does not have is refused by name instead.',
+    inputSchema: fromJsonSchema({
+      type: 'object',
+      properties: {
+        workflow: {
+          type: 'string',
+          description: 'The title of the workflow, as find_workflow showed it.',
+        },
+      },
+      required: ['workflow'],
+    }),
+    // Nothing is overwritten that was not already this same workflow, and installing the same
+    // one twice is the same file written twice.
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  async ({ workflow }, ctx) => {
+    const signal = ctx?.mcpReq?.signal
+    const asked = String(workflow ?? '').trim()
+    if (asked === '') return refuse('Which one? Use the title find_workflow showed.')
+    const state = await reachable(ctx)
+    if (!state.ok) return refuse(state.said)
+    const server = await where()
+
+    const all = flatten(await templates(server, signal).catch(() => []))
+    if (all.length === 0) return refuse('This ComfyUI does not offer a workflow catalogue.')
+    const { entry, many } = pickEntry(all, asked)
+    if (many) return refuse(`More than one workflow matches “${asked}”: ${many.join(', ')}. Which one?`)
+    if (!entry) return refuse(`Nothing in ComfyUI’s workflows is called “${asked}”. find_workflow lists what is there.`)
+
+    let doc
+    try {
+      doc = await template(server, entry.name, signal)
+    } catch (error) {
+      return refuse(`${entry.title} is in the catalogue but its file could not be read: ${String(error?.message ?? error)}`)
+    }
+
+    /**
+     * **This is where the sharpest edge in the plan turns out not to be one.**
+     *
+     * §8.6 was written around installing node packs — arbitrary Python, no sandbox, no undo —
+     * and chose one consent then trust the catalogue. But the converter refuses any node class
+     * this machine does not already have, so a workflow that installs cleanly is one whose
+     * nodes are **already here**. Nothing is downloaded, nothing is executed, and the file
+     * written is JSON. The consent ladder that decision was buying is not needed for what this
+     * can actually do, and claiming it would be theatre.
+     */
+    const spec = await nodes(signal).catch(() => ({}))
+    const got = convert(doc, spec)
+    if (!got.ok) {
+      return refuse(
+        `${entry.title} cannot be converted here: ${got.why[0]}. Alexia will not guess at a graph it ` +
+          'cannot prove — the way round is to open it in ComfyUI (Workflow → Browse Templates), then ' +
+          'Workflow → Export (API), and hand the file to add_workflow.',
+      )
+    }
+
+    // Both halves, from the one source, so they cannot disagree. `workflows` pairs them by name
+    // and D126 refuses an export that has fallen behind its workflow — which is a real check
+    // only when the editor copy is actually there.
+    await write(server, `${FOLDER}/${entry.name}.json`, JSON.stringify(doc), signal)
+    await write(server, `${FOLDER}/${entry.name}${API_SUFFIX}`, JSON.stringify(got.graph), signal)
+
+    const absent = missing(got.graph, spec)
+    const found = knobs(got.graph, spec)
+    return {
+      content: [
+        {
+          type: 'text',
+          text: [
+            `Installed ${entry.title} as ${entry.name}. run_workflow can use it now.`,
+            entry.models.length > 0 ?
+              `It wants ${entry.models.join(', ')} — if a model is missing the run will say so rather than guess.`
+            : undefined,
+            entry.vram ? `Its author says it wants ${(entry.vram / 1e9).toFixed(1)} GB of video memory.` : undefined,
+            absent.length > 0 ? `Nodes this ComfyUI does not have: ${absent.join(', ')}.` : undefined,
+            found.length > 0 ?
+              `What you can set: ${found.map((one) => one.label ?? one.key).join(', ')}.`
+              // **Measured, and it is the normal case for a catalogue entry.** D128 surfaces only
+              // the fields whose nodes the workflow's author renamed, because a title is how an
+              // author says *this is the knob*. ComfyUI's own templates leave every node at its
+              // default name, so they arrive with none — it runs, with whatever its author baked
+              // in, and saying that plainly beats offering settings that are not there.
+            : 'It exposes no settings — ComfyUI’s own templates do not name their fields, so it runs ' +
+              'with whatever its author put in it. To steer it, open it in ComfyUI, rename the boxes ' +
+              'you want to control, and export it again with add_workflow.',
+          ]
+            .filter(Boolean)
+            .join('\n'),
         },
       ],
     }

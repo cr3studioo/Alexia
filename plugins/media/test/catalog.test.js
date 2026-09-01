@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { expect, test } from 'vitest'
-import { describe as line, flatten, runnable, search, shelf } from '../catalog.js'
+import { pickEntry, describe as line, flatten, runnable, search, shelf } from '../catalog.js'
 
 /** `/templates/index.json` in miniature, with every shape the real one has. */
 const INDEX = [
@@ -124,4 +124,31 @@ test('an entry reads as a line somebody can decide from', () => {
   const all = flatten(INDEX)
   expect(line(all.find((one) => one.name === 'image_flux_krea'))).toBe('Flux Krea: Text to Image — image, wants 22.3 GB, needs Flux')
   expect(line(all.find((one) => one.name === 'api_seedream_t2i'))).toContain('calls a paid service')
+})
+
+/**
+ * Which entry somebody meant, when all they have ever been shown is a title.
+ *
+ * `describe` never prints the catalogue's own `name`, so the title is the only handle that has
+ * been in front of a person — and installing the wrong workflow is a silent wrong answer to a
+ * question asked out loud, so more than one match is a question rather than a guess.
+ */
+test('an entry is found by what somebody was actually shown', () => {
+  const entries = [
+    { name: 'image_z_image_int8', title: 'Z Image Turbo', description: '', tags: [], models: [], category: 'Image', paid: false, rank: 0 },
+    { name: 'video_wan_i2v', title: 'WAN Image to Video', description: '', tags: [], models: [], category: 'Video', paid: false, rank: 0 },
+    { name: 'video_wan_t2v', title: 'WAN Text to Video', description: '', tags: [], models: [], category: 'Video', paid: false, rank: 0 },
+  ]
+  // The catalogue's own name, which is what a second call would carry.
+  expect(pickEntry(entries, 'image_z_image_int8').entry.title).toBe('Z Image Turbo')
+  // The title, which is all a person ever saw. Case is not a decision anybody made.
+  expect(pickEntry(entries, 'z image turbo').entry.name).toBe('image_z_image_int8')
+  // One unique partial is unambiguous and is taken.
+  expect(pickEntry(entries, 'Text to Video').entry.name).toBe('video_wan_t2v')
+  // Two matches is a question, not a coin toss.
+  const both = pickEntry(entries, 'WAN')
+  expect(both.entry).toBeUndefined()
+  expect(both.many).toEqual(['WAN Image to Video', 'WAN Text to Video'])
+  // Nothing at all says nothing at all.
+  expect(pickEntry(entries, 'a pony').entry).toBeUndefined()
 })

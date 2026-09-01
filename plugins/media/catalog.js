@@ -138,3 +138,24 @@ export function shelf(entries, vram) {
         `of the ${open.length} open-source ones, **${fits.length} fit your ${gb(vram)} card**.`,
   }
 }
+
+/**
+ * The catalogue entry somebody meant, out of what they typed.
+ *
+ * `describe` prints the title and never the catalogue's own `name`, so a title is the only
+ * identifier that has actually been in front of anybody. Exact name first because that is
+ * unambiguous when it is used, then exact title, then one unique partial — and **ambiguity
+ * refuses** rather than picking the first, because installing the wrong workflow is a silent
+ * wrong answer to a question somebody asked out loud.
+ */
+export function pickEntry(entries, asked) {
+  const want = asked.trim().toLowerCase()
+  const exact = entries.find((one) => one.name.toLowerCase() === want)
+  if (exact) return { entry: exact }
+  const titled = entries.filter((one) => one.title.toLowerCase() === want)
+  if (titled.length === 1) return { entry: titled[0] }
+  const near = titled.length > 1 ? titled : entries.filter((one) => one.title.toLowerCase().includes(want))
+  if (near.length === 1) return { entry: near[0] }
+  if (near.length > 1) return { many: near.slice(0, 6).map((one) => one.title) }
+  return {}
+}
