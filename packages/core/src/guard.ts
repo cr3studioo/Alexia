@@ -197,10 +197,13 @@ export const ROUTES: Readonly<Record<string, Route>> = {
   },
 
   '/api/library/install': {
-    act: (body) => (body.update === true ? 'update' : undefined),
+    act: (body) => (body.update === true ? 'update' : body.enable === true ? 'enable' : undefined),
     acts: {
       update: confirm(
         'An update stops the running plugin and replaces its folder with a different version. The version being replaced is not kept, and the thing being overwritten is a plugin that was working a minute ago.',
+      ),
+      enable: safe(
+        'The download starts running once it lands. Only first run asks for this, and only having shown the plugin’s own `requires` sentences beside the tick that agreed to them (D118) — which is the same consent the Plugins page takes, in the one place a person is choosing several at once. Disable is one press away.',
       ),
     },
     otherwise: safe(

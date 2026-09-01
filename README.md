@@ -24,6 +24,12 @@ once added to another assistant and could not be removed without breaking the co
 Nine other invariants sit beside it, all enforced on every commit. Core is forbidden from
 ever naming a plugin — the check greps for it.
 
+**Nothing ships inside the installer.** Alexia arrives able to hold a conversation, and every
+capability is a download — the ones written here on exactly the same footing as anybody
+else's, through the same shelf. A plugin version is a [GitHub Release](./docs/authoring/publishing.md):
+the archive is an asset on it and the entry is a block in its notes, so publishing one is
+cutting a release, and it appears on the Plugins screen of every Alexia that can run it.
+
 ## Status
 
 **Phase 0 complete. Nothing runs yet** — no installable build, no release, no working

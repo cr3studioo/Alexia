@@ -135,12 +135,21 @@ of them blocks starting.**
 - [x] **D7.** How do plugins update?
   **Answered 2026-08-27:** independently with a protocol version check; yours ship with the
   app. The handshake is what makes accepting plugins early survivable.
+  **Revised 2026-08-31 (D118):** the second half was wrong. Nothing ships with the app — one
+  update path, from the same shelf, ours on the same footing as anybody else's — and the
+  protocol check gained a second half, `min_app`, because the integer describes the contract
+  and not the build. Alexia updates itself too (D119), which is what makes a floor an author
+  can declare mean anything.
 
 ## E. Plugins and ecosystem
 
 - [x] **E1.** Registry hosting.
   **Answered 2026-08-27:** a real backend, chosen for instant revocation. Keep it minimal —
   a list with a revoke button, not a product.
+  **Revised 2026-08-31 (D118):** GitHub Releases, because the backend was never deployed —
+  the account and the card were a gate nobody passed, and the shelf read *nothing new* for
+  two milestones. A release is the listing. The revoke button is what was traded away and the
+  static layout is kept behind `--pages` for whoever needs it back.
 - [x] **E2.** Third-party plugins, and when.
   **Answered 2026-08-27:** accept early, review each one yourself. Conditional on the
   conformance suite existing first, and on stating up front that there is no promised

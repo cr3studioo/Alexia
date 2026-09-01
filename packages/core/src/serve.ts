@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { ALEXIA_PROTOCOL_MAX, ALEXIA_PROTOCOL_MIN, CORE_CAPABILITIES, TOOLS_META } from '@alexia/protocol'
+import { APP_VERSION, CORE_CAPABILITIES, TOOLS_META } from '@alexia/protocol'
 import { randomUUID } from 'node:crypto'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import type { CreateMessageResult } from '@modelcontextprotocol/client'
@@ -22,7 +22,7 @@ import { asRuling, counted, freshTally, ModelChecker, type Tally } from './check
 import { commands, pins, type Ran, run as runCommand } from './commands.js'
 import { preauthorise, record } from './consent.js'
 import { refuse, type Body } from './guard.js'
-import { Library } from './library.js'
+import { Library, offerable } from './library.js'
 import { distil, forget, learnable, outline, save, type Episode } from './learned.js'
 import { mimeOf, Offers, openable, reach } from './offered.js'
 import { installed, OLLAMA, running } from './ollama.js'
@@ -258,6 +258,17 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
    * with the new plugin sitting in the *not enabled* state.
    */
   const library = new Library({ store, pluginsDir: extensions, skillsDir })
+  /**
+   * **The shelf is not read from here** (D118), and that is deliberate.
+   *
+   * Nothing ships inside the installer any more, so *what can this thing do* is a network
+   * call — and the tempting place to make it is at boot, so the Plugins screen opens on a
+   * list rather than a spinner. It is not made here because *here* is every core that ever
+   * starts: every test, every headless run, every restart of a daemon nobody is looking at,
+   * each one spending a request from an hourly quota of sixty for a screen that may not be
+   * opened. The shell asks on load, which is the moment somebody is actually there, and
+   * `Library` holds the answer for fifteen minutes so that opening the screen again is free.
+   */
 
   /**
    * The files tools have handed back, for as long as this core is up.
@@ -415,6 +426,17 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     // the border). Stored here with the theme because it is the same kind of fact and a tab
     // and the window should not disagree about it. 60 is the sheet's own default.
     glass: (store.kvGet(CORE, 'glass') as number | undefined) ?? 60,
+    /**
+     * Whether Alexia looks for a newer version of itself when it starts (D121).
+     *
+     * **On unless somebody says otherwise, and sayable in one place.** An assistant that
+     * quietly stops updating is one running last month's bugs on purpose, so the default is
+     * to look — and *a person who wants to stay where they are* is a real answer rather than
+     * a mistake, which is why it is a stored preference and not a hidden flag. It gates the
+     * *looking*, not the installing: nothing has ever installed itself here without somebody
+     * pressing a button, and the About page says so in those words.
+     */
+    updates: (store.kvGet(CORE, 'updates_auto') as boolean | undefined) ?? true,
   })
 
   /**
@@ -879,6 +901,14 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
       response.end(
         JSON.stringify({
           setup: setup(),
+          /**
+           * What this build is (D121).
+           *
+           * Sent with every state read rather than fetched from the shelf, because the About
+           * page must be able to answer *which version am I running* with the network down —
+           * which is exactly when somebody is most likely to be asking.
+           */
+          app: APP_VERSION,
           // Everything you could type right now, and the pins those commands set. The
           // shell shows both as controls: a command is a shortcut, never the only route.
           commands: commands(manifests()),
@@ -944,6 +974,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
         mode?: keyof typeof MODES
         theme?: string
         glass?: number
+        updates?: boolean
         provider?: { id: string; key: string }
       }
       if (chosen.name) store.kvSet(CORE, 'display_name', chosen.name)
@@ -958,6 +989,10 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
       if (typeof chosen.glass === 'number' && Number.isFinite(chosen.glass)) {
         store.kvSet(CORE, 'glass', Math.min(100, Math.max(0, Math.round(chosen.glass))))
       }
+      // Whether to look for a newer Alexia at startup (D121). Stored beside the theme because
+      // it is the same kind of fact: an answer about this install that outlives the window it
+      // was given in.
+      if (typeof chosen.updates === 'boolean') store.kvSet(CORE, 'updates_auto', chosen.updates)
       if (chosen.provider?.key) {
         const provider = providers.find((p) => p.id === chosen.provider?.id)
         /**
@@ -1252,28 +1287,50 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
           library.skills().catch(() => []),
           library.revoked().catch(() => ({ plugins: [], skills: [] })),
         ])
+        /**
+         * What is here that has a newer version out, and what that update needs (M5-4, D118).
+         *
+         * The protocol window used to be passed in from this line; it is inside `offerable`
+         * now, with the app-version range, because *can this build run it* had grown two
+         * answers in two files and a screen has to say one sentence about it.
+         */
+        const updates = await library
+          .updates(
+            plugins.ids.flatMap((id) => {
+              const manifest = plugins.manifest(id)
+              return manifest ? [{ id, version: manifest.version }] : []
+            }),
+          )
+          .catch(() => [])
+
+        const shelf = available.map((entry) => ({ ...entry, offer: offerable(entry) }))
         response.writeHead(200, { 'content-type': 'application/json' })
         response.end(
           JSON.stringify({
             ok: true,
             registry: library.url,
+            /** What this build is. The screen says it out loud when something needs a newer one. */
+            app: APP_VERSION,
             // Whether a signature can be checked at all. `false` is shown, because an
             // unverified signature is exactly as good as none and must not look better.
             verifying: library.publisherKey !== undefined,
-            plugins: available.map((entry) => ({ ...entry, installed: installed.has(entry.id) })),
-            // What is here that has a newer version out (M5-4). The protocol window is
-            // applied inside `updates`, so nothing is offered that this Alexia could not
-            // then load — an update that bricks a working plugin is worse than no update.
-            updates: await library
-              .updates(
-                plugins.ids.flatMap((id) => {
-                  const manifest = plugins.manifest(id)
-                  return manifest ? [{ id, version: manifest.version }] : []
-                }),
-                { min: ALEXIA_PROTOCOL_MIN, max: ALEXIA_PROTOCOL_MAX },
-              )
-              .then((rows) => rows.map(({ id, from, to }) => ({ id, from, to })))
-              .catch(() => []),
+            plugins: shelf
+              .filter((entry) => entry.offer === 'ok')
+              .map((entry) => ({ ...entry, installed: installed.has(entry.id) })),
+            updates: updates
+              .filter((row) => row.offer === 'ok')
+              .map(({ id, from, to }) => ({ id, from, to })),
+            /**
+             * The count that turns a missing plugin into something a person can act on.
+             *
+             * Not a list. Naming plugins somebody cannot install yet is a shop window for a
+             * shop that is shut; the number plus *update Alexia* is the whole of what is
+             * actionable, and the list arrives with the update that makes it real.
+             */
+            needsNewerApp: {
+              plugins: shelf.filter((entry) => entry.offer === 'newer-app' && !installed.has(entry.id)).length,
+              updates: updates.filter((row) => row.offer === 'newer-app').length,
+            },
             skills: offered.map((entry) => ({ ...entry, installed: here.has(entry.name) })),
             // Only the ones this machine actually has. A list of everything ever withdrawn
             // is a list nobody reads.
@@ -1286,7 +1343,8 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
           JSON.stringify({
             ok: false,
             registry: library.url,
-            why: `Could not reach the registry: ${error instanceof Error ? error.message : String(error)}`,
+            app: APP_VERSION,
+            why: `Could not reach the plugin shelf: ${error instanceof Error ? error.message : String(error)}`,
           }),
         )
       }
@@ -1294,7 +1352,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     }
 
     if (url.pathname === '/api/library/install' && request.method === 'POST') {
-      const asked = sent as { id?: string; kind?: string; update?: boolean }
+      const asked = sent as { id?: string; kind?: string; update?: boolean; enable?: boolean }
       // Updating stops the running process first. Replacing the folder underneath a live
       // plugin on Windows fails on the files it has open, and the half-replaced folder that
       // leaves behind is worse than the version it was replacing.
@@ -1311,6 +1369,12 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
       // Back on, but only if it was on: an update is not consent to run something that was
       // sitting there disabled.
       if (asked.update === true && done.ok) plugins.enable(asked.id ?? '')
+      // First run's picker, and nothing else, asks for this (D118). Installed-and-not-enabled
+      // is still where a plugin arrives everywhere a person installs one at a time; a screen
+      // that showed four plugins' `requires` sentences and took four ticks has already had the
+      // conversation D73 is about, and leaving all four inert afterwards would be an assistant
+      // that quietly did not do the thing it was just asked to do.
+      if (asked.enable === true && done.ok) plugins.enable(asked.id ?? '')
       if (done.ok) plugins.load()
       skills.invalidate()
       response.writeHead(200, { 'content-type': 'application/json' })

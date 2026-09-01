@@ -77,14 +77,17 @@ is rejected — it is right on your machine and wrong on everyone else's.
 > Whether Alexia ships a Python runtime the same way is [open question
 > G2](../../questions.md), to be answered at M3.
 
-### The two versions
+### The three versions
 
 ```jsonc
 "alexia_protocol": 3,          // ours: which Alexia contract you were written against
-"mcp_protocol": "2025-11-25"   // MCP's: which revision your server speaks
+"mcp_protocol": "2025-11-25",  // MCP's: which revision your server speaks
+"min_app": "0.2.0"             // which builds of Alexia you run on (optional)
 ```
 
-They do different jobs and both are checked before you get a process.
+They do different jobs and all three are checked before you get a process — and, since
+plugins are downloads rather than something that ships inside the installer, before the
+download too.
 
 `alexia_protocol` is an integer that goes up when the `alexia/*` layer or this file changes.
 Core speaks a range — **2 to 3 today** — and one revision back is supported, which is what
@@ -107,6 +110,26 @@ The schema only checks the *shape* of this field on purpose: an unaccepted-but-w
 revision should produce the readable refusal in
 [`wire-protocol.md` §8](./wire-protocol.md#8-errors-and-the-exact-words), not a schema error
 nobody can decode.
+
+`min_app` and `max_app` are the **build** range, and they exist because the protocol integer
+cannot express one. A capability that arrived in Alexia 0.2.0 is not a new contract revision:
+a plugin that needs it declares the same `alexia_protocol` as everything else, handshakes
+perfectly on 0.1.9, and does not work. Both are optional and absent means *any*.
+
+```
+My Plugin needs Alexia 0.2.0 or later, and this is 0.1.9.
+Update Alexia, or install an earlier version of My Plugin.
+```
+
+The same check runs in three places, so there is no path that installs something which cannot
+load: the shelf does not offer it, the install refuses it, and the loader will not spawn it.
+On the Plugins screen the user sees a count — *two plugins and one plugin update need a newer
+Alexia* — rather than a list of names they cannot act on.
+
+**A range is a promise.** `min_app` should name the oldest build you actually tested against,
+and `max_app` is for a plugin that is *known* broken above some version rather than one nobody
+has got round to testing. Narrowing a range that did not need narrowing takes your plugin off
+somebody's shelf without telling them what they are missing.
 
 ### What you need, and what you offer
 

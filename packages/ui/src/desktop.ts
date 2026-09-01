@@ -14,14 +14,20 @@
  * - the tray's state, because it is the only answer to *is it running?* anyone gets;
  * - Escape, because dismissing the overlay is a keypress the page sees and the window does not;
  * - autostart, because Alexia is a daemon and *with an obvious way to turn it off*;
- * - and nothing else. If a fifth appears, it probably belongs on the other side of the port.
+ * - updating itself, because replacing a running program is the one thing a web page cannot
+ *   do for itself at any price (D119);
+ * - and nothing else. If a sixth appears, it probably belongs on the other side of the port.
  */
 
 /** What the tray says about right now. Four states, because a person reads it at a glance. */
 export type TrayState = 'idle' | 'working' | 'attention' | 'error'
 
 interface TauriBridge {
-  core?: { invoke?: (command: string, args?: Record<string, unknown>) => Promise<unknown> }
+  core?: {
+    invoke?: (command: string, args?: Record<string, unknown>) => Promise<unknown>
+    /** Tauri's own event channel, which is how a Rust command reports progress to a page. */
+    Channel?: new () => { onmessage: (message: unknown) => void }
+  }
 }
 
 /**
@@ -78,3 +84,79 @@ export function setAutostart(on: boolean): void {
 
 /** Said once, at first run, and then never again. */
 export const HOTKEY = 'Ctrl + Alt + Space'
+
+// ---- updating itself (D119) ----------------------------------------------------------------
+
+/**
+ * What the updater found. `rid` is Tauri's handle on the pending update, and the only reason
+ * this is two calls: checking and installing are minutes apart, with a person in between.
+ */
+export interface Update {
+  rid: number
+  /** What is on the release. */
+  version: string
+  /** What is running. Read off the binary itself rather than asked for over the port. */
+  currentVersion: string
+}
+
+/**
+ * Is there a newer Alexia? (D119)
+ *
+ * `tauri-plugin-updater` does the whole of this — it reads `latest.json` off the app's own
+ * GitHub Release, compares the version against this build's, and verifies a signature over
+ * the installer before a byte of it is run. What is here is two `invoke` calls, because the
+ * page is a remote origin and cannot import the plugin's own JS wrapper; the wrapper does
+ * exactly this and nothing more.
+ *
+ * `undefined` means *nothing to do*, and it is deliberately the same answer for **no update**
+ * and for **could not ask**. Nobody asked for this check, so nobody is owed an error about
+ * it — an assistant that opens with *could not reach the update server* has spent somebody's
+ * attention on a problem that is not theirs and that they cannot act on.
+ *
+ * The cost of that, said plainly: **a check that fails is not retried until the next launch**,
+ * and this is a daemon that can be up for weeks. A manual *check now* on the Settings screen
+ * is the answer if that ever bites; it is not here because a button nobody has needed yet is
+ * a button nobody has needed yet.
+ */
+export async function updateAvailable(): Promise<Update | undefined> {
+  const invoke = bridge()?.invoke
+  if (!invoke) return undefined
+  try {
+    const found = (await invoke('plugin:updater|check')) as Update | null
+    return found ?? undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Take it: download in the background, then hand over to the installer.
+ *
+ * **The last thing this function does is not return.** `installMode: "quiet"` runs the NSIS
+ * installer with `/S /R` — silent, then restart — and the plugin exits this process the
+ * moment the installer is launched, because a running Alexia holds the files being replaced.
+ * So there is no success path to write UI for: the window closes, the install happens without
+ * a dialog, and Alexia comes back on its own. The only branch worth writing is the failure
+ * one, which is why the error is thrown rather than swallowed the way everything else here is.
+ *
+ * `onProgress` reports bytes as they arrive. It is the difference between a button that looks
+ * broken for ninety seconds and one that is visibly working.
+ */
+export async function installUpdate(rid: number, onProgress?: (done: number, total?: number) => void): Promise<void> {
+  const core = bridge()
+  if (!core?.invoke) throw new Error('Alexia can only update itself from the desktop app.')
+  let done = 0
+  let total: number | undefined
+  const channel = core.Channel ? new core.Channel() : undefined
+  if (channel) {
+    channel.onmessage = (message: unknown) => {
+      const said = message as { event?: string; data?: { contentLength?: number; chunkLength?: number } }
+      if (said.event === 'Started') total = said.data?.contentLength
+      if (said.event === 'Progress') {
+        done += said.data?.chunkLength ?? 0
+        onProgress?.(done, total)
+      }
+    }
+  }
+  await core.invoke('plugin:updater|download_and_install', { rid, onEvent: channel })
+}
