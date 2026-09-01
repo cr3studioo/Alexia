@@ -62,6 +62,12 @@ async function look(signal) {
     // A model named in the settings that is not installed is the one thing this screen can
     // catch and nothing else will: pictures still come out, painted by a different model,
     // and they look like the plugin working. Naming it here costs a line and a colour.
+    // **The card, said before anything is pressed rather than after.** M9-1e: a machine with no
+    // graphics card can install this, ask for a picture, and wait minutes for it — and until now
+    // the only place that was said was `setup`, which somebody reaches after committing.
+    // ComfyUI's own reading is the authority (§6.1), so this is only asked once it is answering.
+    const card = vram(await stats(await where(), signal).catch(() => undefined))
+    if (!card) return { ok: true, said: `▲ Ready — ${many}, but no graphics card was found, so each picture will take minutes rather than seconds` }
     const asked = await preferred()
     return asked && !pick(available, asked) ?
         { ok: true, said: `▲ Ready — ${many}, and none of them is “${asked}”. Pictures use ${available[0]}.` }

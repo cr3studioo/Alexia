@@ -295,7 +295,7 @@ event. Sequenced so nothing waits on something later.
 - [x] **M9-1b** `generate` runs the starter workflow file instead of the graph literal
 - [x] **M9-1c** The install hand-off, and a card that states its size before it is pressed
 - [x] **M9-1d** Hardware tiering, the model download, `--extra-model-paths-config`
-- [ ] **M9-1e** The no-GPU card — *coming soon* sentence done in `tier.js`; the **dimming** is core and is not
+- [x] **M9-1e** The no-GPU machine is told on the plugin's own screen, before anything is pressed, rather than only inside `setup`. **The dimming was not built and is not needed** — it is a look; the sentence is the information
 - [x] **M9-1f** Lifecycle: up once started, down on conversation-ended, clean uninstall
 - [x] **M9-2** The catalogue, its search, **installing one** (D137), **steering it** (D138) and the page that lists and removes them. **C2 was not needed** — `table` is already *a list of things with actions on each one* (D83); C4’s drop zone is convenience over a path that already works
 - [x] **M9-3** The `image` widget (D132), the Pictures tab, and a trace entry that shows its work — the forming picture (D135) and the pipeline (D136). **The diagram is an ordered strip rather than a node-link graph**, which dissolved §7.3's two losses instead of working around them
