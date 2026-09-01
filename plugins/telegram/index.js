@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { writeFile } from 'node:fs/promises'
 import { fromJsonSchema, log, plugin } from '@alexia/sdk'
-import { answered, chunk, filePath, me, send, sendVoice, TelegramError, unbutton, updates } from './api.js'
+import { answered, chunk, filePath, me, send, sendDocument, sendPhoto, sendVoice, TelegramError, unbutton, updates } from './api.js'
 import { Asking } from './asking.js'
 
 /**
@@ -183,11 +183,49 @@ async function answer(token, chatId, text) {
   await remember(chatId, 'assistant', said)
   const words = await marked(chatId, said || 'I had nothing to say to that.')
 
+  // A file the task made — a picture, a report — first (D122). It is usually the thing that
+  // was asked for, and it crosses Telegram's servers like the words next to it, which the
+  // marker on `words` already says.
+  await delivered(token, chatId, result)
+
   // A voice note when there is a voice that can make one, and words when there is not. The
   // marker line is text either way: a promise about where words went, read out loud, is a
   // promise nobody can scroll back to.
   if (await spoken(token, chatId, said)) return
   for (const part of chunk(words)) await say(token, chatId, part)
+}
+
+/**
+ * The files on `alexia/files`, if core sent any (D122).
+ *
+ * Core reads the bytes and returns them base64 on the result's `_meta`, because this plugin
+ * runs in its own process and cannot reach the `/api/file` route the window uses. A raster
+ * image goes as a photo for the inline preview; everything else — a PDF, a zip — goes as a
+ * document. A file that fails to send is one line in the log, never a dropped answer.
+ */
+async function delivered(token, chatId, result) {
+  const files = result?._meta?.['alexia/files']
+  if (!Array.isArray(files)) return
+  for (const file of files) {
+    const bytes = Buffer.from(String(file?.data ?? ''), 'base64')
+    if (bytes.length === 0) continue
+    const asPhoto = /^image\/(png|jpe?g|webp|gif)$/i.test(String(file.mime)) && bytes.length <= 10 * 1024 * 1024
+    try {
+      if (asPhoto) await sendPhoto(token, chatId, bytes, file.name)
+      else await sendDocument(token, chatId, bytes, file.name)
+    } catch (error) {
+      // A photo Telegram would not take (odd dimensions, say) still goes as a document.
+      if (asPhoto) {
+        try {
+          await sendDocument(token, chatId, bytes, file.name)
+          continue
+        } catch {
+          /* falls through to the log below */
+        }
+      }
+      log.warn('could not send a file', error)
+    }
+  }
 }
 
 /**

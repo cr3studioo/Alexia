@@ -116,3 +116,26 @@ return { isError: true, content: [{ type: 'text', text: 'There is no file at tha
 
 That sentence goes back to the model as the answer to its call, and the model plans around
 it. *The file is not there* is information. A stack trace is not.
+
+## Handing back a file
+
+A tool that writes something a person wants — a picture, a report, a converted document —
+hands it back as a `resource_link` block beside its text. The SDK has a one-liner:
+
+```js
+return {
+  content: [
+    { type: 'text', text: 'Made the chart.' },
+    alexia.file(path, { description: 'Q3 revenue by region' }),
+  ],
+}
+```
+
+The path must be absolute and the file must already be written when you return — Alexia
+checks, and names a file that is not there as *missing* rather than offering it. The **model**
+is told only `[file: chart.png]`, because `Message.content` is a string and the bytes were
+never going to fit in it. What the person gets depends on where they are: a row under the
+answer in the window (open it, save it, show it in a folder), or the file itself sent through
+whatever channel the conversation is on — a photo or an attachment over Telegram. Either way,
+do not also put the path in your text: the model will read it back to someone who cannot open
+it, and the file is already on its way.
