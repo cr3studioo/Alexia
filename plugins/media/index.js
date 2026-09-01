@@ -5,7 +5,7 @@ import { readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import { checkpoints, classes, download, interrupt, named, order, pick, queue, stats, template, templates, wait } from './comfy.js'
 import { alive, awake, install, loopback, port, ready, start, stop, tail } from './launch.js'
-import { API_SUFFIX, FOLDER, apply, isApi, knobs, missing, read, reseed, saved, write } from './workflows.js'
+import { API_SUFFIX, FOLDER, apply, isApi, knobs, missing, read, remove, reseed, saved, write } from './workflows.js'
 import { api as starterGraph, editor as starterDoc, STARTER } from './starter.js'
 import { measure, tight } from './sizing.js'
 import { fetchModel, have } from './models.js'
@@ -513,8 +513,14 @@ alexia.tool(
     }
     const spec = await nodes(signal).catch(() => ({}))
     const said = []
+    const shown = []
     for (const row of rows) {
       said.push(`${row.name} — ${standing(row)}`)
+      // One walk, two audiences: the sentences are for the model, the row is for the panel. A
+      // second tool answering the same question off the same disk would be a second thing to
+      // keep true, and `table` wants exactly the shape this loop already has in its hand.
+      const seen = { id: row.name, name: row.name, state: standing(row), fields: '—' }
+      shown.push(seen)
       if (!row.export) continue
       try {
         const graph = await read(server, row.export, signal)
@@ -527,16 +533,18 @@ alexia.tool(
           said.push(`  It needs ${absent.join(', ')}, which ${absent.length === 1 ? 'is' : 'are'} not installed here.`)
         }
         const found = knobs(graph, spec)
+        seen.fields = found.length > 0 ? found.map((one) => one.field).join(', ') : 'none'
         said.push(
           ...(found.length > 0 ? found.map(describe) : (
             ['  No fields — nothing in it is titled, so it runs exactly as exported.']
           )),
         )
       } catch (error) {
+        seen.fields = 'unreadable'
         said.push(`  Could not read the export: ${String(error?.message ?? error)}`)
       }
     }
-    return { content: [{ type: 'text', text: said.join('\n') }] }
+    return { content: [{ type: 'text', text: said.join('\n') }], structuredContent: { rows: shown } }
   },
 )
 
@@ -1013,7 +1021,7 @@ alexia.tool(
             entry.vram ? `Its author says it wants ${(entry.vram / 1e9).toFixed(1)} GB of video memory.` : undefined,
             absent.length > 0 ? `Nodes this ComfyUI does not have: ${absent.join(', ')}.` : undefined,
             found.length > 0 ?
-              `What you can set: ${found.map((one) => one.label ?? one.key).join(', ')}.`
+              `What you can set: ${found.map((one) => one.field).join(', ')}.`
               // **Measured, and it is the normal case for a catalogue entry.** D128 surfaces only
               // the fields whose nodes the workflow's author renamed, because a title is how an
               // author says *this is the knob*. ComfyUI's own templates leave every node at its
@@ -1025,6 +1033,50 @@ alexia.tool(
           ]
             .filter(Boolean)
             .join('\n'),
+        },
+      ],
+    }
+  },
+)
+
+alexia.tool(
+  'remove_workflow',
+  {
+    description:
+      'Delete a workflow saved on this machine, by the name workflows lists it under. Removes both ' +
+      'halves — the workflow and its API export. Use when the user asks to get rid of one.',
+    inputSchema: fromJsonSchema({
+      type: 'object',
+      properties: { id: { type: 'string', description: 'The workflow’s name, as workflows lists it.' } },
+      required: ['id'],
+    }),
+    // The one destructive thing this plugin does to something a person may have built by hand,
+    // so it goes through the gate rather than round it.
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+  },
+  async ({ id }, ctx) => {
+    const signal = ctx?.mcpReq?.signal
+    const name = String(id ?? '').trim()
+    if (name === '') return refuse('Which one? workflows lists what is saved here.')
+    const state = await reachable(ctx)
+    if (!state.ok) return refuse(state.said)
+    const server = await where()
+    const row = (await saved(server, signal)).find((one) => one.name === name)
+    if (!row) return refuse(`Nothing saved here is called ${name}.`)
+    // Both halves, and a half that was not there is not a failure — a pair with one side
+    // missing is the ordinary case, not a broken one.
+    const gone = []
+    for (const path of [row.workflow, row.export]) {
+      if (path && (await remove(server, path, signal))) gone.push(path)
+    }
+    return {
+      content: [
+        {
+          type: 'text',
+          text:
+            gone.length === 0 ?
+              `${name} was listed but its files were already gone.`
+            : `Deleted ${name} — ${gone.length === 2 ? 'the workflow and its export' : gone[0]}. It is not in ComfyUI any more either; this is ComfyUI’s own folder.`,
         },
       ],
     }

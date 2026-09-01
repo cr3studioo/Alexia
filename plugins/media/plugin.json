@@ -120,6 +120,37 @@
         "detail": "about_picture"
       },
       {
+        "key": "installed_workflows",
+        "type": "table",
+        "label": "Workflows",
+        "hint": "The ComfyUI workflows on this machine — the ones Alexia installed for you and the ones you exported yourself. Removing one deletes it from ComfyUI’s own folder, because that is where it lives.",
+        "rows": "workflows",
+        "columns": [
+          {
+            "key": "name",
+            "label": "What"
+          },
+          {
+            "key": "state",
+            "label": "State"
+          },
+          {
+            "key": "fields",
+            "label": "What you can set",
+            "hideNarrow": true
+          }
+        ],
+        "rowActions": [
+          {
+            "key": "remove_workflow",
+            "label": "Remove",
+            "tool": "remove_workflow",
+            "confirm": "Delete it from ComfyUI?"
+          }
+        ],
+        "filter": true
+      },
+      {
         "key": "disk",
         "type": "status",
         "label": "On disk"

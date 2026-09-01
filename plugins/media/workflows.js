@@ -103,6 +103,20 @@ export async function read(server, path, signal) {
   return (await body(await fetch(url(server, path), { signal }), `reading ${path}`)).json()
 }
 
+/**
+ * Delete one file out of the user directory (`app/user_manager.py:418`).
+ *
+ * A missing file is a success rather than an error: removing a workflow deletes both halves of
+ * a pair, and a pair with only one half on disk is the ordinary case — an export with no
+ * workflow beside it, or the other way round.
+ */
+export async function remove(server, path, signal) {
+  const response = await fetch(url(server, path), { method: 'DELETE', signal })
+  if (response.status === 404) return false
+  await body(response, `deleting ${path}`)
+  return true
+}
+
 /** Write one file into the user directory. ComfyUI writes a temp file and renames over it. */
 export async function write(server, path, text, signal) {
   await body(
