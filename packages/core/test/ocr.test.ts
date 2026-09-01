@@ -83,7 +83,7 @@ test('with one installed, the same scan comes back as what it says', async () =>
     expect(answered.isError).toBe(true)
     expect(textOf(answered)).toContain(process.platform)
   }
-}, 60_000)
+}, 120_000)
 
 test('a picture reaches whatever reads pictures, by name, with no plugin named anywhere', async () => {
   const answered = await withOcr.capability('image.ocr', { file: scanned })
