@@ -49,6 +49,12 @@ export type WidgetType =
    * else: one renderer, and the control surface still names no tab and no plugin.
    */
   | 'ladder'
+  /**
+   * The fifteenth, and the one that was refused three times (D89). Not a way into a
+   * filesystem: the person picks a file, core writes the bytes somewhere inside the asking
+   * plugin's own folder, and the value is the path core made.
+   */
+  | 'file'
 
 /** A `table`'s column, as its author declared it. */
 export interface Column {
@@ -70,6 +76,16 @@ export interface RowAction {
 
 export interface Row {
   id: string
+  /**
+   * Something to listen to, on the row it belongs to.
+   *
+   * **Not a fifteenth widget.** A list of voices where hearing one means pressing a button
+   * and waiting for the speakers is a list nobody auditions twice; the reference app puts a
+   * player on the row, and a player on a row is a field rather than a control an author
+   * declares. A public URL or a `data:` URI, and `preload="none"` — so a page of forty voices
+   * fetches nothing at all until somebody presses play on one of them.
+   */
+  preview?: string
   [field: string]: unknown
 }
 
@@ -83,8 +99,21 @@ export interface Rendered {
   min?: number
   max?: number
   step?: number
-  options?: string[]
+  /**
+   * `choice`: bare values, or values with something to read beside them.
+   *
+   * An object option renders as a stacked card rather than a segment or a dropdown row, which
+   * is core's call the way segmented-versus-dropdown already is. `available: false` dims it and
+   * puts `reason` under it — core resolved that from the option's `needs` before it got here.
+   */
+  options?: (string | { value: string; label: string; hint?: string; available?: boolean; reason?: string })[]
   kind?: 'file' | 'dir'
+  /** `file`: what the picker offers, in the browser's own syntax. Advisory, not a check. */
+  accept?: string
+  /** `text`: a box that takes more than one line. Same value, more of it visible. */
+  multiline?: boolean
+  /** Whether saving this changes which other widgets exist. Core works it out; see below. */
+  gates?: boolean
   tool?: string
   /** `password`: whether one is stored, and core's own sentence about where it went. */
   set?: boolean
@@ -134,6 +163,15 @@ export interface WidgetHost {
   fresh(): Promise<Rendered[]>
   /** Where a redrawn widget is looked for. */
   root(): HTMLElement
+  /**
+   * Draw this whole screen again, because what is on it has changed.
+   *
+   * Only ever called for a widget core marked `gates` — one whose value decides which other
+   * widgets exist at all. A single field cannot redraw a page it does not own, and the screen
+   * that does own it is the one that knows about chrome, headings and the settings/panel
+   * split. Absent on a host that has no gated widgets, which is core's own tabs.
+   */
+  redraw?(): void
 }
 
 export const el = <K extends keyof HTMLElementTagNameMap>(
@@ -180,9 +218,14 @@ export function widget(host: WidgetHost, declared: Rendered): HTMLElement {
    *
    * Redrawing was the obvious thing and it was wrong twice over: `change` fires while the
    * control still has focus, so replacing it takes the focus away from whoever is using the
-   * keyboard, and the control already shows what they just set. The one exception is
-   * `password`, which genuinely looks different once there is one — a changed placeholder
-   * and a way to forget it — so that is the only widget drawn again.
+   * keyboard, and the control already shows what they just set.
+   *
+   * Two exceptions, and the reason is the same both times — *the screen no longer shows the
+   * truth*. `password` genuinely looks different once there is one: a changed placeholder and
+   * a way to forget it, so that one widget is drawn again. And a widget core marked `gates` is
+   * one whose value decides which **other** widgets are on the page, so leaving the page alone
+   * would mean choosing an engine and watching nothing happen. That one redraws the screen
+   * rather than itself, because a field cannot draw a page it is only a part of.
    */
   const save = async (value: unknown): Promise<void> => {
     const answer = await host.send('/api/settings', { plugin: host.plugin, key: declared.key, value })
@@ -192,6 +235,10 @@ export function widget(host: WidgetHost, declared: Rendered): HTMLElement {
       return
     }
     problem.hidden = true
+    if (declared.gates === true) {
+      host.redraw?.()
+      return
+    }
     if (declared.type !== 'password') return
     const now = (await host.fresh()).find((s) => s.key === declared.key)
     if (now) field.replaceWith(widget(host, now))
@@ -209,9 +256,13 @@ export function widget(host: WidgetHost, declared: Rendered): HTMLElement {
   switch (declared.type) {
     case 'text':
     case 'path': {
-      const input = el('input')
+      // A `textarea` where the author said the answer is long. Same value, saved the same way
+      // on the same event — the only difference is how much of it somebody can see at once,
+      // which is the whole of what a transcript box needed.
+      const input = declared.type === 'text' && declared.multiline === true ? el('textarea') : el('input')
       input.id = id
-      input.type = 'text'
+      if (input instanceof HTMLInputElement) input.type = 'text'
+      else input.rows = 3
       input.value = typeof declared.value === 'string' ? declared.value : ''
       if (declared.placeholder) input.placeholder = declared.placeholder
       input.addEventListener('change', () => void save(input.value))
@@ -229,6 +280,64 @@ export function widget(host: WidgetHost, declared: Rendered): HTMLElement {
       browse.title = 'A folder picker needs the desktop app (M5). Type or paste the path for now.'
       pair.append(input, browse)
       labelled(pair, id)
+      break
+    }
+
+    /**
+     * A file somebody points at, and the path core makes out of it.
+     *
+     * **The bytes go up; a path comes back.** *A browser will not tell a page where a file is*
+     * is still true — this never asks. `FileReader` hands over the contents, they go to
+     * `/api/upload` as base64 the same way an attachment does, and core writes them inside the
+     * plugin's own folder and stores the path it made. So what the plugin reads is a path it
+     * could always read, and what this control produces is a value nobody had to type.
+     *
+     * The name of the chosen file is what is shown, not the path: the path is core's business
+     * and a temp filename under a data directory tells the person nothing they chose.
+     */
+    case 'file': {
+      const input = el('input')
+      input.id = id
+      input.type = 'file'
+      if (declared.accept) input.accept = declared.accept
+      const said = el('p', 'hint')
+      const held = typeof declared.value === 'string' ? declared.value : ''
+      said.textContent = held === '' ? '' : `Holding ${held.split(/[\\/]/).pop() ?? held}.`
+      said.hidden = said.textContent === ''
+      input.addEventListener('change', () => {
+        const file = input.files?.[0]
+        if (!file) return
+        said.className = 'hint'
+        said.textContent = `Reading ${file.name}…`
+        said.hidden = false
+        const reader = new FileReader()
+        reader.addEventListener('error', () => {
+          said.className = 'error'
+          said.textContent = `${file.name} could not be read.`
+        })
+        reader.addEventListener('load', () => {
+          // `readAsDataURL` rather than assembling base64 by hand: the browser already does
+          // this correctly for a 25 MB file, and a loop over a Uint8Array does not.
+          const data = String(reader.result ?? '').split(',')[1] ?? ''
+          void (async () => {
+            const answer = await host.send('/api/upload', {
+              plugin: host.plugin,
+              key: declared.key,
+              name: file.name,
+              data,
+            })
+            const ok = answer.ok === true
+            said.className = ok ? 'hint' : 'error'
+            said.textContent = ok ? `Holding ${file.name}.` : String(answer.why ?? 'That file did not save.')
+            // A `file` can gate the widgets under it exactly as a `choice` can — *the button
+            // that uses this recording* has no reason to exist before there is one.
+            if (ok && declared.gates === true) host.redraw?.()
+          })()
+        })
+        reader.readAsDataURL(file)
+      })
+      labelled(input, id)
+      field.append(said)
       break
     }
 
@@ -289,11 +398,47 @@ export function widget(host: WidgetHost, declared: Rendered): HTMLElement {
 
     case 'choice': {
       const options = declared.options ?? []
+      /**
+       * A choice that is really a **decision**, drawn as stacked cards.
+       *
+       * Three model sizes are a word each and a segmented control says all there is to say.
+       * Four engines are not: the difference between them is where the work happens, what it
+       * costs and what it cannot do, and none of that fits in a segment. So an option carrying
+       * a sentence gets a card with the sentence in it — and one that cannot be picked yet is
+       * dimmed with the reason under it rather than missing, because the person who cannot
+       * pick it is the one who needs to know what to do about that.
+       */
+      if (options.some((one) => typeof one !== 'string' && one.hint !== undefined)) {
+        const group = el('div', 'picks')
+        group.setAttribute('role', 'radiogroup')
+        group.setAttribute('aria-label', declared.label)
+        for (const one of options) {
+          const option = typeof one === 'string' ? { value: one, label: one } : one
+          const out = option.available === false
+          const pick = el('label', out ? 'pick off' : 'pick')
+          const input = el('input')
+          input.type = 'radio'
+          input.name = id
+          input.value = option.value
+          input.checked = declared.value === option.value
+          input.disabled = out
+          input.addEventListener('change', () => void save(option.value))
+          const body = el('span', 'pick-body')
+          body.append(el('span', 'pick-name', option.label))
+          if (option.hint) body.append(el('span', 'pick-hint', option.hint))
+          if (out && option.reason) body.append(el('span', 'pick-why', option.reason))
+          pick.append(input, body)
+          group.append(pick)
+        }
+        field.append(el('span', 'label', declared.label), group)
+        break
+      }
+      const plain = options.map((one) => (typeof one === 'string' ? one : one.value))
       if (options.length <= SEGMENTED_UP_TO) {
         const group = el('div', 'segmented')
         group.setAttribute('role', 'radiogroup')
         group.setAttribute('aria-label', declared.label)
-        for (const option of options) {
+        for (const option of plain) {
           const choice = el('label', 'segment')
           const input = el('input')
           input.type = 'radio'
@@ -309,7 +454,16 @@ export function widget(host: WidgetHost, declared: Rendered): HTMLElement {
       }
       const select = el('select')
       select.id = id
-      for (const option of options) select.add(new Option(option, option, false, declared.value === option))
+      for (const one of options) {
+        const { value, label } = typeof one === 'string' ? { value: one, label: one } : one
+        // `createElement` rather than `new Option(…)`: the legacy constructor is a global that
+        // only exists on a real `window`, which is one more thing standing between this file
+        // and being rendered in a test. Same four fields, one of them not needed.
+        const option = el('option', undefined, label)
+        option.value = value
+        option.selected = declared.value === value
+        select.append(option)
+      }
       select.addEventListener('change', () => void save(select.value))
       labelled(select, id)
       break
@@ -320,7 +474,8 @@ export function widget(host: WidgetHost, declared: Rendered): HTMLElement {
       const group = el('div', 'checks')
       group.setAttribute('role', 'group')
       group.setAttribute('aria-label', declared.label)
-      for (const option of declared.options ?? []) {
+      for (const one of declared.options ?? []) {
+        const option = typeof one === 'string' ? one : one.value
         const box = el('label', 'check')
         const input = el('input')
         input.type = 'checkbox'
@@ -496,6 +651,23 @@ const reloadTables = (host: WidgetHost): void => {
   for (const box of host.root().querySelectorAll('.table-box')) box.dispatchEvent(new Event(RELOAD))
 }
 
+/**
+ * Something to listen to, on the row it belongs to.
+ *
+ * `preload="none"` is the whole reason this is affordable: a list of forty voices fetches
+ * nothing at all until somebody presses play on one of them, and a `data:` URI costs one
+ * decode rather than a request. Native controls, because the browser's own player is already
+ * keyboard-reachable, already labelled by the assistive technology on this machine, and
+ * already knows how to be small — three things a hand-drawn one would have to earn back.
+ */
+const player = (src: string): HTMLAudioElement => {
+  const audio = el('audio', 'row-audio')
+  audio.controls = true
+  audio.preload = 'none'
+  audio.src = src
+  return audio
+}
+
 /** Below this, columns marked `hideNarrow` are dropped and the actions get their own row. */
 const NARROW = 560
 
@@ -574,8 +746,14 @@ function table(host: WidgetHost, declared: Rendered): HTMLElement {
       const cell = el('th', column.align === 'right' ? 'right' : undefined, column.label)
       headRow.append(cell)
     }
-    // One header cell for every action, unlabelled: the buttons say what they do.
-    if ((declared.rowActions ?? []).length > 0 || declared.detail !== undefined) headRow.append(el('th'))
+    // One header cell for every action, unlabelled: the buttons say what they do. A row with
+    // something to listen to needs the same cell, which is why this asks the rows and not
+    // only the declaration.
+    const extra =
+      (declared.rowActions ?? []).length > 0 ||
+      declared.detail !== undefined ||
+      visible.some((row) => typeof row.preview === 'string')
+    if (extra) headRow.append(el('th'))
     head.append(headRow)
     grid.append(head)
 
@@ -867,6 +1045,7 @@ function cards(host: WidgetHost, declared: Rendered): HTMLElement {
     name.type = 'button'
     head.append(name)
     shell.append(head, el('p', 'bento-what', String(row.summary ?? '')))
+    if (typeof row.preview === 'string') shell.append(player(row.preview))
 
     const foot = el('div', 'bento-foot')
     if (state !== '') foot.append(el('span', here ? 'pill' : 'pill caution', state))
@@ -1493,11 +1672,13 @@ function rowOf(
     line.append(cell)
   }
   out.append(line)
-  if ((declared.rowActions ?? []).length === 0 && declared.detail === undefined) return out
+  const heard = typeof row.preview === 'string' ? row.preview : undefined
+  if ((declared.rowActions ?? []).length === 0 && declared.detail === undefined && heard === undefined) return out
   // A row carrying the chosen mark anywhere is the chosen row, and reads like one.
   if (columns.some((column) => String(row[column.key] ?? '').startsWith('◆'))) line.classList.add('chosen')
 
   const cell = el('td', 'row-actions')
+  if (heard !== undefined) cell.append(player(heard))
   const said = el('p', 'hint')
   said.hidden = true
 

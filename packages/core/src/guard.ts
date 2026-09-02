@@ -242,6 +242,12 @@ export const ROUTES: Readonly<Record<string, Route>> = {
     ),
   },
 
+  '/api/upload': {
+    otherwise: safe(
+      'The bytes behind a declared `file` widget, written inside the asking plugin’s own folder under the same ceilings an attachment gets, replacing whatever that widget held before. The person is choosing the file in their own picker, so a confirm would be asking them to agree to the thing they have just done — and it puts nothing anywhere they could not reach.',
+    ),
+  },
+
   '/api/rows': {
     otherwise: safe(
       'A table asking for its contents. It calls the tool the author named, under the same permission ruling every tool call gets — a lister that has not declared itself read-only is asked about, in every mode but Full trust. Nothing core owns changes.',

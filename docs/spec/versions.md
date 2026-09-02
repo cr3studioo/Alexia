@@ -5,9 +5,9 @@ handshake, handled by the SDK. **`alexia_protocol` is ours**: an integer, bumped
 `alexia/*` layer or the manifest changes, and checked *before your process is spawned*.
 
 ```
-you say alexia_protocol 3    Alexia speaks 2..4   ->  loads
-you say alexia_protocol 1    Alexia speaks 2..4   ->  "X was written for an older version"
-you say alexia_protocol 5    Alexia speaks 2..4   ->  "X needs a newer Alexia"
+you say alexia_protocol 3    Alexia speaks 2..7   ->  loads
+you say alexia_protocol 1    Alexia speaks 2..7   ->  "X was written for an older version"
+you say alexia_protocol 8    Alexia speaks 2..7   ->  "X needs a newer Alexia"
 ```
 
 ## The other version: `min_app` *(2026-08-31, D118)*
@@ -37,6 +37,63 @@ contract was still moving.
 **It was kept at 3, on 2026-08-29.** Plugins declaring 1 stopped loading and said so in a
 sentence rather than crashing, exactly as written here while it was still hypothetical. The
 migration for a revision-1 plugin that uses nothing from 2 is one character.
+
+## 6 → 7 *(2026-09-02)*
+
+**Four things, and they are one change: a page that shows what applies.**
+
+The case was the Voice plugin's own page — nineteen widgets in manifest order, all visible
+whether or not they applied, and nothing on it saying which engine was actually speaking. Two
+of its settings existed only to apologise for that: an `expression` toggle that did nothing on
+one engine, with a hint and a clause in the status line explaining so.
+
+| | |
+|---|---|
+| `when` on every widget | `{ "key": "engine", "is": ["qwen", "fish"] }`. A widget that does not match is **not on the page** — core filters before it renders. |
+| `choice` options with a sentence | An option may be `{ value, label, hint, needs, reason }` instead of a bare string. Any `hint` and the group draws as stacked cards. |
+| `file` | A file the person picks. Core writes the bytes into your folder and stores the path — you read a path, exactly as with `path`. |
+| `multiline` on `text` | A box rather than a line. Same value, same save. |
+
+All four are optional and none changes what an existing manifest means, which is why the floor
+stayed at 2 again. What is genuinely new is that **saving can now change the shape of a page**:
+core marks the widgets others depend on, and the shell redraws when one of those is saved. That
+is the only case where a save redraws anything — it deliberately does not otherwise, because a
+redraw takes the focus off whoever is mid-keystroke.
+
+### `file`, which had been refused three times
+
+The refusals are in [`ui-schema.md`](./ui-schema.md) and they all turned on one fact: *a
+browser will not tell a page where a file is.* True, and it means a `file` widget can never
+fill in a `path` the way a person typing one does.
+
+What ended it is that **core creates the path**. The bytes go to `/api/upload` the way an
+attachment goes to the composer, under the same ceilings and through the same `safeName`, and
+core writes them inside the asking plugin's own folder. The stored value is that path. Nothing
+had to be told where the file came from, and the Voice plugin's two consumers — `add_voice` and
+`clone_voice` — needed no change at all, which is the evidence that this is the same value
+arriving a different way.
+
+Two consequences worth knowing before you use it: your page cannot write the value itself
+(`/api/settings` refuses a `file`), and one widget holds one file — a second choice replaces
+the first. Two files that belong together are two widgets.
+
+### If you are updating a plugin
+
+Nothing to do. Declare 7 only if you use one of the four; a manifest declaring 3 loads
+unchanged and simply has no opinion about any of them. Bare-string `choice` options render
+exactly as they always did.
+
+## 4 → 5 and 5 → 6 *(2026-09-01)*
+
+**One widget each, and both went in without a note here — which is the gap this line closes.**
+`image` at 5 (pictures a plugin has made) and `cards` at 6 (things a plugin holds, drawn the
+way core draws plugins). Both are additive, both are argued for in
+[`ui-schema.md`](./ui-schema.md), and both are optional. The floor stayed at 2 for each.
+
+`cards` shipped without a revision gate at all, and its row actions were unreachable from
+`/api/action` until 7 — because two separate lists in core said `type === 'table'` where they
+meant *any widget with rows under it*. Both are now the rule rather than a list, and invariant
+13 checks both halves against every manifest in the repo.
 
 ## 3 → 4 *(2026-08-31, M6-11)*
 

@@ -167,24 +167,30 @@ later for the filesystem and the shell, and nowhere else.
 ]
 ```
 
-There are **twelve widget types**. Ten, and then two — see the notes below the table:
+There are **fifteen widget types**. Ten, and then five, each argued for one at a time — see
+the notes below the table:
 
 | Type | Extra fields | For |
 |---|---|---|
-| `text` | `default`, `placeholder` | a short string |
+| `text` | `default`, `placeholder`, `multiline` | a string. `multiline` (7) gives it a box rather than a line. |
 | `password` | — | a secret. No `default`, ever. Stored in the OS keychain, handed back only to you. |
 | `number` | `default`, `min`, `max`, `step` | a number |
 | `toggle` | `default` | on or off |
-| `choice` | `options` ✅, `default` | one of a fixed list |
+| `choice` | `options` ✅, `default` | one of a fixed list — see [Choices](#choices) |
 | `multi-choice` | `options` ✅, `default` (array) | several of a fixed list |
-| `path` | `kind`: `file` \| `dir` | a file or folder on this machine. No `default` — see below. |
+| `path` | `kind`: `file` \| `dir` | a file or folder on this machine, typed. No `default` — see below. |
+| `file` | `accept` | a file the person **picks**. Core writes the bytes and stores the path — see [Files](#files). *(7)* |
 | `status` | — | read-only text you drive at runtime |
 | `progress` | — | a bar you drive at runtime |
 | `action` | `tool` ✅ | a button that calls one of your tools with no arguments |
 | `table` | `rows` ✅, `columns` ✅, `rowActions`, `detail`, `filter`, `groupBy` | a list of things, with actions on each one — see [Tables](#tables) |
-| `graph` | `rows` ✅, `detail`, `filter` | things that point at each other, drawn as a map — see [Graphs](#graphs) |
+| `graph` | `rows` ✅, `detail`, `filter` | things that point at each other, drawn as a map — see [Graphs](#graphs). *(4)* |
+| `image` | `rows` ✅, `detail`, `single` | pictures you have made. *(5)* |
+| `cards` | `rows` ✅, `rowActions`, `detail`, `filter`, `dim` | things you hold, drawn the way core draws plugins. *(6)* |
 
-Every widget takes `key` (lowercase, digits, underscores), `label`, and optional `hint`.
+Every widget takes `key` (lowercase, digits, underscores), `label`, an optional `hint`, and an
+optional `when` — see [Showing what applies](#showing-what-applies). The bracketed number is the
+`alexia_protocol` revision that type or field arrived in; declare at least that.
 
 **Why a fixed list and not a schema renderer.** A plugin cannot style itself wrong because
 it never styles itself. A general JSON-Schema form renderer re-opens that door, and adds
@@ -209,9 +215,89 @@ means core naming one plugin, and a sandboxed iframe, which means a plugin drawi
 pixels and every rule on this page gone with it. It still has one user. That is written down
 rather than argued away.
 
+**The fifteenth was `file`, refused three times before it** (D89, and again at M7-4). Every
+refusal turned on one fact rather than on taste: *a browser will not tell a page where a file
+is*, so a `file` widget could not fill a `path`, and a plugin that takes paths would have been
+handed a control unable to produce one. What changed at revision 7 is that core grew the other
+half — the composer's upload seam already took bytes from a browser, wrote them somewhere safe
+and handed over a path. **Core creates the path, so nothing has to be told where the file was.**
+It is a `path` whose value a person produces by pointing instead of typing, which is what
+everybody asking for it meant; see [Files](#files).
+
 `path` takes no default and `password` takes no default, for the same underlying reason: a
 value baked into a manifest is a value that is wrong on someone else's machine, and in the
 password case, a secret in a public repo.
+
+### Showing what applies
+
+Every widget takes an optional `when`, naming another widget of yours and the value or values
+that make this one relevant:
+
+```jsonc
+{ "key": "clip", "type": "file", "label": "A recording to clone", "accept": ".wav",
+  "when": { "key": "engine", "is": ["qwen", "fish"] } }
+```
+
+A widget whose `when` does not match **is not on the page at all**. Not greyed, not disabled —
+absent, because a greyed control is a promise that something could be typed into it. Core reads
+the stored value before it renders, so a hidden widget never reaches the screen and never has to
+be reasoned about by whoever is looking at one.
+
+One key, one set of values, compared as strings. It is deliberately not an expression language:
+if you need *and*, that is two settings; if you need arithmetic, that is a tool. `when.key` must
+name a widget you declared, in either list — a `when` pointing at nothing is a load error rather
+than a widget that silently never draws.
+
+Core works out for itself which widgets other widgets depend on, and redraws the page when one
+of those is saved. You do not declare that and cannot get it wrong.
+
+### Choices
+
+An option is a bare string, or an object when the choice is really a **decision**:
+
+```jsonc
+{ "key": "engine", "type": "choice", "label": "Voice engine", "default": "local",
+  "options": [
+    "local",
+    { "value": "cloud", "label": "A service",
+      "hint": "Fast, no graphics card, and the words leave this machine.",
+      "needs": "api_key", "reason": "Add a key at the bottom of this page." }
+  ] }
+```
+
+Bare strings render exactly as they always did — a segmented control at two or three options, a
+dropdown above that. An option carrying a `hint` makes the whole group render as stacked cards
+with the sentence under each name, because three model sizes are a word each and four engines
+are not. Which of those you get is core's decision, the same way segmented-versus-dropdown
+already was.
+
+`needs` names another widget of yours that must hold a value before this option can be picked,
+and `reason` is your own sentence saying so. Core dims the option and shows the sentence rather
+than hiding it: the person who cannot pick it is the person who needs to know what to do about
+that. Leave `reason` out and core writes one naming the widget — which it can, because *this box
+is empty* is a fact about the page rather than about what filling it would mean.
+
+`default` must be one of the option **values**, and two options may not share one.
+
+### Files
+
+```jsonc
+{ "key": "clip", "type": "file", "label": "A recording to clone", "accept": ".wav,.mp3" }
+```
+
+The person picks a file in their own picker. Core writes the bytes inside **your** plugin's
+folder and stores the path it made, so the value you read is an absolute path — exactly what a
+`path` gives you, and the same code reads both. The bytes purge with your folder.
+
+- `accept` is advisory, in the browser's own syntax. It makes the picker useful; it is not a
+  check, because a person can always choose *all files*. Refuse what you cannot read.
+- The ceilings are the ones an attachment gets: 25 MB for one file.
+- **One widget holds one file.** A second choice replaces the first, and the file keeps its own
+  name — so a voice named after its file is still named after its file. Two files that belong
+  together are two widgets: that is honest about what your plugin needs rather than relying on a
+  folder convention nobody was told.
+- Your page cannot write this value itself: `/api/settings` refuses a `file`, because the path
+  is core's to create.
 
 Reading and reacting to settings at runtime is `alexia/settings/get` and
 `alexia/settings/changed`; rendering is [`ui-schema.md`](./ui-schema.md).

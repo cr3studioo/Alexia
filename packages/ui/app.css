@@ -827,7 +827,7 @@ body[data-view='control'] .view:not(#control) {
 /* The selected row is marked by a background, not a colour: on these screens a colour means
    something happened, and being under the cursor has not happened to anybody. */
 .hit.on {
-  background: var(--surface-sunk, rgb(127 127 127 / 12%));
+  background: var(--surface-sunken);
 }
 
 .hit.empty {
@@ -1057,8 +1057,10 @@ body[data-view='control'] .view:not(#control) {
 }
 
 /* Narrow: the note is the whole frame rather than a column two inches wide beside a map that
-   is now one inch wide. Same breakpoint the tables use. */
-@media (max-width: 560px) {
+   is now one inch wide. Same breakpoint the tables use — 559 and not 560, because the tables'
+   is `< NARROW` in JavaScript and this is `<=` in CSS. It said 560 under this same comment,
+   which left one pixel of width where the map had collapsed and no table had. */
+@media (max-width: 559px) {
   .graph-frame:has(.graph-note:not([hidden])) .graph-canvas {
     display: none;
   }
@@ -1351,6 +1353,100 @@ body[data-view='control'] .view:not(#control) {
 .check input {
   width: auto;
   margin: 0;
+}
+
+/* ---- a choice that is really a decision -------------------------------------------------
+
+   Three model sizes are a word each and the segmented control above says everything there is
+   to say. Four engines are not: what differs between them is where the work happens, what it
+   costs and what it cannot do, and none of that fits in a segment. So an option that arrives
+   with a sentence gets a card with the sentence in it — the same move the plugins grid makes
+   one level up, and the same dimming rule (D120): what you cannot pick yet is shown, quietly,
+   with the reason under it, rather than hidden. */
+
+.picks {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.pick {
+  display: flex;
+  gap: var(--space-3);
+  align-items: flex-start;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  cursor: pointer;
+}
+
+.pick:hover {
+  border-color: var(--line-strong);
+}
+
+.pick input {
+  width: auto;
+  margin: 0;
+  flex: 0 0 auto;
+  /* The radio sits on the first line of the name rather than the middle of a three-line card. */
+  margin-top: 0.15em;
+}
+
+.pick:has(input:checked) {
+  border-color: var(--accent);
+}
+
+.pick:has(input:focus-visible) {
+  outline: var(--ring) solid var(--focus);
+  outline-offset: var(--ring);
+}
+
+.pick-body {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.pick-name {
+  font-size: var(--text-base);
+}
+
+.pick-hint {
+  font-size: var(--text-sm);
+  color: var(--ink-quiet);
+}
+
+/* Why this one cannot be picked, and it is the author's own sentence — core knows only that
+   the widget it names is empty, never what filling it would mean. */
+.pick-why {
+  font-size: var(--text-sm);
+  color: var(--caution);
+}
+
+.pick.off {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.pick.off:hover {
+  border-color: var(--line);
+}
+
+/* ---- something to listen to, on the row it belongs to -----------------------------------
+
+   The browser's own player: already keyboard-reachable, already labelled by whatever assistive
+   technology this machine runs, and already able to be small. All that is left is to stop it
+   being 300px wide inside a table cell. */
+
+.row-audio {
+  height: 2rem;
+  max-width: 100%;
+  width: 14rem;
+  vertical-align: middle;
+}
+
+.bento-card > .row-audio {
+  width: 100%;
+  margin-top: var(--space-2);
 }
 
 /* ---- the routing ladder (D112) --------------------------------------------------------

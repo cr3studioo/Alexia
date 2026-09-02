@@ -3,8 +3,8 @@
   "manifest_version": 1,
   "id": "voice",
   "name": "Voice",
-  "summary": "Hears you and answers out loud, with Whisper and Piper running on this machine — and, if you give it a key, a voice cloned from a clip of your own.",
-  "version": "0.1.0",
+  "summary": "Hears you with Whisper and answers out loud — in Piper on this machine, in Qwen3-TTS if you have the Python for it, or in a voice cloned from a clip of your own.",
+  "version": "0.2.0",
   "license": "AGPL-3.0-only",
   "entry": {
     "run": "node",
@@ -12,7 +12,7 @@
       "index.js"
     ]
   },
-  "alexia_protocol": 3,
+  "alexia_protocol": 7,
   "mcp_protocol": "2025-11-25",
   "requires": [
     {
@@ -37,7 +37,7 @@
     },
     {
       "cap": "proc.spawn",
-      "why": "To run Whisper and Piper here rather than sending anything away to be listened to or read out."
+      "why": "To run Whisper, Piper and Qwen here rather than sending anything away to be listened to or read out."
     },
     {
       "cap": "net.request",
@@ -52,69 +52,38 @@
   "settings": [
     {
       "type": "choice",
-      "key": "model_size",
-      "label": "Speech model",
+      "key": "engine",
+      "label": "Voice engine",
+      "default": "piper",
+      "hint": "Which of them speaks. Everything below is the material that one works with — what does not apply to it is not on this page.",
       "options": [
-        "tiny",
-        "base",
-        "small"
-      ],
-      "default": "base",
-      "hint": "Bigger is more accurate and slower. Tiny is 75 MB, base 148 MB, small 488 MB."
-    },
-    {
-      "type": "number",
-      "key": "threads",
-      "label": "Processor threads",
-      "min": 1,
-      "max": 32,
-      "step": 1,
-      "default": 4,
-      "hint": "More is faster until it is not. Four suits most machines."
-    },
-    {
-      "type": "path",
-      "key": "whisper_path",
-      "label": "Whisper program",
-      "kind": "file",
-      "hint": "Leave this empty and Alexia downloads one. Point it at your own whisper-cli if you have a build that suits this machine better."
-    },
-    {
-      "type": "path",
-      "key": "piper_path",
-      "label": "Piper program",
-      "kind": "file",
-      "hint": "The same again for speaking. Empty means Alexia fetches one; on a machine with no prebuilt Piper this is how you supply your own."
-    },
-    {
-      "type": "password",
-      "key": "fish_key",
-      "label": "fish.audio key",
-      "hint": "Only needed to clone a voice from a recording, which Piper cannot do. Leave it empty and everything stays on this machine."
-    },
-    {
-      "type": "toggle",
-      "key": "expression",
-      "label": "Speak with expression",
-      "default": false,
-      "hint": "Marks a reply up with emotion before it is spoken. Costs one small model call per reply, and only works with a cloned voice — Piper has no expression at all."
-    },
-    {
-      "type": "status",
-      "key": "ready",
-      "label": "State"
-    },
-    {
-      "type": "progress",
-      "key": "fetching",
-      "label": "Downloading"
-    },
-    {
-      "type": "action",
-      "key": "install",
-      "label": "Download now",
-      "tool": "install",
-      "hint": "Fetches Whisper, Piper, the speech model and the voice. It happens on first use anyway; this is for getting it over with while you are looking."
+        {
+          "value": "piper",
+          "label": "Piper",
+          "hint": "Fast, and entirely on this machine. Three published voices and any .onnx you bring. It cannot clone a voice and has no expression at all."
+        },
+        {
+          "value": "qwen",
+          "label": "Qwen3-TTS",
+          "hint": "Better than Piper, still on this machine, and the only local engine that can clone a voice from a recording. It wants a Python with qwen-tts in it and a graphics card.",
+          "needs": "qwen_path",
+          "reason": "Point “Qwen program” at a Python that has qwen-tts installed — it is at the bottom of this page."
+        },
+        {
+          "value": "fish_plain",
+          "label": "fish.audio",
+          "hint": "A cloud engine: fast, no graphics card, and it can clone from fifteen seconds. What you say is read exactly as written, and it leaves this machine to be spoken.",
+          "needs": "fish_key",
+          "reason": "Add a fish.audio key at the bottom of this page."
+        },
+        {
+          "value": "fish_expressive",
+          "label": "fish.audio, with expression",
+          "hint": "The same, with each reply marked up for emotion first. One extra model call per reply, and it is the only engine here that can be told how to say something.",
+          "needs": "fish_key",
+          "reason": "Add a fish.audio key at the bottom of this page."
+        }
+      ]
     }
   ],
   "storage": {
@@ -128,87 +97,18 @@
     "label": "Voice",
     "widgets": [
       {
-        "key": "voices",
-        "type": "table",
-        "label": "Voices",
-        "hint": "Which voice speaks, and what else this machine has. A published voice downloads the first time it is used.",
-        "rows": "voices",
-        "columns": [
-          {
-            "key": "name",
-            "label": "Voice"
-          },
-          {
-            "key": "where",
-            "label": "Where from",
-            "hideNarrow": true
-          },
-          {
-            "key": "state",
-            "label": "State"
-          }
-        ],
-        "rowActions": [
-          {
-            "key": "use_voice",
-            "label": "Speak in this",
-            "tool": "use_voice"
-          },
-          {
-            "key": "try_voice",
-            "label": "Hear it",
-            "tool": "hear_voice"
-          },
-          {
-            "key": "drop_voice",
-            "label": "Remove",
-            "tool": "drop_voice",
-            "confirm": "Remove {name}?"
-          }
-        ],
-        "filter": true
-      },
-      {
-        "type": "path",
-        "key": "add_voice",
-        "label": "Add a voice",
-        "kind": "file",
-        "hint": "A Piper .onnx voice you have downloaded, with its .onnx.json beside it. Point at it here, then press Add."
-      },
-      {
-        "key": "install_voice",
-        "type": "action",
-        "label": "Add the voice in the box",
-        "tool": "add_voice",
-        "hint": "Copies the file named above into Alexia. Piper does not clone a voice from a recording — this is for a voice you have already downloaded."
-      },
-      {
-        "type": "path",
-        "key": "clip",
-        "label": "A recording to clone",
-        "kind": "file",
-        "hint": "Fifteen seconds of the voice you want, as a .wav. Put the words that were said in the box below, then press Clone."
-      },
-      {
-        "type": "text",
-        "key": "clip_text",
-        "label": "What the recording says",
-        "placeholder": "The exact words spoken in the clip.",
-        "hint": "A cloner told what was said makes a better voice than one guessing."
-      },
-      {
-        "key": "clone_voice",
-        "type": "action",
-        "label": "Clone the voice in the recording",
-        "tool": "clone_voice",
-        "hint": "Uses the recording and the words above. Needs a fish.audio key: the clip and its transcript leave this machine, and the voice lives on that account until you remove it here."
-      },
-      {
         "key": "find",
         "type": "text",
         "label": "Find a voice",
         "placeholder": "spongebob",
-        "hint": "A name to look for among the voices published on fish.audio. Leave it empty to see what the filters alone turn up."
+        "hint": "A name to look for among the voices published on fish.audio. Leave it empty to see what the filters alone turn up.",
+        "when": {
+          "key": "engine",
+          "is": [
+            "fish_plain",
+            "fish_expressive"
+          ]
+        }
       },
       {
         "key": "find_langs",
@@ -229,7 +129,14 @@
         "default": [
           "en"
         ],
-        "hint": "Language codes. Most of the catalogue is not English, so leaving all of them off answers in languages you cannot judge."
+        "hint": "Language codes. Most of the catalogue is not English, so leaving all of them off answers in languages you cannot judge.",
+        "when": {
+          "key": "engine",
+          "is": [
+            "fish_plain",
+            "fish_expressive"
+          ]
+        }
       },
       {
         "key": "find_tags",
@@ -252,54 +159,235 @@
           "warm",
           "deep"
         ],
-        "hint": "The vendor's own words for its voices. Several together narrow it."
+        "hint": "The vendor's own words for its voices. Several together narrow it.",
+        "when": {
+          "key": "engine",
+          "is": [
+            "fish_plain",
+            "fish_expressive"
+          ]
+        }
       },
       {
         "key": "find_now",
         "type": "action",
         "label": "Search fish.audio",
         "tool": "search_voices",
-        "hint": "Asks again with whatever is in the boxes above, and fills the list below."
+        "hint": "Asks again with whatever is in the boxes above, and fills the list below.",
+        "when": {
+          "key": "engine",
+          "is": [
+            "fish_plain",
+            "fish_expressive"
+          ]
+        }
       },
       {
         "key": "catalogue",
-        "type": "table",
+        "type": "cards",
         "label": "Voices on fish.audio",
-        "hint": "The top five for what you searched. Hear one, then keep it — a kept voice joins the list above and can speak, without ever being downloaded.",
+        "hint": "The top few for what you searched, in their authors' own words. Play the sample, or hear one say your own line, then keep it — a kept voice joins the list below and can speak without ever being downloaded.",
         "rows": "search_voices",
-        "columns": [
-          {
-            "key": "name",
-            "label": "Voice"
-          },
-          {
-            "key": "tags",
-            "label": "Sounds like",
-            "hideNarrow": true
-          },
-          {
-            "key": "likes",
-            "label": "Likes",
-            "align": "right",
-            "hideNarrow": true
-          },
-          {
-            "key": "state",
-            "label": "State"
-          }
-        ],
+        "dim": "■ not kept",
         "rowActions": [
-          {
-            "key": "hear_voice",
-            "label": "Hear it",
-            "tool": "hear_voice"
-          },
           {
             "key": "keep_voice",
             "label": "Keep",
             "tool": "keep_voice"
+          },
+          {
+            "key": "hear_found",
+            "label": "Say my line",
+            "tool": "preview_voice"
+          }
+        ],
+        "when": {
+          "key": "engine",
+          "is": [
+            "fish_plain",
+            "fish_expressive"
+          ]
+        }
+      },
+      {
+        "key": "preview_text",
+        "type": "text",
+        "label": "Preview text",
+        "default": "This is what I sound like.",
+        "placeholder": "This is what I sound like.",
+        "hint": "What a voice says when you ask to hear it. One line for the whole page, because the question is what the voices sound like rather than what each one says."
+      },
+      {
+        "key": "voices",
+        "type": "cards",
+        "label": "Your voices",
+        "hint": "Every voice this machine can reach, under the engine it belongs to. The one that speaks is the chosen voice of the engine picked at the top; choosing a voice under another engine sets that engine's voice, and pick the engine to hear it.",
+        "rows": "voices",
+        "dim": "■ not downloaded",
+        "filter": true,
+        "rowActions": [
+          {
+            "key": "use_voice",
+            "label": "Speak in this",
+            "tool": "use_voice"
+          },
+          {
+            "key": "try_voice",
+            "label": "Hear it",
+            "tool": "preview_voice"
+          },
+          {
+            "key": "drop_voice",
+            "label": "Remove",
+            "tool": "drop_voice",
+            "confirm": "Remove {name}?"
           }
         ]
+      },
+      {
+        "type": "file",
+        "key": "add_voice",
+        "label": "Add a Piper voice",
+        "accept": ".onnx",
+        "hint": "A .onnx voice you have downloaded, with its .onnx.json beside it. Choose the .onnx here, then press Add.",
+        "when": {
+          "key": "engine",
+          "is": "piper"
+        }
+      },
+      {
+        "type": "file",
+        "key": "add_config",
+        "label": "…and its .onnx.json",
+        "accept": ".json",
+        "hint": "The settings file that came with it. Piper will not load a voice without one — it is where the sample rate lives, so half a voice is silence rather than an error.",
+        "when": {
+          "key": "engine",
+          "is": "piper"
+        }
+      },
+      {
+        "key": "install_voice",
+        "type": "action",
+        "label": "Add the voice above",
+        "tool": "add_voice",
+        "hint": "Copies the file into Alexia. Piper cannot clone a voice from a recording — this is for one you have already downloaded.",
+        "when": {
+          "key": "engine",
+          "is": "piper"
+        }
+      },
+      {
+        "type": "file",
+        "key": "clip",
+        "label": "A recording to clone",
+        "accept": ".wav,.mp3,.flac,.ogg,audio/*",
+        "hint": "Fifteen seconds of the voice you want. Put the words that were said in the box below, then press Clone.",
+        "when": {
+          "key": "engine",
+          "is": [
+            "qwen",
+            "fish_plain",
+            "fish_expressive"
+          ]
+        }
+      },
+      {
+        "type": "text",
+        "key": "clip_text",
+        "label": "What the recording says",
+        "multiline": true,
+        "placeholder": "The exact words spoken in the clip.",
+        "hint": "A cloner told what was said makes a better voice than one guessing.",
+        "when": {
+          "key": "engine",
+          "is": [
+            "qwen",
+            "fish_plain",
+            "fish_expressive"
+          ]
+        }
+      },
+      {
+        "key": "clone_voice",
+        "type": "action",
+        "label": "Clone the voice in the recording",
+        "tool": "clone_voice",
+        "hint": "Uses the recording and the words above. On fish.audio the clip and its transcript leave this machine and the voice lives on that account until you remove it here; on Qwen3-TTS neither leaves.",
+        "when": {
+          "key": "engine",
+          "is": [
+            "qwen",
+            "fish_plain",
+            "fish_expressive"
+          ]
+        }
+      },
+      {
+        "type": "choice",
+        "key": "model_size",
+        "label": "Hearing — speech model",
+        "options": [
+          "tiny",
+          "base",
+          "small"
+        ],
+        "default": "base",
+        "hint": "What Whisper turns your speech into text with, whichever engine answers. Bigger is more accurate and slower: tiny is 75 MB, base 148 MB, small 488 MB."
+      },
+      {
+        "type": "number",
+        "key": "threads",
+        "label": "Processor threads",
+        "min": 1,
+        "max": 32,
+        "step": 1,
+        "default": 4,
+        "hint": "More is faster until it is not. Four suits most machines."
+      },
+      {
+        "type": "status",
+        "key": "ready",
+        "label": "State"
+      },
+      {
+        "type": "progress",
+        "key": "fetching",
+        "label": "Downloading"
+      },
+      {
+        "type": "action",
+        "key": "install",
+        "label": "Download now",
+        "tool": "install",
+        "hint": "Fetches Whisper, Piper, the speech model and the voice. It happens on first use anyway; this is for getting it over with while you are looking."
+      },
+      {
+        "type": "path",
+        "key": "whisper_path",
+        "label": "Whisper program",
+        "kind": "file",
+        "hint": "Leave this empty and Alexia downloads one. Point it at your own whisper-cli if you have a build that suits this machine better."
+      },
+      {
+        "type": "path",
+        "key": "piper_path",
+        "label": "Piper program",
+        "kind": "file",
+        "hint": "The same again for speaking. Empty means Alexia fetches one; on a machine with no prebuilt Piper this is how you supply your own."
+      },
+      {
+        "type": "path",
+        "key": "qwen_path",
+        "label": "Qwen program",
+        "kind": "file",
+        "hint": "A Python that already has qwen-tts installed. Nothing here downloads PyTorch: a plugin that quietly pulls six gigabytes because somebody asked for a voice has decided something for you."
+      },
+      {
+        "type": "password",
+        "key": "fish_key",
+        "label": "fish.audio key",
+        "hint": "Needed for either fish.audio engine. Leave it empty and everything stays on this machine."
       }
     ]
   }

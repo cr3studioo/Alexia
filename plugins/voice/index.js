@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { copyFile, rm, writeFile } from 'node:fs/promises'
-import { basename, dirname, join } from 'node:path'
+import { copyFile, readFile, rm, writeFile } from 'node:fs/promises'
+import { basename } from 'node:path'
 import { fromJsonSchema, log, plugin } from '@alexia/sdk'
 import * as expression from './expression.js'
 import * as fish from './fish.js'
 import * as piper from './piper.js'
+import * as qwen from './qwen.js'
 import * as whisper from './whisper.js'
 
 /**
@@ -27,6 +28,43 @@ const alexia = plugin()
 let own
 
 /**
+ * The four engines, and the three families behind them.
+ *
+ * **There is an engine switch now, and the comment that used to say there was not was right
+ * for as long as there were two.** *A voice is picked in one place and where it lives is a
+ * property of the voice* works while the only question is Piper-or-cloud; it stops working
+ * the moment two engines can hold the same voice, and it never covered `expression`, which
+ * had to be a toggle that did nothing on one of them and a clause in the status line
+ * apologising for it. Expression is not a switch here: it is the fourth engine, because that
+ * is what it actually is — the same vendor, one extra model call, said out loud on the card.
+ *
+ * `family` is what speaks; `engine` is what the person picked. Two names because
+ * `fish_plain` and `fish_expressive` are one engine asked to behave differently, and every
+ * question about *which files are on disk* wants the family rather than the choice.
+ */
+const ENGINES = {
+  piper: { family: 'piper', label: 'Piper', expressive: false },
+  qwen: { family: 'qwen', label: 'Qwen3-TTS', expressive: false },
+  fish_plain: { family: 'fish', label: 'fish.audio', expressive: false },
+  fish_expressive: { family: 'fish', label: 'fish.audio', expressive: true },
+}
+
+/**
+ * Which family a voice id belongs to, read off the id itself.
+ *
+ * The prefixes are the whole of it: `cloud:` is somebody's fish.audio voice, `qwen:` is one
+ * this machine cloned, and anything else is a Piper stem — which is what makes a voice
+ * somebody dropped into the folder work exactly like one Alexia downloaded.
+ */
+const familyOf = (voice) =>
+  fish.idOf(voice) !== undefined ? 'fish'
+  : qwen.idOf(voice) !== undefined ? 'qwen'
+  : 'piper'
+
+/** What speaks when nobody has chosen. Only Piper has one: the other two are somebody's own. */
+const FIRST = { piper: 'lessac' }
+
+/**
  * What the user chose, with the manifest's defaults filled in.
  *
  * **Which voice speaks is this plugin's own, not a setting** (M6-6). It used to be a `choice`
@@ -34,26 +72,40 @@ let own
  * of their own — a dropdown whose options are fixed in a manifest cannot list a file that
  * arrived afterwards. So the panel's list is the picker and the answer lives here, in the
  * plugin's own key-value store, where it can name a voice nobody published.
+ *
+ * **One picked voice per family, not one for the page.** With an engine switch above the list
+ * a single answer would be wrong half the time: choosing a cloned voice, switching to Piper
+ * for a fast reply and switching back would have lost it. So each family remembers its own,
+ * and the engine at the top says which of them is speaking.
  */
 async function chosen() {
   const settings = await alexia.settings()
   const path = (key) =>
     typeof settings[key] === 'string' && settings[key] !== '' ? settings[key] : undefined
-  const picked = await alexia.storage.get('voice').catch(() => undefined)
+  const engine = ENGINES[settings.engine] ? settings.engine : 'piper'
+  const { family, expressive } = ENGINES[engine]
+  const picked = await alexia.storage.get(`voice_${family}`).catch(() => undefined)
+  // Before there were engines there was one answer for all of them, under `voice`. It is read
+  // as this family's when it belongs to this family, so an upgrade keeps the voice somebody
+  // was using rather than silently going back to lessac.
+  const before = await alexia.storage.get('voice').catch(() => undefined)
+  const inherited = typeof before === 'string' && familyOf(before) === family ? before : undefined
   return {
     size: whisper.MODELS[settings.model_size] ? settings.model_size : 'base',
-    voice: typeof picked === 'string' && picked !== '' ? picked : 'lessac',
+    engine,
+    family,
+    expressive,
+    voice: typeof picked === 'string' && picked !== '' ? picked : (inherited ?? FIRST[family]),
     threads: Number(settings.threads) || 4,
     hearing: path('whisper_path'),
     speaking: path('piper_path'),
-    // The second engine (M7-4). **There is no engine switch**: a voice is picked in one
-    // place, and where it lives is a property of the voice rather than a second setting to
-    // keep in step with it. `cloud:` means somebody's own voice; anything else is a Piper
-    // stem, exactly as before.
+    qwen: path('qwen_path'),
     key: path('fish_key'),
     clip: path('clip'),
     clipText: typeof settings.clip_text === 'string' ? settings.clip_text.trim() : '',
-    expressive: settings.expression === true,
+    // One line for the whole page rather than one per voice: the question somebody is asking
+    // of a list of voices is what they sound like, not what each of them says.
+    preview: (typeof settings.preview_text === 'string' ? settings.preview_text.trim() : '') || SAMPLE,
     // What the panel's search boxes hold. They are a question rather than a preference,
     // which is why they live beside the list they filter and not on the settings screen.
     find: typeof settings.find === 'string' ? settings.find.trim() : '',
@@ -61,6 +113,9 @@ async function chosen() {
     langs: Array.isArray(settings.find_langs) ? settings.find_langs : [],
   }
 }
+
+/** What a voice says when nobody has typed anything else into the preview box. */
+const SAMPLE = 'This is what I sound like.'
 
 /**
  * The published voices somebody kept (M7-4 had only the ones cloning made).
@@ -77,13 +132,34 @@ async function kept() {
 }
 
 /**
- * What the last search found, by id.
+ * What the last search found, by id: `{ name, preview }`.
  *
  * A row action carries `{ id }` and nothing else, so Keep would otherwise have no name to
  * write down — and asking the vendor again for a row that is on screen is a second call to
- * learn something this process was told a moment ago.
+ * learn something this process was told a moment ago. The sample URL rides along for the same
+ * reason: it is a public link the search already handed over, and a kept voice that lost its
+ * sample would be a card with a play button until the page was reloaded and then without one.
  */
 const lastFound = new Map()
+
+/**
+ * What to call a voice in a sentence somebody reads.
+ *
+ * A cloud voice's id is a hex string, and *That is cloud:0051da37…* is a sentence nobody can
+ * check against the card they just pressed. A Piper stem and a Qwen clone are already their
+ * own names, so the id is the right answer for both and the lookup is only for the one kind
+ * that needs it.
+ *
+ * The two lists that cost nothing first — what the last search found, and what somebody kept.
+ * The account is asked only when neither has it and a caller has handed over a key to ask
+ * with, because that is a network call and most of these sentences do not need one.
+ */
+async function nameOf(id, key) {
+  if (familyOf(id) !== 'fish') return qwen.idOf(id) ?? id
+  const cheap = lastFound.get(id)?.name ?? (await kept()).find((one) => one.id === id)?.name
+  if (cheap !== undefined || key === undefined) return cheap ?? id
+  return (await cloudVoices(key)).find((one) => one.id === id)?.name ?? id
+}
 
 /** The voices on the account, if there is a key. An empty list is the ordinary state. */
 async function cloned(key, signal) {
@@ -107,21 +183,27 @@ async function cloned(key, signal) {
  * two downloads and one of them can be finished while the other is not.
  */
 async function bind() {
-  const { size, voice, hearing, speaking, key, expressive } = await chosen()
+  const picked = await chosen()
+  const { size, family, hearing, key } = picked
   const hears = own ? await whisper.ready(own, size, hearing) : false
   // A cloned voice needs no file on this machine — the key is the whole of what makes it
   // speakable, so `speaks` is true for one the moment there is a key to reach it with.
-  const cloud = fish.idOf(voice) !== undefined
-  const speaks = cloud ? key !== undefined : own ? await piper.ready(own, voice, speaking) : false
+  const speaks = await canSpeak(picked)
   heard.update({ _meta: hears ? { 'alexia/provides': ['voice.transcribe'] } : {} })
   said.update({ _meta: speaks ? { 'alexia/provides': ['voice.speak'] } : {} })
   // Only the cloud engine returns a format a message can carry, so the binding follows the
-  // chosen voice rather than the plugin being enabled.
-  rendered.update({ _meta: cloud && key !== undefined ? { 'alexia/provides': ['voice.render'] } : {} })
-  await alexia
-    .status('ready', state({ hears, speaks, size, voice, hearing, speaking, cloud, key, expressive }))
-    .catch(() => {})
+  // engine rather than the plugin being enabled.
+  rendered.update({ _meta: family === 'fish' && key !== undefined ? { 'alexia/provides': ['voice.render'] } : {} })
+  await alexia.status('ready', state({ ...picked, hears, speaks })).catch(() => {})
   return { hears, speaks }
+}
+
+/** Whether the engine that is picked could say something right now, in the voice that is picked. */
+async function canSpeak({ family, voice, speaking, qwen: python, key }) {
+  if (voice === undefined) return false
+  if (family === 'fish') return key !== undefined
+  if (family === 'qwen') return python !== undefined && (await qwen.ready(own, voice, python))
+  return own ? piper.ready(own, voice, speaking) : false
 }
 
 /**
@@ -130,27 +212,23 @@ async function bind() {
  * `●` only when both work, because a plugin that can hear and not answer is not ready — it
  * is halfway, and the person looking at this screen is the one who has to decide whether to
  * wait. Only `▲` is coloured (D67): being ready is not something happening.
+ *
+ * **It stopped having to apologise for `expression`.** The old line ended
+ * *"— expression is off, Piper has none"*, which is what a status line has to say when a
+ * toggle is on screen that does nothing where it is. The engine is on screen now and it is
+ * the thing that decides, so there is nothing left to explain away.
  */
-function state({ hears, speaks, size, voice, hearing, speaking, cloud, key, expressive }) {
-  /**
-   * **Expression is off and says so** when a local voice is speaking (M7-4).
-   *
-   * Piper has no expression control of any kind, and the predecessor proved the
-   * sampling-parameter workaround inert on this hardware. A switch that appears to work and
-   * does nothing is worse than one that is greyed out, so the state line carries the answer
-   * rather than leaving somebody to wonder why nothing changed.
-   */
-  const mood =
-    !expressive ? ''
-    : cloud ? ', with expression'
-    : ' — expression is off, Piper has none'
-  if (cloud && !key) return '▲ A cloned voice is picked and there is no fish.audio key'
-  if (hears && speaks) return `● Ready — ${size}, ${voice}${mood}`
+function state({ hears, speaks, size, engine, family, voice, hearing, speaking, qwen: python, key }) {
+  const named = ENGINES[engine].label
+  if (voice === undefined) return `▲ ${named} is picked and no voice under it is chosen`
+  if (family === 'fish' && !key) return `▲ ${named} is picked and there is no key to reach it with`
+  if (family === 'qwen' && !python) return `▲ ${named} is picked and no Python has been pointed at`
+  if (hears && speaks) return `● Ready — ${size}, ${voice} on ${named}`
   if (!whisper.build() && !hearing) return '▲ Point at a Whisper program'
-  if (!piper.build() && !speaking) return '▲ Point at a Piper program'
+  if (family === 'piper' && !piper.build() && !speaking) return '▲ Point at a Piper program'
   // A voice somebody added has no published size, and inventing one would be a number on
   // a screen that means nothing.
-  const mb = cloud ? undefined : piper.VOICES[voice]?.mb
+  const mb = family === 'piper' ? piper.VOICES[voice]?.mb : undefined
   if (hears) return mb === undefined ? `▲ Hearing only — ${voice} is not loading` : `▲ Hearing only — the ${voice} voice is ${mb} MB`
   if (speaks) return `▲ Speaking only — the ${size} model is ${whisper.MODELS[size].mb} MB`
   return mb === undefined ?
@@ -166,7 +244,7 @@ function state({ hears, speaks, size, voice, hearing, speaking, cloud, key, expr
  * both, because that is the one place somebody asked for all of it.
  */
 async function fetching(ctx, half) {
-  const { size, voice, hearing, speaking } = await chosen()
+  const { size, family, voice, hearing, speaking } = await chosen()
   if (!own) throw new Error('Alexia has not given this plugin a folder to work in.')
   const report = (done, total, message) => alexia.progress(ctx, done, total, message)
   await alexia.status('ready', '▲ Downloading').catch(() => {})
@@ -175,13 +253,68 @@ async function fetching(ctx, half) {
       if (!whisper.build() && !hearing) throw new Error(missing('Whisper', 'Whisper program'))
       await whisper.install(own, size, hearing, report)
     }
-    if (half !== 'hearing') {
+    // Only Piper has anything to fetch. The other two engines are a key and a Python that is
+    // already there, and a download bar for either would be a bar for nothing.
+    if (half !== 'hearing' && family === 'piper') {
       if (!piper.build() && !speaking) throw new Error(missing('Piper', 'Piper program'))
       await piper.install(own, voice, speaking, report)
     }
   } finally {
     await bind()
   }
+}
+
+/**
+ * Text in, audio bytes out, from whichever engine the **voice** belongs to.
+ *
+ * One function rather than a branch in each of the two callers. *Say this reply out loud* and
+ * *say my line in that voice* are the same question asked of the same three engines, and the
+ * version where each caller knew about all three is the version where hearing a voice and
+ * speaking in it could disagree about what a voice even is.
+ *
+ * The voice rather than the chosen engine, because a preview is asked of a row: somebody
+ * auditioning a Piper voice while fish.audio is picked wants to hear that voice, not a
+ * refusal about which engine is at the top of the page.
+ *
+ * `ctx` is only for expression, and it is the only reason this takes one — a preview has
+ * nothing to mark up an emotion against, so it passes none and gets the plain words.
+ */
+async function utter(settings, { id, text, signal, ctx, format = 'wav' }) {
+  const family = familyOf(id)
+  if (family === 'fish') {
+    if (!settings.key) throw new Error(`${id} lives on fish.audio and there is no key to reach it with.`)
+    const marked = settings.expressive && ctx ? await annotate(text, ctx) : text
+    const bytes = await fish.say(settings.key, { text: marked, id: fish.idOf(id), format, signal })
+    return { bytes, wav: format === 'wav' }
+  }
+  if (family === 'qwen') {
+    if (!settings.qwen) throw new Error(`${id} is a Qwen3-TTS voice and no Python has been pointed at.`)
+    return { bytes: await readFile(await qwen.say(own, { python: settings.qwen, voice: id, text, signal })), wav: true }
+  }
+  if (!(await piper.ready(own, id, settings.speaking))) {
+    throw new Error(`${id} is not downloaded yet. Choose it and it arrives the first time it speaks.`)
+  }
+  const there = await piper.programs(own, id, settings.speaking)
+  return { bytes: await readFile(await piper.say({ ...there, text, signal })), wav: true }
+}
+
+/**
+ * The last few previews, as `data:` URIs, in memory and nowhere else.
+ *
+ * **Not stored anywhere is true by construction rather than by a cleanup routine**: this map
+ * dies with the process, and lazy spawn means the process dies five minutes after anybody
+ * stops looking. What reaches the page is the URI on the row, which the browser holds for as
+ * long as the card is drawn.
+ *
+ * Bounded because a `data:` URI is the audio: three of them is a few hundred kilobytes and
+ * forty of them is a plugin holding somebody's afternoon of auditioning in RAM.
+ */
+const previews = new Map()
+const PREVIEWS = 3
+
+const remember = (id, bytes, type) => {
+  previews.set(id, `data:${type};base64,${bytes.toString('base64')}`)
+  for (const old of [...previews.keys()].slice(0, -PREVIEWS)) previews.delete(old)
 }
 
 const missing = (what, setting) =>
@@ -286,40 +419,30 @@ const said = alexia.tool(
     const words = String(text ?? '').trim()
     if (!words) return { isError: true, content: [{ type: 'text', text: 'There was nothing to say.' }] }
     const picked = await chosen()
-    const { voice, speaking } = picked
-    const id = fish.idOf(voice)
-
-    if (id !== undefined) {
-      if (!picked.key) {
-        return {
-          isError: true,
-          content: [{ type: 'text', text: `${voice} is a cloned voice and there is no fish.audio key to reach it with.` }],
-        }
-      }
-      await alexia.status('ready', '▲ Speaking').catch(() => {})
-      try {
-        const marked = picked.expressive ? await annotate(words, ctx) : words
-        const audio = await fish.say(picked.key, { text: marked, id, signal: ctx.mcpReq.signal })
-        // Written where Piper writes its own, so one file is overwritten rather than
-        // accumulated and the purge that takes the folder takes this too.
-        const { wav } = piper.where(own, 'lessac')
-        await writeFile(wav, audio)
-        await piper.play(wav, ctx.mcpReq.signal)
-        return { content: [{ type: 'text', text: 'Said it, in your own voice.' }] }
-      } finally {
-        await bind()
+    const { engine, family, voice, speaking } = picked
+    if (voice === undefined) {
+      return {
+        isError: true,
+        content: [{ type: 'text', text: `${ENGINES[engine].label} is the engine and no voice under it has been chosen yet.` }],
       }
     }
 
-    if (!(await piper.ready(own, voice, speaking))) await fetching(ctx, 'speaking')
-    const found = await piper.programs(own, voice, speaking)
+    // Only Piper has anything to download, and only the chosen voice is worth downloading:
+    // this is the moment somebody actually asked to hear it.
+    if (family === 'piper' && !(await piper.ready(own, voice, speaking))) await fetching(ctx, 'speaking')
     await alexia.status('ready', '▲ Speaking').catch(() => {})
     try {
-      // Markers are not stripped from Piper's input for a reason: nothing puts them there.
-      // `annotate` is only ever reached on the path that can read them.
-      const wav = await piper.say({ ...found, text: words, signal: ctx.mcpReq.signal })
+      // Written where Piper writes its own, so one file is overwritten rather than
+      // accumulated and the purge that takes the folder takes this too.
+      const { wav } = piper.where(own, 'lessac')
+      // Markers are not stripped from a local engine's input for a reason: nothing puts them
+      // there. `annotate` is only ever reached on the path that can read them.
+      const { bytes } = await utter(picked, { id: voice, text: words, signal: ctx.mcpReq.signal, ctx })
+      await writeFile(wav, bytes)
       await piper.play(wav, ctx.mcpReq.signal)
       return { content: [{ type: 'text', text: `Said it, in ${voice}’s voice.` }] }
+    } catch (error) {
+      return { isError: true, content: [{ type: 'text', text: error instanceof Error ? error.message : String(error) }] }
     } finally {
       await bind()
     }
@@ -435,19 +558,37 @@ async function cloudVoices(key) {
   const account = (await cloned(key)).map((one) => ({
     id: `${fish.PREFIX}${one.id}`,
     name: one.name,
-    cloud: true,
-    owned: true,
+    where: 'Cloned by you, and living on your fish.audio account.',
     here: true,
+    ...(one.preview && { preview: one.preview }),
   }))
   const already = new Set(account.map((one) => one.id))
   // A voice somebody kept that turns out to be their own is one voice, listed once, and the
   // account's own answer is the truer of the two.
   const saved = (await kept())
     .filter((one) => !already.has(one.id))
-    .map((one) => ({ id: one.id, name: one.name ?? one.id, cloud: true, here: true }))
+    .map((one) => ({
+      id: one.id,
+      name: one.name ?? one.id,
+      where: 'Published on fish.audio by somebody else, and kept by you.',
+      here: true,
+      ...(one.preview && { preview: one.preview }),
+    }))
   return [...account, ...saved]
 }
 
+/**
+ * Every voice, under the engine it belongs to.
+ *
+ * **One list rather than one per engine**, because the question is *what can this machine
+ * sound like* and the answer does not divide into three screens. `group` puts a labelled row
+ * across the grid before the first card carrying it, in the order the rows arrive — so the
+ * engine picked at the top comes first and the rest follow it, which is the order somebody
+ * reading this page is actually in.
+ *
+ * The size moved out of `state` and into `meta`, so the states are a fixed short vocabulary
+ * again — which is what lets the manifest say `dim: "■ not downloaded"` and mean it.
+ */
 alexia.tool(
   'voices',
   {
@@ -455,24 +596,47 @@ alexia.tool(
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
   },
   async () => {
-    const { voice, key } = await chosen()
-    const rows = [...(await piper.catalogue(own)), ...(await cloudVoices(key))].map((one) => ({
-      id: one.id,
-      name: one.name ?? one.id,
-      where:
-        one.cloud ? (one.owned ? 'cloned, on fish.audio' : 'kept from fish.audio')
-        : one.mine ? 'yours'
-        : 'published',
-      // Two facts, and the row says both: whether it is the one that speaks, and whether it
-      // is actually here. The chosen voice not being downloaded yet is an ordinary state —
-      // it arrives on the first thing said in it — and a row claiming only the first would
-      // be the row somebody stares at wondering why nothing happens.
-      state:
-        one.id === voice && one.here ? '● speaking'
-        : one.id === voice ? `▲ speaking — arrives on first use${one.mb ? `, ${one.mb} MB` : ''}`
-        : one.here ? '● ready'
-        : `■ not downloaded${one.mb ? ` — ${one.mb} MB` : ''}`,
+    const picked = await chosen()
+    const held = new Map(
+      await Promise.all(
+        ['piper', 'qwen', 'fish'].map(async (one) => [one, await alexia.storage.get(`voice_${one}`).catch(() => undefined)]),
+      ),
+    )
+    const local = (await piper.catalogue(own)).map((one) => ({
+      ...one,
+      name: one.id,
+      where: one.mine ? 'A voice you added, from a file of your own.' : 'Published for Piper, and downloaded on first use.',
     }))
+    const families = {
+      piper: local,
+      qwen: await qwen.catalogue(own),
+      fish: await cloudVoices(picked.key),
+    }
+    // The engine somebody is looking at first, then the other two in a fixed order — so the
+    // grid does not reshuffle itself every time the engine above it changes.
+    const order = [picked.family, ...['piper', 'qwen', 'fish'].filter((one) => one !== picked.family)]
+    const rows = order.flatMap((family) =>
+      families[family].map((one) => ({
+        id: one.id,
+        name: one.name ?? one.id,
+        group: ENGINES[family === 'fish' ? 'fish_plain' : family].label,
+        summary: one.where ?? '',
+        // Three facts and the row says all of them: whether it is the one speaking, whether
+        // it is this family's pick while another family is speaking, and whether it is
+        // actually here. The chosen voice not being downloaded is an ordinary state — it
+        // arrives on the first thing said in it — and a row claiming only the first is the
+        // row somebody stares at wondering why nothing happens.
+        state:
+          one.id === picked.voice && family === picked.family ? (one.here ? '● speaking' : '▲ speaking — arrives on first use')
+          : one.id === held.get(family) ? '◆ picked'
+          : one.here ? '● ready'
+          : '■ not downloaded',
+        ...(one.mb && { meta: `${one.mb} MB` }),
+        // Whatever was generated for it since this process started, and otherwise the
+        // vendor's own sample where there is one. Both play in the row; neither is stored.
+        ...((previews.get(one.id) ?? one.preview) && { preview: previews.get(one.id) ?? one.preview }),
+      })),
+    )
     return { content: [{ type: 'text', text: `${rows.length} voices` }], structuredContent: { rows } }
   },
 )
@@ -514,13 +678,19 @@ alexia.tool(
     lastFound.clear()
     const rows = results.map((one) => {
       const id = `${fish.PREFIX}${one.id}`
-      lastFound.set(id, one.name)
+      lastFound.set(id, { name: one.name, ...(one.preview && { preview: one.preview }) })
       return {
         id,
         name: one.name,
-        tags: one.tags.slice(0, 4).join(' · '),
-        likes: String(one.likes),
+        // The author's own sentence about the voice, which is what somebody reads to decide.
+        // The tag list is the fallback rather than the summary: *character-voice · energetic*
+        // is four words that mean less than one line of description.
+        summary: one.about ?? one.tags.slice(0, 4).join(' · '),
+        meta: [...one.tags.slice(0, 3), `${one.likes} likes`].join(' · '),
         state: held.has(id) ? '● kept' : '■ not kept',
+        // The vendor's published sample, on the row, until somebody asks to hear their own
+        // line in it. A public URL needing no key, no proxy and nothing stored.
+        ...((previews.get(id) ?? one.preview) && { preview: previews.get(id) ?? one.preview }),
       }
     })
     return {
@@ -548,32 +718,42 @@ alexia.tool(
     }
     const held = await kept()
     if (held.some((one) => one.id === id)) return { content: [{ type: 'text', text: 'That one is already in the list.' }] }
-    const name = lastFound.get(id)
-    if (name === undefined) {
+    const found = lastFound.get(id)
+    if (found === undefined) {
       // Rather than writing the id down as a name. A row whose name is a hex string is a row
       // nobody can pick out of a list, and the fix is one press of Search.
       return { isError: true, content: [{ type: 'text', text: 'Search again, then keep the voice from the row it appears on.' }] }
     }
-    await alexia.storage.set('kept', [...held, { id, name }])
+    const { name } = found
+    await alexia.storage.set('kept', [...held, { id, name, ...(found.preview && { preview: found.preview }) }])
     await bind()
     return { content: [{ type: 'text', text: `${name} is in the list. Choose it to speak in it.` }] }
   },
 )
 
 /**
- * What it sounds like, before it is the voice that answers.
+ * What it sounds like saying **your** line, before it is the voice that answers.
  *
- * **Spoken rather than played back.** The vendor publishes a sample clip per voice, and the
- * predecessor put an `<audio>` element on it — but a plugin here does not draw its own
- * controls, and the clip's format is whatever its author uploaded, which the operating
- * system's own player may or may not open. One short sentence through the engine that would
- * actually be speaking costs a free call and answers the real question: *what will this
- * sound like when it is answering me.*
+ * **It plays on the row rather than out of the speakers, and that is the change.** The old
+ * version spoke through the operating system's own player, which was the right answer while a
+ * plugin had no way to put a control on a page: the vendor's sample is whatever format its
+ * author uploaded, and handing that to `SoundPlayer` was a coin toss. A row can carry a
+ * player now, so the audio goes there — where the voice it belongs to is, next to the button
+ * that made it, and stoppable.
+ *
+ * The bytes go into a `Map` that dies with the process and never touch disk beyond the one
+ * scratch file Piper overwrites anyway. *Not stored anywhere* is therefore a property of
+ * where this lives rather than a cleanup routine somebody has to remember to run.
+ *
+ * **Deliberately not a download.** A button that says *hear it* should not spend 60 MB and a
+ * minute to answer; a Piper voice arrives the first time it is actually asked to speak.
  */
 alexia.tool(
-  'hear_voice',
+  'preview_voice',
   {
-    description: 'Say one short sentence in a voice without making it the one that speaks. Takes the voice’s id.',
+    description:
+      'Say the line in the preview box in one voice, without making it the voice that speaks. ' +
+      'The audio appears on that voice’s own card. Takes the voice’s id.',
     inputSchema: fromJsonSchema({
       type: 'object',
       properties: { id: { type: 'string', description: 'Which voice.' } },
@@ -582,29 +762,23 @@ alexia.tool(
     annotations: { destructiveHint: false, openWorldHint: true },
   },
   async ({ id }, ctx) => {
-    const words = 'This is what I sound like.'
-    const { key, speaking } = await chosen()
-    const clone = fish.idOf(id)
+    const picked = await chosen()
     await alexia.status('ready', '▲ Speaking').catch(() => {})
     try {
-      if (clone !== undefined) {
-        if (!key) return { isError: true, content: [{ type: 'text', text: 'That voice lives on fish.audio and there is no key to reach it with.' }] }
-        const { wav } = piper.where(own, 'lessac')
-        await writeFile(wav, await fish.say(key, { text: words, id: clone, signal: ctx?.mcpReq?.signal }))
-        await piper.play(wav, ctx?.mcpReq?.signal)
-        return { content: [{ type: 'text', text: `That is ${id}.` }] }
-      }
-      // Deliberately not a download. A button that says *hear it* should not spend 60 MB and
-      // a minute to answer; the voice arrives the first time it is actually asked to speak.
-      if (!(await piper.ready(own, id, speaking))) {
-        return {
-          isError: true,
-          content: [{ type: 'text', text: `${id} is not downloaded yet. Choose it and it arrives the first time it speaks.` }],
-        }
-      }
-      const there = await piper.programs(own, id, speaking)
-      await piper.play(await piper.say({ ...there, text: words, signal: ctx?.mcpReq?.signal }), ctx?.mcpReq?.signal)
-      return { content: [{ type: 'text', text: `That is ${id}.` }] }
+      // Mp3 from the cloud engine, because a `data:` URI *is* the audio and a WAV of one
+      // sentence is a couple of megabytes of base64 through a JSON body for no gain. The
+      // local engines make WAV and there is nothing here that would convert it.
+      const cloud = familyOf(id) === 'fish'
+      const { bytes } = await utter(picked, {
+        id,
+        text: picked.preview,
+        signal: ctx?.mcpReq?.signal,
+        ...(cloud && { format: 'mp3' }),
+      })
+      remember(id, bytes, cloud ? 'audio/mpeg' : 'audio/wav')
+      return { content: [{ type: 'text', text: `That is ${await nameOf(id)}. Press play on its card.` }] }
+    } catch (error) {
+      return { isError: true, content: [{ type: 'text', text: error instanceof Error ? error.message : String(error) }] }
     } finally {
       await bind()
     }
@@ -623,20 +797,40 @@ alexia.tool(
     annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   async ({ id }) => {
-    const { key } = await chosen()
-    const known = [...(await piper.catalogue(own)), ...(await cloudVoices(key))].find((one) => one.id === id)
+    const picked = await chosen()
+    const family = familyOf(id)
+    const known = (await voicesIn(family, picked)).find((one) => one.id === id)
     if (!known) return { isError: true, content: [{ type: 'text', text: `There is no voice called ${id}.` }] }
-    await alexia.storage.set('voice', id)
+    await alexia.storage.set(`voice_${family}`, id)
     await bind()
     // Downloading is not done here: a published voice that is not on disk yet arrives on the
     // first thing said in it, the same as it always did.
+    const called = known.name ?? id
+    const arriving = known.here ? '' : ', and downloads the first time it is used'
+    // **The engine is not switched here, and that is deliberate.** A plugin may only write its
+    // own `status` — everything else on that screen is the user's answer, and a plugin that
+    // could rewrite a choice could quietly undo a decision somebody made. So a voice under
+    // another engine becomes that engine's voice and the sentence says which press is left.
     return {
       content: [
-        { type: 'text', text: known.here ? `${id} is speaking now.` : `${id} is speaking now, and downloads the first time it is used.` },
+        {
+          type: 'text',
+          text:
+            family === picked.family ?
+              `${called} is speaking now${arriving}.`
+            : `${called} is ${ENGINES[family === 'fish' ? 'fish_plain' : family].label}'s voice now${arriving}. Choose that engine at the top to hear it.`,
+        },
       ],
     }
   },
 )
+
+/** One family's voices, asked the same way the list above asks for all three. */
+async function voicesIn(family, picked) {
+  if (family === 'fish') return cloudVoices(picked.key)
+  if (family === 'qwen') return qwen.catalogue(own)
+  return piper.catalogue(own)
+}
 
 alexia.tool(
   'drop_voice',
@@ -651,26 +845,50 @@ alexia.tool(
   },
   async ({ id }) => {
     const { key } = await chosen()
+    const family = familyOf(id)
     const clone = fish.idOf(id)
+    /**
+     * Forget it as this family's pick, if it was.
+     *
+     * A chosen voice that no longer exists is silence with no explanation, so the selection
+     * falls back rather than dangling — to Piper's lessac, and to nothing at all for the two
+     * families whose voices are all somebody's own. *Nothing chosen* is an honest state and
+     * the status line says it; inventing a replacement would not be.
+     */
+    const forget = async () => {
+      if ((await alexia.storage.get(`voice_${family}`).catch(() => undefined)) !== id) return ''
+      await alexia.storage.set(`voice_${family}`, FIRST[family] ?? '')
+      return FIRST[family] ? ` ${FIRST[family]} is speaking.` : ' Nothing is chosen under that engine now.'
+    }
+
     // A kept voice first, because it is the one case where removing is *forgetting*: it
     // belongs to whoever published it, this machine holds only a line saying it is in the
     // list, and calling the vendor's delete for it would be asking to delete somebody
     // else's voice.
+    // Asked before anything is removed, because on the cloud engine the name is on the
+    // account and the next line is what takes it off.
+    const called = await nameOf(id, key)
     const held = await kept()
     if (held.some((one) => one.id === id)) {
       await alexia.storage.set('kept', held.filter((one) => one.id !== id))
-      if ((await chosen()).voice === id) await alexia.storage.set('voice', 'lessac')
+      const said = await forget()
       await bind()
-      return { content: [{ type: 'text', text: `${id} is out of the list. It is still published on fish.audio.` }] }
+      return { content: [{ type: 'text', text: `${called} is out of the list. It is still published on fish.audio.${said}` }] }
     }
     if (clone !== undefined) {
       if (!key) return { isError: true, content: [{ type: 'text', text: 'There is no fish.audio key, so there is nothing to remove it with.' }] }
-      // Gone from the account, not from a folder. The selection falls back rather than
-      // dangling: a chosen voice that no longer exists is silence with no explanation.
+      // Gone from the account, not from a folder.
       await fish.remove(key, clone)
-      if ((await chosen()).voice === id) await alexia.storage.set('voice', 'lessac')
+      const said = await forget()
       await bind()
-      return { content: [{ type: 'text', text: `${id} is gone from fish.audio. Lessac is speaking.` }] }
+      return { content: [{ type: 'text', text: `${called} is gone from fish.audio.${said}` }] }
+    }
+    if (family === 'qwen') {
+      const gone = await qwen.remove(own, id)
+      if (!gone) return { isError: true, content: [{ type: 'text', text: `There is no Qwen3-TTS voice called ${id}.` }] }
+      const said = await forget()
+      await bind()
+      return { content: [{ type: 'text', text: `${called} is gone from this machine.${said}` }] }
     }
     const known = (await piper.catalogue(own)).find((one) => one.id === id)
     if (!known?.mine) {
@@ -687,9 +905,9 @@ alexia.tool(
     const { model, config } = piper.where(own, id)
     await rm(model, { force: true })
     await rm(config, { force: true })
-    if ((await chosen()).voice === id) await alexia.storage.set('voice', 'lessac')
+    const said = await forget()
     await bind()
-    return { content: [{ type: 'text', text: `${id} is gone. Lessac is speaking.` }] }
+    return { content: [{ type: 'text', text: `${called} is gone.${said}` }] }
   },
 )
 
@@ -697,15 +915,31 @@ alexia.tool(
   'add_voice',
   {
     description:
-      'Copy a Piper voice you have downloaded into Alexia, so it can speak in it. Reads the path in the “Add a voice” box. Takes no arguments.',
+      'Copy a Piper voice you have downloaded into Alexia, so it can speak in it. Reads the file chosen in the “Add a Piper voice” box. Takes no arguments.',
     annotations: { openWorldHint: false },
   },
   async () => {
     const settings = await alexia.settings()
+    // **A path, exactly as before.** The box above it is a file picker now rather than a
+    // typed path, and this function did not change: core writes the bytes somewhere inside
+    // this plugin's own folder and stores the path it made, so what arrives here is what
+    // always arrived here. That is the whole of what made `file` possible (D89).
     const from = typeof settings.add_voice === 'string' ? settings.add_voice.trim() : ''
-    if (from === '') return { isError: true, content: [{ type: 'text', text: 'Point “Add a voice” at a Piper .onnx file first.' }] }
+    if (from === '') return { isError: true, content: [{ type: 'text', text: 'Choose a Piper .onnx file above first.' }] }
     if (!from.endsWith('.onnx')) {
       return { isError: true, content: [{ type: 'text', text: 'A Piper voice is a .onnx file, with its .onnx.json beside it.' }] }
+    }
+    /**
+     * Both halves, chosen separately.
+     *
+     * The typed-path version could find the config beside the model because it knew where the
+     * model was on somebody's disk. A picker hands over one file and no folder, so the second
+     * half is a second picker — which is the honest shape anyway: **a Piper voice is two
+     * files**, and the box that says so is better than a folder convention nobody was told.
+     */
+    const config = typeof settings.add_config === 'string' ? settings.add_config.trim() : ''
+    if (config === '') {
+      return { isError: true, content: [{ type: 'text', text: 'Choose the matching .onnx.json as well. Piper will not load a voice without it.' }] }
     }
     const stem = basename(from, '.onnx')
     const there = piper.where(own, stem)
@@ -713,7 +947,7 @@ alexia.tool(
       // Both halves or neither: Piper will not load a voice without its config, and the
       // config is where the sample rate lives — so half a voice is silence, not an error.
       await copyFile(from, there.model)
-      await copyFile(join(dirname(from), `${stem}.onnx.json`), there.config)
+      await copyFile(config, there.config)
     } catch (error) {
       await rm(there.model, { force: true })
       return {
@@ -745,38 +979,50 @@ alexia.tool(
   'clone_voice',
   {
     description:
-      'Make a voice that sounds like a recording, using the file in the “A recording to clone” ' +
-      'box and the words in “What the recording says”. Needs a fish.audio key. Takes no arguments.',
-    // It reaches an API and it puts something on somebody's account, so it says both.
+      'Make a voice that sounds like a recording, using the file chosen in the “A recording to clone” ' +
+      'box and the words in “What the recording says”. Takes no arguments.',
+    // It may reach an API and put something on somebody's account, so it says both.
     annotations: { destructiveHint: false, idempotentHint: false, openWorldHint: true },
   },
   async (ctx) => {
-    const { key, clip, clipText } = await chosen()
+    const { engine, family, key, qwen: python, clip, clipText } = await chosen()
     const refuse = (text) => ({ isError: true, content: [{ type: 'text', text }] })
-    if (!key) return refuse('Add a fish.audio key on the plugins screen first. Piper cannot clone a voice from a recording.')
-    if (!clip) return refuse('Point “A recording to clone” at a .wav of the voice you want.')
+    if (family === 'piper') return refuse('Piper cannot clone a voice from a recording. Choose Qwen3-TTS or fish.audio at the top.')
+    if (family === 'fish' && !key) return refuse('Add a fish.audio key at the bottom of this page first.')
+    if (family === 'qwen' && !python) return refuse('Point “Qwen program” at a Python that has qwen-tts installed first.')
+    if (!clip) return refuse('Choose a recording of the voice you want, above.')
     if (clipText === '') return refuse('Put the words that were said in the clip into “What the recording says”.')
 
     const name = basename(clip).replace(/\.[^.]+$/, '') || 'my voice'
     await alexia.status('ready', '▲ Cloning').catch(() => {})
     try {
-      const made = await fish.clone(key, { name, wav: clip, transcript: clipText, signal: ctx?.mcpReq?.signal })
+      // **Which engine clones is the engine that is picked**, and the difference between the
+      // two is the whole reason the card at the top says what it says: one of them keeps the
+      // clip on this machine and the other sends it away to be learned from.
+      const made =
+        family === 'qwen' ?
+          await qwen.clone(own, { python, name, clip, transcript: clipText, signal: ctx?.mcpReq?.signal })
+        : await fish.clone(key, { name, wav: clip, transcript: clipText, signal: ctx?.mcpReq?.signal })
+      const id = family === 'qwen' ? `${qwen.PREFIX}${made.id}` : `${fish.PREFIX}${made.id}`
       // Picked straight away. Somebody who has just cloned their own voice wanted to hear
       // it, and making them find it in a list first is a step with no decision in it.
-      await alexia.storage.set('voice', `${fish.PREFIX}${made.id}`)
-      // Said out loud because it is the one thing about this that a delete cannot undo: the
-      // voice is on somebody's account, not on this disk, so removing the plugin does not
-      // remove it. **Remove** on the panel is what does.
+      await alexia.storage.set(`voice_${family}`, id)
+      // Said out loud because on one of the two engines it is the one thing about this that a
+      // delete cannot undo: the voice is on somebody's account, not on this disk, so removing
+      // the plugin does not remove it. **Remove** on this page is what does.
       return {
         content: [
           {
             type: 'text',
-            text: `${made.name} is cloned and speaking now. It lives on your fish.audio account — deleting this plugin will not remove it, but Remove on the Voice panel will.`,
+            text:
+              family === 'qwen' ?
+                `${made.name} is cloned and speaking now. It is a file in this plugin's own folder, and deleting the plugin takes it with it.`
+              : `${made.name} is cloned and speaking now. It lives on your fish.audio account — deleting this plugin will not remove it, but Remove on this page will.`,
           },
         ],
       }
     } catch (error) {
-      return refuse(`That did not work: ${error instanceof Error ? error.message : String(error)}`)
+      return refuse(`That did not work: ${error instanceof Error ? error.message : String(error)}. Engine: ${ENGINES[engine].label}.`)
     } finally {
       await bind()
     }
@@ -796,6 +1042,9 @@ await bind()
 // The model and the voice are the things that decide whether either capability is answerable
 // at all, so a change to any of them re-asks rather than assuming the last answer still holds.
 alexia.onSettingsChanged((changed) => {
-  if (['model_size', 'whisper_path', 'piper_path'].some((key) => key in changed)) void bind()
+  // The engine joined the list, and it is the one that changes the most: which family speaks
+  // decides which files matter, whether there is a key to reach anything with, and every
+  // sentence the status line is able to say.
+  if (['engine', 'model_size', 'whisper_path', 'piper_path', 'qwen_path'].some((key) => key in changed)) void bind()
 })
 log.info(`${alexia.manifest.name} is ready`)

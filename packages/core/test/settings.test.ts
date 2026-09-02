@@ -8,7 +8,7 @@ import { expect, test } from 'vitest'
 import { Host } from '../src/host.js'
 import { keyOf, PROVIDERS } from '../src/provider.js'
 import { account, ACCOUNT_ALLOWED, CORE, memorySecrets } from '../src/secrets.js'
-import { pane, refuse, secretStoreName, write, type Setting } from '../src/settings.js'
+import { pane, refuse, secretStoreName, write, type PaneOptions, type Rendered, type Setting } from '../src/settings.js'
 import { Store } from '../src/store.js'
 
 /**
@@ -216,4 +216,108 @@ test('a keychain account name is one the keychain will actually accept', () => {
   // And it still splits exactly one way: neither alphabet contains a dot.
   expect(account('hello', 'api_key')).toBe('hello.api_key')
   expect(account('hello', 'api_key').split('.')).toHaveLength(2)
+})
+
+/**
+ * A page that shows what applies (`alexia_protocol` 7).
+ *
+ * Its own manifest rather than a `when` bolted onto the one above, because the thing under
+ * test is a **page**: which widgets are on it, and what a value change does to the rest of
+ * them. Four engines with sentences, three of them gated on something else being filled in,
+ * and widgets that only exist for one of them — which is the shape that made this necessary.
+ */
+const gated = Manifest.parse({
+  manifest_version: 1,
+  id: 'demo',
+  name: 'Demo',
+  summary: 'A page whose widgets appear and disappear with the one at the top of it.',
+  version: '0.1.0',
+  license: 'AGPL-3.0-only',
+  entry: { run: 'node', args: ['index.js'] },
+  alexia_protocol: 7,
+  mcp_protocol: '2025-11-25',
+  settings: [
+    {
+      type: 'choice',
+      key: 'engine',
+      label: 'Engine',
+      default: 'here',
+      options: [
+        { value: 'here', label: 'On this machine', hint: 'Fast, and it cannot clone.' },
+        { value: 'away', label: 'A service', hint: 'It can clone, and it needs a key.', needs: 'api_key', reason: 'Add a key below.' },
+        { value: 'other', label: 'Something else', hint: 'It needs a program.', needs: 'exe' },
+      ],
+    },
+    { type: 'text', key: 'clip_text', label: 'What the clip says', multiline: true, when: { key: 'engine', is: 'away' } },
+    { type: 'file', key: 'clip', label: 'A recording', accept: '.wav', when: { key: 'engine', is: ['away', 'other'] } },
+    { type: 'text', key: 'local_only', label: 'Only here', when: { key: 'engine', is: 'here' } },
+    { type: 'password', key: 'api_key', label: 'Service key' },
+    { type: 'text', key: 'exe', label: 'Program' },
+  ],
+})
+
+const shown = async (extra: Partial<PaneOptions> = {}): Promise<Rendered[]> =>
+  (await pane(gated, { ...options, ...extra })).settings
+
+test('a widget that does not apply to what is chosen is not on the page at all', async () => {
+  // Gone rather than greyed. A greyed control promises something could be typed there.
+  const first = await shown()
+  expect(first.map((one) => one.key)).toEqual(['engine', 'local_only', 'api_key', 'exe'])
+
+  store.setSetting('demo', 'engine', 'away')
+  const away = await shown()
+  expect(away.map((one) => one.key)).toEqual(['engine', 'clip_text', 'clip', 'api_key', 'exe'])
+
+  // A list `is`, so one widget can belong to two engines without being declared twice.
+  store.setSetting('demo', 'engine', 'other')
+  expect((await shown()).map((one) => one.key)).toEqual(['engine', 'clip', 'api_key', 'exe'])
+  store.setSetting('demo', 'engine', 'here')
+})
+
+test('the widgets that decide what else is on the page say so, and the rest do not', async () => {
+  const page = await shown()
+  // Core works this out; an author who had to declare it would forget. `exe` and `api_key`
+  // are in because an option's availability turns on them, not only because a `when` does.
+  const gates = page.filter((one) => one.gates === true).map((one) => one.key)
+  expect(gates.sort()).toEqual(['api_key', 'engine', 'exe'])
+  expect(page.find((one) => one.key === 'local_only')).not.toHaveProperty('gates')
+})
+
+test('an option that needs something is dimmed with the reason, and lit once it is there', async () => {
+  const options0 = (page: Rendered[]): Record<string, unknown>[] => {
+    const engine = page.find((one) => one.key === 'engine')
+    return (engine !== undefined && 'options' in engine ? engine.options : []) as Record<string, unknown>[]
+  }
+
+  const before = options0(await shown())
+  expect(before[0]).toEqual({ value: 'here', label: 'On this machine', hint: 'Fast, and it cannot clone.' })
+  expect(before[1]).toMatchObject({ available: false, reason: 'Add a key below.' })
+  // No `reason` of the author's, so core writes one naming the widget it is waiting on —
+  // which it can, because that is a fact about this page rather than about what the key does.
+  expect(before[2]).toMatchObject({ available: false, reason: 'Needs “Program”.' })
+
+  // The key is in the keychain rather than the database, so this is asked of the keychain.
+  await secrets.set('demo', 'api_key', 'sk-not-a-real-key')
+  store.setSetting('demo', 'exe', 'C:/python/python.exe')
+  const after = options0(await shown())
+  expect(after[1]).toMatchObject({ available: true })
+  expect(after[1]).not.toHaveProperty('reason')
+  expect(after[2]).toMatchObject({ available: true })
+
+  // An empty string is not a value. It is what a box somebody cleared holds.
+  store.setSetting('demo', 'exe', '')
+  expect(options0(await shown())[2]).toMatchObject({ available: false })
+})
+
+test('a file is chosen, not typed — so the page may not write one', () => {
+  const declaredIn = (key: string): Setting => gated.settings!.find((one) => one.key === key)!
+  // The bytes go to `/api/upload`, which puts them somewhere safe and stores the path it
+  // made. A path arriving here instead is a page asking core to remember somewhere nobody
+  // uploaded anything to.
+  expect(refuse(declaredIn('clip'), 'C:/Users/someone/secrets.wav')).toBe(
+    '"A recording" is a file you choose, not a path you type.',
+  )
+  // And a `choice` refusal still names the values, not the labels a person reads.
+  expect(refuse(declaredIn('engine'), 'nowhere')).toBe('"nowhere" is not one of here, away, other.')
+  expect(refuse(declaredIn('engine'), 'away')).toBeUndefined()
 })

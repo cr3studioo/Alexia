@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import type { Manifest, Stage } from '@alexia/protocol'
+import { optionValue, type Manifest, type Stage } from '@alexia/protocol'
 import { existsSync, statSync } from 'node:fs'
 import { isAbsolute } from 'node:path'
 import type { SecretStore } from './secrets.js'
@@ -67,6 +67,18 @@ export type Rendered = (Setting | CoreWidget) & {
   reason?: string
   /** `progress` only: whatever the last `notifications/progress` said. Absent means idle. */
   live?: Progress
+  /**
+   * Whether some other widget on this page is drawn or not drawn because of this one's value.
+   *
+   * The shell needs it because saving normally does **not** redraw — a redraw takes the focus
+   * off whoever is mid-keystroke, and the control already shows what they just set. A widget
+   * that decides which other widgets exist is the exception: leaving the page as it was would
+   * mean picking an engine and watching nothing happen.
+   *
+   * Core works it out rather than the author declaring it, because it is a fact about the
+   * page and an author who had to remember to write it down would forget.
+   */
+  gates?: boolean
 }
 
 export interface Progress {
@@ -136,8 +148,17 @@ export function secretStoreName(platform: string = process.platform): string {
   return 'Stored in the system secret service.'
 }
 
-/** Read-only widgets: the plugin drives them, the user cannot type into them. */
-const DRIVEN = new Set(['status', 'progress', 'action', 'table', 'graph'])
+/**
+ * Read-only widgets: the plugin drives them, the user cannot type into them.
+ *
+ * The list was `status | progress | action | table | graph` and stayed that way while `image`,
+ * `cards` and the row-filling widgets after them arrived — the same list-somebody-has-to-
+ * remember-to-extend that invariant 13 was written about. So the rule is stated instead: a
+ * widget that fills itself from a tool is not one you type into, whatever it is called.
+ */
+const DRIVEN = new Set(['status', 'progress', 'action'])
+
+const driven = (declared: Setting): boolean => DRIVEN.has(declared.type) || 'rows' in declared
 
 export interface PaneOptions {
   store: Store
@@ -180,6 +201,12 @@ export function declaredWidgets(manifest: Manifest): Setting[] {
  *
  * The manifest forbids two of them sharing a key, so this is a lookup rather than a search
  * with a tie-break: a press has one meaning.
+ *
+ * **Any widget that has row actions, not a list of the ones that did.** It used to test
+ * `type === 'table'`, which was true when `table` was the only widget with rows under it and
+ * quietly false from the day `cards` arrived — so every button on every card answered *there
+ * is no action called that*. The identical mistake in the identical shape one function down
+ * is what invariant 13 was written about; the rule is stated here instead of the list.
  */
 export function declaredAction(
   manifest: Manifest,
@@ -187,7 +214,7 @@ export function declaredAction(
 ): { tool: string; row: boolean } | undefined {
   for (const widget of declaredWidgets(manifest)) {
     if (widget.type === 'action' && widget.key === key) return { tool: widget.tool, row: false }
-    if (widget.type !== 'table') continue
+    if (!('rowActions' in widget)) continue
     const found = widget.rowActions?.find((one) => one.key === key)
     if (found) return { tool: found.tool, row: true }
   }
@@ -238,14 +265,85 @@ export async function render(
   const tools = options.tools(manifest.id)
   const where = secretStoreName(options.platform)
 
+  /**
+   * What every widget on this page holds, both halves of it.
+   *
+   * Both, because `settings` and `panel.widgets` are one namespace (D86) and `when` names a
+   * key rather than a list — a panel widget gated on a setting above it is the ordinary case
+   * and would be the one that quietly never drew if this only looked at the list being
+   * rendered.
+   */
+  const all = declaredWidgets(manifest)
+  const valueOf = (key: string): unknown => {
+    const found = all.find((widget) => widget.key === key)
+    return stored[key] ?? (found !== undefined && 'default' in found ? found.default : undefined)
+  }
+
+  /**
+   * Whether the widget behind this key holds anything.
+   *
+   * A `password` is the one whose value core does not have, and it is also the common case
+   * for `needs` — *this engine needs a key* — so it is asked of the keychain rather than
+   * guessed from an empty string that is empty for a different reason.
+   */
+  const filled = async (key: string): Promise<boolean> => {
+    if (all.find((widget) => widget.key === key)?.type === 'password') {
+      return options.hasSecret(manifest.id, key)
+    }
+    const value = valueOf(key)
+    if (Array.isArray(value)) return value.length > 0
+    return value !== undefined && value !== '' && value !== false
+  }
+
+  /** Which widgets some other widget's existence, or an option's availability, depends on. */
+  const gating = new Set<string>()
+  for (const widget of all) {
+    if (widget.when !== undefined) gating.add(widget.when.key)
+    if (widget.type !== 'choice') continue
+    for (const one of widget.options) {
+      if (typeof one !== 'string' && one.needs !== undefined) gating.add(one.needs)
+    }
+  }
+
   const settings: Rendered[] = []
   for (const declared of declaredList) {
+    // Gone rather than greyed. A widget that does not apply to what is chosen never reaches
+    // the screen, which is the whole of what this page was asked to become.
+    if (declared.when !== undefined) {
+      const wanted = Array.isArray(declared.when.is) ? declared.when.is : [declared.when.is]
+      if (!wanted.includes(String(valueOf(declared.when.key) ?? ''))) continue
+    }
+    const gates = gating.has(declared.key) ? { gates: true } : {}
+
+    if (declared.type === 'choice') {
+      // `needs` answered against what is actually stored. Dimmed and explained rather than
+      // dropped: the person who cannot pick this is the one who needs to know what to do.
+      const resolved = []
+      for (const one of declared.options) {
+        if (typeof one === 'string' || one.needs === undefined) {
+          resolved.push(one)
+          continue
+        }
+        // The author's `reason` is taken out of the spread rather than left in it: a sentence
+        // saying why this cannot be picked, riding on an option that can be, is a page
+        // carrying an answer to a question nobody is asking.
+        const { reason, ...rest } = one
+        const there = await filled(one.needs)
+        resolved.push({
+          ...rest,
+          available: there && one.available !== false,
+          ...(there ? {} : { reason: reason ?? `Needs “${all.find((w) => w.key === one.needs)?.label ?? one.needs}”.` }),
+        })
+      }
+      settings.push({ ...declared, options: resolved, ...gates, ...(stored[declared.key] !== undefined || declared.default !== undefined ? { value: stored[declared.key] ?? declared.default } : {}) })
+      continue
+    }
     if (declared.type === 'password') {
       // The secret itself is not put on the screen. What the screen needs is whether there is
       // one and which store holds it — the two facts a person actually wants, and neither of
       // them is the secret. (Invariant 8 caught the first draft of this comment, which said
       // something stronger about where the value goes than this module can promise.)
-      settings.push({ ...declared, set: await options.hasSecret(manifest.id, declared.key), stored: where })
+      settings.push({ ...declared, ...gates, set: await options.hasSecret(manifest.id, declared.key), stored: where })
       continue
     }
     if (declared.type === 'action') {
@@ -256,6 +354,7 @@ export async function render(
       const missing = tools !== undefined && !tools.includes(declared.tool)
       settings.push({
         ...declared,
+        ...gates,
         available: !missing,
         ...(missing && { reason: `${manifest.name} has no tool called "${declared.tool}" right now.` }),
       })
@@ -263,11 +362,11 @@ export async function render(
     }
     if (declared.type === 'progress') {
       const live = options.progress(manifest.id)
-      settings.push({ ...declared, ...(live && { live }) })
+      settings.push({ ...declared, ...gates, ...(live && { live }) })
       continue
     }
     const value = stored[declared.key] ?? ('default' in declared ? declared.default : undefined)
-    settings.push({ ...declared, ...(value !== undefined && { value }) })
+    settings.push({ ...declared, ...gates, ...(value !== undefined && { value }) })
   }
   return settings
 }
@@ -303,12 +402,16 @@ export async function pane(manifest: Manifest, options: PaneOptions): Promise<Pa
  * again.
  */
 export function refuse(declared: Setting, value: unknown): string | undefined {
-  if (DRIVEN.has(declared.type)) {
+  if (driven(declared)) {
     if (declared.type === 'action') return `"${declared.label}" is a button, not a value.`
     // A table is edited a row at a time, through the actions its author declared on it.
     if (declared.type === 'table') return `"${declared.label}" is a list, not a value.`
     return `"${declared.label}" is driven by the plugin, not by you.`
   }
+  // The one value the user has but core writes. Its bytes arrive at `/api/upload`, which puts
+  // them somewhere safe and stores the path it made — so a path arriving here instead is a
+  // page asking core to remember somewhere nobody uploaded anything to.
+  if (declared.type === 'file') return `"${declared.label}" is a file you choose, not a path you type.`
 
   switch (declared.type) {
     case 'text':
@@ -329,10 +432,10 @@ export function refuse(declared: Setting, value: unknown): string | undefined {
     case 'toggle':
       return typeof value === 'boolean' ? undefined : `"${declared.label}" is on or off.`
 
-    case 'choice':
-      return declared.options.includes(value as string) ? undefined : (
-          `"${String(value)}" is not one of ${declared.options.join(', ')}.`
-        )
+    case 'choice': {
+      const values = declared.options.map(optionValue)
+      return values.includes(value as string) ? undefined : `"${String(value)}" is not one of ${values.join(', ')}.`
+    }
 
     case 'multi-choice': {
       if (!Array.isArray(value)) return `"${declared.label}" takes a list.`

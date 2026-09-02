@@ -1,7 +1,7 @@
 # The declarative UI schema
 
 > **A plugin cannot style itself wrong because it never styles itself.** It declares what it
-> needs; core renders it. Twelve widgets, one visual language, and screens that look the same
+> needs; core renders it. Fifteen widgets, one visual language, and screens that look the same
 > whoever wrote the plugin.
 >
 > This document is the rendering half. The manifest half — every field, every constraint —
@@ -10,7 +10,7 @@
 >
 > **Two lists, one renderer, since M6-2.** These widgets are also what a plugin's `panel`
 > declares — the second half of its page, under the settings that drive it. Everything below
-> is true of both: the same twelve, the same rules, the same file drawing them. What differs
+> is true of both: the same fifteen, the same rules, the same file drawing them. What differs
 > is what each half is *for*, and that difference is in [`manifest.md`](./manifest.md#panel)
 > rather than here, because nothing about the rendering changes. (Until D118 a panel was a tab
 > on a screen of its own, which is why some of the prose below still says *screen*.)
@@ -26,10 +26,12 @@ renders them", and both were looked at and left. A general schema renderer accep
 nesting, arbitrary widgets and arbitrary layout hints — which re-opens the exact door this
 design closed, and adds about 175 KB to do it.
 
-Twelve hand-written widgets is a smaller amount of code than the adapter would have been.
-**If you need a thirteenth, that is a conversation** — open an issue saying what the twelve
+Fifteen hand-written widgets is a smaller amount of code than the adapter would have been.
+**If you need a sixteenth, that is a conversation** — open an issue saying what the fifteen
 could not do. It is not a config option, and it is not a `"type": "custom"` with an escape
-hatch.
+hatch. Five of these have now been that conversation, and one of them was refused three times
+before the sentence refusing it stopped being true; the record of each is below, kept in full
+rather than tidied, because the reasoning is what the bar is made of.
 
 **The eleventh was that conversation, held rather than skipped** (D83, M6-3). This document
 promised one and then got one: `table`, *a list of things with actions on each one*, granted
@@ -56,18 +58,31 @@ the look.** The layout itself is the first option, drawn inside the third's rule
 instead of them — about a hundred and fifty lines of arithmetic in `packages/ui/src/force.ts`,
 no dependency, and tested without a browser because it is only arithmetic.
 
-**`file` got its real user, and it is still not a widget.** The refusal was recorded three
-times on three different arguments, the last of them ending *"that argument is waiting on a
-real user."* Uploading a document is that user — it is the whole of a feature rather than a
-convenience — and what it produced is **a control in the composer**, which is core's own
-surface, not a thirteenth widget. The two are different grants with different blast radii: the
-composer is one control on one screen that core draws and core owns, and a `file` widget is a
-thing *any* plugin may declare on a settings pane. Granting the first does not carry the second,
-and nothing about the second has changed — it still has no user, and a bar that is waived
-because a neighbouring case was granted is not a bar. The path obstacle is also unmoved and is
-the reason the composer route works at all: **a browser will not tell a page where a file is**,
-so a `path` can never be filled by picking — but drag-and-drop and paste hand the webview
-*bytes*, with no path involved, and bytes are all an upload ever needed.
+**`file` was refused three times, and the third refusal is what eventually granted it**
+(D89, M7-4, and revision 7 on 2026-09-02). The wording is kept here rather than rewritten,
+because the reasoning is the point:
+
+> The path obstacle is also unmoved and is the reason the composer route works at all: **a
+> browser will not tell a page where a file is**, so a `path` can never be filled by picking —
+> but drag-and-drop and paste hand the webview *bytes*, with no path involved, and bytes are
+> all an upload ever needed.
+
+That paragraph names the obstacle *and* the way round it, one sentence apart, and it took a
+year and a plugin that needed it to notice. **Bytes are all an upload ever needed — and a path
+is all a plugin ever needed.** Core already had the half that turns one into the other:
+`attach.ts` takes bytes from the webview, enforces the ceilings, writes the file and hands over
+a path. What was missing was not a mechanism. It was pointing the existing one at a widget.
+
+So the widget does not ask where the file is, and does not need to: **core creates the path.**
+The value stored is an absolute path inside the asking plugin's own folder, and a plugin reads
+it exactly as it reads a `path` — the voice plugin's `add_voice` and `clone_voice` needed no
+change at all when it landed, which is the strongest evidence available that this is the same
+value arriving a different way.
+
+What was *not* waived is the bar. This is not `file` granted because the composer was; it is
+`file` granted because the sentence that refused it stopped being true. The composer paragraph
+above is still right about blast radius, and it is still the reason this widget writes only
+inside one plugin's folder and only for a key that plugin declared.
 
 **There is one more, and it is not yours** (D112). Core's Models tab draws a `ladder` — the
 spend slider and the running order under it — and it is deliberately **not in the manifest
@@ -79,7 +94,7 @@ its manifest, and core has no manifest — so the screen that shows which model 
 picked had nowhere to decide it, and *recommended* stayed a word covering a rule. It presses
 `/api/action` like a row action does, so it adds no write path and no gate, and it is drawn by
 the same renderer as everything on this page. If you want it, the answer is the one above:
-open an issue saying what the twelve could not do.
+open an issue saying what the fifteen could not do.
 
 The shape of the declaration is borrowed from VS Code's `contributes.configuration`, which
 has been proving this exact idea at enormous scale for a decade. The shape, narrowed — not
@@ -87,10 +102,12 @@ the size.
 
 ---
 
-## The twelve
+## The fifteen
 
-Every widget takes `key`, `label`, and an optional `hint`. The hint renders under the
-control in smaller type; it is one sentence, and it says something the label does not.
+Every widget takes `key`, `label`, an optional `hint`, and an optional `when`. The hint renders
+under the control in smaller type; it is one sentence, and it says something the label does not.
+`when` decides whether the widget is drawn at all — see [When a widget is on the page at
+all](#when-a-widget-is-on-the-page-at-all).
 
 ### `text`
 
@@ -174,6 +191,92 @@ The label is a statement that is true when the toggle is on. `"Start muted"`, no
 
 Two or three options render as a segmented control instead of a dropdown; four or more as a
 dropdown. That is core's decision, not yours, and it is why you do not get to pick.
+
+**An option can carry a sentence, and then the whole group is drawn as cards** (revision 7):
+
+```jsonc
+{ "key": "engine", "type": "choice", "label": "Voice engine", "default": "local",
+  "options": [
+    { "value": "local", "label": "Piper",
+      "hint": "Fast, on this machine. It cannot clone a voice." },
+    { "value": "cloud", "label": "fish.audio",
+      "hint": "Cloud. Fast, no graphics card, and it can clone from fifteen seconds.",
+      "needs": "api_key", "reason": "Add a key at the bottom of this page." }
+  ] }
+```
+
+```
+  Voice engine
+  ┌──────────────────────────────────────────────────────────┐
+  │ (•) Piper                                                │
+  │     Fast, on this machine. It cannot clone a voice.      │
+  └──────────────────────────────────────────────────────────┘
+  ┌──────────────────────────────────────────────────────────┐
+  │ ( ) fish.audio                                           │   ← dimmed
+  │     Cloud. Fast, no graphics card, and it can clone…     │
+  │     Add a key at the bottom of this page.                │
+  └──────────────────────────────────────────────────────────┘
+```
+
+Three model sizes are a word each and a segment says all there is to say. Four engines are
+not: what differs between them is where the work happens, what it costs and what it cannot do.
+So an option that arrives with a `hint` gets a card with the sentence in it — still core's
+decision about which form, made on what you declared rather than on a layout field.
+
+`needs` names another widget of yours that must hold something first. Core dims the option and
+puts your `reason` under it rather than hiding it, for the same reason a plugin you have not
+installed is dimmed rather than absent: the person who cannot pick it is the one who needs to
+know what to do about that.
+
+---
+
+## When a widget is on the page at all
+
+Every widget takes an optional `when`, and a widget whose `when` does not match **is not
+rendered** — not greyed, not disabled, gone.
+
+```jsonc
+{ "key": "clip", "type": "file", "label": "A recording to clone",
+  "when": { "key": "engine", "is": ["qwen", "fish"] } }
+```
+
+The case this arrived for was a page of nineteen widgets of which four applied, with two
+sentences of hint apologising for the rest. A greyed control is a promise that something could
+be typed into it; an absent one is the truth, and the setting it depends on is what brings it
+back.
+
+Core filters before it renders, so a hidden widget never reaches the page — the shell is not
+given something to hide. It also works out for itself which widgets other widgets turn on and
+redraws the page when one of those is saved, which is the **only** case where saving redraws
+anything: normally it deliberately does not, because a redraw takes the focus off whoever is
+mid-keystroke.
+
+One key, one set of values, string compare. It is not an expression language and should not
+become one — *and* is two settings, and arithmetic is a tool.
+
+---
+
+### `file`
+
+```jsonc
+{ "key": "clip", "type": "file", "label": "A recording to clone", "accept": ".wav,.mp3" }
+```
+
+```
+  A recording to clone
+  ┌──────────────┐
+  │ Choose file… │  no file chosen
+  └──────────────┘
+  Holding my-voice.wav.
+```
+
+The person picks; core writes the bytes into your own folder and stores the path it made. You
+read a path. `accept` is advisory — it makes the picker useful and is not a check, because a
+person can always choose *all files*.
+
+**One widget, one file.** Two files that belong together are two widgets, which is the honest
+shape: a Piper voice is a `.onnx` and a `.onnx.json`, and saying so beats a folder convention
+nobody was told about.
 
 ### `multi-choice`
 
@@ -325,6 +428,27 @@ What core owns, and what a plugin therefore cannot get wrong:
 its label for a reader who cannot see it, and the detail beside it is ordinary text — but a
 map is not keyboard-reachable, and a plugin whose data a person must be able to *act* on
 should put a `table` beside it, which is where a row has a button and a name.
+
+---
+
+## A row can carry something to listen to
+
+A `table` or `cards` row may carry a `preview` — a URL or a `data:` URI — and core draws the
+browser's own audio player on that row.
+
+```jsonc
+{ "id": "cloud:abc", "name": "SpongeBob", "summary": "A high-pitched, enthusiastic voice…",
+  "state": "● kept", "preview": "https://example.invalid/sample.mp3" }
+```
+
+Not a widget: it is a field, because *what does this one sound like* is a question about a row
+rather than a control an author declares. `preload="none"`, so a list of forty voices fetches
+nothing at all until somebody presses play on one of them.
+
+The player is the browser's, deliberately. It is already keyboard-reachable, already labelled
+by whatever assistive technology is on the machine, and already knows how to be small — three
+things a hand-drawn one would have to earn back, on a page whose whole argument is that core
+owns the look.
 
 ---
 

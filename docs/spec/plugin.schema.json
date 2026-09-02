@@ -107,6 +107,34 @@
           {
             "type": "object",
             "properties": {
+              "when": {
+                "type": "object",
+                "properties": {
+                  "key": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_]*$"
+                  },
+                  "is": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "minItems": 1,
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "key",
+                  "is"
+                ],
+                "additionalProperties": false
+              },
               "type": {
                 "type": "string",
                 "const": "text"
@@ -127,6 +155,9 @@
               },
               "placeholder": {
                 "type": "string"
+              },
+              "multiline": {
+                "type": "boolean"
               }
             },
             "required": [
@@ -138,6 +169,34 @@
           {
             "type": "object",
             "properties": {
+              "when": {
+                "type": "object",
+                "properties": {
+                  "key": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_]*$"
+                  },
+                  "is": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "minItems": 1,
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "key",
+                  "is"
+                ],
+                "additionalProperties": false
+              },
               "type": {
                 "type": "string",
                 "const": "password"
@@ -163,6 +222,34 @@
           {
             "type": "object",
             "properties": {
+              "when": {
+                "type": "object",
+                "properties": {
+                  "key": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_]*$"
+                  },
+                  "is": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "minItems": 1,
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "key",
+                  "is"
+                ],
+                "additionalProperties": false
+              },
               "type": {
                 "type": "string",
                 "const": "number"
@@ -201,6 +288,34 @@
           {
             "type": "object",
             "properties": {
+              "when": {
+                "type": "object",
+                "properties": {
+                  "key": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_]*$"
+                  },
+                  "is": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "minItems": 1,
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "key",
+                  "is"
+                ],
+                "additionalProperties": false
+              },
               "type": {
                 "type": "string",
                 "const": "toggle"
@@ -229,6 +344,34 @@
           {
             "type": "object",
             "properties": {
+              "when": {
+                "type": "object",
+                "properties": {
+                  "key": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_]*$"
+                  },
+                  "is": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "minItems": 1,
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "key",
+                  "is"
+                ],
+                "additionalProperties": false
+              },
               "type": {
                 "type": "string",
                 "const": "choice"
@@ -248,8 +391,46 @@
                 "minItems": 1,
                 "type": "array",
                 "items": {
-                  "type": "string",
-                  "minLength": 1
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "value": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "label": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "hint": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "needs": {
+                          "type": "string",
+                          "pattern": "^[a-z][a-z0-9_]*$"
+                        },
+                        "reason": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 160
+                        },
+                        "available": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "value",
+                        "label"
+                      ],
+                      "additionalProperties": false
+                    }
+                  ]
                 }
               },
               "default": {
@@ -266,6 +447,34 @@
           {
             "type": "object",
             "properties": {
+              "when": {
+                "type": "object",
+                "properties": {
+                  "key": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_]*$"
+                  },
+                  "is": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "minItems": 1,
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "key",
+                  "is"
+                ],
+                "additionalProperties": false
+              },
               "type": {
                 "type": "string",
                 "const": "multi-choice"
@@ -306,6 +515,34 @@
           {
             "type": "object",
             "properties": {
+              "when": {
+                "type": "object",
+                "properties": {
+                  "key": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_]*$"
+                  },
+                  "is": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "minItems": 1,
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "key",
+                  "is"
+                ],
+                "additionalProperties": false
+              },
               "type": {
                 "type": "string",
                 "const": "path"
@@ -339,6 +576,91 @@
           {
             "type": "object",
             "properties": {
+              "when": {
+                "type": "object",
+                "properties": {
+                  "key": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_]*$"
+                  },
+                  "is": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "minItems": 1,
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "key",
+                  "is"
+                ],
+                "additionalProperties": false
+              },
+              "type": {
+                "type": "string",
+                "const": "file"
+              },
+              "key": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_]*$"
+              },
+              "label": {
+                "type": "string",
+                "minLength": 1
+              },
+              "hint": {
+                "type": "string"
+              },
+              "accept": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "type",
+              "key",
+              "label"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "when": {
+                "type": "object",
+                "properties": {
+                  "key": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_]*$"
+                  },
+                  "is": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "minItems": 1,
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "key",
+                  "is"
+                ],
+                "additionalProperties": false
+              },
               "type": {
                 "type": "string",
                 "const": "status"
@@ -364,6 +686,34 @@
           {
             "type": "object",
             "properties": {
+              "when": {
+                "type": "object",
+                "properties": {
+                  "key": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_]*$"
+                  },
+                  "is": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "minItems": 1,
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "key",
+                  "is"
+                ],
+                "additionalProperties": false
+              },
               "type": {
                 "type": "string",
                 "const": "progress"
@@ -389,6 +739,34 @@
           {
             "type": "object",
             "properties": {
+              "when": {
+                "type": "object",
+                "properties": {
+                  "key": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_]*$"
+                  },
+                  "is": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "minItems": 1,
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "key",
+                  "is"
+                ],
+                "additionalProperties": false
+              },
               "type": {
                 "type": "string",
                 "const": "action"
@@ -419,6 +797,34 @@
           {
             "type": "object",
             "properties": {
+              "when": {
+                "type": "object",
+                "properties": {
+                  "key": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_]*$"
+                  },
+                  "is": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "minItems": 1,
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "key",
+                  "is"
+                ],
+                "additionalProperties": false
+              },
               "type": {
                 "type": "string",
                 "const": "table"
@@ -524,6 +930,34 @@
           {
             "type": "object",
             "properties": {
+              "when": {
+                "type": "object",
+                "properties": {
+                  "key": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_]*$"
+                  },
+                  "is": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "minItems": 1,
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "key",
+                  "is"
+                ],
+                "additionalProperties": false
+              },
               "type": {
                 "type": "string",
                 "const": "graph"
@@ -561,6 +995,34 @@
           {
             "type": "object",
             "properties": {
+              "when": {
+                "type": "object",
+                "properties": {
+                  "key": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_]*$"
+                  },
+                  "is": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "minItems": 1,
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "key",
+                  "is"
+                ],
+                "additionalProperties": false
+              },
               "type": {
                 "type": "string",
                 "const": "cards"
@@ -637,6 +1099,34 @@
           {
             "type": "object",
             "properties": {
+              "when": {
+                "type": "object",
+                "properties": {
+                  "key": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_]*$"
+                  },
+                  "is": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "minItems": 1,
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "key",
+                  "is"
+                ],
+                "additionalProperties": false
+              },
               "type": {
                 "type": "string",
                 "const": "image"
@@ -760,6 +1250,34 @@
               {
                 "type": "object",
                 "properties": {
+                  "when": {
+                    "type": "object",
+                    "properties": {
+                      "key": {
+                        "type": "string",
+                        "pattern": "^[a-z][a-z0-9_]*$"
+                      },
+                      "is": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "minItems": 1,
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "key",
+                      "is"
+                    ],
+                    "additionalProperties": false
+                  },
                   "type": {
                     "type": "string",
                     "const": "text"
@@ -780,6 +1298,9 @@
                   },
                   "placeholder": {
                     "type": "string"
+                  },
+                  "multiline": {
+                    "type": "boolean"
                   }
                 },
                 "required": [
@@ -791,6 +1312,34 @@
               {
                 "type": "object",
                 "properties": {
+                  "when": {
+                    "type": "object",
+                    "properties": {
+                      "key": {
+                        "type": "string",
+                        "pattern": "^[a-z][a-z0-9_]*$"
+                      },
+                      "is": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "minItems": 1,
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "key",
+                      "is"
+                    ],
+                    "additionalProperties": false
+                  },
                   "type": {
                     "type": "string",
                     "const": "password"
@@ -816,6 +1365,34 @@
               {
                 "type": "object",
                 "properties": {
+                  "when": {
+                    "type": "object",
+                    "properties": {
+                      "key": {
+                        "type": "string",
+                        "pattern": "^[a-z][a-z0-9_]*$"
+                      },
+                      "is": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "minItems": 1,
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "key",
+                      "is"
+                    ],
+                    "additionalProperties": false
+                  },
                   "type": {
                     "type": "string",
                     "const": "number"
@@ -854,6 +1431,34 @@
               {
                 "type": "object",
                 "properties": {
+                  "when": {
+                    "type": "object",
+                    "properties": {
+                      "key": {
+                        "type": "string",
+                        "pattern": "^[a-z][a-z0-9_]*$"
+                      },
+                      "is": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "minItems": 1,
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "key",
+                      "is"
+                    ],
+                    "additionalProperties": false
+                  },
                   "type": {
                     "type": "string",
                     "const": "toggle"
@@ -882,6 +1487,34 @@
               {
                 "type": "object",
                 "properties": {
+                  "when": {
+                    "type": "object",
+                    "properties": {
+                      "key": {
+                        "type": "string",
+                        "pattern": "^[a-z][a-z0-9_]*$"
+                      },
+                      "is": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "minItems": 1,
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "key",
+                      "is"
+                    ],
+                    "additionalProperties": false
+                  },
                   "type": {
                     "type": "string",
                     "const": "choice"
@@ -901,8 +1534,46 @@
                     "minItems": 1,
                     "type": "array",
                     "items": {
-                      "type": "string",
-                      "minLength": 1
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "value": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "label": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "hint": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "needs": {
+                              "type": "string",
+                              "pattern": "^[a-z][a-z0-9_]*$"
+                            },
+                            "reason": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 160
+                            },
+                            "available": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "value",
+                            "label"
+                          ],
+                          "additionalProperties": false
+                        }
+                      ]
                     }
                   },
                   "default": {
@@ -919,6 +1590,34 @@
               {
                 "type": "object",
                 "properties": {
+                  "when": {
+                    "type": "object",
+                    "properties": {
+                      "key": {
+                        "type": "string",
+                        "pattern": "^[a-z][a-z0-9_]*$"
+                      },
+                      "is": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "minItems": 1,
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "key",
+                      "is"
+                    ],
+                    "additionalProperties": false
+                  },
                   "type": {
                     "type": "string",
                     "const": "multi-choice"
@@ -959,6 +1658,34 @@
               {
                 "type": "object",
                 "properties": {
+                  "when": {
+                    "type": "object",
+                    "properties": {
+                      "key": {
+                        "type": "string",
+                        "pattern": "^[a-z][a-z0-9_]*$"
+                      },
+                      "is": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "minItems": 1,
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "key",
+                      "is"
+                    ],
+                    "additionalProperties": false
+                  },
                   "type": {
                     "type": "string",
                     "const": "path"
@@ -992,6 +1719,91 @@
               {
                 "type": "object",
                 "properties": {
+                  "when": {
+                    "type": "object",
+                    "properties": {
+                      "key": {
+                        "type": "string",
+                        "pattern": "^[a-z][a-z0-9_]*$"
+                      },
+                      "is": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "minItems": 1,
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "key",
+                      "is"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "type": {
+                    "type": "string",
+                    "const": "file"
+                  },
+                  "key": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_]*$"
+                  },
+                  "label": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "hint": {
+                    "type": "string"
+                  },
+                  "accept": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "type",
+                  "key",
+                  "label"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "when": {
+                    "type": "object",
+                    "properties": {
+                      "key": {
+                        "type": "string",
+                        "pattern": "^[a-z][a-z0-9_]*$"
+                      },
+                      "is": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "minItems": 1,
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "key",
+                      "is"
+                    ],
+                    "additionalProperties": false
+                  },
                   "type": {
                     "type": "string",
                     "const": "status"
@@ -1017,6 +1829,34 @@
               {
                 "type": "object",
                 "properties": {
+                  "when": {
+                    "type": "object",
+                    "properties": {
+                      "key": {
+                        "type": "string",
+                        "pattern": "^[a-z][a-z0-9_]*$"
+                      },
+                      "is": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "minItems": 1,
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "key",
+                      "is"
+                    ],
+                    "additionalProperties": false
+                  },
                   "type": {
                     "type": "string",
                     "const": "progress"
@@ -1042,6 +1882,34 @@
               {
                 "type": "object",
                 "properties": {
+                  "when": {
+                    "type": "object",
+                    "properties": {
+                      "key": {
+                        "type": "string",
+                        "pattern": "^[a-z][a-z0-9_]*$"
+                      },
+                      "is": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "minItems": 1,
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "key",
+                      "is"
+                    ],
+                    "additionalProperties": false
+                  },
                   "type": {
                     "type": "string",
                     "const": "action"
@@ -1072,6 +1940,34 @@
               {
                 "type": "object",
                 "properties": {
+                  "when": {
+                    "type": "object",
+                    "properties": {
+                      "key": {
+                        "type": "string",
+                        "pattern": "^[a-z][a-z0-9_]*$"
+                      },
+                      "is": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "minItems": 1,
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "key",
+                      "is"
+                    ],
+                    "additionalProperties": false
+                  },
                   "type": {
                     "type": "string",
                     "const": "table"
@@ -1177,6 +2073,34 @@
               {
                 "type": "object",
                 "properties": {
+                  "when": {
+                    "type": "object",
+                    "properties": {
+                      "key": {
+                        "type": "string",
+                        "pattern": "^[a-z][a-z0-9_]*$"
+                      },
+                      "is": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "minItems": 1,
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "key",
+                      "is"
+                    ],
+                    "additionalProperties": false
+                  },
                   "type": {
                     "type": "string",
                     "const": "graph"
@@ -1214,6 +2138,34 @@
               {
                 "type": "object",
                 "properties": {
+                  "when": {
+                    "type": "object",
+                    "properties": {
+                      "key": {
+                        "type": "string",
+                        "pattern": "^[a-z][a-z0-9_]*$"
+                      },
+                      "is": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "minItems": 1,
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "key",
+                      "is"
+                    ],
+                    "additionalProperties": false
+                  },
                   "type": {
                     "type": "string",
                     "const": "cards"
@@ -1290,6 +2242,34 @@
               {
                 "type": "object",
                 "properties": {
+                  "when": {
+                    "type": "object",
+                    "properties": {
+                      "key": {
+                        "type": "string",
+                        "pattern": "^[a-z][a-z0-9_]*$"
+                      },
+                      "is": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "minItems": 1,
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "key",
+                      "is"
+                    ],
+                    "additionalProperties": false
+                  },
                   "type": {
                     "type": "string",
                     "const": "image"

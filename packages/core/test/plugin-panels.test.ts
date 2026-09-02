@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { afterAll, expect, test } from 'vitest'
 import { memorySecrets } from '../src/secrets.js'
 import { serve, type Serving } from '../src/serve.js'
@@ -56,9 +56,10 @@ const rows = async (plugin: string, key: string): Promise<Row[]> =>
 
 interface Pane {
   id: string
+  settings: { type: string; key: string; gates?: boolean }[]
   enabled: boolean
   running: boolean
-  panel?: { label: string; widgets: { type: string; key: string }[] }
+  panel?: { label: string; widgets: { type: string; key: string; value?: unknown }[] }
 }
 const panes = async (): Promise<Pane[]> =>
   ((await (
@@ -182,6 +183,91 @@ test('a detail is the whole sentence, because a column has to truncate and this 
   const detail = await post('/api/detail', { plugin: 'memory', key: 'remembered_list', row: String(one?.id) })
   expect(detail.ok).toBe(true)
   expect(String(detail.text)).toContain('Written down')
+}, 20_000)
+
+/**
+ * The `file` widget, end to end — and the thing D89 said could not be done.
+ *
+ * *A browser will not tell a page where a file is*, so this does not ask: bytes go up, core
+ * writes them inside the plugin's own folder, and **the value the plugin reads is a path core
+ * made**. Which is why the plugin side of `add_voice` needed no change at all — it takes a
+ * path, exactly as it did when somebody had to type one.
+ */
+test('a file chosen in the page becomes a path the plugin can read', async () => {
+  const bytes = Buffer.from('not really an onnx, and this route does not care')
+  const put = await post('/api/upload', {
+    plugin: 'voice',
+    key: 'add_voice',
+    name: 'en_US-someone-medium.onnx',
+    data: bytes.toString('base64'),
+  })
+  expect(put.ok).toBe(true)
+  // The person's own name for it, not a timestamp: Piper names a voice after its file, so a
+  // widget that renamed it would have thrown away the one thing the filename carried.
+  expect(basename(String(put.path))).toBe('en_US-someone-medium.onnx')
+  expect(readFileSync(String(put.path))).toEqual(bytes)
+  // Inside the asking plugin's own folder, which is what makes invariant 5 keep holding: the
+  // purge that takes the folder takes this with it.
+  expect(String(put.path).startsWith(join(root, 'plugins', 'voice'))).toBe(true)
+
+  // And it is the widget's value now, which is the whole point — the plugin reads a path.
+  const pane = (await panes()).find((one) => one.id === 'voice')
+  const widget = pane?.panel?.widgets.find((one) => one.key === 'add_voice') as { value?: string } | undefined
+  expect(widget?.value).toBe(String(put.path))
+
+  // One widget holds one file. A second choice replaces the first rather than accumulating a
+  // folder of every recording anybody ever cloned from.
+  const again = await post('/api/upload', { plugin: 'voice', key: 'add_voice', name: 'other.onnx', data: bytes.toString('base64') })
+  expect(again.ok).toBe(true)
+  expect(existsSync(String(put.path))).toBe(false)
+
+  // The ceilings are `attach.ts`'s, unchanged, because this is the same seam.
+  const empty = await post('/api/upload', { plugin: 'voice', key: 'add_voice', name: 'nothing.onnx', data: '' })
+  expect(empty.ok).toBe(false)
+  expect(String(empty.why)).toContain('empty')
+
+  // And a widget that does not take a file says so rather than quietly storing a path.
+  const wrong = await post('/api/upload', { plugin: 'voice', key: 'preview_text', name: 'x.wav', data: bytes.toString('base64') })
+  expect(wrong.ok).toBe(false)
+  expect(String(wrong.why)).toContain('does not take a file')
+}, 20_000)
+
+/**
+ * Choosing an engine changes which widgets are on the page (`alexia_protocol` 7).
+ *
+ * The page this arrived to fix showed nineteen widgets of which four applied. What is being
+ * held still is that a widget belonging to an engine nobody picked is **not on the page** —
+ * not greyed, not disabled, absent — and that the widget deciding it says so, because a save
+ * that changes the shape of a page has to redraw it and the shell is told by core rather than
+ * by guessing.
+ */
+test('picking an engine decides which widgets the page has at all', async () => {
+  const keys = async (): Promise<string[]> =>
+    ((await panes()).find((one) => one.id === 'voice')?.panel?.widgets ?? []).map((one) => one.key)
+
+  const local = await keys()
+  expect(local).toContain('add_voice')
+  expect(local).not.toContain('clip')
+  expect(local).not.toContain('catalogue')
+
+  const saved = await post('/api/settings', { plugin: 'voice', key: 'engine', value: 'fish_plain' })
+  expect(saved.ok).toBe(true)
+
+  const cloud = await keys()
+  expect(cloud).toContain('clip')
+  expect(cloud).toContain('catalogue')
+  expect(cloud).not.toContain('add_voice')
+
+  // Core marks the widget the rest of the page turns on, so the shell knows to redraw after
+  // a save it otherwise deliberately never redraws for.
+  const engine = (await panes()).find((one) => one.id === 'voice')?.settings.find((one) => one.key === 'engine')
+  expect(engine).toMatchObject({ gates: true })
+  // The cloud engines are dimmed with the author's own sentence until there is a key.
+  const options = (engine as { options?: { value: string; available?: boolean; reason?: string }[] }).options ?? []
+  expect(options.find((one) => one.value === 'fish_plain')).toMatchObject({ available: false })
+  expect(options.find((one) => one.value === 'piper')?.available).toBeUndefined()
+
+  await post('/api/settings', { plugin: 'voice', key: 'engine', value: 'piper' })
 }, 20_000)
 
 test('deleting a plugin takes its page with it, and the other one is untouched', async () => {
