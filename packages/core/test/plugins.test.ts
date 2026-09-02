@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { ErrorCode, Manifest } from '@alexia/protocol'
+import { CONVERSATION_ENDED, ErrorCode, Manifest } from '@alexia/protocol'
 import { mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -95,3 +95,18 @@ test('purge means purge', async () => {
   expect(store.kvGet('hello', 'last')).toBeUndefined()
   expect(store.settings('hello')).toEqual({})
 }, 20_000)
+
+test('a plugin that does not care about the conversation ending is not disturbed by being told', async () => {
+  // `alexia/conversation/ended` is broadcast to **every** running plugin, and almost none of them
+  // will ever register a handler for it. So the case that matters is this one: an unhandled
+  // notification must be shrugged off rather than raising, because it is sent on the path
+  // somebody takes to start a new chat — and a plugin that choked on it would break that path
+  // for everyone, over a message it had no interest in.
+  await plugin.listTools()
+  await expect(plugin.notify(CONVERSATION_ENDED, {})).resolves.toBeUndefined()
+
+  // And it is still there and still working afterwards, which is the half a resolved promise
+  // does not prove on its own.
+  const after = await plugin.callTool('greet', { who: 'Still here' })
+  expect(after.content).toEqual([{ type: 'text', text: 'Hello, Still here.' }])
+})

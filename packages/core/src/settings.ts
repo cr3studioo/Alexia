@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import type { Manifest } from '@alexia/protocol'
+import type { Manifest, Stage } from '@alexia/protocol'
 import { existsSync, statSync } from 'node:fs'
 import { isAbsolute } from 'node:path'
 import type { SecretStore } from './secrets.js'
@@ -73,6 +73,26 @@ export interface Progress {
   progress: number
   total?: number
   message?: string
+  /**
+   * A picture of the thing being made, while it is being made.
+   *
+   * A `data:` URL and never a path: it is a frame that exists for a second and is replaced, so
+   * writing each one to disk to serve it back would be a file per step of every render. It is
+   * capped where it is produced rather than here — a progress channel is not a transport, and a
+   * plugin sending megabytes through one is the thing that would make this a bad idea.
+   *
+   * Generic on purpose. Core has no notion of diffusion; it knows only that some work can show
+   * itself midway, which is true of a render, a download preview and a page being laid out.
+   */
+  preview?: string
+  /**
+   * The job's own steps, in the order the plugin runs them.
+   *
+   * The bar above says how far through *everything* is; this says how many parts there are,
+   * which one is live, and how far that one has got on its own. A plugin that has one step
+   * sends nothing here and gets the bar, which is every plugin before this existed.
+   */
+  stages?: Stage[]
 }
 
 export interface Pane {
@@ -182,12 +202,24 @@ export function declaredAction(
  * questions of both: *which tool answers with the contents*, and *which one says more about
  * one of them*. A second lookup would be a second place to forget a widget type.
  */
+/**
+ * The widget a `/api/rows` or `/api/detail` call is asking about, by its key.
+ *
+ * **Every widget that fills itself from a tool belongs here, and two did not.** The list was
+ * `table | graph` and stayed that way while `image` (D132) and `cards` (D141) were added, so
+ * core answered *there is no list called that* for both — which is what the picture gallery has
+ * been saying since the day it shipped. The name says `table` and the rule is *anything with a
+ * `rows` tool*, so it is written as that rather than as a list somebody has to remember to
+ * extend the next time a widget grows one.
+ */
 export function declaredTable(
   manifest: Manifest,
   key: string,
-): Extract<Setting, { type: 'table' | 'graph' }> | undefined {
+): Extract<Setting, { rows: string }> | undefined {
   const found = declaredWidgets(manifest).find((widget) => widget.key === key)
-  return found?.type === 'table' || found?.type === 'graph' ? found : undefined
+  return found !== undefined && 'rows' in found && typeof found.rows === 'string' ?
+      (found as Extract<Setting, { rows: string }>)
+    : undefined
 }
 
 /**

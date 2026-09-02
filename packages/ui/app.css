@@ -617,17 +617,31 @@ body[data-view='control'] .view:not(#control) {
   gap: var(--space-1);
 }
 
-/* Not installed is behind a disclosure, because this screen is where somebody comes to change
-   something they have. `details` is the platform's, so the keyboard behaviour is not ours. */
-#available-box {
-  margin-bottom: var(--space-5);
+/* Not installed, in the same grid as what is (D120).
+
+   **Dimmed, not greyed out.** A disabled control is one you cannot use, and these are the only
+   cards on the screen that are entirely *for* using — so the difference is carried by a dashed
+   edge and a lighter ground, both of which say "outline" rather than "broken", while the text
+   keeps its full contrast because it is what somebody reads to decide. Hovering brings it all
+   the way up: the card is a live target and behaves like one. */
+.bento-card.dim {
+  border-style: dashed;
+  background: color-mix(in oklab, var(--surface-raised) 55%, transparent);
 }
 
-#available-box summary {
-  cursor: pointer;
-  color: var(--ink-quiet);
+.bento-card.dim:hover,
+.bento-card.dim:has(.confirm) {
+  border-style: solid;
+  background: var(--surface-raised);
+}
+
+/* The label that explains the dimming, across the whole grid. Without it a paler card is a
+   card somebody reads as failed rather than as available. */
+.bento-label {
+  grid-column: 1 / -1;
+  margin: var(--space-3) 0 0;
   font-size: var(--text-sm);
-  margin-bottom: var(--space-3);
+  color: var(--ink-quiet);
 }
 
 #plugin-filter {
@@ -2415,6 +2429,59 @@ button[disabled] {
   color: var(--ink-quiet);
 }
 
+/* A file a tool made, under the answer that made it. The mirror of `.read` above: that one is
+   what came in with the question, this is what went out with the answer. Open by default
+   rather than folded, because unlike an extracted document this is a thing the person now has
+   and the buttons are the entire point of drawing it. */
+.turn .made {
+  margin-top: var(--space-2);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--line);
+  font-size: var(--text-sm);
+}
+
+.turn .made-line {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.turn .made-name {
+  font-weight: 500;
+  word-break: break-word;
+}
+
+.turn .made-line small {
+  color: var(--ink-quiet);
+  font-size: var(--text-xs);
+}
+
+/* Wrapping rather than scrolling: four buttons on a narrow window become two rows, and a
+   row of controls that runs off the edge is a control nobody finds. */
+.turn .made-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.turn .made-buttons .quiet-button {
+  font-size: var(--text-xs);
+  padding: var(--space-1) var(--space-3);
+}
+
+/* Bounded, because a generated picture is whatever size it is and an answer should not become
+   six screens of one. It is a preview; Open is what shows it properly. */
+.turn .made-preview {
+  display: block;
+  max-width: 100%;
+  max-height: 18rem;
+  width: auto;
+  margin-bottom: var(--space-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+}
+
 /* ---- states the widgets share ------------------------------------------------------------
 
    `status` and `progress` from spec/ui-schema.md are the two widgets that are not inputs.
@@ -3016,4 +3083,275 @@ kbd {
   margin: 0;
   font-size: var(--text-sm);
   color: var(--ink-faint);
+}
+
+/* ---- a newer Alexia (D117) ----------------------------------------------------------------
+
+   A strip along the bottom rather than a dialog over the middle. An update is news, not an
+   interruption: the thing somebody was doing when it arrived is still the more important
+   thing on screen, and a modal that stops a conversation to announce a download is exactly
+   the behaviour this project exists not to have. It sits above everything because it belongs
+   to the program rather than to a screen, and it is never rendered in a browser at all. */
+.update-bar {
+  position: fixed;
+  inset: auto var(--space-4) var(--space-4) auto;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  max-width: min(30rem, calc(100vw - 2 * var(--space-4)));
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  color: var(--ink);
+  font-size: var(--text-sm);
+  box-shadow: 0 0.5rem 1.5rem color-mix(in oklab, var(--ink) 18%, transparent);
+}
+
+.update-bar > span {
+  flex: 1;
+}
+
+/* The failure half. Hidden until there is one, and then it is the whole point of the strip. */
+.update-bar > a {
+  color: var(--ink-quiet);
+}
+
+/* First run's plugin picker (D116). The rows are the `.card` the mode chooser uses, so a
+   checkbox list of plugins looks like the radio list two blocks above it rather than like a
+   fourth kind of control invented for this screen. */
+#shelf .card em {
+  font-style: normal;
+  color: var(--ink-faint);
+}
+
+#shelf .asks {
+  margin: var(--space-2) 0 0;
+  padding-left: var(--space-4);
+  color: var(--ink-faint);
+  font-size: var(--text-xs);
+}
+
+/* The thirteenth widget (alexia_protocol 5). A plugin says what the pictures are; every
+   decision below is core's, which is the whole reason it is a widget and not an iframe. */
+
+.image-grid {
+  display: grid;
+  /* Auto-fill rather than a fixed count: the same rule reads as four across on a wide window
+     and two on a narrow one, without a breakpoint per screen anybody has to maintain. */
+  grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr));
+  gap: var(--space-3);
+}
+
+.image-one {
+  display: block;
+}
+
+.image-cell {
+  margin: 0;
+  min-width: 0;
+}
+
+.image-shot,
+.image-gap {
+  display: block;
+  width: 100%;
+  /* Square, so a grid of portraits and landscapes is still a grid. `contain` rather than
+     `cover` in the single case, because the one picture somebody is watching should be whole
+     rather than well-cropped. */
+  aspect-ratio: 1;
+  object-fit: cover;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+}
+
+.image-one .image-shot,
+.image-one .image-gap {
+  aspect-ratio: auto;
+  max-height: 40vh;
+  object-fit: contain;
+}
+
+/* A file that has gone, and a row that never pointed at one, draw the same thing: a quiet
+   space where a picture would be. A torn-page icon says *something is broken*, and nothing
+   is — it was there when the plugin listed it and it is not there now. */
+.image-gap {
+  background: repeating-linear-gradient(
+    45deg,
+    var(--surface-raised),
+    var(--surface-raised) 6px,
+    var(--surface) 6px,
+    var(--surface) 12px
+  );
+}
+
+.image-caption {
+  margin: var(--space-1) 0 0;
+  color: var(--ink-faint);
+  font-size: var(--text-xs);
+  line-height: var(--leading-tight);
+  /* Two lines, then an ellipsis. A prompt can be a paragraph, and a caption that grows to fit
+     one turns an even grid into a ragged column. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.image-openable {
+  cursor: pointer;
+}
+
+.image-openable:focus-visible {
+  outline: 2px solid var(--chosen);
+  outline-offset: 2px;
+  border-radius: var(--radius-md);
+}
+
+/* ---- a step that shows its work ------------------------------------------------------
+
+   A rail row is a line of text. A picture set beside the name is a flex item that takes the
+   width it is given and leaves the name none — so the work goes on a line of its own,
+   underneath, and only for the steps that have any. */
+.rail-row:has(.step-work) {
+  flex-wrap: wrap;
+}
+
+.step-work {
+  flex-basis: 100%;
+  min-width: 0;
+}
+
+/* The pipeline, left to right, each segment filling as its own stage does. No names on it:
+   five would fit across this rail and twenty-five would not, and the line above already says
+   which stage is running. What this adds is the shape — how many, and how far along. */
+.step-stages {
+  display: flex;
+  gap: 2px;
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.step-stages li {
+  flex: 1;
+  height: 3px;
+  border-radius: var(--radius-full);
+  background: var(--line);
+  overflow: hidden;
+}
+
+.step-stages li::after {
+  content: '';
+  display: block;
+  height: 100%;
+  width: var(--fill, 0%);
+  border-radius: inherit;
+  /* Finished work recedes. It is present, and it is not what anybody is looking at. */
+  background: var(--line-strong);
+}
+
+.step-stages li.done::after {
+  width: 100%;
+}
+
+/* The running one is the whole point of the strip, and three pixels cannot be made bolder —
+   so it is the loudest colour instead, in both palettes. */
+.step-stages li.running::after {
+  background: var(--accent);
+}
+
+.step-stages li.failed::after {
+  width: 100%;
+  background: var(--danger);
+}
+
+/* The work as it stands. One element, replaced in place — a render sends one of these a
+   second, and keeping them would build a filmstrip of something that has a single current
+   state. Its own size, never the row's: `flex-basis` on the picture itself would set its
+   width and stretch it. */
+.step-preview {
+  display: block;
+  max-width: 100%;
+  max-height: 13rem;
+  margin: var(--space-2) auto 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  /* It sharpens over the steps, so a hard swap reads as flicker. */
+  transition: opacity 120ms ease;
+}
+
+/* ---- the same grid, one level down (D141) -----------------------------------------------
+
+   A plugin's own things, drawn the way core draws plugins. Nothing here redefines a card: it
+   is the plugins page at a smaller size, because two grids that merely resemble each other
+   drift, and the whole argument for this widget was that people already read the first one. */
+.bento-small {
+  /* Narrower tracks, so a panel column fits three where the plugins page fits two. */
+  grid-template-columns: repeat(auto-fill, minmax(min(11rem, 100%), 1fr));
+  gap: var(--space-2);
+  margin-bottom: 0;
+}
+
+.bento-small .bento-card {
+  padding: var(--space-3);
+  gap: var(--space-1);
+  border-radius: var(--radius-md);
+}
+
+.bento-small .bento-open {
+  font-size: var(--text-sm);
+}
+
+/* Two lines of the sentence and no more. At this size a five-line summary is the card, and
+   the grid stops being scannable — which is the one thing it is for. */
+.bento-small .bento-what {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  font-size: var(--text-xs);
+}
+
+/* The foot carries three things and eleven rems is one line's worth of room, so they are laid
+   out rather than left to wrap: the state and the button share the first line, and what it
+   needs goes underneath on its own, clipped. Letting all three wrap freely made every card as
+   tall as three rows and the grid stopped being scannable, which is the one thing it is for. */
+.bento-small .bento-foot {
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-start;
+  gap: var(--space-1);
+}
+
+.bento-small .bento-foot > .quiet-button {
+  margin-left: auto;
+  padding: 0.15rem 0.5rem;
+  font-size: var(--text-xs);
+}
+
+/* `order` rather than markup order: the shell builds one foot for both sizes, and which line
+   a thing lands on is a question about this width, not about what the plugin sent. */
+.bento-small .pane-meta {
+  order: 1;
+  flex-basis: 100%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-xs);
+}
+
+.bento-small .pill {
+  font-size: var(--text-xs);
+}
+
+/* The row that explains a section, across the whole grid — the same one the plugins page uses
+   to say why the dimmed cards are dimmed. */
+.bento-small .bento-label {
+  grid-column: 1 / -1;
+  margin: var(--space-2) 0 0;
 }

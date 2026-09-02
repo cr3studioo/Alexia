@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { ErrorCode, isPermission, Manifest, PROVIDES_META, SETTINGS_CHANGED } from '@alexia/protocol'
+import { CONVERSATION_ENDED, ErrorCode, isPermission, Manifest, PROVIDES_META, SETTINGS_CHANGED } from '@alexia/protocol'
 import {
   ProtocolError,
   type CallToolResult,
@@ -380,6 +380,27 @@ export class Plugins {
     return false
   }
 
+  /**
+   * What is **here and switched off** that would answer this — by display name, for a sentence.
+   *
+   * The distinction `answers()` alone cannot make, and it is the difference between a refusal
+   * somebody can act on and one that sends them somewhere with no answer at the end of it.
+   * *Nothing here reads documents, install one from the library* is wrong twice over when the
+   * reader is sitting in the list with its switch off: the verb is wrong, and on a machine
+   * whose registry was never deployed the library it points at is empty.
+   *
+   * **Naming the plugin here is not invariant 1.** That rule is about a plugin id written into
+   * core's source, where it would hardcode a dependency; this is a name read off a manifest at
+   * run time, which is what the settings screen has always done. Core still resolves by
+   * capability and still cannot tell which plugin answered one.
+   */
+  couldAnswer(cap: string): string[] {
+    return [...this.#entries.values()]
+      .filter((entry) => !this.#enabled.has(entry.manifest.id) && entry.manifest.provides?.includes(cap))
+      .map((entry) => entry.manifest.name)
+      .sort()
+  }
+
   /** Whether a process is up, asked without starting one. Lazy spawn makes `false` normal. */
   running(id: string): boolean {
     return this.#entries.get(id)?.process.pid !== undefined
@@ -443,6 +464,36 @@ export class Plugins {
     // changed, and "there is no longer one" is a change a plugin has to be able to see.
     const said = declared.type === 'password' && value === '' ? null : value
     await entry.process.notify(SETTINGS_CHANGED, { changed: { [key]: said } })
+  }
+
+  /**
+   * Where this plugin's own directory is.
+   *
+   * Asked rather than rebuilt, because `<dataDir>/plugins/<id>` written down in a second place
+   * is a second answer waiting to disagree with the first — and the thing that reads it is a
+   * boundary check, which is exactly where two answers must not exist.
+   */
+  ownDir(id: string): string {
+    return this.#host.ownDir(id)
+  }
+
+  /**
+   * Tell every running plugin that the conversation is over.
+   *
+   * **Broadcast, and to whoever happens to be running.** Nothing is spawned to hear it — a
+   * plugin that is not up is not holding anything, so waking one to say *let go* would be the
+   * opposite of the point. Nobody is asked to react and nothing waits for an answer; a plugin
+   * that throws or is mid-shutdown does not hold up a new conversation.
+   *
+   * Core names no plugin here. It says the thing that happened and lets whoever cares decide
+   * what that means for them.
+   */
+  async ended(): Promise<void> {
+    await Promise.allSettled(
+      [...this.#entries.values()]
+        .filter((entry) => entry.process !== undefined)
+        .map((entry) => entry.process!.notify(CONVERSATION_ENDED, {})),
+    )
   }
 
   /**

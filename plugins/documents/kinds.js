@@ -106,6 +106,13 @@ export const READABLE =
  * The refusal is written for the person who has to act on it, and it deliberately does not
  * apologise. *Nothing installed here reads a scan* is a limit; *could not extract text* is a
  * failure, and only one of the two is true.
+ *
+ * A picture also comes back with **`picture`**, naming the format, and the two are not
+ * redundant. The refusal is what a person is told when nothing here can read a picture; the
+ * field is how `index.js` finds out there is something to offer `image.ocr` before falling
+ * back to saying it. Neither this file nor the reader beside it ever makes that call — they
+ * stay pure and stay testable without a wire, and the refusal they wrote is what a machine
+ * with no OCR plugin still gets, word for word.
  */
 export function kindOf(name, bytes) {
   const extension = extname(String(name)).slice(1).toLowerCase()
@@ -119,7 +126,7 @@ export function kindOf(name, bytes) {
     if (inside !== undefined && inside !== 'zip') return { kind: inside }
     return { refusal: 'that is a zip archive. Unpack it and attach what is inside — this reads documents, not archives.' }
   }
-  if (magic !== undefined && PICTURES.has(magic)) return { refusal: picture(magic) }
+  if (magic !== undefined && PICTURES.has(magic)) return { picture: magic, refusal: picture(magic) }
   if (magic === 'exe' || magic === 'ps') {
     return { refusal: `that is ${OTHER[magic] ?? 'not a document'}, and there are no words in it to read.` }
   }
@@ -127,7 +134,7 @@ export function kindOf(name, bytes) {
   const known = BY_EXTENSION[extension]
   if (known !== undefined) return { kind: known }
   if (magic === 'pdf') return { kind: 'pdf' }
-  if (PICTURES.has(extension)) return { refusal: picture(extension) }
+  if (PICTURES.has(extension)) return { picture: extension, refusal: picture(extension) }
   if (OTHER[extension] !== undefined) {
     return {
       refusal:

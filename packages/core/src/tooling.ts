@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+import { PREVIEW_META, type Stage, STAGES_META } from '@alexia/protocol'
 import type { CallToolResult } from '@modelcontextprotocol/client'
-import type { Tooling, ToolOutcome } from './agent.js'
+import { statSync } from 'node:fs'
+import { basename } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import type { Produced, Tooling, ToolOutcome } from './agent.js'
+import { mimeOf } from './offered.js'
 import type { Annotations } from './permissions.js'
 import type { Plugins } from './plugins.js'
 import type { ToolSpec } from './provider.js'
@@ -27,6 +32,38 @@ import { SKILL_TOOL, type Skills } from './skills.js'
 /** The provider-side limit on a function name, and the reason a long one is dropped. */
 const NAME_LIMIT = 64
 const SEPARATOR = '__'
+
+/** How many steps of a pipeline are worth drawing. Past this it is a texture, not a diagram. */
+const STAGES_MAX = 64
+
+/** A label long enough to be a paragraph is not a label. */
+const LABEL_MAX = 80
+
+/**
+ * The stages a plugin sent, or nothing at all.
+ *
+ * Everything here becomes elements in the shell, so each field is checked rather than
+ * trusted: an unrecognised `state` would otherwise land in a class name, and `label` is text
+ * somebody else wrote. **Anything malformed drops the whole strip** rather than drawing part
+ * of one — a pipeline with a step missing is a wrong picture, where no pipeline at all is
+ * just the bar, which is what every plugin already gets.
+ */
+export function stagesOf(said: unknown): Stage[] | undefined {
+  if (!Array.isArray(said) || said.length === 0) return undefined
+  const out: Stage[] = []
+  for (const one of said.slice(0, STAGES_MAX)) {
+    if (typeof one !== 'object' || one === null) return undefined
+    const { label, state, progress, total } = one as Record<string, unknown>
+    if (state !== 'waiting' && state !== 'running' && state !== 'done' && state !== 'failed') return undefined
+    out.push({
+      state,
+      ...(typeof label === 'string' && { label: label.slice(0, LABEL_MAX) }),
+      ...(typeof progress === 'number' && Number.isFinite(progress) && { progress }),
+      ...(typeof total === 'number' && Number.isFinite(total) && { total }),
+    })
+  }
+  return out
+}
 
 interface Known {
   pluginId: string
@@ -130,16 +167,28 @@ export class PluginTooling implements Tooling {
     try {
       // `onprogress` is what puts a `progressToken` on the request, so a plugin that reports
       // has somewhere for it to go — and a plugin that does not simply never sends one.
-      return read(
+      return outcomeOf(
         await process.callTool(found.tool, args, {
           ...(signal && { signal }),
           ...(onProgress && {
-            onprogress: (update) =>
+            onprogress: (update) => {
+              // Extension keys an older core ignores, the same shape `alexia/tools` and
+              // `alexia/files` already use. A plugin that sends nothing here is unaffected.
+              const meta = (update as { _meta?: Record<string, unknown> })._meta
+              // A preview that is not a `data:` URL is dropped rather than passed on: this is
+              // the one field a plugin fills that ends up in an `img`, so it does not get to
+              // name a path or a host.
+              const shown = meta?.[PREVIEW_META]
+              const preview = typeof shown === 'string' && shown.startsWith('data:image/') ? shown : undefined
+              const stages = stagesOf(meta?.[STAGES_META])
               onProgress({
                 progress: update.progress,
                 ...(update.total !== undefined && { total: update.total }),
                 ...(update.message !== undefined && { message: update.message }),
-              }),
+                ...(preview !== undefined && { preview }),
+                ...(stages !== undefined && { stages }),
+              })
+            },
           }),
         }),
       )
@@ -188,19 +237,72 @@ export class PluginTooling implements Tooling {
 }
 
 /**
+ * One `resource_link` block, as a file on this machine — or nothing, if it does not name one.
+ *
+ * **Only `file:` URIs, and only ones that are there.** A `resource_link` may point at
+ * anything with a URI, and core's answer to *the tool handed back an https:// address* is
+ * that it is a link and the text already says so. What this is for is the narrower case that
+ * had no answer at all: a plugin made a file, on this disk, and wants the person to have it.
+ *
+ * The existence check is here rather than at registration because **this function writes the
+ * sentence the model reads**, and the model's sentence and the row on screen have to agree
+ * about whether there is a file. A tool that names a file it did not manage to write says so
+ * in the text, and no row appears offering to open it.
+ */
+function produced(block: Record<string, unknown>): Produced | undefined {
+  const uri = String(block.uri ?? '')
+  if (!uri.startsWith('file:')) return undefined
+  try {
+    const path = fileURLToPath(uri)
+    const found = statSync(path)
+    if (!found.isFile()) return undefined
+    const name = String(block.name ?? '') || basename(path)
+    return {
+      name,
+      path,
+      bytes: found.size,
+      // The block's own type when it gave one; otherwise read it off the name. A plugin that
+      // omits `mimeType` on a `.png` should still get a picture shown in place, not a row
+      // that only offers to open it — and `sendPhoto` on the Telegram side reads the same.
+      mime: String(block.mimeType ?? '') || mimeOf(name),
+    }
+  } catch {
+    // A malformed URI, or a file the tool named and did not write. Either way there is
+    // nothing to hand anybody, and the caller says so instead of offering it.
+    return undefined
+  }
+}
+
+/**
  * An MCP result as the model reads it. Text blocks are the whole of what a model can use
  * here; anything else is named rather than dropped silently, because *the tool returned an
  * image* is something to plan around and an empty string is not.
+ *
+ * A `resource_link` is named **and** kept. The model gets `[file: report.pdf]`, which is all
+ * it can act on — `Message.content` is a string and the bytes were never going to fit in it
+ * — and the file itself goes up to the shell, which can do rather more with it than say its
+ * name.
  */
-function read(result: CallToolResult): ToolOutcome {
-  const parts = (result.content ?? []).map((block) =>
-    block.type === 'text' ? block.text : `[${block.type}]`,
-  )
+export function outcomeOf(result: CallToolResult): ToolOutcome {
+  const files: Produced[] = []
+  const parts = (result.content ?? []).map((block) => {
+    if (block.type === 'text') return block.text as string
+    if (block.type === 'resource_link') {
+      const one = produced(block)
+      if (one !== undefined) {
+        files.push(one)
+        return `[file: ${one.name}]`
+      }
+      return `[file: ${String(block.name ?? block.uri ?? 'unnamed')} — not written]`
+    }
+    return `[${block.type}]`
+  })
   const text = parts.join('\n').trim()
   return {
     ok: result.isError !== true,
     // A tool that succeeded and said nothing did happen, and the model needs to be told
     // that rather than handed a blank it will read as a failure.
     text: text || (result.isError === true ? 'The tool failed and said nothing.' : 'Done.'),
+    ...(files.length > 0 && { files }),
   }
 }

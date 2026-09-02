@@ -166,3 +166,42 @@ export function pdf(lines, { objects: extra = [] } = {}) {
   out += `trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\nstartxref\n0\n%%EOF\n`
   return Buffer.from(out, 'latin1')
 }
+
+/**
+ * A PDF that is a **picture of a page** — no text layer, one image drawn to fill the sheet.
+ *
+ * This is the shape a scanner writes, and it is built here rather than committed for the
+ * cases where what matters is the *wrapper*: a page whose image is fax-compressed, a page
+ * whose image is too small to be the page, a page with no image on it at all. Each of those
+ * is one line to express here and would be an unexplainable binary in the repo.
+ *
+ * What proves the reader against a real producer is `scanned-page.pdf`, which a browser
+ * actually printed, and it is committed for exactly the reason this comment gives elsewhere:
+ * a reader tested only against fixtures written by the same hand agrees with itself.
+ */
+export function scan(images) {
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /XObject << ${images
+      // Object six onwards: the five before it are the catalog, the page tree, the page,
+      // its empty content stream and the font `pdf()` also writes.
+      .map((_one, at) => `/Im${String(at)} ${String(at + 6)} 0 R`)
+      .join(' ')} >> >> /Contents 4 0 R >>`,
+    '<< /Length 0 >>\nstream\n\nendstream',
+    // The font object `pdf()` puts here, kept so the object numbering matches its shape.
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+    ...images.map(({ width, height, filter, stream, gray = false }) => {
+      const bytes = Buffer.isBuffer(stream) ? stream : Buffer.from(stream, 'latin1')
+      return (
+        `<< /Type /XObject /Subtype /Image /Width ${String(width)} /Height ${String(height)} ` +
+        `/ColorSpace ${gray ? '/DeviceGray' : '/DeviceRGB'} /BitsPerComponent 8 ` +
+        `/Filter ${filter} /Length ${String(bytes.length)} >>\nstream\n${bytes.toString('latin1')}\nendstream`
+      )
+    }),
+  ]
+  let out = '%PDF-1.4\n'
+  for (const [at, body] of objects.entries()) out += `${String(at + 1)} 0 obj\n${body}\nendobj\n`
+  out += `trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\nstartxref\n0\n%%EOF\n`
+  return Buffer.from(out, 'latin1')
+}

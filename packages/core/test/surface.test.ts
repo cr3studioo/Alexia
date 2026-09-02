@@ -565,3 +565,39 @@ test('/new is the same button, typed — and it says the window has to repaint',
   expect(String(again.note)).toContain('already in a new chat')
   expect(again.moved).toBeUndefined()
 })
+
+test('a plugin may show pictures from its own folder and from nowhere else', async () => {
+  // The whole of the `image` widget's safety is this route's boundary. `/api/file` serves what a
+  // *tool result* offered, from a list core wrote down; a widget's rows are paths the **plugin**
+  // chooses, so a route that served whatever it named would be a general file reader that any
+  // plugin could aim anywhere and have the shell fetch with its own token.
+  const own = join(root, 'plugins', 'shipper')
+  mkdirSync(own, { recursive: true })
+  writeFileSync(join(own, 'made.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47]))
+
+  const get = async (query: string): Promise<Response> =>
+    await fetch(new URL(`/api/plugin-file?${query}`, alexia.url), { headers: { 'x-alexia-token': alexia.token } })
+
+  // Its own file: served.
+  const mine = await get(`plugin=shipper&path=${encodeURIComponent(join(own, 'made.png'))}`)
+  expect(mine.status).toBe(200)
+  expect(Buffer.from(await mine.arrayBuffer())).toEqual(Buffer.from([0x89, 0x50, 0x4e, 0x47]))
+
+  // Something outside it: refused, and said so rather than 404ing as though it did not exist —
+  // *you may not* and *there is nothing there* are different facts and a plugin author debugging
+  // a widget needs the first one.
+  const secret = join(root, 'not-yours.txt')
+  writeFileSync(secret, 'private')
+  expect((await get(`plugin=shipper&path=${encodeURIComponent(secret)}`)).status).toBe(403)
+
+  // **The one that a string prefix test would have let through.** A path that reads as inside
+  // and resolves outside is the whole reason both sides go through `realpath` first.
+  const climbing = join(own, '..', '..', 'not-yours.txt')
+  expect((await get(`plugin=shipper&path=${encodeURIComponent(climbing)}`)).status).toBe(403)
+
+  // A plugin that is not installed cannot be borrowed as a name to read through.
+  expect((await get(`plugin=nobody&path=${encodeURIComponent(join(own, 'made.png'))}`)).status).toBe(404)
+
+  // And a file that has gone since the plugin listed it is a fact about the file, not an error.
+  expect((await get(`plugin=shipper&path=${encodeURIComponent(join(own, 'never.png'))}`)).status).toBe(404)
+})

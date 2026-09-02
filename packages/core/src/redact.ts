@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import type { Message } from './store.js'
+import { textOf, withText, type Message } from './store.js'
 
 /**
  * What may leave this machine for a third-party model.
@@ -176,17 +176,39 @@ function apply(rules: [string, RegExp][], text: string): { text: string; kinds: 
 export function redact(messages: Message[]): { messages: Message[]; kinds: Kinds } {
   const kinds: Kinds = []
   const out = messages.map((message) => {
-    const body = redactText(message.content)
+    const body = redactText(textOf(message))
     kinds.push(...body.kinds)
     const calls = message.calls?.map((call) => {
       const args = redactText(call.arguments)
       kinds.push(...args.kinds)
       return { ...call, arguments: args.text }
     })
-    return { ...message, content: body.text, ...(calls && { calls }) }
+    // `withText` rather than `content: body.text`, and it is not a tidy-up. Writing the
+    // string straight back would **delete the picture** out of a turn that carried one, and
+    // it would do it silently, on the one code path nobody is allowed to get wrong.
+    return { ...withText(message, body.text), ...(calls && { calls }) }
   })
   return { messages: out, kinds }
 }
+
+/**
+ * **What this does not do, said out loud: it cannot read a picture.**
+ *
+ * Every rule in this file is a regex over text, and a payslip photographed rather than
+ * typed goes past all of them — the address, the account number and the salary are pixels.
+ * That is a real widening of §5.4's finding and it is stated here rather than discovered:
+ * the policy above is the owner's and is unchanged, and what changed is that a message can
+ * now carry something the policy has no way to inspect.
+ *
+ * It is not fixable *here*. Reading the text in a picture in order to redact it would mean
+ * OCR inside core's egress path, on every image, before every send — a model-sized cost on
+ * the one path that must never be slow, and a second recogniser that can disagree with the
+ * one a plugin provides. What makes it acceptable is that **a picture is never sent by
+ * accident**: it arrives because somebody attached it, it is shown in the turn that carries
+ * it, and the router refuses outright rather than quietly downgrading when nothing available
+ * can see it. The person choosing to send it can see exactly what they are sending, which is
+ * more than was true of the extracted text before `showRead` existed.
+ */
 
 /** `secret×2, street×1` — what went, never the values. The line a person is shown. */
 export function summarise(kinds: Kinds): string {

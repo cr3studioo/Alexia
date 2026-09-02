@@ -128,6 +128,41 @@ test('a turn is kept even when the answer is a refusal', async () => {
   expect(state.spent).toBe(0)
 })
 
+test('staying on this version is an answer that survives a restart (D121)', async () => {
+  // The About page's switch governs *looking*, and looking happens at startup — so a
+  // preference that did not outlive the window would be a control that appears to work and
+  // does nothing, which is the worst shape a setting can take.
+  const dir = mkdtempSync(join(tmpdir(), 'alexia-updates-'))
+  mkdirSync(join(dir, 'cache'), { recursive: true })
+  noPolling(dir)
+  const secrets = memorySecrets()
+
+  const first = await serve({ dataDir: dir, uiDir: ui, secrets })
+  const ask = async (server: { url: string; token: string }) =>
+    (
+      (await (
+        await fetch(new URL('/api/state', server.url), { headers: { 'x-alexia-token': server.token } })
+      ).json()) as { setup: { updates: boolean }; app: string }
+    )
+
+  // Looking is the default: an assistant that quietly stops updating runs last month's bugs.
+  expect((await ask(first)).setup.updates).toBe(true)
+  // And the version is on this endpoint, so the About page can answer with the network down.
+  expect((await ask(first)).app).toMatch(/^\d+\.\d+\.\d+/)
+
+  await fetch(new URL('/api/setup', first.url), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-alexia-token': first.token },
+    body: JSON.stringify({ updates: false }),
+  })
+  expect((await ask(first)).setup.updates).toBe(false)
+  await first.close()
+
+  const again = await serve({ dataDir: dir, uiDir: ui, secrets })
+  expect((await ask(again)).setup.updates).toBe(false)
+  await again.close()
+})
+
 test('first run asks three things and then never asks again', async () => {
   const fresh = mkdtempSync(join(tmpdir(), 'alexia-first-'))
   mkdirSync(join(fresh, 'cache'), { recursive: true })
@@ -147,8 +182,17 @@ test('first run asks three things and then never asks again', async () => {
   // Theme is not one of the three and is never asked at first run — it arrives already
   // answered, and `system` is the answer, which is the behaviour there was before there was a
   // control. It is on this endpoint because it is the same kind of value: a fact about this
-  // install that the settings screen can change and change back.
-  expect(before.setup).toEqual({ done: false, name: 'Alexia', mode: 'combined', theme: 'system', glass: 60 })
+  // install that the settings screen can change and change back. `updates` joined it for the
+  // same reason (D121), and its default is *look*: an assistant that quietly stops updating
+  // is one running last month's bugs on purpose.
+  expect(before.setup).toEqual({
+    done: false,
+    name: 'Alexia',
+    mode: 'combined',
+    theme: 'system',
+    glass: 60,
+    updates: true,
+  })
   /**
    * What the mode picker is honest about. Two things changed here and both are the point.
    *
@@ -178,7 +222,7 @@ test('first run asks three things and then never asks again', async () => {
   })
 
   const after = await read()
-  expect(after.setup).toEqual({ done: true, name: 'Ada', mode: 'local', theme: 'system', glass: 60 })
+  expect(after.setup).toEqual({ done: true, name: 'Ada', mode: 'local', theme: 'system', glass: 60, updates: true })
   // The key went to the keychain and nowhere near the database.
   expect(await secrets.get(CORE, keyOf(PROVIDERS[0]!))).toBe('sk-users-own')
   // And the screen can say so without being able to read it back — which is what stops the
@@ -208,7 +252,7 @@ test('first run asks three things and then never asks again', async () => {
   })
 
   const edited = await read()
-  expect(edited.setup).toEqual({ done: true, name: 'Grace', mode: 'local', theme: 'system', glass: 60 })
+  expect(edited.setup).toEqual({ done: true, name: 'Grace', mode: 'local', theme: 'system', glass: 60, updates: true })
   expect(await secrets.get(CORE, keyOf(PROVIDERS[0]!))).toBe('sk-the-second-one')
 
   // A sentence in the key box is refused here rather than at the provider. This exact string

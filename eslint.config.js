@@ -46,6 +46,13 @@ export default tseslint.config(
         // is how a file goes into one. Both have been Node globals since 18.
         FormData: 'readonly',
         Blob: 'readonly',
+        // A graph is read from disk once and run many times, so a run that turned its knobs
+        // in place would carry into the next one. A Node global since 17.
+        structuredClone: 'readonly',
+        // ComfyUI's per-step progress is websocket-only, and Node has had one built in since 22.
+        WebSocket: 'readonly',
+        // Counting the bytes of a seven-gigabyte download as they go past, without buffering it.
+        TransformStream: 'readonly',
       },
     },
   },

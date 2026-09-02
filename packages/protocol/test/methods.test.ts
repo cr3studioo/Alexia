@@ -6,7 +6,9 @@ import {
   ALEXIA_METHODS,
   ErrorCode,
   PERMISSIONS,
+  PREVIEW_META,
   PROVIDES_META,
+  STAGES_META,
   TOOLS_META,
   isAlexiaMethod,
   KV_MAX_BYTES,
@@ -32,8 +34,9 @@ describe('the specs and the code say the same thing', () => {
       .map((m) => m[0])
       .filter((n) => !n.endsWith('/'))
     expect(named.length).toBeGreaterThan(8) // the scanner is actually reading the specs
-    // Three of them are not methods: one notification core sends down, and two `_meta` keys.
-    const known = [SETTINGS_CHANGED, PROVIDES_META, TOOLS_META] as string[]
+    // Some are not methods: one notification core sends down, and the `_meta` keys — the two
+    // extension flags on a request, and the two a plugin puts on a progress notification.
+    const known = [SETTINGS_CHANGED, PROVIDES_META, TOOLS_META, PREVIEW_META, STAGES_META] as string[]
     const unknown = [...new Set(named)].filter((n) => !isAlexiaMethod(n) && !known.includes(n))
     expect(unknown, 'documented but not implemented').toEqual([])
   })

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { z } from 'zod'
+import { APP_VERSION, newer } from './version.js'
 
 /**
  * `plugin.json` v1 — the file core reads **before the plugin process exists**.
@@ -40,9 +41,13 @@ import { z } from 'zod'
  * seven first-party plugins declare 2, use nothing from 3, and dropping them to make a point
  * about deprecation would be breaking working software to keep a number tidy. Raising `MIN`
  * is what deprecating a revision looks like, and there is nothing here worth deprecating.
+ *
+ * **5 on 2026-09-01.** `image` — a widget for pictures a plugin has made. Additive, and the
+ * floor stays at 2 for the same reason it did last time: nothing below is worth deprecating,
+ * and the plugins declaring 2 still work.
  */
 export const ALEXIA_PROTOCOL_MIN = 2
-export const ALEXIA_PROTOCOL_MAX = 4
+export const ALEXIA_PROTOCOL_MAX = 6
 
 /**
  * The two MCP revisions core speaks, in preference order (D55, corrected by D57).
@@ -258,6 +263,123 @@ const setting = z.discriminatedUnion('type', [
     /** A filter box, applied in the page over the node labels. */
     filter: z.boolean().optional(),
   }),
+
+  z.object({
+    /**
+     * The fourteenth widget: **things a plugin holds, drawn the way core draws plugins**
+     * (`alexia_protocol` 6).
+     *
+     * §8.1 of the engine plan asked for the plugins page applied one level down: a grid of
+     * cards, the ones you have first, then a labelled row, then the rest dimmed rather than
+     * hidden (D118, D120). The line that makes it legal was already written at `settings.ts:16`
+     * — *nothing here names a plugin: every card is whatever is in the folder* — and this
+     * generalises it to *whatever the plugin declares*. Core learns that a plugin can contain
+     * things; it never learns the word *workflow*.
+     *
+     * **Granted after a `table` was tried and was the wrong shape.** Forty rows of a
+     * spreadsheet are forty things nobody can judge; the plugins page answers the same question
+     * with a name, a sentence and a state, and people already read it. That is a difference in
+     * what the reader can do rather than in decoration, which is the bar `ui-schema.md` sets.
+     *
+     * A row is `id`, `name`, `summary`, and optionally `meta`, `state` and `group` — fixed by
+     * the contract the way `graph`'s is, because a card offers no choices about layout that a
+     * reader would notice and every knob here is one more thing an author can get wrong.
+     */
+    type: z.literal('cards'),
+    key: z.string().regex(IDENT),
+    label: z.string().min(1),
+    hint: z.string().optional(),
+    /**
+     * The tool that answers with the cards, called with no arguments when the panel opens.
+     *
+     * `structuredContent: { rows: [...] }`, as `table` and `image` answer. `state` is the
+     * plugin's own word and is drawn as the pill; `group` puts a labelled row across the grid
+     * before the first card carrying it, in the order the rows arrive — grouping is not
+     * sorting, and the plugin decides what comes first.
+     */
+    rows: z.string().min(1),
+    /** A tool called with `{ id }`, whose text opens under the card that was pressed. */
+    detail: z.string().min(1).optional(),
+    /** A filter box, applied over each card's name and summary. */
+    filter: z.boolean().optional(),
+    /**
+     * The `state` that means *not here yet*, drawn dimmed rather than hidden (D120).
+     *
+     * Dimmed and labelled, never absent: the first person to delete something and want it back
+     * could not find where things come from, which is the one journey that starts on a page
+     * like this and cannot be finished anywhere else.
+     */
+    dim: z.string().min(1).optional(),
+    rowActions: z
+      .array(
+        z
+          .object({
+            key: z.string().regex(IDENT),
+            label: z.string().min(1),
+            /** Called with `{ id }` — the card's own. */
+            tool: z.string().min(1),
+            confirm: z.string().min(1).max(160).optional(),
+            /**
+             * Only on cards whose `state` is this.
+             *
+             * *Install* belongs on the ones that are not here and *Remove* on the ones that
+             * are; without it both sit on every card, which is how somebody presses Remove on
+             * something they never installed.
+             */
+            when: z.string().min(1).optional(),
+          })
+          .strict(),
+      )
+      .optional(),
+  }),
+
+  z.object({
+    /**
+     * `image` — the thirteenth, and the second that paints pixels.
+     *
+     * **The twelve could describe a picture and could not show one.** `file` was refused twice
+     * (D89) and the refusal still stands: that was about a plugin asking somebody to *choose* a
+     * file, which a browser cannot express, and this is the opposite direction — a plugin that
+     * has made something and has nowhere to put it.
+     *
+     * **Granted the way `graph` was: on what the alternatives cost.** The other two answers were
+     * the shell drawing a picture for one named plugin, which is this project's founding
+     * complaint arriving by the back door, and a sandboxed iframe, which hands a plugin the
+     * pixels and the palette and the focus ring with them. A widget core draws for anybody who
+     * declares one is again the only answer that leaves the shell naming nobody.
+     *
+     * **And it arrives with three users rather than one**, which D115 was uneasy about: a
+     * gallery of what a generator has made, the thumbnail on an item in a plugin's own library,
+     * and a preview of something being worked on while it is still being worked on.
+     *
+     * Barer than `table` for the same reason `graph` is. A plugin says what the pictures are
+     * and what each one is called. **How big, how they sit, what fills the gap while one loads,
+     * what a screen reader says, and what any of it does in the dark are core's**, because they
+     * are the decisions that make a page look like one page.
+     */
+    type: z.literal('image'),
+    key: z.string().regex(IDENT),
+    label: z.string().min(1),
+    hint: z.string().optional(),
+    /**
+     * The tool that answers with the pictures, called with no arguments when the panel opens.
+     *
+     * It answers `structuredContent: { rows: [...] }` the way a `table`'s does. A row carries a
+     * string `id`, a `src` — an absolute path to a file, or a `data:` URL for something held in
+     * memory — and an optional `caption` and `alt`. A row whose `src` cannot be read draws as a
+     * gap with its caption, rather than as a broken picture or as nothing at all.
+     */
+    rows: z.string().min(1),
+    /** A tool called with `{ id }`, whose text opens beside the picture when one is clicked. */
+    detail: z.string().min(1).optional(),
+    /**
+     * One picture rather than a grid.
+     *
+     * The difference between *here is everything you have made* and *here is the one thing
+     * happening now*, which are different screens and should not be one widget pretending.
+     */
+    single: z.boolean().optional(),
+  }),
 ])
 
 export const ManifestShape = z
@@ -284,6 +406,24 @@ export const ManifestShape = z
     alexia_protocol: z.int().positive(),
     /** MCP's. Pinned by the plugin, negotiated at `server/discover`. */
     mcp_protocol: z.string().regex(MCP_REVISION, 'an MCP revision date, e.g. 2026-07-28'),
+
+    /**
+     * The Alexia builds this plugin runs on (D118).
+     *
+     * **The field that a shelf needs and `alexia_protocol` cannot supply.** The integer above
+     * describes the *shape* of the contract; these describe the *build*. A plugin that calls
+     * a capability which arrived in 0.2.0 speaks protocol 2 perfectly well and still does
+     * nothing useful on 0.1.9, and before plugins were distributed on their own schedule that
+     * gap did not exist — everything shipped inside one installer, so the app you had was the
+     * app every plugin was built against.
+     *
+     * Both are optional and absent means *any*, which is the right answer for almost every
+     * plugin: a range is a promise, and narrowing one that did not need narrowing takes a
+     * working plugin off somebody's shelf. `max_app` in particular is for a plugin that is
+     * known broken above some version, not for one nobody has got round to testing.
+     */
+    min_app: z.string().regex(SEMVER, 'semantic version, e.g. 0.2.0').optional(),
+    max_app: z.string().regex(SEMVER, 'semantic version, e.g. 0.2.0').optional(),
 
     requires: z
       .array(
@@ -410,11 +550,17 @@ export const Manifest = ManifestShape.superRefine((m, ctx) => {
   // heard of one: an older Alexia would refuse the manifest as unparseable rather than saying
   // which of the two of you is out of date, which is the whole job of this integer.
   m.panel?.widgets.forEach((w, i) => {
+    if (w.type === 'image' && m.alexia_protocol < 5) {
+      fail(['panel', 'widgets', i], 'image arrived in alexia_protocol 5 — declare "alexia_protocol": 5 to use it')
+    }
     if (w.type === 'graph' && m.alexia_protocol < 4) {
       fail(['panel', 'widgets', i], 'graph arrived in alexia_protocol 4 — declare "alexia_protocol": 4 to use it')
     }
   })
   m.settings?.forEach((w, i) => {
+    if (w.type === 'image' && m.alexia_protocol < 5) {
+      fail(['settings', i], 'image arrived in alexia_protocol 5 — declare "alexia_protocol": 5 to use it')
+    }
     if (w.type === 'graph' && m.alexia_protocol < 4) {
       fail(['settings', i], 'graph arrived in alexia_protocol 4 — declare "alexia_protocol": 4 to use it')
     }
@@ -479,10 +625,33 @@ export const Manifest = ManifestShape.superRefine((m, ctx) => {
 
 export type Manifest = z.infer<typeof Manifest>
 
-/** Whether core will load this manifest's declared contract versions, and why not. */
-export function versionVerdict(m: Pick<Manifest, 'name' | 'alexia_protocol' | 'mcp_protocol'>):
-  | { ok: true }
-  | { ok: false; reason: string } {
+/**
+ * Whether core will load this manifest's declared contract versions, and why not.
+ *
+ * Both halves of compatibility, in one place on purpose: the shelf asks this before
+ * offering a download and the loader asks it before spawning a process, and two functions
+ * would be two chances for the sentence a user reads to differ from the reason they were
+ * refused. `app` is a seam for the tests — everything real passes {@link APP_VERSION}.
+ */
+export function versionVerdict(
+  m: Pick<Manifest, 'name' | 'alexia_protocol' | 'mcp_protocol'> & { min_app?: string; max_app?: string },
+  app: string = APP_VERSION,
+): { ok: true } | { ok: false; reason: string } {
+  // The declared build range first, because it is the one an author writes deliberately —
+  // and its refusal names a version number, which is more use than a protocol integer to
+  // somebody deciding whether to update.
+  if (m.min_app !== undefined && newer(m.min_app, app)) {
+    return {
+      ok: false,
+      reason: `${m.name} needs Alexia ${m.min_app} or later, and this is ${app}.\nUpdate Alexia, or install an earlier version of ${m.name}.`,
+    }
+  }
+  if (m.max_app !== undefined && newer(app, m.max_app)) {
+    return {
+      ok: false,
+      reason: `${m.name} says it runs on Alexia ${m.max_app} and earlier, and this is ${app}.\nCheck whether ${m.name} has an update.`,
+    }
+  }
   if (m.alexia_protocol > ALEXIA_PROTOCOL_MAX) {
     return {
       ok: false,

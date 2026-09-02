@@ -184,6 +184,7 @@
             <nav id="settings-tabs" class="tabs" aria-label="Settings">
               <button id="settings-tab-general" class="tab on" type="button" aria-current="page">General</button>
               <button id="settings-tab-plugins" class="tab" type="button" aria-current="false">Plugins</button>
+              <button id="settings-tab-about" class="tab" type="button" aria-current="false">About</button>
             </nav>
 
             <div id="general">
@@ -310,18 +311,52 @@
                   placeholder="Filter plugins"
                   aria-label="Filter plugins"
                 />
+                <!-- Everything, installed or not, in one grid (D120). What is not installed
+                     is dimmed and says so, because *what can it do* and *what could it do* are
+                     one question asked about one kind of thing — and a disclosure below the
+                     grid, which is where these used to live, is a good hiding place for the
+                     one thing somebody who has just deleted a plugin came here to undo. -->
                 <div id="bento" class="bento"></div>
-                <!-- Not installed, and therefore not shown until somebody asks. `details` is
-                     the disclosure the platform already has; a second one written here would
-                     be keyboard behaviour re-implemented for no reason. -->
-                <details id="available-box" hidden>
-                  <summary>Plugins you have not installed</summary>
-                  <div id="available" class="bento"></div>
-                </details>
                 <div id="problems"></div>
                 <div id="library"></div>
               </div>
               <div id="plugin-detail" hidden></div>
+            </div>
+
+            <!-- About (D121). What this is, who made it, and the one decision a person has to
+                 be able to take back: whether Alexia looks for a newer version of itself. The
+                 update controls live here rather than on General because they are about the
+                 program, not about the assistant — and because *which version am I running*
+                 had no answer anywhere on screen until this page existed. -->
+            <div id="about-page" hidden>
+              <div class="group">
+                <h3 class="step-heading">Alexia <span id="about-version">—</span></h3>
+                <p class="hint">
+                  Made by cr3studioo. AGPL-3.0 for the app, Apache-2.0 for the plugin SDK — so
+                  anyone can write a plugin without legal advice, and nobody can close the app
+                  itself back up.
+                </p>
+                <p class="hint">
+                  <a href="https://github.com/cr3studioo/Alexia" target="_blank" rel="noreferrer">The source</a>
+                  ·
+                  <a href="https://github.com/cr3studioo/Alexia/releases" target="_blank" rel="noreferrer">Every release</a>
+                </p>
+              </div>
+
+              <div class="group">
+                <h3 class="step-heading">Updates</h3>
+                <p class="hint" id="about-update-said">Checking…</p>
+                <div class="row">
+                  <button id="check-updates" class="quiet-button" type="button">Check now</button>
+                  <button id="take-update" class="begin" type="button" hidden>Update now</button>
+                </div>
+                <label class="switch" id="auto-updates-row">
+                  <input id="auto-updates" type="checkbox" checked />
+                  <span class="track"></span>
+                  <span>Look for a newer version when Alexia starts</span>
+                </label>
+                <p class="hint" id="auto-updates-hint"></p>
+              </div>
             </div>
           </div>
         </section>
@@ -378,6 +413,16 @@
           <span id="spend" class="money-value">$0.00</span>
         </p>
       </div>
+    </div>
+
+    <!-- A newer Alexia exists (D119). One line and one button: the download happens in the
+         background and the installer replaces this program in place, so the only thing asked
+         of anybody is whether now is a good moment. Never shown in a browser, where there is
+         nothing to replace. -->
+    <div id="update-bar" class="update-bar" hidden>
+      <span id="update-said"></span>
+      <button id="update-now" type="button">Update now</button>
+      <a id="update-manual" href="https://github.com/cr3studioo/Alexia/releases/latest" target="_blank" rel="noreferrer" hidden>Download it manually</a>
     </div>
 
     <!-- First run: steps 2, 3 and 4a. No account, no tour, no permission questions — the
@@ -439,6 +484,19 @@
           <p class="hint" id="wall-hint"></p>
           <div id="wall" class="wall"></div>
           <p class="hint" id="training"></p>
+        </div>
+
+        <!-- What it can do (D118). Nothing ships inside the installer any more, so this is
+             the step where an assistant that can do nothing becomes one that can do
+             something — a list read off the shelf at startup, filtered to what this build can
+             actually run, with each plugin's own `requires` sentences under it. Checking a box
+             here is the yes: what it will ask for is on screen at the moment of asking, which
+             is the only place that question means anything. -->
+        <div class="group" id="choose" hidden>
+          <h2 class="step-heading">What should it be able to do?</h2>
+          <p class="hint" id="choose-hint"></p>
+          <div id="shelf" class="cards"></div>
+          <p class="hint" id="choose-said"></p>
         </div>
 
         <!-- Step 5 lives here rather than as a screen of its own: Alexia is a tray-resident

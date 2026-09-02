@@ -217,9 +217,43 @@ function where(clause: Where | undefined): Clause {
  * are the agent's step trace: the loop (M15) writes them, and core stores them so a reload
  * shows the same steps the user watched happen.
  */
+/**
+ * A picture, on its way to a model that can see one.
+ *
+ * **`data:` rather than a path or a URL**, and the reason is what the other two would mean.
+ * A path is a file the provider cannot open. A URL is a file somebody else's server fetches,
+ * which is a second copy of the user's picture on a host nobody chose. Base64 in the body is
+ * the shape every OpenAI-compatible endpoint takes and the only one where the bytes go
+ * exactly where the rest of the message goes.
+ *
+ * It is a *turn*, not an attachment: once it is in the history it is re-sent with the history,
+ * the same way every other message is. That is what `trim.ts` has to be careful about — a
+ * picture is orders of magnitude larger than the sentence beside it, and a conversation that
+ * carries three of them forever is one that stops fitting in anything.
+ */
+export interface Part {
+  type: 'text' | 'image'
+  /** `text` parts. */
+  text?: string
+  /** `image` parts: a full `data:` URL, media type and all. */
+  url?: string
+}
+
 export interface Message {
   role: 'system' | 'user' | 'assistant' | 'tool'
-  content: string
+  /**
+   * What was said — **a string, or the parts a turn is made of** when one of them is not text.
+   *
+   * A string is not a legacy shape and is not going away: it is what every turn that is only
+   * words has always been, it is what is already in everybody's database, and re-writing all
+   * of that to `[{type:'text'}]` would be a migration that buys nothing. `textOf()` reads
+   * either; nothing else in core should be reaching past it.
+   *
+   * The array exists because there was nowhere to put a picture. Until this, core could not
+   * send an image to *any* model — not a weak one, not a strong one, not a local one the
+   * catalog already labelled as taking images.
+   */
+  content: string | Part[]
   /** Assistant: what this turn asked to run. */
   calls?: { id: string; name: string; arguments: string }[]
   /** Tool: which of those calls this is the answer to. */
@@ -233,6 +267,44 @@ export interface Session {
   title: string | null
   createdAt: number
   updatedAt: number
+}
+
+/**
+ * The words in a message, whichever shape it is in.
+ *
+ * **Everything in core that used to read `message.content` reads this instead**, and that is
+ * the whole migration strategy: one function, thirty call sites, rather than thirty places
+ * each deciding for themselves what a message with a picture in it means. A place that
+ * genuinely needs the picture asks for {@link imagesIn} on purpose — which makes reaching for
+ * an image a deliberate act and forgetting about one impossible.
+ */
+export const textOf = (message: { content: string | Part[] }): string =>
+  typeof message.content === 'string' ? message.content : (
+    message.content
+      .filter((part) => part.type === 'text')
+      .map((part) => part.text ?? '')
+      .join('\n')
+  )
+
+/** The pictures in a message, if it has any. Asked for by name, never stumbled into. */
+export const imagesIn = (message: { content: string | Part[] }): Part[] =>
+  typeof message.content === 'string' ? [] : message.content.filter((part) => part.type === 'image')
+
+/** Whether a conversation is carrying anything a text-only model cannot be sent. */
+export const carries = (messages: readonly { readonly content: string | Part[] }[]): string[] =>
+  messages.some((message) => imagesIn(message).length > 0) ? ['image'] : []
+
+/**
+ * The same message with its text replaced and its pictures kept.
+ *
+ * `redact.ts` and `trim.ts` both rewrite what was said and neither of them has any business
+ * dropping an attachment while doing it — which is exactly what `{ ...m, content: newText }`
+ * would silently do to a turn that carried one.
+ */
+export function withText<T extends { content: string | Part[] }>(message: T, text: string): T {
+  if (typeof message.content === 'string') return { ...message, content: text }
+  const pictures = imagesIn(message)
+  return { ...message, content: [{ type: 'text' as const, text }, ...pictures] }
 }
 
 export interface SelectQuery {

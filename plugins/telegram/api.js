@@ -9,11 +9,12 @@
  * read in one sitting is worth more here than a framework's reconnect semantics. The day
  * this wants inline keyboards or file uploads, grammY is the sanctioned replacement.
  *
- * **M7-5 wanted both of those and it is still not grammY**, which is worth writing down
- * rather than quietly not doing: a keyboard is one extra field on `sendMessage`, a press is
- * one extra `allowed_updates` entry, and an upload is a `FormData`. Six calls rather than
- * two. The sanction stands and the day it is taken will be a day this file is doing
- * something a framework is better at than sixty lines of `fetch`, which it is not yet.
+ * **M7-5 wanted a keyboard and D122 wanted an upload, and it is still not grammY**, which is
+ * worth writing down rather than quietly not doing: a keyboard is one extra field on
+ * `sendMessage`, a press is one extra `allowed_updates` entry, and an upload is a `FormData`.
+ * Eight calls rather than two. The sanction stands and the day it is taken will be a day this
+ * file is doing something a framework is better at than eighty lines of `fetch`, which it is
+ * not yet.
  */
 
 const BASE = 'https://api.telegram.org/bot'
@@ -121,6 +122,33 @@ export async function sendVoice(token, chatId, ogg, signal) {
   }
   return answer.result
 }
+
+/**
+ * A file a task made, sent on (D122).
+ *
+ * Two methods, one shape: `sendPhoto` gets the inline preview a picture wants and refuses
+ * anything that is not a raster image under 10 MB; `sendDocument` takes anything at all and
+ * shows it as an attachment. The caller picks by mime type, and a photo that Telegram
+ * rejects falls back to a document rather than not arriving.
+ */
+async function upload(token, method, field, chatId, bytes, name, caption, signal) {
+  const form = new FormData()
+  form.set('chat_id', String(chatId))
+  form.set(field, new Blob([bytes]), name || 'file')
+  if (caption) form.set('caption', String(caption).slice(0, 1024))
+  const response = await fetch(`${BASE}${token}/${method}`, { method: 'POST', body: form, ...(signal && { signal }) })
+  const answer = await response.json().catch(() => ({}))
+  if (!response.ok || answer.ok !== true) {
+    throw new TelegramError(response.status, answer.description ?? `Telegram answered ${response.status}`)
+  }
+  return answer.result
+}
+
+export const sendPhoto = (token, chatId, bytes, name, caption, signal) =>
+  upload(token, 'sendPhoto', 'photo', chatId, bytes, name, caption, signal)
+
+export const sendDocument = (token, chatId, bytes, name, caption, signal) =>
+  upload(token, 'sendDocument', 'document', chatId, bytes, name, caption, signal)
 
 /** Telegram's own cap. A longer answer is split rather than refused by the API mid-sentence. */
 export const LIMIT = 4096

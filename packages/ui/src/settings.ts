@@ -23,6 +23,7 @@
  * No Node in here, ever (invariant 6).
  */
 
+import { inApp, installUpdate, updateAvailable, type Update } from './desktop.js'
 import { el, widget, type Rendered, type WidgetHost } from './widgets.js'
 
 export type { Rendered } from './widgets.js'
@@ -82,6 +83,10 @@ interface LibraryState {
   revoked?: { id: string; revoked_reason: string }[]
   /** Installed here, with a newer version out and loadable by this Alexia (M5-4). */
   updates?: { id: string; from: string; to: string }[]
+  /** What this build is, so the sentence about a newer one can say what it is newer than. */
+  app?: string
+  /** How much of the shelf is out of reach until Alexia itself is updated (D118). */
+  needsNewerApp?: { plugins: number; updates: number }
 }
 
 /** A skill's index entry (M2-2). There is nothing to configure — it is a folder of text. */
@@ -94,22 +99,24 @@ interface Skill {
   pluginId?: string
 }
 
-/** Which of the two pages is on screen. The card page is a state of the second, not a third. */
-type Page = 'general' | 'plugins'
+/** Which page is on screen. A plugin's own page is a state of `plugins`, not a fourth. */
+type Page = 'general' | 'plugins' | 'about'
 
 export function mountSettings(token: string): {
   open: (page?: Page, filter?: string) => void
+  /** Fed from `/api/state`, because the version and the update preference are core's answer. */
+  about: (state: { app?: string; updates?: boolean }) => void
 } {
   const view = document.querySelector<HTMLElement>('#settings')!
   const general = document.querySelector<HTMLElement>('#general')!
   const pluginsPage = document.querySelector<HTMLElement>('#plugins-page')!
+  const aboutPage = document.querySelector<HTMLElement>('#about-page')!
   const tabGeneral = document.querySelector<HTMLButtonElement>('#settings-tab-general')!
   const tabPlugins = document.querySelector<HTMLButtonElement>('#settings-tab-plugins')!
+  const tabAbout = document.querySelector<HTMLButtonElement>('#settings-tab-about')!
   const grids = document.querySelector<HTMLElement>('#plugin-grids')!
   const sheet = document.querySelector<HTMLElement>('#plugin-detail')!
   const installed = document.querySelector<HTMLElement>('#bento')!
-  const offeredBox = document.querySelector<HTMLDetailsElement>('#available-box')!
-  const offered = document.querySelector<HTMLElement>('#available')!
   const search = document.querySelector<HTMLInputElement>('#plugin-filter')!
   const broken = document.querySelector<HTMLElement>('#problems')!
   const known = document.querySelector<HTMLElement>('#skills')!
@@ -182,9 +189,11 @@ export function mountSettings(token: string): {
   function pick(page: Page): void {
     general.hidden = page !== 'general'
     pluginsPage.hidden = page !== 'plugins'
+    aboutPage.hidden = page !== 'about'
     for (const [tab, on] of [
       [tabGeneral, page === 'general'],
       [tabPlugins, page === 'plugins'],
+      [tabAbout, page === 'about'],
     ] as const) {
       tab.classList.toggle('on', on)
       tab.setAttribute('aria-current', on ? 'page' : 'false')
@@ -193,6 +202,7 @@ export function mountSettings(token: string): {
   }
 
   tabGeneral.addEventListener('click', () => pick('general'))
+  tabAbout.addEventListener('click', () => pick('about'))
   tabPlugins.addEventListener('click', () => pick('plugins'))
 
   /** Filtering is a redraw of what is already read — there is nothing here to fetch again. */
@@ -264,6 +274,18 @@ export function mountSettings(token: string): {
     }
 
     const shown = panes.filter((pane) => matches(pane.name, pane.summary))
+    /**
+     * What is not here, in the same grid as what is (D120).
+     *
+     * It used to be a collapsed `details` under the grid, on the argument that this screen is
+     * where somebody comes to change something they *have*, and a page opening on forty things
+     * they do not is a shop. The argument was sound and the placement was still wrong: the
+     * first person to delete a plugin and want it back could not find where plugins come from,
+     * which is the one journey that starts on this screen and cannot be completed anywhere
+     * else. Dimmed and labelled costs nothing at eleven plugins, and if the shelf ever is
+     * forty, the filter box above is already how somebody finds one.
+     */
+    const available = listings.filter((entry) => !entry.installed && matches(entry.name, entry.summary))
     installed.replaceChildren(
       ...shown.map((pane) =>
         card({ ...pane, installed: true }, [toggle(pane)], () => {
@@ -271,16 +293,18 @@ export function mountSettings(token: string): {
           draw()
         }),
       ),
+      // A row of its own across the grid, so the dimming is explained rather than left to be
+      // inferred — a card that is merely paler is a card somebody thinks is broken.
+      ...(available.length > 0 ?
+        [el('p', 'bento-label', available.length === 1 ? 'Not installed — one plugin you can add' : `Not installed — ${String(available.length)} plugins you can add`)]
+      : []),
+      ...available.map(offer),
     )
-    if (panes.length === 0) {
-      installed.append(
-        el('p', 'hint', 'Nothing is installed yet. Open the list below, or point at a folder.'),
-      )
-    } else if (shown.length === 0) {
-      installed.append(el('p', 'hint', `Nothing installed matches “${search.value.trim()}”.`))
+    if (panes.length === 0 && available.length === 0) {
+      installed.append(el('p', 'hint', 'Nothing is installed yet, and the shelf could not be read. A folder on disk still works.'))
+    } else if (shown.length === 0 && available.length === 0) {
+      installed.append(el('p', 'hint', `Nothing matches “${search.value.trim()}”.`))
     }
-
-    drawOffered()
 
     // A folder that is not a plugin is shown, never swallowed. Somebody put it there on
     // purpose and the reason it did not load is the only useful thing anyone can tell them.
@@ -290,19 +314,6 @@ export function mountSettings(token: string): {
   }
 
   // ---- what is not here yet ----------------------------------------------------------------
-
-  /**
-   * The registry's cards, behind a disclosure because **only what is installed is shown by
-   * default**: this screen is where somebody comes to change something they have, and a grid
-   * that opened on forty things they do not is a shop rather than a settings page.
-   */
-  function drawOffered(): void {
-    const shown = listings.filter((entry) => !entry.installed && matches(entry.name, entry.summary))
-    offeredBox.hidden = shown.length === 0
-    offeredBox.querySelector('summary')!.textContent =
-      shown.length === 1 ? 'One plugin you have not installed' : `${String(shown.length)} plugins you have not installed`
-    offered.replaceChildren(...shown.map(offer))
-  }
 
   /**
    * A card for something that is not here yet.
@@ -320,6 +331,7 @@ export function mountSettings(token: string): {
       // A question whose answer is below the fold is a question nobody answers.
       asked.scrollIntoView({ block: 'nearest' })
     })
+    box.classList.add('dim')
     return box
   }
 
@@ -446,9 +458,21 @@ export function mountSettings(token: string): {
   /** The last library read, for the two sentences a card says about a signature. */
   let library: LibraryState | undefined
 
+  /**
+   * What to call the shelf on screen.
+   *
+   * `github:cr3studioo/Alexia` is how the source is stored and not a thing to put in front of
+   * anybody: the two sentences it appears in are both about something having gone wrong or
+   * being empty, which is exactly when a person wants somewhere they can go and look.
+   */
+  const named = (source: string): string =>
+    source.startsWith('github:') ? `github.com/${source.slice('github:'.length)}` : source
+
   function drawLibrary(read: LibraryState): void {
     library = read
     listings = read.plugins ?? []
+    // The grid holds the shelf now, so a library read is a redraw of it (D120).
+    draw()
     shelf.replaceChildren()
 
     // Withdrawn, and on this machine. Loudest thing on the screen, above everything else,
@@ -497,14 +521,42 @@ export function mountSettings(token: string): {
       shelf.append(box)
     }
 
-    // A registry that is down is not an empty registry, and must not look like one.
-    if (!read.ok) shelf.append(el('p', 'hint', read.why ?? `Could not reach ${read.registry}.`))
+    /**
+     * What this build cannot be offered (D118).
+     *
+     * A count and a reason, never a list of names. Naming plugins somebody cannot install is
+     * a shop window for a shop that is shut — and the number is the part that is actionable,
+     * because it is what turns *update Alexia* from housekeeping into something that gets
+     * them a thing they want. It sits above the shelf for the same reason the update rows do:
+     * it is about the state this machine is in, not about anything on offer.
+     */
+    const behind = read.needsNewerApp
+    if (behind && behind.plugins + behind.updates > 0) {
+      const count = (n: number, one: string, many: string): string =>
+        n === 1 ? `one ${one}` : `${String(n)} ${many}`
+      const parts = [
+        behind.plugins > 0 ? count(behind.plugins, 'plugin', 'plugins') : '',
+        behind.updates > 0 ? count(behind.updates, 'plugin update', 'plugin updates') : '',
+      ].filter(Boolean)
+      const box = el('section', 'pane')
+      box.append(
+        el('b', undefined, `${parts.join(' and ')} need a newer Alexia`),
+        el(
+          'p',
+          'hint',
+          `This is Alexia ${read.app ?? ''}. They are not shown below, because installing one would put a plugin here that cannot load. Alexia offers its own update when there is one.`,
+        ),
+      )
+      shelf.append(box)
+    }
+
+    // A shelf that is down is not an empty shelf, and must not look like one.
+    if (!read.ok) shelf.append(el('p', 'hint', read.why ?? `Could not reach ${named(read.registry)}.`))
     else if (listings.every((entry) => entry.installed)) {
-      shelf.append(el('p', 'hint', `Nothing new at ${read.registry}.`))
+      shelf.append(el('p', 'hint', `Everything on ${named(read.registry)} is installed.`))
     }
 
     shelf.append(adding(), addingServer())
-    drawOffered()
     drawOfferedSkills(read)
   }
 
@@ -793,7 +845,106 @@ export function mountSettings(token: string): {
     return wrapper
   }
 
+  // ---- About (D121) -----------------------------------------------------------------------
+
+  /**
+   * What this is, who made it, and the one decision about updating that is a person's to take.
+   *
+   * **The page exists because "which version am I running" had no answer on screen.** It was
+   * in the binary, in the release notes and in an error message about plugins needing a newer
+   * Alexia, and nowhere a person would look — so the first line of this page is the number,
+   * read from `/api/state` rather than from the shelf, because the network being down is
+   * exactly when somebody asks.
+   *
+   * **Three separate things, said as three things.** *Check now* asks GitHub this second, for
+   * somebody who has heard there is a release and does not want to restart to find out.
+   * *Update now* appears only when there is one. The switch governs **looking**, not
+   * installing — nothing here has ever installed itself without a press, and the sentence
+   * under the switch says which of the two it is turning off, because "auto-update" is a
+   * phrase people reasonably read as *it will change under me*.
+   */
+  function mountAbout(): { show: (state: { app?: string; updates?: boolean }) => void } {
+    const version = document.querySelector<HTMLElement>('#about-version')!
+    const said = document.querySelector<HTMLElement>('#about-update-said')!
+    const check = document.querySelector<HTMLButtonElement>('#check-updates')!
+    const take = document.querySelector<HTMLButtonElement>('#take-update')!
+    const auto = document.querySelector<HTMLInputElement>('#auto-updates')!
+    const autoRow = document.querySelector<HTMLElement>('#auto-updates-row')!
+    const autoHint = document.querySelector<HTMLElement>('#auto-updates-hint')!
+    let found: Update | undefined
+
+    /** The whole update block is about a program replacing itself, which a browser tab cannot. */
+    const desktop = inApp()
+
+    const offer = (update: Update | undefined, checked: boolean): void => {
+      found = update
+      take.hidden = update === undefined
+      said.className = 'hint'
+      said.textContent =
+        update ? `Alexia ${update.version} is available. You have ${update.currentVersion}.`
+        : checked ? 'This is the newest version.'
+        : ''
+    }
+
+    check.addEventListener('click', () => {
+      check.disabled = true
+      said.className = 'hint'
+      said.textContent = 'Asking GitHub…'
+      void updateAvailable()
+        .then((update) => offer(update, true))
+        .finally(() => (check.disabled = false))
+    })
+
+    take.addEventListener('click', () => {
+      if (!found) return
+      take.disabled = true
+      void installUpdate(found.rid, (done, total) => {
+        said.textContent =
+          total !== undefined && total > 0 ?
+            `Downloading… ${String(Math.round((done / total) * 100))}%`
+          : `Downloading… ${String(Math.round(done / 1e6))} MB`
+      })
+        // No success branch: the installer replaces this program and the window goes with it.
+        .catch((error: unknown) => {
+          said.className = 'error'
+          said.textContent = `The update did not go through: ${error instanceof Error ? error.message : String(error)}. The releases page above has the installer.`
+          take.disabled = false
+        })
+    })
+
+    auto.addEventListener('change', () => {
+      autoHint.textContent = wording(auto.checked)
+      void send('/api/setup', { updates: auto.checked })
+    })
+
+    const wording = (on: boolean): string =>
+      on ?
+        'Alexia asks GitHub once, at startup, and shows a strip if there is something newer. It never installs anything on its own — that is always this button, or the one in the strip.'
+      : 'Alexia will not look on its own. You stay on this version until you press Check now.'
+
+    return {
+      show: (state) => {
+        version.textContent = state.app ?? '—'
+        auto.checked = state.updates !== false
+        autoHint.textContent = wording(auto.checked)
+        if (!desktop) {
+          // In a browser there is no program to replace, and a dead button is worse than none.
+          check.hidden = true
+          take.hidden = true
+          autoRow.hidden = true
+          autoHint.textContent = ''
+          said.textContent = 'Alexia updates itself in the desktop app. This is a browser tab, so there is nothing here to replace.'
+          return
+        }
+        offer(undefined, false)
+      },
+    }
+  }
+
+  const about = mountAbout()
+
   return {
+    about: about.show,
     open: (page?: Page, filter?: string) => {
       view.scrollTop = 0
       // The palette found a plugin and this is the page it lives on; typing its name into

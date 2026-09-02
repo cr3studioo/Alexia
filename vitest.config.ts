@@ -14,6 +14,7 @@ const needPlugins = [
   'packages/core/test/documents.test.ts',
   'packages/core/test/lifecycle.test.ts',
   'packages/core/test/noticing.test.ts',
+  'packages/core/test/ocr.test.ts',
   'packages/core/test/panels.test.ts',
   'packages/core/test/plugin-panels.test.ts',
   'packages/core/test/plugins.test.ts',
@@ -35,6 +36,22 @@ const needPlugins = [
 ]
 const withoutPlugins = existsSync(join(import.meta.dirname, 'plugins')) ? [] : needPlugins
 
+/**
+ * Long enough for what this suite actually does.
+ *
+ * Vitest's default is five seconds, which is a limit for pure functions. Half of this suite
+ * spawns real plugin processes over real pipes, runs sqlite migrations, and starts HTTP
+ * servers — and it runs eighty-eight files at once. Under that load a spawn that takes one
+ * second alone takes six, and the failure is a timeout on a test that is not slow and not
+ * broken. It cost a release: CI went red on *a database from the previous schema is carried
+ * forward* while the same file passed in 1.6 seconds on its own.
+ *
+ * The suite already knew: the tests that were written after somebody hit this pass `30_000`
+ * by hand. This makes that the default rather than a thing each author has to remember, and
+ * it hides nothing — a test that genuinely hangs still fails, thirty seconds later.
+ */
+const testTimeout = 30_000
+
 // Two projects, because `pnpm check` runs them as separate gates: a red unit test is a
 // bug, a red invariant is the thesis breaking. `pnpm vitest run --project invariants -t <name>`
 // runs one check alone — see docs/spec/invariants.md.
@@ -44,6 +61,7 @@ export default defineConfig({
       {
         test: {
           name: 'unit',
+          testTimeout,
           // The first-party plugins are JavaScript, and they hold real logic — a download,
           // a child process, a parser over another program's output. Their tests step aside
           // with `plugins/` when the core-alone job moves it, which is the right way round.
@@ -60,6 +78,7 @@ export default defineConfig({
       {
         test: {
           name: 'invariants',
+          testTimeout,
           include: ['packages/core/test/invariants/**/*.test.ts'],
           exclude: withoutPlugins,
         },

@@ -11,12 +11,12 @@
  * bill.
  */
 
-import { autostart, dismiss, HOTKEY, inApp, setAutostart, tray } from './desktop.js'
+import { autostart, dismiss, HOTKEY, inApp, installUpdate, setAutostart, tray, updateAvailable } from './desktop.js'
 import { mountControl } from './control.js'
 import { mountPalette } from './palette.js'
 import { mountSettings } from './settings.js'
 import { mountGlass, mountTheme, type Theme } from './theme.js'
-import { mountLive } from './live.js'
+import { mountLive, type Stage } from './live.js'
 import { mountRail } from './rail.js'
 import { el } from './widgets.js'
 
@@ -77,7 +77,9 @@ interface Permissions {
 }
 
 interface State {
-  setup: { done: boolean; name: string; mode: string; theme: Theme; glass: number }
+  setup: { done: boolean; name: string; mode: string; theme: Theme; glass: number; updates?: boolean }
+  /** What this build is, for the About page — sent with every state read (D121). */
+  app?: string
   permissions: Permissions
   messages: Turn[]
   spent: number
@@ -244,6 +246,140 @@ function showRead(turn: HTMLElement, attached: { name: string; text?: string; re
 }
 
 /**
+ * **A file a tool made, under the answer that made it, with something to press.**
+ *
+ * The mirror of `showRead` above, and the gap it closes was already costing something before
+ * this existed: the picture plugin finished generating an image and returned its *path*, in
+ * prose. Correct, and nothing a person could do anything with — the file was on their own
+ * disk and the only way to reach it was to read the sentence, select the path out of it, and
+ * go and find it in a file manager.
+ *
+ * **Four things, because people want different ones.** Open it now; save a copy somewhere
+ * they choose; find it where it already is; or take the path, which is what you want when
+ * the next thing you are doing is typing it into something else.
+ *
+ * Nothing here is given a path to send back. Every button carries the id core handed over,
+ * which is the whole reason the routes behind them cannot be pointed at somebody's keys.
+ */
+function showFiles(
+  turn: HTMLElement,
+  files: { id: string; name: string; bytes: number; mime: string; path: string; openable: boolean }[],
+): void {
+  for (const one of files) {
+    const row = document.createElement('div')
+    row.className = 'made'
+
+    const line = document.createElement('div')
+    line.className = 'made-line'
+    const name = document.createElement('span')
+    name.className = 'made-name'
+    name.textContent = one.name
+    const size = document.createElement('small')
+    size.textContent = size3(one.bytes)
+    line.append(name, size)
+
+    const buttons = document.createElement('div')
+    buttons.className = 'made-buttons'
+
+    /** One press, one sentence back if it did not work. */
+    const act = (label: string, run: () => Promise<void>): HTMLButtonElement => {
+      const button = document.createElement('button')
+      button.type = 'button'
+      button.className = 'quiet-button'
+      button.textContent = label
+      button.addEventListener('click', () => {
+        button.disabled = true
+        void run()
+          .catch((error: unknown) => say(String(error instanceof Error ? error.message : error)))
+          .finally(() => (button.disabled = false))
+      })
+      return button
+    }
+
+    const post = async (action: 'open' | 'reveal'): Promise<void> => {
+      const answered = (await (
+        await fetch('/api/file', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'x-alexia-token': token },
+          // `confirm` is the contract on the wire (`guard.ts`), and this button's own label
+          // is the confirmation — the person pressed *Open*, which is the whole question.
+          body: JSON.stringify({ id: one.id, action, confirm: true }),
+        })
+      ).json()) as { ok: boolean; said?: string }
+      if (!answered.ok) say(answered.said ?? 'That did not work.')
+    }
+
+    /**
+     * Saved through a blob rather than a link straight at the route.
+     *
+     * The route wants the session token in a header and a browser sends no headers when it
+     * follows a download link — so the alternative is the token in the URL, where it would
+     * land in history. Fetching it here costs one copy in memory and keeps it out.
+     */
+    const save = async (): Promise<void> => {
+      const answered = await fetch(`/api/file?id=${encodeURIComponent(one.id)}`, {
+        headers: { 'x-alexia-token': token },
+      })
+      if (!answered.ok) {
+        const why = (await answered.json()) as { said?: string }
+        say(why.said ?? `${one.name} could not be saved.`)
+        return
+      }
+      const href = URL.createObjectURL(await answered.blob())
+      const link = document.createElement('a')
+      link.href = href
+      link.download = one.name
+      link.click()
+      URL.revokeObjectURL(href)
+    }
+
+    if (one.openable) buttons.append(act('Open', () => post('open')))
+    buttons.append(
+      act('Save', save),
+      act('Show in folder', () => post('reveal')),
+      act('Copy path', async () => {
+        try {
+          await navigator.clipboard.writeText(one.path)
+          say(`Copied ${one.path}`)
+        } catch {
+          // A browser that will not give the page the clipboard. Showing the path is the
+          // next best thing, because it can at least be selected out of the line.
+          say(one.path)
+        }
+      }),
+    )
+
+    row.append(line, buttons)
+
+    // A picture is worth showing rather than naming. Same fetch as Save, so an image that
+    // has since been deleted simply does not appear rather than drawing a broken frame.
+    if (one.mime.startsWith('image/')) {
+      void fetch(`/api/file?id=${encodeURIComponent(one.id)}`, { headers: { 'x-alexia-token': token } })
+        .then(async (answered) => (answered.ok ? answered.blob() : undefined))
+        .then((blob) => {
+          if (!blob) return
+          const picture = document.createElement('img')
+          picture.className = 'made-preview'
+          picture.src = URL.createObjectURL(blob)
+          picture.alt = one.name
+          row.prepend(picture)
+        })
+        .catch(() => {
+          // Nothing to say. The row and its buttons are already there and all of them work.
+        })
+    }
+
+    turn.append(row)
+  }
+}
+
+/** Bytes, as a person would say them. */
+const size3 = (bytes: number): string =>
+  bytes < 1024 ? `${String(bytes)} B`
+  : bytes < 1024 * 1024 ? `${String(Math.round(bytes / 1024))} KB`
+  : `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+
+/**
  * The bytes, base64, in a JSON body — which is what `plan.md` settled long before there was
  * anything to upload: `node:http` has no multipart parser and adding one for this would buy
  * core a parser it otherwise never needs.
@@ -251,7 +387,73 @@ function showRead(turn: HTMLElement, attached: { name: string; text?: string; re
  * Chunked, because `btoa(String.fromCharCode(...bytes))` on a twenty-megabyte file is a
  * stack overflow rather than a string.
  */
-async function base64(file: File): Promise<string> {
+/**
+ * The long side a vision model actually looks at. Anything past this is tiled away by the
+ * model itself, so sending it is paying upload time for pixels nobody reads.
+ */
+const MOST_PIXELS = 1568
+
+/** Under this, and already small enough, a picture goes exactly as it is. */
+const LEAVE_ALONE = 1024 * 1024
+
+/**
+ * **A picture, made small enough to be worth sending.**
+ *
+ * Measured on a real attachment rather than guessed at: a 1672×941 illustration saved as PNG
+ * was **3.62 MB**, and the same image at JPEG quality 85 is **394 KB** — nine times smaller,
+ * for a picture the model was going to tile down anyway. That difference is most of the wait
+ * between pressing send and getting an answer, and all of it is spent uploading detail no
+ * model ever sees. It is re-sent with every later turn too, because history goes whole.
+ *
+ * ponytail: `createImageBitmap` and `OffscreenCanvas`, both of which every browser this runs
+ * in already has. No image library, nothing to bundle, and the work happens on the machine
+ * that already has the bytes in memory.
+ *
+ * **Three things it deliberately will not do.** It never touches anything that is not an
+ * image. It leaves a small picture exactly as it is — a crisp screenshot somebody wants text
+ * read out of stays pixel-for-pixel, because that is the case where lossy re-encoding costs
+ * something real. And it keeps the original whenever the re-encode comes out bigger, which
+ * happens with flat-coloured graphics that PNG is genuinely good at.
+ */
+async function smaller(file: File): Promise<{ blob: Blob; type: string; was?: number }> {
+  if (!file.type.startsWith('image/')) return { blob: file, type: file.type }
+  let bitmap: ImageBitmap
+  try {
+    bitmap = await createImageBitmap(file)
+  } catch {
+    // A format the browser cannot decode. It may still be one the model can read, so it goes
+    // as it is rather than being refused by the one part of this that was only an optimisation.
+    return { blob: file, type: file.type }
+  }
+  const longest = Math.max(bitmap.width, bitmap.height)
+  if (file.size <= LEAVE_ALONE && longest <= MOST_PIXELS) {
+    bitmap.close()
+    return { blob: file, type: file.type }
+  }
+
+  const scale = Math.min(1, MOST_PIXELS / longest)
+  const width = Math.round(bitmap.width * scale)
+  const height = Math.round(bitmap.height * scale)
+  const canvas = new OffscreenCanvas(width, height)
+  const context = canvas.getContext('2d')
+  if (!context) {
+    bitmap.close()
+    return { blob: file, type: file.type }
+  }
+  // JPEG has no transparency. Without this, every transparent pixel of a PNG arrives black,
+  // which on a logo or a diagram is the whole picture ruined rather than a bit of quality.
+  context.fillStyle = '#ffffff'
+  context.fillRect(0, 0, width, height)
+  context.drawImage(bitmap, 0, 0, width, height)
+  bitmap.close()
+
+  const jpeg = await canvas.convertToBlob({ type: 'image/jpeg', quality: 0.85 })
+  return jpeg.size < file.size ?
+      { blob: jpeg, type: 'image/jpeg', was: file.size }
+    : { blob: file, type: file.type }
+}
+
+async function base64(file: Blob): Promise<string> {
   const bytes = new Uint8Array(await file.arrayBuffer())
   let binary = ''
   for (let at = 0; at < bytes.length; at += 0x8000) {
@@ -395,15 +597,25 @@ function firstRun(state: State): void {
     void autostart().then((on) => (startsUp.checked = on ?? true))
   }
 
+  // What it can do, read off the shelf while the rest of first run is being answered (D118).
+  const shelf = shelfStep()
+
   begin.addEventListener('click', () => {
     // No key travels with this any more: a tile saves its own the moment it is pasted, so by
     // the time anybody reaches this button the keychain already has whatever it is getting.
-    void post('/api/setup', { name: name.value.trim() || 'Alexia', mode: chosen() }).then(() => {
-      if (inApp()) setAutostart(startsUp.checked)
-      show('chat')
-      called(name.value.trim() || 'Alexia')
-      text.focus()
-    })
+    begin.disabled = true
+    void post('/api/setup', { name: name.value.trim() || 'Alexia', mode: chosen() })
+      // The plugins picked above, installed **before the screen changes**. Handing somebody
+      // the conversation and then filling their assistant in behind it would make the first
+      // thing they typed land on an Alexia that could not yet do what they had just asked for.
+      .then(() => shelf.install())
+      .then(() => {
+        if (inApp()) setAutostart(startsUp.checked)
+        show('chat')
+        called(name.value.trim() || 'Alexia')
+        text.focus()
+      })
+      .finally(() => (begin.disabled = false))
   })
 }
 
@@ -682,10 +894,17 @@ async function load(): Promise<void> {
   known = state.commands
   for (const picker of modes) picker.value = state.setup.mode
   setupSettings(state)
+  // The About page's two facts, from the same read: the version and whether to look for a
+  // newer one. Both are core's answer rather than the page's, so the window and a tab pointed
+  // at the same core cannot disagree about them.
+  settings.about({ app: state.app, updates: state.setup.updates })
   if (!state.setup.done) firstRun(state)
   paint(state)
   showPermissions(state.permissions)
   say(state.warning)
+  // Last, and never awaited: an update offer must not be able to hold up a window. `load`
+  // runs once, at boot, which is the only moment restarting to take an update costs nothing.
+  void offerUpdate(state.setup.updates !== false)
 }
 
 /**
@@ -806,6 +1025,165 @@ function toolLine(): { saw(name: string): void } {
       log.scrollTop = log.scrollHeight
     },
   }
+}
+
+// ---- first run: what it can do (D118) -------------------------------------------------------
+
+/** One plugin on the shelf, as first run needs it. `/api/library` says more; this is the part. */
+interface Shelved {
+  id: string
+  name: string
+  summary: string
+  version: string
+  installed: boolean
+  requires: { cap: string; why: string }[]
+}
+
+/**
+ * The step that exists because nothing ships inside the installer any more (D118).
+ *
+ * Alexia arrives able to hold a conversation and do nothing else, and every capability is a
+ * download. That is the right trade — *install only what you need*, and a plugin author who
+ * does not wait for an Alexia release — but it has one cost, and it lands exactly here: a
+ * person who is never shown the shelf never finds out that the thing reads documents.
+ *
+ * So the shelf is a step of first run rather than a screen somebody might visit. What is on
+ * it is what **this build can run**: `/api/library` has already dropped anything needing a
+ * newer Alexia, so nothing here can be checked and then fail to install.
+ *
+ * **The tick is the consent.** Each row carries the author's own `requires` sentences, which
+ * is the same thing the Plugins page shows before an install and the same rule as everywhere
+ * else in this project: the question is asked where the thing being decided is. Nothing is
+ * ticked by default — an installer that pre-selects is an installer choosing for you.
+ *
+ * A shelf that cannot be reached is one grey line, and Start still works. Somebody on a
+ * captive portal gets an assistant, not a wall.
+ */
+function shelfStep(): { install: () => Promise<void> } {
+  const group = document.querySelector<HTMLElement>('#choose')!
+  const hint = document.querySelector<HTMLElement>('#choose-hint')!
+  const list = document.querySelector<HTMLElement>('#shelf')!
+  // Under the list it is about, rather than in the line under the Start button: what is being
+  // downloaded belongs beside the ticks that asked for it.
+  const said = document.querySelector<HTMLElement>('#choose-said')!
+  const boxes: HTMLInputElement[] = []
+
+  void fetch('/api/library', { headers: { 'x-alexia-token': token } })
+    .then(async (answer) => answer.json() as Promise<{ ok?: boolean; why?: string; plugins?: Shelved[] }>)
+    .then((read) => {
+      group.hidden = false
+      const shown = (read.plugins ?? []).filter((entry) => !entry.installed)
+      if (read.ok !== true || shown.length === 0) {
+        hint.textContent =
+          read.ok !== true ?
+            `${read.why ?? 'The plugin list could not be reached.'} You can install plugins later from Settings.`
+          : 'Nothing new to add right now. Settings has the full list whenever you want it.'
+        return
+      }
+      hint.textContent =
+        'Alexia can hold a conversation on its own. Everything else is a plugin, and these download when you tick them. You can add or remove any of them later.'
+      for (const entry of shown) {
+        const row = el('label', 'card')
+        const head = el('span', 'card-head')
+        const box = el('input') as HTMLInputElement
+        box.type = 'checkbox'
+        box.value = entry.id
+        boxes.push(box)
+        head.append(box, el('b', undefined, entry.name), el('em', undefined, entry.version))
+        row.append(head, el('span', undefined, entry.summary))
+        // What it will ask for, in its author's words, beside the tick that agrees to it.
+        if (entry.requires.length > 0) {
+          const asks = el('ul', 'asks')
+          for (const need of entry.requires) asks.append(el('li', undefined, need.why))
+          row.append(asks)
+        }
+        list.append(row)
+      }
+    })
+    .catch(() => {
+      group.hidden = false
+      hint.textContent = 'The plugin list could not be reached. You can install plugins later from Settings.'
+    })
+
+  return {
+    /**
+     * Install what was ticked, one at a time, saying which one is happening.
+     *
+     * Sequential rather than parallel: each of these unpacks an archive into the folder core
+     * watches, and four at once is four loaders racing on one directory for no gain a person
+     * could see. A failure is reported and the rest still go — one plugin that would not
+     * download is not a reason to hand somebody none of the four they asked for.
+     */
+    install: async (): Promise<void> => {
+      const wanted = boxes.filter((box) => box.checked).map((box) => box.value)
+      const failed: string[] = []
+      for (const [at, id] of wanted.entries()) {
+        said.textContent = `Installing ${id} (${String(at + 1)} of ${String(wanted.length)})…`
+        const done = (await post('/api/library/install', { id, enable: true }).catch(() => ({ ok: false }))) as {
+          ok?: boolean
+        }
+        if (done.ok !== true) failed.push(id)
+      }
+      said.textContent = failed.length > 0 ? `${failed.join(', ')} did not install. Settings can try again.` : ''
+    },
+  }
+}
+
+// ---- a newer Alexia (D119) -----------------------------------------------------------------
+
+/**
+ * Offer the update, and then get out of the way.
+ *
+ * **One check, at startup, and never again while the window is open.** Alexia is a daemon
+ * that stays up for weeks, so the tempting thing is an hourly poll — and the thing that
+ * would actually reach a person is a strip appearing over their conversation at four in the
+ * afternoon because a release happened. The check is at the moment somebody has just
+ * launched the program, which is the one moment restarting it costs nothing.
+ *
+ * Nothing is shown when there is no update, when the check fails, or in a browser. Failure
+ * is silent by design: nobody asked for this check, so nobody is owed a report of it going
+ * wrong — {@link updateAvailable} says why.
+ */
+async function offerUpdate(automatic: boolean): Promise<void> {
+  // Somebody who has turned this off has said they want to stay where they are, and a strip
+  // appearing anyway would be the setting doing nothing. Settings, then About, still has a
+  // *Check now* that asks this second — turning the looking off is not turning it away.
+  if (!automatic) return
+  const found = await updateAvailable()
+  if (!found) return
+
+  const bar = document.querySelector<HTMLElement>('#update-bar')!
+  const said = document.querySelector<HTMLElement>('#update-said')!
+  const now = document.querySelector<HTMLButtonElement>('#update-now')!
+  const manual = document.querySelector<HTMLAnchorElement>('#update-manual')!
+
+  said.textContent = `Alexia ${found.version} is out. This is ${found.currentVersion}.`
+  bar.hidden = false
+
+  now.addEventListener('click', () => {
+    now.disabled = true
+    said.textContent = `Downloading Alexia ${found.version}…`
+    void installUpdate(found.rid, (done, total) => {
+      // A percentage where the server said how big it is, bytes where it did not. Neither
+      // is a spinner: this replaces the program somebody is looking at, and *how far along*
+      // is the question they will actually have.
+      said.textContent =
+        total !== undefined && total > 0 ?
+          `Downloading Alexia ${found.version}… ${String(Math.round((done / total) * 100))}%`
+        : `Downloading Alexia ${found.version}… ${String(Math.round(done / 1e6))} MB`
+    })
+      // There is no success branch. `installUpdate` launches the installer and the plugin
+      // exits this process, so the window is gone before a `.then` could run — see its own
+      // comment. What lands here is a download that failed or an installer that would not
+      // start, and both leave a program that is still working and a person owed a sentence.
+      .catch((error: unknown) => {
+        said.className = 'error'
+        said.textContent = `The update did not go through: ${error instanceof Error ? error.message : String(error)}`
+        now.disabled = false
+        now.textContent = 'Try again'
+        manual.hidden = false
+      })
+  })
 }
 
 /** POST to core with the token, and give back whatever it said. */
@@ -953,42 +1331,93 @@ function offerToLearn(offer: { about?: string; outline?: string }): void {
 
 async function ask(question: string, files: File[] = []): Promise<void> {
   const said = bubble('user', question)
+  /** What each picture became on the way out, once it is known. See {@link smaller}. */
+  const shrank = new Map<string, string>()
+  let carried: HTMLElement | undefined
   // What the message carried, in the turn that carried it: the names now, and what was read
   // out of them the moment core says — folded away under this same turn.
   if (files.length > 0) {
-    const carried = document.createElement('small')
+    carried = document.createElement('small')
     carried.className = 'carried'
     carried.textContent = `📎 ${files.map((file) => file.name).join(', ')}`
     said.append(carried)
+    /**
+     * **A picture, shown in the turn that sent it.**
+     *
+     * The same argument `showRead` makes about extracted text, and it lands harder here: an
+     * image now goes to the model *as an image*, so what was sent is a thing the person can
+     * only check by looking at it. A filename is not that check — `dark.png` says nothing
+     * about what is in `dark.png`, and `redact.ts` cannot read a picture, so this is the only
+     * place the contents are ever in front of the person who sent them.
+     *
+     * Drawn from the local `File` rather than from anything core sends back. The bytes are
+     * already in this page — the user chose them a moment ago — so asking for them again
+     * would be a second copy of a photograph over a socket to save nothing.
+     */
+    for (const file of files.filter((one) => one.type.startsWith('image/'))) {
+      const shown = document.createElement('img')
+      shown.className = 'made-preview'
+      shown.alt = file.name
+      shown.src = URL.createObjectURL(file)
+      // Freed once it has been decoded. The element keeps the pixels; the blob URL is only
+      // the way in, and a page that never revokes one leaks every picture it ever showed.
+      shown.addEventListener('load', () => URL.revokeObjectURL(shown.src), { once: true })
+      said.append(shown)
+    }
   }
   const tools = toolLine()
   live.begin(document.querySelector<HTMLElement>('#chat-title')?.textContent ?? 'This conversation')
   const answer = bubble('assistant')
-  answer.textContent = files.length > 0 ? 'Reading…' : '…'
+  /**
+   * Her words go in a text node of their own, not straight onto the bubble — because a file
+   * a step made is appended to the same bubble by `showFiles`, and `answer.textContent = ''`
+   * on the first token would take the picture with it. The node stays; only its data moves.
+   */
+  const prose = document.createTextNode(files.length > 0 ? 'Reading…' : '…')
+  answer.replaceChildren(prose)
   let started = false
+
+  /**
+   * Made small enough to send, before anything is sent.
+   *
+   * Hoisted out of the request body on purpose: the user's own bubble is already on screen by
+   * now, so re-encoding a photograph does not delay the message appearing — it delays only
+   * the send, which was going to be the slow part anyway and is now a great deal less slow.
+   */
+  const uploads =
+    files.length === 0 ? []
+    : await Promise.all(
+        files.map(async (file) => {
+          const { blob, type, was } = await smaller(file)
+          // Re-encoding somebody's picture is a real change to what was sent, and a change
+          // nobody is told about is the thing this codebase refuses everywhere else.
+          if (was !== undefined) shrank.set(file.name, `${readable(was)} → ${readable(blob.size)}`)
+          return { name: file.name, type, data: await base64(blob) }
+        }),
+      )
+  if (carried && shrank.size > 0) {
+    carried.textContent = `📎 ${files
+      .map((file) => `${file.name}${shrank.has(file.name) ? ` (${shrank.get(file.name)!})` : ''}`)
+      .join(', ')}`
+  }
 
   const response = await fetch('/api/chat', {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-alexia-token': token },
-    body: JSON.stringify({
-      text: question,
-      ...(files.length > 0 && {
-        files: await Promise.all(files.map(async (file) => ({ name: file.name, data: await base64(file) }))),
-      }),
-    }),
+    body: JSON.stringify({ text: question, ...(uploads.length > 0 && { files: uploads }) }),
   })
   if (!response.body) {
-    answer.textContent = 'Alexia is not answering.'
+    prose.data = 'Alexia is not answering.'
     return
   }
 
   for await (const event of frames(response.body)) {
     if (typeof event.delta === 'string') {
       if (!started) {
-        answer.textContent = ''
+        prose.data = ''
         started = true
       }
-      answer.textContent += event.delta
+      prose.data += event.delta
       log.scrollTop = log.scrollHeight
     }
     // The one plain line before a charge, and the monthly warning, land in the same place.
@@ -1008,7 +1437,8 @@ async function ask(question: string, files: File[] = []): Promise<void> {
           ok?: boolean
           text?: string
           args?: Record<string, unknown>
-          progress?: { progress: number; total?: number; message?: string }
+          progress?: { progress: number; total?: number; message?: string; preview?: string; stages?: Stage[] }
+          files?: { id: string; name: string; bytes: number; mime: string; path: string; openable: boolean }[]
         }
       | undefined
     if (step) {
@@ -1024,6 +1454,10 @@ async function ask(question: string, files: File[] = []): Promise<void> {
         log.append(answer)
       } else {
         live.done(step.n, step.ok, step.text ?? '')
+        // A file the step made goes in the conversation rather than in the live panel: the
+        // panel is a trace of what happened and closes, and this is a thing the person now
+        // has. It lands under the answer the way an attachment lands under the question.
+        if (step.files && step.files.length > 0) showFiles(answer, step.files)
       }
     }
     if (typeof event.error === 'string') {

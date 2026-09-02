@@ -137,3 +137,58 @@ export const TOOLS_META = 'alexia/tools'
  * claim to until it can.
  */
 export const PROVIDES_META = 'alexia/provides'
+
+/**
+ * The `_meta` key core puts on a `sampling/createMessage` **result** to hand a channel
+ * plugin the files a task made.
+ *
+ * The window reads a tool's `resource_link` off the step trace and draws a row with the file
+ * on it (D119). A channel plugin — Telegram — is in another process and cannot reach the
+ * `/api/file` route that row uses, so core reads the bytes and returns them here:
+ * `[{ name, mime, data }]`, `data` base64, the same shape `voice.render` already hands back
+ * an Ogg in. A flag a plugin cannot see going wrong, like the two above: an Alexia that does
+ * not set it delivers the words alone, which is every channel before this existed.
+ */
+export const FILES_META = 'alexia/files'
+
+
+/**
+ * The `_meta` key a plugin puts on a progress notification to send **a picture of the work
+ * while it is still work**.
+ *
+ * A `data:` URL and never a path: the frame exists for a second and is replaced, so writing
+ * each one to disk to serve it back would be a file per step of every render. Under `_meta`
+ * for the same reason as the three above — an Alexia that has never heard of it draws the bar
+ * and ignores the rest, so nothing about it is a version number.
+ */
+export const PREVIEW_META = 'alexia/preview'
+
+/**
+ * The `_meta` key a plugin puts on a progress notification to send **the shape of the job**:
+ * its own steps, in the order they run, each with its own state and its own fraction.
+ *
+ * The overall bar answers *how long*. This answers *how many, and which one* — which is the
+ * question a person watching a pipeline actually has, and the one a single percentage cannot
+ * be made to answer however precise it gets.
+ */
+export const STAGES_META = 'alexia/stages'
+
+/**
+ * One step of a long job, as the plugin running it describes its own shape.
+ *
+ * **Ordered by the plugin, and never sorted anywhere else.** Core cannot know that *decode*
+ * follows *sample* — it would have to guess from names, or infer it from links it was not
+ * given — and the plugin owns the pipeline and simply states the order. Which is the division
+ * `graph` already draws: a plugin says what the things are, core decides every pixel.
+ *
+ * `label` is for a tooltip and nothing is laid out around it, because five names fit across a
+ * rail and twenty-five do not, and a strip that is unreadable at twenty-five is a strip that
+ * fails exactly where a pipeline got interesting.
+ */
+export interface Stage {
+  label?: string
+  state: 'waiting' | 'running' | 'done' | 'failed'
+  /** How far this one step has got. A `total` of zero or absent means it cannot say. */
+  progress?: number
+  total?: number
+}

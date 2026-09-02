@@ -73,3 +73,21 @@ test('a file that is not there says so in a sentence somebody can act on', async
   expect(answered.isError).toBe(true)
   expect(textOf(answered)).toMatch(/There is no file at/)
 })
+
+test('a reader that is here and switched off is a different sentence from one that is absent', async () => {
+  // The bug this is here for was found by attaching a picture to a fresh install: the reader
+  // was sitting in the list with its switch off, and the refusal said *nothing installed here
+  // reads documents, the library has one — install it*. Wrong verb, wrong screen, and on a
+  // machine whose registry was never deployed, a library with nothing in it at the end of it.
+  expect(plugins.answers(CORE_CAPABILITIES.extract)).toBe(true)
+  expect(plugins.couldAnswer(CORE_CAPABILITIES.extract)).toEqual([])
+
+  for (const id of plugins.ids) await plugins.disable(id)
+
+  // Now nothing answers — and core can still say *why* nothing does, which is the whole
+  // difference between a refusal somebody can act on and one that sends them nowhere.
+  expect(plugins.answers(CORE_CAPABILITIES.extract)).toBe(false)
+  expect(plugins.couldAnswer(CORE_CAPABILITIES.extract)).toEqual(['Documents'])
+
+  for (const id of plugins.ids) plugins.enable(id)
+})

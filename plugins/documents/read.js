@@ -31,8 +31,14 @@ import { decode, delimiterOf, fromHtml, looksBinary, rows, table, tidy } from '.
  */
 export const DEFAULT_LIMIT = 160_000
 
-/** What a document that will not fit says, in the extraction itself. */
-const cut = (text, limit) => {
+/**
+ * What a document that will not fit says, in the extraction itself.
+ *
+ * Exported because the OCR path in `index.js` reads the same document by another route and
+ * has to be cut by the same rule. Two budgets that could disagree is how a setting becomes
+ * a lie about one of the two ways in.
+ */
+export const cut = (text, limit) => {
   if (text.length <= limit) return { text, truncated: false }
   // Cut at a line, so the last thing a model reads is not half a word.
   const at = text.lastIndexOf('\n', limit)

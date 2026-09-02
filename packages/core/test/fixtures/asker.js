@@ -8,6 +8,10 @@
 // proves the flag is a wire fact rather than an SDK convenience.
 import { McpServer, fromJsonSchema } from '@modelcontextprotocol/server'
 import { StdioServerTransport } from '@modelcontextprotocol/server/stdio'
+import { mkdirSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 
 const server = new McpServer(
   { name: 'asker', version: '0.1.0' },
@@ -15,6 +19,9 @@ const server = new McpServer(
 )
 
 const text = (t) => ({ content: [{ type: 'text', text: t }] })
+
+const made = join(tmpdir(), 'alexia-asker-made')
+mkdirSync(made, { recursive: true })
 
 /** What the last question was, and what was answered. The test reads both. */
 let question = ''
@@ -32,6 +39,38 @@ server.registerTool(
       _meta: { 'alexia/tools': true },
     })
     return text(answer.content?.type === 'text' ? answer.content.text : '')
+  },
+)
+
+// A tool that writes a file and hands it back (D122). `readOnlyHint` so the gate does not
+// stop it — this is about a file reaching the channel, and `wipe` already exercises the gate.
+server.registerTool(
+  'paint',
+  { description: 'Writes a picture and hands it back.', annotations: { readOnlyHint: true, openWorldHint: false } },
+  () => {
+    const to = join(made, 'sunset.png')
+    writeFileSync(to, Buffer.from('PNGSUN'))
+    return {
+      content: [
+        { type: 'text', text: 'Painted a sunset.' },
+        { type: 'resource_link', uri: pathToFileURL(to).href, name: 'sunset.png', mimeType: 'image/png' },
+      ],
+    }
+  },
+)
+
+// `go`, but it reports what came back on the result's `_meta` — which is how a channel
+// plugin that cannot reach `/api/file` gets the bytes.
+server.registerTool(
+  'go_paint',
+  { description: 'Starts a task that makes a file, and reports what came back.', annotations: { openWorldHint: true } },
+  async () => {
+    const answer = await server.server.createMessage({
+      messages: [{ role: 'user', content: { type: 'text', text: 'paint a sunset' } }],
+      maxTokens: 200,
+      _meta: { 'alexia/tools': true },
+    })
+    return text(JSON.stringify(answer._meta?.['alexia/files'] ?? 'none'))
   },
 )
 

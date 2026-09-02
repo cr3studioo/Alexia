@@ -1,15 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { ALEXIA_PROTOCOL_MAX, ALEXIA_PROTOCOL_MIN, CORE_CAPABILITIES, TOOLS_META } from '@alexia/protocol'
+import { APP_VERSION, CORE_CAPABILITIES, FILES_META, TOOLS_META } from '@alexia/protocol'
 import { randomUUID } from 'node:crypto'
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import type { CreateMessageResult } from '@modelcontextprotocol/client'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { join } from 'node:path'
-import { run, said } from './agent.js'
+import { join, sep } from 'node:path'
+import { run, said, type Produced } from './agent.js'
 import {
   discard,
   MOST_FILES,
+  MOST_PER_FILE,
+  MOST_TOGETHER,
   noteFor,
   receive,
   withDocuments,
@@ -22,8 +24,9 @@ import { asRuling, counted, freshTally, ModelChecker, type Tally } from './check
 import { commands, pins, type Ran, run as runCommand } from './commands.js'
 import { preauthorise, record } from './consent.js'
 import { refuse, type Body } from './guard.js'
-import { Library } from './library.js'
+import { Library, offerable } from './library.js'
 import { distil, forget, learnable, outline, save, type Episode } from './learned.js'
+import { mimeOf, Offers, openable, reach } from './offered.js'
 import { installed, OLLAMA, running } from './ollama.js'
 import { usable } from './pool.js'
 import { ceilings, estimate, previewLine, setCeilings, worthAsking, type Ceilings } from './preview.js'
@@ -52,7 +55,7 @@ import { search } from './palette.js'
 import { tabs as coreTabs } from './panels.js'
 import { actions as coreActions, sources as coreSources, searchable } from './surface.js'
 import { Skills, SKILL_TOOL } from './skills.js'
-import { dataDir, Store, type Message } from './store.js'
+import { dataDir, Store, textOf, type Message, type Part } from './store.js'
 import { PluginTooling } from './tooling.js'
 import { Trace } from './trace.js'
 import { allowance, caps, setCaps, today, warning } from './usage.js'
@@ -159,6 +162,28 @@ function shell(): string {
  */
 const THEMES = ['system', 'light', 'dark']
 
+/**
+ * MCP's content blocks, as the parts a stored message is made of.
+ *
+ * The narrowing worth stating: **a string comes back when a string is all there was**, which
+ * is nearly always. Every turn that is only words is stored and sent exactly as it was before
+ * any of this existed, so the shape a provider sees is unchanged for the overwhelming
+ * majority of traffic and the array is not a tax everybody pays for a feature few use.
+ *
+ * MCP hands an image over as base64 plus its media type, in two fields; a provider wants one
+ * `data:` URL. That reassembly is the whole of what this does that a `map` would not.
+ */
+function asParts(blocks: { type: string; text?: string; data?: string; mimeType?: string }[]): string | Part[] {
+  if (blocks.every((block) => block.type === 'text')) return blocks.map((block) => block.text ?? '').join('\n')
+  return blocks.map((block) =>
+    block.type === 'image' && typeof block.data === 'string' ?
+      { type: 'image' as const, url: `data:${block.mimeType ?? 'image/png'};base64,${block.data}` }
+      // Audio, a resource, something MCP adds next year. Named rather than dropped: *the
+      // caller sent audio* is something a model can answer about, and a blank is not.
+    : { type: 'text' as const, text: block.type === 'text' ? (block.text ?? '') : `[${block.type}]` },
+  )
+}
+
 const STATIC: Record<string, [string, string]> = {
   '/': ['index.html', 'text/html; charset=utf-8'],
   '/app.css': ['app.css', 'text/css; charset=utf-8'],
@@ -236,6 +261,26 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
    * with the new plugin sitting in the *not enabled* state.
    */
   const library = new Library({ store, pluginsDir: extensions, skillsDir })
+  /**
+   * **The shelf is not read from here** (D118), and that is deliberate.
+   *
+   * Nothing ships inside the installer any more, so *what can this thing do* is a network
+   * call — and the tempting place to make it is at boot, so the Plugins screen opens on a
+   * list rather than a spinner. It is not made here because *here* is every core that ever
+   * starts: every test, every headless run, every restart of a daemon nobody is looking at,
+   * each one spending a request from an hourly quota of sixty for a screen that may not be
+   * opened. The shell asks on load, which is the moment somebody is actually there, and
+   * `Library` holds the answer for fifteen minutes so that opening the screen again is free.
+   */
+
+  /**
+   * The files tools have handed back, for as long as this core is up.
+   *
+   * Here rather than in the store on purpose — see `offered.ts`. A row that survived a
+   * restart would be a button promising a file core has not looked at since, and a download
+   * that fails is worse than one that was never offered.
+   */
+  const offers = new Offers()
 
   /**
    * Everything installed, and the aggregate of what it can do (M15-2).
@@ -276,13 +321,19 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
         ...(params.systemPrompt === undefined ? [] : [{ role: 'system' as const, content: params.systemPrompt }]),
         ...params.messages.map((turn) => ({
           role: turn.role === 'assistant' ? ('assistant' as const) : ('user' as const),
-          // MCP lets one turn carry several blocks, and several kinds. A model reached over
-          // this path is a text one, so anything else is named rather than dropped — *the
-          // caller sent an image* is something to answer, and a blank is not.
-          content: [turn.content]
-            .flat()
-            .map((block) => (block.type === 'text' ? block.text : `[${block.type}]`))
-            .join('\n'),
+          /**
+           * MCP lets one turn carry several blocks, and several kinds.
+           *
+           * This used to flatten every one of them to the literal string `[image]`, on the
+           * true-at-the-time grounds that *a model reached over this path is a text one*. It
+           * is not any more, so a plugin holding a picture — a screenshot it just took, a
+           * page it just scanned — can hand it over and have it *seen*, and the router picks
+           * a model that can see it.
+           *
+           * Anything that is neither text nor an image is still named rather than dropped:
+           * *the caller sent audio* is something a model can answer about, and a blank is not.
+           */
+          content: asParts([turn.content].flat()),
         })),
       ]
       /**
@@ -309,7 +360,8 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
        * — and a wrapped prompt that happened to begin with a slash being answered *there is
        * no /home* instead of being read would be a bug nobody would find for weeks.
        */
-      const typed = [...asked].reverse().find((turn) => turn.role === 'user')?.content.trim() ?? ''
+      const lastAsked = [...asked].reverse().find((turn) => turn.role === 'user')
+      const typed = lastAsked === undefined ? '' : textOf(lastAsked).trim()
       if (!typed.includes('\n') && /^\/[a-z][a-z0-9.-]*(?:\s|$)/i.test(typed)) return asCommand(pluginId, typed)
 
       if (params._meta?.[TOOLS_META] === true) return asTask(pluginId, asked)
@@ -328,7 +380,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
       )
       return {
         role: 'assistant',
-        content: { type: 'text', text: answer.message.content },
+        content: { type: 'text', text: textOf(answer.message) },
         model: answer.model.id,
         stopReason: 'endTurn',
       }
@@ -377,6 +429,17 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     // the border). Stored here with the theme because it is the same kind of fact and a tab
     // and the window should not disagree about it. 60 is the sheet's own default.
     glass: (store.kvGet(CORE, 'glass') as number | undefined) ?? 60,
+    /**
+     * Whether Alexia looks for a newer version of itself when it starts (D121).
+     *
+     * **On unless somebody says otherwise, and sayable in one place.** An assistant that
+     * quietly stops updating is one running last month's bugs on purpose, so the default is
+     * to look — and *a person who wants to stay where they are* is a real answer rather than
+     * a mistake, which is why it is a stored preference and not a hidden flag. It gates the
+     * *looking*, not the installing: nothing has ever installed itself here without somebody
+     * pressing a button, and the About page says so in those words.
+     */
+    updates: (store.kvGet(CORE, 'updates_auto') as boolean | undefined) ?? true,
   })
 
   /**
@@ -516,6 +579,10 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
       spending = undefined
       return (session = id)
     },
+    // Broadcast, to whoever is running and cares. Nothing is spawned to hear it and nothing
+    // waits for it — a new conversation must not be held up by a plugin letting go of a
+    // graphics card.
+    ended: () => void plugins.ended(),
   }
   const ours = coreSources(surface)
   const ourActions = coreActions(surface)
@@ -696,12 +763,14 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
 
   async function asTask(pluginId: string, messages: Message[]): Promise<CreateMessageResult> {
     if (task) throw new Error('Alexia is already working on something. Try again when it has finished.')
-    const text = [...messages].reverse().find((m) => m.role === 'user')?.content ?? ''
+    const started = [...messages].reverse().find((m) => m.role === 'user')
+    const text = started === undefined ? '' : textOf(started)
     // The same two lines `/api/chat` does before it runs anything: the turn that started
     // this is written down before the answer to it is, or the transcript reads as Alexia
-    // talking to itself.
+    // talking to itself. The *whole* turn is stored — a picture in it included — while
+    // `text` stays the words, because the gate, the trace and the ledger all read that.
     const its = conversation(pluginId)
-    if (text !== '') store.append(its, { role: 'user', content: text })
+    if (started !== undefined) store.append(its, { role: 'user', content: started.content })
     const runId = randomUUID()
     const stop = new AbortController()
     task = stop
@@ -746,10 +815,15 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
         calls: store.callsIn(runId),
       })
       const last = result.messages.at(-1)
+      const carried = carry(result.steps.flatMap((step) => step.outcome?.files ?? []))
       return {
         role: 'assistant',
         model: last?.model ?? '',
-        content: { type: 'text', text: result.why ?? last?.content ?? '' },
+        content: { type: 'text', text: result.why ?? (last === undefined ? '' : textOf(last)) },
+        // The files the task made, for a channel that cannot reach `/api/file` from its own
+        // process (D122). The window takes them off the step trace instead and needs no
+        // `_meta`. A key an older Alexia ignores, exactly like the tools flag before it.
+        ...(carried.length > 0 && { _meta: { [FILES_META]: carried } }),
       }
     } catch (error) {
       trace.end('refused', { why: said(error), calls: store.callsIn(runId) })
@@ -757,6 +831,30 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     } finally {
       task = undefined
     }
+  }
+
+  /**
+   * Read what a task's tools wrote, so a channel plugin can send it on (D122).
+   *
+   * Same ceilings as an upload and for the same reason — a base64 body is one string in
+   * memory whichever door it goes through. A file that is gone, or over the bar, is dropped:
+   * the answer's words still arrive, and it is the words that carried the meaning.
+   */
+  function carry(files: readonly Produced[]): { name: string; mime: string; data: string }[] {
+    const out: { name: string; mime: string; data: string }[] = []
+    let together = 0
+    for (const file of files.slice(0, MOST_FILES)) {
+      try {
+        const bytes = readFileSync(file.path)
+        if (bytes.length === 0 || bytes.length > MOST_PER_FILE) continue
+        if (together + bytes.length > MOST_TOGETHER) break
+        together += bytes.length
+        out.push({ name: file.name, mime: file.mime, data: bytes.toString('base64') })
+      } catch {
+        // The tool named a file that is no longer there. Not this path's problem to explain.
+      }
+    }
+    return out
   }
 
   const server = createServer((request, response) => {
@@ -839,6 +937,14 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
       response.end(
         JSON.stringify({
           setup: setup(),
+          /**
+           * What this build is (D121).
+           *
+           * Sent with every state read rather than fetched from the shelf, because the About
+           * page must be able to answer *which version am I running* with the network down —
+           * which is exactly when somebody is most likely to be asking.
+           */
+          app: APP_VERSION,
           // Everything you could type right now, and the pins those commands set. The
           // shell shows both as controls: a command is a shortcut, never the only route.
           commands: commands(manifests()),
@@ -904,6 +1010,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
         mode?: keyof typeof MODES
         theme?: string
         glass?: number
+        updates?: boolean
         provider?: { id: string; key: string }
       }
       if (chosen.name) store.kvSet(CORE, 'display_name', chosen.name)
@@ -918,6 +1025,10 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
       if (typeof chosen.glass === 'number' && Number.isFinite(chosen.glass)) {
         store.kvSet(CORE, 'glass', Math.min(100, Math.max(0, Math.round(chosen.glass))))
       }
+      // Whether to look for a newer Alexia at startup (D121). Stored beside the theme because
+      // it is the same kind of fact: an answer about this install that outlives the window it
+      // was given in.
+      if (typeof chosen.updates === 'boolean') store.kvSet(CORE, 'updates_auto', chosen.updates)
       if (chosen.provider?.key) {
         const provider = providers.find((p) => p.id === chosen.provider?.id)
         /**
@@ -1213,28 +1324,50 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
           library.skills().catch(() => []),
           library.revoked().catch(() => ({ plugins: [], skills: [] })),
         ])
+        /**
+         * What is here that has a newer version out, and what that update needs (M5-4, D118).
+         *
+         * The protocol window used to be passed in from this line; it is inside `offerable`
+         * now, with the app-version range, because *can this build run it* had grown two
+         * answers in two files and a screen has to say one sentence about it.
+         */
+        const updates = await library
+          .updates(
+            plugins.ids.flatMap((id) => {
+              const manifest = plugins.manifest(id)
+              return manifest ? [{ id, version: manifest.version }] : []
+            }),
+          )
+          .catch(() => [])
+
+        const shelf = available.map((entry) => ({ ...entry, offer: offerable(entry) }))
         response.writeHead(200, { 'content-type': 'application/json' })
         response.end(
           JSON.stringify({
             ok: true,
             registry: library.url,
+            /** What this build is. The screen says it out loud when something needs a newer one. */
+            app: APP_VERSION,
             // Whether a signature can be checked at all. `false` is shown, because an
             // unverified signature is exactly as good as none and must not look better.
             verifying: library.publisherKey !== undefined,
-            plugins: available.map((entry) => ({ ...entry, installed: installed.has(entry.id) })),
-            // What is here that has a newer version out (M5-4). The protocol window is
-            // applied inside `updates`, so nothing is offered that this Alexia could not
-            // then load — an update that bricks a working plugin is worse than no update.
-            updates: await library
-              .updates(
-                plugins.ids.flatMap((id) => {
-                  const manifest = plugins.manifest(id)
-                  return manifest ? [{ id, version: manifest.version }] : []
-                }),
-                { min: ALEXIA_PROTOCOL_MIN, max: ALEXIA_PROTOCOL_MAX },
-              )
-              .then((rows) => rows.map(({ id, from, to }) => ({ id, from, to })))
-              .catch(() => []),
+            plugins: shelf
+              .filter((entry) => entry.offer === 'ok')
+              .map((entry) => ({ ...entry, installed: installed.has(entry.id) })),
+            updates: updates
+              .filter((row) => row.offer === 'ok')
+              .map(({ id, from, to }) => ({ id, from, to })),
+            /**
+             * The count that turns a missing plugin into something a person can act on.
+             *
+             * Not a list. Naming plugins somebody cannot install yet is a shop window for a
+             * shop that is shut; the number plus *update Alexia* is the whole of what is
+             * actionable, and the list arrives with the update that makes it real.
+             */
+            needsNewerApp: {
+              plugins: shelf.filter((entry) => entry.offer === 'newer-app' && !installed.has(entry.id)).length,
+              updates: updates.filter((row) => row.offer === 'newer-app').length,
+            },
             skills: offered.map((entry) => ({ ...entry, installed: here.has(entry.name) })),
             // Only the ones this machine actually has. A list of everything ever withdrawn
             // is a list nobody reads.
@@ -1247,7 +1380,8 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
           JSON.stringify({
             ok: false,
             registry: library.url,
-            why: `Could not reach the registry: ${error instanceof Error ? error.message : String(error)}`,
+            app: APP_VERSION,
+            why: `Could not reach the plugin shelf: ${error instanceof Error ? error.message : String(error)}`,
           }),
         )
       }
@@ -1255,7 +1389,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     }
 
     if (url.pathname === '/api/library/install' && request.method === 'POST') {
-      const asked = sent as { id?: string; kind?: string; update?: boolean }
+      const asked = sent as { id?: string; kind?: string; update?: boolean; enable?: boolean }
       // Updating stops the running process first. Replacing the folder underneath a live
       // plugin on Windows fails on the files it has open, and the half-replaced folder that
       // leaves behind is worse than the version it was replacing.
@@ -1272,6 +1406,12 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
       // Back on, but only if it was on: an update is not consent to run something that was
       // sitting there disabled.
       if (asked.update === true && done.ok) plugins.enable(asked.id ?? '')
+      // First run's picker, and nothing else, asks for this (D118). Installed-and-not-enabled
+      // is still where a plugin arrives everywhere a person installs one at a time; a screen
+      // that showed four plugins' `requires` sentences and took four ticks has already had the
+      // conversation D73 is about, and leaving all four inert afterwards would be an assistant
+      // that quietly did not do the thing it was just asked to do.
+      if (asked.enable === true && done.ok) plugins.enable(asked.id ?? '')
       if (done.ok) plugins.load()
       skills.invalidate()
       response.writeHead(200, { 'content-type': 'application/json' })
@@ -1555,6 +1695,117 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
       return
     }
 
+    /**
+     * A file some tool made, on its way back to the person who asked for it.
+     *
+     * **The id is the whole design.** There is no path in either request, so there is no
+     * traversal to defend against and no prefix to check: the string a caller sends is a key
+     * into a map of files that tools offered during this run, and a key that is not in it is
+     * a 404. A path could be pointed at anything on the disk; this cannot be pointed at all.
+     *
+     * `?id=` rather than `/api/file/<id>` for a reason that is about this repo rather than
+     * about REST: `guard.test.ts` walks this file for the literal path comparisons below and
+     * demands a classification for each one it finds. A path with a variable segment in it
+     * would slip past that scanner — and a route the guard cannot see is exactly the hole
+     * that test exists to close. It caught this comment quoting the pattern, which is a fair
+     * indication it is reading the file rather than agreeing with itself.
+     */
+    /**
+     * A picture an `image` widget is showing (D115's successor, `alexia_protocol` 5).
+     *
+     * **The boundary is the whole route.** `/api/file` serves what a *tool result* offered, by
+     * id, which is a list core wrote down. A widget's rows are different: the plugin names the
+     * paths, and serving whatever it names would turn this into a general file reader that any
+     * plugin can point anywhere — at the keychain database, at somebody’s documents — and have
+     * the shell fetch with its own token.
+     *
+     * So the only thing this will read is a file **inside the asking plugin’s own directory**,
+     * which is the one place it already has. `realpath` before the comparison, because `..` and
+     * a symlink are the two ways a path that looks inside points outside, and a prefix test on
+     * the string alone catches neither.
+     */
+    if (url.pathname === '/api/plugin-file' && request.method === 'GET') {
+      const id = url.searchParams.get('plugin') ?? ''
+      const wanted = url.searchParams.get('path') ?? ''
+      const deny = (code: number, said: string): void => {
+        response.writeHead(code, { 'content-type': 'application/json' })
+        response.end(JSON.stringify({ ok: false, said }))
+      }
+      if (!plugins.manifest(id)) return deny(404, 'There is no plugin by that name.')
+      let real: string
+      try {
+        // `realpath` on both sides before the comparison. `..` and a symlink are the two ways a
+        // path that reads as inside points outside, and a prefix test on the raw string catches
+        // neither — which is the difference between a widget and a file reader.
+        const root = realpathSync(plugins.ownDir(id))
+        real = realpathSync(wanted)
+        if (real !== root && !real.startsWith(root + sep)) {
+          return deny(403, 'A plugin may only show files from its own folder.')
+        }
+      } catch {
+        return deny(404, 'That file is not there.')
+      }
+
+      try {
+        const bytes = readFileSync(real)
+        response.writeHead(200, { 'content-type': mimeOf(real), 'cache-control': 'private, max-age=60' })
+        response.end(bytes)
+      } catch {
+        deny(410, 'That file is no longer where it was.')
+      }
+      return
+    }
+
+    if (url.pathname === '/api/file') {
+      const wanted = offers.get(request.method === 'GET' ? url.searchParams.get('id') : sent.id)
+      if (wanted === undefined) {
+        response.writeHead(404, { 'content-type': 'application/json' })
+        response.end(JSON.stringify({ ok: false, said: 'That file is not one anything offered here.' }))
+        return
+      }
+      if (request.method === 'GET') {
+        let bytes: Buffer
+        try {
+          bytes = readFileSync(wanted.path)
+        } catch {
+          // It was there when the tool offered it and it is not there now — moved, deleted,
+          // or on a drive that has been unplugged. That is a fact about the file rather than
+          // an error in the request, and the shell says so on the row.
+          response.writeHead(410, { 'content-type': 'application/json' })
+          response.end(JSON.stringify({ ok: false, said: `${wanted.name} is no longer where it was made.` }))
+          return
+        }
+        response.writeHead(200, {
+          'content-type': wanted.mime === 'application/octet-stream' ? mimeOf(wanted.name) : wanted.mime,
+          'content-length': String(bytes.length),
+          // The shell saves through a blob it fetched, so this header is for anything that
+          // reaches the route directly — and for the name being right when it does.
+          'content-disposition': `attachment; filename="${wanted.name.replace(/[^\w. -]/g, '_')}"`,
+          'cache-control': 'no-store',
+        })
+        response.end(bytes)
+        return
+      }
+      const how = sent.action === 'open' ? 'open' : 'reveal'
+      if (how === 'open' && !openable(wanted.name)) {
+        // Refused, and pointed at the thing that does work. A refusal that leaves somebody
+        // with no way to reach their own file would be answering a safety question with a
+        // usability failure.
+        response.writeHead(409, { 'content-type': 'application/json' })
+        response.end(
+          JSON.stringify({
+            ok: false,
+            said: `${wanted.name} is the sort of file that runs when it is opened, so Alexia will not open it for you. Show in folder still works, and from there it is your decision.`,
+          }),
+        )
+        return
+      }
+      reach(wanted.path, how)
+      response.writeHead(200, { 'content-type': 'application/json' })
+      response.end(JSON.stringify({ ok: true }))
+      return
+    }
+
     if (url.pathname === '/api/chat' && request.method === 'POST') {
       await reply(sent, response)
       return
@@ -1587,11 +1838,39 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     text: string,
     uploads: Upload[],
     say: (event: Record<string, unknown>) => void,
-  ): Promise<string> {
+  ): Promise<string | Part[]> {
     const { kept, refused } = receive(uploads, join(root, 'uploads'))
     const readings: Reading[] = []
+    /** The pictures, which go to the model as pictures rather than as a reading of them. */
+    const pictures: Part[] = []
+    const seen: string[] = []
     try {
-      for (const one of kept) readings.push(await extracted(one))
+      for (const one of kept) {
+        /**
+         * **A picture is sent, not read** — and choosing between those two is the whole of
+         * what this branch decides.
+         *
+         * Until the wire could carry an image there was one answer to every attachment:
+         * extract text, and refuse when there was none to extract. There are two now, and
+         * they are for different files. A scanned page wants recognition — exact characters,
+         * cheap, no model. A screenshot or a photograph wants *sight*, and OCR over one
+         * returns button labels and a timestamp in no order, which is §4's silent failure.
+         *
+         * So a picture goes as a picture, and **nothing here also runs OCR over it**. The
+         * model can call whatever reads documents itself when it decides it wants the exact
+         * text — which is the right way round, because it is the only participant that knows
+         * whether the question was *what does this say* or *what is this*.
+         */
+        // What the shell said, when it said — a re-encoded picture keeps its old name and
+        // no longer matches it. The name is the fallback, which is every other case.
+        const mime = one.type ?? mimeOf(one.name)
+        if (mime.startsWith('image/')) {
+          pictures.push({ type: 'image', url: `data:${mime};base64,${readFileSync(one.path).toString('base64')}` })
+          seen.push(one.name)
+          continue
+        }
+        readings.push(await extracted(one))
+      }
     } finally {
       // Written, read, gone. The extracted text is in the conversation and the original is
       // already on the user's own disk; a third copy accumulating beside the database is a
@@ -1602,7 +1881,11 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     // design — a message that scrolls away or overwrites itself is a message the user is
     // being tested on — so four attachments say four things in one sentence rather than
     // three of them being replaced by the fourth before anybody read them.
-    const lines = [...refused, ...readings.map(noteFor)]
+    const lines = [
+      ...refused,
+      ...seen.map((name) => `${name} went as a picture, for the model to look at.`),
+      ...readings.map(noteFor),
+    ]
     if (lines.length > 0) say({ note: lines.join(' ') })
     /**
      * **What was actually read, sent to the screen as well as to the model.**
@@ -1619,7 +1902,19 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
      * anybody who wants to open it.
      */
     if (readings.length > 0) say({ attached: readings })
-    return withDocuments(text, readings)
+
+    /**
+     * The words, and then the pictures.
+     *
+     * Named in the text as well as carried as parts, because a model handed three images and
+     * a sentence has no way to tell which is `chart.png` and which is `receipt.jpg` — the
+     * parts arrive in order and carry no filenames. The name is how the user refers to it and
+     * therefore how the answer has to refer to it back.
+     */
+    const said = withDocuments(text, readings)
+    if (pictures.length === 0) return said
+    const named = seen.map((name) => `[attached: ${name} — a picture, in this message]`).join('\n')
+    return [{ type: 'text', text: [said, named].filter((part) => part !== '').join('\n\n') }, ...pictures]
   }
 
   /**
@@ -1632,9 +1927,27 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
    */
   async function extracted(one: Saved): Promise<Reading> {
     if (!plugins.answers(CORE_CAPABILITIES.extract)) {
+      /**
+       * Three states, not one, and the old sentence collapsed them into the rarest.
+       *
+       * It said *nothing installed here reads documents, the library has one — install it*,
+       * which is wrong in the commonest case by a long way: the reader **is** installed and
+       * is sitting in the list with its switch off, so *install* is the wrong verb and the
+       * library is the wrong screen. Worse on a machine whose registry was never deployed,
+       * where the library it sends somebody to is empty — a refusal that names a wall, points
+       * at a door, and the door opens onto nothing.
+       *
+       * Core cannot promise anything about the library, because core cannot see it from here.
+       * It can say exactly what is true: what is here and off, or that there is nothing, and
+       * which screen either of those is fixed on.
+       */
+      const off = plugins.couldAnswer(CORE_CAPABILITIES.extract)
       return {
         name: one.name,
-        refusal: 'Nothing installed here reads documents. The library has one — install it and attach this again.',
+        refusal:
+          off.length > 0 ?
+            `${off.join(' and ')} can read this and ${off.length > 1 ? 'are' : 'is'} switched off. Turn ${off.length > 1 ? 'them' : 'it'} on in Settings, then Plugins, and attach this again.`
+          : 'Nothing installed here reads documents. Settings, then Plugins, is where one is added.',
       }
     }
     try {
@@ -1792,7 +2105,24 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
           progress: (step) => say({ step: { n: step.n, name: step.name, progress: step.progress } }),
           done: (step) => {
             trace.done(step)
-            say({ step: { n: step.n, name: step.name, ...step.outcome } })
+            /**
+             * A file the tool made, given an id and sent to the screen.
+             *
+             * The model already has what it can use — `[file: report.pdf]`, in the outcome
+             * text — because `Message.content` is a string and the bytes were never going
+             * anywhere near it. This is the other half: the person who asked gets a row they
+             * can open, save, find or copy the path of, which until now was a sentence
+             * containing a path and nothing else.
+             */
+            const files = step.outcome === undefined ? [] : offers.keep(step.outcome.files ?? [])
+            say({
+              step: {
+                n: step.n,
+                name: step.name,
+                ...step.outcome,
+                ...(files.length > 0 && { files: files.map((one) => ({ ...one, openable: openable(one.name) })) }),
+              },
+            })
           },
         },
       })
@@ -1822,7 +2152,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
        * no money is spent until somebody says yes. A feature that quietly distilled every
        * task would be a feature that quietly spent money on every task.
        */
-      const episode = { task: text, steps: result.steps, answer: last?.content ?? '' }
+      const episode = { task: text, steps: result.steps, answer: last === undefined ? '' : textOf(last) }
       if (result.ended === 'answered' && learnable(episode)) {
         lesson = episode
         say({ learn: { about: text.slice(0, 120), outline: outline(episode) } })
@@ -1843,8 +2173,9 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
        * Location is deliberately *not* stripped here: where somebody lives is a thing worth
        * remembering, and it is only dangerous when it leaves.
        */
-      if (result.ended === 'answered' && (last?.content.trim() ?? '') !== '') {
-        void plugins.capability(CORE_CAPABILITIES.capture, exchange(text, last?.content ?? '')).catch(() => {
+      const answered = last === undefined ? '' : textOf(last)
+      if (result.ended === 'answered' && answered.trim() !== '') {
+        void plugins.capability(CORE_CAPABILITIES.capture, exchange(text, answered)).catch(() => {
           // Nothing provides it, or whatever does is having a bad day. Either way this is
           // not the user's problem and never becomes one.
         })

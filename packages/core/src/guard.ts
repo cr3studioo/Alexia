@@ -197,10 +197,13 @@ export const ROUTES: Readonly<Record<string, Route>> = {
   },
 
   '/api/library/install': {
-    act: (body) => (body.update === true ? 'update' : undefined),
+    act: (body) => (body.update === true ? 'update' : body.enable === true ? 'enable' : undefined),
     acts: {
       update: confirm(
         'An update stops the running plugin and replaces its folder with a different version. The version being replaced is not kept, and the thing being overwritten is a plugin that was working a minute ago.',
+      ),
+      enable: safe(
+        'The download starts running once it lands. Only first run asks for this, and only having shown the plugin’s own `requires` sentences beside the tick that agreed to them (D118) — which is the same consent the Plugins page takes, in the one place a person is choosing several at once. Disable is one press away.',
       ),
     },
     otherwise: safe(
@@ -245,6 +248,12 @@ export const ROUTES: Readonly<Record<string, Route>> = {
     ),
   },
 
+  '/api/plugin-file': {
+    otherwise: safe(
+      'The bytes of a picture an `image` widget is showing. It reads and nothing else — and it will only read inside the asking plugin’s **own** folder, resolved through the real path first so that a `..` or a symlink pointing outside is refused rather than followed. A plugin naming a file it does not own gets a 403 and the widget draws a gap.',
+    ),
+  },
+
   '/api/detail': {
     otherwise: safe(
       'What expands under one row of a table: the same call as the list above, about one thing rather than all of them, through the same ruling.',
@@ -279,6 +288,20 @@ export const ROUTES: Readonly<Record<string, Route>> = {
   '/api/chat': {
     otherwise: safe(
       'Sending a sentence is the product. Everything it can then do goes through the permission gate, the never-touch list and the ceilings, and the preview asks before an expensive task starts — a confirm on the message box would be a confirm on typing.',
+    ),
+  },
+
+  '/api/file': {
+    acts: {
+      reveal: safe(
+        'It opens a file manager with the file selected. Nothing runs, nothing changes, and the window it opens is one the person closes — this is the answer for everything Open refuses, so a refusal is never a dead end.',
+      ),
+      open: confirm(
+        'Opening hands the file to whatever this machine has registered for it, which for some kinds means running it. The file has to be one a tool offered during this session and its extension has to be one that is not a program — but the press itself is the last thing standing between a plugin writing a file and this machine executing it.',
+      ),
+    },
+    otherwise: read(
+      'The bytes of a file some tool made, by the id it was offered under. It reads one file off the disk and sends it; there is no path in the request, so there is nothing to point somewhere else. A POST with no act nobody has classified lands here and is refused, which is the right way round.',
     ),
   },
 }

@@ -10,6 +10,24 @@ you say alexia_protocol 1    Alexia speaks 2..4   ->  "X was written for an olde
 you say alexia_protocol 5    Alexia speaks 2..4   ->  "X needs a newer Alexia"
 ```
 
+## The other version: `min_app` *(2026-08-31, D118)*
+
+`alexia_protocol` describes the **shape of the contract**. It says nothing about the build,
+and since plugins stopped shipping inside the installer that gap is a real one: a plugin
+needing a capability that arrived in Alexia 0.2.0 declares the same revision as everything
+else, handshakes perfectly on 0.1.9, and does not work.
+
+```
+you say min_app 0.2.0        this build is 0.2.1  ->  loads
+you say min_app 0.3.0        this build is 0.2.1  ->  not on the shelf, not offered as an
+                                                      update, refused if asked anyway
+```
+
+Optional, and absent means *any*. Declare the oldest build you actually tested against —
+`max_app` is for a plugin that is *known* broken above a version, not one nobody has tested.
+Both are checked by the same `versionVerdict` as the integer above, in three places: the
+shelf, the install, and the loader.
+
 ## The promise, from v2 onwards
 
 **One revision back is supported.** Alexia at revision *n* loads plugins declaring *n* and

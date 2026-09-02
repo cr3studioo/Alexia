@@ -4,7 +4,7 @@
   "id": "documents",
   "name": "Documents",
   "summary": "Reads a document you give her — PDF, Word, Excel, PowerPoint, OpenDocument, EPUB, web pages, spreadsheets, notes and code — and hands back what it says.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "license": "AGPL-3.0-only",
   "entry": {
     "run": "node",
@@ -18,6 +18,10 @@
     {
       "cap": "fs.read_scoped",
       "why": "To open the document you attached, or one you point it at. It only ever reads."
+    },
+    {
+      "cap": "image.ocr",
+      "why": "If something here can read the words in a picture, to use it for a scan. Without it, a scan is refused."
     }
   ],
   "provides": [

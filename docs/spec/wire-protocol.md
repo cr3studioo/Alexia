@@ -638,6 +638,40 @@ Send it for anything over about two seconds. First-run downloads are the whole r
 five-minute setup budget holds, and a bar that moves is the difference between waiting and
 quitting.
 
+#### Showing the work — `alexia/preview` and `alexia/stages`
+
+Two optional keys on the same notification's `_meta`, for a job where the bar is not the whole
+story:
+
+```jsonc
+{ "jsonrpc": "2.0", "method": "notifications/progress",
+  "params": { "progressToken": "t-7", "progress": 12, "total": 20,
+              "message": "KSampler — step 12 of 20",
+              "_meta": {
+                "alexia/preview": "data:image/jpeg;base64,…",
+                "alexia/stages": [
+                  { "label": "Load the model", "state": "done" },
+                  { "label": "Sample", "state": "running", "progress": 12, "total": 20 },
+                  { "label": "Save", "state": "waiting" } ] } } }
+```
+
+`alexia/preview` is **a picture of the work while it is still work** — a `data:` URL and never
+a path, because the frame exists for a second and is replaced. Anything that is not a
+`data:image/` URL is dropped at the boundary: this is the one field you fill that ends up in an
+`img`, so it does not get to name a path or a host. Send the same frame twice and you have paid
+for it twice.
+
+`alexia/stages` is **the shape of the job** — your own steps, in the order *you* run them, each
+with its own `state` (`waiting`, `running`, `done`, `failed`) and, when it can say, its own
+`progress`/`total`. The order is yours and is never re-sorted; core cannot know that *decode*
+follows *sample*. Labels are for a tooltip, so do not lay anything out around them. A strip with
+one unrecognised `state` is refused whole rather than drawn with a step missing, and past 64
+stages the rest are dropped.
+
+**Both are flags rather than methods, and neither moves `alexia_protocol`.** An Alexia that has
+never heard of them draws the bar and ignores the rest — which is exactly what it did before
+they existed, the bar that [`versions.md`](./versions.md) sets for leaving the number alone.
+
 ### A tool that disappears
 
 Your tool list may change at any time. Send
