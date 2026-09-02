@@ -5,7 +5,7 @@ import { readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import { checkpoints, classes, download, interrupt, named, order, pick, queue, stats, template, templates, wait } from './comfy.js'
 import { alive, awake, install, loopback, port, ready, start, stop, tail } from './launch.js'
-import { API_SUFFIX, FOLDER, apply, isApi, knobs, missing, read, remove, reseed, saved, wired, write } from './workflows.js'
+import { API_SUFFIX, FOLDER, apply, isApi, knobs, missing, fromWeb, read, remove, reseed, saved, wired, write } from './workflows.js'
 import { api as starterGraph, editor as starterDoc, STARTER } from './starter.js'
 import { measure, tight } from './sizing.js'
 import { fetchModel, have } from './models.js'
@@ -712,14 +712,19 @@ alexia.tool(
   'add_workflow',
   {
     description:
-      'Save a ComfyUI API export so run_workflow can use it. Takes the path of the file ComfyUI ' +
-      'wrote when the user chose Workflow → Export (API) — usually in their Downloads folder. ' +
-      'Use when the user has just exported a workflow, or when workflows says one is not ' +
-      'exported or its export is behind. Refuses anything that is not an API export.',
+      'Save a workflow so run_workflow can use it, from a file on this machine or from an https ' +
+      'link the user gave. A path is what ComfyUI wrote for Workflow → Export (API), usually in ' +
+      'Downloads; a link is one the user pasted — to the workflow file itself, not to the page ' +
+      'showing it. Use when the user has just exported one, has found one online, or when ' +
+      'workflows says one is not exported. Never invent a link: only use one the user gave.',
     inputSchema: fromJsonSchema({
       type: 'object',
       properties: {
-        file: { type: 'string', description: 'The path of the exported .json file.' },
+        file: {
+          type: 'string',
+          description:
+            'The path of the exported .json file, or an https link to one the user gave you.',
+        },
         name: {
           type: 'string',
           description:
@@ -734,15 +739,27 @@ alexia.tool(
   async ({ file, name }, ctx) => {
     const signal = ctx?.mcpReq?.signal
     const path = String(file ?? '').trim()
-    if (path === '') return refuse('Which file? This needs the path of the export ComfyUI saved.')
+    if (path === '') return refuse('Which one? This needs a path on this machine, or an https link to the file.')
+    // A link and a file are the same thing once they are JSON, and D139 is why a link is
+    // allowed at all: the converter refuses any node this machine does not have, so nothing
+    // arrives but text that either maps onto what is installed or is turned away by name.
+    const web = /^https?:/i.test(path)
     let doc
-    try {
-      doc = JSON.parse(readFileSync(path, 'utf8'))
-    } catch (error) {
-      return refuse(
-        error?.code === 'ENOENT' ? `There is no file at ${path}.`
-          : `${basename(path)} could not be read as JSON: ${String(error?.message ?? error)}`,
-      )
+    if (web) {
+      try {
+        doc = await fromWeb(path, signal)
+      } catch (error) {
+        return refuse(String(error?.message ?? error))
+      }
+    } else {
+      try {
+        doc = JSON.parse(readFileSync(path, 'utf8'))
+      } catch (error) {
+        return refuse(
+          error?.code === 'ENOENT' ? `There is no file at ${path}.`
+            : `${basename(path)} could not be read as JSON: ${String(error?.message ?? error)}`,
+        )
+      }
     }
     const state = await reachable(ctx)
     if (!state.ok) return refuse(state.said)
@@ -768,7 +785,10 @@ alexia.tool(
       converted = true
     }
 
-    const called = String(name ?? '').trim() || basename(path).replace(/\.api\.json$|\.json$/i, '')
+    const called =
+      String(name ?? '').trim() ||
+      (web ? decodeURIComponent(new URL(path).pathname.split('/').filter(Boolean).pop() ?? 'workflow') : basename(path))
+        .replace(/\.api\.json$|\.json$/i, '')
     const to = `${FOLDER}/${called}${API_SUFFIX}`
     await write(server, to, JSON.stringify(doc), signal)
 

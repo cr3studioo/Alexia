@@ -98,6 +98,48 @@ export async function saved(server, signal) {
   }))
 }
 
+/** As much of a workflow as anybody should have to download. They are tens of kilobytes. */
+export const FETCH_MAX = 4_000_000
+
+/**
+ * A workflow off the open web, as JSON.
+ *
+ * **§8.6 said never a URL from a conversation, and that rule was written about node packs** —
+ * arbitrary Python, no sandbox, no undo. D137 established the risk is not reachable from here:
+ * the converter refuses any node class this machine does not already have, so what arrives is
+ * JSON that either maps onto nodes already installed or is refused by name. Nothing is executed
+ * and nothing is downloaded but text. A link is then exactly as dangerous as a file on disk,
+ * which `add_workflow` has always accepted.
+ *
+ * What is still enforced is the shape of the thing: **`https` only** — a plain-text fetch is a
+ * workflow anybody on the path can rewrite — and a size ceiling, because a URL that answers with
+ * a gigabyte is not a workflow and should cost one refusal rather than a disk.
+ */
+export async function fromWeb(url, signal) {
+  let where
+  try {
+    where = new URL(url)
+  } catch {
+    throw new Error(`${url} is not a web address.`)
+  }
+  if (where.protocol !== 'https:') throw new Error('Only https links are accepted, so nobody on the way can rewrite it.')
+  const response = await fetch(where, { signal, redirect: 'follow', headers: { accept: 'application/json,text/plain,*/*' } })
+  if (!response.ok) throw new Error(`${where.host} answered ${response.status} ${response.statusText}.`)
+  const size = Number(response.headers.get('content-length'))
+  if (Number.isFinite(size) && size > FETCH_MAX) throw new Error(`That is ${Math.round(size / 1e6)} MB, which is not a workflow.`)
+  const text = await response.text()
+  if (text.length > FETCH_MAX) throw new Error('That is far too big to be a workflow.')
+  try {
+    return JSON.parse(text)
+  } catch {
+    // The commonest mistake by a mile: a link to the *page* showing a workflow rather than to
+    // the file. Saying which it was is the difference between a fix and a shrug.
+    throw new Error(
+      `${where.host} answered with a page rather than a workflow. Open it, use the download or raw link, and give that address instead.`,
+    )
+  }
+}
+
 /** Read one file out of the user directory. */
 export async function read(server, path, signal) {
   return (await body(await fetch(url(server, path), { signal }), `reading ${path}`)).json()

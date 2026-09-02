@@ -2,7 +2,7 @@
 import { createServer } from 'node:http'
 import { afterAll, beforeAll, expect, test } from 'vitest'
 import { outputs } from '../comfy.js'
-import { apply, isApi, knobs, missing, pair, read, reseed, saved, slug, titled, wired, write } from '../workflows.js'
+import { apply, fromWeb, isApi, knobs, missing, pair, read, reseed, saved, slug, titled, wired, write } from '../workflows.js'
 
 /**
  * `Photo Reference (Pose + Style)`, as ComfyUI would export it for the API — trimmed to the
@@ -302,4 +302,54 @@ test('every ambiguity says nothing rather than guessing', () => {
 
   // Nothing sampler-shaped at all.
   expect(wired({ 1: { class_type: 'SaveImage', inputs: { images: ['2', 0] } } }, spec)).toEqual([])
+})
+
+/**
+ * A workflow off the open web (D139).
+ *
+ * §8.6 forbade a URL from a conversation, and that rule was written about node packs — a
+ * stranger's Python. What actually arrives here is text, and the converter refuses any node this
+ * machine does not already have, so the refusals worth testing are the ones about the *shape* of
+ * what came back rather than about trust.
+ */
+const answering = (body, { ok = true, status = 200, length } = {}) => {
+  const real = globalThis.fetch
+  globalThis.fetch = () =>
+    Promise.resolve({
+      ok,
+      status,
+      statusText: 'Test',
+      headers: { get: (k) => (k === 'content-length' && length !== undefined ? String(length) : null) },
+      text: () => Promise.resolve(body),
+    })
+  return () => {
+    globalThis.fetch = real
+  }
+}
+
+test('a workflow can come from a link, and the refusals say which mistake was made', async () => {
+  // Plain http is refused rather than fetched: a workflow over plain text is one anybody on the
+  // path can rewrite, and this ends up being queued on somebody's own machine.
+  await expect(fromWeb('http://example.com/w.json')).rejects.toThrow(/https/i)
+  await expect(fromWeb('not a url')).rejects.toThrow(/not a web address/i)
+
+  // The happy path is just JSON.
+  let undo = answering('{"nodes":[],"links":[]}')
+  await expect(fromWeb('https://example.com/w.json')).resolves.toEqual({ nodes: [], links: [] })
+  undo()
+
+  // **The commonest mistake by a mile**: the address of the page showing a workflow rather than
+  // of the file. A parse error alone would send somebody looking for a broken workflow.
+  undo = answering('<!doctype html><html><body>Workflow</body></html>')
+  await expect(fromWeb('https://example.com/workflows/nice-one')).rejects.toThrow(/page rather than a workflow/i)
+  undo()
+
+  // Something enormous costs one refusal rather than a disk.
+  undo = answering('{}', { length: 900_000_000 })
+  await expect(fromWeb('https://example.com/big.json')).rejects.toThrow(/not a workflow/i)
+  undo()
+
+  undo = answering('', { ok: false, status: 404 })
+  await expect(fromWeb('https://example.com/gone.json')).rejects.toThrow(/404/)
+  undo()
 })
