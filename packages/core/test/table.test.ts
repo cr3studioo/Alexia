@@ -164,12 +164,12 @@ interface Row {
 await post('/api/plugin', { id: 'shelf', action: 'enable' })
 
 test('a table declares its shape in the manifest, and the panel draws without a process', async () => {
-  const { tabs } = (await (
-    await fetch(new URL('/api/panels', alexia.url), { headers: { 'x-alexia-token': alexia.token } })
-  ).json()) as { tabs: { plugin?: string; running?: boolean; widgets?: Record<string, unknown>[] }[] }
+  const { panes } = (await (
+    await fetch(new URL('/api/plugins', alexia.url), { headers: { 'x-alexia-token': alexia.token } })
+  ).json()) as { panes: { id: string; running?: boolean; panel?: { widgets: Record<string, unknown>[] } }[] }
 
-  const mine = tabs.find((tab) => tab.plugin === 'shelf')
-  const table = mine?.widgets?.find((w) => w.key === 'things')
+  const mine = panes.find((pane) => pane.id === 'shelf')
+  const table = mine?.panel?.widgets.find((w) => w.key === 'things')
   expect(table?.type).toBe('table')
   // The whole shape, so the shell has everything it needs before a single row arrives.
   expect((table?.columns as { key: string }[]).map((c) => c.key)).toEqual(['name', 'uses'])

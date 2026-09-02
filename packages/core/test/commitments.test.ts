@@ -57,14 +57,14 @@ const ledger = async (): Promise<Row[]> =>
 
 await post('/api/plugin', { id: 'commitments', action: 'enable' })
 
-test('a plugin nobody built the screen for gets a tab, and its own words on it', async () => {
-  const { tabs } = (await (
-    await fetch(new URL('/api/panels', alexia.url), { headers: { 'x-alexia-token': alexia.token } })
-  ).json()) as { tabs: { label: string; plugin?: string; widgets?: { type: string; key: string }[] }[] }
+test('a plugin nobody built the screen for gets a panel, and its own words on it', async () => {
+  const { panes } = (await (
+    await fetch(new URL('/api/plugins', alexia.url), { headers: { 'x-alexia-token': alexia.token } })
+  ).json()) as { panes: { id: string; panel?: { label: string; widgets: { type: string; key: string }[] } }[] }
 
-  const mine = tabs.find((tab) => tab.plugin === 'commitments')
-  expect(mine?.label).toBe('Commitments')
-  expect(mine?.widgets?.map((widget) => `${widget.type}:${widget.key}`)).toEqual(['table:ledger_list'])
+  const mine = panes.find((pane) => pane.id === 'commitments')
+  expect(mine?.panel?.label).toBe('Commitments')
+  expect(mine?.panel?.widgets.map((widget) => `${widget.type}:${widget.key}`)).toEqual(['table:ledger_list'])
 }, 20_000)
 
 test('the ledger fills itself from the plugin, grouped the way the plugin decided', async () => {

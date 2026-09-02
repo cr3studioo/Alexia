@@ -5,18 +5,22 @@ import { join } from 'node:path'
 import { afterAll, expect, test } from 'vitest'
 import { CORE_TABS, type Tab } from '../src/panels.js'
 import { memorySecrets } from '../src/secrets.js'
+import type { Pane } from '../src/settings.js'
 import { serve, type Serving } from '../src/serve.js'
 import { noPolling, stage } from './staged.js'
 
 /**
- * The control surface's tab list, assembled (M6-2).
+ * Where a plugin's `panel` goes, and where it does not (M6-2, D118).
  *
- * The whole of what this proves is that **core does not know what is on that screen**. Core
- * contributes the tabs whose data core owns; every other one is here because a plugin
- * declared a `panel` and somebody enabled it. Installed and not enabled is no tab at all,
- * because a folder appearing is not consent (D73), and deleting the folder takes the tab
- * with it — which is M0-G one screen further in, and the thing M6-G tests with the screen
- * actually open.
+ * The whole of what this proves is that **core does not know what is on either screen**. The
+ * control surface holds the tabs whose data core owns and nothing else; a plugin's panel is
+ * the second half of its own page, there because a manifest says so and somebody enabled it,
+ * and gone when the folder is. Nowhere does a person type a plugin's name.
+ *
+ * D118 is why the second half of that sentence changed screens. A plugin used to have a tab
+ * here *and* a settings pane there, so *where do I go to use this thing* had two answers and
+ * neither screen said which. One page now, and this file holds the split still: enabling puts
+ * the widgets on the page, and nothing ever puts them on a tab.
  */
 
 const root = mkdtempSync(join(tmpdir(), 'alexia-panels-'))
@@ -68,59 +72,75 @@ const call = (path: string, body?: unknown): Promise<Response> =>
 
 const tabs = async (): Promise<Tab[]> => ((await (await call('/api/panels')).json()) as { tabs: Tab[] }).tabs
 
+const panes = async (): Promise<Pane[]> => ((await (await call('/api/plugins')).json()) as { panes: Pane[] }).panes
+
+const mine = async (id: string): Promise<Pane | undefined> => (await panes()).find((pane) => pane.id === id)
+
 test('core contributes the tabs whose data core owns, and every one of them holds something', async () => {
   const list = await tabs()
-  expect(list.filter((tab) => tab.from === 'core').map((tab) => tab.id)).toEqual(CORE_TABS.map((tab) => tab.id))
+  expect(list.map((tab) => tab.id)).toEqual(CORE_TABS.map((tab) => tab.id))
 
   // Either a panel, or a sentence saying what it will hold and which task builds it. Never
   // both and never neither: a blank tab is indistinguishable from a broken one, and a
   // placeholder that looked like working software would be worse than either.
-  for (const tab of list.filter((one) => one.from === 'core')) {
+  for (const tab of list) {
     const built = (tab.widgets ?? []).length > 0
     expect(built !== (typeof tab.soon === 'string'), tab.id).toBe(true)
   }
 })
 
-test('a plugin that is installed and not enabled has no tab at all', async () => {
-  // Not a greyed-out one. A folder appearing is not consent (D73), and a tab that is there
-  // and does nothing is a question rather than an answer.
-  expect((await tabs()).some((tab) => tab.from === 'plugin')).toBe(false)
+test('a plugin that is installed and not enabled is a walkthrough, not a panel', async () => {
+  // A folder appearing is not consent (D73). Core hands over what the manifest declared —
+  // it has nothing else to hand over — and the page draws neither half until the yes is
+  // given, because configuring something you have not agreed to run asks two questions at
+  // once.
+  const hello = await mine('hello')
+  expect(hello?.enabled).toBe(false)
+  expect(hello?.settings.length).toBeGreaterThan(0)
+  expect(hello?.panel?.widgets.map((one) => one.key)).toEqual(['panel_state'])
 })
 
-test('enabling it puts its tab on the screen, with the widgets it declared', async () => {
+test('enabling it puts the panel on the plugin’s own page, with the widgets it declared', async () => {
   await call('/api/plugin', { id: 'hello', action: 'enable' })
 
-  const mine = (await tabs()).filter((tab) => tab.from === 'plugin')
-  expect(mine).toHaveLength(1)
+  const hello = await mine('hello')
+  expect(hello?.enabled).toBe(true)
   // The label is the plugin's, and core never wrote it down anywhere.
-  expect(mine[0]?.label).toBe('Greetings')
-  expect(mine[0]?.widgets?.map((w) => w.key)).toEqual(['panel_state'])
+  expect(hello?.panel?.label).toBe('Greetings')
+  expect(hello?.panel?.widgets.map((one) => one.key)).toEqual(['panel_state'])
 
-  // Enabled and not running is the ordinary state under lazy spawn, and the screen is told
-  // so rather than left to guess: drawing this list started nothing.
-  expect(mine[0]?.running).toBe(false)
+  // Enabled and not running is the ordinary state under lazy spawn, and the page is told so
+  // rather than left to guess: drawing it started nothing.
+  expect(hello?.running).toBe(false)
 })
 
-test('a plugin with no panel gets no tab, and is not asked to explain itself', async () => {
+test('and it is on that page only — the control surface stays core’s own (D118)', async () => {
+  // The property the move exists for. A tab here and a pane there was two homes for one
+  // plugin, and neither screen said which held the thing somebody was after. `Greetings`
+  // exists and is enabled; it is simply not on this list, and never will be.
+  const list = await tabs()
+  expect(list.map((tab) => tab.id)).toEqual(CORE_TABS.map((tab) => tab.id))
+  expect(list.some((tab) => tab.label === 'Greetings')).toBe(false)
+})
+
+test('a plugin with no panel gets no second half, and is not asked to explain itself', async () => {
   await call('/api/plugin', { id: 'crasher', action: 'enable' })
-  const mine = (await tabs()).filter((tab) => tab.from === 'plugin')
-  expect(mine.map((tab) => tab.plugin)).toEqual(['hello'])
+  expect((await mine('crasher'))?.panel).toBeUndefined()
 })
 
-test('deleting the plugin takes its tab with it', async () => {
-  // The M6-G shape, without the browser. Nothing in core knew the tab's name, so there is
-  // nothing in core to clean up — which is the entire point of the tab list being assembled.
+test('deleting the plugin takes its page with it', async () => {
+  // The M6-G shape, without the browser. Nothing in core knew the panel's name, so there is
+  // nothing in core to clean up — which is the entire point of the page being assembled.
   await call('/api/plugin', { id: 'hello', action: 'delete', confirm: true })
 
-  const list = await tabs()
-  expect(list.some((tab) => tab.from === 'plugin')).toBe(false)
-  expect(list.map((tab) => tab.id)).toEqual(CORE_TABS.map((tab) => tab.id))
+  expect(await mine('hello')).toBeUndefined()
+  expect((await tabs()).map((tab) => tab.id)).toEqual(CORE_TABS.map((tab) => tab.id))
 })
 
 test('a panel declared against an older revision is refused where it stands', async () => {
   // `panel` arrived in alexia_protocol 3 (D86). Declaring it while claiming 2 is a load
   // error, because an integer a manifest can quietly ignore is an integer that means
-  // nothing — and it is caught at the folder rather than found later as a missing tab.
+  // nothing — and it is caught at the folder rather than found later as a missing half.
   const backdated = mkdtempSync(join(tmpdir(), 'alexia-backdated-'))
   const folder = join(backdated, 'hello')
   mkdirSync(folder)
@@ -136,7 +156,7 @@ test('a panel declared against an older revision is refused where it stands', as
   const said = (await (await call('/api/install', { path: folder })).json()) as { ok: boolean; said: string }
   expect(said.ok).toBe(false)
   expect(said.said).toContain('alexia_protocol')
-  expect((await tabs()).some((tab) => tab.from === 'plugin')).toBe(false)
+  expect(await mine('hello')).toBeUndefined()
 
   rmSync(backdated, { recursive: true, force: true })
 })

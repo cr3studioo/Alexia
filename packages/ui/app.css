@@ -507,6 +507,17 @@ body[data-view='control'] .view:not(#control) {
   margin: 0;
 }
 
+/* Where a plugin's page turns from what it is set to into what it is doing (D118).
+
+   A rule and a gap, not a box: the widgets below it are the same widgets as the ones above
+   and drawing them inside a panel of their own would say they were a different kind of
+   thing. `.step-heading` carries no top margin by design, so the space belongs here. */
+.plugin-panel {
+  margin-top: var(--space-6);
+  padding-top: var(--space-5);
+  border-top: 1px solid var(--line);
+}
+
 /* ---- the plugin grid (M8-3) ---------------------------------------------------------
 
    A card each, on a grid that decides its own column count. `auto-fill` with a minimum

@@ -504,20 +504,17 @@ export function sources(options: SurfaceOptions): Record<string, Source> {
  * so a skill that has just been forgotten is gone from the palette by the act that removed
  * it and nothing has to be told twice.
  *
- * A plugin's panel contributes its **name** and not its contents. Reaching inside one means a
- * tool call, and a palette that spawned every installed plugin on every keystroke would be a
- * search box with a startup cost — which is the opposite of what Ctrl+K is for.
+ * A plugin contributes its **name** and not its contents — through `library` below, which is
+ * the list its own page is drawn from since D118. Reaching inside a plugin means a tool call,
+ * and a palette that spawned every installed one on every keystroke would be a search box
+ * with a startup cost, which is the opposite of what Ctrl+K is for.
  */
 export async function searchable(
   options: SurfaceOptions,
-  tabs: readonly { id: string; label: string; from: string }[],
+  tabs: readonly { id: string; label: string }[],
 ): Promise<Searchable[]> {
   const ours = sources(options)
-  const found: Searchable[] = tabs.map((tab) => ({
-    tab: tab.id,
-    kind: tab.from === 'core' ? 'panel' : 'plugin',
-    label: tab.label,
-  }))
+  const found: Searchable[] = tabs.map((tab) => ({ tab: tab.id, kind: 'panel', label: tab.label }))
 
   /** Which table each row comes from, and what to call one of its rows on screen. */
   const lists: [string, string, string, (row: Row) => string][] = [
@@ -526,7 +523,8 @@ export async function searchable(
     ['skills', 'learned', 'learned skill', (row) => String(row.name)],
     ['tools', 'tools', 'tool', (row) => String(row.name)],
     // Not a control tab: plugins live on the settings screen (M8-3), and the shell routes
-    // this one word there. The palette says where a thing is; it does not get a second index.
+    // this one word there. Since D118 that page holds a plugin's panel too, so this row is
+    // the only one a plugin needs — there is no second place to send anybody.
     ['plugins', 'library', 'plugin', (row) => String(row.name)],
   ]
   for (const [tab, key, kind, label] of lists) {

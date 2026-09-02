@@ -300,7 +300,8 @@
             <div id="plugins-page" hidden>
               <!-- The grid, and the one card blown up. Two children of one page rather than a
                    view of their own, so Back from a plugin lands on the grid and Back from the
-                   grid lands in the conversation — one meaning per press. -->
+                   grid lands in the conversation — one meaning per press. The blown-up card is
+                   the whole plugin since D118: what it is set to, then what it is doing. -->
               <div id="plugin-grids">
                 <input
                   id="plugin-filter"
@@ -326,8 +327,9 @@
         </section>
 
         <!-- The control surface (M6-2). Nothing in this markup names a tab: the strip is
-             built from what core sends, which is core's own tabs plus one for every enabled
-             plugin that declared a panel. Delete the plugin's folder and its tab goes. -->
+             built from what core sends, which since D118 is core's own tabs and only those.
+             A plugin's panel is the second half of its page under Plugins, so there is one
+             place to look for a plugin rather than two. -->
         <section id="control" class="view">
           <div class="centred">
             <div class="view-top">

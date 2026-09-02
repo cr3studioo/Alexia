@@ -314,19 +314,28 @@ without motion for a reader who asked for that. See [`ui-schema.md`](./ui-schema
 
 *Arrived in `alexia_protocol` 3. Declaring it while claiming 2 is a load error.*
 
-A tab on the **control surface** — the screen that answers *what has this been doing, what
-did I say yes to, what does it know*. It appears because your plugin is installed and enabled
-and for no other reason, and it goes when your folder does. Core never writes your tab's name
-down anywhere; the list on that screen is assembled from manifests.
+**The second half of your plugin's own page** — the one a person reaches through Settings →
+Plugins → your plugin. It is drawn below your `settings`, under a rule, with `label` above it
+where that says something the page has not already: most plugins name the panel after
+themselves, and *Voice* under *Voice* is not a section break. It is there because your plugin
+is installed and enabled and for no other reason, and it goes when your folder does. Core
+never writes your panel's name down anywhere; that page is assembled from manifests.
 
-The widgets are the widgets above, unchanged. A settings pane and a panel are two views of
-one declaration, and what separates them is what they are *for*: settings are values somebody
+The widgets are the widgets above, unchanged. Settings and a panel are two halves of one
+declaration, and what separates them is what they are *for*: settings are values somebody
 changes, a panel is a record somebody reads, plus the one or two things they change while
-reading it.
+reading it. **They are on one page, so write your hints that way.** A hint may say *the box
+above*; it may not send anybody to another screen, because there is no longer another screen
+to send them to.
+
+*Until D118 a panel was a tab on the control surface instead, which put a plugin's settings on
+one screen and the thing they drove on another — so the voice plugin had to tell people which
+of the two held the other half. If you are reading an older plugin, that is what its hints are
+about.*
 
 **`settings` and `panel.widgets` are one namespace.** A widget's value is stored once, so a
 key in both lists would be one value with two declarations that could disagree about its
-type. Declaring a key twice is a load error. Which screen a widget belongs on is your call.
+type. Declaring a key twice is a load error. Which half a widget belongs in is your call.
 
 ### `min_tier`
 

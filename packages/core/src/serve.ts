@@ -49,6 +49,7 @@ import { CORE, keychain, type SecretStore } from './secrets.js'
 import { addServer, markReviewed, unreviewed } from './servers.js'
 import { declaredAction, declaredTable } from './settings.js'
 import { search } from './palette.js'
+import { tabs as coreTabs } from './panels.js'
 import { actions as coreActions, sources as coreSources, searchable } from './surface.js'
 import { Skills, SKILL_TOOL } from './skills.js'
 import { dataDir, Store, type Message } from './store.js'
@@ -1111,17 +1112,18 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     }
 
     /**
-     * The control surface's tab list (M6-2).
+     * The control surface's tab list (M6-2, narrowed by D118).
      *
-     * Assembled, never typed: core's own tabs, then one for every enabled plugin that
-     * declared a panel. The shell draws whatever comes back and knows the name of nothing —
-     * which is what makes deleting a folder take its tab with it, and what M6-G tests.
+     * Core's own tabs and nothing else. A plugin's panel used to arrive here as a tab of its
+     * own and is now the second half of its page on `/api/plugins`, because one plugin with
+     * two homes is one of them being the wrong guess. The shell still draws whatever comes
+     * back and writes none of it down.
      *
      * A GET, and it spawns nothing, for the same reason `/api/plugins` does not.
      */
     if (url.pathname === '/api/panels') {
       response.writeHead(200, { 'content-type': 'application/json' })
-      response.end(JSON.stringify({ tabs: await plugins.tabs() }))
+      response.end(JSON.stringify({ tabs: coreTabs({ store }) }))
       return
     }
 
@@ -1140,7 +1142,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     if (url.pathname === '/api/search') {
       const asked = url.searchParams.get('q') ?? ''
       response.writeHead(200, { 'content-type': 'application/json' })
-      response.end(JSON.stringify({ hits: search(asked, await searchable(surface, await plugins.tabs())) }))
+      response.end(JSON.stringify({ hits: search(asked, await searchable(surface, coreTabs({ store }))) }))
       return
     }
 

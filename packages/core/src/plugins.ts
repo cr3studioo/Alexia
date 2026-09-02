@@ -11,7 +11,6 @@ import {
 import { cpSync, readdirSync, readFileSync, realpathSync, rmSync, watch, type FSWatcher } from 'node:fs'
 import { basename, join } from 'node:path'
 import { Host } from './host.js'
-import { tabs, type Tab } from './panels.js'
 import { CORE, keychain, type SecretStore } from './secrets.js'
 import {
   declaredAction,
@@ -387,11 +386,12 @@ export class Plugins {
   }
 
   /**
-   * Every installed plugin's settings pane (M2-1).
+   * Every installed plugin's own page (M2-1) — its settings, and its panel under them (D118).
    *
    * **Nothing here spawns anything.** The whole reason the widget schema lives in the
-   * manifest is that a settings screen has to draw itself while the processes are stopped,
-   * which — with lazy spawn — is the ordinary case rather than the corner one.
+   * manifest is that this page has to draw itself while the processes are stopped, which —
+   * with lazy spawn — is the ordinary case rather than the corner one. That was already true
+   * of the settings half and is what let the panel move here without waking anything.
    */
   async panes(): Promise<Pane[]> {
     const built: Pane[] = []
@@ -403,21 +403,7 @@ export class Plugins {
     return built
   }
 
-  /**
-   * The control surface's tab list (M6-2).
-   *
-   * Core's tabs plus one per enabled plugin that declared a panel. Core has no say in the
-   * second half beyond *is it enabled*, which is what makes deleting a folder take its tab
-   * with it — and what makes M6-G a test rather than a hope.
-   */
-  async tabs(): Promise<Tab[]> {
-    return tabs({
-      ...this.#drawing(),
-      manifests: this.ids.flatMap((id) => this.manifest(id) ?? []),
-    })
-  }
-
-  /** What both screens need to draw a declared widget, and neither of them spawns anything. */
+  /** What a page needs to draw a declared widget, and none of it spawns anything. */
   #drawing(): PaneOptions {
     return {
       store: this.options.store,

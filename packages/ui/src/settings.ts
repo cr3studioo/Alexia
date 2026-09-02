@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 /**
- * The settings screen: what first run asked, and every plugin's chrome (M2-1, M8-3).
+ * The settings screen: what first run asked, and every plugin's whole page (M2-1, M8-3, D118).
  *
  * **A plugin cannot style itself wrong because it never styles itself.** The widgets
  * themselves are drawn by `widgets.ts`, which the control surface uses as well — one
@@ -14,6 +14,11 @@
  * plugins and was a scroll at nine — a plugin's settings are the thing you came for, and
  * having to scroll past four other plugins' to reach them is the screen doing the finding
  * badly. Nothing here names a plugin: every card is whatever is in the folder.
+ *
+ * **And one plugin has one page (D118).** A plugin's `panel` used to be a tab on the control
+ * surface, so its settings were here and the thing they drove was a screen away — two places
+ * to look, and no way to guess which. The panel is drawn below the settings on this page now,
+ * assembled from the same manifest by the same renderer, and the control surface is core's.
  *
  * No Node in here, ever (invariant 6).
  */
@@ -33,6 +38,8 @@ export interface Pane {
   running: boolean
   requires: { cap: string; why: string }[]
   settings: Rendered[]
+  /** What it is *doing*, under the values that drive it. Absent unless it declared a panel. */
+  panel?: { label: string; widgets: Rendered[] }
 }
 
 interface Problem {
@@ -143,7 +150,11 @@ export function mountSettings(token: string): {
       const state = (await (
         await fetch('/api/plugins', { headers: { 'x-alexia-token': token } })
       ).json()) as { panes: Pane[] }
-      return state.panes.find((p) => p.id === plugin)?.settings ?? []
+      const found = state.panes.find((p) => p.id === plugin)
+      // Both halves, because a redraw is asked for by key and the two lists are one
+      // namespace (D86). Looking in only one of them would leave a `progress` bar declared
+      // on the panel frozen while the download it is about is happening.
+      return found === undefined ? [] : [...found.settings, ...(found.panel?.widgets ?? [])]
     },
   })
 
@@ -639,6 +650,13 @@ export function mountSettings(token: string): {
    * own words, then one button. Its settings are not drawn, because configuring something you
    * have not agreed to run is a screen asking two questions at once — and the order in the
    * lifecycle is enable, then configure.
+   *
+   * **Enabled is the whole plugin, and this is the only page there is of it (D118).** The
+   * values it takes first, then what it is doing with them — the panel that used to be a tab
+   * on the control surface, one screen away from the settings that drive it. Voice was the
+   * case that showed it: you typed the path of a recording here and pressed Clone over there,
+   * and two of that plugin's own hints had to say which screen the other half was on. One
+   * page, so a hint can say *below* and be right.
    */
   function drawPage(pane: Pane): void {
     const top = el('div', 'view-top')
@@ -699,7 +717,19 @@ export function mountSettings(token: string): {
       )
     }
 
-    if (pane.enabled) for (const declared of pane.settings) box.append(widget(host(pane.id), declared))
+    if (pane.enabled) {
+      for (const declared of pane.settings) box.append(widget(host(pane.id), declared))
+      if (pane.panel !== undefined) {
+        // A rule above it rather than a heading, because the break is the point and the name
+        // usually is not: most plugins call their panel after themselves, and *Voice* under
+        // *Voice* is the data showing through rather than a section. So the heading is drawn
+        // only where the author called it something the page has not said yet.
+        const below = el('section', 'plugin-panel')
+        if (pane.panel.label !== pane.name) below.append(el('h4', 'step-heading', pane.panel.label))
+        for (const declared of pane.panel.widgets) below.append(widget(host(pane.id), declared))
+        box.append(below)
+      }
+    }
     box.append(lifecycle(pane))
     sheet.replaceChildren(box)
     view.scrollTop = 0
