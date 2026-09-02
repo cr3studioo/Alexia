@@ -17,7 +17,7 @@
  * Bump it in this file, run `pnpm invariants`, and the check names the two files that have
  * fallen behind.
  */
-export const APP_VERSION = '0.3.0'
+export const APP_VERSION = '0.4.0'
 
 /**
  * Is `candidate` a later version than `installed`?
