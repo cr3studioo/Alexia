@@ -988,6 +988,103 @@ alexia.tool(
   },
 )
 
+/**
+ * The library, as a page somebody can read (§8.1, §8.4).
+ *
+ * **The tiers §8.4 ranks do not all exist yet.** *Verified* needs workflows the owner has run
+ * and tagged, and *Curated* needs an Alexia set published the way plugins are; neither has been
+ * built, and inventing a badge for them would be the rot that section warns about — a tick that
+ * means nothing is worse than no tick. So this is the third tier, ComfyUI’s own, and it says so.
+ *
+ * **Filtered on the machine before it is ranked on the words** (D133). Showing somebody 468
+ * workflows when 45 of them will run on their card is accurate and misleading at once, so what
+ * is listed is what this card can actually run, and the hint carries the honest arithmetic.
+ */
+alexia.tool(
+  'library',
+  {
+    description:
+      'List the workflows this machine could install and run, from the catalogue ComfyUI ships. ' +
+      'Takes no arguments. Use to show somebody what is available, or before install_workflow. ' +
+      'Only lists what this graphics card can run and what does not need a paid service.',
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+  },
+  async (ctx) => {
+    const signal = ctx?.mcpReq?.signal
+    const state = await reachable(ctx)
+    if (!state.ok) {
+      return { content: [{ type: 'text', text: state.said }], structuredContent: { rows: [] } }
+    }
+    const server = await where()
+    const all = flatten(await templates(server, signal).catch(() => []))
+    if (all.length === 0) {
+      return {
+        content: [{ type: 'text', text: 'This ComfyUI does not offer a workflow catalogue.' }],
+        structuredContent: { rows: [] },
+      }
+    }
+    const card = vram(await stats(server, signal).catch(() => undefined))
+    const mine = runnable(all, { vram: card?.total })
+    const here = new Set((await saved(server, signal).catch(() => [])).map((one) => one.name))
+    const counts = shelf(all, card?.total)
+    const rows = mine
+      .map((one) => ({
+        id: one.name,
+        title: one.title,
+        category: one.category,
+        // What it costs to run, in the two terms that decide it for somebody.
+        wants:
+          [one.vram ? `${(one.vram / 1e9).toFixed(1)} GB` : undefined, one.models.length > 0 ? one.models.join(', ') : undefined]
+            .filter(Boolean)
+            .join(' · ') || '—',
+        state: here.has(one.name) ? 'installed' : '—',
+      }))
+      // Installed first, then alphabetical: the ones already here are the ones somebody is
+      // looking for when they open this, and the rest is a list to browse.
+      .sort((a, b) => (a.state === b.state ? a.title.localeCompare(b.title) : a.state === 'installed' ? -1 : 1))
+    return { content: [{ type: 'text', text: counts.said }], structuredContent: { rows } }
+  },
+)
+
+alexia.tool(
+  'about_workflow',
+  {
+    description: 'What one catalogue workflow is for, by its catalogue name. Used by the library page.',
+    inputSchema: fromJsonSchema({
+      type: 'object',
+      properties: { id: { type: 'string', description: 'The workflow’s catalogue name.' } },
+      required: ['id'],
+    }),
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+  },
+  async ({ id }, ctx) => {
+    const signal = ctx?.mcpReq?.signal
+    const state = await reachable(ctx)
+    if (!state.ok) return refuse(state.said)
+    const server = await where()
+    const all = flatten(await templates(server, signal).catch(() => []))
+    const one = all.find((entry) => entry.name === String(id ?? '').trim())
+    if (!one) return refuse(`Nothing in the catalogue is called ${String(id)}.`)
+    const here = (await saved(server, signal).catch(() => [])).some((row) => row.name === one.name)
+    return {
+      content: [
+        {
+          type: 'text',
+          text: [
+            one.description || 'Its author left no description.',
+            one.models.length > 0 ? `Models: ${one.models.join(', ')}.` : undefined,
+            one.vram ? `Wants ${(one.vram / 1e9).toFixed(1)} GB of video memory.` : undefined,
+            one.paid ? 'Calls a paid service and needs an API key.' : undefined,
+            here ? 'Installed here already.' : 'Not installed — press Install to set it up.',
+          ]
+            .filter(Boolean)
+            .join(' '),
+        },
+      ],
+    }
+  },
+)
+
 alexia.tool(
   'install_workflow',
   {
@@ -1001,18 +1098,19 @@ alexia.tool(
       properties: {
         workflow: {
           type: 'string',
-          description: 'The title of the workflow, as find_workflow showed it.',
+          description: 'The title of the workflow, as find_workflow or the library showed it.',
         },
+        id: { type: 'string', description: 'Its catalogue name, which the library page passes.' },
       },
-      required: ['workflow'],
     }),
     // Nothing is overwritten that was not already this same workflow, and installing the same
     // one twice is the same file written twice.
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
-  async ({ workflow }, ctx) => {
+  async ({ workflow, id }, ctx) => {
     const signal = ctx?.mcpReq?.signal
-    const asked = String(workflow ?? '').trim()
+    // `workflow` is what the model passes; `id` is what a row action on the library page passes.
+    const asked = String(workflow ?? id ?? '').trim()
     if (asked === '') return refuse('Which one? Use the title find_workflow showed.')
     const state = await reachable(ctx)
     if (!state.ok) return refuse(state.said)

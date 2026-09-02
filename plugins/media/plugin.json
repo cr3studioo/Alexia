@@ -4,7 +4,7 @@
   "id": "media",
   "name": "Local media generation",
   "summary": "Makes pictures, sound and video on this machine with ComfyUI, starting it if it is not already running, so the media-making half of Combined mode is real.",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "license": "AGPL-3.0-only",
   "entry": {
     "run": "node",
@@ -109,7 +109,7 @@
     "skills/picture-prompts"
   ],
   "panel": {
-    "label": "Pictures",
+    "label": "Pictures & workflows",
     "widgets": [
       {
         "key": "made",
@@ -118,6 +118,38 @@
         "hint": "Everything this machine has made, newest first. Nothing is ever deleted to make room — the size below is what that costs. Click one to see what made it.",
         "rows": "pictures",
         "detail": "about_picture"
+      },
+      {
+        "key": "library",
+        "type": "table",
+        "label": "Workflow library",
+        "hint": "The workflows ComfyUI ships, filtered to the ones this graphics card can actually run and that need no paid service. Press Install and run_workflow can use it. The two ranked tiers the plan describes — workflows Alexia has verified, and a curated set — do not exist yet, and a badge for them would mean nothing.",
+        "rows": "library",
+        "columns": [
+          {
+            "key": "title",
+            "label": "Workflow"
+          },
+          {
+            "key": "state",
+            "label": "State"
+          },
+          {
+            "key": "wants",
+            "label": "Needs",
+            "hideNarrow": true
+          }
+        ],
+        "rowActions": [
+          {
+            "key": "install_workflow",
+            "label": "Install",
+            "tool": "install_workflow"
+          }
+        ],
+        "detail": "about_workflow",
+        "filter": true,
+        "groupBy": "category"
       },
       {
         "key": "installed_workflows",
