@@ -21,13 +21,16 @@ import { basename } from 'node:path'
  * **No dependency.** `fetch`, `FormData` and `Blob` are Node's own, and one HTTP client does
  * not justify an ask.
  *
- * **What is verified and what is not.** The synthesis and listing shapes are the ones the
- * predecessor ran live against a real key on 2026-08-13; `s2.1-pro-free` is pinned because
- * the vendor's own default is paid and answers 402 on an account with no API credit, which
- * was the difference between this working and not working at all. **The clone-creation call
- * below has not been run against the live API from this repo** — there is no key on this
- * machine — so it is written from the published shape and says so. First run with a real key
- * is where it gets confirmed, and the failure is a readable message rather than a mystery.
+ * **What is verified.** The synthesis and listing shapes are the ones the predecessor ran live
+ * against a real key on 2026-08-13; `s2.1-pro-free` is pinned because the vendor's own default
+ * is paid and answers 402 on an account with no API credit, which was the difference between
+ * this working and not working at all.
+ *
+ * **The clone-creation call was the one thing here that had never been run**, and it has been:
+ * 2026-09-02, against the live API with a real key, end to end — a fifteen-second clip and its
+ * transcript up, a trained model back on the account, spoken in, and deleted again. The
+ * published shape was right. `listing`'s three extra fields were confirmed on the same run,
+ * including that `samples[0].audio` is served from `platform.r2.fish.audio` with no key at all.
  */
 
 /**
@@ -121,6 +124,19 @@ export async function clone(key, { name, wav, transcript, signal }) {
  *
  * The same endpoint answers *my voices* and *everyone's*; what differs is the query, so it
  * is one function rather than two that would drift.
+ *
+ * **Three fields the first version threw away**, all confirmed live against the API on
+ * 2026-09-02. Each was discarded on the same reasoning — *the panel is a table, and a table
+ * has columns* — which stopped being true when the page grew cards and a player:
+ *
+ * - `samples[0].audio` is a public R2 URL, playable with no key, no proxy and nothing stored.
+ *   There is **no** top-level `preview_url`; anything claiming one has renamed this field.
+ * - `description` is a real sentence about the voice and reads far better as a card's summary
+ *   than four tags joined by a dot.
+ * - `default_text` is the vendor's own suggested line for hearing it.
+ *
+ * A missing one is absent rather than empty, so a caller can tell *the vendor said nothing*
+ * from *the vendor said nothing useful*.
  */
 async function listing(key, query, signal) {
   const response = await call(`/model?${query}`, { key, signal })
@@ -129,13 +145,21 @@ async function listing(key, query, signal) {
     // A model still training is listed and cannot speak, so offering one would be offering a
     // voice that fails at the moment somebody uses it.
     .filter((item) => item && (item.state === undefined || item.state === 'trained'))
-    .map((item) => ({
-      id: String(item._id ?? ''),
-      name: String(item.title ?? '(untitled)'),
-      tags: (Array.isArray(item.tags) ? item.tags : []).map(String),
-      likes: Number(item.like_count) || 0,
-      by: String(item.author?.nickname ?? ''),
-    }))
+    .map((item) => {
+      const sample = (Array.isArray(item.samples) ? item.samples : []).find((one) => one?.audio)
+      const about = String(item.description ?? '').trim()
+      const suggested = String(item.default_text ?? '').trim()
+      return {
+        id: String(item._id ?? ''),
+        name: String(item.title ?? '(untitled)'),
+        tags: (Array.isArray(item.tags) ? item.tags : []).map(String),
+        likes: Number(item.like_count) || 0,
+        by: String(item.author?.nickname ?? ''),
+        ...(sample && { preview: String(sample.audio) }),
+        ...(about && { about }),
+        ...(suggested && { suggested }),
+      }
+    })
     .filter((one) => one.id !== '')
 }
 

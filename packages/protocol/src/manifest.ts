@@ -45,9 +45,19 @@ import { APP_VERSION, newer } from './version.js'
  * **5 on 2026-09-01.** `image` — a widget for pictures a plugin has made. Additive, and the
  * floor stays at 2 for the same reason it did last time: nothing below is worth deprecating,
  * and the plugins declaring 2 still work.
+ *
+ * **6 on 2026-09-01 (D141).** `cards` — things a plugin holds, drawn the way core draws
+ * plugins.
+ *
+ * **7 on 2026-09-02.** Four at once, and they are one change: a page that shows what applies.
+ * `when` on every widget, so a widget that does not apply is not drawn; `choice` options that
+ * carry a sentence, so a choice that is really a decision reads as one; `file`, so a person
+ * can point at a file rather than type where one is (D89's obstacle removed, not waived); and
+ * `multiline` on `text`. All four are optional and none of them changes what an existing
+ * manifest means, which is why the floor stays at 2 again.
  */
 export const ALEXIA_PROTOCOL_MIN = 2
-export const ALEXIA_PROTOCOL_MAX = 6
+export const ALEXIA_PROTOCOL_MAX = 7
 
 /**
  * The two MCP revisions core speaks, in preference order (D55, corrected by D57).
@@ -77,24 +87,103 @@ const MCP_REVISION = /^\d{4}-\d{2}-\d{2}$/
 
 const id = z.string().min(1).max(64).regex(ID, 'lowercase letters, digits and hyphens only')
 
+/**
+ * **When this widget is on the page at all** (`alexia_protocol` 7).
+ *
+ * Every widget carries it, because *which of these apply* is a question about the page and
+ * not about one kind of control. It names a sibling's key and the value or values that make
+ * this one relevant; core reads the stored value before it renders, and a widget that does
+ * not match never reaches the screen.
+ *
+ * **Hidden, not greyed.** A greyed control is a promise that something could be typed there,
+ * and the page it produces is nineteen widgets of which four apply — which is the page this
+ * arrived to fix. What is gone is gone, and the setting it depends on is the thing that
+ * brings it back.
+ *
+ * It is not a general expression language and should not become one: one key, one set of
+ * values, resolved by a string compare. A plugin that needs *and* has two settings, and a
+ * plugin that needs arithmetic has a tool.
+ */
+const gated = {
+  when: z
+    .object({
+      key: z.string().regex(IDENT),
+      is: z.union([z.string(), z.array(z.string()).min(1)]),
+    })
+    .strict()
+    .optional(),
+}
+
+/**
+ * One option of a `choice`, either as a bare value or as a value with something to read.
+ *
+ * A bare string is what almost every choice is — three model sizes, two formats — and it
+ * renders exactly as it always did. An object is for a choice that is really a **decision**:
+ * four engines, each with a cost and a trade-off, where the difference between them is a
+ * sentence rather than a word. Core draws those as stacked cards; that it does so is core's
+ * call, exactly as segmented-versus-dropdown is.
+ *
+ * `needs` names another widget that must hold a value before this option can be picked, and
+ * `reason` is the author's own sentence saying so. Core dims the card and shows the sentence
+ * rather than hiding the option, for the same reason D120 dims a plugin that is not
+ * installed: the person who cannot pick it is the person who needs to know what to do about it.
+ */
+const option = z.union([
+  z.string().min(1),
+  z
+    .object({
+      value: z.string().min(1),
+      label: z.string().min(1),
+      hint: z.string().min(1).optional(),
+      needs: z.string().regex(IDENT).optional(),
+      reason: z.string().min(1).max(160).optional(),
+      /**
+       * Whether it can be picked. Core computes this from `needs` and overwrites whatever is
+       * here; declaring `false` outright is for an option that is permanently out on this
+       * build, which is a thing an author knows and core does not.
+       */
+      available: z.boolean().optional(),
+    })
+    .strict(),
+])
+
+/** One `choice` option as it reaches the screen, whichever way it was declared. */
+export type ChoiceOption = z.infer<typeof option>
+
+/** The value a `choice` option stands for, however it was written. */
+export const optionValue = (one: string | { value: string }): string =>
+  typeof one === 'string' ? one : one.value
+
 const setting = z.discriminatedUnion('type', [
   z.object({
+    ...gated,
     type: z.literal('text'),
     key: z.string().regex(IDENT),
     label: z.string().min(1),
     hint: z.string().optional(),
     default: z.string().optional(),
     placeholder: z.string().optional(),
+    /**
+     * A box that takes more than a line (`alexia_protocol` 7).
+     *
+     * Not a new widget: it is the same value, saved the same way, and the only thing that
+     * changes is how much of it you can see while you type. The case is a transcript — the
+     * words somebody said in a fifteen-second clip, typed into a control that showed forty
+     * characters of them.
+     */
+    multiline: z.boolean().optional(),
   }),
   z.object({
     // Never carries a default and never appears in a log or an export: core keeps the
     // value in the OS keychain and hands it back only to the plugin that declared it.
+    ...gated,
     type: z.literal('password'),
     key: z.string().regex(IDENT),
     label: z.string().min(1),
     hint: z.string().optional(),
   }),
   z.object({
+    ...gated,
     type: z.literal('number'),
     key: z.string().regex(IDENT),
     label: z.string().min(1),
@@ -105,6 +194,7 @@ const setting = z.discriminatedUnion('type', [
     step: z.number().positive().optional(),
   }),
   z.object({
+    ...gated,
     type: z.literal('toggle'),
     key: z.string().regex(IDENT),
     label: z.string().min(1),
@@ -112,14 +202,17 @@ const setting = z.discriminatedUnion('type', [
     default: z.boolean().optional(),
   }),
   z.object({
+    ...gated,
     type: z.literal('choice'),
     key: z.string().regex(IDENT),
     label: z.string().min(1),
     hint: z.string().optional(),
-    options: z.array(z.string().min(1)).min(1),
+    /** Bare strings, or {@link option} objects for a choice that is really a decision. */
+    options: z.array(option).min(1),
     default: z.string().optional(),
   }),
   z.object({
+    ...gated,
     type: z.literal('multi-choice'),
     key: z.string().regex(IDENT),
     label: z.string().min(1),
@@ -128,6 +221,7 @@ const setting = z.discriminatedUnion('type', [
     default: z.array(z.string()).optional(),
   }),
   z.object({
+    ...gated,
     type: z.literal('path'),
     key: z.string().regex(IDENT),
     label: z.string().min(1),
@@ -136,13 +230,52 @@ const setting = z.discriminatedUnion('type', [
     // No default: an absolute path baked into a manifest is wrong on someone else's machine.
   }),
   z.object({
+    ...gated,
+    /**
+     * The fifteenth widget: **a file somebody picks** (`alexia_protocol` 7).
+     *
+     * **Refused three times, and the obstacle that stopped it is gone rather than waived.**
+     * D89's refusal was not about taste, it was arithmetic: *a browser will not tell a page
+     * where a file is*, so a `file` widget could never fill a `path`, and a plugin that takes
+     * paths would be handed a control that cannot produce one. Every argument since then went
+     * round the same wall — including this plugin's own comment at `clone_voice`, which
+     * accepted `path` because the alternative it was offered was building a wav recorder.
+     *
+     * What changed is that core grew the other half. `attach.ts` already takes bytes from a
+     * browser, writes them somewhere safe, hands over a path, and enforces the ceilings — for
+     * the composer, which D89 explicitly said did *not* carry this grant. It still does not
+     * carry it on its own. What carries it is that **core creates the path, so nothing has to
+     * be told where the file was**: the widget's stored value is an absolute path core wrote,
+     * inside the asking plugin's own folder, and a plugin reads it exactly as it reads a
+     * `path` today. `clone_voice` and `add_voice` needed no change at all.
+     *
+     * So this is not a way for a plugin to reach into a filesystem. It is a `path` whose value
+     * a person produces by pointing at a file instead of by typing where one is, which is what
+     * everybody asking for it meant.
+     */
+    type: z.literal('file'),
+    key: z.string().regex(IDENT),
+    label: z.string().min(1),
+    hint: z.string().optional(),
+    /**
+     * What the picker offers, in the browser's own syntax — `.wav,.mp3` or `audio/*`.
+     *
+     * Advisory, as it is everywhere else: a picker that offers every file when one extension
+     * works is a worse picker, and it is not a check. The plugin still refuses what it cannot
+     * read, because the person can always choose *all files*.
+     */
+    accept: z.string().min(1).optional(),
+  }),
+  z.object({
     // Read-only. The plugin drives it; core renders whatever it last wrote.
+    ...gated,
     type: z.literal('status'),
     key: z.string().regex(IDENT),
     label: z.string().min(1),
     hint: z.string().optional(),
   }),
   z.object({
+    ...gated,
     type: z.literal('progress'),
     key: z.string().regex(IDENT),
     label: z.string().min(1),
@@ -150,6 +283,7 @@ const setting = z.discriminatedUnion('type', [
   }),
   z.object({
     // A button. Pressing it calls one of the plugin's own tools with no arguments.
+    ...gated,
     type: z.literal('action'),
     key: z.string().regex(IDENT),
     label: z.string().min(1),
@@ -172,6 +306,7 @@ const setting = z.discriminatedUnion('type', [
      * second gate and no new concept — which is what stopped this being a bigger idea than
      * it needed to be.
      */
+    ...gated,
     type: z.literal('table'),
     key: z.string().regex(IDENT),
     label: z.string().min(1),
@@ -247,6 +382,7 @@ const setting = z.discriminatedUnion('type', [
      * because a graph offers no choices about column order that a reader would notice, and
      * every knob here would be one more thing an author can get wrong.
      */
+    ...gated,
     type: z.literal('graph'),
     key: z.string().regex(IDENT),
     label: z.string().min(1),
@@ -285,6 +421,7 @@ const setting = z.discriminatedUnion('type', [
      * the contract the way `graph`'s is, because a card offers no choices about layout that a
      * reader would notice and every knob here is one more thing an author can get wrong.
      */
+    ...gated,
     type: z.literal('cards'),
     key: z.string().regex(IDENT),
     label: z.string().min(1),
@@ -357,6 +494,7 @@ const setting = z.discriminatedUnion('type', [
      * what a screen reader says, and what any of it does in the dark are core's**, because they
      * are the decisions that make a page look like one page.
      */
+    ...gated,
     type: z.literal('image'),
     key: z.string().regex(IDENT),
     label: z.string().min(1),
@@ -546,32 +684,19 @@ export const Manifest = ManifestShape.superRefine((m, ctx) => {
   if (m.panel !== undefined && m.alexia_protocol < 3) {
     fail(['panel'], 'panel arrived in alexia_protocol 3 — declare "alexia_protocol": 3 to use it')
   }
-  // Same rule as the two above, and it is what stops a `graph` reaching a core that has never
-  // heard of one: an older Alexia would refuse the manifest as unparseable rather than saying
-  // which of the two of you is out of date, which is the whole job of this integer.
-  m.panel?.widgets.forEach((w, i) => {
-    if (w.type === 'image' && m.alexia_protocol < 5) {
-      fail(['panel', 'widgets', i], 'image arrived in alexia_protocol 5 — declare "alexia_protocol": 5 to use it')
-    }
-    if (w.type === 'graph' && m.alexia_protocol < 4) {
-      fail(['panel', 'widgets', i], 'graph arrived in alexia_protocol 4 — declare "alexia_protocol": 4 to use it')
-    }
-  })
-  m.settings?.forEach((w, i) => {
-    if (w.type === 'image' && m.alexia_protocol < 5) {
-      fail(['settings', i], 'image arrived in alexia_protocol 5 — declare "alexia_protocol": 5 to use it')
-    }
-    if (w.type === 'graph' && m.alexia_protocol < 4) {
-      fail(['settings', i], 'graph arrived in alexia_protocol 4 — declare "alexia_protocol": 4 to use it')
-    }
-  })
-
   if (/^([A-Za-z]:|[\\/])/.test(m.entry.run)) {
     fail(['entry', 'run'], 'entry.run must be a command on PATH or a path relative to the plugin folder')
   }
 
-  // Both lists, because they hold the same widgets and a default that is not one of the
-  // options is the same bug wherever it is declared.
+  /**
+   * Every widget, checked once, in whichever list it was declared in.
+   *
+   * **One loop rather than one per rule per list.** It used to be four: a copy of the
+   * revision gate for each half, and a copy of the default check for each half — which is
+   * how `cards` shipped with no revision gate at all while `graph` and `image` had two
+   * each. The list that is easy to forget to extend is the one that gets forgotten.
+   */
+  const declared = new Set([...(m.settings ?? []), ...(m.panel?.widgets ?? [])].map((w) => w.key))
   for (const [field, widgets] of [
     ['settings', m.settings ?? []],
     ['panel', m.panel?.widgets ?? []],
@@ -579,8 +704,46 @@ export const Manifest = ManifestShape.superRefine((m, ctx) => {
     // `panel.widgets`, so the path a reader is handed points at the thing they wrote.
     const at = (i: number): (string | number)[] => (field === 'panel' ? ['panel', 'widgets', i] : [field, i])
     widgets.forEach((s, i) => {
-      if (s.type === 'choice' && s.default !== undefined && !s.options.includes(s.default)) {
-        fail([...at(i), 'default'], `default "${s.default}" is not one of options`)
+      /**
+       * A field that arrived in a later revision may only be used by a plugin that declared
+       * it. Without this the integer means nothing: a manifest could quietly use whatever
+       * core happens to understand today and be refused as unparseable on the machine
+       * running yesterday's build — which is the exact failure it exists to make readable.
+       */
+      const since = (revision: number, what: string, where: (string | number)[] = at(i)): void => {
+        if (m.alexia_protocol < revision) {
+          fail(where, `${what} arrived in alexia_protocol ${String(revision)} — declare "alexia_protocol": ${String(revision)} to use it`)
+        }
+      }
+      if (s.type === 'graph') since(4, 'graph')
+      if (s.type === 'image') since(5, 'image')
+      if (s.type === 'cards') since(6, 'cards')
+      if (s.type === 'file') since(7, 'file')
+      if (s.type === 'text' && s.multiline !== undefined) since(7, 'multiline', [...at(i), 'multiline'])
+      if (s.when !== undefined) {
+        since(7, 'when', [...at(i), 'when'])
+        // A `when` naming a key nobody declared is a widget that is never drawn, silently.
+        // Both lists, because they are one namespace (D86) and a panel widget may perfectly
+        // well turn on a setting above it.
+        if (!declared.has(s.when.key)) {
+          fail([...at(i), 'when', 'key'], `when.key "${s.when.key}" is not a widget this plugin declares`)
+        }
+        if (s.when.key === s.key) fail([...at(i), 'when', 'key'], 'a widget cannot be gated on itself')
+      }
+
+      if (s.type === 'choice') {
+        const values = s.options.map(optionValue)
+        if (s.options.some((o) => typeof o !== 'string')) since(7, 'a choice option with a label', [...at(i), 'options'])
+        for (const [n, one] of s.options.entries()) {
+          if (typeof one === 'string' || one.needs === undefined) continue
+          if (!declared.has(one.needs)) {
+            fail([...at(i), 'options', n, 'needs'], `needs "${one.needs}" is not a widget this plugin declares`)
+          }
+        }
+        for (const d of new Set(dupes(values))) fail([...at(i), 'options'], `option "${d}" is declared twice`)
+        if (s.default !== undefined && !values.includes(s.default)) {
+          fail([...at(i), 'default'], `default "${s.default}" is not one of options`)
+        }
       }
       if (s.type === 'multi-choice' && s.default) {
         for (const d of s.default) {

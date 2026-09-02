@@ -62,7 +62,10 @@ const TEXT: [string, string[]][] = [
 const OBJECT: [string, string[]][] = [
   ['line-strong', ['surface', 'surface-raised']],
   ['focus', ['surface', 'surface-raised']],
-  ['accent', ['surface', 'surface-sunken']],
+  // `surface-raised` joined the list when an engine card started marking *the chosen one* with
+  // an accent border: a card's own ground is what that border has to be seen against, and it
+  // is the one surface the accent had never been measured on.
+  ['accent', ['surface', 'surface-sunken', 'surface-raised']],
 ]
 
 test.each([

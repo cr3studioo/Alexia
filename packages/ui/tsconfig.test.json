@@ -3,6 +3,10 @@
   "compilerOptions": {
     "rootDir": ".",
     "outDir": "dist",
+    // DOM here as well as in `tsconfig.json`, because one of these tests renders the widgets
+    // rather than reading them as text. The `src` half is browser code and always had it;
+    // this half was Node-only until something in it needed a document.
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
     "types": ["node"]
   },
   "references": [

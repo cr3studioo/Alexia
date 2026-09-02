@@ -153,6 +153,10 @@ export function mountSettings(token: string): {
     // A plugin's widgets are only ever on its own page, which is the only thing on screen
     // when they are drawn — so a redraw looks there rather than anywhere a grid ever was.
     root: () => sheet,
+    // Only ever asked for by a widget core marked `gates` — one whose value decides which
+    // other widgets are on the page. Re-reads and draws the page again, which is the same
+    // thing every other change of shape on this screen does.
+    redraw: () => void load(),
     fresh: async () => {
       const state = (await (
         await fetch('/api/plugins', { headers: { 'x-alexia-token': token } })

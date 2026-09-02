@@ -8,8 +8,9 @@ import {
   type Root,
   type Tool,
 } from '@modelcontextprotocol/client'
-import { cpSync, readdirSync, readFileSync, realpathSync, rmSync, watch, type FSWatcher } from 'node:fs'
+import { cpSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, watch, type FSWatcher } from 'node:fs'
 import { basename, join } from 'node:path'
+import { receive, type Upload } from './attach.js'
 import { Host } from './host.js'
 import { CORE, keychain, type SecretStore } from './secrets.js'
 import {
@@ -464,6 +465,47 @@ export class Plugins {
     // changed, and "there is no longer one" is a change a plugin has to be able to see.
     const said = declared.type === 'password' && value === '' ? null : value
     await entry.process.notify(SETTINGS_CHANGED, { changed: { [key]: said } })
+  }
+
+  /**
+   * The bytes behind a `file` widget, and the path they become.
+   *
+   * **This is the half D89 was missing.** *A browser will not tell a page where a file is* was
+   * the whole of that refusal, and it is still true — so core does not ask. The bytes arrive
+   * the way an attachment's do, `receive()` puts them somewhere with the same ceilings and the
+   * same `safeName()`, and **core stores the path it just made**. The plugin then reads a path
+   * exactly as it reads a `path` today, which is why nothing on that side changed.
+   *
+   * Inside the plugin's own folder, so it purges with the plugin and invariant 5 keeps holding.
+   * One folder per widget and one file in it: the previous one is deleted first, because a
+   * folder that grows a copy of every recording anybody ever cloned from is a cost nobody
+   * asked for — and because that is what lets the file keep its own name.
+   *
+   * **The name is the person's, not a timestamp.** `receive()` numbers what it writes, which is
+   * right for a message carrying two files called `scan.pdf` and wrong here: a widget holds one
+   * file, and a plugin reading `1757…-0.onnx` has lost the one thing the filename was carrying.
+   * Piper names a voice after its file; so does a clone.
+   */
+  async upload(id: string, key: string, file: Upload): Promise<{ path: string } | { refused: string }> {
+    const entry = this.#entries.get(id)
+    const declared = entry && declaredWidgets(entry.manifest).find((s) => s.key === key)
+    if (!entry || !declared) {
+      throw new ProtocolError(ErrorCode.INVALID_PARAMS, `${id} has no setting called "${key}"`)
+    }
+    if (declared.type !== 'file') {
+      throw new ProtocolError(ErrorCode.INVALID_PARAMS, `"${declared.label}" does not take a file.`)
+    }
+    // Emptied first rather than after, so one widget holds one file and the name below is free.
+    const dir = join(this.#host.ownDir(id), 'uploads', key)
+    rmSync(dir, { recursive: true, force: true })
+    const { kept, refused } = receive([file], dir)
+    if (kept[0] === undefined) return { refused: refused[0] ?? 'That file did not arrive.' }
+
+    const path = join(dir, kept[0].name)
+    renameSync(kept[0].path, path)
+    this.options.store.setSetting(id, key, path)
+    await entry.process.notify(SETTINGS_CHANGED, { changed: { [key]: path } })
+    return { path }
   }
 
   /**

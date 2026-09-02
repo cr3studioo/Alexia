@@ -1577,6 +1577,40 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     }
 
     /**
+     * A `file` widget, filled.
+     *
+     * The same shape `/api/chat` sends an attachment in — a name and base64 — for the same
+     * reason: `node:http` has no multipart parser, and the webview has bytes rather than a
+     * path. What differs is where they go and how long they stay: an attachment is read and
+     * deleted in one breath, and this one is a value, so it is written inside the plugin's own
+     * folder and the path becomes the widget's stored value.
+     *
+     * A separate route rather than `/api/settings`, because the value core keeps is not the
+     * value the page sent — `refuse()` turns a `file` away for exactly that reason.
+     */
+    if (url.pathname === '/api/upload' && request.method === 'POST') {
+      const got = sent as { plugin?: string; key?: string; name?: string; data?: string }
+      try {
+        const answer = await plugins.upload(got.plugin ?? '', got.key ?? '', {
+          name: String(got.name ?? 'file'),
+          data: String(got.data ?? ''),
+        })
+        response.writeHead(200, { 'content-type': 'application/json' })
+        response.end(
+          JSON.stringify(
+            'refused' in answer ?
+              { ok: false, why: answer.refused }
+            : { ok: true, path: answer.path, panes: await plugins.panes() },
+          ),
+        )
+      } catch (error) {
+        response.writeHead(200, { 'content-type': 'application/json' })
+        response.end(JSON.stringify({ ok: false, why: error instanceof Error ? error.message : String(error) }))
+      }
+      return
+    }
+
+    /**
      * An `action` button, pressed.
      *
      * The permission gate is the same one every tool call goes through: a destructive tool is
