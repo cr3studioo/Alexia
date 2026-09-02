@@ -122,9 +122,10 @@ export interface WidgetHost {
    */
   plugin: string
   /**
-   * Which screen. It only distinguishes `data-field` attributes — the settings pane and a
-   * panel can be in the same document showing the same plugin, and a redraw that found the
-   * other one's node would replace the wrong thing.
+   * Which screen. It only distinguishes `data-field` attributes — a plugin's page and a core
+   * tab can be in the same document, and a redraw that found the other one's node would
+   * replace the wrong thing. A plugin's two lists share this value since D118, which is safe
+   * for the reason they could always share a store: one key, declared once (D86).
    */
   screen: string
   /** A POST carrying the token, and the parsed answer. */
@@ -481,7 +482,9 @@ export function widget(host: WidgetHost, declared: Rendered): HTMLElement {
 
 /**
  * *Ask for your rows again.* Dispatched at every table and map on the screen an `action` was
- * pressed on — which is one plugin's page or one panel tab, never the whole window.
+ * pressed on — which is one plugin's page or one core tab, never the whole window. Since D118
+ * a plugin's page holds both its lists, so a button in the settings half reaches the table in
+ * the panel half, which is the right answer where it used to be an impossible one.
  *
  * An event rather than a registry: a table that has been drawn over is gone from the DOM and
  * so hears nothing, which is the correct behaviour and is free here rather than being a list

@@ -83,12 +83,16 @@ of date.
 
 **One field and one widget.** `panel`, and `table`.
 
-A plugin declaring a tab on the control surface, the same way it declares settings (D86). The
-tab list on that screen is **assembled**: core contributes the tabs whose data core owns, and
-every other one is a `panel` in the manifest of a plugin somebody has enabled. The previous
-Alexia's dashboard listed nine tabs by hand in one file and grew a 480-line panel for a single
-text-to-speech vendor inside its own source tree — this field is what makes that impossible
-rather than merely discouraged, and deleting a plugin folder takes its tab with it.
+A plugin declaring a screen of its own, the same way it declares settings (D86). What it
+declares is **assembled** rather than typed anywhere: the widgets are there because a manifest
+says so and somebody enabled the plugin. The previous Alexia's dashboard listed nine tabs by
+hand in one file and grew a 480-line panel for a single text-to-speech vendor inside its own
+source tree — this field is what makes that impossible rather than merely discouraged, and
+deleting a plugin folder takes its panel with it.
+
+*Where that panel is drawn changed at D118 and the field did not: it was a tab on the control
+surface, and it is now the second half of the plugin's own page, under the settings that drive
+it. No revision, because nothing a manifest says about it changed.*
 
 ```jsonc
 {

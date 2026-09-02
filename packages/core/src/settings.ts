@@ -6,7 +6,7 @@ import type { SecretStore } from './secrets.js'
 import type { Store } from './store.js'
 
 /**
- * The settings screen, from the manifest side (M2-1).
+ * The plugin's own page, from the manifest side (M2-1, D118).
  *
  * **A plugin cannot style itself wrong because it never styles itself.** It declares twelve
  * possible widgets; this module turns those declarations plus the stored values into
@@ -112,6 +112,16 @@ export interface Pane {
   /** The author's own sentences, never rewritten: this is what the user reads. */
   requires: { cap: string; why: string }[]
   settings: Rendered[]
+  /**
+   * The rest of the same page: what the plugin is *doing*, under its own heading (D118).
+   *
+   * `panel` used to be a tab on the control surface, one screen away from the values that
+   * drive it — so cloning a voice meant typing a path on this page, going to another screen
+   * and pressing a button there. Two places for one plugin is one of them being the wrong
+   * guess, so both lists arrive together and one page draws them. Absent when the manifest
+   * declares no panel, which most plugins do not.
+   */
+  panel?: { label: string; widgets: Rendered[] }
 }
 
 /**
@@ -152,12 +162,13 @@ export interface PaneOptions {
 }
 
 /**
- * Every widget this plugin declared, on either screen.
+ * Every widget this plugin declared, in either list.
  *
  * `settings` and `panel.widgets` are one namespace (D86) because a widget's value is stored
  * once. So *is this key declared* has one answer, and the two places that ask it — an edit
  * arriving and a button being pressed — get it from here rather than each searching the list
- * they happen to know about.
+ * they happen to know about. Since D118 the two lists are also one page, which is what the
+ * namespace was already describing.
  */
 export function declaredWidgets(manifest: Manifest): Setting[] {
   return [...(manifest.settings ?? []), ...(manifest.panel?.widgets ?? [])]
@@ -214,8 +225,9 @@ export function declaredTable(
 /**
  * A declared list of widgets, filled in with what core knows right now.
  *
- * Shared by the settings pane and the control-surface panel, because they are two views of
- * one declaration and a second renderer would be a second set of rules about `password`.
+ * Called twice for one plugin — once for `settings` and once for `panel.widgets` — because
+ * they are two halves of one page, and a second renderer would be a second set of rules
+ * about `password`.
  */
 export async function render(
   manifest: Manifest,
@@ -260,7 +272,7 @@ export async function render(
   return settings
 }
 
-/** One plugin's pane: its chrome, and its ten-widget form filled in. */
+/** One plugin's page: its chrome, its form filled in, and its panel under it (D118). */
 export async function pane(manifest: Manifest, options: PaneOptions): Promise<Pane> {
   return {
     id: manifest.id,
@@ -272,6 +284,14 @@ export async function pane(manifest: Manifest, options: PaneOptions): Promise<Pa
     running: options.running(manifest.id),
     requires: manifest.requires?.map((r) => ({ cap: r.cap, why: r.why })) ?? [],
     settings: await render(manifest, manifest.settings ?? [], options),
+    // Rendered by the same function as the settings above it, which is what stops the two
+    // halves of one page drifting into two sets of rules about where a `password` goes.
+    ...(manifest.panel !== undefined && {
+      panel: {
+        label: manifest.panel.label,
+        widgets: await render(manifest, manifest.panel.widgets, options),
+      },
+    }),
   }
 }
 

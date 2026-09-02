@@ -1665,8 +1665,8 @@ text.addEventListener('keydown', (event) => {
  */
 const palette = mountPalette(token, (tab, filter) => {
   // Plugins live on the settings screen rather than the control surface (M8-3), so the one
-  // hit that is not a control tab opens the page it is actually on. The palette says where a
-  // thing lives; it does not get to be wrong about it because two screens exist.
+  // hit that is not a control tab opens the page it is actually on. Since D118 that page is
+  // the whole plugin, so there is one answer to *where does this live* rather than two.
   if (tab === 'plugins') {
     show('settings')
     settings.open('plugins', filter)
@@ -1708,4 +1708,3 @@ const rail = mountRail(token, {
 
 await load()
 await rail.refresh()
-

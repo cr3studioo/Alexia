@@ -1,50 +1,37 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import type { Manifest } from '@alexia/protocol'
 import { pins } from './commands.js'
-import { render, type PaneOptions, type Rendered } from './settings.js'
+import type { Rendered } from './settings.js'
+import type { Store } from './store.js'
 
 /**
- * The control surface's tab list, assembled (M6-2).
+ * The control surface's tab list (M6-2, narrowed by D118).
  *
- * **This is M0's rule one screen later.** Core contributes the tabs whose data core owns.
- * Every other tab is here because a plugin declared a `panel` in its manifest and somebody
- * enabled that plugin — and for no other reason. Nothing in this file knows a plugin's name,
- * and there is no list of tabs anywhere that a person types into.
+ * **Every tab here is one whose data core owns**, and there is still no list anywhere that a
+ * person types into: a tab exists because core has a table to put on it. Until D118 a plugin
+ * could declare a `panel` and get a tab of its own beside these, which meant one plugin had
+ * two homes — its settings on the plugins page and its panel over here — and no way for
+ * anybody to guess which held the thing they were after. A plugin's panel is now the second
+ * half of its own page, drawn by `pane()` in `settings.ts`, and this screen is core's alone.
  *
- * That is not tidiness. The previous Alexia's dashboard listed nine tabs by hand in one
- * `App.tsx`, and one of them was a 480-line panel for a single text-to-speech vendor living
- * in the dashboard's own source tree. That is this project's founding complaint arriving by
- * the back door: not a feature you cannot remove, but a feature core cannot stop naming. A
- * dashboard is where an architecture like this usually breaks, because it is the one screen
- * that has to know about everything at once.
+ * **The rule that put plugin tabs here in the first place did not move.** The previous
+ * Alexia's dashboard listed nine tabs by hand in one `App.tsx`, and one of them was a
+ * 480-line panel for a single text-to-speech vendor living in the dashboard's own source
+ * tree — this project's founding complaint arriving by the back door. What stops that is
+ * that no screen in core names a plugin, and the plugins page is assembled from manifests
+ * exactly the way this list used to be. Deleting a folder still takes its page with it.
  *
- * **Nothing here spawns anything.** A panel draws from the manifest and the store, the same
- * way a settings pane does and for the same reason — with lazy spawn, *not running* is the
- * ordinary state of a plugin. Anything that genuinely needs the process is a tool call the
- * panel makes when somebody opens it, not a spawn at draw time. Core's own tabs work the
- * same way: their tables declare their shape here and fetch their rows on open.
+ * **Nothing here spawns anything.** A tab draws from the store and declares its tables;
+ * their rows are fetched when somebody opens it, never at draw time.
  */
 
 export interface Tab {
   /** Stable, and what the shell remembers between draws. */
   id: string
   label: string
-  /** Core's own, or a plugin's. The shell draws both the same; only this says which. */
-  from: 'core' | 'plugin'
-  /** A plugin tab: whose. Absent on core's own, which belong to nobody. */
-  plugin?: string
-  /**
-   * A plugin tab: whether its process is up.
-   *
-   * Enabled and not running is a **normal** state and reads as one. It is what lazy spawn
-   * produces most of the time, and a tab that looked broken whenever nothing had called the
-   * plugin lately would teach people to ignore the one that is actually broken.
-   */
-  running?: boolean
-  /** The declared widgets, filled in. Core's tabs and a plugin's are the same shape. */
+  /** The declared widgets, filled in. */
   widgets?: Rendered[]
   /**
-   * A core tab whose panel is not built yet: what it will hold, and which task builds it.
+   * A tab whose panel is not built yet: what it will hold, and which task builds it.
    *
    * Deliberately a sentence rather than an empty pane. A blank tab is indistinguishable from
    * a broken one, and a placeholder that looked like working software would be worse than
@@ -282,10 +269,12 @@ const MODELS: Rendered = table({
  * *Activity* first because *what has this been doing* is the question that brings somebody
  * to this screen. The rest follow it: what it knows, and what it can do.
  *
- * **There is no Library tab here any more (M8-3).** It was a read-only copy of a list the
- * settings screen owns the write path for, and one list in two places is one of them being
- * out of date. `library` is still a source in `surface.ts`, because the palette indexes it —
- * what moved is the screen it opens, not the read.
+ * **There is no Library tab here any more (M8-3), and no plugin tabs either (D118).** The
+ * first was a read-only copy of a list the settings screen owns the write path for; the
+ * second was a plugin's second home, one screen away from the settings that drive it. One
+ * thing in two places is one of them being out of date, and both moved the same way — onto
+ * the page that already owned the write path. `library` is still a source in `surface.ts`,
+ * because the palette indexes it: what moved is the screen it opens, not the read.
  */
 export const CORE_TABS: readonly { id: string; label: string; soon?: string; widgets?: Rendered[] }[] = [
   // First, and ahead of *Activity*, because it is the only tab somebody opens mid-sentence:
@@ -302,45 +291,24 @@ export const CORE_TABLES: readonly string[] = CORE_TABS.flatMap((tab) =>
   (tab.widgets ?? []).flatMap((widget) => (widget.type === 'table' ? [widget.key] : [])),
 )
 
-export interface TabOptions extends PaneOptions {
-  /** Every installed plugin's manifest, enabled or not. The rule below is core's, not the caller's. */
-  manifests: readonly Manifest[]
+export interface TabOptions {
+  /** Where the standing choices live. The only thing on this screen that is not a declaration. */
+  store: Store
 }
 
-/** Core's tabs, then everyone else's. */
-export async function tabs(options: TabOptions): Promise<Tab[]> {
-  const theirs: Tab[] = []
-  for (const manifest of options.manifests) {
-    if (manifest.panel === undefined) continue
-    // A folder appearing is not consent (D73). Installed and not enabled has no tab at all —
-    // not a greyed-out one, because a tab that is there and does nothing is a question.
-    if (options.enabled?.(manifest.id) === false) continue
-    theirs.push({
-      id: `plugin:${manifest.id}`,
-      label: manifest.panel.label,
-      from: 'plugin',
-      plugin: manifest.id,
-      running: options.running(manifest.id),
-      widgets: await render(manifest, manifest.panel.widgets, options),
-    })
-  }
-  // By label, so the row does not reorder itself because a folder was read in a different
-  // order. Nothing about install time is visible on this screen, so nothing should depend on it.
-  theirs.sort((a, b) => a.label.localeCompare(b.label))
-
-  /**
-   * Core's tabs are declarations rather than a render pass — they hold no plugin's stored
-   * values, so there is nothing to fill in. The one exception is the ladder's own setting
-   * (D112), which is a pin rather than a plugin setting and so has nowhere else to arrive
-   * from: the rows come from `/api/rows` when the widget is drawn, and the slider's position
-   * has to be right on the first paint or the screen opens showing the wrong answer.
-   */
+/**
+ * The tabs, filled in.
+ *
+ * These are declarations rather than a render pass — they hold no plugin's stored values, so
+ * there is nothing to fill in. The one exception is the ladder's own setting (D112), which is
+ * a pin rather than a plugin setting and so has nowhere else to arrive from: the rows come
+ * from `/api/rows` when the widget is drawn, and the slider's position has to be right on the
+ * first paint or the screen opens showing the wrong answer.
+ */
+export function tabs(options: TabOptions): Tab[] {
   const standing = pins(options.store)
   const live = (widget: Rendered): Rendered =>
     widget.type === 'ladder' ? { ...widget, value: standing.spend ?? 'mixed' } : widget
 
-  return [
-    ...CORE_TABS.map((tab) => ({ ...tab, from: 'core' as const, widgets: tab.widgets?.map(live) })),
-    ...theirs,
-  ]
+  return CORE_TABS.map((tab) => ({ ...tab, widgets: tab.widgets?.map(live) }))
 }

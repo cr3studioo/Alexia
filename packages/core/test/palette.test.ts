@@ -34,7 +34,7 @@ const over: Searchable[] = [
   { tab: 'skills', kind: 'skill', label: 'folding-laundry', detail: 'installed here' },
   { tab: 'skills', kind: 'learned skill', label: 'sorting-downloads', detail: 'sort my downloads by year' },
   { tab: 'activity', kind: 'run', label: 'sort my downloads', detail: 'answered' },
-  { tab: 'plugin:voice', kind: 'plugin', label: 'Voice' },
+  { tab: 'plugins', kind: 'plugin', label: 'Voice' },
   { tab: 'tools', kind: 'tool', label: 'transcribe', detail: 'voice · reads only' },
 ]
 
@@ -62,6 +62,7 @@ test('nothing typed finds nothing, and there is a ceiling on what comes back', (
 })
 
 test('a hit carries where it lives, which is the whole of what the palette does', () => {
-  // It navigates; it does not execute. What comes back is a tab.
-  expect(search('Voice', over)[0]).toMatchObject({ tab: 'plugin:voice', kind: 'plugin' })
+  // It navigates; it does not execute. What comes back is a tab — and for a plugin that is
+  // the plugins page, which since D118 is the only place a plugin lives.
+  expect(search('Voice', over)[0]).toMatchObject({ tab: 'plugins', kind: 'plugin' })
 })

@@ -8,11 +8,12 @@
 > is [`manifest.md`](./manifest.md#settings). Where a widget's fields are listed there, they
 > are not repeated here.
 >
-> **Two screens, one renderer, since M6-2.** These widgets are also what a plugin's `panel`
-> declares — its tab on the control surface. Everything below is true on both: the same
-> twelve, the same rules, the same file drawing them. What differs is what each screen is *for*, and
-> that difference is in [`manifest.md`](./manifest.md#panel) rather than here, because
-> nothing about the rendering changes.
+> **Two lists, one renderer, since M6-2.** These widgets are also what a plugin's `panel`
+> declares — the second half of its page, under the settings that drive it. Everything below
+> is true of both: the same twelve, the same rules, the same file drawing them. What differs
+> is what each half is *for*, and that difference is in [`manifest.md`](./manifest.md#panel)
+> rather than here, because nothing about the rendering changes. (Until D118 a panel was a tab
+> on a screen of its own, which is why some of the prose below still says *screen*.)
 >
 > Companions: [`manifest.md`](./manifest.md) · [`wire-protocol.md`](./wire-protocol.md)
 

@@ -29,10 +29,11 @@ import { APP_VERSION, newer } from './version.js'
  * rather than a habit, and raising it is what deprecating a revision looks like.
  * `docs/spec/versions.md` is the migration note.
  *
- * **3 on 2026-08-29 (D86).** `panel` — a plugin declaring a tab on the control surface, the
- * same way it declares settings. Additive again, and the promise being kept for the first
- * time rather than described: `MIN` rises with `MAX`, so a manifest declaring 1 now says so
- * in a sentence instead of loading.
+ * **3 on 2026-08-29 (D86).** `panel` — a plugin declaring a screen of its own, the same way
+ * it declares settings. Additive again, and the promise being kept for the first time rather
+ * than described: `MIN` rises with `MAX`, so a manifest declaring 1 now says so in a sentence
+ * instead of loading. *(D118 moved where a panel is drawn — onto the plugin's own page,
+ * under its settings — and left the field alone, so there was no revision in it.)*
  *
  * **4 on 2026-08-31 (D115).** `graph` — a widget for rows that point at each other. Additive
  * like the two before it, and **the floor did not rise with the ceiling this time.** The
@@ -483,28 +484,35 @@ export const ManifestShape = z
     lifetime: z.enum(['lazy', 'resident']).optional(),
 
     /**
-     * A tab on the control surface, declared the same way settings are (M6-2, D86).
+     * The second half of the plugin's own page, declared the same way settings are (M6-2,
+     * D86; moved off the control surface by D118).
      *
-     * **Core never types a plugin's name into the tab bar.** The list on that screen is
-     * assembled: core contributes the tabs whose data core owns, and every other one is
-     * here, in the manifest of a plugin that is installed and enabled — which is the whole
-     * reason it goes when the folder does. The previous Alexia's dashboard listed nine tabs
-     * by hand in one file and grew a 480-line panel for one vendor inside its own source
-     * tree; this field is the thing that makes that impossible rather than discouraged.
+     * **Core never types a plugin's name into a screen.** The plugins page is assembled: a
+     * card and a page exist because a manifest is in a folder, and this half of that page
+     * exists because that manifest declared it and somebody enabled the plugin — which is
+     * the whole reason it goes when the folder does. The previous Alexia's dashboard listed
+     * nine tabs by hand in one file and grew a 480-line panel for one vendor inside its own
+     * source tree; this field is what makes that impossible rather than discouraged.
      *
      * The widgets are the settings widgets, unchanged, because a plugin that cannot style
-     * itself wrong on one screen must not be able to on another. What makes a panel not a
+     * itself wrong in one list must not be able to in another. What makes a panel not a
      * settings pane is what it is *for*: settings are values you change, a panel is a record
-     * you read — and the one or two things you change *while* reading it.
+     * you read — and the one or two things you change *while* reading it. **Both are on one
+     * page**, which is what a hint saying *the box above* may now rely on.
      *
      * **`settings` and `panel.widgets` are one namespace.** A widget's value lives in the
      * plugin's settings store either way, so a key declared in both lists would be one value
      * with two declarations that could disagree about its type. Declaring a key twice is a
-     * load error; choosing which screen a widget belongs on is the author's job.
+     * load error; choosing which half a widget belongs in is the author's job.
      */
     panel: z
       .object({
-        /** What the tab says. Short — it sits in a row with everything else's. */
+        /**
+         * What the section says, where it says anything.
+         *
+         * Drawn only when it is not the plugin's own name, because a heading repeating the
+         * one above it is a section break that marks nothing. Short either way.
+         */
         label: z.string().min(1).max(32),
         widgets: z.array(setting).min(1),
       })

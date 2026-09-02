@@ -3,13 +3,13 @@ import { el, widget, type Rendered, type WidgetHost } from './widgets.js'
 
 /**
  * The control surface (M6-2): what has this been doing, what did I say yes to, what does it
- * know, which of these did I install.
+ * know, which conversation was I in.
  *
- * **Nothing in this file names a tab.** The strip is whatever `/api/panels` sends back, and
- * that is core's own tabs plus one for every enabled plugin that declared a panel in its
- * manifest. If you are about to type a plugin's name in here, you have found a missing
- * capability — the same rule M0 set for core, one screen later, and the one M6-G tests by
- * deleting a plugin folder with this screen open.
+ * **Nothing in this file names a tab.** The strip is whatever `/api/panels` sends back, which
+ * since D118 is core's own tabs and only those — a plugin's panel is the second half of its
+ * page on the plugins screen, because a plugin with a home here *and* a home there is two
+ * places to look for one thing. If you are about to type a plugin's name in here, you have
+ * found a missing capability: the same rule M0 set for core, one screen later.
  *
  * No Node in here, ever (invariant 6).
  */
@@ -17,12 +17,8 @@ import { el, widget, type Rendered, type WidgetHost } from './widgets.js'
 interface Tab {
   id: string
   label: string
-  from: 'core' | 'plugin'
-  plugin?: string
-  /** A plugin tab: whether its process is up. Enabled and not running is normal. */
-  running?: boolean
   widgets?: Rendered[]
-  /** A core tab whose panel is not built yet: what it will hold, and which task builds it. */
+  /** A tab whose panel is not built yet: what it will hold, and which task builds it. */
   soon?: string
 }
 
@@ -56,8 +52,8 @@ export function mountControl(token: string): { open: (tab?: string, filter?: str
 
   async function load(): Promise<void> {
     tabs = await read()
-    // A tab that has gone takes the selection with it. This is the line M6-G is about: a
-    // plugin deleted while this screen is open leaves nothing behind to select.
+    // A tab that has gone takes the selection with it. Cheap, and it holds for a core tab
+    // that is retired the same way it held for a plugin's before D118 moved those.
     if (chosen !== undefined && !tabs.some((tab) => tab.id === chosen)) chosen = undefined
     chosen ??= tabs[0]?.id
     draw()
@@ -66,17 +62,16 @@ export function mountControl(token: string): { open: (tab?: string, filter?: str
   /**
    * What a widget on *this* screen needs.
    *
-   * `fresh` re-reads the whole tab list, because the two things it is asked for — a
-   * `progress` bar mid-call and a `password` that has just been set — are exactly the cases
-   * where anything cached is stale by definition.
+   * `plugin` is the empty string on every one of them — core's own data, and the only kind
+   * this screen holds. `fresh` re-reads the whole tab list, because the thing it is asked for
+   * is a widget mid-call, which is exactly the case where anything cached is stale.
    */
-  const host = (plugin: string): WidgetHost => ({
-    plugin,
+  const host = (): WidgetHost => ({
+    plugin: '',
     screen: 'panel',
     send,
     root: () => body,
-    fresh: async () =>
-      (await read()).find((tab) => (plugin === '' ? tab.id === chosen : tab.plugin === plugin))?.widgets ?? [],
+    fresh: async () => (await read()).find((tab) => tab.id === chosen)?.widgets ?? [],
   })
 
   function draw(): void {
@@ -122,23 +117,16 @@ export function mountControl(token: string): { open: (tab?: string, filter?: str
   /**
    * One tab's contents.
    *
-   * **Core's tabs and a plugin's go through the same function**, which is the whole of what
-   * M6-4 was watching for: if either had needed a line of its own here, `table` would have
-   * been the wrong widget. Neither did. The only difference between them is whose name goes
-   * on the requests the widgets make, and for core's own that name is nobody's.
+   * **Drawn by the same function that draws a plugin's page**, which is the whole of what
+   * M6-4 was watching for: if a core table had needed a line of its own here, `table` would
+   * have been the wrong widget. None did. The only difference between the two screens is
+   * whose name goes on the requests the widgets make, and here that name is nobody's.
    */
   function panel(tab: Tab): HTMLElement[] {
     if (tab.soon !== undefined) return [el('p', 'hint', tab.soon)]
 
-    const drawn: HTMLElement[] = []
-    // Enabled and not running is the ordinary state under lazy spawn, and it reads as one
-    // rather than as a warning — a tab that looked broken whenever nothing had called the
-    // plugin lately would teach people to ignore the one that is actually broken.
-    if (tab.running === false) drawn.push(el('p', 'hint', 'Not running. It starts when something needs it.'))
-
-    const at = host(tab.plugin ?? '')
-    drawn.push(...(tab.widgets ?? []).map((declared) => widget(at, declared)))
-    return drawn
+    const at = host()
+    return (tab.widgets ?? []).map((declared) => widget(at, declared))
   }
 
   current.addEventListener('click', () => {

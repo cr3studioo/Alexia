@@ -93,20 +93,6 @@
       "hint": "Only needed to clone a voice from a recording, which Piper cannot do. Leave it empty and everything stays on this machine."
     },
     {
-      "type": "path",
-      "key": "clip",
-      "label": "A recording to clone",
-      "kind": "file",
-      "hint": "Fifteen seconds of the voice you want, as a .wav. Put the words that were said in the box below, then press Clone on the Voice panel."
-    },
-    {
-      "type": "text",
-      "key": "clip_text",
-      "label": "What the recording says",
-      "placeholder": "The exact words spoken in the clip.",
-      "hint": "A cloner told what was said makes a better voice than one guessing."
-    },
-    {
       "type": "toggle",
       "key": "expression",
       "label": "Speak with expression",
@@ -129,13 +115,6 @@
       "label": "Download now",
       "tool": "install",
       "hint": "Fetches Whisper, Piper, the speech model and the voice. It happens on first use anyway; this is for getting it over with while you are looking."
-    },
-    {
-      "type": "path",
-      "key": "add_voice",
-      "label": "Add a voice",
-      "kind": "file",
-      "hint": "A Piper .onnx voice you have downloaded, with its .onnx.json beside it. Point at it here, then press Add on the Voice panel."
     }
   ],
   "storage": {
@@ -190,18 +169,39 @@
         "filter": true
       },
       {
+        "type": "path",
+        "key": "add_voice",
+        "label": "Add a voice",
+        "kind": "file",
+        "hint": "A Piper .onnx voice you have downloaded, with its .onnx.json beside it. Point at it here, then press Add."
+      },
+      {
         "key": "install_voice",
         "type": "action",
         "label": "Add the voice in the box",
         "tool": "add_voice",
-        "hint": "Copies the file named in “Add a voice”, on the plugins screen, into Alexia. Piper does not clone a voice from a recording — this is for a voice you have already downloaded."
+        "hint": "Copies the file named above into Alexia. Piper does not clone a voice from a recording — this is for a voice you have already downloaded."
+      },
+      {
+        "type": "path",
+        "key": "clip",
+        "label": "A recording to clone",
+        "kind": "file",
+        "hint": "Fifteen seconds of the voice you want, as a .wav. Put the words that were said in the box below, then press Clone."
+      },
+      {
+        "type": "text",
+        "key": "clip_text",
+        "label": "What the recording says",
+        "placeholder": "The exact words spoken in the clip.",
+        "hint": "A cloner told what was said makes a better voice than one guessing."
       },
       {
         "key": "clone_voice",
         "type": "action",
         "label": "Clone the voice in the recording",
         "tool": "clone_voice",
-        "hint": "Uses the recording and the words named on the plugins screen. Needs a fish.audio key: the clip and its transcript leave this machine, and the voice lives on that account until you remove it here."
+        "hint": "Uses the recording and the words above. Needs a fish.audio key: the clip and its transcript leave this machine, and the voice lives on that account until you remove it here."
       },
       {
         "key": "find",

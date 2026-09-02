@@ -146,13 +146,20 @@ it — that is where a row has a name and a button.
 }
 ```
 
-That is a **tab on the control surface** — the screen a person opens to ask what Alexia has
-been doing and what it knows. Your tab is there because somebody enabled your plugin, and it
-goes when your folder does. Nothing in Alexia writes your tab's name down.
+That is **the second half of your plugin's own page**, drawn under the settings above it with
+a rule between them. It is there because somebody enabled your plugin, and it goes when your
+folder does. Nothing in Alexia writes your panel's name down — and `label` only appears where
+it says something the page has not, so calling it after your plugin costs you nothing and
+gains you nothing.
 
-Everything above still applies: the same widgets, the same rules, the same renderer. Use the
-settings pane for values somebody sets once and a panel for something they come back to look
-at — plus the one or two things they change while looking.
+Everything above still applies: the same widgets, the same rules, the same renderer. Use
+`settings` for values somebody sets once and `panel` for something they come back to look at
+— plus the one or two things they change while looking.
+
+**Both halves are on one page, so write your hints that way.** *Press Clone below* is fine.
+*Press Clone on the Voice panel* is a sentence from before D118, when a panel was a tab on a
+screen of its own and your settings were somewhere else entirely; there is nowhere else now,
+and a hint that sends somebody looking for it sends them nowhere.
 
 **One namespace.** A key may appear in `settings` or in `panel.widgets`, not both: the value
 is stored once, so two declarations of it could disagree about its type. Declaring one twice

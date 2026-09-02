@@ -8,12 +8,12 @@ import { serve, type Serving } from '../src/serve.js'
 import { noPolling, stage } from './staged.js'
 
 /**
- * The two plugin-owned panels, end to end (M6-6, M6-7).
+ * The two plugin-owned panels, end to end (M6-6, M6-7; on their own pages since D118).
  *
- * These are the first tabs core has never heard the name of, and the thing being held still
- * is that it still has not: the tabs are here because two manifests say so and somebody
- * enabled them. Everything below goes through the same routes a plugin written by a stranger
- * would use — nothing in this file reaches into either plugin.
+ * These are the first panels core has never heard the name of, and the thing being held still
+ * is that it still has not: they are here because two manifests say so and somebody enabled
+ * them. Everything below goes through the same routes a plugin written by a stranger would
+ * use — nothing in this file reaches into either plugin.
  *
  * The tests name the plugins because a test is allowed to; invariant 1 reads `packages/core`
  * and `packages/ui`, which is where naming one would actually matter.
@@ -54,28 +54,30 @@ const post = async (path: string, body: unknown): Promise<Record<string, unknown
 const rows = async (plugin: string, key: string): Promise<Row[]> =>
   ((await post('/api/rows', { plugin, key })).rows ?? []) as Row[]
 
-interface Tab {
-  label: string
-  plugin?: string
-  running?: boolean
-  widgets?: { type: string; key: string }[]
+interface Pane {
+  id: string
+  enabled: boolean
+  running: boolean
+  panel?: { label: string; widgets: { type: string; key: string }[] }
 }
-const tabs = async (): Promise<Tab[]> =>
+const panes = async (): Promise<Pane[]> =>
   ((await (
-    await fetch(new URL('/api/panels', alexia.url), { headers: { 'x-alexia-token': alexia.token } })
-  ).json()) as { tabs: Tab[] }).tabs
+    await fetch(new URL('/api/plugins', alexia.url), { headers: { 'x-alexia-token': alexia.token } })
+  ).json()) as { panes: Pane[] }).panes
 
-test('two plugins declare two tabs, and neither is enabled yet so neither is there', async () => {
-  expect((await tabs()).some((tab) => tab.plugin !== undefined)).toBe(false)
+const paneled = async (): Promise<Pane[]> => (await panes()).filter((pane) => pane.enabled && pane.panel !== undefined)
+
+test('two plugins declare two panels, and neither is enabled yet so neither is drawn', async () => {
+  expect(await paneled()).toEqual([])
 
   await post('/api/plugin', { id: 'voice', action: 'enable' })
   await post('/api/plugin', { id: 'memory', action: 'enable' })
 
-  const mine = (await tabs()).filter((tab) => tab.plugin !== undefined)
-  expect(mine.map((tab) => tab.label).sort()).toEqual(['Memory', 'Voice'])
-  // Both drew from their manifests with their processes stopped, which is what lets this
-  // screen exist at all under lazy spawn.
-  expect(mine.every((tab) => tab.running === false)).toBe(true)
+  const mine = await paneled()
+  expect(mine.map((pane) => pane.panel?.label).sort()).toEqual(['Memory', 'Voice'])
+  // Both drew from their manifests with their processes stopped, which is what lets these
+  // pages exist at all under lazy spawn.
+  expect(mine.every((pane) => !pane.running)).toBe(true)
 })
 
 test('the voice panel lists every voice this machine could speak in', async () => {
@@ -152,10 +154,10 @@ test('the map is the same notes, with the links the sorter wrote (M6-11)', async
     at: at + 1,
   })
 
-  const tab = (await tabs()).find((one) => one.plugin === 'memory')
+  const mine = (await panes()).find((one) => one.id === 'memory')
   // Declared by the plugin, drawn by core: the shell has one more widget type and still no
   // idea which plugin asked for one.
-  expect(tab?.widgets?.map((widget) => widget.type)).toEqual(['graph', 'table'])
+  expect(mine?.panel?.widgets.map((widget) => widget.type)).toEqual(['graph', 'table'])
 
   const nodes = await rows('memory', 'remembered_map')
   const child = nodes.find((row) => row.label === 'The grant deadline')
@@ -182,13 +184,12 @@ test('a detail is the whole sentence, because a column has to truncate and this 
   expect(String(detail.text)).toContain('Written down')
 }, 20_000)
 
-test('deleting a plugin takes its tab with it, and the other one is untouched', async () => {
-  // M6-G's shape with two plugins installed, which is the case where a tab list that was
-  // written by hand somewhere would take the wrong one.
+test('deleting a plugin takes its page with it, and the other one is untouched', async () => {
+  // M6-G's shape with two plugins installed, which is the case where a list that was written
+  // by hand somewhere would take the wrong one.
   await post('/api/plugin', { id: 'memory', action: 'delete', confirm: true })
 
-  const left = await tabs()
-  expect(left.filter((tab) => tab.plugin !== undefined).map((tab) => tab.label)).toEqual(['Voice'])
+  expect((await paneled()).map((pane) => pane.panel?.label)).toEqual(['Voice'])
   // And the one that stayed still answers, so nothing was torn down with it.
   expect((await rows('voice', 'voices')).length).toBeGreaterThan(0)
 }, 20_000)
