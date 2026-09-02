@@ -25,6 +25,7 @@ export type WidgetType =
   | 'number'
   | 'toggle'
   | 'choice'
+  | 'cards'
   | 'multi-choice'
   | 'path'
   | 'status'
@@ -63,6 +64,8 @@ export interface RowAction {
   label: string
   /** A second press that has already said what goes, with `{column}` filled in from the row. */
   confirm?: string
+  /** `cards`: only on cards whose `state` is this, so Remove never sits on what is not here. */
+  when?: string
 }
 
 export interface Row {
@@ -97,6 +100,8 @@ export interface Rendered {
   detail?: string
   filter?: boolean
   groupBy?: string
+  /** `cards`: the `state` that means *not here yet*, drawn dimmed rather than hidden (D120). */
+  dim?: string
   /** `image`: one picture rather than a grid — *the thing happening now* rather than *everything*. */
   single?: boolean
   /** `ladder`: the slider's stops, and the two actions it presses. `rows` is shared with `table`. */
@@ -382,6 +387,13 @@ export function widget(host: WidgetHost, declared: Rendered): HTMLElement {
       field.append(el('span', 'label', declared.label))
       if (declared.hint) field.append(el('p', 'hint lede', declared.hint))
       field.append(table(host, declared))
+      break
+    }
+
+    case 'cards': {
+      field.append(el('span', 'label', declared.label))
+      if (declared.hint) field.append(el('p', 'hint lede', declared.hint))
+      field.append(cards(host, declared))
       break
     }
 
@@ -776,6 +788,178 @@ function pictures(host: WidgetHost, declared: Rendered): HTMLElement {
       return
     }
     paint()
+  }
+
+  box.addEventListener(RELOAD, () => void load())
+  void load()
+  return box
+}
+
+/**
+ * The fourteenth widget: **things a plugin holds, drawn the way core draws plugins**.
+ *
+ * §8.1 of the engine plan asked for the plugins page one level down, and the whole of it is
+ * already here: `bento` is the grid, `bento-card` is the card, `bento-label` is the row that
+ * explains a section, and `dim` is what D120 settled about showing what you do not have rather
+ * than hiding it. What is new is that the cards come from a plugin's tool instead of from the
+ * folder, which is the generalisation `settings.ts:16` was always one word away from.
+ *
+ * **A `table` was tried first and was the wrong shape.** Forty rows of a spreadsheet are forty
+ * things nobody can judge; a name, a sentence and a state is what people already read one
+ * screen over. Nothing about the look is the plugin's: it sends words and a state, and every
+ * pixel here is core's, exactly as for `table` and `graph`.
+ */
+function cards(host: WidgetHost, declared: Rendered): HTMLElement {
+  // `table-box` again, because *ask for your rows again* is addressed to that class and this is
+  // the same question of the same kind of tool.
+  const box = el('div', 'table-box')
+  const said = el('p', 'hint', 'Loading…')
+  const grid = el('div', 'bento bento-small')
+  const drawer = el('div', 'graph-note')
+  drawer.hidden = true
+  const noteTitle = el('p', 'graph-note-title')
+  const noteBody = el('p', 'detail-text')
+  const close = el('button', 'quiet-button', 'Close')
+  close.type = 'button'
+  close.addEventListener('click', () => {
+    drawer.hidden = true
+  })
+  drawer.append(noteTitle, noteBody, close)
+
+  let query = ''
+  if (declared.filter === true) {
+    const search = el('input', 'table-filter')
+    search.type = 'search'
+    search.placeholder = `Filter ${declared.label.toLowerCase()}`
+    search.setAttribute('aria-label', `Filter ${declared.label}`)
+    search.addEventListener('input', () => {
+      query = search.value.trim().toLowerCase()
+      paint()
+    })
+    box.append(search)
+  }
+  box.append(said, grid, drawer)
+
+  let rows: Row[] = []
+
+  const load = async (): Promise<void> => {
+    const answer = await host.send('/api/rows', { plugin: host.plugin, key: declared.rows ?? '' })
+    rows = (answer.rows ?? []) as Row[]
+    if (answer.ok === false) {
+      said.textContent = String(answer.said ?? 'That did not answer.')
+      said.hidden = false
+      grid.replaceChildren()
+      return
+    }
+    paint()
+  }
+
+  /** One card: a name, what it is, what state it is in, and whatever may be done to it. */
+  function card(row: Row): HTMLElement {
+    const state = String(row.state ?? '')
+    const here = declared.dim === undefined || state !== declared.dim
+    const shell = el('article', here ? 'bento-card' : 'bento-card dim')
+    const head = el('div', 'bento-head')
+    const name = el('button', 'bento-open', String(row.name ?? row.id ?? ''))
+    name.type = 'button'
+    head.append(name)
+    shell.append(head, el('p', 'bento-what', String(row.summary ?? '')))
+
+    const foot = el('div', 'bento-foot')
+    if (state !== '') foot.append(el('span', here ? 'pill' : 'pill caution', state))
+    if (row.meta !== undefined && String(row.meta) !== '') foot.append(el('span', 'pane-meta', String(row.meta)))
+
+    for (const action of declared.rowActions ?? []) {
+      // *Install* belongs on what is not here and *Remove* on what is. Without this both sit
+      // on every card, which is how somebody presses Remove on something they never installed.
+      if (action.when !== undefined && action.when !== state) continue
+      const button = el('button', 'quiet-button', action.label)
+      button.type = 'button'
+      let armed = action.confirm === undefined
+      const press = async (approved?: boolean): Promise<void> => {
+        button.disabled = true
+        try {
+          const answer = await host.send('/api/action', {
+            plugin: host.plugin,
+            key: action.key,
+            row: row.id,
+            ...(armed && { confirm: true }),
+            ...(approved === true && { approved: true }),
+          })
+          if (typeof answer.ask === 'string') {
+            foot.append(confirm(answer.ask, press))
+            return
+          }
+          if (answer.ok === true) {
+            // The sentence goes above the grid, which survives the redraw the card does not.
+            said.textContent = String(answer.said ?? '')
+            said.hidden = String(answer.said ?? '') === ''
+            await load()
+            return
+          }
+          said.hidden = false
+          said.textContent = String(answer.said ?? 'That did not work.')
+        } finally {
+          button.disabled = false
+        }
+      }
+      button.addEventListener('click', (event) => {
+        event.stopPropagation()
+        if (!armed) {
+          // The author's own second press: nothing the first time, unambiguous the second.
+          armed = true
+          button.textContent = String(action.confirm)
+          button.classList.add('warn')
+          return
+        }
+        void press()
+      })
+      foot.append(button)
+    }
+    shell.append(foot)
+
+    if (declared.detail !== undefined) {
+      const open = (): void => {
+        void (async () => {
+          noteTitle.textContent = String(row.name ?? row.id ?? '')
+          noteBody.textContent = 'Loading…'
+          drawer.hidden = false
+          const answer = await host.send('/api/detail', {
+            plugin: host.plugin,
+            key: declared.detail ?? '',
+            row: String(row.id ?? ''),
+          })
+          noteBody.textContent = String(answer.text ?? answer.said ?? 'There is nothing more to say about that.')
+        })()
+      }
+      shell.addEventListener('click', (event) => {
+        if ((event.target as HTMLElement).closest('button') === null || (event.target as HTMLElement) === name) open()
+      })
+    }
+    return shell
+  }
+
+  function paint(): void {
+    const matches = (row: Row): boolean =>
+      query === '' || `${String(row.name ?? '')} ${String(row.summary ?? '')}`.toLowerCase().includes(query)
+    const visible = rows.filter(matches)
+    grid.replaceChildren()
+    let group: string | undefined
+    for (const row of visible) {
+      const named = row.group === undefined ? undefined : String(row.group)
+      // A row of its own across the grid, in the order the rows arrived: grouping is not
+      // sorting, and which section comes first is the plugin's to decide.
+      if (named !== undefined && named !== group) {
+        grid.append(el('p', 'bento-label', named))
+        group = named
+      }
+      grid.append(card(row))
+    }
+    said.hidden = visible.length > 0
+    said.textContent =
+      rows.length === 0 ? 'Nothing here yet.'
+      : visible.length === 0 ? `Nothing matches “${query}”.`
+      : ''
   }
 
   box.addEventListener(RELOAD, () => void load())

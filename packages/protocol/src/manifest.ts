@@ -46,7 +46,7 @@ import { APP_VERSION, newer } from './version.js'
  * and the plugins declaring 2 still work.
  */
 export const ALEXIA_PROTOCOL_MIN = 2
-export const ALEXIA_PROTOCOL_MAX = 5
+export const ALEXIA_PROTOCOL_MAX = 6
 
 /**
  * The two MCP revisions core speaks, in preference order (D55, corrected by D57).
@@ -261,6 +261,75 @@ const setting = z.discriminatedUnion('type', [
     detail: z.string().min(1).optional(),
     /** A filter box, applied in the page over the node labels. */
     filter: z.boolean().optional(),
+  }),
+
+  z.object({
+    /**
+     * The fourteenth widget: **things a plugin holds, drawn the way core draws plugins**
+     * (`alexia_protocol` 6).
+     *
+     * §8.1 of the engine plan asked for the plugins page applied one level down: a grid of
+     * cards, the ones you have first, then a labelled row, then the rest dimmed rather than
+     * hidden (D118, D120). The line that makes it legal was already written at `settings.ts:16`
+     * — *nothing here names a plugin: every card is whatever is in the folder* — and this
+     * generalises it to *whatever the plugin declares*. Core learns that a plugin can contain
+     * things; it never learns the word *workflow*.
+     *
+     * **Granted after a `table` was tried and was the wrong shape.** Forty rows of a
+     * spreadsheet are forty things nobody can judge; the plugins page answers the same question
+     * with a name, a sentence and a state, and people already read it. That is a difference in
+     * what the reader can do rather than in decoration, which is the bar `ui-schema.md` sets.
+     *
+     * A row is `id`, `name`, `summary`, and optionally `meta`, `state` and `group` — fixed by
+     * the contract the way `graph`'s is, because a card offers no choices about layout that a
+     * reader would notice and every knob here is one more thing an author can get wrong.
+     */
+    type: z.literal('cards'),
+    key: z.string().regex(IDENT),
+    label: z.string().min(1),
+    hint: z.string().optional(),
+    /**
+     * The tool that answers with the cards, called with no arguments when the panel opens.
+     *
+     * `structuredContent: { rows: [...] }`, as `table` and `image` answer. `state` is the
+     * plugin's own word and is drawn as the pill; `group` puts a labelled row across the grid
+     * before the first card carrying it, in the order the rows arrive — grouping is not
+     * sorting, and the plugin decides what comes first.
+     */
+    rows: z.string().min(1),
+    /** A tool called with `{ id }`, whose text opens under the card that was pressed. */
+    detail: z.string().min(1).optional(),
+    /** A filter box, applied over each card's name and summary. */
+    filter: z.boolean().optional(),
+    /**
+     * The `state` that means *not here yet*, drawn dimmed rather than hidden (D120).
+     *
+     * Dimmed and labelled, never absent: the first person to delete something and want it back
+     * could not find where things come from, which is the one journey that starts on a page
+     * like this and cannot be finished anywhere else.
+     */
+    dim: z.string().min(1).optional(),
+    rowActions: z
+      .array(
+        z
+          .object({
+            key: z.string().regex(IDENT),
+            label: z.string().min(1),
+            /** Called with `{ id }` — the card's own. */
+            tool: z.string().min(1),
+            confirm: z.string().min(1).max(160).optional(),
+            /**
+             * Only on cards whose `state` is this.
+             *
+             * *Install* belongs on the ones that are not here and *Remove* on the ones that
+             * are; without it both sit on every card, which is how somebody presses Remove on
+             * something they never installed.
+             */
+            when: z.string().min(1).optional(),
+          })
+          .strict(),
+      )
+      .optional(),
   }),
 
   z.object({

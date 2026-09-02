@@ -4,7 +4,7 @@
   "id": "media",
   "name": "Local media generation",
   "summary": "Makes pictures, sound and video on this machine with ComfyUI, starting it if it is not already running, so the media-making half of Combined mode is real.",
-  "version": "0.3.4",
+  "version": "0.4.0",
   "license": "AGPL-3.0-only",
   "entry": {
     "run": "node",
@@ -12,7 +12,7 @@
       "index.js"
     ]
   },
-  "alexia_protocol": 5,
+  "alexia_protocol": 6,
   "mcp_protocol": "2025-11-25",
   "requires": [
     {
@@ -121,66 +121,28 @@
       },
       {
         "key": "library",
-        "type": "table",
-        "label": "Workflow library",
-        "hint": "The workflows ComfyUI ships, filtered to the ones this graphics card can actually run and that need no paid service. Press Install and run_workflow can use it. The two ranked tiers the plan describes — workflows Alexia has verified, and a curated set — do not exist yet, and a badge for them would mean nothing.",
+        "type": "cards",
+        "label": "Workflows",
+        "hint": "The workflows on this machine and the ones ComfyUI ships that this graphics card can run. Yours first, then what you can add. The two ranked tiers the plan describes — workflows Alexia has verified, and a curated set — do not exist yet, and a badge for them would mean nothing.",
         "rows": "library",
-        "columns": [
-          {
-            "key": "title",
-            "label": "Workflow"
-          },
-          {
-            "key": "state",
-            "label": "State"
-          },
-          {
-            "key": "wants",
-            "label": "Needs",
-            "hideNarrow": true
-          }
-        ],
+        "detail": "about_workflow",
+        "filter": true,
+        "dim": "available",
         "rowActions": [
           {
             "key": "install_workflow",
             "label": "Install",
-            "tool": "install_workflow"
-          }
-        ],
-        "detail": "about_workflow",
-        "filter": true,
-        "groupBy": "category"
-      },
-      {
-        "key": "installed_workflows",
-        "type": "table",
-        "label": "Workflows",
-        "hint": "The ComfyUI workflows on this machine — the ones Alexia installed for you and the ones you exported yourself. Removing one deletes it from ComfyUI’s own folder, because that is where it lives.",
-        "rows": "workflows",
-        "columns": [
-          {
-            "key": "name",
-            "label": "What"
+            "tool": "install_workflow",
+            "when": "available"
           },
-          {
-            "key": "state",
-            "label": "State"
-          },
-          {
-            "key": "fields",
-            "label": "What you can set",
-            "hideNarrow": true
-          }
-        ],
-        "rowActions": [
           {
             "key": "remove_workflow",
             "label": "Remove",
             "tool": "remove_workflow",
-            "confirm": "Delete it from ComfyUI?"
+            "confirm": "Delete it?",
+            "when": "installed"
           }
-        ],
-        "filter": true
+        ]
       },
       {
         "key": "disk",

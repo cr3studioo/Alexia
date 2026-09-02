@@ -563,6 +563,82 @@
             "properties": {
               "type": {
                 "type": "string",
+                "const": "cards"
+              },
+              "key": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_]*$"
+              },
+              "label": {
+                "type": "string",
+                "minLength": 1
+              },
+              "hint": {
+                "type": "string"
+              },
+              "rows": {
+                "type": "string",
+                "minLength": 1
+              },
+              "detail": {
+                "type": "string",
+                "minLength": 1
+              },
+              "filter": {
+                "type": "boolean"
+              },
+              "dim": {
+                "type": "string",
+                "minLength": 1
+              },
+              "rowActions": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "key": {
+                      "type": "string",
+                      "pattern": "^[a-z][a-z0-9_]*$"
+                    },
+                    "label": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "tool": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "confirm": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 160
+                    },
+                    "when": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "key",
+                    "label",
+                    "tool"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "type",
+              "key",
+              "label",
+              "rows"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
                 "const": "image"
               },
               "key": {
@@ -1126,6 +1202,82 @@
                   },
                   "filter": {
                     "type": "boolean"
+                  }
+                },
+                "required": [
+                  "type",
+                  "key",
+                  "label",
+                  "rows"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "const": "cards"
+                  },
+                  "key": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_]*$"
+                  },
+                  "label": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "hint": {
+                    "type": "string"
+                  },
+                  "rows": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "detail": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "filter": {
+                    "type": "boolean"
+                  },
+                  "dim": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "rowActions": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "key": {
+                          "type": "string",
+                          "pattern": "^[a-z][a-z0-9_]*$"
+                        },
+                        "label": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "tool": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "confirm": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 160
+                        },
+                        "when": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "required": [
+                        "key",
+                        "label",
+                        "tool"
+                      ],
+                      "additionalProperties": false
+                    }
                   }
                 },
                 "required": [

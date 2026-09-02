@@ -3272,3 +3272,75 @@ kbd {
   /* It sharpens over the steps, so a hard swap reads as flicker. */
   transition: opacity 120ms ease;
 }
+
+/* ---- the same grid, one level down (D141) -----------------------------------------------
+
+   A plugin's own things, drawn the way core draws plugins. Nothing here redefines a card: it
+   is the plugins page at a smaller size, because two grids that merely resemble each other
+   drift, and the whole argument for this widget was that people already read the first one. */
+.bento-small {
+  /* Narrower tracks, so a panel column fits three where the plugins page fits two. */
+  grid-template-columns: repeat(auto-fill, minmax(min(11rem, 100%), 1fr));
+  gap: var(--space-2);
+  margin-bottom: 0;
+}
+
+.bento-small .bento-card {
+  padding: var(--space-3);
+  gap: var(--space-1);
+  border-radius: var(--radius-md);
+}
+
+.bento-small .bento-open {
+  font-size: var(--text-sm);
+}
+
+/* Two lines of the sentence and no more. At this size a five-line summary is the card, and
+   the grid stops being scannable — which is the one thing it is for. */
+.bento-small .bento-what {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  font-size: var(--text-xs);
+}
+
+/* The foot carries three things and eleven rems is one line's worth of room, so they are laid
+   out rather than left to wrap: the state and the button share the first line, and what it
+   needs goes underneath on its own, clipped. Letting all three wrap freely made every card as
+   tall as three rows and the grid stopped being scannable, which is the one thing it is for. */
+.bento-small .bento-foot {
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-start;
+  gap: var(--space-1);
+}
+
+.bento-small .bento-foot > .quiet-button {
+  margin-left: auto;
+  padding: 0.15rem 0.5rem;
+  font-size: var(--text-xs);
+}
+
+/* `order` rather than markup order: the shell builds one foot for both sizes, and which line
+   a thing lands on is a question about this width, not about what the plugin sent. */
+.bento-small .pane-meta {
+  order: 1;
+  flex-basis: 100%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-xs);
+}
+
+.bento-small .pill {
+  font-size: var(--text-xs);
+}
+
+/* The row that explains a section, across the whole grid — the same one the plugins page uses
+   to say why the dimmed cards are dimmed. */
+.bento-small .bento-label {
+  grid-column: 1 / -1;
+  margin: var(--space-2) 0 0;
+}

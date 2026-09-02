@@ -1017,34 +1017,70 @@ alexia.tool(
     }
     const server = await where()
     const all = flatten(await templates(server, signal).catch(() => []))
-    if (all.length === 0) {
-      return {
-        content: [{ type: 'text', text: 'This ComfyUI does not offer a workflow catalogue.' }],
-        structuredContent: { rows: [] },
-      }
-    }
     const card = vram(await stats(server, signal).catch(() => undefined))
     const mine = runnable(all, { vram: card?.total })
-    const here = new Set((await saved(server, signal).catch(() => [])).map((one) => one.name))
-    const counts = shelf(all, card?.total)
-    const rows = mine
-      .map((one) => ({
+    const known = new Map(all.map((one) => [one.name, one]))
+    const here = await saved(server, signal).catch(() => [])
+    const spec = await nodes(signal).catch(() => ({}))
+
+    /** What a workflow already here can be told, which is the useful thing to know about it. */
+    const settings = async (row) => {
+      if (!row.export) return 'not exported'
+      try {
+        const graph = await read(server, row.export, signal)
+        if (!isApi(graph)) return 'not an API export'
+        const { found, derived } = fields(graph, spec)
+        if (found.length === 0) return 'no settings'
+        return `${found.map((one) => one.field).join(', ')}${derived ? ' (from its wiring)' : ''}`
+      } catch {
+        return 'unreadable'
+      }
+    }
+
+    const rows = []
+    // **Installed first, then your own, then the rest** — the order somebody opening this page
+    // is looking in. Grouping is not sorting, so the sections are built in the order they read.
+    for (const row of here.filter((one) => known.has(one.name))) {
+      const one = known.get(row.name)
+      rows.push({
         id: one.name,
-        title: one.title,
-        category: one.category,
-        // What it costs to run, in the two terms that decide it for somebody.
-        wants:
+        name: one.title,
+        summary: one.description || 'Its author left no description.',
+        meta: await settings(row),
+        state: 'installed',
+        group: 'Installed',
+      })
+    }
+    for (const row of here.filter((one) => !known.has(one.name))) {
+      rows.push({
+        id: row.name,
+        name: row.name,
+        // A workflow somebody built or was given has no catalogue entry to describe it, and
+        // inventing one would be worse than saying where it came from.
+        summary: 'Yours — added from a file or a link rather than the catalogue.',
+        meta: await settings(row),
+        state: 'installed',
+        group: 'Your own',
+      })
+    }
+    const rest = mine.filter((one) => !here.some((row) => row.name === one.name))
+    for (const one of rest) {
+      rows.push({
+        id: one.name,
+        name: one.title,
+        summary: one.description || 'Its author left no description.',
+        meta:
           [one.vram ? `${(one.vram / 1e9).toFixed(1)} GB` : undefined, one.models.length > 0 ? one.models.join(', ') : undefined]
             .filter(Boolean)
-            .join(' · ') || '—',
-        state: here.has(one.name) ? 'installed' : '—',
-      }))
-      // Installed first, then alphabetical: the ones already here are the ones somebody is
-      // looking for when they open this, and the rest is a list to browse.
-      .sort((a, b) => (a.state === b.state ? a.title.localeCompare(b.title) : a.state === 'installed' ? -1 : 1))
-    return { content: [{ type: 'text', text: counts.said }], structuredContent: { rows } }
+            .join(' · ') || 'nothing extra',
+        state: 'available',
+        group: `Not installed — ${rest.length} this card can run`,
+      })
+    }
+    return { content: [{ type: 'text', text: shelf(all, card?.total).said }], structuredContent: { rows } }
   },
 )
+
 
 alexia.tool(
   'about_workflow',
