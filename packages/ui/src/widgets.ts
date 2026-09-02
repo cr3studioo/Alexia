@@ -760,7 +760,7 @@ function pictures(host: WidgetHost, declared: Rendered): HTMLElement {
             drawer.hidden = false
             const answer = await host.send('/api/detail', {
               plugin: host.plugin,
-              key: declared.detail ?? '',
+              key: declared.key,
               row: String(row.id ?? ''),
             })
             noteBody.textContent = String(answer.text ?? answer.said ?? 'There is nothing more to say about that.')
@@ -779,7 +779,7 @@ function pictures(host: WidgetHost, declared: Rendered): HTMLElement {
   }
 
   const load = async (): Promise<void> => {
-    const answer = await host.send('/api/rows', { plugin: host.plugin, key: declared.rows ?? '' })
+    const answer = await host.send('/api/rows', { plugin: host.plugin, key: declared.key })
     rows = (answer.rows ?? []) as Row[]
     if (answer.ok === false) {
       said.textContent = String(answer.said ?? 'That did not answer.')
@@ -843,7 +843,7 @@ function cards(host: WidgetHost, declared: Rendered): HTMLElement {
   let rows: Row[] = []
 
   const load = async (): Promise<void> => {
-    const answer = await host.send('/api/rows', { plugin: host.plugin, key: declared.rows ?? '' })
+    const answer = await host.send('/api/rows', { plugin: host.plugin, key: declared.key })
     rows = (answer.rows ?? []) as Row[]
     if (answer.ok === false) {
       said.textContent = String(answer.said ?? 'That did not answer.')
@@ -926,7 +926,7 @@ function cards(host: WidgetHost, declared: Rendered): HTMLElement {
           drawer.hidden = false
           const answer = await host.send('/api/detail', {
             plugin: host.plugin,
-            key: declared.detail ?? '',
+            key: declared.key,
             row: String(row.id ?? ''),
           })
           noteBody.textContent = String(answer.text ?? answer.said ?? 'There is nothing more to say about that.')

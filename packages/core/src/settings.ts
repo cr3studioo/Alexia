@@ -191,12 +191,24 @@ export function declaredAction(
  * questions of both: *which tool answers with the contents*, and *which one says more about
  * one of them*. A second lookup would be a second place to forget a widget type.
  */
+/**
+ * The widget a `/api/rows` or `/api/detail` call is asking about, by its key.
+ *
+ * **Every widget that fills itself from a tool belongs here, and two did not.** The list was
+ * `table | graph` and stayed that way while `image` (D132) and `cards` (D141) were added, so
+ * core answered *there is no list called that* for both — which is what the picture gallery has
+ * been saying since the day it shipped. The name says `table` and the rule is *anything with a
+ * `rows` tool*, so it is written as that rather than as a list somebody has to remember to
+ * extend the next time a widget grows one.
+ */
 export function declaredTable(
   manifest: Manifest,
   key: string,
-): Extract<Setting, { type: 'table' | 'graph' }> | undefined {
+): Extract<Setting, { rows: string }> | undefined {
   const found = declaredWidgets(manifest).find((widget) => widget.key === key)
-  return found?.type === 'table' || found?.type === 'graph' ? found : undefined
+  return found !== undefined && 'rows' in found && typeof found.rows === 'string' ?
+      (found as Extract<Setting, { rows: string }>)
+    : undefined
 }
 
 /**
