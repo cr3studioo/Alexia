@@ -40,6 +40,9 @@ function shell() {
 
 export const supported = () => process.platform === 'win32'
 
+/** What a person reads when this engine is named in a sentence. */
+export const engine = 'Windows'
+
 /**
  * Run a script and give back what it printed.
  *

@@ -2,7 +2,7 @@
 import { spawn } from 'node:child_process'
 import { mkdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
-import { extract, fetchTo, find, lastLine, mb, run, there } from './fetching.js'
+import { extract, fetchTo, find, lastLine, MACOS_BUILDS, mb, run, there } from './fetching.js'
 
 /**
  * Hearing, with whisper.cpp (M2-3).
@@ -21,23 +21,36 @@ import { extract, fetchTo, find, lastLine, mb, run, there } from './fetching.js'
  * machine, silently, on a schedule nobody here controls. Moving it is an edit to this line
  * and a release of this plugin, which is the same bar as any other code change.
  */
-const RELEASE = 'b4938'
+export const RELEASE = 'b4938'
 
 /**
  * Where a prebuilt CLI comes from, per platform.
  *
- * ponytail: Windows x64 only, because it is the only one that has been run. The project
- * publishes `whisper-bin-ubuntu-x64.tar.gz` and an xcframework with no CLI in it — the
- * Linux asset is two lines away, but *supports Linux* is not a thing to write down before
- * anybody has watched it work. Everywhere else the answer is the `whisper_path` setting,
- * which is exactly the case that widget exists for.
+ * Windows from the project's own release; macOS from ours (D147), because the project publishes
+ * an xcframework with no program in it — built by `scripts/voice-macos.mjs` from this same tag,
+ * and run on an Apple Silicon Mac before this line was written. The project publishes
+ * `whisper-bin-ubuntu-x64.tar.gz` too, and Linux is two lines away, but *supports Linux* is
+ * not a thing to write down before anybody has watched it work. Everywhere else the answer is
+ * the `whisper_path` setting, which is exactly the case that widget exists for.
  */
-const BUILDS = {
+export const BUILDS = {
   'win32-x64': {
     url: `https://github.com/ggml-org/whisper.cpp/releases/download/${RELEASE}/whisper-bin-x64.zip`,
     archive: 'whisper-bin-x64.zip',
     cli: 'whisper-cli.exe',
     stream: 'whisper-stream.exe',
+  },
+  'darwin-arm64': {
+    url: `${MACOS_BUILDS}/whisper-bin-macos-arm64.tar.gz`,
+    archive: 'whisper-bin-macos-arm64.tar.gz',
+    cli: 'whisper-cli',
+    stream: 'whisper-stream',
+  },
+  'darwin-x64': {
+    url: `${MACOS_BUILDS}/whisper-bin-macos-x64.tar.gz`,
+    archive: 'whisper-bin-macos-x64.tar.gz',
+    cli: 'whisper-cli',
+    stream: 'whisper-stream',
   },
 }
 

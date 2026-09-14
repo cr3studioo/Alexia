@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { APP_VERSION, CORE_CAPABILITIES, FILES_META, TOOLS_META } from '@alexia/protocol'
 import { randomUUID } from 'node:crypto'
-import { existsSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import type { CreateMessageResult } from '@modelcontextprotocol/client'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
@@ -408,6 +408,15 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
       }),
   })
   const tooling = new PluginTooling(plugins, (line) => console.error(`[tools] ${line}`), skills)
+  /**
+   * The folder exists before anything watches it. A fresh install has installed nothing, so
+   * there is no `extensions` yet — and `watch()` on a folder that is not there fails once and
+   * never tries again. Every install since the plugins stopped shipping (D118) started that
+   * way: the library made the folder on the first download, and nothing noticed a plugin
+   * folder deleted by hand until the next restart. `Plugins` still refuses to watch a missing
+   * folder (invariant 2); making it is the job of whoever owns the data directory, which is here.
+   */
+  mkdirSync(extensions, { recursive: true })
   plugins.load()
   plugins.watch()
 

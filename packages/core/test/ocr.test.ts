@@ -68,7 +68,8 @@ test('with nothing that reads pictures, a scan is refused in the words it always
 test('with one installed, the same scan comes back as what it says', async () => {
   const answered = await withOcr.capability(CORE_CAPABILITIES.extract, { file: scanned })
 
-  if (process.platform === 'win32') {
+  // Both platforms with an engine built in: Windows' through PowerShell, macOS's Vision (D146).
+  if (process.platform === 'win32' || process.platform === 'darwin') {
     // The whole chain, across two plugin processes and a capability name: the text layer
     // refused, the page pulled out of the PDF as the JPEG it already was, handed over as
     // bytes because it was never a file, recognised, and sorted back into reading order.
@@ -79,7 +80,7 @@ test('with one installed, the same scan comes back as what it says', async () =>
     // lines from the account it belongs to, and nothing anywhere would say so.
     expect(textOf(answered)).toMatch(/Account 88213\s+Period March 2026/)
   } else {
-    // Windows only so far, and that is a sentence rather than a silence.
+    // Linux has no engine at the OS level, and that is a sentence rather than a silence.
     expect(answered.isError).toBe(true)
     expect(textOf(answered)).toContain(process.platform)
   }

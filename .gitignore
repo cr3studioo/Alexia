@@ -5,3 +5,4 @@ spikes/*/target/
 spikes/*/gen/
 *.tsbuildinfo
 dist-registry/
+dist-voice/

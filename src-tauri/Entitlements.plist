@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  SPDX-License-Identifier: AGPL-3.0-only
+
+  What the hardened runtime is told to allow (D145). Notarisation requires the hardened runtime,
+  and the hardened runtime refuses by default the things a Node process is made of — so each
+  line below is the reason something would otherwise not start, and nothing is here for comfort.
+
+  Tauri signs the shell and the core sidecar with this file. The sidecar *is* Node, and every
+  plugin core spawns runs on that same binary, so these apply to plugins too.
+-->
+<plist version="1.0">
+  <dict>
+    <!-- V8 compiles JavaScript to machine code at run time. Without this, Node dies at start. -->
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+    <!-- And writes some of it through memory that was not mapped for JIT. Node's own release
+         builds carry this line for the same reason. -->
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+    <!-- A native addon is a library loaded into Node. The keychain's is signed with this app's
+         identity, but a plugin's addon arrives as a download signed by whoever built it, and
+         library validation would refuse it by name. -->
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+    <!-- The microphone, for voice. Paired with NSMicrophoneUsageDescription in Info.plist:
+         the entitlement lets the process ask, the sentence is what the person is asked. -->
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
+  </dict>
+</plist>

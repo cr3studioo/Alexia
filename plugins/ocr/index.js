@@ -3,6 +3,7 @@ import { fromJsonSchema, log, plugin } from '@alexia/sdk'
 import { rmSync, statSync, writeFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import { assemble } from './lines.js'
+import * as mac from './macos.js'
 import * as win from './windows.js'
 
 /**
@@ -19,7 +20,8 @@ import * as win from './windows.js'
  *
  * **It is a separate plugin from `documents` on purpose.** That one is zero dependencies,
  * one permission and no child process, and its argument is that it installs on a cold
- * machine; this one spawns PowerShell and is Windows-only. Folding them together would cost
+ * machine; this one spawns the operating system's own recogniser — PowerShell on Windows,
+ * `osascript` on a Mac (D146) — and runs nowhere else. Folding them together would cost
  * the first its whole case. Delete this folder and `documents` refuses a picture in exactly
  * the words it used before this existed — which is the invariant, tested rather than hoped.
  *
@@ -31,6 +33,9 @@ import * as win from './windows.js'
 
 const alexia = plugin()
 
+/** Whichever engine this machine has. Both answer the same three calls, and neither is asked which. */
+const ocr = mac.supported() ? mac : win
+
 /**
  * Big enough that something has gone wrong. Windows will refuse anything over 10,000 pixels
  * on a side anyway; this is the cheaper refusal, before a 300 MB file is handed to a decoder.
@@ -41,22 +46,22 @@ const refuse = (text) => ({ isError: true, content: [{ type: 'text', text }] })
 
 const unsupported = () =>
   refuse(
-    `Reading the words in a picture uses Windows' own text recognition, and this is ${process.platform}. ` +
+    `Reading the words in a picture uses the text recognition built into Windows and macOS, and this is ${process.platform}. ` +
       'Nothing was read. On this platform it would need a recogniser of its own — that is a ' +
       'second plugin offering the same thing, not a setting here.',
   )
 
 let own
-/** What Windows can read here, asked once. The list does not change while a process lives. */
+/** What this machine can read, asked once. The list does not change while a process lives. */
 let installed
 
 async function known(signal) {
-  if (installed === undefined) installed = await win.languages(signal).catch(() => [])
+  if (installed === undefined) installed = await ocr.languages(signal).catch(() => [])
   return installed
 }
 
 async function report() {
-  if (!win.supported()) {
+  if (!ocr.supported()) {
     await alexia.status('state', `▲ Not available on ${process.platform} yet`).catch(() => {})
     return
   }
@@ -65,7 +70,7 @@ async function report() {
     .status(
       'state',
       have.length === 0 ?
-        '▲ Windows has no text-recognition language installed'
+        `▲ ${ocr.engine} has no text-recognition language installed`
       : `● Reads ${have.map((one) => one.name).join(', ')}`,
     )
     .catch(() => {})
@@ -114,7 +119,7 @@ alexia.tool(
           type: 'string',
           description:
             'A language tag such as en-GB or cs, when the picture is not in the usual one. ' +
-            'Leave it out to use the languages Windows is already set to.',
+            'Leave it out to use the languages this computer is already set to.',
         },
       },
     }),
@@ -127,7 +132,7 @@ alexia.tool(
     _meta: { 'alexia/provides': ['image.ocr'] },
   },
   async ({ file, bytes, language }, ctx) => {
-    if (!win.supported()) return unsupported()
+    if (!ocr.supported()) return unsupported()
     const path = String(file ?? '').trim()
     const encoded = String(bytes ?? '')
     if (path === '' && encoded === '') return refuse('Which picture? This needs a path, or the picture itself.')
@@ -157,7 +162,7 @@ alexia.tool(
     }
 
     try {
-      const { language: used, lines, width, height } = await win.read(handed ?? path, {
+      const { language: used, lines, width, height } = await ocr.read(handed ?? path, {
         language: String(language ?? '').trim(),
         signal: ctx?.mcpReq?.signal,
       })
@@ -168,7 +173,7 @@ alexia.tool(
       // up answering about a document nobody read.
       if (text === '') {
         return refuse(
-          'Windows found no text in that picture. Either there are no words in it, or they ' +
+          `${ocr.engine} found no text in that picture. Either there are no words in it, or they ` +
             'are too small or too faint to make out. Nothing was read.',
         )
       }
@@ -202,7 +207,7 @@ alexia.tool(
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
   },
   async (ctx) => {
-    if (!win.supported()) return unsupported()
+    if (!ocr.supported()) return unsupported()
     const have = await known(ctx?.mcpReq?.signal).catch(() => [])
     return {
       content: [
@@ -210,8 +215,8 @@ alexia.tool(
           type: 'text',
           text:
             have.length === 0 ?
-              'Windows has no text-recognition language installed on this machine, so no picture can be read ' +
-                'here yet. Settings, then Time and language, then Language and region, adds one.'
+              `${ocr.engine} has no text-recognition language installed on this machine, so no picture can be read ` +
+                'here yet. On Windows, Settings, then Time and language, then Language and region, adds one.'
             : `${have.map((one) => `${one.name} (${one.tag})`).join('\n')}\n\n` +
               'A picture is read in whichever of these fits unless a language is asked for.',
         },

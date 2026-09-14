@@ -79,11 +79,11 @@ test('replaying it adds not one row to the ledger', async () => {
   sampled.length = 0
 
   const said = await call('replay_plan', { name: 'the usual' })
-  if (process.platform === 'win32') {
+  if (process.platform === 'win32' || process.platform === 'darwin') {
     expect(said).toContain('costing nothing')
     expect(said).toContain('3 steps')
   } else {
-    // Windows only so far, and that is a sentence rather than a silence. The claim below is
+    // Windows and macOS only so far, and that is a sentence rather than a silence. The claim below is
     // measured either way: nothing asked for a model on this path.
     expect(said).toContain(process.platform)
   }

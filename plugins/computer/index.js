@@ -3,7 +3,7 @@ import { fromJsonSchema, log, plugin } from '@alexia/sdk'
 import { readdirSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { check, free, MAX_STEPS, replay, STEPS } from './replay.js'
-import * as win from './windows.js'
+import { desktop } from './desktop.js'
 
 /**
  * Computer control (M4-2) — the reason the permission model exists.
@@ -64,7 +64,7 @@ const noted = (what, detail, step) =>
 async function report() {
   const { allow_input: allow } = await settings()
   const state =
-    !win.supported() ? `▲ Not available on ${process.platform} yet`
+    !desktop.supported() ? `▲ Not available on ${process.platform} yet`
     : allow === true ? '▲ Can move the mouse and type'
     : '● Looking only'
   await alexia.status('state', state).catch(() => {})
@@ -91,7 +91,7 @@ const refuse = (text) => ({ isError: true, content: [{ type: 'text', text }] })
 
 const unsupported = () =>
   refuse(
-    `Computer control only works on Windows so far, and this is ${process.platform}. Nothing was done.`,
+    `Computer control works on Windows and macOS, and this is ${process.platform}. Nothing was done.`,
   )
 
 const shot = alexia.tool(
@@ -108,10 +108,10 @@ const shot = alexia.tool(
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
   },
   async (ctx) => {
-    if (!win.supported()) return unsupported()
+    if (!desktop.supported()) return unsupported()
     if (!own) return refuse('Alexia has not given this plugin a folder to work in.')
     const to = join(own, `screen-${new Date().toISOString().replace(/[:.]/g, '-')}.png`)
-    const size = await win.screenshot(to, ctx?.mcpReq?.signal)
+    const size = await desktop.screenshot(to, ctx?.mcpReq?.signal)
     await noted('screenshot', to)
     await prune()
     return {
@@ -137,8 +137,8 @@ alexia.tool(
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
   },
   async (ctx) => {
-    if (!win.supported()) return unsupported()
-    const open = await win.windows(ctx?.mcpReq?.signal)
+    if (!desktop.supported()) return unsupported()
+    const open = await desktop.windows(ctx?.mcpReq?.signal)
     const text =
       open.length === 0 ?
         'No window has a title right now.'
@@ -170,13 +170,13 @@ alexia.tool(
     annotations: { destructiveHint: true, openWorldHint: true },
   },
   async ({ x, y, button, double }, ctx) => {
-    if (!win.supported()) return unsupported()
+    if (!desktop.supported()) return unsupported()
     try {
       await mayTouch()
     } catch (error) {
       return refuse(error.message)
     }
-    await win.click(x, y, button ?? 'left', double === true, ctx?.mcpReq?.signal)
+    await desktop.click(x, y, button ?? 'left', double === true, ctx?.mcpReq?.signal)
     await noted('click', `${x},${y} ${button ?? 'left'}${double === true ? ' double' : ''}`)
     return { content: [{ type: 'text', text: `Clicked at ${Math.round(x)}, ${Math.round(y)}.` }] }
   },
@@ -200,13 +200,13 @@ alexia.tool(
     annotations: { openWorldHint: true },
   },
   async ({ x, y }, ctx) => {
-    if (!win.supported()) return unsupported()
+    if (!desktop.supported()) return unsupported()
     try {
       await mayTouch()
     } catch (error) {
       return refuse(error.message)
     }
-    await win.move(x, y, ctx?.mcpReq?.signal)
+    await desktop.move(x, y, ctx?.mcpReq?.signal)
     return { content: [{ type: 'text', text: `Pointer at ${Math.round(x)}, ${Math.round(y)}.` }] }
   },
 )
@@ -225,13 +225,13 @@ alexia.tool(
     annotations: { destructiveHint: true, openWorldHint: true },
   },
   async ({ text }, ctx) => {
-    if (!win.supported()) return unsupported()
+    if (!desktop.supported()) return unsupported()
     try {
       await mayTouch()
     } catch (error) {
       return refuse(error.message)
     }
-    await win.type(text, ctx?.mcpReq?.signal)
+    await desktop.type(text, ctx?.mcpReq?.signal)
     // The text itself is not written to the log. This tool is how a password gets typed,
     // and a plugin that keeps a copy of everything it typed is a keylogger with a manifest.
     await noted('type', `${String(text).length} characters`)
@@ -242,24 +242,23 @@ alexia.tool(
 alexia.tool(
   'key',
   {
-    description:
-      'Press a key or a combination — {ENTER}, {TAB}, {ESC}, {F5}, ^c for Ctrl+C, ^v for ' +
-      'Ctrl+V, %{F4} for Alt+F4, {WIN} for the Windows key on its own (this opens the start ' +
-      'menu) and {WIN}r for Windows+R. Use for anything that is not ordinary text.',
+    // The notation is the platform's: SendKeys on Windows, cmd+c on a Mac. Each backend says
+    // its own, so a model is never taught a grammar the machine in front of it refuses.
+    description: desktop.KEY_HELP,
     inputSchema: fromJsonSchema({
       type: 'object',
       properties: {
-        keys: { type: 'string', description: 'The combination, in SendKeys notation.' },
+        keys: { type: 'string', description: desktop.KEY_NOTATION },
       },
       required: ['keys'],
     }),
     annotations: { destructiveHint: true, openWorldHint: true },
   },
   async ({ keys }, ctx) => {
-    if (!win.supported()) return unsupported()
+    if (!desktop.supported()) return unsupported()
     try {
       await mayTouch()
-      await win.key(keys, ctx?.mcpReq?.signal)
+      await desktop.key(keys, ctx?.mcpReq?.signal)
     } catch (error) {
       // Including the grammar refusal, which is a sentence the model can act on: it says
       // what the notation is, so the next attempt is a corrected one rather than a repeat.
@@ -282,10 +281,10 @@ alexia.tool(
     annotations: { openWorldHint: true },
   },
   async ({ pid }, ctx) => {
-    if (!win.supported()) return unsupported()
+    if (!desktop.supported()) return unsupported()
     try {
       await mayTouch()
-      await win.focus(pid, ctx?.mcpReq?.signal)
+      await desktop.focus(pid, ctx?.mcpReq?.signal)
     } catch (error) {
       return refuse(error.message)
     }
@@ -339,10 +338,10 @@ alexia.tool(
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
   },
   async ({ pid, title, match, limit }, ctx) => {
-    if (!win.supported()) return unsupported()
+    if (!desktop.supported()) return unsupported()
     let rows
     try {
-      rows = await win.elements({ ...where({ pid, title, match }), limit }, ctx?.mcpReq?.signal)
+      rows = await desktop.elements({ ...where({ pid, title, match }), limit }, ctx?.mcpReq?.signal)
     } catch (error) {
       return refuse(error.message)
     }
@@ -392,10 +391,10 @@ alexia.tool(
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
   },
   async ({ pid, title, match }, ctx) => {
-    if (!win.supported()) return unsupported()
+    if (!desktop.supported()) return unsupported()
     let found
     try {
-      found = await win.readElement(where({ pid, title, match }), ctx?.mcpReq?.signal)
+      found = await desktop.readElement(where({ pid, title, match }), ctx?.mcpReq?.signal)
     } catch (error) {
       return refuse(error.message)
     }
@@ -428,7 +427,7 @@ alexia.tool(
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
   },
   async ({ pid, title, match, says, gone }, ctx) => {
-    if (!win.supported()) return unsupported()
+    if (!desktop.supported()) return unsupported()
     const step = {
       do: 'expect',
       match: String(match ?? ''),
@@ -477,7 +476,7 @@ alexia.tool(
     annotations: { destructiveHint: true, openWorldHint: true },
   },
   async ({ pid, title, match }, ctx) => {
-    if (!win.supported()) return unsupported()
+    if (!desktop.supported()) return unsupported()
     const step = {
       do: 'press',
       match: String(match ?? ''),
@@ -505,7 +504,7 @@ alexia.tool(
  */
 async function bind() {
   const { allow_input: allow } = await settings()
-  const here = win.supported()
+  const here = desktop.supported()
   shot.update({ _meta: here ? { 'alexia/provides': ['computer.screenshot'] } : {} })
   controller.update({ _meta: here && allow === true ? { 'alexia/provides': ['computer.control'] } : {} })
   await report()
@@ -539,14 +538,14 @@ const controller = alexia.tool(
     annotations: { destructiveHint: true, openWorldHint: true },
   },
   async ({ action, x, y, text, keys }, ctx) => {
-    if (!win.supported()) return unsupported()
+    if (!desktop.supported()) return unsupported()
     const signal = ctx?.mcpReq?.signal
     try {
       await mayTouch()
-      if (action === 'click') await win.click(x ?? 0, y ?? 0, 'left', false, signal)
-      else if (action === 'move') await win.move(x ?? 0, y ?? 0, signal)
-      else if (action === 'type') await win.type(text ?? '', signal)
-      else if (action === 'key') await win.key(keys ?? '', signal)
+      if (action === 'click') await desktop.click(x ?? 0, y ?? 0, 'left', false, signal)
+      else if (action === 'move') await desktop.move(x ?? 0, y ?? 0, signal)
+      else if (action === 'type') await desktop.type(text ?? '', signal)
+      else if (action === 'key') await desktop.key(keys ?? '', signal)
       else return refuse(`"${String(action)}" is not something this can do.`)
     } catch (error) {
       return refuse(error.message)
@@ -659,16 +658,16 @@ alexia.tool(
     if (!plan) return refuse(`There is no plan called “${String(name ?? '')}”.`)
     // A plan is data a person can hand-edit, so it is checked for what it holds before the
     // platform gate — an unrunnable step is rejected as such on every OS, not hidden behind
-    // "Windows only" on the ones that cannot run it anyway.
+    // *not available here* on the ones that cannot run it anyway.
     const wrong = check(plan)
     if (wrong) return refuse(wrong)
-    if (!win.supported()) return unsupported()
+    if (!desktop.supported()) return unsupported()
     try {
       await mayTouch()
       /**
        * **The whole of what a decision costs, and it is passed in from here.**
        *
-       * `replay.js` cannot reach a model — it imports `./windows.js` and nothing else — so
+       * `replay.js` cannot reach a model — it imports `./desktop.js` and nothing else — so
        * this is the only way one enters, and a plan with no `ask` steps never reaches this
        * line. A script is free by construction rather than by intention.
        */

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { mkdir, readdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
-import { extract, fetchTo, find, mb, run, there } from './fetching.js'
+import { extract, fetchTo, find, MACOS_BUILDS, mb, run, there } from './fetching.js'
 
 /**
  * Speaking, with Piper (M2-4).
@@ -14,19 +14,31 @@ import { extract, fetchTo, find, mb, run, there } from './fetching.js'
  */
 
 /** Pinned, for the same reason Whisper's is: an unpinned URL changes what runs, silently. */
-const RELEASE = '2023.11.14-2'
+export const RELEASE = '2023.11.14-2'
 
 /**
- * ponytail: Windows x64 only, matching `whisper.js`. Piper publishes Linux and macOS
- * tarballs of the same shape, and they are three lines away — but *supports macOS* is not a
- * thing to write down before anybody has watched it work. Elsewhere the answer is the
- * `piper_path` setting, which is what that widget is for.
+ * Windows from Piper's own release; macOS from ours (D147). Piper does publish Mac tarballs,
+ * and running one is what said not to use them: `piper_macos_aarch64` is an Intel binary —
+ * *bad CPU type* on Apple Silicon — and its libraries are not beside it. The build in
+ * `scripts/voice-macos.mjs` is this same tag, with the libraries in the folder and the binary
+ * told to look there. Linux is still unrun. Elsewhere the answer is the `piper_path` setting,
+ * which is what that widget is for.
  */
-const BUILDS = {
+export const BUILDS = {
   'win32-x64': {
     url: `https://github.com/rhasspy/piper/releases/download/${RELEASE}/piper_windows_amd64.zip`,
     archive: 'piper_windows_amd64.zip',
     exe: 'piper.exe',
+  },
+  'darwin-arm64': {
+    url: `${MACOS_BUILDS}/piper-macos-arm64.tar.gz`,
+    archive: 'piper-macos-arm64.tar.gz',
+    exe: 'piper',
+  },
+  'darwin-x64': {
+    url: `${MACOS_BUILDS}/piper-macos-x64.tar.gz`,
+    archive: 'piper-macos-x64.tar.gz',
+    exe: 'piper',
   },
 }
 

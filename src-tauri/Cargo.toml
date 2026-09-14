@@ -13,7 +13,9 @@ description = "Alexia — an assistant that runs on your own machine."
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["tray-icon", "image-png"] }
+# `macos-private-api` because the overlay is an NSPanel on a Mac (D145), and the panel crate needs
+# it; it compiles to nothing anywhere else.
+tauri = { version = "2", features = ["tray-icon", "image-png", "macos-private-api"] }
 # `generate_context!` expands to code that names `serde_json` in this crate's root, so it has
 # to be a direct dependency even though nothing here mentions it.
 serde_json = "1"
@@ -27,6 +29,14 @@ tauri-plugin-updater = "2"
 # Spawning the core sidecar, and nothing else. No shell, no arbitrary commands: the
 # capability file allows exactly one binary by name.
 tauri-plugin-shell = "2"
+
+# Not a fifth thing: the hotkey's overlay, on a Mac (D145). macOS shows an ordinary window over
+# another app's full-screen Space only if it does not activate its app, and the one window that
+# does not is a non-activating NSPanel. Swapping a window's AppKit class is unsafe code nobody
+# here should own, so it is this crate's — used by Cap, Screenpipe and others for exactly this —
+# pinned to a commit, because it is published from git rather than crates.io.
+[target.'cfg(target_os = "macos")'.dependencies]
+tauri-nspanel = { git = "https://github.com/ahkohd/tauri-nspanel", rev = "c9ec2130422200f0863b23dfdad02b133a529b07" }
 
 [profile.release]
 # A smaller installer is a shorter download in front of somebody who has not yet seen the

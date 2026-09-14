@@ -1,0 +1,96 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# The macOS voice programs, built and released (D147).
+#
+# `plugins/voice` downloads Whisper and Piper. On Windows both come from the projects that make
+# them; on a Mac neither project publishes one that runs — whisper.cpp has no Mac program at all,
+# and Piper's Apple Silicon archive is an Intel binary with its libraries missing. So
+# `scripts/voice-macos.mjs` builds both from pinned sources, and this runs it once per
+# architecture and attaches the four archives to the release `fetching.js` names.
+#
+# `[GATE]`, like `release.yml`: a person starts it, and what it makes is a **draft**. The plugin's
+# downloads answer 404 until somebody presses publish, which is the honest state of a binary
+# nobody has yet looked at.
+#
+# **`make_latest: false`, and it is not cosmetic.** Alexia updates itself from
+# `releases/latest/download/latest.json` on this repository. A release of voice programs that
+# became *latest* would point every install's updater at a release with no installer on it —
+# the same reason `scripts/publish.mjs` cuts plugin releases with `--latest=false`.
+
+name: voice-macos
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Draft the release the voice plugin downloads from.
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        # One of each, natively. Cross-compiling would work for Whisper and not for Piper,
+        # whose phonemiser picks its onnxruntime by the processor it is built on.
+        runner: [macos-latest, macos-15-intel]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      # No `pnpm install`: the script imports two plugin files, and they import only `node:`.
+      - run: cmake --version
+      - run: node scripts/voice-macos.mjs
+      - uses: actions/upload-artifact@v5
+        with:
+          name: voice-macos-${{ runner.arch }}
+          path: dist-voice/*.tar.gz
+
+  release:
+    needs: build
+    if: inputs.publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@v5
+        with:
+          path: out
+          merge-multiple: true
+
+      # The tag is read from the plugin, never typed here: `MACOS_BUILDS` names both pins, and a
+      # tag that disagreed with it would be a release nobody's plugin ever asks for.
+      - name: Name the release and list what is in it
+        id: named
+        run: |
+          tag=$(node --input-type=module -e "import('./plugins/voice/fetching.js').then((m) => console.log(m.MACOS_BUILDS.split('/').at(-1)))")
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          {
+            echo 'body<<END'
+            echo "Whisper and Piper for macOS, built by \`scripts/voice-macos.mjs\` from the versions this tag names."
+            echo ''
+            echo 'These are downloads for the voice plugin, not an Alexia release.'
+            echo ''
+            echo '```'
+            (cd out && sha256sum *.tar.gz)
+            echo '```'
+            echo END
+          } >> "$GITHUB_OUTPUT"
+          ls -l out
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          make_latest: false
+          tag_name: ${{ steps.named.outputs.tag }}
+          name: ${{ steps.named.outputs.tag }}
+          body: ${{ steps.named.outputs.body }}
+          files: out/*.tar.gz

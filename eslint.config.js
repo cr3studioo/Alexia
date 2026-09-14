@@ -11,6 +11,8 @@ export default tseslint.config(
       '**/node_modules/**',
       '**/*.tsbuildinfo',
       'dist-app/**',
+      // What `scripts/voice-macos.mjs` downloads and builds: other projects' sources, not ours.
+      'dist-voice/**',
       '**/target/**',
       // What `scripts/sidecar.mjs` arranges for Tauri: the same bundle as `dist-app`, moved.
       // `gen/` is Tauri's own generated schema output, and `binaries/` is a copy of Node.

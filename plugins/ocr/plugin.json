@@ -3,8 +3,8 @@
   "manifest_version": 1,
   "id": "ocr",
   "name": "Text in pictures",
-  "summary": "Reads the words in a picture — a scan, a photograph of a page, a screenshot — using the text recognition already built into Windows. Nothing to download.",
-  "version": "0.1.0",
+  "summary": "Reads the words in a picture — a scan, a photograph of a page, a screenshot — using the text recognition already built into Windows and macOS. Nothing to download.",
+  "version": "0.2.0",
   "license": "AGPL-3.0-only",
   "entry": {
     "run": "node",
@@ -17,7 +17,7 @@
   "requires": [
     {
       "cap": "proc.spawn",
-      "why": "To ask Windows' own text recognition to read the picture, through PowerShell. Nothing else is started."
+      "why": "To ask the text recognition built into Windows or macOS to read the picture. Nothing else is started."
     },
     {
       "cap": "fs.read_scoped",
@@ -37,7 +37,7 @@
       "key": "language",
       "label": "Language to read in",
       "placeholder": "en-GB",
-      "hint": "Leave it empty and it uses the languages you already have set for Windows. The State line below says which ones this machine can read; adding another is Settings, then Time and language."
+      "hint": "Leave it empty and it uses the languages this computer is already set to. The State line below says which ones this machine can read; on Windows, adding another is Settings, then Time and language."
     },
     {
       "type": "status",

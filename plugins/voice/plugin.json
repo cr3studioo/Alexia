@@ -4,7 +4,7 @@
   "id": "voice",
   "name": "Voice",
   "summary": "Hears you with Whisper and answers out loud — in Piper on this machine, in Qwen3-TTS if you have the Python for it, or in a voice cloned from a clip of your own.",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "license": "AGPL-3.0-only",
   "entry": {
     "run": "node",

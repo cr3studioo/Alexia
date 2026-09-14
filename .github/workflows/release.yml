@@ -123,15 +123,14 @@ jobs:
           ls -l out
 
       # The update signature, over the bytes that will actually be downloaded. See the header:
-      # taken *after* SignPath because Authenticode rewrites the installer, and `latest.json`
-      # is written from the `.sig` this produces.
+      # taken *after* SignPath because Authenticode rewrites the installer. `latest.json` is
+      # written by `publish` below from every platform's `.sig`, because one file lists them all.
       - name: Sign the update
         if: inputs.publish
         shell: bash
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          VERSION: ${{ inputs.version }}
         run: |
           if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
             echo "TAURI_SIGNING_PRIVATE_KEY is not set, so this release could be published and"
@@ -141,39 +140,160 @@ jobs:
             echo "  gh secret set TAURI_SIGNING_PRIVATE_KEY --repo $GITHUB_REPOSITORY < ~/.alexia/updater.key"
             exit 1
           fi
-          installer=$(ls out/*.exe | head -1)
-          pnpm tauri signer sign "$installer"
+          pnpm tauri signer sign "$(ls out/*.exe | head -1)"
+
+      - uses: actions/upload-artifact@v5
+        if: inputs.publish
+        with:
+          name: release-windows-x86_64
+          path: out/
+
+  # The Mac app (D145). Same gate, same order, one job per architecture — and the two switches
+  # mean the same thing here as above: `sign` decides whether macOS warns the person opening it,
+  # `publish` decides whether an Alexia already installed can update.
+  #
+  # **`sign` on a Mac is signing *and* notarising**, and without it Gatekeeper does not warn so
+  # much as refuse: a downloaded app with no Developer ID opens only after System Settings →
+  # Privacy & Security → *Open Anyway*. That is a cold-install test failing on its first screen,
+  # so an unsigned Mac release says so in its notes rather than in a support email.
+  #
+  # Secrets it reads when `sign` is on: `APPLE_CERTIFICATE` (the Developer ID Application
+  # certificate as base64 .p12) and `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY` (its
+  # name, "Developer ID Application: …"), and `APPLE_ID`, `APPLE_PASSWORD` (an app-specific
+  # password) and `APPLE_TEAM_ID` for notarisation. Tauri notarises and staples when the last
+  # three are present, and signs ad hoc when none are — which is what `tauri.macos.conf.json`
+  # falls back to, so an unsigned build still runs under the hardened runtime it would ship with.
+  macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-latest
+            platform: darwin-aarch64
+          - runner: macos-15-intel
+            platform: darwin-x86_64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm check
+
+      - name: The version in the tree is the version being released
+        run: |
+          built=$(node -e "import('./packages/protocol/dist/src/version.js').then(m=>console.log(m.APP_VERSION))")
+          if [ "$built" != "${{ inputs.version }}" ]; then
+            echo "This tree builds Alexia $built, and you asked for ${{ inputs.version }}."
+            exit 1
+          fi
+
+      # Into a keychain of the runner's own, before anything signs: `sidecar.mjs` signs the
+      # keychain library in `resources/` with this identity, and `tauri build` signs the rest.
+      - name: Import the Developer ID certificate
+        if: inputs.sign
+        uses: apple-actions/import-codesign-certs@v3
+        with:
+          p12-file-base64: ${{ secrets.APPLE_CERTIFICATE }}
+          p12-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+
+      # The variables are set only when signing, never set empty: Tauri reads an empty
+      # `APPLE_SIGNING_IDENTITY` as an identity called "", which is not ad hoc — it is a failure.
+      - name: Build, sign and notarise
+        env:
+          IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          NOTARY_ID: ${{ secrets.APPLE_ID }}
+          NOTARY_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          NOTARY_TEAM: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          if [ "${{ inputs.sign }}" = "true" ]; then
+            export APPLE_SIGNING_IDENTITY="$IDENTITY" APPLE_ID="$NOTARY_ID" APPLE_PASSWORD="$NOTARY_PASSWORD" APPLE_TEAM_ID="$NOTARY_TEAM"
+          fi
+          node scripts/sidecar.mjs
+          pnpm tauri build
+
+      # The disk image for somebody installing, and the app itself compressed for somebody
+      # updating — Tauri's updater replaces a Mac app from a `.app.tar.gz`, not from a dmg.
+      - name: Collect the app
+        if: inputs.publish
+        run: |
+          mkdir -p out
+          cp src-tauri/target/release/bundle/dmg/*.dmg out/
+          tar -czf "out/Alexia_${{ matrix.platform }}.app.tar.gz" -C src-tauri/target/release/bundle/macos Alexia.app
+          ls -l out
+
+      # After notarisation, never before, for the reason the Windows job signs after SignPath:
+      # stapling writes the ticket into the app, so a signature over the earlier bytes would be
+      # a signature over an app nobody downloads.
+      - name: Sign the update
+        if: inputs.publish
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "TAURI_SIGNING_PRIVATE_KEY is not set; see the Windows job for why that stops a release."
+            exit 1
+          fi
+          pnpm tauri signer sign "out/Alexia_${{ matrix.platform }}.app.tar.gz"
+
+      - uses: actions/upload-artifact@v5
+        if: inputs.publish
+        with:
+          name: release-${{ matrix.platform }}
+          path: out/
+
+  # One release and one `latest.json` for every platform. Written here rather than in a platform
+  # job because the file is a single list: two jobs each writing their own would publish
+  # whichever finished last, and every other platform's installs would stop updating.
+  publish:
+    needs: [windows, macos]
+    if: inputs.publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v5
+        with:
+          pattern: release-*
+          path: out
+          merge-multiple: true
+
+      - name: Write latest.json
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
           node --input-type=module - <<'NODE'
           import { readdirSync, readFileSync, writeFileSync } from 'node:fs'
           import { join } from 'node:path'
           // Tauri's static endpoint format, and only the fields it reads. The URL is the
           // release asset this same job is about to upload — `releases/latest/download/<name>`
           // rather than a tag, so this file does not have to know its own version twice.
-          const exe = readdirSync('out').find((f) => f.endsWith('.exe'))
-          const signature = readFileSync(join('out', `${exe}.sig`), 'utf8').trim()
+          const files = readdirSync('out')
+          const entry = (file) => ({
+            signature: readFileSync(join('out', `${file}.sig`), 'utf8').trim(),
+            url: `https://github.com/${process.env.GITHUB_REPOSITORY}/releases/latest/download/${file}`,
+          })
+          const platforms = {}
+          const exe = files.find((f) => f.endsWith('.exe'))
+          if (exe) platforms['windows-x86_64'] = entry(exe)
+          for (const platform of ['darwin-aarch64', 'darwin-x86_64']) {
+            const app = `Alexia_${platform}.app.tar.gz`
+            if (files.includes(app)) platforms[platform] = entry(app)
+          }
           writeFileSync(
             'out/latest.json',
-            JSON.stringify(
-              {
-                version: process.env.VERSION,
-                pub_date: new Date().toISOString(),
-                platforms: {
-                  'windows-x86_64': {
-                    signature,
-                    url: `https://github.com/${process.env.GITHUB_REPOSITORY}/releases/latest/download/${exe}`,
-                  },
-                },
-              },
-              null,
-              2,
-            ),
+            JSON.stringify({ version: process.env.VERSION, pub_date: new Date().toISOString(), platforms }, null, 2),
           )
+          console.log(Object.keys(platforms).join(', '))
           NODE
 
       # `[GATE]` again, and deliberately the last one: publishing is the outward-facing act.
       # A draft, so a person presses the button that makes it public.
       - name: Draft the release
-        if: inputs.publish
         uses: softprops/action-gh-release@v2
         with:
           draft: true
@@ -185,11 +305,15 @@ jobs:
           make_latest: true
           files: |
             out/*.exe
+            out/*.dmg
+            out/*.app.tar.gz
             out/latest.json
           body: |
             Alexia ${{ inputs.version }}.
 
-            ${{ inputs.sign && 'The publisher on this installer reads "SignPath Foundation". That is the certificate programme that signs open-source releases for free, and it is not a sign that something is wrong. Windows may still show a SmartScreen warning until this build accumulates reputation.' || 'This installer is not code-signed yet, so Windows will show a SmartScreen warning: More info, then Run anyway. The download is still checked — Alexia verifies its own signature over this file before installing it as an update.' }}
+            ${{ inputs.sign && 'The publisher on the Windows installer reads "SignPath Foundation". That is the certificate programme that signs open-source releases for free, and it is not a sign that something is wrong. Windows may still show a SmartScreen warning until this build accumulates reputation. The Mac app is signed with a Developer ID and notarised by Apple.' || 'These builds are not code-signed yet. On Windows, SmartScreen will warn: More info, then Run anyway. On a Mac, macOS will refuse to open the app the first time: open System Settings, then Privacy & Security, and press Open Anyway beside Alexia. The downloads are still checked — Alexia verifies its own signature over an update before installing it.' }}
+
+            On a Mac, pick the disk image for your processor: aarch64 for Apple Silicon, x86_64 for Intel.
 
             Alexia installed from an earlier release updates itself to this one: it offers the
             update at startup and replaces itself in place when you press the button.

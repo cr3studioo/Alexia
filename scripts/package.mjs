@@ -11,28 +11,25 @@
  *
  * Not signed, not pretty, no auto-update. `Ugly is fine. Silent is not.`
  *
- * What comes out is a folder that runs on a Windows box with nothing installed:
+ * What comes out is a folder that runs on a machine with nothing installed:
  *
  *   Alexia/
- *     Alexia.cmd    the double-click
- *     node.exe      the runtime, copied — Node is MIT and redistributable
+ *     Alexia.cmd    the double-click — `Alexia.command` on macOS, `alexia.sh` on Linux
+ *     node.exe      the runtime, copied — `node` off Windows. Node is MIT and redistributable
  *     boot.mjs      start the server, then open the browser at it
  *     alexia.mjs    core, bundled to one file
  *     *.node        the one native dependency that cannot be bundled
  *     ui/           the shell: index.html, app.css, main.js, her face
  *
- * Data still goes to %LOCALAPPDATA%\Alexia and never beside the executable, which is what
- * makes "delete the folder" a clean uninstall of the program and not of the conversation.
+ * Data still goes to the platform's per-user data folder (`store.ts`) and never beside the
+ * executable, which is what makes "delete the folder" a clean uninstall of the program and
+ * not of the conversation.
  *
- * **Windows only, and that is a decision rather than an omission (M2-7, D75).** The other
- * platforms are three small changes away — the runtime's filename, the launcher's extension,
- * and the command that opens a browser — and the keyring's platform table already carries
- * their slugs. What stops it is that a bundle nobody has run on a machine that never had
- * Alexia is not a bundle anybody should be handed: `@napi-rs/keyring` reaches libsecret on
- * Linux and the Keychain on macOS, and *whether the app starts at all* is exactly what a
- * packaged build is supposed to answer. The line below fails loudly on an unsupported
- * platform, which is the honest state. The day there is a machine to test on, this becomes
- * a small commit rather than a hope.
+ * **Windows first; macOS since it was run on one (D144).** D75 held the other platforms back
+ * as three small changes nobody had run. Running it on a Mac found a fourth, which is the
+ * reason D75 held them back: the keyring slug was `darwin-universal`, and `@napi-rs/keyring`
+ * 1.3.0 publishes no such package — one per architecture — so this script threw before
+ * copying anything. Linux takes the same branches and still has not been run.
  */
 import { build } from 'esbuild'
 import { spawn } from 'node:child_process'
@@ -44,6 +41,9 @@ import { fileURLToPath } from 'node:url'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const out = join(root, 'dist-app', 'Alexia')
+const windows = process.platform === 'win32'
+/** The runtime's filename. `scripts/sidecar.mjs` reads the same name back. */
+const runtime = windows ? 'node.exe' : 'node'
 
 /**
  * What a package resolves to, seen from a given folder — its entry file, not its folder,
@@ -95,8 +95,17 @@ await build({
 // 2. The one thing that cannot be bundled. `@napi-rs/keyring` is how a key reaches the
 //    Windows credential locker instead of the database, so this is not optional — losing it
 //    would mean silently falling back to storing secrets somewhere worse.
-const slug = { win32: 'win32-x64-msvc', darwin: 'darwin-universal', linux: 'linux-x64-gnu' }[process.platform]
-if (!slug) throw new Error(`No packaged build for ${process.platform} yet.`)
+//    Per platform *and* architecture: there is no universal macOS binary, so an Apple Silicon
+//    build carries the arm64 one and an Intel build the x64 one.
+const slug = {
+  'win32-x64': 'win32-x64-msvc',
+  'win32-arm64': 'win32-arm64-msvc',
+  'darwin-arm64': 'darwin-arm64',
+  'darwin-x64': 'darwin-x64',
+  'linux-x64': 'linux-x64-gnu',
+  'linux-arm64': 'linux-arm64-gnu',
+}[`${process.platform}-${process.arch}`]
+if (!slug) throw new Error(`No packaged build for ${process.platform}-${process.arch} yet.`)
 
 let at = join(root, 'packages', 'core')
 for (const hop of ['cross-keychain', '@napi-rs/keyring']) at = dirname(entry(at, hop))
@@ -110,9 +119,12 @@ cpSync(source, join(out, native))
 // And the fallback's script, because a credential store with no second route is a credential
 // store that fails silently the day the first one moves. `cross-keychain` reaches it as
 // `<its own bundled location>/scripts/credman.ps1`, which after bundling is beside this file.
-const keychainDir = dirname(entry(join(root, 'packages', 'core'), 'cross-keychain'))
-mkdirSync(join(out, 'scripts'), { recursive: true })
-cpSync(join(keychainDir, 'scripts', 'credman.ps1'), join(out, 'scripts', 'credman.ps1'))
+// Windows only: the macOS fallback is the system's own `security` and needs no file.
+if (windows) {
+  const keychainDir = dirname(entry(join(root, 'packages', 'core'), 'cross-keychain'))
+  mkdirSync(join(out, 'scripts'), { recursive: true })
+  cpSync(join(keychainDir, 'scripts', 'credman.ps1'), join(out, 'scripts', 'credman.ps1'))
+}
 
 // 3. The shell. Everything `serve.ts` serves statically, in the folder its third candidate
 //    looks in.
@@ -163,7 +175,7 @@ cpSync(join(root, 'packages', 'ui', 'dist', 'src'), join(ui, 'dist', 'src'), {
 
 // 5. The runtime. 89 MB of Node, which is most of what the tester downloads and the honest
 //    price of not asking them to install anything.
-cpSync(process.execPath, join(out, 'node.exe'))
+cpSync(process.execPath, join(out, runtime))
 
 // 6. Start it, then take them to it. `Silent is not fine`: the window stays, says where she
 //    is, and says what to do if the browser did not come up on its own.
@@ -207,8 +219,17 @@ console.log('Closing this window stops Alexia.')
 // Not under the desktop shell, which has its own windows and does not want a browser
 // opening a second copy of the same conversation beside them.
 if (!process.env.ALEXIA_TAURI) {
+  const [opener, args] =
+    process.platform === 'win32' ? ['cmd', ['/c', 'start', '""', url]]
+    : process.platform === 'darwin' ? ['open', [url]]
+    : ['xdg-open', [url]]
   try {
-    spawn('cmd', ['/c', 'start', '""', url], { detached: true, stdio: 'ignore' }).unref()
+    const browser = spawn(opener, args, { detached: true, stdio: 'ignore' })
+    // A missing opener is an \`error\` event rather than a throw, and an unheard one ends the
+    // process — so without this, a machine with no \`xdg-open\` would lose Alexia a moment
+    // after she said where she was.
+    browser.on('error', () => {})
+    browser.unref()
   } catch {
     // No browser is not a failure. The address is on screen.
   }
@@ -246,11 +267,20 @@ if (!process.env.ALEXIA_TAURI) {
 )
 
 // 7. The double-click itself. \`%~dp0\` is this file's own folder, so the whole thing runs
-//    from wherever it was unzipped — Desktop, Downloads, a stick.
-writeFileSync(
-  join(out, 'Alexia.cmd'),
-  ['@echo off', 'title Alexia', 'cd /d "%~dp0"', 'node.exe boot.mjs', 'pause', ''].join('\r\n'),
-)
+//    from wherever it was unzipped — Desktop, Downloads, a stick. Off Windows the same thing
+//    is \`dirname "$0"\`, and a \`.command\` is what Finder opens in Terminal on a double-click.
+if (windows) {
+  writeFileSync(
+    join(out, 'Alexia.cmd'),
+    ['@echo off', 'title Alexia', 'cd /d "%~dp0"', 'node.exe boot.mjs', 'pause', ''].join('\r\n'),
+  )
+} else {
+  writeFileSync(
+    join(out, process.platform === 'darwin' ? 'Alexia.command' : 'alexia.sh'),
+    ['#!/bin/sh', 'cd "$(dirname "$0")" || exit 1', 'exec ./node boot.mjs', ''].join('\n'),
+    { mode: 0o755 },
+  )
+}
 
 /**
  * 8. Start what was just built and ask it one question.
@@ -270,10 +300,13 @@ writeFileSync(
  * is the thing to add.
  */
 const home = mkdtempSync(join(tmpdir(), 'alexia-package-check-'))
-const app = spawn(join(out, 'node.exe'), ['boot.mjs'], {
+const app = spawn(join(out, runtime), ['boot.mjs'], {
   cwd: out,
-  // Its own throwaway `%LOCALAPPDATA%`, so checking the build cannot touch a real install.
-  env: { ...process.env, LOCALAPPDATA: home },
+  // Its own throwaway data folder, so checking the build cannot touch a real install. Each
+  // platform finds that folder through a different variable (`store.ts`), so all three are
+  // pointed at it: `LOCALAPPDATA` alone left a Mac checking against the real one.
+  // `ALEXIA_TAURI` because under it no browser opens — a build check has no one to show.
+  env: { ...process.env, LOCALAPPDATA: home, HOME: home, XDG_DATA_HOME: home, ALEXIA_TAURI: '1' },
   stdio: ['ignore', 'pipe', 'pipe'],
 })
 let said = ''
@@ -315,4 +348,4 @@ ${said}`)), 30_000)
 const mb = (path) => (statSync(path).size / 1024 / 1024).toFixed(1)
 console.log(`Packaged to ${out}`)
 console.log(`  alexia.mjs  ${mb(join(out, 'alexia.mjs'))} MB`)
-console.log(`  node.exe    ${mb(join(out, 'node.exe'))} MB`)
+console.log(`  ${runtime.padEnd(10)}  ${mb(join(out, runtime))} MB`)

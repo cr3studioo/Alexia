@@ -4,7 +4,7 @@
   "id": "computer",
   "name": "Computer control",
   "summary": "Lets Alexia see what is on screen, press things, move the mouse and type. Anything a person at this keyboard could do.",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "license": "AGPL-3.0-only",
   "entry": {
     "run": "node",
@@ -25,7 +25,7 @@
     },
     {
       "cap": "proc.spawn",
-      "why": "To ask Windows itself to do those things, through PowerShell."
+      "why": "To ask the computer itself to do those things — PowerShell on Windows, osascript on a Mac."
     },
     {
       "cap": "fs.own_dir",
