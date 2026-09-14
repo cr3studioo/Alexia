@@ -864,6 +864,17 @@ export async function send(
        * and quietly moving on would hide the one problem the person can actually fix.
        */
       if (status === 403) continue
+      /**
+       * **`406` is a model that cannot take this request right now** — a rung failure too.
+       *
+       * Real ones, from AI Horde, whose roster is whichever volunteers are awake: *"Model None
+       * not known!"* for a seeded row whose worker had gone to bed, and *"Request is not
+       * possible."* when no worker awake could serve it. Both threw and ended a first message
+       * with two more Horde rows still in the plan behind it, on exactly the evening the rungs
+       * above had spent their two requests a minute — the no-key floor failing on the one day
+       * it is the whole of what is left.
+       */
+      if (status === 406) continue
       throw error
     }
   }

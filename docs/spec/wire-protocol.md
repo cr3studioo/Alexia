@@ -514,7 +514,14 @@ ask.** That is not politeness, it is the invariant in code: if a plugin could le
 the folder would break something else.
 
 If no enabled plugin provides the capability, core answers `-32050` (§8). Declare what you
-need in `requires[]` so the user is told at install time instead of at failure time. Names
+need in `requires[]` so the user is told at install time instead of at failure time.
+
+**Wait for the answer; core is the clock.** Another plugin's work can take minutes — OCR on a
+cold machine, a long voice note — and core answers every capability call inside its own
+budget, with an error if the provider runs past it. MCP's default request timeout is sixty
+seconds, which is shorter than that budget, so a caller left on it throws away the slowest
+honest answers. `@alexia/sdk` waits `CAPABILITY_CALL_MS` from `@alexia/protocol`; a plugin
+speaking the wire directly should wait at least as long. Names
 come from [`capabilities.md`](./capabilities.md); adding one is a pull request, not a string
 you invent.
 

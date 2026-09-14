@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { Manifest, MCP_PINNED, SETTINGS_CHANGED } from '@alexia/protocol'
+import { CAPABILITY_CALL_MS, Manifest, MCP_PINNED, SETTINGS_CHANGED } from '@alexia/protocol'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterEach, expect, test, vi } from 'vitest'
@@ -128,6 +128,13 @@ test('a wedged plugin fails its call and gets killed, rather than hanging the ch
   await vi.waitFor(() => expect(alive(wedged)).toBe(false), { timeout: 10_000 })
   expect(spy.logs.join('\n')).toContain('stopped answering')
 }, 20_000)
+
+test('a plugin asking another for a capability waits as long as core lets the other one work', () => {
+  // Core wakes the provider and then gives its call `callMs`. A caller that gave up sooner
+  // threw away exactly the slow honest answers — Windows OCR on a cold machine, at sixty
+  // seconds, while core was still allowing two minutes (D149).
+  expect(CAPABILITY_CALL_MS).toBeGreaterThan(DEFAULT_TIMINGS.startMs + DEFAULT_TIMINGS.callMs)
+})
 
 test('three stops in a minute and it is switched off, in words a person can act on', async () => {
   const spy = host()
