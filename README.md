@@ -7,7 +7,7 @@
 
 <p align="center">
   <a href="https://github.com/cr3studioo/Alexia/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/cr3studioo/Alexia?style=flat-square&label=release&color=18385f&labelColor=2f5d93"></a>
-  <img alt="Windows" src="https://img.shields.io/badge/platform-Windows-18385f?style=flat-square&labelColor=2f5d93">
+  <img alt="Windows and macOS" src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS-18385f?style=flat-square&labelColor=2f5d93">
   <a href="./LICENSE"><img alt="AGPL-3.0" src="https://img.shields.io/badge/licence-AGPL--3.0-18385f?style=flat-square&labelColor=2f5d93"></a>
   <a href="./docs/authoring/README.md"><img alt="Plugin SDK Apache-2.0" src="https://img.shields.io/badge/plugin%20SDK-Apache--2.0-18385f?style=flat-square&labelColor=2f5d93"></a>
 </p>
@@ -53,20 +53,34 @@ talking to it.
 
 ## Get Alexia
 
-**Windows (x64)** — download `Alexia_x.y.z_x64-setup.exe` from the
-[latest release](https://github.com/cr3studioo/Alexia/releases/latest) and run it.
+All downloads are on the [latest release](https://github.com/cr3studioo/Alexia/releases/latest).
+
+| | Download | Then |
+|---|---|---|
+| **Windows** (x64) | `Alexia_x.y.z_x64-setup.exe` | Run it. |
+| **macOS** — Apple Silicon (M1 and later) | `Alexia_x.y.z_aarch64.dmg` | Open it and drag Alexia into Applications. |
+| **macOS** — Intel | `Alexia_x.y.z_x64.dmg` | Open it and drag Alexia into Applications. |
+
+macOS 11 or later. Not sure which Mac you have? Apple menu → **About This Mac**: *Chip* means
+Apple Silicon, *Processor* means Intel.
 
 > [!NOTE]
-> The installer is not code-signed yet, so Windows SmartScreen will warn you: choose
-> **More info → Run anyway**. Alexia still verifies its own signature on every update it
-> installs, and it updates itself in place when a new version is out.
+> Neither build is code-signed yet, so the first launch meets a warning:
+>
+> - **Windows** — SmartScreen: choose **More info → Run anyway**.
+> - **macOS** — macOS says it cannot verify Alexia. Press **Done**, open **System Settings →
+>   Privacy & Security**, scroll down and press **Open Anyway** beside Alexia. Only the first
+>   time.
+>
+> Alexia still verifies its own signature on every update it installs, and it updates itself in
+> place when a new version is out.
 
 First run takes about two minutes:
 
 1. **What should I call you?** — one field, skippable.
 2. **How should I run?** — *Local* (the model runs on this machine, ~5 min download), *Combined* (the default), or *Cloud*.
 3. **Connect a model** — a free tier with no card, a key you already have, or your existing Claude Code login.
-4. **Talk.** The tray icon appears and the hotkey is shown once.
+4. **Talk.** The tray icon appears (the menu bar, on a Mac) and the hotkey is shown once.
 
 No account, no email, no tour.
 
@@ -102,7 +116,7 @@ same footing as anybody else's.
 | 🖱️ **Computer control** | Sees the screen, moves the mouse, presses things and types. Anything a person at the keyboard could do. |
 | 🧠 **Long-term memory** | Remembers across conversations, and draws what it knows as a map you can explore. |
 | ✈️ **Telegram** | Talk to Alexia from your phone. Every reply says that it crossed Telegram's servers. |
-| 🔤 **Text in pictures** | Reads the words in a scan, photo or screenshot, using the OCR built into Windows. |
+| 🔤 **Text in pictures** | Reads the words in a scan, photo or screenshot, using the OCR built into Windows and macOS. |
 | 🎭 **Personality** | Write Alexia a personality in your own words, keep as many as you like, switch between them. |
 | ✅ **Commitments** | Keeps track of what you said you would do — and whether you did. |
 | 💻 **Claude Code** | Hands a coding job to the Claude Code CLI you already have, using your own login. |
