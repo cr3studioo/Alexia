@@ -22,7 +22,7 @@
  * `node.exe`, renamed, and the signing story covers two files instead of one.
  */
 import { spawnSync } from 'node:child_process'
-import { cpSync, existsSync, mkdirSync, rmSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -68,10 +68,28 @@ for (const name of ['alexia.mjs', 'boot.mjs', 'ui', 'scripts']) {
   if (existsSync(from)) cpSync(from, join(resources, name), { recursive: true })
 }
 // The native keyring, whatever it is called on this platform. Found rather than named, so
-// this does not quietly ship yesterday's copy under today's filename.
-for (const name of ['keyring.win32-x64-msvc.node', 'keyring.darwin-universal.node', 'keyring.linux-x64-gnu.node']) {
-  const from = join(packaged, name)
-  if (existsSync(from)) cpSync(from, join(resources, name))
+// this does not quietly ship yesterday's copy under today's filename — the names this used to
+// list included `darwin-universal`, which the keyring has never published (D144).
+for (const name of readdirSync(packaged).filter((file) => /^keyring\..+\.node$/.test(file))) {
+  cpSync(join(packaged, name), join(resources, name))
+  if (process.platform === 'darwin') sign(join(resources, name))
+}
+
+/**
+ * Sign a native library the way Tauri signs the executables beside it (D145).
+ *
+ * Tauri signs the shell and every `externalBin`, and nothing under `resources` — so the
+ * keychain's `.node` would reach notarisation carrying whatever signature its publisher gave
+ * it, and Apple refuses a bundle with one foreign library inside. Signed here, with the same
+ * identity `tauri build` will use: `APPLE_SIGNING_IDENTITY` in a release, and ad hoc (`-`)
+ * otherwise, which is what `tauri.macos.conf.json` falls back to as well.
+ */
+function sign(path) {
+  const identity = process.env.APPLE_SIGNING_IDENTITY || '-'
+  const args = ['--force', '--options', 'runtime', '--sign', identity, path]
+  if (identity !== '-') args.splice(2, 0, '--timestamp')
+  const signed = spawnSync('codesign', args, { stdio: 'inherit' })
+  if (signed.status !== 0) throw new Error(`codesign refused ${path}`)
 }
 
 // 4. The entry point has to be there, because `main.rs` names it and a sidecar that starts

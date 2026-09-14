@@ -26,6 +26,16 @@ function shell() {
 
 export const supported = () => process.platform === 'win32'
 
+/** What a person reads when this platform is named in a sentence. */
+export const engine = 'Windows'
+
+/** What the `key` tool tells a model, because the notation is this backend's to define. */
+export const KEY_HELP =
+  'Press a key or a combination — {ENTER}, {TAB}, {ESC}, {F5}, ^c for Ctrl+C, ^v for ' +
+  'Ctrl+V, %{F4} for Alt+F4, {WIN} for the Windows key on its own (this opens the start ' +
+  'menu) and {WIN}r for Windows+R. Use for anything that is not ordinary text.'
+export const KEY_NOTATION = 'The combination, in SendKeys notation.'
+
 /**
  * Run a script and give back what it printed.
  *

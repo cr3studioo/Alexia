@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, statSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync } from 'node:fs'
 import { request as httpRequest } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -100,6 +100,25 @@ test('a request target that is not a path is refused, not answered and not a 500
 
   // And the path that is a path still is one.
   expect(await raw('/app.css')).toBe(200)
+})
+
+test('a fresh install is watching its plugins folder from the first start', async () => {
+  // `root` has never had anything installed into it, which is every install since plugins
+  // stopped shipping inside the app. The folder did not exist, so the watch failed once and
+  // never retried — and a plugin folder deleted by hand went unnoticed until a restart.
+  const problems = async (): Promise<string> =>
+    JSON.stringify(((await (await get('/api/plugins')).json()) as { problems: unknown[] }).problems)
+  expect(await problems()).not.toContain('cannot watch')
+
+  // Watched, and not merely created: a folder arriving is noticed with nobody asking.
+  const stray = join(root, 'extensions', 'not-a-plugin')
+  mkdirSync(stray)
+  try {
+    await expect.poll(problems, { timeout: 5000 }).toContain('not-a-plugin has no readable plugin.json')
+  } finally {
+    rmSync(stray, { recursive: true, force: true })
+  }
+  await expect.poll(problems, { timeout: 5000 }).not.toContain('not-a-plugin')
 })
 
 test('a turn is kept even when the answer is a refusal', async () => {

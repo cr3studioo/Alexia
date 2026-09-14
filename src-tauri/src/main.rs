@@ -26,6 +26,7 @@
 
 use std::net::TcpListener;
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 use tauri::image::Image;
 use tauri::menu::{Menu, MenuItem};
@@ -37,7 +38,26 @@ use tauri_plugin_shell::process::CommandChild;
 use tauri_plugin_shell::ShellExt;
 
 /// The summon. One combination, shown once at first run and then never again.
+///
+/// Not the same one everywhere (D145): on macOS `Ctrl+Option+Space` is the system's own *next
+/// input source*, so for anybody with two keyboards it switched language instead. Option+Space
+/// is the combination Mac assistants already answer to. `desktop.ts` says the same thing twice.
+#[cfg(not(target_os = "macos"))]
 const HOTKEY: (Modifiers, Code) = (Modifiers::CONTROL.union(Modifiers::ALT), Code::Space);
+#[cfg(target_os = "macos")]
+const HOTKEY: (Modifiers, Code) = (Modifiers::ALT, Code::Space);
+
+// The overlay's AppKit class on a Mac (D145): a panel that can take the keyboard without
+// activating Alexia, which is what lets it appear over another app's full-screen Space.
+#[cfg(target_os = "macos")]
+tauri_nspanel::tauri_panel! {
+    panel!(OverlayPanel {
+        config: {
+            can_become_key_window: true,
+            is_floating_panel: true
+        }
+    })
+}
 
 /// The tray's four states, as the page reports them.
 ///
@@ -83,7 +103,43 @@ fn free_port() -> u16 {
         .unwrap_or(43117)
 }
 
+/// Alexia is in the Dock while its window is up, and a menu-bar item while it is only a daemon.
+///
+/// Windows gives each window its own taskbar entry and the shell relies on that; macOS has one
+/// icon for the app, so the same rule is the activation policy (D145).
+///
+/// This was taken out once, blamed for Alexia being terminated after its window closed. The
+/// cause was a utility on the test Mac that quits any app whose last window closes — the same
+/// thing would have happened to every build, which is why removing this did not stop it.
+#[cfg(target_os = "macos")]
+fn in_dock(app: &AppHandle, shown: bool) {
+    use tauri::ActivationPolicy::{Accessory, Regular};
+    let _ = app.set_activation_policy(if shown { Regular } else { Accessory });
+}
+#[cfg(not(target_os = "macos"))]
+fn in_dock(_app: &AppHandle, _shown: bool) {}
+
+/// When the overlay was last summoned — the guard D66 asked M5-2 for and M5-2 never built.
+///
+/// A blur already in flight can land a moment *after* the show meant to open the overlay, and
+/// blur-to-hide then shuts it in the same breath. On Windows that took *click away, change your
+/// mind, press the hotkey*. On a Mac, while the overlay was an ordinary window, it took nothing:
+/// activating the app to focus it sent it a blur of its own, and the hotkey brought Alexia to
+/// the front and showed nothing (D145). A blur this soon after a summon is not somebody leaving.
+static SUMMONED: Mutex<Option<Instant>> = Mutex::new(None);
+const SETTLING: Duration = Duration::from_millis(400);
+
 fn reveal(app: &AppHandle) {
+    if let Ok(mut at) = SUMMONED.lock() {
+        *at = Some(Instant::now());
+    }
+    // Shown and made key *without* activating Alexia, on a Mac — activating is what kept the
+    // overlay off a full-screen Space.
+    #[cfg(target_os = "macos")]
+    if let Ok(panel) = tauri_nspanel::ManagerExt::get_webview_panel(app, "overlay") {
+        panel.show_and_make_key();
+        return;
+    }
     if let Some(overlay) = app.get_webview_window("overlay") {
         let _ = overlay.show();
         let _ = overlay.set_focus();
@@ -91,6 +147,7 @@ fn reveal(app: &AppHandle) {
 }
 
 fn open_main(app: &AppHandle) {
+    in_dock(app, true);
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.show();
         let _ = window.unminimize();
@@ -103,10 +160,23 @@ fn main() {
     // Decided here, so the windows can be built without waiting for the sidecar to boot.
     let url = format!("http://127.0.0.1:{port}/");
 
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    // The panel crate's plugin, which the overlay's conversion below needs registered first.
+    #[cfg(target_os = "macos")]
+    let builder = builder.plugin(tauri_nspanel::init());
+    builder
         // One Alexia. A second launch raises the window that is already running rather than
         // starting a second core on a second port with the same database open twice.
-        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| open_main(app)))
+        //
+        // `--overlay` summons the overlay instead (D145), so anything that can run a command —
+        // a launcher, a Shortcut, a test with no keyboard to press — reaches the hotkey's door.
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            if argv.iter().any(|arg| arg == "--overlay") {
+                reveal(app)
+            } else {
+                open_main(app)
+            }
+        }))
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, None))
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -160,22 +230,40 @@ fn main() {
                 .visible(false)
                 .center()
                 .build()?;
+            // On a Mac the overlay becomes a panel: non-activating, so showing it neither brings
+            // Alexia forward nor switches Space; on every Space; and allowed over a full-screen app.
+            // `CanJoinAllSpaces` and `FullScreenAuxiliary` on an ordinary window were tried first and
+            // measured not to be enough — the window activates its app, and macOS keeps it off a
+            // full-screen Space that is not the app's.
+            #[cfg(target_os = "macos")]
+            {
+                use tauri_nspanel::{CollectionBehavior, PanelLevel, StyleMask, WebviewWindowExt};
+                let panel = overlay.to_panel::<OverlayPanel>()?;
+                panel.set_level(PanelLevel::Floating.value());
+                panel.set_style_mask(StyleMask::empty().nonactivating_panel().into());
+                panel.set_collection_behavior(CollectionBehavior::new().full_screen_auxiliary().can_join_all_spaces().into());
+            }
 
             let hiding = overlay.clone();
             overlay.on_window_event(move |event| {
                 if let WindowEvent::Focused(false) = event {
-                    let _ = hiding.hide();
+                    let settling = SUMMONED.lock().ok().and_then(|at| *at).is_some_and(|at| at.elapsed() < SETTLING);
+                    if !settling {
+                        let _ = hiding.hide();
+                    }
                 }
             });
 
             // The main window closes to the tray rather than quitting. Alexia is a daemon;
             // closing its window is putting it away, not switching it off.
+
             if let Some(window) = app.get_webview_window("main") {
                 let closing = window.clone();
                 window.on_window_event(move |event| {
                     if let WindowEvent::CloseRequested { api, .. } = event {
                         api.prevent_close();
                         let _ = closing.hide();
+                        in_dock(closing.app_handle(), false);
                     }
                 });
             }
@@ -186,7 +274,9 @@ fn main() {
                 .icon(Image::from_bytes(include_bytes!("../icons/icon.png"))?)
                 .tooltip("Alexia — idle")
                 .menu(&Menu::with_items(app, &[&open, &quit])?)
-                .show_menu_on_left_click(false)
+                // A menu-bar item opens its menu on a click; a Windows tray icon waits for the
+                // right button. Each is what that platform's people already do.
+                .show_menu_on_left_click(cfg!(target_os = "macos"))
                 .on_menu_event(|app, event| match event.id().as_ref() {
                     "open" => open_main(app),
                     "quit" => app.exit(0),
@@ -210,7 +300,7 @@ fn main() {
             // A hotkey another program already owns is a degraded install, not a reason to
             // refuse to start. It is logged and the tray still works.
             if let Err(error) = app.global_shortcut().register(combo) {
-                eprintln!("Ctrl+Alt+Space is taken by something else: {error}");
+                eprintln!("The hotkey is taken by something else: {error}");
             }
             Ok(())
         })
@@ -223,13 +313,19 @@ fn main() {
         // A hard kill still cannot reach here, which is why `boot.mjs` watches its parent as
         // well. Two halves, because neither covers the other's case: this one is immediate
         // and orderly, that one survives this process being shot.
-        .run(|app, event| {
-            if let RunEvent::Exit = event {
+        .run(|app, event| match event {
+            RunEvent::Exit => {
                 if let Ok(mut held) = app.state::<Mutex<Option<CommandChild>>>().lock() {
                     if let Some(core) = held.take() {
                         let _ = core.kill();
                     }
                 }
             }
+            // Double-clicking an Alexia that is already running, or its Dock icon (D145). The
+            // second launch never becomes a process on macOS, so single-instance never hears of
+            // it — and a window closed to the tray would stay closed.
+            #[cfg(target_os = "macos")]
+            RunEvent::Reopen { .. } => open_main(app),
+            _ => {}
         });
 }

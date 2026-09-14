@@ -10,8 +10,10 @@ jobs:
       fail-fast: false
       matrix:
         # Windows first: it is the target. Ubuntu alongside, so a portability
-        # break shows up the day it happens rather than at M5.
-        os: [windows-latest, ubuntu-latest]
+        # break shows up the day it happens rather than at M5. macOS since it ships
+        # (D144): the OCR suite reads a real scan through Vision there, and a Mac-only
+        # break is otherwise found by somebody's Mac rather than by this job.
+        os: [windows-latest, ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7

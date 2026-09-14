@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import * as win from './windows.js'
+import { desktop } from './desktop.js'
 
 /**
  * The two rungs below a model deciding every step (M7-6).
@@ -21,7 +21,7 @@ import * as win from './windows.js'
  *
  * **The zero-cost guarantee is structural, and here it is stronger than the predecessor's.**
  * There, `script_engine.py` simply never imported the gateway or the ledger — a rule the
- * import graph enforced rather than a comment. Here this file imports `./windows.js` and
+ * import graph enforced rather than a comment. Here this file imports `./desktop.js` and
  * nothing else: no SDK, no `createMessage`, no capability call. There is **no code path from
  * this module to a model**, so a script cannot bill even by accident, and the test that says
  * so reads the imports rather than trusting this paragraph.
@@ -45,12 +45,12 @@ import * as win from './windows.js'
  * **The reader is the accessibility tree, and that is what keeps this file free.** Not OCR: a
  * document parser answers *what does this say* and the question here is *is the Save button
  * there, and does the display say 42* — different questions, and only the control tree answers
- * the second exactly. It lives in `./windows.js`, so this module still imports that and nothing
+ * the second exactly. It lives in the desktop backend, so this module still imports that and nothing
  * else, and the test that reads the imports still proves a script cannot bill. An OCR fallback
  * that reached for a model would break that, and the invariant is worth more than the fallback.
  */
 async function postcondition(step, signal) {
-  const wrong = expectation(step, await win.readElement(targeted(step), signal))
+  const wrong = expectation(step, await desktop.readElement(targeted(step), signal))
   if (wrong) throw new Error(wrong)
 }
 
@@ -67,7 +67,7 @@ const targeted = (step) => ({
  * Apart so it can be tested without a screen. Every other rule in this file is provable on any
  * machine — the import graph, the step registry, what a decision costs — and a postcondition
  * whose *only* test needed a Windows desktop with the right window open would be the one rule
- * nobody ever checked. The spawn stays in `windows.js`; the sentence is here.
+ * nobody ever checked. The spawn stays in the backend; the sentence is here.
  */
 export function expectation(step, found) {
   const named = String(step.match ?? 'that window')
@@ -98,11 +98,11 @@ export function expectation(step, found) {
  * plugin's tools do would be a way to reach something nobody annotated.
  */
 export const STEPS = {
-  click: (step, signal) => win.click(Number(step.x) || 0, Number(step.y) || 0, step.button ?? 'left', step.double === true, signal),
-  move: (step, signal) => win.move(Number(step.x) || 0, Number(step.y) || 0, signal),
-  type: (step, signal) => win.type(String(step.text ?? ''), signal),
-  key: (step, signal) => win.key(String(step.keys ?? ''), signal),
-  focus: (step, signal) => win.focus(Number(step.pid) || 0, signal),
+  click: (step, signal) => desktop.click(Number(step.x) || 0, Number(step.y) || 0, step.button ?? 'left', step.double === true, signal),
+  move: (step, signal) => desktop.move(Number(step.x) || 0, Number(step.y) || 0, signal),
+  type: (step, signal) => desktop.type(String(step.text ?? ''), signal),
+  key: (step, signal) => desktop.key(String(step.keys ?? ''), signal),
+  focus: (step, signal) => desktop.focus(Number(step.pid) || 0, signal),
   /** The one step that does nothing, and the one every real sequence needs. */
   wait: (step) => new Promise((resolve) => setTimeout(resolve, Math.min(30_000, Math.max(0, Number(step.ms) || 0)))),
   /** The one step that changes nothing and can still stop the plan. See {@link postcondition}. */
@@ -121,7 +121,7 @@ export const STEPS = {
 
 async function pressing(step, signal) {
   if (String(step.match ?? '') === '') throw new Error('a press step has to say which control it means')
-  const wrong = pressed(step, await win.invoke(targeted(step), signal))
+  const wrong = pressed(step, await desktop.invoke(targeted(step), signal))
   if (wrong) throw new Error(wrong)
 }
 

@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  SPDX-License-Identifier: AGPL-3.0-only
+
+  Merged into the Info.plist Tauri writes (D145). macOS asks the person on the app's behalf and
+  reads the question from here; a process that reaches the microphone with no sentence to show
+  is not asked about — it is refused, silently, and a voice plugin hears nothing.
+
+  macOS attributes a permission to the app responsible for a process, not to the process: when
+  voice spawns a recorder, the prompt names Alexia, so the sentence has to live here rather than
+  in the plugin.
+-->
+<plist version="1.0">
+  <dict>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Alexia listens only when you ask her to, so she can turn what you say into text.</string>
+  </dict>
+</plist>

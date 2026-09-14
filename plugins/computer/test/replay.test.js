@@ -28,18 +28,22 @@ const code = (text) => text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*
 const source = code(read('replay.js'))
 
 test('a script cannot bill, because nothing in the module can reach a model', () => {
-  // One import, and it spawns PowerShell. No SDK, so no `alexia`, so no `createMessage` and
-  // no `capability` — there is nowhere in this file for a model to enter.
-  const imports = [...source.matchAll(/^import .*? from '([^']+)'/gm)].map((found) => found[1])
-  expect(imports).toEqual(['./windows.js'])
+  // One import, and it is the desktop — PowerShell or osascript. No SDK, so no `alexia`, so no
+  // `createMessage` and no `capability` — there is nowhere in this file for a model to enter.
+  const importsOf = (text) => [...text.matchAll(/^import .*? from '([^']+)'/gm)].map((found) => found[1])
+  const imports = importsOf(source)
+  expect(imports).toEqual(['./desktop.js'])
+  // And `desktop.js` only chooses between the two backends (D148): one hop, and both ends known.
+  expect(importsOf(code(read('desktop.js'))).sort()).toEqual(['./macos.js', './windows.js'])
 
   for (const reachable of ['@alexia/sdk', 'createMessage', 'capability(', 'sampling']) {
     expect(source, `${reachable} must not be reachable from a rung that claims to be free`).not.toContain(reachable)
   }
 
-  // And `windows.js` is the same one step further out, so the graph has no second hop.
-  const windows = code(read('windows.js'))
-  expect([...windows.matchAll(/^import .*? from '([^']+)'/gm)].map((found) => found[1]).every((one) => one.startsWith('node:'))).toBe(true)
+  // And each backend is the same one step further out, so the graph ends there.
+  for (const backend of ['windows.js', 'macos.js']) {
+    expect(importsOf(code(read(backend))).every((one) => one.startsWith('node:')), backend).toBe(true)
+  }
 })
 
 test('a plan with no decision in it runs with nothing to decide with', async () => {

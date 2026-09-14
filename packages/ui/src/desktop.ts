@@ -82,8 +82,18 @@ export function setAutostart(on: boolean): void {
   call(on ? 'plugin:autostart|enable' : 'plugin:autostart|disable')
 }
 
-/** Said once, at first run, and then never again. */
-export const HOTKEY = 'Ctrl + Alt + Space'
+/**
+ * Said once, at first run, and then never again.
+ *
+ * Whatever `main.rs` registers on this platform, in that platform's words (D145): on a Mac
+ * `Ctrl + Option + Space` already switches keyboard language, so the shell registers
+ * Option + Space there instead. A string that named the other one would send somebody hunting
+ * for a key that does nothing.
+ */
+export const hotkeyFor = (userAgent: string): string =>
+  /Macintosh|Mac OS X/.test(userAgent) ? 'Option + Space' : 'Ctrl + Alt + Space'
+
+export const HOTKEY = hotkeyFor(globalThis.navigator?.userAgent ?? '')
 
 // ---- updating itself (D119) ----------------------------------------------------------------
 

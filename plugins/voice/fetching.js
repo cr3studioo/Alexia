@@ -20,6 +20,17 @@ import { pipeline } from 'node:stream/promises'
  */
 
 /** Whether a file is there and is not an empty stub left by something that went wrong. */
+/**
+ * Where the macOS builds of both programs live (D147).
+ *
+ * Neither project publishes one that runs: whisper.cpp has no Mac program in its releases, and
+ * Piper's Apple Silicon archive holds an Intel binary with its libraries missing. So
+ * `scripts/voice-macos.mjs` builds both from the pinned sources below and a release of this
+ * repository carries them. The tag names both pins, so moving either one is a new release
+ * rather than new bytes under an old URL — the same bar `RELEASE` in each file sets.
+ */
+export const MACOS_BUILDS = 'https://github.com/cr3studioo/Alexia/releases/download/voice-macos-b4938-2023.11.14-2'
+
 export const there = async (path) => {
   try {
     return (await stat(path)).size > 0
