@@ -823,9 +823,30 @@ test('the ledger does not refuse somebody’s own choice before it has been trie
 
   expect(ids(route(work, pins(), drained))).toEqual(['free/beta', 'paid/small'])
   expect(ids(route(work, pins({ model: 'free/tools' }), drained))).toEqual(['free/tools'])
-  // A list keeps its spent entry and asks it last: the one list somebody wanted is worth a 429.
-  expect(ids(route(work, pins({ order: ['free/tools', 'free/beta'] }), drained))).toEqual(['free/beta', 'free/tools'])
+  // A list keeps its spent entry, in the place it was written: the one list somebody wanted is
+  // worth a 429.
+  expect(ids(route(work, pins({ order: ['free/tools', 'free/beta'] }), drained))).toEqual(['free/tools', 'free/beta'])
   ledger.close()
+})
+
+test('one model on two providers, in a list: your key before the keyless floor, whatever the catalog read first', () => {
+  // Measured on this machine's catalog: each Nemotron in the owner's list is served by Kilo's
+  // keyless floor *and* by OpenRouter, and Kilo's rows come first in the file. The list names
+  // the model; which provider serves it first is the ladder's call, not the file's.
+  const floor: Provider = { id: 'floor', name: 'Floor', baseUrl: 'http://127.0.0.1:3', auth: 'optional' }
+  const onFloor = model({ id: 'same/model', tier: 'T1', supportsTools: true, provider: 'floor' })
+  const onKey = model({ id: 'same/model', tier: 'T1', supportsTools: true, provider: 'alpha' })
+  const next = model({ id: 'next/model', tier: 'T1', supportsTools: true, provider: 'floor' })
+  const both = world({
+    models: [onFloor, next, onKey],
+    rungs: [remaining(store, floor), remaining(store, alpha)],
+  })
+  const plan = route({ messages: asked('hello') }, pins({ order: ['same/model', 'next/model'] }), both)
+  expect(plan.ok && plan.choices.map((c) => `${c.model.id}@${c.provider.id}`)).toEqual([
+    'same/model@alpha',
+    'same/model@floor',
+    'next/model@floor',
+  ])
 })
 
 // The context filter. `Model.context` existed since the catalog did and was read by nothing,

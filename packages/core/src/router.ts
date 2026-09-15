@@ -345,9 +345,9 @@ export function route(ask: Ask, pins: Pins, world: World): Verdict {
 
   /**
    * **A list somebody made is the whole plan** (D155). Automatic gets every model the ledger
-   * has not written off; a sequence gets exactly its own entries, the ones the ledger calls
-   * spent moved to the end rather than dropped — when it is the only list somebody wanted,
-   * asking and collecting a 429 beats skipping a model on a count.
+   * has not written off; a sequence gets exactly its own entries, none of them dropped on the
+   * ledger's say-so — when it is the only list somebody wanted, asking and collecting a 429
+   * beats skipping a model on a count.
    */
   const order = pins.order ?? []
   const mode: Mode = order.length > 0 ? 'sequence' : 'automatic'
@@ -651,15 +651,19 @@ const cheapest = (a: Choice, b: Choice): number =>
  * is a property of the model and not of the list (D112): a shortlist is a running order
  * *within* what the slider allowed, never a second, quieter way to start spending money.
  *
- * One exception to the written order, and it moves nothing out: an entry whose free tier the
- * ledger calls spent is tried after the ones that still have headroom.
+ * **A list names models, not providers**, and one id is often served by two: the same
+ * Nemotron is on OpenRouter behind your key and on Kilo's keyless floor. Between those two the
+ * list has no opinion, so the ledger decides first — the one with headroom — and then
+ * Automatic's own ranking, which puts your key ahead of the floor. Without that last step the
+ * tie went to whichever provider's list the catalog happened to read first.
  */
 const listed =
   (order: readonly string[], tired: ReadonlySet<Choice>) =>
   (a: Choice, b: Choice): number =>
     Number(paid(a.model.tier)) - Number(paid(b.model.tier)) ||
+    order.indexOf(a.model.id) - order.indexOf(b.model.id) ||
     Number(tired.has(a)) - Number(tired.has(b)) ||
-    order.indexOf(a.model.id) - order.indexOf(b.model.id)
+    cheapest(a, b)
 
 /**
  * Why a sequence has nothing to ask, said about **the list** rather than about every model
