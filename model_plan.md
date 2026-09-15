@@ -4,7 +4,8 @@
 > It is a build plan, not research: [`models_plan.md`](./models_plan.md) is the August research
 > on which providers exist and what they give away, and this builds on it. **Agreed
 > 2026-09-15** and recorded in [`Alexia.md`](./Alexia.md) as **D154** (§1–2) and **D155**
-> (§3, which changes D112). Tracked as **M8-6** in [`plan.md`](./plan.md).
+> (§3, which changes D112); **D158** and **D159** record how §3 and §2 were built. Tracked as
+> **M8-6** in [`plan.md`](./plan.md).
 >
 > Started 2026-09-15. Every claim below was checked against the code, this machine's
 > `cache/models.json` (1,830 rows) and the real `route()`, not recalled.
@@ -150,6 +151,51 @@ make a provider `keyed`.
 router and not under 7B. A model that timed out twice in the last hour is not first. The ★ on
 the Models tab is still exactly `route()`'s first choice, because it already is by definition.
 
+**Built 2026-09-15 (D159)**, all five signals and both fixes, in core and the Models tab. Where
+the build differs from the text above, or had to decide something the text did not:
+
+- **The whole order**, after free before paid and tools first: strikes, not a router, the ladder
+  (keyed, this machine, keyless), tier, price, size class, `weekly`, then the provider's order.
+  **Price stays above size and usage.** It is zero across the free tier, so the ranking above
+  holds exactly, and a paid fallback is still the cheapest one that fits.
+- **A strike counts one and halves every hour**; a model sinks by what it carries, rounded. One
+  failure sinks it for an hour, two together for two, and a model that always fails is retried
+  about every hour and a half. Rows older than a day are deleted (`strikes`, migration 6).
+  **Only failures about the model strike**: rate limit, no credit, timeout, dropped or dead
+  stream, an empty answer, a free answer cut off. A refused key and a context too long do not.
+- **A strike orders and never removes.** A pin and a list keep their entries and their order;
+  a strike only decides which provider of one listed or pinned model is asked first.
+- **Routers are known by id or name** (`routes()` in `catalog.ts`). OpenRouter's
+  `tokenizer: "Router"` also marks the `~vendor/…-latest` aliases, which are one model each, and
+  Kilo's routers say `"Other"`. Checked against 1,830 cached rows and both live lists: nine
+  router ids, no false positives. The tab labels them *a different free model each time*.
+- **Size is the whole model** for a mixture of experts (`-120b-a12b` is 120, so Nemotron 3 Nano
+  Omni's `30b-a3b` is big), and it is an order only: `params`, which only a runner reports, is
+  still the only thing the planning filter reads. It reaches local models too, so beside an 8B a
+  1B no longer turns the crank; `agent.test`'s planner/cranker fixture changed to say so.
+- **`weekly` is lent when the catalog is read** (`borrow()`), never written to the cache, with
+  `weeklyFrom` naming the lender for the detail line. Routers neither lend nor borrow.
+- **`/best` reverses only the money half** (group, tools, ladder, tier, price). Reversing the
+  whole list would have put a model that failed a minute ago, and every router, first.
+- **A stored key makes a keyless provider keyed**: `usable()` reads the keychain for every
+  provider and `Rung.keyed` reaches the choice and its bubble.
+- **A pin on a model served by two providers** is picked the way a list picks, still one choice.
+
+Measured on this Mac's catalog (a copy of `cache/models.json`): with no OpenRouter key Automatic
+starts at `gpt-oss-120b` on OVHcloud (borrowing OpenRouter's figure), then Nemotron 3 Ultra and
+Super on Kilo, where it used to start at `kilo-auto/free`. With an OpenRouter key it starts at
+`google/gemma-4-31b-it:free`. The pin on Nemotron 3 Super goes to OpenRouter, not Kilo, and the
+owner's list asks each Nemotron on OpenRouter, then on Kilo.
+
+Tests: `router.test.ts` (each signal, the keyed floor, the pin, `/best`, what `send()` records,
+this catalog's shape), `catalog.test.ts` (routers, sizes, lending), `pool.test.ts`,
+`store.test.ts`, and `ranking.test.ts` over the wire (the label, the lender's line, the ★ moving
+off a model that failed in a chat).
+
+**Found while checking, not fixed:** a plugin's `sampling/createMessage` reaches the host without
+the SDK's abort signal (`supervisor.ts`), so when Adapt gives up at 110 s, `send()` goes on
+walking the plan. The fix is to pass that signal through `host.sampling()` into `send()`.
+
 ---
 
 ## 3. A failure ends the conversation
@@ -259,14 +305,15 @@ never answers: the next rung is asked after 30 s.
 Requesty 684 → **12** free (9 with tools), Navy 146 → 101 rows (45 unpriced dropped, 1 free),
 Kilo 370 rows (22 free), OpenRouter 441 (23 free). Under *free only*, the Models tab no longer
 lists paid rows. §3 is in core and the shell (D158), and it reaches the installed app only with
-a new build. Not yet: *Funded*, the keyless group and its switch, key events, key removal. Next: §2.
+a new build. §2 is built too (D159), and also needs a new build. Not yet: *Funded*, the keyless
+group and its switch, key events, key removal. Next: §1 steps 3–4.
 
 1. **§1 steps 1–2**: unpriced is not free, one `available()`. Smallest change, and it closes
    a real billing hole (Requesty) before anything else.
 2. ~~**§3**: failure kinds, the three modes, default timeouts. This is the one people feel on
    every rate-limited evening.~~ Done 2026-09-15 (D158).
-3. **§2**: ranking. Borrowed `weekly` and *routers last* first, because they are cheap. Strikes
-   and size-from-id second.
+3. ~~**§2**: ranking. Borrowed `weekly` and *routers last* first, because they are cheap. Strikes
+   and size-from-id second.~~ Done 2026-09-15 (D159).
 4. **§1 steps 3–4**: key events and key removal, which need the shell.
 5. ~~**Alexia.md**: D112 rewritten with the three modes, and the decision log entry.~~ Done
    2026-09-15 (D154, D155).
@@ -282,6 +329,8 @@ a new build. Not yet: *Funded*, the keyless group and its switch, key events, ke
   notice (§9.5 of `models_plan.md`)? **Recommended:** yes, unchanged from today.
 - [ ] **The model-size heuristic.** Reading `-2.6b` out of an id is right for most open
   models and says nothing about closed ones. Acceptable as a tiebreak and never a filter?
+  **Built as an order and never a filter** (D159), above `weekly`. Also open: whether a mixture
+  of experts should count its active part (`-30b-a3b` counts as 30B today).
 - [ ] **A restart after a dead stream** costs the tokens already streamed. Worth it for the
   answer, or stop and ask? **Built as a restart** (D158), since the tokens are free on the free
   rungs where streams die most. Asking first is still open.

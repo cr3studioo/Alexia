@@ -32,7 +32,7 @@ being sent. What was sent was one sentence, to a random model.
 | Adapt refuses a cut-off answer; 4,000-token budget; waits 110 s, not the SDK's 60 s | **Done**, `plugins/persona/index.js` |
 | `usable()` requires all four sections with something under each | **Done**, `writing.js`, tested with the real cut-off shape |
 | A trace line with the personality's length per step, so *was it sent?* is readable | Not started |
-| Routers labelled on the Models screen | Moved to `model_plan.md` §2 |
+| Routers labelled on the Models screen | **Done** in `model_plan.md` §2 (D159): *a different free model each time*, ranked last |
 
 ### This machine
 
@@ -73,10 +73,13 @@ model is ignored (M8-1).
 1. **M8-1.** `intelligencePriority` sorts best-first; manifest `min_tier` becomes
    `Ask.minTier`.
 2. **Never a router.** Adapt asks for one real model, even when the chat pin is a router.
-   `model_plan.md` §2 gives the router a recognisable label, so this is one filter.
+   `model_plan.md` §2 gives the router a recognisable label (`routes()` in `catalog.ts`, D159),
+   so this is one filter.
 3. **Prefer a model that answers, not one that thinks forever.** `model_plan.md` §2's strikes
-   make a model that timed out on Adapt sink for the next press. Until then, the refusal names
-   the model so the person can pick another.
+   are built (D159): `send()` records a timeout or a cut-off free answer, and the model sinks for
+   about an hour, so one that ran out on Adapt is not first on the next press. What is left here
+   is the plugin's side: when Adapt gives up at 110 s, core is not told (the sampling request
+   drops its cancel signal), so `send()` goes on walking the plan behind a refusal already shown.
 4. **G13 is answered: yes** (D156). A button somebody pressed is a run: Adapt carries a run
    id, so it may use a paid model under the monthly cap and the spend preview. That matters
    most for §2, because the small size is a distillation and weak models distil worst.
