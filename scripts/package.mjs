@@ -35,6 +35,7 @@ import { build } from 'esbuild'
 import { spawn } from 'node:child_process'
 import { cpSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
+import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -197,12 +198,18 @@ import { spawn } from 'node:child_process'
 // takes the branch that would have worked out of reach, and the failure is silent, because
 // cross-keychain reads a missing native module as *this backend is not supported here* and
 // quietly spawns PowerShell for every secret instead.
-const { serve } = await import('./alexia.mjs')
+const { serve, fromShell } = await import('./alexia.mjs')
+
+// Under the desktop app the shell holds the keychain and hands core the way in down stdin
+// (D153), because an entry Node creates is readable by every script Node will run. Awaited
+// before anything is served: a shell that hands over nothing is a core that does not start,
+// never one that quietly keeps secrets where a plugin can read them.
+const secrets = process.env.ALEXIA_TAURI ? await fromShell(process.stdin) : undefined
 
 // The port is Alexia's own choice when nothing says otherwise, and the shell's choice when
 // something does: the desktop app (M5-1) picks a free port before it builds its windows, so
 // that they can be pointed somewhere without waiting for Node to boot.
-const { url } = await serve({ port: Number(process.env.ALEXIA_PORT) || 0 })
+const { url } = await serve({ port: Number(process.env.ALEXIA_PORT) || 0, secrets })
 console.log('Alexia is running.')
 console.log('')
 console.log('   ' + url)
@@ -298,17 +305,27 @@ if (windows) {
  * identically, and telling them apart would mean core reporting its own backend, which is a
  * product change to satisfy a build script. The day a slow first run points back here, that
  * is the thing to add.
+ *
+ * **This script plays the shell** (D153). Under `ALEXIA_TAURI` core will not start until it
+ * is handed a vault on stdin, so a stand-in is opened here and its line written down the
+ * pipe — which also means the packaged handover is exercised, not just the unpackaged one.
+ * It answers *nothing stored* to everything, which is the truth about a fresh install.
  */
+const vault = createServer((socket) =>
+  socket.once('data', () => socket.end(`${JSON.stringify({ ok: true, secret: null })}\n`)),
+)
+await new Promise((resolve) => vault.listen(0, '127.0.0.1', resolve))
 const home = mkdtempSync(join(tmpdir(), 'alexia-package-check-'))
-const app = spawn(join(out, runtime), ['boot.mjs'], {
+const app = spawn(join(out, runtime), ['--disable-sigusr1', 'boot.mjs'], {
   cwd: out,
   // Its own throwaway data folder, so checking the build cannot touch a real install. Each
   // platform finds that folder through a different variable (`store.ts`), so all three are
   // pointed at it: `LOCALAPPDATA` alone left a Mac checking against the real one.
   // `ALEXIA_TAURI` because under it no browser opens — a build check has no one to show.
   env: { ...process.env, LOCALAPPDATA: home, HOME: home, XDG_DATA_HOME: home, ALEXIA_TAURI: '1' },
-  stdio: ['ignore', 'pipe', 'pipe'],
+  stdio: ['pipe', 'pipe', 'pipe'],
 })
+app.stdin.write(`${JSON.stringify({ port: vault.address().port, token: 'package-check' })}\n`)
 let said = ''
 app.stdout.on('data', (chunk) => (said += String(chunk)))
 app.stderr.on('data', (chunk) => (said += String(chunk)))
@@ -331,13 +348,14 @@ ${said}`)), 30_000)
   const answer = await (await fetch(new URL('/api/plugins', url), { headers: { 'x-alexia-token': token } })).text()
   const state = JSON.parse(answer)
   if (!Array.isArray(state.panes)) throw new Error(`/api/plugins answered ${answer.slice(0, 200)}`)
-  console.log('Started, served the shell and read the keychain.')
+  console.log('Started, took the handover, served the shell and read the keychain.')
 } finally {
   // Waited for, not just signalled: Windows will not let go of a directory a live process is
   // sitting in, and removing it a millisecond early fails the build over nothing.
   const gone = new Promise((resolve) => app.once('exit', resolve))
   app.kill()
   await gone
+  vault.close()
   try {
     rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })
   } catch {

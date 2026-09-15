@@ -160,7 +160,8 @@ in [`../memory.md`](../memory.md).
 
 Hand-written Rust in `src-tauri/` stays under **300 lines**, generated code excluded.
 
-Alexia.md's own tripwire. Rust is confined to installer, updates, tray and hotkey. Rust
+Alexia.md's own tripwire. Rust is confined to installer, updates, tray and hotkey — and
+custody of secrets, which is not logic and has its own reason (D153). Rust
 nobody on this project can debug is worse than no Rust, and the budget is the only thing that
 notices it creeping.
 

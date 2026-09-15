@@ -286,7 +286,13 @@ jobs:
           core=Alexia.app/Contents/MacOS/alexia-core
           cd Alexia.app/Contents/Resources/resources
           home=$(mktemp -d)
-          HOME="$home" ALEXIA_TAURI=1 "$GITHUB_WORKSPACE/$core" boot.mjs > "$home/said.log" 2>&1 &
+          # This step plays the shell (D153): under ALEXIA_TAURI the core starts only once it is
+          # handed a vault on stdin. A stand-in that answers *nothing stored*, which is the truth
+          # about a fresh install, run by the same core so this job still needs nothing installed.
+          "$GITHUB_WORKSPACE/$core" -e 'const s=require("net").createServer(c=>c.once("data",()=>c.end(JSON.stringify({ok:true,secret:null})+"\n"))).listen(0,"127.0.0.1",()=>console.log(JSON.stringify({port:s.address().port,token:"release-check"})))' > "$home/vault.line" &
+          vault=$!
+          for _ in $(seq 1 50); do [ -s "$home/vault.line" ] && break; sleep 0.2; done
+          HOME="$home" ALEXIA_TAURI=1 "$GITHUB_WORKSPACE/$core" --disable-sigusr1 boot.mjs < "$home/vault.line" > "$home/said.log" 2>&1 &
           pid=$!
           url=""
           for _ in $(seq 1 150); do
@@ -294,10 +300,10 @@ jobs:
             [ -n "$url" ] && break
             sleep 0.2
           done
-          if [ -z "$url" ]; then cat "$home/said.log"; kill $pid; exit 1; fi
+          if [ -z "$url" ]; then cat "$home/said.log"; kill $pid $vault; exit 1; fi
           token=$(curl -s "$url" | grep -oE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | head -1)
           curl -sf -H "x-alexia-token: $token" "$url/api/plugins" | grep -q '"panes"'
-          kill $pid
+          kill $pid $vault
           "$GITHUB_WORKSPACE/$core" -e "require('./keyring.darwin-universal.node'); if (process.arch !== 'x64') process.exit(1); console.log('core and keychain run as', process.arch)"
 
   # One release and one `latest.json` for every platform. Written here rather than in a platform

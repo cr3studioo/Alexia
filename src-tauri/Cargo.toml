@@ -29,6 +29,12 @@ tauri-plugin-updater = "2"
 # Spawning the core sidecar, and nothing else. No shell, no arbitrary commands: the
 # capability file allows exactly one binary by name.
 tauri-plugin-shell = "2"
+# The fifth, and the answer to the question above (D153): the keychain trusts a program, not a
+# script, so core — a program that runs any script — cannot be the one it trusts. `v1`, the
+# default, is the native store on each platform and an error anywhere else, never a mock.
+keyring = "4.2"
+# The vault's token. Already in the tree under Tauri; named here because it is used here.
+getrandom = "0.3"
 
 # Not a fifth thing: the hotkey's overlay, on a Mac (D145). macOS shows an ordinary window over
 # another app's full-screen Space only if it does not activate its app, and the one window that

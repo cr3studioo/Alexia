@@ -36,7 +36,7 @@ test('one Alexia at a time: the shell keeps the sidecar handle and kills it on e
   const source = shell()
   // Kept rather than dropped. `sidecar.spawn()?;` on its own is the bug this replaced.
   expect(source, 'the sidecar handle must be kept — dropping it does not stop the process').toMatch(
-    /let \(_events, child\) = sidecar\.spawn\(\)\?;/,
+    /let \(_events, mut child\) = sidecar\.spawn\(\)\?;/,
   )
   expect(source).toContain('Mutex::<Option<CommandChild>>::new(None)')
 

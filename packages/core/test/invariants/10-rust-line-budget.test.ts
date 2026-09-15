@@ -2,8 +2,8 @@ import { expect, test } from 'vitest'
 import { files } from './_repo.js'
 
 // Defends: Alexia.md's own tripwire. Rust is confined to installer, updates, tray and
-// hotkey. Rust nobody here can debug at 3am is worse than no Rust, and the budget is the
-// only thing that notices it creeping.
+// hotkey, plus holding the keychain (D153), which decides nothing. Rust nobody here can debug
+// at 3am is worse than no Rust, and the budget is the only thing that notices it creeping.
 
 const BUDGET = 300
 
