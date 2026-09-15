@@ -219,3 +219,17 @@ export type AlexiaParams<M extends AlexiaMethod> = z.infer<(typeof ALEXIA_METHOD
 export type AlexiaResult<M extends AlexiaMethod> = z.infer<(typeof ALEXIA_METHODS)[M]['result']>
 
 export const isAlexiaMethod = (m: string): m is AlexiaMethod => m in ALEXIA_METHODS
+
+/**
+ * How long a plugin waits on `alexia/capability/call` before giving up on it (D149).
+ *
+ * **Core is the clock, so this only has to outlast it.** Core answers every capability call
+ * inside its own budget — start the provider if it is asleep, then one `tools/call` — and a
+ * provider that runs past it gets core's sentence rather than silence. Left to MCP's default,
+ * the caller gave up at sixty seconds while core was still allowing the provider two minutes,
+ * so the slowest honest answers were the ones thrown away: Windows' OCR on a cold machine
+ * reading a scan for `documents`, and a long voice note Telegram handed to `voice`.
+ *
+ * A test in core holds this above core's own figures, so the two cannot drift apart quietly.
+ */
+export const CAPABILITY_CALL_MS = 150_000

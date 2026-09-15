@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import {
   ALEXIA_METHODS,
+  CAPABILITY_CALL_MS,
   MCP_PINNED,
   CONVERSATION_ENDED,
   ConversationEnded,
@@ -203,11 +204,16 @@ export function plugin(options: PluginOptions = {}): AlexiaPlugin {
     },
   )
 
-  const call = <M extends AlexiaMethod>(method: M, params: AlexiaParams<M>): Promise<AlexiaResult<M>> =>
+  const call = <M extends AlexiaMethod>(
+    method: M,
+    params: AlexiaParams<M>,
+    timeout?: number,
+  ): Promise<AlexiaResult<M>> =>
     server.server.request(
       { method, params },
       // The schemas the protocol package already owns. One source, both ends of the wire.
       ALEXIA_METHODS[method].result as unknown as StandardSchemaV1<unknown, AlexiaResult<M>>,
+      timeout === undefined ? undefined : { timeout },
     )
 
   const storage: Storage = {
@@ -246,7 +252,9 @@ export function plugin(options: PluginOptions = {}): AlexiaPlugin {
     onConversationEnded: (handler) =>
       server.server.setNotificationHandler(CONVERSATION_ENDED, { params: ConversationEnded }, () => handler()),
     host: () => call('alexia/host/info', {}),
-    capability: (cap, args) => call('alexia/capability/call', { cap, arguments: args }),
+    // Another plugin's work rather than a row in core's database, so it gets core's patience
+    // for that work instead of MCP's sixty seconds (D149).
+    capability: (cap, args) => call('alexia/capability/call', { cap, arguments: args }, CAPABILITY_CALL_MS),
     storage,
     progress: (ctx, progress, total, message, work) => {
       const progressToken = ctx.mcpReq._meta?.progressToken

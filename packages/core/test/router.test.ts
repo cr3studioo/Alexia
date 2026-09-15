@@ -219,6 +219,8 @@ let refuse = new Set<string>()
 let mute = new Set<string>()
 /** Models that refuse this caller specifically, the way a gated free row does. */
 let gated = new Set<string>()
+/** Models no worker is serving right now, the way a volunteer roster says so. */
+let unserved = new Set<string>()
 const server: Server = createServer((request, response) => {
   let raw = ''
   request.on('data', (chunk: Buffer) => (raw += chunk.toString()))
@@ -232,6 +234,11 @@ const server: Server = createServer((request, response) => {
     if (gated.has(asked)) {
       response.writeHead(403, { 'content-type': 'text/plain' })
       response.end(`${asked} is only available on agentic harnesses`)
+      return
+    }
+    if (unserved.has(asked)) {
+      response.writeHead(406, { 'content-type': 'application/json' })
+      response.end(JSON.stringify({ detail: 'Model None not known!' }))
       return
     }
     if (mute.has(asked)) {
@@ -1163,5 +1170,35 @@ test('a model gated to somebody else is a rung failure, not the end of the task'
   )
   expect(answer.model.id).toBe(cheapPaid.id)
   gated = new Set()
+  ledger.close()
+})
+
+test('a model nobody is serving right now is a rung failure, not the end of the task', async () => {
+  // Real, from AI Horde: *"Model None not known!"*, a 406 for a row whose volunteer had gone
+  // offline. It used to throw and end a first message with more of the floor still behind it.
+  const secrets = memorySecrets()
+  const one = { ...alpha, baseUrl: at }
+  const two = { ...beta, baseUrl: at }
+  await secrets.set(CORE, keyOf(one), 'sk-a')
+  await secrets.set(CORE, keyOf(two), 'sk-b')
+
+  refuse = new Set()
+  mute = new Set()
+  gated = new Set()
+  unserved = new Set(['free/text'])
+  const ledger = new Store(':memory:')
+
+  const answer = await send(
+    [
+      { model: freeText, provider: one },
+      { model: cheapPaid, provider: two },
+    ],
+    { messages: asked('hello'), maxTokens: 200 },
+    ledger,
+    secrets,
+    {},
+  )
+  expect(answer.model.id).toBe(cheapPaid.id)
+  unserved = new Set()
   ledger.close()
 })
