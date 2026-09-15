@@ -4,8 +4,9 @@
 > It is a build plan, not research: [`models_plan.md`](./models_plan.md) is the August research
 > on which providers exist and what they give away, and this builds on it. **Agreed
 > 2026-09-15** and recorded in [`Alexia.md`](./Alexia.md) as **D154** (§1–2) and **D155**
-> (§3, which changes D112); **D158** and **D159** record how §3 and §2 were built, and **D160**
-> the owner's answers that followed (§4). Tracked as **M8-6** in [`plan.md`](./plan.md).
+> (§3, which changes D112); **D158** and **D159** record how §3 and §2 were built; **D160** the
+> owner's answers that followed, and **D161** the design of §4 answered against a clickable
+> mock-up. Tracked as **M8-6** in [`plan.md`](./plan.md).
 >
 > Started 2026-09-15. Every claim below was checked against the code, this machine's
 > `cache/models.json` (1,830 rows) and the real `route()`, not recalled.
@@ -194,7 +195,7 @@ off a model that failed in a chat).
 
 **Found while checking, not fixed:** a plugin's `sampling/createMessage` reaches the host without
 the SDK's abort signal (`supervisor.ts`), so when Adapt gives up at 110 s, `send()` goes on
-walking the plan. The fix is to pass that signal through `host.sampling()` into `send()`.
+walking the plan. The fix is to pass that signal through `host.sampling()` into `send()` (§4 A).
 
 ---
 
@@ -299,71 +300,437 @@ never answers: the next rung is asked after 30 s.
 
 ---
 
-## 4. After §2: the owner's answers (D160)
+## 4. A table that shows what Alexia thinks of each model
 
-Asked in plain words once §2 was built, and answered 2026-09-15. Each line says whether it is
-**decided**, **proposed** (suggested here, not yet confirmed by the owner), or **open**.
+Asked for by the owner once §2 was built (**D160**), then designed against a clickable mock-up
+and answered the same day (**D161**). In the owner's words: *a table where every model is ranked
+and given attributes, so I can see what the program thinks about each model. Alexia tags models
+herself, "too many errors", and sets aside models that don't help, on her own. The table keeps
+itself up to date: providers change their lists and limits almost daily, and nobody should ever
+import a model by hand. New models are "not trusted yet" and move up as evidence arrives.*
 
-### Decided
+**Mock-up:** [the Models table](https://claude.ai/artifact/WhUn8j9VYiMQKQTaGkkWQr). Every
+rank, size, usage figure, price, key and *answered here* in it is real: this Mac's
+`cache/models.json` run through the built `route()`, OpenRouter's live list, this Mac's database,
+and test requests sent on 2026-09-15. Tags drawn with a dashed outline show a rule where this Mac
+has no evidence for it yet.
 
-- **Size.** A size read from a name counts the whole model (`30b-a3b` is 30B), and only ever
-  orders: names can be wrong, so it never rules a model out. This is what D159 built.
-- **Free limits are protected per provider account**, not by locking one model to a chat. A
-  free allowance is usually shared by every free model on one account (OpenRouter's daily free
-  requests are), so a lock on one model would protect nothing. The chat somebody is watching has
-  first claim on each provider's free requests; plugins (Telegram, Adapt) take another provider,
-  wait, or run locally.
-- **A switch to another model is said twice**: a pop-up that goes away after three seconds, on
-  every switch (rate limit, timeout, error, an answer that broke off), and the line in the chat
-  that already says it stays, as the record.
-- **An answer that breaks off restarts on the next model without asking, paid ones included.**
-  That is what `send()` already does. D158's rule is unchanged: a paid answer that reached its
-  length limit is kept, not bought again.
-- **Crossing into paid gets a switch**, shown under the slider when it is on *free then paid*:
-  - **On**: Automatic moves to a paid model when the free ones are done, and a warning sits under
-    the message box (*paid models will be used once the free ones are done*).
-  - **Off**: the work pauses, and waits for *Allow switching to a paid model*.
-- **When Adapt gives up, core stops too.** `supervisor.ts` hands `sampling/createMessage` to the
-  host without the SDK's abort signal; it is to be passed through `host.sampling()` into `send()`.
+**Already built, and confirmed in D160:** a size read from a name counts the whole model
+(`30b-a3b` is 30B) and only orders (D159); an answer that breaks off restarts on the next model
+without asking, paid included, and a paid answer that reached its length limit is still kept
+rather than bought twice (D158).
 
-### Asked for, to be designed (a clickable mock-up first)
+### What the code does
 
-- **A table on the Models screen that ranks every model and shows why**: its place, its
-  attributes, and what Alexia thinks of it, as tags such as *new*, *busy* and *broken*, so Alexia
-  can set aside a model that does not help on its own.
-- **Kept current without anybody importing a model.** Every provider's list is already fetched
-  by Alexia itself; what changes daily should show up in the table.
+**The table is not the ranking.**
+- The Models tab sorts its rows with a comparator of its own (`surface.ts:264`): the ★, the
+  person's list, router, size, `weekly`, price. It leaves out what failed here and the ladder
+  (your key, this Mac, no key), so a row's place is not where Automatic would ask it. Only the ★
+  is `route()`'s answer.
+- Rows are grouped by provider (`panels.ts:265`), so there is no one order to read a rank from.
+- A row's id is the model id (`surface.ts:283`) and the detail finds the first row with that id
+  (`surface.ts:310`). Nemotron 3 Super is on OpenRouter and on Kilo, so Kilo's row opens
+  OpenRouter's detail.
+- The hint still says every provider but OpenRouter *is ordered by price instead*
+  (`panels.ts:243`), which D159's lent figure made untrue.
 
-### Proposed, not yet confirmed
+**Nothing remembers enough to judge a model.**
+- `strikes` (migration 6, `store.ts:96`) keeps failures for one day (`STRIKES_KEPT`,
+  `store.ts:109`), and `strikes()` does not return the status it stored (`store.ts:674`). *Busy
+  this evening* and *retired* look the same, and anything older than a day is gone.
+- `usage` keeps every answer (`store.ts:684`); `provider_usage` counts requests per provider for
+  the current minute, day and month only (`store.ts:620`). Nothing counts how often one model was
+  *tried*, so no failure rate can be computed.
+- No first-seen time is stored. `refresh()` works out `Change.added` and `removed`
+  (`catalog.ts:385`) and nobody keeps them. `news()` (`catalog.ts:448`), which turns them into
+  *three new free models are available*, has no caller. `parse()` (`catalog.ts:470`) reads
+  neither OpenRouter's `created` nor its `expiration_date`.
+- The installed app's database is at migration 5, so D159's `strikes` has not reached it. On this
+  Mac: 16 answers ever, and the ledger shows 8 OVHcloud requests on 14 Sep with none answered.
 
-- **Busy is not broken.** Most free failures are evening rate limits. *Busy* sinks and comes back
-  on its own (D159's strikes); *broken* is retired, always empty or always failing.
-- **Set aside, never deleted, and never out of somebody's own choice.** A broken model is hidden
-  with its reason on screen and comes back if it starts working. A pinned or listed model is shown
-  as *not available*, never removed (D155).
-- **New is the middle, not the bottom.** A model that just appeared has no usage figure yet; a new
-  model is sometimes the best one, and OpenRouter's figure fills in within a week.
-- **Hallucinating needs a person.** A script sees errors, timeouts and empty answers, but cannot
-  tell a wrong answer from a right one. The signal is a *bad answer* press — Alexia.md already
-  plans *try that again with a smarter model*, which collects exactly that.
-- **The list on a timer.** Today it is fetched at startup and when the Models tab opens, so an app
-  left open for a week has a week-old list.
-- **Limits read from answers.** Limits are typed into `PROVIDERS` by hand with a *verified* date,
-  because providers do not publish them in a readable list; some send *requests left* with every
-  answer, which could keep the ledger honest.
-- **The paid switch works through the daily allowance** Alexia already has, so there are not two
-  money settings that can disagree: on spends up to the allowance without asking, off asks. A
-  paused task started from Telegram gives up after a while and says so there. The warning also
-  covers the case where no free model *can* do the job (a picture, a long conversation), not only
-  where they are used up.
+**Evidence only arrives from the top.** Automatic walks from its first choice and stops at the
+first answer, so on an ordinary day only the first few rows are ever asked. A model lower down is
+never tried, and a model that has been set aside would never be tried again.
 
-### Open
+**The lists are fetched at startup and when the Models tab opens** (`serve.ts:244`,
+`surface.ts:232`). There is no timer, though Alexia.md (*The model router*) already says *poll
+daily*. Measured: OpenRouter's free list gained `z-ai/glm-5.2:free` between this Mac's cache
+(10:25 UTC) and the evening.
 
-- **Sending model statistics to a server of the owner's.** *Decided later.* It would change two
-  things Alexia.md says (*no user backend at all*, and the registry's *no analytics*). If it comes:
-  opt-in, no prompts, keys, names or times of day, a privacy policy (GDPR applies in Europe),
-  protection against fake reports, and a published *known broken* list the app reads as one more
-  signal — never a server deleting models from people's apps.
+**Limits are typed by hand, and some are already wrong.** `rpm`, `rpd` and `callsPerMonth`, each
+row with a `verified` date (`provider.ts:106–132`). Checked on 2026-09-15:
+
+| Provider | The row says | Now |
+|---|---|---|
+| **Cerebras** | 30 a minute, 14,400 a day | 5 a minute on the free trial (its docs) |
+| **Groq** | 14,400 a day | GPT-OSS 120B: 30 a minute, 1,000 a day, published per model (its docs) |
+| **LLM7** | answers without a key | *Missing API key* from both models tried (live) |
+| **OVHcloud** | 2 a minute without a key | 429 on the first request, and again a minute later (live) |
+
+`chat()` (`provider.ts:816`) reads no response header. What providers send:
+
+| Provider | What it tells | How it is known |
+|---|---|---|
+| **Groq** | `x-ratelimit-limit-requests` and `-remaining-requests` (per day), `-limit-tokens` and `-remaining-tokens` (per minute), `-reset-*`, `retry-after` on a 429 | docs |
+| **OVHcloud** | `ratelimit-limit`, `ratelimit-remaining`, `ratelimit-reset`, `x-ratelimit-limit-minute`, `x-ratelimit-remaining-minute`, `retry-after` | live, keyless |
+| **OpenRouter** | `X-RateLimit-Limit`, `-Remaining`, `-Reset` **only on a 429**; `Retry-After` when the providers behind it hint | docs |
+| **OpenRouter `GET /api/v1/key`** | `limit`, `limit_remaining`, `usage`, `usage_daily`/`_weekly`/`_monthly`, `is_free_tier` | docs; not called with the owner's key |
+| **Kilo** | nothing on a 200 | live, keyless |
+| **Google AI Studio** | nothing documented; limits are shown in its dashboard | docs |
+| **Cerebras** | not named in its docs | docs |
+
+**Free requests are one pool for everybody.** `send()` counts every free request against its
+provider (`router.ts:1152`, `pool.ts:101`) whoever sent it, so a Telegram task and the chat on
+screen draw from the same OpenRouter fifty a day, first come, first served.
+
+**A switch is said once, and not kept.** `send()` says the switch line as the new model starts
+answering (`router.ts:1128`); `serve.ts:2172` streams it as a `note`; the shell writes it into
+`#note` (`main.ts:1469` → `say()`, `main.ts:143`): one line under the message box, replaced by the
+next note and never stored. A reload loses it.
+
+**Money.** The daily allowance is `caps.daily` (`usage.ts:44`), **$0 unless somebody sets it**
+(`usage.ts:56`), and at $0 *free then paid* is *free only* (`capped`, `router.ts:430`). The router
+already knows when paid *would* have answered (`priced`, `router.ts:513`), and says it as a
+sentence. The money question (`MoneyConsent`, `agent.ts:178`) is asked only when this Mac's model
+heads the plan with a paid one behind it (`agent.ts:560`), and the answer lasts the conversation
+(`spending`, `serve.ts:595`). A plugin with no run is free only (D96, `router.ts:1063`). A Telegram
+task can already put a yes/no to the phone (`CORE_CAPABILITIES.ask`, `serve.ts:776`).
+
+**Adapt's cancel.** `supervisor.ts:256` registers `sampling/createMessage` as
+`(request) => this.host.sampling(this.id, request.params)`. The SDK (2.0.0) passes the handler a
+second argument whose `mcpReq.signal` aborts when the plugin gives up. It is dropped:
+`HostServices.sampling` (`supervisor.ts:51`) and `host.ts:83` have nowhere to put it, and
+`serve.ts:379` calls `send()` without one. When Adapt stops waiting at 110 s, `send()` goes on
+down the plan.
+
+**No bad-answer button.** `Ask.above` exists and the loop escalates with it (`agent.ts:416`), but
+the shell has no *try that again with a smarter model*.
+
+### What it should do
+
+#### The table
+
+**One table, in the order Alexia would ask**, grouped by what a row is to the router rather
+than by provider:
+
+| Group | Which rows | In what order |
+|---|---|---|
+| **Your list** | Only when the list has entries | The list's own order, one model's providers key first (D158) |
+| **Automatic, free** | Every reachable free model that is not set aside | `route()`'s order for a plain request |
+| **Set aside by Alexia** | Free models set aside, each with its reason | By reason, then name |
+| **Paid** | Unless the slider is on *free only* | `route()`'s order under *paid only*: tools first, then cheapest |
+
+**The columns, and where each value comes from:**
+
+| Column | Shows | From |
+|---|---|---|
+| **#** | Place in its group | The position in `route()`'s `choices`, never a second sort in `surface.ts` |
+| **Model** | Name, provider, *your key* / *no key* / *this Mac* | `Model.name`, `Choice.provider`, `Choice.keyed` |
+| **Why it is here** | One sentence under the name | `explain(row, rowAbove)`: the first ranking key on which the two differ |
+| **Size** | *31B, from its name* / *8.2B, reported* / *not said* | `sizeOf()` (`catalog.ts:86`), and whether `params` was reported |
+| **Can** | *tools* / *talk only*, *pictures*, *reads 256k* | `supportsTools`, `modality`, `context` |
+| **World, last week** | Tokens, and *via OpenRouter* when lent | `weekly`, `weeklyFrom` |
+| **Answered here** | Answers in 30 days | The model record, below |
+| **Price** | *free*, or dollars per million tokens in | `priceIn` |
+| **Tags** | What Alexia thinks, and plain facts | `judge()`, below |
+
+Clicking a row opens **what Alexia has seen**, a sentence per piece of evidence (*answered 2
+times; said "too busy" 4 times between 18:10 and 21:40*), and the model's facts.
+
+**The why-line cannot drift from the ranking, because it is the ranking.** `ranking()`
+(`router.ts:681`) becomes an ordered list of named keys, each with a comparison and a sentence.
+The comparator walks the list; `explain(a, b)` returns the first deciding key's sentence. From the
+mock-up: *The world sent it 32B tokens last week, fewer than Gemma 4 26B's 317B.* · *No key
+needed, so shared and rationed for everyone. After models on your key.* · *A router: a different
+free model each time, some of them tiny.* · *New and not tried yet, so it waits below every model
+that has answered.*
+
+**Rows are keyed by provider and model**, so each copy has its own detail and its own tags:
+Kilo's Nemotron can be busy while OpenRouter's answers.
+
+#### The model record
+
+**One row per try, kept 30 days**: when, which provider and model, how it went (*answered*,
+*busy*, *failed*, *slow*, *empty*, *cut*, *retired*, *needs a key*, *bad answer*), the status, and
+who asked (*chat*, *plugin*, *test*, or *person* for a bad-answer press). **And one row per model
+per provider**: when it was first seen here, whether its provider's list was already known at that
+moment, and when it left the list.
+
+D159's strikes become a reading of the record: the last day's failures about the model, weighed
+exactly as `sunk()` weighs them (`router.ts:246`), so Automatic's order does not move on the same
+failures. As in D159, a refused key is the provider's and a conversation too long is the
+request's. No credit (402) is the account's: said about the provider, never tagged on the model.
+
+#### The tags, and what each one does
+
+One function, `judge()`, computes them from the record and the catalog, and both `route()` and the
+table read it (the D154 rule: one function, two readers). Every number is a named constant
+beside its reason.
+
+| Tag | Rule | Effect | Why this number |
+|---|---|---|---|
+| **new · not tried yet** | First seen here in the last 14 days, when its provider's list was already known; or OpenRouter's `created` in the last 14 days. And no good reply here yet | **The bottom of its group** | 14 days gives OpenRouter's weekly figure a full week to arrive. On a fresh install everything is first seen at once, so there only `created` counts |
+| *(no longer new)* | Its first good reply, from a real question or a test message | Ranked as if its usage were the middle of models its size, until a real figure (its own or lent) replaces that, up or down | The owner's rule: *the first good reply moves it higher, then OpenRouter's figure overwrites it*. The middle is the least one reply proves. After 14 days with no figure it ranks like any model without one |
+| **busy** | Rate-limited in the last hour, or before a `retry-after` the provider sent | Sinks, as D159's strikes already do, and clears by itself | Busy is not broken: most free failures are an evening's per-minute limits |
+| **always busy for you** | In the last 24 hours, at least 3 tries spread over at least 2 hours, every one rate-limited, none answered | **Set aside** | A rush comes in minutes. D159's half-life retries a sinking model about every 90 minutes, so a whole day of refusals reaches 3 spread tries by itself. OVHcloud: 8 of 8 on 14 Sep, 2 of 2 on 15 Sep |
+| **not answering** | The same shape for timeouts, dropped streams and errors, or a mix of those and rate limits | **Set aside** | The same day-long wall for a different reason |
+| **answers empty** | 3 empty answers in a row with no good reply between | **Set aside** | A classifier (`nemotron-3.5-content-safety`) or an image model is empty every time; one empty answer can be a hiccup |
+| **retired** | *No longer offered* (404) twice in a row; or gone from its provider's list; or past OpenRouter's `expiration_date` | **Set aside**. A row gone from the list stays only where a pin or a list names it | One 404 can be a provider mid-deploy |
+| **retiring {date}** | OpenRouter's `expiration_date` within 30 days | None | Said before it happens: `dots-3-note-preview:free` retires 2026-09-30 |
+| **needs a key** | Refused for having no key (a keyless 401, D158) twice for one model, **or once each for two models of the same provider** | **Set aside** until a key for that provider is saved, then back at once | LLM7 on 15 Sep: two models, two refusals. One model wanting a key is that model; two means the provider changed |
+| **too many errors** | In 30 days, at least 5 tries and at least half of them failed, busy not counted | Below every model without doubts in its group; stays listed | Under 5 tries the share is luck. At half, every other answer is a switch pop-up |
+| **gave bad answers** | 2 *Bad answer* presses in 30 days | As *too many errors* | One press can be the question's fault; two in a month are the model's |
+| **router**, **under 7B**, **talk only**, **keeps your words** | `routes()`, `stature()`, `supportsTools`, `trainsOnYourData: 'yes'` | Nothing beyond what they already do in the ranking | Facts, shown so nobody has to open the detail for them |
+
+**Set aside, never deleted:**
+- **Automatic** leaves a set-aside model out of its plan. When that would leave nothing, it asks
+  them anyway, the reading the ledger already gets (`reachable()`, `router.ts:546`): asking and
+  collecting a refusal beats refusing on a guess.
+- **Your list** keeps every entry. A set-aside entry is skipped and shown as *not available:
+  always busy for you*; when every entry is set aside they are asked in order anyway. D155's promise
+  holds: Alexia never edits a list.
+- **A pin is asked anyway**, the way D158 stopped the ledger refusing pins in advance, and its row
+  says what Alexia has seen.
+- **One good reply brings a model back**, and the daily test is how a set-aside model gets the
+  chance to give one.
+
+**Hallucination is not detected.** A script sees errors, timeouts and empty answers. It cannot
+tell a wrong answer from a right one, so the signal is a person pressing *Bad answer*.
+
+#### Test messages
+
+**Once a day, Alexia sends a tiny test to the models that have no other way to earn evidence**:
+new models not yet tried, and set-aside models (except *needs a key* while there is no key, and
+*retired* once gone from the list).
+- **What is sent**: *Reply with the single word OK.* Never a word of the person's, never a
+  conversation, never a personality. Any reply with text in it is a good reply.
+- **Free only**, like any request nobody is waiting on (D96).
+- **At most 10 a day in all**, one per model, only while the app is running, never while an
+  answer is streaming.
+- **The lowest claim on free requests**: a test counts as background for the rule below.
+- Recorded as `source: 'test'`. Nothing goes into a conversation or the spend ledger.
+
+#### Keeping it current
+
+- **Every 6 hours** while the app runs, plus at startup and when the Models tab opens, as now.
+  Alexia.md said *daily*. `refresh()`'s age check becomes 6 hours; a tick that comes late after
+  the machine slept simply polls.
+- **First seen** is written from `Change.added` on every refresh, and *left the list* from
+  `Change.removed`; a model that comes back clears it.
+- **`parse()` reads `created` and `expiration_date` for OpenRouter**, the only list whose
+  `created` means *added*. `PARSER` becomes 7.
+- **The news line**: `news()` gets its caller. On the Models tab, once per refresh that added
+  something free: *1 new free model since this morning: GLM 5.2 on OpenRouter. Not tried yet.*
+- **Limits from answers**: `chat()` reads the headers above on every response and every error. A
+  remaining count lowers the ledger's count for that provider and never raises it past the row; a
+  reset says when it recovers; `retry-after` makes the model *busy* until then. A provider that
+  sends nothing changes nothing, and the typed row stays the floor.
+- **OpenRouter's key**, when there is one, is read (`GET /api/v1/key`) when it is saved and on
+  every tick: `is_free_tier` picks 50 or 1,000 a day, which replaces D107's deliberately low guess
+  with the real figure, and `limit_remaining` is §1's missing *Funded*.
+- **The four rows found wrong are re-verified by hand** (Cerebras, Groq, LLM7, OVHcloud).
+  Headers correct what they report, and no header reports Cerebras's or LLM7's terms.
+
+#### Free limits per account, with the chat first
+
+D160 gave the chat on screen first claim on each provider's free requests. How:
+- **The chat** is a request from the app's own chat, and **Adapt**, which somebody pressed and is
+  watching (D156). **Background** is everything else: a plugin's task (Telegram), a plugin's
+  sampling request, a test message.
+- **Background uses providers with no daily limit first**: no `rpd` and no `callsPerMonth` (a
+  per-minute limit alone, like Kilo's, is not a daily one), and this Mac.
+- **Only when none of those can do the job** (tools, window, pictures) may background use a
+  day-limited provider, and **only the first half of its day**: 25 of OpenRouter's 50, by the
+  ledger or by a header's remaining count, whichever is lower.
+- **Per provider.** OpenRouter's free allowance is shared by every free model on an account (its
+  docs), which is the case D160 was about. Groq publishes a limit per model, so there the half is
+  stricter than it needs to be; a row can say `limits: 'model'` the day that matters.
+- A pin or a list is held to the same half for background, and the stop says *the rest of today's
+  OpenRouter requests are kept for your chat*.
+
+#### A switch is said twice
+
+D160: every switch to another model (a rate limit, a timeout, an error, an answer that broke off)
+is **a pop-up for three seconds** and **a line in the chat that stays**.
+- `send()` reports the switch as an event with its parts (from, to, the reasons) beside the
+  sentence it already builds.
+- The shell shows that sentence as a pop-up for 3 seconds (a newer one replaces it), and adds it
+  to the answer as a small line above the words, not to `#note`.
+- **The line is saved** on the assistant message, as `notes` in its JSON body (no migration,
+  `store.ts:586`), and drawn again from history. `toWire()` (`provider.ts:1021`) sends only what
+  a provider reads, so a note never reaches a model.
+- The paid warning gets a place of its own above the message box, so neither replaces the other.
+
+#### Crossing into paid
+
+| | The paid switch **on** | The paid switch **off** |
+|---|---|---|
+| **The setting** | Shown under the slider on *free then paid*. Turning it on asks *up to $__ a day*, starting at $1, and that number **is** `caps.daily`: one money setting | The daily amount is kept and bounds what *Allow* can spend |
+| **Free models used up** | Moves to paid, with a warning above the message box: *Paid models will be used once the free ones are done, up to $1.00 today* | The work **pauses**: *The free models are used up.* **Allow switching to a paid model** |
+| **No free model can do it** (a picture, a long conversation) | The same, and the warning names the reason | The same pause, naming the reason |
+| **This Mac's model is next** | Paid first: the switch is the yes, given in advance | This Mac answers; it pauses only if this Mac cannot |
+| **One press of *Allow*** | — | Covers **this conversation**, as today's money question does. At $0 the button carries the amount box |
+| **A Telegram task** | Moves to paid, as the chat would | **Asks on Telegram**, with the yes/no permission questions already use. No answer in **10 minutes** stops it, and it says so there |
+| **A plugin with no run** | Free only (D96), unchanged | Free only |
+
+**The money question is folded into the switch.** *Slow local (free), or paid?* (`agent.ts:560`)
+stops being a question of its own: with the switch on it is already answered, and with the switch
+off the pause is the one place money is asked about. The monthly cap and its hard stop are
+unchanged and still stop everything.
+
+#### Adapt's cancel
+
+When the plugin gives up, core stops. The SDK's signal is passed from the handler into `send()`,
+so no further rung is asked, nothing counts as the model's failure, and nothing is billed after
+the plugin has shown its refusal. The same signal reaches `asTask`, so a plugin's task stops when
+its plugin gives up.
+
+#### A bad-answer button
+
+A quiet **Bad answer** on every finished answer. A press records a *bad answer* for the model
+that answered (a router's own row when a router answered), then asks the same question again
+**without that model**: the next in Automatic's ranking, or with the paid switch on, a model
+above its tier (`Ask.above`, the *smarter model* Alexia.md planned). Two presses in 30 days tag
+the model. It sits in the same place on an answer as D157's *that wasn't her*, which is about the
+personality rather than the model, so the two are built as one row of message actions.
+
+#### Later: the record shared with a server of the owner's
+
+*Decided later* (D160). This plan leaves the hook and nothing else:
+- `store.report(since)` returns, per model per provider and by week: tries, answers, failures by
+  kind, and bad-answer presses. No prompts, answers, keys, names or times of day. Nothing calls
+  it and nothing sends it.
+- `World.reported`, an optional set of models reported broken elsewhere, is empty today; `judge()`
+  would read it as one more piece of evidence, never as a deletion.
+- **Sending it would change Alexia.md in two places**: *no user backend at all* (*What deliberately
+  is not in first run*) and the registry's *no analytics* (*A real backend from the start*). It
+  would have to be opt-in, with a privacy policy (GDPR applies), protection against fake reports,
+  and a published *known broken* list that apps read as a signal.
+
+### The fix
+
+**A. Adapt's cancel**
+1. `HostServices.sampling(pluginId, params, signal?)` (`supervisor.ts:51`). The handler at
+   `supervisor.ts:256` passes `ctx.mcpReq.signal`, and `host.ts:83` passes it on.
+2. `serve.ts`'s `sample` puts the signal on `send()`'s request (`serve.ts:379`) and on `asTask`'s
+   run, joined to the task's own stop with `AbortSignal.any`.
+
+**B. The model record and the tags**
+3. **Migration 7**: `tries` (`at`, `provider`, `model`, `outcome`, `status`, `source`) and `seen`
+   (`provider`, `model`, `first_seen`, `list_known`, `gone_at`); rows older than 30 days deleted as
+   new ones arrive. `recordStrike()` becomes `recordTry()`, called by `send()` for every outcome,
+   answers included; `strikes()` reads the last day's model failures from `tries`; the one-day
+   `strikes` table is dropped by the same migration. The outcome is named beside `failed()`
+   (`router.ts:943`).
+4. **`health.ts`**: `judge(tries, seen, models, keyed, now)` returns, per provider and model,
+   `{ tags, aside?, untested, doubted, standIn? }`, every threshold a named constant with its
+   reason. `World.health` carries it and `world()` (`serve.ts:487`) gathers it.
+5. **`route()`** leaves set-aside rows out of Automatic's pool and a sequence's, unless nothing
+   would be left; a pin ignores it.
+6. **`ranking()` becomes named keys**: group, *not tried yet*, *doubted*, tools, what failed here,
+   router, the ladder, tier, price, size, usage or its stand-in. `/best` still turns only the
+   money keys. `explain(a, b)` returns the deciding key's sentence.
+
+**C. The table**
+7. `surface.ts` builds the rows from `route()`'s plans (the list's; Automatic's for a plain
+   request; *paid only*'s) and the set-aside rows from `World.health`, keyed `provider\nmodel`;
+   `detail` and the row actions read both halves. `panels.ts` replaces `groupBy: 'provider'` with
+   the four groups and a corrected hint; the shell's table draws tags as chips in their tone.
+8. The ★ keeps its definition: `route()`'s first choice for a request with tools.
+
+**D. Keeping it current**
+9. A 6-hour timer in `serve()` calling `pollAll`, cleared on close; `refresh()`'s default age 6 hours.
+10. `refresh()` writes `seen` from its `Change`; `parse()` reads `created` and `expiration_date`
+    for OpenRouter; `PARSER` 7; `news()` is called and its line shown on the Models tab.
+11. `chat()` reads rate-limit headers into a per-provider *heard* record (remaining, span, reset,
+    when); `remaining()` (`pool.ts:44`) takes the lower of the ledger and what was heard;
+    `retry-after` records *busy until* for that model.
+12. OpenRouter's `GET /api/v1/key` when its key is saved and on every tick: `is_free_tier` sets
+    the day's limit, `limit_remaining` feeds §1's *Funded*.
+13. Re-verify the Cerebras, Groq, LLM7 and OVHcloud rows by hand, with new `verified` dates.
+
+**E. Test messages**
+14. **`trial.ts`**: once a day on the timer, up to 10 models due a test, each sent
+    `send([choice], { messages: [TEST], maxTokens: 256 }, …, { source: 'test' })` one at a time,
+    skipped while a chat answer streams. Free only, and background for the limit rule.
+
+**F. Free limits per account**
+15. `Ask.background` (a plugin's task or sampling request, a test; never the chat or Adapt). For
+    background, `route()` builds the pool from providers with no daily limit and this Mac; only when
+    that pool fits nothing does it add day-limited providers under half their day. The refusal
+    says the rest is kept for the chat.
+
+**G. A switch said twice**
+16. `send()` gains `onSwitch({ from, to, reasons })` beside `onNote`; `serve.ts` streams `switch`;
+    the assistant message stores `notes`.
+17. The shell: a 3-second pop-up, the saved line above the answer, notes drawn from history, and
+    the paid warning in its own place above the message box.
+
+**H. Crossing into paid**
+18. `caps.cross` beside `caps.daily`. On the Models tab, the switch under the slider on *free then
+    paid*; turning it on asks for and writes `daily`, starting at $1.
+19. **Off**: when Automatic or a sequence runs out of free models, because they are used up or
+    cannot do the job, and the same request with the price line open has a paid choice (`priced`,
+    `router.ts:513`, and the same check once `send()` has exhausted the free rungs), the run ends
+    `paused` rather than `refused`. The shell shows *Allow switching to a paid model*, with the
+    amount box when `daily` is $0; a press sets the conversation's `spending` and asks again from
+    where it stopped.
+20. **On**: `spending` is true from the start of a conversation and the warning shows. The
+    *slow local or paid* question (`agent.ts:560`) is removed.
+21. **Telegram**: `asTask`'s pause asks through `CORE_CAPABILITIES.ask` and waits 10 minutes; no
+    answer ends the task with the sentence sent back.
+
+**I. The bad-answer button**
+22. `POST /api/chat { again: true, bad: { provider, model } }` records the press and asks again
+    without that model (and `above` its tier with the paid switch on). The shell's button sits in
+    one row of message actions with *that wasn't her* (D157).
+
+**J. The hook for later**
+23. `store.report(since)` and an empty `World.reported`, with a test that a report carries only
+    the listed fields.
+
+### Acceptance
+
+- **Cancel.** A plugin asks for sampling with a 1-second timeout, over a provider that never
+  answers and a second that would: the second provider is never called, and no try is recorded
+  against the first.
+- **Same order, new record.** D159's tests in `router.test.ts` pass unchanged over failures
+  written to `tries`.
+- **Busy and set aside.** Three rate-limited tries at 10:00, 11:00 and 12:30 with no answer: *always
+  busy for you*, and out of Automatic's plan. Three at 20:00, 20:05 and 20:10: *busy*, and still in
+  it. One good reply the next day: back.
+- **Empty and retired.** Three empty answers in a row: *answers empty*. A 404, an answer, a 404:
+  not retired. Two 404s in a row: retired.
+- **Needs a key.** A keyless 401 from two models of one keyless provider sets every model of that
+  provider aside; saving a key brings them all back without a restart.
+- **Lists and pins.** A list whose first entry is set aside asks the second first and shows the
+  first as *not available*; a list whose every entry is set aside asks them all, in order; a pin
+  on a set-aside model is asked.
+- **New.** A model that appears on a provider's second refresh is *new · not tried yet* and last
+  in its group; after one good test reply it ranks at its size's middle usage; once its `weekly`
+  arrives, at that figure's place. On a fresh install only models with a recent `created` are new.
+- **The table is the ranking.** On this Mac's catalog copy, the Automatic group equals `route()`'s
+  choices for a plain request row for row, and each row's why-line names the key on which it
+  differs from the row above. Kilo's and OpenRouter's Nemotron 3 Super open different details.
+- **Current.** With a fake clock the lists are fetched again after 6 hours and not after 5; a
+  model added between two fetches produces the news line once. `x-ratelimit-remaining-requests: 3`
+  leaves that provider 3 for the day; `retry-after: 20` makes the model busy for 20 seconds.
+- **Tests.** With 14 models due, 10 tests go out, none to a paid model, none while an answer
+  streams, and nothing lands in a conversation or the spend ledger.
+- **Chat first.** A Telegram task needing tools, with keyless Kilo and keyed OpenRouter both able,
+  goes to Kilo. With only OpenRouter able and 24 of its 50 used, it asks; at 25 it stops with the
+  *kept for your chat* sentence. The chat at 49 of 50 still asks OpenRouter, and so does Adapt.
+- **Said twice.** Automatic falls from a 429 to a second model: one `switch` event, a 3-second
+  pop-up, the line above the answer, and the line is still there after a reload. No note is in the
+  body a provider receives.
+- **Paid.** Switch off, every free rung 429, a paid model reachable: the run ends `paused` and
+  nothing is billed; *Allow* answers from the paid model, and the same conversation does not pause
+  again. Switch on at $1: the paid model answers and the warning shows; with the day's $1 spent it
+  stops as the allowance does today. A picture no free model can read: the same pause, with that
+  reason. A Telegram task paused for 10 minutes without an answer ends with the sentence on
+  Telegram.
+- **Bad answer.** A press asks again and the model that answered is not asked; two presses in 30
+  days tag it and move it below untagged models.
 
 ---
 
@@ -374,7 +741,8 @@ Requesty 684 → **12** free (9 with tools), Navy 146 → 101 rows (45 unpriced 
 Kilo 370 rows (22 free), OpenRouter 441 (23 free). Under *free only*, the Models tab no longer
 lists paid rows. §3 is in core and the shell (D158), and it reaches the installed app only with
 a new build. §2 is built too (D159), and also needs a new build. Not yet: *Funded*, the keyless
-group and its switch, key events, key removal. Next: §1 steps 3–4, then §4 (D160).
+group and its switch, key events, key removal. §4 is designed (D160, D161) against a mock-up and
+not built. Next: §4 A, then §1 steps 3–4 and §4 B.
 
 1. **§1 steps 1–2**: unpriced is not free, one `available()`. Smallest change, and it closes
    a real billing hole (Requesty) before anything else.
@@ -382,11 +750,26 @@ group and its switch, key events, key removal. Next: §1 steps 3–4, then §4 (
    every rate-limited evening.~~ Done 2026-09-15 (D158).
 3. ~~**§2**: ranking. Borrowed `weekly` and *routers last* first, because they are cheap. Strikes
    and size-from-id second.~~ Done 2026-09-15 (D159).
-4. **§1 steps 3–4**: key events and key removal, which need the shell.
-5. ~~**Alexia.md**: D112 rewritten with the three modes, and the decision log entry.~~ Done
+4. **§4 A**: Adapt's cancel. Small, on its own, and it stops work going on behind a refusal the
+   person has already seen.
+5. **§1 steps 3–4**: key events and key removal, which need the shell. *Needs a key* coming back
+   the moment a key is saved depends on the event.
+6. ~~**Alexia.md**: D112 rewritten with the three modes, and the decision log entry.~~ Done
    2026-09-15 (D154, D155).
-6. **§4** (D160): Adapt's cancel reaching `send()` (small); the mock-up of the model table, then
-   its build; free limits per account; the switch pop-up; the paid switch.
+7. **§4 B**: the model record and the tags, in core with their tests. Everything after reads
+   `judge()`.
+8. **§4 C**: the table, built against the mock-up.
+9. **§4 D**: keeping it current (the timer, first seen, the news line, headers, OpenRouter's key,
+   the four stale rows).
+10. **§4 E**: test messages. Needs B and D.
+11. **§4 G**: a switch said twice. Needs nothing above except A, so it can move earlier.
+12. **§4 F**: free limits per account.
+13. **§4 H**: crossing into paid, then Telegram's question.
+14. **§4 I**: the bad-answer button, with *that wasn't her* (`plan-personality.md`, improvement 10).
+15. **§4 J**: the hook for later sharing.
+
+Everything here reaches the installed app only in a new build. The persona plugin there is
+hand-patched, and a build does not reinstall it.
 
 ## Open decisions
 
@@ -402,4 +785,29 @@ group and its switch, key events, key removal. Next: §1 steps 3–4, then §4 (
   model counts** (`-30b-a3b` is 30B): built in D159, confirmed in D160.
 - [x] **A restart after a dead stream** costs the tokens already streamed. **Restart without
   asking, paid included** (D160), with a three-second pop-up and the line in the chat.
-- [ ] **Model statistics to the owner's server.** Decided later (D160). See §4.
+- [x] **How the table shows the ranking.** In Automatic's own order, in four groups, with a
+  why-line per row taken from the ranking's keys (D161, against the mock-up).
+- [x] **Busy and broken.** Busy sinks and comes back. A whole day of nothing but *too busy* (3
+  tries over 2 hours, none answered) sets a model aside (D161), which changes D159's *never
+  written off* for that one case.
+- [x] **Set aside, never deleted.** Automatic skips it; a list skips it and says why; a pin still
+  asks it; one good reply brings it back (D161).
+- [x] **Evidence for models lower down.** A test message once a day, free only, at most 10, never
+  the person's words (D161).
+- [x] **Where a new model starts.** At the bottom. Its first good reply moves it to the middle of
+  its size; OpenRouter's figure then places it, up or down (D161).
+- [x] **Hallucination.** Only a person can tell: a *Bad answer* button, built after the table; two
+  presses in 30 days tag a model (D161).
+- [x] **How current.** Every 6 hours, and limits read from answers where providers send them
+  (D161). Alexia.md said daily.
+- [x] **The chat first, how.** Background uses providers with no daily limit and this Mac first,
+  and at most half of a day-limited provider's day; Adapt counts as the chat (D161).
+- [x] **The paid switch and the allowance.** One setting: turning the switch on asks for the daily
+  amount (D161).
+- [x] **Allow.** One press covers the conversation. A Telegram task asks on Telegram and gives up
+  after 10 minutes (D161).
+- [x] **The *slow local or paid* question.** Folded into the switch (D161).
+- [x] **No free model can do it.** The same switch and pause, naming the reason (D161).
+- [ ] **Model statistics to the owner's server.** Decided later (D160). The hook is §4 J.
+- [ ] **Automatic test messages and each provider's terms.** Alexia.md's *respect each provider's
+  terms*: check that a daily automated test is allowed on every free tier before a public release.
