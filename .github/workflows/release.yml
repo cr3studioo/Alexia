@@ -266,11 +266,45 @@ jobs:
           name: release-darwin-universal
           path: out/
 
+  # The Intel half, run on an Intel Mac before anybody can download it (D150). The build above
+  # happens on Apple Silicon, where the x86_64 half is compiled and merged but never executed —
+  # so the first machine to run it would otherwise be a person's. The core starts from inside
+  # the very app that will be published, serves the shell, and loads the merged keychain
+  # library, all as x86_64.
+  macos-intel:
+    needs: macos
+    if: inputs.publish
+    runs-on: macos-15-intel
+    steps:
+      - uses: actions/download-artifact@v5
+        with:
+          name: release-darwin-universal
+          path: out
+      - name: The published app's core runs on Intel
+        run: |
+          tar -xzf out/Alexia_darwin-universal.app.tar.gz
+          core=Alexia.app/Contents/MacOS/alexia-core
+          cd Alexia.app/Contents/Resources/resources
+          home=$(mktemp -d)
+          HOME="$home" ALEXIA_TAURI=1 "$GITHUB_WORKSPACE/$core" boot.mjs > "$home/said.log" 2>&1 &
+          pid=$!
+          url=""
+          for _ in $(seq 1 150); do
+            url=$(grep -oE 'http://127\.0\.0\.1:[0-9]+' "$home/said.log" | head -1 || true)
+            [ -n "$url" ] && break
+            sleep 0.2
+          done
+          if [ -z "$url" ]; then cat "$home/said.log"; kill $pid; exit 1; fi
+          token=$(curl -s "$url" | grep -oE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | head -1)
+          curl -sf -H "x-alexia-token: $token" "$url/api/plugins" | grep -q '"panes"'
+          kill $pid
+          "$GITHUB_WORKSPACE/$core" -e "require('./keyring.darwin-universal.node'); if (process.arch !== 'x64') process.exit(1); console.log('core and keychain run as', process.arch)"
+
   # One release and one `latest.json` for every platform. Written here rather than in a platform
   # job because the file is a single list: two jobs each writing their own would publish
   # whichever finished last, and every other platform's installs would stop updating.
   publish:
-    needs: [windows, macos]
+    needs: [windows, macos, macos-intel]
     if: inputs.publish
     runs-on: ubuntu-latest
     steps:
