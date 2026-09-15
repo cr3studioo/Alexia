@@ -58,11 +58,9 @@ All downloads are on the [latest release](https://github.com/cr3studioo/Alexia/r
 | | Download | Then |
 |---|---|---|
 | **Windows** (x64) | `Alexia_x.y.z_x64-setup.exe` | Run it. |
-| **macOS** — Apple Silicon (M1 and later) | `Alexia_x.y.z_aarch64.dmg` | Open it and drag Alexia into Applications. |
-| **macOS** — Intel | `Alexia_x.y.z_x64.dmg` | Open it and drag Alexia into Applications. |
+| **macOS** — any Mac, Apple Silicon or Intel | `Alexia_x.y.z_universal.dmg` | Open it and drag Alexia into Applications. |
 
-macOS 11 or later. Not sure which Mac you have? Apple menu → **About This Mac**: *Chip* means
-Apple Silicon, *Processor* means Intel.
+macOS 11 or later.
 
 > [!NOTE]
 > Neither build is code-signed yet, so the first launch meets a warning:

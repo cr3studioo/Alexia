@@ -20,15 +20,32 @@
  * key reaches the Windows credential locker rather than something worse — losing that to
  * tidy up the artefact count would be trading a real property for a cosmetic one. So:
  * `node.exe`, renamed, and the signing story covers two files instead of one.
+ *
+ * **`--universal` makes one Mac app for both processors** (D150), for
+ * `tauri build --target universal-apple-darwin`. Two disk images asked somebody who has never
+ * opened *About This Mac* which chip they have, on the download page, before anything else —
+ * which is where setup dies. Tauri merges the shell's two builds itself; the two things here
+ * that are per-architecture, Node and the keychain library, are merged with `lipo` from this
+ * machine's copy and the other processor's, fetched and checked against the hash its publisher
+ * wrote down.
  */
 import { spawnSync } from 'node:child_process'
-import { cpSync, existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const packaged = join(root, 'dist-app', 'Alexia')
 const tauri = join(root, 'src-tauri')
+const universal = process.argv.includes('--universal')
+if (universal && process.platform !== 'darwin') {
+  console.error(`--universal makes a Mac app, and this is ${process.platform}.`)
+  process.exit(1)
+}
+/** The processor this machine is not, whose half of a universal app has to be fetched. */
+const other = process.arch === 'arm64' ? 'x64' : 'arm64'
 
 /** What `rustc -vV` calls this machine. Tauri appends it to every `externalBin`. */
 function triple() {
@@ -55,9 +72,21 @@ rmSync(resources, { recursive: true, force: true })
 mkdirSync(binaries, { recursive: true })
 mkdirSync(resources, { recursive: true })
 
-// 2. The runtime, under the name Tauri resolves `sidecar("alexia-core")` to.
+// 2. The runtime, under the name Tauri resolves `sidecar("alexia-core")` to — which for a
+//    universal build is the triple Tauri is told to build, not the one this machine is.
 const suffix = host.includes('windows') ? '.exe' : ''
-cpSync(join(packaged, `node${suffix}`), join(binaries, `alexia-core-${host}${suffix}`))
+const target = universal ? 'universal-apple-darwin' : host
+const sidecar = join(binaries, `alexia-core-${target}${suffix}`)
+if (universal) {
+  // Tauri compiles each processor's shell on its own before merging them, and each of those
+  // builds refuses to start without a sidecar of its own triple — so both halves are written
+  // under their own names too, and only the merged one reaches the bundle.
+  const halves = { [process.arch]: join(packaged, 'node'), [other]: await nodeFor(other) }
+  for (const [arch, from] of Object.entries(halves)) {
+    cpSync(from, join(binaries, `alexia-core-${arch === 'arm64' ? 'aarch64' : 'x86_64'}-apple-darwin`))
+  }
+  lipo(Object.values(halves), sidecar)
+} else cpSync(join(packaged, `node${suffix}`), sidecar)
 
 // 3. Everything the sidecar reads once it is running. `Alexia.cmd` and the runtime itself do
 //    not come: the launcher is the app now, and the runtime is above. Neither do plugins —
@@ -71,8 +100,68 @@ for (const name of ['alexia.mjs', 'boot.mjs', 'ui', 'scripts']) {
 // this does not quietly ship yesterday's copy under today's filename — the names this used to
 // list included `darwin-universal`, which the keyring has never published (D144).
 for (const name of readdirSync(packaged).filter((file) => /^keyring\..+\.node$/.test(file))) {
+  if (universal) continue
   cpSync(join(packaged, name), join(resources, name))
   if (process.platform === 'darwin') sign(join(resources, name))
+}
+// `darwin-universal` is the first name the keyring's loader tries, before either processor's —
+// so the merged library needs no second copy of either beside it.
+if (universal) {
+  const merged = join(resources, 'keyring.darwin-universal.node')
+  lipo([join(packaged, `keyring.darwin-${process.arch}.node`), await keyringFor(other)], merged)
+  sign(merged)
+}
+
+/** One Mach-O holding both halves. The inputs' signatures do not survive it, so both outputs are signed after. */
+function lipo(halves, to) {
+  const made = spawnSync('lipo', ['-create', '-output', to, ...halves], { stdio: 'inherit' })
+  if (made.status !== 0) throw new Error(`lipo could not merge ${halves.join(' and ')}`)
+}
+
+/**
+ * The bytes at a URL, refused unless they hash to what their publisher wrote down.
+ *
+ * Both halves fetched here end up inside a signed app that runs with somebody's keychain, so a
+ * mirror serving something else is not a download error to retry — it is the one thing this
+ * script must never package.
+ */
+async function fetched(url, algorithm, expected, encoding) {
+  const response = await fetch(url)
+  if (!response.ok) throw new Error(`${url} answered ${response.status}`)
+  const bytes = Buffer.from(await response.arrayBuffer())
+  const actual = createHash(algorithm).update(bytes).digest(encoding)
+  if (actual !== expected) throw new Error(`${url} is not the file its publisher hashed (${algorithm} ${actual})`)
+  const dir = mkdtempSync(join(tmpdir(), 'alexia-universal-'))
+  const path = join(dir, url.split('/').at(-1))
+  writeFileSync(path, bytes)
+  return { dir, path }
+}
+
+/** One file out of a downloaded archive. */
+function unpacked({ dir, path }, member) {
+  const done = spawnSync('tar', ['-xzf', path, '-C', dir, member], { stdio: 'inherit' })
+  if (done.status !== 0) throw new Error(`${member} is not in ${path}`)
+  return join(dir, member)
+}
+
+/** This same Node release for the other processor, checked against nodejs.org's SHASUMS256. */
+async function nodeFor(arch) {
+  const base = `https://nodejs.org/dist/${process.version}`
+  const name = `node-${process.version}-darwin-${arch}`
+  const sums = await fetch(`${base}/SHASUMS256.txt`).then((response) => response.text())
+  const sum = new RegExp(`^([0-9a-f]{64})\\s+${name}\\.tar\\.gz$`, 'm').exec(sums)?.[1]
+  if (!sum) throw new Error(`nodejs.org lists no ${name}.tar.gz`)
+  return unpacked(await fetched(`${base}/${name}.tar.gz`, 'sha256', sum, 'hex'), `${name}/bin/node`)
+}
+
+/** The keyring's library for the other processor, at the version and hash `pnpm-lock.yaml` pins. */
+async function keyringFor(arch) {
+  const lock = readFileSync(join(root, 'pnpm-lock.yaml'), 'utf8')
+  const pinned = new RegExp(`'@napi-rs/keyring-darwin-${arch}@([^']+)':\\s+resolution: \\{integrity: sha512-([^}]+)\\}`).exec(lock)
+  if (!pinned) throw new Error(`pnpm-lock.yaml pins no @napi-rs/keyring-darwin-${arch}`)
+  const [, version, integrity] = pinned
+  const url = `https://registry.npmjs.org/@napi-rs/keyring-darwin-${arch}/-/keyring-darwin-${arch}-${version}.tgz`
+  return unpacked(await fetched(url, 'sha512', integrity, 'base64'), `package/keyring.darwin-${arch}.node`)
 }
 
 /**
@@ -96,6 +185,6 @@ function sign(path) {
 //    Node with nothing to run opens a REPL and waits forever.
 if (!existsSync(join(resources, 'boot.mjs'))) throw new Error('the packaged build has no boot.mjs')
 
-console.log(`Sidecar: ${join(binaries, `alexia-core-${host}${suffix}`)}`)
+console.log(`Sidecar: ${sidecar}`)
 console.log(`Resources: ${resources}`)
-console.log('Now: pnpm tauri build')
+console.log(universal ? 'Now: pnpm tauri build --target universal-apple-darwin' : 'Now: pnpm tauri build')
