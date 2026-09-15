@@ -91,6 +91,25 @@ export const MODES: Record<'local' | 'combined' | 'cloud', Placement> = {
  */
 export type Spend = 'free' | 'mixed' | 'paid'
 
+/** Whether the slider lets this model's side of the price line answer. */
+export const allowed = (model: Model, spend: Spend): boolean =>
+  spend === 'mixed' || paid(model.tier) === (spend === 'paid')
+
+/**
+ * **A model somebody could send a request to right now** (D154): its provider is connected,
+ * and the slider lets its side of the price line answer.
+ *
+ * One function because two readers need the same answer. The Models tab filtered on the
+ * provider alone and the router on the provider *and* the slider, so under *free only* the tab
+ * listed 348 paid Kilo rows the router would never ask — a list of models that was, row for
+ * row, a list of things that would not happen.
+ *
+ * A price nobody published is already gone by the time a row gets here: `parse()` does not
+ * carry it. What is not here yet is *can this account pay* — that needs each provider's balance.
+ */
+export const available = (model: Model, connected: ReadonlySet<string>, spend: Spend): boolean =>
+  connected.has(model.provider) && allowed(model, spend)
+
 export interface Pins {
   placement: Placement
   /** `/best` walks the list from the top instead of the bottom. */
@@ -393,7 +412,7 @@ export function route(ask: Ask, pins: Pins, world: World): Verdict {
       .filter((c) => !pins.uncensored || c.model.nsfwOk === 'yes')
       // The slider, and it is a filter rather than a preference: *free only* that reaches for a
       // paid model when the free ones are busy is the setting not existing.
-      .filter((c) => spend === 'mixed' || paid(c.model.tier) === (spend === 'paid'))
+      .filter((c) => allowed(c.model, spend))
       // And a paid model that is no better than the free rung it stands in for is not a
       // rung, it is the same answer for money.
       .filter((c) => sidegrades || !automatic || !paid(c.model.tier) || stepUp(c.model, replacing))

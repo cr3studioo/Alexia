@@ -47,6 +47,8 @@ const model = (over: Record<string, unknown>): Record<string, unknown> => ({
 })
 noPolling(root, [
   model({ id: 'openrouter/reachable', name: 'Reachable', provider: 'openrouter', weekly: 1_500_000 }),
+  // Connected and paid: the row the slider is about (D154).
+  model({ id: 'openrouter/paid', name: 'Paid', provider: 'openrouter', priceIn: 3, priceOut: 15, tier: 'T3' }),
   model({ id: 'groq/unreachable', name: 'Unreachable', provider: 'groq', priceIn: 2, tier: 'T3' }),
 ])
 
@@ -384,7 +386,13 @@ test('the models panel lists what you can actually reach, and nothing else', asy
   // Only the connected provider's. A key for OpenRouter is not an invitation to browse the
   // six providers you have never signed up to — one key would bury twenty usable rows under
   // eighty you cannot send anything to.
-  expect(models.map((row) => row.id)).toEqual(['openrouter/reachable'])
+  expect(models.map((row) => row.id)).toEqual(['openrouter/reachable', 'openrouter/paid'])
+
+  // And only the side of the price line the slider lets answer (D154). *Free only* used to
+  // list every paid row the router would never ask, so the list was not what would happen.
+  expect((await post('/api/action', { key: 'set_spend', row: 'free' })).ok).toBe(true)
+  expect((await rows('models')).map((row) => row.id)).toEqual(['openrouter/reachable'])
+  expect((await post('/api/action', { key: 'set_spend', row: 'mixed' })).ok).toBe(true)
 
   // The one Automatic would pick, asked of the router rather than decided here.
   expect(models[0]?.state).toBe('★ recommended')
@@ -430,10 +438,12 @@ test('the ladder writes the pins the router reads, and the ★ moves with it', a
 
   // The ladder's own rows: every model you can reach, with the position you gave it. Nothing
   // is listed yet, which is the ordinary state and the one the screen opens in.
+  // The ladder lists both sides whatever the slider says: it is a running order *within* each
+  // side, and somebody may well arrange the paid side before moving the slider to it.
   const before = await rows('routing')
-  expect(before.map((row) => row.id)).toEqual(['openrouter/reachable'])
-  expect(before[0]?.side).toBe('free')
-  expect(before[0]?.rank).toBe('')
+  expect(before.map((row) => row.id)).toEqual(['openrouter/paid', 'openrouter/reachable'])
+  expect(before.find((row) => row.id === 'openrouter/reachable')?.side).toBe('free')
+  expect(before.every((row) => row.rank === '')).toBe(true)
 
   // One list, sent whole. A move-up call per row would be four chances to land somewhere
   // nobody asked for if one of them were dropped.
@@ -446,14 +456,14 @@ test('the ladder writes the pins the router reads, and the ★ moves with it', a
   expect((await post('/api/action', { key: 'set_order', row: 'gone/yesterday,openrouter/reachable' })).ok).toBe(true)
   expect((await standing()).order).toEqual(['openrouter/reachable'])
 
-  // The slider. Only one provider is connected here and everything it offers is free, so
-  // *paid only* is a real wall — and the ★ goes with it, because the ★ is the router's
-  // answer rather than a decoration this screen keeps.
+  // The slider. *Paid only* is a real wall — the free row leaves the list, and the ★ goes to
+  // the paid one, because the ★ is the router's answer rather than a decoration this screen
+  // keeps.
   const paid = await post('/api/action', { key: 'set_spend', row: 'paid' })
   expect(paid.ok).toBe(true)
   expect(String(paid.said)).toContain('billed')
   expect((await standing()).spend).toBe('paid')
-  expect((await rows('models'))[0]?.state).not.toContain('recommended')
+  expect((await rows('models')).map((row) => [row.id, row.state])).toEqual([['openrouter/paid', '★ recommended']])
 
   // Not a value: a stop that does not exist is a sentence rather than a pin nobody can undo.
   const nonsense = await post('/api/action', { key: 'set_spend', row: 'whatever' })

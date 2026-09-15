@@ -3,7 +3,7 @@ import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Catalog, Model } from './catalog.js'
 import { pins, setPin } from './commands.js'
-import { route, type Spend, type World } from './router.js'
+import { available, route, type Spend, type World } from './router.js'
 import { allow, forgetConsent } from './consent.js'
 import { forget } from './learned.js'
 import type { Row } from './plugins.js'
@@ -250,7 +250,10 @@ export function sources(options: SurfaceOptions): Record<string, Source> {
         const listed = standing.order ?? []
         return (
           catalog.models
-            .filter((model) => keyed.has(model.provider))
+            // What you could send a request to right now, from the same function the router
+            // reads (D154). The pinned model stays even when the slider hides its side: it is
+            // the row whose button undoes the pin.
+            .filter((model) => available(model, keyed, standing.spend ?? 'mixed') || model.id === standing.model)
             .sort(
               (a, b) =>
                 // What it would pick, then the running order the user wrote themselves (D112),

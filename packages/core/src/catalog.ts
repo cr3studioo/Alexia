@@ -100,7 +100,8 @@ const FRONTIER_USD_PER_MTOK = 1
 
 /**
  * Bumped whenever {@link parse} learns to read a field it used to drop — at 3 and again at 4
- * to drop a row it used to keep, and at 5 to read a second list shape. Both change what a cached snapshot means, and a cache is only as good
+ * to drop a row it used to keep, at 5 to read a second list shape, and at 6 to stop reading a
+ * missing price as zero (D154). Both change what a cached snapshot means, and a cache is only as good
  * as the reader that filled it: every machine already holds five negative-priced rows that
  * out-sort the free tier, and they leave on the next poll rather than on the next reinstall.
  *
@@ -109,7 +110,7 @@ const FRONTIER_USD_PER_MTOK = 1
  * providers, and a stamp they cannot see the value of is a barrier that quietly falls over
  * the next time this number changes.
  */
-export const PARSER = 5
+export const PARSER = 6
 
 /**
  * **The keyless floor's models, written down rather than fetched.**
@@ -407,6 +408,12 @@ function parse(payload: unknown, provider: Provider, weekly: ReadonlyMap<string,
       /** How much it can produce. Zero is a model that does not answer in words at all. */
       max_completion_tokens?: unknown
       pricing?: { prompt?: unknown; completion?: unknown }
+      /** Requesty's names for the same two numbers, per token. Its `pricing` is a tier table. */
+      input_price?: unknown
+      output_price?: unknown
+      /** Requesty's and Navy's tool flag, where OpenRouter lists `tools` under parameters. */
+      supports_tool_calling?: unknown
+      supports_tools?: unknown
       architecture?: { input_modalities?: unknown }
       supported_parameters?: unknown
       top_provider?: { is_moderated?: unknown }
@@ -427,8 +434,24 @@ function parse(payload: unknown, provider: Provider, weekly: ReadonlyMap<string,
      */
     if (entry.max_completion_tokens === 0) return []
 
-    const priceIn = perMillion(entry.pricing?.prompt)
-    const priceOut = perMillion(entry.pricing?.completion)
+    const pricedIn = perMillion(entry.pricing?.prompt ?? entry.input_price)
+    const pricedOut = perMillion(entry.pricing?.completion ?? entry.output_price)
+    /**
+     * **A price nobody published is not zero** (D154).
+     *
+     * It was, everywhere, on the grounds that nobody publishes prices on a free tier — true
+     * of Groq, and false of a router. Requesty prices its list under names this did not read,
+     * so all 684 of its models arrived free, and a Requesty key would have let *free only*
+     * route to models that bill. Now the provider row says what silence means: on a `free`
+     * provider it is zero, as before; on a `published` one it is a row nobody priced, and it
+     * is not carried unless the provider's terms name it free.
+     */
+    if (pricedIn === undefined || pricedOut === undefined) {
+      const named = (provider.freeModels ?? []).some((one) => one.toLowerCase() === id.toLowerCase())
+      if ((provider.pricing ?? 'free') === 'published' && !named) return []
+    }
+    const priceIn = pricedIn ?? 0
+    const priceOut = pricedOut ?? 0
     /**
      * **A negative price is not a price.** OpenRouter prices its own meta-routers —
      * `openrouter/auto` and four siblings — at `-1`, which is their way of saying *varies,
@@ -463,7 +486,8 @@ function parse(payload: unknown, provider: Provider, weekly: ReadonlyMap<string,
          * the upgrade is a `tools` probe per provider, cached beside this, when the auto path
          * needs them.
          */
-        supportsTools: params.includes('tools'),
+        // Requesty and Navy say it in a flag of their own; a flag that is not `true` is not a yes.
+        supportsTools: params.includes('tools') || entry.supports_tool_calling === true || entry.supports_tools === true,
         modality: Array.isArray(modalities) ? modalities.map(String) : ['text'],
         ...(typeof entry.canonical_slug === 'string' &&
           weekly.has(entry.canonical_slug) && { weekly: weekly.get(entry.canonical_slug) }),
@@ -516,10 +540,16 @@ async function popularity(provider: Provider): Promise<ReadonlyMap<string, numbe
   }
 }
 
-/** Prices arrive as strings, per token. Nobody thinks in those. */
-function perMillion(price: unknown): number {
+/**
+ * Prices arrive as strings, per token. Nobody thinks in those.
+ *
+ * `undefined` when there is no price to read, which is different from a price of zero —
+ * `Number(undefined)` is `NaN` and `Number(null)` is `0`, and this used to turn both into zero.
+ */
+function perMillion(price: unknown): number | undefined {
+  if (price === undefined || price === null || price === '') return undefined
   const n = Number(price)
-  return Number.isFinite(n) ? n * 1_000_000 : 0
+  return Number.isFinite(n) ? n * 1_000_000 : undefined
 }
 
 function read(file: string): Snapshot | undefined {

@@ -63,6 +63,25 @@ export interface Provider {
    */
   timeoutMs?: number
   /**
+   * **What a model with no price on it means** (D154).
+   *
+   * `free`: everything this provider lists is inside its free tier, so an absent price is
+   * zero — Groq, Cerebras, the keyless floor (models_plan.md §6). `published`: this provider
+   * prices what it sells, so an absent price is *nobody said*, and a row nobody priced is a
+   * row the catalog does not carry. It used to be read as zero everywhere, which catalogued
+   * all 684 of Requesty's models as free.
+   *
+   * Every row in {@link PROVIDERS} says which, and a test holds that. Absent is `free` only so
+   * a provider built by hand — a test's, a local server's — behaves as it always did.
+   */
+  pricing?: 'free' | 'published'
+  /**
+   * For a `published` provider whose list prices nothing: the models its terms say are free,
+   * by id, case aside. Z.ai is the case — GLM-4.7-Flash is free forever and its list needs a
+   * key and carries no prices (models_plan.md §6.3).
+   */
+  freeModels?: readonly string[]
+  /**
    * Raw text-completion backends 500 on a `tools` field. Provider-wide fallback for
    * models with no per-model answer. AI Horde is the case that forces this.
    */
@@ -132,6 +151,7 @@ export const PROVIDERS: Provider[] = [
     // nothing and is the polite half of using somebody's free tier.
     headers: { 'HTTP-Referer': 'https://github.com/cr3studioo/Alexia', 'X-Title': 'Alexia' },
     auth: 'required',
+    pricing: 'published',
     terms: 'https://openrouter.ai/terms',
     // Keyed by `canonical_slug`, which is what the public list calls the same model — 377 of
     // the 396 rows join, and the ones that do not are models nobody has used yet.
@@ -147,6 +167,7 @@ export const PROVIDERS: Provider[] = [
     baseUrl: 'https://api.groq.com/openai/v1',
     models: '/models',
     auth: 'required',
+    pricing: 'free',
     terms: 'https://groq.com/terms-of-use/',
     verified: '2026-08-27',
     trainsOnYourData: 'unknown',
@@ -159,6 +180,7 @@ export const PROVIDERS: Provider[] = [
     baseUrl: 'https://api.cerebras.ai/v1',
     models: '/models',
     auth: 'required',
+    pricing: 'free',
     terms: 'https://www.cerebras.ai/terms-of-service',
     verified: '2026-08-27',
     trainsOnYourData: 'unknown',
@@ -171,6 +193,7 @@ export const PROVIDERS: Provider[] = [
     baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
     models: '/models',
     auth: 'required',
+    pricing: 'free',
     terms: 'https://ai.google.dev/gemini-api/terms',
     verified: '2026-08-27',
     trainsOnYourData: 'unknown',
@@ -183,6 +206,7 @@ export const PROVIDERS: Provider[] = [
     baseUrl: 'https://api.mistral.ai/v1',
     models: '/models',
     auth: 'required',
+    pricing: 'free',
     terms: 'https://mistral.ai/terms',
     verified: '2026-08-27',
     trainsOnYourData: 'unknown',
@@ -194,6 +218,7 @@ export const PROVIDERS: Provider[] = [
     baseUrl: 'https://integrate.api.nvidia.com/v1',
     models: '/models',
     auth: 'required',
+    pricing: 'free',
     terms: 'https://build.nvidia.com/terms',
     verified: '2026-08-27',
     trainsOnYourData: 'unknown',
@@ -206,6 +231,7 @@ export const PROVIDERS: Provider[] = [
     // No model list endpoint recorded. Left off rather than guessed: the catalog asks the
     // provider row where to look, and a wrong path is a daily failed fetch.
     auth: 'required',
+    pricing: 'free',
     terms: 'https://docs.github.com/site-policy/github-terms/github-terms-of-service',
     verified: '2026-08-27',
     trainsOnYourData: 'unknown',
@@ -242,6 +268,7 @@ export const PROVIDERS: Provider[] = [
      * when there is nothing to put in it — never sent empty.
      */
     auth: 'optional',
+    pricing: 'free',
     // 2 req/min is per IP **per model**, so spreading across the five is ~10/min in
     // practice. The ledger counts per provider, which cannot say that — so this is the
     // conservative reading of it, and the cost of being conservative is a slower floor
@@ -259,6 +286,7 @@ export const PROVIDERS: Provider[] = [
     // A volunteer queue: anonymous is lowest priority, and a real account key buys queue
     // priority with kudos rather than access.
     auth: 'optional',
+    pricing: 'free',
     /**
      * **An absence is not enough here.** The anonymous credential is a literal that AI Horde
      * publishes for everyone to use, so it is sent rather than omitted — the opposite of the
@@ -283,6 +311,7 @@ export const PROVIDERS: Provider[] = [
     baseUrl: 'https://hermes.ai.unturf.com/v1',
     models: '/models',
     auth: 'optional',
+    pricing: 'free',
     /**
      * Any non-empty string is accepted; it is used for identification and nothing else. So
      * the value is a name rather than a secret, and being identifiable costs nothing and is
@@ -307,6 +336,7 @@ export const PROVIDERS: Provider[] = [
     // In Tier A because it answers with no header at all, and in §6.3 because a key raises
     // the ceiling. One row says both.
     auth: 'optional',
+    pricing: 'published',
     // Published as 200 req/hr per IP, which is a window this schema does not have. Three a
     // minute is the conservative reading that never overruns the hour it is really counted
     // in; the cost of being wrong this way is a slower rung, not a refusal.
@@ -341,6 +371,7 @@ export const PROVIDERS: Provider[] = [
      * there is deliberately no `anonymousKey` here.
      */
     auth: 'optional',
+    pricing: 'free',
     // Published as 20 rpm inside 100 requests an hour. The minute is the one this schema can
     // hold; the hour is left to a 429, which the cascade already reads as *next rung*.
     rpm: 20,
@@ -361,6 +392,7 @@ export const PROVIDERS: Provider[] = [
      * that work are written down in `catalog.ts` instead.
      */
     auth: 'required',
+    pricing: 'free',
     // The free tier is a **shared** 5M tokens a day across everybody, not a per-user
     // allowance — so what is left is not something this machine can know.
     trainsOnYourData: 'unknown',
@@ -378,6 +410,7 @@ export const PROVIDERS: Provider[] = [
      */
     baseUrl: 'https://api.cloudflare.com/client/v4/accounts/{account}/ai/v1',
     auth: 'required',
+    pricing: 'free',
     /**
      * 60s. One model wants 200s — a live sweep aborted it repeatedly at 15 — and a timeout
      * is a property of the row rather than of the model, so the row cannot say that. The
@@ -407,6 +440,7 @@ export const PROVIDERS: Provider[] = [
      * there.
      */
     auth: 'required',
+    pricing: 'free',
     timeoutMs: 120_000,
     trainsOnYourData: 'unknown',
     verified: '2026-08-30',
@@ -430,6 +464,9 @@ export const PROVIDERS: Provider[] = [
     baseUrl: 'https://api.z.ai/api/paas/v4',
     models: '/models',
     auth: 'required',
+    pricing: 'published',
+    // Source: models_plan.md §6.3 — GLM-4.7-Flash permanently free; the rest are billed.
+    freeModels: ['glm-4.7-flash'],
     /**
      * **No `timeoutMs` on purpose**, which is what *needs a longer timeout* means here. These
      * are reasoning models and no number was ever published for them; a row that declares
@@ -452,6 +489,7 @@ export const PROVIDERS: Provider[] = [
     baseUrl: 'https://api.cohere.com/compatibility/v1',
     models: '/models',
     auth: 'required',
+    pricing: 'free',
     /**
      * **A thousand calls a month, not a token budget.** This is the row the field exists for:
      * `rpd` would either strand most of it or overrun it in the first week, because a call is
@@ -475,6 +513,7 @@ export const PROVIDERS: Provider[] = [
     baseUrl: 'https://api.aionlabs.ai/v1',
     models: '/models',
     auth: 'required',
+    pricing: 'published',
     trainsOnYourData: 'unknown',
     verified: '2026-08-30',
   },
@@ -486,6 +525,7 @@ export const PROVIDERS: Provider[] = [
     baseUrl: 'https://apihub.agnes-ai.com/v1',
     models: '/models',
     auth: 'required',
+    pricing: 'free',
     // Its flash model reasons before it answers — 20s to the first token on a one-word
     // completion — so the default patience calls a working provider dead.
     timeoutMs: 60_000,
@@ -499,6 +539,7 @@ export const PROVIDERS: Provider[] = [
     baseUrl: 'https://router.requesty.ai/v1',
     models: '/models',
     auth: 'required',
+    pricing: 'published',
     trainsOnYourData: 'unknown',
     verified: '2026-08-30',
   },
@@ -509,6 +550,7 @@ export const PROVIDERS: Provider[] = [
     baseUrl: 'https://api.sea-lion.ai/v1',
     models: '/models',
     auth: 'required',
+    pricing: 'free',
     trainsOnYourData: 'unknown',
     verified: '2026-08-30',
   },
@@ -519,6 +561,7 @@ export const PROVIDERS: Provider[] = [
     baseUrl: 'https://api.navy/v1',
     models: '/models',
     auth: 'required',
+    pricing: 'published',
     /**
      * **It wants to know who is calling.** The same argument as OpenRouter's attribution
      * headers at the top of this table: being identifiable costs nothing and is the polite

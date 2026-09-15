@@ -197,6 +197,39 @@ test('a cache from before the per-provider clock is honoured rather than re-fetc
   expect((await upgraded.refresh({ ...provider, id: 'other' })).added).toHaveLength(0)
 })
 
+test('a price nobody published is not free, on a provider that prices what it sells (D154)', async () => {
+  const path = file()
+  const catalog = new Catalog(path)
+  // Requesty's shape: prices per token under names of its own, a tier table where OpenRouter
+  // keeps its two strings, and a tool flag rather than a parameter list. Read as before, all
+  // 684 of its models arrived at zero — and zero is the free tier.
+  payload = {
+    data: [
+      { id: 'sail/gpt-oss-120b', input_price: 6e-8, output_price: 4e-7, pricing: [{ input_price: 6e-8 }], supports_tool_calling: true, context_window: 131_072 },
+      { id: 'nvidia/nemotron-3-super-120b-a12b', input_price: 0, output_price: 0, supports_tool_calling: true, context_window: 262_144 },
+      // Navy's shape for a row it did not price: the field is there, and it says nothing.
+      { id: 'schizogpt', pricing: null },
+      { id: 'GLM-4.7-Flash' },
+    ],
+  }
+  await catalog.refresh({ ...provider, pricing: 'published', freeModels: ['glm-4.7-flash'] }, 0)
+
+  const by = new Map(catalog.fetched.map((m) => [m.id, m]))
+  expect(by.get('sail/gpt-oss-120b')?.tier).toBe('T2')
+  expect(by.get('sail/gpt-oss-120b')?.priceIn).toBeCloseTo(0.06)
+  expect(by.get('sail/gpt-oss-120b')?.supportsTools).toBe(true)
+  // Zero that somebody wrote down is free.
+  expect(by.get('nvidia/nemotron-3-super-120b-a12b')?.tier).toBe('T1')
+  // Silence is not. The row is not carried at all, rather than carried at a price it is not.
+  expect(by.has('schizogpt')).toBe(false)
+  // Unless the provider's own terms name it free — case aside, because ids are not consistent.
+  expect(by.get('GLM-4.7-Flash')?.tier).toBe('T1')
+})
+
+test('every provider says what a missing price means, because the default is the old mistake', () => {
+  for (const one of PROVIDERS) expect(one.pricing, one.id).toMatch(/^(free|published)$/)
+})
+
 test('a provider that publishes nothing but ids is still a list of models', async () => {
   const path = file()
   const catalog = new Catalog(path)
