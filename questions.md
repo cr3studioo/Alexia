@@ -288,8 +288,11 @@ are still open, and the last one is the largest contract question left.*
 
 *One question, and it is G12's ceiling meeting a case G12 did not have: a button.*
 
-- [ ] **G13.** **May a plugin's own call spend, when a person pressed the button that made
-  it?** G12 answered *a plugin on its own clock spends nothing but free* (D96), and the
+- [x] **G13.** **May a plugin's own call spend, when a person pressed the button that made
+  it?** **Answered 2026-09-15 (D156): yes.** A call started by a person pressing a declared
+  `action` is a run and carries a run id, so the monthly cap and the spend preview apply as
+  they do to any task. A plugin on its own clock stays free only (D96). *The question as it
+  was asked:* G12 answered *a plugin on its own clock spends nothing but free* (D96), and the
   derivation is the good part — *attributed to a plugin, belonging to no run* is a timer
   waking at 3am with nobody to show a spend preview to. **Adapt is not that.** Somebody
   opened a settings screen, typed a description, pressed a button and watched a progress bar,
