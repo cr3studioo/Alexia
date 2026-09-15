@@ -149,6 +149,12 @@ export async function updateAvailable(): Promise<Update | undefined> {
  * a dialog, and Alexia comes back on its own. The only branch worth writing is the failure
  * one, which is why the error is thrown rather than swallowed the way everything else here is.
  *
+ * **That was Windows, and a Mac does return** (D152). There the updater replaces the `.app`
+ * bundle in place and hands back, with nothing ending the process: the first Mac update sat at
+ * 100% over an Alexia that had already been swapped out from under it. So when the install
+ * comes back, this asks the shell to relaunch — and that call does not return either, which
+ * keeps the one promise above true on every platform.
+ *
  * `onProgress` reports bytes as they arrive. It is the difference between a button that looks
  * broken for ninety seconds and one that is visibly working.
  */
@@ -169,4 +175,5 @@ export async function installUpdate(rid: number, onProgress?: (done: number, tot
     }
   }
   await core.invoke('plugin:updater|download_and_install', { rid, onEvent: channel })
+  await core.invoke('relaunch')
 }
