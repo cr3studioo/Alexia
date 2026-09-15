@@ -216,6 +216,34 @@ survives; the next message goes back to their choice. Changing the setting is th
    says *spent* is tried anyway: D107 already says that count is a deliberately low copy of
    somebody else's number.
 
+**Built 2026-09-15 (D158)**, all six, in core and the shell. Where the build differs from the
+text above, or had to decide something the text did not:
+
+- **Patience counts bytes.** A reasoning model streaming its thoughts and a gateway's keep-alive
+  both reset the gap. A row's `timeoutMs` is its first-byte patience, `idleMs` its gap. Ollama
+  on this machine gets 180 s to the first byte.
+- **A stream that ends without `[DONE]` or a `finish_reason`, or sends an error frame, is a
+  failure.** Before, it came back as a finished answer.
+- **A cut-off answer moves on only when free.** A paid one was billed, and the next paid model
+  would hit the same ceiling for a second bill.
+- **A 401 on a keyless provider with no key sent is one model wanting a key**, not the
+  provider's key refused, so that provider's other models are still asked.
+- **A sequence keeps today's filters, money included** (allowance, sidegrade). Rows of one model
+  on two providers go key first, then the keyless floor. On this machine each Nemotron in the
+  owner's order is on both OpenRouter and Kilo.
+- **The switch line is said as the new model starts answering**, not before it is asked:
+  *Nemotron 3 Super is rate-limited right now — this answer is from Gemma 4 31B.* It is also
+  said inside a sequence.
+- **"Use Automatic for this answer"** is `POST /api/chat {again: true, automatic: true}`. It asks
+  the question already in the conversation, from where the task stopped, and appends nothing.
+  A pin also gets *Try again*.
+- Found while testing: four `serve.test` failures were this Mac's Ollama answering the suite;
+  `ServeOptions.local: false` keeps it out.
+
+Tests: `router.test.ts` (modes, every failure kind, the stop sentence), `provider.test.ts`
+(patience, dropped streams, error frames, unreachable, keyless 401), `agent.test.ts`, and
+`fallback.test.ts` over `/api/chat`. The shell was driven in headless Chromium against a stub.
+
 **Acceptance.** A fake provider answering 402 then a working one: Automatic answers from the
 second, and the transcript shows the switch line. The same with a single pin: the answer stops
 with the 402 sentence and two buttons. A sequence of two failing models with a third working
@@ -227,15 +255,16 @@ never answers: the next rung is asked after 30 s.
 
 ## Order of work
 
-**Status 2026-09-15:** step 1 is built and tested. Measured against the live lists: Requesty
-684 → **12** free (9 with tools), Navy 146 → 101 rows (45 unpriced dropped, 1 free), Kilo 370
-rows (22 free), OpenRouter 441 (23 free). Under *free only*, the Models tab no longer lists
-paid rows. Not yet: *Funded*, the keyless group and its switch, key events, key removal.
+**Status 2026-09-15:** steps 1 and 2 are built and tested. Measured against the live lists:
+Requesty 684 → **12** free (9 with tools), Navy 146 → 101 rows (45 unpriced dropped, 1 free),
+Kilo 370 rows (22 free), OpenRouter 441 (23 free). Under *free only*, the Models tab no longer
+lists paid rows. §3 is in core and the shell (D158), and it reaches the installed app only with
+a new build. Not yet: *Funded*, the keyless group and its switch, key events, key removal. Next: §2.
 
 1. **§1 steps 1–2**: unpriced is not free, one `available()`. Smallest change, and it closes
    a real billing hole (Requesty) before anything else.
-2. **§3**: failure kinds, the three modes, default timeouts. This is the one people feel on
-   every rate-limited evening.
+2. ~~**§3**: failure kinds, the three modes, default timeouts. This is the one people feel on
+   every rate-limited evening.~~ Done 2026-09-15 (D158).
 3. **§2**: ranking. Borrowed `weekly` and *routers last* first, because they are cheap. Strikes
    and size-from-id second.
 4. **§1 steps 3–4**: key events and key removal, which need the shell.
@@ -254,4 +283,5 @@ paid rows. Not yet: *Funded*, the keyless group and its switch, key events, key 
 - [ ] **The model-size heuristic.** Reading `-2.6b` out of an id is right for most open
   models and says nothing about closed ones. Acceptable as a tiebreak and never a filter?
 - [ ] **A restart after a dead stream** costs the tokens already streamed. Worth it for the
-  answer, or stop and ask?
+  answer, or stop and ask? **Built as a restart** (D158), since the tokens are free on the free
+  rungs where streams die most. Asking first is still open.
