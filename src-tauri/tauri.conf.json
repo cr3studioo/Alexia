@@ -18,7 +18,7 @@
   "bundle": {
     "active": true,
     "targets": ["nsis"],
-    "icon": ["icons/icon.ico", "icons/icon.png"],
+    "icon": ["icons/icon.icns", "icons/icon.ico", "icons/icon.png"],
     "publisher": "SignPath Foundation",
     "shortDescription": "An assistant that runs on your own machine.",
     "longDescription": "Alexia runs on your machine, routes work to whichever model suits it, and can be extended by dropping a folder in — or emptied by deleting one.",
