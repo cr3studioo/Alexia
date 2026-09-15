@@ -4,8 +4,8 @@
 > It is a build plan, not research: [`models_plan.md`](./models_plan.md) is the August research
 > on which providers exist and what they give away, and this builds on it. **Agreed
 > 2026-09-15** and recorded in [`Alexia.md`](./Alexia.md) as **D154** (§1–2) and **D155**
-> (§3, which changes D112); **D158** and **D159** record how §3 and §2 were built. Tracked as
-> **M8-6** in [`plan.md`](./plan.md).
+> (§3, which changes D112); **D158** and **D159** record how §3 and §2 were built, and **D160**
+> the owner's answers that followed (§4). Tracked as **M8-6** in [`plan.md`](./plan.md).
 >
 > Started 2026-09-15. Every claim below was checked against the code, this machine's
 > `cache/models.json` (1,830 rows) and the real `route()`, not recalled.
@@ -299,6 +299,74 @@ never answers: the next rung is asked after 30 s.
 
 ---
 
+## 4. After §2: the owner's answers (D160)
+
+Asked in plain words once §2 was built, and answered 2026-09-15. Each line says whether it is
+**decided**, **proposed** (suggested here, not yet confirmed by the owner), or **open**.
+
+### Decided
+
+- **Size.** A size read from a name counts the whole model (`30b-a3b` is 30B), and only ever
+  orders: names can be wrong, so it never rules a model out. This is what D159 built.
+- **Free limits are protected per provider account**, not by locking one model to a chat. A
+  free allowance is usually shared by every free model on one account (OpenRouter's daily free
+  requests are), so a lock on one model would protect nothing. The chat somebody is watching has
+  first claim on each provider's free requests; plugins (Telegram, Adapt) take another provider,
+  wait, or run locally.
+- **A switch to another model is said twice**: a pop-up that goes away after three seconds, on
+  every switch (rate limit, timeout, error, an answer that broke off), and the line in the chat
+  that already says it stays, as the record.
+- **An answer that breaks off restarts on the next model without asking, paid ones included.**
+  That is what `send()` already does. D158's rule is unchanged: a paid answer that reached its
+  length limit is kept, not bought again.
+- **Crossing into paid gets a switch**, shown under the slider when it is on *free then paid*:
+  - **On**: Automatic moves to a paid model when the free ones are done, and a warning sits under
+    the message box (*paid models will be used once the free ones are done*).
+  - **Off**: the work pauses, and waits for *Allow switching to a paid model*.
+- **When Adapt gives up, core stops too.** `supervisor.ts` hands `sampling/createMessage` to the
+  host without the SDK's abort signal; it is to be passed through `host.sampling()` into `send()`.
+
+### Asked for, to be designed (a clickable mock-up first)
+
+- **A table on the Models screen that ranks every model and shows why**: its place, its
+  attributes, and what Alexia thinks of it, as tags such as *new*, *busy* and *broken*, so Alexia
+  can set aside a model that does not help on its own.
+- **Kept current without anybody importing a model.** Every provider's list is already fetched
+  by Alexia itself; what changes daily should show up in the table.
+
+### Proposed, not yet confirmed
+
+- **Busy is not broken.** Most free failures are evening rate limits. *Busy* sinks and comes back
+  on its own (D159's strikes); *broken* is retired, always empty or always failing.
+- **Set aside, never deleted, and never out of somebody's own choice.** A broken model is hidden
+  with its reason on screen and comes back if it starts working. A pinned or listed model is shown
+  as *not available*, never removed (D155).
+- **New is the middle, not the bottom.** A model that just appeared has no usage figure yet; a new
+  model is sometimes the best one, and OpenRouter's figure fills in within a week.
+- **Hallucinating needs a person.** A script sees errors, timeouts and empty answers, but cannot
+  tell a wrong answer from a right one. The signal is a *bad answer* press — Alexia.md already
+  plans *try that again with a smarter model*, which collects exactly that.
+- **The list on a timer.** Today it is fetched at startup and when the Models tab opens, so an app
+  left open for a week has a week-old list.
+- **Limits read from answers.** Limits are typed into `PROVIDERS` by hand with a *verified* date,
+  because providers do not publish them in a readable list; some send *requests left* with every
+  answer, which could keep the ledger honest.
+- **The paid switch works through the daily allowance** Alexia already has, so there are not two
+  money settings that can disagree: on spends up to the allowance without asking, off asks. A
+  paused task started from Telegram gives up after a while and says so there. The warning also
+  covers the case where no free model *can* do the job (a picture, a long conversation), not only
+  where they are used up.
+
+### Open
+
+- **Sending model statistics to a server of the owner's.** *Decided later.* It would change two
+  things Alexia.md says (*no user backend at all*, and the registry's *no analytics*). If it comes:
+  opt-in, no prompts, keys, names or times of day, a privacy policy (GDPR applies in Europe),
+  protection against fake reports, and a published *known broken* list the app reads as one more
+  signal — never a server deleting models from people's apps.
+
+---
+
 ## Order of work
 
 **Status 2026-09-15:** steps 1 and 2 are built and tested. Measured against the live lists:
@@ -306,7 +374,7 @@ Requesty 684 → **12** free (9 with tools), Navy 146 → 101 rows (45 unpriced 
 Kilo 370 rows (22 free), OpenRouter 441 (23 free). Under *free only*, the Models tab no longer
 lists paid rows. §3 is in core and the shell (D158), and it reaches the installed app only with
 a new build. §2 is built too (D159), and also needs a new build. Not yet: *Funded*, the keyless
-group and its switch, key events, key removal. Next: §1 steps 3–4.
+group and its switch, key events, key removal. Next: §1 steps 3–4, then §4 (D160).
 
 1. **§1 steps 1–2**: unpriced is not free, one `available()`. Smallest change, and it closes
    a real billing hole (Requesty) before anything else.
@@ -317,6 +385,8 @@ group and its switch, key events, key removal. Next: §1 steps 3–4.
 4. **§1 steps 3–4**: key events and key removal, which need the shell.
 5. ~~**Alexia.md**: D112 rewritten with the three modes, and the decision log entry.~~ Done
    2026-09-15 (D154, D155).
+6. **§4** (D160): Adapt's cancel reaching `send()` (small); the mock-up of the model table, then
+   its build; free limits per account; the switch pop-up; the paid switch.
 
 ## Open decisions
 
@@ -324,13 +394,12 @@ group and its switch, key events, key removal. Next: §1 steps 3–4.
   switched on by default and switchable off (D154).
 - [x] **A sequence falls through within itself.** **Yes** — and never past its last entry
   (D155).
-- [ ] **Automatic and paid.** With the slider on *free then paid*, does Automatic's
-  fallthrough cross into paid models after the last free one, with the existing one-line
-  notice (§9.5 of `models_plan.md`)? **Recommended:** yes, unchanged from today.
-- [ ] **The model-size heuristic.** Reading `-2.6b` out of an id is right for most open
-  models and says nothing about closed ones. Acceptable as a tiebreak and never a filter?
-  **Built as an order and never a filter** (D159), above `weekly`. Also open: whether a mixture
-  of experts should count its active part (`-30b-a3b` counts as 30B today).
-- [ ] **A restart after a dead stream** costs the tokens already streamed. Worth it for the
-  answer, or stop and ask? **Built as a restart** (D158), since the tokens are free on the free
-  rungs where streams die most. Asking first is still open.
+- [x] **Automatic and paid.** With the slider on *free then paid*, does Automatic's
+  fallthrough cross into paid models after the last free one? **A switch decides** (D160): on,
+  it does, with a warning under the message box; off, it pauses and asks. See §4.
+- [x] **The model-size heuristic.** Reading `-2.6b` out of an id is right for most open
+  models and says nothing about closed ones. **An order and never a filter, and the whole
+  model counts** (`-30b-a3b` is 30B): built in D159, confirmed in D160.
+- [x] **A restart after a dead stream** costs the tokens already streamed. **Restart without
+  asking, paid included** (D160), with a three-second pop-up and the line in the chat.
+- [ ] **Model statistics to the owner's server.** Decided later (D160). See §4.

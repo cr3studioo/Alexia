@@ -92,11 +92,11 @@ A personality is sent **on every step**, as the tail of the system prompt (`agen
 Roughly, 400 words is 500 tokens; a 15-step task spends 7–8k tokens re-sending it. On a paid
 model that is money; on a free one it is context, rate limit, and half-followed instructions.
 
-| Size | Rough budget | Keeps |
+| Size | Budget (D160) | Keeps |
 |---|---|---|
-| **Small** | 60–80 tokens | Name, register, what to call the user, at most three hard rules |
-| **Medium** | ~200 tokens | All four headings, one or two lines each |
-| **High** | ~500 tokens | The full document |
+| **Small** | about 100 words | Name, register, what to call the user, at most three hard rules |
+| **Medium** | about 300 words | All four headings, one or two lines each |
+| **High** | about 600 words | The full document |
 
 **Who gets which, by capability, not price** (the signals come from `model_plan.md` §2):
 
@@ -151,7 +151,9 @@ likely to run a reasoning model out of room.
 
 **What.** After Adapt or Refine, two sample answers in the new voice before saving: *who are
 you?*, and one prompt built from her own *What you do without being asked* section. Answered
-by the model Automatic would use for chat. Buttons: **Use**, **Refine**, **Discard**.
+by the model Automatic would use for chat. Buttons: **Use**, **Refine**, **Discard**, and
+**Skip** from the very first time (D160) — the automatic checks, such as refusing a cut-off
+personality, run whether or not the samples are heard.
 
 **Why.** Adapt currently saves and switches in one press, so the first time anybody hears the
 new personality is in a real conversation. The preview also catches the case this plan
@@ -173,7 +175,8 @@ has in `plugins.answers()`. It names nobody.
 
 **What.** When the Memory plugin is enabled, Adapt splits what it reads. Facts about the
 person (their name, their goals, their deadlines) are offered to `memory.remember` with one
-confirm. How to behave stays in the personality. Without Memory, nothing changes.
+confirm for all of them (D160). Proposed, not yet confirmed: one list with every fact ticked, so a
+wrong one can be unticked and the rest still saved with one press. How to behave stays in the personality. Without Memory, nothing changes.
 
 **Why.** Efficiency: facts in the personality are re-sent on every step whether they matter
 or not, and Memory recalls them only when they do. It also stops two places from disagreeing
@@ -243,10 +246,10 @@ for paid models, an order that lets provider prompt caching reuse the personalit
 
 - [x] **G13.** May Adapt, a button somebody pressed, use a paid model? **Yes** (D156).
 - [x] **All ten improvements.** **Approved** (D157).
-- [ ] **The budgets.** 60–80 / ~200 / ~500 tokens?
-- [ ] **The high size for paid models.** Still capped at 400 words, when the first real
-  description was 5,825 characters?
-- [ ] **The preview (3).** Always shown, or skippable once somebody has seen a few?
-- [ ] **Facts to memory (5).** One confirm for the batch, or each fact separately?
-- [ ] **The old broken row on this machine.** Forget it, or keep it until improvement 1 can
-  show what it was?
+- [x] **The budgets.** **About 100 / 300 / 600 words** (D160).
+- [x] **The high size for paid models.** **About 600 words** (D160). The words it was written
+  from are kept (improvement 1), so a long description is not lost by being distilled.
+- [x] **The preview (3).** **Shown, with a Skip button from the first time** (D160).
+- [x] **Facts to memory (5).** **One confirm for all of them** (D160).
+- [x] **The old broken row on this machine.** **Delete it** (D160) — from the app's own
+  Personality screen, never from the database, and never by removing the plugin.
