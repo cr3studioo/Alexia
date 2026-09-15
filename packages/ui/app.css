@@ -2266,6 +2266,15 @@ button[disabled] {
   font-size: var(--text-sm);
 }
 
+/* A stop in somebody's own choice (D155): the reason above, and this one answer's way on. */
+.turn.refusal .stop-offer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  white-space: normal;
+}
+
 /* ---- the step trace -------------------------------------------------------------------
 
    The hardest thing here to draw and the thing people look at most. A log: one row per step,

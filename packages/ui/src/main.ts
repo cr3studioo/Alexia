@@ -1365,6 +1365,56 @@ async function ask(question: string, files: File[] = []): Promise<void> {
       said.append(shown)
     }
   }
+  await respond(files.length > 0 ? 'Reading…' : '…', said, async () => {
+    /**
+     * Made small enough to send, before anything is sent.
+     *
+     * Hoisted out of the request body on purpose: the user's own bubble is already on screen by
+     * now, so re-encoding a photograph does not delay the message appearing — it delays only
+     * the send, which was going to be the slow part anyway and is now a great deal less slow.
+     */
+    const uploads =
+      files.length === 0 ? []
+      : await Promise.all(
+          files.map(async (file) => {
+            const { blob, type, was } = await smaller(file)
+            // Re-encoding somebody's picture is a real change to what was sent, and a change
+            // nobody is told about is the thing this codebase refuses everywhere else.
+            if (was !== undefined) shrank.set(file.name, `${readable(was)} → ${readable(blob.size)}`)
+            return { name: file.name, type, data: await base64(blob) }
+          }),
+        )
+    if (carried && shrank.size > 0) {
+      carried.textContent = `📎 ${files
+        .map((file) => `${file.name}${shrank.has(file.name) ? ` (${shrank.get(file.name)!})` : ''}`)
+        .join(', ')}`
+    }
+    return { text: question, ...(uploads.length > 0 && { files: uploads }) }
+  })
+}
+
+/**
+ * **The question that stopped, asked once more** (D155): on Automatic, or on the same model.
+ *
+ * Nothing new appears on the user's side, because nothing new was said — core asks the
+ * question already in the conversation, from wherever the task stopped.
+ */
+function again(automatic: boolean): Promise<void> {
+  return respond('…', undefined, () => Promise.resolve({ again: true, automatic }))
+}
+
+/**
+ * One answer, streamed into a bubble of its own: everything core says while it is made.
+ *
+ * `body` is a promise so the caller can do slow work — shrinking a photograph — after the
+ * waiting bubble is already on screen. `said` is the question's own bubble, when this answer
+ * has one to hang what was read out of the attachments under.
+ */
+async function respond(
+  waiting: string,
+  said: HTMLElement | undefined,
+  body: () => Promise<Record<string, unknown>>,
+): Promise<void> {
   const tools = toolLine()
   live.begin(document.querySelector<HTMLElement>('#chat-title')?.textContent ?? 'This conversation')
   const answer = bubble('assistant')
@@ -1373,39 +1423,25 @@ async function ask(question: string, files: File[] = []): Promise<void> {
    * a step made is appended to the same bubble by `showFiles`, and `answer.textContent = ''`
    * on the first token would take the picture with it. The node stays; only its data moves.
    */
-  const prose = document.createTextNode(files.length > 0 ? 'Reading…' : '…')
+  const prose = document.createTextNode(waiting)
   answer.replaceChildren(prose)
   let started = false
-
   /**
-   * Made small enough to send, before anything is sent.
-   *
-   * Hoisted out of the request body on purpose: the user's own bubble is already on screen by
-   * now, so re-encoding a photograph does not delay the message appearing — it delays only
-   * the send, which was going to be the slow part anyway and is now a great deal less slow.
+   * Where the model turn now streaming began in `prose`. A task's turns share one bubble, so a
+   * turn that is withdrawn (`restart`) takes back its own words and leaves the earlier ones.
    */
-  const uploads =
-    files.length === 0 ? []
-    : await Promise.all(
-        files.map(async (file) => {
-          const { blob, type, was } = await smaller(file)
-          // Re-encoding somebody's picture is a real change to what was sent, and a change
-          // nobody is told about is the thing this codebase refuses everywhere else.
-          if (was !== undefined) shrank.set(file.name, `${readable(was)} → ${readable(blob.size)}`)
-          return { name: file.name, type, data: await base64(blob) }
-        }),
-      )
-  if (carried && shrank.size > 0) {
-    carried.textContent = `📎 ${files
-      .map((file) => `${file.name}${shrank.has(file.name) ? ` (${shrank.get(file.name)!})` : ''}`)
-      .join(', ')}`
-  }
+  let turnFrom = 0
 
   const response = await fetch('/api/chat', {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-alexia-token': token },
-    body: JSON.stringify({ text: question, ...(uploads.length > 0 && { files: uploads }) }),
+    body: JSON.stringify(await body()),
   })
+  if (response.status === 409) {
+    // Asked again after the question had its answer: there is nothing left to answer.
+    answer.remove()
+    return
+  }
   if (!response.body) {
     prose.data = 'Alexia is not answering.'
     return
@@ -1420,10 +1456,19 @@ async function ask(question: string, files: File[] = []): Promise<void> {
       prose.data += event.delta
       log.scrollTop = log.scrollHeight
     }
+    // The model writing this turn stopped partway and another is starting it again (D155).
+    // Its half-sentence goes, so two models' words are never run together in one bubble.
+    if (event.restart === true) {
+      prose.data = prose.data.slice(0, turnFrom)
+      if (prose.data === '') {
+        prose.data = waiting
+        started = false
+      }
+    }
     // The one plain line before a charge, and the monthly warning, land in the same place.
     if (typeof event.note === 'string') say(event.note)
     const attached = event.attached as { name: string; text?: string; refusal?: string }[] | undefined
-    if (attached) showRead(said, attached)
+    if (attached && said) showRead(said, attached)
     if (typeof event.ask === 'string') askPermission(event.ask)
     // A learned skill just fired, and it can be wrong. Attribution goes where the work is
     // happening, with the two things you would want at that moment beside it (M4-5).
@@ -1442,6 +1487,8 @@ async function ask(question: string, files: File[] = []): Promise<void> {
         }
       | undefined
     if (step) {
+      // Whatever her next words are, they belong to the turn after this step.
+      turnFrom = started ? prose.data.length : 0
       if (step.progress) {
         live.moving(step.n, step.progress)
       } else if (step.ok === undefined) {
@@ -1462,7 +1509,8 @@ async function ask(question: string, files: File[] = []): Promise<void> {
     }
     if (typeof event.error === 'string') {
       answer.remove()
-      bubble('refusal', event.error)
+      const stopped = bubble('refusal', event.error)
+      if (event.chosen === 'pinned' || event.chosen === 'sequence') offerInstead(stopped, event.chosen)
     }
     const done = event.done as
       | { model?: string; bubble?: Bubble; spent?: number; warning?: string; ended?: string; steps?: number }
@@ -1487,6 +1535,32 @@ async function ask(question: string, files: File[] = []): Promise<void> {
       if (done.ended === 'ceiling') say(`Stopped after ${String(done.steps ?? 0)} steps — that is the ceiling, not the end of the task.`)
     }
   }
+}
+
+/**
+ * **A stop in somebody's own choice** (D155): one pinned model, or the end of their list. The
+ * reason is core's sentence; what is offered under it is this one answer on Automatic — and,
+ * for one model, the same model again. Neither changes a setting. The pin is theirs, and so is
+ * the list, and a button that quietly rewrote them would be the router choosing for them again.
+ */
+function offerInstead(stopped: HTMLElement, chosen: 'pinned' | 'sequence'): void {
+  const buttons = document.createElement('div')
+  buttons.className = 'stop-offer'
+  const offer = (label: string, automatic: boolean): HTMLButtonElement => {
+    const one = document.createElement('button')
+    one.type = 'button'
+    one.textContent = label
+    if (!automatic) one.className = 'quiet-button'
+    one.addEventListener('click', () => {
+      buttons.remove()
+      running(() => again(automatic))
+    })
+    return one
+  }
+  buttons.append(offer('Use Automatic for this answer', true))
+  if (chosen === 'pinned') buttons.append(offer('Try again', false))
+  stopped.append(buttons)
+  log.scrollTop = log.scrollHeight
 }
 
 // ---- commands: the shortcut half -----------------------------------------------------
@@ -1629,12 +1703,17 @@ form.addEventListener('submit', (event) => {
   drawAttached()
   text.value = ''
   menu.hidden = true
+  running(() => ask(question, files))
+})
+
+/** A task on screen: the send button held, the stop button shown, and the tray saying so. */
+function running(task: () => Promise<void>): void {
   button.disabled = true
   stop.hidden = false
   // The tray is the only answer to *is it running?* the target user has, so it says so for
   // the whole of a task rather than only while a window happens to be open (M5-2).
   tray('working')
-  void ask(question, files)
+  void task()
     .catch((error: unknown) => {
       bubble('refusal', String(error))
       tray('error')
@@ -1645,7 +1724,7 @@ form.addEventListener('submit', (event) => {
       prompt.hidden = true
       text.focus()
     })
-})
+}
 
 // Enter sends, Shift+Enter is a newline — the shape every chat window has, so nobody has
 // to be told.
