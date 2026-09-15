@@ -2,8 +2,9 @@
 
 > **What this doc is.** The plan for the second version of `plugins/persona`: what is fixed,
 > what it should feel like, and the work in order. **Agreed 2026-09-15**, all ten improvements
-> included, and recorded in [`Alexia.md`](./Alexia.md) as **D156** (G13) and **D157**. Tracked
-> as **M8-7** in [`plan.md`](./plan.md). What is still open is at the end.
+> included, and recorded in [`Alexia.md`](./Alexia.md) as **D156** (G13) and **D157**; **D160**
+> settled the budgets, the preview and the facts, and **D161** that Adapt counts as the chat for
+> free requests. Tracked as **M8-7** in [`plan.md`](./plan.md). What is still open is at the end.
 >
 > **Depends on [`model_plan.md`](./model_plan.md).** Which model writes a personality and
 > which model reads it are routing questions, and that plan is where they are fixed.
@@ -72,17 +73,23 @@ model is ignored (M8-1).
 
 1. **M8-1.** `intelligencePriority` sorts best-first; manifest `min_tier` becomes
    `Ask.minTier`.
-2. **Never a router.** Adapt asks for one real model, even when the chat pin is a router.
-   `model_plan.md` §2 gives the router a recognisable label (`routes()` in `catalog.ts`, D159),
-   so this is one filter.
+2. **Never a router, and never a model Alexia doubts.** Adapt asks for one real model, even when
+   the chat pin is a router. `model_plan.md` §2 gives the router a recognisable label (`routes()`
+   in `catalog.ts`, D159), so this is one filter; §4 B's tags add the rest (*new · not tried yet*,
+   set aside, *too many errors*, *gave bad answers*), read from the same `judge()`.
 3. **Prefer a model that answers, not one that thinks forever.** `model_plan.md` §2's strikes
    are built (D159): `send()` records a timeout or a cut-off free answer, and the model sinks for
    about an hour, so one that ran out on Adapt is not first on the next press. What is left here
    is the plugin's side: when Adapt gives up at 110 s, core is not told (the sampling request
    drops its cancel signal), so `send()` goes on walking the plan behind a refusal already shown.
+   Fixed as `model_plan.md` §4 A (D160).
 4. **G13 is answered: yes** (D156). A button somebody pressed is a run: Adapt carries a run
    id, so it may use a paid model under the monthly cap and the spend preview. That matters
    most for §2, because the small size is a distillation and weak models distil worst.
+5. **Adapt counts as the chat, not as a plugin** (D161). Background requests keep off
+   day-limited providers so the chat keeps its free requests (`model_plan.md` §4 F), and Adapt
+   is exempt: somebody pressed it and is watching its progress bar, so it may use the OpenRouter
+   key's free requests the way the chat does.
 
 ---
 
@@ -101,7 +108,9 @@ model that is money; on a free one it is context, rate limit, and half-followed 
 **Who gets which, by capability, not price** (the signals come from `model_plan.md` §2):
 
 - **Small:** a size class under 7B, a context under 32k, **any router**, and anything whose size
-  is unknown *and* that has a strike. When in doubt, the weaker reader.
+  is unknown *and* that Alexia doubts: *new · not tried yet*, *too many errors* or *gave bad
+  answers* in `model_plan.md` §4's record (D161), or a strike in the last hour. When in doubt,
+  the weaker reader.
 - **Medium:** free hosted models and local models of 7B and up.
 - **High:** paid models.
 
@@ -224,6 +233,8 @@ she should have said. The last few become examples that **Refine** uses as evide
 
 **Why.** It turns *something is off* into a concrete fix without the person having to find
 words for a system prompt. It needs a message action in the shell, which is the larger part.
+`model_plan.md` §4 I adds *Bad answer* in the same place (D161): that one is about the model,
+this one about the personality, and they are built as one row of message actions.
 
 **Also worth doing, later:** starter *descriptions* (not documents: D105 showed a model copies
 a worked example); export and import a personality as a `.md` file, through the §6 check; and
@@ -233,14 +244,27 @@ for paid models, an order that lets provider prompt caching reuse the personalit
 
 ## Order of work
 
-1. **`model_plan.md` §1 steps 1–2 and §3.** Unpriced is not free, one `available()`, and
-   fallback that works. Every personality problem here got worse because of routing.
-2. **The trace line** from *Where it stands*.
-3. **Quick wins:** improvements 1, 6, 7, and the `/persona` command from 8.
-4. **§1, the writer:** M8-1, never a router, strikes. Then G13.
-5. **§2, three sizes.**
-6. **Improvements 2, 3, 4, 5, 9.**
-7. **Improvement 10**, and the header chip from 8.
+*Brought up to date 2026-09-15 for D160 and D161.*
+
+0. **On this machine, whenever the owner likes:** delete the broken *Alexia* row from the app's
+   own Personality screen (D160). Never from the database, and never by removing or reinstalling
+   the plugin, which would delete every saved personality.
+1. ~~**`model_plan.md` §1 steps 1–2 and §3.** Unpriced is not free, one `available()`, and
+   fallback that works.~~ Done (D154, D158); §2's ranking and strikes too (D159). All three reach
+   the installed app only in a new build.
+2. **`model_plan.md` §4 A: Adapt's cancel reaches `send()`** (D160). Before anything that makes
+   Adapt call more, since today a refusal on screen leaves core still asking.
+3. **The trace line** from *Where it stands*.
+4. **Quick wins:** improvements 1, 6, 7, and the `/persona` command from 8.
+5. **§1, the writer:** M8-1; never a router, and never a model `model_plan.md` §4 B tags as new,
+   set aside or doubted (so after §4 B); then G13's build (D156), a run id on Adapt, which also
+   makes it the chat for free requests (D161, `model_plan.md` §4 F).
+6. **§2, three sizes**, at about 100, 300 and 600 words (D160), with *small* also for a model §4 B
+   doubts.
+7. **Improvements 2, 3, 4, 5, 9.** The preview (3) shows with **Skip** from the first time; facts
+   (5) go to Memory with one yes for all (D160).
+8. **Improvement 10** with `model_plan.md` §4 I's *Bad answer*, as one row of message actions,
+   and the header chip from 8.
 
 ## Open decisions
 
@@ -253,3 +277,5 @@ for paid models, an order that lets provider prompt caching reuse the personalit
 - [x] **Facts to memory (5).** **One confirm for all of them** (D160).
 - [x] **The old broken row on this machine.** **Delete it** (D160) — from the app's own
   Personality screen, never from the database, and never by removing the plugin.
+- [x] **Adapt and the free requests kept for the chat.** **Adapt counts as the chat** (D161),
+  which keeps D156; D160 had listed it among the plugins.
