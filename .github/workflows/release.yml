@@ -321,13 +321,20 @@ jobs:
           node --input-type=module - <<'NODE'
           import { readdirSync, readFileSync, writeFileSync } from 'node:fs'
           import { join } from 'node:path'
-          // Tauri's static endpoint format, and only the fields it reads. The URL is the
-          // release asset this same job is about to upload — `releases/latest/download/<name>`
-          // rather than a tag, so this file does not have to know its own version twice.
+          // Tauri's static endpoint format, and only the fields it reads.
+          //
+          // **The URL names this release's tag, never `latest`** (D151). The app reads this file
+          // at startup and downloads only when somebody presses the button — which in a tray app
+          // can be hours later. With `releases/latest/download/<name>` the address moved the
+          // moment the next release went out, so an offer made before it pointed at a file the
+          // new release did not have: 0.5.0's `Alexia_darwin-aarch64.app.tar.gz` answered 404
+          // once 0.5.1 was latest. Same name would have been worse, not better — the new bytes
+          // under the old signature, refused as tampered. Pinned, a stale offer installs exactly
+          // what it offered, and the next start offers the rest.
           const files = readdirSync('out')
           const entry = (file) => ({
             signature: readFileSync(join('out', `${file}.sig`), 'utf8').trim(),
-            url: `https://github.com/${process.env.GITHUB_REPOSITORY}/releases/latest/download/${file}`,
+            url: `https://github.com/${process.env.GITHUB_REPOSITORY}/releases/download/v${process.env.VERSION}/${file}`,
           })
           const platforms = {}
           const exe = files.find((f) => f.endsWith('.exe'))
