@@ -166,7 +166,9 @@ test('the core the shell hands the vault to cannot be steered from outside', () 
   const source = main()
   // Its environment rebuilt without the variables that change what Node runs or trusts,
   // cleared *first* so the filter is the whole of what gets through.
-  expect(source).toMatch(/\.env_clear\(\)\s*\.envs\(std::env::vars\(\)\.filter\(\|\(name, _\)\| !steers_node\(name\)\)\)/)
+  expect(source).toMatch(/\.env_clear\(\)\s*\.envs\(std::env::vars_os\(\)\.filter\(\|\(name, _\)\| !steers_node\(name\)\)\)/)
+  // `vars()` panics on a variable that is not valid Unicode, and the release profile aborts.
+  expect(source).not.toMatch(/\.envs\(std::env::vars\(\)/)
   for (const prefix of ['"NODE_"', '"DYLD_"', '"LD_"', '"OPENSSL_"']) expect(source).toContain(prefix)
   // SIGUSR1 opens Node's inspector, and any process running as this user may send it.
   expect(source).toContain('.args(["--disable-sigusr1", "boot.mjs"])')

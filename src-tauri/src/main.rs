@@ -151,8 +151,11 @@ const SETTLING: Duration = Duration::from_millis(400);
 /// `NODE_TLS_REJECT_UNAUTHORIZED` and a proxy would read a key on its way to a provider, and
 /// the loader and OpenSSL variables are the same thing one layer down. None of them is set on
 /// an app started from the Dock; all of them are one `export` away from a terminal.
-fn steers_node(name: &str) -> bool {
-    let name = name.to_ascii_uppercase();
+///
+/// Asked of the raw name, because `std::env::vars()` panics on a variable that is not valid
+/// Unicode, and with `panic = "abort"` that is an app that will not open on that machine.
+fn steers_node(name: &std::ffi::OsStr) -> bool {
+    let name = name.to_string_lossy().to_ascii_uppercase();
     ["NODE_", "DYLD_", "LD_", "OPENSSL_", "SSL"].iter().any(|prefix| name.starts_with(prefix))
 }
 
@@ -223,7 +226,7 @@ fn main() {
                 .shell()
                 .sidecar("alexia-core")?
                 .env_clear()
-                .envs(std::env::vars().filter(|(name, _)| !steers_node(name)))
+                .envs(std::env::vars_os().filter(|(name, _)| !steers_node(name)))
                 // The sidecar *is* the Node runtime, so it needs something to run. Passing
                 // Node nothing opens a REPL and waits forever, which looks exactly like a
                 // core that started and never answered.
