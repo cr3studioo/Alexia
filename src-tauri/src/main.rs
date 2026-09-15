@@ -91,6 +91,18 @@ fn hide_overlay(app: AppHandle) {
     }
 }
 
+/// Come back as the version the updater has just put in place (D152).
+///
+/// On Windows the installer ends this process and starts the new one itself, so the page never
+/// gets here. On a Mac the updater swaps the bundle and returns, and that is all: the bar sat
+/// at 100% over an app that had already been replaced. `request_restart` goes out through
+/// `RunEvent::Exit` below — the core stopped, the single-instance socket removed — and starts
+/// the path this process was launched from, which is where the new bundle now is.
+#[tauri::command]
+fn relaunch(app: AppHandle) {
+    app.request_restart();
+}
+
 /// A port nothing else is using, released immediately so the core can take it.
 ///
 /// There is a race here and it is the right trade: the alternative is parsing the sidecar's
@@ -185,7 +197,7 @@ fn main() {
         // does *not* stop the process — which is how quitting used to leave a core running
         // with the database open, and the next launch made a second one beside it.
         .manage(Mutex::<Option<CommandChild>>::new(None))
-        .invoke_handler(tauri::generate_handler![tray_state, hide_overlay])
+        .invoke_handler(tauri::generate_handler![tray_state, hide_overlay, relaunch])
         .setup(move |app| {
             let handle = app.handle().clone();
 

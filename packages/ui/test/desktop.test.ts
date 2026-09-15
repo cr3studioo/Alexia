@@ -2,7 +2,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { expect, test } from 'vitest'
-import { hotkeyFor } from '../src/desktop.js'
+import { hotkeyFor, installUpdate } from '../src/desktop.js'
 
 /**
  * The hotkey is said in two places — registered in `main.rs`, named on screen here — and the
@@ -30,4 +30,30 @@ test('the page names the hotkey the shell registers on a Mac', () => {
 test('the page names the hotkey the shell registers everywhere else', () => {
   expect(hotkeyFor(WINDOWS)).toBe('Ctrl + Alt + Space')
   expect(registered('not\\(target_os = "macos"\\)')).toBe('Modifiers::CONTROL.union(Modifiers::ALT)')
+})
+
+/**
+ * A Mac update that finished and then sat at 100% (D152). The updater replaces the bundle and
+ * returns there, so the page has to ask for the relaunch — and the shell has to have a command
+ * by that name, or the ask fails into the same silence the bar was already sitting in.
+ */
+test('after the updater installs, the page asks the shell to come back as the new version', async () => {
+  const asked: string[] = []
+  const tauri = globalThis as unknown as { __TAURI__?: unknown }
+  tauri.__TAURI__ = {
+    core: {
+      invoke: (command: string) => {
+        asked.push(command)
+        return Promise.resolve(null)
+      },
+    },
+  }
+  try {
+    await installUpdate(7)
+  } finally {
+    delete tauri.__TAURI__
+  }
+  expect(asked).toEqual(['plugin:updater|download_and_install', 'relaunch'])
+  expect(/generate_handler!\[[^\]]*\brelaunch\b[^\]]*\]/.test(shell)).toBe(true)
+  expect(shell).toMatch(/fn relaunch\(app: AppHandle\) \{\s*app\.request_restart\(\);/)
 })
