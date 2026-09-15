@@ -491,6 +491,8 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     // Asked fresh with the rest of it, and for the same reason: an allowance can run out
     // mid-sentence exactly the way a free tier can.
     today: today(store),
+    // What failed here in the last day, so a model that just timed out is not first again (D159).
+    strikes: store.strikes(),
   })
 
   /**

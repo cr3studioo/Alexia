@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import type { Model } from './catalog.js'
+import { routes, sizeOf, type Model } from './catalog.js'
 import { OLLAMA } from './ollama.js'
 import { sent, spent, type Rung } from './pool.js'
 import { anonymous, chat, PATIENCE, ProviderError, type ChatRequest, type Provider, type Usage } from './provider.js'
@@ -63,7 +63,7 @@ export type Placement = Record<CapabilityClass, 'local' | 'cloud'>
  * escalates: this is the ladder walking downwards.
  *
  * For that person the model on their machine is not *the private one*, it is **a slow helper
- * that lives in their house**. Slow helpers go near the end, which is what {@link cheapest}
+ * that lives in their house**. Slow helpers go near the end, which is what {@link ranking}
  * does with it — behind every keyed free tier, ahead of anything that charges. **Low, not
  * high**: a local 8B loses on latency to every free tier above it, and beats a keyless one
  * throttled to a couple of requests a minute.
@@ -181,6 +181,8 @@ export interface Ask {
 export interface Choice {
   model: Model
   provider: Provider
+  /** The person's own key is on it — see `Rung.keyed`. Absent reads the provider's `auth`. */
+  keyed?: boolean
 }
 
 /**
@@ -214,6 +216,40 @@ export interface World {
    * so forgetting one costs a slower answer — forgetting this one would cost money.
    */
   today?: Today
+  /**
+   * **What failed on this machine in the last day** (D159), from `Store.strikes()`. Absent is
+   * nothing failed, which is what a world gathered by hand in a test means.
+   */
+  strikes?: readonly Strike[]
+}
+
+/** One failure of one model on one provider, as {@link send} recorded it. */
+export interface Strike {
+  provider: string
+  model: string
+  at: number
+}
+
+/**
+ * **How long a failure takes to count half as much** (D159).
+ *
+ * A failure counts one when it happens and halves every hour; a model sinks by what it is
+ * carrying, rounded. So one failure sinks a model for an hour, two together for two, four for
+ * three, and a model that fails every time it is tried is tried again about every hour and a
+ * half — never written off, because a rate limit ends and a free tier resets. An hour because
+ * the failures this is for mostly are that short: a per-minute limit, a busy worker, a slow
+ * evening. The store forgets a strike after a day.
+ */
+export const STRIKE_HALF_LIFE = 60 * 60 * 1000
+
+/** How far each model on each provider has sunk right now, keyed `provider\nmodel`. Zero is absent. */
+export function sunk(strikes: readonly Strike[], at: number = Date.now()): Map<string, number> {
+  const carried = new Map<string, number>()
+  for (const strike of strikes) {
+    const key = `${strike.provider}\n${strike.model}`
+    carried.set(key, (carried.get(key) ?? 0) + 0.5 ** (Math.max(0, at - strike.at) / STRIKE_HALF_LIFE))
+  }
+  return new Map([...carried].map(([key, weight]) => [key, Math.round(weight)] as const).filter(([, level]) => level > 0))
 }
 
 /**
@@ -332,12 +368,20 @@ export function route(ask: Ask, pins: Pins, world: World): Verdict {
   const everything: Choice[] = [...hosted.map((row) => row.choice), ...(where === 'local' || kind === 'text' ? here : [])]
   /** What the free-tier ledger believes is spent. A pre-check for Automatic, never a refusal of somebody's own choice. */
   const tired = new Set(hosted.filter((row) => row.out).map((row) => row.choice))
+  /** How far each model has sunk on what failed here lately (D159). */
+  const weights = sunk(world.strikes ?? [])
+  const ranked = ranking(weights)
 
   if (pins.model) {
     // The user named one. Their choice, including past a flag nobody has verified — and past
     // the ledger, which is this machine's low copy of somebody else's number (D107). Refusing a
     // pin *before trying it* because the count says spent was the pin failing on a guess.
-    const named = everything.find((c) => c.model.id === pins.model)
+    //
+    // **One model, and the provider picked the way a list picks one** (D159). The same id is
+    // often on two providers, and this took whichever the catalog read first — Kilo's keyless
+    // floor ahead of the person's own OpenRouter key on this machine. Still one choice: a pin
+    // never falls back, not even to the same model somewhere else.
+    const [named] = everything.filter((c) => c.model.id === pins.model).sort(listed([pins.model], tired, ranked))
     return named ?
         { ok: true, mode: 'pinned', choices: [named] }
       : { ok: false, mode: 'pinned', why: `${pins.model} is not available right now.` }
@@ -453,14 +497,16 @@ export function route(ask: Ask, pins: Pins, world: World): Verdict {
       // And a paid model that is no better than the free rung it stands in for is not a
       // rung, it is the same answer for money.
       .filter((c) => sidegrades || !middle || !paid(c.model.tier) || stepUp(c.model, replacing))
-      .sort(mode === 'sequence' ? listed(order, tired) : cheapest)
+      .sort(
+        mode === 'sequence' ? listed(order, tired, ranked)
+          // `/best` walks Automatic's ranking from the other end. A list somebody put in order is
+          // not a ranking to walk backwards.
+        : pins.prefer === 'best' ? ranking(weights, 'best')
+        : ranked,
+      )
 
   const choices = fitting(spend)
-  if (choices.length > 0) {
-    // `/best` walks Automatic's ranking from the other end. A list somebody put in order is
-    // not a ranking to walk backwards.
-    return { ok: true, mode, choices: pins.prefer === 'best' && mode === 'automatic' ? [...choices].reverse() : choices }
-  }
+  if (choices.length > 0) return { ok: true, mode, choices }
   // Was the allowance the wall? Only if opening the price line would actually have produced
   // something — otherwise the real wall is one of the others and saying *set an allowance*
   // sends somebody to spend money on a problem money does not fix.
@@ -501,34 +547,11 @@ function reachable(world: World, connected: ReadonlyMap<string, Rung>): { choice
   return world.models.flatMap((model) => {
     const rung = connected.get(model.provider)
     if (!rung) return []
-    return [{ choice: { model, provider: rung.provider }, out: spent(rung) && !paid(model.tier) }]
+    const choice: Choice = { model, provider: rung.provider, ...(rung.keyed !== undefined && { keyed: rung.keyed }) }
+    return [{ choice, out: spent(rung) && !paid(model.tier) }]
   })
 }
 
-/**
- * Cheapest first — and **the tie is the interesting part**, because the free tier is one
- * enormous tie.
- *
- * Tier, then the two prices, was the whole comparator, and every free model matches on all
- * three: `T1`, zero, zero. So the winner among twenty free models was **whichever the
- * catalog happened to list first**, which is a property of a JSON feed rather than a
- * judgement, and *Automatic* — plus the ★ on the models screen, which is defined as what
- * Automatic would pick — inherited it.
- *
- * Found the way these things are found: a personality that reached the model intact and was
- * ignored anyway. The free model at the front of the list could not hold a system prompt,
- * and nothing in this function had an opinion about that.
- *
- * `weekly` is the axis, and it is already fetched. Its own comment is the argument — *a free
- * model nobody sends anything to is a free model with a reason nobody wrote down* — and it
- * is the only quality signal here that comes from outside this machine, so it cannot go
- * stale the way a list of good models written into this file would.
- *
- * **A model whose provider publishes no figure sorts behind one that does**, which is the
- * same way this codebase reads every other silence: `nsfwOk: 'unknown'` does not satisfy an
- * uncensored pin either. Absent is not zero and is not last-because-bad — it is last because
- * unknown, among models that were otherwise going to be ordered by a feed's whim.
- */
 /**
  * **Which rung of §8.2's ladder a choice stands on**, within its half of it.
  *
@@ -552,18 +575,17 @@ function reachable(world: World, connected: ReadonlyMap<string, Rung>): { choice
  * on its own. So keyed free tiers sort among themselves on the rules underneath — price, then
  * what the world actually uses — and the two rungs are one until somebody says otherwise.
  *
- * **A keyless row somebody has pasted a key into still sorts as the floor**, and that is the
- * other place this is an approximation rather than a reading. OVHcloud answers anonymously at
- * two requests a minute and at four hundred with a key; the pool knows which of those is
- * true and a `Rung` does not carry it, so this cannot. It costs a keyed OVHcloud its place
- * among the keyed tiers and nothing else — it is still above the models that only talk, and
- * still ahead of nothing that charges.
+ * **A keyless provider somebody has pasted a key into is keyed** (D159). It used to sort as
+ * the floor, because a `Rung` did not say whether a key was stored: OVHcloud answers
+ * anonymously at two requests a minute and at four hundred with a key, and a paid-up Kilo
+ * account ranked with a stranger's. The pool reads the keychain for every provider now, and
+ * `keyed` on the choice carries the answer; a choice built by hand without it reads `auth`.
  */
 const RUNGS = { keyed: 0, machine: 1, floor: 2 } as const
 const standing = (choice: Choice): number =>
   choice.model.tier === 'T0' ? RUNGS.machine
-  : anonymous(choice.provider) ? RUNGS.floor
-  : RUNGS.keyed
+  : (choice.keyed ?? !anonymous(choice.provider)) ? RUNGS.keyed
+  : RUNGS.floor
 
 /**
  * **What state this answer leaves the user in** (§8.4), for the one badge on the chat screen.
@@ -614,37 +636,111 @@ export function bubble(choice: Choice): Bubble {
   return { rung: 6, says: 'just chat now', state: 'red' }
 }
 
-const cheapest = (a: Choice, b: Choice): number =>
-  // The group comes first (D112). Free before paid, whatever else is true of either.
-  Number(paid(a.model.tier)) - Number(paid(b.model.tier)) ||
-  /*
-   * **Then hands before mouths, and then the ladder** (§8.2).
-   *
-   * Two keys, and between them they are the nine rungs. The first is §8.1's organising
-   * idea: some helpers can call tools and therefore do work, some can only talk, and you
-   * ask a helper with hands first — so a model on this machine that can use tools (rung 4)
-   * is above a hosted free one that cannot (rung 6), which is what the ladder prints. It
-   * does not overrule the filter above it; that one *removes* the talkers when the work
-   * needs hands, and this one *orders* them when it does not.
-   *
-   * The second is {@link standing}: keyed, then this machine, then the keyless floor. None
-   * of it applies to a list somebody put in order ({@link listed}): somebody who dragged a
-   * row to the top typed that, and none of this exists to argue with them.
-   *
-   * **`rank` cannot do either job**, which is why they are keys of their own rather than a
-   * fall-through: it reads `T0` as the *cheapest* tier, so left to it a local model sorts in
-   * front of every keyed free tier — the exact opposite of the rung §8.3 put it on.
-   *
-   * Rung 2, the Claude subscription, is not here and cannot be: it is a plugin offering a
-   * tool, never a row in `PROVIDERS`, and it ships off (§14.1). A rung the user unlocks by
-   * hand is not a rung a shipped cascade can walk onto by itself.
-   */
-  Number(!a.model.supportsTools) - Number(!b.model.supportsTools) ||
-  standing(a) - standing(b) ||
-  rank(a.model.tier) - rank(b.model.tier) ||
-  a.model.priceIn - b.model.priceIn ||
-  a.model.priceOut - b.model.priceOut ||
-  (b.model.weekly ?? -1) - (a.model.weekly ?? -1)
+/**
+ * **Where a model's size puts it** (D159): known to be big enough to plan, not known, or known
+ * to be smaller than {@link PLANNER}. Unknown is the middle and not the bottom — most closed
+ * models never say, and silence is not smallness. Exported for whatever else needs to know
+ * whether a reader is small.
+ */
+export const stature = (model: Pick<Model, 'id' | 'params'>): 'big' | 'unknown' | 'small' => {
+  const billions = sizeOf(model)
+  return billions === undefined ? 'unknown' : billions >= PLANNER ? 'big' : 'small'
+}
+const STATURE = { big: 0, unknown: 1, small: 2 } as const
+
+/**
+ * Cheapest first — and **the tie is the interesting part**, because the free tier is one
+ * enormous tie.
+ *
+ * Tier, then the two prices, was the whole comparator, and every free model matches on all
+ * three: `T1`, zero, zero. So the winner among twenty free models was **whichever the
+ * catalog happened to list first**, which is a property of a JSON feed rather than a
+ * judgement, and *Automatic* — plus the ★ on the models screen, which is defined as what
+ * Automatic would pick — inherited it.
+ *
+ * Found the way these things are found: a personality that reached the model intact and was
+ * ignored anyway. The free model at the front of the list could not hold a system prompt,
+ * and nothing in this function had an opinion about that.
+ *
+ * `weekly` is the axis, and it is already fetched. Its own comment is the argument — *a free
+ * model nobody sends anything to is a free model with a reason nobody wrote down* — and it
+ * is the only quality signal here that comes from outside this machine, so it cannot go
+ * stale the way a list of good models written into this file would.
+ *
+ * **A model whose provider publishes no figure sorts behind one that does**, which is the
+ * same way this codebase reads every other silence: `nsfwOk: 'unknown'` does not satisfy an
+ * uncensored pin either. Absent is not zero and is not last-because-bad — it is last because
+ * unknown, among models that were otherwise going to be ordered by a feed's whim.
+ *
+ * **It was not enough on its own** (D159). Only OpenRouter publishes `weekly`, so without an
+ * OpenRouter key every free model tied again and `kilo-auto/free`, a router, came first. So a
+ * model is now ranked on what predicts a good answer, strongest signal first: what failed on
+ * this machine, not a router, the ladder and the price as before, size, then `weekly` lent
+ * across providers. Every one of them comes from outside this repo or from this machine.
+ */
+const ranking =
+  (weights: ReadonlyMap<string, number>, from: 'cheap' | 'best' = 'cheap') =>
+  (a: Choice, b: Choice): number => {
+    /** How far this model on this provider has sunk on what failed here ({@link sunk}). */
+    const struck = (c: Choice): number => weights.get(`${c.provider.id}\n${c.model.id}`) ?? 0
+    /**
+     * `/best` turns the money half of the ranking round — paid first, the dearest first — and
+     * leaves the half about whether an answer will come alone. Walking the whole list backwards
+     * put the model that failed a minute ago, and a router, at the top of the strongest-first list.
+     */
+    const way = from === 'best' ? -1 : 1
+    return (
+      // The group comes first (D112). Free before paid, whatever else is true of either.
+      way * (Number(paid(a.model.tier)) - Number(paid(b.model.tier))) ||
+      /*
+       * **Then hands before mouths** (§8.2).
+       *
+       * §8.1's organising idea: some helpers can call tools and therefore do work, some can
+       * only talk, and you ask a helper with hands first — so a model on this machine that can
+       * use tools (rung 4) is above a hosted free one that cannot (rung 6), which is what the
+       * ladder prints. It does not overrule the filter above it; that one *removes* the talkers
+       * when the work needs hands, and this one *orders* them when it does not.
+       *
+       * None of what follows applies to a list somebody put in order ({@link listed}) except
+       * between one model's providers: somebody who dragged a row to the top typed that, and
+       * none of this exists to argue with them.
+       *
+       * Rung 2, the Claude subscription, is not here and cannot be: it is a plugin offering a
+       * tool, never a row in `PROVIDERS`, and it ships off (§14.1). A rung the user unlocks by
+       * hand is not a rung a shipped cascade can walk onto by itself.
+       */
+      way * (Number(!a.model.supportsTools) - Number(!b.model.supportsTools)) ||
+      /*
+       * **Then what failed on this machine** (D159), the strongest signal there is about *this*
+       * person's keys and network, and the only one. A model that timed out a minute ago goes
+       * behind the ones that did not, and comes back as the failure ages.
+       */
+      struck(a) - struck(b) ||
+      // **Then not a router** (D159). A router is a different model each time, 2.6B included,
+      // so it is asked after every model that is one model. It stays pinnable.
+      Number(routes(a.model)) - Number(routes(b.model)) ||
+      /*
+       * **Then the ladder**, {@link standing}: keyed, then this machine, then the keyless floor.
+       *
+       * **`rank` cannot do this job**, which is why it is a key of its own rather than a
+       * fall-through: it reads `T0` as the *cheapest* tier, so left to it a local model sorts in
+       * front of every keyed free tier — the exact opposite of the rung §8.3 put it on.
+       */
+      way * (standing(a) - standing(b)) ||
+      way * (rank(a.model.tier) - rank(b.model.tier)) ||
+      way * (a.model.priceIn - b.model.priceIn) ||
+      way * (a.model.priceOut - b.model.priceOut) ||
+      /*
+       * **Then what predicts a good answer, among models that cost the same** — which for the
+       * free tier is all of them (D159). Size first, read from the id where the provider does
+       * not report one ({@link stature}); then `weekly`, borrowed from OpenRouter by every
+       * provider serving the same model (`borrow()` in `catalog.ts`). Neither is turned round by
+       * `/best`: a bigger, busier model is the better one from either end.
+       */
+      STATURE[stature(a.model)] - STATURE[stature(b.model)] ||
+      (b.model.weekly ?? -1) - (a.model.weekly ?? -1)
+    )
+  }
 
 /**
  * **A sequence, in the order somebody wrote it** (D155) — within its group, because the group
@@ -658,12 +754,12 @@ const cheapest = (a: Choice, b: Choice): number =>
  * tie went to whichever provider's list the catalog happened to read first.
  */
 const listed =
-  (order: readonly string[], tired: ReadonlySet<Choice>) =>
+  (order: readonly string[], tired: ReadonlySet<Choice>, ranked: (a: Choice, b: Choice) => number) =>
   (a: Choice, b: Choice): number =>
     Number(paid(a.model.tier)) - Number(paid(b.model.tier)) ||
     order.indexOf(a.model.id) - order.indexOf(b.model.id) ||
     Number(tired.has(a)) - Number(tired.has(b)) ||
-    cheapest(a, b)
+    ranked(a, b)
 
 /**
  * Why a sequence has nothing to ask, said about **the list** rather than about every model
@@ -806,6 +902,8 @@ export interface Answer {
   usage: Usage
   model: Model
   provider: Provider
+  /** The person's own key was on it, as the plan's choice said — for {@link bubble}. */
+  keyed?: boolean
   /** The reply stopped at `maxTokens` rather than finishing — see `chat()`. */
   cut: boolean
 }
@@ -973,6 +1071,16 @@ export async function send(
     !unpaid(choice) && !refused.has(choice.provider.id) && (outgrown === undefined || choice.model.context > outgrown)
   /** How many failures a note has already told the person about. */
   let told = 0
+  /**
+   * **Remembered on this machine** (D159), so the next plan puts this model behind the ones that
+   * did not fail. About the model only: a refused key is the provider's, and a conversation too
+   * long for one window says nothing about the model's health.
+   */
+  const strike = (failure: Failure): void => {
+    if (failure.reach === 'model') {
+      store.recordStrike({ provider: failure.choice.provider.id, model: failure.choice.model.id, status: failure.status })
+    }
+  }
 
   for (const [at, choice] of choices.entries()) {
     if (unpaid(choice)) {
@@ -1078,6 +1186,7 @@ export async function send(
         empty ? `${choice.model.name} answered with nothing`
         : cut && !paid(choice.model.tier) ? `${choice.model.name} ran out of room before finishing`
         : undefined
+      if (short !== undefined) strike({ choice, reach: 'model', status: 502, says: short })
       if (short !== undefined && later) {
         failures.push({ choice, reach: 'model', status: 502, says: short })
         if (spoke) hooks.onRestart?.()
@@ -1097,12 +1206,20 @@ export async function send(
         tokensOut: usage.out,
         cost: costOf(choice.model, usage),
       })
-      return { message, usage, cut, model: choice.model, provider: choice.provider }
+      return {
+        message,
+        usage,
+        cut,
+        model: choice.model,
+        provider: choice.provider,
+        ...(choice.keyed !== undefined && { keyed: choice.keyed }),
+      }
     } catch (error) {
       const failure = failed(error, choice)
       // The stop button, or a bug in core. Neither is somebody else's turn.
       if (failure === undefined || request.signal?.aborted === true) throw error
       failures.push(failure)
+      strike(failure)
       if (spoke) hooks.onRestart?.()
       if (failure.reach === 'provider') refused.add(choice.provider.id)
       if (failure.reach === 'request') outgrown = Math.max(outgrown ?? 0, choice.model.context)

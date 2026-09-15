@@ -120,10 +120,18 @@ const pins: Pins = { placement: MODES.combined }
 OLLAMA.baseUrl = at
 OLLAMA.auth = 'none'
 
-/** Two local models, same tier and both free: only their size tells them apart. */
-const small = model({ id: 'small', tier: 'T0', provider: 'ollama', params: 1 })
+/**
+ * A model too small to plan that the ladder asks first anyway, and one that can plan.
+ *
+ * These were two local models, 1B and 8B, and the 1B came first only because it was listed
+ * first. Since D159 a model under 7B sinks below every bigger one on the same rung, so the
+ * small one is now a keyed free tier reporting its size, and the big one lives on this machine:
+ * the ladder asks your keys before the house, and only its size keeps the small one off planning.
+ */
+const small = model({ id: 'small', tier: 'T1', params: 1 })
 const big = model({ id: 'big', tier: 'T0', provider: 'ollama', params: 8 })
-const local = (): Promise<World> => Promise.resolve({ models: [], local: [small, big], rungs: [] })
+const split = (): Promise<World> =>
+  Promise.resolve({ models: [small], local: [big], rungs: [{ provider: alpha, minute: 100, day: 100, month: Infinity }] })
 
 function bench(): { store: Store; session: number; world(): Promise<World> } {
   const store = new Store(':memory:')
@@ -182,16 +190,16 @@ test('the plan pays for a model that can plan; turning the crank does not', asyn
   await run({
     messages: start('refactor the notes module'),
     tools: tooling(),
-    pins: { placement: MODES.local },
-    world: local,
+    pins,
+    world: split,
     store,
     secrets,
     session,
   })
 
   // Planning skips the 1B — G5 measured an 8B, and said nothing good about anything below
-  // it. Cranking does not need a planner, so it takes the first free model that can call a
-  // tool, which is the small one.
+  // it. Cranking does not need a planner, so it takes the first model the ladder offers that
+  // can call a tool, which is the small one on your key.
   expect(served).toEqual(['big', 'small', 'small'])
   store.close()
 })
@@ -218,8 +226,8 @@ test('a tool that fails is an observation, and it buys back the planner', async 
   const result = await run({
     messages: start('refactor the notes module'),
     tools,
-    pins: { placement: MODES.local },
-    world: local,
+    pins,
+    world: split,
     store,
     secrets,
     session,

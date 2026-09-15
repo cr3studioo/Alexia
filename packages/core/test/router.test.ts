@@ -3,11 +3,24 @@ import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { afterAll, expect, test } from 'vitest'
 import type { Model } from '../src/catalog.js'
-import { SEEDED } from '../src/catalog.js'
+import { borrow, SEEDED } from '../src/catalog.js'
 import { remaining, sent, usable } from '../src/pool.js'
 import { anonymous, keyOf, ProviderError, PROVIDERS, type Provider } from '../src/provider.js'
 import { OLLAMA } from '../src/ollama.js'
-import { bubble, failed, MODES, route, send, shapeOf, stopped, type Choice, type Pins, type World } from '../src/router.js'
+import {
+  bubble,
+  failed,
+  MODES,
+  route,
+  send,
+  shapeOf,
+  stopped,
+  STRIKE_HALF_LIFE,
+  type Choice,
+  type Pins,
+  type Strike,
+  type World,
+} from '../src/router.js'
 import { CORE, memorySecrets } from '../src/secrets.js'
 import type { Message } from '../src/store.js'
 import { Store } from '../src/store.js'
@@ -1563,4 +1576,229 @@ test('a long stop lists three reasons and counts the rest', () => {
   expect(stopped(failures.slice(0, 1), 'the monthly cap is reached — raise it in settings, or use a free model')).toBe(
     'a is rate-limited right now. The monthly cap is reached — raise it in settings, or use a free model.',
   )
+})
+
+// ---- Best to worst (D159) -------------------------------------------------------------------
+//
+// `weekly` was the only thing ordering the free tier, and only OpenRouter publishes it, so
+// without an OpenRouter key every free model tied and `kilo-auto/free` — a router — came first.
+
+const work = { messages: asked('sort my downloads'), tools: [{ name: 'fs.list' }] }
+const hands = (id: string, over: Partial<Model> = {}): Model => model({ id, tier: 'T1', supportsTools: true, ...over })
+const where = (verdict: ReturnType<typeof route>): string[] =>
+  verdict.ok ? verdict.choices.map((c) => `${c.model.id}@${c.provider.id}`) : [verdict.why]
+/** Failures of one model on one provider, each so many minutes ago. */
+const failures = (model: string, provider: string, ...minutesAgo: number[]): Strike[] =>
+  minutesAgo.map((ago) => ({ model, provider, at: Date.now() - ago * 60_000 }))
+
+test('a model that failed here lately goes behind the ones that did not, and comes back as it ages', () => {
+  const best = hands('free/best', { weekly: 9_000_000 })
+  const next = hands('free/next', { weekly: 10 })
+  const struck = (...minutesAgo: number[]): World =>
+    world({ models: [best, next], strikes: failures('free/best', 'alpha', ...minutesAgo) })
+
+  expect(ids(route(work, pins(), struck()))).toEqual(['free/best', 'free/next'])
+  // model_plan.md §2's acceptance: a model that timed out twice in the last hour is not first.
+  expect(ids(route(work, pins(), struck(50, 10)))).toEqual(['free/next', 'free/best'])
+  // One failure counts half after an hour and is rounded away, so it is first again — a rate
+  // limit ends and a free tier resets, and nothing here writes a model off for good.
+  expect(ids(route(work, pins(), struck(70)))).toEqual(['free/best', 'free/next'])
+  // Two together count one after an hour, and still sink it.
+  expect(ids(route(work, pins(), struck(70, 70)))).toEqual(['free/next', 'free/best'])
+  expect(STRIKE_HALF_LIFE).toBe(60 * 60 * 1000)
+
+  // What failed orders a plan, and never empties one: the struck model is still asked last,
+  // and a pin on it is still the pin.
+  expect(ids(route(work, pins({ model: 'free/best' }), struck(1, 1, 1)))).toEqual(['free/best'])
+  // Nor does it reorder a list somebody wrote.
+  expect(ids(route(work, pins({ order: ['free/best', 'free/next'] }), struck(1, 1, 1)))).toEqual(['free/best', 'free/next'])
+})
+
+test('a failure is about one model on one provider, so the same model elsewhere is asked first', () => {
+  const floor: Provider = { id: 'floor', name: 'Floor', baseUrl: 'http://127.0.0.1:3', auth: 'optional' }
+  const both = (strikes: Strike[] = []): World =>
+    world({
+      models: [hands('same/model', { provider: 'floor' }), hands('same/model')],
+      rungs: [remaining(store, floor), remaining(store, alpha)],
+      strikes,
+    })
+  // Your key before the floor, as the ladder says…
+  expect(where(route(work, pins(), both()))).toEqual(['same/model@alpha', 'same/model@floor'])
+  // …until your key's copy has just failed twice.
+  expect(where(route(work, pins(), both(failures('same/model', 'alpha', 2, 1))))).toEqual([
+    'same/model@floor',
+    'same/model@alpha',
+  ])
+})
+
+test('a pinned model on two providers is asked on your key, not whichever the catalog read first, and is still one choice', () => {
+  // Measured on this machine: each of the owner's Nemotrons is on Kilo's keyless floor and on
+  // OpenRouter, Kilo first in the file — so a pin took the floor while a key sat in the keychain.
+  const floor: Provider = { id: 'floor', name: 'Floor', baseUrl: 'http://127.0.0.1:3', auth: 'optional' }
+  const both = (strikes: Strike[] = []): World =>
+    world({
+      models: [hands('same/model', { provider: 'floor' }), hands('other/model', { provider: 'floor' }), hands('same/model')],
+      rungs: [remaining(store, floor), remaining(store, alpha)],
+      strikes,
+    })
+  const pinned = route(work, pins({ model: 'same/model' }), both())
+  expect(pinned.mode).toBe('pinned')
+  // One choice: a pin never falls back, not even to the same model on the other provider.
+  expect(where(pinned)).toEqual(['same/model@alpha'])
+  // Picked the way a list picks between one model's providers, so a copy that just failed
+  // hands the pin to the other copy — of the same model, which is still what was chosen.
+  expect(where(route(work, pins({ model: 'same/model' }), both(failures('same/model', 'alpha', 1))))).toEqual([
+    'same/model@floor',
+  ])
+})
+
+test('a router is asked after every model that is one model, and it can still be pinned or listed', () => {
+  // Priced at zero and the busiest thing in the catalog, so nothing but being a router sinks it.
+  const lottery = hands('kilo-auto/free', { name: 'Auto Free', weekly: 900_000_000_000 })
+  const named = hands('openrouter/free', { name: 'Free Models Router' })
+  const real = hands('vendor/real')
+  const tiny = hands('vendor/tiny-2.6b')
+  const catalog = world({ models: [lottery, named, tiny, real] })
+
+  // Behind even a 2.6B: that one is one model somebody can judge, and a router is a
+  // different model on every request, that 2.6B included.
+  expect(ids(route(work, pins(), catalog))).toEqual(['vendor/real', 'vendor/tiny-2.6b', 'kilo-auto/free', 'openrouter/free'])
+  expect(ids(route(work, pins({ model: 'kilo-auto/free' }), catalog))).toEqual(['kilo-auto/free'])
+  expect(ids(route(work, pins({ order: ['openrouter/free', 'vendor/real'] }), catalog))).toEqual([
+    'openrouter/free',
+    'vendor/real',
+  ])
+})
+
+test('a size read from the id: under 7B sinks, and unknown sits in the middle rather than at the bottom', () => {
+  // Listed smallest first and busiest first, so neither the file nor `weekly` can be what
+  // decides it.
+  const tiny = hands('liquid/lfm-2.5-2.6b:free', { weekly: 9_000_000_000 })
+  const unsaid = hands('poolside/laguna-s-2.1:free', { weekly: 5_000_000 })
+  const large = hands('nvidia/nemotron-3-super-120b-a12b:free', { weekly: 1 })
+  expect(ids(route(work, pins(), world({ models: [tiny, unsaid, large] })))).toEqual([
+    'nvidia/nemotron-3-super-120b-a12b:free',
+    'poolside/laguna-s-2.1:free',
+    'liquid/lfm-2.5-2.6b:free',
+  ])
+
+  // An order and never a filter: planning still reaches a hosted 2.6B when it is all there
+  // is, because only a size the runner itself reports keeps a model off planning (D62).
+  const planning = { ...work, messages: asked('refactor the notes module') }
+  expect(ids(route(planning, pins(), world({ models: [tiny] })))).toEqual(['liquid/lfm-2.5-2.6b:free'])
+})
+
+test('a keyless provider with your key in it ranks with your keys, and its bubble says so', () => {
+  const kilo: Provider = { id: 'floor', name: 'Floor', baseUrl: 'http://127.0.0.1:3', auth: 'optional' }
+  const onFloor = hands('floor/model', { provider: 'floor', weekly: 900 })
+  const onKey = hands('keyed/model', { weekly: 1 })
+  const floorRung = remaining(store, kilo)
+
+  // No key in it: the floor, behind a keyed tier however much less that one is used.
+  const stranger = route(work, pins(), world({ models: [onFloor, onKey], rungs: [remaining(store, alpha), floorRung] }))
+  expect(ids(stranger)).toEqual(['keyed/model', 'floor/model'])
+  expect(stranger.ok && bubble(stranger.choices[1]!).says).toBe('free floor, still capable')
+
+  // A paid-up account on the same provider is one of your keys, and the world's usage decides.
+  const paidUp = route(
+    work,
+    pins(),
+    world({ models: [onFloor, onKey], rungs: [remaining(store, alpha), { ...floorRung, keyed: true }] }),
+  )
+  expect(ids(paidUp)).toEqual(['floor/model', 'keyed/model'])
+  expect(paidUp.ok && bubble(paidUp.choices[0]!).says).toBe('ready for anything')
+})
+
+test('/best turns the money round, and leaves what failed and what is a router at the bottom', () => {
+  const lottery = hands('kilo-auto/free', { name: 'Auto Free' })
+  const catalog = world({
+    models: [lottery, freeTools, cheapPaid, frontier],
+    strikes: failures('paid/frontier', 'beta', 1),
+  })
+  // Walking the whole list backwards put the model that failed a minute ago, and a router,
+  // at the top of the strongest-first list.
+  expect(ids(route({ messages: asked('hello'), tools: [{ name: 'fs.list' }] }, pins({ prefer: 'best' }), catalog))).toEqual([
+    'paid/small',
+    'paid/frontier',
+    'free/tools',
+    'kilo-auto/free',
+  ])
+})
+
+test('with no OpenRouter key, Automatic on this machine’s catalog starts with a real model of a real size', () => {
+  // The rows `model_plan.md` §2 measured, cut to what decides the order: Kilo's free list in
+  // Kilo's own order, and OpenRouter's rows for the same models with the figures OpenRouter
+  // published (2026-09-15 cache). Before D159 the first choice here was `kilo-auto/free`.
+  const kiloGateway: Provider = { id: 'kilo-gateway', name: 'Kilo Gateway', baseUrl: 'http://127.0.0.1:4', auth: 'optional' }
+  const openrouter: Provider = { id: 'openrouter', name: 'OpenRouter', baseUrl: 'http://127.0.0.1:5' }
+  const kilo = (id: string, name: string): Model => hands(id, { name, provider: 'kilo-gateway', context: 262_144 })
+  const lent = (id: string, weekly: number): Model => hands(id, { provider: 'openrouter', context: 262_144, weekly })
+  const models = borrow([
+    kilo('kilo-auto/free', 'Auto Free'),
+    kilo('poolside/laguna-s-2.1:free', 'Poolside: Laguna S 2.1 (free)'),
+    kilo('nvidia/nemotron-3-ultra-550b-a55b:free', 'NVIDIA: Nemotron 3 Ultra (free)'),
+    kilo('liquid/lfm-2.5-2.6b:free', 'LiquidAI: LFM2.5-2.6B (free)'),
+    kilo('nvidia/nemotron-3.5-lightning:free', 'NVIDIA: Nemotron 3.5 Lightning (free)'),
+    kilo('nvidia/nemotron-3-super-120b-a12b:free', 'NVIDIA: Nemotron 3 Super (free)'),
+    kilo('openrouter/free', 'OpenRouter Free Models Router'),
+    lent('google/gemma-4-31b-it:free', 391_965_209_752),
+    lent('poolside/laguna-s-2.1:free', 69_326_928_584),
+    lent('nvidia/nemotron-3.5-lightning:free', 51_038_703_166),
+    lent('nvidia/nemotron-3-ultra-550b-a55b:free', 31_889_512_209),
+    lent('nvidia/nemotron-3-super-120b-a12b:free', 10_043_068_411),
+    lent('liquid/lfm-2.5-2.6b:free', 2_056_029),
+    hands('openrouter/free', { name: 'Free Models Router', provider: 'openrouter', context: 200_000 }),
+  ])
+  const floorOnly = route(work, pins(), world({ models, rungs: [remaining(store, kiloGateway)] }))
+  expect(ids(floorOnly)).toEqual([
+    'nvidia/nemotron-3-ultra-550b-a55b:free',
+    'nvidia/nemotron-3-super-120b-a12b:free',
+    'poolside/laguna-s-2.1:free',
+    'nvidia/nemotron-3.5-lightning:free',
+    'liquid/lfm-2.5-2.6b:free',
+    'kilo-auto/free',
+    'openrouter/free',
+  ])
+
+  // With an OpenRouter key the answer is the one the plan found already worked, and the keyless
+  // copies of the same models follow your key's.
+  const keyed = route(work, pins(), world({ models, rungs: [remaining(store, kiloGateway), remaining(store, openrouter)] }))
+  expect(where(keyed).slice(0, 3)).toEqual([
+    'google/gemma-4-31b-it:free@openrouter',
+    'nvidia/nemotron-3-ultra-550b-a55b:free@openrouter',
+    'nvidia/nemotron-3-super-120b-a12b:free@openrouter',
+  ])
+  // A router is last whoever's key it is behind — and among the routers, your key still first.
+  expect(where(keyed).slice(-3)).toEqual(['openrouter/free@openrouter', 'kilo-auto/free@kilo-gateway', 'openrouter/free@kilo-gateway'])
+})
+
+test('what failed is remembered on this machine; a refused key and a conversation too long are not', async () => {
+  const { one, two, keys, ledger } = await scripted()
+  const three: Provider = { ...alpha, id: 'gamma', name: 'Gamma', baseUrl: at }
+  await keys.set(CORE, keyOf(three), 'sk-c')
+  behave = new Map([
+    ['free/limited', { status: 429, body: 'slow down' }],
+    ['free/32k', { status: 400, body: "This model's maximum context length is 32768 tokens" }],
+    ['free/refused', { status: 401, body: 'invalid api key' }],
+  ])
+  mute = new Set(['free/mute'])
+
+  const answer = await send(
+    [
+      { model: free('free/limited'), provider: one },
+      { model: free('free/mute'), provider: one },
+      { model: free('free/32k', { provider: 'beta', context: 32_768 }), provider: two },
+      { model: free('free/refused', { provider: 'beta', context: 200_000 }), provider: two },
+      { model: free('free/fine', { provider: 'gamma', context: 200_000 }), provider: three },
+    ],
+    { messages: asked('hello') },
+    ledger,
+    keys,
+  )
+  expect(answer.model.id).toBe('free/fine')
+  // The rate limit and the empty answer are about those models. The key is the provider's, and
+  // the window was the conversation's — neither says anything about how a model is doing.
+  expect(ledger.strikes().map((one) => `${one.model}@${one.provider}`)).toEqual(['free/limited@alpha', 'free/mute@alpha'])
+  behave = new Map()
+  ledger.close()
 })

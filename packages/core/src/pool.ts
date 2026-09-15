@@ -30,6 +30,14 @@ export interface Rung {
   minute: number
   day: number
   month: number
+  /**
+   * **A key of the person's own is stored for it** (D159). Always true of a provider that needs
+   * one, since it is not a rung without it; for one that answers without a key, true only when
+   * somebody pasted one in — a paid-up Kilo account is not the keyless floor.
+   *
+   * Absent on a rung built by hand, which reads the provider's `auth` as it always did.
+   */
+  keyed?: boolean
 }
 
 /** Whether a provider has anything left to give at this instant. */
@@ -73,16 +81,16 @@ export async function usable(
 ): Promise<Rung[]> {
   const connected = await Promise.all(
     providers.map(async (provider) => {
-      if (anonymous(provider)) return provider
+      // Asked of the keyless providers too: a key pasted into one moves it off the floor.
+      const keyed = Boolean(await secrets.get(CORE, keyOf(provider)).catch(() => undefined))
       // Nothing is pooled without a key the user added themselves. No key, not in the pool.
-      const key = await secrets.get(CORE, keyOf(provider)).catch(() => undefined)
-      return key ? provider : undefined
+      return keyed || anonymous(provider) ? { provider, keyed } : undefined
     }),
   )
 
   return connected
-    .filter((provider) => provider !== undefined)
-    .map((provider) => remaining(store, provider, at))
+    .filter((found) => found !== undefined)
+    .map(({ provider, keyed }) => ({ ...remaining(store, provider, at), keyed }))
     .sort((a, b) => b.day - a.day || b.minute - a.minute)
 }
 

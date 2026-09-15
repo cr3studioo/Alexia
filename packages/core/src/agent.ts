@@ -646,7 +646,11 @@ export async function run(options: RunOptions): Promise<RunResult> {
     on?.turn?.({
       asked: verdict.choices[0]?.model.id ?? answer.model.id,
       answered: answer.model.id,
-      bubble: bubble({ model: answer.model, provider: answer.provider }),
+      bubble: bubble({
+        model: answer.model,
+        provider: answer.provider,
+        ...(answer.keyed !== undefined && { keyed: answer.keyed }),
+      }),
     })
     answered = answer.model.tier
 

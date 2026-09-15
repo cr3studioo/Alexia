@@ -116,6 +116,23 @@ const userTurns = (): number => {
   return session === undefined ? 0 : alexia.store.history(session).filter((turn) => turn.role === 'user').length
 }
 
+// First in the file, because it needs `stub/one` to be Automatic's first choice: every test
+// below leaves a failure of `stub/one` on this machine, and a model that just failed is not
+// asked first again (D159).
+test('Automatic whose first model dies mid-sentence tells the screen to clear it, then answers', async () => {
+  behave = new Map([['stub/one', 'dies']])
+  const { events } = await chat({ text: 'one more' })
+
+  const kinds = events.flatMap((event) =>
+    'delta' in event ? [`delta:${String(event.delta)}`]
+    : 'restart' in event ? ['restart']
+    : 'note' in event ? ['note']
+    : [],
+  )
+  expect(kinds).toEqual(['delta:Half of', 'restart', 'note', 'delta:from stub/two'])
+  expect(events.some((event) => 'error' in event)).toBe(false)
+}, 30_000)
+
 test('a pinned model that fails stops, marked as the person’s choice, and Automatic answers once without changing it', async () => {
   alexia.store.kvSet(CORE, 'pins', { model: 'stub/one' })
   behave = new Map([['stub/one', 429]])
@@ -131,8 +148,10 @@ test('a pinned model that fails stops, marked as the person’s choice, and Auto
   const again = await chat({ again: true, automatic: true })
   expect(again.events.some((event) => 'error' in event)).toBe(false)
   expect(again.events.filter((event) => 'delta' in event).map((event) => event.delta)).toEqual(['from stub/two'])
-  // Automatic ranked the rate-limited pin first again, and walked past it — which is the point.
-  expect(asked.slice(1)).toEqual(['stub/one', 'stub/two'])
+  // Automatic remembers that the pin was rate-limited a moment ago, so it asks the other model
+  // first rather than collecting the same 429 again (D159). The pin itself was asked anyway:
+  // what failed here orders Automatic, and never refuses somebody's own choice.
+  expect(asked.slice(1)).toEqual(['stub/two'])
 
   // **One answer, not a setting**: the pin is where the person left it, and the question was
   // asked again rather than written into the conversation a second time.
@@ -158,16 +177,3 @@ test('a list that fails all the way down stops at its end, marked as a list', as
   alexia.store.kvSet(CORE, 'pins', {})
 }, 30_000)
 
-test('Automatic whose first model dies mid-sentence tells the screen to clear it, then answers', async () => {
-  behave = new Map([['stub/one', 'dies']])
-  const { events } = await chat({ text: 'one more' })
-
-  const kinds = events.flatMap((event) =>
-    'delta' in event ? [`delta:${String(event.delta)}`]
-    : 'restart' in event ? ['restart']
-    : 'note' in event ? ['note']
-    : [],
-  )
-  expect(kinds).toEqual(['delta:Half of', 'restart', 'note', 'delta:from stub/two'])
-  expect(events.some((event) => 'error' in event)).toBe(false)
-}, 30_000)

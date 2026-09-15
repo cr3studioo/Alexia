@@ -92,7 +92,21 @@ const MIGRATIONS: string[] = [
   `ALTER TABLE usage ADD COLUMN run_id TEXT;
    ALTER TABLE usage ADD COLUMN asked TEXT;
    CREATE INDEX usage_by_run ON usage (run_id);`,
+
+  // 6 — what failed on this machine (D159). `provider_usage` counts every request and `usage`
+  // every success, so nothing remembered that a model timed out five minutes ago, and Automatic
+  // put it first again. A day of rows at most: older ones are deleted as new ones arrive.
+  `CREATE TABLE strikes (
+     at INTEGER NOT NULL,
+     provider TEXT NOT NULL,
+     model TEXT NOT NULL,
+     status INTEGER NOT NULL
+   );
+   CREATE INDEX strikes_at ON strikes (at);`,
 ]
+
+/** How long a strike is kept at all. What it weighs while it is kept is the router's to say. */
+export const STRIKES_KEPT = 24 * 60 * 60 * 1000
 
 /**
  * The three windows a free tier is rationed by, and which bucket an instant falls in.
@@ -636,6 +650,31 @@ export class Store {
       return row?.count ?? 0
     }
     return { minute: count(...SPANS[0]), day: count(...SPANS[1]), month: count(...SPANS[2]) }
+  }
+
+  /**
+   * **A model that failed on this machine** (D159): rate-limited, out of credit, too slow, a
+   * dropped stream, an empty answer. One row per failure, and anything older than a day is
+   * deleted in the same breath, so the table is never more than a day of bad luck.
+   */
+  recordStrike(row: { provider: string; model: string; status: number; at?: number }): void {
+    const at = row.at ?? Date.now()
+    this.transaction(() => {
+      this.#db.prepare('INSERT INTO strikes (at, provider, model, status) VALUES (?, ?, ?, ?)').run(
+        at,
+        row.provider,
+        row.model,
+        row.status,
+      )
+      this.#db.prepare('DELETE FROM strikes WHERE at < ?').run(at - STRIKES_KEPT)
+    })
+  }
+
+  /** Every failure in the day before `at`, oldest first. */
+  strikes(at: number = Date.now()): { provider: string; model: string; at: number }[] {
+    return this.#db
+      .prepare('SELECT provider, model, at FROM strikes WHERE at >= ? ORDER BY at')
+      .all(at - STRIKES_KEPT) as unknown as { provider: string; model: string; at: number }[]
   }
 
   /**

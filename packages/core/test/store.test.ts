@@ -14,7 +14,7 @@ import { dataDir, Store } from '../src/store.js'
 const tmp = (): string => join(mkdtempSync(join(tmpdir(), 'alexia-store-')), 'data', 'alexia.db')
 
 /** How many migrations this build knows. Every fresh database should be at this version. */
-const MIGRATIONS = 5
+const MIGRATIONS = 6
 
 /** The schema version as SQLite holds it, read without going through `Store`. */
 function version(path: string): number {
@@ -98,6 +98,20 @@ test('a database from the previous schema is carried forward, not rebuilt', () =
   expect(store.kvGet('demo', 'model')).toBe('base') // migration 1 did not run a second time
   expect(store.tables()).toContain('sessions') //     migration 2 did run
   expect(version(path)).toBe(MIGRATIONS)
+  store.close()
+})
+
+test('a failure is kept for a day and then forgotten, so the table is never more than one (D159)', () => {
+  const store = new Store(':memory:')
+  const day = 24 * 60 * 60 * 1000
+  const noon = Date.UTC(2026, 8, 15, 12)
+  store.recordStrike({ provider: 'openrouter', model: 'a', status: 429, at: noon - day - 1 })
+  store.recordStrike({ provider: 'openrouter', model: 'b', status: 408, at: noon - 60_000 })
+  expect(store.strikes(noon).map((one) => one.model)).toEqual(['b'])
+  // Writing a new one deletes what has aged out rather than only hiding it: read from a day
+  // earlier, `a` would still be in the window if it were still in the table.
+  store.recordStrike({ provider: 'kilo-gateway', model: 'c', status: 502, at: noon })
+  expect(store.strikes(noon - day).map((one) => one.model)).toEqual(['b', 'c'])
   store.close()
 })
 

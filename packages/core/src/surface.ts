@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import type { Catalog, Model } from './catalog.js'
+import { routes, type Catalog, type Model } from './catalog.js'
 import { pins, setPin } from './commands.js'
-import { available, route, type Spend, type World } from './router.js'
+import { available, paid, route, stature, type Spend, type World } from './router.js'
 import { allow, forgetConsent } from './consent.js'
 import { forget } from './learned.js'
 import type { Row } from './plugins.js'
@@ -97,6 +97,12 @@ export interface SurfaceOptions {
 
 /** `▲` is the one mark that is coloured, because on this screen a colour means look at this. */
 const OK = '● ready'
+
+/** What a router row is labelled, in place of what it can do (D159). */
+const ROUTER = (model: Model): string => (paid(model.tier) ? 'a different model each time' : 'a different free model each time')
+
+/** {@link stature}'s answers, best first, for sorting the Models tab the way Automatic does. */
+const SIZES = ['big', 'unknown', 'small'] as const
 
 /** `2026-08-29 14:03`, which is what a person reads. Never a raw timestamp. */
 const when = (at: number): string => new Date(at).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' })
@@ -263,9 +269,12 @@ export function sources(options: SurfaceOptions): Record<string, Source> {
                 Number(b.id === best) - Number(a.id === best) ||
                 (listed.indexOf(a.id) === -1 ? listed.length : listed.indexOf(a.id)) -
                   (listed.indexOf(b.id) === -1 ? listed.length : listed.indexOf(b.id)) ||
-                // Then what the world is actually using, which is the closest thing to a
-                // review a model has. Providers that publish nothing fall through to price,
-                // so their models are ordered as they always were rather than sunk.
+                // Then the parts of Automatic's own ranking a row can be judged on alone (D159):
+                // routers last, a size read from the id, then what the world is actually using,
+                // lent across providers serving the same model. Providers that publish nothing
+                // fall through to price, so their models are ordered as they always were.
+                Number(routes(a)) - Number(routes(b)) ||
+                SIZES.indexOf(stature(a)) - SIZES.indexOf(stature(b)) ||
                 (b.weekly ?? 0) - (a.weekly ?? 0) ||
                 a.priceIn - b.priceIn ||
                 a.name.localeCompare(b.name),
@@ -290,6 +299,8 @@ export function sources(options: SurfaceOptions): Record<string, Source> {
               state:
                 model.id === standing.model ? '◆ everything goes here'
                 : model.id === best ? '★ recommended'
+                  // A router says so in place of tools: what it can do is whatever it picks (D159).
+                : routes(model) ? `${OK} · ${ROUTER(model)}`
                 : model.supportsTools ? `${OK} · tools`
                 : `${OK} · text only`,
             }))
@@ -306,8 +317,13 @@ export function sources(options: SurfaceOptions): Record<string, Source> {
             `${model.tier} · ${price(model.priceIn)} in, ${price(model.priceOut)} out, per million tokens`,
             `Context: ${window(model.context)} · takes ${model.modality.join(', ')}`,
             `Tools: ${model.supportsTools ? 'yes' : 'not according to its provider'}`,
+            ...(routes(model) ?
+              [`A router: ${ROUTER(model)}, chosen by ${model.provider}. Automatic asks it after every single model.`]
+            : []),
             model.weekly === undefined ?
               `${model.provider} does not publish how much its models are used.`
+            : model.weeklyFrom !== undefined ?
+              `${count(model.weekly)} tokens through this model last week on ${model.weeklyFrom}, which publishes the figure ${model.provider} does not.`
             : `${count(model.weekly)} tokens through this model last week, across everyone using ${model.provider}.`,
             // The two flags nobody may guess at. Both say `unknown` until a person has read
             // the provider's terms, and the screen repeats that rather than rounding it off.
