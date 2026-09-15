@@ -5,7 +5,7 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, expect, test } from 'vitest'
-import { Catalog, news, SEEDED } from '../src/catalog.js'
+import { borrow, Catalog, news, routes, SEEDED, sizeOf, type Model } from '../src/catalog.js'
 import { PROVIDERS, type Provider } from '../src/provider.js'
 
 // The catalog is a cache with a diff on it. What is worth testing is the unhappy half:
@@ -379,4 +379,111 @@ test('the written-down models are the ones somebody checked, and none of the dea
     expect([model.priceIn, model.priceOut], model.id).toEqual([0, 0])
     expect(model.tier, model.id).toBe('T1')
   }
+})
+
+// ---- What a row says about itself (D159) ----------------------------------------------------
+
+test('a router is known by an auto or router in its id or its name, and nothing else is', () => {
+  // Every router on this machine's catalog and Kilo's live list on 2026-09-15, by id and name
+  // as each gateway spells them.
+  const routers: [string, string][] = [
+    ['kilo-auto/free', 'Auto Free'],
+    ['kilo-auto/small', 'Auto Small'],
+    ['kilo-auto/balanced', 'Auto Balanced'],
+    ['openrouter/free', 'Free Models Router'],
+    ['openrouter/free', 'OpenRouter Free Models Router'],
+    ['openrouter/auto', 'Auto Router'],
+    ['openrouter/pareto-code', 'Pareto Code Router'],
+  ]
+  for (const [id, name] of routers) expect(routes({ id, name }), id).toBe(true)
+
+  // And the near misses from the same lists: a provider called *openrouter*, a quantiser
+  // called AutoRound, a model called *fast*, a `~…-latest` alias that is one model.
+  const models: [string, string][] = [
+    ['nvidia/nemotron-3-super-120b-a12b:free', 'NVIDIA: Nemotron 3 Super (free)'],
+    ['Lorbus/Qwen3.6-27B-int4-AutoRound', 'Lorbus/Qwen3.6-27B-int4-AutoRound'],
+    ['morph/morph-v3-fast', 'Morph: Morph V3 Fast'],
+    ['~anthropic/claude-sonnet-latest', 'Anthropic: Claude Sonnet Latest'],
+    ['openrouter/some-model', 'OpenRouter: Some Model'],
+  ]
+  for (const [id, name] of models) expect(routes({ id, name }), id).toBe(false)
+})
+
+test('a size is read from the id where the runner reports none, and a reported one wins', () => {
+  const sizes: [string, number | undefined][] = [
+    ['liquid/lfm-2.5-2.6b:free', 2.6],
+    // A mixture of experts names the whole model first, and the whole model is what is read.
+    ['nvidia/nemotron-3-super-120b-a12b:free', 120],
+    ['ibm/granite-3.0-3b-a800m-instruct', 3],
+    ['qwen3.5:397b', 397],
+    ['mistralai/mixtral-8x22b-v0.1', 176],
+    ['koboldcpp/Gemma-4-E4B-it-Ultra-Uncensored-Heretic', 4],
+    ['koboldcpp/MN-Violet-Lotus-12B.Q8_0', 12],
+    // A version number is not a size, and neither is a context length.
+    ['nvidia/llama3-chatqa-1.5-70b', 70],
+    ['writer/palmyra-fin-70b-32k', 70],
+    ['poolside/laguna-s-2.1:free', undefined],
+    ['gpt-5.5', undefined],
+  ]
+  for (const [id, billions] of sizes) expect(sizeOf({ id }), id).toBe(billions)
+  // Ollama's own answer about a model on this machine beats whatever its name suggests.
+  expect(sizeOf({ id: 'qwen3-8b-agent:latest', params: 8.2 })).toBe(8.2)
+})
+
+test('a usage figure is lent to every provider serving the same model, and never over a row’s own', () => {
+  const row = (id: string, provider: string, over: Partial<Model> = {}): Model => ({
+    id,
+    name: id,
+    provider,
+    tier: 'T1',
+    priceIn: 0,
+    priceOut: 0,
+    context: 0,
+    supportsTools: true,
+    modality: ['text'],
+    nsfwOk: 'unknown',
+    trainsOnYourData: 'unknown',
+    ...over,
+  })
+  const lent = borrow([
+    row('nvidia/nemotron-3-super-120b-a12b:free', 'kilo-gateway'),
+    row('nvidia/nemotron-3-super-120b-a12b', 'nvidia'),
+    row('nvidia/nemotron-3-super-120b-a12b:free', 'openrouter', { weekly: 10_043_068_411 }),
+    // The same model's paid row carries the same figure on OpenRouter; the larger is taken.
+    row('nvidia/nemotron-3-super-120b-a12b', 'openrouter', { weekly: 10_043_068_000 }),
+    // A figure of its own is never replaced.
+    row('NVIDIA/Nemotron-3-Super-120B-A12B', 'somewhere', { weekly: 7 }),
+    // A router's usage is not any one model's, so it neither lends nor borrows.
+    row('openrouter/free', 'openrouter', { name: 'Free Models Router', weekly: 99 }),
+    row('kilo-auto/free', 'kilo-gateway', { name: 'Auto Free' }),
+    row('vendor/free', 'elsewhere'),
+  ])
+  const by = (id: string, provider: string): Model | undefined => lent.find((m) => m.id === id && m.provider === provider)
+  expect(by('nvidia/nemotron-3-super-120b-a12b:free', 'kilo-gateway')).toMatchObject({ weekly: 10_043_068_411, weeklyFrom: 'openrouter' })
+  expect(by('nvidia/nemotron-3-super-120b-a12b', 'nvidia')).toMatchObject({ weekly: 10_043_068_411, weeklyFrom: 'openrouter' })
+  expect(by('nvidia/nemotron-3-super-120b-a12b:free', 'openrouter')?.weeklyFrom).toBeUndefined()
+  expect(by('NVIDIA/Nemotron-3-Super-120B-A12B', 'somewhere')).toMatchObject({ weekly: 7 })
+  expect(by('kilo-auto/free', 'kilo-gateway')?.weekly).toBeUndefined()
+  expect(by('vendor/free', 'elsewhere')?.weekly).toBeUndefined()
+})
+
+test('the catalog lends the figure when it is read, and never writes a borrowed one to the cache', async () => {
+  const path = file()
+  const feed = createServer((_request, response) => {
+    response.writeHead(200, { 'content-type': 'application/json' })
+    response.end(JSON.stringify({ data: { analytics: { 'vendor/shared-1': { total_prompt_tokens: 40, total_completion_tokens: 2 } } } }))
+  })
+  await new Promise<void>((resolve) => feed.listen(0, '127.0.0.1', resolve))
+  const catalog = new Catalog(path)
+  payload = { data: [entry({ id: 'vendor/shared:free', canonical_slug: 'vendor/shared-1' })] }
+  await catalog.refresh({ ...provider, id: 'lender', usage: `http://127.0.0.1:${(feed.address() as AddressInfo).port}/` }, 0)
+  payload = { data: [entry({ id: 'other-prefix/shared' })] }
+  await catalog.refresh({ ...provider, id: 'borrower' }, 0)
+  feed.close()
+
+  expect(catalog.models.find((m) => m.provider === 'borrower')).toMatchObject({ weekly: 42, weeklyFrom: 'lender' })
+  // What the endpoints said is unchanged, so the next usage feed's figure is the one lent.
+  expect(catalog.fetched.find((m) => m.provider === 'borrower')?.weekly).toBeUndefined()
+  const { readFileSync } = await import('node:fs')
+  expect(readFileSync(path, 'utf8')).not.toContain('weeklyFrom')
 })

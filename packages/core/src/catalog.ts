@@ -48,6 +48,78 @@ export interface Model {
    * one. Zero would sort as *unused* and read as *bad*, and neither is what silence means.
    */
   weekly?: number
+  /**
+   * **Whose figure `weekly` is, when it is not this provider's own** (D159): the id of the
+   * provider that published it for the same model. Absent on a row that published its own.
+   * Set by {@link borrow} when the catalog is read, never written to the cache.
+   */
+  weeklyFrom?: string
+}
+
+/**
+ * **A router: a row that hands the request to a different model each time** (D159).
+ *
+ * `openrouter/free` and `kilo-auto/free` are priced at zero, so they arrive as ordinary free
+ * rows — and Automatic without an OpenRouter key put `kilo-auto/free` first, which is a random
+ * free model, 2.6B included. They are ranked last and stay pinnable.
+ *
+ * **Read from the id and the name**, the words both gateways use: an `auto` or `router` segment
+ * of the id (`kilo-auto/small`), or a name that says *Router* or starts with *Auto*. Measured
+ * on 2026-09-15 against the 1,830 rows cached on this machine and both gateways' live lists
+ * (OpenRouter 446, Kilo 378): the nine router ids among them, and nothing else. OpenRouter's
+ * own list says `tokenizer: "Router"`, which was not used: it also marks the `~vendor/…-latest`
+ * aliases, each of which is one model, and Kilo's routers say `"Other"`.
+ */
+export const routes = (model: Pick<Model, 'id' | 'name'>): boolean =>
+  /(?:^|[\s/:_-])(?:auto|router)(?:$|[\s/:_-])/i.test(model.id) || /\brouter\b|^auto\b/i.test(model.name)
+
+/**
+ * **Billions of parameters, from what the runner says or else from the id** (D159) — `-2.6b`,
+ * `:397b`, `-8x22b`, Gemma's `E4B`. Undefined when neither says, which is most closed models.
+ *
+ * A mixture of experts names two sizes, `-120b-a12b`, and this reads the first: the whole
+ * model. The active part never starts with a digit, so it is never matched.
+ *
+ * **For ranking only.** `params` is still what the planning filter reads, so a size guessed
+ * from a name never removes a model from a plan — it only orders one.
+ */
+export function sizeOf(model: Pick<Model, 'id' | 'params'>): number | undefined {
+  if (model.params !== undefined) return model.params
+  const found = /(?:^|[\s/:_-])(?:(\d+)x)?e?(\d+(?:\.\d+)?)b(?=$|[\s/:_.-])/i.exec(model.id)
+  if (found === null) return undefined
+  return (found[1] === undefined ? 1 : Number(found[1])) * Number(found[2])
+}
+
+/**
+ * One model's name across providers: the provider's prefix, a `:free` suffix and case taken
+ * off. `nvidia/nemotron-3-super-120b-a12b:free` on OpenRouter and on Kilo, and
+ * `nvidia/nemotron-3-super-120b-a12b` on NVIDIA, are all `nemotron-3-super-120b-a12b`.
+ */
+const same = (id: string): string => id.toLowerCase().replace(/:free$/, '').replace(/^.*\//, '')
+
+/**
+ * **The world's usage figure, lent to every provider serving the same model** (D159).
+ *
+ * Only OpenRouter publishes `weekly`, so every other provider's free models tied, and the tie
+ * went to the order of somebody's JSON — which is how `kilo-auto/free` came first. The figure
+ * is about the model rather than the provider, so a row without one borrows it by {@link same}
+ * name. A row's own figure is never replaced, and a router neither lends nor borrows: its usage
+ * is not any one model's.
+ *
+ * Measured on this machine: the only names two lending rows share are one model's free and paid
+ * rows on OpenRouter, which carry the same figure; the larger is taken all the same.
+ */
+export function borrow(models: readonly Model[]): Model[] {
+  const lent = new Map<string, { weekly: number; from: string }>()
+  for (const model of models) {
+    if (model.weekly === undefined || routes(model)) continue
+    const known = lent.get(same(model.id))
+    if (known === undefined || model.weekly > known.weekly) lent.set(same(model.id), { weekly: model.weekly, from: model.provider })
+  }
+  return models.map((model) => {
+    const found = model.weekly === undefined && !routes(model) ? lent.get(same(model.id)) : undefined
+    return found === undefined ? model : { ...model, weekly: found.weekly, weeklyFrom: found.from }
+  })
 }
 
 export interface Snapshot {
@@ -235,6 +307,8 @@ export const SEEDED: readonly Model[] = [
 
 export class Catalog {
   #snapshot: Snapshot
+  /** {@link models} for the snapshot it was built from, since the router reads it on every step. */
+  #read?: { from: Snapshot; models: readonly Model[] }
 
   /** `file` is `<cacheDir>/models.json`. Missing, empty or corrupt all mean the same thing. */
   constructor(private readonly file: string) {
@@ -251,10 +325,19 @@ export class Catalog {
    * the seeded half is the one somebody confirmed by hand — a fetched row's silence about
    * tools and windows is the thing it exists to correct, so letting the fetch overwrite it
    * would undo the fix on the first successful poll.
+   *
+   * **With `weekly` lent across providers** ({@link borrow}), here rather than in the cache, so
+   * a figure is always the one the latest usage feed published.
    */
   get models(): readonly Model[] {
-    const written = new Set(SEEDED.map((m) => m.id))
-    return [...SEEDED, ...this.#snapshot.models.filter((m) => !written.has(m.id))]
+    if (this.#read?.from !== this.#snapshot) {
+      const written = new Set(SEEDED.map((m) => m.id))
+      this.#read = {
+        from: this.#snapshot,
+        models: borrow([...SEEDED, ...this.#snapshot.models.filter((m) => !written.has(m.id))]),
+      }
+    }
+    return this.#read.models
   }
 
   /**
