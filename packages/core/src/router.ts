@@ -701,6 +701,8 @@ export interface Answer {
   usage: Usage
   model: Model
   provider: Provider
+  /** The reply stopped at `maxTokens` rather than finishing — see `chat()`. */
+  cut: boolean
 }
 
 /**
@@ -806,7 +808,7 @@ export async function send(
     // with money behind it talked itself out of the pool halfway through a day.
     if (!paid(choice.model.tier)) sent(store, choice.provider)
     try {
-      const { message, usage } = await chat(
+      const { message, usage, cut } = await chat(
         choice.provider,
         { ...request, messages: outbound.messages, model: choice.model.id },
         hooks.onDelta,
@@ -848,7 +850,7 @@ export async function send(
         tokensOut: usage.out,
         cost: costOf(choice.model, usage),
       })
-      return { message, usage, model: choice.model, provider: choice.provider }
+      return { message, usage, cut, model: choice.model, provider: choice.provider }
     } catch (error) {
       last = error
       const status = error instanceof ProviderError ? error.status : 0

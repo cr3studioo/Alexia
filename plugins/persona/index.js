@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { fromJsonSchema, log, plugin } from '@alexia/sdk'
-import { brief, clean, nameFrom, unique, usable } from './writing.js'
+import { brief, clean, nameFrom, ROOM, unique, usable, WAIT } from './writing.js'
 
 /**
  * The personality node (M4-4, revised 2026-08-29).
@@ -95,23 +95,41 @@ alexia.tool(
     try {
       const answered = await alexia.server.server.createMessage({
         messages: [{ role: 'user', content: { type: 'text', text: brief(description) } }],
-        maxTokens: 1200,
+        // Room to think as well as to write. It was 1,200, and a reasoning model spent almost
+        // all of it thinking — which is counted and never shown — so the document it did
+        // write stopped at `## How` (2026-09-15). Nearly every free model is a reasoning
+        // model now, and on a free one the headroom costs nothing.
+        maxTokens: ROOM,
         // Writing, not rephrasing — this is the only call this plugin makes, and it makes
         // it once per personality, so it is worth a rung that can actually write. The old
         // node's cheapest-possible preference was right for a task that ran on every answer
         // and wrong for this one.
         modelPreferences: { intelligencePriority: 0.8, speedPriority: 0.3, costPriority: 0.3 },
+      }, {
+        // The SDK's own default is sixty seconds, and a model thinking before it writes four
+        // hundred words takes longer than that — the first press after raising `ROOM` timed
+        // out at exactly 60.0s (2026-09-15). Just under core's 120-second ceiling on a
+        // button, so a slow model ends in this plugin's sentence rather than a bare timeout.
+        timeout: WAIT,
       })
       alexia.progress(ctx, 2, 3, 'Writing it')
+      // Half a personality is worse than none: it saves, it reads as chosen, and she acts as
+      // if nothing was. An Alexia too old to say `maxTokens` still gets caught by `usable`.
+      if (answered.stopReason === 'maxTokens') {
+        return nope('The model ran out of room before it finished, so nothing was saved. Press Adapt again, or pick a different model.')
+      }
       said = answered.content?.type === 'text' ? answered.content.text : ''
     } catch (error) {
       log.warn('could not adapt', error)
+      if (error instanceof Error && /timed out/i.test(error.message)) {
+        return nope('The model took longer than two minutes, so nothing was saved. Press Adapt again, or pick a faster model.')
+      }
       return nope(`Could not write it: ${error instanceof Error ? error.message : String(error)}`)
     }
 
     const doc = clean(said)
     if (!usable(doc)) {
-      return nope('That came back as something other than a personality. Try describing her again.')
+      return nope('That came back without all four parts of a personality, so nothing was saved. Press Adapt again.')
     }
 
     const existing = await saved()

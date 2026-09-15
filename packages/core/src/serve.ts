@@ -384,7 +384,9 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
         role: 'assistant',
         content: { type: 'text', text: textOf(answer.message) },
         model: answer.model.id,
-        stopReason: 'endTurn',
+        // MCP's own word for *it ran out of room*. A plugin told `endTurn` about half an
+        // answer has no way to know it is half, and the personality adapter saved one.
+        stopReason: answer.cut ? 'maxTokens' : 'endTurn',
       }
     },
   })

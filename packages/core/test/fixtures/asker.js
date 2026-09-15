@@ -82,7 +82,8 @@ server.registerTool(
       messages: [{ role: 'user', content: { type: 'text', text: 'tidy up' } }],
       maxTokens: 200,
     })
-    return text(answer.content?.type === 'text' ? answer.content.text : '')
+    // The stop reason beside the words, so a test can tell a cut answer from a whole one.
+    return text(`${answer.content?.type === 'text' ? answer.content.text : ''} (${answer.stopReason})`)
   },
 )
 

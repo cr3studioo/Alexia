@@ -712,6 +712,7 @@ interface Chunk {
   model?: string
   usage?: { prompt_tokens?: number; completion_tokens?: number }
   choices?: {
+    finish_reason?: string | null
     delta?: {
       content?: string
       tool_calls?: {
@@ -736,7 +737,7 @@ export async function chat(
   request: ChatRequest,
   onDelta?: (text: string) => void,
   secrets: SecretStore = keychain,
-): Promise<{ message: Message; usage: Usage }> {
+): Promise<{ message: Message; usage: Usage; cut: boolean }> {
   // What credential goes on the wire, in three cases — and the difference between the last
   // two is the entire reason `auth` replaced a boolean.
   //
@@ -814,6 +815,15 @@ export async function chat(
   let content = ''
   let model = request.model
   let usage: Usage = { in: 0, out: 0 }
+  /**
+   * **Whether the reply stopped because it ran out of room**, rather than because it was done.
+   *
+   * Read because it was not, and the difference was invisible (2026-09-15). A reasoning model
+   * given 1,200 tokens spent about 1,150 of them thinking — which is counted, and never
+   * streamed as `content` — and the personality it was writing stopped at `## How`. Every
+   * check downstream saw a short, well-formed answer, and saved it.
+   */
+  let cut = false
   const calls: ({ id: string; name: string; arguments: string } | undefined)[] = []
 
   // The stream can stall as easily as the handshake can, and a row's patience has to cover
@@ -834,6 +844,9 @@ export async function chat(
       if (chunk.usage) {
         usage = { in: chunk.usage.prompt_tokens ?? 0, out: chunk.usage.completion_tokens ?? 0 }
       }
+      // On a frame of its own or beside the last delta, depending on the provider, so it is
+      // read before the frame can be skipped for having no delta.
+      if (chunk.choices?.[0]?.finish_reason === 'length') cut = true
       const delta = chunk.choices?.[0]?.delta
       if (!delta) continue
       if (delta.content) {
@@ -857,6 +870,7 @@ export async function chat(
   return {
     message: { role: 'assistant', content, model, ...(asked.length > 0 && { calls: asked }) },
     usage,
+    cut,
   }
 }
 

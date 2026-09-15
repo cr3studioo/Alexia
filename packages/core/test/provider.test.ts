@@ -83,6 +83,31 @@ test('a streamed answer arrives in pieces and comes back as one message', async 
   expect(seen?.auth).toBe('Bearer sk-test-key')
 })
 
+test('a reply that ran out of room says so, because a short answer and a cut one look alike', async () => {
+  // 2026-09-15, live: a reasoning model given 1,200 tokens thought for most of them, and the
+  // personality it was writing stopped at `## How`. Thinking is counted and never streamed,
+  // so the only thing that tells a cut answer from a finished one is `finish_reason`.
+  answer = {
+    status: 200,
+    frames: [
+      JSON.stringify({ choices: [{ delta: { content: '# Butler\n\n## How' } }] }),
+      JSON.stringify({ choices: [{ delta: {}, finish_reason: 'length' }] }),
+      JSON.stringify({ usage: { prompt_tokens: 1559, completion_tokens: 1200 } }),
+      '[DONE]',
+    ],
+  }
+  const ask = { model: 'm', messages: [{ role: 'user' as const, content: 'write it' }] }
+  const cutShort = await chat(provider, ask, undefined, secrets)
+  expect(cutShort.message.content).toBe('# Butler\n\n## How')
+  expect(cutShort.cut).toBe(true)
+
+  answer = {
+    status: 200,
+    frames: [JSON.stringify({ choices: [{ delta: { content: 'Done.' }, finish_reason: 'stop' }] }), '[DONE]'],
+  }
+  expect((await chat(provider, ask, undefined, secrets)).cut).toBe(false)
+})
+
 test('a tool call streamed in fragments is one call by the end', async () => {
   answer = {
     status: 200,

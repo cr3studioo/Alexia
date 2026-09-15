@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { expect, test } from 'vitest'
-import { brief, clean, LONGEST, nameFrom, SHAPE, unique, usable } from '../writing.js'
+import { brief, clean, LONGEST, nameFrom, SECTIONS, SHAPE, unique, usable } from '../writing.js'
 
 /**
  * Adapting (M4-4), minus the model.
@@ -51,6 +51,29 @@ test('a model talking about the document is not the document', () => {
   expect(usable('Sure! Here is a personality for Alexia that is blunt and to the point.')).toBe(false)
   expect(usable('# Hi')).toBe(false)
   expect(usable(`# Long\n${'word '.repeat(LONGEST)}`)).toBe(false)
+})
+
+/** A whole personality, built from the shape's own headings so it cannot drift from them. */
+const whole = (override = {}) =>
+  [
+    '# Butler',
+    ...SECTIONS.flatMap((name) => ['', `## ${name}`, override[name] ?? 'Be formal.']),
+  ].join('\n')
+
+test('half a personality is not a personality, which is what the shallow check let through', () => {
+  // 2026-09-15, live: the answer ran out of room and this was saved and put in use. It has a
+  // heading and more than forty characters, which was the whole of the old check.
+  const cut = '# Butler\n\n## Who you are\nYou are a formal, attentive household butler for the user.\n\n## How'
+  expect(usable(cut)).toBe(false)
+
+  expect(usable(whole())).toBe(true)
+  // A section with nothing under it is as missing as one that is not there.
+  expect(usable(whole({ 'Hard rules': '' }))).toBe(false)
+  // `Nothing.` is an answer, and the brief tells the model to use it.
+  expect(usable(whole({ 'What you do without being asked': 'Nothing.' }))).toBe(true)
+  // What a model does to headings when left alone, and none of it is a missing section.
+  expect(usable(whole().replace('## Hard rules', '### HARD RULES:'))).toBe(true)
+  expect(usable(whole({ 'How you talk': '### Register\n- blunt' }))).toBe(true)
 })
 
 test('an untyped name comes from the user’s own words, never the model’s', () => {
