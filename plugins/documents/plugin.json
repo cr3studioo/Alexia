@@ -4,7 +4,7 @@
   "id": "documents",
   "name": "Documents",
   "summary": "Reads a document you give her — PDF, Word, Excel, PowerPoint, OpenDocument, EPUB, web pages, spreadsheets, notes and code — and hands back what it says.",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "license": "AGPL-3.0-only",
   "entry": {
     "run": "node",

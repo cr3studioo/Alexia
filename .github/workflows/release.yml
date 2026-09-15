@@ -6,7 +6,7 @@
 # release: applying to a certificate programme and publishing a binary with somebody's name on
 # it are outward-facing acts, so a person starts this and a person presses publish.
 #
-# **Two switches, because they answer different questions.** `sign` is Authenticode, and it
+# **Two switches, because they answer different questions.** `sign_windows` is Authenticode, and it
 # decides whether Windows warns the person double-clicking the installer. `publish` is the
 # release, and it decides whether an Alexia already on somebody's machine can update — that
 # one needs only the minisign key, which costs nothing and exists today. Holding the second
@@ -41,8 +41,15 @@ on:
       version:
         description: The version to build, e.g. 0.2.0 — must match APP_VERSION
         required: true
-      sign:
-        description: Submit to SignPath for Authenticode signing. Off until the certificate exists.
+      # One switch per platform (D150), because the two certificates arrive separately — SignPath
+      # is an application to a programme and Apple is a paid account — and a single switch meant
+      # the first one to exist could not be used until the second did.
+      sign_windows:
+        description: Submit the Windows installer to SignPath for Authenticode signing. Off until the certificate exists.
+        type: boolean
+        default: false
+      sign_macos:
+        description: Sign the Mac app with a Developer ID and notarise it. Off until the Apple account exists.
         type: boolean
         default: false
       publish:
@@ -101,7 +108,7 @@ jobs:
       # second hostage to the first is how an update path stays untested until the day it
       # matters.
       - name: Sign
-        if: inputs.sign
+        if: inputs.sign_windows
         uses: signpath/github-action-submit-signing-request@v1
         with:
           api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
@@ -148,31 +155,28 @@ jobs:
           name: release-windows-x86_64
           path: out/
 
-  # The Mac app (D145). Same gate, same order, one job per architecture — and the two switches
-  # mean the same thing here as above: `sign` decides whether macOS warns the person opening it,
-  # `publish` decides whether an Alexia already installed can update.
+  # The Mac app (D145). Same gate, same order — and the two switches mean the same thing here as
+  # above: `sign_macos` decides whether macOS warns the person opening it, `publish` decides
+  # whether an Alexia already installed can update.
   #
-  # **`sign` on a Mac is signing *and* notarising**, and without it Gatekeeper does not warn so
+  # **One universal app, not one per processor** (D150). Two disk images asked the person
+  # downloading which chip their Mac has, before they had seen anything work. So one Apple
+  # Silicon runner builds both halves: Tauri merges the shell, and `sidecar.mjs --universal`
+  # merges Node and the keychain library. About twice the download, and one question fewer.
+  #
+  # **`sign_macos` is signing *and* notarising**, and without it Gatekeeper does not warn so
   # much as refuse: a downloaded app with no Developer ID opens only after System Settings →
   # Privacy & Security → *Open Anyway*. That is a cold-install test failing on its first screen,
   # so an unsigned Mac release says so in its notes rather than in a support email.
   #
-  # Secrets it reads when `sign` is on: `APPLE_CERTIFICATE` (the Developer ID Application
+  # Secrets it reads when `sign_macos` is on: `APPLE_CERTIFICATE` (the Developer ID Application
   # certificate as base64 .p12) and `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY` (its
   # name, "Developer ID Application: …"), and `APPLE_ID`, `APPLE_PASSWORD` (an app-specific
   # password) and `APPLE_TEAM_ID` for notarisation. Tauri notarises and staples when the last
   # three are present, and signs ad hoc when none are — which is what `tauri.macos.conf.json`
   # falls back to, so an unsigned build still runs under the hardened runtime it would ship with.
   macos:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: macos-latest
-            platform: darwin-aarch64
-          - runner: macos-15-intel
-            platform: darwin-x86_64
-    runs-on: ${{ matrix.runner }}
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -181,6 +185,8 @@ jobs:
           node-version: 24
           cache: pnpm
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
 
       - run: pnpm install --frozen-lockfile
       - run: pnpm check
@@ -196,7 +202,7 @@ jobs:
       # Into a keychain of the runner's own, before anything signs: `sidecar.mjs` signs the
       # keychain library in `resources/` with this identity, and `tauri build` signs the rest.
       - name: Import the Developer ID certificate
-        if: inputs.sign
+        if: inputs.sign_macos
         uses: apple-actions/import-codesign-certs@v3
         with:
           p12-file-base64: ${{ secrets.APPLE_CERTIFICATE }}
@@ -211,20 +217,32 @@ jobs:
           NOTARY_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           NOTARY_TEAM: ${{ secrets.APPLE_TEAM_ID }}
         run: |
-          if [ "${{ inputs.sign }}" = "true" ]; then
+          if [ "${{ inputs.sign_macos }}" = "true" ]; then
             export APPLE_SIGNING_IDENTITY="$IDENTITY" APPLE_ID="$NOTARY_ID" APPLE_PASSWORD="$NOTARY_PASSWORD" APPLE_TEAM_ID="$NOTARY_TEAM"
           fi
-          node scripts/sidecar.mjs
-          pnpm tauri build
+          node scripts/sidecar.mjs --universal
+          pnpm tauri build --target universal-apple-darwin
+
+      # Both halves really are in there. A universal build that quietly came out single-processor
+      # would install fine on the machine that built it and refuse to open on the other kind.
+      - name: The app runs on both processors
+        run: |
+          app=src-tauri/target/universal-apple-darwin/release/bundle/macos/Alexia.app
+          for binary in "$app"/Contents/MacOS/* "$app"/Contents/Resources/resources/keyring.darwin-universal.node; do
+            archs=$(lipo -archs "$binary")
+            echo "$(basename "$binary"): $archs"
+            case "$archs" in *x86_64*arm64*|*arm64*x86_64*) ;; *) echo "$binary is not universal"; exit 1 ;; esac
+          done
 
       # The disk image for somebody installing, and the app itself compressed for somebody
       # updating — Tauri's updater replaces a Mac app from a `.app.tar.gz`, not from a dmg.
       - name: Collect the app
         if: inputs.publish
         run: |
+          bundle=src-tauri/target/universal-apple-darwin/release/bundle
           mkdir -p out
-          cp src-tauri/target/release/bundle/dmg/*.dmg out/
-          tar -czf "out/Alexia_${{ matrix.platform }}.app.tar.gz" -C src-tauri/target/release/bundle/macos Alexia.app
+          cp "$bundle"/dmg/*.dmg out/
+          tar -czf out/Alexia_darwin-universal.app.tar.gz -C "$bundle"/macos Alexia.app
           ls -l out
 
       # After notarisation, never before, for the reason the Windows job signs after SignPath:
@@ -240,19 +258,53 @@ jobs:
             echo "TAURI_SIGNING_PRIVATE_KEY is not set; see the Windows job for why that stops a release."
             exit 1
           fi
-          pnpm tauri signer sign "out/Alexia_${{ matrix.platform }}.app.tar.gz"
+          pnpm tauri signer sign out/Alexia_darwin-universal.app.tar.gz
 
       - uses: actions/upload-artifact@v5
         if: inputs.publish
         with:
-          name: release-${{ matrix.platform }}
+          name: release-darwin-universal
           path: out/
+
+  # The Intel half, run on an Intel Mac before anybody can download it (D150). The build above
+  # happens on Apple Silicon, where the x86_64 half is compiled and merged but never executed —
+  # so the first machine to run it would otherwise be a person's. The core starts from inside
+  # the very app that will be published, serves the shell, and loads the merged keychain
+  # library, all as x86_64.
+  macos-intel:
+    needs: macos
+    if: inputs.publish
+    runs-on: macos-15-intel
+    steps:
+      - uses: actions/download-artifact@v5
+        with:
+          name: release-darwin-universal
+          path: out
+      - name: The published app's core runs on Intel
+        run: |
+          tar -xzf out/Alexia_darwin-universal.app.tar.gz
+          core=Alexia.app/Contents/MacOS/alexia-core
+          cd Alexia.app/Contents/Resources/resources
+          home=$(mktemp -d)
+          HOME="$home" ALEXIA_TAURI=1 "$GITHUB_WORKSPACE/$core" boot.mjs > "$home/said.log" 2>&1 &
+          pid=$!
+          url=""
+          for _ in $(seq 1 150); do
+            url=$(grep -oE 'http://127\.0\.0\.1:[0-9]+' "$home/said.log" | head -1 || true)
+            [ -n "$url" ] && break
+            sleep 0.2
+          done
+          if [ -z "$url" ]; then cat "$home/said.log"; kill $pid; exit 1; fi
+          token=$(curl -s "$url" | grep -oE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | head -1)
+          curl -sf -H "x-alexia-token: $token" "$url/api/plugins" | grep -q '"panes"'
+          kill $pid
+          "$GITHUB_WORKSPACE/$core" -e "require('./keyring.darwin-universal.node'); if (process.arch !== 'x64') process.exit(1); console.log('core and keychain run as', process.arch)"
 
   # One release and one `latest.json` for every platform. Written here rather than in a platform
   # job because the file is a single list: two jobs each writing their own would publish
   # whichever finished last, and every other platform's installs would stop updating.
   publish:
-    needs: [windows, macos]
+    needs: [windows, macos, macos-intel]
     if: inputs.publish
     runs-on: ubuntu-latest
     steps:
@@ -280,9 +332,12 @@ jobs:
           const platforms = {}
           const exe = files.find((f) => f.endsWith('.exe'))
           if (exe) platforms['windows-x86_64'] = entry(exe)
-          for (const platform of ['darwin-aarch64', 'darwin-x86_64']) {
-            const app = `Alexia_${platform}.app.tar.gz`
-            if (files.includes(app)) platforms[platform] = entry(app)
+          // One universal app under both names. The updater compiled into each half of it asks
+          // for its own processor — `darwin-aarch64` or `darwin-x86_64` — and never for
+          // `darwin-universal`, so both keys point at the same file.
+          const app = 'Alexia_darwin-universal.app.tar.gz'
+          if (files.includes(app)) {
+            for (const platform of ['darwin-aarch64', 'darwin-x86_64']) platforms[platform] = entry(app)
           }
           writeFileSync(
             'out/latest.json',
@@ -311,9 +366,11 @@ jobs:
           body: |
             Alexia ${{ inputs.version }}.
 
-            ${{ inputs.sign && 'The publisher on the Windows installer reads "SignPath Foundation". That is the certificate programme that signs open-source releases for free, and it is not a sign that something is wrong. Windows may still show a SmartScreen warning until this build accumulates reputation. The Mac app is signed with a Developer ID and notarised by Apple.' || 'These builds are not code-signed yet. On Windows, SmartScreen will warn: More info, then Run anyway. On a Mac, macOS will refuse to open the app the first time: open System Settings, then Privacy & Security, and press Open Anyway beside Alexia. The downloads are still checked — Alexia verifies its own signature over an update before installing it.' }}
+            **Windows:** ${{ inputs.sign_windows && 'the publisher on the installer reads "SignPath Foundation". That is the certificate programme that signs open-source releases for free, and it is not a sign that something is wrong. Windows may still show a SmartScreen warning until this build accumulates reputation.' || 'the installer is not code-signed yet, so SmartScreen will warn: More info, then Run anyway.' }}
 
-            On a Mac, pick the disk image for your processor: aarch64 for Apple Silicon, x86_64 for Intel.
+            **macOS:** one disk image for every Mac, Apple Silicon and Intel alike. ${{ inputs.sign_macos && 'The app is signed with a Developer ID and notarised by Apple.' || 'It is not code-signed yet, so macOS refuses to open it the first time: press Done, open System Settings, then Privacy & Security, and press Open Anyway beside Alexia.' }}
+
+            Either way the downloads are checked: Alexia verifies its own signature over an update before installing it.
 
             Alexia installed from an earlier release updates itself to this one: it offers the
             update at startup and replaces itself in place when you press the button.
