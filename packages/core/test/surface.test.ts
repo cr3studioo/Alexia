@@ -459,25 +459,36 @@ test('the ladder writes the pins the router reads, and the ★ moves with it', a
   expect((await post('/api/action', { key: 'set_order', row: 'gone/yesterday,openrouter/reachable' })).ok).toBe(true)
   expect((await standing()).order).toEqual(['openrouter/reachable'])
 
-  // The slider. *Paid only* is a real wall — the free row leaves the list, and the ★ goes to
-  // the paid one, because the ★ is the router's answer rather than a decoration this screen
-  // keeps.
+  // A list with anything in it is the whole plan (D155), and the reply says so — D112's
+  // *everything else still answers, behind them* is exactly the sentence that is not true now.
+  const ordered = await post('/api/action', { key: 'set_order', row: 'openrouter/reachable' })
+  expect(String(ordered.said)).toContain('only that one answers')
+  expect(String(ordered.said)).not.toContain('behind')
+
+  // The slider. *Paid only* is a real wall — the free row leaves the list — and the only model
+  // in the order is free, so nothing may answer and nothing is starred: the ★ is the router's
+  // answer rather than a decoration this screen keeps, and the router's answer is *nothing*.
   const paid = await post('/api/action', { key: 'set_spend', row: 'paid' })
   expect(paid.ok).toBe(true)
   expect(String(paid.said)).toContain('billed')
   expect((await standing()).spend).toBe('paid')
-  expect((await rows('models')).map((row) => [row.id, row.state])).toEqual([['openrouter/paid', '★ recommended']])
+  expect((await rows('models')).map((row) => row.id)).toEqual(['openrouter/paid'])
+  expect((await rows('models')).map((row) => row.state)).not.toContain('★ recommended')
 
   // Not a value: a stop that does not exist is a sentence rather than a pin nobody can undo.
   const nonsense = await post('/api/action', { key: 'set_spend', row: 'whatever' })
   expect(nonsense.ok).toBe(false)
   expect((await standing()).spend).toBe('paid')
 
+  // Cleared, the list is Automatic again, and under *paid only* the ★ goes to the paid model.
+  const cleared = await post('/api/action', { key: 'set_order', row: '' })
+  expect(String(cleared.said)).toContain('Automatic')
+  expect((await standing()).order).toEqual([])
+  expect((await rows('models')).map((row) => [row.id, row.state])).toEqual([['openrouter/paid', '★ recommended']])
+
   // And back, because the middle is what Automatic always did — the two ends are the two
   // things people wanted to be able to say, not a new default.
   expect((await post('/api/action', { key: 'set_spend', row: 'mixed' })).ok).toBe(true)
-  expect((await post('/api/action', { key: 'set_order', row: '' })).ok).toBe(true)
-  expect((await standing()).order).toEqual([])
   expect((await rows('models'))[0]?.state).toBe('★ recommended')
 })
 
@@ -516,6 +527,18 @@ test('choosing a model pins it, and Automatic gives the choice back', async () =
   expect(String((await post('/api/action', { key: 'automatic', row: 'openrouter/reachable' })).said)).toContain(
     'Already automatic',
   )
+
+  // One model never falls back (D155), and choosing one is when that is said.
+  expect(String((await post('/api/action', { key: 'use_model', row: 'openrouter/reachable' })).said)).toContain(
+    'stops and says why',
+  )
+  // And with a list of your own above the table, this button does not call the result
+  // *automatic* — the list still decides, and it is not this button's to clear.
+  await post('/api/action', { key: 'set_order', row: 'openrouter/reachable' })
+  const listed = await post('/api/action', { key: 'automatic', row: 'openrouter/reachable' })
+  expect(String(listed.said)).toContain('Your own order of 1 still decides')
+  expect(await pinned()).toBeUndefined()
+  await post('/api/action', { key: 'set_order', row: '' })
 })
 
 test('chats: a new one, a way back into an old one, and the one you are in cannot be deleted', async () => {

@@ -25,6 +25,13 @@ export const OLLAMA: Provider = {
   // pool, and a local runner that is not installed must never look like an available rung.
   baseUrl: `${HOST}/v1`,
   auth: 'none',
+  /**
+   * **Three minutes to the first byte**, where a hosted row gets thirty seconds (D155). The
+   * first request loads the model off the disk, and a long conversation is read in full on
+   * this machine's own processor before a word comes back — minutes on a laptop with no GPU,
+   * and nothing streamed while it happens. Once it is talking, it gets the ordinary gap.
+   */
+  timeoutMs: 180_000,
   // The one provider where this is a fact rather than a reading of somebody's terms: the
   // model is on this machine and the request goes to loopback.
   trainsOnYourData: 'no',

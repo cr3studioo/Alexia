@@ -57,11 +57,16 @@ export interface Provider {
   /** AI Horde's documented anonymous key is a literal (`0000000000`), not an absence. */
   anonymousKey?: string
   /**
-   * A volunteer queue answers in minutes; the default timeout calls that dead.
-   * AI Horde 120s · Ollama Cloud 120s · Cloudflare 60s (200s for glm-4.7-flash)
-   * · Agnes 60s · Z.ai longer.
+   * **How long to wait for the first byte of an answer**, where {@link PATIENCE}'s thirty
+   * seconds would call a working provider dead (D155). A volunteer queue answers in minutes.
+   * AI Horde 120s · Ollama Cloud 120s · Cloudflare 60s (200s for glm-4.7-flash) · Agnes 60s.
+   *
+   * It used to be the whole request's deadline, and only rows that set it had one: every other
+   * provider was waited on for as long as Node's own fetch would wait.
    */
   timeoutMs?: number
+  /** The longest silence once an answer has started. {@link PATIENCE}'s twenty seconds unless a row says otherwise. */
+  idleMs?: number
   /**
    * **What a model with no price on it means** (D154).
    *
@@ -468,10 +473,10 @@ export const PROVIDERS: Provider[] = [
     // Source: models_plan.md §6.3 — GLM-4.7-Flash permanently free; the rest are billed.
     freeModels: ['glm-4.7-flash'],
     /**
-     * **No `timeoutMs` on purpose**, which is what *needs a longer timeout* means here. These
-     * are reasoning models and no number was ever published for them; a row that declares
-     * nothing gets the platform's own patience, which is longer than any figure that would
-     * have been invented to put here.
+     * **No `timeoutMs`**, though these are reasoning models. It used to mean *the platform's
+     * own patience*, and since D155 it means {@link PATIENCE}: thirty seconds to the first
+     * byte. Patience counts bytes rather than words, so a model that streams its reasoning is
+     * still answering while it thinks; if this row proves otherwise, a number goes here.
      */
     trainsOnYourData: 'unknown',
     verified: '2026-08-30',
@@ -739,21 +744,54 @@ export interface Usage {
 }
 
 /**
- * A provider said no. The status is on it because the router acts on the number: a 429 is
- * the next rung down, and a 401 is a key the user has to fix.
+ * **How long a provider may say nothing** (D155): until the first byte of an answer, and then
+ * between one chunk and the next.
+ *
+ * Two numbers and not a deadline, because a deadline is wrong at both ends. A long answer
+ * streaming steadily is a provider working, however long it takes; a provider that has sent
+ * nothing for twenty seconds in the middle of a sentence has gone, however recently it
+ * started. And one pair for every row, because a row that declared nothing used to wait as long
+ * as Node's fetch would — *nothing waits for ever* is the rule, and these are its first figures.
+ */
+export const PATIENCE = { first: 30_000, between: 20_000 } as const
+
+/**
+ * What went wrong, where the status alone cannot say it.
+ *
+ * - `slow` — nothing arrived inside the first-byte patience.
+ * - `stalled` — an answer started, then went quiet for longer than the gap allowed.
+ * - `unreachable` — the connection never opened: no network, a name that did not resolve.
+ * - `dropped` — the stream broke, or ended without saying it had finished.
+ * - `keyless` — a 401 with none of the person's keys on the request.
+ */
+export type Trouble = 'slow' | 'stalled' | 'unreachable' | 'dropped' | 'keyless'
+
+/**
+ * A provider said no. The status is on it because the router acts on the number — see
+ * `failed()` in `router.ts`, which is the one place a status is read for what to do next.
+ *
+ * `0` is *there was no status*: nothing came back to have one.
  */
 export class ProviderError extends Error {
   constructor(
     readonly status: number,
     message: string,
+    readonly trouble?: Trouble,
   ) {
     super(message)
   }
 }
 
+/** A socket that broke mid-answer, told apart from a bug in the code reading it. */
+class Broke extends Error {}
+
+const seconds = (ms: number): string => `${String(Math.round(ms / 1000))} seconds`
+
 interface Chunk {
   model?: string
   usage?: { prompt_tokens?: number; completion_tokens?: number }
+  /** A provider that fails after the status line has been sent can only say so in a frame. */
+  error?: { code?: number | string; message?: string }
   choices?: {
     finish_reason?: string | null
     delta?: {
@@ -791,129 +829,182 @@ export async function chat(
   //   `none`      never asks, never reads the keychain.
   const stored = provider.auth === 'none' ? undefined : await secrets.get(CORE, keyOf(provider))
   if (!anonymous(provider) && !stored) {
-    throw new ProviderError(401, `${provider.name} has no key yet — add one in settings.`)
+    throw new ProviderError(401, `${provider.name} has no key yet — add one in settings.`, 'keyless')
   }
   // A documented anonymous credential is a literal the provider hands out, not an absence,
   // so it stands in only where the user has supplied nothing of their own. It lives in the
   // row because it is a fact about that provider, not a branch in this function.
   const key = stored ?? provider.anonymousKey
 
-  // This provider's own patience, if the row declared any. A row that declares none gets
-  // exactly what it got before — whatever the platform waits — because there is no single
-  // number to put here: a volunteer queue answers in minutes, and a fast tier that has gone
-  // quiet for thirty seconds is already gone. One default would be wrong for one of them.
-  const patience = provider.timeoutMs === undefined ? undefined : AbortSignal.timeout(provider.timeoutMs)
-  const signal =
-    patience === undefined ? request.signal
-    : request.signal === undefined ? patience
-    : AbortSignal.any([request.signal, patience])
+  /**
+   * **Patience, as two numbers rather than a deadline** ({@link PATIENCE}). One timer, re-armed
+   * by every chunk that arrives: until the first, it is the row's first-byte patience; after
+   * it, the gap between chunks. Bytes rather than words, so a reasoning model streaming its
+   * thinking, and a gateway's keep-alive comments, both count as somebody still being there.
+   */
+  const first = provider.timeoutMs ?? PATIENCE.first
+  const between = provider.idleMs ?? PATIENCE.between
+  const patience = new AbortController()
+  let started = false
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const wait = (): void => {
+    clearTimeout(timer)
+    timer = setTimeout(() => patience.abort(), started ? between : first)
+  }
+  const signal = request.signal === undefined ? patience.signal : AbortSignal.any([request.signal, patience.signal])
 
   /**
-   * An abort of *ours* rather than the user's becomes a 504 — the status the cascade reads
-   * as *try the next rung*. Keeping the two apart is the whole point: the stop button must
-   * stop, not walk down the ladder looking for somebody else to answer a question nobody is
+   * Every way this can fail, turned into a {@link ProviderError} the router can act on —
+   * except one. **The stop button stops**: an abort of the person's is thrown as it is, so it
+   * never walks down the ladder looking for somebody else to answer a question nobody is
    * waiting for any more.
    */
   const gaveUp = (error: unknown): never => {
-    if (patience?.aborted === true && request.signal?.aborted !== true) {
-      throw new ProviderError(504, `${provider.name} did not answer inside ${String(provider.timeoutMs)}ms.`)
+    if (request.signal?.aborted === true) throw error
+    if (patience.signal.aborted) {
+      throw started ?
+          new ProviderError(504, `${provider.name} went quiet for ${seconds(between)} partway through an answer.`, 'stalled')
+        : new ProviderError(504, `${provider.name} did not answer within ${seconds(first)}.`, 'slow')
     }
-    throw error
+    if (error instanceof ProviderError) throw error
+    const why = error instanceof Error ? (error.cause instanceof Error ? error.cause.message : error.message) : String(error)
+    if (error instanceof Broke) throw new ProviderError(0, `${provider.name} dropped the answer: ${why}`, 'dropped')
+    // What `fetch` throws is the connection: no network, a name that did not resolve, a reset.
+    throw new ProviderError(0, `${provider.name} could not be reached: ${why}`, 'unreachable')
   }
 
   // The address and the credential, which for one shape of row are two halves of the same
   // stored string.
   const reach = reaching(provider, key)
 
-  const response = await fetch(`${reach.baseUrl}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      ...(reach.key !== undefined && { authorization: `Bearer ${reach.key}` }),
-      ...provider.headers,
-    },
-    body: JSON.stringify({
-      model: request.model,
-      messages: request.messages.map(toWire),
-      // A provider-wide `tools: false` outranks anything the caller asked for. The per-model
-      // `supportsTools` flag cannot cover this on its own: a roster discovered live has
-      // models the catalog has never seen, and the backends behind one do not decline a
-      // `tools` field politely — they 500 on it.
-      ...(provider.tools !== false && request.tools && { tools: request.tools.map(asFunction) }),
-      ...(request.maxTokens !== undefined && { max_tokens: request.maxTokens }),
-      stream: true,
-      // The only way to be told what a streamed answer cost. A provider that ignores it
-      // leaves usage at zero, which is the honest number to show rather than a guess.
-      stream_options: { include_usage: true },
-    }),
-    signal,
-  }).catch(gaveUp)
-
-  if (!response.ok || !response.body) {
-    // The body is the provider's own explanation, and it is usually the useful part.
-    const said = await response.text().catch(() => '')
-    throw new ProviderError(response.status, `${provider.name} said ${response.status}: ${said.slice(0, 200)}`)
-  }
-
-  let content = ''
-  let model = request.model
-  let usage: Usage = { in: 0, out: 0 }
-  /**
-   * **Whether the reply stopped because it ran out of room**, rather than because it was done.
-   *
-   * Read because it was not, and the difference was invisible (2026-09-15). A reasoning model
-   * given 1,200 tokens spent about 1,150 of them thinking — which is counted, and never
-   * streamed as `content` — and the personality it was writing stopped at `## How`. Every
-   * check downstream saw a short, well-formed answer, and saved it.
-   */
-  let cut = false
-  const calls: ({ id: string; name: string; arguments: string } | undefined)[] = []
-
-  // The stream can stall as easily as the handshake can, and a row's patience has to cover
-  // both — a provider that stops mid-sentence has failed exactly as completely as one that
-  // never spoke, and the rung below it can still answer.
+  wait()
   try {
-    for await (const event of frames(response.body)) {
-      if (event === '[DONE]') break
-      let chunk: Chunk
-      try {
-        chunk = JSON.parse(event) as Chunk
-      } catch {
-        // A frame that is not JSON is a provider having a bad day, not a reason to lose the
-        // answer that arrived before it.
-        continue
-      }
-      if (chunk.model) model = chunk.model
-      if (chunk.usage) {
-        usage = { in: chunk.usage.prompt_tokens ?? 0, out: chunk.usage.completion_tokens ?? 0 }
-      }
-      // On a frame of its own or beside the last delta, depending on the provider, so it is
-      // read before the frame can be skipped for having no delta.
-      if (chunk.choices?.[0]?.finish_reason === 'length') cut = true
-      const delta = chunk.choices?.[0]?.delta
-      if (!delta) continue
-      if (delta.content) {
-        content += delta.content
-        onDelta?.(delta.content)
-      }
-      for (const call of delta.tool_calls ?? []) {
-        // Streamed in pieces and keyed by index: the id and name arrive once, the arguments
-        // in fragments that only mean anything concatenated.
-        const at = (calls[call.index] ??= { id: '', name: '', arguments: '' })
-        if (call.id) at.id = call.id
-        if (call.function?.name) at.name = call.function.name
-        if (call.function?.arguments) at.arguments += call.function.arguments
-      }
-    }
-  } catch (error) {
-    gaveUp(error)
-  }
+    const response = await fetch(`${reach.baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        ...(reach.key !== undefined && { authorization: `Bearer ${reach.key}` }),
+        ...provider.headers,
+      },
+      body: JSON.stringify({
+        model: request.model,
+        messages: request.messages.map(toWire),
+        // A provider-wide `tools: false` outranks anything the caller asked for. The per-model
+        // `supportsTools` flag cannot cover this on its own: a roster discovered live has
+        // models the catalog has never seen, and the backends behind one do not decline a
+        // `tools` field politely — they 500 on it.
+        ...(provider.tools !== false && request.tools && { tools: request.tools.map(asFunction) }),
+        ...(request.maxTokens !== undefined && { max_tokens: request.maxTokens }),
+        stream: true,
+        // The only way to be told what a streamed answer cost. A provider that ignores it
+        // leaves usage at zero, which is the honest number to show rather than a guess.
+        stream_options: { include_usage: true },
+      }),
+      signal,
+    }).catch(gaveUp)
 
-  const asked = calls.filter((c) => c !== undefined)
-  return {
-    message: { role: 'assistant', content, model, ...(asked.length > 0 && { calls: asked }) },
-    usage,
-    cut,
+    if (!response.ok || !response.body) {
+      // The body is the provider's own explanation, and it is usually the useful part.
+      const said = await response.text().catch(() => '')
+      throw new ProviderError(
+        response.status,
+        `${provider.name} said ${response.status}: ${said.slice(0, 200)}`,
+        // **A 401 with nothing of the person's on it is not their key being refused.** A
+        // keyless provider answers most of its models anonymously and a few only with a key,
+        // so this one model wants a key; the rest of that provider's list still answers.
+        response.status === 401 && stored === undefined ? 'keyless' : undefined,
+      )
+    }
+
+    let content = ''
+    let model = request.model
+    let usage: Usage = { in: 0, out: 0 }
+    /**
+     * **Whether the reply stopped because it ran out of room**, rather than because it was done.
+     *
+     * Read because it was not, and the difference was invisible (2026-09-15). A reasoning model
+     * given 1,200 tokens spent about 1,150 of them thinking — which is counted, and never
+     * streamed as `content` — and the personality it was writing stopped at `## How`. Every
+     * check downstream saw a short, well-formed answer, and saved it.
+     */
+    let cut = false
+    /**
+     * **Whether the provider said it had finished** — `[DONE]`, or a `finish_reason`.
+     *
+     * A stream that simply ends without either is a connection that closed under an answer,
+     * and it used to come back as that answer: half a sentence, returned as though it were
+     * the whole of one (D155).
+     */
+    let finished = false
+    const calls: ({ id: string; name: string; arguments: string } | undefined)[] = []
+
+    // The stream can stall as easily as the handshake can, and the patience covers both — a
+    // provider that stops mid-sentence has failed exactly as completely as one that never
+    // spoke, and the rung below it can still answer.
+    try {
+      const chunks = frames(response.body, () => {
+        started = true
+        wait()
+      })
+      for await (const event of chunks) {
+        if (event === '[DONE]') {
+          finished = true
+          break
+        }
+        let chunk: Chunk
+        try {
+          chunk = JSON.parse(event) as Chunk
+        } catch {
+          // A frame that is not JSON is a provider having a bad day, not a reason to lose the
+          // answer that arrived before it.
+          continue
+        }
+        if (chunk.error) {
+          // Failing after `200` has been sent leaves a provider only this way to say so.
+          const code = Number(chunk.error.code)
+          throw new ProviderError(
+            code >= 400 && code < 600 ? code : 502,
+            `${provider.name} said: ${String(chunk.error.message ?? chunk.error.code ?? 'an error')}`.slice(0, 240),
+          )
+        }
+        if (chunk.model) model = chunk.model
+        if (chunk.usage) {
+          usage = { in: chunk.usage.prompt_tokens ?? 0, out: chunk.usage.completion_tokens ?? 0 }
+        }
+        // On a frame of its own or beside the last delta, depending on the provider, so it is
+        // read before the frame can be skipped for having no delta.
+        const reason = chunk.choices?.[0]?.finish_reason
+        if (reason === 'error') throw new Broke('it said the answer failed')
+        if (reason) finished = true
+        if (reason === 'length') cut = true
+        const delta = chunk.choices?.[0]?.delta
+        if (!delta) continue
+        if (delta.content) {
+          content += delta.content
+          onDelta?.(delta.content)
+        }
+        for (const call of delta.tool_calls ?? []) {
+          // Streamed in pieces and keyed by index: the id and name arrive once, the arguments
+          // in fragments that only mean anything concatenated.
+          const at = (calls[call.index] ??= { id: '', name: '', arguments: '' })
+          if (call.id) at.id = call.id
+          if (call.function?.name) at.name = call.function.name
+          if (call.function?.arguments) at.arguments += call.function.arguments
+        }
+      }
+      if (!finished) throw new Broke('the stream ended before the answer did')
+    } catch (error) {
+      gaveUp(error)
+    }
+
+    const asked = calls.filter((c) => c !== undefined)
+    return {
+      message: { role: 'assistant', content, model, ...(asked.length > 0 && { calls: asked }) },
+      usage,
+      cut,
+    }
+  } finally {
+    clearTimeout(timer)
   }
 }
 
@@ -965,14 +1056,22 @@ const asFunction = (tool: ToolSpec): Record<string, unknown> => ({
  * The `data:` payloads of a server-sent event stream, in order. Everything else — comments,
  * event names, the blank lines between frames — is not something any of these endpoints
  * sends anything meaningful in.
+ *
+ * `arrived` hears every chunk, comments included: a keep-alive is not an answer, but it is the
+ * provider still being there, which is the only thing patience measures.
  */
-async function* frames(body: ReadableStream<Uint8Array>): AsyncGenerator<string> {
+async function* frames(body: ReadableStream<Uint8Array>, arrived: () => void): AsyncGenerator<string> {
   const reader = body.getReader()
   const decoder = new TextDecoder()
   let buffer = ''
   for (;;) {
-    const { done, value } = await reader.read()
+    // A read that throws is the connection going, which is the provider's failure and not a
+    // bug here — so it is named as one on the way out.
+    const { done, value } = await reader.read().catch((error: unknown) => {
+      throw new Broke(error instanceof Error ? error.message : String(error), { cause: error })
+    })
     if (done) break
+    arrived()
     buffer += decoder.decode(value, { stream: true })
     // A chunk boundary lands mid-line often enough that this is the whole reason for the
     // buffer: yield the complete lines, keep the tail for the next read.

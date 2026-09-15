@@ -227,8 +227,9 @@ export function sources(options: SurfaceOptions): Record<string, Source> {
         const standing = pins(store)
         const keyed = await options.connected()
         /**
-         * What Automatic would pick if nothing were pinned — which is what *recommended*
-         * means here, and the only definition of it that cannot drift.
+         * What the router would ask first if nothing were pinned — Automatic's first choice,
+         * or the first of the person's own list when there is one (D155) — which is what
+         * *recommended* means here, and the only definition of it that cannot drift.
          *
          * Not a list of good models kept in this file. Core does not name a vendor's model
          * any more than it names a plugin, and a list like that is wrong within a season:
@@ -672,7 +673,9 @@ export function actions(
     setPin(options.store, { model: id })
     return {
       ok: true,
-      said: `Every request now goes to ${model.name}. Press Automatic on any row to hand the choice back.`,
+      // One model never falls back (D155), and the moment somebody chooses one is the moment
+      // to say so — not the evening it is rate-limited.
+      said: `Every request now goes to ${model.name}. If it cannot answer, Alexia stops and says why rather than asking another model. Press Automatic on any row to hand the choice back.`,
     }
   }
 
@@ -709,6 +712,9 @@ export function actions(
    * **Unknown ids are dropped rather than refused.** A model that left the catalog since the
    * screen was drawn would otherwise make the whole list unsaveable, with a sentence about a
    * row the person cannot see.
+   *
+   * **A list with anything in it is the whole plan** (D155), so the reply says that rather
+   * than D112's *everything else still answers, behind them*, which is no longer true.
    */
   const setOrder = (list: string): Promise<{ ok: boolean; said: string }> => {
     const wanted = list.split(',').map((one) => one.trim()).filter((one) => one !== '')
@@ -719,8 +725,8 @@ export function actions(
       ok: true,
       said:
         order.length === 0 ?
-          'Order cleared. Every model falls back to cheapest-first within whatever the slider allows.'
-        : `${String(order.length)} in your own order. Everything else still answers, behind them.`,
+          'Order cleared, which is Automatic: every model the slider allows can answer, and when one fails the next one does.'
+        : `${String(order.length)} in your own order, and only ${order.length === 1 ? 'that one answers' : 'these answer'}. If ${order.length === 1 ? 'it fails' : 'the last one fails too'}, Alexia stops and says why, and offers Automatic for that answer.`,
     })
   }
 
@@ -737,13 +743,17 @@ export function actions(
      * — and *stop pinning* means the same thing pressed anywhere.
      */
     automatic: () => {
-      const had = pins(options.store).model
+      const { model: had, order = [] } = pins(options.store)
       setPin(options.store, { model: undefined })
+      // The list above the table is a choice of its own, and this button does not clear it —
+      // so while it has anything in it, *automatic* would be the wrong word (D155).
+      const listed = order.length > 0
       return Promise.resolve({
         ok: true,
         said:
-          had === undefined ?
-            'Already automatic — no model is pinned, so each request goes to the cheapest one that fits it.'
+          listed ?
+            `No model is pinned. Your own order of ${String(order.length)} still decides which models answer — clear it above for Automatic.`
+          : had === undefined ? 'Already automatic — no model is pinned, so each request goes to the cheapest one that fits it.'
           : 'Back to automatic. Each request goes to the cheapest model that fits it, and no model is pinned.',
       })
     },

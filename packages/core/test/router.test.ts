@@ -5,9 +5,9 @@ import { afterAll, expect, test } from 'vitest'
 import type { Model } from '../src/catalog.js'
 import { SEEDED } from '../src/catalog.js'
 import { remaining, sent, usable } from '../src/pool.js'
-import { anonymous, keyOf, PROVIDERS, type Provider } from '../src/provider.js'
+import { anonymous, keyOf, ProviderError, PROVIDERS, type Provider } from '../src/provider.js'
 import { OLLAMA } from '../src/ollama.js'
-import { bubble, MODES, route, send, shapeOf, type Choice, type Pins, type World } from '../src/router.js'
+import { bubble, failed, MODES, route, send, shapeOf, stopped, type Choice, type Pins, type World } from '../src/router.js'
 import { CORE, memorySecrets } from '../src/secrets.js'
 import type { Message } from '../src/store.js'
 import { Store } from '../src/store.js'
@@ -221,11 +221,41 @@ let mute = new Set<string>()
 let gated = new Set<string>()
 /** Models no worker is serving right now, the way a volunteer roster says so. */
 let unserved = new Set<string>()
+/**
+ * Everything else a provider does to an answer (D155), by model: a status with its own words,
+ * a stream that dies after five chunks, a provider that never answers, a reply cut at its ceiling.
+ */
+let behave = new Map<string, { status: number; body?: string } | 'dies' | 'hangs' | 'cut'>()
+/** Every model asked, in order — so a test can say what was *not* asked. */
+const called: string[] = []
 const server: Server = createServer((request, response) => {
   let raw = ''
   request.on('data', (chunk: Buffer) => (raw += chunk.toString()))
   request.on('end', () => {
     const { model: asked } = JSON.parse(raw) as { model: string }
+    called.push(asked)
+    const how = behave.get(asked)
+    if (how === 'hangs') return
+    if (how === 'dies') {
+      response.writeHead(200, { 'content-type': 'text/event-stream' })
+      for (const word of ['one ', 'two ', 'three ', 'four ', 'five ']) {
+        response.write(`data: ${JSON.stringify({ choices: [{ delta: { content: word } }] })}\n\n`)
+      }
+      setTimeout(() => response.destroy(), 20)
+      return
+    }
+    if (how === 'cut') {
+      response.writeHead(200, { 'content-type': 'text/event-stream' })
+      response.end(
+        `data: ${JSON.stringify({ choices: [{ delta: { content: 'half' }, finish_reason: 'length' }] })}\n\ndata: [DONE]\n\n`,
+      )
+      return
+    }
+    if (how !== undefined) {
+      response.writeHead(how.status, { 'content-type': 'text/plain' })
+      response.end(how.body ?? 'no')
+      return
+    }
     if (refuse.has(asked)) {
       response.writeHead(429, { 'content-type': 'text/plain' })
       response.end('slow down')
@@ -514,18 +544,16 @@ test('with the keyed tiers spent, the cascade reaches this machine instead of a 
   ledger.close()
 })
 
-test('the shortlist can move this machine up, because that is somebody typing it', () => {
+test('a list can put this machine first, because that is somebody typing it', () => {
   // The rule above is about a default reaching for local first, not about arguing with a
   // person who dragged their own model to the top. The group still wins — free before paid —
-  // and inside it the list the user wrote themselves is read before the local rule.
+  // and inside it the list the user wrote is the order, ahead of the local rule.
   const work = { messages: asked('sort my downloads'), tools: [{ name: 'fs.list' }] }
   const installed = world({ local: [localSmall] })
-  expect(ids(route(work, pins({ order: ['qwen3:8b'] }), installed))).toEqual([
-    'qwen3:8b',
-    'free/tools',
-    'paid/small',
-    'paid/frontier',
-  ])
+  expect(ids(route(work, pins({ order: ['free/tools', 'qwen3:8b'] }), installed))).toEqual(['free/tools', 'qwen3:8b'])
+  expect(ids(route(work, pins({ order: ['qwen3:8b', 'free/tools'] }), installed))).toEqual(['qwen3:8b', 'free/tools'])
+  // And the list is the whole plan (D155): with only the machine on it, nothing else is behind it.
+  expect(ids(route(work, pins({ order: ['qwen3:8b'] }), installed))).toEqual(['qwen3:8b'])
 })
 
 /**
@@ -727,35 +755,77 @@ test('local placement is still every hosted rung gone, not merely last', () => {
 test('the user’s own order is read within a group, never across one', () => {
   const work = { messages: asked('sort my downloads'), tools: [{ name: 'fs.list' }] }
 
-  // Frontier named first, and it still sorts behind every free model — because it is paid.
-  expect(ids(route(work, pins({ order: ['paid/frontier'] }), world()))).toEqual([
+  // Frontier named first, and it still sorts behind the free model — because it is paid.
+  expect(ids(route(work, pins({ order: ['paid/frontier', 'free/tools'] }), world()))).toEqual([
     'free/tools',
     'paid/frontier',
-    'paid/small',
   ])
 
   // Within the paid group it is the whole point: the dearer one first because it was asked
   // for, ahead of the rule that would otherwise have chosen for you.
-  expect(ids(route(work, pins({ spend: 'paid', order: ['paid/frontier'] }), world()))).toEqual([
+  expect(ids(route(work, pins({ spend: 'paid', order: ['paid/frontier', 'paid/small'] }), world()))).toEqual([
     'paid/frontier',
     'paid/small',
   ])
 
-  // And an empty list is the behaviour this screen had before anybody touched it, which is
-  // what makes the shortlist optional rather than a form to fill in.
-  expect(ids(route(work, pins({ order: [] }), world()))).toEqual(ids(route(work, pins(), world())))
+  // And an empty list is Automatic, which is what makes the list optional rather than a form
+  // to fill in.
+  const empty = route(work, pins({ order: [] }), world())
+  expect(ids(empty)).toEqual(ids(route(work, pins(), world())))
+  expect(empty.mode).toBe('automatic')
 })
 
-test('a model that has left the catalog does not take the order with it', () => {
+test('a model that has left the catalog is skipped in the list, and a list of only those stops', () => {
   const work = { messages: asked('sort my downloads'), tools: [{ name: 'fs.list' }] }
-  // `Infinity - Infinity` is `NaN`, which `Array.sort` reads as *equal* in every direction at
-  // once — so the unlisted rows would have come back in whatever order the engine felt like.
-  // They tie on `order.length` instead, and fall through to the rules underneath.
-  expect(ids(route(work, pins({ order: ['gone/yesterday', 'also/gone'] }), world()))).toEqual([
-    'free/tools',
-    'paid/small',
-    'paid/frontier',
-  ])
+  // One entry gone: the rest of the list is still the list.
+  expect(ids(route(work, pins({ order: ['gone/yesterday', 'paid/small'] }), world()))).toEqual(['paid/small'])
+
+  // Every entry gone. D112 fell through to everything else here; a list somebody made is the
+  // whole plan now, so it says the list is empty rather than quietly answering from outside it.
+  const stranded = route(work, pins({ order: ['gone/yesterday', 'also/gone'] }), world())
+  expect(stranded).toMatchObject({ ok: false, mode: 'sequence' })
+  expect(ids(stranded)[0]).toContain('none of the models in your order can be reached')
+})
+
+/**
+ * **Three modes, three promises** (D155). Which one a plan is in decides how far a failure may
+ * walk, so the mode travels on the verdict and the rule lives in the plan rather than in `send`.
+ */
+test('the plan says whose choice it is: nobody, a list, or one model', () => {
+  const work = { messages: asked('sort my downloads'), tools: [{ name: 'fs.list' }] }
+  expect(route(work, pins(), world()).mode).toBe('automatic')
+  expect(route(work, pins({ order: ['free/tools'] }), world()).mode).toBe('sequence')
+  expect(route(work, pins({ model: 'free/text', order: ['free/tools'] }), world()).mode).toBe('pinned')
+})
+
+test('a list never reaches past its last entry, even when a model outside it would answer', () => {
+  // The work needs hands and the only model on the list has none. Automatic would hand it to
+  // `free/tools`; a list somebody wrote does not, and it says why in words about the list.
+  const work = { messages: asked('sort my downloads'), tools: [{ name: 'fs.list' }] }
+  const verdict = route(work, pins({ order: ['free/text'] }), world())
+  expect(verdict).toMatchObject({ ok: false, mode: 'sequence' })
+  expect(ids(verdict)).toEqual(['none of the models in your order can use tools, and this needs them'])
+})
+
+test('the ledger does not refuse somebody’s own choice before it has been tried', () => {
+  // alpha has used its day by this machine's count — a count D107 calls a deliberately low
+  // copy of somebody else's number. Automatic leaves alpha's free rows out while anything
+  // else is left; a pin used to be refused outright, *is not available right now*, on a guess.
+  const ledger = new Store(':memory:')
+  for (let i = 0; i < alpha.rpd!; i++) sent(ledger, alpha, noon + i * 61_000)
+  const at = noon + alpha.rpd! * 61_000
+  const freeBeta = model({ id: 'free/beta', tier: 'T1', provider: 'beta', supportsTools: true })
+  const drained = world({
+    models: [freeText, freeTools, freeBeta, cheapPaid],
+    rungs: [remaining(ledger, alpha, at), remaining(ledger, beta, at)],
+  })
+  const work = { messages: asked('sort my downloads'), tools: [{ name: 'fs.list' }] }
+
+  expect(ids(route(work, pins(), drained))).toEqual(['free/beta', 'paid/small'])
+  expect(ids(route(work, pins({ model: 'free/tools' }), drained))).toEqual(['free/tools'])
+  // A list keeps its spent entry and asks it last: the one list somebody wanted is worth a 429.
+  expect(ids(route(work, pins({ order: ['free/tools', 'free/beta'] }), drained))).toEqual(['free/beta', 'free/tools'])
+  ledger.close()
 })
 
 // The context filter. `Model.context` existed since the catalog did and was read by nothing,
@@ -1201,4 +1271,275 @@ test('a model nobody is serving right now is a rung failure, not the end of the 
   expect(answer.model.id).toBe(cheapPaid.id)
   unserved = new Set()
   ledger.close()
+})
+
+// ---- D155: a failure is classified once, and the plan decides how far it walks ------------
+
+/** Two providers pointed at the scripted server, both with keys, and a fresh ledger. */
+const scripted = async (): Promise<{ one: Provider; two: Provider; keys: ReturnType<typeof memorySecrets>; ledger: Store }> => {
+  const keys = memorySecrets()
+  const one = { ...alpha, baseUrl: at }
+  const two = { ...beta, baseUrl: at }
+  await keys.set(CORE, keyOf(one), 'sk-a')
+  await keys.set(CORE, keyOf(two), 'sk-b')
+  refuse = new Set()
+  mute = new Set()
+  gated = new Set()
+  unserved = new Set()
+  called.length = 0
+  return { one, two, keys, ledger: new Store(':memory:') }
+}
+
+const free = (id: string, over: Partial<Model> = {}): Model => model({ id, name: id, tier: 'T1', ...over })
+
+test('no credit is the next rung’s turn in Automatic, and the switch is said in one line', async () => {
+  // `402` used to throw and end the answer with every other model untried.
+  const { one, two, keys, ledger } = await scripted()
+  behave = new Map([['free/broke', { status: 402, body: 'Insufficient credits' }]])
+  const notes: string[] = []
+
+  const answer = await send(
+    [
+      { model: free('free/broke'), provider: one },
+      { model: free('free/fine', { provider: 'beta' }), provider: two },
+    ],
+    { messages: asked('hello') },
+    ledger,
+    keys,
+    { onNote: (line) => notes.push(line), onDelta: () => undefined },
+  )
+  expect(answer.model.id).toBe('free/fine')
+  expect(notes).toEqual(['There is no Alpha credit to pay for free/broke — this answer is from free/fine.'])
+  ledger.close()
+})
+
+test('one model that fails stops, with the model and the reason in words', async () => {
+  const { one, keys, ledger } = await scripted()
+  behave = new Map([['free/broke', { status: 402, body: 'Insufficient credits' }]])
+  // A plan of one is what a pin routes to, so there is nothing to walk to.
+  await expect(send([{ model: free('free/broke'), provider: one }], { messages: asked('hello') }, ledger, keys)).rejects.toMatchObject({
+    status: 402,
+    message: 'There is no Alpha credit to pay for free/broke.',
+  })
+  ledger.close()
+})
+
+test('a list that fails all the way down stops at its end, and the model outside it is never asked', async () => {
+  const { one, two, keys, ledger } = await scripted()
+  const first = free('free/first', { supportsTools: true })
+  const second = free('free/second', { supportsTools: true, provider: 'beta' })
+  const outside = free('free/outside', { supportsTools: true })
+  behave = new Map<string, { status: number; body?: string } | 'dies' | 'hangs' | 'cut'>([
+    ['free/first', { status: 429 }],
+    ['free/second', { status: 404, body: 'No endpoints found' }],
+  ])
+  const place: World = world({ models: [first, second, outside], rungs: [remaining(ledger, one), remaining(ledger, two)] })
+
+  const verdict = route({ messages: asked('hello') }, pins({ order: ['free/first', 'free/second'] }), place)
+  expect(verdict).toMatchObject({ ok: true, mode: 'sequence' })
+  const plan = verdict.ok ? verdict.choices.map((c) => ({ ...c, provider: c.provider.id === 'alpha' ? one : two })) : []
+
+  await expect(send(plan, { messages: asked('hello') }, ledger, keys)).rejects.toThrow(
+    'free/first is rate-limited right now, and free/second is no longer offered by Beta.',
+  )
+  expect(called).toEqual(['free/first', 'free/second'])
+  ledger.close()
+})
+
+test('a stream that dies halfway starts again on the next rung, and the half is thrown away', async () => {
+  const { one, two, keys, ledger } = await scripted()
+  behave = new Map([['free/dies', 'dies']])
+  const shown: string[] = []
+
+  const answer = await send(
+    [
+      { model: free('free/dies'), provider: one },
+      { model: free('free/fine', { provider: 'beta' }), provider: two },
+    ],
+    { messages: asked('hello') },
+    ledger,
+    keys,
+    {
+      onDelta: (text) => shown.push(text),
+      // What the shell does with it: the half-written bubble is cleared.
+      onRestart: () => (shown.length = 0),
+      onNote: (line) => shown.push(`[${line}]`),
+    },
+  )
+  expect(answer.model.id).toBe('free/fine')
+  expect(answer.message.content).toBe('here')
+  expect(shown).toEqual(['[free/dies stopped answering partway through — this answer is from free/fine.]', 'here'])
+  ledger.close()
+})
+
+test('a provider that never answers is given up on at its patience, and the next rung asked', async () => {
+  const { one, two, keys, ledger } = await scripted()
+  behave = new Map([['free/silent', 'hangs']])
+  // A tenth of a second standing in for the thirty every row now gets by default.
+  const impatient = { ...one, timeoutMs: 100 }
+
+  const answer = await send(
+    [
+      { model: free('free/silent'), provider: impatient },
+      { model: free('free/fine', { provider: 'beta' }), provider: two },
+    ],
+    { messages: asked('hello') },
+    ledger,
+    keys,
+  )
+  expect(answer.model.id).toBe('free/fine')
+  ledger.close()
+})
+
+test('a refused key skips every model on that provider, and only that provider', async () => {
+  const { one, two, keys, ledger } = await scripted()
+  behave = new Map([['free/a1', { status: 401, body: 'invalid api key' }]])
+  const notes: string[] = []
+
+  const answer = await send(
+    [
+      { model: free('free/a1'), provider: one },
+      { model: free('free/a2'), provider: one },
+      { model: free('free/b1', { provider: 'beta' }), provider: two },
+    ],
+    { messages: asked('hello') },
+    ledger,
+    keys,
+    { onNote: (line) => notes.push(line) },
+  )
+  // Every rung on alpha would have said the same thing, so the second was not asked.
+  expect(called).toEqual(['free/a1', 'free/b1'])
+  expect(answer.model.id).toBe('free/b1')
+  expect(notes).toEqual(['Your Alpha key was refused — this answer is from free/b1.'])
+  ledger.close()
+})
+
+test('a keyless provider saying 401 is one model wanting a key, not the provider gone', async () => {
+  // A keyless floor answers most of its list anonymously and a few models only with a key.
+  const { keys, ledger } = await scripted()
+  const floor: Provider = { id: 'floor', name: 'Floor', baseUrl: at, auth: 'optional' }
+  behave = new Map([['floor/keyed', { status: 401, body: 'missing_api_key' }]])
+
+  const answer = await send(
+    [
+      { model: free('floor/keyed', { provider: 'floor' }), provider: floor },
+      { model: free('floor/open', { provider: 'floor' }), provider: floor },
+    ],
+    { messages: asked('hello') },
+    ledger,
+    keys,
+  )
+  expect(answer.model.id).toBe('floor/open')
+  ledger.close()
+})
+
+test('a conversation too long for one model is only tried on a bigger window', async () => {
+  const { one, two, keys, ledger } = await scripted()
+  behave = new Map([['free/32k', { status: 400, body: "This model's maximum context length is 32768 tokens" }]])
+  const plan = [
+    { model: free('free/32k'), provider: one },
+    // The same window would refuse the same way, and a smaller one worse.
+    { model: free('free/also-32k', { provider: 'beta' }), provider: two },
+    { model: free('free/8k', { provider: 'beta', context: 8_192 }), provider: two },
+    { model: free('free/200k', { provider: 'beta', context: 200_000 }), provider: two },
+  ]
+  const answer = await send(plan, { messages: asked('hello') }, ledger, keys)
+  expect(answer.model.id).toBe('free/200k')
+  expect(called).toEqual(['free/32k', 'free/200k'])
+
+  // And with nothing bigger left, the stop says so rather than blaming the model.
+  called.length = 0
+  await expect(send(plan.slice(0, 3), { messages: asked('hello') }, ledger, keys)).rejects.toThrow(
+    'This conversation is too long for free/32k. Nothing left to try reads more than that — start a new chat.',
+  )
+  ledger.close()
+})
+
+test('a model retired, a connection refused, a server error: each is the next rung’s turn', async () => {
+  const { one, two, keys, ledger } = await scripted()
+  behave = new Map<string, { status: number; body?: string } | 'dies' | 'hangs' | 'cut'>([
+    ['free/retired', { status: 404 }],
+    ['free/broken', { status: 500 }],
+  ])
+  // Nothing listens on port 1, which is what a network that is not there looks like from here.
+  const nowhere: Provider = { ...one, id: 'nowhere', name: 'Nowhere', baseUrl: 'http://127.0.0.1:1/v1' }
+  await keys.set(CORE, keyOf(nowhere), 'sk-n')
+
+  const answer = await send(
+    [
+      { model: free('free/retired'), provider: one },
+      { model: free('free/unreached', { provider: 'nowhere' }), provider: nowhere },
+      { model: free('free/broken'), provider: one },
+      { model: free('free/fine', { provider: 'beta' }), provider: two },
+    ],
+    { messages: asked('hello') },
+    ledger,
+    keys,
+  )
+  expect(answer.model.id).toBe('free/fine')
+  ledger.close()
+})
+
+test('a free answer cut off at its ceiling is the next rung’s turn, and a paid one is not bought twice', async () => {
+  const { one, two, keys, ledger } = await scripted()
+  behave = new Map<string, { status: number; body?: string } | 'dies' | 'hangs' | 'cut'>([
+    ['free/cut', 'cut'],
+    ['paid/cut', 'cut'],
+  ])
+  const walked = await send(
+    [
+      { model: free('free/cut'), provider: one },
+      { model: free('free/fine', { provider: 'beta' }), provider: two },
+    ],
+    { messages: asked('hello') },
+    ledger,
+    keys,
+  )
+  expect(walked.model.id).toBe('free/fine')
+
+  // Billed, and the next paid model would end at the same ceiling for a second bill. So the
+  // cut answer comes back as one, and the caller — Adapt, say — decides what it is worth.
+  const billed = await send(
+    [
+      { model: model({ ...cheapPaid, id: 'paid/cut' }), provider: two },
+      { model: frontier, provider: two },
+    ],
+    { messages: asked('hello'), maxTokens: 200 },
+    ledger,
+    keys,
+  )
+  expect(billed).toMatchObject({ cut: true, message: { content: 'half' } })
+  expect(called).not.toContain('paid/frontier')
+  ledger.close()
+})
+
+test('the stop button is not a failure, so it walks nowhere', async () => {
+  const { one, two, keys, ledger } = await scripted()
+  behave = new Map([['free/silent', 'hangs']])
+  const stop = new AbortController()
+  const asking = send(
+    [
+      { model: free('free/silent'), provider: one },
+      { model: free('free/fine', { provider: 'beta' }), provider: two },
+    ],
+    { messages: asked('hello'), signal: stop.signal },
+    ledger,
+    keys,
+  )
+  setTimeout(() => stop.abort(), 50)
+  await expect(asking).rejects.not.toBeInstanceOf(ProviderError)
+  expect(called).toEqual(['free/silent'])
+  ledger.close()
+})
+
+test('a long stop lists three reasons and counts the rest', () => {
+  const choice = (id: string): Choice => ({ model: free(id), provider: alpha })
+  const failures = ['a', 'b', 'c', 'd', 'e'].map((id) => failed(new ProviderError(429, 'slow down'), choice(id))!)
+  expect(stopped(failures)).toBe(
+    'a is rate-limited right now, b is rate-limited right now, c is rate-limited right now, and 2 more could not answer either.',
+  )
+  // Nothing about a provider failing is a reason to hide the monthly cap behind it.
+  expect(stopped(failures.slice(0, 1), 'the monthly cap is reached — raise it in settings, or use a free model')).toBe(
+    'a is rate-limited right now. The monthly cap is reached — raise it in settings, or use a free model.',
+  )
 })

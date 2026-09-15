@@ -2031,47 +2031,73 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
    * it did, which is most of them.
    */
   async function reply(sent: Body, response: ServerResponse): Promise<void> {
-    const { text: typed, files } = sent as { text?: string; files?: Upload[] }
+    const { text: typed, files, again, automatic } = sent as {
+      text?: string
+      files?: Upload[]
+      again?: boolean
+      automatic?: boolean
+    }
     const uploads = Array.isArray(files) ? files.slice(0, MOST_FILES) : []
+    /**
+     * **The question that stopped, asked again** (D155) — *Try again*, or *Use Automatic for
+     * this answer* with `automatic` beside it.
+     *
+     * Nothing is appended: the question is already in the conversation, and so is every step
+     * the task took before it stopped, so a task that stopped at step six carries on from
+     * step six. Refused when the last thing in the conversation is an answer, because then
+     * there is nothing left to answer and a second reply to the same question is not this.
+     */
+    const history = again === true ? store.history(session) : []
+    const question = [...history].reverse().find((turn) => turn.role === 'user')
+    const last = history.at(-1)
+    const answered = last?.role === 'assistant' && (last.calls?.length ?? 0) === 0
+    if (again === true && (question === undefined || answered)) {
+      response.writeHead(409)
+      response.end()
+      return
+    }
     // A file with nothing typed is a whole message — *here, read this* — so the line is
     // required only when it is the only thing there is.
-    if (!typed && uploads.length === 0) {
+    if (again !== true && !typed && uploads.length === 0) {
       response.writeHead(400)
       response.end()
       return
     }
-    const text = String(typed ?? '')
+    const text = question === undefined ? String(typed ?? '') : textOf(question)
 
     response.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store' })
     const say = (event: Record<string, unknown>): void => void response.write(`data: ${JSON.stringify(event)}\n\n`)
 
-    /**
-     * The documents, read before anything else happens.
-     *
-     * **`text` stays what the person typed** and only `content` grows, which is the load-
-     * bearing half of this: the permission gate, the boundary sentences and the offer to
-     * learn all read `text`, and every one of them would be wrong to read a document. A file
-     * containing the words *delete everything* is not somebody asking for anything.
-     */
-    const content = uploads.length === 0 ? text : await documents(text, uploads, say)
+    if (question === undefined) {
+      /**
+       * The documents, read before anything else happens.
+       *
+       * **`text` stays what the person typed** and only `content` grows, which is the load-
+       * bearing half of this: the permission gate, the boundary sentences and the offer to
+       * learn all read `text`, and every one of them would be wrong to read a document. A file
+       * containing the words *delete everything* is not somebody asking for anything.
+       */
+      const content = uploads.length === 0 ? text : await documents(text, uploads, say)
 
-    const user: Message = { role: 'user', content }
-    store.append(session, user)
+      const user: Message = { role: 'user', content }
+      store.append(session, user)
+
+      // A boundary the user just spoke, or one they just lifted. Said out loud either way:
+      // a rule that changed silently is a rule they will be surprised by later. Once, when it
+      // was said — asking the same question again does not say it a second time.
+      const standing = scope().boundaries ?? []
+      const spoken = heard(text)
+      if (spoken) {
+        store.kvSet(CORE, 'boundaries', [...standing, spoken])
+        say({ note: boundaryAck(spoken) })
+      } else if (standing.length > 0 && lifts(text)) {
+        store.kvSet(CORE, 'boundaries', [])
+        say({ note: 'Lifted. I can delete and change things again.' })
+      }
+    }
 
     /** Which rung of §8.2's ladder actually answered, for the badge at the end (§8.4). */
     let reached: Bubble | undefined
-
-    // A boundary the user just spoke, or one they just lifted. Said out loud either way:
-    // a rule that changed silently is a rule they will be surprised by later.
-    const standing = scope().boundaries ?? []
-    const spoken = heard(text)
-    if (spoken) {
-      store.kvSet(CORE, 'boundaries', [...standing, spoken])
-      say({ note: boundaryAck(spoken) })
-    } else if (standing.length > 0 && lifts(text)) {
-      store.kvSet(CORE, 'boundaries', [])
-      say({ note: 'Lifted. I can delete and change things again.' })
-    }
 
     const month = allowance(store)
     const limits = ceilings(store)
@@ -2104,7 +2130,9 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
         messages: store.history(session),
         ...(chosen !== undefined && { personality: chosen }),
         tools: tooling,
-        pins: pins(store),
+        // *Use Automatic for this answer* is this answer, not a setting (D155): the pin and the
+        // list are still there for the next message, and nothing here writes to them.
+        pins: again === true && automatic === true ? { ...pins(store), model: undefined, order: undefined } : pins(store),
         world,
         store,
         secrets,
@@ -2140,6 +2168,9 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
         on: {
           delta: (delta) => say({ delta }),
           note: (note) => say({ note }),
+          // The words on screen since the turn began came from a model that stopped partway;
+          // the answer is starting again on the next one (D155).
+          restart: () => say({ restart: true }),
           turn: (models) => {
             trace.turn(models)
             // §8.4's badge. Held rather than sent per turn: the screen names one state at a
@@ -2190,8 +2221,13 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
 
       if (result.ended === 'refused') {
         // The refusal is the answer. It is written to be read by the person who has to act
-        // on it, so it goes to the screen exactly as the router wrote it.
-        say({ error: result.why })
+        // on it, so it goes to the screen exactly as the router wrote it — and when what
+        // stopped was the person's own choice, a pin or a list, the screen is told which, so
+        // it can offer Automatic for this one answer (D155).
+        say({
+          error: result.why,
+          ...((result.mode === 'pinned' || result.mode === 'sequence') && { chosen: result.mode }),
+        })
         response.end()
         return
       }

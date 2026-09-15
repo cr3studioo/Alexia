@@ -2,14 +2,18 @@
 import { createServer, type IncomingMessage, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { afterAll, expect, test } from 'vitest'
-import { chat, keyOf, PROVIDERS, ProviderError, reaching, type Provider } from '../src/provider.js'
+import { chat, keyOf, PATIENCE, PROVIDERS, ProviderError, reaching, type Provider } from '../src/provider.js'
 import { CORE, memorySecrets } from '../src/secrets.js'
 
 // A real HTTP server rather than a stubbed `fetch`: what is worth testing here is the
 // streaming — frames arriving split at the wrong places, a tool call delivered in
 // fragments — and a stub that hands over whole objects tests none of it.
 
-let answer: { status: number; frames: string[]; waitMs?: number } = { status: 200, frames: [] }
+/**
+ * What the server does next. `waitMs` holds the whole reply back; `gapMs` sends the frames one
+ * at a time with that pause between them; `open` leaves the connection hanging after the last.
+ */
+let answer: { status: number; frames: string[]; waitMs?: number; gapMs?: number; open?: true } = { status: 200, frames: [] }
 // `sent` is the header list itself, not only the value: a test about an *omitted* credential
 // cannot be written against a string, because an absent header and an empty one both read
 // back as falsy and the whole point is that they are two different requests.
@@ -35,10 +39,24 @@ const server: Server = createServer((request: IncomingMessage, response) => {
         return
       }
       response.writeHead(200, { 'content-type': 'text/event-stream' })
+      const { frames, gapMs, open } = answer
+      if (gapMs !== undefined) {
+        const next = (at: number): void => {
+          if (response.destroyed) return
+          if (at === frames.length) {
+            if (open !== true) response.end()
+            return
+          }
+          response.write(`data: ${frames[at] ?? ''}\n\n`)
+          setTimeout(() => next(at + 1), gapMs).unref()
+        }
+        next(0)
+        return
+      }
       // Written as one string and cut at arbitrary points, which is what a socket does to it.
-      const wire = answer.frames.map((f) => `data: ${f}\n\n`).join('')
+      const wire = frames.map((f) => `data: ${f}\n\n`).join('')
       for (let at = 0; at < wire.length; at += 17) response.write(wire.slice(at, at + 17))
-      response.end()
+      if (open !== true) response.end()
     }
     if (answer.waitMs === undefined) reply()
     else setTimeout(reply, answer.waitMs).unref()
@@ -218,11 +236,88 @@ test('a provider that declares its own patience gives up at it, as a rung and no
   const slow: Provider = { ...provider, timeoutMs: 50 }
 
   const failed = chat(slow, { model: 'm', messages: [] }, undefined, secrets)
-  // 504 on purpose: the cascade reads 429 and anything >= 500 as *try the next rung*. A
-  // provider that did not answer inside its own declared patience has failed; the rung under
-  // it has not, and the user should never learn the difference.
+  // A provider that did not answer inside its patience has failed; the rung under it has not,
+  // and the user should never learn the difference.
   await expect(failed).rejects.toBeInstanceOf(ProviderError)
-  await expect(failed).rejects.toMatchObject({ status: 504 })
+  await expect(failed).rejects.toMatchObject({ status: 504, trouble: 'slow' })
+})
+
+test('every provider has a patience, whether or not its row declares one', () => {
+  // D155. A row that declared nothing used to wait for as long as the platform did, which for
+  // most of the table meant a conversation that could hang for ever.
+  expect(PATIENCE).toEqual({ first: 30_000, between: 20_000 })
+})
+
+test('patience is the silence between chunks, not a deadline on a long answer', async () => {
+  // Five frames 60 ms apart: 300 ms in all, three times the 100 ms either number allows. A
+  // deadline would cut this off; a gap never gets near it.
+  answer = {
+    status: 200,
+    gapMs: 60,
+    frames: [
+      ...['a', 'b', 'c', 'd'].map((word) => JSON.stringify({ choices: [{ delta: { content: word } }] })),
+      '[DONE]',
+    ],
+  }
+  const brisk: Provider = { ...provider, timeoutMs: 100, idleMs: 100 }
+  const { message } = await chat(brisk, { model: 'm', messages: [] }, undefined, secrets)
+  expect(message.content).toBe('abcd')
+
+  // The same provider, gone quiet after its first word.
+  answer = { status: 200, gapMs: 1_000, open: true, frames: [JSON.stringify({ choices: [{ delta: { content: 'a' } }] }), '[DONE]'] }
+  await expect(chat(brisk, { model: 'm', messages: [] }, undefined, secrets)).rejects.toMatchObject({
+    status: 504,
+    trouble: 'stalled',
+  })
+})
+
+test('a stream that ends without saying it finished is dropped, not an answer', async () => {
+  // Half a sentence used to come back as though it were the whole of one: nothing downstream
+  // could tell a closed connection from a finished reply.
+  answer = { status: 200, frames: [JSON.stringify({ choices: [{ delta: { content: 'The answer is' } }] })] }
+  await expect(chat(provider, { model: 'm', messages: [] }, undefined, secrets)).rejects.toMatchObject({
+    status: 0,
+    trouble: 'dropped',
+  })
+
+  // A `finish_reason` on the last frame is finished enough, with or without `[DONE]` after it.
+  answer = { status: 200, frames: [JSON.stringify({ choices: [{ delta: { content: 'Done.' }, finish_reason: 'stop' }] })] }
+  expect((await chat(provider, { model: 'm', messages: [] }, undefined, secrets)).message.content).toBe('Done.')
+})
+
+test('a failure sent inside a stream that had already said 200 is still a failure', async () => {
+  answer = {
+    status: 200,
+    frames: [
+      JSON.stringify({ choices: [{ delta: { content: 'Once' } }] }),
+      JSON.stringify({ error: { code: 429, message: 'Rate limit exceeded upstream' } }),
+    ],
+  }
+  await expect(chat(provider, { model: 'm', messages: [] }, undefined, secrets)).rejects.toMatchObject({
+    status: 429,
+    message: expect.stringContaining('Rate limit exceeded upstream'),
+  })
+})
+
+test('a provider nobody can reach says so, with no status to pretend with', async () => {
+  const nowhere: Provider = { ...provider, baseUrl: 'http://127.0.0.1:1/v1' }
+  await expect(chat(nowhere, { model: 'm', messages: [] }, undefined, secrets)).rejects.toMatchObject({
+    status: 0,
+    trouble: 'unreachable',
+  })
+})
+
+test('a 401 with no key of the person’s on it is marked, because it is not their key refused', async () => {
+  answer = { status: 401, frames: [] }
+  const optional: Provider = { ...provider, id: 'keyless-401', auth: 'optional' }
+  await expect(chat(optional, { model: 'm', messages: [] }, undefined, memorySecrets())).rejects.toMatchObject({
+    status: 401,
+    trouble: 'keyless',
+  })
+  // Their own key, refused, is the other 401 — and it carries no mark.
+  const failed = await chat(provider, { model: 'm', messages: [] }, undefined, secrets).catch((error: unknown) => error)
+  expect(failed).toMatchObject({ status: 401 })
+  expect((failed as ProviderError).trouble).toBeUndefined()
 })
 
 test('the stop button stops, rather than falling down the ladder', async () => {

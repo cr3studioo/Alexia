@@ -12,6 +12,7 @@ import {
   shapeOf,
   type Ask,
   type Bubble,
+  type Mode,
   type Pins,
   type Shape,
   type Tier,
@@ -117,6 +118,11 @@ export interface AgentEvents {
   delta?(text: string): void
   /** Core talking, not the model: a charge about to happen, a rung that ran out. */
   note?(line: string): void
+  /**
+   * **The words streamed since the last turn began are void** (D155): the model writing them
+   * stopped partway, and the answer is starting again on the next one.
+   */
+  restart?(): void
   /**
    * Which model this turn asked for, which one answered, and **what state that leaves the
    * user in** (§8.4).
@@ -250,6 +256,12 @@ export interface RunResult {
   ended: 'answered' | 'stopped' | 'ceiling' | 'refused'
   /** Set when `ended` is `refused` — the router's sentence, or the provider's. */
   why?: string
+  /**
+   * Set when `ended` is `refused`: whose choice the plan was (D155). A stop in `sequence` or
+   * `pinned` is the person's own choice ending, and it can offer *Use Automatic for this
+   * answer*; a stop in `automatic` has already asked everything there was.
+   */
+  mode?: Mode
 }
 
 /** High enough that no honest task meets it; low enough that a loop cannot bankrupt anyone. */
@@ -516,7 +528,7 @@ export async function run(options: RunOptions): Promise<RunResult> {
     // A pin with nothing behind it is a sentence, never a quiet reach for something else.
     // Mid-task it is also the honest place to stop: half a task is better than a task
     // finished somewhere the user said not to go.
-    if (!verdict.ok) return finish('refused', ranOutOfHands(ask, now) ? NO_HANDS : verdict.why)
+    if (!verdict.ok) return finish('refused', ranOutOfHands(ask, now) ? NO_HANDS : verdict.why, verdict.mode)
 
     /**
      * **The money question, asked once** (§9.5).
@@ -558,7 +570,7 @@ export async function run(options: RunOptions): Promise<RunResult> {
       }
       // Yes buys the rungs that charge and nothing else — asking for speed and then being
       // given the slow one anyway is the answer not having been read.
-      if (money.allowed) verdict = { ok: true, choices: faster }
+      if (money.allowed) verdict = { ...verdict, choices: faster }
     }
 
     /**
@@ -617,11 +629,15 @@ export async function run(options: RunOptions): Promise<RunResult> {
           ...(options.paidAllowed !== undefined && { paidAllowed: options.paidAllowed }),
           ...(on?.delta && { onDelta: on.delta }),
           ...(on?.note && { onNote: on.note }),
+          ...(on?.restart && { onRestart: on.restart }),
         },
       )
     } catch (error) {
       // The user pressing stop arrives here as an abort, and it is not a failure.
       if (options.signal?.aborted) return finish('stopped')
+      // Every rung in the plan failed. That is a stop with a sentence — which models, and why
+      // — rather than a crash, and whose plan it was decides what the screen offers next.
+      if (error instanceof ProviderError) return finish('refused', error.message, verdict.mode)
       throw error
     }
 
@@ -709,8 +725,8 @@ export async function run(options: RunOptions): Promise<RunResult> {
     return route({ messages: ask.messages, shape: 'simple' }, pins, now).ok
   }
 
-  function finish(ended: RunResult['ended'], why?: string): RunResult {
-    return { messages: added, steps, ended, ...(why !== undefined && { why }) }
+  function finish(ended: RunResult['ended'], why?: string, mode?: Mode): RunResult {
+    return { messages: added, steps, ended, ...(why !== undefined && { why }), ...(mode !== undefined && { mode }) }
   }
 }
 

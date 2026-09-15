@@ -2,7 +2,7 @@
 import type { Model } from './catalog.js'
 import { OLLAMA } from './ollama.js'
 import { sent, spent, type Rung } from './pool.js'
-import { anonymous, chat, ProviderError, type ChatRequest, type Provider, type Usage } from './provider.js'
+import { anonymous, chat, PATIENCE, ProviderError, type ChatRequest, type Provider, type Usage } from './provider.js'
 import { redact, summarise } from './redact.js'
 import type { SecretStore } from './secrets.js'
 import { textOf, type Message, type Store } from './store.js'
@@ -121,12 +121,14 @@ export interface Pins {
   /** Free only, free then paid, or paid only. Absent is `mixed`, which is what it always did. */
   spend?: Spend
   /**
-   * The user's own running order, by model id, **across both groups**.
+   * The user's own running order, by model id, **across both groups** — and when it has
+   * anything in it, **the only models that answer** (D155).
    *
-   * A ranked shortlist rather than a full ordering: a catalog with four hundred rows in it is
-   * not a thing anybody drags into order, and being made to is how a preference screen turns
-   * into a chore nobody finishes. Anything named here is tried in this order within its own
-   * group; everything else still answers, behind them, in the order the router already used.
+   * A short list rather than a full ordering: a catalog with four hundred rows in it is not a
+   * thing anybody drags into order, and being made to is how a preference screen turns into a
+   * chore nobody finishes. D112 let everything left off it answer behind it, which was
+   * backwards: somebody who chose three models did not choose the other four hundred. So a
+   * failure falls through this list and stops at its end, and Automatic is the empty list.
    *
    * **The group is a property of the model, not of the list.** A paid model ranked first is
    * still paid, so it sorts behind every free one unless the spend axis says otherwise —
@@ -181,7 +183,20 @@ export interface Choice {
   provider: Provider
 }
 
-export type Verdict = { ok: true; choices: Choice[] } | { ok: false; why: string }
+/**
+ * **Three modes, three promises** (D155), and which one a plan was made in.
+ *
+ * - `automatic` — nobody chose. Falls through the whole ranked list.
+ * - `sequence` — somebody listed models in an order. Falls through that list and stops at its end.
+ * - `pinned` — somebody chose one model. It answers or it stops; nothing stands in for it.
+ *
+ * On the verdict rather than inside {@link send}, which walks whatever it is handed: the plan
+ * is where the promise is kept, and the mode travels with it so a stop can say whose choice
+ * stopped — the person's two, which offer *Use Automatic for this answer*, or Automatic's own.
+ */
+export type Mode = 'automatic' | 'sequence' | 'pinned'
+
+export type Verdict = { ok: true; mode: Mode; choices: Choice[] } | { ok: false; mode: Mode; why: string }
 
 /** Everything the router needs to know about the world, gathered by the caller. */
 export interface World {
@@ -313,16 +328,34 @@ export function route(ask: Ask, pins: Pins, world: World): Verdict {
   // {@link MODES} for why that is not the privacy pin being escalated past — and for why it
   // is text alone, images and speech being placed local by `combined` already.
   const here = world.local.map((model) => ({ model, provider: OLLAMA }))
-  const pool: Choice[] =
-    where === 'local' ? here
-    : kind === 'text' ? [...reachable(world, connected), ...here]
-    : reachable(world, connected)
+  const hosted = where === 'local' ? [] : reachable(world, connected)
+  const everything: Choice[] = [...hosted.map((row) => row.choice), ...(where === 'local' || kind === 'text' ? here : [])]
+  /** What the free-tier ledger believes is spent. A pre-check for Automatic, never a refusal of somebody's own choice. */
+  const tired = new Set(hosted.filter((row) => row.out).map((row) => row.choice))
 
   if (pins.model) {
-    // The user named one. Their choice, including past a flag nobody has verified.
-    const named = pool.find((c) => c.model.id === pins.model)
-    return named ? { ok: true, choices: [named] } : { ok: false, why: `${pins.model} is not available right now.` }
+    // The user named one. Their choice, including past a flag nobody has verified — and past
+    // the ledger, which is this machine's low copy of somebody else's number (D107). Refusing a
+    // pin *before trying it* because the count says spent was the pin failing on a guess.
+    const named = everything.find((c) => c.model.id === pins.model)
+    return named ?
+        { ok: true, mode: 'pinned', choices: [named] }
+      : { ok: false, mode: 'pinned', why: `${pins.model} is not available right now.` }
   }
+
+  /**
+   * **A list somebody made is the whole plan** (D155). Automatic gets every model the ledger
+   * has not written off; a sequence gets exactly its own entries, the ones the ledger calls
+   * spent moved to the end rather than dropped — when it is the only list somebody wanted,
+   * asking and collecting a 429 beats skipping a model on a count.
+   */
+  const order = pins.order ?? []
+  const mode: Mode = order.length > 0 ? 'sequence' : 'automatic'
+  const withHeadroom = everything.filter((c) => !tired.has(c))
+  const pool: Choice[] =
+    mode === 'sequence' ? everything.filter((c) => order.includes(c.model.id))
+    : withHeadroom.length > 0 ? withHeadroom
+    : everything
 
   const shape = ask.shape ?? shapeOf(ask)
   const floor = ask.minTier ?? 'T0'
@@ -352,8 +385,12 @@ export function route(ask: Ask, pins: Pins, world: World): Verdict {
    */
   const capped = asked === 'mixed' && where === 'cloud' && !affordable(world.today)
   const spend: Spend = capped ? 'free' : asked
-  /** Automatic, as opposed to somebody having said the words. Both extra rules below are scoped to it. */
-  const automatic = asked === 'mixed'
+  /**
+   * The slider's middle, as opposed to somebody having said the words. Both extra rules below
+   * are scoped to it — in a list somebody made as much as in Automatic, because they are rules
+   * about money rather than about which model (D155 changed the second, not the first).
+   */
+  const middle = asked === 'mixed'
 
   /**
    * **Why free failed**, which is the question that decides where money comes in the order —
@@ -415,21 +452,29 @@ export function route(ask: Ask, pins: Pins, world: World): Verdict {
       .filter((c) => allowed(c.model, spend))
       // And a paid model that is no better than the free rung it stands in for is not a
       // rung, it is the same answer for money.
-      .filter((c) => sidegrades || !automatic || !paid(c.model.tier) || stepUp(c.model, replacing))
-      .sort(cheapest(pins.order ?? []))
+      .filter((c) => sidegrades || !middle || !paid(c.model.tier) || stepUp(c.model, replacing))
+      .sort(mode === 'sequence' ? listed(order, tired) : cheapest)
 
   const choices = fitting(spend)
-  if (choices.length > 0) return { ok: true, choices: pins.prefer === 'best' ? [...choices].reverse() : choices }
+  if (choices.length > 0) {
+    // `/best` walks Automatic's ranking from the other end. A list somebody put in order is
+    // not a ranking to walk backwards.
+    return { ok: true, mode, choices: pins.prefer === 'best' && mode === 'automatic' ? [...choices].reverse() : choices }
+  }
   // Was the allowance the wall? Only if opening the price line would actually have produced
   // something — otherwise the real wall is one of the others and saying *set an allowance*
   // sends somebody to spend money on a problem money does not fix.
   const priced = capped && fitting('mixed').length > 0
   // And the other new wall, asked the same way: was everything paid here merely equal to
   // what ran out? Relax the one rule and see whether anything appears.
-  const sidegrade = !capped && automatic && fitting(spend, true).length > 0
+  const sidegrade = !capped && middle && fitting(spend, true).length > 0
   return {
     ok: false,
-    why: refusal(where, pins, pool, needsTools, shape, world, spend, ask.messages, priced, sidegrade, carried),
+    mode,
+    why:
+      mode === 'sequence' ?
+        outOfOrder(pool, pins, needsTools, spend, ask.messages, priced, sidegrade, carried)
+      : refusal(where, pins, pool, needsTools, shape, world, spend, ask.messages, priced, sidegrade, carried),
   }
 }
 
@@ -448,15 +493,16 @@ export function route(ask: Ask, pins: Pins, world: World): Verdict {
  * it would leave *nothing at all*, it is not honoured — asking and possibly collecting a 429
  * beats refusing on a guess while a working key sits in the keychain, and the 429 already
  * has somewhere to go ({@link send} walks to the next rung).
+ *
+ * So this marks rather than filters, and {@link route} decides: Automatic leaves the spent rows
+ * out while anything else is left, a sequence tries them last, and a pin ignores the mark.
  */
-function reachable(world: World, connected: ReadonlyMap<string, Rung>): Choice[] {
-  const rows = world.models.flatMap((model) => {
+function reachable(world: World, connected: ReadonlyMap<string, Rung>): { choice: Choice; out: boolean }[] {
+  return world.models.flatMap((model) => {
     const rung = connected.get(model.provider)
     if (!rung) return []
     return [{ choice: { model, provider: rung.provider }, out: spent(rung) && !paid(model.tier) }]
   })
-  const withHeadroom = rows.filter((row) => !row.out)
-  return (withHeadroom.length > 0 ? withHeadroom : rows).map((row) => row.choice)
 }
 
 /**
@@ -568,51 +614,87 @@ export function bubble(choice: Choice): Bubble {
   return { rung: 6, says: 'just chat now', state: 'red' }
 }
 
-const cheapest =
-  (order: readonly string[]) =>
-  (a: Choice, b: Choice): number =>
-    // The group comes first and the user's list cannot move it (D112). Free before paid, so a
-    // shortlist is a running order *within* what the slider already allowed rather than a
-    // second, quieter way to start spending money.
-    Number(paid(a.model.tier)) - Number(paid(b.model.tier)) ||
-    // Then the shortlist, which is the only thing on this screen the user wrote themselves.
-    // `order.length` for anything unlisted, so the unlisted tie among themselves and fall
-    // through to the rules below rather than to `Infinity - Infinity`, which is `NaN` and
-    // which `Array.sort` reads as *these two are equal* in every direction at once.
-    place(order, a.model.id) - place(order, b.model.id) ||
-    /*
-     * **Then hands before mouths, and then the ladder** (§8.2).
-     *
-     * Two keys, and between them they are the nine rungs. The first is §8.1's organising
-     * idea: some helpers can call tools and therefore do work, some can only talk, and you
-     * ask a helper with hands first — so a model on this machine that can use tools (rung 4)
-     * is above a hosted free one that cannot (rung 6), which is what the ladder prints. It
-     * does not overrule the filter above it; that one *removes* the talkers when the work
-     * needs hands, and this one *orders* them when it does not.
-     *
-     * The second is {@link standing}: keyed, then this machine, then the keyless floor. Both
-     * sit under the shortlist, for the reason the shortlist sits where it does — somebody who
-     * dragged a row to the top typed that, and none of this exists to argue with them.
-     *
-     * **`rank` cannot do either job**, which is why they are keys of their own rather than a
-     * fall-through: it reads `T0` as the *cheapest* tier, so left to it a local model sorts in
-     * front of every keyed free tier — the exact opposite of the rung §8.3 put it on.
-     *
-     * Rung 2, the Claude subscription, is not here and cannot be: it is a plugin offering a
-     * tool, never a row in `PROVIDERS`, and it ships off (§14.1). A rung the user unlocks by
-     * hand is not a rung a shipped cascade can walk onto by itself.
-     */
-    Number(!a.model.supportsTools) - Number(!b.model.supportsTools) ||
-    standing(a) - standing(b) ||
-    rank(a.model.tier) - rank(b.model.tier) ||
-    a.model.priceIn - b.model.priceIn ||
-    a.model.priceOut - b.model.priceOut ||
-    (b.model.weekly ?? -1) - (a.model.weekly ?? -1)
+const cheapest = (a: Choice, b: Choice): number =>
+  // The group comes first (D112). Free before paid, whatever else is true of either.
+  Number(paid(a.model.tier)) - Number(paid(b.model.tier)) ||
+  /*
+   * **Then hands before mouths, and then the ladder** (§8.2).
+   *
+   * Two keys, and between them they are the nine rungs. The first is §8.1's organising
+   * idea: some helpers can call tools and therefore do work, some can only talk, and you
+   * ask a helper with hands first — so a model on this machine that can use tools (rung 4)
+   * is above a hosted free one that cannot (rung 6), which is what the ladder prints. It
+   * does not overrule the filter above it; that one *removes* the talkers when the work
+   * needs hands, and this one *orders* them when it does not.
+   *
+   * The second is {@link standing}: keyed, then this machine, then the keyless floor. None
+   * of it applies to a list somebody put in order ({@link listed}): somebody who dragged a
+   * row to the top typed that, and none of this exists to argue with them.
+   *
+   * **`rank` cannot do either job**, which is why they are keys of their own rather than a
+   * fall-through: it reads `T0` as the *cheapest* tier, so left to it a local model sorts in
+   * front of every keyed free tier — the exact opposite of the rung §8.3 put it on.
+   *
+   * Rung 2, the Claude subscription, is not here and cannot be: it is a plugin offering a
+   * tool, never a row in `PROVIDERS`, and it ships off (§14.1). A rung the user unlocks by
+   * hand is not a rung a shipped cascade can walk onto by itself.
+   */
+  Number(!a.model.supportsTools) - Number(!b.model.supportsTools) ||
+  standing(a) - standing(b) ||
+  rank(a.model.tier) - rank(b.model.tier) ||
+  a.model.priceIn - b.model.priceIn ||
+  a.model.priceOut - b.model.priceOut ||
+  (b.model.weekly ?? -1) - (a.model.weekly ?? -1)
 
-/** Where a model sits in the user's shortlist, or behind everything that is in it. */
-const place = (order: readonly string[], id: string): number => {
-  const at = order.indexOf(id)
-  return at === -1 ? order.length : at
+/**
+ * **A sequence, in the order somebody wrote it** (D155) — within its group, because the group
+ * is a property of the model and not of the list (D112): a shortlist is a running order
+ * *within* what the slider allowed, never a second, quieter way to start spending money.
+ *
+ * One exception to the written order, and it moves nothing out: an entry whose free tier the
+ * ledger calls spent is tried after the ones that still have headroom.
+ */
+const listed =
+  (order: readonly string[], tired: ReadonlySet<Choice>) =>
+  (a: Choice, b: Choice): number =>
+    Number(paid(a.model.tier)) - Number(paid(b.model.tier)) ||
+    Number(tired.has(a)) - Number(tired.has(b)) ||
+    order.indexOf(a.model.id) - order.indexOf(b.model.id)
+
+/**
+ * Why a sequence has nothing to ask, said about **the list** rather than about every model
+ * there is. The general refusal's sentences — *connect a provider*, *move the slider* — send
+ * somebody to fix the world, when what stopped is a list they wrote; and whatever it says,
+ * the stop beside it offers *Use Automatic for this answer*.
+ */
+function outOfOrder(
+  pool: Choice[],
+  pins: Pins,
+  needsTools: boolean,
+  spend: Spend,
+  messages: Message[],
+  capped: boolean,
+  sidegrade: boolean,
+  carried: string[],
+): string {
+  if (pool.length === 0) {
+    return 'none of the models in your order can be reached right now — their provider is not connected, or they have left the catalog'
+  }
+  const unseen = carried.filter((kind) => !pool.some((c) => c.model.modality.includes(kind)))
+  if (unseen.length > 0) {
+    return `none of the models in your order can be given ${unseen.map((kind) => (kind === 'image' ? 'a picture' : kind === 'audio' ? 'sound' : kind)).join(' or ')}`
+  }
+  if (!pool.some((c) => fits(c.model, messages))) return 'this conversation is longer than any model in your order can read'
+  if (capped) return 'the models in your order that fit this cost money, and Alexia does not spend money on its own until you give it a daily allowance — set one in settings'
+  if (sidegrade) return 'the paid models in your order are no better than a free model you already have, so none of them is bought'
+  if (pins.uncensored) return 'none of the models in your order is known to be uncensored'
+  if (spend !== 'mixed' && !pool.some((c) => paid(c.model.tier) === (spend === 'paid'))) {
+    return spend === 'free' ?
+        'the models screen is set to free only, and every model in your order costs money'
+      : 'the models screen is set to paid only, and every model in your order is free'
+  }
+  if (needsTools && !pool.some((c) => c.model.supportsTools)) return 'none of the models in your order can use tools, and this needs them'
+  return 'none of the models in your order fits this request'
 }
 
 /**
@@ -725,11 +807,104 @@ export interface Answer {
 }
 
 /**
+ * **How far one failure moves the walk** (D155) — decided once, here, from what came back.
+ *
+ * - `model` — *this model, right now*: rate-limited, no credit, retired, gated, nobody serving
+ *   it, too slow, a connection that failed or dropped, an answer that was empty or cut off.
+ *   The next rung may well work.
+ * - `provider` — *this provider*: the key was refused. Every rung on it would say the same, so
+ *   they are skipped for the rest of the answer, and every other provider can still answer.
+ * - `request` — *this request*: the conversation is longer than the model can read. Only a
+ *   model with a bigger window is worth asking; a smaller one would refuse it the same way.
+ *
+ * `send()` used to move on for five statuses and throw on everything else, so no credit, a
+ * retired model, a dropped connection or a stream that died halfway all ended the answer with
+ * four hundred models still untried.
+ */
+export type Reach = 'model' | 'provider' | 'request'
+
+export interface Failure {
+  choice: Choice
+  reach: Reach
+  status: number
+  /** The reason in plain words, naming the model or its provider. Never a status code. */
+  says: string
+}
+
+/** How providers say *this conversation is longer than this model reads*. A 400 that says anything else is about the model. */
+const TOO_LONG = /context|too long|too large|too many tokens|maximum.{0,40}tokens|token limit|reduce the length/i
+
+/**
+ * What a thrown error means for the walk, or `undefined` when it is not a provider failing at
+ * all — a bug in core, or the stop button — which is thrown on rather than walked past.
+ */
+export function failed(error: unknown, choice: Choice): Failure | undefined {
+  if (!(error instanceof ProviderError)) return undefined
+  const { model, provider } = choice
+  const { status, trouble } = error
+  const of = (reach: Reach, says: string): Failure => ({ choice, reach, status, says })
+  if (status === 401) {
+    // With no key of the person's on the request, a provider that answers anonymously is
+    // saying that *this model* wants one — the rest of its list still answers.
+    if (trouble === 'keyless' && anonymous(provider)) return of('model', `${model.name} needs a ${provider.name} key`)
+    return of('provider', trouble === 'keyless' ? `${provider.name} has no key yet` : `your ${provider.name} key was refused`)
+  }
+  if (status === 413 || (status === 400 && TOO_LONG.test(error.message))) {
+    return of('request', `this conversation is too long for ${model.name}`)
+  }
+  return of(
+    'model',
+    trouble === 'slow' ? `${model.name} did not answer within ${String(Math.round((provider.timeoutMs ?? PATIENCE.first) / 1000))} seconds`
+    : trouble === 'stalled' || trouble === 'dropped' ? `${model.name} stopped answering partway through`
+    : trouble === 'unreachable' ? `${provider.name} could not be reached`
+    : status === 402 ? `there is no ${provider.name} credit to pay for ${model.name}`
+    : status === 403 ? `${provider.name} would not let ${model.name} take this request`
+    : status === 404 ? `${model.name} is no longer offered by ${provider.name}`
+    : status === 406 ? `nobody is serving ${model.name} right now`
+    : status === 408 ? `${model.name} did not answer in time`
+    : status === 429 ? `${model.name} is rate-limited right now`
+    : status >= 500 ? `${provider.name} could not serve ${model.name} just now`
+    : `${provider.name} turned down the request to ${model.name}`,
+  )
+}
+
+/**
+ * A sentence's first letter, when the sentence starts with a word of Alexia's. A model's own
+ * name is left as its provider spells it — `gpt-oss-120b` is not `Gpt-oss-120b`.
+ */
+const capital = (line: string): string =>
+  /^(your|there|nobody|this|the)\b/.test(line) ? line.charAt(0).toUpperCase() + line.slice(1) : line
+
+/** Three reasons and a count, joined the way a sentence joins them. */
+const reasons = (failures: readonly Failure[], rest: string): string => {
+  const told = failures.slice(0, 3).map((one) => one.says)
+  const more = failures.length - told.length
+  const parts = more > 0 ? [...told, `${String(more)} more ${rest}`] : told
+  return capital(parts.length < 2 ? parts.join('') : `${parts.slice(0, -1).join(', ')}, and ${parts.at(-1) ?? ''}`)
+}
+
+/**
+ * **The stop, as a sentence** (D155): which models were asked, and why none of them answered.
+ * It is the whole of what the person is told, so it names models and reasons and never a status.
+ */
+export function stopped(failures: readonly Failure[], blocked?: string): string {
+  const last = failures.at(-1)
+  const lines = [`${reasons(failures, 'could not answer either')}.`]
+  if (last?.reach === 'request') lines.push('Nothing left to try reads more than that — start a new chat.')
+  if (blocked !== undefined) lines.push(`${capital(blocked)}.`)
+  return lines.join(' ')
+}
+
+/**
  * Walk the plan until one of them answers.
  *
- * A rung that says 429 is not an error, it is the next rung's turn — and every request is
- * counted against its provider whether or not it worked, because a refused request still
- * counted against the tier that refused it.
+ * A rung that fails is not an error, it is the next rung's turn — how far the turn moves is
+ * {@link failed}'s to say — and every request is counted against its provider whether or not
+ * it worked, because a refused request still counted against the tier that refused it.
+ *
+ * **The plan is the promise.** This walks exactly what it was handed and nothing else: a
+ * sequence's plan is its own entries and a pin's is one model, so a failure there stops, with
+ * {@link stopped}'s sentence, and never quietly reaches for a model nobody chose (D155).
  *
  * **This is also where a payload is read before it goes** (M7-1). Everything bound for
  * anything but `T0` is stripped of credentials and location here, one line above the send,
@@ -744,6 +919,12 @@ export async function send(
   hooks: {
     onDelta?: (text: string) => void
     onNote?: (line: string) => void
+    /**
+     * **Throw away what was streamed** (D155). A rung that had already sent words failed, and
+     * the answer starts again on the next one — a half-written bubble left on screen would be
+     * two models' sentences run together.
+     */
+    onRestart?: () => void
     /** The hard stop (M1-9). False and the paid rungs are not rungs at all. */
     paidAllowed?: boolean
     /** Who this is for, so spend can be totalled per session and per plugin. */
@@ -757,7 +938,7 @@ export async function send(
     run?: string
   } = {},
 ): Promise<Answer> {
-  let last: unknown
+  const failures: Failure[] = []
   let blocked: string | undefined
   /**
    * **A plugin working on its own clock spends nothing but free** (G12, D96).
@@ -778,8 +959,19 @@ export async function send(
    * and read here — not a second cap mechanism.
    */
   const onItsOwn = hooks.plugin !== undefined && hooks.run === undefined
+  const unpaid = (choice: Choice): boolean => paid(choice.model.tier) && (hooks.paidAllowed === false || onItsOwn)
+  /** Providers whose key was refused during this answer. */
+  const refused = new Set<string>()
+  /** The biggest window that has already proved too small for this conversation. */
+  let outgrown: number | undefined
+  /** Whether a rung is still worth asking, given what this answer has already ruled out. */
+  const open = (choice: Choice): boolean =>
+    !unpaid(choice) && !refused.has(choice.provider.id) && (outgrown === undefined || choice.model.context > outgrown)
+  /** How many failures a note has already told the person about. */
+  let told = 0
+
   for (const [at, choice] of choices.entries()) {
-    if (paid(choice.model.tier) && (hooks.paidAllowed === false || onItsOwn)) {
+    if (unpaid(choice)) {
       // A cap that is reached does not quietly pick something worse, and it does not
       // quietly spend either. It stops, and the caller says why — and which wall it was,
       // because *raise your cap* is the wrong advice for the other one.
@@ -789,6 +981,7 @@ export async function send(
         : 'the monthly cap is reached — raise it in settings, or use a free model'
       continue
     }
+    if (!open(choice)) continue
     /**
      * **Nothing is billed without a ceiling on the reply.** Input tokens can be counted
      * before sending and output tokens cannot, so this is the only thing standing between a
@@ -805,13 +998,32 @@ export async function send(
       )
     }
     // One plain line before the charge, not after it. Nobody is surprised by a bill from
-    // something that did not say anything.
+    // something that did not say anything. It is also this rung's switch line, so the one
+    // below stays quiet for it.
     if (paid(choice.model.tier)) {
       hooks.onNote?.(
         at === 0 ?
           `Using ${choice.model.name}, which costs money — about $${choice.model.priceIn.toFixed(2)} per million words in.`
         : `The free models are used up, so this one goes to ${choice.model.name}, which costs money.`,
       )
+      told = failures.length
+    }
+    /**
+     * **One line when the answer comes from somewhere else** (D155), said as this rung starts
+     * answering rather than as it is asked: a switch announced before it has worked is a
+     * promise, and on a rate-limited evening the next three might not keep it.
+     */
+    const switched = (): void => {
+      if (told < failures.length) {
+        hooks.onNote?.(`${reasons(failures.slice(told), 'could not answer')} — this answer is from ${choice.model.name}.`)
+      }
+      told = failures.length
+    }
+    let spoke = false
+    const onDelta = (text: string): void => {
+      if (!spoke) switched()
+      spoke = true
+      hooks.onDelta?.(text)
     }
     // `T0` means the model is on this machine (only `ollama.ts` ever writes it), so the
     // payload is not going anywhere and stripping it would cost accuracy to protect against
@@ -826,11 +1038,12 @@ export async function send(
     // request is billed to credit and spends none of it, and counting it here is how a key
     // with money behind it talked itself out of the pool halfway through a day.
     if (!paid(choice.model.tier)) sent(store, choice.provider)
+    const later = choices.slice(at + 1).some(open)
     try {
       const { message, usage, cut } = await chat(
         choice.provider,
         { ...request, messages: outbound.messages, model: choice.model.id },
-        hooks.onDelta,
+        onDelta,
         secrets,
       )
       /**
@@ -850,12 +1063,23 @@ export async function send(
        *
        * A tool call with no prose is a real answer and must not be caught by this — that is
        * most of what the agent loop's turns look like.
+       *
+       * **A reply cut off at its ceiling is the same kind of failure** (D155), with one
+       * exception: a paid one has been billed, and asking the next paid model would pay a
+       * second time for an answer that ends at the same ceiling. That one comes back cut, and
+       * the caller decides.
        */
       const empty = textOf(message).trim() === '' && (message.calls?.length ?? 0) === 0
-      if (empty && at < choices.length - 1) {
-        last = new ProviderError(502, `${choice.model.name} answered with nothing`)
+      const short =
+        empty ? `${choice.model.name} answered with nothing`
+        : cut && !paid(choice.model.tier) ? `${choice.model.name} ran out of room before finishing`
+        : undefined
+      if (short !== undefined && later) {
+        failures.push({ choice, reach: 'model', status: 502, says: short })
+        if (spoke) hooks.onRestart?.()
         continue
       }
+      if (!spoke) switched()
       store.recordUsage({
         session: hooks.session,
         plugin: hooks.plugin,
@@ -871,34 +1095,16 @@ export async function send(
       })
       return { message, usage, cut, model: choice.model, provider: choice.provider }
     } catch (error) {
-      last = error
-      const status = error instanceof ProviderError ? error.status : 0
-      // Rate-limited, or the provider is having a moment. Either way the next rung can try.
-      if (status === 429 || status >= 500) continue
-      /**
-       * **`403` is about this model, not about the request** — so it is a rung failure too.
-       *
-       * Real one, from the free tier: *"inkling:free is only available on agentic
-       * harnesses"*. A gate on one row of somebody's catalog, which threw and ended a task
-       * that four hundred other models could have answered. `401` stays fatal on purpose:
-       * that is a key that is wrong, every rung on that provider will say the same thing,
-       * and quietly moving on would hide the one problem the person can actually fix.
-       */
-      if (status === 403) continue
-      /**
-       * **`406` is a model that cannot take this request right now** — a rung failure too.
-       *
-       * Real ones, from AI Horde, whose roster is whichever volunteers are awake: *"Model None
-       * not known!"* for a seeded row whose worker had gone to bed, and *"Request is not
-       * possible."* when no worker awake could serve it. Both threw and ended a first message
-       * with two more Horde rows still in the plan behind it, on exactly the evening the rungs
-       * above had spent their two requests a minute — the no-key floor failing on the one day
-       * it is the whole of what is left.
-       */
-      if (status === 406) continue
-      throw error
+      const failure = failed(error, choice)
+      // The stop button, or a bug in core. Neither is somebody else's turn.
+      if (failure === undefined || request.signal?.aborted === true) throw error
+      failures.push(failure)
+      if (spoke) hooks.onRestart?.()
+      if (failure.reach === 'provider') refused.add(choice.provider.id)
+      if (failure.reach === 'request') outgrown = Math.max(outgrown ?? 0, choice.model.context)
     }
   }
-  if (blocked !== undefined && last === undefined) throw new ProviderError(402, blocked)
-  throw last ?? new ProviderError(503, 'nothing was available to ask')
+  const last = failures.at(-1)
+  if (last === undefined) throw new ProviderError(blocked === undefined ? 503 : 402, blocked ?? 'nothing was available to ask')
+  throw new ProviderError(last.status, stopped(failures, blocked))
 }

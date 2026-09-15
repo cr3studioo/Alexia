@@ -33,8 +33,11 @@ const model = (over: Partial<Model> & Pick<Model, 'id' | 'tier'>): Model => ({
 const tiny = model({ id: 'tiny', tier: 'T0' })
 const hosted = model({ id: 'hosted', tier: 'T1', priceIn: 1 })
 
-/** One scripted assistant turn: either it calls something, or it answers. */
-type Turn = { say: string } | { call: string; args?: string }
+/**
+ * One scripted assistant turn: it calls something, it answers, it fails with a status, or it
+ * starts answering and the connection dies under it.
+ */
+type Turn = { say: string } | { call: string; args?: string } | { status: number } | { dies: string }
 
 let script: Turn[] = []
 /** Which model id served each step, in order. The per-step tiering assertions read this. */
@@ -55,6 +58,17 @@ const server: Server = createServer((request, response) => {
     body = JSON.parse(raw) as { model: string; messages: { role: string; content: string }[] }
     served.push(body.model)
     const turn = script.shift() ?? { say: 'done' }
+    if ('status' in turn) {
+      response.writeHead(turn.status, { 'content-type': 'text/plain' })
+      response.end('no')
+      return
+    }
+    if ('dies' in turn) {
+      response.writeHead(200, { 'content-type': 'text/event-stream' })
+      response.write(`data: ${JSON.stringify({ choices: [{ delta: { content: turn.dies } }] })}\n\n`)
+      setTimeout(() => response.destroy(), 20)
+      return
+    }
     const delta =
       'call' in turn ?
         {
@@ -301,6 +315,56 @@ test('a pin nothing satisfies stops the task and says so, mid-task included', as
   expect(result.ended).toBe('refused')
   expect(result.why).toContain('uncensored')
   expect(result.steps).toEqual([])
+  store.close()
+})
+
+/**
+ * **Three modes, three promises** (D155), from the loop's side: a plan that fails all the way
+ * down is a stop with a sentence, and the result says whose choice the plan was — so the
+ * screen can offer *Use Automatic for this answer* for the person's own choices, and only those.
+ */
+test('one model that fails ends the task with its reason, marked as somebody’s own choice', async () => {
+  script = [{ status: 402 }]
+  served = []
+  const { store, session, world } = bench()
+
+  const result = await run({ messages: start('go'), tools: tooling(), pins: { ...pins, model: 'hosted' }, world, store, secrets, session })
+
+  // Not a throw: a model with no credit is something to tell somebody, not a crash.
+  expect(result).toMatchObject({ ended: 'refused', mode: 'pinned', why: 'There is no Alpha credit to pay for hosted.' })
+  expect(served).toEqual(['hosted'])
+  store.close()
+})
+
+test('Automatic walks past a failure mid-task, says so once, and the half-streamed words are withdrawn', async () => {
+  script = [{ dies: 'I will re' }, { say: 'Read it: hi.' }]
+  served = []
+  const { store, session, world } = bench()
+  const shown: string[] = []
+  const turns: { asked: string; answered: string }[] = []
+
+  const result = await run({
+    messages: start('go'),
+    tools: tooling(),
+    pins,
+    world,
+    store,
+    secrets,
+    session,
+    on: {
+      delta: (text) => shown.push(text),
+      restart: () => (shown.length = 0),
+      note: (line) => shown.push(`[${line}]`),
+      turn: (models) => turns.push({ asked: models.asked, answered: models.answered }),
+    },
+  })
+
+  expect(result.ended).toBe('answered')
+  expect(result.mode).toBeUndefined()
+  expect(served).toHaveLength(2)
+  expect(shown).toEqual([`[${served[0] ?? ''} stopped answering partway through — this answer is from ${served[1] ?? ''}.]`, 'Read it: hi.'])
+  // The trace keeps both halves of it: who was asked, and who answered.
+  expect(turns).toEqual([{ asked: served[0], answered: served[1] }])
   store.close()
 })
 

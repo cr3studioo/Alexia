@@ -185,7 +185,7 @@ const TOOLS: Rendered = table({
  * can be reached at all.
  */
 /**
- * The routing ladder, above the table (D112).
+ * The routing ladder, above the table (D112, D155).
  *
  * **What *recommended* was hiding.** The ★ has always been the router's own answer rather
  * than a second opinion, which made it honest and left it unmoveable: the rule behind it is
@@ -195,10 +195,11 @@ const TOOLS: Rendered = table({
  *
  * Two controls and no third. The slider says **which side of the price line may answer** —
  * the question the word *recommended* was quietly answering for everybody — and the ladder
- * under it says **in what order**, as a shortlist somebody drags rather than a catalog of
- * four hundred rows with a number typed beside each. Everything left off it still answers,
- * behind the list, exactly as before; a preference screen you have to finish is a preference
- * screen nobody starts.
+ * under it says **which models, in what order**, as a short list somebody drags rather than a
+ * catalog of four hundred rows with a number typed beside each. **Empty is Automatic**, so a
+ * preference screen nobody finishes is still a working one. D112 let everything left off the
+ * list answer behind it; D155 turned that round, because somebody who chose three models did
+ * not choose the other four hundred — the list is the plan, and it stops at its end.
  */
 const LADDER: Rendered = {
   type: 'ladder',
@@ -207,7 +208,8 @@ const LADDER: Rendered = {
   hint:
     'The slider is the money question, and it is a wall rather than a preference: on the left nothing that costs money is ever asked, even when every free model is rate-limited — Alexia says so instead. ' +
     'The middle is what Automatic always did, and it is the default: free first, paid only when the free rungs are gone, with one plain line before the first charge. ' +
-    'The lists under it are your own running order within each side. Drag to reorder, and anything you do not list still answers behind the ones you did, cheapest first — so an empty list is the same behaviour this screen had before you touched it.',
+    'The lists under it are your own running order within each side, and when they have anything in them, only those models answer: if one fails the next in the list does, and if the last one fails Alexia stops, says why, and offers Automatic for that one answer. ' +
+    'Leave them empty for Automatic, which tries every model the slider allows, best first, and moves to the next whenever one fails.',
   rows: 'routing',
   stops: [
     {
@@ -235,11 +237,11 @@ const MODELS: Rendered = table({
   key: 'models',
   label: 'Models',
   hint:
-    'Normally Alexia picks a model per request — the cheapest one that can do the job, falling to the next when one is rate-limited. That is Automatic, and it is what happens when nothing here is chosen. ' +
-    'The ★ is the one Automatic would pick right now for a request that needs tools: it is the router’s own answer rather than a second opinion, so it moves when your keys, the catalog, a rate limit — or the slider above — move. ' +
+    'Normally Alexia picks a model per request — the cheapest one that can do the job, falling to the next when one fails. That is Automatic, and it is what happens when nothing here is chosen. ' +
+    'The ★ is the model that would be asked first right now for a request that needs tools — Automatic’s pick, or the first of your own order above: it is the router’s own answer rather than a second opinion, so it moves when your keys, the catalog, a rate limit — or the controls above — move. ' +
     '"Tokens / week" is how much the whole world put through that model in the provider’s last published week, refreshed daily and again whenever you open this tab. ' +
     'Only OpenRouter publishes that figure today, so every other provider shows a dash there and its models are ordered by price instead — a dash means nobody says, not nobody uses it. ' +
-    'Use sends every request to one model instead, until you press Automatic on any row to hand the choice back. The chosen row is marked and coloured. ' +
+    'Use sends every request to one model instead, until you press Automatic on any row to hand the choice back. One model never falls back: if it cannot answer, Alexia stops and says why. The chosen row is marked and coloured. ' +
     'Only models you can actually send a request to right now are listed: a provider you have connected, and the side of the price line the slider above allows. Add a key in settings and that provider’s models appear here; a model whose provider publishes prices but not for that model is left out rather than shown as free. ' +
     'Each provider publishes its own list and they do not agree on what to include, so a dash is something that provider does not say rather than a zero.',
   rows: 'models',

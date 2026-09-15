@@ -155,6 +155,9 @@ test('a plugin that says nothing about tools gets a completion, as it always did
 test('a completion that ran out of room reaches the plugin as maxTokens, not as finished', async () => {
   // The personality adapter saved half a document because this said `endTurn` whatever the
   // provider said. MCP has the word; core was not using it.
+  //
+  // The stub is the only rung, which matters since D155: a free answer cut short with another
+  // model behind it is that model's turn, and only the last rung's cut reaches the plugin.
   script = [{ say: 'half', cut: true }]
   expect(String((await press('plain')).said)).toContain('half (maxTokens)')
   script = [{ say: 'whole' }]
