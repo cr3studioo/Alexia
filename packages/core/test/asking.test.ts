@@ -111,6 +111,8 @@ const alexia: Serving = await serve({
   // that answer with an empty keychain — so without this the router would quietly prefer one
   // of them and this suite would be measuring somebody else's server over the real network.
   providers: [stub],
+  // And nothing from this machine, which is a rung behind every stub that fails (D155).
+  local: false,
 })
 
 afterAll(async () => {

@@ -123,6 +123,14 @@ export interface ServeOptions {
    * The one test that is *supposed* to reach the real floor says so by not passing this.
    */
   providers?: Provider[]
+  /**
+   * Whether this server looks for models on this machine. Yes unless a test says otherwise.
+   *
+   * The same seam as `providers`, one rung further down. A test that expected a refusal on
+   * *a machine with no Ollama* was answered by the Ollama on the laptop running it, and since a
+   * failed rung walks on to the next one (D155), so is any test whose stub provider fails.
+   */
+  local?: boolean
   secrets?: SecretStore
 }
 
@@ -478,7 +486,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
   /** Everything the router needs to know, asked fresh: a tier can be exhausted mid-sentence. */
   const world = async () => ({
     models: catalog.models,
-    local: (await running()) ? await installed() : [],
+    local: options.local !== false && (await running()) ? await installed() : [],
     rungs: await usable(store, secrets, providers),
     // Asked fresh with the rest of it, and for the same reason: an allowance can run out
     // mid-sentence exactly the way a free tier can.

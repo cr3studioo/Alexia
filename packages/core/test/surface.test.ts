@@ -115,6 +115,9 @@ const alexia: Serving = await serve({
    * providers whose lists this suite would go and fetch over the network.
    */
   providers: PROVIDERS.filter((p) => p.id === 'openrouter' || p.id === 'groq'),
+  // And no model on this machine: a refused key walks on to the next rung now (D155), and on
+  // a laptop running Ollama that rung is the laptop's.
+  local: false,
 })
 
 afterAll(async () => {
