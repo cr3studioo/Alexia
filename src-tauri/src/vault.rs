@@ -1,0 +1,103 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+
+//! Custody of secrets (D153) — the one thing in this crate that is not a Tauri plugin, and
+//! the one thing core cannot do for itself.
+//!
+//! **Why it is not behind the port like everything else.** The macOS keychain decides who
+//! may read an entry by asking which *program* is calling, and it cannot see past a program
+//! to the script it runs. Core is Node, so an entry core creates is readable by anything
+//! Node will run: measured on 2026-09-15, a two-line script handed to `alexia-core` from a
+//! terminal read a real OpenRouter key with no prompt. Every plugin is started with that
+//! same binary, so every plugin could too. This process runs no scripts, so an entry it
+//! creates answers to it alone.
+//!
+//! **The shape.** A loopback port and a token. The token goes to core down its stdin, which
+//! no other process can read; every request carries it, and one without it is refused. Get,
+//! set and delete, by name — **no listing**, so not even core can ask what else is in there.
+//!
+//! What is **not** here: deciding anything. Which entry, when, and what it is for are core's.
+//! This reads or writes the one it is named and says what happened.
+
+use std::io::{BufRead, BufReader, Read, Write};
+use std::net::{TcpListener, TcpStream};
+use std::thread;
+use std::time::Duration;
+
+use serde::Deserialize;
+use serde_json::{json, Value};
+
+/// The app's own identifier, and deliberately **not** `alexia`, which is what core used when
+/// it held the keychain itself. An entry under that name may still be one Node created, and
+/// reading it from here would always put a keychain prompt in front of somebody, where core —
+/// whose program it trusts — can usually move it without one. `custody()` in `secrets.ts`.
+const SERVICE: &str = "dev.alexia.app";
+
+#[derive(Deserialize)]
+struct Ask {
+    token: String,
+    op: String,
+    account: String,
+    secret: Option<String>,
+}
+
+/// Open the vault and return the one line core reads off its stdin to find it.
+pub fn open() -> std::io::Result<String> {
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let port = listener.local_addr()?.port();
+    let mut bytes = [0u8; 32];
+    getrandom::fill(&mut bytes).map_err(|error| std::io::Error::other(error.to_string()))?;
+    let token: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
+    let line = format!("{}\n", json!({ "port": port, "token": token }));
+
+    // One request at a time. A keychain call takes milliseconds, and the one that does not is
+    // a prompt waiting on a person, which nothing else should be answered around either.
+    thread::spawn(move || {
+        for stream in listener.incoming().flatten() {
+            serve(stream, &token);
+        }
+    });
+    Ok(line)
+}
+
+fn serve(stream: TcpStream, token: &str) {
+    // The port is reachable by every process on the machine, and one that connects and then
+    // says nothing must not hold the vault shut behind it.
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
+    let Ok(reading) = stream.try_clone() else { return };
+    let mut line = String::new();
+    if BufReader::new(reading.take(64 * 1024)).read_line(&mut line).is_err() {
+        return;
+    }
+    let _ = (&stream).write_all(format!("{}\n", answer(&line, token)).as_bytes());
+}
+
+fn answer(line: &str, token: &str) -> Value {
+    let Ok(ask) = serde_json::from_str::<Ask>(line) else {
+        return json!({ "error": "not a request" });
+    };
+    if !same(ask.token.as_bytes(), token.as_bytes()) {
+        return json!({ "error": "refused" });
+    }
+    let entry = match keyring::Entry::new(SERVICE, &ask.account) {
+        Ok(entry) => entry,
+        Err(error) => return json!({ "error": error.to_string() }),
+    };
+    let done = match (ask.op.as_str(), ask.secret) {
+        ("get", _) => entry.get_password().map(Some),
+        ("set", Some(secret)) => entry.set_password(&secret).map(|()| None),
+        ("delete", _) => entry.delete_credential().map(|()| None),
+        _ => return json!({ "error": "not an operation" }),
+    };
+    match done {
+        Ok(secret) => json!({ "ok": true, "secret": secret }),
+        // Nothing there is an answer, not a failure: most declared passwords were never filled
+        // in, and purge deletes every one of them.
+        Err(keyring::Error::NoEntry) => json!({ "ok": true, "secret": null }),
+        Err(error) => json!({ "error": error.to_string() }),
+    }
+}
+
+/// Equal, in a time that does not depend on where two tokens first differ.
+fn same(a: &[u8], b: &[u8]) -> bool {
+    a.len() == b.len() && a.iter().zip(b).fold(0, |differ, (x, y)| differ | (x ^ y)) == 0
+}

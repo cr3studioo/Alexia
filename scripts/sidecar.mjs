@@ -16,10 +16,11 @@
  *
  * **Re-evaluated here, as the plan asked: Node SEA against shipping `node.exe`** (M5-1). SEA
  * would be one signable artefact instead of an executable plus a script, which matters at
- * M5-3. It also cannot load a native addon from a snapshot, and `@napi-rs/keyring` is how a
- * key reaches the Windows credential locker rather than something worse — losing that to
- * tidy up the artefact count would be trading a real property for a cosmetic one. So:
- * `node.exe`, renamed, and the signing story covers two files instead of one.
+ * M5-3. It also cannot load a native addon from a snapshot, and `@napi-rs/keyring` is how the
+ * unzipped build reaches the credential store, and how the app moves entries from before D153
+ * into the shell's vault — losing that to tidy up the artefact count would be trading a real
+ * property for a cosmetic one. So: `node.exe`, renamed, and the signing story covers two files
+ * instead of one.
  *
  * **`--universal` makes one Mac app for both processors** (D150), for
  * `tauri build --target universal-apple-darwin`. Two disk images asked somebody who has never

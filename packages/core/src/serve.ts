@@ -49,6 +49,8 @@ import { anonymous, keyOf, PROVIDERS, type Provider } from './provider.js'
 import { redactSecrets } from './redact.js'
 import { MODES, route, send, shapeOf, type Bubble } from './router.js'
 import { CORE, keychain, type SecretStore } from './secrets.js'
+// For `boot.mjs`, which imports the bundle this file is the entry of and nothing else (D153).
+export { fromShell } from './secrets.js'
 import { addServer, markReviewed, unreviewed } from './servers.js'
 import { declaredAction, declaredTable } from './settings.js'
 import { search } from './palette.js'

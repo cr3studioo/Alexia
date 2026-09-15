@@ -5,9 +5,10 @@
 //!
 //! **This file is deliberately boring, and staying boring is a test** — invariant 10 counts
 //! the lines. Rust is here for four things and no others: the installer, signed updates, the
-//! tray icon and the global hotkey. Everything Alexia actually *does* — the conversation,
-//! the router, the plugins, the permission model — is in the TypeScript core, behind an HTTP
-//! boundary this process starts and then leaves alone.
+//! tray icon and the global hotkey — plus one exception with its own file and its own reason,
+//! custody of secrets (`vault.rs`, D153). Everything Alexia actually *does* — the
+//! conversation, the router, the plugins, the permission model — is in the TypeScript core,
+//! behind an HTTP boundary this process starts and then leaves alone.
 //!
 //! The shape:
 //!
@@ -23,6 +24,8 @@
 //! What is **not** here, on purpose: no business logic, no model calls, no file handling, no
 //! parsing of anything the core says. If something needs deciding, it is decided on the
 //! other side of the port.
+
+mod vault;
 
 use std::net::TcpListener;
 use std::sync::Mutex;
@@ -141,6 +144,18 @@ fn in_dock(_app: &AppHandle, _shown: bool) {}
 static SUMMONED: Mutex<Option<Instant>> = Mutex::new(None);
 const SETTLING: Duration = Duration::from_millis(400);
 
+/// Environment that changes what Node runs or whom it trusts, rather than where things are.
+///
+/// The core this process starts is handed the vault, so whatever can steer that core can read
+/// every secret in it. `NODE_OPTIONS=--import` would put somebody else's code inside it,
+/// `NODE_TLS_REJECT_UNAUTHORIZED` and a proxy would read a key on its way to a provider, and
+/// the loader and OpenSSL variables are the same thing one layer down. None of them is set on
+/// an app started from the Dock; all of them are one `export` away from a terminal.
+fn steers_node(name: &str) -> bool {
+    let name = name.to_ascii_uppercase();
+    ["NODE_", "DYLD_", "LD_", "OPENSSL_", "SSL"].iter().any(|prefix| name.starts_with(prefix))
+}
+
 fn reveal(app: &AppHandle) {
     if let Ok(mut at) = SUMMONED.lock() {
         *at = Some(Instant::now());
@@ -207,10 +222,16 @@ fn main() {
             let sidecar = app
                 .shell()
                 .sidecar("alexia-core")?
+                .env_clear()
+                .envs(std::env::vars().filter(|(name, _)| !steers_node(name)))
                 // The sidecar *is* the Node runtime, so it needs something to run. Passing
                 // Node nothing opens a REPL and waits forever, which looks exactly like a
                 // core that started and never answered.
-                .args(["boot.mjs"])
+                //
+                // `--disable-sigusr1` because on macOS and Linux that signal opens Node's
+                // inspector, and any process running as this user may send it — which would
+                // be a debugger attached to the one process holding the vault's token.
+                .args(["--disable-sigusr1", "boot.mjs"])
                 .env("ALEXIA_PORT", port.to_string())
                 .env("ALEXIA_TAURI", "1")
                 // Tauri preserves a resource's path relative to this crate, so the folder
@@ -218,7 +239,11 @@ fn main() {
                 // than a build step that flattens it, and it is one place rather than four
                 // path joins inside the core it starts.
                 .current_dir(app.path().resource_dir()?.join("resources"));
-            let (_events, child) = sidecar.spawn()?;
+            let (_events, mut child) = sidecar.spawn()?;
+            // Where the vault is and the token that opens it, down the one channel only this
+            // process and that child share. Written before core has booted; the pipe holds
+            // it until `boot.mjs` reads it.
+            child.write(vault::open()?.as_bytes())?;
             if let Ok(mut held) = handle.state::<Mutex<Option<CommandChild>>>().lock() {
                 *held = Some(child);
             }
