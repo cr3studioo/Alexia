@@ -689,6 +689,60 @@ personality rather than the model, so the two are built as one row of message ac
 23. `store.report(since)` and an empty `World.reported`, with a test that a report carries only
     the listed fields.
 
+**Built 2026-09-16 (D162)**, A and B, in core. Where the build differs from the text above, or
+had to decide something the text did not:
+
+- **The cancel has a third pass-through.** `plugins.ts` hands `sample` to the host as well, so the
+  signal goes handler → `host.ts` → `plugins.ts`'s option → `serve.ts`'s `sample` → `send()`'s
+  request, and `asTask`'s run with `AbortSignal.any`. `send()` also checks it before every rung,
+  so nothing is counted against a provider for a request that will not be sent.
+- **The SDK drops a cancel for request id 0** (`if (!notification.params.requestId) return`, in
+  2.0.0), and a plugin numbers its requests from 0: the very first request a plugin process makes
+  cannot be cancelled. Adapt reads its settings before it samples, so its request never is.
+  Core does not work around it, which would mean reaching into the SDK's private map.
+- **Thirteen outcomes.** The nine above, and four the plan implied: `no-credit` (the account's),
+  `key-refused` (the provider's), `too-long` (the conversation's) and `unreachable`. They are
+  recorded and never tag a model. The outcome is named in `failed()` beside its sentence.
+- **Strikes are exactly D159's**: `STRUCK` in `store.ts` is every failure about the model, no
+  credit and an unreachable provider included, so the order did not move and `router.test.ts`
+  is unchanged. A paid answer cut at its ceiling is recorded as answered, as D158 kept it.
+- **A connection that could not be made never sets a model aside** (the owner's answer). It sinks
+  for the hour. Automatic walks its whole plan on every question, so an evening offline would
+  otherwise have set aside every model it tried.
+- **Set aside lasts until a good reply**, not a rolling day: every rule reads the tries since a
+  model's last answer, bounded by the 30-day record. That is the mock-up's *a test message
+  tomorrow* and the acceptance's *the next day*. **Until E is built**, a set-aside model comes back
+  only through a pin, a list whose every entry is set aside, an Automatic plan with nothing else
+  in it, or its record passing 30 days.
+- **Skipped after every other filter** (the owner confirmed D161 over D155's *falls through the
+  whole ranked list*): a picture only a set-aside model can read still reaches it, and when nothing
+  else fits they are all asked, in order.
+- **In a row** means with no good reply between, for empty answers and 404s.
+- **Needs a key, provider-wide**, sets aside every model of the provider except one that has
+  answered since the latest refusal.
+- **A pin on a model served twice** takes the copy that is not set aside, then the one with
+  headroom, then the ranking.
+- **The stand-in** is the median of the models in the same size class that publish their own
+  `weekly` (not lent, not a router), the mean of the two middles for an even count.
+- **`explain()` uses the mock-up's sentences**, one per key; *Was busy recently* rather than *a
+  moment ago*, since a strike lasts about an hour; a money key under `/best` says so. `ranking()`
+  also returns `decides(a, b)`, the key's name. The fact tag is *talk only*, as above.
+- **`PLANNER` and `stature()` moved to `catalog.ts`.** `health.ts` needs them for *under 7B*, and
+  `depcruise` forbids the cycle a `router.ts` import would make.
+- **`Model.created` and `Model.expires` exist, and `seen` has a reader only.** D fills them. New,
+  *retiring* and the stand-in are tested on fixture rows and change nothing until then.
+- **Migration 7 over a database at 5**, checked on a copy of this Mac's: it runs 6 then 7, keeps
+  both saved personalities and all 16 answers, and carries nothing over from `strikes`.
+
+Tests: `cancel.test.ts` (a plugin's sampling request, and a plugin's task, each giving up after a
+second over a provider that never answers), `health.test.ts` (every tag, lists and pins, new,
+doubted, D159's order over the record, the why-lines against a real plan), `setaside.test.ts`
+(over `/api/chat`: two keyless refusals set a provider aside, a saved key brings it back without a
+restart), `store.test.ts` (the record, and migration 7 from 5). **Not written yet**, because they
+need a later step: a list entry *shown* as not available and *the table is the ranking* (C), a
+model new on a provider's *second refresh* (D), and everything under Current, Tests, Chat first,
+Said twice, Paid and Bad answer (D–I).
+
 ### Acceptance
 
 - **Cancel.** A plugin asks for sampling with a 1-second timeout, over a provider that never
@@ -744,20 +798,24 @@ a new build. §2 is built too (D159), and also needs a new build. Not yet: *Fund
 group and its switch, key events, key removal. §4 is designed (D160, D161) against a mock-up and
 not built. Next: §4 A, then §1 steps 3–4 and §4 B.
 
+**Status 2026-09-16:** §4 A and §4 B are built and tested (D162), in core only; they reach the
+installed app only with a new build, and a build between B and E leaves a set-aside model no daily
+way back. Next: §1 steps 3–4 and §4 C.
+
 1. **§1 steps 1–2**: unpriced is not free, one `available()`. Smallest change, and it closes
    a real billing hole (Requesty) before anything else.
 2. ~~**§3**: failure kinds, the three modes, default timeouts. This is the one people feel on
    every rate-limited evening.~~ Done 2026-09-15 (D158).
 3. ~~**§2**: ranking. Borrowed `weekly` and *routers last* first, because they are cheap. Strikes
    and size-from-id second.~~ Done 2026-09-15 (D159).
-4. **§4 A**: Adapt's cancel. Small, on its own, and it stops work going on behind a refusal the
-   person has already seen.
+4. ~~**§4 A**: Adapt's cancel. Small, on its own, and it stops work going on behind a refusal the
+   person has already seen.~~ Done 2026-09-16 (D162).
 5. **§1 steps 3–4**: key events and key removal, which need the shell. *Needs a key* coming back
    the moment a key is saved depends on the event.
 6. ~~**Alexia.md**: D112 rewritten with the three modes, and the decision log entry.~~ Done
    2026-09-15 (D154, D155).
-7. **§4 B**: the model record and the tags, in core with their tests. Everything after reads
-   `judge()`.
+7. ~~**§4 B**: the model record and the tags, in core with their tests. Everything after reads
+   `judge()`.~~ Done 2026-09-16 (D162).
 8. **§4 C**: the table, built against the mock-up.
 9. **§4 D**: keeping it current (the timer, first seen, the news line, headers, OpenRouter's key,
    the four stale rows).

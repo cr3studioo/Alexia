@@ -252,8 +252,9 @@ for paid models, an order that lets provider prompt caching reuse the personalit
 1. ~~**`model_plan.md` §1 steps 1–2 and §3.** Unpriced is not free, one `available()`, and
    fallback that works.~~ Done (D154, D158); §2's ranking and strikes too (D159). All three reach
    the installed app only in a new build.
-2. **`model_plan.md` §4 A: Adapt's cancel reaches `send()`** (D160). Before anything that makes
-   Adapt call more, since today a refusal on screen leaves core still asking.
+2. ~~**`model_plan.md` §4 A: Adapt's cancel reaches `send()`** (D160). Before anything that makes
+   Adapt call more, since today a refusal on screen leaves core still asking.~~ Done 2026-09-16
+   (D162), and §4 B's `judge()` exists for step 5 to read. Both reach the app only in a new build.
 3. **The trace line** from *Where it stands*.
 4. **Quick wins:** improvements 1, 6, 7, and the `/persona` command from 8.
 5. **§1, the writer:** M8-1; never a router, and never a model `model_plan.md` §4 B tags as new,
