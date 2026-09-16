@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { routes, type Catalog, type Model } from './catalog.js'
+import { routes, stature, type Catalog, type Model } from './catalog.js'
 import { pins, setPin } from './commands.js'
-import { available, paid, route, stature, type Spend, type World } from './router.js'
+import { available, paid, route, type Spend, type World } from './router.js'
 import { allow, forgetConsent } from './consent.js'
 import { forget } from './learned.js'
 import type { Row } from './plugins.js'

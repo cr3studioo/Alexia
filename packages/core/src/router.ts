@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { routes, sizeOf, type Model } from './catalog.js'
+import { PLANNER, routes, stature, type Model } from './catalog.js'
 import { OLLAMA } from './ollama.js'
 import { sent, spent, type Rung } from './pool.js'
-import { anonymous, chat, PATIENCE, ProviderError, type ChatRequest, type Provider, type Usage } from './provider.js'
+import type { Judgement, Health } from './health.js'
+import { anonymous, chat, PATIENCE, ProviderError, PROVIDERS, type ChatRequest, type Provider, type Usage } from './provider.js'
 import { redact, summarise } from './redact.js'
 import type { SecretStore } from './secrets.js'
-import { textOf, type Message, type Store } from './store.js'
+import { textOf, type Message, type Outcome, type Source, type Store } from './store.js'
 import { floor, PER_TOKEN, size, summary } from './trim.js'
 import { affordable, costOf, type Today } from './usage.js'
 
@@ -221,6 +222,11 @@ export interface World {
    * nothing failed, which is what a world gathered by hand in a test means.
    */
   strikes?: readonly Strike[]
+  /**
+   * **What Alexia thinks of each model** (D161), from `judge()` over the 30-day record. Absent is
+   * nothing known, which is what a world gathered by hand in a test means.
+   */
+  health?: Health
 }
 
 /** One failure of one model on one provider, as {@link send} recorded it. */
@@ -228,6 +234,8 @@ export interface Strike {
   provider: string
   model: string
   at: number
+  /** How it went, for the sentence under its row. Absent on a strike made by hand. */
+  outcome?: Outcome
 }
 
 /**
@@ -262,24 +270,10 @@ export function sunk(strikes: readonly Strike[], at: number = Date.now()): Map<s
  * So the row went to `T0`, and then the whole table read `T0, T0, T0` and was doing nothing.
  * A lookup that returns the same answer for every key is drift with a type annotation, so it
  * is gone, and what the shape actually decides is written where it happens: `needsTools`
- * below, and `PLANNER`.
+ * below, and `PLANNER` (in `catalog.ts`, beside the size it is compared with).
  *
  * The floor that remains is the asking plugin's own `min_tier`, which was always separate.
  */
-
-/**
- * The smallest model trusted to plan, in billions of parameters.
- *
- * This is the axis `tier` could not carry. **Every** local model is `T0` whether it is 1B or
- * 8B, so flipping the row above without this would have handed planning to a 1B — which the
- * measurement says nothing good about. Only local models report a size, so this only ever
- * excludes something on this machine; a hosted model is judged by its tier, as before.
- *
- * Seven because the class measured is 7–9B and the next size down on that machine is 1B.
- * There is no evidence sitting between them, and a threshold that pretends otherwise is a
- * guess wearing a number.
- */
-const PLANNER = 7
 
 /**
  * Will this model's window hold the part of the trace that can never be collapsed away?
@@ -368,9 +362,14 @@ export function route(ask: Ask, pins: Pins, world: World): Verdict {
   const everything: Choice[] = [...hosted.map((row) => row.choice), ...(where === 'local' || kind === 'text' ? here : [])]
   /** What the free-tier ledger believes is spent. A pre-check for Automatic, never a refusal of somebody's own choice. */
   const tired = new Set(hosted.filter((row) => row.out).map((row) => row.choice))
-  /** How far each model has sunk on what failed here lately (D159). */
-  const weights = sunk(world.strikes ?? [])
-  const ranked = ranking(weights)
+  /** Automatic's order: what failed here lately (D159), what is known of each model (D161), and the rest. */
+  const ranked = ranking(world).compare
+  /**
+   * **Set aside by Alexia** (D161): a whole day of nothing but refusals, three empty answers, a
+   * retired model, a keyless provider that now wants a key. Never deleted, and never a reason to
+   * refuse a pin — only a reason not to ask while something else can answer.
+   */
+  const aside = (c: Choice): boolean => world.health?.get(`${c.provider.id}\n${c.model.id}`)?.aside !== undefined
 
   if (pins.model) {
     // The user named one. Their choice, including past a flag nobody has verified — and past
@@ -381,7 +380,7 @@ export function route(ask: Ask, pins: Pins, world: World): Verdict {
     // often on two providers, and this took whichever the catalog read first — Kilo's keyless
     // floor ahead of the person's own OpenRouter key on this machine. Still one choice: a pin
     // never falls back, not even to the same model somewhere else.
-    const [named] = everything.filter((c) => c.model.id === pins.model).sort(listed([pins.model], tired, ranked))
+    const [named] = everything.filter((c) => c.model.id === pins.model).sort(listed([pins.model], tired, ranked, aside))
     return named ?
         { ok: true, mode: 'pinned', choices: [named] }
       : { ok: false, mode: 'pinned', why: `${pins.model} is not available right now.` }
@@ -498,14 +497,24 @@ export function route(ask: Ask, pins: Pins, world: World): Verdict {
       // rung, it is the same answer for money.
       .filter((c) => sidegrades || !middle || !paid(c.model.tier) || stepUp(c.model, replacing))
       .sort(
-        mode === 'sequence' ? listed(order, tired, ranked)
+        mode === 'sequence' ? listed(order, tired, ranked, aside)
           // `/best` walks Automatic's ranking from the other end. A list somebody put in order is
           // not a ranking to walk backwards.
-        : pins.prefer === 'best' ? ranking(weights, 'best')
+        : pins.prefer === 'best' ? ranking(world, 'best').compare
         : ranked,
       )
 
-  const choices = fitting(spend)
+  const fitted = fitting(spend)
+  /**
+   * **Set aside is skipped while anything else fits, and asked when nothing does** (D161) — the
+   * reading the ledger already gets: asking and collecting a refusal beats refusing on a guess.
+   * Asked of what fits rather than of the pool, so a request only a set-aside model can take (a
+   * picture, a long conversation) still reaches it. A list skips its set-aside entries the same
+   * way and never loses one; a pin was answered above and ignores this. This narrows D155's
+   * *Automatic falls through the whole ranked list* by the models that were failing anyway (D162).
+   */
+  const kept = fitted.filter((c) => !aside(c))
+  const choices = kept.length > 0 ? kept : fitted
   if (choices.length > 0) return { ok: true, mode, choices }
   // Was the allowance the wall? Only if opening the price line would actually have produced
   // something — otherwise the real wall is one of the others and saying *set an allowance*
@@ -636,17 +645,49 @@ export function bubble(choice: Choice): Bubble {
   return { rung: 6, says: 'just chat now', state: 'red' }
 }
 
-/**
- * **Where a model's size puts it** (D159): known to be big enough to plan, not known, or known
- * to be smaller than {@link PLANNER}. Unknown is the middle and not the bottom — most closed
- * models never say, and silence is not smallness. Exported for whatever else needs to know
- * whether a reader is small.
- */
-export const stature = (model: Pick<Model, 'id' | 'params'>): 'big' | 'unknown' | 'small' => {
-  const billions = sizeOf(model)
-  return billions === undefined ? 'unknown' : billions >= PLANNER ? 'big' : 'small'
-}
 const STATURE = { big: 0, unknown: 1, small: 2 } as const
+
+/** A ranking key's name: what the Models table's why-line says decided (D161). */
+export type RankKey =
+  | 'group'
+  | 'untested'
+  | 'doubted'
+  | 'tools'
+  | 'struck'
+  | 'router'
+  | 'ladder'
+  | 'tier'
+  | 'price'
+  | 'size'
+  | 'usage'
+
+export interface Ranking {
+  /** For `sort`: negative when `a` is asked first. */
+  compare: (a: Choice, b: Choice) => number
+  /** The key that puts `a` below `b`, or nothing when `a` is not below it. */
+  decides: (a: Choice, b: Choice) => RankKey | undefined
+  /** **The why-line**: one sentence saying why the lower of the two sits below the other. */
+  explain: (a: Choice, b: Choice) => string
+}
+
+interface Key {
+  name: RankKey
+  /** One of the keys `/best` turns round: the money half. */
+  money: boolean
+  compare: (a: Choice, b: Choice) => number
+  /** Why `a` comes after `b` on this key, cheapest first. */
+  says: (a: Choice, b: Choice) => string
+}
+
+/** Tokens the way a person reads them: 317B, 8.2B, 68M. */
+const tokens = (n: number): string => {
+  const [unit, size] = n >= 1e12 ? ['T', 1e12] : n >= 1e9 ? ['B', 1e9] : n >= 1e6 ? ['M', 1e6] : n >= 1e3 ? ['k', 1e3] : ['', 1]
+  const scaled = n / size
+  return `${scaled < 10 && unit !== '' ? scaled.toFixed(1).replace(/\.0$/, '') : String(Math.round(scaled))}${unit}`
+}
+
+/** Dollars per million tokens, to the cent unless it costs less than one. */
+const dollars = (n: number): string => `$${n === 0 || n >= 0.01 ? n.toFixed(2) : String(n)}`
 
 /**
  * Cheapest first — and **the tie is the interesting part**, because the free tier is one
@@ -677,21 +718,55 @@ const STATURE = { big: 0, unknown: 1, small: 2 } as const
  * model is now ranked on what predicts a good answer, strongest signal first: what failed on
  * this machine, not a router, the ladder and the price as before, size, then `weekly` lent
  * across providers. Every one of them comes from outside this repo or from this machine.
+ *
+ * **An ordered list of named keys, each a comparison and a sentence** (D161). The Models table
+ * puts a reason under every row, and a reason written anywhere but here would drift from the
+ * order it explains. The comparator walks the keys; `explain` returns the sentence of the first
+ * key on which two rows differ, which is exactly the key that put one below the other.
  */
-const ranking =
-  (weights: ReadonlyMap<string, number>, from: 'cheap' | 'best' = 'cheap') =>
-  (a: Choice, b: Choice): number => {
-    /** How far this model on this provider has sunk on what failed here ({@link sunk}). */
-    const struck = (c: Choice): number => weights.get(`${c.provider.id}\n${c.model.id}`) ?? 0
-    /**
-     * `/best` turns the money half of the ranking round — paid first, the dearest first — and
-     * leaves the half about whether an answer will come alone. Walking the whole list backwards
-     * put the model that failed a minute ago, and a router, at the top of the strongest-first list.
-     */
-    const way = from === 'best' ? -1 : 1
-    return (
+export function ranking(
+  world: Pick<World, 'strikes' | 'health'>,
+  from: 'cheap' | 'best' = 'cheap',
+  at: number = Date.now(),
+): Ranking {
+  const idOf = (c: Choice): string => `${c.provider.id}\n${c.model.id}`
+  /** How far each model on each provider has sunk on what failed here ({@link sunk}). */
+  const weights = sunk(world.strikes ?? [], at)
+  const struck = (c: Choice): number => weights.get(idOf(c)) ?? 0
+  /** How each model's latest failure went, for its sentence. */
+  const lately = new Map<string, Outcome | undefined>((world.strikes ?? []).map((one) => [`${one.provider}\n${one.model}`, one.outcome]))
+  const judged = (c: Choice): Judgement | undefined => world.health?.get(idOf(c))
+  /** Its own usage figure, or one lent to it, or a new model's stand-in. -1 is none, which sorts last. */
+  const figure = (c: Choice): number => c.model.weekly ?? judged(c)?.standIn ?? -1
+
+  const keys: Key[] = [
+    {
       // The group comes first (D112). Free before paid, whatever else is true of either.
-      way * (Number(paid(a.model.tier)) - Number(paid(b.model.tier))) ||
+      name: 'group',
+      money: true,
+      compare: (a, b) => Number(paid(a.model.tier)) - Number(paid(b.model.tier)),
+      says: () => 'Costs money, so it comes after every free model.',
+    },
+    {
+      // **Then not tried yet** (D161). A new model starts at the bottom of its group, and its
+      // first good reply — to a real question or a daily test — lets the keys below place it.
+      name: 'untested',
+      money: false,
+      compare: (a, b) => Number(judged(a)?.untested === true) - Number(judged(b)?.untested === true),
+      says: () => 'New and not tried yet, so it waits below every model that has answered. One good reply moves it up.',
+    },
+    {
+      // **Then doubted** (D161): too many errors here, or two *Bad answer* presses. Still listed
+      // and still asked, after every model in its group that nobody has doubts about.
+      name: 'doubted',
+      money: false,
+      compare: (a, b) => Number(judged(a)?.doubted === true) - Number(judged(b)?.doubted === true),
+      says: (a) =>
+        judged(a)?.tags.some((tag) => tag.says === 'gave bad answers') === true ?
+          'You marked its answers bad twice in 30 days, so it comes after every model without doubts.'
+        : 'At least half of its tries here failed in the last 30 days, so it comes after every model without doubts.',
+    },
+    {
       /*
        * **Then hands before mouths** (§8.2).
        *
@@ -709,16 +784,33 @@ const ranking =
        * tool, never a row in `PROVIDERS`, and it ships off (§14.1). A rung the user unlocks by
        * hand is not a rung a shipped cascade can walk onto by itself.
        */
-      way * (Number(!a.model.supportsTools) - Number(!b.model.supportsTools)) ||
+      name: 'tools',
+      money: true,
+      compare: (a, b) => Number(!a.model.supportsTools) - Number(!b.model.supportsTools),
+      says: () => 'Can only talk, not use tools, so it comes after every model that can.',
+    },
+    {
       /*
        * **Then what failed on this machine** (D159), the strongest signal there is about *this*
        * person's keys and network, and the only one. A model that timed out a minute ago goes
        * behind the ones that did not, and comes back as the failure ages.
        */
-      struck(a) - struck(b) ||
+      name: 'struck',
+      money: false,
+      compare: (a, b) => struck(a) - struck(b),
+      says: (a, b) =>
+        `${lately.get(idOf(a)) === 'busy' ? 'Was busy' : 'Failed here'} recently, so it sits below ${b.model.name} for ${struck(a) > 1 ? 'a few hours' : 'about an hour'}.`,
+    },
+    {
       // **Then not a router** (D159). A router is a different model each time, 2.6B included,
       // so it is asked after every model that is one model. It stays pinnable.
-      Number(routes(a.model)) - Number(routes(b.model)) ||
+      name: 'router',
+      money: false,
+      compare: (a, b) => Number(routes(a.model)) - Number(routes(b.model)),
+      says: (a) =>
+        `A router: a different ${paid(a.model.tier) ? '' : 'free '}model each time, some of them tiny. Asked after every single model.`,
+    },
+    {
       /*
        * **Then the ladder**, {@link standing}: keyed, then this machine, then the keyless floor.
        *
@@ -726,10 +818,31 @@ const ranking =
        * fall-through: it reads `T0` as the *cheapest* tier, so left to it a local model sorts in
        * front of every keyed free tier — the exact opposite of the rung §8.3 put it on.
        */
-      way * (standing(a) - standing(b)) ||
-      way * (rank(a.model.tier) - rank(b.model.tier)) ||
-      way * (a.model.priceIn - b.model.priceIn) ||
-      way * (a.model.priceOut - b.model.priceOut) ||
+      name: 'ladder',
+      money: true,
+      compare: (a, b) => standing(a) - standing(b),
+      says: (a, b) =>
+        standing(a) === RUNGS.machine ? 'Runs on this Mac: free and private, but slow. After the free models on your key.'
+        : `No key needed, so shared and rationed for everyone. After ${standing(b) === RUNGS.machine ? 'this Mac’s model' : 'models on your key'}.`,
+    },
+    {
+      name: 'tier',
+      money: true,
+      compare: (a, b) => rank(a.model.tier) - rank(b.model.tier),
+      says: (a, b) =>
+        a.model.tier === 'T3' ? 'A frontier model, so it comes after the smaller paid ones.'
+        : `A bigger tier than ${b.model.name}, so it comes after it.`,
+    },
+    {
+      name: 'price',
+      money: true,
+      compare: (a, b) => a.model.priceIn - b.model.priceIn || a.model.priceOut - b.model.priceOut,
+      says: (a, b) =>
+        a.model.priceIn !== b.model.priceIn ?
+          `Costs ${dollars(a.model.priceIn)} per million tokens in, more than ${b.model.name}’s ${dollars(b.model.priceIn)}.`
+        : `Costs the same as ${b.model.name} to send, and ${dollars(a.model.priceOut)} per million tokens back, more than its ${dollars(b.model.priceOut)}.`,
+    },
+    {
       /*
        * **Then what predicts a good answer, among models that cost the same** — which for the
        * free tier is all of them (D159). Size first, read from the id where the provider does
@@ -737,10 +850,58 @@ const ranking =
        * provider serving the same model (`borrow()` in `catalog.ts`). Neither is turned round by
        * `/best`: a bigger, busier model is the better one from either end.
        */
-      STATURE[stature(a.model)] - STATURE[stature(b.model)] ||
-      (b.model.weekly ?? -1) - (a.model.weekly ?? -1)
-    )
+      name: 'size',
+      money: false,
+      compare: (a, b) => STATURE[stature(a.model)] - STATURE[stature(b.model)],
+      says: (a) =>
+        stature(a.model) === 'unknown' ?
+          `Its size isn’t published, so it comes after models known to be ${String(PLANNER)}B or more.`
+        : `Under ${String(PLANNER)}B${a.model.params === undefined ? ' (read from its name)' : ''}, so it comes after every model not known to be that small.`,
+    },
+    {
+      // A new model that has answered and has no figure yet ranks on its stand-in: the middle of
+      // models its size, until its own figure or a lent one replaces it (D161).
+      name: 'usage',
+      money: false,
+      compare: (a, b) => figure(b) - figure(a),
+      says: (a, b) => {
+        if (figure(a) < 0) return 'Nobody publishes how much it is used, so it comes after the models that have a figure.'
+        const lender = a.model.weeklyFrom
+        const its =
+          a.model.weekly === undefined ?
+            `New here and has answered, so until a usage figure arrives it stands at the middle of models its size, ${tokens(figure(a))} tokens a week`
+          : `The world sent it ${tokens(figure(a))} tokens last week${lender === undefined ? '' : ` (figure from ${PROVIDERS.find((one) => one.id === lender)?.name ?? lender})`}`
+        return `${its}, fewer than ${b.model.name}’s ${tokens(figure(b))}${b.model.weekly === undefined ? ', the middle of models its size' : ''}.`
+      },
+    },
+  ]
+
+  /**
+   * `/best` turns the money half of the ranking round — paid first, the dearest first — and
+   * leaves the half about whether an answer will come alone. Walking the whole list backwards
+   * put the model that failed a minute ago, and a router, at the top of the strongest-first list.
+   */
+  const way = (key: Key): number => (from === 'best' && key.money ? -1 : 1)
+  const deciding = (a: Choice, b: Choice): Key | undefined => keys.find((key) => key.compare(a, b) !== 0)
+  return {
+    compare: (a, b) => {
+      const key = deciding(a, b)
+      return key === undefined ? 0 : way(key) * key.compare(a, b)
+    },
+    decides: (a, b) => {
+      const key = deciding(a, b)
+      return key !== undefined && way(key) * key.compare(a, b) > 0 ? key.name : undefined
+    },
+    explain: (a, b) => {
+      const key = deciding(a, b)
+      if (key === undefined) return `Ties with ${b.model.name} on everything Alexia knows; the provider’s own order decides.`
+      // Said about the lower of the two, whichever way round they were handed over.
+      const [lower, upper] = way(key) * key.compare(a, b) > 0 ? [a, b] : [b, a]
+      if (way(key) < 0) return `/best turns the money order round, so it comes after ${upper.model.name}.`
+      return key.says(lower, upper)
+    },
   }
+}
 
 /**
  * **A sequence, in the order somebody wrote it** (D155) — within its group, because the group
@@ -749,15 +910,21 @@ const ranking =
  *
  * **A list names models, not providers**, and one id is often served by two: the same
  * Nemotron is on OpenRouter behind your key and on Kilo's keyless floor. Between those two the
- * list has no opinion, so the ledger decides first — the one with headroom — and then
- * Automatic's own ranking, which puts your key ahead of the floor. Without that last step the
- * tie went to whichever provider's list the catalog happened to read first.
+ * list has no opinion, so what this machine knows decides first — a copy not set aside (D161),
+ * then the one with headroom — and then Automatic's own ranking, which puts your key ahead of
+ * the floor. Without that the tie went to whichever provider's list the catalog read first.
  */
 const listed =
-  (order: readonly string[], tired: ReadonlySet<Choice>, ranked: (a: Choice, b: Choice) => number) =>
+  (
+    order: readonly string[],
+    tired: ReadonlySet<Choice>,
+    ranked: (a: Choice, b: Choice) => number,
+    aside: (c: Choice) => boolean,
+  ) =>
   (a: Choice, b: Choice): number =>
     Number(paid(a.model.tier)) - Number(paid(b.model.tier)) ||
     order.indexOf(a.model.id) - order.indexOf(b.model.id) ||
+    Number(aside(a)) - Number(aside(b)) ||
     Number(tired.has(a)) - Number(tired.has(b)) ||
     ranked(a, b)
 
@@ -931,6 +1098,8 @@ export interface Failure {
   status: number
   /** The reason in plain words, naming the model or its provider. Never a status code. */
   says: string
+  /** How the model record keeps it (D161). */
+  outcome: Outcome
 }
 
 /** How providers say *this conversation is longer than this model reads*. A 400 that says anything else is about the model. */
@@ -944,16 +1113,20 @@ export function failed(error: unknown, choice: Choice): Failure | undefined {
   if (!(error instanceof ProviderError)) return undefined
   const { model, provider } = choice
   const { status, trouble } = error
-  const of = (reach: Reach, says: string): Failure => ({ choice, reach, status, says })
+  const of = (reach: Reach, says: string, outcome: Outcome): Failure => ({ choice, reach, status, says, outcome })
   if (status === 401) {
     // With no key of the person's on the request, a provider that answers anonymously is
     // saying that *this model* wants one — the rest of its list still answers.
-    if (trouble === 'keyless' && anonymous(provider)) return of('model', `${model.name} needs a ${provider.name} key`)
-    return of('provider', trouble === 'keyless' ? `${provider.name} has no key yet` : `your ${provider.name} key was refused`)
+    if (trouble === 'keyless' && anonymous(provider)) return of('model', `${model.name} needs a ${provider.name} key`, 'needs-key')
+    return of('provider', trouble === 'keyless' ? `${provider.name} has no key yet` : `your ${provider.name} key was refused`, 'key-refused')
   }
   if (status === 413 || (status === 400 && TOO_LONG.test(error.message))) {
-    return of('request', `this conversation is too long for ${model.name}`)
+    return of('request', `this conversation is too long for ${model.name}`, 'too-long')
   }
+  // The outcome is named here, beside the sentence, so the record and the stop cannot disagree
+  // about what happened (D161). No credit is the account's and a connection that could not be
+  // made may be this Mac's: both still sink the model, as D159 had them, and neither tags it.
+  const slow = trouble === 'slow' || status === 408
   return of(
     'model',
     trouble === 'slow' ? `${model.name} did not answer within ${String(Math.round((provider.timeoutMs ?? PATIENCE.first) / 1000))} seconds`
@@ -967,6 +1140,13 @@ export function failed(error: unknown, choice: Choice): Failure | undefined {
     : status === 429 ? `${model.name} is rate-limited right now`
     : status >= 500 ? `${provider.name} could not serve ${model.name} just now`
     : `${provider.name} turned down the request to ${model.name}`,
+    slow ? 'slow'
+    : trouble === 'unreachable' ? 'unreachable'
+    : trouble === 'stalled' || trouble === 'dropped' ? 'failed'
+    : status === 402 ? 'no-credit'
+    : status === 404 ? 'retired'
+    : status === 429 ? 'busy'
+    : 'failed',
   )
 }
 
@@ -1038,6 +1218,8 @@ export async function send(
      * charge with no run and the ledger says so rather than guessing one.
      */
     run?: string
+    /** Who is asking, for the model record (D161). Absent is a plugin when `plugin` is set, else the chat. */
+    source?: Source
   } = {},
 ): Promise<Answer> {
   const failures: Failure[] = []
@@ -1072,14 +1254,14 @@ export async function send(
   /** How many failures a note has already told the person about. */
   let told = 0
   /**
-   * **Remembered on this machine** (D159), so the next plan puts this model behind the ones that
-   * did not fail. About the model only: a refused key is the provider's, and a conversation too
-   * long for one window says nothing about the model's health.
+   * **Every try is remembered on this machine** (D161), answers included: the record is what
+   * sinks a model that just failed (D159) and what, over 30 days, sets one aside. What each
+   * outcome counts for is read later — a refused key is kept and never held against the model.
+   * A try the stop button or a plugin's cancel ended is not a try of the model, and is not kept.
    */
-  const strike = (failure: Failure): void => {
-    if (failure.reach === 'model') {
-      store.recordStrike({ provider: failure.choice.provider.id, model: failure.choice.model.id, status: failure.status })
-    }
+  const source: Source = hooks.source ?? (hooks.plugin !== undefined ? 'plugin' : 'chat')
+  const record = (choice: Choice, outcome: Outcome, status: number): void => {
+    store.recordTry({ provider: choice.provider.id, model: choice.model.id, outcome, status, source })
   }
 
   for (const [at, choice] of choices.entries()) {
@@ -1190,9 +1372,10 @@ export async function send(
         empty ? `${choice.model.name} answered with nothing`
         : cut && !paid(choice.model.tier) ? `${choice.model.name} ran out of room before finishing`
         : undefined
-      if (short !== undefined) strike({ choice, reach: 'model', status: 502, says: short })
+      const outcome: Outcome = short === undefined ? 'answered' : empty ? 'empty' : 'cut'
+      record(choice, outcome, short === undefined ? 200 : 502)
       if (short !== undefined && later) {
-        failures.push({ choice, reach: 'model', status: 502, says: short })
+        failures.push({ choice, reach: 'model', status: 502, says: short, outcome })
         if (spoke) hooks.onRestart?.()
         continue
       }
@@ -1223,7 +1406,7 @@ export async function send(
       // The stop button, or a bug in core. Neither is somebody else's turn.
       if (failure === undefined || request.signal?.aborted === true) throw error
       failures.push(failure)
-      strike(failure)
+      record(choice, failure.outcome, failure.status)
       if (spoke) hooks.onRestart?.()
       if (failure.reach === 'provider') refused.add(choice.provider.id)
       if (failure.reach === 'request') outgrown = Math.max(outgrown ?? 0, choice.model.context)

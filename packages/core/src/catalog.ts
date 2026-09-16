@@ -54,6 +54,13 @@ export interface Model {
    * Set by {@link borrow} when the catalog is read, never written to the cache.
    */
   weeklyFrom?: string
+  /**
+   * **When the provider added it**, where the provider's own list says and means it — OpenRouter's
+   * `created` (§4 D reads it). A model added in the last fortnight is new (D161).
+   */
+  created?: number
+  /** **When the provider stops serving it**, from OpenRouter's `expiration_date` (§4 D reads it). */
+  expires?: number
 }
 
 /**
@@ -88,6 +95,34 @@ export function sizeOf(model: Pick<Model, 'id' | 'params'>): number | undefined 
   const found = /(?:^|[\s/:_-])(?:(\d+)x)?e?(\d+(?:\.\d+)?)b(?=$|[\s/:_.-])/i.exec(model.id)
   if (found === null) return undefined
   return (found[1] === undefined ? 1 : Number(found[1])) * Number(found[2])
+}
+
+/**
+ * The smallest model trusted to plan, in billions of parameters.
+ *
+ * This is the axis `tier` could not carry. **Every** local model is `T0` whether it is 1B or
+ * 8B, so flipping the router's `hard` row without this would have handed planning to a 1B —
+ * which the measurement says nothing good about. Only local models report a size, so this only
+ * ever excludes something on this machine; a hosted model is judged by its tier, as before.
+ *
+ * Here rather than in `router.ts` since D162, beside the size it is compared with, so the model
+ * record's *under 7B* tag reads the same line the planning filter does.
+ *
+ * Seven because the class measured is 7–9B and the next size down on that machine is 1B.
+ * There is no evidence sitting between them, and a threshold that pretends otherwise is a
+ * guess wearing a number.
+ */
+export const PLANNER = 7
+
+/**
+ * **Where a model's size puts it** (D159): known to be big enough to plan, not known, or known
+ * to be smaller than {@link PLANNER}. Unknown is the middle and not the bottom — most closed
+ * models never say, and silence is not smallness. Exported for whatever else needs to know
+ * whether a reader is small.
+ */
+export const stature = (model: Pick<Model, 'id' | 'params'>): 'big' | 'unknown' | 'small' => {
+  const billions = sizeOf(model)
+  return billions === undefined ? 'unknown' : billions >= PLANNER ? 'big' : 'small'
 }
 
 /**

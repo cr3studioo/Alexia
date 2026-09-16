@@ -24,6 +24,7 @@ import { asRuling, counted, freshTally, ModelChecker, type Tally } from './check
 import { commands, pins, type Ran, run as runCommand } from './commands.js'
 import { preauthorise, record } from './consent.js'
 import { refuse, type Body } from './guard.js'
+import { judge } from './health.js'
 import { Library, offerable } from './library.js'
 import { distil, forget, learnable, outline, save, type Episode } from './learned.js'
 import { mimeOf, Offers, openable, reach } from './offered.js'
@@ -490,16 +491,29 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
   const manifests = () => plugins.ids.flatMap((id) => plugins.manifest(id) ?? [])
 
   /** Everything the router needs to know, asked fresh: a tier can be exhausted mid-sentence. */
-  const world = async () => ({
-    models: catalog.models,
-    local: options.local !== false && (await running()) ? await installed() : [],
-    rungs: await usable(store, secrets, providers),
-    // Asked fresh with the rest of it, and for the same reason: an allowance can run out
-    // mid-sentence exactly the way a free tier can.
-    today: today(store),
-    // What failed here in the last day, so a model that just timed out is not first again (D159).
-    strikes: store.strikes(),
-  })
+  const world = async () => {
+    const models = catalog.models
+    const local = options.local !== false && (await running()) ? await installed() : []
+    const rungs = await usable(store, secrets, providers)
+    return {
+      models,
+      local,
+      rungs,
+      // Asked fresh with the rest of it, and for the same reason: an allowance can run out
+      // mid-sentence exactly the way a free tier can.
+      today: today(store),
+      // What failed here in the last day, so a model that just timed out is not first again (D159).
+      strikes: store.strikes(),
+      // What Alexia thinks of each model, from 30 days of tries (D161). Judged on every ask, so a
+      // key saved a moment ago brings back a provider set aside for wanting one, without a restart.
+      health: judge(
+        store.tries(),
+        store.seen(),
+        [...models, ...local],
+        new Set(rungs.filter((rung) => rung.keyed === true).map((rung) => rung.provider.id)),
+      ),
+    }
+  }
 
   /**
    * One question at a time, waiting for an answer from the screen.

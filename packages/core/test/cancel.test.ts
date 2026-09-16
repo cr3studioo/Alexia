@@ -133,9 +133,9 @@ test('a plugin that stops waiting stops the walk: the next rung is never asked, 
   await pastPatience()
 
   expect(served).toEqual(['silent/one'])
-  // The silent provider did not fail: the plugin stopped asking. A strike here would sink a
-  // model for somebody else's impatience.
-  expect(alexia.store.strikes()).toEqual([])
+  // The silent provider did not fail: the plugin stopped asking. A try recorded here would sink
+  // a model for somebody else's impatience, and count towards setting it aside (D161).
+  expect(alexia.store.tries()).toEqual([])
 }, 30_000)
 
 test('and a task a plugin started stops with it, leaving room for the next one', async () => {
@@ -144,7 +144,7 @@ test('and a task a plugin started stops with it, leaving room for the next one',
   await pastPatience()
 
   expect(served).toEqual(['silent/one'])
-  expect(alexia.store.strikes()).toEqual([])
+  expect(alexia.store.tries()).toEqual([])
 
   // The task ended rather than waiting out the provider, so the next one is not refused as
   // *already working on something* — and a plugin that does wait still gets the walk.
