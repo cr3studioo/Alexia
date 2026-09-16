@@ -736,12 +736,14 @@ function tile(provider: Provider, saved: (id: string) => void): HTMLElement {
     if (!typed) return
     paste.disabled = true
     void post('/api/setup', { provider: { id: provider.id, key: typed } })
-      .then(() => {
+      .then((answer) => {
         paste.value = ''
         said.className = 'tile-said good'
-        said.textContent = 'Saved to the keychain.'
+        // What the key unlocked, now that core waits for the list (§1 step 3).
+        said.textContent = typeof answer.said === 'string' ? answer.said : 'Saved to the keychain.'
         head.append(el('span', 'flag good', 'key stored'))
         saved(provider.id)
+        redrawModels()
       })
       // A key is the one thing nobody can check by looking, so a silent failure here is a
       // person pasting the same key again forever.
@@ -772,6 +774,7 @@ function setupSettings(state: State): void {
   const provider = document.querySelector<HTMLSelectElement>('#provider-setting')!
   const key = document.querySelector<HTMLInputElement>('#key-setting')!
   const save = document.querySelector<HTMLButtonElement>('#save-key')!
+  const remove = document.querySelector<HTMLButtonElement>('#remove-key')!
   const said = document.querySelector<HTMLElement>('#key-said')!
 
   name.value = state.setup.name
@@ -819,7 +822,48 @@ function setupSettings(state: State): void {
       (connected.has(provider.value) ?
         `A key is stored for ${picked?.name ?? provider.value}. Pasting one replaces it. `
       : `No key yet for ${picked?.name ?? provider.value}. `) + (picked?.terms ? `Terms: ${picked.terms}` : '')
+    // The way out sits beside the way in, and only where there is something to take out.
+    remove.hidden = !connected.has(provider.value)
+    disarm()
   }
+
+  /**
+   * **Remove a key** (§1 step 4), on the same screen that adds one.
+   *
+   * Two presses, because what it deletes cannot be read back: the keychain is the only copy
+   * this machine has, and a key is minted on somebody else's site. The first press only
+   * changes the button's words; anything else — choosing another provider, three seconds —
+   * puts them back.
+   */
+  let armed: number | undefined
+  const disarm = (): void => {
+    window.clearTimeout(armed)
+    armed = undefined
+    remove.textContent = 'Remove key'
+  }
+  remove.addEventListener('click', () => {
+    if (armed === undefined) {
+      remove.textContent = 'Press again to remove'
+      armed = window.setTimeout(disarm, 3000)
+      return
+    }
+    disarm()
+    const id = provider.value
+    remove.disabled = true
+    void post('/api/setup', { provider: { id, remove: true } })
+      .then((answer) => {
+        connected.delete(id)
+        describe()
+        if (typeof answer.said === 'string') said.textContent = answer.said
+        redrawModels()
+      })
+      .catch((error: unknown) => {
+        said.className = 'error'
+        said.textContent = `Not removed: ${error instanceof Error ? error.message : String(error)}`
+      })
+      .finally(() => (remove.disabled = false))
+  })
+
   provider.addEventListener('change', describe)
   describe()
 
@@ -827,12 +871,14 @@ function setupSettings(state: State): void {
     if (!key.value.trim()) return
     save.disabled = true
     void post('/api/setup', { provider: { id: provider.value, key: key.value.trim() } })
-      .then(() => {
+      .then((answer) => {
         connected.add(provider.value)
         key.value = ''
         describe()
-        // Said out loud, because the box empties and nothing else on the screen moves.
-        said.textContent = `Saved to the keychain. ${said.textContent}`
+        // Said out loud, because the box empties and nothing else on the screen moves — and
+        // said as what the key unlocked, which core waited to find out (§1 step 3).
+        said.textContent = typeof answer.said === 'string' ? answer.said : `Saved to the keychain. ${said.textContent}`
+        redrawModels()
       })
       // And said out loud when it does not: a key is the one thing somebody cannot check by
       // looking, so a silent failure here is a person pasting the same key again forever.
@@ -846,6 +892,16 @@ function setupSettings(state: State): void {
   key.addEventListener('keydown', (event) => {
     if (event.key === 'Enter') store()
   })
+}
+
+/**
+ * **A key changed, so the lists that follow the keychain are drawn again** (§1 steps 3–4): the
+ * rail's models, and the Models tab when it is the screen being looked at. A tab that is not
+ * on screen reads its rows when it is next opened, so there is nothing to redraw there.
+ */
+function redrawModels(): void {
+  void rail.refresh()
+  if (document.body.dataset.view === 'control') control.open()
 }
 
 const read = async (): Promise<State> =>

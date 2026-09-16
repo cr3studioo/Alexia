@@ -48,7 +48,7 @@ import {
 } from './permissions.js'
 import { anonymous, keyOf, PROVIDERS, type Provider } from './provider.js'
 import { redactSecrets } from './redact.js'
-import { MODES, route, send, shapeOf, type Bubble } from './router.js'
+import { allowed, MODES, paid, route, send, shapeOf, type Bubble } from './router.js'
 import { CORE, keychain, type SecretStore } from './secrets.js'
 // For `boot.mjs`, which imports the bundle this file is the entry of and nothing else (D153).
 export { fromShell } from './secrets.js'
@@ -602,6 +602,77 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     return new Set(found.flat())
   }
 
+  const capitalised = (line: string): string => line.charAt(0).toUpperCase() + line.slice(1)
+
+  /** `14 free models`, `1 free model`. */
+  const models = (n: number, kind: string): string => `${String(n)} ${kind}model${n === 1 ? '' : 's'}`
+
+  /**
+   * **How long a saved key waits for its provider's list** (§1 step 3, D163). Long enough for
+   * OpenRouter's, the biggest, on a slow connection; short enough that a provider that never
+   * answers leaves a Save button that answered. The fetch goes on behind it either way.
+   */
+  const LIST_WAIT = 15_000
+
+  /**
+   * A key was just saved: fetch that provider's list with it and say what it unlocked.
+   *
+   * The count is what the slider lets answer, from the same `allowed()` the Models tab and the
+   * router read (D154) — *14 free models* on *free only* should not quietly include paid rows
+   * a person will never see. A list that does not arrive is said too, because the commonest
+   * reason for that on a list that needs a key is the key.
+   */
+  const connectedNow = async (provider: Provider, key: string): Promise<string> => {
+    const fetched = catalog.refresh(provider, 0, key)
+    const waited = await Promise.race([
+      fetched,
+      new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), LIST_WAIT).unref()),
+    ])
+    if (waited === undefined) {
+      return `${provider.name} connected. Its model list is still arriving — open the Models tab again in a moment.`
+    }
+    if (waited.failed !== undefined) {
+      return `${provider.name}'s key is saved, but its model list did not arrive (${waited.failed}). If it says 401 or 403, the key was not accepted.`
+    }
+    const spend = pins(store).spend ?? 'mixed'
+    const listed = catalog.models.filter((m) => m.provider === provider.id && allowed(m, spend))
+    const free = listed.filter((m) => !paid(m.tier)).length
+    const priced = listed.length - free
+    return `${provider.name} connected — ${models(free, 'free ')}${priced > 0 ? ` and ${String(priced)} paid` : ''}.`
+  }
+
+  /**
+   * **Take a key out of the keychain** (§1 step 4). The provider is disconnected, unless it
+   * answers without a key, in which case it goes back to the shared floor.
+   *
+   * **A pin and a list are never edited by this** — D155's *Alexia never edits a list* — so
+   * whatever named this provider's models stays named, and the Models tab and the ladder show
+   * it as *not available* until a key is back. The sentence says so, because the alternative is
+   * somebody finding a list entry greyed out a week later with no memory of why.
+   */
+  const disconnect = async (provider: Provider): Promise<string> => {
+    await secrets.delete(CORE, keyOf(provider))
+    if (anonymous(provider)) {
+      return `The ${provider.name} key is removed. ${provider.name} still answers without one, on its shared free tier.`
+    }
+    const standing = pins(store)
+    const ids = new Set(catalog.models.filter((m) => m.provider === provider.id).map((m) => m.id))
+    // A model another connected provider also serves still answers, so it is not named here.
+    const reachable = await connected()
+    const still = new Set(catalog.models.filter((m) => reachable.has(m.provider)).map((m) => m.id))
+    const lost = (id: string): boolean => ids.has(id) && !still.has(id)
+    const pinned = standing.model !== undefined && lost(standing.model)
+    const listed = (standing.order ?? []).filter(lost).length
+    const kept = [
+      ...(pinned ? ['the model you chose stays chosen'] : []),
+      ...(listed > 0 ? [`your list keeps ${listed === 1 ? 'the one it names' : `the ${String(listed)} it names`}`] : []),
+    ]
+    return (
+      `The ${provider.name} key is removed, and its ${models(ids.size, '')} are no longer listed.` +
+      (kept.length === 0 ? '' : ` ${capitalised(kept.join(' and '))}, shown as not available until a key is back.`)
+    )
+  }
+
   /**
    * Whether money has been agreed to in this conversation (§9.5).
    *
@@ -615,7 +686,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
   let spending: boolean | undefined
 
   const surface = {
-    skills, tooling, plugins, skillsDir, trace, dataDir: root, store, catalog, connected, world,
+    skills, tooling, plugins, skillsDir, trace, dataDir: root, store, catalog, connected, providers, world,
     refresh: pollAll,
     session: () => session,
     openSession: (id: number) => {
@@ -1055,7 +1126,8 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
         theme?: string
         glass?: number
         updates?: boolean
-        provider?: { id: string; key: string }
+        /** A key to store, or `remove` to take the stored one out of the keychain (§1 step 4). */
+        provider?: { id: string; key?: string; remove?: boolean }
       }
       if (chosen.name) store.kvSet(CORE, 'display_name', chosen.name)
       if (chosen.mode && chosen.mode in MODES) store.kvSet(CORE, 'mode', chosen.mode)
@@ -1073,6 +1145,8 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
       // it is the same kind of fact: an answer about this install that outlives the window it
       // was given in.
       if (typeof chosen.updates === 'boolean') store.kvSet(CORE, 'updates_auto', chosen.updates)
+      /** What happened to a key, as the one line the screen shows where it was pressed (§1). */
+      let said: string | undefined
       if (chosen.provider?.key) {
         const provider = providers.find((p) => p.id === chosen.provider?.id)
         /**
@@ -1104,15 +1178,21 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
         }
         // Straight to the keychain, never to the database — the same path a plugin's
         // password takes, and the same check proves it.
-        if (provider) await secrets.set(CORE, keyOf(provider), chosen.provider.key)
-        // And its list, now that there is something to ask with. Four of the six refuse an
-        // unauthenticated request, so this is the moment their models become knowable at
-        // all — waiting for the next restart would mean connecting a provider and finding
-        // the Models tab still empty, with nothing on screen saying why.
-        if (provider) void catalog.refresh(provider, 0, chosen.provider.key)
+        if (provider) {
+          await secrets.set(CORE, keyOf(provider), chosen.provider.key)
+          // And its list, now that there is something to ask with. Four of the six refuse an
+          // unauthenticated request, so this is the moment their models become knowable at
+          // all. **Waited for** (§1 step 3), so the answer can say what the key unlocked and
+          // the shell can redraw the list with it in — it used to be fired and forgotten, and
+          // the Models tab opened straight after showed the provider with nothing in it.
+          said = await connectedNow(provider, chosen.provider.key)
+        }
+      } else if (chosen.provider?.remove === true) {
+        const provider = providers.find((p) => p.id === chosen.provider?.id)
+        if (provider) said = await disconnect(provider)
       }
       response.writeHead(200, { 'content-type': 'application/json' })
-      response.end(JSON.stringify(setup()))
+      response.end(JSON.stringify({ ...setup(), ...(said !== undefined && { said }) }))
       return
     }
 

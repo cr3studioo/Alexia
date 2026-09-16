@@ -248,3 +248,44 @@ test('a table row carrying a preview gets the same player, and the column to put
   expect(players).toHaveLength(2)
   expect(players[0]!.getAttribute('preload')).toBe('none')
 })
+
+// ---- the ladder, when a key has gone -----------------------------------------------------
+
+test('a listed model whose provider lost its key stays on the ladder, says why, and survives the next edit', async () => {
+  // What core sends after a key is removed (§1 step 4): the listed row, marked `off`.
+  const host = fakeHost({
+    '/api/rows': {
+      ok: true,
+      rows: [
+        { id: 'stub/free-a', name: 'Free A', provider: 'stub', price: 'free', side: 'free', rank: '1', off: 'not available — no key for Stub' },
+        { id: 'floor/one', name: 'Floor One', provider: 'floor', price: 'free', side: 'free', rank: '2', off: '' },
+        { id: 'floor/two', name: 'Floor Two', provider: 'floor', price: 'free', side: 'free', rank: '', off: '' },
+      ],
+    },
+  })
+  const field = widget(host, {
+    type: 'ladder',
+    key: 'routing',
+    label: 'What may answer',
+    rows: 'routing',
+    stops: [{ value: 'mixed', label: 'Free, then paid', hint: 'Free first.' }],
+    ordered: 'set_order',
+  })
+  await settled()
+
+  const chips = [...field.querySelectorAll<HTMLElement>('.chip')]
+  expect(chips.map((chip) => chip.dataset.id)).toEqual(['stub/free-a', 'floor/one'])
+  expect(chips[0]!.classList.contains('off')).toBe(true)
+  expect(chips[0]!.querySelector('.chip-meta')?.textContent).toBe('not available — no key for Stub')
+  expect(chips[1]!.classList.contains('off')).toBe(false)
+
+  // Taking the other one off the list saves what is left — the unavailable entry included.
+  chips[1]!.querySelector<HTMLButtonElement>('.chip-drop')!.click()
+  expect(host.sent.at(-1)?.body).toMatchObject({ key: 'set_order', row: 'stub/free-a' })
+
+  // And search offers what can be asked and is not listed — never a model nothing can ask.
+  const search = field.querySelector<HTMLInputElement>('.ladder-search')!
+  search.value = 'f'
+  search.dispatchEvent(new Event('input'))
+  expect([...field.querySelectorAll('.ladder-hit .chip-name')].map((one) => one.textContent)).toEqual(['Floor One', 'Floor Two'])
+})

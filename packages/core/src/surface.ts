@@ -7,6 +7,7 @@ import { available, paid, route, type Spend, type World } from './router.js'
 import { allow, forgetConsent } from './consent.js'
 import { forget } from './learned.js'
 import type { Row } from './plugins.js'
+import type { Provider } from './provider.js'
 import { Plugins } from './plugins.js'
 import type { Skills } from './skills.js'
 import type { Searchable } from './palette.js'
@@ -58,6 +59,8 @@ export interface SurfaceOptions {
    * unlock per row on a table with several hundred of them.
    */
   connected(): Promise<ReadonlySet<string>>
+  /** The provider rows this core reads, for a provider's name where a row has only its id. */
+  providers: readonly Provider[]
   /**
    * What the router can see right now — the same gathering the chat uses.
    *
@@ -159,6 +162,14 @@ export function sources(options: SurfaceOptions): Record<string, Source> {
    * person**, because reading it is how somebody decides whether to say yes (M6-9).
    */
   const skillText = (name: string): Promise<string> => Promise.resolve(skills.text(name))
+
+  /**
+   * **Why a model somebody named cannot be asked** (§1 step 4): its provider has no key any more.
+   * Said on the row rather than by taking the row away — a pin and a list are the person's, and
+   * a key removed is a key that may come back.
+   */
+  const unreachable = (provider: string): string =>
+    `not available — no key for ${options.providers.find((one) => one.id === provider)?.name ?? provider}`
 
   return {
     /**
@@ -297,7 +308,8 @@ export function sources(options: SurfaceOptions): Record<string, Source> {
                * do**, and the answer is that this model now answers everything.
                */
               state:
-                model.id === standing.model ? '◆ everything goes here'
+                model.id === standing.model ?
+                  `◆ everything goes here${keyed.has(model.provider) ? '' : ` · ${unreachable(model.provider)}`}`
                 : model.id === best ? '★ recommended'
                   // A router says so in place of tools: what it can do is whatever it picks (D159).
                 : routes(model) ? `${OK} · ${ROUTER(model)}`
@@ -354,8 +366,23 @@ export function sources(options: SurfaceOptions): Record<string, Source> {
         const standing = pins(store)
         const keyed = await options.connected()
         const listed = standing.order ?? []
+        /**
+         * What can be asked, and — only for what the person's list names — what cannot any more.
+         *
+         * The ladder used to be given connected rows alone and dropped every order entry it could
+         * not find, then saved what it was showing on the next drag: removing a key quietly
+         * deleted that provider's models from the person's list. A model another connected
+         * provider still serves is reachable and is not repeated here.
+         */
+        const reachable = new Set(catalog.models.filter((model) => keyed.has(model.provider)).map((model) => model.id))
+        const lost = new Set<string>()
         return catalog.models
-          .filter((model) => keyed.has(model.provider))
+          .filter((model) => {
+            if (keyed.has(model.provider)) return true
+            if (!listed.includes(model.id) || reachable.has(model.id) || lost.has(model.id)) return false
+            lost.add(model.id)
+            return true
+          })
           .map((model) => ({
             id: model.id,
             name: model.name,
@@ -366,6 +393,8 @@ export function sources(options: SurfaceOptions): Record<string, Source> {
             // which is the ordinary state of almost every row here.
             rank: listed.indexOf(model.id) === -1 ? '' : String(listed.indexOf(model.id) + 1),
             tools: model.supportsTools ? 'tools' : 'text only',
+            // Empty for everything that can be asked; the reason, for a listed model that cannot.
+            off: keyed.has(model.provider) ? '' : unreachable(model.provider),
           }))
           .sort(
             (a, b) =>

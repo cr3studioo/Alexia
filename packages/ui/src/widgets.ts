@@ -1964,7 +1964,9 @@ function ladder(host: WidgetHost, declared: Rendered): HTMLElement {
   // ---- one chip ----------------------------------------------------------------------------
 
   const chip = (row: Row, at: number): HTMLElement => {
-    const item = el('li', 'chip')
+    /** Why it cannot be asked right now, or nothing (§1 step 4). Kept on the list either way. */
+    const off = String(row.off ?? '')
+    const item = el('li', off === '' ? 'chip' : 'chip off')
     item.dataset.id = row.id
     item.dataset.side = String(row.side)
     item.draggable = true
@@ -1975,7 +1977,7 @@ function ladder(host: WidgetHost, declared: Rendered): HTMLElement {
     const what = el('span', 'chip-what')
     what.append(
       el('span', 'chip-name', String(row.name)),
-      el('span', 'chip-meta', `${String(row.provider)} · ${String(row.price)}`),
+      el('span', 'chip-meta', off === '' ? `${String(row.provider)} · ${String(row.price)}` : off),
     )
     item.append(what)
 
@@ -2048,7 +2050,7 @@ function ladder(host: WidgetHost, declared: Rendered): HTMLElement {
       return
     }
     const found = rows
-      .filter((row) => !order.includes(row.id))
+      .filter((row) => !order.includes(row.id) && String(row.off ?? '') === '')
       .filter((row) => `${String(row.name)} ${String(row.provider)}`.toLowerCase().includes(needle))
       .slice(0, HITS)
     hits.replaceChildren(
@@ -2099,7 +2101,9 @@ function ladder(host: WidgetHost, declared: Rendered): HTMLElement {
   function paint(): void {
     const known = new Map(rows.map((row) => [row.id, row]))
     // Whatever core kept, minus anything that has left the catalog since. This screen shows
-    // what will actually happen, and a row naming a model no provider offers will not.
+    // what will actually happen, and a row naming a model no provider offers will not. A model
+    // whose provider has lost its key is still a row — core sends it marked `off` — so it stays
+    // on the list and in what the next drag saves (§1 step 4).
     order = order.filter((id) => known.has(id))
     for (const side of sides) {
       const mine = order

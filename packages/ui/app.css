@@ -1663,6 +1663,16 @@ body[data-view='control'] .view:not(#control) {
   cursor: grab;
 }
 
+/* A model the list still names and nothing can ask: its provider has no key. Kept, and the
+   reason is the line under its name — dimmed like a closed side, not struck out like a deletion. */
+.chip.off .chip-name {
+  color: var(--ink-faint);
+}
+
+.chip.off .chip-meta {
+  color: var(--caution);
+}
+
 .chip-drop {
   flex: none;
   padding: 0 var(--space-1);
