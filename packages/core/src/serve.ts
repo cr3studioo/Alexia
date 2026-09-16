@@ -326,7 +326,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
      * **The spend lands on the plugin that spent it.** That is the whole reason
      * `usage.plugin` exists, and until something called this it was a column nothing wrote.
      */
-    sample: async (pluginId, params) => {
+    sample: async (pluginId, params, signal) => {
       const asked: Message[] = [
         ...(params.systemPrompt === undefined ? [] : [{ role: 'system' as const, content: params.systemPrompt }]),
         ...params.messages.map((turn) => ({
@@ -374,13 +374,19 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
       const typed = lastAsked === undefined ? '' : textOf(lastAsked).trim()
       if (!typed.includes('\n') && /^\/[a-z][a-z0-9.-]*(?:\s|$)/i.test(typed)) return asCommand(pluginId, typed)
 
-      if (params._meta?.[TOOLS_META] === true) return asTask(pluginId, asked)
+      if (params._meta?.[TOOLS_META] === true) return asTask(pluginId, asked, signal)
 
       const verdict = route({ messages: asked, shape: shapeOf({ messages: asked }) }, pins(store), await world())
       if (!verdict.ok) throw new Error(verdict.why)
       const answer = await send(
         verdict.choices,
-        { messages: asked, ...(params.maxTokens !== undefined && { maxTokens: params.maxTokens }) },
+        {
+          messages: asked,
+          ...(params.maxTokens !== undefined && { maxTokens: params.maxTokens }),
+          // The plugin's cancel (D160). When it stops waiting, no further rung is asked and
+          // nothing is counted as the model's failure: nobody is there to be answered.
+          ...(signal !== undefined && { signal }),
+        },
         store,
         secrets,
         // No `run`, because there is no task: a plugin asked. **That is also the ceiling**
@@ -784,7 +790,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     return { role: 'assistant', model: '', content: { type: 'text', text: ran.note }, stopReason: 'endTurn' }
   }
 
-  async function asTask(pluginId: string, messages: Message[]): Promise<CreateMessageResult> {
+  async function asTask(pluginId: string, messages: Message[], gaveUp?: AbortSignal): Promise<CreateMessageResult> {
     if (task) throw new Error('Alexia is already working on something. Try again when it has finished.')
     const started = [...messages].reverse().find((m) => m.role === 'user')
     const text = started === undefined ? '' : textOf(started)
@@ -816,7 +822,8 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
         plugin: pluginId,
         paidAllowed: !month.stop,
         maxSteps: limitsNow().steps,
-        signal: stop.signal,
+        // The stop button, and the plugin that started this giving up: either one ends the task.
+        signal: gaveUp === undefined ? stop.signal : AbortSignal.any([stop.signal, gaveUp]),
         guard: gate(text, runId),
         /**
          * The yes, from wherever the person is.

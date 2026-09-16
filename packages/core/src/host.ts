@@ -28,7 +28,7 @@ export interface HostOptions {
   displayName?: string
   privacyMode?: HostInfo['privacyMode']
   /** The router (M1-8). Absent means core cannot answer for the model yet, and says so. */
-  sample?(pluginId: string, params: CreateMessageRequestParams): Promise<CreateMessageResult>
+  sample?(pluginId: string, params: CreateMessageRequestParams, signal?: AbortSignal): Promise<CreateMessageResult>
   /** The folders the user has put in scope. A fixed stub until the UI has a way to add one. */
   roots?(pluginId: string): Root[]
   /** Route a capability to whichever plugin provides it. The resolver lands at M0-7. */
@@ -80,13 +80,13 @@ export class Host implements HostServices {
     return this.options.roots?.(pluginId) ?? []
   }
 
-  async sampling(pluginId: string, params: CreateMessageRequestParams): Promise<CreateMessageResult> {
+  async sampling(pluginId: string, params: CreateMessageRequestParams, signal?: AbortSignal): Promise<CreateMessageResult> {
     if (!this.options.sample) {
       // Honest rather than convenient: a canned answer here would look like a working model
       // to every plugin author who tried it before M1-8.
       return fail(ErrorCode.INTERNAL_ERROR, 'Alexia has no model wired up yet.')
     }
-    return this.options.sample(pluginId, params)
+    return this.options.sample(pluginId, params, signal)
   }
 
   /** Every `alexia/*` request, already validated against the wire schema by the supervisor. */

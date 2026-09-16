@@ -1083,6 +1083,10 @@ export async function send(
   }
 
   for (const [at, choice] of choices.entries()) {
+    // Whoever was waiting has stopped: the stop button, or a plugin that gave up (D160). Asked
+    // before each rung as well as inside `chat()`, so a rung is not counted against its
+    // provider for a request that is never going to be sent.
+    request.signal?.throwIfAborted()
     if (unpaid(choice)) {
       // A cap that is reached does not quietly pick something worse, and it does not
       // quietly spend either. It stops, and the caller says why — and which wall it was,

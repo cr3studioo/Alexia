@@ -47,8 +47,11 @@ export interface HostServices {
   /**
    * A plugin asked for the model. The router lands at M1-8; at M0 this is a stub. The
    * plugin id travels with it so the spend lands on whoever spent it.
+   *
+   * `signal` aborts when the plugin stops waiting (D160): the SDK's own cancellation, so a
+   * plugin that has already shown its refusal does not leave core asking model after model.
    */
-  sampling(pluginId: string, params: CreateMessageRequestParams): Promise<CreateMessageResult>
+  sampling(pluginId: string, params: CreateMessageRequestParams, signal?: AbortSignal): Promise<CreateMessageResult>
   /** The folders the user has put in scope. A fixed stub at M0. */
   roots(pluginId: string): Root[] | Promise<Root[]>
   /** One line the plugin wrote to stderr. stdout is the wire; stderr is the log. */
@@ -253,8 +256,10 @@ export class PluginProcess {
       versionNegotiation: { mode: 'auto' },
       listChanged: { tools: { onChanged: () => this.host.toolsChanged?.(this.id) } },
     })
-    client.setRequestHandler('sampling/createMessage', (request) =>
-      this.host.sampling(this.id, request.params),
+    // The second argument carries the plugin's cancel. It was dropped here, so when Adapt gave
+    // up at 110 s, `send()` went on down the plan behind a refusal already on screen (D159).
+    client.setRequestHandler('sampling/createMessage', (request, ctx) =>
+      this.host.sampling(this.id, request.params, ctx.mcpReq.signal),
     )
     client.setRequestHandler('roots/list', async () => ({ roots: await this.host.roots(this.id) }))
 
