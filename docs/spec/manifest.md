@@ -371,7 +371,7 @@ first press costs nothing and the second one is unambiguous.
 
 **Groups are drawn alphabetically unless you say otherwise.** `groupOrder` names them in the
 order you mean; a group you do not name follows, alphabetically, and a named group with no rows
-is not drawn. A row can also explain itself: `note` is one sentence drawn under it, and `tags`
+is not drawn. A row can also explain itself: `note` is one sentence drawn under its first left-aligned cell, and `tags`
 is a list of chips, each `{ "says": "busy", "tone": "caution" }` with a tone of `quiet`,
 `caution` or `danger` — declare a column whose `key` is `tags` and that is where they go. See
 [`ui-schema.md`](./ui-schema.md#a-row-can-explain-itself).

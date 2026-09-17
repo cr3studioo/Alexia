@@ -470,7 +470,7 @@ A tag with any other tone, or a `tags` that is not a list, is drawn as `quiet` t
 never as an error, because a row is data and a panel that refuses to draw over one field is worse
 than one that shows the rest.
 
-**A note is a sentence, not a second column.** It sits under the first cell and wraps; it is
+**A note is a sentence, not a second column.** It sits under the first cell that is not right-aligned — where a name is, rather than under a number — and wraps; it is
 searched by the filter like any column, because *why is this here* is something a person looks
 for. And a table's groups can be put in order with `groupOrder` on the declaration — see
 [`manifest.md`](./manifest.md#tables).

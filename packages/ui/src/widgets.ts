@@ -1692,6 +1692,8 @@ function rowOf(
 ): DocumentFragment {
   const out = document.createDocumentFragment()
   const line = el('tr')
+  /** Where a row's `note` goes: under the first column read left to right, which is where a name is. */
+  const noteAt = Math.max(0, columns.findIndex((column) => column.align !== 'right'))
   for (const [at, column] of columns.entries()) {
     if (column.key === 'tags') {
       // Chips, each in its tone (`alexia_protocol` 8). The tone is a class and never a colour
@@ -1710,8 +1712,9 @@ function rowOf(
       [column.align === 'right' ? 'right tabular' : '', state ?? ''].filter(Boolean).join(' ') || undefined,
       text,
     )
-    // A row's own sentence goes under its first cell, where a person reads the name (8).
-    if (at === 0 && typeof row.note === 'string' && row.note !== '') cell.append(el('span', 'row-note', row.note))
+    // A row's own sentence goes under its name (8): the first cell that is not a right-aligned
+    // number, since a `#` column first would otherwise wrap a sentence down a two-digit width.
+    if (at === noteAt && typeof row.note === 'string' && row.note !== '') cell.append(el('span', 'row-note', row.note))
     line.append(cell)
   }
   out.append(line)

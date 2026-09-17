@@ -286,7 +286,11 @@ export function mountRail(token: string, options: RailOptions): Rail {
         .catch(() => ({ panes: [] })),
     ])
     chats = gotChats
-    models = gotModels
+    // The Models table lists one model once per provider and per group (D161); a pin names the
+    // model, so the rail lists each model once, in the table's order — which is Alexia's.
+    models = gotModels.filter(
+      (row, at) => gotModels.findIndex((other) => other.id.split('\n').pop() === row.id.split('\n').pop()) === at,
+    )
     drawChats()
     drawModels()
     drawPlugins(gotPlugins.panes ?? [])

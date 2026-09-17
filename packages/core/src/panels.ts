@@ -232,29 +232,42 @@ const LADDER: Rendered = {
   ordered: 'set_order',
 }
 
+/**
+ * **The Models table's four groups** (D161), in the order they are drawn. `surface.ts` names each
+ * row's group from here and the declaration's `groupOrder` reads the same list, so the two cannot
+ * spell a group differently and quietly put it at the end.
+ */
+export const MODEL_GROUPS = {
+  chosen: 'Your choice',
+  listed: 'Your list',
+  automatic: 'Automatic, free',
+  aside: 'Set aside by Alexia',
+  paid: 'Paid',
+} as const
+
 const MODELS: Rendered = table({
   type: 'table',
   key: 'models',
   label: 'Models',
   hint:
-    'Normally Alexia picks a model per request — the cheapest one that can do the job, falling to the next when one fails. That is Automatic, and it is what happens when nothing here is chosen. ' +
-    'The ★ is the model that would be asked first right now for a request that needs tools — Automatic’s pick, or the first of your own order above: it is the router’s own answer rather than a second opinion, so it moves when your keys, the catalog, a rate limit — or the controls above — move. ' +
-    '"Tokens / week" is how much the whole world put through that model in the provider’s last published week, refreshed daily and again whenever you open this tab. ' +
-    'Only OpenRouter publishes that figure today, so every other provider shows a dash there and its models are ordered by price instead — a dash means nobody says, not nobody uses it. ' +
-    'Use sends every request to one model instead, until you press Automatic on any row to hand the choice back. One model never falls back: if it cannot answer, Alexia stops and says why. The chosen row is marked and coloured. ' +
-    'Only models you can actually send a request to right now are listed: a provider you have connected, and the side of the price line the slider above allows. Add a key in settings and that provider’s models appear here; a model whose provider publishes prices but not for that model is left out rather than shown as free. ' +
-    'Each provider publishes its own list and they do not agree on what to include, so a dash is something that provider does not say rather than a zero.',
+    'Every model you can reach, in the order Alexia would ask them, and what she thinks of each. The sentence under a row says why it sits below the one above — it is taken from the ranking itself, so it cannot describe an order Alexia is not following. ' +
+    'Your choice or your list comes first when you have one. Automatic is the free models for an ordinary request, best first: what failed on this machine lately, then not a router, your keys before this Mac before the providers that need no key, then size, then how much the whole world used each model last week — lent across providers serving the same model. ' +
+    'Set aside is what Alexia has stopped asking on her own: a whole day of nothing but refusals, three empty answers, a model no longer offered, or a provider that now wants a key. Nothing is deleted, a model you chose is still asked, and one good reply brings a model back. Paid is the order Automatic would pay in: tools first, then cheapest. ' +
+    'The ★ is what would be asked first right now for a request that needs tools. Use this sends every request to one model until you press Automatic; one model never falls back, so if it cannot answer Alexia stops and says why. ' +
+    'Answered here counts the last 30 days on this machine. Only models you can send a request to right now are listed: add a key in settings and that provider’s models appear.',
   rows: 'models',
   columns: [
-    { key: 'name', label: 'Model' },
-    { key: 'price', label: 'Per 1M in', align: 'right' },
-    // How much the world put through it last week. Only one provider publishes this, which
-    // is why the sentence above the table says so — an empty column on six providers looks
-    // like a bug, and *nobody publishes this* is the fact that stops it looking like one.
-    { key: 'week', label: 'Tokens / week', align: 'right' },
-    { key: 'context', label: 'Context', align: 'right', hideNarrow: true },
-    { key: 'tier', label: 'Tier', align: 'right', hideNarrow: true },
-    { key: 'state', label: 'State' },
+    // The place in its group, and the ★ or ◆ when the row is one.
+    { key: 'rank', label: '#', align: 'right' },
+    { key: 'name', label: 'Model, and why it is here' },
+    { key: 'via', label: 'Where', hideNarrow: true },
+    { key: 'size', label: 'Size', align: 'right', hideNarrow: true },
+    { key: 'can', label: 'Can', hideNarrow: true },
+    // How much the world put through it last week, and whose figure it is when it was lent.
+    { key: 'week', label: 'World, last week', align: 'right', hideNarrow: true },
+    { key: 'answered', label: 'Answered here', align: 'right' },
+    { key: 'price', label: 'Per 1M in', align: 'right', hideNarrow: true },
+    { key: 'tags', label: 'Tags' },
   ],
   rowActions: [
     { key: 'use_model', label: 'Use this', tool: 'use_model' },
@@ -262,7 +275,8 @@ const MODELS: Rendered = table({
   ],
   detail: 'model',
   filter: true,
-  groupBy: 'provider',
+  groupBy: 'group',
+  groupOrder: Object.values(MODEL_GROUPS),
 })
 
 /**

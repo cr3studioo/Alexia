@@ -101,8 +101,8 @@ const post = async (path: string, body: unknown): Promise<Record<string, unknown
     })
   ).json()) as Record<string, unknown>
 
-const tab = async (): Promise<{ id: string; state: string; week: string }[]> =>
-  ((await post('/api/rows', { key: 'models' })).rows ?? []) as { id: string; state: string; week: string }[]
+const tab = async (): Promise<{ id: string; state: string; week: string; note: string; group: string }[]> =>
+  ((await post('/api/rows', { key: 'models' })).rows ?? []) as { id: string; state: string; week: string; note: string; group: string }[]
 
 /** One POST to `/api/chat`, read to the end. */
 const chat = async (text: string): Promise<string> =>
@@ -117,14 +117,19 @@ const chat = async (text: string): Promise<string> =>
 test('the Models tab labels a router and puts it last, and says whose usage figure a row borrowed', async () => {
   const rows = await tab()
   // A size read from the id before a size nobody said; a router after both.
-  expect(rows.map((one) => one.id)).toEqual(['vendor/large-120b-a12b:free', 'vendor/busy:free', 'kilo-auto/free'])
+  expect(rows.map((one) => one.id)).toEqual(['floor\nvendor/large-120b-a12b:free', 'floor\nvendor/busy:free', 'floor\nkilo-auto/free'])
+  expect(rows.every((one) => one.group === 'Automatic, free')).toBe(true)
   expect(rows[0]?.state).toBe('★ recommended')
   expect(rows[2]?.state).toBe('● ready · a different free model each time')
-  expect(rows[1]?.week).toBe('5.0M')
+  // Whose figure it is, when it was lent (D159) — on the row now, not only in the detail.
+  expect(rows[1]?.week).toBe('5.0M via lender')
+  // And why each sits below the one above, in the ranking's own words (D161).
+  expect(rows[1]?.note).toBe('Its size isn’t published, so it comes after models known to be 7B or more.')
+  expect(rows[2]?.note).toBe('A router: a different free model each time, some of them tiny. Asked after every single model.')
 
-  const router = String((await post('/api/detail', { key: 'models', row: 'kilo-auto/free' })).text)
+  const router = String((await post('/api/detail', { key: 'models', row: 'floor\nkilo-auto/free' })).text)
   expect(router).toContain('A router: a different free model each time, chosen by floor.')
-  const busy = String((await post('/api/detail', { key: 'models', row: 'vendor/busy:free' })).text)
+  const busy = String((await post('/api/detail', { key: 'models', row: 'floor\nvendor/busy:free' })).text)
   expect(busy).toContain('last week on lender, which publishes the figure floor does not.')
 })
 
@@ -136,7 +141,7 @@ test('a model that fails in a conversation loses the ★, and the next conversat
   expect(alexia.store.strikes().map((one) => one.model)).toEqual(['vendor/large-120b-a12b:free'])
 
   // The ★ is the router's first choice, so it moves with the failure rather than beside it.
-  expect((await tab()).find((one) => one.state === '★ recommended')?.id).toBe('vendor/busy:free')
+  expect((await tab()).find((one) => one.state === '★ recommended')?.id).toBe('floor\nvendor/busy:free')
 
   // And the next question does not collect the same 429 first.
   asked.length = 0

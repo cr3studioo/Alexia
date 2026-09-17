@@ -104,8 +104,15 @@ const post = async (path: string, body: unknown): Promise<Record<string, unknown
 const rows = async (key: string): Promise<Record<string, string>[]> =>
   ((await post('/api/rows', { key })).rows ?? []) as Record<string, string>[]
 
+/** The Models table's rows as `group: model@provider`, which is what a person reads off it (D161). */
+const table = async (): Promise<string[]> =>
+  (await rows('models')).map((row) => {
+    const [provider, model] = String(row.id).split('\n')
+    return `${String(row.group)}: ${String(model)}@${String(provider)}`
+  })
+
 test('saving a key waits for its list and says what it unlocked, and the Models tab has it at once', async () => {
-  expect((await rows('models')).map((row) => row.id)).toEqual(['floor/one'])
+  expect(await table()).toEqual(['Automatic, free: floor/one@floor'])
 
   // A key its provider will not list for: saved, and said plainly that the list did not come.
   const wrong = await post('/api/setup', { provider: { id: 'stub', key: 'sk-wrong' } })
@@ -115,7 +122,12 @@ test('saving a key waits for its list and says what it unlocked, and the Models 
   const right = await post('/api/setup', { provider: { id: 'stub', key: 'sk-stub' } })
   expect(right.said).toBe('Stub connected — 2 free models and 1 paid.')
   // No reopen, no wait: the answer came after the list, so the next read has it.
-  expect((await rows('models')).map((row) => row.id).sort()).toEqual(['floor/one', 'stub/free-a', 'stub/free-b', 'stub/paid'])
+  expect((await table()).sort()).toEqual([
+    'Automatic, free: floor/one@floor',
+    'Automatic, free: stub/free-a@stub',
+    'Automatic, free: stub/free-b@stub',
+    'Paid: stub/paid@stub',
+  ])
 
   // On *free only* the count is what the slider lets answer, the same rule the tab reads.
   await post('/api/action', { key: 'set_spend', row: 'free' })
@@ -134,9 +146,17 @@ test('removing a key takes it out of the keychain and the list, and a pin or a l
   expect(await secrets.get(CORE, keyOf(stub))).toBeUndefined()
 
   // The tab changes back without a reload — except the pinned row, which says why it is there.
-  const table = await rows('models')
-  expect(table.map((row) => row.id).sort()).toEqual(['floor/one', 'stub/free-b'])
-  expect(table.find((row) => row.id === 'stub/free-b')?.state).toBe('◆ everything goes here · not available — no key for Stub')
+  expect(await table()).toEqual([
+    'Your choice: stub/free-b@stub',
+    'Your list: floor/one@floor',
+    'Your list: stub/free-a@stub',
+    'Automatic, free: floor/one@floor',
+  ])
+  const shown = await rows('models')
+  expect(shown[0]).toMatchObject({ state: '◆ everything goes here · not available — no key for Stub', note: 'Your choice, not available — no key for Stub.' })
+  // The list asks what it can, and says which entry it cannot, under the number it was given.
+  expect(shown[1]?.note).toBe('Number 2 in your list, on Floor with no key.')
+  expect(shown[2]?.note).toBe('Number 1 in your list, not available — no key for Stub.')
 
   // Nothing the person wrote was edited: the list still names both, in order.
   const state = (await (await fetch(new URL('/api/state', alexia.url), { headers: { 'x-alexia-token': alexia.token } })).json()) as {
@@ -161,5 +181,5 @@ test('removing the key of a provider that answers without one leaves it on the s
   expect((await post('/api/setup', { provider: { id: 'floor', remove: true } })).said).toBe(
     'The Floor key is removed. Floor still answers without one, on its shared free tier.',
   )
-  expect((await rows('models')).map((row) => row.id)).toContain('floor/one')
+  expect(await table()).toContain('Your list: floor/one@floor')
 }, 30_000)
