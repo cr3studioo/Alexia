@@ -91,6 +91,32 @@ in one line: *Groq connected — 14 free models.*
 keys lists no paid rows. Saving a key changes the Models tab's rows without a reload.
 Removing it changes them back. The Requesty rows on this machine disappear from Automatic.
 
+**Built 2026-09-17 (D163)**, steps 3 and 4, in core and the shell. Where the build differs from
+the text above, or had to decide something the text did not:
+
+- **A save waits for the list, 15 seconds at most**, then answers with what the key unlocked
+  under the slider (*Groq connected — 14 free models and 3 paid*, the same `allowed()` the tab
+  reads). A list that does not come is said with the reason, since on a list that needs a key the
+  reason is usually the key; one still arriving past 15 s is said as still arriving.
+- **The line is shown where the key was saved** — the settings box, or the first-run tile — and
+  not on the Models tab, which is not on screen while a key is being pasted. The shell then
+  redraws the rail's models, and the Models tab if it is the screen being looked at.
+- **Remove is two presses**, on the settings screen only, and only while a key is stored. A
+  provider that answers without a key goes back to the shared floor and says so.
+- **Found: the ladder deleted list entries.** It dropped any entry it could not find among its
+  rows and saved what it showed on the next drag, and it was given connected rows only — so
+  removing a key would have taken that provider's models out of the person's list. Core now sends
+  a listed model whose provider has no key as a row marked `off`, the ladder keeps it and says
+  *not available — no key for X*, and search never offers it. The pinned row says the same. A
+  model another connected provider still serves is not marked. A model gone from the catalog
+  altogether still leaves the ladder, as before; §4 D decides what a gone model is.
+- **Not built:** *Funded* and the keyless group's switch, still open from step 2.
+
+Tests: `keys.test.ts` over `/api/setup` and `/api/rows` (a wrong key, the count under *free
+only*, removal, the pin and the list kept, the floor), and `widgets.test.ts` (the ladder keeps an
+unavailable entry through the next edit). The shell was driven in headless Chromium against a
+stub: the line, the rail redrawn without a reload, and the two presses.
+
 ---
 
 ## 2. Automatic is not best-to-worst
@@ -290,6 +316,14 @@ text above, or had to decide something the text did not:
 Tests: `router.test.ts` (modes, every failure kind, the stop sentence), `provider.test.ts`
 (patience, dropped streams, error frames, unreachable, keyless 401), `agent.test.ts`, and
 `fallback.test.ts` over `/api/chat`. The shell was driven in headless Chromium against a stub.
+
+**Changed 2026-09-17 (D163): keep-alives count for two minutes, not for ever.** Kilo sent
+`: KILO PROCESSING` every 0.4 s for a minute for Nemotron 3 Ultra and never a word, and every
+comment re-armed both timers, so Automatic waited on it indefinitely and the no-keys invariant
+timed out. `PATIENCE.keptAlive` is 120 s (a row's `keptAliveMs`, never less than its first-byte
+patience): past it with no data, the model has not answered — trouble `kept`, *did not answer in
+120 seconds, though Kilo Gateway kept the connection open*, recorded as slow — and the next model
+is asked. Data that started and then turned into keep-alives is a stall.
 
 **Acceptance.** A fake provider answering 402 then a working one: Automatic answers from the
 second, and the transcript shows the switch line. The same with a single pin: the answer stops
@@ -802,6 +836,9 @@ not built. Next: §4 A, then §1 steps 3–4 and §4 B.
 installed app only with a new build, and a build between B and E leaves a set-aside model no daily
 way back. Next: §1 steps 3–4 and §4 C.
 
+**Status 2026-09-17:** §1 steps 3–4 are built (D163), in core and the shell, and keep-alives now
+hold a request open for two minutes rather than for ever. Next: §4 C.
+
 1. **§1 steps 1–2**: unpriced is not free, one `available()`. Smallest change, and it closes
    a real billing hole (Requesty) before anything else.
 2. ~~**§3**: failure kinds, the three modes, default timeouts. This is the one people feel on
@@ -810,8 +847,8 @@ way back. Next: §1 steps 3–4 and §4 C.
    and size-from-id second.~~ Done 2026-09-15 (D159).
 4. ~~**§4 A**: Adapt's cancel. Small, on its own, and it stops work going on behind a refusal the
    person has already seen.~~ Done 2026-09-16 (D162).
-5. **§1 steps 3–4**: key events and key removal, which need the shell. *Needs a key* coming back
-   the moment a key is saved depends on the event.
+5. ~~**§1 steps 3–4**: key events and key removal, which need the shell. *Needs a key* coming back
+   the moment a key is saved depends on the event.~~ Done 2026-09-17 (D163).
 6. ~~**Alexia.md**: D112 rewritten with the three modes, and the decision log entry.~~ Done
    2026-09-15 (D154, D155).
 7. ~~**§4 B**: the model record and the tags, in core with their tests. Everything after reads
