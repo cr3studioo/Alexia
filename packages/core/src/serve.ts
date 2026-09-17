@@ -546,6 +546,8 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
         store.seen(),
         [...models, ...local],
         new Set(rungs.filter((rung) => rung.keyed === true).map((rung) => rung.provider.id)),
+        Date.now(),
+        store.waits(),
       ),
     }
   }

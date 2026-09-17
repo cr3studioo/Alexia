@@ -1339,7 +1339,7 @@ export async function send(
     if (!paid(choice.model.tier)) sent(store, choice.provider)
     const later = choices.slice(at + 1).some(open)
     try {
-      const { message, usage, cut } = await chat(
+      const { message, usage, cut, heard } = await chat(
         choice.provider,
         { ...request, messages: outbound.messages, model: choice.model.id },
         onDelta,
@@ -1368,6 +1368,8 @@ export async function send(
        * second time for an answer that ends at the same ceiling. That one comes back cut, and
        * the caller decides.
        */
+      // What the provider said about its limits on this answer (§4 D).
+      if (heard !== undefined) store.hear(choice.provider.id, heard, choice.model.id)
       const empty = textOf(message).trim() === '' && (message.calls?.length ?? 0) === 0
       const short =
         empty ? `${choice.model.name} answered with nothing`
@@ -1403,6 +1405,8 @@ export async function send(
         ...(choice.keyed !== undefined && { keyed: choice.keyed }),
       }
     } catch (error) {
+      // A refusal says the most about limits: *try again in 20 seconds* is on the 429 (§4 D).
+      if (error instanceof ProviderError && error.heard !== undefined) store.hear(choice.provider.id, error.heard, choice.model.id)
       const failure = failed(error, choice)
       // The stop button, or a bug in core. Neither is somebody else's turn.
       if (failure === undefined || request.signal?.aborted === true) throw error

@@ -787,12 +787,96 @@ export const PATIENCE = { first: 30_000, between: 20_000, keptAlive: 120_000 } a
 export type Trouble = 'slow' | 'stalled' | 'unreachable' | 'dropped' | 'keyless' | 'kept'
 
 /**
+ * **What a provider said about its own limits**, on an answer or on a refusal (§4 D, D161).
+ *
+ * The rows in {@link PROVIDERS} are typed by hand and some were already wrong when checked —
+ * Groq publishes a limit per model, OVHcloud refused the first anonymous request — while several
+ * providers say the truth on every response. So what they say is read, and it only ever lowers
+ * what the ledger believes is left: a row stays the ceiling, and a provider that says nothing
+ * changes nothing.
+ */
+export interface Heard {
+  /** Requests left in the current minute, and when that resets (epoch ms) when it said. */
+  minute?: { remaining: number; resets?: number }
+  /** Requests left in the current day, and when that resets. */
+  day?: { remaining: number; resets?: number }
+  /** `retry-after`: not before this instant. It is about the model that was asked. */
+  retryAt?: number
+}
+
+/** `2m59.56s`, `1h2m3s`, `7.66s`, `120ms` — Groq's resets — as milliseconds. */
+const span = (text: string): number | undefined => {
+  let total = 0
+  let found = false
+  for (const [, amount, unit] of text.matchAll(/(\d+(?:\.\d+)?)(ms|h|m|s)/g)) {
+    found = true
+    total += Number(amount) * (unit === 'h' ? 3_600_000 : unit === 'm' ? 60_000 : unit === 's' ? 1000 : 1)
+  }
+  return found ? total : undefined
+}
+
+/** A refusal, carrying what its headers said — so a 429 that says *try in 20 seconds* is heard. */
+const listened = (error: ProviderError, limits: Heard | undefined): ProviderError => {
+  if (limits !== undefined) error.heard = limits
+  return error
+}
+
+/**
+ * Read the rate-limit headers the providers in the table send (§4 D):
+ *
+ * - **Groq**: `x-ratelimit-remaining-requests` is the day's requests, reset in `2m59s` form.
+ * - **OVHcloud**: `x-ratelimit-remaining-minute`, and `ratelimit-remaining` with `ratelimit-reset`
+ *   in seconds — a window of a minute or less is a minute's, anything longer a day's.
+ * - **OpenRouter**, on a 429: `x-ratelimit-remaining` with `x-ratelimit-reset` in epoch ms, windowed
+ *   the same way.
+ * - **Anyone**: `retry-after`, in seconds or as a date.
+ */
+export function hear(headers: Headers, at: number = Date.now()): Heard | undefined {
+  const number = (name: string): number | undefined => {
+    const value = headers.get(name)
+    if (value === null || value.trim() === '') return undefined
+    const parsed = Number(value)
+    return Number.isFinite(parsed) ? parsed : undefined
+  }
+  const heard: Heard = {}
+  const windowed = (remaining: number | undefined, resets: number | undefined): void => {
+    if (remaining === undefined) return
+    const one = { remaining, ...(resets !== undefined && { resets }) }
+    if (resets !== undefined && resets - at > 60_000) heard.day ??= one
+    else heard.minute ??= one
+  }
+
+  const groq = number('x-ratelimit-remaining-requests')
+  if (groq !== undefined) {
+    const reset = span(headers.get('x-ratelimit-reset-requests') ?? '')
+    heard.day = { remaining: groq, ...(reset !== undefined && { resets: at + reset }) }
+  }
+  const perMinute = number('x-ratelimit-remaining-minute')
+  if (perMinute !== undefined) heard.minute = { remaining: perMinute }
+  const ietfReset = number('ratelimit-reset')
+  windowed(number('ratelimit-remaining'), ietfReset === undefined ? undefined : at + ietfReset * 1000)
+  const openRouterReset = number('x-ratelimit-reset')
+  windowed(number('x-ratelimit-remaining'), openRouterReset)
+
+  const retry = headers.get('retry-after')
+  if (retry !== null && retry.trim() !== '') {
+    const seconds = Number(retry)
+    const when = Number.isFinite(seconds) ? at + seconds * 1000 : Date.parse(retry)
+    if (Number.isFinite(when) && when > at) heard.retryAt = when
+  }
+  return heard.minute === undefined && heard.day === undefined && heard.retryAt === undefined ? undefined : heard
+}
+
+/**
  * A provider said no. The status is on it because the router acts on the number — see
  * `failed()` in `router.ts`, which is the one place a status is read for what to do next.
  *
  * `0` is *there was no status*: nothing came back to have one.
  */
 export class ProviderError extends Error {
+  /** What the refusal's headers said about the provider's limits, when they said anything (§4 D). */
+  heard?: Heard
+
   constructor(
     readonly status: number,
     message: string,
@@ -838,7 +922,7 @@ export async function chat(
   request: ChatRequest,
   onDelta?: (text: string) => void,
   secrets: SecretStore = keychain,
-): Promise<{ message: Message; usage: Usage; cut: boolean }> {
+): Promise<{ message: Message; usage: Usage; cut: boolean; heard?: Heard }> {
   // What credential goes on the wire, in three cases — and the difference between the last
   // two is the entire reason `auth` replaced a boolean.
   //
@@ -937,18 +1021,20 @@ export async function chat(
       }),
       signal,
     }).catch(gaveUp)
+    /** What the provider said about its limits, on this answer or this refusal (§4 D). */
+    const limits = hear(response.headers)
 
     if (!response.ok || !response.body) {
       // The body is the provider's own explanation, and it is usually the useful part.
       const said = await response.text().catch(() => '')
-      throw new ProviderError(
+      throw listened(new ProviderError(
         response.status,
         `${provider.name} said ${response.status}: ${said.slice(0, 200)}`,
         // **A 401 with nothing of the person's on it is not their key being refused.** A
         // keyless provider answers most of its models anonymously and a few only with a key,
         // so this one model wants a key; the rest of that provider's list still answers.
         response.status === 401 && stored === undefined ? 'keyless' : undefined,
-      )
+      ), limits)
     }
 
     let content = ''
@@ -1045,6 +1131,7 @@ export async function chat(
       message: { role: 'assistant', content, model, ...(asked.length > 0 && { calls: asked }) },
       usage,
       cut,
+      ...(limits !== undefined && { heard: limits }),
     }
   } finally {
     clearTimeout(timer)

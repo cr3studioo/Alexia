@@ -145,6 +145,8 @@ export function judge(
   models: readonly Model[],
   keyed: ReadonlySet<string>,
   now: number = Date.now(),
+  /** `retry-after`s still running, keyed `provider\nmodel` (§4 D): busy until then. */
+  waits: ReadonlyMap<string, number> = new Map(),
 ): Health {
   const kept = tries.filter((one) => one.at <= now && now - one.at <= TRIES_KEPT)
   const record = new Map<string, Try[]>()
@@ -219,7 +221,9 @@ export function judge(
     const judged = mine.filter((one) => one.outcome === 'answered' || ERRORS.has(one.outcome))
     const errors = judged.length >= DOUBT.tries && judged.filter((one) => one.outcome !== 'answered').length >= judged.length * DOUBT.share
     const bad = mine.filter((one) => one.outcome === 'bad-answer').length >= BAD_PRESSES
-    const busy = reasons.length === 0 && since.some((one) => one.outcome === 'busy' && now - one.at < BUSY_FOR)
+    const busy =
+      reasons.length === 0 &&
+      (since.some((one) => one.outcome === 'busy' && now - one.at < BUSY_FOR) || (waits.get(key) ?? 0) > now)
     const retiring = model.expires !== undefined && now < model.expires && model.expires - now <= RETIRING_WITHIN
 
     const tags: Tag[] = [

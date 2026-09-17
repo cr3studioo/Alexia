@@ -422,6 +422,13 @@ export interface SelectQuery {
 
 export class Store {
   readonly #db: DatabaseSync
+  /**
+   * **What providers said about their own limits** (§4 D), per provider, and when. In memory: a
+   * remaining count is true for a minute or a day, and a restart that forgets it asks again.
+   */
+  readonly #heard = new Map<string, { minute?: { remaining: number; resets?: number; at: number }; day?: { remaining: number; resets?: number; at: number } }>()
+  /** `retry-after`, per model on a provider (`provider\nmodel`): busy until this instant. */
+  readonly #waits = new Map<string, number>()
 
   /**
    * `path` is a file, `:memory:`, or nothing — which means the real one, in the data
@@ -742,6 +749,46 @@ export class Store {
       return row?.count ?? 0
     }
     return { minute: count(...SPANS[0]), day: count(...SPANS[1]), month: count(...SPANS[2]) }
+  }
+
+  /**
+   * **A provider's own word on what it has left** (§4 D), from an answer's or a refusal's headers.
+   * A window it said nothing about keeps what was heard before; `retry-after` is about the model.
+   */
+  hear(
+    provider: string,
+    heard: { minute?: { remaining: number; resets?: number }; day?: { remaining: number; resets?: number }; retryAt?: number },
+    model?: string,
+    at: number = Date.now(),
+  ): void {
+    const known = this.#heard.get(provider) ?? {}
+    this.#heard.set(provider, {
+      ...known,
+      ...(heard.minute !== undefined && { minute: { ...heard.minute, at } }),
+      ...(heard.day !== undefined && { day: { ...heard.day, at } }),
+    })
+    if (heard.retryAt !== undefined && model !== undefined) this.#waits.set(`${provider}\n${model}`, heard.retryAt)
+  }
+
+  /**
+   * What a provider last said it had left, where that is still true: before the reset it named,
+   * or — when it named none — inside the same minute or UTC day it was said in.
+   */
+  heard(provider: string, at: number = Date.now()): { minute?: number; day?: number } {
+    const known = this.#heard.get(provider)
+    const still = (window: { remaining: number; resets?: number; at: number } | undefined, bucket: (at: number) => number): number | undefined =>
+      window === undefined ? undefined
+      : window.resets !== undefined ? (at < window.resets ? window.remaining : undefined)
+      : bucket(window.at) === bucket(at) ? window.remaining
+      : undefined
+    const minute = still(known?.minute, SPANS[0][1])
+    const day = still(known?.day, SPANS[1][1])
+    return { ...(minute !== undefined && { minute }), ...(day !== undefined && { day }) }
+  }
+
+  /** Every model a provider asked us to leave alone for now, keyed `provider\nmodel`, until when. */
+  waits(at: number = Date.now()): ReadonlyMap<string, number> {
+    return new Map([...this.#waits].filter(([, until]) => until > at))
   }
 
   /**

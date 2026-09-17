@@ -2,7 +2,11 @@
 import { createServer, type IncomingMessage, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { afterAll, expect, test } from 'vitest'
-import { chat, keyOf, PATIENCE, PROVIDERS, ProviderError, reaching, type Provider } from '../src/provider.js'
+import { judge } from '../src/health.js'
+import { remaining } from '../src/pool.js'
+import { chat, hear, keyOf, PATIENCE, PROVIDERS, ProviderError, reaching, type Provider } from '../src/provider.js'
+import { send } from '../src/router.js'
+import { Store } from '../src/store.js'
 import { CORE, memorySecrets } from '../src/secrets.js'
 
 // A real HTTP server rather than a stubbed `fetch`: what is worth testing here is the
@@ -13,7 +17,10 @@ import { CORE, memorySecrets } from '../src/secrets.js'
  * What the server does next. `waitMs` holds the whole reply back; `gapMs` sends the frames one
  * at a time with that pause between them; `open` leaves the connection hanging after the last.
  */
-let answer: { status: number; frames: string[]; waitMs?: number; gapMs?: number; open?: true } = { status: 200, frames: [] }
+let answer: { status: number; frames: string[]; waitMs?: number; gapMs?: number; open?: true; headers?: Record<string, string> } = {
+  status: 200,
+  frames: [],
+}
 // `sent` is the header list itself, not only the value: a test about an *omitted* credential
 // cannot be written against a string, because an absent header and an empty one both read
 // back as falsy and the whole point is that they are two different requests.
@@ -34,11 +41,11 @@ const server: Server = createServer((request: IncomingMessage, response) => {
       // that ask it to wait are checking.
       if (response.destroyed) return
       if (answer.status !== 200) {
-        response.writeHead(answer.status, { 'content-type': 'text/plain' })
+        response.writeHead(answer.status, { 'content-type': 'text/plain', ...answer.headers })
         response.end('rate limited, try later')
         return
       }
-      response.writeHead(200, { 'content-type': 'text/event-stream' })
+      response.writeHead(200, { 'content-type': 'text/event-stream', ...answer.headers })
       const { frames, gapMs, open } = answer
       if (gapMs !== undefined) {
         const next = (at: number): void => {
@@ -557,4 +564,67 @@ test('the clean-terms cluster carries its two quirks as row values', async () =>
   const wants: Provider = { ...provider, headers: { 'User-Agent': 'Alexia (+test)' } }
   await chat(wants, { model: 'm', messages: [] }, undefined, secrets)
   expect(seen?.sent).toContain('user-agent')
+})
+
+
+// ---- What providers say about their limits (model_plan.md §4 D) --------------------------------
+
+test('the rate-limit headers each provider sends are read into a minute, a day, and a retry', () => {
+  const at = Date.UTC(2026, 8, 17, 12)
+  // Groq, on every answer: the day's requests, and when they reset.
+  expect(hear(new Headers({ 'x-ratelimit-remaining-requests': '997', 'x-ratelimit-reset-requests': '2m59.56s' }), at)).toEqual({
+    day: { remaining: 997, resets: at + 179_560 },
+  })
+  // OVHcloud, keyless: the minute's, both ways it says it.
+  expect(hear(new Headers({ 'x-ratelimit-remaining-minute': '0', 'ratelimit-remaining': '0', 'ratelimit-reset': '42' }), at)).toEqual({
+    minute: { remaining: 0 },
+  })
+  // OpenRouter, on a 429: an epoch reset a day away is a day's limit.
+  expect(hear(new Headers({ 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': String(at + 6 * 3_600_000) }), at)).toEqual({
+    day: { remaining: 0, resets: at + 6 * 3_600_000 },
+  })
+  // Anyone: retry-after in seconds, or as a date.
+  expect(hear(new Headers({ 'retry-after': '20' }), at)).toEqual({ retryAt: at + 20_000 })
+  expect(hear(new Headers({ 'retry-after': new Date(at + 60_000).toUTCString() }), at)).toEqual({ retryAt: at + 60_000 })
+  // A provider that says nothing says nothing.
+  expect(hear(new Headers({ 'content-type': 'text/event-stream' }), at)).toBeUndefined()
+})
+
+test('three requests left for the day is three, and a retry-after makes the model busy until then', async () => {
+  const ledger = new Store(':memory:')
+  const limited: Provider = { ...provider, id: 'limited', name: 'Limited', rpd: 1000 }
+  await secrets.set(CORE, keyOf(limited), 'sk-limited')
+  const model = {
+    id: 'm',
+    name: 'M',
+    provider: 'limited',
+    tier: 'T1' as const,
+    priceIn: 0,
+    priceOut: 0,
+    context: 32_768,
+    supportsTools: false,
+    modality: ['text'],
+    nsfwOk: 'unknown' as const,
+    trainsOnYourData: 'unknown' as const,
+  }
+
+  answer = {
+    status: 200,
+    headers: { 'x-ratelimit-remaining-requests': '3', 'x-ratelimit-reset-requests': '5h' },
+    frames: [JSON.stringify({ choices: [{ delta: { content: 'hi' }, finish_reason: 'stop' }] })],
+  }
+  await send([{ model, provider: limited }], { messages: [{ role: 'user', content: 'hi' }] }, ledger, secrets)
+  // The row allows a thousand and the ledger counted one; the provider said three, so three.
+  expect(remaining(ledger, limited).day).toBe(3)
+
+  answer = { status: 429, headers: { 'retry-after': '20' }, frames: [] }
+  const before = Date.now()
+  await expect(send([{ model, provider: limited }], { messages: [{ role: 'user', content: 'hi' }] }, ledger, secrets)).rejects.toThrow()
+  const until = ledger.waits().get('limited\nm') ?? 0
+  expect(until - before).toBeGreaterThanOrEqual(19_000)
+  expect(until - before).toBeLessThanOrEqual(21_000)
+  expect(judge([], [], [model], new Set(), Date.now(), ledger.waits()).get('limited\nm')?.tags.map((tag) => tag.says)).toContain('busy')
+  // And busy ends when the provider said it would.
+  expect(judge([], [], [model], new Set(), until + 1, ledger.waits(until + 1)).get('limited\nm')?.tags).toEqual([{ says: 'talk only', tone: 'quiet' }])
+  ledger.close()
 })

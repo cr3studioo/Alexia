@@ -43,10 +43,17 @@ export interface Rung {
 /** Whether a provider has anything left to give at this instant. */
 export function remaining(store: Store, provider: Provider, at: number = Date.now()): Rung {
   const used = store.requests(provider.id, at)
+  /**
+   * **And what the provider itself last said** (§4 D): the lower of the two, so a header can only
+   * ever take the ledger down — a row stays the ceiling, and a provider that says nothing changes
+   * nothing. Groq says the day's requests on every answer; OVHcloud the minute's.
+   */
+  const told = store.heard(provider.id, at)
+  const lower = (counted: number, said: number | undefined): number => Math.max(0, Math.min(counted, said ?? Infinity))
   return {
     provider,
-    minute: provider.rpm === undefined ? Infinity : Math.max(0, provider.rpm - used.minute),
-    day: provider.rpd === undefined ? Infinity : Math.max(0, provider.rpd - used.day),
+    minute: lower(provider.rpm === undefined ? Infinity : provider.rpm - used.minute, told.minute),
+    day: lower(provider.rpd === undefined ? Infinity : provider.rpd - used.day, told.day),
     // Counted in calls, because that is the unit the budget is written in. A long request
     // and a one-word one spend exactly the same amount of it.
     month:
