@@ -777,6 +777,50 @@ need a later step: a list entry *shown* as not available and *the table is the r
 model new on a provider's *second refresh* (D), and everything under Current, Tests, Chat first,
 Said twice, Paid and Bad answer (D–I).
 
+**Built 2026-09-17 (D164)**, C, in core, the shell and the plugin contract. Where the build
+differs from the text above, or had to decide something the text did not:
+
+- **The table needed the contract to move** (the owner's answer). The `table` widget a core tab is
+  drawn with is the one plugins declare, and it could not put a sentence under a row, draw tags,
+  or keep groups in an order that is not alphabetical. **`alexia_protocol` 8** adds `groupOrder`
+  to a table and `note` and `tags` to a row, for every plugin; only `groupOrder` is gated on the
+  revision, and the floor stays at 2. `manifest.md`, `ui-schema.md`, `versions.md` and the JSON
+  schema say so.
+- **A pin gets a group of its own**, *Your choice*, above *Your list*: a pin is the whole plan
+  (D155), and the table above had nowhere to put one.
+- **A list entry no plan holds stays in its group**, after the entries that will be asked, with
+  its reason: *no key for X*, *set aside: …*, or *not available for a request like this, or on
+  this side of the price line*.
+- **Automatic's group is `route()` for a plain request with the pin and list taken off and the
+  slider at *free only***; *Paid* is the same at *paid only*; *Set aside* is every reachable model
+  judged aside that neither plan holds — so a set-aside model Automatic asks because nothing else
+  is left stays where it is asked.
+- **The first row of a group** has no row above to be explained against: *First choice: the free
+  model Alexia would ask first — on your OpenRouter key, can use tools, 31B* and *The first paid
+  model Alexia would ask: …*. A list row says *Number 1 in your list, on your OpenRouter key*, and
+  its second copy *…again, on Kilo Gateway with no key: asked only if OpenRouter's copy fails*.
+- **A set-aside sentence promises no test message**, since §4 E is not built: *One good reply
+  brings it back.*
+- **The ★ is one row**, the provider `route()` would ask, where it used to mark every copy of a
+  model id. *Answered here* counts answers in the record, as planned, so an upgraded app starts at
+  0 for every model. The detail opens with what Alexia has seen, one sentence per outcome.
+- **Found while drawing it**: the week column read `391965.2M` for a busy model (now `392.0B`);
+  the Control view was 50rem, so nine columns wrapped four lines deep (now 76rem, with figures
+  kept to one line); a note under a right-aligned `#` wrapped down two digits of width (it goes
+  under the first left-aligned cell).
+- **Not built from the mock-up**: its filter chips (*Needs attention*, *New*, *Set aside*…), a line
+  under each group heading, and opening a row by clicking it — the Details button opens it. None
+  is in the fix above; say if they are wanted.
+
+Measured on a copy of this Mac's catalog: with no OpenRouter key the Automatic group is 103 rows
+and equals `route()`'s plan row for row, every why-line equal to `explain()`; with a key, 125 rows,
+the same, starting at Gemma 4 31B, and Kilo's and OpenRouter's Nemotron 3 Super open different
+details. The shell was driven in headless Chromium over that copy. Tests: `table.models.test.ts`
+(the plan row for row, every why-line, the columns, two copies with two details, a model moving to
+*Set aside*), `widgets.test.ts` (group order, the note, tags and their tones, the filter),
+`manifest.test.ts` (8 and its gate), and `surface.test.ts`, `ranking.test.ts`, `keys.test.ts`
+moved to the new rows.
+
 ### Acceptance
 
 - **Cancel.** A plugin asks for sampling with a 1-second timeout, over a provider that never
@@ -839,6 +883,8 @@ way back. Next: §1 steps 3–4 and §4 C.
 **Status 2026-09-17:** §1 steps 3–4 are built (D163), in core and the shell, and keep-alives now
 hold a request open for two minutes rather than for ever. Next: §4 C.
 
+**Status 2026-09-17, later:** §4 C is built (D164), with `alexia_protocol` 8. Next: §4 D.
+
 1. **§1 steps 1–2**: unpriced is not free, one `available()`. Smallest change, and it closes
    a real billing hole (Requesty) before anything else.
 2. ~~**§3**: failure kinds, the three modes, default timeouts. This is the one people feel on
@@ -853,7 +899,7 @@ hold a request open for two minutes rather than for ever. Next: §4 C.
    2026-09-15 (D154, D155).
 7. ~~**§4 B**: the model record and the tags, in core with their tests. Everything after reads
    `judge()`.~~ Done 2026-09-16 (D162).
-8. **§4 C**: the table, built against the mock-up.
+8. ~~**§4 C**: the table, built against the mock-up.~~ Done 2026-09-17 (D164), with `alexia_protocol` 8.
 9. **§4 D**: keeping it current (the timer, first seen, the news line, headers, OpenRouter's key,
    the four stale rows).
 10. **§4 E**: test messages. Needs B and D.
