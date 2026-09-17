@@ -966,6 +966,31 @@ allowance, the old rule without `cross`), `agent.test.ts` (the old money-questio
 switch). The shell was driven in headless Chromium: the pause with its amount box, *Allow*, the
 switch under the slider, and the warning above the message box after a reload.
 
+**Built 2026-09-17 (D170)**, I, in core and the shell. Where the build differs from the text above:
+
+- **Only the latest answer has *Bad answer*,** not every finished answer: a press asks that question
+  again, and asking an older question again would rewrite everything said after it. The row of
+  message actions is there; *that wasn't her* joins it when `plan-personality.md` reaches
+  improvement 10, which its own order of work puts after the writer and the sizes.
+- **The body is `bad: {}`,** not `{ provider, model }`: core reads the model and provider from the
+  stored answer, so the page cannot name a model that did not write it. Answers now store their
+  provider beside their model (`Message.provider`). With no unmarked answer to mark, 409.
+- **The answer is marked, not removed** (`Message.bad`): it stays on the page, dimmed, with *You
+  marked this a bad answer. It is not shown to a model again.*, and every history a model is sent
+  leaves it out.
+- **The redo is Automatic for that answer only,** as *Use Automatic for this answer* is (D155): a
+  pin on the marked model would otherwise ask it again. `Ask.avoid` drops that model on that
+  provider from the plan; the same model on another provider may still answer.
+- **The next question is ranked as before.** One press moves nothing; two in 30 days tag the model
+  *gave bad answers* and sink it, as D162 built.
+
+Tests: `bad.test.ts` over `/api/chat` (a press answers from the next model and the marked model is
+not asked; the bad words are in no body a model receives; the press is a `bad-answer` try from
+`person`; the state still shows the marked answer; the next question goes back to the first model;
+two presses order the other model above it with the tag; 409 with nothing to mark; with the switch
+on, the redo is asked above the marked model's tier). The shell was driven in headless Chromium:
+the button under the latest answer, the marked line, and both after a reload.
+
 ### Acceptance
 
 - **Cancel.** A plugin asks for sampling with a 1-second timeout, over a provider that never
@@ -1042,6 +1067,9 @@ test is still open, before a public release. Next: §4 G.
 
 **Status 2026-09-17, end of day:** §4 H is built (D169). Next: §4 I, then J.
 
+**Status 2026-09-17, after hours:** §4 I is built (D170). *That wasn't her* joins its row later
+(`plan-personality.md` step 8). Next: §4 J.
+
 1. **§1 steps 1–2**: unpriced is not free, one `available()`. Smallest change, and it closes
    a real billing hole (Requesty) before anything else.
 2. ~~**§3**: failure kinds, the three modes, default timeouts. This is the one people feel on
@@ -1064,7 +1092,8 @@ test is still open, before a public release. Next: §4 G.
     2026-09-17 (D167).
 12. ~~**§4 F**: free limits per account.~~ Done 2026-09-17 (D168).
 13. ~~**§4 H**: crossing into paid, then Telegram's question.~~ Done 2026-09-17 (D169).
-14. **§4 I**: the bad-answer button, with *that wasn't her* (`plan-personality.md`, improvement 10).
+14. ~~**§4 I**: the bad-answer button, with *that wasn't her* (`plan-personality.md`, improvement 10).~~
+    Done 2026-09-17 (D170): the button, and the row *that wasn't her* joins later.
 15. **§4 J**: the hook for later sharing.
 
 Everything here reaches the installed app only in a new build. The persona plugin there is
