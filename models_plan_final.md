@@ -1081,15 +1081,44 @@ point of §2."* [§15](./models_plan.md#15-do-and-do-not) lists it as a Do.
 
 ## 6. Definition of done for the whole plan
 
-- [ ] Every unticked box on the §4 board is ticked, or explicitly deleted by a Gate 0
-      answer with a note saying which answer deleted it.
-- [ ] `answers-with-no-keys.test.ts` (MP-16) is green in CI.
-- [ ] Every new `PROVIDERS` row carries `Source:` and `verified:` (R6).
-- [ ] Exactly two provider-driven mechanisms were added — MP-9 and MP-10 — and no other
-      provider required code (R7).
-- [ ] `plan.md`, `Alexia.md` and `models_plan.md` are unmodified.
-- [ ] Every Do and Do-not in [§15](./models_plan.md#15-do-and-do-not) survives a
-      read-through against the final diff.
+*Checked 2026-09-17 against the tree at `4a5663f`, after `model_plan.md` §4 A–H (D162–D169) had
+been built on top of this plan's work. Nothing in MP-1 to MP-29 was rebuilt.*
+
+- [x] Every unticked box on the §4 board is ticked, or explicitly deleted by a Gate 0
+      answer with a note saying which answer deleted it. *All 29 are ticked; Gate 0 deleted none.*
+- [x] `answers-with-no-keys.test.ts` (MP-16) is green in CI. *`pnpm check` runs the invariants;
+      the last pushed commit (`3efd5a0`) passed on ubuntu, windows and macos and without plugins,
+      and it passes locally at `4a5663f`. On 2026-09-16 it timed out on Kilo holding a request
+      open with keep-alives; D163 bounded that at two minutes.*
+- [x] Every new `PROVIDERS` row carries `Source:` and `verified:` (R6). *All fifteen added rows
+      do; the seven rows that predate this plan carry `verified:` only, as they did before it.*
+- [x] Exactly two provider-driven mechanisms were added — MP-9 and MP-10 — and no other
+      provider required code (R7). *No provider id appears in core's logic outside the
+      `PROVIDERS` table and the written-down keyless models. Later work added row **fields** —
+      `pricing`/`freeModels` (D154), `keptAliveMs` (D163), `listsDates`, `keyInfo`,
+      `rpdFunded`, `wantsCard` (D165) — each read the same way for any row, none naming a
+      provider; they were decided by the owner in `model_plan.md`, outside this plan.*
+- [ ] `plan.md`, `Alexia.md` and `models_plan.md` are unmodified. ***Not true as written, and not
+      made true.*** *`models_plan.md` is unmodified since it landed (`ad140ad`). But that same
+      commit added thirteen lines to `Alexia.md`, and since then the owner's own process — every
+      decision recorded in `Alexia.md`'s decision log and `plan.md`'s change log the same day —
+      has changed both files many times, D154 to D169 included. Reverting them to satisfy this
+      box would delete decisions, so it stays unticked with this note.*
+- [x] Every Do and Do-not in [§15](./models_plan.md#15-do-and-do-not) survives a
+      read-through against the final diff. *Read through on 2026-09-17. Two are held in a changed
+      form by later owner decisions, and are noted rather than counted as broken:* **Ask about
+      money once per task** *is now the paid switch, answered in advance, and one press of*
+      Allow switching to a paid model *per conversation (D161, D169) — never a question per step,
+      and the spend still shows;* **Call any gateway with `auto`** *— routers (`kilo-auto/free`,
+      `openrouter/free`) are ranked after every single model and labelled, and stay pinnable
+      (D159); OpenRouter's `-1`-priced meta-routers are still dropped at parse. The rest hold as
+      written: rows vendored with provenance, the gotchas tested, one router, escalation on
+      measured struggle, the context filter, Skip reaching a conversation, Kilo's
+      `trainsOnYourData: 'yes'`, LLM7 probed (again on 2026-09-17), no daemon, nothing from
+      `avoid`, no OpenCode Free or Felo, local below the keyed free tiers, no fall to a chat-only
+      model mid-task, `mixed` behind a $0 allowance and now a switch, no empty OVHcloud header, no
+      sidegrades, no difficulty classifier, no graph, no guessed `trainsOnYourData`, and the
+      catalogue re-verified — now every six hours and by what providers say (D165).*
 
 ---
 
