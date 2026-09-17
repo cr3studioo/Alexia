@@ -991,6 +991,27 @@ two presses order the other model above it with the tag; 409 with nothing to mar
 on, the redo is asked above the marked model's tier). The shell was driven in headless Chromium:
 the button under the latest answer, the marked line, and both after a reload.
 
+**Built 2026-09-17 (D171)**, J, in core. Where the build differs from the text above, or had to
+decide something the text did not:
+
+- **A week is the date of its UTC Monday** (`2026-09-14`): a date, so no time of day leaves, and
+  weeks line up across machines.
+- **A *Bad answer* press is counted apart, not as a try:** no request was sent, so a model's tries
+  and answers stay a failure rate.
+- **Who asked stays here.** The record's `source` (chat, plugin, test, person) and HTTP `status` are
+  left out with everything else not listed; failures are keyed by `Outcome`, which already says
+  what the status meant.
+- **`since` is an instant, and the record keeps 30 days,** so a report goes back no further; the
+  first week can be partial when `since` is not a Monday.
+- **`World.reported`** is `ReadonlySet<string>` keyed `provider\nmodel`, and `serve()` passes an empty
+  set. `judge()` does not read it yet: with nothing ever in it, a rule for it would be untested.
+
+Tests: `report.test.ts` (tries in two weeks and on two providers, with a conversation, a saved
+secret and usage in the same store: the report equals the counts, carries exactly the seven
+fields, only failure kinds under `failures`, a Monday for every week, and none of the words,
+secret, sources or times; and nothing in `packages/core/src` or `packages/ui/src` calls
+`.report(`, so turning sharing on is a change somebody makes on purpose).
+
 ### Acceptance
 
 - **Cancel.** A plugin asks for sampling with a 1-second timeout, over a provider that never
@@ -1070,6 +1091,9 @@ test is still open, before a public release. Next: §4 G.
 **Status 2026-09-17, after hours:** §4 I is built (D170). *That wasn't her* joins its row later
 (`plan-personality.md` step 8). Next: §4 J.
 
+**Status 2026-09-17, last:** §4 J is built (D171), and with it all of §4. Everything reaches the
+installed app only in a new build. Still open from §1: the keyless group's switch.
+
 1. **§1 steps 1–2**: unpriced is not free, one `available()`. Smallest change, and it closes
    a real billing hole (Requesty) before anything else.
 2. ~~**§3**: failure kinds, the three modes, default timeouts. This is the one people feel on
@@ -1094,7 +1118,7 @@ test is still open, before a public release. Next: §4 G.
 13. ~~**§4 H**: crossing into paid, then Telegram's question.~~ Done 2026-09-17 (D169).
 14. ~~**§4 I**: the bad-answer button, with *that wasn't her* (`plan-personality.md`, improvement 10).~~
     Done 2026-09-17 (D170): the button, and the row *that wasn't her* joins later.
-15. **§4 J**: the hook for later sharing.
+15. ~~**§4 J**: the hook for later sharing.~~ Done 2026-09-17 (D171).
 
 Everything here reaches the installed app only in a new build. The persona plugin there is
 hand-patched, and a build does not reinstall it.
