@@ -1802,3 +1802,10 @@ test('what failed is remembered on this machine; a refused key and a conversatio
   behave = new Map()
   ledger.close()
 })
+
+test('a model a gateway only kept alive is named with the time it was given, and is the model’s failure (D163)', () => {
+  const gateway: Provider = { id: 'kilo-gateway', name: 'Kilo Gateway', baseUrl: 'http://127.0.0.1:4', auth: 'optional' }
+  const kept = failed(new ProviderError(504, 'kept', 'kept'), { model: free('nvidia/ultra', { name: 'Nemotron 3 Ultra' }), provider: gateway })
+  expect(kept).toMatchObject({ reach: 'model', outcome: 'slow' })
+  expect(kept?.says).toBe('Nemotron 3 Ultra did not answer in 120 seconds, though Kilo Gateway kept the connection open')
+})

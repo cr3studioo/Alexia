@@ -68,6 +68,12 @@ export interface Provider {
   /** The longest silence once an answer has started. {@link PATIENCE}'s twenty seconds unless a row says otherwise. */
   idleMs?: number
   /**
+   * **The longest a row may keep a request open with keep-alives and no answer** (D163).
+   * {@link PATIENCE}'s two minutes unless a row says otherwise, and never shorter than its own
+   * first-byte patience.
+   */
+  keptAliveMs?: number
+  /**
    * **What a model with no price on it means** (D154).
    *
    * `free`: everything this provider lists is inside its free tier, so an absent price is
@@ -752,8 +758,14 @@ export interface Usage {
  * nothing for twenty seconds in the middle of a sentence has gone, however recently it
  * started. And one pair for every row, because a row that declared nothing used to wait as long
  * as Node's fetch would — *nothing waits for ever* is the rule, and these are its first figures.
+ *
+ * **And a third, for a gateway that keeps the line open and never answers** (D163). A keep-alive
+ * comment counts as the provider still being there, which is right while a model thinks — but
+ * Kilo sent `: KILO PROCESSING` every 0.4 seconds for a whole minute and not one word (measured
+ * 2026-09-16, Nemotron 3 Ultra, anonymous), and every one of them re-armed both timers above. So
+ * two minutes of keep-alives with no data in them is a model that did not answer.
  */
-export const PATIENCE = { first: 30_000, between: 20_000 } as const
+export const PATIENCE = { first: 30_000, between: 20_000, keptAlive: 120_000 } as const
 
 /**
  * What went wrong, where the status alone cannot say it.
@@ -763,8 +775,9 @@ export const PATIENCE = { first: 30_000, between: 20_000 } as const
  * - `unreachable` — the connection never opened: no network, a name that did not resolve.
  * - `dropped` — the stream broke, or ended without saying it had finished.
  * - `keyless` — a 401 with none of the person's keys on the request.
+ * - `kept` — only keep-alives, for longer than a row may keep a request open on them (D163).
  */
-export type Trouble = 'slow' | 'stalled' | 'unreachable' | 'dropped' | 'keyless'
+export type Trouble = 'slow' | 'stalled' | 'unreachable' | 'dropped' | 'keyless' | 'kept'
 
 /**
  * A provider said no. The status is on it because the router acts on the number — see
@@ -840,12 +853,20 @@ export async function chat(
    * **Patience, as two numbers rather than a deadline** ({@link PATIENCE}). One timer, re-armed
    * by every chunk that arrives: until the first, it is the row's first-byte patience; after
    * it, the gap between chunks. Bytes rather than words, so a reasoning model streaming its
-   * thinking, and a gateway's keep-alive comments, both count as somebody still being there.
+   * thinking, and a gateway's keep-alive comments, both count as somebody still being there —
+   * until keep-alives are all there has been for {@link PATIENCE}'s `keptAlive` (D163).
    */
   const first = provider.timeoutMs ?? PATIENCE.first
   const between = provider.idleMs ?? PATIENCE.between
+  const keptAlive = Math.max(provider.keptAliveMs ?? PATIENCE.keptAlive, first)
   const patience = new AbortController()
   let started = false
+  /** When the request went out, then when the last real data arrived: what keep-alives are measured from. */
+  let spoke = Date.now()
+  /** Whether any real data has arrived, for which trouble a keep-alive wall is. */
+  let answered = false
+  /** Whether it was keep-alives alone that ran out the patience, rather than a silence. */
+  let onlyKeptAlive = false
   let timer: ReturnType<typeof setTimeout> | undefined
   const wait = (): void => {
     clearTimeout(timer)
@@ -862,6 +883,13 @@ export async function chat(
   const gaveUp = (error: unknown): never => {
     if (request.signal?.aborted === true) throw error
     if (patience.signal.aborted) {
+      if (onlyKeptAlive) {
+        throw new ProviderError(
+          504,
+          `${provider.name} kept the connection open for ${seconds(keptAlive)} without ${answered ? 'going on with the answer' : 'answering'}.`,
+          answered ? 'stalled' : 'kept',
+        )
+      }
       throw started ?
           new ProviderError(504, `${provider.name} went quiet for ${seconds(between)} partway through an answer.`, 'stalled')
         : new ProviderError(504, `${provider.name} did not answer within ${seconds(first)}.`, 'slow')
@@ -942,8 +970,16 @@ export async function chat(
     // provider that stops mid-sentence has failed exactly as completely as one that never
     // spoke, and the rung below it can still answer.
     try {
-      const chunks = frames(response.body, () => {
+      const chunks = frames(response.body, (data) => {
         started = true
+        if (data) {
+          answered = true
+          spoke = Date.now()
+        } else if (Date.now() - spoke >= keptAlive) {
+          onlyKeptAlive = true
+          patience.abort()
+          return
+        }
         wait()
       })
       for await (const event of chunks) {
@@ -1058,9 +1094,10 @@ const asFunction = (tool: ToolSpec): Record<string, unknown> => ({
  * sends anything meaningful in.
  *
  * `arrived` hears every chunk, comments included: a keep-alive is not an answer, but it is the
- * provider still being there, which is the only thing patience measures.
+ * provider still being there, which is what patience measures. It is told whether the chunk
+ * finished any real data, because keep-alives alone are allowed only so long (D163).
  */
-async function* frames(body: ReadableStream<Uint8Array>, arrived: () => void): AsyncGenerator<string> {
+async function* frames(body: ReadableStream<Uint8Array>, arrived: (data: boolean) => void): AsyncGenerator<string> {
   const reader = body.getReader()
   const decoder = new TextDecoder()
   let buffer = ''
@@ -1071,16 +1108,19 @@ async function* frames(body: ReadableStream<Uint8Array>, arrived: () => void): A
       throw new Broke(error instanceof Error ? error.message : String(error), { cause: error })
     })
     if (done) break
-    arrived()
     buffer += decoder.decode(value, { stream: true })
     // A chunk boundary lands mid-line often enough that this is the whole reason for the
     // buffer: yield the complete lines, keep the tail for the next read.
+    const payloads: string[] = []
     let cut = buffer.indexOf('\n')
     while (cut !== -1) {
       const line = buffer.slice(0, cut).trim()
       buffer = buffer.slice(cut + 1)
-      if (line.startsWith('data:')) yield line.slice('data:'.length).trim()
+      if (line.startsWith('data:')) payloads.push(line.slice('data:'.length).trim())
       cut = buffer.indexOf('\n')
     }
+    // Real data, or a line of it still arriving, is progress; a chunk of comments alone is not.
+    arrived(payloads.length > 0 || buffer.trimStart().startsWith('data:'))
+    yield* payloads
   }
 }

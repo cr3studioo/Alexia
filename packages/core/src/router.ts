@@ -1126,10 +1126,11 @@ export function failed(error: unknown, choice: Choice): Failure | undefined {
   // The outcome is named here, beside the sentence, so the record and the stop cannot disagree
   // about what happened (D161). No credit is the account's and a connection that could not be
   // made may be this Mac's: both still sink the model, as D159 had them, and neither tags it.
-  const slow = trouble === 'slow' || status === 408
+  const slow = trouble === 'slow' || trouble === 'kept' || status === 408
   return of(
     'model',
     trouble === 'slow' ? `${model.name} did not answer within ${String(Math.round((provider.timeoutMs ?? PATIENCE.first) / 1000))} seconds`
+    : trouble === 'kept' ? `${model.name} did not answer in ${String(Math.round(Math.max(provider.keptAliveMs ?? PATIENCE.keptAlive, provider.timeoutMs ?? PATIENCE.first) / 1000))} seconds, though ${provider.name} kept the connection open`
     : trouble === 'stalled' || trouble === 'dropped' ? `${model.name} stopped answering partway through`
     : trouble === 'unreachable' ? `${provider.name} could not be reached`
     : status === 402 ? `there is no ${provider.name} credit to pay for ${model.name}`

@@ -47,7 +47,9 @@ const server: Server = createServer((request: IncomingMessage, response) => {
             if (open !== true) response.end()
             return
           }
-          response.write(`data: ${frames[at] ?? ''}\n\n`)
+          // A frame starting with a colon is a keep-alive comment, sent as one (D163).
+          const frame = frames[at] ?? ''
+          response.write(frame.startsWith(':') ? `${frame}\n\n` : `data: ${frame}\n\n`)
           setTimeout(() => next(at + 1), gapMs).unref()
         }
         next(0)
@@ -245,7 +247,42 @@ test('a provider that declares its own patience gives up at it, as a rung and no
 test('every provider has a patience, whether or not its row declares one', () => {
   // D155. A row that declared nothing used to wait for as long as the platform did, which for
   // most of the table meant a conversation that could hang for ever.
-  expect(PATIENCE).toEqual({ first: 30_000, between: 20_000 })
+  // D163 added the third: how long keep-alives alone may hold a request open.
+  expect(PATIENCE).toEqual({ first: 30_000, between: 20_000, keptAlive: 120_000 })
+})
+
+test('keep-alives hold a request open while a model thinks, and not for ever', async () => {
+  // Measured on 2026-09-16: Kilo sent `: KILO PROCESSING` every 0.4 s for a minute and not one
+  // word, and every comment re-armed both timers, so Automatic waited on it indefinitely.
+  const gateway: Provider = { ...provider, timeoutMs: 50, idleMs: 100, keptAliveMs: 300 }
+  const alive = ': KILO PROCESSING'
+
+  // Thinking, then answering, inside the limit: comments are still somebody being there — each
+  // gap is 20 ms and the whole wait is well past the 50 ms first-byte patience.
+  answer = {
+    status: 200,
+    gapMs: 20,
+    frames: [...Array.from({ length: 6 }, () => alive), JSON.stringify({ choices: [{ delta: { content: 'ok' } }] }), '[DONE]'],
+  }
+  expect((await chat(gateway, { model: 'm', messages: [] }, undefined, secrets)).message.content).toBe('ok')
+
+  // Nothing but comments, past the limit: a model that did not answer, and said so.
+  answer = { status: 200, gapMs: 20, open: true, frames: Array.from({ length: 60 }, () => alive) }
+  const kept = chat(gateway, { model: 'm', messages: [] }, undefined, secrets)
+  await expect(kept).rejects.toMatchObject({ status: 504, trouble: 'kept' })
+  await expect(kept).rejects.toThrow('kept the connection open for 0 seconds without answering')
+
+  // An answer that started and then turned into keep-alives has stalled, the same as a silence.
+  answer = {
+    status: 200,
+    gapMs: 20,
+    open: true,
+    frames: [JSON.stringify({ choices: [{ delta: { content: 'The' } }] }), ...Array.from({ length: 60 }, () => alive)],
+  }
+  await expect(chat(gateway, { model: 'm', messages: [] }, undefined, secrets)).rejects.toMatchObject({
+    status: 504,
+    trouble: 'stalled',
+  })
 })
 
 test('patience is the silence between chunks, not a deadline on a long answer', async () => {
