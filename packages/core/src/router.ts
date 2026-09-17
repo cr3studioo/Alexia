@@ -1392,7 +1392,9 @@ export async function send(
         continue
       }
       if (!spoke) switched()
-      store.recordUsage({
+      // A daily test (§4 E) is evidence about a model, not somebody's spending: it goes to the
+      // record above and never into the ledger a person reads their costs from.
+      if (source !== 'test') store.recordUsage({
         session: hooks.session,
         plugin: hooks.plugin,
         run: hooks.run,

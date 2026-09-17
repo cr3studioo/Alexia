@@ -61,6 +61,7 @@ import { Skills, SKILL_TOOL } from './skills.js'
 import { dataDir, Store, textOf, type Message, type Part } from './store.js'
 import { PluginTooling } from './tooling.js'
 import { Trace } from './trace.js'
+import { trial } from './trial.js'
 import { allowance, caps, setCaps, today, warning } from './usage.js'
 
 /**
@@ -318,7 +319,11 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
    * anybody opening the Models tab. A tick that comes late after the machine slept simply polls:
    * each provider's own age decides, not the timer. Cleared on close.
    */
-  const ticking = setInterval(pollAll, POLL_EVERY)
+  const ticking = setInterval(() => {
+    pollAll()
+    // And today's test messages, on the same tick (§4 E). Declared below, and a tick is hours away.
+    void testModels()
+  }, POLL_EVERY)
   ticking.unref()
 
   /**
@@ -453,6 +458,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
 
       const verdict = route({ messages: asked, shape: shapeOf({ messages: asked }) }, pins(store), await world())
       if (!verdict.ok) throw new Error(verdict.why)
+      sampling += 1
       const answer = await send(
         verdict.choices,
         {
@@ -468,7 +474,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
         // — `send` reads *attributed to a plugin, belonging to no run* as *free tiers only*
         // (G12, D96), so the rule is the router's rather than this call site's.
         { plugin: pluginId },
-      )
+      ).finally(() => (sampling -= 1))
       return {
         role: 'assistant',
         content: { type: 'text', text: textOf(answer.message) },
@@ -610,6 +616,23 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
    * `notifications/cancelled`. The plugin that ignores that is why `callMs` exists.
    */
   let task: AbortController | undefined
+
+  /** A plugin's sampling requests on their way — answers somebody may be waiting for (§4 E). */
+  let sampling = 0
+
+  /**
+   * **Today's test messages** (§4 E): a minute after start, and on every six-hour tick. Never while
+   * a task runs or a plugin's request is being answered — asked before each test, so an answer
+   * that starts mid-round stops the round — and never more than the day allows, which the store
+   * remembers across a restart.
+   */
+  const answering = (): boolean => task !== undefined || sampling > 0
+  const testModels = async (): Promise<void> => {
+    if (answering()) return
+    await trial({ world: await world(), store, secrets, busy: answering }).catch(() => undefined)
+  }
+  const firstTests = setTimeout(() => void testModels(), 60_000)
+  firstTests.unref()
 
   /**
    * The last task worth learning from, waiting for an answer (M4-5).
@@ -2499,6 +2522,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     store,
     close: async () => {
       clearInterval(ticking)
+      clearTimeout(firstTests)
       await new Promise<void>((resolve) => server.close(() => resolve()))
       await plugins.stop()
       store.close()
