@@ -91,6 +91,8 @@ interface State {
   warning?: string
   /** Today's spending against today's allowance — the number that decides whether the router may spend at all. */
   today?: { spent: number; allowance: number }
+  /** The paid switch is on: Automatic moves to paid by itself once the free models are done (§4 H). */
+  cross?: boolean
   providers: Provider[]
   commands: Command[]
 }
@@ -152,10 +154,17 @@ function say(line?: string): void {
 const paidNote = document.querySelector<HTMLElement>('#paid-note')!
 const popup = document.querySelector<HTMLElement>('#popup')!
 
-/** The line before a charge, where nothing else writes (§4 G). Empty clears it. */
+/**
+ * **What stands above the message box when the paid switch is on** (§4 H): *Paid models will be
+ * used once the free ones are done, up to $1.00 today.* Put back whenever a charge line is cleared.
+ */
+let standingPaid = ''
+
+/** The line before a charge, where nothing else writes (§4 G). Empty puts the standing warning back. */
 function warnPaid(line?: string): void {
-  paidNote.textContent = line ?? ''
-  paidNote.hidden = !line
+  const shown = line ?? standingPaid
+  paidNote.textContent = shown
+  paidNote.hidden = shown === ''
 }
 
 /** **How long a switch is on screen as a pop-up** (D160): long enough to read one sentence. */
@@ -985,6 +994,11 @@ function paint(state: State): void {
     day && day.allowance > 0 ? `${money(day.spent)} of ${money(day.allowance)} today`
     : state.cap === undefined ? money(state.spent)
     : `${money(state.spent)} of ${money(state.cap)}`
+  standingPaid =
+    state.cross === true && day !== undefined && day.allowance > 0 ?
+      `Paid models will be used once the free ones are done, up to ${money(day.allowance)} today.`
+    : ''
+  warnPaid()
   spendBadge.title =
     day && day.allowance > 0 ?
       `Spent ${money(day.spent)} of ${money(day.allowance)} today.`
@@ -1502,8 +1516,48 @@ async function ask(question: string, files: File[] = []): Promise<void> {
  * Nothing new appears on the user's side, because nothing new was said — core asks the
  * question already in the conversation, from wherever the task stopped.
  */
-function again(automatic: boolean): Promise<void> {
-  return respond('…', undefined, () => Promise.resolve({ again: true, automatic }))
+function again(automatic: boolean, allow?: { daily?: number }): Promise<void> {
+  return respond('…', undefined, () =>
+    Promise.resolve({ again: true, ...(automatic && { automatic }), ...(allow !== undefined && { allow }) }),
+  )
+}
+
+/**
+ * **A pause** (§4 H): the free models are done, a paid one would answer, and the paid switch is
+ * off. Core's sentence says why, and one press of *Allow switching to a paid model* covers this
+ * conversation and carries on from where it stopped. At $0 a day the press alone would buy
+ * nothing, so the box for the amount comes with it, starting at $1.
+ */
+function offerPaid(paused: HTMLElement, daily: number): void {
+  const buttons = document.createElement('div')
+  buttons.className = 'stop-offer'
+  const allow = document.createElement('button')
+  allow.type = 'button'
+  allow.textContent = 'Allow switching to a paid model'
+  let amount: HTMLInputElement | undefined
+  if (daily <= 0) {
+    const box = document.createElement('label')
+    box.className = 'pause-amount'
+    amount = document.createElement('input')
+    amount.type = 'number'
+    amount.min = '0.5'
+    amount.step = '0.5'
+    amount.value = '1.00'
+    box.append('up to $', amount, ' a day')
+    buttons.append(box)
+  }
+  allow.addEventListener('click', () => {
+    const typed = amount === undefined ? undefined : Number(amount.value)
+    if (typed !== undefined && !(typed > 0)) {
+      say('Say how much a day paid models may spend — a number above $0.')
+      return
+    }
+    buttons.remove()
+    running(() => again(false, typed === undefined ? {} : { daily: typed }))
+  })
+  buttons.append(allow)
+  paused.append(buttons)
+  log.scrollTop = log.scrollHeight
 }
 
 /**
@@ -1624,6 +1678,11 @@ async function respond(
       answer.remove()
       const stopped = bubble('refusal', event.error)
       if (event.chosen === 'pinned' || event.chosen === 'sequence') offerInstead(stopped, event.chosen)
+    }
+    // Paused rather than stopped: nothing was billed, and a press lets paid answer (§4 H).
+    if (typeof event.paused === 'string') {
+      answer.remove()
+      offerPaid(bubble('refusal', event.paused), typeof event.daily === 'number' ? event.daily : 0)
     }
     const done = event.done as
       | { model?: string; bubble?: Bubble; spent?: number; warning?: string; ended?: string; steps?: number }

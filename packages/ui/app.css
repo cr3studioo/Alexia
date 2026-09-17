@@ -1575,6 +1575,54 @@ body[data-view='control'] .view:not(#control) {
 
 /* The side the slider has closed. Dimmed rather than removed: what you ordered is still what
    you ordered, and a column that vanished would read as the list having been thrown away. */
+/* The day's amount beside *Allow switching to a paid model*, when there was none (§4 H). */
+.pause-amount {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--text-sm);
+}
+
+.pause-amount input {
+  width: 6em;
+}
+
+/* The paid switch under the slider (§4 H): a checkbox, its sentence, and the day's amount. */
+.cross {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  margin: 0 0 var(--space-4);
+}
+
+.cross-toggle {
+  margin: 0;
+}
+
+.cross-label {
+  font-size: var(--text-sm);
+}
+
+.cross-amount {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--text-sm);
+  color: var(--ink-quiet);
+}
+
+.cross-daily {
+  width: 6em;
+}
+
+.cross-said {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--ink-quiet);
+}
+
 .ladder-col[data-off='true'] {
   opacity: 0.45;
 }

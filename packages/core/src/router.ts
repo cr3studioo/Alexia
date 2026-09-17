@@ -214,7 +214,19 @@ export interface Choice {
  */
 export type Mode = 'automatic' | 'sequence' | 'pinned'
 
-export type Verdict = { ok: true; mode: Mode; choices: Choice[] } | { ok: false; mode: Mode; why: string }
+export type Verdict =
+  | { ok: true; mode: Mode; choices: Choice[] }
+  | {
+      ok: false
+      mode: Mode
+      why: string
+      /**
+       * **A pause, not a stop** (§4 H): the free models are done — used up, or none can do this —
+       * a paid one would answer, and the paid switch is off. The sentence to show beside *Allow
+       * switching to a paid model*.
+       */
+      paused?: string
+    }
 
 /** Everything the router needs to know about the world, gathered by the caller. */
 export interface World {
@@ -232,6 +244,13 @@ export interface World {
    * so forgetting one costs a slower answer — forgetting this one would cost money.
    */
   today?: Today
+  /**
+   * **Whether Automatic may cross into paid by itself** (§4 H): the paid switch is on, or somebody
+   * pressed *Allow* in this conversation. `false` is the switch off, which pauses rather than
+   * refusing when a paid model would answer. Absent is the old rule, where the daily allowance
+   * alone decides — which is also what a world gathered by hand in a test means.
+   */
+  cross?: boolean
   /**
    * **What failed on this machine in the last day** (D159), from `Store.strikes()`. Absent is
    * nothing failed, which is what a world gathered by hand in a test means.
@@ -461,7 +480,9 @@ export function route(ask: Ask, pins: Pins, world: World): Verdict {
    * saying the words, and this exists to stop a router spending on its own, not to argue
    * with a person who typed it.
    */
-  const capped = asked === 'mixed' && where === 'cloud' && !affordable(world.today)
+  /** The switch is off and nobody allowed it in this conversation: paid pauses rather than spends (§4 H). */
+  const switchedOff = world.cross === false
+  const capped = asked === 'mixed' && where === 'cloud' && (!affordable(world.today) || switchedOff)
   const spend: Spend = capped ? 'free' : asked
   /**
    * The slider's middle, as opposed to somebody having said the words. Both extra rules below
@@ -570,9 +591,26 @@ export function route(ask: Ask, pins: Pins, world: World): Verdict {
   // And the other new wall, asked the same way: was everything paid here merely equal to
   // what ran out? Relax the one rule and see whether anything appears.
   const sidegrade = !capped && middle && fitting(spend, true).length > 0
+  /**
+   * **Why the free models are done, when the switch is what stopped paid** (§4 H): used up, or not
+   * one of them can do this — a picture, a long conversation, tools. Said beside *Allow*.
+   */
+  const pausedWhy = (): string => {
+    const free = (mode === 'sequence' ? everything.filter((c) => order.includes(c.model.id)) : everything).filter((c) => !paid(c.model.tier))
+    if (free.length === 0) return 'There is no free model to ask.'
+    if (fitting('free', false, free).length > 0) return 'The free models are used up.'
+    const unseen = carried.filter((kind) => !free.some((c) => c.model.modality.includes(kind)))
+    if (unseen.length > 0) {
+      return `No free model can be given ${unseen.map((kind) => (kind === 'image' ? 'a picture' : kind === 'audio' ? 'sound' : kind)).join(' or ')}.`
+    }
+    if (!free.some((c) => fits(c.model, ask.messages))) return 'This conversation is longer than any free model can read.'
+    if (needsTools && !free.some((c) => c.model.supportsTools)) return 'No free model can use tools.'
+    return 'No free model can do this.'
+  }
   return {
     ok: false,
     mode,
+    ...(priced && switchedOff && { paused: pausedWhy() }),
     why:
       mode === 'sequence' ?
         outOfOrder(pool, pins, needsTools, spend, ask.messages, priced, sidegrade, carried)
@@ -1087,6 +1125,10 @@ function refusal(
   // set to free only* would be a lie here — nobody set it, the allowance did, and the fix
   // lives on a different screen. Silence about that is the degradation this axis exists to
   // prevent.
+  if (capped && world.cross === true && (world.today?.allowance ?? 0) > 0) {
+    // The switch is on and today's amount is spent: the allowance stopping it, as it always did (§4 H).
+    return `the free models are used up, and today's $${(world.today?.allowance ?? 0).toFixed(2)} for paid models is spent — raise it under the paid switch on the Models tab, or wait for tomorrow`
+  }
   if (capped) {
     return 'the free models are used up, and Alexia does not spend money on its own until you give it a daily allowance — set one in settings, or wait for the free tiers to reset'
   }
@@ -1498,5 +1540,7 @@ export async function send(
   }
   const last = failures.at(-1)
   if (last === undefined) throw new ProviderError(blocked === undefined ? 503 : 402, blocked ?? 'nothing was available to ask')
-  throw new ProviderError(last.status, stopped(failures, blocked))
+  const stop = new ProviderError(last.status, stopped(failures, blocked))
+  if (refused.size > 0) stop.refused = [...refused]
+  throw stop
 }

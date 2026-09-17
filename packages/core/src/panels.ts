@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { pins } from './commands.js'
+import { caps } from './usage.js'
 import type { Rendered } from './settings.js'
 import type { Store } from './store.js'
 
@@ -230,6 +231,7 @@ const LADDER: Rendered = {
   ],
   chose: 'set_spend',
   ordered: 'set_order',
+  crossing: 'set_cross',
 }
 
 /**
@@ -324,7 +326,9 @@ export interface TabOptions {
 export function tabs(options: TabOptions): Tab[] {
   const standing = pins(options.store)
   const live = (widget: Rendered): Rendered =>
-    widget.type === 'ladder' ? { ...widget, value: standing.spend ?? 'mixed' } : widget
+    widget.type === 'ladder' ?
+      { ...widget, value: standing.spend ?? 'mixed', cross: caps(options.store).cross === true, daily: caps(options.store).daily ?? 0 }
+    : widget
 
   return CORE_TABS.map((tab) => ({ ...tab, widgets: tab.widgets?.map(live) }))
 }

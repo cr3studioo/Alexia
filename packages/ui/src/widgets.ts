@@ -140,6 +140,10 @@ export interface Rendered {
   stops?: { value: string; label: string; hint: string }[]
   chose?: string
   ordered?: string
+  /** `ladder`: the paid switch's action, and where it stands (§4 H). */
+  crossing?: string
+  cross?: boolean
+  daily?: number
 }
 
 /** Which screen is drawing, and how it answers the two questions a widget asks back. */
@@ -1958,7 +1962,52 @@ function ladder(host: WidgetHost, declared: Rendered): HTMLElement {
     // The side that is out of play is dimmed rather than removed: what you ordered is still
     // what you ordered, and a column that vanished would read as the list being thrown away.
     for (const [side, column] of columns) column.dataset.off = String(spend !== 'mixed' && spend !== side)
+    // The paid switch belongs to *free then paid* alone: the other two stops already said it.
+    crossing.hidden = declared.crossing === undefined || spend !== 'mixed'
   }
+
+  // ---- the paid switch (§4 H) --------------------------------------------------------------
+
+  /**
+   * **Whether Automatic moves to a paid model by itself once the free ones are done.**
+   *
+   * Turning it on asks *up to $__ a day*, starting at $1, and that number is the daily allowance —
+   * one money setting, not a switch beside an amount that could disagree with it. Off keeps the
+   * amount, which still bounds what *Allow* can spend when a conversation pauses.
+   */
+  const crossing = el('div', 'cross')
+  const toggle = el('input', 'cross-toggle')
+  toggle.type = 'checkbox'
+  toggle.id = `${host.screen}-${host.plugin}-${declared.key}-cross`
+  toggle.checked = declared.cross === true
+  const toggleLabel = el('label', 'cross-label', 'Switch to a paid model when the free ones are done')
+  toggleLabel.htmlFor = toggle.id
+  const amountBox = el('span', 'cross-amount')
+  const amount = el('input', 'cross-daily')
+  amount.type = 'number'
+  amount.min = '0.5'
+  amount.step = '0.5'
+  amount.value = ((declared.daily ?? 0) > 0 ? (declared.daily ?? 1) : 1).toFixed(2)
+  amount.setAttribute('aria-label', 'Daily amount for paid models, in dollars')
+  amountBox.append('up to $', amount, ' a day')
+  amountBox.hidden = !toggle.checked
+  const crossSaid = el('p', 'cross-said')
+  crossSaid.hidden = true
+  const cross = async (value: string): Promise<void> => {
+    if (declared.crossing === undefined) return
+    const answer = await host.send('/api/action', { plugin: host.plugin, key: declared.crossing, row: value })
+    crossSaid.textContent = String(answer.said ?? '')
+    crossSaid.className = answer.ok === true ? 'cross-said' : 'cross-said error'
+    crossSaid.hidden = crossSaid.textContent === ''
+  }
+  toggle.addEventListener('change', () => {
+    amountBox.hidden = !toggle.checked
+    void cross(toggle.checked ? `on:${amount.value}` : 'off')
+  })
+  amount.addEventListener('change', () => {
+    if (toggle.checked) void cross(`on:${amount.value}`)
+  })
+  crossing.append(toggle, toggleLabel, amountBox, crossSaid)
 
   for (const stop of stops) {
     const choice = el('label', 'grade-stop')
@@ -2187,7 +2236,7 @@ function ladder(host: WidgetHost, declared: Rendered): HTMLElement {
 
   const adding = el('div', 'ladder-add')
   adding.append(search, hits)
-  box.append(track, explains, grid, adding, clear, said)
+  box.append(track, explains, crossing, grid, adding, clear, said)
   slide()
   void load()
   return box

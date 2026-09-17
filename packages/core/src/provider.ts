@@ -915,6 +915,12 @@ export function hear(headers: Headers, at: number = Date.now()): Heard | undefin
 export class ProviderError extends Error {
   /** What the refusal's headers said about the provider's limits, when they said anything (§4 D). */
   heard?: Heard
+  /**
+   * **Providers whose key was refused while a whole plan was walked** (§4 H), on the stop `send()`
+   * throws: a paid model behind one of them would be refused the same way, so it is no reason to
+   * pause and offer *Allow*.
+   */
+  refused?: string[]
 
   constructor(
     readonly status: number,

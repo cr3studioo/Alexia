@@ -53,6 +53,13 @@ export interface CoreWidget {
   /** The action that takes the slider's new value, and the one that takes the running order. */
   chose: string
   ordered: string
+  /**
+   * **The paid switch under the slider** (§4 H): the action that turns it on with a daily amount
+   * (`on:1.50`) or off (`off`), and what it stands at now — filled in when the tab is read.
+   */
+  crossing?: string
+  cross?: boolean
+  daily?: number
 }
 
 /** A declaration plus what core knows about it right now. The shell renders this and nothing else. */

@@ -87,6 +87,10 @@ const REVERSIBLE_CORE = new Set([
   // being put back, and neither deletes anything — the same argument as the two above.
   'set_spend',
   'set_order',
+  // The paid switch (§4 H). One press puts it back, and turning it on already asks the one thing
+  // worth confirming — how much a day — in the same breath; a dialog in front of that would be a
+  // second question about the answer to the first.
+  'set_cross',
   // Starting a conversation and moving between them (M8-2). Nothing is written over and
   // nothing is lost: the one you were in is still in the list, one press away. `forget_chat`
   // is deliberately **not** here — it deletes a conversation and everything said in it.

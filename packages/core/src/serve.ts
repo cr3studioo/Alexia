@@ -133,6 +133,11 @@ export interface ServeOptions {
    * failed rung walks on to the next one (D155), so is any test whose stub provider fails.
    */
   local?: boolean
+  /**
+   * How long a task started elsewhere waits for a yes to a paid model before it stops (§4 H). Ten
+   * minutes unless a test says otherwise, because a test cannot wait ten minutes for a no.
+   */
+  allowWaitMs?: number
   secrets?: SecretStore
 }
 
@@ -795,26 +800,30 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
   }
 
   /**
-   * Whether money has been agreed to in this conversation (§9.5).
+   * **The conversations in which somebody pressed *Allow switching to a paid model*** (§4 H).
    *
-   * Once per task is what the loop guarantees; **for the session** is what this adds, by
-   * being the same answer the next task finds. A router that asks about money on every
-   * request is a nag, and a nag is clicked through without being read.
-   *
-   * Cleared when a different conversation is opened, because consent given in one is not
-   * consent given in another.
+   * One press covers the conversation it was pressed in, and only that one: consent given in one
+   * conversation is not consent given in another. Kept per conversation rather than cleared when
+   * another is opened, so going back to one where it was allowed finds it still allowed — and a
+   * Telegram conversation's yes is its own.
    */
-  let spending: boolean | undefined
+  const paidIn = new Set<number>()
+
+  /**
+   * **The world a task in this conversation sees** (§4 H): everything `world()` gathers, and
+   * whether paid may be crossed into by itself — the paid switch on, or *Allow* pressed here.
+   */
+  const worldFor = (conversation: number) => async () => ({
+    ...(await world()),
+    cross: caps(store).cross === true || paidIn.has(conversation),
+  })
 
   const surface = {
     skills, tooling, plugins, skillsDir, trace, dataDir: root, store, catalog, connected, providers, world,
     news: () => (headlines.size === 0 ? undefined : [...headlines.values()].join(' ')),
     refresh: pollAll,
     session: () => session,
-    openSession: (id: number) => {
-      spending = undefined
-      return (session = id)
-    },
+    openSession: (id: number) => (session = id),
     // Broadcast, to whoever is running and cares. Nothing is spawned to hear it and nothing
     // waits for it — a new conversation must not be held up by a plugin letting go of a
     // graphics card.
@@ -1014,11 +1023,12 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     try {
       const month = allowance(store)
       const chosen = await personality()
-      const result = await run({
-        messages,
+      const once = (asked: Message[]): ReturnType<typeof run> => run({
+        messages: asked,
         tools: tooling,
         pins: pins(store),
-        world,
+        // Whether paid may be crossed into for this conversation: the switch, or a yes on the phone (§4 H).
+        world: worldFor(its),
         store,
         secrets,
         session: its,
@@ -1049,6 +1059,44 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
           return said.trim().toLowerCase() === 'yes'
         },
       })
+      let result = await once(messages)
+      /**
+       * **A pause, asked on the phone** (§4 H). The free models are done and a paid one would answer,
+       * with the switch off: the question goes where the person is, as a yes or no, and waits ten
+       * minutes. A yes covers this conversation and carries on from where it stopped; no, or no
+       * answer, ends the task with the sentence sent back there. With no daily amount there is
+       * nothing a yes could buy, so the sentence says where to set one instead of asking.
+       */
+      if (result.ended === 'paused') {
+        const daily = caps(store).daily ?? 0
+        const why = result.why ?? 'The free models are used up.'
+        if (daily <= 0) {
+          result = { ...result, why: `${why} A paid model needs a daily amount first — set one under the paid switch on the Models tab in the app.` }
+        } else {
+          const yes = await Promise.race([
+            plugins
+              .capability(CORE_CAPABILITIES.ask, {
+                question: `${why} Allow switching to a paid model, up to $${daily.toFixed(2)} today?`,
+                options: ['Yes', 'No'],
+              })
+              .then((asked) => (asked.content ?? []).map((block) => (block.type === 'text' ? block.text : '')).join('').trim().toLowerCase() === 'yes')
+              .catch(() => false),
+            new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), options.allowWaitMs ?? 10 * 60_000).unref()),
+          ])
+          if (yes === true) {
+            paidIn.add(its)
+            result = await once([...messages, ...result.messages])
+          } else {
+            result = {
+              ...result,
+              why:
+                yes === false ?
+                  `${why} Not allowed, so no paid model was asked.`
+                : `${why} Nobody allowed a paid model within ten minutes, so this stopped.`,
+            }
+          }
+        }
+      }
       trace.end(result.ended, {
         ...(result.why !== undefined && { why: result.why }),
         calls: store.callsIn(runId),
@@ -1195,6 +1243,8 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
           // Today's side of the same question, and the one that decides whether the router
           // may reach across the price line on its own at all.
           today: today(store),
+          // The paid switch (§4 H), so the screen can say above the message box that paid is on.
+          cross: caps(store).cross === true,
           // The permission controls, and what is standing. Every one of these is a control
           // in the shell, not only a command — same rule as M1-12.
           ceilings: limitsNow(),
@@ -2261,11 +2311,22 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
    * it did, which is most of them.
    */
   async function reply(sent: Body, response: ServerResponse): Promise<void> {
-    const { text: typed, files, again, automatic } = sent as {
+    const { text: typed, files, again, automatic, allow } = sent as {
       text?: string
       files?: Upload[]
       again?: boolean
       automatic?: boolean
+      /**
+       * ***Allow switching to a paid model*** (§4 H), pressed on a pause: this conversation may cross
+       * into paid from now on, and — when there was no daily amount — `daily` is the one typed
+       * into the box beside the button. Sent with `again`, so the question carries on.
+       */
+      allow?: { daily?: number }
+    }
+    if (again === true && allow !== undefined) {
+      paidIn.add(session)
+      const daily = allow.daily
+      if (typeof daily === 'number' && Number.isFinite(daily) && daily > 0) setCaps(store, { ...caps(store), daily: Math.round(daily * 100) / 100 })
     }
     const uploads = Array.isArray(files) ? files.slice(0, MOST_FILES) : []
     /**
@@ -2363,7 +2424,8 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
         // *Use Automatic for this answer* is this answer, not a setting (D155): the pin and the
         // list are still there for the next message, and nothing here writes to them.
         pins: again === true && automatic === true ? { ...pins(store), model: undefined, order: undefined } : pins(store),
-        world,
+        // Whether paid may be crossed into here: the switch, or *Allow* pressed in this conversation (§4 H).
+        world: worldFor(session),
         store,
         secrets,
         session,
@@ -2380,21 +2442,6 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
             pending = resolve
             say({ ask: ruling.why })
           }),
-        // The money question travels the same channel as a permission question, because it
-        // is the same shape: one question, held open, settled by the person at the screen.
-        money: {
-          get allowed(): boolean | undefined {
-            return spending
-          },
-          set allowed(answer: boolean | undefined) {
-            spending = answer
-          },
-          ask: (question) =>
-            new Promise<boolean>((resolve) => {
-              pending = resolve
-              say({ ask: question })
-            }),
-        },
         on: {
           delta: (delta) => say({ delta }),
           note: (note) => say({ note }),
@@ -2452,6 +2499,17 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
         // total with anything else spending at the same moment — a Telegram task, say.
         calls: store.callsIn(runId),
       })
+
+      /**
+       * **A pause** (§4 H): the free models are done, a paid one would answer, and the switch is off.
+       * Nothing was billed. The screen shows the reason and *Allow switching to a paid model* — with
+       * a box for the daily amount when there is none, since at $0 the press alone would buy nothing.
+       */
+      if (result.ended === 'paused') {
+        say({ paused: result.why, daily: caps(store).daily ?? 0 })
+        response.end()
+        return
+      }
 
       if (result.ended === 'refused') {
         // The refusal is the answer. It is written to be read by the person who has to act
@@ -2526,12 +2584,16 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
       // open would read as *still going* to somebody looking at the panel afterwards.
       trace.end('refused', { why: said(error), calls: store.callsIn(runId) })
       say({ error: said(error) })
+    } finally {
+      // Whatever ended the task, an unanswered question outlives nothing. Settling it as a
+      // no rather than leaving it is what keeps a stopped task from holding the next one.
+      //
+      // In a `finally` since §4 H: a refusal returned early and skipped this, so after any
+      // refusal on screen a task from a phone was told Alexia was *already working on something*.
+      pending?.(false)
+      pending = undefined
+      task = undefined
     }
-    // Whatever ended the task, an unanswered question outlives nothing. Settling it as a
-    // no rather than leaving it is what keeps a stopped task from holding the next one.
-    pending?.(false)
-    pending = undefined
-    task = undefined
     response.end()
   }
 

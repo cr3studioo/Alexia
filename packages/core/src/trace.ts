@@ -51,7 +51,7 @@ export interface Run {
   /** The user's own line. It is what the run was for, so it is never paraphrased. */
   task: string
   at: number
-  ended?: 'answered' | 'stopped' | 'ceiling' | 'refused'
+  ended?: 'answered' | 'stopped' | 'ceiling' | 'refused' | 'paused'
   /** Set when it ended in a refusal — the router's sentence, or the provider's. */
   why?: string
   /**

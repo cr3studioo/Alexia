@@ -22,7 +22,7 @@ import {
 import type { SecretStore } from './secrets.js'
 import { carries, textOf, type Message, type Store } from './store.js'
 import { budgetFor, trim, type TrimOptions } from './trim.js'
-import { dollars, type Today } from './usage.js'
+import { affordable, type Today } from './usage.js'
 
 /**
  * Plan → act → observe → repeat.
@@ -166,27 +166,6 @@ export interface AgentEvents {
  */
 export const REPLY_CEILING = 2_000
 
-/**
- * **The money question, and where its answer is kept** (§9.5).
- *
- * Asked at most once, in the one situation that is genuinely a choice: the keyed free rungs
- * are spent, the model on this machine is about to do the work slowly instead, and there is
- * an allowance that would buy something faster. A router that asks about money on every
- * request is a nag, and people click through nags without reading — which is worse than not
- * asking. **No is the default**: nobody there, or nobody answering, leaves the plan on the
- * free rung it was already going to use.
- *
- * The answer lives on this object rather than in the loop, so **the caller decides how long
- * it is remembered.** Once per task is what the loop guarantees; for the session is what the
- * caller gets by handing the same object to the next one.
- */
-export interface MoneyConsent {
-  /** The standing answer. Undefined until somebody has actually been asked. */
-  allowed?: boolean
-  /** Ask, and wait. Nobody there is a no, the same as every other question the loop asks. */
-  ask(question: string): Promise<boolean>
-}
-
 export interface RunOptions {
   /** The conversation, ending with the line the user just sent. */
   messages: Message[]
@@ -246,12 +225,6 @@ export interface RunOptions {
   guard?(call: { name: string; args: Record<string, unknown> }): Ruling | Promise<Ruling>
   /** The user's decision on an `ask`. Absent means nobody is there to ask, so it is a no. */
   approve?(ruling: { verdict: 'ask'; why: string }): Promise<boolean>
-  /**
-   * Where the money question's answer is kept (§9.5). Absent means nobody can be asked, so
-   * the plan stands as routed — the allowance and the sidegrade rule have already decided
-   * whether a paid rung may be in it at all.
-   */
-  money?: MoneyConsent
   on?: AgentEvents
 }
 
@@ -259,8 +232,12 @@ export interface RunResult {
   /** Everything the loop added, in order. Already appended to the store. */
   messages: Message[]
   steps: Step[]
-  /** Why it ended. `answered` is the only one that is not a limit being hit. */
-  ended: 'answered' | 'stopped' | 'ceiling' | 'refused'
+  /**
+   * Why it ended. `answered` is the only one that is not a limit being hit. `paused` is the free
+   * models done with a paid one able to answer and the paid switch off (§4 H): *Allow switching
+   * to a paid model* carries on from where it stopped.
+   */
+  ended: 'answered' | 'stopped' | 'ceiling' | 'refused' | 'paused'
   /** Set when `ended` is `refused` — the router's sentence, or the provider's. */
   why?: string
   /**
@@ -469,16 +446,12 @@ export async function run(options: RunOptions): Promise<RunResult> {
      * cannot make worse — rather than printing a sentence that was not true.
      */
     /**
-     * *No* to the money question is an answer about the task, not about the turn it was asked
-     * on: an upgrade that reaches past the free rungs and spends anyway is the question not
-     * having been asked. Nothing else is pinned — the plan below keeps the paid rungs it
-     * already had, behind the free one, which is where the answer left them.
-     *
-     * An allowance nobody has been asked about is a different thing, and it is not overruled
-     * here: **the allowance is the permission** (§9.2). Setting one is how somebody says yes
-     * to exactly this — a task going badly buying one better attempt inside a daily cap.
+     * **The paid switch and the allowance are the permission** (§9.2, §4 H). Setting them is how
+     * somebody says yes to exactly this — a task going badly buying one better attempt inside a
+     * daily cap — so an upgrade routes under the same pins as the plan, and the world's `cross`
+     * decides whether paid may be reached at all.
      */
-    const upward: Pins = options.money?.allowed === false ? { ...pins, spend: 'free' } : pins
+    const upward: Pins = pins
 
     /**
      * **What this conversation is carrying that words cannot stand in for** (§5.2, Q5).
@@ -537,50 +510,20 @@ export async function run(options: RunOptions): Promise<RunResult> {
     // A pin with nothing behind it is a sentence, never a quiet reach for something else.
     // Mid-task it is also the honest place to stop: half a task is better than a task
     // finished somewhere the user said not to go.
+    // Free done, paid able, the switch off: a pause the person can lift, not a stop (§4 H). The
+    // monthly hard stop is not something *Allow* can lift, so it stays a refusal.
+    if (!verdict.ok && verdict.paused !== undefined && options.paidAllowed !== false) return finish('paused', verdict.paused, verdict.mode)
     if (!verdict.ok) return finish('refused', ranOutOfHands(ask, now) ? NO_HANDS : verdict.why, verdict.mode)
 
     /**
-     * **The money question, asked once** (§9.5).
-     *
-     * Only where there is genuinely a choice to make: the plan is about to run on the model
-     * on this machine — slowly, for nothing — and there is a rung behind it that would be
-     * faster for money. If the allowance is nothing, no paid rung reached this plan and there
-     * is nothing to consent to; if nothing local reached it either, there is no free way to
-     * do the work and nothing to offer instead. Either way the question never appears, which
-     * is what keeps it worth reading on the day it does.
-     *
-     * **The default is the free one, and the question is the upgrade.** It reads the other
-     * way round from how it started: paid used to head the plan and this offered a way back
-     * down, which meant a cascade whose safe answer was one click away from being skipped.
-     * Now local heads it ({@link MODES}), the safe answer is what happens if nobody replies,
-     * and money is the thing somebody has to say yes to. §9.2's asymmetry, in the one place
-     * the user meets it — money is the only irreversible step here.
-     *
-     * **Once per task, remembered for the session.** The answer is written back onto the
-     * caller's object, so a second paid decision in the same task finds it already there and
-     * a second task in the same conversation does too.
-     *
-     * Nothing here picks the model. The allowance decided whether paid is reachable at all
-     * and the sidegrade rule decided whether any of it is worth buying, so the paid rungs
-     * left in the plan are already the ones worth being asked about — this only drops the
-     * free half in front of them, rather than routing again with the price line forced open,
-     * which would spend past the allowance the first route honoured.
+     * **This Mac or paid, when both are next** (§4 H). The keyed free rungs are done, the model on
+     * this machine heads the plan, and a paid rung is behind it. The paid switch answered the old
+     * *slow local or paid?* question in advance: on, paid goes first; off, paid was never in the
+     * plan, this Mac answers, and the work pauses only if this Mac cannot.
      */
     const slow = verdict.choices[0]
     const faster = verdict.choices.filter((c) => paid(c.model.tier))
-    if (options.money && slow?.model.tier === 'T0' && faster[0]) {
-      const money = options.money
-      if (money.allowed === undefined) {
-        const day = now.today
-        money.allowed = await money.ask(
-          `Do you want slow local (free), or paid credits on ${faster[0].provider.name}?` +
-            (day ? ` Spent ${dollars(day.spent)} of ${dollars(day.allowance)} today.` : ''),
-        )
-      }
-      // Yes buys the rungs that charge and nothing else — asking for speed and then being
-      // given the slow one anyway is the answer not having been read.
-      if (money.allowed) verdict = { ...verdict, choices: faster }
-    }
+    if (now.cross === true && slow?.model.tier === 'T0' && faster[0]) verdict = { ...verdict, choices: faster }
 
     /**
      * **Route first, then trim to the window that won.** The budget is a property of the
@@ -655,6 +598,34 @@ export async function run(options: RunOptions): Promise<RunResult> {
       if (options.signal?.aborted) return finish('stopped')
       // Every rung in the plan failed. That is a stop with a sentence — which models, and why
       // — rather than a crash, and whose plan it was decides what the screen offers next.
+      /**
+       * **The free rungs were all asked and none answered** (§4 H). With the switch off, the plan
+       * had no paid rung in it; if one would answer with the price line open, this is the same
+       * pause the router gives when the ledger already knew — and nothing has been billed.
+       */
+      if (error instanceof ProviderError && now.cross === false && options.paidAllowed !== false && verdict.mode !== 'pinned') {
+        const opened = route(ask, pins, { ...now, cross: true, today: { spent: 0, allowance: Number.MAX_SAFE_INTEGER } })
+        // Not behind a key that was just refused: *Allow* would only collect the same refusal.
+        const refused = new Set(error.refused ?? [])
+        if (opened.ok && opened.choices.some((c) => paid(c.model.tier) && !refused.has(c.provider.id))) {
+          return finish('paused', 'The free models are used up.', verdict.mode)
+        }
+      }
+      /**
+       * **The switch is on and the day's amount is what stopped paid** (§4 H): the free rungs failed
+       * and a paid one would have answered but for the allowance. It stops as the allowance always
+       * did — and says so, rather than naming only the free model that was busy.
+       */
+      if (error instanceof ProviderError && now.cross === true && !affordable(now.today) && options.paidAllowed !== false && verdict.mode !== 'pinned') {
+        const opened = route(ask, pins, { ...now, today: { spent: 0, allowance: Number.MAX_SAFE_INTEGER } })
+        if (opened.ok && opened.choices.some((c) => paid(c.model.tier))) {
+          return finish(
+            'refused',
+            `${error.message} And today's $${(now.today?.allowance ?? 0).toFixed(2)} for paid models is spent — raise it under the paid switch on the Models tab, or wait for tomorrow.`,
+            verdict.mode,
+          )
+        }
+      }
       if (error instanceof ProviderError) return finish('refused', error.message, verdict.mode)
       throw error
     }

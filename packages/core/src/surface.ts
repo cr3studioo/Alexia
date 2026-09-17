@@ -17,6 +17,7 @@ import type { Searchable } from './palette.js'
 import type { Outcome, Store, Try } from './store.js'
 import type { PluginTooling } from './tooling.js'
 import { asText, spentOn, type Trace } from './trace.js'
+import { caps, setCaps } from './usage.js'
 
 /**
  * What core's own tables are made of (M6-4).
@@ -996,6 +997,34 @@ export function actions(
     })
   }
 
+  /**
+   * **The paid switch** (§4 H): `on:1.50` turns it on with that daily amount, `off` turns it off.
+   *
+   * The amount **is** the daily allowance, `caps.daily`, which already existed and was $0 by
+   * default — so turning the switch on alone would have bought nothing. One money setting, not two.
+   * Off keeps the amount: it still bounds what *Allow* can spend in a conversation.
+   */
+  const setCross = (value: string): Promise<{ ok: boolean; said: string }> => {
+    const standing = caps(options.store)
+    if (value === 'off') {
+      setCaps(options.store, { ...standing, cross: false })
+      return Promise.resolve({
+        ok: true,
+        said: 'Off. When the free models are done, the work pauses and asks before a paid model is used.',
+      })
+    }
+    const amount = Number(/^on:(.*)$/.exec(value)?.[1] ?? Number.NaN)
+    if (!Number.isFinite(amount) || amount <= 0) {
+      return Promise.resolve({ ok: false, said: 'Say how much a day paid models may spend — a number above $0.' })
+    }
+    const daily = Math.round(amount * 100) / 100
+    setCaps(options.store, { ...standing, cross: true, daily })
+    return Promise.resolve({
+      ok: true,
+      said: `On. Paid models will be used once the free ones are done, up to $${daily.toFixed(2)} a day.`,
+    })
+  }
+
   return {
     new_chat: newChat,
     open_chat: openChat,
@@ -1003,6 +1032,7 @@ export function actions(
     use_model: useModel,
     set_spend: setSpend,
     set_order: setOrder,
+    set_cross: setCross,
     /**
      * Back to the router choosing. On every row rather than only the pinned one, because a
      * button that appears and disappears as the selection moves is a button people hunt for

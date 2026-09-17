@@ -1835,3 +1835,29 @@ test('a switch into a paid model is said twice: the charge line in its place, an
   refuse = new Set()
   ledger.close()
 })
+
+test('with the paid switch off, free done and paid able is a pause with its reason, and nothing else is (§4 H)', () => {
+  const eyes = model({ id: 'paid/eyes', tier: 'T2', priceIn: 1, provider: 'beta', supportsTools: true, context: 128_000, modality: ['text', 'image'] })
+  const off = (over: Partial<World> = {}): World => world({ models: [freeTools, eyes], today: { spent: 0, allowance: 0 }, cross: false, ...over })
+  const hello = { messages: asked('hello'), tools: [{ name: 'fs.list' }] }
+
+  // The free tier spent by the ledger: used up.
+  const spentLedger = new Store(':memory:')
+  for (let i = 0; i < 10; i++) spentLedger.recordRequest('alpha')
+  const usedUp = route(hello, pins(), off({ rungs: [remaining(spentLedger, alpha), remaining(spentLedger, beta)] }))
+  expect(usedUp.ok === false && usedUp.paused).toBe('The free models are used up.')
+
+  // A picture no free model can be given.
+  const picture = route({ ...hello, modality: ['image'] }, pins(), off())
+  expect(picture.ok === false && picture.paused).toBe('No free model can be given a picture.')
+
+  // The switch on with the day's amount spent is the allowance stopping it, not a pause.
+  const spent = route({ ...hello, modality: ['image'] }, pins(), off({ cross: true, today: { spent: 2, allowance: 1 } }))
+  expect(spent.ok === false && spent.paused).toBe(undefined)
+  expect(spent.ok === false && spent.why).toContain("today's $1.00 for paid models is spent")
+
+  // And a world that says nothing about the switch keeps the old rule, where the allowance decides.
+  const unsaid = route({ ...hello, modality: ['image'] }, pins(), world({ models: [freeTools, eyes], today: { spent: 0, allowance: 0 } }))
+  expect(unsaid.ok === false && unsaid.paused).toBe(undefined)
+  spentLedger.close()
+})
