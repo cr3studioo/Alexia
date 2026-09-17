@@ -895,6 +895,26 @@ Tests: `trial.test.ts` (fourteen due and ten sent, none paid, the one sentence, 
 no conversation and no ledger row, nothing more that day, the rest the next day, a set-aside model
 back on its reply, none while busy, a round stopped mid-way).
 
+**Built 2026-09-17 (D167)**, G, in core and the shell. Where the build differs from the text above:
+
+- **`onSwitch` replaces `onNote` for a switch only where a caller gives it**, so a caller with no
+  place for a switch — a plugin's sampling request, a test — still hears the line it always did.
+  The loop gives it and falls back to `note` for a screen that has no `switch`.
+- **A switch into a paid model is said as a switch too.** Before, the charge line stood in for it;
+  now the charge line goes to `onPaid`, in its own place above the message box, and the switch is
+  its own event beside it. Where no `onSwitch` is given, nothing changes.
+- **Notes are kept per message**, on the assistant message whose answer the switch produced; a task
+  whose third step switched keeps the line on that step's message, which is the bubble a reload
+  draws for it.
+- **The pop-up** is a fixed line over the bottom of the conversation, clear of the composer, gone
+  after 3,000 ms and replaced by a newer switch. The paid line is cleared when the next question
+  goes.
+
+Tests: `fallback.test.ts` over `/api/chat` (one `switch` event and no note repeating it, kept on the
+answer in `/api/state`, and not in the next request a model receives), `router.test.ts` (a switch
+into paid: the charge line and the event, no note). The shell was driven in headless Chromium: the
+pop-up for three seconds, the line above the answer, the same line after a reload.
+
 ### Acceptance
 
 - **Cancel.** A plugin asks for sampling with a 1-second timeout, over a provider that never
@@ -965,6 +985,8 @@ says (OpenRouter). Still not built from §1: the keyless group's switch. Next: �
 **Status 2026-09-17, night:** §4 E is built (D166). Whether each free tier's terms allow the daily
 test is still open, before a public release. Next: §4 G.
 
+**Status 2026-09-17, late:** §4 G is built (D167). Next: §4 F.
+
 1. **§1 steps 1–2**: unpriced is not free, one `available()`. Smallest change, and it closes
    a real billing hole (Requesty) before anything else.
 2. ~~**§3**: failure kinds, the three modes, default timeouts. This is the one people feel on
@@ -983,7 +1005,8 @@ test is still open, before a public release. Next: §4 G.
 9. ~~**§4 D**: keeping it current (the timer, first seen, the news line, headers, OpenRouter's key,
    the four stale rows).~~ Done 2026-09-17 (D165).
 10. ~~**§4 E**: test messages. Needs B and D.~~ Done 2026-09-17 (D166).
-11. **§4 G**: a switch said twice. Needs nothing above except A, so it can move earlier.
+11. ~~**§4 G**: a switch said twice. Needs nothing above except A, so it can move earlier.~~ Done
+    2026-09-17 (D167).
 12. **§4 F**: free limits per account.
 13. **§4 H**: crossing into paid, then Telegram's question.
 14. **§4 I**: the bad-answer button, with *that wasn't her* (`plan-personality.md`, improvement 10).
