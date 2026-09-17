@@ -120,6 +120,18 @@ export interface Provider {
   rpm?: number
   rpd?: number
   /**
+   * **The day's free requests once the account has bought credit** (§4 D), where that differs —
+   * OpenRouter's 50 becomes 1,000 after a one-off $10. Read only when {@link keyInfo} has said the
+   * account is past its free tier; until then {@link rpd} is the deliberately low guess (D107).
+   */
+  rpdFunded?: number
+  /**
+   * **Where the provider says what a key's account is** (§4 D), relative to `baseUrl`: whether it
+   * is still on the free tier, and how much of the key's credit limit is left. OpenRouter's
+   * `GET /key`. Read when a key is saved and on every six-hour tick.
+   */
+  keyInfo?: string
+  /**
    * **What it costs you to get in, in the currency that is not money** (§6.6, §12.2).
    *
    * Not every free tier is free of trouble: one of these wants a Telegram channel joined and
@@ -178,6 +190,8 @@ export const PROVIDERS: Provider[] = [
     trainsOnYourData: 'unknown',
     rpm: 20,
     rpd: 50, //                                 1,000 after a one-off $10 of credit
+    rpdFunded: 1000,
+    keyInfo: '/key',
   },
   {
     id: 'groq',

@@ -29,7 +29,7 @@ import { Library, offerable } from './library.js'
 import { distil, forget, learnable, outline, save, type Episode } from './learned.js'
 import { mimeOf, Offers, openable, reach } from './offered.js'
 import { installed, OLLAMA, running } from './ollama.js'
-import { usable } from './pool.js'
+import { accountKey, fundedBy, usable, type Account } from './pool.js'
 import { ceilings, estimate, previewLine, setCeilings, worthAsking, type Ceilings } from './preview.js'
 import { Plugins } from './plugins.js'
 import {
@@ -269,9 +269,48 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
   const poll = async (provider: Provider): Promise<void> => {
     void (await fetchList(provider))
   }
-  /** Every provider, if its own list has aged out. Startup calls it; so does the Models tab. */
+
+  /**
+   * **What the provider says the key's account is** (§4 D): still on the free tier or not, and how
+   * much of the key's credit limit is left. Kept in the store's core namespace, so the ledger's
+   * daily allowance and *Funded* read the provider's own word rather than D107's low guess. A key
+   * with nowhere to ask, a refusal, or a shape this does not know leaves what was known.
+   */
+  /** How long an account question waits. Declared here, above the startup poll that first asks one. */
+  const ACCOUNT_WAIT = 15_000
+  const readAccount = async (provider: Provider, key?: string): Promise<Account | undefined> => {
+    if (provider.keyInfo === undefined) return undefined
+    const stored = key ?? (await secrets.get(CORE, keyOf(provider)).catch(() => undefined))
+    if (stored === undefined) return undefined
+    try {
+      const response = await fetch(`${provider.baseUrl}${provider.keyInfo}`, {
+        headers: { authorization: `Bearer ${stored}`, accept: 'application/json', ...provider.headers },
+        signal: AbortSignal.timeout(ACCOUNT_WAIT),
+      })
+      if (!response.ok) return undefined
+      const { data } = (await response.json()) as { data?: { is_free_tier?: unknown; limit_remaining?: unknown } }
+      if (typeof data?.is_free_tier !== 'boolean') return undefined
+      const account: Account = {
+        freeTier: data.is_free_tier,
+        limitRemaining: typeof data.limit_remaining === 'number' ? data.limit_remaining : null,
+        at: Date.now(),
+      }
+      // Only if that key is still the one stored: a key removed while this was asking takes its
+      // account with it, and an answer arriving after must not write it back.
+      if ((await secrets.get(CORE, keyOf(provider)).catch(() => undefined)) !== stored) return undefined
+      store.kvSet(CORE, accountKey(provider.id), account)
+      return account
+    } catch {
+      return undefined
+    }
+  }
+
+  /** Every provider, if its own list has aged out, and every account a key can ask about. Startup calls it; so does the Models tab. */
   const pollAll = (): void => {
-    for (const provider of providers) void poll(provider)
+    for (const provider of providers) {
+      void poll(provider)
+      void readAccount(provider)
+    }
   }
   pollAll()
   /**
@@ -671,11 +710,18 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     if (waited.failed !== undefined) {
       return `${provider.name}'s key is saved, but its model list did not arrive (${waited.failed}). If it says 401 or 403, the key was not accepted.`
     }
+    // What the account is, where the provider says: it decides the day's allowance and whether its
+    // paid models can be bought, so it is asked before the count below is taken (§4 D).
+    const account = await readAccount(provider, key)
     const spend = pins(store).spend ?? 'mixed'
-    const listed = catalog.models.filter((m) => m.provider === provider.id && allowed(m, spend))
+    const funded = fundedBy(account)
+    const listed = catalog.models.filter((m) => m.provider === provider.id && allowed(m, spend) && !(paid(m.tier) && funded === false))
     const free = listed.filter((m) => !paid(m.tier)).length
     const priced = listed.length - free
-    return `${provider.name} connected — ${models(free, 'free ')}${priced > 0 ? ` and ${String(priced)} paid` : ''}.`
+    return (
+      `${provider.name} connected — ${models(free, 'free ')}${priced > 0 ? ` and ${String(priced)} paid` : ''}.` +
+      (funded === false ? ` Its paid models are not listed: ${provider.name} says ${account?.freeTier === true ? 'this account has no credit yet' : "this key's credit limit is used up"}.` : '')
+    )
   }
 
   /**
@@ -689,6 +735,8 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
    */
   const disconnect = async (provider: Provider): Promise<string> => {
     await secrets.delete(CORE, keyOf(provider))
+    // What the provider said about that key's account goes with the key.
+    store.kvDelete(CORE, accountKey(provider.id))
     if (anonymous(provider)) {
       return `The ${provider.name} key is removed. ${provider.name} still answers without one, on its shared free tier.`
     }

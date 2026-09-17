@@ -106,10 +106,16 @@ export const allowed = (model: Model, spend: Spend): boolean =>
  * row, a list of things that would not happen.
  *
  * A price nobody published is already gone by the time a row gets here: `parse()` does not
- * carry it. What is not here yet is *can this account pay* — that needs each provider's balance.
+ * carry it. *Can this account pay* is here since §4 D, where a provider says: OpenRouter's key
+ * endpoint says whether the account ever bought credit and how much of the key's limit is left.
  */
-export const available = (model: Model, connected: ReadonlySet<string>, spend: Spend): boolean =>
-  connected.has(model.provider) && allowed(model, spend)
+export const available = (
+  model: Model,
+  connected: ReadonlySet<string>,
+  spend: Spend,
+  /** Providers whose account cannot pay, by their own word (§4 D, *Funded*). Their paid rows are out. */
+  unfunded: ReadonlySet<string> = new Set(),
+): boolean => connected.has(model.provider) && allowed(model, spend) && !(paid(model.tier) && unfunded.has(model.provider))
 
 export interface Pins {
   placement: Placement
@@ -556,6 +562,9 @@ function reachable(world: World, connected: ReadonlyMap<string, Rung>): { choice
   return world.models.flatMap((model) => {
     const rung = connected.get(model.provider)
     if (!rung) return []
+    // A paid model on an account its provider says cannot pay is not reachable (§4 D, *Funded*):
+    // it would only collect a 402 after the plan had been shown to be possible.
+    if (paid(model.tier) && rung.funded === false) return []
     const choice: Choice = { model, provider: rung.provider, ...(rung.keyed !== undefined && { keyed: rung.keyed }) }
     return [{ choice, out: spent(rung) && !paid(model.tier) }]
   })

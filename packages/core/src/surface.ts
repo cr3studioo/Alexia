@@ -503,7 +503,12 @@ export function sources(options: SurfaceOptions): Record<string, Source> {
 
         // Set aside by Alexia: reachable, and in no plan above because of it. By reason, then name.
         const aside = [...world.models, ...world.local]
-          .filter((model) => (model.tier === 'T0' || available(model, keyed, spend)) && !shown.has(rowId(model.provider, model.id)))
+          .filter(
+            (model) =>
+              (model.tier === 'T0' ||
+                available(model, keyed, spend, new Set(world.rungs.filter((rung) => rung.funded === false).map((rung) => rung.provider.id)))) &&
+              !shown.has(rowId(model.provider, model.id)),
+          )
           .flatMap((model) => {
             const reason = world.health?.get(rowId(model.provider, model.id))?.aside
             return reason === undefined ? [] : [{ model, reason }]

@@ -38,7 +38,29 @@ export interface Rung {
    * Absent on a rung built by hand, which reads the provider's `auth` as it always did.
    */
   keyed?: boolean
+  /**
+   * **Whether the account can pay for this provider's paid models** (§4 D, §1's *Funded*), as the
+   * provider itself last said. Absent is unknown, which is read as yes: most providers say nothing,
+   * and a 402 on asking is a refusal the router already handles.
+   */
+  funded?: boolean
 }
+
+/** What a provider's key endpoint said about the account, as core keeps it (§4 D). */
+export interface Account {
+  /** Never bought credit: free models only, at the free tier's daily limit. */
+  freeTier: boolean
+  /** How much of the key's own credit limit is left, in dollars; null for a key with no limit. */
+  limitRemaining: number | null
+  at: number
+}
+
+/** Where an account is kept: the store's core namespace, one entry per provider. */
+export const accountKey = (provider: string): string => `account.${provider}`
+
+/** Whether an account can pay, from what its provider said. Unknown is yes. */
+export const fundedBy = (account: Account | undefined): boolean | undefined =>
+  account === undefined ? undefined : !account.freeTier && (account.limitRemaining === null || account.limitRemaining > 0)
 
 /** Whether a provider has anything left to give at this instant. */
 export function remaining(store: Store, provider: Provider, at: number = Date.now()): Rung {
@@ -50,10 +72,15 @@ export function remaining(store: Store, provider: Provider, at: number = Date.no
    */
   const told = store.heard(provider.id, at)
   const lower = (counted: number, said: number | undefined): number => Math.max(0, Math.min(counted, said ?? Infinity))
+  /** The real day's allowance once the provider has said the account bought credit (§4 D). */
+  const account = store.kvGet(CORE, accountKey(provider.id)) as Account | undefined
+  const perDay = account !== undefined && !account.freeTier ? (provider.rpdFunded ?? provider.rpd) : provider.rpd
+  const funded = fundedBy(account)
   return {
     provider,
+    ...(funded !== undefined && { funded }),
     minute: lower(provider.rpm === undefined ? Infinity : provider.rpm - used.minute, told.minute),
-    day: lower(provider.rpd === undefined ? Infinity : provider.rpd - used.day, told.day),
+    day: lower(perDay === undefined ? Infinity : perDay - used.day, told.day),
     // Counted in calls, because that is the unit the budget is written in. A long request
     // and a one-word one spend exactly the same amount of it.
     month:
