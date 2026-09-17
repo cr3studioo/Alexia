@@ -25,12 +25,15 @@ const root = mkdtempSync(join(tmpdir(), 'alexia-fallback-'))
 /** What each model does when asked: answer, fail with a status, or die after a few words. */
 let behave = new Map<string, number | 'dies'>()
 const asked: string[] = []
+/** Every request body a model received, as sent. */
+const served: string[] = []
 const models: Server = createServer((request, response) => {
   let raw = ''
   request.on('data', (chunk: Buffer) => (raw += chunk.toString()))
   request.on('end', () => {
     const { model } = JSON.parse(raw) as { model: string }
     asked.push(model)
+    served.push(raw)
     const how = behave.get(model)
     if (typeof how === 'number') {
       response.writeHead(how, { 'content-type': 'text/plain' })
@@ -127,10 +130,44 @@ test('Automatic whose first model dies mid-sentence tells the screen to clear it
     'delta' in event ? [`delta:${String(event.delta)}`]
     : 'restart' in event ? ['restart']
     : 'note' in event ? ['note']
+    : 'switch' in event ? ['switch']
     : [],
   )
-  expect(kinds).toEqual(['delta:Half of', 'restart', 'note', 'delta:from stub/two'])
+  // The switch is an event of its own since §4 G, not a note: the screen says it twice.
+  expect(kinds).toEqual(['delta:Half of', 'restart', 'switch', 'delta:from stub/two'])
   expect(events.some((event) => 'error' in event)).toBe(false)
+}, 30_000)
+
+test('a switch is said once as an event, kept on the answer across a reload, and never sent to a model', async () => {
+  // `stub/one` failed in the test above, so it is asked second now; make the first one refuse.
+  behave = new Map([['stub/two', 429]])
+  asked.length = 0
+  served.length = 0
+  const { events } = await chat({ text: 'what is on today' })
+
+  const switches = events.filter((event) => 'switch' in event).map((event) => event.switch as Record<string, unknown>)
+  expect(switches).toEqual([
+    {
+      from: ['Stub Two'],
+      to: 'Stub One',
+      reasons: ['Stub Two is rate-limited right now'],
+      says: 'Stub Two is rate-limited right now — this answer is from Stub One.',
+    },
+  ])
+  // Once: no note repeats it.
+  expect(events.filter((event) => 'note' in event)).toEqual([])
+
+  // Kept on the answer, which is what a reload draws.
+  const state = (await (await fetch(new URL('/api/state', alexia.url), { headers: { 'x-alexia-token': alexia.token } })).json()) as {
+    messages: { role: string; notes?: string[] }[]
+  }
+  expect(state.messages.at(-1)).toMatchObject({ role: 'assistant', notes: ['Stub Two is rate-limited right now — this answer is from Stub One.'] })
+
+  // And the next question sends that conversation to a model without the note in it.
+  behave = new Map()
+  await chat({ text: 'and tomorrow' })
+  expect(served.at(-1)).toBeDefined()
+  expect(served.at(-1)).not.toContain('this answer is from')
 }, 30_000)
 
 test('a pinned model that fails stops, marked as the person’s choice, and Automatic answers once without changing it', async () => {

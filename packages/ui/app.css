@@ -2425,6 +2425,58 @@ button[disabled] {
   background: var(--surface);
 }
 
+/* The line before a charge (§4 G): its own row, in the caution colour, because money is the one
+   thing on this screen that should never be replaced by a quieter line. */
+#paid-note {
+  margin: 0;
+  padding: var(--space-2) var(--space-4);
+  font-size: var(--text-sm);
+  color: var(--caution);
+  border-top: 1px solid var(--line);
+  background: var(--surface);
+}
+
+/* A switch to another model, for three seconds (§4 G), over the bottom of the conversation. */
+#popup {
+  position: fixed;
+  left: 50%;
+  /* Clear of the composer, which is the one thing a person is looking at when a switch happens. */
+  bottom: calc(2 * var(--space-8) + var(--space-4));
+  z-index: 20;
+  max-width: min(36rem, calc(100vw - 2 * var(--space-4)));
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  transform: translateX(-50%);
+  font-size: var(--text-sm);
+  color: var(--ink);
+  background: var(--surface-raised);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  box-shadow: 0 6px 24px color-mix(in oklab, var(--ink) 18%, transparent);
+  animation: popup-in 160ms ease-out;
+}
+
+@keyframes popup-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 6px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #popup {
+    animation: none;
+  }
+}
+
+/* The same switch, kept on the answer: a small line above the words, drawn again on reload. */
+.switch-line {
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-xs);
+  line-height: var(--leading-prose);
+  color: var(--ink-faint);
+}
+
 /* ---- the permission prompt -------------------------------------------------------------
 
    Above the composer, never over the trace. What is being decided is what just happened on

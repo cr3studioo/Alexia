@@ -15,6 +15,7 @@ import {
   type Mode,
   type Pins,
   type Shape,
+  type Switch,
   type Tier,
   type World,
 } from './router.js'
@@ -118,6 +119,10 @@ export interface AgentEvents {
   delta?(text: string): void
   /** Core talking, not the model: a charge about to happen, a rung that ran out. */
   note?(line: string): void
+  /** Another model is answering this turn, and why (§4 G). Also kept on the message as a note. */
+  switch?(event: Switch): void
+  /** The line before a charge, for a place of its own (§4 G). */
+  paid?(line: string): void
   /**
    * **The words streamed since the last turn began are void** (D155): the model writing them
    * stopped partway, and the answer is starting again on the next one.
@@ -608,6 +613,8 @@ export async function run(options: RunOptions): Promise<RunResult> {
      */
     const billable = verdict.choices.some((c) => paid(c.model.tier))
 
+    /** What this turn's switches said, kept on the answer they belong to (§4 G). */
+    const noted: string[] = []
     let answer
     try {
       answer = await send(
@@ -629,6 +636,13 @@ export async function run(options: RunOptions): Promise<RunResult> {
           ...(options.paidAllowed !== undefined && { paidAllowed: options.paidAllowed }),
           ...(on?.delta && { onDelta: on.delta }),
           ...(on?.note && { onNote: on.note }),
+          onSwitch: (event: Switch) => {
+            noted.push(event.says)
+            // A screen that has no place for a switch still hears it, as the line it always was.
+            if (on?.switch) on.switch(event)
+            else on?.note?.(event.says)
+          },
+          ...(on?.paid && { onPaid: on.paid }),
           ...(on?.restart && { onRestart: on.restart }),
         },
       )
@@ -656,7 +670,7 @@ export async function run(options: RunOptions): Promise<RunResult> {
 
     messages.push(answer.message)
     added.push(answer.message)
-    store.append(session, answer.message)
+    store.append(session, noted.length === 0 ? answer.message : { ...answer.message, notes: noted })
 
     const calls = answer.message.calls ?? []
     if (calls.length === 0) return finish('answered')

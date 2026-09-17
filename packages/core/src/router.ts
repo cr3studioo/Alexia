@@ -1073,6 +1073,18 @@ function refusal(
   return 'no model fits this request right now — try again shortly'
 }
 
+/**
+ * **A switch to another model**, with its parts (D160, §4 G): which models could not answer, which
+ * one is answering instead, why, and the sentence. Said twice on screen — a pop-up for three
+ * seconds, and a line on the answer that is saved with it.
+ */
+export interface Switch {
+  from: string[]
+  to: string
+  reasons: string[]
+  says: string
+}
+
 export interface Answer {
   message: Message
   usage: Usage
@@ -1212,6 +1224,13 @@ export async function send(
     onDelta?: (text: string) => void
     onNote?: (line: string) => void
     /**
+     * **A switch, as an event** (§4 G). When given, the switch line goes here rather than to
+     * `onNote`, so the screen can say it twice and keep it; without it, nothing changes.
+     */
+    onSwitch?: (event: Switch) => void
+    /** **The line before a charge**, in a place of its own (§4 G). Without it, `onNote` has it. */
+    onPaid?: (line: string) => void
+    /**
      * **Throw away what was streamed** (D155). A rung that had already sent words failed, and
      * the answer starts again on the next one — a half-written bubble left on screen would be
      * two models' sentences run together.
@@ -1309,12 +1328,14 @@ export async function send(
     // something that did not say anything. It is also this rung's switch line, so the one
     // below stays quiet for it.
     if (paid(choice.model.tier)) {
-      hooks.onNote?.(
+      ;(hooks.onPaid ?? hooks.onNote)?.(
         at === 0 ?
           `Using ${choice.model.name}, which costs money — about $${choice.model.priceIn.toFixed(2)} per million words in.`
         : `The free models are used up, so this one goes to ${choice.model.name}, which costs money.`,
       )
-      told = failures.length
+      // Where the switch has a place of its own, it is still said: the charge line is the money,
+      // the switch is the model (§4 G). Where it has not, the charge line was the switch line.
+      if (hooks.onSwitch === undefined) told = failures.length
     }
     /**
      * **One line when the answer comes from somewhere else** (D155), said as this rung starts
@@ -1323,7 +1344,13 @@ export async function send(
      */
     const switched = (): void => {
       if (told < failures.length) {
-        hooks.onNote?.(`${reasons(failures.slice(told), 'could not answer')} — this answer is from ${choice.model.name}.`)
+        const these = failures.slice(told)
+        const says = `${reasons(these, 'could not answer')} — this answer is from ${choice.model.name}.`
+        if (hooks.onSwitch !== undefined) {
+          hooks.onSwitch({ from: these.map((one) => one.choice.model.name), to: choice.model.name, reasons: these.map((one) => one.says), says })
+        } else {
+          hooks.onNote?.(says)
+        }
       }
       told = failures.length
     }

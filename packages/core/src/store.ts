@@ -366,6 +366,12 @@ export interface Message {
   callId?: string
   /** Which model produced it. Kept per message, so switching models cannot make it lie. */
   model?: string
+  /**
+   * **What Alexia said about this answer** (§4 G): *Nemotron 3 Super is rate-limited right now —
+   * this answer is from Gemma 4 31B.* Saved in the message's JSON body, so a reload draws it
+   * again; `toWire()` sends only what a provider reads, so a note never reaches a model.
+   */
+  notes?: string[]
 }
 
 export interface Session {

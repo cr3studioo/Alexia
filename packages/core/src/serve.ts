@@ -2381,6 +2381,10 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
         on: {
           delta: (delta) => say({ delta }),
           note: (note) => say({ note }),
+          // Said twice (§4 G): the screen shows it for three seconds and keeps it on the answer.
+          switch: (event) => say({ switch: event }),
+          // The charge line, in a place of its own above the message box.
+          paid: (line) => say({ paid: line }),
           // The words on screen since the turn began came from a model that stopped partway;
           // the answer is starting again on the next one (D155).
           restart: () => say({ restart: true }),

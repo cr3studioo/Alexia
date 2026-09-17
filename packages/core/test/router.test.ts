@@ -19,6 +19,7 @@ import {
   type Choice,
   type Pins,
   type Strike,
+  type Switch,
   type World,
 } from '../src/router.js'
 import { CORE, memorySecrets } from '../src/secrets.js'
@@ -1808,4 +1809,29 @@ test('a model a gateway only kept alive is named with the time it was given, and
   const kept = failed(new ProviderError(504, 'kept', 'kept'), { model: free('nvidia/ultra', { name: 'Nemotron 3 Ultra' }), provider: gateway })
   expect(kept).toMatchObject({ reach: 'model', outcome: 'slow' })
   expect(kept?.says).toBe('Nemotron 3 Ultra did not answer in 120 seconds, though Kilo Gateway kept the connection open')
+})
+
+test('a switch into a paid model is said twice: the charge line in its place, and the switch as an event (§4 G)', async () => {
+  const { one, two, keys, ledger } = await scripted()
+  refuse = new Set(['free/text'])
+  const switches: Switch[] = []
+  const paidLines: string[] = []
+  const notes: string[] = []
+  const answer = await send(
+    [
+      { model: freeText, provider: one },
+      { model: cheapPaid, provider: two },
+    ],
+    { messages: asked('hello'), maxTokens: 200 },
+    ledger,
+    keys,
+    { onNote: (line) => notes.push(line), onSwitch: (event) => switches.push(event), onPaid: (line) => paidLines.push(line) },
+  )
+  expect(answer.model.id).toBe('paid/small')
+  expect(paidLines).toEqual(['The free models are used up, so this one goes to paid/small, which costs money.'])
+  // Where the switch has a place of its own it is still said, rather than folded into the charge.
+  expect(switches.map((one) => [one.from, one.to])).toEqual([[['free/text'], 'paid/small']])
+  expect(notes).toEqual([])
+  refuse = new Set()
+  ledger.close()
 })

@@ -24,6 +24,8 @@ interface Turn {
   role: 'system' | 'user' | 'assistant' | 'tool'
   content: string
   model?: string
+  /** What Alexia said about this answer — a switch to another model — kept with it (§4 G). */
+  notes?: string[]
 }
 
 /**
@@ -145,6 +147,38 @@ function bubble(kind: 'user' | 'assistant' | 'refusal', content = ''): HTMLEleme
 function say(line?: string): void {
   note.textContent = line ?? ''
   note.hidden = !line
+}
+
+const paidNote = document.querySelector<HTMLElement>('#paid-note')!
+const popup = document.querySelector<HTMLElement>('#popup')!
+
+/** The line before a charge, where nothing else writes (§4 G). Empty clears it. */
+function warnPaid(line?: string): void {
+  paidNote.textContent = line ?? ''
+  paidNote.hidden = !line
+}
+
+/** **How long a switch is on screen as a pop-up** (D160): long enough to read one sentence. */
+const POPUP_MS = 3000
+let popupTimer: number | undefined
+
+/** A switch, said for three seconds; a newer one replaces it and starts its own three (§4 G). */
+function pop(line: string): void {
+  window.clearTimeout(popupTimer)
+  popup.textContent = line
+  popup.hidden = false
+  popupTimer = window.setTimeout(() => {
+    popup.hidden = true
+    popup.textContent = ''
+  }, POPUP_MS)
+}
+
+/** A switch kept on its answer: a small line above the words, drawn again from history (§4 G). */
+function switchLine(line: string): HTMLElement {
+  const element = document.createElement('p')
+  element.className = 'switch-line'
+  element.textContent = line
+  return element
 }
 
 // ---- attachments (D-documents) ------------------------------------------------------------
@@ -933,7 +967,9 @@ function paint(state: State): void {
   wearing()
   for (const turn of state.messages) {
     if (turn.role !== 'user' && turn.role !== 'assistant') continue
-    bubble(turn.role, turn.content)
+    const drawn = bubble(turn.role, turn.content)
+    // The switch lines that were said when this answer was written, above its words (§4 G).
+    if (turn.notes !== undefined && turn.notes.length > 0) drawn.prepend(...turn.notes.map(switchLine))
     if (turn.model) modelBadge.textContent = turn.model
   }
   /**
@@ -1498,6 +1534,8 @@ async function respond(
    * turn that is withdrawn (`restart`) takes back its own words and leaves the earlier ones.
    */
   let turnFrom = 0
+  // A new question: a charge line from the last answer is not about this one (§4 G).
+  warnPaid()
 
   const response = await fetch('/api/chat', {
     method: 'POST',
@@ -1532,8 +1570,16 @@ async function respond(
         started = false
       }
     }
-    // The one plain line before a charge, and the monthly warning, land in the same place.
+    // The monthly warning and core's other plain lines land in the same place.
     if (typeof event.note === 'string') say(event.note)
+    // Another model is answering: said for three seconds, and kept above the words (§4 G).
+    const switched = event.switch as { says?: string } | undefined
+    if (switched !== undefined && typeof switched.says === 'string') {
+      pop(switched.says)
+      answer.insertBefore(switchLine(switched.says), prose)
+    }
+    // The charge line, in its own place, where no other line can replace it (§4 G).
+    if (typeof event.paid === 'string') warnPaid(event.paid)
     const attached = event.attached as { name: string; text?: string; refusal?: string }[] | undefined
     if (attached && said) showRead(said, attached)
     if (typeof event.ask === 'string') askPermission(event.ask)

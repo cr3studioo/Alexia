@@ -144,7 +144,15 @@
             </div>
           </div>
 
+          <!-- The line before a charge, in a place of its own (§4 G): a switch or a file note
+               in the line below must never be what takes a price off the screen. -->
+          <p id="paid-note" hidden></p>
+
           <p id="note" hidden></p>
+
+          <!-- A switch to another model, said for three seconds (§4 G). It is also kept on the
+               answer as a line, so the pop-up is the notice and never the record. -->
+          <p id="popup" role="status" aria-live="polite" hidden></p>
 
           <!-- Typing `/` lists what there is, with a line each. Nobody is going to read
                documentation to find a command. -->
