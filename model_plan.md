@@ -936,6 +936,36 @@ with only OpenRouter able, background asks at 24 of 50 and stops at 25 with the 
 list included; the chat at 49; and over `/api/action`, a plugin's request during its own press
 answers at 49 of 50, which fails when every plugin request is made background).
 
+**Built 2026-09-17 (D169)**, H, in core and the shell. Where the build differs from the text above:
+
+- **`World.cross`** carries the switch into the router: the switch on, or *Allow* pressed in this
+  conversation. `false` pauses; absent keeps the old rule, where the allowance alone decides.
+- **A pause needs a paid model that could answer.** One behind a key refused during the same answer
+  is no reason to offer *Allow*, since it would collect the same refusal.
+- **The reason** is one of: *The free models are used up.* · *No free model can be given a picture.*
+  · *This conversation is longer than any free model can read.* · *No free model can use tools.* ·
+  *There is no free model to ask.* · *No free model can do this.*
+- **Switch on, day's amount spent** stops as the allowance did, and the sentence now says so —
+  *today's $1.00 for paid models is spent — raise it under the paid switch* — including when the
+  free rungs were asked first and failed, which used to name only the busy free model.
+- **Allow sends the amount** typed beside it when the day's amount is $0, and sets `caps.daily`;
+  the switch on the Models tab then shows that amount.
+- **Consent is kept per conversation** rather than cleared when another is opened, so going back
+  to a conversation where it was allowed finds it still allowed; a phone's conversation is its own.
+- **Telegram at $0 a day** is not asked: a yes could buy nothing, so the sentence says where to set
+  an amount. The ten minutes is `ServeOptions.allowWaitMs`, for tests.
+- **Found: `/api/chat` kept the running task after a refusal.** It was released only when a run ended
+  normally, so after any refusal on screen a task from a phone was refused as *already working*. It
+  is released in a `finally`.
+
+Tests: `paid.test.ts` over `/api/chat` (switch off: paused, nothing billed; *Allow* with an amount
+answers from paid, the same conversation does not pause again, a new one does; switch on: paid
+answers, and with the day spent it stops with the sentence; a phone: yes answers from paid, no
+answer stops after the wait), `router.test.ts` (the pause and its reasons, a picture, the spent
+allowance, the old rule without `cross`), `agent.test.ts` (the old money-question tests, now the
+switch). The shell was driven in headless Chromium: the pause with its amount box, *Allow*, the
+switch under the slider, and the warning above the message box after a reload.
+
 ### Acceptance
 
 - **Cancel.** A plugin asks for sampling with a 1-second timeout, over a provider that never
@@ -1010,6 +1040,8 @@ test is still open, before a public release. Next: §4 G.
 
 **Status 2026-09-17, later still:** §4 F is built (D168). Next: §4 H.
 
+**Status 2026-09-17, end of day:** §4 H is built (D169). Next: §4 I, then J.
+
 1. **§1 steps 1–2**: unpriced is not free, one `available()`. Smallest change, and it closes
    a real billing hole (Requesty) before anything else.
 2. ~~**§3**: failure kinds, the three modes, default timeouts. This is the one people feel on
@@ -1031,7 +1063,7 @@ test is still open, before a public release. Next: §4 G.
 11. ~~**§4 G**: a switch said twice. Needs nothing above except A, so it can move earlier.~~ Done
     2026-09-17 (D167).
 12. ~~**§4 F**: free limits per account.~~ Done 2026-09-17 (D168).
-13. **§4 H**: crossing into paid, then Telegram's question.
+13. ~~**§4 H**: crossing into paid, then Telegram's question.~~ Done 2026-09-17 (D169).
 14. **§4 I**: the bad-answer button, with *that wasn't her* (`plan-personality.md`, improvement 10).
 15. **§4 J**: the hook for later sharing.
 
