@@ -44,6 +44,13 @@ export interface Rung {
    * and a 402 on asking is a refusal the router already handles.
    */
   funded?: boolean
+  /**
+   * **The day's free requests, and the month's calls, where the row rations by either** (§4 F):
+   * what makes a provider *day-limited*, whose second half of the day is kept for the chat. A
+   * per-minute limit alone is not a daily one. Absent is not rationed that way.
+   */
+  dayLimit?: number
+  monthLimit?: number
 }
 
 /** What a provider's key endpoint said about the account, as core keeps it (§4 D). */
@@ -79,6 +86,8 @@ export function remaining(store: Store, provider: Provider, at: number = Date.no
   return {
     provider,
     ...(funded !== undefined && { funded }),
+    ...(perDay !== undefined && { dayLimit: perDay }),
+    ...(provider.callsPerMonth !== undefined && { monthLimit: provider.callsPerMonth }),
     minute: lower(provider.rpm === undefined ? Infinity : provider.rpm - used.minute, told.minute),
     day: lower(perDay === undefined ? Infinity : perDay - used.day, told.day),
     // Counted in calls, because that is the unit the budget is written in. A long request
@@ -135,3 +144,12 @@ export async function usable(
 export function sent(store: Store, provider: Provider, at: number = Date.now()): void {
   store.recordRequest(provider.id, at)
 }
+
+/**
+ * **Whether a background request may still use this provider's free requests** (§4 F): a provider
+ * with no daily or monthly ration always, and one with a ration only while more than half of it is
+ * left — by the ledger or by what the provider said, whichever is lower, which is what `day` and
+ * `month` already are. The second half is the chat's.
+ */
+export const underHalf = (rung: Rung): boolean =>
+  (rung.dayLimit === undefined || rung.day > rung.dayLimit / 2) && (rung.monthLimit === undefined || rung.month > rung.monthLimit / 2)

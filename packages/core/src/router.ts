@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { PLANNER, routes, stature, type Model } from './catalog.js'
 import { OLLAMA } from './ollama.js'
-import { sent, spent, type Rung } from './pool.js'
+import { sent, spent, underHalf, type Rung } from './pool.js'
 import type { Judgement, Health } from './health.js'
 import { anonymous, chat, PATIENCE, ProviderError, PROVIDERS, type ChatRequest, type Provider, type Usage } from './provider.js'
 import { redact, summarise } from './redact.js'
@@ -183,6 +183,15 @@ export interface Ask {
    * *a rule nobody can see is a rule nobody can disagree with.*
    */
   modality?: readonly string[]
+  /**
+   * **Nobody at the screen is waiting on this** (D160, §4 F): a plugin's task, a plugin's request,
+   * a daily test — never the chat, and never a button somebody pressed and is watching (Adapt,
+   * D161). A free allowance is shared by every free model on an account, so the chat being
+   * watched gets first claim on it: background asks providers with no daily ration and this Mac
+   * first, a day-limited provider only when nothing else can do the job, and then only the first
+   * half of its day.
+   */
+  background?: boolean
 }
 
 export interface Choice {
@@ -376,6 +385,22 @@ export function route(ask: Ask, pins: Pins, world: World): Verdict {
    * refuse a pin — only a reason not to ask while something else can answer.
    */
   const aside = (c: Choice): boolean => world.health?.get(`${c.provider.id}\n${c.model.id}`)?.aside !== undefined
+  /** A free choice on a provider that rations its day or month — the requests the chat has first claim to (§4 F). */
+  const dayLimited = (c: Choice): boolean => {
+    const rung = connected.get(c.provider.id)
+    return !paid(c.model.tier) && c.model.tier !== 'T0' && rung !== undefined && (rung.dayLimit !== undefined || rung.monthLimit !== undefined)
+  }
+  /** Whether background may take this choice at all: not day-limited, or still in the first half of its day. */
+  const keptFor = (c: Choice): boolean => {
+    const rung = connected.get(c.provider.id)
+    return !dayLimited(c) || rung === undefined || underHalf(rung)
+  }
+  /** Why background stops when what could answer is the chat's half: named by provider. */
+  const chatsHalf = (held: readonly Choice[]): string => {
+    const names = [...new Set(held.filter((c) => !keptFor(c)).map((c) => c.provider.name))]
+    const said = names.length <= 1 ? (names[0] ?? 'those') : `${names.slice(0, -1).join(', ')} and ${names.at(-1) ?? ''}`
+    return `the rest of today's ${said} requests are kept for your chat`
+  }
 
   if (pins.model) {
     // The user named one. Their choice, including past a flag nobody has verified — and past
@@ -387,6 +412,10 @@ export function route(ask: Ask, pins: Pins, world: World): Verdict {
     // floor ahead of the person's own OpenRouter key on this machine. Still one choice: a pin
     // never falls back, not even to the same model somewhere else.
     const [named] = everything.filter((c) => c.model.id === pins.model).sort(listed([pins.model], tired, ranked, aside))
+    // A pin is held to the same half for background (§4 F): somebody chose it, but not for this.
+    if (named !== undefined && ask.background === true && !keptFor(named)) {
+      return { ok: false, mode: 'pinned', why: chatsHalf([named]) }
+    }
     return named ?
         { ok: true, mode: 'pinned', choices: [named] }
       : { ok: false, mode: 'pinned', why: `${pins.model} is not available right now.` }
@@ -476,8 +505,8 @@ export function route(ask: Ask, pins: Pins, world: World): Verdict {
    * the same filters with the line open and see. Inferring it from which filter emptied the
    * list gets the sentence wrong, and the sentence is the half the user meets.
    */
-  const fitting = (spend: Spend, sidegrades = false): Choice[] =>
-    pool
+  const fitting = (spend: Spend, sidegrades = false, from: readonly Choice[] = pool): Choice[] =>
+    from
       .filter((c) => rank(c.model.tier) >= rank(floor))
       .filter((c) => ask.above === undefined || rank(c.model.tier) > rank(ask.above))
       .filter((c) => !needsTools || c.model.supportsTools)
@@ -510,7 +539,19 @@ export function route(ask: Ask, pins: Pins, world: World): Verdict {
         : ranked,
       )
 
-  const fitted = fitting(spend)
+  /**
+   * **The chat first** (§4 F). Background asks what has no daily ration — and this Mac — first; only
+   * when that fits nothing does a day-limited provider come in, and then only in the first half of
+   * its day. A list keeps its own order and is held to the same half.
+   */
+  const everyone = fitting(spend)
+  const background = ask.background === true
+  const unrationed = background && mode === 'automatic' ? fitting(spend, false, pool.filter((c) => !dayLimited(c))) : []
+  const fitted =
+    !background ? everyone
+    : unrationed.length > 0 ? unrationed
+    : everyone.filter(keptFor)
+  if (background && fitted.length === 0 && everyone.length > 0) return { ok: false, mode, why: chatsHalf(everyone) }
   /**
    * **Set aside is skipped while anything else fits, and asked when nothing does** (D161) — the
    * reading the ledger already gets: asking and collecting a refusal beats refusing on a guess.

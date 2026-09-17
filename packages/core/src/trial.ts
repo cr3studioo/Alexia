@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { CORE, type SecretStore } from './secrets.js'
+import { underHalf } from './pool.js'
 import { paid, send, type Choice, type World } from './router.js'
 import { SPANS, type Store, type Try } from './store.js'
 
@@ -51,6 +52,8 @@ export function due(world: World, tries: readonly Try[]): Choice[] {
     .flatMap((model): Choice[] => {
       const rung = rungs.get(model.provider)
       if (rung === undefined || paid(model.tier)) return []
+      // A test is the lowest claim on free requests (§4 F): never from the half of a day kept for the chat.
+      if (!underHalf(rung)) return []
       const judged = world.health?.get(`${model.provider}\n${model.id}`)
       if (judged === undefined) return []
       const aside = judged.aside !== undefined && !(judged.aside === 'needs a key' && rung.keyed !== true)

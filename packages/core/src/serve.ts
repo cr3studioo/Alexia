@@ -454,9 +454,13 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
       const typed = lastAsked === undefined ? '' : textOf(lastAsked).trim()
       if (!typed.includes('\n') && /^\/[a-z][a-z0-9.-]*(?:\s|$)/i.test(typed)) return asCommand(pluginId, typed)
 
-      if (params._meta?.[TOOLS_META] === true) return asTask(pluginId, asked, signal)
+      if (params._meta?.[TOOLS_META] === true) return asTask(pluginId, asked, signal, background(pluginId))
 
-      const verdict = route({ messages: asked, shape: shapeOf({ messages: asked }) }, pins(store), await world())
+      const verdict = route(
+        { messages: asked, shape: shapeOf({ messages: asked }), ...(background(pluginId) && { background: true }) },
+        pins(store),
+        await world(),
+      )
       if (!verdict.ok) throw new Error(verdict.why)
       sampling += 1
       const answer = await send(
@@ -619,6 +623,15 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
 
   /** A plugin's sampling requests on their way — answers somebody may be waiting for (§4 E). */
   let sampling = 0
+
+  /**
+   * **Plugins whose button somebody has just pressed** (§4 F, D161). A request a plugin makes while
+   * its own press is in flight is somebody watching a progress bar — Adapt is the case — and counts
+   * as the chat for free requests; anything else a plugin asks for is background. Without a run id
+   * on a press (G13's build, not yet), this is how core tells the two apart.
+   */
+  const pressing = new Map<string, number>()
+  const background = (pluginId: string): boolean => (pressing.get(pluginId) ?? 0) === 0
 
   /**
    * **Today's test messages** (§4 E): a minute after start, and on every six-hour tick. Never while
@@ -984,7 +997,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     return { role: 'assistant', model: '', content: { type: 'text', text: ran.note }, stopReason: 'endTurn' }
   }
 
-  async function asTask(pluginId: string, messages: Message[], gaveUp?: AbortSignal): Promise<CreateMessageResult> {
+  async function asTask(pluginId: string, messages: Message[], gaveUp?: AbortSignal, behind = true): Promise<CreateMessageResult> {
     if (task) throw new Error('Alexia is already working on something. Try again when it has finished.')
     const started = [...messages].reverse().find((m) => m.role === 'user')
     const text = started === undefined ? '' : textOf(started)
@@ -1014,6 +1027,8 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
         // The spend lands on the plugin that asked, exactly as a plain `sampling` call's
         // does — and it is a run now, so it is a paid path like any other task (G12, D96).
         plugin: pluginId,
+        // A message from a phone is not the chat on screen: its free requests come second (§4 F).
+        ...(behind && { background: true }),
         paidAllowed: !month.stop,
         maxSteps: limitsNow().steps,
         // The stop button, and the plugin that started this giving up: either one ends the task.
@@ -1899,9 +1914,11 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
       // A press that does not fit its declaration — a row action with no row, or a plain
       // button handed one — is a sentence rather than a 500. The screen shows it beside the
       // control, which is where somebody can do something about it.
+      pressing.set(plugin, (pressing.get(plugin) ?? 0) + 1)
       const result = await plugins
         .action(plugin, press.key ?? '', undefined, press.row)
         .catch((error: unknown) => ({ ok: false, said: error instanceof Error ? error.message : String(error) }))
+        .finally(() => pressing.set(plugin, (pressing.get(plugin) ?? 1) - 1))
       response.writeHead(200, { 'content-type': 'application/json' })
       response.end(JSON.stringify({ ...result, panes: await plugins.panes() }))
       return

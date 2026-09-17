@@ -190,6 +190,8 @@ export interface MoneyConsent {
 export interface RunOptions {
   /** The conversation, ending with the line the user just sent. */
   messages: Message[]
+  /** Nobody at the screen is waiting: a plugin's task (§4 F). The chat keeps first claim on free requests. */
+  background?: boolean
   tools: Tooling
   pins: Pins
   /** Re-asked every step: a tier can be exhausted mid-task, which is the whole point. */
@@ -504,6 +506,7 @@ export async function run(options: RunOptions): Promise<RunResult> {
         messages,
         shape: planning,
         above: answered,
+        ...(options.background === true && { background: true }),
         ...(named.length > 0 && { tools: named }),
         ...(seeing.length > 0 && { modality: seeing }),
       }
@@ -521,6 +524,7 @@ export async function run(options: RunOptions): Promise<RunResult> {
     const plain: Ask = {
       messages,
       shape,
+      ...(options.background === true && { background: true }),
       ...(named.length > 0 && { tools: named }),
       ...(seeing.length > 0 && { modality: seeing }),
     }
