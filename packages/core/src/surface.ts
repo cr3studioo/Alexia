@@ -37,6 +37,8 @@ import { asText, spentOn, type Trace } from './trace.js'
 
 export interface Source {
   rows(): Promise<Row[]>
+  /** One line above the rows, when there is something to say — the Models tab's news (§4 D). */
+  note?(): string | undefined
   /** What expands under one row. Text, and it is read rather than computed. */
   detail?(id: string): Promise<string>
 }
@@ -64,6 +66,8 @@ export interface SurfaceOptions {
   connected(): Promise<ReadonlySet<string>>
   /** The provider rows this core reads, for a provider's name where a row has only its id. */
   providers: readonly Provider[]
+  /** What the last fetch of each list added, as one line, or nothing (§4 D). */
+  news?(): string | undefined
   /**
    * What the router can see right now — the same gathering the chat uses.
    *
@@ -512,6 +516,7 @@ export function sources(options: SurfaceOptions): Record<string, Source> {
 
         return [...out, ...paidRows]
       },
+      note: () => options.news?.(),
       detail: async (id) => {
         const [providerId, modelId] = id.includes('\n') ? (id.split('\n', 2) as [string, string]) : [undefined, id]
         const world = await options.world()

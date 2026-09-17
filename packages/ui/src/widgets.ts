@@ -737,10 +737,13 @@ function table(host: WidgetHost, declared: Rendered): HTMLElement {
   /** The last thing an action said, kept across the redraw that action asked for. */
   let announced = ''
 
+  /** Whether the line above the rows is core's news rather than empty, so a repaint keeps it. */
+  let announcedNews = false
+
   /** One `<tbody>` per group, or one for everything when nothing groups it. */
   function paint(): void {
     const visible = matching()
-    said.hidden = announced === '' && rows.length > 0 && visible.length > 0
+    said.hidden = announced === '' && !announcedNews && rows.length > 0 && visible.length > 0
     if (rows.length > 0 && visible.length === 0) {
       said.hidden = false
       said.textContent = 'Nothing matches that.'
@@ -804,6 +807,8 @@ function table(host: WidgetHost, declared: Rendered): HTMLElement {
       rows?: Row[]
       said?: string
       ask?: string
+      /** A line core has to say above its own list — the Models tab's news (§4 D). */
+      note?: string
     }
     if (typeof answer.ask === 'string') {
       // The same two steps an `action` takes. A list that needs permission asks for it in
@@ -842,9 +847,10 @@ function table(host: WidgetHost, declared: Rendered): HTMLElement {
       said.textContent = announced
       said.hidden = false
     } else {
-      said.className = 'hint'
-      said.textContent = rows.length === 0 ? 'Nothing here yet.' : ''
+      said.className = typeof answer.note === 'string' ? 'hint said-news' : 'hint'
+      said.textContent = rows.length === 0 ? 'Nothing here yet.' : (answer.note ?? '')
     }
+    announcedNews = typeof answer.note === 'string' && rows.length > 0
     paint()
   }
 

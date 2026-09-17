@@ -29,6 +29,12 @@ export interface Provider {
   /** Where its model list lives, relative to `baseUrl`. Not every provider has one. */
   models?: string
   /**
+   * **Its list's `created` means the day the model was added, and it publishes retirement dates**
+   * (`expiration_date`), so the catalog reads both (§4 D). OpenRouter's does; a list whose
+   * `created` is when a vendor trained the model would make every old model look new.
+   */
+  listsDates?: true
+  /**
    * Where this provider publishes **how much the world is using each of its models** — an
    * absolute URL, because it need not sit under `baseUrl` and on the one provider that has
    * it, it does not.
@@ -167,6 +173,7 @@ export const PROVIDERS: Provider[] = [
     // Keyed by `canonical_slug`, which is what the public list calls the same model — 377 of
     // the 396 rows join, and the ones that do not are models nobody has used yet.
     usage: 'https://openrouter.ai/api/frontend/v1/models/find?order=top-weekly',
+    listsDates: true,
     verified: '2026-08-27',
     trainsOnYourData: 'unknown',
     rpm: 20,

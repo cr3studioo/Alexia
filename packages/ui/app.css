@@ -878,6 +878,12 @@ body[data-view='control'] .view:not(#control) {
   margin-top: var(--space-3);
 }
 
+/* News above a list — *1 new free model since 09:15* — said once, in the accent, and gone after
+   the next fetch that adds nothing (§4 D). */
+.said-news {
+  color: var(--chosen);
+}
+
 .table-filter {
   width: 100%;
   max-width: var(--measure-short);

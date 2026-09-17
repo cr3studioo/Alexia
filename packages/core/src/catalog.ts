@@ -190,13 +190,24 @@ export interface Snapshot {
 
 /** What changed since the last fetch. The news line is built from this, and so is the UI. */
 export interface Change {
+  /** New on this provider's list since the last fetch — per provider, since one model is often on two. */
   added: Model[]
   removed: Model[]
+  /**
+   * **Whether this provider's list had been fetched before** (§4 D). On the first fetch every model
+   * is *added*, and none of them is new: a fresh install sees everything at once.
+   */
+  listKnown: boolean
   /** The fetch did not happen: offline, or the provider is having a bad day. Not an error. */
   failed?: string
 }
 
-const DAY = 24 * 60 * 60 * 1000
+/**
+ * **How often the lists are fetched again** (D161): six hours, while the app runs. Providers change
+ * their lists and limits almost daily — OpenRouter's free list gained a model between this Mac's
+ * morning cache and the evening of 2026-09-15 — and nobody should have to import a model by hand.
+ */
+export const POLL_EVERY = 6 * 60 * 60 * 1000
 
 /**
  * Where the line between "small paid" and "frontier" falls, in dollars per million input
@@ -208,7 +219,8 @@ const FRONTIER_USD_PER_MTOK = 1
 /**
  * Bumped whenever {@link parse} learns to read a field it used to drop — at 3 and again at 4
  * to drop a row it used to keep, at 5 to read a second list shape, and at 6 to stop reading a
- * missing price as zero (D154). Both change what a cached snapshot means, and a cache is only as good
+ * missing price as zero (D154), and at 7 to read OpenRouter's `created` and `expiration_date`
+ * (§4 D). Each changes what a cached snapshot means, and a cache is only as good
  * as the reader that filled it: every machine already holds five negative-priced rows that
  * out-sort the free tier, and they leave on the next poll rather than on the next reinstall.
  *
@@ -217,7 +229,7 @@ const FRONTIER_USD_PER_MTOK = 1
  * providers, and a stamp they cannot see the value of is a barrier that quietly falls over
  * the next time this number changes.
  */
-export const PARSER = 6
+export const PARSER = 7
 
 /**
  * **The keyless floor's models, written down rather than fetched.**
@@ -411,15 +423,17 @@ export class Catalog {
   }
 
   /**
-   * Fetch, unless what is cached is younger than `maxAge` — which is the daily poll, minus
-   * a timer nothing owns yet. The app loop calls this on a schedule from M1-10.
+   * Fetch, unless what is cached is younger than `maxAge` — six hours by default, which is the
+   * poll `serve()` runs on a timer (§4 D) as well as at startup and when the Models tab opens.
    *
    * A fetch that fails leaves the cache exactly as it was and says why in `failed`. Being
    * offline is an ordinary state for this, not an error worth throwing at anyone.
    */
-  async refresh(provider: Provider, maxAge = DAY, key?: string): Promise<Change> {
-    if (!provider.models) return { added: [], removed: [], failed: `${provider.name} has no model list` }
-    if (Date.now() - this.fetchedFrom(provider.id) < maxAge) return { added: [], removed: [] }
+  async refresh(provider: Provider, maxAge = POLL_EVERY, key?: string): Promise<Change> {
+    /** Rows of this provider were fetched before, so what arrives now that was not there is new. */
+    const listKnown = this.#snapshot.models.some((m) => m.provider === provider.id)
+    if (!provider.models) return { added: [], removed: [], listKnown, failed: `${provider.name} has no model list` }
+    if (Date.now() - this.fetchedFrom(provider.id) < maxAge) return { added: [], removed: [], listKnown }
 
     let models: Model[]
     try {
@@ -447,16 +461,19 @@ export class Catalog {
       if (!response.ok) throw new Error(`${response.status}`)
       models = parse(await response.json(), provider, await popularity(provider))
     } catch (error) {
-      return { added: [], removed: [], failed: `could not reach ${provider.name}: ${String(error)}` }
+      return { added: [], removed: [], listKnown, failed: `could not reach ${provider.name}: ${String(error)}` }
     }
     // An empty list is a shape change, not a world where no models exist. Keep the cache.
     if (models.length === 0) {
-      return { added: [], removed: [], failed: `${provider.name} returned nothing usable` }
+      return { added: [], removed: [], listKnown, failed: `${provider.name} returned nothing usable` }
     }
 
-    const before = new Map(this.#snapshot.models.map((m) => [m.id, m]))
+    // This provider's rows only, on both sides: a model OpenRouter adds is new on OpenRouter
+    // whether or not Kilo already served it, and each copy is judged on its own (D161).
+    const before = new Map(this.#snapshot.models.filter((m) => m.provider === provider.id).map((m) => [m.id, m]))
     const after = new Map(models.map((m) => [m.id, m]))
     const change: Change = {
+      listKnown,
       added: models.filter((m) => !before.has(m.id)),
       // Only this provider's rows: another provider's models are not gone because this
       // one did not mention them.
@@ -479,9 +496,20 @@ export class Catalog {
 /**
  * The change, as a sentence. Free models first, because that is the one people want to hear
  * about — and nothing at all when nothing happened, so this can be called unconditionally.
+ *
+ * **With `named`, the Models tab's line** (§4 D): only free models, each with its provider, and
+ * only when the list was known before — the first fetch on a fresh install is not four hundred
+ * new models. *1 new free model since 09:15: GLM 5.2 on OpenRouter. Not tried yet.*
  */
-export function news(change: Change): string | undefined {
+export function news(change: Change, named?: { provider: string; since: string }): string | undefined {
   const free = change.added.filter((m) => m.tier === 'T1')
+  if (named !== undefined) {
+    if (!change.listKnown || free.length === 0) return undefined
+    const shown = free.slice(0, 3).map((m) => m.name)
+    const more = free.length - shown.length
+    const names = more > 0 ? `${shown.join(', ')} and ${String(more)} more` : shown.join(' and ')
+    return `${String(free.length)} new free model${free.length === 1 ? '' : 's'} since ${named.since}: ${names} on ${named.provider}. Not tried yet.`
+  }
   const [count, kind] = free.length > 0 ? [free.length, 'free '] : [change.added.length, '']
   if (count === 0) return undefined
   return `${count} new ${kind}model${count === 1 ? ' is' : 's are'} available.`
@@ -526,6 +554,9 @@ function parse(payload: unknown, provider: Provider, weekly: ReadonlyMap<string,
       /** How much it can produce. Zero is a model that does not answer in words at all. */
       max_completion_tokens?: unknown
       pricing?: { prompt?: unknown; completion?: unknown }
+      /** OpenRouter's: when it was added (seconds), and when it stops being served (a date). */
+      created?: unknown
+      expiration_date?: unknown
       /** Requesty's names for the same two numbers, per token. Its `pricing` is a tier table. */
       input_price?: unknown
       output_price?: unknown
@@ -607,6 +638,13 @@ function parse(payload: unknown, provider: Provider, weekly: ReadonlyMap<string,
         // Requesty and Navy say it in a flag of their own; a flag that is not `true` is not a yes.
         supportsTools: params.includes('tools') || entry.supports_tool_calling === true || entry.supports_tools === true,
         modality: Array.isArray(modalities) ? modalities.map(String) : ['text'],
+        // Only where the row says the list means it (§4 D): elsewhere `created` is a training date.
+        ...(provider.listsDates === true && typeof entry.created === 'number' && entry.created > 0 && {
+          created: entry.created < 1e12 ? entry.created * 1000 : entry.created,
+        }),
+        ...(provider.listsDates === true &&
+          typeof entry.expiration_date === 'string' &&
+          Number.isFinite(Date.parse(entry.expiration_date)) && { expires: Date.parse(entry.expiration_date) }),
         ...(typeof entry.canonical_slug === 'string' &&
           weekly.has(entry.canonical_slug) && { weekly: weekly.get(entry.canonical_slug) }),
         // A moderated endpoint refuses; an unmoderated one does not. A provider that does

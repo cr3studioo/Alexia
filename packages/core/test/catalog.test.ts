@@ -5,7 +5,7 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, expect, test } from 'vitest'
-import { borrow, Catalog, news, routes, SEEDED, sizeOf, type Model } from '../src/catalog.js'
+import { borrow, Catalog, news, POLL_EVERY, routes, SEEDED, sizeOf, type Model } from '../src/catalog.js'
 import { PROVIDERS, type Provider } from '../src/provider.js'
 
 // The catalog is a cache with a diff on it. What is worth testing is the unhappy half:
@@ -109,7 +109,7 @@ test('the cache is what makes it work offline, and a fresh one is not re-fetched
   payload = { data: [entry(), entry({ id: 'qwen/qwen3-30b:free' })] }
   const restarted = new Catalog(path)
   expect(restarted.fetched.map((m) => m.id)).toEqual(['qwen/qwen3-8b:free'])
-  expect(await restarted.refresh(provider)).toEqual({ added: [], removed: [] })
+  expect(await restarted.refresh(provider)).toEqual({ added: [], removed: [], listKnown: true })
   expect(restarted.fetchedAt).toBeGreaterThan(0)
 
   // And with the provider unreachable, the cached list is still the list.
@@ -486,4 +486,60 @@ test('the catalog lends the figure when it is read, and never writes a borrowed 
   expect(catalog.fetched.find((m) => m.provider === 'borrower')?.weekly).toBeUndefined()
   const { readFileSync } = await import('node:fs')
   expect(readFileSync(path, 'utf8')).not.toContain('weeklyFrom')
+})
+
+// ---- Keeping it current (model_plan.md §4 D) --------------------------------------------------
+
+test('the lists are fetched again after six hours and not after five', async () => {
+  const path = file()
+  payload = { data: [entry()] }
+  const catalog = new Catalog(path)
+  await catalog.refresh(provider)
+  // From the fetch's own stamp, not from a moment before it: six hours to the millisecond.
+  const started = catalog.fetchedFrom(provider.id)
+
+  payload = { data: [entry(), entry({ id: 'z-ai/glm-5.2:free', name: 'GLM 5.2' })] }
+  const at = (hours: number): void => {
+    Date.now = () => started + hours * 60 * 60 * 1000
+  }
+  const real = Date.now
+  try {
+    at(5)
+    expect((await catalog.refresh(provider)).added).toEqual([])
+    at(6)
+    const later = await catalog.refresh(provider)
+    expect(later.added.map((m) => m.id)).toEqual(['z-ai/glm-5.2:free'])
+    expect(later.listKnown).toBe(true)
+    // The line the Models tab shows, once, and only for a list that was known before.
+    expect(news(later, { provider: 'OpenRouter', since: '09:15' })).toBe('1 new free model since 09:15: GLM 5.2 on OpenRouter. Not tried yet.')
+    expect(news({ ...later, listKnown: false }, { provider: 'OpenRouter', since: '09:15' })).toBeUndefined()
+  } finally {
+    Date.now = real
+  }
+  expect(POLL_EVERY).toBe(6 * 60 * 60 * 1000)
+})
+
+test('added is per provider, and only a list that says so has its dates read', async () => {
+  const path = file()
+  const other: Provider = { ...provider, id: 'other', name: 'Other' }
+  payload = { data: [entry()] }
+  const catalog = new Catalog(path)
+  const first = await catalog.refresh(other)
+  // The first fetch of a list is everything at once, and nothing in it is new.
+  expect(first.listKnown).toBe(false)
+
+  // The same model on a second provider is new there, whoever else serves it.
+  const second = await catalog.refresh(provider)
+  expect(second.added.map((m) => `${m.id}@${m.provider}`)).toEqual(['qwen/qwen3-8b:free@test'])
+
+  payload = { data: [entry({ created: 1_789_000_000, expiration_date: '2026-09-30' })] }
+  expect((await catalog.refresh(provider, 0)).added).toEqual([])
+  expect(catalog.fetched.find((m) => m.provider === 'test')).not.toHaveProperty('created')
+
+  const dated: Provider = { ...provider, id: 'dated', listsDates: true }
+  await catalog.refresh(dated)
+  expect(catalog.fetched.find((m) => m.provider === 'dated')).toMatchObject({
+    created: 1_789_000_000_000,
+    expires: Date.parse('2026-09-30'),
+  })
 })

@@ -19,7 +19,7 @@ import {
   type Saved,
   type Upload,
 } from './attach.js'
-import { Catalog } from './catalog.js'
+import { Catalog, news, POLL_EVERY, type Change } from './catalog.js'
 import { asRuling, counted, freshTally, ModelChecker, type Tally } from './checker.js'
 import { commands, pins, type Ran, run as runCommand } from './commands.js'
 import { preauthorise, record } from './consent.js'
@@ -238,14 +238,49 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
   // public, which is what lets first run show what is free before anybody has pasted a key,
   // and it is what lets the Models tab show what a key would get you. A provider that is
   // unreachable, or that wants a key for its list, leaves the cache exactly as it was.
+  /**
+   * **What the last fetch of each provider's list added**, as the Models tab's news line (§4 D):
+   * one line per provider, replaced by that provider's next fetch — so a model added between two
+   * fetches is news once, and a fetch that adds nothing clears it.
+   */
+  const headlines = new Map<string, string>()
+  /**
+   * Fetch one provider's list — when it has aged out, or at once with `maxAge` 0 — and write down
+   * what changed: first sightings and departures into the record, and the news line.
+   */
+  const fetchList = async (provider: Provider, maxAge?: number, key?: string): Promise<Change> => {
+    const since = catalog.fetchedFrom(provider.id)
+    const change = await catalog.refresh(provider, maxAge, key ?? (await secrets.get(CORE, keyOf(provider)).catch(() => undefined)))
+    // Declined as fresh, or failed: nothing was fetched, so nothing changed.
+    if (change.failed !== undefined || catalog.fetchedFrom(provider.id) === since) return change
+    store.recordSeen(provider.id, {
+      added: change.added.map((model) => model.id),
+      removed: change.removed.map((model) => model.id),
+      listKnown: change.listKnown,
+    })
+    const line = news(change, {
+      provider: provider.name,
+      since: new Date(since).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }),
+    })
+    if (line === undefined) headlines.delete(provider.id)
+    else headlines.set(provider.id, line)
+    return change
+  }
   const poll = async (provider: Provider): Promise<void> => {
-    void (await catalog.refresh(provider, undefined, await secrets.get(CORE, keyOf(provider)).catch(() => undefined)))
+    void (await fetchList(provider))
   }
   /** Every provider, if its own list has aged out. Startup calls it; so does the Models tab. */
   const pollAll = (): void => {
     for (const provider of providers) void poll(provider)
   }
   pollAll()
+  /**
+   * **Every six hours while the app runs** (D161), which is how the lists stay current without
+   * anybody opening the Models tab. A tick that comes late after the machine slept simply polls:
+   * each provider's own age decides, not the timer. Cleared on close.
+   */
+  const ticking = setInterval(pollAll, POLL_EVERY)
+  ticking.unref()
 
   /**
    * The conversation on screen (M8-2), and the reason it is a variable.
@@ -623,7 +658,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
    * reason for that on a list that needs a key is the key.
    */
   const connectedNow = async (provider: Provider, key: string): Promise<string> => {
-    const fetched = catalog.refresh(provider, 0, key)
+    const fetched = fetchList(provider, 0, key)
     const waited = await Promise.race([
       fetched,
       new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), LIST_WAIT).unref()),
@@ -687,6 +722,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
 
   const surface = {
     skills, tooling, plugins, skillsDir, trace, dataDir: root, store, catalog, connected, providers, world,
+    news: () => (headlines.size === 0 ? undefined : [...headlines.values()].join(' ')),
     refresh: pollAll,
     session: () => session,
     openSession: (id: number) => {
@@ -1816,7 +1852,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
         const source = ours[asked.key ?? '']
         const answer =
           source === undefined ? { said: `There is no list called "${asked.key ?? ''}".` }
-          : url.pathname === '/api/rows' ? { rows: await source.rows() }
+          : url.pathname === '/api/rows' ? { rows: await source.rows(), ...(source.note?.() !== undefined && { note: source.note() }) }
           : { text: (await source.detail?.(asked.row ?? '')) ?? 'There is nothing more to say about that.' }
         response.writeHead(200, { 'content-type': 'application/json' })
         response.end(JSON.stringify('said' in answer ? { ok: false, ...answer } : { ok: true, ...answer }))
@@ -2411,6 +2447,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     token,
     store,
     close: async () => {
+      clearInterval(ticking)
       await new Promise<void>((resolve) => server.close(() => resolve()))
       await plugins.stop()
       store.close()

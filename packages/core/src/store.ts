@@ -779,7 +779,36 @@ export class Store {
       .all(at - STRIKES_KEPT, ...struck) as unknown as { provider: string; model: string; at: number; outcome: Outcome }[]
   }
 
-  /** Every model this machine has seen on a provider's list (§4 D writes them; empty until then). */
+  /**
+   * **What one fetch of a provider's list changed** (§4 D): a model that arrived is first seen now
+   * — unless it was seen before, in which case it has only come back and loses its *gone* — and a
+   * model that left is gone now. `listKnown` says whether the list had been fetched before, which
+   * is what separates *added today* from *everything, on the first fetch of a fresh install*.
+   */
+  recordSeen(provider: string, change: { added: readonly string[]; removed: readonly string[]; listKnown: boolean }, at: number = Date.now()): void {
+    this.transaction(() => {
+      for (const model of change.added) {
+        this.#db
+          .prepare(
+            'INSERT INTO seen (provider, model, first_seen, list_known, gone_at) VALUES (?, ?, ?, ?, NULL)' +
+              ' ON CONFLICT (provider, model) DO UPDATE SET gone_at = NULL',
+          )
+          .run(provider, model, at, change.listKnown ? 1 : 0)
+      }
+      for (const model of change.removed) {
+        // A model that was on the list before `seen` existed has no first sighting worth
+        // inventing: zero, which is never new.
+        this.#db
+          .prepare(
+            'INSERT INTO seen (provider, model, first_seen, list_known, gone_at) VALUES (?, ?, 0, 1, ?)' +
+              ' ON CONFLICT (provider, model) DO UPDATE SET gone_at = excluded.gone_at',
+          )
+          .run(provider, model, at)
+      }
+    })
+  }
+
+  /** Every model this machine has seen on a provider's list, with when it arrived and whether it left. */
   seen(): Seen[] {
     const rows = this.#db.prepare('SELECT provider, model, first_seen, list_known, gone_at FROM seen').all() as {
       provider: string
