@@ -129,6 +129,8 @@ export interface Rendered {
   detail?: string
   filter?: boolean
   groupBy?: string
+  /** `table`: the order groups are drawn in (`alexia_protocol` 8). The rest follow, alphabetically. */
+  groupOrder?: string[]
   /** `cards`: the `state` that means *not here yet*, drawn dimmed rather than hidden (D120). */
   dim?: string
   /** `image`: one picture rather than a grid — *the thing happening now* rather than *everything*. */
@@ -690,12 +692,17 @@ function table(host: WidgetHost, declared: Rendered): HTMLElement {
   const narrow = (): boolean => window.innerWidth < NARROW
   const shown = (): Column[] => columns.filter((column) => !(narrow() && column.hideNarrow === true))
 
-  /** The filter, over the declared columns only. What is not on screen is not searched. */
+  /**
+   * The filter, over the declared columns only — and a row's `note`, which is drawn under the
+   * first of them. What is not on screen is not searched. Tags are searched by what they say.
+   */
   const matching = (): Row[] => {
     const needle = query.trim().toLowerCase()
     if (needle === '') return rows
-    return rows.filter((row) =>
-      columns.some((column) => String(row[column.key] ?? '').toLowerCase().includes(needle)),
+    return rows.filter(
+      (row) =>
+        columns.some((column) => cellText(row, column.key).toLowerCase().includes(needle)) ||
+        (typeof row.note === 'string' && row.note.toLowerCase().includes(needle)),
     )
   }
 
@@ -768,7 +775,12 @@ function table(host: WidgetHost, declared: Rendered): HTMLElement {
               return into
             }, new Map<string, Row[]>())
             .entries(),
-        ].sort(([a], [b]) => a.localeCompare(b))
+        ].sort(([a], [b]) => {
+          // The author's order first (`alexia_protocol` 8), then alphabetically as it always was.
+          const order = declared.groupOrder ?? []
+          const at = (name: string): number => (order.includes(name) ? order.indexOf(name) : order.length)
+          return at(a) - at(b) || a.localeCompare(b)
+        })
 
     for (const [name, group] of groups) {
       const body = el('tbody')
@@ -1651,6 +1663,25 @@ const MARKS: Record<string, string> = {
   '★': 'is-suggested',
 }
 
+/** How a tag is drawn. Anything else a row sends is read as a fact (`alexia_protocol` 8). */
+const TONES = new Set(['quiet', 'caution', 'danger'])
+
+/** A row's `tags`, as far as they make sense. A field that is not a list is no tags at all. */
+const tagsOf = (value: unknown): { says: string; tone: string }[] =>
+  Array.isArray(value) ?
+    value.flatMap((one) => {
+      if (typeof one === 'string') return [{ says: one, tone: 'quiet' }]
+      if (typeof one !== 'object' || one === null) return []
+      const { says, tone } = one as { says?: unknown; tone?: unknown }
+      if (typeof says !== 'string' || says === '') return []
+      return [{ says, tone: typeof tone === 'string' && TONES.has(tone) ? tone : 'quiet' }]
+    })
+  : []
+
+/** What a cell says, as text: the `tags` column reads as its words, so the filter can find them. */
+const cellText = (row: Row, key: string): string =>
+  key === 'tags' ? tagsOf(row[key]).map((tag) => tag.says).join(' ') : String(row[key] ?? '')
+
 /** One row, its cells, and whatever can be done to it. */
 function rowOf(
   host: WidgetHost,
@@ -1661,7 +1692,17 @@ function rowOf(
 ): DocumentFragment {
   const out = document.createDocumentFragment()
   const line = el('tr')
-  for (const column of columns) {
+  for (const [at, column] of columns.entries()) {
+    if (column.key === 'tags') {
+      // Chips, each in its tone (`alexia_protocol` 8). The tone is a class and never a colour
+      // written here, and a `tags` that is not a list draws nothing rather than its own text.
+      const cell = el('td', 'tags-cell')
+      const list = el('span', 'tags')
+      for (const tag of tagsOf(row[column.key])) list.append(el('span', `tag ${tag.tone}`, tag.says))
+      cell.append(list)
+      line.append(cell)
+      continue
+    }
     const text = String(row[column.key] ?? '')
     const state = MARKS[text.slice(0, 1)]
     const cell = el(
@@ -1669,6 +1710,8 @@ function rowOf(
       [column.align === 'right' ? 'right tabular' : '', state ?? ''].filter(Boolean).join(' ') || undefined,
       text,
     )
+    // A row's own sentence goes under its first cell, where a person reads the name (8).
+    if (at === 0 && typeof row.note === 'string' && row.note !== '') cell.append(el('span', 'row-note', row.note))
     line.append(cell)
   }
   out.append(line)

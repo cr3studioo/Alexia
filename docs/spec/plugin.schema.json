@@ -917,6 +917,16 @@
               "groupBy": {
                 "type": "string",
                 "pattern": "^[a-z][a-z0-9_]*$"
+              },
+              "groupOrder": {
+                "minItems": 1,
+                "maxItems": 16,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64
+                }
               }
             },
             "required": [
@@ -2060,6 +2070,16 @@
                   "groupBy": {
                     "type": "string",
                     "pattern": "^[a-z][a-z0-9_]*$"
+                  },
+                  "groupOrder": {
+                    "minItems": 1,
+                    "maxItems": 16,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 64
+                    }
                   }
                 },
                 "required": [

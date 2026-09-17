@@ -452,6 +452,31 @@ owns the look.
 
 ---
 
+## A row can explain itself
+
+*`alexia_protocol` 8.* A `table` row may carry a `note` — one sentence, drawn under the row — and
+`tags`, a list of chips drawn in a column whose `key` is `tags`.
+
+```jsonc
+{ "id": "kilo-gateway\nnvidia/nemotron-3-super-120b-a12b:free", "name": "NVIDIA: Nemotron 3 Super",
+  "note": "No key needed, so shared and rationed for everyone. After models on your key.",
+  "tags": [{ "says": "busy", "tone": "caution" }, { "says": "keeps your words", "tone": "quiet" }] }
+```
+
+**A tone is one of three, and core owns what each looks like**: `quiet` is a fact, `caution` is
+something to keep an eye on, `danger` is a reason something is not being used. They are the page's
+only colours besides the accent (`docs/design.md`), so a chip in a colour always means look here.
+A tag with any other tone, or a `tags` that is not a list, is drawn as `quiet` text or not at all —
+never as an error, because a row is data and a panel that refuses to draw over one field is worse
+than one that shows the rest.
+
+**A note is a sentence, not a second column.** It sits under the first cell and wraps; it is
+searched by the filter like any column, because *why is this here* is something a person looks
+for. And a table's groups can be put in order with `groupOrder` on the declaration — see
+[`manifest.md`](./manifest.md#tables).
+
+---
+
 ## Layout
 
 Widgets render **in manifest order**, in one column, on the plugin's own settings page.

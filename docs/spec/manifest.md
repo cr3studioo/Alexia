@@ -183,7 +183,7 @@ the notes below the table:
 | `status` | — | read-only text you drive at runtime |
 | `progress` | — | a bar you drive at runtime |
 | `action` | `tool` ✅ | a button that calls one of your tools with no arguments |
-| `table` | `rows` ✅, `columns` ✅, `rowActions`, `detail`, `filter`, `groupBy` | a list of things, with actions on each one — see [Tables](#tables) |
+| `table` | `rows` ✅, `columns` ✅, `rowActions`, `detail`, `filter`, `groupBy`, `groupOrder` | a list of things, with actions on each one — see [Tables](#tables) |
 | `graph` | `rows` ✅, `detail`, `filter` | things that point at each other, drawn as a map — see [Graphs](#graphs). *(4)* |
 | `image` | `rows` ✅, `detail`, `single` | pictures you have made. *(5)* |
 | `cards` | `rows` ✅, `rowActions`, `detail`, `filter`, `dim` | things you hold, drawn the way core draws plugins. *(6)* |
@@ -346,10 +346,11 @@ purge with you. Paths are relative and may not climb out of your folder. See
                    "confirm": "Remove {name}?" }],
   "detail": "explain_thing",                   // optional, expands under the row
   "filter": true,                              // a box, applied in the page
-  "groupBy": "category" }
+  "groupBy": "category",
+  "groupOrder": ["Needs you", "Running", "Done"] }  // optional, alexia_protocol 8
 ```
 
-*Arrived in `alexia_protocol` 3.*
+*Arrived in `alexia_protocol` 3. `groupOrder`, and a row's `note` and `tags`, in 8.*
 
 **`rows` is a tool of yours, called with no arguments.** It answers with MCP's own
 `structuredContent`, shaped `{ "rows": [ … ] }`, and **every row carries a string `id`** —
@@ -367,6 +368,13 @@ trust, which is the permission gate doing its job to a lister that claimed nothi
 permission gate any tool call does, and the question appears beside the row. `confirm` is a
 second press that has already said what goes, with `{column}` filled in from the row — the
 first press costs nothing and the second one is unambiguous.
+
+**Groups are drawn alphabetically unless you say otherwise.** `groupOrder` names them in the
+order you mean; a group you do not name follows, alphabetically, and a named group with no rows
+is not drawn. A row can also explain itself: `note` is one sentence drawn under it, and `tags`
+is a list of chips, each `{ "says": "busy", "tone": "caution" }` with a tone of `quiet`,
+`caution` or `danger` — declare a column whose `key` is `tags` and that is where they go. See
+[`ui-schema.md`](./ui-schema.md#a-row-can-explain-itself).
 
 **`hideNarrow` is not decoration.** Seven columns on a 375px screen put the Delete button
 past the edge: usable in the sense that the scroll stayed inside the table, and not usable at

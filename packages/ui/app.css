@@ -1656,6 +1656,49 @@ body[data-view='control'] .view:not(#control) {
   color: var(--ink-faint);
 }
 
+/* A row's own sentence, under its first cell (`alexia_protocol` 8): why it is where it is. */
+.row-note {
+  display: block;
+  margin-top: 2px;
+  max-width: 62ch;
+  font-size: var(--text-xs);
+  line-height: var(--leading-prose);
+  color: var(--ink-faint);
+  white-space: normal;
+}
+
+/* Tags: chips in a tone, and the tone is the only thing that colours one. */
+.tags-cell {
+  vertical-align: top;
+}
+
+.tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  max-width: 16rem;
+}
+
+.tag {
+  padding: 0 var(--space-2);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: var(--text-xs);
+  line-height: 1.6;
+  color: var(--ink-faint);
+  white-space: nowrap;
+}
+
+.tag.caution {
+  border-color: var(--caution);
+  color: var(--caution);
+}
+
+.tag.danger {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
 .chip-grip {
   flex: none;
   color: var(--ink-faint);

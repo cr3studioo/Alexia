@@ -38,6 +38,29 @@ contract was still moving.
 sentence rather than crashing, exactly as written here while it was still hypothetical. The
 migration for a revision-1 plugin that uses nothing from 2 is one character.
 
+## 7 → 8 *(2026-09-17, D164)*
+
+**A table that explains its own order.** Three additions to `table`, all optional:
+
+| | |
+|---|---|
+| `groupOrder` on the table | `["Your list", "Automatic, free", "Set aside by Alexia", "Paid"]`. Groups are drawn in that order; any group not named follows, alphabetically, as before. |
+| `note` on a row | One sentence drawn under the row. |
+| `tags` on a row | Chips, each `{ "says": "busy", "tone": "caution" }`, tone `quiet`, `caution` or `danger`, drawn in a column whose `key` is `tags`. |
+
+The case was core's own Models table (`model_plan.md` §4 C): it lists every model in the order
+Alexia would ask them, with a sentence under each saying why it sits below the one above, and
+what Alexia has concluded about it. A core tab is drawn by the same widget a plugin declares
+(M6-4), so what it needed arrived for everyone rather than as something only core could say.
+
+Only `groupOrder` is a manifest field, so only it is checked against the revision: declaring it
+while claiming 7 is a load error naming the revision. `note` and `tags` are row fields, like
+`preview` — a shell older than 8 simply does not draw them.
+
+### If you are updating a plugin
+
+Nothing to do. Declare 8 only to use `groupOrder`.
+
 ## 6 → 7 *(2026-09-02)*
 
 **Four things, and they are one change: a page that shows what applies.**

@@ -289,3 +289,61 @@ test('a listed model whose provider lost its key stays on the ladder, says why, 
   search.dispatchEvent(new Event('input'))
   expect([...field.querySelectorAll('.ladder-hit .chip-name')].map((one) => one.textContent)).toEqual(['Floor One', 'Floor Two'])
 })
+
+// ---- a table that explains its own order (alexia_protocol 8) -----------------------------
+
+test('groups come in the declared order, a note sits under the row, and tags are chips in their tone', async () => {
+  const host = fakeHost({
+    '/api/rows': {
+      ok: true,
+      rows: [
+        { id: 'p', name: 'Paid one', group: 'Paid', tags: [] },
+        { id: 'a', name: 'Aside one', group: 'Set aside by Alexia', note: 'Set aside: answers with nothing.', tags: [{ says: 'answers empty', tone: 'danger' }] },
+        { id: 'z', name: 'Unnamed group', group: 'Another', tags: 'not a list' },
+        { id: 'f', name: 'Free one', group: 'Automatic, free', note: 'First choice.', tags: [{ says: 'busy', tone: 'caution' }, { says: 'router', tone: 'loud' }, 'talk only'] },
+      ],
+    },
+  })
+  const field = widget(host, {
+    type: 'table',
+    key: 'models',
+    label: 'Models',
+    rows: 'models',
+    filter: true,
+    groupBy: 'group',
+    groupOrder: ['Your list', 'Automatic, free', 'Set aside by Alexia', 'Paid'],
+    columns: [
+      { key: 'name', label: 'Model' },
+      { key: 'tags', label: 'Tags' },
+    ],
+  })
+  await settled()
+
+  // Named groups in their order, an unnamed one after them, and an empty named one not at all.
+  expect([...field.querySelectorAll('tr.group th')].map((th) => th.textContent)).toEqual([
+    'Automatic, free',
+    'Set aside by Alexia',
+    'Paid',
+    'Another',
+  ])
+  const free = [...field.querySelectorAll('tbody tr')].find((tr) => tr.textContent?.includes('Free one'))!
+  expect(free.querySelector('.row-note')?.textContent).toBe('First choice.')
+  // An unknown tone is read as a fact, and a bare string is a quiet tag.
+  expect([...free.querySelectorAll('.tag')].map((tag) => `${tag.textContent} ${tag.className}`)).toEqual([
+    'busy tag caution',
+    'router tag quiet',
+    'talk only tag quiet',
+  ])
+  // Tags that are not a list draw as nothing rather than as "not a list".
+  const odd = [...field.querySelectorAll('tbody tr')].find((tr) => tr.textContent?.includes('Unnamed group'))!
+  expect(odd.textContent).not.toContain('not a list')
+
+  // The filter finds a row by its note and by what its tags say.
+  const filter = field.querySelector<HTMLInputElement>('.table-filter')!
+  filter.value = 'answers with nothing'
+  filter.dispatchEvent(new Event('input'))
+  expect([...field.querySelectorAll('tbody tr:not(.group):not(.detail)')].map((tr) => tr.querySelector('td')?.firstChild?.textContent)).toEqual(['Aside one'])
+  filter.value = 'busy'
+  filter.dispatchEvent(new Event('input'))
+  expect([...field.querySelectorAll('tbody tr:not(.group):not(.detail)')].map((tr) => tr.querySelector('td')?.firstChild?.textContent)).toEqual(['Free one'])
+})

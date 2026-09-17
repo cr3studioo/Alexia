@@ -211,3 +211,28 @@ test('the checked-in JSON Schema matches the zod schema', () => {
   const onDisk = read(...SCHEMA_PATH)
   expect(onDisk).toEqual(pluginJsonSchema())
 })
+
+test('groupOrder arrived in revision 8, and a manifest claiming 7 is told so', () => {
+  const table = {
+    key: 'things',
+    type: 'table',
+    label: 'Things',
+    rows: 'list_things',
+    columns: [{ key: 'name', label: 'Name' }],
+    groupBy: 'group',
+    groupOrder: ['Open', 'Closed'],
+  }
+  const withTable = (revision: number): Record<string, unknown> => {
+    const m = structuredClone(voice) as Record<string, unknown>
+    m.alexia_protocol = revision
+    m.panel = { label: 'Things', widgets: [table] }
+    return m
+  }
+  const refused = Manifest.safeParse(withTable(7))
+  expect(refused.success).toBe(false)
+  expect(refused.success === false && refused.error.issues.map((i) => i.message).join()).toContain(
+    'groupOrder arrived in alexia_protocol 8',
+  )
+  const accepted = Manifest.safeParse(withTable(8))
+  expect(accepted.success ? null : accepted.error.issues).toBe(null)
+})
