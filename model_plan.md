@@ -821,6 +821,59 @@ details. The shell was driven in headless Chromium over that copy. Tests: `table
 `manifest.test.ts` (8 and its gate), and `surface.test.ts`, `ranking.test.ts`, `keys.test.ts`
 moved to the new rows.
 
+**Built 2026-09-17 (D165)**, D, in core and the shell. Where the build differs from the text
+above, or had to decide something the text did not:
+
+- **The timer is `setInterval` in `serve()`, every 6 hours, cleared on close**, and each provider's
+  own age decides whether a tick fetches — so a tick after sleep polls, and one early does nothing.
+- **`added` was computed across providers**, so a model new on OpenRouter that Kilo already served
+  was never news and never *first seen* there. It is per provider now. A `Change` says `listKnown`:
+  the first fetch of a list is everything at once and makes nothing new.
+- **`seen`**: an arrival is first seen now; a departure is gone now; a model that comes back loses
+  its *gone* and keeps its first sighting. A departure with no sighting recorded is first seen at
+  zero, which is never new.
+- **Which lists carry dates is a row's field**, `listsDates` (OpenRouter's): elsewhere `created` is
+  when a vendor trained the model, and would make every old model new. `PARSER` 7.
+- **The news line sits above the Models table**, one sentence per provider — *1 new free model since
+  09:15: GLM 5.2 on OpenRouter. Not tried yet.* — replaced by that provider's next fetch, so it is
+  said once. It reaches the shell as a `note` on `/api/rows`, which is core's, not the contract's.
+  A model that comes back after leaving is counted as new in the line; nothing tells the two apart.
+- **What providers say about limits is kept in memory**, per provider, and a restart asks again.
+  Groq's `x-ratelimit-remaining-requests` is the day's (its docs say so); OVHcloud's
+  `x-ratelimit-remaining-minute` the minute's; `ratelimit-remaining` and OpenRouter's
+  `x-ratelimit-remaining` are a minute's when their reset is a minute or less away, else a day's.
+  `remaining()` takes the lower of that and the ledger. **`retry-after` is a *busy* tag until then**
+  and nothing more: the 429 it came on already sank the model (D159).
+- **OpenRouter's key endpoint is a row's `keyInfo`**, with `rpdFunded` for the day once credit was
+  bought, read when a key is saved and on every tick and kept per provider in the store; removing
+  the key removes it, and an answer that arrives after the removal is not written back. **Funded is
+  *not on the free tier, and the key's own limit not used up***; unknown is yes. A rung carries it,
+  the router and the table leave out paid models an account cannot pay for, and the save sentence
+  says which it was. `is_free_tier` means *never bought credit*, so an account that bought once and
+  spent it all reads as funded until its first 402.
+- **The four rows, checked 2026-09-17**: Groq's limits are per model, and GPT-OSS is 1,000 a day
+  (was 14,400); **Cerebras's free trial wants a verified payment method** and gives $5 of credit
+  that expires after 30 days, at 5 a minute (was 30 and 14,400) — the owner's answer: keep the row,
+  say so on its tile, and let the key wall work out *only Cerebras wants a card* from the rows;
+  OVHcloud is still 2 a minute anonymously; LLM7 lists 47 models, and of three asked with no key two
+  wanted one and GLM-5.3-Flash answered.
+- **Which changed *needs a key*** (the owner's answer): two models of a provider refusing set the
+  whole provider aside only when none of its models has answered in the record. Otherwise each model
+  needs its own two refusals, so LLM7's model that works is not taken with the ones that do not —
+  where the daily test, which skips *needs a key*, would never have reached it.
+- **Not checked**: OpenRouter's key endpoint with the owner's real key (never used here); Groq's
+  free-plan table beyond the GPT-OSS rows, which its page did not show; Cerebras's pricing page,
+  which said nothing either way — the source is its rate-limit page.
+
+Tests: `catalog.test.ts` (fetched again after six hours and not after five, the news line once and
+only for a known list, `added` per provider, dates only where a row says), `current.test.ts` over
+the wire (a model that arrives on a known list is new and last, answers into the middle of its size,
+is placed by its figure; the news said once; gone and back), `provider.test.ts` (each provider's
+headers; three left is three; `retry-after: 20` busy for 20 seconds; the four rows),
+`funded.test.ts` (free tier: 50 a day and no paid models; credit: 1,000 and both; a spent key limit;
+removal), `health.test.ts` (*needs a key* per model when a sibling answers). The key wall's sentence
+and Cerebras's tile were read in headless Chromium.
+
 ### Acceptance
 
 - **Cancel.** A plugin asks for sampling with a 1-second timeout, over a provider that never
@@ -885,6 +938,9 @@ hold a request open for two minutes rather than for ever. Next: §4 C.
 
 **Status 2026-09-17, later:** §4 C is built (D164), with `alexia_protocol` 8. Next: §4 D.
 
+**Status 2026-09-17, evening:** §4 D is built (D165), and with it §1's *Funded* where a provider
+says (OpenRouter). Still not built from §1: the keyless group's switch. Next: §4 E.
+
 1. **§1 steps 1–2**: unpriced is not free, one `available()`. Smallest change, and it closes
    a real billing hole (Requesty) before anything else.
 2. ~~**§3**: failure kinds, the three modes, default timeouts. This is the one people feel on
@@ -900,8 +956,8 @@ hold a request open for two minutes rather than for ever. Next: §4 C.
 7. ~~**§4 B**: the model record and the tags, in core with their tests. Everything after reads
    `judge()`.~~ Done 2026-09-16 (D162).
 8. ~~**§4 C**: the table, built against the mock-up.~~ Done 2026-09-17 (D164), with `alexia_protocol` 8.
-9. **§4 D**: keeping it current (the timer, first seen, the news line, headers, OpenRouter's key,
-   the four stale rows).
+9. ~~**§4 D**: keeping it current (the timer, first seen, the news line, headers, OpenRouter's key,
+   the four stale rows).~~ Done 2026-09-17 (D165).
 10. **§4 E**: test messages. Needs B and D.
 11. **§4 G**: a switch said twice. Needs nothing above except A, so it can move earlier.
 12. **§4 F**: free limits per account.
