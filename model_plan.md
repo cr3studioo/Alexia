@@ -874,6 +874,27 @@ headers; three left is three; `retry-after: 20` busy for 20 seconds; the four ro
 removal), `health.test.ts` (*needs a key* per model when a sibling answers). The key wall's sentence
 and Cerebras's tile were read in headless Chromium.
 
+**Built 2026-09-17 (D166)**, E, in core. Where the build differs from the text above, or had to
+decide something the text did not:
+
+- **Not only on the six-hour tick**: a round also runs a minute after start, because an app open for
+  less than six hours a day would otherwise never test. The day's budget is kept in the store per
+  UTC day, so a restart does not test the same models again.
+- **Oldest evidence first.** Of the models due, the one whose last try is longest ago goes first, and
+  a model never asked is the oldest — so on a day with more due than ten, new models go before
+  set-aside ones.
+- **Due** is free, reachable, and new or set aside; *needs a key* is skipped while no key is saved,
+  and a model gone from its list is not in the catalog to be asked. Paid is never due.
+- **"Never while an answer streams"** is a task running or a plugin's sampling request being
+  answered, asked before every test, so an answer that starts mid-round stops the round.
+- **A test is not in the spend ledger**: `send()` records its try and skips `recordUsage` for
+  `source: 'test'`. It still counts against the provider's free requests, because it spends them.
+- **Not yet: background for the limit rule** — that rule is §4 F.
+
+Tests: `trial.test.ts` (fourteen due and ten sent, none paid, the one sentence, recorded as tests,
+no conversation and no ledger row, nothing more that day, the rest the next day, a set-aside model
+back on its reply, none while busy, a round stopped mid-way).
+
 ### Acceptance
 
 - **Cancel.** A plugin asks for sampling with a 1-second timeout, over a provider that never
@@ -941,6 +962,9 @@ hold a request open for two minutes rather than for ever. Next: §4 C.
 **Status 2026-09-17, evening:** §4 D is built (D165), and with it §1's *Funded* where a provider
 says (OpenRouter). Still not built from §1: the keyless group's switch. Next: §4 E.
 
+**Status 2026-09-17, night:** §4 E is built (D166). Whether each free tier's terms allow the daily
+test is still open, before a public release. Next: §4 G.
+
 1. **§1 steps 1–2**: unpriced is not free, one `available()`. Smallest change, and it closes
    a real billing hole (Requesty) before anything else.
 2. ~~**§3**: failure kinds, the three modes, default timeouts. This is the one people feel on
@@ -958,7 +982,7 @@ says (OpenRouter). Still not built from §1: the keyless group's switch. Next: �
 8. ~~**§4 C**: the table, built against the mock-up.~~ Done 2026-09-17 (D164), with `alexia_protocol` 8.
 9. ~~**§4 D**: keeping it current (the timer, first seen, the news line, headers, OpenRouter's key,
    the four stale rows).~~ Done 2026-09-17 (D165).
-10. **§4 E**: test messages. Needs B and D.
+10. ~~**§4 E**: test messages. Needs B and D.~~ Done 2026-09-17 (D166).
 11. **§4 G**: a switch said twice. Needs nothing above except A, so it can move earlier.
 12. **§4 F**: free limits per account.
 13. **§4 H**: crossing into paid, then Telegram's question.
