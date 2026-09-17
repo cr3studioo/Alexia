@@ -915,6 +915,27 @@ answer in `/api/state`, and not in the next request a model receives), `router.t
 into paid: the charge line and the event, no note). The shell was driven in headless Chromium: the
 pop-up for three seconds, the line above the answer, the same line after a reload.
 
+**Built 2026-09-17 (D168)**, F, in core. Where the build differs from the text above:
+
+- **Adapt is told apart by its press**, not by a run id: G13's run id on a press is not built yet
+  (`plan-personality.md` step 5). A sampling request a plugin makes while a press of its own button
+  is in flight counts as the chat; any other plugin request, and a plugin's task, is background.
+  When the run id arrives, it can replace this without changing the rule.
+- **A rung carries its ration** (`dayLimit`, `monthLimit`, from the row and from what the account
+  said), and `underHalf()` is the one test: more than half of the day's and the month's left, by the
+  ledger or the provider's own count, whichever is lower.
+- **Paid choices and this Mac are never day-limited** for this rule: a paid request spends credit,
+  not the free allowance.
+- **The test messages are background** in the only way a test can be: a model on a provider past
+  half its day is not due.
+- **A plugin's sampling request is background even during a chat task** — the plan's list says so,
+  and a tool that asks a model mid-task is not the answer the person is reading.
+
+Tests: `chatfirst.test.ts` (a background task goes to Kilo where the chat would ask the key first;
+with only OpenRouter able, background asks at 24 of 50 and stops at 25 with the sentence, pin and
+list included; the chat at 49; and over `/api/action`, a plugin's request during its own press
+answers at 49 of 50, which fails when every plugin request is made background).
+
 ### Acceptance
 
 - **Cancel.** A plugin asks for sampling with a 1-second timeout, over a provider that never
@@ -987,6 +1008,8 @@ test is still open, before a public release. Next: §4 G.
 
 **Status 2026-09-17, late:** §4 G is built (D167). Next: §4 F.
 
+**Status 2026-09-17, later still:** §4 F is built (D168). Next: §4 H.
+
 1. **§1 steps 1–2**: unpriced is not free, one `available()`. Smallest change, and it closes
    a real billing hole (Requesty) before anything else.
 2. ~~**§3**: failure kinds, the three modes, default timeouts. This is the one people feel on
@@ -1007,7 +1030,7 @@ test is still open, before a public release. Next: §4 G.
 10. ~~**§4 E**: test messages. Needs B and D.~~ Done 2026-09-17 (D166).
 11. ~~**§4 G**: a switch said twice. Needs nothing above except A, so it can move earlier.~~ Done
     2026-09-17 (D167).
-12. **§4 F**: free limits per account.
+12. ~~**§4 F**: free limits per account.~~ Done 2026-09-17 (D168).
 13. **§4 H**: crossing into paid, then Telegram's question.
 14. **§4 I**: the bad-answer button, with *that wasn't her* (`plan-personality.md`, improvement 10).
 15. **§4 J**: the hook for later sharing.
