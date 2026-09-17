@@ -145,7 +145,7 @@ test('no longer offered twice in a row is retired; with an answer between it is 
   expect(of(soon, 'free/old')?.aside).toBeUndefined()
 })
 
-test('a keyless provider refusing two of its models sets every model of it aside, until a key is saved', () => {
+test('a keyless provider refusing two of its models, and answering none, sets every model of it aside until a key is saved', () => {
   const models = ['floor/a', 'floor/b', 'floor/c'].map((id) => hands(id, { provider: 'floor' }))
   const refusals = [tried('floor/a', 'needs-key', at(1), 'floor'), tried('floor/b', 'needs-key', at(2), 'floor')]
 
@@ -165,9 +165,19 @@ test('a keyless provider refusing two of its models sets every model of it aside
   const twice = judge([refusals[0]!, tried('floor/a', 'needs-key', at(2), 'floor')], [], models, new Set(), at(3))
   expect(of(twice, 'floor/a', 'floor')?.aside).toBe('needs a key')
   expect(of(twice, 'floor/b', 'floor')?.aside).toBeUndefined()
-  // A model of that provider that has answered since the refusals is back by its own reply.
-  const answeredSince = judge([...refusals, tried('floor/c', 'answered', at(2, 30), 'floor')], [], models, new Set(), at(3))
-  expect(of(answeredSince, 'floor/c', 'floor')?.aside).toBeUndefined()
+  // A provider one of whose models answers without a key wants a key per model, not whole (D165):
+  // LLM7 on 2026-09-17 refused two models and answered GLM-5.3-Flash. Each refusing model needs
+  // its own two refusals, and the one that answers is never taken with them.
+  const answeredToo = judge([...refusals, tried('floor/c', 'answered', at(2, 30), 'floor')], [], models, new Set(), at(3))
+  expect(['floor/a', 'floor/b', 'floor/c'].map((id) => of(answeredToo, id, 'floor')?.aside)).toEqual([undefined, undefined, undefined])
+  const twiceEach = judge(
+    [...refusals, tried('floor/a', 'needs-key', at(2, 10), 'floor'), tried('floor/c', 'answered', at(2, 30), 'floor')],
+    [],
+    models,
+    new Set(),
+    at(3),
+  )
+  expect(['floor/a', 'floor/b', 'floor/c'].map((id) => of(twiceEach, id, 'floor')?.aside)).toEqual(['needs a key', undefined, undefined])
 })
 
 // ---- Set aside is never deleted: lists, pins, and a plan with nothing else ------------------

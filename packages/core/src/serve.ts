@@ -1190,6 +1190,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
               ...(p.callsPerMonth !== undefined && { callsPerMonth: p.callsPerMonth }),
               ...(p.verified !== undefined && { verified: p.verified }),
               ...(p.friction !== undefined && { friction: p.friction }),
+              ...(p.wantsCard === true && { card: true }),
               /** Answers without a key at all, which is the tier the Skip button lands on. */
               keyless: (p.auth ?? 'required') !== 'required',
               /** Its account id goes in the URL, so the key it wants is `account_id:token`. */

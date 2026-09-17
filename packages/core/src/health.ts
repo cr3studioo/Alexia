@@ -58,8 +58,11 @@ export const GONE = 2
 
 /**
  * **Refused for want of a key**: twice for one model, or once each for two models of the same
- * provider. One model wanting a key is that model (LLM7 answered four of six without one, D158);
- * two means the provider changed (LLM7 on 15 September: two models, two refusals).
+ * provider **when none of that provider's models has answered in the record** (D165). One model
+ * wanting a key is that model; two, with nothing of the provider's answering, means the provider
+ * changed. LLM7 is why the second half has a condition: on 2026-09-17 two of its models wanted a
+ * key and GLM-5.3-Flash answered without one, and the whole provider set aside would have taken
+ * the model that works with it — where the daily test, which skips *needs a key*, never reaches.
  */
 export const KEYLESS = { refusals: 2, models: 2 } as const
 
@@ -152,7 +155,10 @@ export function judge(
   const record = new Map<string, Try[]>()
   /** Per keyless provider: each model it refused for want of a key, and when it last did. */
   const refused = new Map<string, Map<string, number>>()
+  /** Providers any of whose models answered in the record: those want a key per model, not whole. */
+  const answeredOn = new Set<string>()
   for (const one of kept) {
+    if (one.outcome === 'answered') answeredOn.add(one.provider)
     const key = `${one.provider}\n${one.model}`
     const mine = record.get(key)
     if (mine === undefined) record.set(key, [one])
@@ -206,8 +212,8 @@ export function judge(
     const reasons: Aside[] = []
     if (!keyed.has(model.provider)) {
       const byProvider = refused.get(model.provider)
-      const latest = byProvider !== undefined && byProvider.size >= KEYLESS.models ? Math.max(...byProvider.values()) : undefined
-      if (count('needs-key') >= KEYLESS.refusals || (latest !== undefined && (answeredAt === undefined || answeredAt < latest))) {
+      const whole = byProvider !== undefined && byProvider.size >= KEYLESS.models && !answeredOn.has(model.provider)
+      if (count('needs-key') >= KEYLESS.refusals || whole) {
         reasons.push('needs a key')
       }
     }

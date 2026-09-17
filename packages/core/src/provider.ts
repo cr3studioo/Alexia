@@ -144,6 +144,12 @@ export interface Provider {
    * second thing that can drift.
    */
   friction?: string
+  /**
+   * **It wants a card before it gives a key** (D165). The key wall used to promise that none of
+   * them did; Cerebras's free trial now asks for a verified payment method, so the promise is
+   * worked out from the rows rather than written into the screen.
+   */
+  wantsCard?: true
 
   /**
    * A free tier rationed in **calls a month** rather than in tokens or in requests a day.
@@ -201,10 +207,16 @@ export const PROVIDERS: Provider[] = [
     auth: 'required',
     pricing: 'free',
     terms: 'https://groq.com/terms-of-use/',
-    verified: '2026-08-27',
+    /**
+     * **Limits are per model** (checked 2026-09-17 against console.groq.com/docs/rate-limits):
+     * GPT-OSS 120B and 20B are 30 a minute and 1,000 a day on the free plan, where this row said
+     * 14,400 a day. The lowest published day is the row's, and Groq's own headers correct it on
+     * every answer — `x-ratelimit-remaining-requests` is the day's, by its docs (§4 D).
+     */
+    verified: '2026-09-17',
     trainsOnYourData: 'unknown',
     rpm: 30,
-    rpd: 14_400,
+    rpd: 1_000,
   },
   {
     id: 'cerebras',
@@ -214,10 +226,18 @@ export const PROVIDERS: Provider[] = [
     auth: 'required',
     pricing: 'free',
     terms: 'https://www.cerebras.ai/terms-of-service',
-    verified: '2026-08-27',
+    /**
+     * **A free trial now, and it wants a card** (checked 2026-09-17 against
+     * inference-docs.cerebras.ai/support/rate-limits): $5 of credit after adding a verified
+     * payment method, expiring 30 days after it is granted, at 5 requests a minute and a million
+     * tokens a day per model. This row said 30 a minute and 14,400 a day. It publishes no daily
+     * request count, so there is none here; the tokens run out first, and a 402 moves on.
+     */
+    verified: '2026-09-17',
     trainsOnYourData: 'unknown',
-    rpm: 30,
-    rpd: 14_400,
+    friction: 'Wants a verified payment method, and its $5 of free credit runs out after 30 days',
+    wantsCard: true,
+    rpm: 5,
   },
   {
     id: 'google',
@@ -304,10 +324,11 @@ export const PROVIDERS: Provider[] = [
     // 2 req/min is per IP **per model**, so spreading across the five is ~10/min in
     // practice. The ledger counts per provider, which cannot say that — so this is the
     // conservative reading of it, and the cost of being conservative is a slower floor
-    // rather than a 429.
+    // rather than a 429. Checked live 2026-09-17: still 2, and it says so on every answer
+    // (`x-ratelimit-remaining-minute`, `retry-after`), which §4 D now reads.
     rpm: 2,
     trainsOnYourData: 'unknown',
-    verified: '2026-08-30',
+    verified: '2026-09-17',
   },
   {
     id: 'aihorde',
@@ -396,6 +417,10 @@ export const PROVIDERS: Provider[] = [
     baseUrl: 'https://api.llm7.io/v1',
     models: '/models',
     /**
+     * **Keyless for some models, not all** (checked live 2026-09-17): its list is 47 models now,
+     * and of the first three asked with no key, two said `missing_api_key` and GLM-5.3-Flash
+     * answered. So wanting a key is a fact about a model here, not about the provider (D165).
+     *
      * **Keyless, and a placeholder is worse than nothing.** Four of its six free models
      * answered with no header at all. On one that does want a key, the literal `unused` that
      * one source recommends comes back `invalid_api_key` where sending nothing comes back
@@ -408,7 +433,7 @@ export const PROVIDERS: Provider[] = [
     // hold; the hour is left to a 429, which the cascade already reads as *next rung*.
     rpm: 20,
     trainsOnYourData: 'unknown',
-    verified: '2026-08-30',
+    verified: '2026-09-17',
   },
   {
     id: 'nara',

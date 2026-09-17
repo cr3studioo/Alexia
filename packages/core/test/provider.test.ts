@@ -453,7 +453,8 @@ const row = (id: string): Provider => PROVIDERS.find((p) => p.id === id)!
 test('the keyless floor says what was discovered about each of its four providers', () => {
   // OVHcloud — better with a key and *worse with a wrong one*: a bad key 403s instead of
   // falling back to anonymous, so the header is omitted rather than blanked.
-  expect(row('ovhcloud')).toMatchObject({ auth: 'optional', rpm: 2, verified: '2026-08-30' })
+  // Checked again live on 2026-09-17 (§4 D step 13): still two a minute, anonymously.
+  expect(row('ovhcloud')).toMatchObject({ auth: 'optional', rpm: 2, verified: '2026-09-17' })
   expect(row('ovhcloud').anonymousKey).toBeUndefined()
 
   // AI Horde — a published literal rather than an absence, a queue that answers in minutes,
@@ -627,4 +628,18 @@ test('three requests left for the day is three, and a retry-after makes the mode
   // And busy ends when the provider said it would.
   expect(judge([], [], [model], new Set(), until + 1, ledger.waits(until + 1)).get('limited\nm')?.tags).toEqual([{ says: 'talk only', tone: 'quiet' }])
   ledger.close()
+})
+
+
+test('the four rows found wrong in D161 say what their providers publish now (D165)', () => {
+  const row = (id: string): Provider => PROVIDERS.find((one) => one.id === id)!
+  // Groq's free plan limits are per model: 1,000 a day for GPT-OSS, not 14,400.
+  expect(row('groq')).toMatchObject({ rpm: 30, rpd: 1_000, verified: '2026-09-17' })
+  // Cerebras's free trial wants a card, and says five a minute; the tile says so too.
+  expect(row('cerebras')).toMatchObject({ rpm: 5, wantsCard: true, verified: '2026-09-17' })
+  expect(row('cerebras').rpd).toBeUndefined()
+  expect(row('cerebras').friction).toContain('payment method')
+  expect(row('llm7').verified).toBe('2026-09-17')
+  // And only Cerebras asks for a card, which is what the key wall now works out from the rows.
+  expect(PROVIDERS.filter((one) => one.wantsCard === true).map((one) => one.id)).toEqual(['cerebras'])
 })

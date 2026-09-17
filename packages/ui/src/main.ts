@@ -54,6 +54,8 @@ interface Provider {
   verified?: string
   /** What getting in costs that is not money, where that is more than an email. */
   friction?: string
+  /** It wants a card before it gives a key (D165). */
+  card?: true
   /** It answers without a key, which is the tier that makes skipping this screen work. */
   keyless: boolean
   /** Its account id goes in the URL, so what it wants pasted is `account_id:api_token`. */
@@ -639,10 +641,19 @@ function firstRun(state: State): void {
 function keyWall(state: State, saved: (id: string) => void): void {
   const wall = document.querySelector<HTMLElement>('#wall')!
   const keyless = state.providers.filter((p) => p.keyless).length
+  /**
+   * **Which of them want a card, from the rows** (D165). This said *none of them wants a card*
+   * as a fact about the screen, and it stopped being one when Cerebras's trial started asking.
+   */
+  const carded = state.providers.filter((p) => p.card === true).map((p) => p.name)
+  const cards =
+    carded.length === 0 ? 'none of them wants a card'
+    : carded.length === 1 ? `only ${carded[0] ?? ''} wants a card`
+    : `${carded.slice(0, -1).join(', ')} and ${carded.at(-1) ?? ''} want a card`
   document.querySelector<HTMLElement>('#wall-hint')!.textContent =
     keyless > 0 ?
-      `${String(keyless)} of these answer with no key at all. A key on any of the others makes Alexia faster, and none of them wants a card.`
-    : 'A key on any of these makes Alexia faster, and none of them wants a card.'
+      `${String(keyless)} of these answer with no key at all. A key on any of the others makes Alexia faster, and ${cards}.`
+    : `A key on any of these makes Alexia faster, and ${cards}.`
 
   // The honest trade, said once under the wall rather than on twenty tiles: nobody has read
   // most of these terms, and "we have not checked" beats a confident wrong answer.
