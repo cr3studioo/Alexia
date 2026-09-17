@@ -372,6 +372,14 @@ export interface Message {
    * again; `toWire()` sends only what a provider reads, so a note never reaches a model.
    */
   notes?: string[]
+  /** Which provider answered, beside `model`: the model record and *Bad answer* are per provider (§4 I). */
+  provider?: string
+  /**
+   * **Somebody pressed *Bad answer* on it** (§4 I). It stays in the conversation, marked, so what
+   * happened is still on the page — and it is never shown to a model again, so the next answer is
+   * not written in its shadow.
+   */
+  bad?: true
 }
 
 export interface Session {
@@ -700,6 +708,25 @@ export class Store {
       this.#db.prepare('UPDATE sessions SET updated_at = ? WHERE id = ?').run(at, sessionId)
       return Number(lastInsertRowid)
     })
+  }
+
+  /**
+   * **Mark the latest answer bad** (§4 I): the last assistant message that is an answer rather than
+   * a step asking for tools, and not already marked. Returns it, with the model and provider that
+   * wrote it, or nothing when there is no such answer to mark.
+   */
+  markLastAnswerBad(sessionId: number): Message | undefined {
+    const rows = this.#db
+      .prepare("SELECT id, model, body FROM messages WHERE session_id = ? AND role = 'assistant' ORDER BY id DESC")
+      .all(sessionId) as { id: number; model: string | null; body: string }[]
+    for (const row of rows) {
+      const body = JSON.parse(row.body) as Omit<Message, 'role' | 'model'>
+      if (body.bad === true) return undefined
+      if ((body.calls?.length ?? 0) > 0) continue
+      this.#db.prepare('UPDATE messages SET body = ? WHERE id = ?').run(JSON.stringify({ ...body, bad: true }), row.id)
+      return { role: 'assistant', ...(row.model !== null && { model: row.model }), ...body, bad: true }
+    }
+    return undefined
   }
 
   /**

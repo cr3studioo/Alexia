@@ -171,6 +171,10 @@ export interface RunOptions {
   messages: Message[]
   /** Nobody at the screen is waiting: a plugin's task (§4 F). The chat keeps first claim on free requests. */
   background?: boolean
+  /** Models not to ask in this task, keyed `provider\nmodel` — the one just marked a bad answer (§4 I). */
+  avoid?: string[]
+  /** Every step above this tier — *Bad answer* with the paid switch on asks a smarter model (§4 I). */
+  above?: Tier
   tools: Tooling
   pins: Pins
   /** Re-asked every step: a tier can be exhausted mid-task, which is the whole point. */
@@ -480,6 +484,7 @@ export async function run(options: RunOptions): Promise<RunResult> {
         shape: planning,
         above: answered,
         ...(options.background === true && { background: true }),
+        ...(options.avoid !== undefined && { avoid: options.avoid }),
         ...(named.length > 0 && { tools: named }),
         ...(seeing.length > 0 && { modality: seeing }),
       }
@@ -498,6 +503,8 @@ export async function run(options: RunOptions): Promise<RunResult> {
       messages,
       shape,
       ...(options.background === true && { background: true }),
+      ...(options.avoid !== undefined && { avoid: options.avoid }),
+      ...(options.above !== undefined && { above: options.above }),
       ...(named.length > 0 && { tools: named }),
       ...(seeing.length > 0 && { modality: seeing }),
     }
@@ -645,7 +652,7 @@ export async function run(options: RunOptions): Promise<RunResult> {
 
     messages.push(answer.message)
     added.push(answer.message)
-    store.append(session, noted.length === 0 ? answer.message : { ...answer.message, notes: noted })
+    store.append(session, { ...answer.message, provider: answer.provider.id, ...(noted.length > 0 && { notes: noted }) })
 
     const calls = answer.message.calls ?? []
     if (calls.length === 0) return finish('answered')

@@ -48,7 +48,7 @@ import {
 } from './permissions.js'
 import { anonymous, keyOf, PROVIDERS, type Provider } from './provider.js'
 import { redactSecrets } from './redact.js'
-import { allowed, MODES, paid, route, send, shapeOf, type Bubble } from './router.js'
+import { allowed, MODES, paid, route, send, shapeOf, type Bubble, type Tier } from './router.js'
 import { CORE, keychain, type SecretStore } from './secrets.js'
 // For `boot.mjs`, which imports the bundle this file is the entry of and nothing else (D153).
 export { fromShell } from './secrets.js'
@@ -2310,8 +2310,12 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
    * with the step events added — so a turn that happens to need no tools looks exactly as
    * it did, which is most of them.
    */
+  /** The tier of the model that wrote a message, from the catalog, when it is still there. */
+  const tierOf = (message: Message): Tier | undefined =>
+    catalog.models.find((model) => model.id === message.model && (message.provider === undefined || model.provider === message.provider))?.tier
+
   async function reply(sent: Body, response: ServerResponse): Promise<void> {
-    const { text: typed, files, again, automatic, allow } = sent as {
+    const { text: typed, files, again, automatic, allow, bad } = sent as {
       text?: string
       files?: Upload[]
       again?: boolean
@@ -2322,6 +2326,23 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
        * into the box beside the button. Sent with `again`, so the question carries on.
        */
       allow?: { daily?: number }
+      /**
+       * ***Bad answer*** (§4 I), pressed under the latest answer: it is marked, a *bad answer* is
+       * recorded for the model and provider that wrote it, and the question is asked again without
+       * that model — on Automatic, and above its tier when the paid switch is on. Sent with `again`.
+       */
+      bad?: Record<string, never>
+    }
+    /** The answer just marked bad, when this is a *Bad answer* press. */
+    const marked = again === true && bad !== undefined ? store.markLastAnswerBad(session) : undefined
+    if (again === true && bad !== undefined && marked === undefined) {
+      response.writeHead(409)
+      response.end()
+      return
+    }
+    if (marked?.model !== undefined && marked.provider !== undefined) {
+      // One press, recorded like any other try: two in 30 days tag the model (D161, D162).
+      store.recordTry({ provider: marked.provider, model: marked.model, outcome: 'bad-answer', status: 0, source: 'person' })
     }
     if (again === true && allow !== undefined) {
       paidIn.add(session)
@@ -2338,7 +2359,8 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
      * step six. Refused when the last thing in the conversation is an answer, because then
      * there is nothing left to answer and a second reply to the same question is not this.
      */
-    const history = again === true ? store.history(session) : []
+    // What a model may still be shown: a marked answer stays on the page and never goes back out.
+    const history = again === true ? store.history(session).filter((turn) => turn.bad !== true) : []
     const question = [...history].reverse().find((turn) => turn.role === 'user')
     const last = history.at(-1)
     const answered = last?.role === 'assistant' && (last.calls?.length ?? 0) === 0
@@ -2418,12 +2440,17 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     const chosen = await personality()
     try {
       const result = await run({
-        messages: store.history(session),
+        messages: store.history(session).filter((turn) => turn.bad !== true),
         ...(chosen !== undefined && { personality: chosen }),
         tools: tooling,
         // *Use Automatic for this answer* is this answer, not a setting (D155): the pin and the
         // list are still there for the next message, and nothing here writes to them.
-        pins: again === true && automatic === true ? { ...pins(store), model: undefined, order: undefined } : pins(store),
+        pins:
+          again === true && (automatic === true || marked !== undefined) ? { ...pins(store), model: undefined, order: undefined } : pins(store),
+        // Without the model somebody just marked, and — with the paid switch on — above its tier (§4 I).
+        ...(marked?.model !== undefined &&
+          marked.provider !== undefined && { avoid: [`${marked.provider}\n${marked.model}`] }),
+        ...(marked !== undefined && caps(store).cross === true && tierOf(marked) !== undefined && { above: tierOf(marked) }),
         // Whether paid may be crossed into here: the switch, or *Allow* pressed in this conversation (§4 H).
         world: worldFor(session),
         store,

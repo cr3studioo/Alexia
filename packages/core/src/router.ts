@@ -192,6 +192,11 @@ export interface Ask {
    * half of its day.
    */
   background?: boolean
+  /**
+   * **Models not to ask**, keyed `provider\nmodel` (§4 I): the one somebody just marked a bad
+   * answer, when the same question is asked again. Nothing else about the plan changes.
+   */
+  avoid?: readonly string[]
 }
 
 export interface Choice {
@@ -393,7 +398,10 @@ export function route(ask: Ask, pins: Pins, world: World): Verdict {
   // is text alone, images and speech being placed local by `combined` already.
   const here = world.local.map((model) => ({ model, provider: OLLAMA }))
   const hosted = where === 'local' ? [] : reachable(world, connected)
-  const everything: Choice[] = [...hosted.map((row) => row.choice), ...(where === 'local' || kind === 'text' ? here : [])]
+  const avoided = new Set(ask.avoid ?? [])
+  const everything: Choice[] = [...hosted.map((row) => row.choice), ...(where === 'local' || kind === 'text' ? here : [])].filter(
+    (c) => !avoided.has(`${c.provider.id}\n${c.model.id}`),
+  )
   /** What the free-tier ledger believes is spent. A pre-check for Automatic, never a refusal of somebody's own choice. */
   const tired = new Set(hosted.filter((row) => row.out).map((row) => row.choice))
   /** Automatic's order: what failed here lately (D159), what is known of each model (D161), and the rest. */

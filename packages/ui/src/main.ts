@@ -26,6 +26,8 @@ interface Turn {
   model?: string
   /** What Alexia said about this answer — a switch to another model — kept with it (§4 G). */
   notes?: string[]
+  /** Somebody pressed *Bad answer* on it (§4 I). Still shown, marked; never sent to a model again. */
+  bad?: true
 }
 
 /**
@@ -180,6 +182,39 @@ function pop(line: string): void {
     popup.hidden = true
     popup.textContent = ''
   }, POPUP_MS)
+}
+
+/**
+ * **The row of actions under the latest answer** (§4 I). One row for everything a person can say
+ * about an answer: *Bad answer* now, and *that wasn't her* from the personality plan when it lands
+ * (D157) — so the two are never two rows competing under one bubble. Only the latest answer has
+ * it, because a press asks that question again.
+ */
+function answerActions(answer: HTMLElement): void {
+  for (const old of log.querySelectorAll('.message-actions')) old.remove()
+  const row = document.createElement('div')
+  row.className = 'message-actions'
+  const bad = document.createElement('button')
+  bad.type = 'button'
+  bad.className = 'quiet-button'
+  bad.textContent = 'Bad answer'
+  bad.title = 'Ask again with a different model. Two of these in a month move a model down.'
+  bad.addEventListener('click', () => {
+    row.remove()
+    markBad(answer)
+    running(() => respond('…', undefined, () => Promise.resolve({ again: true, bad: {} })))
+  })
+  row.append(bad)
+  answer.append(row)
+}
+
+/** An answer somebody marked bad: dimmed, and saying so, rather than taken off the page. */
+function markBad(answer: HTMLElement): void {
+  answer.classList.add('bad')
+  const line = document.createElement('p')
+  line.className = 'bad-line'
+  line.textContent = 'You marked this a bad answer. It is not shown to a model again.'
+  answer.prepend(line)
 }
 
 /** A switch kept on its answer: a small line above the words, drawn again from history (§4 G). */
@@ -974,13 +1009,18 @@ function paint(state: State): void {
   // A repainted conversation knows which model answered and nothing about the rate limits of
   // an hour ago, so the state badge goes rather than lying about the present.
   wearing()
+  let latest: HTMLElement | undefined
   for (const turn of state.messages) {
     if (turn.role !== 'user' && turn.role !== 'assistant') continue
     const drawn = bubble(turn.role, turn.content)
     // The switch lines that were said when this answer was written, above its words (§4 G).
     if (turn.notes !== undefined && turn.notes.length > 0) drawn.prepend(...turn.notes.map(switchLine))
+    if (turn.bad === true) markBad(drawn)
     if (turn.model) modelBadge.textContent = turn.model
+    latest = turn.role === 'assistant' && turn.bad !== true && turn.content !== '' ? drawn : undefined
   }
+  // The latest answer, when the conversation ends on one, carries the row of actions (§4 I).
+  if (latest !== undefined) answerActions(latest)
   /**
    * **The day, when there is an allowance; otherwise the month.**
    *
@@ -1703,6 +1743,8 @@ async function respond(
       // A conversation is named by the first thing you said in it, so the rail's list and
       // the title above the log are both a turn out of date until this.
       void rail.refresh()
+      // A finished answer can be marked bad (§4 I).
+      if (done.ended === 'answered') answerActions(answer)
       if (done.ended === 'stopped') say('Stopped.')
       if (done.ended === 'ceiling') say(`Stopped after ${String(done.steps ?? 0)} steps — that is the ceiling, not the end of the task.`)
     }
