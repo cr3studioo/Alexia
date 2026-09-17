@@ -176,6 +176,34 @@ export interface Seen {
   goneAt?: number
 }
 
+/**
+ * **One week of one model on one provider, as it would be shared** (§4 J, D160): a hook left for a
+ * record shared later with a server of the owner's, decided later. Nothing calls
+ * {@link Store.report} and nothing sends it.
+ *
+ * Counts and nothing else. No prompt, no answer, no key, no name, and no time of day: the week is
+ * the date its UTC Monday falls on, and who asked (the chat, a plugin, a test) stays here too.
+ */
+export interface Reported {
+  /** The UTC Monday the week starts on, `YYYY-MM-DD`. */
+  week: string
+  provider: string
+  model: string
+  /** Requests sent to the model, answered or not. A *Bad answer* press is not one. */
+  tries: number
+  answers: number
+  /** Every try that did not answer, by how it went — only the kinds that happened. */
+  failures: Partial<Record<Outcome, number>>
+  /** Presses of *Bad answer* on its answers (§4 I). */
+  badAnswers: number
+}
+
+/** The week an instant falls in, as the date of its UTC Monday. The epoch was a Thursday. */
+function weekOf(at: number): string {
+  const day = Math.floor(at / (24 * 60 * 60 * 1000))
+  return new Date((day - ((day + 3) % 7)) * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
+}
+
 /** How long a try is kept: long enough to tell *busy this evening* from *always failing*. */
 export const TRIES_KEPT = 30 * 24 * 60 * 60 * 1000
 
@@ -904,6 +932,31 @@ export class Store {
       listKnown: row.list_known === 1,
       ...(row.gone_at !== null && { goneAt: row.gone_at }),
     }))
+  }
+
+  /**
+   * **The record since `since`, per model per provider by week** (§4 J): what a later report to a
+   * server of the owner's would carry, and only that — see {@link Reported}. The record keeps 30
+   * days, so that is as far back as it goes. Oldest week first.
+   */
+  report(since: number): Reported[] {
+    const rows = this.#db
+      .prepare('SELECT at, provider, model, outcome FROM tries WHERE at >= ? ORDER BY at')
+      .all(since) as { at: number; provider: string; model: string; outcome: Outcome }[]
+    const weeks = new Map<string, Reported>()
+    for (const row of rows) {
+      const week = weekOf(row.at)
+      const key = `${week}\n${row.provider}\n${row.model}`
+      const one = weeks.get(key) ?? { week, provider: row.provider, model: row.model, tries: 0, answers: 0, failures: {}, badAnswers: 0 }
+      weeks.set(key, one)
+      if (row.outcome === 'bad-answer') one.badAnswers += 1
+      else {
+        one.tries += 1
+        if (row.outcome === 'answered') one.answers += 1
+        else one.failures[row.outcome] = (one.failures[row.outcome] ?? 0) + 1
+      }
+    }
+    return [...weeks.values()]
   }
 
   /**

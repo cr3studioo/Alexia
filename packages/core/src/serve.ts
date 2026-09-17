@@ -603,6 +603,8 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
         Date.now(),
         store.waits(),
       ),
+      // Nothing is reported from anywhere else: the hook for a shared record, decided later (§4 J, D160).
+      reported: new Set<string>(),
     }
   }
 

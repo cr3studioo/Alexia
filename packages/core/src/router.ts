@@ -266,6 +266,12 @@ export interface World {
    * nothing known, which is what a world gathered by hand in a test means.
    */
   health?: Health
+  /**
+   * **Models reported broken elsewhere** (§4 J), keyed `provider\nmodel`: the hook for a record
+   * shared with a server of the owner's, decided later (D160), and empty today. Filled, `judge()`
+   * would read it as one more piece of evidence and never as a deletion. Absent is nothing reported.
+   */
+  reported?: ReadonlySet<string>
 }
 
 /** One failure of one model on one provider, as {@link send} recorded it. */
