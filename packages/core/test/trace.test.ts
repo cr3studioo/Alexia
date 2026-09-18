@@ -123,6 +123,55 @@ test('a run nothing ended reads as unfinished rather than as finished', () => {
   expect(asText(trace.runs[0]!)).toContain('did not finish')
 })
 
+/**
+ * *Was it sent, and how much of it?* (`plan-personality.md` step 3.)
+ *
+ * The bug was reported as *the personality is not being sent* and it was being sent — 221
+ * characters of a document that should have run to thousands, because Adapt had saved half
+ * one (D157). The trace could not tell *none* from *a stub*, so the first guess was wrong.
+ */
+test('a personality that was sent reads as its length, not as a yes', () => {
+  const trace = new Trace()
+  trace.start('eight', 'who are you')
+  trace.personality(221)
+  trace.end('answered')
+
+  expect(trace.runs[0]?.personality).toBe(221)
+  // The number, and the unit — 221 against a description somebody knows ran to thousands is
+  // the whole story, and it is a story a bare *sent* cannot tell.
+  expect(asText(trace.runs[0]!)).toContain('personality: 221 characters sent')
+})
+
+test('no personality reads as none sent, which is a different fault from a short one', () => {
+  const trace = new Trace()
+  trace.start('nine', 'who are you')
+  trace.personality(0)
+  trace.end('answered')
+
+  const text = asText(trace.runs[0]!)
+  expect(text).toContain('personality: none sent')
+  expect(text).not.toContain('characters sent')
+})
+
+test('a run told nothing about a personality says nothing about one', () => {
+  // Silence rather than a guess: `trial.ts` sends no personality and no words of anybody's,
+  // and a line claiming *none sent* on a run that was never asked would read as a finding.
+  const trace = new Trace()
+  trace.start('ten', 'reply with the single word OK')
+  trace.end('answered')
+
+  expect(trace.runs[0]?.personality).toBeUndefined()
+  expect(asText(trace.runs[0]!)).not.toContain('personality:')
+})
+
+test('a personality told after the run ended is dropped rather than misfiled', () => {
+  const trace = new Trace()
+  trace.start('eleven', 'first')
+  trace.end('answered')
+  trace.personality(500)
+  expect(trace.runs[0]?.personality).toBeUndefined()
+})
+
 test('events for a run that has already ended are dropped rather than misfiled', () => {
   // A late `done` from a task that was stopped must not land on the run after it. The loop
   // is single-threaded through one task, but the stream is not, and a step attributed to the

@@ -1025,6 +1025,8 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     try {
       const month = allowance(store)
       const chosen = await personality()
+      // What the model will actually be given, counted the way `system()` counts it (M4-4).
+      trace.personality(chosen?.trim().length ?? 0)
       const once = (asked: Message[]): ReturnType<typeof run> => run({
         messages: asked,
         tools: tooling,
@@ -2440,6 +2442,8 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     const runId = randomUUID()
     trace.start(runId, text)
     const chosen = await personality()
+    // What the model will actually be given, counted the way `system()` counts it (M4-4).
+    trace.personality(chosen?.trim().length ?? 0)
     try {
       const result = await run({
         messages: store.history(session).filter((turn) => turn.bad !== true),
