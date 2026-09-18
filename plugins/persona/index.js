@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { fromJsonSchema, log, plugin } from '@alexia/sdk'
+import { check, noteOf, removedOf } from './safety.js'
 import {
   brief,
   clean,
@@ -48,6 +49,17 @@ const active = async () =>
 
 const text = (said) => ({ content: [{ type: 'text', text: said }] })
 const nope = (said) => ({ isError: true, content: [{ type: 'text', text: said }] })
+
+/**
+ * What Adapt and Re-adapt both say back, in one order: what happened, what was taken out of
+ * the document and why, and then the document itself.
+ *
+ * One function because the two buttons produce the same things and a person pressing either
+ * is owed the same account of it — and because the next one along (Refine, improvement 2) is
+ * a third caller that should not have to reassemble this from parts.
+ */
+const reply = (headline, removed, doc) =>
+  [headline, noteOf(removed), doc].filter((part) => part !== '').join('\n\n')
 
 async function report() {
   const using = await active()
@@ -109,11 +121,20 @@ async function write(ctx, description) {
   // Which model wrote it, as core reported it back. Empty when whatever answered did not say.
   const wrote = String(answered.model ?? '')
 
-  const doc = clean(said)
+  // Every document this plugin saves comes through here, so this is the one place the check
+  // has to be: Adapt and Re-adapt both land on it, and anything added later (Refine, import)
+  // reaches a save the same way.
+  const { doc, removed } = check(clean(said))
   if (!usable(doc)) {
-    return { error: 'That came back without all four parts of a personality, so nothing was saved. Press Adapt again.' }
+    return {
+      error:
+        removed.length > 0 ?
+          'What came back was mostly rules a personality cannot grant, and what was left is ' +
+          `not a personality.\n\n${noteOf(removed)}`
+        : 'That came back without all four parts of a personality, so nothing was saved. Press Adapt again.',
+    }
   }
-  return { doc, wrote }
+  return { doc, wrote, removed }
 }
 
 /**
@@ -177,11 +198,14 @@ alexia.tool(
       // Re-adapt writes from.
       described: description,
       wrote: written.wrote,
+      removed: written.removed,
       at: Date.now(),
       active: 1,
     })
     await bind()
-    return text(`Saved as “${name}” and in use from your next message.\n\n${written.doc}`)
+    return text(
+      reply(`Saved as “${name}” and in use from your next message.`, written.removed, written.doc),
+    )
   },
 )
 
@@ -277,6 +301,7 @@ alexia.tool(
       {
         doc: written.doc,
         wrote: written.wrote,
+        removed: written.removed,
         at: Date.now(),
         previous: was,
       },
@@ -284,7 +309,11 @@ alexia.tool(
     )
     await bind()
     return text(
-      `Wrote “${String(row.name)}” again. Undo brings the previous one back.\n\n${written.doc}`,
+      reply(
+        `Wrote “${String(row.name)}” again. Undo brings the previous one back.`,
+        written.removed,
+        written.doc,
+      ),
     )
   },
 )
@@ -360,7 +389,9 @@ alexia.tool(
   async ({ id }) => {
     const row = await byId(id)
     if (!row) return nope('There is no saved personality with that id.')
-    const trailer = provenance(row)
+    const trailer = [provenance(row), noteOf(removedOf(row))]
+      .filter((part) => part !== '')
+      .join('\n\n')
     return text(trailer === '' ? String(row.doc) : `${String(row.doc)}\n\n---\n${trailer}`)
   },
 )
