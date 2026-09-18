@@ -163,7 +163,7 @@ test('one model on two providers is two rows, with two details, and a model set 
   const aside = after.filter((one) => one.group === MODEL_GROUPS.aside)
   expect(aside.map((one) => one.id)).toEqual(['openrouter\nnvidia/nemotron-3-super-120b-a12b:free'])
   expect(aside[0]).toMatchObject({
-    note: 'Set aside: too busy every time for a whole day. One good reply brings it back.',
+    note: 'Set aside: too busy every time for a whole day. Alexia sends it a test message on its own, and one good reply brings it back.',
     state: '■ set aside · always busy for you',
   })
   expect(aside[0]?.tags).toEqual([{ says: 'always busy for you', tone: 'danger' }])
@@ -173,4 +173,30 @@ test('one model on two providers is two rows, with two details, and a model set 
   const seen = String((await post('/api/detail', { key: 'models', row: aside[0]!.id })).text)
   expect(seen).toContain('Said it was too busy 3 times, from ')
   expect(seen).toContain('What Alexia thinks: always busy for you.')
+})
+
+/**
+ * §4 E sends its test to free models only — `due()` drops anything paid and never walks
+ * `world.local` — so the sentence promising one has to stop where the test does.
+ *
+ * A paid model turns out never to reach the sentence at all: refused all day it stays in *Paid*
+ * rather than moving to *Set aside by Alexia*, because that group takes only rows no plan above
+ * it already showed. So the promise is kept off paid rows by the grouping, and off this Mac's
+ * own models by the flag `setAside()` is given.
+ */
+test('a paid model refused all day stays in Paid, so it is never promised a test message', async () => {
+  const at = Date.now() - 3 * 60 * 60 * 1000
+  for (const later of [0, 60, 150]) {
+    alexia.store.recordTry({
+      provider: 'openrouter',
+      model: 'vendor/frontier',
+      outcome: 'busy',
+      status: 429,
+      source: 'chat',
+      at: at + later * 60_000,
+    })
+  }
+  const frontier = (await rows()).find((one) => one.id === 'openrouter\nvendor/frontier')
+  expect(frontier?.group).toBe(MODEL_GROUPS.paid)
+  expect(String(frontier?.note)).not.toContain('test message')
 })

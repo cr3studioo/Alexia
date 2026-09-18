@@ -267,15 +267,23 @@ export function sources(options: SurfaceOptions): Record<string, Source> {
   }
 
   /**
-   * Why a model is set aside, and what brings it back. **No promise of a test message**: those
-   * are §4 E, and until they exist a sentence saying *a test message tomorrow* would be untrue.
+   * What brings a set-aside model back. **A test message is promised only where one can reach
+   * it**: §4 E sends them to free models it can still ask (D166), never to a paid model and
+   * never to this Mac's own, so those keep the plainer sentence rather than a promise nothing
+   * will keep.
    */
-  const setAside = (reason: Aside, provider: string): string =>
+  const back = (tested: boolean): string =>
+    tested ?
+      ' Alexia sends it a test message on its own, and one good reply brings it back.'
+    : ' One good reply brings it back.'
+
+  /** Why a model is set aside, and what brings it back. */
+  const setAside = (reason: Aside, provider: string, tested: boolean): string =>
     reason === 'needs a key' ? `Set aside: ${nameOf(provider)} now wants a key for it. Back the moment you add one.`
     : reason === 'retired' ? `Set aside: ${nameOf(provider)} no longer offers it.`
-    : reason === 'answers empty' ? 'Set aside: it answered with nothing three times in a row. One good reply brings it back.'
-    : reason === 'always busy for you' ? 'Set aside: too busy every time for a whole day. One good reply brings it back.'
-    : 'Set aside: it timed out or failed every time for a whole day. One good reply brings it back.'
+    : reason === 'answers empty' ? `Set aside: it answered with nothing three times in a row.${back(tested)}`
+    : reason === 'always busy for you' ? `Set aside: too busy every time for a whole day.${back(tested)}`
+    : `Set aside: it timed out or failed every time for a whole day.${back(tested)}`
 
   return {
     /**
@@ -517,7 +525,7 @@ export function sources(options: SurfaceOptions): Record<string, Source> {
           .sort((a, b) => ASIDE.indexOf(a.reason) - ASIDE.indexOf(b.reason) || a.model.name.localeCompare(b.model.name))
         aside.forEach(({ model, reason }, at) => {
           const choice = { model, provider: providerOf(model.provider) }
-          push(choice, SET_ASIDE, at + 1, setAside(reason, model.provider))
+          push(choice, SET_ASIDE, at + 1, setAside(reason, model.provider, !paid(model.tier) && model.tier !== 'T0'))
         })
 
         return [...out, ...paidRows]
