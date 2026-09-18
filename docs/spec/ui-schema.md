@@ -475,6 +475,25 @@ searched by the filter like any column, because *why is this here* is something 
 for. And a table's groups can be put in order with `groupOrder` on the declaration — see
 [`manifest.md`](./manifest.md#tables).
 
+**A group can say what it is, and a chip is the question asked in one press.** `groupNotes`
+draws one line under a group's heading (`alexia_protocol` 9), which is where a fact about the
+whole group belongs — a column repeating it down every row would be a column of one sentence,
+and the widget's hint is where five such lines go to be unread. `chips` are named filters above
+the table, each narrowing it to a group or to rows carrying any of some tags, and each pressed
+again to put the table back.
+
+**A chip that could match everything is not drawn.** It filters on `groupBy`'s value or on what
+a row's `tags` already say, and nothing else: the bar for a query language here is the same bar
+as for a widget, and *one table wanted it* does not clear it. One chip is pressed at a time and
+the filter box searches inside what that chip left, so a person is never looking at the
+intersection of two controls that each claim to be the filter.
+
+**A row with a `detail` opens when it is clicked, not only from its button.** The button stays,
+because it is what a keyboard reaches and the only thing telling a reader the row has anything
+behind it; the row is the target the mouse was already on. A click that lands on a row action,
+or that ends a drag across the text, is not an open — the first belongs to the button and the
+second is somebody copying.
+
 ---
 
 ## Layout

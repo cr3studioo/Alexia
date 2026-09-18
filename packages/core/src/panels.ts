@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { pins } from './commands.js'
+import { SAYS } from './health.js'
 import { keylessOn } from './pool.js'
 import { caps } from './usage.js'
 import type { Rendered } from './settings.js'
@@ -255,9 +256,9 @@ const MODELS: Rendered = table({
   label: 'Models',
   hint:
     'Every model you can reach, in the order Alexia would ask them, and what she thinks of each. The sentence under a row says why it sits below the one above — it is taken from the ranking itself, so it cannot describe an order Alexia is not following. ' +
-    'Your choice or your list comes first when you have one. Automatic is the free models for an ordinary request, best first: what failed on this machine lately, then not a router, your keys before this Mac before the providers that need no key, then size, then how much the whole world used each model last week — lent across providers serving the same model. ' +
-    'Set aside is what Alexia has stopped asking on her own: a whole day of nothing but refusals, three empty answers, a model no longer offered, or a provider that now wants a key. Nothing is deleted, a model you chose is still asked, and one good reply brings a model back. Paid is the order Automatic would pay in: tools first, then cheapest. ' +
-    'The ★ is what would be asked first right now for a request that needs tools. Use this sends every request to one model until you press Automatic; one model never falls back, so if it cannot answer Alexia stops and says why. ' +
+    'Automatic orders the free models by what failed on this machine lately, then not a router, your keys before this Mac before the providers that need no key, then size, then how much the whole world used each model last week — lent across providers serving the same model. ' +
+    'What each group is, is said under its own heading. The chips above the table are the three questions people arrive asking: what needs attention, what is new, and what Alexia has set aside. ' +
+    'The ★ is what would be asked first right now for a request that needs tools. Use this sends every request to one model until you press Automatic. ' +
     'Answered here counts the last 30 days on this machine. Only models you can send a request to right now are listed: add a key in settings and that provider’s models appear.',
   rows: 'models',
   columns: [
@@ -281,6 +282,27 @@ const MODELS: Rendered = table({
   filter: true,
   groupBy: 'group',
   groupOrder: Object.values(MODEL_GROUPS),
+  /**
+   * What each group is, said once under its heading rather than in the table's hint, where the
+   * five of them together were a paragraph nobody reads to find the one line they wanted.
+   */
+  groupNotes: {
+    [MODEL_GROUPS.chosen]: 'Every request goes to this one until you press Automatic. It never falls back: if it cannot answer, Alexia stops and says why.',
+    [MODEL_GROUPS.listed]: 'Your own running order. While anything is listed here, only these models answer, each one tried when the one above it fails.',
+    [MODEL_GROUPS.automatic]: 'What Automatic walks for an ordinary free request, best first. The sentence under a row says why it sits below the one above.',
+    [MODEL_GROUPS.aside]: 'What Alexia has stopped asking on her own, after a day of refusals, three empty answers, a retirement or a provider that now wants a key. Nothing is deleted, and one good reply brings a model back.',
+    [MODEL_GROUPS.paid]: 'The order Automatic would pay in, once the free models are done and the slider allows it: tools first, then cheapest.',
+  },
+  /**
+   * The mock-up's three chips (D161). Each is a question somebody arrives at this table already
+   * asking — *what is broken*, *what is new*, *what has Alexia given up on* — and each is one
+   * press rather than a word typed into the filter box and spelled right.
+   */
+  chips: [
+    { key: 'attention', label: 'Needs attention', tags: [SAYS.errors, SAYS.bad, SAYS.busy] },
+    { key: 'new', label: 'New', tags: [SAYS.untested] },
+    { key: 'aside', label: 'Set aside', group: MODEL_GROUPS.aside },
+  ],
 })
 
 /**

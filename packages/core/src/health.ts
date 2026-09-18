@@ -86,6 +86,23 @@ export interface Tag {
   tone: Tone
 }
 
+/**
+ * **The tags whose words something else has to match**, named once so it cannot drift.
+ *
+ * A chip on the Models table narrows to rows carrying a tag (`alexia_protocol` 9), and it does
+ * that by the tag's own words — which is fine while both ends read them from here, and would be
+ * a filter that quietly matched nothing the day one of them was reworded in place.
+ *
+ * The rest of the tags are not here: they are either a reason (`Aside`, already a type) or a
+ * fact with a number in it, and nothing filters on those.
+ */
+export const SAYS = {
+  untested: 'new · not tried yet',
+  busy: 'busy',
+  errors: 'too many errors',
+  bad: 'gave bad answers',
+} as const
+
 /** Why a model is set aside, in the words of its tag. */
 export type Aside = 'needs a key' | 'retired' | 'answers empty' | 'always busy for you' | 'not answering'
 
@@ -233,11 +250,11 @@ export function judge(
     const retiring = model.expires !== undefined && now < model.expires && model.expires - now <= RETIRING_WITHIN
 
     const tags: Tag[] = [
-      ...(untested ? [{ says: 'new · not tried yet', tone: 'caution' as const }] : []),
+      ...(untested ? [{ says: SAYS.untested, tone: 'caution' as const }] : []),
       ...reasons.map((says) => ({ says, tone: 'danger' as const })),
-      ...(busy ? [{ says: 'busy', tone: 'caution' as const }] : []),
-      ...(errors ? [{ says: 'too many errors', tone: 'caution' as const }] : []),
-      ...(bad ? [{ says: 'gave bad answers', tone: 'caution' as const }] : []),
+      ...(busy ? [{ says: SAYS.busy, tone: 'caution' as const }] : []),
+      ...(errors ? [{ says: SAYS.errors, tone: 'caution' as const }] : []),
+      ...(bad ? [{ says: SAYS.bad, tone: 'caution' as const }] : []),
       ...(retiring ? [{ says: `retiring ${day(model.expires!)}`, tone: 'caution' as const }] : []),
       // Facts, so nobody has to open the detail for them. They do nothing the ranking does not.
       ...(routes(model) ? [{ says: 'router', tone: 'quiet' as const }] : []),

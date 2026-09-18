@@ -890,6 +890,47 @@ body[data-view='control'] .view:not(#control) {
   margin-bottom: var(--space-3);
 }
 
+/* The chips above a table (`alexia_protocol` 9): the questions people arrive asking, one press
+   each. Pressed is a filled chip rather than a colour, so the tags below keep tone to themselves. */
+.table-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.table-chip {
+  padding: 0 var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: none;
+  font-size: var(--text-xs);
+  line-height: 1.9;
+  color: var(--ink-quiet);
+  cursor: pointer;
+}
+
+.table-chip[aria-pressed='true'] {
+  border-color: var(--ink-faint);
+  background: var(--wash);
+  color: var(--ink);
+}
+
+/* A line under a group's heading saying what the group is (`alexia_protocol` 9). */
+.group-note td {
+  padding-top: 0;
+  padding-bottom: var(--space-2);
+  max-width: var(--measure);
+  font-size: var(--text-xs);
+  color: var(--ink-quiet);
+  font-weight: 400;
+}
+
+/* A row whose detail opens when it is clicked, not only from its Details button. */
+.opens {
+  cursor: pointer;
+}
+
 /* Its own scroller rather than the panel's, which is what makes the sticky header stick to
    something. Capped in viewport units so a list of four hundred models is a panel you scroll
    inside rather than a page that never ends. */

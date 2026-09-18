@@ -129,6 +129,9 @@ export interface Rendered {
   detail?: string
   filter?: boolean
   groupBy?: string
+  /** `table`: a line under each group's heading, and the chips above it (`alexia_protocol` 9). */
+  groupNotes?: Record<string, string>
+  chips?: { key: string; label: string; group?: string; tags?: string[] }[]
   /** `table`: the order groups are drawn in (`alexia_protocol` 8). The rest follow, alphabetically. */
   groupOrder?: string[]
   /** `cards`: the `state` that means *not here yet*, drawn dimmed rather than hidden (D120). */
@@ -712,10 +715,25 @@ function table(host: WidgetHost, declared: Rendered): HTMLElement {
    * The filter, over the declared columns only — and a row's `note`, which is drawn under the
    * first of them. What is not on screen is not searched. Tags are searched by what they say.
    */
+  /**
+   * **Which chip is pressed** (`alexia_protocol` 9), or none. One at a time: two chips at once
+   * is a question nobody asked, and *needs attention and new* narrows to almost nothing.
+   */
+  let chip: string | undefined
+
+  /** A chip takes a whole group, or any row carrying one of its tags — by what the tag says. */
+  const wanted = (row: Row, one: { group?: string; tags?: string[] }): boolean =>
+    (one.group !== undefined && declared.groupBy !== undefined && String(row[declared.groupBy] ?? '') === one.group) ||
+    (one.tags !== undefined && tagsOf(row.tags).some((tag) => one.tags!.includes(tag.says)))
+
   const matching = (): Row[] => {
+    const pressed = declared.chips?.find((one) => one.key === chip)
+    // The chip narrows first and the box searches what is left, so the two read as one filter
+    // rather than fighting: typing while a chip is pressed searches inside it.
+    const within = pressed === undefined ? rows : rows.filter((row) => wanted(row, pressed))
     const needle = query.trim().toLowerCase()
-    if (needle === '') return rows
-    return rows.filter(
+    if (needle === '') return within
+    return within.filter(
       (row) =>
         columns.some((column) => cellText(row, column.key).toLowerCase().includes(needle)) ||
         (typeof row.note === 'string' && row.note.toLowerCase().includes(needle)),
@@ -732,6 +750,28 @@ function table(host: WidgetHost, declared: Rendered): HTMLElement {
       paint()
     })
     box.append(search)
+  }
+
+  // The mock-up's chips: the questions people arrive asking, one press instead of a typed word
+  // spelled right. A chip naming neither a group nor a tag would match nothing, so it is not drawn.
+  const usable = (declared.chips ?? []).filter((one) => one.group !== undefined || one.tags !== undefined)
+  if (usable.length > 0) {
+    const chips = el('div', 'table-chips')
+    const buttons = new Map<string, HTMLButtonElement>()
+    for (const one of usable) {
+      const button = el('button', 'table-chip', one.label)
+      button.type = 'button'
+      button.setAttribute('aria-pressed', 'false')
+      button.addEventListener('click', () => {
+        // The same chip again puts the whole table back, so a chip is never a trap.
+        chip = chip === one.key ? undefined : one.key
+        for (const [key, node] of buttons) node.setAttribute('aria-pressed', String(key === chip))
+        paint()
+      })
+      buttons.set(one.key, button)
+      chips.append(button)
+    }
+    box.append(chips)
   }
   box.append(said, scroll)
 
@@ -809,6 +849,18 @@ function table(host: WidgetHost, declared: Rendered): HTMLElement {
         cell.colSpan = shown().length + 1
         heading.append(cell)
         body.append(heading)
+        // What the group is, said once under its own heading (`alexia_protocol` 9) rather than
+        // in the widget's hint, where five of these together were a paragraph nobody reads.
+        const note = declared.groupNotes?.[name]
+        if (note !== undefined && note !== '') {
+          // `group` as well as `group-note`: it belongs to the heading, and everything that
+          // counts data rows already excludes `.group`. A heading is found by its `th`.
+          const line = el('tr', 'group group-note')
+          const lineCell = el('td', undefined, note)
+          lineCell.colSpan = shown().length + 1
+          line.append(lineCell)
+          body.append(line)
+        }
       }
       for (const row of group) body.append(rowOf(host, declared, row, shown(), surface))
       grid.append(body)
@@ -1772,7 +1824,7 @@ function rowOf(
     more.type = 'button'
     more.setAttribute('aria-expanded', 'false')
     let open = false
-    more.addEventListener('click', () => {
+    const toggle = (): void => {
       open = !open
       more.textContent = open ? 'Hide' : 'Details'
       more.setAttribute('aria-expanded', String(open))
@@ -1786,6 +1838,23 @@ function rowOf(
           body.className = answer.ok === true ? 'detail-text' : 'detail-text error'
           body.textContent = String((answer.ok === true ? answer.text : answer.said) ?? '')
         })
+    }
+    more.addEventListener('click', toggle)
+
+    /**
+     * **The whole row opens it too** (D161's mock-up), and the button stays.
+     *
+     * The button is what a keyboard reaches and what tells the reader there is anything behind
+     * the row at all; the row is the target a mouse was already aiming at. Dropping the button
+     * for the row would be a table with no visible affordance and nothing to tab to.
+     */
+    line.classList.add('opens')
+    line.addEventListener('click', (event) => {
+      // A press on something that does its own thing is not a press on the row.
+      if ((event.target as HTMLElement | null)?.closest('button, a, input, select, textarea, audio') !== null) return
+      // A click that ends a drag across the text is somebody copying a model id, not opening it.
+      if ((window.getSelection()?.toString() ?? '') !== '') return
+      toggle()
     })
     cell.append(more)
   }

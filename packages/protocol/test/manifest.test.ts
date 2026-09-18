@@ -236,3 +236,50 @@ test('groupOrder arrived in revision 8, and a manifest claiming 7 is told so', (
   const accepted = Manifest.safeParse(withTable(8))
   expect(accepted.success ? null : accepted.error.issues).toBe(null)
 })
+
+test('groupNotes and chips arrived in revision 9, and a manifest claiming 8 is told so', () => {
+  const table = {
+    key: 'things',
+    type: 'table',
+    label: 'Things',
+    rows: 'list_things',
+    columns: [{ key: 'name', label: 'Name' }],
+    groupBy: 'group',
+    groupNotes: { Open: 'Still waiting on somebody.' },
+    chips: [{ key: 'open', label: 'Open', group: 'Open' }],
+  }
+  const withTable = (revision: number): Record<string, unknown> => {
+    const m = structuredClone(voice) as Record<string, unknown>
+    m.alexia_protocol = revision
+    m.panel = { label: 'Things', widgets: [table] }
+    return m
+  }
+  const refused = Manifest.safeParse(withTable(8))
+  expect(refused.success).toBe(false)
+  const said = refused.success === false ? refused.error.issues.map((i) => i.message).join() : ''
+  expect(said).toContain('groupNotes arrived in alexia_protocol 9')
+  expect(said).toContain('chips arrived in alexia_protocol 9')
+  const accepted = Manifest.safeParse(withTable(9))
+  expect(accepted.success ? null : accepted.error.issues).toBe(null)
+})
+
+test('a chip naming neither a group nor a tag is still parsed, and simply matches nothing', () => {
+  // The shell drops it rather than the manifest refusing it: a chip that matches nothing is a
+  // chip nobody sees, where a load error would take the whole plugin down over one dead filter.
+  const m = structuredClone(voice) as Record<string, unknown>
+  m.alexia_protocol = 9
+  m.panel = {
+    label: 'Things',
+    widgets: [
+      {
+        key: 'things',
+        type: 'table',
+        label: 'Things',
+        rows: 'list_things',
+        columns: [{ key: 'name', label: 'Name' }],
+        chips: [{ key: 'empty', label: 'Nothing' }],
+      },
+    ],
+  }
+  expect(Manifest.safeParse(m).success).toBe(true)
+})

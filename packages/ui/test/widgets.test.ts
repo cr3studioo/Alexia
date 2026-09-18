@@ -347,3 +347,89 @@ test('groups come in the declared order, a note sits under the row, and tags are
   filter.dispatchEvent(new Event('input'))
   expect([...field.querySelectorAll('tbody tr:not(.group):not(.detail)')].map((tr) => tr.querySelector('td')?.firstChild?.textContent)).toEqual(['Free one'])
 })
+
+test('a group says what it is, chips narrow the table, and the row itself opens the detail', async () => {
+  const host = fakeHost({
+    '/api/rows': {
+      ok: true,
+      rows: [
+        { id: 'f', name: 'Free one', group: 'Automatic, free', tags: [{ says: 'busy', tone: 'caution' }] },
+        { id: 'n', name: 'New one', group: 'Automatic, free', tags: [{ says: 'new · not tried yet', tone: 'caution' }] },
+        { id: 'a', name: 'Aside one', group: 'Set aside by Alexia', tags: [{ says: 'answers empty', tone: 'danger' }] },
+      ],
+    },
+    '/api/detail': { ok: true, text: 'Everything known about it.' },
+  })
+  const field = widget(host, {
+    type: 'table',
+    key: 'models',
+    label: 'Models',
+    rows: 'models',
+    filter: true,
+    detail: 'model',
+    columns: [
+      { key: 'name', label: 'Model' },
+      { key: 'tags', label: 'Tags' },
+    ],
+    groupBy: 'group',
+    groupOrder: ['Automatic, free', 'Set aside by Alexia'],
+    groupNotes: { 'Set aside by Alexia': 'What Alexia has stopped asking on her own.' },
+    chips: [
+      { key: 'attention', label: 'Needs attention', tags: ['busy'] },
+      { key: 'aside', label: 'Set aside', group: 'Set aside by Alexia' },
+      // Naming neither a group nor a tag: it would match nothing, so it is never drawn.
+      { key: 'dead', label: 'Nothing' },
+    ],
+  })
+  await settled()
+
+  const names = (): (string | null | undefined)[] =>
+    [...field.querySelectorAll('tbody tr:not(.group):not(.detail)')].map((tr) => tr.querySelector('td')?.firstChild?.textContent)
+
+  // The line under the heading it belongs to, and no line under the group that has none.
+  expect([...field.querySelectorAll('tr.group-note td')].map((td) => td.textContent)).toEqual([
+    'What Alexia has stopped asking on her own.',
+  ])
+
+  const chips = [...field.querySelectorAll<HTMLButtonElement>('.table-chip')]
+  expect(chips.map((chip) => chip.textContent)).toEqual(['Needs attention', 'Set aside'])
+  expect(names()).toEqual(['Free one', 'New one', 'Aside one'])
+
+  // A chip on a tag, then the same chip again to put the table back.
+  chips[0]!.click()
+  expect(chips[0]!.getAttribute('aria-pressed')).toBe('true')
+  expect(names()).toEqual(['Free one'])
+  chips[0]!.click()
+  expect(chips[0]!.getAttribute('aria-pressed')).toBe('false')
+  expect(names()).toEqual(['Free one', 'New one', 'Aside one'])
+
+  // A chip on a group, and one chip at a time — pressing the second lets the first go.
+  chips[0]!.click()
+  chips[1]!.click()
+  expect(chips[0]!.getAttribute('aria-pressed')).toBe('false')
+  expect(names()).toEqual(['Aside one'])
+
+  // The filter box searches inside what the chip left rather than fighting it.
+  const filter = field.querySelector<HTMLInputElement>('.table-filter')!
+  filter.value = 'Free'
+  filter.dispatchEvent(new Event('input'))
+  expect(names()).toEqual([])
+  filter.value = ''
+  filter.dispatchEvent(new Event('input'))
+  chips[1]!.click()
+
+  // Clicking the row opens its detail, the same drawer the button opens.
+  const row = [...field.querySelectorAll('tbody tr:not(.group):not(.detail)')].find((tr) =>
+    tr.textContent?.includes('Free one'),
+  )!
+  row.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+  await settled()
+  expect(host.sent.some((one) => one.path === '/api/detail' && one.body.row === 'f')).toBe(true)
+  expect(row.nextElementSibling?.className).toContain('detail')
+  expect((row.nextElementSibling as HTMLElement).hidden).toBe(false)
+  expect(row.querySelector('button')?.textContent).toBe('Hide')
+
+  // A press on a row's own button is that button's, not the row's: it does not toggle twice.
+  row.querySelector<HTMLButtonElement>('button')!.click()
+  expect((row.nextElementSibling as HTMLElement).hidden).toBe(true)
+})

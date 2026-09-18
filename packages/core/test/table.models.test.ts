@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { afterAll, expect, test } from 'vitest'
 import { noPolling } from './staged.js'
 import { Catalog } from '../src/catalog.js'
-import { judge } from '../src/health.js'
+import { judge, SAYS } from '../src/health.js'
 import { CORE_TABS, MODEL_GROUPS } from '../src/panels.js'
 import { usable } from '../src/pool.js'
 import { keyOf, type Provider } from '../src/provider.js'
@@ -199,4 +199,33 @@ test('a paid model refused all day stays in Paid, so it is never promised a test
   const frontier = (await rows()).find((one) => one.id === 'openrouter\nvendor/frontier')
   expect(frontier?.group).toBe(MODEL_GROUPS.paid)
   expect(String(frontier?.note)).not.toContain('test message')
+})
+
+/**
+ * `model_plan.md` §4 C's three unbuilt mock-up pieces, declared rather than drawn here: the
+ * shell's own tests cover the drawing. What matters on this side is that the chips name tags
+ * `judge()` actually writes and a group `surface.ts` actually fills — a chip matching nothing
+ * is a filter that looks broken, and nothing else would catch it.
+ */
+test('the Models table declares a line per group and chips that match what judge() says', async () => {
+  const declared = CORE_TABS.flatMap((tab) => tab.widgets ?? []).find((one) => one.type === 'table' && one.key === 'models')
+  if (declared?.type !== 'table') throw new Error('the Models table is not declared')
+
+  // Every group the table draws has a line saying what it is.
+  expect(Object.keys(declared.groupNotes ?? {}).sort()).toEqual(Object.values(MODEL_GROUPS).toSorted())
+
+  expect((declared.chips ?? []).map((chip) => chip.label)).toEqual(['Needs attention', 'New', 'Set aside'])
+
+  // A chip naming a group names one this table really draws.
+  const groups = new Set(Object.values(MODEL_GROUPS) as string[])
+  for (const chip of declared.chips ?? []) {
+    if (chip.group !== undefined) expect(groups.has(chip.group)).toBe(true)
+  }
+
+  // And a chip naming tags names words `judge()` really writes: the set-aside row from the test
+  // above carries `always busy for you`, and every chip tag comes from the same named constants.
+  const said = new Set(Object.values(SAYS) as string[])
+  for (const chip of declared.chips ?? []) {
+    for (const tag of chip.tags ?? []) expect(said.has(tag)).toBe(true)
+  }
 })
