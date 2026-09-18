@@ -948,10 +948,10 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
    * asks the person in front of it, and a plugin's own command below, which asks wherever
    * `ask.confirm` is answered. The ruling differs; what running it *is* does not.
    */
-  async function commandTool(plugin: string, tool: string): Promise<string> {
+  async function commandTool(plugin: string, tool: string, args?: Record<string, unknown>): Promise<string> {
     const process = plugins.process(plugin)
     if (!process) throw new Error(`${plugin} is not running`)
-    const result = await process.callTool(tool)
+    const result = await process.callTool(tool, args)
     const said = (result.content ?? [])
       .map((block) => (block.type === 'text' ? block.text : `[${block.type}]`))
       .join('\n')
@@ -993,7 +993,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
       store,
       manifests: manifests(),
       newChat: () => freshFor(pluginId),
-      call: async (plugin, tool) => {
+      call: async (plugin, tool, args) => {
         const ruling = await rulingFor(plugin, tool)
         if (ruling.verdict === 'blocked') throw new Error(ruling.why ?? `${tool} did not run.`)
         if (ruling.verdict === 'ask') {
@@ -1005,7 +1005,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
           const said = (asked?.content ?? []).map((block) => (block.type === 'text' ? block.text : '')).join('')
           if (said.trim().toLowerCase() !== 'yes') throw new Error('Not approved, so nothing ran.')
         }
-        return commandTool(plugin, tool)
+        return commandTool(plugin, tool, args)
       },
     })
     return { role: 'assistant', model: '', content: { type: 'text', text: ran.note }, stopReason: 'endTurn' }
@@ -1410,13 +1410,14 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
         },
         // A command is bound to the plugin tool of the same name — the whole binding, and
         // why a manifest declares a command with a name and a sentence and nothing else.
-        call: async (plugin, tool) => {
+        // Whatever followed the word rides along under `rest`, unread by core (D177).
+        call: async (plugin, tool, args) => {
           const ruling = await rulingFor(plugin, tool)
           if (ruling.verdict === 'blocked' || (ruling.verdict === 'ask' && approved !== true)) {
             asked = ruling
             throw new Error(ruling.why ?? `${tool} did not run.`)
           }
-          return commandTool(plugin, tool)
+          return commandTool(plugin, tool, args)
         },
       })
       response.writeHead(200, { 'content-type': 'application/json' })

@@ -409,13 +409,11 @@ alexia.tool(
  * `/persona`, and `/persona <name>` — the same two things the settings screen does, from a
  * phone, where there is no settings screen.
  *
- * **`<name>` does not reach here yet, and that is core's half, not this plugin's.**
- * `run()` in `packages/core/src/commands.ts:133` takes the first word of what was typed, and
- * `commandTool()` in `serve.ts:948` calls `process.callTool(tool)` with no arguments at all —
- * there is nowhere on that path to put the rest of the line. So today every `/persona
- * anything` arrives here as a bare list. The argument is declared and handled anyway, so the
- * day core forwards the rest of the line this works without being reopened; until then the
- * list is what a person gets, and it tells them the row action is there.
+ * **`<name>` arrives under `rest`, which is core's word and not this plugin's** (D177). Core
+ * hands over whatever followed the command whole, under that one key for every plugin command
+ * alike, and reads none of it. So the name is called `rest` in the schema even though what it
+ * holds here is a personality's name: the key belongs to the binding, and the sentence beside
+ * it is the only place this plugin gets to say what it wants in there.
  */
 alexia.tool(
   'persona',
@@ -425,14 +423,14 @@ alexia.tool(
       'that one instead.',
     inputSchema: fromJsonSchema({
       type: 'object',
-      properties: { name: { type: 'string', description: 'Which one to switch to, by name.' } },
+      properties: { rest: { type: 'string', description: 'Which one to switch to, by name.' } },
       required: [],
     }),
     annotations: { destructiveHint: false, openWorldHint: false },
   },
   async (args) => {
     const rows = await saved()
-    const typed = String(args?.name ?? '').trim()
+    const typed = String(args?.rest ?? '').trim()
 
     if (typed === '') {
       if (rows.length === 0) return text('Nothing written yet. Write one on the Personality screen.')

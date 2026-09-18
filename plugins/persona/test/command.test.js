@@ -68,11 +68,12 @@ test('each declared command has a tool of the same name behind it', () => {
   }
 })
 
-test('the name argument is declared, so it works the day core forwards the rest of the line', () => {
+test('the argument is called what core passes it as, not what it holds', () => {
   const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8')
-  // Verified on this base 2026-09-18: commands.ts:133 keeps only the first word and
-  // serve.ts:948 calls process.callTool(tool) with no arguments, so nothing reaches `name`
-  // yet. Declaring and handling it anyway is what stops this needing to be reopened.
-  expect(source).toMatch(/properties: \{ name: \{ type: 'string'/)
+  // Core hands whatever followed the command over under `rest`, the same key for every
+  // plugin command (D177). Naming this property anything else — `name`, which is what it
+  // actually holds — silently receives nothing, and `/persona Butler` goes back to listing.
+  expect(source).toMatch(/properties: \{ rest: \{ type: 'string'/)
+  expect(source).toMatch(/String\(args\?\.rest \?\? ''\)/)
   expect(source).toMatch(/matchName\(rows, typed\)/)
 })
