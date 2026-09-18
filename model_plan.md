@@ -110,12 +110,30 @@ the text above, or had to decide something the text did not:
   *not available — no key for X*, and search never offers it. The pinned row says the same. A
   model another connected provider still serves is not marked. A model gone from the catalog
   altogether still leaves the ladder, as before; §4 D decides what a gone model is.
-- **Not built:** *Funded* and the keyless group's switch, still open from step 2.
+- **Not built:** *Funded*, still open from step 2. The keyless group's switch is built (D173,
+  2026-09-18).
 
 Tests: `keys.test.ts` over `/api/setup` and `/api/rows` (a wrong key, the count under *free
 only*, removal, the pin and the list kept, the floor), and `widgets.test.ts` (the ladder keeps an
 unavailable entry through the next edit). The shell was driven in headless Chromium against a
 stub: the line, the rail redrawn without a reload, and the two presses.
+
+**Built 2026-09-18 (D173)**, step 2's last open piece: the keyless group's switch. Where the
+build differs from the text above, or had to decide something the text did not:
+
+- **The switch is read in `usable()`**, not only where the Models tab is drawn, so the rungs are
+  not built at all when it is off. Reading it at the drawing end would have left `route()` able
+  to reach a model the screen says is gone, and the two could come to disagree.
+- **Off is what removing a key is** (D163): out of every plan, with anything in a list or a pin
+  kept and marked *not available*, never deleted. A provider somebody has since pasted a key
+  into is keyed rather than keyless, and is unaffected either way — `connected()` asks about a
+  key first and only then about the floor.
+- **Still open from step 2:** *Funded*, where a provider reports a balance.
+
+Tests: `keys.test.ts` switches the floor off and on, checking the ladder's reachability marker
+and that no floor row is left in Automatic. Driven in headless Chromium: the switch draws on,
+two Floor rows leave the table and return, and `performance` reported one navigation entry
+throughout — nothing reloaded.
 
 ---
 
@@ -799,8 +817,10 @@ differs from the text above, or had to decide something the text did not:
   model Alexia would ask first — on your OpenRouter key, can use tools, 31B* and *The first paid
   model Alexia would ask: …*. A list row says *Number 1 in your list, on your OpenRouter key*, and
   its second copy *…again, on Kilo Gateway with no key: asked only if OpenRouter's copy fails*.
-- **A set-aside sentence promises no test message**, since §4 E is not built: *One good reply
-  brings it back.*
+- **A set-aside sentence promised no test message**, since §4 E was not built when this was
+  written: *One good reply brings it back.* Corrected 2026-09-18 (D172) — §4 E has been built
+  since D166, so the sentence says a test goes out as well, but only on a row a test can
+  actually reach: `due()` sends to free models only and never walks `world.local`.
 - **The ★ is one row**, the provider `route()` would ask, where it used to mark every copy of a
   model id. *Answered here* counts answers in the record, as planned, so an upgraded app starts at
   0 for every model. The detail opens with what Alexia has seen, one sentence per outcome.
@@ -808,9 +828,11 @@ differs from the text above, or had to decide something the text did not:
   the Control view was 50rem, so nine columns wrapped four lines deep (now 76rem, with figures
   kept to one line); a note under a right-aligned `#` wrapped down two digits of width (it goes
   under the first left-aligned cell).
-- **Not built from the mock-up**: its filter chips (*Needs attention*, *New*, *Set aside*…), a line
-  under each group heading, and opening a row by clicking it — the Details button opens it. None
-  is in the fix above; say if they are wanted.
+- **Not built from the mock-up** when this was written: its filter chips (*Needs attention*,
+  *New*, *Set aside*…), a line under each group heading, and opening a row by clicking it — the
+  Details button opens it. All three were asked for and built 2026-09-18 (D174), with
+  `alexia_protocol` 9: the chips and the group line are declaration fields, because `table`'s
+  schema is `.strict()` and they cannot ride on a row; click-to-open needed no contract change.
 
 Measured on a copy of this Mac's catalog: with no OpenRouter key the Automatic group is 103 rows
 and equals `route()`'s plan row for row, every why-line equal to `explain()`; with a key, 125 rows,
@@ -820,6 +842,27 @@ details. The shell was driven in headless Chromium over that copy. Tests: `table
 *Set aside*), `widgets.test.ts` (group order, the note, tags and their tones, the filter),
 `manifest.test.ts` (8 and its gate), and `surface.test.ts`, `ranking.test.ts`, `keys.test.ts`
 moved to the new rows.
+
+**Built 2026-09-18 (D174)**, the three pieces C left undone, in core, the shell and the plugin
+contract. Where the build differs from the text above, or had to decide something the text did
+not:
+
+- **Two of the three are the contract's business and one is not.** The group line and the chips
+  are things a table *declares*, not things a row carries, and `table`'s schema is `.strict()`,
+  so they cannot be smuggled through as row data — the same argument that made `groupOrder` a
+  contract field in D164. `alexia_protocol` 8 → 9 for every plugin, floor still 2, the JSON
+  Schema regenerated from the zod, and `manifest.md`, `ui-schema.md` and `versions.md` say so.
+- **Click-to-open needed nothing at all**: pure shell behaviour on a table that already declared
+  a `detail` tool, so no plugin has to do anything to get it. The button flips to *Hide*.
+- **The chips read `judge()`'s own tags** rather than forming a second opinion about what *needs
+  attention* means, so a chip can never disagree with the tag on the row under it.
+
+Tests: `widgets.test.ts` (the group line, chips filtering and toggling, one at a time, the
+search box working inside a chip, the row opening), `table.models.test.ts` (every drawn group
+has a line, every chip names a real group or a real `SAYS` tag), `manifest.test.ts` (both new
+fields pinned to revision 9). Driven in headless Chromium: the line renders under its heading,
+the three chips draw, *New* narrows to the one model with a `created` date and back, *Set aside*
+empties the table, and a row opens its drawer — one navigation entry throughout.
 
 **Built 2026-09-17 (D165)**, D, in core and the shell. Where the build differs from the text
 above, or had to decide something the text did not:
@@ -1094,8 +1137,18 @@ test is still open, before a public release. Next: §4 G.
 **Status 2026-09-17, last:** §4 J is built (D171), and with it all of §4. Everything reaches the
 installed app only in a new build. Still open from §1: the keyless group's switch.
 
-1. **§1 steps 1–2**: unpriced is not free, one `available()`. Smallest change, and it closes
-   a real billing hole (Requesty) before anything else.
+**Status 2026-09-18:** the keyless group's switch is built (D173), and with it all of §1 except
+*Funded*, which waits on providers that report a balance. §4 C's three unbuilt mock-up pieces —
+the chips, the group line and click-to-open — are built too (D174), with `alexia_protocol` 9,
+and §4 C's set-aside sentence now promises a test where one can reach (D172). **This document is
+built end to end apart from *Funded*,** and M8-6 is ticked in `plan.md`. Everything here still
+reaches the installed app only in a new build. Still open, and the owner's rather than the
+model's: whether each free tier's terms allow the daily automated test message, before a public
+release.
+
+1. ~~**§1 steps 1–2**: unpriced is not free, one `available()`. Smallest change, and it closes
+   a real billing hole (Requesty) before anything else.~~ Done 2026-09-15 (D154); step 2's last
+   open piece, the keyless group's switch, done 2026-09-18 (D173). *Funded* is still open.
 2. ~~**§3**: failure kinds, the three modes, default timeouts. This is the one people feel on
    every rate-limited evening.~~ Done 2026-09-15 (D158).
 3. ~~**§2**: ranking. Borrowed `weekly` and *routers last* first, because they are cheap. Strikes

@@ -32,7 +32,7 @@ being sent. What was sent was one sentence, to a random model.
 | Core passes `finish_reason: 'length'` through as `stopReason: 'maxTokens'` | **Done**, tested in `provider.test.ts` and end to end in `asking.test.ts` |
 | Adapt refuses a cut-off answer; 4,000-token budget; waits 110 s, not the SDK's 60 s | **Done**, `plugins/persona/index.js` |
 | `usable()` requires all four sections with something under each | **Done**, `writing.js`, tested with the real cut-off shape |
-| A trace line with the personality's length per step, so *was it sent?* is readable | Not started |
+| A trace line with the personality's length per step, so *was it sent?* is readable | **Done 2026-09-18 (D175)** — recorded per *run*, not per step: `AgentOptions.personality` is read once per task, so a per-step number would repeat itself and imply it could have differed |
 | Routers labelled on the Models screen | **Done** in `model_plan.md` §2 (D159): *a different free model each time*, ranked last |
 
 ### This machine
@@ -255,8 +255,22 @@ for paid models, an order that lets provider prompt caching reuse the personalit
 2. ~~**`model_plan.md` §4 A: Adapt's cancel reaches `send()`** (D160). Before anything that makes
    Adapt call more, since today a refusal on screen leaves core still asking.~~ Done 2026-09-16
    (D162), and §4 B's `judge()` exists for step 5 to read. Both reach the app only in a new build.
-3. **The trace line** from *Where it stands*.
-4. **Quick wins:** improvements 1, 6, 7, and the `/persona` command from 8.
+3. ~~**The trace line** from *Where it stands*.~~ Done 2026-09-18 (D175), per run rather than per
+   step, and counted the way `system()` counts it so it is the length that reached the model. A
+   run never told about a personality says nothing at all, rather than *none sent*.
+4. ~~**Quick wins:** improvements 1, 6, 7, and the `/persona` command from 8.~~ Done 2026-09-18.
+   **4a**, improvement 1: the description, the model that wrote it and when are kept on the
+   personality's row, with **Re-adapt** and **Undo**; Adapt and Re-adapt go through one `write()`,
+   so D157's room, patience and half-a-personality guard apply to both. **4b**, improvement 6: a
+   deterministic check on save and on re-adapt removes lines telling her to skip asking, hide what
+   she did, ignore a limit or claim to be human, and says what it removed and why. **4c**,
+   improvement 7 (D176): what it costs, as a labelled estimate against today's single document —
+   the owner chose that over waiting for §2's three sizes, and `costOf()` takes one document so
+   step 6 calls it three times rather than rewriting it. **4d**, the `/persona` command: `/persona`
+   lists, `/persona <name>` switches, `/plainly` stops. The `<name>` half was not the plugin's to
+   fix — core kept only the first word of a command — and needed **D177**, which hands whatever
+   follows a command to the plugin whole under `rest`. The header chip from improvement 8 is *not*
+   here: it waits for step 8.
 5. **§1, the writer:** M8-1; never a router, and never a model `model_plan.md` §4 B tags as new,
    set aside or doubted (so after §4 B); then G13's build (D156), a run id on Adapt, which also
    makes it the chat for free requests (D161, `model_plan.md` §4 F).
