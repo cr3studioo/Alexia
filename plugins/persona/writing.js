@@ -145,6 +145,28 @@ export const unique = (name, taken) => {
   for (let n = 2; ; n++) if (!taken.includes(`${name} ${n}`)) return `${name} ${n}`
 }
 
+/**
+ * Which saved personality somebody meant by what they typed after `/persona`.
+ *
+ * Exact name first, then a unique prefix, then a unique substring — and **nothing at all when
+ * two could be meant**, because switching to the wrong personality is silent: the next answer
+ * is simply in the wrong voice, with nothing on screen saying why. Ambiguity is returned as
+ * the list of candidates so the caller can say which ones it was torn between.
+ */
+export const matchName = (rows, typed) => {
+  const want = String(typed ?? '').trim().toLowerCase()
+  if (want === '') return { none: true }
+  const named = rows.map((row) => ({ row, name: String(row.name ?? '').toLowerCase() }))
+  const exact = named.filter((one) => one.name === want)
+  if (exact.length === 1) return { row: exact[0].row }
+  const starts = named.filter((one) => one.name.startsWith(want))
+  if (starts.length === 1) return { row: starts[0].row }
+  const has = named.filter((one) => one.name.includes(want))
+  if (has.length === 1) return { row: has[0].row }
+  const among = (starts.length > 0 ? starts : has).map((one) => String(one.row.name))
+  return among.length > 1 ? { among } : { none: true }
+}
+
 /** The day, as a person writes it. */
 const day = (at) => (Number(at) > 0 ? new Date(Number(at)).toISOString().slice(0, 10) : '')
 

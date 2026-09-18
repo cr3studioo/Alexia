@@ -4,6 +4,7 @@ import { check, noteOf, removedOf } from './safety.js'
 import {
   brief,
   clean,
+  matchName,
   nameFrom,
   priorOf,
   provenance,
@@ -393,6 +394,55 @@ alexia.tool(
       .filter((part) => part !== '')
       .join('\n\n')
     return text(trailer === '' ? String(row.doc) : `${String(row.doc)}\n\n---\n${trailer}`)
+  },
+)
+
+/**
+ * `/persona`, and `/persona <name>` — the same two things the settings screen does, from a
+ * phone, where there is no settings screen.
+ *
+ * **`<name>` does not reach here yet, and that is core's half, not this plugin's.**
+ * `run()` in `packages/core/src/commands.ts:133` takes the first word of what was typed, and
+ * `commandTool()` in `serve.ts:948` calls `process.callTool(tool)` with no arguments at all —
+ * there is nowhere on that path to put the rest of the line. So today every `/persona
+ * anything` arrives here as a bare list. The argument is declared and handled anyway, so the
+ * day core forwards the rest of the line this works without being reopened; until then the
+ * list is what a person gets, and it tells them the row action is there.
+ */
+alexia.tool(
+  'persona',
+  {
+    description:
+      'List every saved personality and say which one is in use. Give a name to switch to ' +
+      'that one instead.',
+    inputSchema: fromJsonSchema({
+      type: 'object',
+      properties: { name: { type: 'string', description: 'Which one to switch to, by name.' } },
+      required: [],
+    }),
+    annotations: { destructiveHint: false, openWorldHint: false },
+  },
+  async (args) => {
+    const rows = await saved()
+    const typed = String(args?.name ?? '').trim()
+
+    if (typed === '') {
+      if (rows.length === 0) return text('Nothing written yet. Write one on the Personality screen.')
+      const list = rows
+        .map((row) => `${row.active === 1 ? '● ' : '○ '}${String(row.name)}`)
+        .join('\n')
+      return text(`${list}\n\n/persona <name> switches. /plainly stops using any of them.`)
+    }
+
+    const found = matchName(rows, typed)
+    if (found.among) {
+      return nope(`“${typed}” could be ${found.among.join(' or ')}. Say more of the name.`)
+    }
+    if (!found.row) return nope(`There is no personality called “${typed}”.`)
+    await alexia.storage.update('personalities', { active: 0 }, { active: 1 })
+    await alexia.storage.update('personalities', { active: 1 }, { rowid: Number(found.row.rowid) })
+    await bind()
+    return text(`Using “${String(found.row.name)}” from your next message.`)
   },
 )
 

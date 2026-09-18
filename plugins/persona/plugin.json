@@ -79,6 +79,16 @@
       "label": "State"
     }
   ],
+  "commands": [
+    {
+      "name": "persona",
+      "summary": "List your saved personalities, or switch to one by name"
+    },
+    {
+      "name": "plainly",
+      "summary": "Stop using any personality — Alexia goes back to her own voice"
+    }
+  ],
   "storage": {
     "namespace": "persona",
     "tables": [
