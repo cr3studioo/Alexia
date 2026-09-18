@@ -1,6 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { fromJsonSchema, log, plugin } from '@alexia/sdk'
-import { brief, clean, nameFrom, ROOM, unique, usable, WAIT } from './writing.js'
+import {
+  brief,
+  clean,
+  nameFrom,
+  priorOf,
+  provenance,
+  ROOM,
+  unique,
+  usable,
+  versionOf,
+  WAIT,
+} from './writing.js'
 
 /**
  * The personality node (M4-4, revised 2026-08-29).
@@ -49,6 +60,63 @@ async function report() {
 }
 
 /**
+ * The one model call this plugin makes, and the two buttons that make it.
+ *
+ * Adapt writes a personality that does not exist yet; Re-adapt writes one that does, from the
+ * same words it came from the first time. Same brief, same rung, same clamp — all that differs
+ * is which row the answer lands on, so the call lives here instead of twice. Every clamp below
+ * is D157's, and it is load-bearing: a personality that saves half-written reads as chosen and
+ * behaves as if nothing was set, which is the bug that started the rebuild.
+ */
+async function write(ctx, description) {
+  alexia.progress(ctx, 1, 3, 'Reading what you wrote')
+  let answered
+  try {
+    answered = await alexia.server.server.createMessage({
+      messages: [{ role: 'user', content: { type: 'text', text: brief(description) } }],
+      // Room to think as well as to write. It was 1,200, and a reasoning model spent almost
+      // all of it thinking — which is counted and never shown — so the document it did
+      // write stopped at `## How` (2026-09-15). Nearly every free model is a reasoning
+      // model now, and on a free one the headroom costs nothing.
+      maxTokens: ROOM,
+      // Writing, not rephrasing — this is the only call this plugin makes, and it makes
+      // it once per personality, so it is worth a rung that can actually write. The old
+      // node's cheapest-possible preference was right for a task that ran on every answer
+      // and wrong for this one.
+      modelPreferences: { intelligencePriority: 0.8, speedPriority: 0.3, costPriority: 0.3 },
+    }, {
+      // The SDK's own default is sixty seconds, and a model thinking before it writes four
+      // hundred words takes longer than that — the first press after raising `ROOM` timed
+      // out at exactly 60.0s (2026-09-15). Just under core's 120-second ceiling on a
+      // button, so a slow model ends in this plugin's sentence rather than a bare timeout.
+      timeout: WAIT,
+    })
+  } catch (error) {
+    log.warn('could not adapt', error)
+    if (error instanceof Error && /timed out/i.test(error.message)) {
+      return { error: 'The model took longer than two minutes, so nothing was saved. Press Adapt again, or pick a faster model.' }
+    }
+    return { error: `Could not write it: ${error instanceof Error ? error.message : String(error)}` }
+  }
+
+  alexia.progress(ctx, 2, 3, 'Writing it')
+  // Half a personality is worse than none: it saves, it reads as chosen, and she acts as
+  // if nothing was. An Alexia too old to say `maxTokens` still gets caught by `usable`.
+  if (answered.stopReason === 'maxTokens') {
+    return { error: 'The model ran out of room before it finished, so nothing was saved. Press Adapt again, or pick a different model.' }
+  }
+  const said = answered.content?.type === 'text' ? answered.content.text : ''
+  // Which model wrote it, as core reported it back. Empty when whatever answered did not say.
+  const wrote = String(answered.model ?? '')
+
+  const doc = clean(said)
+  if (!usable(doc)) {
+    return { error: 'That came back without all four parts of a personality, so nothing was saved. Press Adapt again.' }
+  }
+  return { doc, wrote }
+}
+
+/**
  * The capability, and the reason it is a tool rather than a setting core could read.
  *
  * Core asks for `persona.personality` and is handed a paragraph. It does not learn that a
@@ -90,47 +158,8 @@ alexia.tool(
       return nope('Write a line or two describing how she should be, then press Adapt.')
     }
 
-    alexia.progress(ctx, 1, 3, 'Reading what you wrote')
-    let said
-    try {
-      const answered = await alexia.server.server.createMessage({
-        messages: [{ role: 'user', content: { type: 'text', text: brief(description) } }],
-        // Room to think as well as to write. It was 1,200, and a reasoning model spent almost
-        // all of it thinking — which is counted and never shown — so the document it did
-        // write stopped at `## How` (2026-09-15). Nearly every free model is a reasoning
-        // model now, and on a free one the headroom costs nothing.
-        maxTokens: ROOM,
-        // Writing, not rephrasing — this is the only call this plugin makes, and it makes
-        // it once per personality, so it is worth a rung that can actually write. The old
-        // node's cheapest-possible preference was right for a task that ran on every answer
-        // and wrong for this one.
-        modelPreferences: { intelligencePriority: 0.8, speedPriority: 0.3, costPriority: 0.3 },
-      }, {
-        // The SDK's own default is sixty seconds, and a model thinking before it writes four
-        // hundred words takes longer than that — the first press after raising `ROOM` timed
-        // out at exactly 60.0s (2026-09-15). Just under core's 120-second ceiling on a
-        // button, so a slow model ends in this plugin's sentence rather than a bare timeout.
-        timeout: WAIT,
-      })
-      alexia.progress(ctx, 2, 3, 'Writing it')
-      // Half a personality is worse than none: it saves, it reads as chosen, and she acts as
-      // if nothing was. An Alexia too old to say `maxTokens` still gets caught by `usable`.
-      if (answered.stopReason === 'maxTokens') {
-        return nope('The model ran out of room before it finished, so nothing was saved. Press Adapt again, or pick a different model.')
-      }
-      said = answered.content?.type === 'text' ? answered.content.text : ''
-    } catch (error) {
-      log.warn('could not adapt', error)
-      if (error instanceof Error && /timed out/i.test(error.message)) {
-        return nope('The model took longer than two minutes, so nothing was saved. Press Adapt again, or pick a faster model.')
-      }
-      return nope(`Could not write it: ${error instanceof Error ? error.message : String(error)}`)
-    }
-
-    const doc = clean(said)
-    if (!usable(doc)) {
-      return nope('That came back without all four parts of a personality, so nothing was saved. Press Adapt again.')
-    }
+    const written = await write(ctx, description)
+    if (written.error !== undefined) return nope(written.error)
 
     const existing = await saved()
     const name = unique(
@@ -141,9 +170,18 @@ alexia.tool(
     // Exactly one is in use, and the one just written is it. Switching is a row action; a
     // person who pressed Adapt has already said which one they want.
     await alexia.storage.update('personalities', { active: 0 }, { active: 1 })
-    await alexia.storage.insert('personalities', { name, doc, at: Date.now(), active: 1 })
+    await alexia.storage.insert('personalities', {
+      name,
+      doc: written.doc,
+      // The words that produced it, kept beside it: provenance to read, and the input
+      // Re-adapt writes from.
+      described: description,
+      wrote: written.wrote,
+      at: Date.now(),
+      active: 1,
+    })
     await bind()
-    return text(`Saved as “${name}” and in use from your next message.\n\n${doc}`)
+    return text(`Saved as “${name}” and in use from your next message.\n\n${written.doc}`)
   },
 )
 
@@ -162,6 +200,9 @@ alexia.tool(
           id: String(row.rowid),
           name: String(row.name),
           using: row.active === 1 ? 'in use' : '',
+          // Blank for everything saved before the writer was recorded, which is every row
+          // already on this machine. A blank cell is the honest answer; a guess is not.
+          wrote: String(row.wrote ?? ''),
           written: new Date(Number(row.at)).toISOString().slice(0, 10),
         })),
       },
@@ -196,6 +237,86 @@ alexia.tool(
     await alexia.storage.update('personalities', { active: 1 }, { rowid: Number(row.rowid) })
     await bind()
     return text(`Using “${String(row.name)}” from your next message.`)
+  },
+)
+
+/**
+ * Re-adapt: the same words, written again.
+ *
+ * The description is on the row now, so this needs nothing from the settings box — which is
+ * the point. A personality adapted six weeks ago on whatever model was reachable that day can
+ * be written again today without the person having to remember what they originally typed, or
+ * retype it into a box that is now showing something else.
+ */
+alexia.tool(
+  'readapt',
+  {
+    description:
+      'Write one saved personality again from the same description it was adapted from. ' +
+      'Takes the row it is. The version it replaces is kept, and Undo brings it back.',
+    inputSchema: fromJsonSchema(one),
+    annotations: { destructiveHint: false, openWorldHint: false },
+  },
+  async ({ id }, ctx) => {
+    const row = await byId(id)
+    if (!row) return nope('There is no saved personality with that id.')
+    const was = versionOf(row)
+    if (was.described === '') {
+      return nope(
+        `“${String(row.name)}” was saved before the words that made it were kept, so there is ` +
+          'nothing to write it again from. Adapt writes a new one.',
+      )
+    }
+
+    const written = await write(ctx, was.described)
+    if (written.error !== undefined) return nope(written.error)
+
+    alexia.progress(ctx, 3, 3, 'Saving')
+    await alexia.storage.update(
+      'personalities',
+      {
+        doc: written.doc,
+        wrote: written.wrote,
+        at: Date.now(),
+        previous: was,
+      },
+      { rowid: Number(row.rowid) },
+    )
+    await bind()
+    return text(
+      `Wrote “${String(row.name)}” again. Undo brings the previous one back.\n\n${written.doc}`,
+    )
+  },
+)
+
+/**
+ * Undo, and why it swaps rather than pops.
+ *
+ * One version is kept, so Undo is its own inverse: press it again and you are back where you
+ * started. A one-way pop would make *Undo* the button you cannot undo, which is the one thing
+ * a person pressing it is worried about.
+ */
+alexia.tool(
+  'undo',
+  {
+    description:
+      'Put back the previous version of one saved personality. Takes the row it is. ' +
+      'Pressing it again returns to the version you undid.',
+    inputSchema: fromJsonSchema(one),
+    annotations: { destructiveHint: false, openWorldHint: false },
+  },
+  async ({ id }) => {
+    const row = await byId(id)
+    if (!row) return nope('There is no saved personality with that id.')
+    const prior = priorOf(row)
+    if (!prior) return nope(`“${String(row.name)}” has only ever had the one version.`)
+    await alexia.storage.update(
+      'personalities',
+      { ...prior, previous: versionOf(row) },
+      { rowid: Number(row.rowid) },
+    )
+    await bind()
+    return text(`Put back the previous “${String(row.name)}”. Undo again returns to the other one.`)
   },
 )
 
@@ -239,7 +360,8 @@ alexia.tool(
   async ({ id }) => {
     const row = await byId(id)
     if (!row) return nope('There is no saved personality with that id.')
-    return text(String(row.doc))
+    const trailer = provenance(row)
+    return text(trailer === '' ? String(row.doc) : `${String(row.doc)}\n\n---\n${trailer}`)
   },
 )
 

@@ -144,3 +144,60 @@ export const unique = (name, taken) => {
   if (!taken.includes(name)) return name
   for (let n = 2; ; n++) if (!taken.includes(`${name} ${n}`)) return `${name} ${n}`
 }
+
+/** The day, as a person writes it. */
+const day = (at) => (Number(at) > 0 ? new Date(Number(at)).toISOString().slice(0, 10) : '')
+
+/**
+ * One saved version, pulled off a row.
+ *
+ * Rows written before any of this existed have none of these columns — a plugin table grows a
+ * column the first time a key appears, so everything older reads back `undefined`. That is the
+ * normal case on this Mac, not an error, and every reader below has to survive it.
+ */
+export const versionOf = (row) => ({
+  doc: String(row?.doc ?? ''),
+  described: String(row?.described ?? ''),
+  wrote: String(row?.wrote ?? ''),
+  at: Number(row?.at ?? 0),
+})
+
+/** The kept previous version, or nothing. Stored as JSON text, which is what storage.md promises. */
+export const priorOf = (row) => {
+  const raw = row?.previous
+  if (raw === undefined || raw === null || raw === '') return undefined
+  try {
+    const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw
+    return parsed && typeof parsed === 'object' ? versionOf(parsed) : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Where a personality came from, in the words of whoever reads the row a month later.
+ *
+ * **The description is the part worth keeping.** Adapt turns four words into a page, and until
+ * now the four words were thrown away the moment the page existed — so *Re-adapt* had nothing
+ * to re-adapt from, and nobody could tell what the page had been asked to be. Kept beside the
+ * document, it is both the provenance and the input for writing it again.
+ */
+export const provenance = (row) => {
+  const { described, wrote, at } = versionOf(row)
+  const lines = []
+  if (described !== '') lines.push(`Adapted from your words: “${described}”`)
+  const when = day(at)
+  if (wrote !== '' && when !== '') lines.push(`Written by ${wrote} on ${when}`)
+  else if (wrote !== '') lines.push(`Written by ${wrote}`)
+  else if (when !== '') lines.push(`Written on ${when}`)
+  const prior = priorOf(row)
+  if (prior) {
+    const then = day(prior.at)
+    lines.push(
+      then === '' ?
+        'A previous version is kept — Undo restores it.'
+      : `A previous version from ${then} is kept — Undo restores it.`,
+    )
+  }
+  return lines.join('\n')
+}
