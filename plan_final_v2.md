@@ -204,7 +204,7 @@ land on anything not already covered by D154–D171): the same day, in three pla
   item above should already have recorded its own decision as it was made; this step exists to
   catch anything missed before the report below is written.
 
-- [ ] **13. Stop point: full suite, report.**
+- [x] **13. Stop point: full suite, report.**
   This is the brief's "stop after step 4" — i.e. after item 11 above, which is
   `plan-personality.md`'s own order-of-work step 4 finishing, and the genuinely last action of
   the session. Run, in order:
@@ -217,6 +217,17 @@ land on anything not already covered by D154–D171): the same day, in three pla
   Report in plain language: what was built, with commit hashes; which acceptance tests could not
   be written, and why; and the outcome of each conditional item (3–6, 10) — built, skipped, or
   deferred, and which way each decision went.
+
+  **Run 2026-09-18.** `tsc -b` clean; `eslint` clean; `depcruise` no violations (187 modules,
+  870 dependencies); unit **901 passed, 113 files, 0 failed**; invariants **36 passed, 13 files**.
+  The known memory-panel flake did not appear. No acceptance test had to be left unwritten.
+
+  One failure was found and fixed on the way (`61e33b8`), and it was not this session's doing:
+  `trial.test.ts` travels a day forward, but `send()` stamps a try with the real clock rather
+  than the `now` it is handed, so once the real clock passed the fixture's hardcoded `now + 24h`
+  the ten day-one tests read as never sent. It had been green for a year and failed on today's
+  date with nothing changed. The fixture is now anchored to noon UTC of the day it runs. The
+  seam itself is untouched — `send()` still reads the wall clock — and is worth closing properly.
 
 ---
 
