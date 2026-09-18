@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { fromJsonSchema, log, plugin } from '@alexia/sdk'
+import { budgetLine, costLine } from './cost.js'
 import { check, noteOf, removedOf } from './safety.js'
 import {
   brief,
@@ -53,14 +54,16 @@ const nope = (said) => ({ isError: true, content: [{ type: 'text', text: said }]
 
 /**
  * What Adapt and Re-adapt both say back, in one order: what happened, what was taken out of
- * the document and why, and then the document itself.
+ * the document and why, what it will cost, and then the document itself.
  *
- * One function because the two buttons produce the same things and a person pressing either
- * is owed the same account of it — and because the next one along (Refine, improvement 2) is
- * a third caller that should not have to reassemble this from parts.
+ * One function because the two buttons produce the same four things and a person pressing
+ * either is owed the same account of it — and because the next one along (Refine, improvement
+ * 2) is a third caller that should not have to reassemble this from parts.
  */
 const reply = (headline, removed, doc) =>
-  [headline, noteOf(removed), doc].filter((part) => part !== '').join('\n\n')
+  [headline, noteOf(removed), costLine(doc), budgetLine(doc), doc]
+    .filter((part) => part !== '')
+    .join('\n\n')
 
 async function report() {
   const using = await active()
@@ -390,7 +393,12 @@ alexia.tool(
   async ({ id }) => {
     const row = await byId(id)
     if (!row) return nope('There is no saved personality with that id.')
-    const trailer = [provenance(row), noteOf(removedOf(row))]
+    const trailer = [
+      provenance(row),
+      noteOf(removedOf(row)),
+      costLine(String(row.doc)),
+      budgetLine(String(row.doc)),
+    ]
       .filter((part) => part !== '')
       .join('\n\n')
     return text(trailer === '' ? String(row.doc) : `${String(row.doc)}\n\n---\n${trailer}`)
