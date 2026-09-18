@@ -144,6 +144,9 @@ export interface Rendered {
   crossing?: string
   cross?: boolean
   daily?: number
+  /** `ladder`: the keyless floor's switch, and where it stands (§1 step 2, D154). */
+  floor?: string
+  keyless?: boolean
 }
 
 /** Which screen is drawing, and how it answers the two questions a widget asks back. */
@@ -179,6 +182,15 @@ export interface WidgetHost {
    */
   redraw?(): void
 }
+
+/**
+ * **Which models can be reached has changed, so the lists that follow the keychain redraw.**
+ *
+ * The same redraw a saved or removed key causes (§1 steps 3–4), reached from a widget rather
+ * than from the settings screen: the keyless floor's switch (D154) changes exactly what a key
+ * changes, and this file draws one widget and knows nothing about the tab it sits on.
+ */
+export const MODELS_CHANGED = 'alexia:models-changed'
 
 export const el = <K extends keyof HTMLElementTagNameMap>(
   tag: K,
@@ -2009,6 +2021,50 @@ function ladder(host: WidgetHost, declared: Rendered): HTMLElement {
   })
   crossing.append(toggle, toggleLabel, amountBox, crossSaid)
 
+  // ---- the keyless floor's switch (§1 step 2, D154) -----------------------------------------
+
+  /**
+   * **Whether providers that answer without a key may be asked at all.**
+   *
+   * On by default, and shown at every stop of the slider rather than at *free then paid* alone:
+   * the paid switch is a money question the other two stops have already answered, and this one
+   * is not — *free only* is exactly where somebody most wants to say which free providers.
+   */
+  const flooring = el('div', 'floor')
+  const floorToggle = el('input', 'floor-toggle')
+  floorToggle.type = 'checkbox'
+  floorToggle.id = `${host.screen}-${host.plugin}-${declared.key}-floor`
+  floorToggle.checked = declared.keyless !== false
+  const floorLabel = el('label', 'floor-label', 'Ask providers that need no key')
+  floorLabel.htmlFor = floorToggle.id
+  /**
+   * **Where a refusal is read.** On success the redraw below replaces this whole widget, so the
+   * sentence it writes is gone within the frame — and that is right, because what the person is
+   * waiting to see is the table gaining or losing rows, not a line about it. A failure does not
+   * redraw, so the reason stays on screen, which is the case that needs words.
+   */
+  const floorSaid = el('p', 'floor-said')
+  floorSaid.hidden = true
+  floorToggle.addEventListener('change', () => {
+    void (async () => {
+      if (declared.floor === undefined) return
+      const answer = await host.send('/api/action', {
+        plugin: host.plugin,
+        key: declared.floor,
+        row: floorToggle.checked ? 'on' : 'off',
+      })
+      floorSaid.textContent = String(answer.said ?? '')
+      floorSaid.className = answer.ok === true ? 'floor-said' : 'floor-said error'
+      floorSaid.hidden = floorSaid.textContent === ''
+      // The lists that follow the keychain follow this switch for the same reason, so it says so
+      // the way a saved key does (§1 steps 3-4) rather than reaching for the screen itself: this
+      // file draws one widget and knows nothing about the tab the Models table is on.
+      if (answer.ok === true) window.dispatchEvent(new CustomEvent(MODELS_CHANGED))
+    })()
+  })
+  flooring.hidden = declared.floor === undefined
+  flooring.append(floorToggle, floorLabel, floorSaid)
+
   for (const stop of stops) {
     const choice = el('label', 'grade-stop')
     const input = el('input')
@@ -2236,7 +2292,7 @@ function ladder(host: WidgetHost, declared: Rendered): HTMLElement {
 
   const adding = el('div', 'ladder-add')
   adding.append(search, hits)
-  box.append(track, explains, crossing, grid, adding, clear, said)
+  box.append(track, explains, crossing, flooring, grid, adding, clear, said)
   slide()
   void load()
   return box

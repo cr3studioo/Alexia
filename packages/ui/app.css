@@ -1623,6 +1623,30 @@ body[data-view='control'] .view:not(#control) {
   color: var(--ink-quiet);
 }
 
+/* The keyless floor's switch (D154), under the paid one and shown at every stop of the slider. */
+.floor {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  margin: 0 0 var(--space-4);
+}
+
+.floor-toggle {
+  margin: 0;
+}
+
+.floor-label {
+  font-size: var(--text-sm);
+}
+
+.floor-said {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--ink-quiet);
+}
+
 .ladder-col[data-off='true'] {
   opacity: 0.45;
 }

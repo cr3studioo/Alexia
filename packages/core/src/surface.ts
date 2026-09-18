@@ -6,6 +6,7 @@ import { pins, setPin } from './commands.js'
 import type { Aside } from './health.js'
 import { OLLAMA } from './ollama.js'
 import { MODEL_GROUPS } from './panels.js'
+import { setKeylessOn } from './pool.js'
 import { available, paid, ranking, route, type Choice, type Spend, type World } from './router.js'
 import { allow, forgetConsent } from './consent.js'
 import { forget } from './learned.js'
@@ -1033,6 +1034,33 @@ export function actions(
     })
   }
 
+  /**
+   * **The keyless floor's switch** (D154, §1 step 2): whether providers that answer without a
+   * key may be asked at all.
+   *
+   * On by default — a fresh install has nothing else — and off for somebody who would rather
+   * nothing left this machine for a provider they never signed up to. It says how many models
+   * went or came back, because the count is the whole visible effect and the table behind the
+   * switch may not be on screen.
+   */
+  const setKeyless = async (value: string): Promise<{ ok: boolean; said: string }> => {
+    const on = value !== 'off'
+    setKeylessOn(options.store, on)
+    if (!on) {
+      return { ok: true, said: 'Off. Only providers you added a key for are asked. Nothing was deleted, and the switch puts them back.' }
+    }
+    const world = await options.world()
+    const floor = new Set(world.rungs.filter((rung) => rung.keyed !== true).map((rung) => rung.provider.id))
+    const models = world.models.filter((model) => floor.has(model.provider)).length
+    return {
+      ok: true,
+      said:
+        floor.size === 0 ?
+          'On. Providers that answer without a key may be asked again.'
+        : `On. ${String(models)} model${models === 1 ? '' : 's'} from ${String(floor.size)} provider${floor.size === 1 ? '' : 's'} that need no key are back.`,
+    }
+  }
+
   return {
     new_chat: newChat,
     open_chat: openChat,
@@ -1041,6 +1069,7 @@ export function actions(
     set_spend: setSpend,
     set_order: setOrder,
     set_cross: setCross,
+    set_keyless: setKeyless,
     /**
      * Back to the router choosing. On every row rather than only the pinned one, because a
      * button that appears and disappears as the selection moves is a button people hunt for

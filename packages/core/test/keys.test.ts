@@ -183,3 +183,36 @@ test('removing the key of a provider that answers without one leaves it on the s
   )
   expect(await table()).toContain('Your list: floor/one@floor')
 }, 30_000)
+
+/**
+ * `model_plan.md` §1 step 2's last open piece: **the keyless group's switch** (D154).
+ *
+ * The floor is on by default, because hiding it would hide the only thing a fresh install has.
+ * Off, its models leave `available()` — and so the Models tab, which reads the same function —
+ * and the switch puts them back without a reload. A provider somebody pasted a key into is
+ * keyed rather than the floor, so it is untouched either way.
+ */
+test('the keyless group switches off, marking its models unreachable, and back on again', async () => {
+  /** What the ladder says about the floor's model: empty while it can be asked (`surface.ts`). */
+  const reach = async (): Promise<string> =>
+    String((await rows('routing')).find((one) => String(one.id) === 'floor/one')?.off ?? 'no such row')
+  /** Floor rows Automatic would actually walk. */
+  const automatic = async (): Promise<string[]> =>
+    (await table()).filter((one) => one.startsWith('Automatic, free:') && one.endsWith('@floor'))
+
+  expect(await reach()).toBe('')
+
+  const off = await post('/api/action', { plugin: '', key: 'set_keyless', row: 'off' })
+  expect(off.ok).toBe(true)
+  expect(String(off.said)).toContain('Only providers you added a key for are asked')
+  // Exactly what removing a key does (D163): out of every plan, and a listed entry kept but
+  // marked — nothing the person chose is deleted by a switch that one press puts back.
+  expect(await reach()).toBe('not available — no key for Floor')
+  expect(await automatic()).toEqual([])
+
+  const on = await post('/api/action', { plugin: '', key: 'set_keyless', row: 'on' })
+  expect(on.ok).toBe(true)
+  // It says how much came back, because the table behind the switch may not be on screen.
+  expect(String(on.said)).toMatch(/^On\. \d+ models? from \d+ providers? that need no key are back\.$/)
+  expect(await reach()).toBe('')
+}, 30_000)

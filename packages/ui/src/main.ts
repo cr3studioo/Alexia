@@ -18,7 +18,7 @@ import { mountSettings } from './settings.js'
 import { mountGlass, mountTheme, type Theme } from './theme.js'
 import { mountLive, type Stage } from './live.js'
 import { mountRail } from './rail.js'
-import { el } from './widgets.js'
+import { el, MODELS_CHANGED } from './widgets.js'
 
 interface Turn {
   role: 'system' | 'user' | 'assistant' | 'tool'
@@ -992,6 +992,12 @@ function redrawModels(): void {
   void rail.refresh()
   if (document.body.dataset.view === 'control') control.open()
 }
+
+// The keyless floor's switch (D154) changes which providers can be reached, which is what a key
+// changes, so it asks for the same redraw from inside the widget that draws it.
+window.addEventListener(MODELS_CHANGED, () => {
+  redrawModels()
+})
 
 const read = async (): Promise<State> =>
   (await (await fetch('/api/state', { headers: { 'x-alexia-token': token } })).json()) as State

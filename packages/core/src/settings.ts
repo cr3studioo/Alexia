@@ -60,6 +60,14 @@ export interface CoreWidget {
   crossing?: string
   cross?: boolean
   daily?: number
+  /**
+   * **The keyless floor's switch** (§1 step 2, D154): the action that turns the providers which
+   * answer without a key on (`on`) or off (`off`), and what it stands at now. Unlike the paid
+   * switch this one is on at every stop of the slider, because *free only* is exactly where
+   * somebody most wants to say which free providers.
+   */
+  floor?: string
+  keyless?: boolean
 }
 
 /** A declaration plus what core knows about it right now. The shell renders this and nothing else. */

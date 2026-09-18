@@ -20,6 +20,27 @@ import type { Store } from './store.js'
  * happen *before* the request, or the way you find out is a 429 and a slower answer.
  */
 
+/**
+ * **The keyless floor's switch** (D154, `model_plan.md` §1 step 2).
+ *
+ * Whether providers that answer without a key count as reachable at all. **On by default**,
+ * because hiding them would hide the only thing a fresh install has — the switch exists for
+ * somebody who would rather nothing left this machine for a provider they never signed up to,
+ * which is a real preference and not the one to make everybody state first.
+ *
+ * Off, they leave `available()`, the Models tab and every plan at once. A provider somebody
+ * pasted a key into is **keyed rather than the floor** (D159) and stays either way: the switch
+ * is about asking a stranger, not about that provider.
+ */
+const FLOOR = 'keyless.on'
+
+/** Whether the keyless floor may answer. Absent is on. */
+export const keylessOn = (store: Store): boolean => (store.kvGet(CORE, FLOOR) as boolean | undefined) ?? true
+
+export const setKeylessOn = (store: Store, on: boolean): void => {
+  store.kvSet(CORE, FLOOR, on)
+}
+
 /** A provider the user has connected, and how much of its free tier is left right now. */
 export interface Rung {
   provider: Provider
@@ -122,12 +143,15 @@ export async function usable(
   providers: Provider[] = PROVIDERS,
   at: number = Date.now(),
 ): Promise<Rung[]> {
+  // The floor's switch (D154), read once rather than per provider. Off, the keyless rungs are
+  // not built at all, so `route()` and the Models tab lose them together and cannot disagree.
+  const floor = keylessOn(store)
   const connected = await Promise.all(
     providers.map(async (provider) => {
       // Asked of the keyless providers too: a key pasted into one moves it off the floor.
       const keyed = Boolean(await secrets.get(CORE, keyOf(provider)).catch(() => undefined))
       // Nothing is pooled without a key the user added themselves. No key, not in the pool.
-      return keyed || anonymous(provider) ? { provider, keyed } : undefined
+      return keyed || (anonymous(provider) && floor) ? { provider, keyed } : undefined
     }),
   )
 

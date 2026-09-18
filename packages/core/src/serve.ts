@@ -29,7 +29,7 @@ import { Library, offerable } from './library.js'
 import { distil, forget, learnable, outline, save, type Episode } from './learned.js'
 import { mimeOf, Offers, openable, reach } from './offered.js'
 import { installed, OLLAMA, running } from './ollama.js'
-import { accountKey, fundedBy, usable, type Account } from './pool.js'
+import { accountKey, fundedBy, keylessOn, usable, type Account } from './pool.js'
 import { ceilings, estimate, previewLine, setCeilings, worthAsking, type Ceilings } from './preview.js'
 import { Plugins } from './plugins.js'
 import {
@@ -711,10 +711,13 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
    * should grey a button, not empty the screen.
    */
   const connected = async (): Promise<ReadonlySet<string>> => {
+    // The keyless floor's switch (D154). A key is asked about first, so a provider somebody
+    // pasted one into is keyed rather than the floor and stays connected either way.
+    const floor = keylessOn(store)
     const found = await Promise.all(
       providers.map(async (p) =>
-        anonymous(p) || (await secrets.get(CORE, keyOf(p)).catch(() => undefined)) !== undefined ?
-          [p.id]
+        (await secrets.get(CORE, keyOf(p)).catch(() => undefined)) !== undefined ? [p.id]
+        : anonymous(p) && floor ? [p.id]
         : [],
       ),
     )
