@@ -48,6 +48,113 @@ export interface Model {
    * one. Zero would sort as *unused* and read as *bad*, and neither is what silence means.
    */
   weekly?: number
+  /**
+   * **Whose figure `weekly` is, when it is not this provider's own** (D159): the id of the
+   * provider that published it for the same model. Absent on a row that published its own.
+   * Set by {@link borrow} when the catalog is read, never written to the cache.
+   */
+  weeklyFrom?: string
+  /**
+   * **When the provider added it**, where the provider's own list says and means it — OpenRouter's
+   * `created` (§4 D reads it). A model added in the last fortnight is new (D161).
+   */
+  created?: number
+  /** **When the provider stops serving it**, from OpenRouter's `expiration_date` (§4 D reads it). */
+  expires?: number
+}
+
+/**
+ * **A router: a row that hands the request to a different model each time** (D159).
+ *
+ * `openrouter/free` and `kilo-auto/free` are priced at zero, so they arrive as ordinary free
+ * rows — and Automatic without an OpenRouter key put `kilo-auto/free` first, which is a random
+ * free model, 2.6B included. They are ranked last and stay pinnable.
+ *
+ * **Read from the id and the name**, the words both gateways use: an `auto` or `router` segment
+ * of the id (`kilo-auto/small`), or a name that says *Router* or starts with *Auto*. Measured
+ * on 2026-09-15 against the 1,830 rows cached on this machine and both gateways' live lists
+ * (OpenRouter 446, Kilo 378): the nine router ids among them, and nothing else. OpenRouter's
+ * own list says `tokenizer: "Router"`, which was not used: it also marks the `~vendor/…-latest`
+ * aliases, each of which is one model, and Kilo's routers say `"Other"`.
+ */
+export const routes = (model: Pick<Model, 'id' | 'name'>): boolean =>
+  /(?:^|[\s/:_-])(?:auto|router)(?:$|[\s/:_-])/i.test(model.id) || /\brouter\b|^auto\b/i.test(model.name)
+
+/**
+ * **Billions of parameters, from what the runner says or else from the id** (D159) — `-2.6b`,
+ * `:397b`, `-8x22b`, Gemma's `E4B`. Undefined when neither says, which is most closed models.
+ *
+ * A mixture of experts names two sizes, `-120b-a12b`, and this reads the first: the whole
+ * model. The active part never starts with a digit, so it is never matched.
+ *
+ * **For ranking only.** `params` is still what the planning filter reads, so a size guessed
+ * from a name never removes a model from a plan — it only orders one.
+ */
+export function sizeOf(model: Pick<Model, 'id' | 'params'>): number | undefined {
+  if (model.params !== undefined) return model.params
+  const found = /(?:^|[\s/:_-])(?:(\d+)x)?e?(\d+(?:\.\d+)?)b(?=$|[\s/:_.-])/i.exec(model.id)
+  if (found === null) return undefined
+  return (found[1] === undefined ? 1 : Number(found[1])) * Number(found[2])
+}
+
+/**
+ * The smallest model trusted to plan, in billions of parameters.
+ *
+ * This is the axis `tier` could not carry. **Every** local model is `T0` whether it is 1B or
+ * 8B, so flipping the router's `hard` row without this would have handed planning to a 1B —
+ * which the measurement says nothing good about. Only local models report a size, so this only
+ * ever excludes something on this machine; a hosted model is judged by its tier, as before.
+ *
+ * Here rather than in `router.ts` since D162, beside the size it is compared with, so the model
+ * record's *under 7B* tag reads the same line the planning filter does.
+ *
+ * Seven because the class measured is 7–9B and the next size down on that machine is 1B.
+ * There is no evidence sitting between them, and a threshold that pretends otherwise is a
+ * guess wearing a number.
+ */
+export const PLANNER = 7
+
+/**
+ * **Where a model's size puts it** (D159): known to be big enough to plan, not known, or known
+ * to be smaller than {@link PLANNER}. Unknown is the middle and not the bottom — most closed
+ * models never say, and silence is not smallness. Exported for whatever else needs to know
+ * whether a reader is small.
+ */
+export const stature = (model: Pick<Model, 'id' | 'params'>): 'big' | 'unknown' | 'small' => {
+  const billions = sizeOf(model)
+  return billions === undefined ? 'unknown' : billions >= PLANNER ? 'big' : 'small'
+}
+
+/**
+ * One model's name across providers: the provider's prefix, a `:free` suffix and case taken
+ * off. `nvidia/nemotron-3-super-120b-a12b:free` on OpenRouter and on Kilo, and
+ * `nvidia/nemotron-3-super-120b-a12b` on NVIDIA, are all `nemotron-3-super-120b-a12b`.
+ */
+const same = (id: string): string => id.toLowerCase().replace(/:free$/, '').replace(/^.*\//, '')
+
+/**
+ * **The world's usage figure, lent to every provider serving the same model** (D159).
+ *
+ * Only OpenRouter publishes `weekly`, so every other provider's free models tied, and the tie
+ * went to the order of somebody's JSON — which is how `kilo-auto/free` came first. The figure
+ * is about the model rather than the provider, so a row without one borrows it by {@link same}
+ * name. A row's own figure is never replaced, and a router neither lends nor borrows: its usage
+ * is not any one model's.
+ *
+ * Measured on this machine: the only names two lending rows share are one model's free and paid
+ * rows on OpenRouter, which carry the same figure; the larger is taken all the same.
+ */
+export function borrow(models: readonly Model[]): Model[] {
+  const lent = new Map<string, { weekly: number; from: string }>()
+  for (const model of models) {
+    if (model.weekly === undefined || routes(model)) continue
+    const known = lent.get(same(model.id))
+    if (known === undefined || model.weekly > known.weekly) lent.set(same(model.id), { weekly: model.weekly, from: model.provider })
+  }
+  return models.map((model) => {
+    const found = model.weekly === undefined && !routes(model) ? lent.get(same(model.id)) : undefined
+    return found === undefined ? model : { ...model, weekly: found.weekly, weeklyFrom: found.from }
+  })
 }
 
 export interface Snapshot {
@@ -83,13 +190,24 @@ export interface Snapshot {
 
 /** What changed since the last fetch. The news line is built from this, and so is the UI. */
 export interface Change {
+  /** New on this provider's list since the last fetch — per provider, since one model is often on two. */
   added: Model[]
   removed: Model[]
+  /**
+   * **Whether this provider's list had been fetched before** (§4 D). On the first fetch every model
+   * is *added*, and none of them is new: a fresh install sees everything at once.
+   */
+  listKnown: boolean
   /** The fetch did not happen: offline, or the provider is having a bad day. Not an error. */
   failed?: string
 }
 
-const DAY = 24 * 60 * 60 * 1000
+/**
+ * **How often the lists are fetched again** (D161): six hours, while the app runs. Providers change
+ * their lists and limits almost daily — OpenRouter's free list gained a model between this Mac's
+ * morning cache and the evening of 2026-09-15 — and nobody should have to import a model by hand.
+ */
+export const POLL_EVERY = 6 * 60 * 60 * 1000
 
 /**
  * Where the line between "small paid" and "frontier" falls, in dollars per million input
@@ -100,7 +218,9 @@ const FRONTIER_USD_PER_MTOK = 1
 
 /**
  * Bumped whenever {@link parse} learns to read a field it used to drop — at 3 and again at 4
- * to drop a row it used to keep, and at 5 to read a second list shape. Both change what a cached snapshot means, and a cache is only as good
+ * to drop a row it used to keep, at 5 to read a second list shape, and at 6 to stop reading a
+ * missing price as zero (D154), and at 7 to read OpenRouter's `created` and `expiration_date`
+ * (§4 D). Each changes what a cached snapshot means, and a cache is only as good
  * as the reader that filled it: every machine already holds five negative-priced rows that
  * out-sort the free tier, and they leave on the next poll rather than on the next reinstall.
  *
@@ -109,7 +229,7 @@ const FRONTIER_USD_PER_MTOK = 1
  * providers, and a stamp they cannot see the value of is a barrier that quietly falls over
  * the next time this number changes.
  */
-export const PARSER = 5
+export const PARSER = 7
 
 /**
  * **The keyless floor's models, written down rather than fetched.**
@@ -234,6 +354,8 @@ export const SEEDED: readonly Model[] = [
 
 export class Catalog {
   #snapshot: Snapshot
+  /** {@link models} for the snapshot it was built from, since the router reads it on every step. */
+  #read?: { from: Snapshot; models: readonly Model[] }
 
   /** `file` is `<cacheDir>/models.json`. Missing, empty or corrupt all mean the same thing. */
   constructor(private readonly file: string) {
@@ -250,10 +372,19 @@ export class Catalog {
    * the seeded half is the one somebody confirmed by hand — a fetched row's silence about
    * tools and windows is the thing it exists to correct, so letting the fetch overwrite it
    * would undo the fix on the first successful poll.
+   *
+   * **With `weekly` lent across providers** ({@link borrow}), here rather than in the cache, so
+   * a figure is always the one the latest usage feed published.
    */
   get models(): readonly Model[] {
-    const written = new Set(SEEDED.map((m) => m.id))
-    return [...SEEDED, ...this.#snapshot.models.filter((m) => !written.has(m.id))]
+    if (this.#read?.from !== this.#snapshot) {
+      const written = new Set(SEEDED.map((m) => m.id))
+      this.#read = {
+        from: this.#snapshot,
+        models: borrow([...SEEDED, ...this.#snapshot.models.filter((m) => !written.has(m.id))]),
+      }
+    }
+    return this.#read.models
   }
 
   /**
@@ -292,15 +423,17 @@ export class Catalog {
   }
 
   /**
-   * Fetch, unless what is cached is younger than `maxAge` — which is the daily poll, minus
-   * a timer nothing owns yet. The app loop calls this on a schedule from M1-10.
+   * Fetch, unless what is cached is younger than `maxAge` — six hours by default, which is the
+   * poll `serve()` runs on a timer (§4 D) as well as at startup and when the Models tab opens.
    *
    * A fetch that fails leaves the cache exactly as it was and says why in `failed`. Being
    * offline is an ordinary state for this, not an error worth throwing at anyone.
    */
-  async refresh(provider: Provider, maxAge = DAY, key?: string): Promise<Change> {
-    if (!provider.models) return { added: [], removed: [], failed: `${provider.name} has no model list` }
-    if (Date.now() - this.fetchedFrom(provider.id) < maxAge) return { added: [], removed: [] }
+  async refresh(provider: Provider, maxAge = POLL_EVERY, key?: string): Promise<Change> {
+    /** Rows of this provider were fetched before, so what arrives now that was not there is new. */
+    const listKnown = this.#snapshot.models.some((m) => m.provider === provider.id)
+    if (!provider.models) return { added: [], removed: [], listKnown, failed: `${provider.name} has no model list` }
+    if (Date.now() - this.fetchedFrom(provider.id) < maxAge) return { added: [], removed: [], listKnown }
 
     let models: Model[]
     try {
@@ -328,16 +461,19 @@ export class Catalog {
       if (!response.ok) throw new Error(`${response.status}`)
       models = parse(await response.json(), provider, await popularity(provider))
     } catch (error) {
-      return { added: [], removed: [], failed: `could not reach ${provider.name}: ${String(error)}` }
+      return { added: [], removed: [], listKnown, failed: `could not reach ${provider.name}: ${String(error)}` }
     }
     // An empty list is a shape change, not a world where no models exist. Keep the cache.
     if (models.length === 0) {
-      return { added: [], removed: [], failed: `${provider.name} returned nothing usable` }
+      return { added: [], removed: [], listKnown, failed: `${provider.name} returned nothing usable` }
     }
 
-    const before = new Map(this.#snapshot.models.map((m) => [m.id, m]))
+    // This provider's rows only, on both sides: a model OpenRouter adds is new on OpenRouter
+    // whether or not Kilo already served it, and each copy is judged on its own (D161).
+    const before = new Map(this.#snapshot.models.filter((m) => m.provider === provider.id).map((m) => [m.id, m]))
     const after = new Map(models.map((m) => [m.id, m]))
     const change: Change = {
+      listKnown,
       added: models.filter((m) => !before.has(m.id)),
       // Only this provider's rows: another provider's models are not gone because this
       // one did not mention them.
@@ -360,9 +496,20 @@ export class Catalog {
 /**
  * The change, as a sentence. Free models first, because that is the one people want to hear
  * about — and nothing at all when nothing happened, so this can be called unconditionally.
+ *
+ * **With `named`, the Models tab's line** (§4 D): only free models, each with its provider, and
+ * only when the list was known before — the first fetch on a fresh install is not four hundred
+ * new models. *1 new free model since 09:15: GLM 5.2 on OpenRouter. Not tried yet.*
  */
-export function news(change: Change): string | undefined {
+export function news(change: Change, named?: { provider: string; since: string }): string | undefined {
   const free = change.added.filter((m) => m.tier === 'T1')
+  if (named !== undefined) {
+    if (!change.listKnown || free.length === 0) return undefined
+    const shown = free.slice(0, 3).map((m) => m.name)
+    const more = free.length - shown.length
+    const names = more > 0 ? `${shown.join(', ')} and ${String(more)} more` : shown.join(' and ')
+    return `${String(free.length)} new free model${free.length === 1 ? '' : 's'} since ${named.since}: ${names} on ${named.provider}. Not tried yet.`
+  }
   const [count, kind] = free.length > 0 ? [free.length, 'free '] : [change.added.length, '']
   if (count === 0) return undefined
   return `${count} new ${kind}model${count === 1 ? ' is' : 's are'} available.`
@@ -407,6 +554,15 @@ function parse(payload: unknown, provider: Provider, weekly: ReadonlyMap<string,
       /** How much it can produce. Zero is a model that does not answer in words at all. */
       max_completion_tokens?: unknown
       pricing?: { prompt?: unknown; completion?: unknown }
+      /** OpenRouter's: when it was added (seconds), and when it stops being served (a date). */
+      created?: unknown
+      expiration_date?: unknown
+      /** Requesty's names for the same two numbers, per token. Its `pricing` is a tier table. */
+      input_price?: unknown
+      output_price?: unknown
+      /** Requesty's and Navy's tool flag, where OpenRouter lists `tools` under parameters. */
+      supports_tool_calling?: unknown
+      supports_tools?: unknown
       architecture?: { input_modalities?: unknown }
       supported_parameters?: unknown
       top_provider?: { is_moderated?: unknown }
@@ -427,8 +583,24 @@ function parse(payload: unknown, provider: Provider, weekly: ReadonlyMap<string,
      */
     if (entry.max_completion_tokens === 0) return []
 
-    const priceIn = perMillion(entry.pricing?.prompt)
-    const priceOut = perMillion(entry.pricing?.completion)
+    const pricedIn = perMillion(entry.pricing?.prompt ?? entry.input_price)
+    const pricedOut = perMillion(entry.pricing?.completion ?? entry.output_price)
+    /**
+     * **A price nobody published is not zero** (D154).
+     *
+     * It was, everywhere, on the grounds that nobody publishes prices on a free tier — true
+     * of Groq, and false of a router. Requesty prices its list under names this did not read,
+     * so all 684 of its models arrived free, and a Requesty key would have let *free only*
+     * route to models that bill. Now the provider row says what silence means: on a `free`
+     * provider it is zero, as before; on a `published` one it is a row nobody priced, and it
+     * is not carried unless the provider's terms name it free.
+     */
+    if (pricedIn === undefined || pricedOut === undefined) {
+      const named = (provider.freeModels ?? []).some((one) => one.toLowerCase() === id.toLowerCase())
+      if ((provider.pricing ?? 'free') === 'published' && !named) return []
+    }
+    const priceIn = pricedIn ?? 0
+    const priceOut = pricedOut ?? 0
     /**
      * **A negative price is not a price.** OpenRouter prices its own meta-routers —
      * `openrouter/auto` and four siblings — at `-1`, which is their way of saying *varies,
@@ -463,8 +635,16 @@ function parse(payload: unknown, provider: Provider, weekly: ReadonlyMap<string,
          * the upgrade is a `tools` probe per provider, cached beside this, when the auto path
          * needs them.
          */
-        supportsTools: params.includes('tools'),
+        // Requesty and Navy say it in a flag of their own; a flag that is not `true` is not a yes.
+        supportsTools: params.includes('tools') || entry.supports_tool_calling === true || entry.supports_tools === true,
         modality: Array.isArray(modalities) ? modalities.map(String) : ['text'],
+        // Only where the row says the list means it (§4 D): elsewhere `created` is a training date.
+        ...(provider.listsDates === true && typeof entry.created === 'number' && entry.created > 0 && {
+          created: entry.created < 1e12 ? entry.created * 1000 : entry.created,
+        }),
+        ...(provider.listsDates === true &&
+          typeof entry.expiration_date === 'string' &&
+          Number.isFinite(Date.parse(entry.expiration_date)) && { expires: Date.parse(entry.expiration_date) }),
         ...(typeof entry.canonical_slug === 'string' &&
           weekly.has(entry.canonical_slug) && { weekly: weekly.get(entry.canonical_slug) }),
         // A moderated endpoint refuses; an unmoderated one does not. A provider that does
@@ -516,10 +696,16 @@ async function popularity(provider: Provider): Promise<ReadonlyMap<string, numbe
   }
 }
 
-/** Prices arrive as strings, per token. Nobody thinks in those. */
-function perMillion(price: unknown): number {
+/**
+ * Prices arrive as strings, per token. Nobody thinks in those.
+ *
+ * `undefined` when there is no price to read, which is different from a price of zero —
+ * `Number(undefined)` is `NaN` and `Number(null)` is `0`, and this used to turn both into zero.
+ */
+function perMillion(price: unknown): number | undefined {
+  if (price === undefined || price === null || price === '') return undefined
   const n = Number(price)
-  return Number.isFinite(n) ? n * 1_000_000 : 0
+  return Number.isFinite(n) ? n * 1_000_000 : undefined
 }
 
 function read(file: string): Snapshot | undefined {

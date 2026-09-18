@@ -55,9 +55,21 @@ import { APP_VERSION, newer } from './version.js'
  * can point at a file rather than type where one is (D89's obstacle removed, not waived); and
  * `multiline` on `text`. All four are optional and none of them changes what an existing
  * manifest means, which is why the floor stays at 2 again.
+ *
+ * **8 on 2026-09-17 (D164).** A `table` that explains its own order: `groupOrder`, so groups are
+ * drawn in the order their author means rather than alphabetically, and two row fields — `note`,
+ * a sentence under the row, and `tags`, chips that each carry a tone. Core's Models table needed
+ * all three to show why each model sits where it does, and a core tab is drawn by the same widget
+ * a plugin declares, so they arrived for everyone. Optional, and the floor stays at 2.
+ *
+ * **9 on 2026-09-18.** The rest of the Models mock-up, and the same reasoning as 8: `groupNotes`,
+ * a line under a group's heading saying what the group is, and `chips`, named filters that narrow
+ * the table to a group or to rows carrying any of some tags. Both read off what `table` already
+ * has — `groupBy`'s value and a row's `tags` — rather than adding a query language, so nothing an
+ * existing manifest means changes and the floor stays at 2 again.
  */
 export const ALEXIA_PROTOCOL_MIN = 2
-export const ALEXIA_PROTOCOL_MAX = 7
+export const ALEXIA_PROTOCOL_MAX = 9
 
 /**
  * The two MCP revisions core speaks, in preference order (D55, corrected by D57).
@@ -358,6 +370,43 @@ const setting = z.discriminatedUnion('type', [
     filter: z.boolean().optional(),
     /** A field to group rows under. It need not be a column — grouping is not showing. */
     groupBy: z.string().regex(IDENT).optional(),
+    /**
+     * **The order groups are drawn in** (`alexia_protocol` 8), by the value of `groupBy`. A group
+     * not named here follows the named ones, alphabetically, which is how every group was drawn
+     * before. A group named here that has no rows is simply not drawn.
+     */
+    groupOrder: z.array(z.string().min(1).max(64)).min(1).max(16).optional(),
+    /**
+     * **A line under each group's heading** (`alexia_protocol` 9), by the value of `groupBy`.
+     *
+     * A group with nothing said about it keeps its heading alone, which is how every group was
+     * drawn before. Said once under the heading rather than repeated down the rows, because it
+     * is a fact about the group and a column that repeated it would be a column of one sentence.
+     */
+    groupNotes: z.record(z.string().min(1).max(64), z.string().min(1).max(240)).optional(),
+    /**
+     * **Chips that narrow the table to a group, or to rows carrying any of some tags**
+     * (`alexia_protocol` 9). One press filters, the same press again puts it back, and they sit
+     * beside the filter box because they are that same question asked in fewer keystrokes.
+     *
+     * They read off what the table already has — `groupBy`'s value and a row's `tags` — rather
+     * than introducing a query language nobody asked for. A chip naming neither is not drawn: one
+     * that silently matched every row would read as a filter that does not work.
+     */
+    chips: z
+      .array(
+        z
+          .object({
+            key: z.string().regex(IDENT),
+            label: z.string().min(1).max(40),
+            group: z.string().min(1).max(64).optional(),
+            tags: z.array(z.string().min(1).max(64)).min(1).max(8).optional(),
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(8)
+      .optional(),
   }),
   z.object({
     /**
@@ -720,6 +769,9 @@ export const Manifest = ManifestShape.superRefine((m, ctx) => {
       if (s.type === 'cards') since(6, 'cards')
       if (s.type === 'file') since(7, 'file')
       if (s.type === 'text' && s.multiline !== undefined) since(7, 'multiline', [...at(i), 'multiline'])
+      if (s.type === 'table' && s.groupOrder !== undefined) since(8, 'groupOrder', [...at(i), 'groupOrder'])
+      if (s.type === 'table' && s.groupNotes !== undefined) since(9, 'groupNotes', [...at(i), 'groupNotes'])
+      if (s.type === 'table' && s.chips !== undefined) since(9, 'chips', [...at(i), 'chips'])
       if (s.when !== undefined) {
         since(7, 'when', [...at(i), 'when'])
         // A `when` naming a key nobody declared is a widget that is never drawn, silently.

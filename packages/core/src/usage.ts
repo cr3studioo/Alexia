@@ -42,6 +42,13 @@ export interface Caps {
    * and an agent loop can burn a month's budget in an hour, where a day's is a day's.
    */
   daily?: number
+  /**
+   * **The paid switch** (D160, D161, §4 H): on *free then paid*, whether Automatic moves to a paid
+   * model by itself once the free ones are done. On, it does, within {@link daily}; off — the
+   * default — the work pauses and *Allow switching to a paid model* is the one place money is
+   * asked about. Turning it on asks for the daily amount, so there is still one money setting.
+   */
+  cross?: boolean
 }
 
 /**

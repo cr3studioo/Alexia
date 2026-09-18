@@ -18,12 +18,16 @@ import { mountSettings } from './settings.js'
 import { mountGlass, mountTheme, type Theme } from './theme.js'
 import { mountLive, type Stage } from './live.js'
 import { mountRail } from './rail.js'
-import { el } from './widgets.js'
+import { el, MODELS_CHANGED } from './widgets.js'
 
 interface Turn {
   role: 'system' | 'user' | 'assistant' | 'tool'
   content: string
   model?: string
+  /** What Alexia said about this answer — a switch to another model — kept with it (§4 G). */
+  notes?: string[]
+  /** Somebody pressed *Bad answer* on it (§4 I). Still shown, marked; never sent to a model again. */
+  bad?: true
 }
 
 /**
@@ -54,6 +58,8 @@ interface Provider {
   verified?: string
   /** What getting in costs that is not money, where that is more than an email. */
   friction?: string
+  /** It wants a card before it gives a key (D165). */
+  card?: true
   /** It answers without a key, which is the tier that makes skipping this screen work. */
   keyless: boolean
   /** Its account id goes in the URL, so what it wants pasted is `account_id:api_token`. */
@@ -87,6 +93,8 @@ interface State {
   warning?: string
   /** Today's spending against today's allowance — the number that decides whether the router may spend at all. */
   today?: { spent: number; allowance: number }
+  /** The paid switch is on: Automatic moves to paid by itself once the free models are done (§4 H). */
+  cross?: boolean
   providers: Provider[]
   commands: Command[]
 }
@@ -143,6 +151,78 @@ function bubble(kind: 'user' | 'assistant' | 'refusal', content = ''): HTMLEleme
 function say(line?: string): void {
   note.textContent = line ?? ''
   note.hidden = !line
+}
+
+const paidNote = document.querySelector<HTMLElement>('#paid-note')!
+const popup = document.querySelector<HTMLElement>('#popup')!
+
+/**
+ * **What stands above the message box when the paid switch is on** (§4 H): *Paid models will be
+ * used once the free ones are done, up to $1.00 today.* Put back whenever a charge line is cleared.
+ */
+let standingPaid = ''
+
+/** The line before a charge, where nothing else writes (§4 G). Empty puts the standing warning back. */
+function warnPaid(line?: string): void {
+  const shown = line ?? standingPaid
+  paidNote.textContent = shown
+  paidNote.hidden = shown === ''
+}
+
+/** **How long a switch is on screen as a pop-up** (D160): long enough to read one sentence. */
+const POPUP_MS = 3000
+let popupTimer: number | undefined
+
+/** A switch, said for three seconds; a newer one replaces it and starts its own three (§4 G). */
+function pop(line: string): void {
+  window.clearTimeout(popupTimer)
+  popup.textContent = line
+  popup.hidden = false
+  popupTimer = window.setTimeout(() => {
+    popup.hidden = true
+    popup.textContent = ''
+  }, POPUP_MS)
+}
+
+/**
+ * **The row of actions under the latest answer** (§4 I). One row for everything a person can say
+ * about an answer: *Bad answer* now, and *that wasn't her* from the personality plan when it lands
+ * (D157) — so the two are never two rows competing under one bubble. Only the latest answer has
+ * it, because a press asks that question again.
+ */
+function answerActions(answer: HTMLElement): void {
+  for (const old of log.querySelectorAll('.message-actions')) old.remove()
+  const row = document.createElement('div')
+  row.className = 'message-actions'
+  const bad = document.createElement('button')
+  bad.type = 'button'
+  bad.className = 'quiet-button'
+  bad.textContent = 'Bad answer'
+  bad.title = 'Ask again with a different model. Two of these in a month move a model down.'
+  bad.addEventListener('click', () => {
+    row.remove()
+    markBad(answer)
+    running(() => respond('…', undefined, () => Promise.resolve({ again: true, bad: {} })))
+  })
+  row.append(bad)
+  answer.append(row)
+}
+
+/** An answer somebody marked bad: dimmed, and saying so, rather than taken off the page. */
+function markBad(answer: HTMLElement): void {
+  answer.classList.add('bad')
+  const line = document.createElement('p')
+  line.className = 'bad-line'
+  line.textContent = 'You marked this a bad answer. It is not shown to a model again.'
+  answer.prepend(line)
+}
+
+/** A switch kept on its answer: a small line above the words, drawn again from history (§4 G). */
+function switchLine(line: string): HTMLElement {
+  const element = document.createElement('p')
+  element.className = 'switch-line'
+  element.textContent = line
+  return element
 }
 
 // ---- attachments (D-documents) ------------------------------------------------------------
@@ -639,10 +719,19 @@ function firstRun(state: State): void {
 function keyWall(state: State, saved: (id: string) => void): void {
   const wall = document.querySelector<HTMLElement>('#wall')!
   const keyless = state.providers.filter((p) => p.keyless).length
+  /**
+   * **Which of them want a card, from the rows** (D165). This said *none of them wants a card*
+   * as a fact about the screen, and it stopped being one when Cerebras's trial started asking.
+   */
+  const carded = state.providers.filter((p) => p.card === true).map((p) => p.name)
+  const cards =
+    carded.length === 0 ? 'none of them wants a card'
+    : carded.length === 1 ? `only ${carded[0] ?? ''} wants a card`
+    : `${carded.slice(0, -1).join(', ')} and ${carded.at(-1) ?? ''} want a card`
   document.querySelector<HTMLElement>('#wall-hint')!.textContent =
     keyless > 0 ?
-      `${String(keyless)} of these answer with no key at all. A key on any of the others makes Alexia faster, and none of them wants a card.`
-    : 'A key on any of these makes Alexia faster, and none of them wants a card.'
+      `${String(keyless)} of these answer with no key at all. A key on any of the others makes Alexia faster, and ${cards}.`
+    : `A key on any of these makes Alexia faster, and ${cards}.`
 
   // The honest trade, said once under the wall rather than on twenty tiles: nobody has read
   // most of these terms, and "we have not checked" beats a confident wrong answer.
@@ -736,12 +825,14 @@ function tile(provider: Provider, saved: (id: string) => void): HTMLElement {
     if (!typed) return
     paste.disabled = true
     void post('/api/setup', { provider: { id: provider.id, key: typed } })
-      .then(() => {
+      .then((answer) => {
         paste.value = ''
         said.className = 'tile-said good'
-        said.textContent = 'Saved to the keychain.'
+        // What the key unlocked, now that core waits for the list (§1 step 3).
+        said.textContent = typeof answer.said === 'string' ? answer.said : 'Saved to the keychain.'
         head.append(el('span', 'flag good', 'key stored'))
         saved(provider.id)
+        redrawModels()
       })
       // A key is the one thing nobody can check by looking, so a silent failure here is a
       // person pasting the same key again forever.
@@ -772,6 +863,7 @@ function setupSettings(state: State): void {
   const provider = document.querySelector<HTMLSelectElement>('#provider-setting')!
   const key = document.querySelector<HTMLInputElement>('#key-setting')!
   const save = document.querySelector<HTMLButtonElement>('#save-key')!
+  const remove = document.querySelector<HTMLButtonElement>('#remove-key')!
   const said = document.querySelector<HTMLElement>('#key-said')!
 
   name.value = state.setup.name
@@ -819,7 +911,48 @@ function setupSettings(state: State): void {
       (connected.has(provider.value) ?
         `A key is stored for ${picked?.name ?? provider.value}. Pasting one replaces it. `
       : `No key yet for ${picked?.name ?? provider.value}. `) + (picked?.terms ? `Terms: ${picked.terms}` : '')
+    // The way out sits beside the way in, and only where there is something to take out.
+    remove.hidden = !connected.has(provider.value)
+    disarm()
   }
+
+  /**
+   * **Remove a key** (§1 step 4), on the same screen that adds one.
+   *
+   * Two presses, because what it deletes cannot be read back: the keychain is the only copy
+   * this machine has, and a key is minted on somebody else's site. The first press only
+   * changes the button's words; anything else — choosing another provider, three seconds —
+   * puts them back.
+   */
+  let armed: number | undefined
+  const disarm = (): void => {
+    window.clearTimeout(armed)
+    armed = undefined
+    remove.textContent = 'Remove key'
+  }
+  remove.addEventListener('click', () => {
+    if (armed === undefined) {
+      remove.textContent = 'Press again to remove'
+      armed = window.setTimeout(disarm, 3000)
+      return
+    }
+    disarm()
+    const id = provider.value
+    remove.disabled = true
+    void post('/api/setup', { provider: { id, remove: true } })
+      .then((answer) => {
+        connected.delete(id)
+        describe()
+        if (typeof answer.said === 'string') said.textContent = answer.said
+        redrawModels()
+      })
+      .catch((error: unknown) => {
+        said.className = 'error'
+        said.textContent = `Not removed: ${error instanceof Error ? error.message : String(error)}`
+      })
+      .finally(() => (remove.disabled = false))
+  })
+
   provider.addEventListener('change', describe)
   describe()
 
@@ -827,12 +960,14 @@ function setupSettings(state: State): void {
     if (!key.value.trim()) return
     save.disabled = true
     void post('/api/setup', { provider: { id: provider.value, key: key.value.trim() } })
-      .then(() => {
+      .then((answer) => {
         connected.add(provider.value)
         key.value = ''
         describe()
-        // Said out loud, because the box empties and nothing else on the screen moves.
-        said.textContent = `Saved to the keychain. ${said.textContent}`
+        // Said out loud, because the box empties and nothing else on the screen moves — and
+        // said as what the key unlocked, which core waited to find out (§1 step 3).
+        said.textContent = typeof answer.said === 'string' ? answer.said : `Saved to the keychain. ${said.textContent}`
+        redrawModels()
       })
       // And said out loud when it does not: a key is the one thing somebody cannot check by
       // looking, so a silent failure here is a person pasting the same key again forever.
@@ -847,6 +982,22 @@ function setupSettings(state: State): void {
     if (event.key === 'Enter') store()
   })
 }
+
+/**
+ * **A key changed, so the lists that follow the keychain are drawn again** (§1 steps 3–4): the
+ * rail's models, and the Models tab when it is the screen being looked at. A tab that is not
+ * on screen reads its rows when it is next opened, so there is nothing to redraw there.
+ */
+function redrawModels(): void {
+  void rail.refresh()
+  if (document.body.dataset.view === 'control') control.open()
+}
+
+// The keyless floor's switch (D154) changes which providers can be reached, which is what a key
+// changes, so it asks for the same redraw from inside the widget that draws it.
+window.addEventListener(MODELS_CHANGED, () => {
+  redrawModels()
+})
 
 const read = async (): Promise<State> =>
   (await (await fetch('/api/state', { headers: { 'x-alexia-token': token } })).json()) as State
@@ -864,11 +1015,18 @@ function paint(state: State): void {
   // A repainted conversation knows which model answered and nothing about the rate limits of
   // an hour ago, so the state badge goes rather than lying about the present.
   wearing()
+  let latest: HTMLElement | undefined
   for (const turn of state.messages) {
     if (turn.role !== 'user' && turn.role !== 'assistant') continue
-    bubble(turn.role, turn.content)
+    const drawn = bubble(turn.role, turn.content)
+    // The switch lines that were said when this answer was written, above its words (§4 G).
+    if (turn.notes !== undefined && turn.notes.length > 0) drawn.prepend(...turn.notes.map(switchLine))
+    if (turn.bad === true) markBad(drawn)
     if (turn.model) modelBadge.textContent = turn.model
+    latest = turn.role === 'assistant' && turn.bad !== true && turn.content !== '' ? drawn : undefined
   }
+  // The latest answer, when the conversation ends on one, carries the row of actions (§4 I).
+  if (latest !== undefined) answerActions(latest)
   /**
    * **The day, when there is an allowance; otherwise the month.**
    *
@@ -882,6 +1040,11 @@ function paint(state: State): void {
     day && day.allowance > 0 ? `${money(day.spent)} of ${money(day.allowance)} today`
     : state.cap === undefined ? money(state.spent)
     : `${money(state.spent)} of ${money(state.cap)}`
+  standingPaid =
+    state.cross === true && day !== undefined && day.allowance > 0 ?
+      `Paid models will be used once the free ones are done, up to ${money(day.allowance)} today.`
+    : ''
+  warnPaid()
   spendBadge.title =
     day && day.allowance > 0 ?
       `Spent ${money(day.spent)} of ${money(day.allowance)} today.`
@@ -1365,6 +1528,96 @@ async function ask(question: string, files: File[] = []): Promise<void> {
       said.append(shown)
     }
   }
+  await respond(files.length > 0 ? 'Reading…' : '…', said, async () => {
+    /**
+     * Made small enough to send, before anything is sent.
+     *
+     * Hoisted out of the request body on purpose: the user's own bubble is already on screen by
+     * now, so re-encoding a photograph does not delay the message appearing — it delays only
+     * the send, which was going to be the slow part anyway and is now a great deal less slow.
+     */
+    const uploads =
+      files.length === 0 ? []
+      : await Promise.all(
+          files.map(async (file) => {
+            const { blob, type, was } = await smaller(file)
+            // Re-encoding somebody's picture is a real change to what was sent, and a change
+            // nobody is told about is the thing this codebase refuses everywhere else.
+            if (was !== undefined) shrank.set(file.name, `${readable(was)} → ${readable(blob.size)}`)
+            return { name: file.name, type, data: await base64(blob) }
+          }),
+        )
+    if (carried && shrank.size > 0) {
+      carried.textContent = `📎 ${files
+        .map((file) => `${file.name}${shrank.has(file.name) ? ` (${shrank.get(file.name)!})` : ''}`)
+        .join(', ')}`
+    }
+    return { text: question, ...(uploads.length > 0 && { files: uploads }) }
+  })
+}
+
+/**
+ * **The question that stopped, asked once more** (D155): on Automatic, or on the same model.
+ *
+ * Nothing new appears on the user's side, because nothing new was said — core asks the
+ * question already in the conversation, from wherever the task stopped.
+ */
+function again(automatic: boolean, allow?: { daily?: number }): Promise<void> {
+  return respond('…', undefined, () =>
+    Promise.resolve({ again: true, ...(automatic && { automatic }), ...(allow !== undefined && { allow }) }),
+  )
+}
+
+/**
+ * **A pause** (§4 H): the free models are done, a paid one would answer, and the paid switch is
+ * off. Core's sentence says why, and one press of *Allow switching to a paid model* covers this
+ * conversation and carries on from where it stopped. At $0 a day the press alone would buy
+ * nothing, so the box for the amount comes with it, starting at $1.
+ */
+function offerPaid(paused: HTMLElement, daily: number): void {
+  const buttons = document.createElement('div')
+  buttons.className = 'stop-offer'
+  const allow = document.createElement('button')
+  allow.type = 'button'
+  allow.textContent = 'Allow switching to a paid model'
+  let amount: HTMLInputElement | undefined
+  if (daily <= 0) {
+    const box = document.createElement('label')
+    box.className = 'pause-amount'
+    amount = document.createElement('input')
+    amount.type = 'number'
+    amount.min = '0.5'
+    amount.step = '0.5'
+    amount.value = '1.00'
+    box.append('up to $', amount, ' a day')
+    buttons.append(box)
+  }
+  allow.addEventListener('click', () => {
+    const typed = amount === undefined ? undefined : Number(amount.value)
+    if (typed !== undefined && !(typed > 0)) {
+      say('Say how much a day paid models may spend — a number above $0.')
+      return
+    }
+    buttons.remove()
+    running(() => again(false, typed === undefined ? {} : { daily: typed }))
+  })
+  buttons.append(allow)
+  paused.append(buttons)
+  log.scrollTop = log.scrollHeight
+}
+
+/**
+ * One answer, streamed into a bubble of its own: everything core says while it is made.
+ *
+ * `body` is a promise so the caller can do slow work — shrinking a photograph — after the
+ * waiting bubble is already on screen. `said` is the question's own bubble, when this answer
+ * has one to hang what was read out of the attachments under.
+ */
+async function respond(
+  waiting: string,
+  said: HTMLElement | undefined,
+  body: () => Promise<Record<string, unknown>>,
+): Promise<void> {
   const tools = toolLine()
   live.begin(document.querySelector<HTMLElement>('#chat-title')?.textContent ?? 'This conversation')
   const answer = bubble('assistant')
@@ -1373,39 +1626,27 @@ async function ask(question: string, files: File[] = []): Promise<void> {
    * a step made is appended to the same bubble by `showFiles`, and `answer.textContent = ''`
    * on the first token would take the picture with it. The node stays; only its data moves.
    */
-  const prose = document.createTextNode(files.length > 0 ? 'Reading…' : '…')
+  const prose = document.createTextNode(waiting)
   answer.replaceChildren(prose)
   let started = false
-
   /**
-   * Made small enough to send, before anything is sent.
-   *
-   * Hoisted out of the request body on purpose: the user's own bubble is already on screen by
-   * now, so re-encoding a photograph does not delay the message appearing — it delays only
-   * the send, which was going to be the slow part anyway and is now a great deal less slow.
+   * Where the model turn now streaming began in `prose`. A task's turns share one bubble, so a
+   * turn that is withdrawn (`restart`) takes back its own words and leaves the earlier ones.
    */
-  const uploads =
-    files.length === 0 ? []
-    : await Promise.all(
-        files.map(async (file) => {
-          const { blob, type, was } = await smaller(file)
-          // Re-encoding somebody's picture is a real change to what was sent, and a change
-          // nobody is told about is the thing this codebase refuses everywhere else.
-          if (was !== undefined) shrank.set(file.name, `${readable(was)} → ${readable(blob.size)}`)
-          return { name: file.name, type, data: await base64(blob) }
-        }),
-      )
-  if (carried && shrank.size > 0) {
-    carried.textContent = `📎 ${files
-      .map((file) => `${file.name}${shrank.has(file.name) ? ` (${shrank.get(file.name)!})` : ''}`)
-      .join(', ')}`
-  }
+  let turnFrom = 0
+  // A new question: a charge line from the last answer is not about this one (§4 G).
+  warnPaid()
 
   const response = await fetch('/api/chat', {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-alexia-token': token },
-    body: JSON.stringify({ text: question, ...(uploads.length > 0 && { files: uploads }) }),
+    body: JSON.stringify(await body()),
   })
+  if (response.status === 409) {
+    // Asked again after the question had its answer: there is nothing left to answer.
+    answer.remove()
+    return
+  }
   if (!response.body) {
     prose.data = 'Alexia is not answering.'
     return
@@ -1420,10 +1661,27 @@ async function ask(question: string, files: File[] = []): Promise<void> {
       prose.data += event.delta
       log.scrollTop = log.scrollHeight
     }
-    // The one plain line before a charge, and the monthly warning, land in the same place.
+    // The model writing this turn stopped partway and another is starting it again (D155).
+    // Its half-sentence goes, so two models' words are never run together in one bubble.
+    if (event.restart === true) {
+      prose.data = prose.data.slice(0, turnFrom)
+      if (prose.data === '') {
+        prose.data = waiting
+        started = false
+      }
+    }
+    // The monthly warning and core's other plain lines land in the same place.
     if (typeof event.note === 'string') say(event.note)
+    // Another model is answering: said for three seconds, and kept above the words (§4 G).
+    const switched = event.switch as { says?: string } | undefined
+    if (switched !== undefined && typeof switched.says === 'string') {
+      pop(switched.says)
+      answer.insertBefore(switchLine(switched.says), prose)
+    }
+    // The charge line, in its own place, where no other line can replace it (§4 G).
+    if (typeof event.paid === 'string') warnPaid(event.paid)
     const attached = event.attached as { name: string; text?: string; refusal?: string }[] | undefined
-    if (attached) showRead(said, attached)
+    if (attached && said) showRead(said, attached)
     if (typeof event.ask === 'string') askPermission(event.ask)
     // A learned skill just fired, and it can be wrong. Attribution goes where the work is
     // happening, with the two things you would want at that moment beside it (M4-5).
@@ -1442,6 +1700,8 @@ async function ask(question: string, files: File[] = []): Promise<void> {
         }
       | undefined
     if (step) {
+      // Whatever her next words are, they belong to the turn after this step.
+      turnFrom = started ? prose.data.length : 0
       if (step.progress) {
         live.moving(step.n, step.progress)
       } else if (step.ok === undefined) {
@@ -1462,7 +1722,13 @@ async function ask(question: string, files: File[] = []): Promise<void> {
     }
     if (typeof event.error === 'string') {
       answer.remove()
-      bubble('refusal', event.error)
+      const stopped = bubble('refusal', event.error)
+      if (event.chosen === 'pinned' || event.chosen === 'sequence') offerInstead(stopped, event.chosen)
+    }
+    // Paused rather than stopped: nothing was billed, and a press lets paid answer (§4 H).
+    if (typeof event.paused === 'string') {
+      answer.remove()
+      offerPaid(bubble('refusal', event.paused), typeof event.daily === 'number' ? event.daily : 0)
     }
     const done = event.done as
       | { model?: string; bubble?: Bubble; spent?: number; warning?: string; ended?: string; steps?: number }
@@ -1483,10 +1749,38 @@ async function ask(question: string, files: File[] = []): Promise<void> {
       // A conversation is named by the first thing you said in it, so the rail's list and
       // the title above the log are both a turn out of date until this.
       void rail.refresh()
+      // A finished answer can be marked bad (§4 I).
+      if (done.ended === 'answered') answerActions(answer)
       if (done.ended === 'stopped') say('Stopped.')
       if (done.ended === 'ceiling') say(`Stopped after ${String(done.steps ?? 0)} steps — that is the ceiling, not the end of the task.`)
     }
   }
+}
+
+/**
+ * **A stop in somebody's own choice** (D155): one pinned model, or the end of their list. The
+ * reason is core's sentence; what is offered under it is this one answer on Automatic — and,
+ * for one model, the same model again. Neither changes a setting. The pin is theirs, and so is
+ * the list, and a button that quietly rewrote them would be the router choosing for them again.
+ */
+function offerInstead(stopped: HTMLElement, chosen: 'pinned' | 'sequence'): void {
+  const buttons = document.createElement('div')
+  buttons.className = 'stop-offer'
+  const offer = (label: string, automatic: boolean): HTMLButtonElement => {
+    const one = document.createElement('button')
+    one.type = 'button'
+    one.textContent = label
+    if (!automatic) one.className = 'quiet-button'
+    one.addEventListener('click', () => {
+      buttons.remove()
+      running(() => again(automatic))
+    })
+    return one
+  }
+  buttons.append(offer('Use Automatic for this answer', true))
+  if (chosen === 'pinned') buttons.append(offer('Try again', false))
+  stopped.append(buttons)
+  log.scrollTop = log.scrollHeight
 }
 
 // ---- commands: the shortcut half -----------------------------------------------------
@@ -1629,12 +1923,17 @@ form.addEventListener('submit', (event) => {
   drawAttached()
   text.value = ''
   menu.hidden = true
+  running(() => ask(question, files))
+})
+
+/** A task on screen: the send button held, the stop button shown, and the tray saying so. */
+function running(task: () => Promise<void>): void {
   button.disabled = true
   stop.hidden = false
   // The tray is the only answer to *is it running?* the target user has, so it says so for
   // the whole of a task rather than only while a window happens to be open (M5-2).
   tray('working')
-  void ask(question, files)
+  void task()
     .catch((error: unknown) => {
       bubble('refusal', String(error))
       tray('error')
@@ -1645,7 +1944,7 @@ form.addEventListener('submit', (event) => {
       prompt.hidden = true
       text.focus()
     })
-})
+}
 
 // Enter sends, Shift+Enter is a newline — the shape every chat window has, so nobody has
 // to be told.

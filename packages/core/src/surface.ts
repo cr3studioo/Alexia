@@ -1,18 +1,24 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import type { Catalog, Model } from './catalog.js'
+import { routes, sizeOf, type Catalog, type Model } from './catalog.js'
 import { pins, setPin } from './commands.js'
-import { route, type Spend, type World } from './router.js'
+import type { Aside } from './health.js'
+import { OLLAMA } from './ollama.js'
+import { MODEL_GROUPS } from './panels.js'
+import { setKeylessOn } from './pool.js'
+import { available, paid, ranking, route, type Choice, type Spend, type World } from './router.js'
 import { allow, forgetConsent } from './consent.js'
 import { forget } from './learned.js'
 import type { Row } from './plugins.js'
+import { anonymous, type Provider } from './provider.js'
 import { Plugins } from './plugins.js'
 import type { Skills } from './skills.js'
 import type { Searchable } from './palette.js'
-import type { Store } from './store.js'
+import type { Outcome, Store, Try } from './store.js'
 import type { PluginTooling } from './tooling.js'
 import { asText, spentOn, type Trace } from './trace.js'
+import { caps, setCaps } from './usage.js'
 
 /**
  * What core's own tables are made of (M6-4).
@@ -33,6 +39,8 @@ import { asText, spentOn, type Trace } from './trace.js'
 
 export interface Source {
   rows(): Promise<Row[]>
+  /** One line above the rows, when there is something to say — the Models tab's news (§4 D). */
+  note?(): string | undefined
   /** What expands under one row. Text, and it is read rather than computed. */
   detail?(id: string): Promise<string>
 }
@@ -58,6 +66,10 @@ export interface SurfaceOptions {
    * unlock per row on a table with several hundred of them.
    */
   connected(): Promise<ReadonlySet<string>>
+  /** The provider rows this core reads, for a provider's name where a row has only its id. */
+  providers: readonly Provider[]
+  /** What the last fetch of each list added, as one line, or nothing (§4 D). */
+  news?(): string | undefined
   /**
    * What the router can see right now — the same gathering the chat uses.
    *
@@ -98,15 +110,78 @@ export interface SurfaceOptions {
 /** `▲` is the one mark that is coloured, because on this screen a colour means look at this. */
 const OK = '● ready'
 
+/** What a router row is labelled, in place of what it can do (D159). */
+const ROUTER = (model: Model): string => (paid(model.tier) ? 'a different model each time' : 'a different free model each time')
+
+const CHOSEN = MODEL_GROUPS.chosen
+const LISTED = MODEL_GROUPS.listed
+const AUTOMATIC = MODEL_GROUPS.automatic
+const SET_ASIDE = MODEL_GROUPS.aside
+const PAID = MODEL_GROUPS.paid
+
+/** The set-aside group's order, most final reason first: a key or a retirement before a bad day. */
+const ASIDE: readonly Aside[] = ['needs a key', 'retired', 'answers empty', 'always busy for you', 'not answering']
+
+/** One model on one provider, as a row's id (D161). The detail and the row actions read both halves. */
+const rowId = (provider: string, model: string): string => `${provider}\n${model}`
+
+/** `31B, from its name` · `8.2B, reported` · `not said`. A size read from a name says so (D159). */
+const sized = (model: Model): string => {
+  const billions = sizeOf(model)
+  if (billions === undefined) return 'not said'
+  const shown = billions >= 10 ? String(Math.round(billions)) : String(Math.round(billions * 10) / 10)
+  return `${shown}B, ${model.params === undefined ? 'from its name' : 'reported'}`
+}
+
+/** What each outcome in the record is called in a sentence about one model. */
+const DID: Record<Outcome, string> = {
+  answered: 'Answered',
+  busy: 'Said it was too busy',
+  slow: 'Did not answer in time',
+  failed: 'Failed',
+  unreachable: 'Could not be reached',
+  empty: 'Answered with nothing',
+  cut: 'Ran out of room before finishing',
+  retired: 'Said it is no longer offered',
+  'needs-key': 'Wanted a key',
+  'no-credit': 'Had no credit to pay for it',
+  'key-refused': 'Had its key refused',
+  'too-long': 'Found the conversation too long',
+  'bad-answer': 'Was marked a bad answer',
+}
+
+/**
+ * **What Alexia has seen**, a sentence per kind of thing that happened (§4 C): how many times, and
+ * when — *said it was too busy 4 times, from 18:10 to 21:40*. The record's own words, so the detail
+ * and the tags above it are read from the same rows.
+ */
+const evidence = (tries: readonly Try[]): string[] => {
+  if (tries.length === 0) return ['Nothing yet: it has not been asked on this machine in the last 30 days.']
+  const kinds = new Map<Outcome, Try[]>()
+  for (const one of tries) kinds.set(one.outcome, [...(kinds.get(one.outcome) ?? []), one])
+  return [...kinds].map(([outcome, all]) => {
+    const [earliest, latest] = [all[0]!, all.at(-1)!]
+    return all.length === 1 ?
+        `${DID[outcome]} once, ${when(earliest.at)}.`
+      : `${DID[outcome]} ${String(all.length)} times, from ${when(earliest.at)} to ${when(latest.at)}.`
+  })
+}
+
+
 /** `2026-08-29 14:03`, which is what a person reads. Never a raw timestamp. */
 const when = (at: number): string => new Date(at).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' })
 
 /** `128k`, which is what a person reads. Never 131072, and never a bare 0 for *not said*. */
 const window = (tokens: number): string => (tokens > 0 ? `${String(Math.round(tokens / 1000))}k` : '—')
 
-/** The same, for a running total: `1.2M` once thousands stop meaning anything. */
+/**
+ * The same, for a running total: `1.2M` once thousands stop meaning anything, and `392.0B` once
+ * millions do — the world's weekly figure for a busy model is hundreds of billions, and it read
+ * as `391965.2M` until the Models table put one in the first row (D164).
+ */
 const count = (n: number): string =>
   n === 0 ? '—'
+  : n >= 1_000_000_000 ? `${(n / 1_000_000_000).toFixed(1)}B`
   : n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M`
   : n >= 1_000 ? `${(n / 1_000).toFixed(1)}k`
   : String(n)
@@ -153,6 +228,63 @@ export function sources(options: SurfaceOptions): Record<string, Source> {
    * person**, because reading it is how somebody decides whether to say yes (M6-9).
    */
   const skillText = (name: string): Promise<string> => Promise.resolve(skills.text(name))
+
+  /**
+   * **Why a model somebody named cannot be asked** (§1 step 4): its provider has no key any more.
+   * Said on the row rather than by taking the row away — a pin and a list are the person's, and
+   * a key removed is a key that may come back.
+   */
+  const unreachable = (provider: string): string => `not available — no key for ${nameOf(provider)}`
+
+  /** A provider's name where a row has only its id. */
+  const nameOf = (provider: string): string =>
+    provider === OLLAMA.id ? 'this Mac' : (options.providers.find((one) => one.id === provider)?.name ?? provider)
+
+  /** The provider row itself, for a model no plan holds — its name and whether it answers keyless. */
+  const providerOf = (provider: string): Provider =>
+    provider === OLLAMA.id ? OLLAMA : (options.providers.find((one) => one.id === provider) ?? { id: provider, name: provider, baseUrl: '' })
+
+  /** *your key* · *no key* · *this Mac*: which rung of the ladder a choice stands on. */
+  const access = (choice: Choice): string =>
+    choice.model.tier === 'T0' ? 'this Mac'
+    : (choice.keyed ?? !anonymous(choice.provider)) ? 'your key'
+    : 'no key'
+
+  /** The same, as a phrase: *on your OpenRouter key*. */
+  const where = (choice: Choice): string =>
+    choice.model.tier === 'T0' ? 'on this Mac'
+    : access(choice) === 'your key' ? `on your ${nameOf(choice.provider.id)} key`
+    : `on ${nameOf(choice.provider.id)} with no key`
+
+  /** The first row of Automatic, which has no row above it to be explained against. */
+  const first = (choice: Choice): string => {
+    const size = sizeOf(choice.model)
+    const facts = [
+      where(choice),
+      choice.model.supportsTools ? 'can use tools' : 'talks only',
+      size === undefined ? '' : sized(choice.model).replace(/, .*$/, ''),
+    ].filter(Boolean)
+    return `First choice: the free model Alexia would ask first — ${facts.join(', ')}.`
+  }
+
+  /**
+   * What brings a set-aside model back. **A test message is promised only where one can reach
+   * it**: §4 E sends them to free models it can still ask (D166), never to a paid model and
+   * never to this Mac's own, so those keep the plainer sentence rather than a promise nothing
+   * will keep.
+   */
+  const back = (tested: boolean): string =>
+    tested ?
+      ' Alexia sends it a test message on its own, and one good reply brings it back.'
+    : ' One good reply brings it back.'
+
+  /** Why a model is set aside, and what brings it back. */
+  const setAside = (reason: Aside, provider: string, tested: boolean): string =>
+    reason === 'needs a key' ? `Set aside: ${nameOf(provider)} now wants a key for it. Back the moment you add one.`
+    : reason === 'retired' ? `Set aside: ${nameOf(provider)} no longer offers it.`
+    : reason === 'answers empty' ? `Set aside: it answered with nothing three times in a row.${back(tested)}`
+    : reason === 'always busy for you' ? `Set aside: too busy every time for a whole day.${back(tested)}`
+    : `Set aside: it timed out or failed every time for a whole day.${back(tested)}`
 
   return {
     /**
@@ -219,6 +351,16 @@ export function sources(options: SurfaceOptions): Record<string, Source> {
      * screen, where the keys are, listing every provider and what connecting one costs.
      */
     models: {
+      /**
+       * **The table is the ranking** (D161, `model_plan.md` §4 C). Every row is a place in a plan
+       * `route()` made, in the order it made it, and the sentence under each is `explain()` on the
+       * row above — so the screen cannot describe an order the router is not walking. It used to
+       * sort with a comparator of its own and group by provider, and so had no order to read.
+       *
+       * Four groups: what the person chose (a pin, or a list), Automatic's free plan, what Alexia
+       * has set aside, and the paid plan. A row is one model on one provider, keyed
+       * `provider\nmodel`, because Kilo's copy of a model can be busy while OpenRouter's answers.
+       */
       rows: async () => {
         // Opening the list is the signal that somebody wants it current. Deliberately not
         // awaited — a screen that blocked on seven providers would be a screen that opens
@@ -226,90 +368,206 @@ export function sources(options: SurfaceOptions): Record<string, Source> {
         options.refresh()
         const standing = pins(store)
         const keyed = await options.connected()
+        const world = await options.world()
+        const spend = standing.spend ?? 'mixed'
+        const unpinned = { ...standing, model: undefined, order: undefined }
+        const plain = { messages: [] }
+        /** Automatic's comparator and its sentences, the same way round `route()` sorted. */
+        const ranked = ranking(world, standing.prefer === 'best' ? 'best' : 'cheap')
         /**
-         * What Automatic would pick if nothing were pinned — which is what *recommended*
-         * means here, and the only definition of it that cannot drift.
-         *
-         * Not a list of good models kept in this file. Core does not name a vendor's model
-         * any more than it names a plugin, and a list like that is wrong within a season:
-         * the good free model of March is retired by June and the file remembers it
-         * forever. This asks the router, so the recommendation is the same rule the machine
-         * actually follows — cheapest that clears every pin — and it changes when the
-         * catalog, the keys or the rate limits change, without anybody editing anything.
-         *
-         * Asked as a request carrying tools, because that is the shape Alexia's own loop
-         * sends. Recommending something that cannot take a tool call would be recommending
-         * a model that fails on the second step of most real tasks.
+         * The ★: what the router would ask first for a request carrying tools, which is the shape
+         * Alexia's own loop sends — the first of the person's list when there is one (D155).
          */
-        const would = route(
-          { messages: [], tools: [{ name: 'a_tool' }] },
-          { ...standing, model: undefined },
-          await options.world(),
-        )
-        const best = would.ok ? would.choices[0]?.model.id : undefined
+        const tools = route({ messages: [], tools: [{ name: 'a_tool' }] }, { ...standing, model: undefined }, world)
+        const star = tools.ok ? tools.choices[0] : undefined
+        const answered = new Map<string, number>()
+        for (const one of store.tries()) {
+          if (one.outcome === 'answered') answered.set(rowId(one.provider, one.model), (answered.get(rowId(one.provider, one.model)) ?? 0) + 1)
+        }
+
+        const out: Row[] = []
+        const push = (choice: Choice, group: string, place: number, note: string): void => {
+          const { model, provider } = choice
+          const id = rowId(provider.id, model.id)
+          const judged = world.health?.get(id)
+          const chosen = model.id === standing.model
+          const starred = star !== undefined && star.provider.id === provider.id && star.model.id === model.id
+          const reachable = model.tier === 'T0' || keyed.has(provider.id)
+          out.push({
+            id,
+            group,
+            rank: `${chosen && group === CHOSEN ? '◆ ' : starred ? '★ ' : ''}${String(place)}`,
+            name: model.name,
+            provider: provider.id,
+            via: `${model.tier === 'T0' ? 'this Mac' : nameOf(provider.id)} · ${access(choice)}`,
+            note,
+            size: sized(model),
+            can: [
+              model.supportsTools ? 'tools' : 'talk only',
+              model.modality.includes('image') ? 'pictures' : '',
+              model.context > 0 ? `reads ${window(model.context)}` : '',
+            ]
+              .filter(Boolean)
+              .join(' · '),
+            week: model.weekly === undefined ? '—' : `${count(model.weekly)}${model.weeklyFrom === undefined ? '' : ` via ${nameOf(model.weeklyFrom)}`}`,
+            answered: String(answered.get(id) ?? 0),
+            price: price(model.priceIn),
+            tier: model.tier,
+            tags: judged?.tags ?? [],
+            /**
+             * What the rail reads: `◆` is the chosen mark and `★` the router's own answer. The
+             * rest say what a row can do, in the marks every core table already speaks in.
+             */
+            state:
+              chosen ? `◆ everything goes here${reachable ? '' : ` · ${unreachable(provider.id)}`}`
+              : starred ? '★ recommended'
+              : judged?.aside !== undefined ? `■ set aside · ${judged.aside}`
+                // A router says so in place of tools: what it can do is whatever it picks (D159).
+              : routes(model) ? `${OK} · ${ROUTER(model)}`
+              : model.supportsTools ? `${OK} · tools`
+              : `${OK} · text only`,
+          })
+        }
+        /** A model the person named that no plan holds, with the reason — never dropped (D155). */
+        const missing = (id: string): { choice: Choice; why: string } | undefined => {
+          const copies = [...world.models, ...world.local].filter((model) => model.id === id)
+          const model = copies.find((one) => one.tier === 'T0' || keyed.has(one.provider)) ?? copies[0]
+          if (model === undefined) return undefined
+          const choice = { model, provider: providerOf(model.provider) }
+          const aside = world.health?.get(rowId(model.provider, model.id))?.aside
+          const why =
+            model.tier !== 'T0' && !keyed.has(model.provider) ? unreachable(model.provider)
+            : aside !== undefined ? `not available — set aside: ${aside}`
+            : 'not available for a request like this, or on this side of the price line'
+          return { choice, why }
+        }
+
+        // Your choice: a pin is one model and never falls back (D155).
+        if (standing.model !== undefined) {
+          const pinned = route(plain, standing, world)
+          if (pinned.ok && pinned.choices[0] !== undefined) {
+            push(pinned.choices[0], CHOSEN, 1, 'Your choice: every request goes to it, and if it cannot answer, Alexia stops and says why.')
+          } else {
+            const gone = missing(standing.model)
+            if (gone !== undefined) push(gone.choice, CHOSEN, 1, `Your choice, ${gone.why}.`)
+          }
+        }
+
+        // Your list: the plan a sequence makes, then any entry it could not hold.
         const listed = standing.order ?? []
-        return (
-          catalog.models
-            .filter((model) => keyed.has(model.provider))
-            .sort(
-              (a, b) =>
-                // What it would pick, then the running order the user wrote themselves (D112),
-                // then what you have actually been using, then the order the router walks
-                // them in. The top of the list is the useful end.
-                Number(b.id === best) - Number(a.id === best) ||
-                (listed.indexOf(a.id) === -1 ? listed.length : listed.indexOf(a.id)) -
-                  (listed.indexOf(b.id) === -1 ? listed.length : listed.indexOf(b.id)) ||
-                // Then what the world is actually using, which is the closest thing to a
-                // review a model has. Providers that publish nothing fall through to price,
-                // so their models are ordered as they always were rather than sunk.
-                (b.weekly ?? 0) - (a.weekly ?? 0) ||
-                a.priceIn - b.priceIn ||
-                a.name.localeCompare(b.name),
+        if (listed.length > 0) {
+          const plan = route(plain, { ...standing, model: undefined }, world)
+          const planned = plan.ok ? plan.choices : []
+          planned.forEach((choice, at) => {
+            const number = listed.indexOf(choice.model.id) + 1
+            const before = planned.slice(0, at).filter((one) => one.model.id === choice.model.id).at(-1)
+            push(
+              choice,
+              LISTED,
+              at + 1,
+              before === undefined ?
+                `Number ${String(number)} in your list, ${where(choice)}.`
+              : `Number ${String(number)} in your list again, ${where(choice)}: asked only if ${nameOf(before.provider.id)}'s copy fails.`,
             )
-            .map((model) => ({
-              id: model.id,
-              name: model.name,
-              provider: model.provider,
-              tier: model.tier,
-              price: price(model.priceIn),
-              context: window(model.context),
-              week: model.weekly === undefined ? '—' : count(model.weekly),
-              /**
-               * `◆` is the chosen mark, and the shell colours it. The other two are the
-               * marks every core table already speaks in — `■` for something that is not
-               * switched on, nothing at all for the ordinary case.
-               *
-               * *Everything goes here* rather than *in use*, because *in use* answers a
-               * question nobody asked. The one somebody has is **what did pressing that
-               * do**, and the answer is that this model now answers everything.
-               */
-              state:
-                model.id === standing.model ? '◆ everything goes here'
-                : model.id === best ? '★ recommended'
-                : model.supportsTools ? `${OK} · tools`
-                : `${OK} · text only`,
-            }))
-        )
+          })
+          let place = planned.length
+          for (const [at, id] of listed.entries()) {
+            if (planned.some((one) => one.model.id === id)) continue
+            const gone = missing(id)
+            if (gone !== undefined) push(gone.choice, LISTED, ++place, `Number ${String(at + 1)} in your list, ${gone.why}.`)
+          }
+        }
+
+        // Automatic, free: the order Automatic walks for a plain request.
+        const shown = new Set<string>()
+        if (spend !== 'paid') {
+          const free = route(plain, { ...unpinned, spend: 'free' }, world)
+          const choices = free.ok ? free.choices : []
+          choices.forEach((choice, at) => {
+            shown.add(rowId(choice.provider.id, choice.model.id))
+            const above = choices[at - 1]
+            push(choice, AUTOMATIC, at + 1, above === undefined ? first(choice) : ranked.explain(choice, above))
+          })
+        }
+
+        // Paid: Automatic's order under *paid only* — tools first, then cheapest.
+        const paidRows: Row[] = []
+        if (spend !== 'free') {
+          const priced = route(plain, { ...unpinned, spend: 'paid' }, world)
+          const choices = priced.ok ? priced.choices : []
+          const mark = out.length
+          choices.forEach((choice, at) => {
+            shown.add(rowId(choice.provider.id, choice.model.id))
+            const above = choices[at - 1]
+            push(
+              choice,
+              PAID,
+              at + 1,
+              above === undefined ?
+                `The first paid model Alexia would ask: ${where(choice)}, ${price(choice.model.priceIn)} per million tokens in.`
+              : ranked.explain(choice, above),
+            )
+          })
+          paidRows.push(...out.splice(mark))
+        }
+
+        // Set aside by Alexia: reachable, and in no plan above because of it. By reason, then name.
+        const aside = [...world.models, ...world.local]
+          .filter(
+            (model) =>
+              (model.tier === 'T0' ||
+                available(model, keyed, spend, new Set(world.rungs.filter((rung) => rung.funded === false).map((rung) => rung.provider.id)))) &&
+              !shown.has(rowId(model.provider, model.id)),
+          )
+          .flatMap((model) => {
+            const reason = world.health?.get(rowId(model.provider, model.id))?.aside
+            return reason === undefined ? [] : [{ model, reason }]
+          })
+          .sort((a, b) => ASIDE.indexOf(a.reason) - ASIDE.indexOf(b.reason) || a.model.name.localeCompare(b.model.name))
+        aside.forEach(({ model, reason }, at) => {
+          const choice = { model, provider: providerOf(model.provider) }
+          push(choice, SET_ASIDE, at + 1, setAside(reason, model.provider, !paid(model.tier) && model.tier !== 'T0'))
+        })
+
+        return [...out, ...paidRows]
       },
+      note: () => options.news?.(),
       detail: async (id) => {
-        const model = catalog.models.find((one) => one.id === id)
+        const [providerId, modelId] = id.includes('\n') ? (id.split('\n', 2) as [string, string]) : [undefined, id]
+        const world = await options.world()
+        const model = [...world.models, ...world.local].find(
+          (one) => one.id === modelId && (providerId === undefined || one.provider === providerId),
+        )
         if (!model) return 'That model is not in the catalog any more.'
         const keyed = await options.connected()
+        const key = rowId(model.provider, model.id)
+        const tags = world.health?.get(key)?.tags ?? []
         return (
           [
+            `${model.name} on ${model.tier === 'T0' ? 'this Mac' : nameOf(model.provider)}`,
             model.id,
+            '',
+            'What Alexia has seen here in the last 30 days:',
+            ...evidence(store.tries().filter((one) => rowId(one.provider, one.model) === key)),
+            '',
+            `What Alexia thinks: ${tags.length === 0 ? 'nothing to say yet.' : `${tags.map((tag) => tag.says).join(', ')}.`}`,
             '',
             `${model.tier} · ${price(model.priceIn)} in, ${price(model.priceOut)} out, per million tokens`,
             `Context: ${window(model.context)} · takes ${model.modality.join(', ')}`,
             `Tools: ${model.supportsTools ? 'yes' : 'not according to its provider'}`,
+            ...(routes(model) ?
+              [`A router: ${ROUTER(model)}, chosen by ${model.provider}. Automatic asks it after every single model.`]
+            : []),
             model.weekly === undefined ?
               `${model.provider} does not publish how much its models are used.`
+            : model.weeklyFrom !== undefined ?
+              `${count(model.weekly)} tokens through this model last week on ${model.weeklyFrom}, which publishes the figure ${model.provider} does not.`
             : `${count(model.weekly)} tokens through this model last week, across everyone using ${model.provider}.`,
             // The two flags nobody may guess at. Both say `unknown` until a person has read
             // the provider's terms, and the screen repeats that rather than rounding it off.
             `Trains on what you send it: ${model.trainsOnYourData}`,
             `Uncensored: ${model.nsfwOk}`,
-            ...(keyed.has(model.provider) ? [] : ['', `Add a key for ${model.provider} in settings to use this.`]),
+            ...(model.tier === 'T0' || keyed.has(model.provider) ? [] : ['', `Add a key for ${model.provider} in settings to use this.`]),
           ].join('\n')
         )
       },
@@ -334,8 +592,23 @@ export function sources(options: SurfaceOptions): Record<string, Source> {
         const standing = pins(store)
         const keyed = await options.connected()
         const listed = standing.order ?? []
+        /**
+         * What can be asked, and — only for what the person's list names — what cannot any more.
+         *
+         * The ladder used to be given connected rows alone and dropped every order entry it could
+         * not find, then saved what it was showing on the next drag: removing a key quietly
+         * deleted that provider's models from the person's list. A model another connected
+         * provider still serves is reachable and is not repeated here.
+         */
+        const reachable = new Set(catalog.models.filter((model) => keyed.has(model.provider)).map((model) => model.id))
+        const lost = new Set<string>()
         return catalog.models
-          .filter((model) => keyed.has(model.provider))
+          .filter((model) => {
+            if (keyed.has(model.provider)) return true
+            if (!listed.includes(model.id) || reachable.has(model.id) || lost.has(model.id)) return false
+            lost.add(model.id)
+            return true
+          })
           .map((model) => ({
             id: model.id,
             name: model.name,
@@ -346,6 +619,8 @@ export function sources(options: SurfaceOptions): Record<string, Source> {
             // which is the ordinary state of almost every row here.
             rank: listed.indexOf(model.id) === -1 ? '' : String(listed.indexOf(model.id) + 1),
             tools: model.supportsTools ? 'tools' : 'text only',
+            // Empty for everything that can be asked; the reason, for a listed model that cannot.
+            off: keyed.has(model.provider) ? '' : unreachable(model.provider),
           }))
           .sort(
             (a, b) =>
@@ -657,8 +932,13 @@ export function actions(
    * do. The router would refuse it too, but three screens later and as *is not available
    * right now*, which is true and useless.
    */
-  const useModel = async (id: string): Promise<{ ok: boolean; said: string }> => {
-    const model = options.catalog.models.find((one) => one.id === id)
+  const useModel = async (row: string): Promise<{ ok: boolean; said: string }> => {
+    // A Models row is one model on one provider (D161); a pin is the model, and which of its
+    // providers answers is the router's to pick, key first (D159). A bare id still works.
+    const [provider, id] = row.includes('\n') ? (row.split('\n', 2) as [string, string]) : [undefined, row]
+    const model =
+      options.catalog.models.find((one) => one.id === id && (provider === undefined || one.provider === provider)) ??
+      options.catalog.models.find((one) => one.id === id)
     if (!model) return { ok: false, said: 'That model is not in the catalog any more.' }
     if (!(await options.connected()).has(model.provider)) {
       return {
@@ -669,7 +949,9 @@ export function actions(
     setPin(options.store, { model: id })
     return {
       ok: true,
-      said: `Every request now goes to ${model.name}. Press Automatic on any row to hand the choice back.`,
+      // One model never falls back (D155), and the moment somebody chooses one is the moment
+      // to say so — not the evening it is rate-limited.
+      said: `Every request now goes to ${model.name}. If it cannot answer, Alexia stops and says why rather than asking another model. Press Automatic on any row to hand the choice back.`,
     }
   }
 
@@ -706,6 +988,9 @@ export function actions(
    * **Unknown ids are dropped rather than refused.** A model that left the catalog since the
    * screen was drawn would otherwise make the whole list unsaveable, with a sentence about a
    * row the person cannot see.
+   *
+   * **A list with anything in it is the whole plan** (D155), so the reply says that rather
+   * than D112's *everything else still answers, behind them*, which is no longer true.
    */
   const setOrder = (list: string): Promise<{ ok: boolean; said: string }> => {
     const wanted = list.split(',').map((one) => one.trim()).filter((one) => one !== '')
@@ -716,9 +1001,64 @@ export function actions(
       ok: true,
       said:
         order.length === 0 ?
-          'Order cleared. Every model falls back to cheapest-first within whatever the slider allows.'
-        : `${String(order.length)} in your own order. Everything else still answers, behind them.`,
+          'Order cleared, which is Automatic: every model the slider allows can answer, and when one fails the next one does.'
+        : `${String(order.length)} in your own order, and only ${order.length === 1 ? 'that one answers' : 'these answer'}. If ${order.length === 1 ? 'it fails' : 'the last one fails too'}, Alexia stops and says why, and offers Automatic for that answer.`,
     })
+  }
+
+  /**
+   * **The paid switch** (§4 H): `on:1.50` turns it on with that daily amount, `off` turns it off.
+   *
+   * The amount **is** the daily allowance, `caps.daily`, which already existed and was $0 by
+   * default — so turning the switch on alone would have bought nothing. One money setting, not two.
+   * Off keeps the amount: it still bounds what *Allow* can spend in a conversation.
+   */
+  const setCross = (value: string): Promise<{ ok: boolean; said: string }> => {
+    const standing = caps(options.store)
+    if (value === 'off') {
+      setCaps(options.store, { ...standing, cross: false })
+      return Promise.resolve({
+        ok: true,
+        said: 'Off. When the free models are done, the work pauses and asks before a paid model is used.',
+      })
+    }
+    const amount = Number(/^on:(.*)$/.exec(value)?.[1] ?? Number.NaN)
+    if (!Number.isFinite(amount) || amount <= 0) {
+      return Promise.resolve({ ok: false, said: 'Say how much a day paid models may spend — a number above $0.' })
+    }
+    const daily = Math.round(amount * 100) / 100
+    setCaps(options.store, { ...standing, cross: true, daily })
+    return Promise.resolve({
+      ok: true,
+      said: `On. Paid models will be used once the free ones are done, up to $${daily.toFixed(2)} a day.`,
+    })
+  }
+
+  /**
+   * **The keyless floor's switch** (D154, §1 step 2): whether providers that answer without a
+   * key may be asked at all.
+   *
+   * On by default — a fresh install has nothing else — and off for somebody who would rather
+   * nothing left this machine for a provider they never signed up to. It says how many models
+   * went or came back, because the count is the whole visible effect and the table behind the
+   * switch may not be on screen.
+   */
+  const setKeyless = async (value: string): Promise<{ ok: boolean; said: string }> => {
+    const on = value !== 'off'
+    setKeylessOn(options.store, on)
+    if (!on) {
+      return { ok: true, said: 'Off. Only providers you added a key for are asked. Nothing was deleted, and the switch puts them back.' }
+    }
+    const world = await options.world()
+    const floor = new Set(world.rungs.filter((rung) => rung.keyed !== true).map((rung) => rung.provider.id))
+    const models = world.models.filter((model) => floor.has(model.provider)).length
+    return {
+      ok: true,
+      said:
+        floor.size === 0 ?
+          'On. Providers that answer without a key may be asked again.'
+        : `On. ${String(models)} model${models === 1 ? '' : 's'} from ${String(floor.size)} provider${floor.size === 1 ? '' : 's'} that need no key are back.`,
+    }
   }
 
   return {
@@ -728,19 +1068,25 @@ export function actions(
     use_model: useModel,
     set_spend: setSpend,
     set_order: setOrder,
+    set_cross: setCross,
+    set_keyless: setKeyless,
     /**
      * Back to the router choosing. On every row rather than only the pinned one, because a
      * button that appears and disappears as the selection moves is a button people hunt for
      * — and *stop pinning* means the same thing pressed anywhere.
      */
     automatic: () => {
-      const had = pins(options.store).model
+      const { model: had, order = [] } = pins(options.store)
       setPin(options.store, { model: undefined })
+      // The list above the table is a choice of its own, and this button does not clear it —
+      // so while it has anything in it, *automatic* would be the wrong word (D155).
+      const listed = order.length > 0
       return Promise.resolve({
         ok: true,
         said:
-          had === undefined ?
-            'Already automatic — no model is pinned, so each request goes to the cheapest one that fits it.'
+          listed ?
+            `No model is pinned. Your own order of ${String(order.length)} still decides which models answer — clear it above for Automatic.`
+          : had === undefined ? 'Already automatic — no model is pinned, so each request goes to the cheapest one that fits it.'
           : 'Back to automatic. Each request goes to the cheapest model that fits it, and no model is pinned.',
       })
     },

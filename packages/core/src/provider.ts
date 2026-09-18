@@ -29,6 +29,12 @@ export interface Provider {
   /** Where its model list lives, relative to `baseUrl`. Not every provider has one. */
   models?: string
   /**
+   * **Its list's `created` means the day the model was added, and it publishes retirement dates**
+   * (`expiration_date`), so the catalog reads both (§4 D). OpenRouter's does; a list whose
+   * `created` is when a vendor trained the model would make every old model look new.
+   */
+  listsDates?: true
+  /**
    * Where this provider publishes **how much the world is using each of its models** — an
    * absolute URL, because it need not sit under `baseUrl` and on the one provider that has
    * it, it does not.
@@ -57,11 +63,41 @@ export interface Provider {
   /** AI Horde's documented anonymous key is a literal (`0000000000`), not an absence. */
   anonymousKey?: string
   /**
-   * A volunteer queue answers in minutes; the default timeout calls that dead.
-   * AI Horde 120s · Ollama Cloud 120s · Cloudflare 60s (200s for glm-4.7-flash)
-   * · Agnes 60s · Z.ai longer.
+   * **How long to wait for the first byte of an answer**, where {@link PATIENCE}'s thirty
+   * seconds would call a working provider dead (D155). A volunteer queue answers in minutes.
+   * AI Horde 120s · Ollama Cloud 120s · Cloudflare 60s (200s for glm-4.7-flash) · Agnes 60s.
+   *
+   * It used to be the whole request's deadline, and only rows that set it had one: every other
+   * provider was waited on for as long as Node's own fetch would wait.
    */
   timeoutMs?: number
+  /** The longest silence once an answer has started. {@link PATIENCE}'s twenty seconds unless a row says otherwise. */
+  idleMs?: number
+  /**
+   * **The longest a row may keep a request open with keep-alives and no answer** (D163).
+   * {@link PATIENCE}'s two minutes unless a row says otherwise, and never shorter than its own
+   * first-byte patience.
+   */
+  keptAliveMs?: number
+  /**
+   * **What a model with no price on it means** (D154).
+   *
+   * `free`: everything this provider lists is inside its free tier, so an absent price is
+   * zero — Groq, Cerebras, the keyless floor (models_plan.md §6). `published`: this provider
+   * prices what it sells, so an absent price is *nobody said*, and a row nobody priced is a
+   * row the catalog does not carry. It used to be read as zero everywhere, which catalogued
+   * all 684 of Requesty's models as free.
+   *
+   * Every row in {@link PROVIDERS} says which, and a test holds that. Absent is `free` only so
+   * a provider built by hand — a test's, a local server's — behaves as it always did.
+   */
+  pricing?: 'free' | 'published'
+  /**
+   * For a `published` provider whose list prices nothing: the models its terms say are free,
+   * by id, case aside. Z.ai is the case — GLM-4.7-Flash is free forever and its list needs a
+   * key and carries no prices (models_plan.md §6.3).
+   */
+  freeModels?: readonly string[]
   /**
    * Raw text-completion backends 500 on a `tools` field. Provider-wide fallback for
    * models with no per-model answer. AI Horde is the case that forces this.
@@ -84,6 +120,18 @@ export interface Provider {
   rpm?: number
   rpd?: number
   /**
+   * **The day's free requests once the account has bought credit** (§4 D), where that differs —
+   * OpenRouter's 50 becomes 1,000 after a one-off $10. Read only when {@link keyInfo} has said the
+   * account is past its free tier; until then {@link rpd} is the deliberately low guess (D107).
+   */
+  rpdFunded?: number
+  /**
+   * **Where the provider says what a key's account is** (§4 D), relative to `baseUrl`: whether it
+   * is still on the free tier, and how much of the key's credit limit is left. OpenRouter's
+   * `GET /key`. Read when a key is saved and on every six-hour tick.
+   */
+  keyInfo?: string
+  /**
    * **What it costs you to get in, in the currency that is not money** (§6.6, §12.2).
    *
    * Not every free tier is free of trouble: one of these wants a Telegram channel joined and
@@ -96,6 +144,12 @@ export interface Provider {
    * second thing that can drift.
    */
   friction?: string
+  /**
+   * **It wants a card before it gives a key** (D165). The key wall used to promise that none of
+   * them did; Cerebras's free trial now asks for a verified payment method, so the promise is
+   * worked out from the rows rather than written into the screen.
+   */
+  wantsCard?: true
 
   /**
    * A free tier rationed in **calls a month** rather than in tokens or in requests a day.
@@ -132,14 +186,18 @@ export const PROVIDERS: Provider[] = [
     // nothing and is the polite half of using somebody's free tier.
     headers: { 'HTTP-Referer': 'https://github.com/cr3studioo/Alexia', 'X-Title': 'Alexia' },
     auth: 'required',
+    pricing: 'published',
     terms: 'https://openrouter.ai/terms',
     // Keyed by `canonical_slug`, which is what the public list calls the same model — 377 of
     // the 396 rows join, and the ones that do not are models nobody has used yet.
     usage: 'https://openrouter.ai/api/frontend/v1/models/find?order=top-weekly',
+    listsDates: true,
     verified: '2026-08-27',
     trainsOnYourData: 'unknown',
     rpm: 20,
     rpd: 50, //                                 1,000 after a one-off $10 of credit
+    rpdFunded: 1000,
+    keyInfo: '/key',
   },
   {
     id: 'groq',
@@ -147,11 +205,18 @@ export const PROVIDERS: Provider[] = [
     baseUrl: 'https://api.groq.com/openai/v1',
     models: '/models',
     auth: 'required',
+    pricing: 'free',
     terms: 'https://groq.com/terms-of-use/',
-    verified: '2026-08-27',
+    /**
+     * **Limits are per model** (checked 2026-09-17 against console.groq.com/docs/rate-limits):
+     * GPT-OSS 120B and 20B are 30 a minute and 1,000 a day on the free plan, where this row said
+     * 14,400 a day. The lowest published day is the row's, and Groq's own headers correct it on
+     * every answer — `x-ratelimit-remaining-requests` is the day's, by its docs (§4 D).
+     */
+    verified: '2026-09-17',
     trainsOnYourData: 'unknown',
     rpm: 30,
-    rpd: 14_400,
+    rpd: 1_000,
   },
   {
     id: 'cerebras',
@@ -159,11 +224,20 @@ export const PROVIDERS: Provider[] = [
     baseUrl: 'https://api.cerebras.ai/v1',
     models: '/models',
     auth: 'required',
+    pricing: 'free',
     terms: 'https://www.cerebras.ai/terms-of-service',
-    verified: '2026-08-27',
+    /**
+     * **A free trial now, and it wants a card** (checked 2026-09-17 against
+     * inference-docs.cerebras.ai/support/rate-limits): $5 of credit after adding a verified
+     * payment method, expiring 30 days after it is granted, at 5 requests a minute and a million
+     * tokens a day per model. This row said 30 a minute and 14,400 a day. It publishes no daily
+     * request count, so there is none here; the tokens run out first, and a 402 moves on.
+     */
+    verified: '2026-09-17',
     trainsOnYourData: 'unknown',
-    rpm: 30,
-    rpd: 14_400,
+    friction: 'Wants a verified payment method, and its $5 of free credit runs out after 30 days',
+    wantsCard: true,
+    rpm: 5,
   },
   {
     id: 'google',
@@ -171,6 +245,7 @@ export const PROVIDERS: Provider[] = [
     baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
     models: '/models',
     auth: 'required',
+    pricing: 'free',
     terms: 'https://ai.google.dev/gemini-api/terms',
     verified: '2026-08-27',
     trainsOnYourData: 'unknown',
@@ -183,6 +258,7 @@ export const PROVIDERS: Provider[] = [
     baseUrl: 'https://api.mistral.ai/v1',
     models: '/models',
     auth: 'required',
+    pricing: 'free',
     terms: 'https://mistral.ai/terms',
     verified: '2026-08-27',
     trainsOnYourData: 'unknown',
@@ -194,6 +270,7 @@ export const PROVIDERS: Provider[] = [
     baseUrl: 'https://integrate.api.nvidia.com/v1',
     models: '/models',
     auth: 'required',
+    pricing: 'free',
     terms: 'https://build.nvidia.com/terms',
     verified: '2026-08-27',
     trainsOnYourData: 'unknown',
@@ -206,6 +283,7 @@ export const PROVIDERS: Provider[] = [
     // No model list endpoint recorded. Left off rather than guessed: the catalog asks the
     // provider row where to look, and a wrong path is a daily failed fetch.
     auth: 'required',
+    pricing: 'free',
     terms: 'https://docs.github.com/site-policy/github-terms/github-terms-of-service',
     verified: '2026-08-27',
     trainsOnYourData: 'unknown',
@@ -242,13 +320,15 @@ export const PROVIDERS: Provider[] = [
      * when there is nothing to put in it — never sent empty.
      */
     auth: 'optional',
+    pricing: 'free',
     // 2 req/min is per IP **per model**, so spreading across the five is ~10/min in
     // practice. The ledger counts per provider, which cannot say that — so this is the
     // conservative reading of it, and the cost of being conservative is a slower floor
-    // rather than a 429.
+    // rather than a 429. Checked live 2026-09-17: still 2, and it says so on every answer
+    // (`x-ratelimit-remaining-minute`, `retry-after`), which §4 D now reads.
     rpm: 2,
     trainsOnYourData: 'unknown',
-    verified: '2026-08-30',
+    verified: '2026-09-17',
   },
   {
     id: 'aihorde',
@@ -259,6 +339,7 @@ export const PROVIDERS: Provider[] = [
     // A volunteer queue: anonymous is lowest priority, and a real account key buys queue
     // priority with kudos rather than access.
     auth: 'optional',
+    pricing: 'free',
     /**
      * **An absence is not enough here.** The anonymous credential is a literal that AI Horde
      * publishes for everyone to use, so it is sent rather than omitted — the opposite of the
@@ -283,6 +364,7 @@ export const PROVIDERS: Provider[] = [
     baseUrl: 'https://hermes.ai.unturf.com/v1',
     models: '/models',
     auth: 'optional',
+    pricing: 'free',
     /**
      * Any non-empty string is accepted; it is used for identification and nothing else. So
      * the value is a name rather than a secret, and being identifiable costs nothing and is
@@ -307,6 +389,7 @@ export const PROVIDERS: Provider[] = [
     // In Tier A because it answers with no header at all, and in §6.3 because a key raises
     // the ceiling. One row says both.
     auth: 'optional',
+    pricing: 'published',
     // Published as 200 req/hr per IP, which is a window this schema does not have. Three a
     // minute is the conservative reading that never overruns the hour it is really counted
     // in; the cost of being wrong this way is a slower rung, not a refusal.
@@ -334,6 +417,10 @@ export const PROVIDERS: Provider[] = [
     baseUrl: 'https://api.llm7.io/v1',
     models: '/models',
     /**
+     * **Keyless for some models, not all** (checked live 2026-09-17): its list is 47 models now,
+     * and of the first three asked with no key, two said `missing_api_key` and GLM-5.3-Flash
+     * answered. So wanting a key is a fact about a model here, not about the provider (D165).
+     *
      * **Keyless, and a placeholder is worse than nothing.** Four of its six free models
      * answered with no header at all. On one that does want a key, the literal `unused` that
      * one source recommends comes back `invalid_api_key` where sending nothing comes back
@@ -341,11 +428,12 @@ export const PROVIDERS: Provider[] = [
      * there is deliberately no `anonymousKey` here.
      */
     auth: 'optional',
+    pricing: 'free',
     // Published as 20 rpm inside 100 requests an hour. The minute is the one this schema can
     // hold; the hour is left to a 429, which the cascade already reads as *next rung*.
     rpm: 20,
     trainsOnYourData: 'unknown',
-    verified: '2026-08-30',
+    verified: '2026-09-17',
   },
   {
     id: 'nara',
@@ -361,6 +449,7 @@ export const PROVIDERS: Provider[] = [
      * that work are written down in `catalog.ts` instead.
      */
     auth: 'required',
+    pricing: 'free',
     // The free tier is a **shared** 5M tokens a day across everybody, not a per-user
     // allowance — so what is left is not something this machine can know.
     trainsOnYourData: 'unknown',
@@ -378,6 +467,7 @@ export const PROVIDERS: Provider[] = [
      */
     baseUrl: 'https://api.cloudflare.com/client/v4/accounts/{account}/ai/v1',
     auth: 'required',
+    pricing: 'free',
     /**
      * 60s. One model wants 200s — a live sweep aborted it repeatedly at 15 — and a timeout
      * is a property of the row rather than of the model, so the row cannot say that. The
@@ -407,6 +497,7 @@ export const PROVIDERS: Provider[] = [
      * there.
      */
     auth: 'required',
+    pricing: 'free',
     timeoutMs: 120_000,
     trainsOnYourData: 'unknown',
     verified: '2026-08-30',
@@ -430,11 +521,14 @@ export const PROVIDERS: Provider[] = [
     baseUrl: 'https://api.z.ai/api/paas/v4',
     models: '/models',
     auth: 'required',
+    pricing: 'published',
+    // Source: models_plan.md §6.3 — GLM-4.7-Flash permanently free; the rest are billed.
+    freeModels: ['glm-4.7-flash'],
     /**
-     * **No `timeoutMs` on purpose**, which is what *needs a longer timeout* means here. These
-     * are reasoning models and no number was ever published for them; a row that declares
-     * nothing gets the platform's own patience, which is longer than any figure that would
-     * have been invented to put here.
+     * **No `timeoutMs`**, though these are reasoning models. It used to mean *the platform's
+     * own patience*, and since D155 it means {@link PATIENCE}: thirty seconds to the first
+     * byte. Patience counts bytes rather than words, so a model that streams its reasoning is
+     * still answering while it thinks; if this row proves otherwise, a number goes here.
      */
     trainsOnYourData: 'unknown',
     verified: '2026-08-30',
@@ -452,6 +546,7 @@ export const PROVIDERS: Provider[] = [
     baseUrl: 'https://api.cohere.com/compatibility/v1',
     models: '/models',
     auth: 'required',
+    pricing: 'free',
     /**
      * **A thousand calls a month, not a token budget.** This is the row the field exists for:
      * `rpd` would either strand most of it or overrun it in the first week, because a call is
@@ -475,6 +570,7 @@ export const PROVIDERS: Provider[] = [
     baseUrl: 'https://api.aionlabs.ai/v1',
     models: '/models',
     auth: 'required',
+    pricing: 'published',
     trainsOnYourData: 'unknown',
     verified: '2026-08-30',
   },
@@ -486,6 +582,7 @@ export const PROVIDERS: Provider[] = [
     baseUrl: 'https://apihub.agnes-ai.com/v1',
     models: '/models',
     auth: 'required',
+    pricing: 'free',
     // Its flash model reasons before it answers — 20s to the first token on a one-word
     // completion — so the default patience calls a working provider dead.
     timeoutMs: 60_000,
@@ -499,6 +596,7 @@ export const PROVIDERS: Provider[] = [
     baseUrl: 'https://router.requesty.ai/v1',
     models: '/models',
     auth: 'required',
+    pricing: 'published',
     trainsOnYourData: 'unknown',
     verified: '2026-08-30',
   },
@@ -509,6 +607,7 @@ export const PROVIDERS: Provider[] = [
     baseUrl: 'https://api.sea-lion.ai/v1',
     models: '/models',
     auth: 'required',
+    pricing: 'free',
     trainsOnYourData: 'unknown',
     verified: '2026-08-30',
   },
@@ -519,6 +618,7 @@ export const PROVIDERS: Provider[] = [
     baseUrl: 'https://api.navy/v1',
     models: '/models',
     auth: 'required',
+    pricing: 'published',
     /**
      * **It wants to know who is calling.** The same argument as OpenRouter's attribution
      * headers at the top of this table: being identifiable costs nothing and is the polite
@@ -696,22 +796,153 @@ export interface Usage {
 }
 
 /**
- * A provider said no. The status is on it because the router acts on the number: a 429 is
- * the next rung down, and a 401 is a key the user has to fix.
+ * **How long a provider may say nothing** (D155): until the first byte of an answer, and then
+ * between one chunk and the next.
+ *
+ * Two numbers and not a deadline, because a deadline is wrong at both ends. A long answer
+ * streaming steadily is a provider working, however long it takes; a provider that has sent
+ * nothing for twenty seconds in the middle of a sentence has gone, however recently it
+ * started. And one pair for every row, because a row that declared nothing used to wait as long
+ * as Node's fetch would — *nothing waits for ever* is the rule, and these are its first figures.
+ *
+ * **And a third, for a gateway that keeps the line open and never answers** (D163). A keep-alive
+ * comment counts as the provider still being there, which is right while a model thinks — but
+ * Kilo sent `: KILO PROCESSING` every 0.4 seconds for a whole minute and not one word (measured
+ * 2026-09-16, Nemotron 3 Ultra, anonymous), and every one of them re-armed both timers above. So
+ * two minutes of keep-alives with no data in them is a model that did not answer.
+ */
+export const PATIENCE = { first: 30_000, between: 20_000, keptAlive: 120_000 } as const
+
+/**
+ * What went wrong, where the status alone cannot say it.
+ *
+ * - `slow` — nothing arrived inside the first-byte patience.
+ * - `stalled` — an answer started, then went quiet for longer than the gap allowed.
+ * - `unreachable` — the connection never opened: no network, a name that did not resolve.
+ * - `dropped` — the stream broke, or ended without saying it had finished.
+ * - `keyless` — a 401 with none of the person's keys on the request.
+ * - `kept` — only keep-alives, for longer than a row may keep a request open on them (D163).
+ */
+export type Trouble = 'slow' | 'stalled' | 'unreachable' | 'dropped' | 'keyless' | 'kept'
+
+/**
+ * **What a provider said about its own limits**, on an answer or on a refusal (§4 D, D161).
+ *
+ * The rows in {@link PROVIDERS} are typed by hand and some were already wrong when checked —
+ * Groq publishes a limit per model, OVHcloud refused the first anonymous request — while several
+ * providers say the truth on every response. So what they say is read, and it only ever lowers
+ * what the ledger believes is left: a row stays the ceiling, and a provider that says nothing
+ * changes nothing.
+ */
+export interface Heard {
+  /** Requests left in the current minute, and when that resets (epoch ms) when it said. */
+  minute?: { remaining: number; resets?: number }
+  /** Requests left in the current day, and when that resets. */
+  day?: { remaining: number; resets?: number }
+  /** `retry-after`: not before this instant. It is about the model that was asked. */
+  retryAt?: number
+}
+
+/** `2m59.56s`, `1h2m3s`, `7.66s`, `120ms` — Groq's resets — as milliseconds. */
+const span = (text: string): number | undefined => {
+  let total = 0
+  let found = false
+  for (const [, amount, unit] of text.matchAll(/(\d+(?:\.\d+)?)(ms|h|m|s)/g)) {
+    found = true
+    total += Number(amount) * (unit === 'h' ? 3_600_000 : unit === 'm' ? 60_000 : unit === 's' ? 1000 : 1)
+  }
+  return found ? total : undefined
+}
+
+/** A refusal, carrying what its headers said — so a 429 that says *try in 20 seconds* is heard. */
+const listened = (error: ProviderError, limits: Heard | undefined): ProviderError => {
+  if (limits !== undefined) error.heard = limits
+  return error
+}
+
+/**
+ * Read the rate-limit headers the providers in the table send (§4 D):
+ *
+ * - **Groq**: `x-ratelimit-remaining-requests` is the day's requests, reset in `2m59s` form.
+ * - **OVHcloud**: `x-ratelimit-remaining-minute`, and `ratelimit-remaining` with `ratelimit-reset`
+ *   in seconds — a window of a minute or less is a minute's, anything longer a day's.
+ * - **OpenRouter**, on a 429: `x-ratelimit-remaining` with `x-ratelimit-reset` in epoch ms, windowed
+ *   the same way.
+ * - **Anyone**: `retry-after`, in seconds or as a date.
+ */
+export function hear(headers: Headers, at: number = Date.now()): Heard | undefined {
+  const number = (name: string): number | undefined => {
+    const value = headers.get(name)
+    if (value === null || value.trim() === '') return undefined
+    const parsed = Number(value)
+    return Number.isFinite(parsed) ? parsed : undefined
+  }
+  const heard: Heard = {}
+  const windowed = (remaining: number | undefined, resets: number | undefined): void => {
+    if (remaining === undefined) return
+    const one = { remaining, ...(resets !== undefined && { resets }) }
+    if (resets !== undefined && resets - at > 60_000) heard.day ??= one
+    else heard.minute ??= one
+  }
+
+  const groq = number('x-ratelimit-remaining-requests')
+  if (groq !== undefined) {
+    const reset = span(headers.get('x-ratelimit-reset-requests') ?? '')
+    heard.day = { remaining: groq, ...(reset !== undefined && { resets: at + reset }) }
+  }
+  const perMinute = number('x-ratelimit-remaining-minute')
+  if (perMinute !== undefined) heard.minute = { remaining: perMinute }
+  const ietfReset = number('ratelimit-reset')
+  windowed(number('ratelimit-remaining'), ietfReset === undefined ? undefined : at + ietfReset * 1000)
+  const openRouterReset = number('x-ratelimit-reset')
+  windowed(number('x-ratelimit-remaining'), openRouterReset)
+
+  const retry = headers.get('retry-after')
+  if (retry !== null && retry.trim() !== '') {
+    const seconds = Number(retry)
+    const when = Number.isFinite(seconds) ? at + seconds * 1000 : Date.parse(retry)
+    if (Number.isFinite(when) && when > at) heard.retryAt = when
+  }
+  return heard.minute === undefined && heard.day === undefined && heard.retryAt === undefined ? undefined : heard
+}
+
+/**
+ * A provider said no. The status is on it because the router acts on the number — see
+ * `failed()` in `router.ts`, which is the one place a status is read for what to do next.
+ *
+ * `0` is *there was no status*: nothing came back to have one.
  */
 export class ProviderError extends Error {
+  /** What the refusal's headers said about the provider's limits, when they said anything (§4 D). */
+  heard?: Heard
+  /**
+   * **Providers whose key was refused while a whole plan was walked** (§4 H), on the stop `send()`
+   * throws: a paid model behind one of them would be refused the same way, so it is no reason to
+   * pause and offer *Allow*.
+   */
+  refused?: string[]
+
   constructor(
     readonly status: number,
     message: string,
+    readonly trouble?: Trouble,
   ) {
     super(message)
   }
 }
 
+/** A socket that broke mid-answer, told apart from a bug in the code reading it. */
+class Broke extends Error {}
+
+const seconds = (ms: number): string => `${String(Math.round(ms / 1000))} seconds`
+
 interface Chunk {
   model?: string
   usage?: { prompt_tokens?: number; completion_tokens?: number }
+  /** A provider that fails after the status line has been sent can only say so in a frame. */
+  error?: { code?: number | string; message?: string }
   choices?: {
+    finish_reason?: string | null
     delta?: {
       content?: string
       tool_calls?: {
@@ -736,7 +967,7 @@ export async function chat(
   request: ChatRequest,
   onDelta?: (text: string) => void,
   secrets: SecretStore = keychain,
-): Promise<{ message: Message; usage: Usage }> {
+): Promise<{ message: Message; usage: Usage; cut: boolean; heard?: Heard }> {
   // What credential goes on the wire, in three cases — and the difference between the last
   // two is the entire reason `auth` replaced a boolean.
   //
@@ -747,116 +978,208 @@ export async function chat(
   //   `none`      never asks, never reads the keychain.
   const stored = provider.auth === 'none' ? undefined : await secrets.get(CORE, keyOf(provider))
   if (!anonymous(provider) && !stored) {
-    throw new ProviderError(401, `${provider.name} has no key yet — add one in settings.`)
+    throw new ProviderError(401, `${provider.name} has no key yet — add one in settings.`, 'keyless')
   }
   // A documented anonymous credential is a literal the provider hands out, not an absence,
   // so it stands in only where the user has supplied nothing of their own. It lives in the
   // row because it is a fact about that provider, not a branch in this function.
   const key = stored ?? provider.anonymousKey
 
-  // This provider's own patience, if the row declared any. A row that declares none gets
-  // exactly what it got before — whatever the platform waits — because there is no single
-  // number to put here: a volunteer queue answers in minutes, and a fast tier that has gone
-  // quiet for thirty seconds is already gone. One default would be wrong for one of them.
-  const patience = provider.timeoutMs === undefined ? undefined : AbortSignal.timeout(provider.timeoutMs)
-  const signal =
-    patience === undefined ? request.signal
-    : request.signal === undefined ? patience
-    : AbortSignal.any([request.signal, patience])
+  /**
+   * **Patience, as two numbers rather than a deadline** ({@link PATIENCE}). One timer, re-armed
+   * by every chunk that arrives: until the first, it is the row's first-byte patience; after
+   * it, the gap between chunks. Bytes rather than words, so a reasoning model streaming its
+   * thinking, and a gateway's keep-alive comments, both count as somebody still being there —
+   * until keep-alives are all there has been for {@link PATIENCE}'s `keptAlive` (D163).
+   */
+  const first = provider.timeoutMs ?? PATIENCE.first
+  const between = provider.idleMs ?? PATIENCE.between
+  const keptAlive = Math.max(provider.keptAliveMs ?? PATIENCE.keptAlive, first)
+  const patience = new AbortController()
+  let started = false
+  /** When the request went out, then when the last real data arrived: what keep-alives are measured from. */
+  let spoke = Date.now()
+  /** Whether any real data has arrived, for which trouble a keep-alive wall is. */
+  let answered = false
+  /** Whether it was keep-alives alone that ran out the patience, rather than a silence. */
+  let onlyKeptAlive = false
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const wait = (): void => {
+    clearTimeout(timer)
+    timer = setTimeout(() => patience.abort(), started ? between : first)
+  }
+  const signal = request.signal === undefined ? patience.signal : AbortSignal.any([request.signal, patience.signal])
 
   /**
-   * An abort of *ours* rather than the user's becomes a 504 — the status the cascade reads
-   * as *try the next rung*. Keeping the two apart is the whole point: the stop button must
-   * stop, not walk down the ladder looking for somebody else to answer a question nobody is
+   * Every way this can fail, turned into a {@link ProviderError} the router can act on —
+   * except one. **The stop button stops**: an abort of the person's is thrown as it is, so it
+   * never walks down the ladder looking for somebody else to answer a question nobody is
    * waiting for any more.
    */
   const gaveUp = (error: unknown): never => {
-    if (patience?.aborted === true && request.signal?.aborted !== true) {
-      throw new ProviderError(504, `${provider.name} did not answer inside ${String(provider.timeoutMs)}ms.`)
+    if (request.signal?.aborted === true) throw error
+    if (patience.signal.aborted) {
+      if (onlyKeptAlive) {
+        throw new ProviderError(
+          504,
+          `${provider.name} kept the connection open for ${seconds(keptAlive)} without ${answered ? 'going on with the answer' : 'answering'}.`,
+          answered ? 'stalled' : 'kept',
+        )
+      }
+      throw started ?
+          new ProviderError(504, `${provider.name} went quiet for ${seconds(between)} partway through an answer.`, 'stalled')
+        : new ProviderError(504, `${provider.name} did not answer within ${seconds(first)}.`, 'slow')
     }
-    throw error
+    if (error instanceof ProviderError) throw error
+    const why = error instanceof Error ? (error.cause instanceof Error ? error.cause.message : error.message) : String(error)
+    if (error instanceof Broke) throw new ProviderError(0, `${provider.name} dropped the answer: ${why}`, 'dropped')
+    // What `fetch` throws is the connection: no network, a name that did not resolve, a reset.
+    throw new ProviderError(0, `${provider.name} could not be reached: ${why}`, 'unreachable')
   }
 
   // The address and the credential, which for one shape of row are two halves of the same
   // stored string.
   const reach = reaching(provider, key)
 
-  const response = await fetch(`${reach.baseUrl}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      ...(reach.key !== undefined && { authorization: `Bearer ${reach.key}` }),
-      ...provider.headers,
-    },
-    body: JSON.stringify({
-      model: request.model,
-      messages: request.messages.map(toWire),
-      // A provider-wide `tools: false` outranks anything the caller asked for. The per-model
-      // `supportsTools` flag cannot cover this on its own: a roster discovered live has
-      // models the catalog has never seen, and the backends behind one do not decline a
-      // `tools` field politely — they 500 on it.
-      ...(provider.tools !== false && request.tools && { tools: request.tools.map(asFunction) }),
-      ...(request.maxTokens !== undefined && { max_tokens: request.maxTokens }),
-      stream: true,
-      // The only way to be told what a streamed answer cost. A provider that ignores it
-      // leaves usage at zero, which is the honest number to show rather than a guess.
-      stream_options: { include_usage: true },
-    }),
-    signal,
-  }).catch(gaveUp)
-
-  if (!response.ok || !response.body) {
-    // The body is the provider's own explanation, and it is usually the useful part.
-    const said = await response.text().catch(() => '')
-    throw new ProviderError(response.status, `${provider.name} said ${response.status}: ${said.slice(0, 200)}`)
-  }
-
-  let content = ''
-  let model = request.model
-  let usage: Usage = { in: 0, out: 0 }
-  const calls: ({ id: string; name: string; arguments: string } | undefined)[] = []
-
-  // The stream can stall as easily as the handshake can, and a row's patience has to cover
-  // both — a provider that stops mid-sentence has failed exactly as completely as one that
-  // never spoke, and the rung below it can still answer.
+  wait()
   try {
-    for await (const event of frames(response.body)) {
-      if (event === '[DONE]') break
-      let chunk: Chunk
-      try {
-        chunk = JSON.parse(event) as Chunk
-      } catch {
-        // A frame that is not JSON is a provider having a bad day, not a reason to lose the
-        // answer that arrived before it.
-        continue
-      }
-      if (chunk.model) model = chunk.model
-      if (chunk.usage) {
-        usage = { in: chunk.usage.prompt_tokens ?? 0, out: chunk.usage.completion_tokens ?? 0 }
-      }
-      const delta = chunk.choices?.[0]?.delta
-      if (!delta) continue
-      if (delta.content) {
-        content += delta.content
-        onDelta?.(delta.content)
-      }
-      for (const call of delta.tool_calls ?? []) {
-        // Streamed in pieces and keyed by index: the id and name arrive once, the arguments
-        // in fragments that only mean anything concatenated.
-        const at = (calls[call.index] ??= { id: '', name: '', arguments: '' })
-        if (call.id) at.id = call.id
-        if (call.function?.name) at.name = call.function.name
-        if (call.function?.arguments) at.arguments += call.function.arguments
-      }
-    }
-  } catch (error) {
-    gaveUp(error)
-  }
+    const response = await fetch(`${reach.baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        ...(reach.key !== undefined && { authorization: `Bearer ${reach.key}` }),
+        ...provider.headers,
+      },
+      body: JSON.stringify({
+        model: request.model,
+        messages: request.messages.map(toWire),
+        // A provider-wide `tools: false` outranks anything the caller asked for. The per-model
+        // `supportsTools` flag cannot cover this on its own: a roster discovered live has
+        // models the catalog has never seen, and the backends behind one do not decline a
+        // `tools` field politely — they 500 on it.
+        ...(provider.tools !== false && request.tools && { tools: request.tools.map(asFunction) }),
+        ...(request.maxTokens !== undefined && { max_tokens: request.maxTokens }),
+        stream: true,
+        // The only way to be told what a streamed answer cost. A provider that ignores it
+        // leaves usage at zero, which is the honest number to show rather than a guess.
+        stream_options: { include_usage: true },
+      }),
+      signal,
+    }).catch(gaveUp)
+    /** What the provider said about its limits, on this answer or this refusal (§4 D). */
+    const limits = hear(response.headers)
 
-  const asked = calls.filter((c) => c !== undefined)
-  return {
-    message: { role: 'assistant', content, model, ...(asked.length > 0 && { calls: asked }) },
-    usage,
+    if (!response.ok || !response.body) {
+      // The body is the provider's own explanation, and it is usually the useful part.
+      const said = await response.text().catch(() => '')
+      throw listened(new ProviderError(
+        response.status,
+        `${provider.name} said ${response.status}: ${said.slice(0, 200)}`,
+        // **A 401 with nothing of the person's on it is not their key being refused.** A
+        // keyless provider answers most of its models anonymously and a few only with a key,
+        // so this one model wants a key; the rest of that provider's list still answers.
+        response.status === 401 && stored === undefined ? 'keyless' : undefined,
+      ), limits)
+    }
+
+    let content = ''
+    let model = request.model
+    let usage: Usage = { in: 0, out: 0 }
+    /**
+     * **Whether the reply stopped because it ran out of room**, rather than because it was done.
+     *
+     * Read because it was not, and the difference was invisible (2026-09-15). A reasoning model
+     * given 1,200 tokens spent about 1,150 of them thinking — which is counted, and never
+     * streamed as `content` — and the personality it was writing stopped at `## How`. Every
+     * check downstream saw a short, well-formed answer, and saved it.
+     */
+    let cut = false
+    /**
+     * **Whether the provider said it had finished** — `[DONE]`, or a `finish_reason`.
+     *
+     * A stream that simply ends without either is a connection that closed under an answer,
+     * and it used to come back as that answer: half a sentence, returned as though it were
+     * the whole of one (D155).
+     */
+    let finished = false
+    const calls: ({ id: string; name: string; arguments: string } | undefined)[] = []
+
+    // The stream can stall as easily as the handshake can, and the patience covers both — a
+    // provider that stops mid-sentence has failed exactly as completely as one that never
+    // spoke, and the rung below it can still answer.
+    try {
+      const chunks = frames(response.body, (data) => {
+        started = true
+        if (data) {
+          answered = true
+          spoke = Date.now()
+        } else if (Date.now() - spoke >= keptAlive) {
+          onlyKeptAlive = true
+          patience.abort()
+          return
+        }
+        wait()
+      })
+      for await (const event of chunks) {
+        if (event === '[DONE]') {
+          finished = true
+          break
+        }
+        let chunk: Chunk
+        try {
+          chunk = JSON.parse(event) as Chunk
+        } catch {
+          // A frame that is not JSON is a provider having a bad day, not a reason to lose the
+          // answer that arrived before it.
+          continue
+        }
+        if (chunk.error) {
+          // Failing after `200` has been sent leaves a provider only this way to say so.
+          const code = Number(chunk.error.code)
+          throw new ProviderError(
+            code >= 400 && code < 600 ? code : 502,
+            `${provider.name} said: ${String(chunk.error.message ?? chunk.error.code ?? 'an error')}`.slice(0, 240),
+          )
+        }
+        if (chunk.model) model = chunk.model
+        if (chunk.usage) {
+          usage = { in: chunk.usage.prompt_tokens ?? 0, out: chunk.usage.completion_tokens ?? 0 }
+        }
+        // On a frame of its own or beside the last delta, depending on the provider, so it is
+        // read before the frame can be skipped for having no delta.
+        const reason = chunk.choices?.[0]?.finish_reason
+        if (reason === 'error') throw new Broke('it said the answer failed')
+        if (reason) finished = true
+        if (reason === 'length') cut = true
+        const delta = chunk.choices?.[0]?.delta
+        if (!delta) continue
+        if (delta.content) {
+          content += delta.content
+          onDelta?.(delta.content)
+        }
+        for (const call of delta.tool_calls ?? []) {
+          // Streamed in pieces and keyed by index: the id and name arrive once, the arguments
+          // in fragments that only mean anything concatenated.
+          const at = (calls[call.index] ??= { id: '', name: '', arguments: '' })
+          if (call.id) at.id = call.id
+          if (call.function?.name) at.name = call.function.name
+          if (call.function?.arguments) at.arguments += call.function.arguments
+        }
+      }
+      if (!finished) throw new Broke('the stream ended before the answer did')
+    } catch (error) {
+      gaveUp(error)
+    }
+
+    const asked = calls.filter((c) => c !== undefined)
+    return {
+      message: { role: 'assistant', content, model, ...(asked.length > 0 && { calls: asked }) },
+      usage,
+      cut,
+      ...(limits !== undefined && { heard: limits }),
+    }
+  } finally {
+    clearTimeout(timer)
   }
 }
 
@@ -908,23 +1231,35 @@ const asFunction = (tool: ToolSpec): Record<string, unknown> => ({
  * The `data:` payloads of a server-sent event stream, in order. Everything else — comments,
  * event names, the blank lines between frames — is not something any of these endpoints
  * sends anything meaningful in.
+ *
+ * `arrived` hears every chunk, comments included: a keep-alive is not an answer, but it is the
+ * provider still being there, which is what patience measures. It is told whether the chunk
+ * finished any real data, because keep-alives alone are allowed only so long (D163).
  */
-async function* frames(body: ReadableStream<Uint8Array>): AsyncGenerator<string> {
+async function* frames(body: ReadableStream<Uint8Array>, arrived: (data: boolean) => void): AsyncGenerator<string> {
   const reader = body.getReader()
   const decoder = new TextDecoder()
   let buffer = ''
   for (;;) {
-    const { done, value } = await reader.read()
+    // A read that throws is the connection going, which is the provider's failure and not a
+    // bug here — so it is named as one on the way out.
+    const { done, value } = await reader.read().catch((error: unknown) => {
+      throw new Broke(error instanceof Error ? error.message : String(error), { cause: error })
+    })
     if (done) break
     buffer += decoder.decode(value, { stream: true })
     // A chunk boundary lands mid-line often enough that this is the whole reason for the
     // buffer: yield the complete lines, keep the tail for the next read.
+    const payloads: string[] = []
     let cut = buffer.indexOf('\n')
     while (cut !== -1) {
       const line = buffer.slice(0, cut).trim()
       buffer = buffer.slice(cut + 1)
-      if (line.startsWith('data:')) yield line.slice('data:'.length).trim()
+      if (line.startsWith('data:')) payloads.push(line.slice('data:'.length).trim())
       cut = buffer.indexOf('\n')
     }
+    // Real data, or a line of it still arriving, is progress; a chunk of comments alone is not.
+    arrived(payloads.length > 0 || buffer.trimStart().startsWith('data:'))
+    yield* payloads
   }
 }

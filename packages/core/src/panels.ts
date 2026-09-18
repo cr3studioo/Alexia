@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { pins } from './commands.js'
+import { SAYS } from './health.js'
+import { keylessOn } from './pool.js'
+import { caps } from './usage.js'
 import type { Rendered } from './settings.js'
 import type { Store } from './store.js'
 
@@ -185,7 +188,7 @@ const TOOLS: Rendered = table({
  * can be reached at all.
  */
 /**
- * The routing ladder, above the table (D112).
+ * The routing ladder, above the table (D112, D155).
  *
  * **What *recommended* was hiding.** The ★ has always been the router's own answer rather
  * than a second opinion, which made it honest and left it unmoveable: the rule behind it is
@@ -195,10 +198,11 @@ const TOOLS: Rendered = table({
  *
  * Two controls and no third. The slider says **which side of the price line may answer** —
  * the question the word *recommended* was quietly answering for everybody — and the ladder
- * under it says **in what order**, as a shortlist somebody drags rather than a catalog of
- * four hundred rows with a number typed beside each. Everything left off it still answers,
- * behind the list, exactly as before; a preference screen you have to finish is a preference
- * screen nobody starts.
+ * under it says **which models, in what order**, as a short list somebody drags rather than a
+ * catalog of four hundred rows with a number typed beside each. **Empty is Automatic**, so a
+ * preference screen nobody finishes is still a working one. D112 let everything left off the
+ * list answer behind it; D155 turned that round, because somebody who chose three models did
+ * not choose the other four hundred — the list is the plan, and it stops at its end.
  */
 const LADDER: Rendered = {
   type: 'ladder',
@@ -207,7 +211,8 @@ const LADDER: Rendered = {
   hint:
     'The slider is the money question, and it is a wall rather than a preference: on the left nothing that costs money is ever asked, even when every free model is rate-limited — Alexia says so instead. ' +
     'The middle is what Automatic always did, and it is the default: free first, paid only when the free rungs are gone, with one plain line before the first charge. ' +
-    'The lists under it are your own running order within each side. Drag to reorder, and anything you do not list still answers behind the ones you did, cheapest first — so an empty list is the same behaviour this screen had before you touched it.',
+    'The lists under it are your own running order within each side, and when they have anything in them, only those models answer: if one fails the next in the list does, and if the last one fails Alexia stops, says why, and offers Automatic for that one answer. ' +
+    'Leave them empty for Automatic, which tries every model the slider allows, best first, and moves to the next whenever one fails.',
   rows: 'routing',
   stops: [
     {
@@ -228,31 +233,46 @@ const LADDER: Rendered = {
   ],
   chose: 'set_spend',
   ordered: 'set_order',
+  crossing: 'set_cross',
+  floor: 'set_keyless',
 }
+
+/**
+ * **The Models table's four groups** (D161), in the order they are drawn. `surface.ts` names each
+ * row's group from here and the declaration's `groupOrder` reads the same list, so the two cannot
+ * spell a group differently and quietly put it at the end.
+ */
+export const MODEL_GROUPS = {
+  chosen: 'Your choice',
+  listed: 'Your list',
+  automatic: 'Automatic, free',
+  aside: 'Set aside by Alexia',
+  paid: 'Paid',
+} as const
 
 const MODELS: Rendered = table({
   type: 'table',
   key: 'models',
   label: 'Models',
   hint:
-    'Normally Alexia picks a model per request — the cheapest one that can do the job, falling to the next when one is rate-limited. That is Automatic, and it is what happens when nothing here is chosen. ' +
-    'The ★ is the one Automatic would pick right now for a request that needs tools: it is the router’s own answer rather than a second opinion, so it moves when your keys, the catalog, a rate limit — or the slider above — move. ' +
-    '"Tokens / week" is how much the whole world put through that model in the provider’s last published week, refreshed daily and again whenever you open this tab. ' +
-    'Only OpenRouter publishes that figure today, so every other provider shows a dash there and its models are ordered by price instead — a dash means nobody says, not nobody uses it. ' +
-    'Use sends every request to one model instead, until you press Automatic on any row to hand the choice back. The chosen row is marked and coloured. ' +
-    'Only providers you have connected are listed, so this is what you can actually send a request to right now — add a key in settings and that provider’s models appear here. ' +
-    'Each provider publishes its own list and they do not agree on what to include, so a dash is something that provider does not say rather than a zero.',
+    'Every model you can reach, in the order Alexia would ask them, and what she thinks of each. The sentence under a row says why it sits below the one above — it is taken from the ranking itself, so it cannot describe an order Alexia is not following. ' +
+    'Automatic orders the free models by what failed on this machine lately, then not a router, your keys before this Mac before the providers that need no key, then size, then how much the whole world used each model last week — lent across providers serving the same model. ' +
+    'What each group is, is said under its own heading. The chips above the table are the three questions people arrive asking: what needs attention, what is new, and what Alexia has set aside. ' +
+    'The ★ is what would be asked first right now for a request that needs tools. Use this sends every request to one model until you press Automatic. ' +
+    'Answered here counts the last 30 days on this machine. Only models you can send a request to right now are listed: add a key in settings and that provider’s models appear.',
   rows: 'models',
   columns: [
-    { key: 'name', label: 'Model' },
-    { key: 'price', label: 'Per 1M in', align: 'right' },
-    // How much the world put through it last week. Only one provider publishes this, which
-    // is why the sentence above the table says so — an empty column on six providers looks
-    // like a bug, and *nobody publishes this* is the fact that stops it looking like one.
-    { key: 'week', label: 'Tokens / week', align: 'right' },
-    { key: 'context', label: 'Context', align: 'right', hideNarrow: true },
-    { key: 'tier', label: 'Tier', align: 'right', hideNarrow: true },
-    { key: 'state', label: 'State' },
+    // The place in its group, and the ★ or ◆ when the row is one.
+    { key: 'rank', label: '#', align: 'right' },
+    { key: 'name', label: 'Model, and why it is here' },
+    { key: 'via', label: 'Where', hideNarrow: true },
+    { key: 'size', label: 'Size', align: 'right', hideNarrow: true },
+    { key: 'can', label: 'Can', hideNarrow: true },
+    // How much the world put through it last week, and whose figure it is when it was lent.
+    { key: 'week', label: 'World, last week', align: 'right', hideNarrow: true },
+    { key: 'answered', label: 'Answered here', align: 'right' },
+    { key: 'price', label: 'Per 1M in', align: 'right', hideNarrow: true },
+    { key: 'tags', label: 'Tags' },
   ],
   rowActions: [
     { key: 'use_model', label: 'Use this', tool: 'use_model' },
@@ -260,7 +280,29 @@ const MODELS: Rendered = table({
   ],
   detail: 'model',
   filter: true,
-  groupBy: 'provider',
+  groupBy: 'group',
+  groupOrder: Object.values(MODEL_GROUPS),
+  /**
+   * What each group is, said once under its heading rather than in the table's hint, where the
+   * five of them together were a paragraph nobody reads to find the one line they wanted.
+   */
+  groupNotes: {
+    [MODEL_GROUPS.chosen]: 'Every request goes to this one until you press Automatic. It never falls back: if it cannot answer, Alexia stops and says why.',
+    [MODEL_GROUPS.listed]: 'Your own running order. While anything is listed here, only these models answer, each one tried when the one above it fails.',
+    [MODEL_GROUPS.automatic]: 'What Automatic walks for an ordinary free request, best first. The sentence under a row says why it sits below the one above.',
+    [MODEL_GROUPS.aside]: 'What Alexia has stopped asking on her own, after a day of refusals, three empty answers, a retirement or a provider that now wants a key. Nothing is deleted, and one good reply brings a model back.',
+    [MODEL_GROUPS.paid]: 'The order Automatic would pay in, once the free models are done and the slider allows it: tools first, then cheapest.',
+  },
+  /**
+   * The mock-up's three chips (D161). Each is a question somebody arrives at this table already
+   * asking — *what is broken*, *what is new*, *what has Alexia given up on* — and each is one
+   * press rather than a word typed into the filter box and spelled right.
+   */
+  chips: [
+    { key: 'attention', label: 'Needs attention', tags: [SAYS.errors, SAYS.bad, SAYS.busy] },
+    { key: 'new', label: 'New', tags: [SAYS.untested] },
+    { key: 'aside', label: 'Set aside', group: MODEL_GROUPS.aside },
+  ],
 })
 
 /**
@@ -308,7 +350,15 @@ export interface TabOptions {
 export function tabs(options: TabOptions): Tab[] {
   const standing = pins(options.store)
   const live = (widget: Rendered): Rendered =>
-    widget.type === 'ladder' ? { ...widget, value: standing.spend ?? 'mixed' } : widget
+    widget.type === 'ladder' ?
+      {
+        ...widget,
+        value: standing.spend ?? 'mixed',
+        cross: caps(options.store).cross === true,
+        daily: caps(options.store).daily ?? 0,
+        keyless: keylessOn(options.store),
+      }
+    : widget
 
   return CORE_TABS.map((tab) => ({ ...tab, widgets: tab.widgets?.map(live) }))
 }

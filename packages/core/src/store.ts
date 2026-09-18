@@ -92,7 +92,141 @@ const MIGRATIONS: string[] = [
   `ALTER TABLE usage ADD COLUMN run_id TEXT;
    ALTER TABLE usage ADD COLUMN asked TEXT;
    CREATE INDEX usage_by_run ON usage (run_id);`,
+
+  // 6 — what failed on this machine (D159). `provider_usage` counts every request and `usage`
+  // every success, so nothing remembered that a model timed out five minutes ago, and Automatic
+  // put it first again. A day of rows at most: older ones are deleted as new ones arrive.
+  `CREATE TABLE strikes (
+     at INTEGER NOT NULL,
+     provider TEXT NOT NULL,
+     model TEXT NOT NULL,
+     status INTEGER NOT NULL
+   );
+   CREATE INDEX strikes_at ON strikes (at);`,
+
+  // 7 — the model record (D161). A day of failures could sink a model but not judge one: *busy
+  // this evening* and *retired* looked the same, nothing counted how often a model was tried,
+  // and nothing remembered when one first appeared. So every try is kept for 30 days, answers
+  // included, and `strikes` becomes a reading of it (`Store.strikes()`), which is why it goes.
+  // Nothing is carried over: a day of strikes existed only on machines that ran a development
+  // build, and the next failure writes the first row.
+  `CREATE TABLE tries (
+     at INTEGER NOT NULL,
+     provider TEXT NOT NULL,
+     model TEXT NOT NULL,
+     outcome TEXT NOT NULL,
+     status INTEGER NOT NULL,
+     source TEXT NOT NULL
+   );
+   CREATE INDEX tries_at ON tries (at);
+   CREATE TABLE seen (
+     provider TEXT NOT NULL,
+     model TEXT NOT NULL,
+     first_seen INTEGER NOT NULL,
+     list_known INTEGER NOT NULL,
+     gone_at INTEGER,
+     PRIMARY KEY (provider, model)
+   );
+   DROP TABLE strikes;`,
 ]
+
+/**
+ * **How one try of one model went** (D161), in the words the record keeps.
+ *
+ * The first nine are the plan's. The last four were implied by it and needed a name to be kept
+ * apart, because none of them is about the model: `no-credit` is the account's, `key-refused`
+ * the provider's, `too-long` the conversation's, and `unreachable` is as likely this Mac's
+ * network as the provider (D162). They are recorded, and never tag a model.
+ */
+export type Outcome =
+  | 'answered'
+  | 'busy'
+  | 'failed'
+  | 'slow'
+  | 'empty'
+  | 'cut'
+  | 'retired'
+  | 'needs-key'
+  | 'bad-answer'
+  | 'no-credit'
+  | 'key-refused'
+  | 'too-long'
+  | 'unreachable'
+
+/** Who asked: the app's chat, a plugin, a daily test (§4 E), or a person pressing *Bad answer* (§4 I). */
+export type Source = 'chat' | 'plugin' | 'test' | 'person'
+
+/** One row of the record. */
+export interface Try {
+  at: number
+  provider: string
+  model: string
+  outcome: Outcome
+  status: number
+  source: Source
+}
+
+/** When a model was first on its provider's list here, and when it left (§4 D writes these). */
+export interface Seen {
+  provider: string
+  model: string
+  firstSeen: number
+  /** Whether that provider's list had been fetched before, so *first seen* means *added*. */
+  listKnown: boolean
+  goneAt?: number
+}
+
+/**
+ * **One week of one model on one provider, as it would be shared** (§4 J, D160): a hook left for a
+ * record shared later with a server of the owner's, decided later. Nothing calls
+ * {@link Store.report} and nothing sends it.
+ *
+ * Counts and nothing else. No prompt, no answer, no key, no name, and no time of day: the week is
+ * the date its UTC Monday falls on, and who asked (the chat, a plugin, a test) stays here too.
+ */
+export interface Reported {
+  /** The UTC Monday the week starts on, `YYYY-MM-DD`. */
+  week: string
+  provider: string
+  model: string
+  /** Requests sent to the model, answered or not. A *Bad answer* press is not one. */
+  tries: number
+  answers: number
+  /** Every try that did not answer, by how it went — only the kinds that happened. */
+  failures: Partial<Record<Outcome, number>>
+  /** Presses of *Bad answer* on its answers (§4 I). */
+  badAnswers: number
+}
+
+/** The week an instant falls in, as the date of its UTC Monday. The epoch was a Thursday. */
+function weekOf(at: number): string {
+  const day = Math.floor(at / (24 * 60 * 60 * 1000))
+  return new Date((day - ((day + 3) % 7)) * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
+}
+
+/** How long a try is kept: long enough to tell *busy this evening* from *always failing*. */
+export const TRIES_KEPT = 30 * 24 * 60 * 60 * 1000
+
+/** How far back a failure still sinks a model (D159). What it weighs meanwhile is the router's to say. */
+export const STRIKES_KEPT = 24 * 60 * 60 * 1000
+
+/**
+ * **The outcomes that sink a model** (D159): a failure about the model, whatever else it is.
+ * Exactly the failures that were struck before the record replaced the table, so Automatic's
+ * order does not move on the same failures — no credit and a connection that could not be made
+ * included, a refused key and a conversation too long not.
+ */
+export const STRUCK: ReadonlySet<Outcome> = new Set<Outcome>([
+  'busy',
+  'failed',
+  'slow',
+  'empty',
+  'cut',
+  'retired',
+  'needs-key',
+  'no-credit',
+  'unreachable',
+])
 
 /**
  * The three windows a free tier is rationed by, and which bucket an instant falls in.
@@ -260,6 +394,20 @@ export interface Message {
   callId?: string
   /** Which model produced it. Kept per message, so switching models cannot make it lie. */
   model?: string
+  /**
+   * **What Alexia said about this answer** (§4 G): *Nemotron 3 Super is rate-limited right now —
+   * this answer is from Gemma 4 31B.* Saved in the message's JSON body, so a reload draws it
+   * again; `toWire()` sends only what a provider reads, so a note never reaches a model.
+   */
+  notes?: string[]
+  /** Which provider answered, beside `model`: the model record and *Bad answer* are per provider (§4 I). */
+  provider?: string
+  /**
+   * **Somebody pressed *Bad answer* on it** (§4 I). It stays in the conversation, marked, so what
+   * happened is still on the page — and it is never shown to a model again, so the next answer is
+   * not written in its shadow.
+   */
+  bad?: true
 }
 
 export interface Session {
@@ -316,6 +464,13 @@ export interface SelectQuery {
 
 export class Store {
   readonly #db: DatabaseSync
+  /**
+   * **What providers said about their own limits** (§4 D), per provider, and when. In memory: a
+   * remaining count is true for a minute or a day, and a restart that forgets it asks again.
+   */
+  readonly #heard = new Map<string, { minute?: { remaining: number; resets?: number; at: number }; day?: { remaining: number; resets?: number; at: number } }>()
+  /** `retry-after`, per model on a provider (`provider\nmodel`): busy until this instant. */
+  readonly #waits = new Map<string, number>()
 
   /**
    * `path` is a file, `:memory:`, or nothing — which means the real one, in the data
@@ -584,6 +739,25 @@ export class Store {
   }
 
   /**
+   * **Mark the latest answer bad** (§4 I): the last assistant message that is an answer rather than
+   * a step asking for tools, and not already marked. Returns it, with the model and provider that
+   * wrote it, or nothing when there is no such answer to mark.
+   */
+  markLastAnswerBad(sessionId: number): Message | undefined {
+    const rows = this.#db
+      .prepare("SELECT id, model, body FROM messages WHERE session_id = ? AND role = 'assistant' ORDER BY id DESC")
+      .all(sessionId) as { id: number; model: string | null; body: string }[]
+    for (const row of rows) {
+      const body = JSON.parse(row.body) as Omit<Message, 'role' | 'model'>
+      if (body.bad === true) return undefined
+      if ((body.calls?.length ?? 0) > 0) continue
+      this.#db.prepare('UPDATE messages SET body = ? WHERE id = ?').run(JSON.stringify({ ...body, bad: true }), row.id)
+      return { role: 'assistant', ...(row.model !== null && { model: row.model }), ...body, bad: true }
+    }
+    return undefined
+  }
+
+  /**
    * The conversation, oldest first — exactly what gets re-sent to whichever model is
    * selected now. Models are stateless and the history is ours, which is the whole reason
    * switching one mid-conversation loses nothing.
@@ -636,6 +810,153 @@ export class Store {
       return row?.count ?? 0
     }
     return { minute: count(...SPANS[0]), day: count(...SPANS[1]), month: count(...SPANS[2]) }
+  }
+
+  /**
+   * **A provider's own word on what it has left** (§4 D), from an answer's or a refusal's headers.
+   * A window it said nothing about keeps what was heard before; `retry-after` is about the model.
+   */
+  hear(
+    provider: string,
+    heard: { minute?: { remaining: number; resets?: number }; day?: { remaining: number; resets?: number }; retryAt?: number },
+    model?: string,
+    at: number = Date.now(),
+  ): void {
+    const known = this.#heard.get(provider) ?? {}
+    this.#heard.set(provider, {
+      ...known,
+      ...(heard.minute !== undefined && { minute: { ...heard.minute, at } }),
+      ...(heard.day !== undefined && { day: { ...heard.day, at } }),
+    })
+    if (heard.retryAt !== undefined && model !== undefined) this.#waits.set(`${provider}\n${model}`, heard.retryAt)
+  }
+
+  /**
+   * What a provider last said it had left, where that is still true: before the reset it named,
+   * or — when it named none — inside the same minute or UTC day it was said in.
+   */
+  heard(provider: string, at: number = Date.now()): { minute?: number; day?: number } {
+    const known = this.#heard.get(provider)
+    const still = (window: { remaining: number; resets?: number; at: number } | undefined, bucket: (at: number) => number): number | undefined =>
+      window === undefined ? undefined
+      : window.resets !== undefined ? (at < window.resets ? window.remaining : undefined)
+      : bucket(window.at) === bucket(at) ? window.remaining
+      : undefined
+    const minute = still(known?.minute, SPANS[0][1])
+    const day = still(known?.day, SPANS[1][1])
+    return { ...(minute !== undefined && { minute }), ...(day !== undefined && { day }) }
+  }
+
+  /** Every model a provider asked us to leave alone for now, keyed `provider\nmodel`, until when. */
+  waits(at: number = Date.now()): ReadonlyMap<string, number> {
+    return new Map([...this.#waits].filter(([, until]) => until > at))
+  }
+
+  /**
+   * **One try of one model** (D161), however it went — answers included, because a failure rate
+   * needs the tries it failed out of. Anything older than {@link TRIES_KEPT} is deleted in the
+   * same breath, so the record is never more than a month.
+   */
+  recordTry(row: Omit<Try, 'at'> & { at?: number }): void {
+    const at = row.at ?? Date.now()
+    this.transaction(() => {
+      this.#db
+        .prepare('INSERT INTO tries (at, provider, model, outcome, status, source) VALUES (?, ?, ?, ?, ?, ?)')
+        .run(at, row.provider, row.model, row.outcome, row.status, row.source)
+      this.#db.prepare('DELETE FROM tries WHERE at < ?').run(at - TRIES_KEPT)
+    })
+  }
+
+  /** The record in the 30 days before `at`, oldest first. */
+  tries(at: number = Date.now()): Try[] {
+    return this.#db
+      .prepare('SELECT at, provider, model, outcome, status, source FROM tries WHERE at >= ? ORDER BY at')
+      .all(at - TRIES_KEPT) as unknown as Try[]
+  }
+
+  /**
+   * **What failed on this machine in the day before `at`** (D159), oldest first: a reading of the
+   * record since D161, and the same failures the one-day table used to hold.
+   */
+  strikes(at: number = Date.now()): { provider: string; model: string; at: number; outcome: Outcome }[] {
+    const struck = [...STRUCK]
+    return this.#db
+      .prepare(
+        `SELECT provider, model, at, outcome FROM tries WHERE at >= ? AND outcome IN (${struck.map(() => '?').join(', ')}) ORDER BY at`,
+      )
+      .all(at - STRIKES_KEPT, ...struck) as unknown as { provider: string; model: string; at: number; outcome: Outcome }[]
+  }
+
+  /**
+   * **What one fetch of a provider's list changed** (§4 D): a model that arrived is first seen now
+   * — unless it was seen before, in which case it has only come back and loses its *gone* — and a
+   * model that left is gone now. `listKnown` says whether the list had been fetched before, which
+   * is what separates *added today* from *everything, on the first fetch of a fresh install*.
+   */
+  recordSeen(provider: string, change: { added: readonly string[]; removed: readonly string[]; listKnown: boolean }, at: number = Date.now()): void {
+    this.transaction(() => {
+      for (const model of change.added) {
+        this.#db
+          .prepare(
+            'INSERT INTO seen (provider, model, first_seen, list_known, gone_at) VALUES (?, ?, ?, ?, NULL)' +
+              ' ON CONFLICT (provider, model) DO UPDATE SET gone_at = NULL',
+          )
+          .run(provider, model, at, change.listKnown ? 1 : 0)
+      }
+      for (const model of change.removed) {
+        // A model that was on the list before `seen` existed has no first sighting worth
+        // inventing: zero, which is never new.
+        this.#db
+          .prepare(
+            'INSERT INTO seen (provider, model, first_seen, list_known, gone_at) VALUES (?, ?, 0, 1, ?)' +
+              ' ON CONFLICT (provider, model) DO UPDATE SET gone_at = excluded.gone_at',
+          )
+          .run(provider, model, at)
+      }
+    })
+  }
+
+  /** Every model this machine has seen on a provider's list, with when it arrived and whether it left. */
+  seen(): Seen[] {
+    const rows = this.#db.prepare('SELECT provider, model, first_seen, list_known, gone_at FROM seen').all() as {
+      provider: string
+      model: string
+      first_seen: number
+      list_known: number
+      gone_at: number | null
+    }[]
+    return rows.map((row) => ({
+      provider: row.provider,
+      model: row.model,
+      firstSeen: row.first_seen,
+      listKnown: row.list_known === 1,
+      ...(row.gone_at !== null && { goneAt: row.gone_at }),
+    }))
+  }
+
+  /**
+   * **The record since `since`, per model per provider by week** (§4 J): what a later report to a
+   * server of the owner's would carry, and only that — see {@link Reported}. The record keeps 30
+   * days, so that is as far back as it goes. Oldest week first.
+   */
+  report(since: number): Reported[] {
+    const rows = this.#db
+      .prepare('SELECT at, provider, model, outcome FROM tries WHERE at >= ? ORDER BY at')
+      .all(since) as { at: number; provider: string; model: string; outcome: Outcome }[]
+    const weeks = new Map<string, Reported>()
+    for (const row of rows) {
+      const week = weekOf(row.at)
+      const key = `${week}\n${row.provider}\n${row.model}`
+      const one = weeks.get(key) ?? { week, provider: row.provider, model: row.model, tries: 0, answers: 0, failures: {}, badAnswers: 0 }
+      weeks.set(key, one)
+      if (row.outcome === 'bad-answer') one.badAnswers += 1
+      else {
+        one.tries += 1
+        if (row.outcome === 'answered') one.answers += 1
+        else one.failures[row.outcome] = (one.failures[row.outcome] ?? 0) + 1
+      }
+    }
+    return [...weeks.values()]
   }
 
   /**

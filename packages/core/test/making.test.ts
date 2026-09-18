@@ -98,6 +98,8 @@ const alexia: Serving = await serve({
   pluginsDir: from,
   secrets,
   providers: [stub],
+  // And nothing from this machine, which is a rung behind every stub that fails (D155).
+  local: false,
 })
 
 afterAll(async () => {

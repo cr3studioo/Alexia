@@ -67,6 +67,23 @@ test('a tier that is spent is marked spent, and stays in the pool as itself', as
   store.close()
 })
 
+test('a keyless provider is pooled without a key, and a key pasted into it makes it keyed (D159)', async () => {
+  const store = new Store(':memory:')
+  const floor: Provider = { id: 'floor', name: 'Floor', baseUrl: 'http://127.0.0.1:3', auth: 'optional' }
+  const keyed = async (secrets: Awaited<ReturnType<typeof connected>>): Promise<[string, boolean | undefined][]> =>
+    (await usable(store, secrets, [free, floor], noon)).map((r) => [r.provider.id, r.keyed])
+
+  // With nothing in the keychain the floor still answers, as a stranger.
+  expect(await keyed(await connected())).toEqual([['floor', false]])
+  // A paid-up account is not the floor. It used to rank as one, because nothing asked. (The
+  // floor is first here only because it publishes no daily limit, and the pool spreads.)
+  expect(await keyed(await connected('floor', 'free-one'))).toEqual([
+    ['floor', true],
+    ['free-one', true],
+  ])
+  store.close()
+})
+
 test('the pool spreads, rather than draining one provider and then noticing', async () => {
   const store = new Store(':memory:')
   const secrets = await connected('free-one', 'free-two')

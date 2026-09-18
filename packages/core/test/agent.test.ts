@@ -2,7 +2,7 @@
 import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { afterAll, expect, test } from 'vitest'
-import { run, struggling, type MoneyConsent, type Step, type Tooling } from '../src/agent.js'
+import { run, struggling, type Step, type Tooling } from '../src/agent.js'
 import type { Model } from '../src/catalog.js'
 import { remaining } from '../src/pool.js'
 import { keyOf, type Provider, type ToolSpec } from '../src/provider.js'
@@ -33,8 +33,11 @@ const model = (over: Partial<Model> & Pick<Model, 'id' | 'tier'>): Model => ({
 const tiny = model({ id: 'tiny', tier: 'T0' })
 const hosted = model({ id: 'hosted', tier: 'T1', priceIn: 1 })
 
-/** One scripted assistant turn: either it calls something, or it answers. */
-type Turn = { say: string } | { call: string; args?: string }
+/**
+ * One scripted assistant turn: it calls something, it answers, it fails with a status, or it
+ * starts answering and the connection dies under it.
+ */
+type Turn = { say: string } | { call: string; args?: string } | { status: number } | { dies: string }
 
 let script: Turn[] = []
 /** Which model id served each step, in order. The per-step tiering assertions read this. */
@@ -55,6 +58,17 @@ const server: Server = createServer((request, response) => {
     body = JSON.parse(raw) as { model: string; messages: { role: string; content: string }[] }
     served.push(body.model)
     const turn = script.shift() ?? { say: 'done' }
+    if ('status' in turn) {
+      response.writeHead(turn.status, { 'content-type': 'text/plain' })
+      response.end('no')
+      return
+    }
+    if ('dies' in turn) {
+      response.writeHead(200, { 'content-type': 'text/event-stream' })
+      response.write(`data: ${JSON.stringify({ choices: [{ delta: { content: turn.dies } }] })}\n\n`)
+      setTimeout(() => response.destroy(), 20)
+      return
+    }
     const delta =
       'call' in turn ?
         {
@@ -106,10 +120,18 @@ const pins: Pins = { placement: MODES.combined }
 OLLAMA.baseUrl = at
 OLLAMA.auth = 'none'
 
-/** Two local models, same tier and both free: only their size tells them apart. */
-const small = model({ id: 'small', tier: 'T0', provider: 'ollama', params: 1 })
+/**
+ * A model too small to plan that the ladder asks first anyway, and one that can plan.
+ *
+ * These were two local models, 1B and 8B, and the 1B came first only because it was listed
+ * first. Since D159 a model under 7B sinks below every bigger one on the same rung, so the
+ * small one is now a keyed free tier reporting its size, and the big one lives on this machine:
+ * the ladder asks your keys before the house, and only its size keeps the small one off planning.
+ */
+const small = model({ id: 'small', tier: 'T1', params: 1 })
 const big = model({ id: 'big', tier: 'T0', provider: 'ollama', params: 8 })
-const local = (): Promise<World> => Promise.resolve({ models: [], local: [small, big], rungs: [] })
+const split = (): Promise<World> =>
+  Promise.resolve({ models: [small], local: [big], rungs: [{ provider: alpha, minute: 100, day: 100, month: Infinity }] })
 
 function bench(): { store: Store; session: number; world(): Promise<World> } {
   const store = new Store(':memory:')
@@ -168,16 +190,16 @@ test('the plan pays for a model that can plan; turning the crank does not', asyn
   await run({
     messages: start('refactor the notes module'),
     tools: tooling(),
-    pins: { placement: MODES.local },
-    world: local,
+    pins,
+    world: split,
     store,
     secrets,
     session,
   })
 
   // Planning skips the 1B — G5 measured an 8B, and said nothing good about anything below
-  // it. Cranking does not need a planner, so it takes the first free model that can call a
-  // tool, which is the small one.
+  // it. Cranking does not need a planner, so it takes the first model the ladder offers that
+  // can call a tool, which is the small one on your key.
   expect(served).toEqual(['big', 'small', 'small'])
   store.close()
 })
@@ -204,8 +226,8 @@ test('a tool that fails is an observation, and it buys back the planner', async 
   const result = await run({
     messages: start('refactor the notes module'),
     tools,
-    pins: { placement: MODES.local },
-    world: local,
+    pins,
+    world: split,
     store,
     secrets,
     session,
@@ -301,6 +323,56 @@ test('a pin nothing satisfies stops the task and says so, mid-task included', as
   expect(result.ended).toBe('refused')
   expect(result.why).toContain('uncensored')
   expect(result.steps).toEqual([])
+  store.close()
+})
+
+/**
+ * **Three modes, three promises** (D155), from the loop's side: a plan that fails all the way
+ * down is a stop with a sentence, and the result says whose choice the plan was — so the
+ * screen can offer *Use Automatic for this answer* for the person's own choices, and only those.
+ */
+test('one model that fails ends the task with its reason, marked as somebody’s own choice', async () => {
+  script = [{ status: 402 }]
+  served = []
+  const { store, session, world } = bench()
+
+  const result = await run({ messages: start('go'), tools: tooling(), pins: { ...pins, model: 'hosted' }, world, store, secrets, session })
+
+  // Not a throw: a model with no credit is something to tell somebody, not a crash.
+  expect(result).toMatchObject({ ended: 'refused', mode: 'pinned', why: 'There is no Alpha credit to pay for hosted.' })
+  expect(served).toEqual(['hosted'])
+  store.close()
+})
+
+test('Automatic walks past a failure mid-task, says so once, and the half-streamed words are withdrawn', async () => {
+  script = [{ dies: 'I will re' }, { say: 'Read it: hi.' }]
+  served = []
+  const { store, session, world } = bench()
+  const shown: string[] = []
+  const turns: { asked: string; answered: string }[] = []
+
+  const result = await run({
+    messages: start('go'),
+    tools: tooling(),
+    pins,
+    world,
+    store,
+    secrets,
+    session,
+    on: {
+      delta: (text) => shown.push(text),
+      restart: () => (shown.length = 0),
+      note: (line) => shown.push(`[${line}]`),
+      turn: (models) => turns.push({ asked: models.asked, answered: models.answered }),
+    },
+  })
+
+  expect(result.ended).toBe('answered')
+  expect(result.mode).toBeUndefined()
+  expect(served).toHaveLength(2)
+  expect(shown).toEqual([`[${served[0] ?? ''} stopped answering partway through — this answer is from ${served[1] ?? ''}.]`, 'Read it: hi.'])
+  // The trace keeps both halves of it: who was asked, and who answered.
+  expect(turns).toEqual([{ asked: served[0], answered: served[1] }])
   store.close()
 })
 
@@ -523,92 +595,66 @@ test('on the first message the wall is named by its fix, not by the loss', async
   store.close()
 })
 
-// The money question (§9.5). One question, in the one situation that is genuinely a choice —
-// and a router that asks about money every request is a nag, which is worse than not asking
-// because a nag is clicked through without being read.
+// The paid switch (§4 H), which answered the old money question in advance: *slow local
+// (free), or paid?* is no longer a question — on, paid goes first; off, this Mac answers.
 
 /** Nothing free and keyed, one paid rung, and the model on this machine that heads the plan. */
-const aChoice = (store: Store, allowance: number): World => ({
+const aChoice = (store: Store, allowance: number, cross?: boolean): World => ({
   models: [model({ id: 'paid/wide', tier: 'T2', priceIn: 1, context: 128_000 })],
   local: [model({ id: 'qwen3:8b', tier: 'T0', provider: 'ollama' })],
   rungs: [remaining(store, alpha)],
   today: { spent: 0.12, allowance },
+  ...(cross !== undefined && { cross }),
 })
 
-/** A consent object of the shape the caller owns, plus a log of what it was asked. */
-const consent = (answer: boolean): MoneyConsent & { asked: string[] } => {
-  const asked: string[] = []
-  return {
-    asked,
-    allowed: undefined,
-    ask(question: string) {
-      asked.push(question)
-      return Promise.resolve(answer)
-    },
-  }
-}
-
-test('the money question is asked once in a task, not once a step', async () => {
+test('with the paid switch on, paid goes before this Mac for every step, and nobody is asked', async () => {
   script = [{ call: 'notes.read' }, { call: 'notes.read' }, { say: 'done' }]
   served = []
   const { store, session } = bench()
-  const money = consent(true)
 
   const result = await run({
     messages: start('read my note'),
     tools: tooling(),
     pins,
-    world: () => Promise.resolve(aChoice(store, 1)),
+    world: () => Promise.resolve(aChoice(store, 1, true)),
     store,
     secrets,
     session,
-    money,
   })
 
   expect(result.ended).toBe('answered')
-  // Three steps, one question — and the number is in it, because *how much have I spent* is
-  // the thing somebody needs to answer it. Yes bought the faster rung and every step went
-  // there: asking for speed and being given the slow one anyway is the answer not being read.
+  // The switch is the yes, given in advance: every step on the faster rung, with no question.
   expect(served).toEqual(['paid/wide', 'paid/wide', 'paid/wide'])
-  expect(money.asked).toHaveLength(1)
-  expect(money.asked[0]).toBe(
-    'Do you want slow local (free), or paid credits on Alpha? Spent $0.12 of $1.00 today.',
-  )
   store.close()
 })
 
-test('saying no does not quietly spend the money anyway, and still answers', async () => {
+test('with the paid switch off, this Mac answers, and nothing is spent', async () => {
   script = [{ say: 'done' }]
   served = []
   const { store, session } = bench()
-  const money = consent(false)
 
   const result = await run({
     messages: start('read my note'),
     tools: tooling(),
     pins,
-    world: () => Promise.resolve(aChoice(store, 1)),
+    world: () => Promise.resolve(aChoice(store, 1, false)),
     store,
     secrets,
     session,
-    money,
   })
 
-  // Asked, told no, and the plan stayed where it already was: the slow free rung on this
-  // machine, which is what *no* means now that local is a rung of the cascade. Not a refusal
-  // — a refusal was the old shape, from back when saying no left nothing underneath.
-  expect(money.asked).toHaveLength(1)
+  // Off, paid was never in the plan: the slow free rung on this machine answers, and the work
+  // pauses only when this Mac cannot.
   expect(result.ended).toBe('answered')
   expect(served).toEqual(['qwen3:8b'])
   expect(store.spend(0)).toBe(0)
   store.close()
 })
 
-test('with nothing allowed for today there is nothing to consent to, so nobody is asked', async () => {
+test('with nothing allowed for today, this Mac answers too', async () => {
   script = [{ say: 'done' }]
   served = []
   const { store, session } = bench()
-  const money = consent(true)
 
   await run({
     messages: start('read my note'),
@@ -618,14 +664,29 @@ test('with nothing allowed for today there is nothing to consent to, so nobody i
     store,
     secrets,
     session,
-    money,
   })
 
-  // No paid rung reached the plan, so there is nothing to consent to and the question never
-  // appears — which is what keeps it worth reading on the day it does. The work still gets
-  // done, on the machine it is running on, for nothing.
-  expect(money.asked).toEqual([])
   expect(served).toEqual(['qwen3:8b'])
+  store.close()
+})
+
+test('with the switch off and nothing free able, the task pauses before anything is billed', async () => {
+  script = [{ say: 'done' }]
+  served = []
+  const { store, session } = bench()
+  // No model on this machine this time: only the paid one can answer.
+  const world: World = { ...aChoice(store, 1, false), local: [] }
+
+  const result = await run({ messages: start('read my note'), tools: tooling(), pins, world: () => Promise.resolve(world), store, secrets, session })
+  expect(result.ended).toBe('paused')
+  expect(result.why).toBe('There is no free model to ask.')
+  expect(served).toEqual([])
+  expect(store.spend(0)).toBe(0)
+
+  // Allowed in this conversation, it carries on from where it stopped.
+  const allowed = await run({ messages: start('read my note'), tools: tooling(), pins, world: () => Promise.resolve({ ...world, cross: true }), store, secrets, session })
+  expect(allowed.ended).toBe('answered')
+  expect(served).toEqual(['paid/wide'])
   store.close()
 })
 
@@ -800,30 +861,27 @@ test('escalation never buys what the allowance did not', async () => {
   store.close()
 })
 
-test('a no to the money question is a no to the upgrade as well', async () => {
+test('with the paid switch off, a task going badly is not upgraded into paid either', async () => {
   script = [...repeating]
   served = []
   const { store, session } = bench()
   const seen = watched()
-  const money = consent(false)
 
   const result = await run({
     messages: start('refactor the notes module'),
     tools: tooling(),
     pins,
-    world: () => Promise.resolve(aChoice(store, 1)),
+    // An allowance is set, but the switch is off: the upgrade may not cross into paid by itself.
+    world: () => Promise.resolve(aChoice(store, 1, false)),
     store,
     secrets,
     session,
-    money,
     on: seen.on,
   })
 
-  // Asked once, told no — and then the loop struggled, which is exactly the moment the
-  // answer has to still mean something. An upgrade that spends anyway is the question not
-  // having been asked.
+  // The loop struggled, which is the moment the switch has to still mean something: an upgrade
+  // that spends anyway is the setting not existing.
   expect(result.ended).toBe('answered')
-  expect(money.asked).toHaveLength(1)
   expect(served).toEqual(['qwen3:8b', 'qwen3:8b', 'qwen3:8b', 'qwen3:8b'])
   expect(seen.notes).toEqual([])
   expect(store.spend(0)).toBe(0)

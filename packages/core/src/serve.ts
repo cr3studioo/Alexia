@@ -19,16 +19,17 @@ import {
   type Saved,
   type Upload,
 } from './attach.js'
-import { Catalog } from './catalog.js'
+import { Catalog, news, POLL_EVERY, type Change } from './catalog.js'
 import { asRuling, counted, freshTally, ModelChecker, type Tally } from './checker.js'
 import { commands, pins, type Ran, run as runCommand } from './commands.js'
 import { preauthorise, record } from './consent.js'
 import { refuse, type Body } from './guard.js'
+import { judge } from './health.js'
 import { Library, offerable } from './library.js'
 import { distil, forget, learnable, outline, save, type Episode } from './learned.js'
 import { mimeOf, Offers, openable, reach } from './offered.js'
 import { installed, OLLAMA, running } from './ollama.js'
-import { usable } from './pool.js'
+import { accountKey, fundedBy, keylessOn, usable, type Account } from './pool.js'
 import { ceilings, estimate, previewLine, setCeilings, worthAsking, type Ceilings } from './preview.js'
 import { Plugins } from './plugins.js'
 import {
@@ -47,7 +48,7 @@ import {
 } from './permissions.js'
 import { anonymous, keyOf, PROVIDERS, type Provider } from './provider.js'
 import { redactSecrets } from './redact.js'
-import { MODES, route, send, shapeOf, type Bubble } from './router.js'
+import { allowed, MODES, paid, route, send, shapeOf, type Bubble, type Tier } from './router.js'
 import { CORE, keychain, type SecretStore } from './secrets.js'
 // For `boot.mjs`, which imports the bundle this file is the entry of and nothing else (D153).
 export { fromShell } from './secrets.js'
@@ -60,6 +61,7 @@ import { Skills, SKILL_TOOL } from './skills.js'
 import { dataDir, Store, textOf, type Message, type Part } from './store.js'
 import { PluginTooling } from './tooling.js'
 import { Trace } from './trace.js'
+import { trial } from './trial.js'
 import { allowance, caps, setCaps, today, warning } from './usage.js'
 
 /**
@@ -123,6 +125,19 @@ export interface ServeOptions {
    * The one test that is *supposed* to reach the real floor says so by not passing this.
    */
   providers?: Provider[]
+  /**
+   * Whether this server looks for models on this machine. Yes unless a test says otherwise.
+   *
+   * The same seam as `providers`, one rung further down. A test that expected a refusal on
+   * *a machine with no Ollama* was answered by the Ollama on the laptop running it, and since a
+   * failed rung walks on to the next one (D155), so is any test whose stub provider fails.
+   */
+  local?: boolean
+  /**
+   * How long a task started elsewhere waits for a yes to a paid model before it stops (§4 H). Ten
+   * minutes unless a test says otherwise, because a test cannot wait ten minutes for a no.
+   */
+  allowWaitMs?: number
   secrets?: SecretStore
 }
 
@@ -229,14 +244,92 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
   // public, which is what lets first run show what is free before anybody has pasted a key,
   // and it is what lets the Models tab show what a key would get you. A provider that is
   // unreachable, or that wants a key for its list, leaves the cache exactly as it was.
-  const poll = async (provider: Provider): Promise<void> => {
-    void (await catalog.refresh(provider, undefined, await secrets.get(CORE, keyOf(provider)).catch(() => undefined)))
+  /**
+   * **What the last fetch of each provider's list added**, as the Models tab's news line (§4 D):
+   * one line per provider, replaced by that provider's next fetch — so a model added between two
+   * fetches is news once, and a fetch that adds nothing clears it.
+   */
+  const headlines = new Map<string, string>()
+  /**
+   * Fetch one provider's list — when it has aged out, or at once with `maxAge` 0 — and write down
+   * what changed: first sightings and departures into the record, and the news line.
+   */
+  const fetchList = async (provider: Provider, maxAge?: number, key?: string): Promise<Change> => {
+    const since = catalog.fetchedFrom(provider.id)
+    const change = await catalog.refresh(provider, maxAge, key ?? (await secrets.get(CORE, keyOf(provider)).catch(() => undefined)))
+    // Declined as fresh, or failed: nothing was fetched, so nothing changed.
+    if (change.failed !== undefined || catalog.fetchedFrom(provider.id) === since) return change
+    store.recordSeen(provider.id, {
+      added: change.added.map((model) => model.id),
+      removed: change.removed.map((model) => model.id),
+      listKnown: change.listKnown,
+    })
+    const line = news(change, {
+      provider: provider.name,
+      since: new Date(since).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }),
+    })
+    if (line === undefined) headlines.delete(provider.id)
+    else headlines.set(provider.id, line)
+    return change
   }
-  /** Every provider, if its own list has aged out. Startup calls it; so does the Models tab. */
+  const poll = async (provider: Provider): Promise<void> => {
+    void (await fetchList(provider))
+  }
+
+  /**
+   * **What the provider says the key's account is** (§4 D): still on the free tier or not, and how
+   * much of the key's credit limit is left. Kept in the store's core namespace, so the ledger's
+   * daily allowance and *Funded* read the provider's own word rather than D107's low guess. A key
+   * with nowhere to ask, a refusal, or a shape this does not know leaves what was known.
+   */
+  /** How long an account question waits. Declared here, above the startup poll that first asks one. */
+  const ACCOUNT_WAIT = 15_000
+  const readAccount = async (provider: Provider, key?: string): Promise<Account | undefined> => {
+    if (provider.keyInfo === undefined) return undefined
+    const stored = key ?? (await secrets.get(CORE, keyOf(provider)).catch(() => undefined))
+    if (stored === undefined) return undefined
+    try {
+      const response = await fetch(`${provider.baseUrl}${provider.keyInfo}`, {
+        headers: { authorization: `Bearer ${stored}`, accept: 'application/json', ...provider.headers },
+        signal: AbortSignal.timeout(ACCOUNT_WAIT),
+      })
+      if (!response.ok) return undefined
+      const { data } = (await response.json()) as { data?: { is_free_tier?: unknown; limit_remaining?: unknown } }
+      if (typeof data?.is_free_tier !== 'boolean') return undefined
+      const account: Account = {
+        freeTier: data.is_free_tier,
+        limitRemaining: typeof data.limit_remaining === 'number' ? data.limit_remaining : null,
+        at: Date.now(),
+      }
+      // Only if that key is still the one stored: a key removed while this was asking takes its
+      // account with it, and an answer arriving after must not write it back.
+      if ((await secrets.get(CORE, keyOf(provider)).catch(() => undefined)) !== stored) return undefined
+      store.kvSet(CORE, accountKey(provider.id), account)
+      return account
+    } catch {
+      return undefined
+    }
+  }
+
+  /** Every provider, if its own list has aged out, and every account a key can ask about. Startup calls it; so does the Models tab. */
   const pollAll = (): void => {
-    for (const provider of providers) void poll(provider)
+    for (const provider of providers) {
+      void poll(provider)
+      void readAccount(provider)
+    }
   }
   pollAll()
+  /**
+   * **Every six hours while the app runs** (D161), which is how the lists stay current without
+   * anybody opening the Models tab. A tick that comes late after the machine slept simply polls:
+   * each provider's own age decides, not the timer. Cleared on close.
+   */
+  const ticking = setInterval(() => {
+    pollAll()
+    // And today's test messages, on the same tick (§4 E). Declared below, and a tick is hours away.
+    void testModels()
+  }, POLL_EVERY)
+  ticking.unref()
 
   /**
    * The conversation on screen (M8-2), and the reason it is a variable.
@@ -318,7 +411,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
      * **The spend lands on the plugin that spent it.** That is the whole reason
      * `usage.plugin` exists, and until something called this it was a column nothing wrote.
      */
-    sample: async (pluginId, params) => {
+    sample: async (pluginId, params, signal) => {
       const asked: Message[] = [
         ...(params.systemPrompt === undefined ? [] : [{ role: 'system' as const, content: params.systemPrompt }]),
         ...params.messages.map((turn) => ({
@@ -366,25 +459,38 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
       const typed = lastAsked === undefined ? '' : textOf(lastAsked).trim()
       if (!typed.includes('\n') && /^\/[a-z][a-z0-9.-]*(?:\s|$)/i.test(typed)) return asCommand(pluginId, typed)
 
-      if (params._meta?.[TOOLS_META] === true) return asTask(pluginId, asked)
+      if (params._meta?.[TOOLS_META] === true) return asTask(pluginId, asked, signal, background(pluginId))
 
-      const verdict = route({ messages: asked, shape: shapeOf({ messages: asked }) }, pins(store), await world())
+      const verdict = route(
+        { messages: asked, shape: shapeOf({ messages: asked }), ...(background(pluginId) && { background: true }) },
+        pins(store),
+        await world(),
+      )
       if (!verdict.ok) throw new Error(verdict.why)
+      sampling += 1
       const answer = await send(
         verdict.choices,
-        { messages: asked, ...(params.maxTokens !== undefined && { maxTokens: params.maxTokens }) },
+        {
+          messages: asked,
+          ...(params.maxTokens !== undefined && { maxTokens: params.maxTokens }),
+          // The plugin's cancel (D160). When it stops waiting, no further rung is asked and
+          // nothing is counted as the model's failure: nobody is there to be answered.
+          ...(signal !== undefined && { signal }),
+        },
         store,
         secrets,
         // No `run`, because there is no task: a plugin asked. **That is also the ceiling**
         // — `send` reads *attributed to a plugin, belonging to no run* as *free tiers only*
         // (G12, D96), so the rule is the router's rather than this call site's.
         { plugin: pluginId },
-      )
+      ).finally(() => (sampling -= 1))
       return {
         role: 'assistant',
         content: { type: 'text', text: textOf(answer.message) },
         model: answer.model.id,
-        stopReason: 'endTurn',
+        // MCP's own word for *it ran out of room*. A plugin told `endTurn` about half an
+        // answer has no way to know it is half, and the personality adapter saved one.
+        stopReason: answer.cut ? 'maxTokens' : 'endTurn',
       }
     },
   })
@@ -474,14 +580,33 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
   const manifests = () => plugins.ids.flatMap((id) => plugins.manifest(id) ?? [])
 
   /** Everything the router needs to know, asked fresh: a tier can be exhausted mid-sentence. */
-  const world = async () => ({
-    models: catalog.models,
-    local: (await running()) ? await installed() : [],
-    rungs: await usable(store, secrets, providers),
-    // Asked fresh with the rest of it, and for the same reason: an allowance can run out
-    // mid-sentence exactly the way a free tier can.
-    today: today(store),
-  })
+  const world = async () => {
+    const models = catalog.models
+    const local = options.local !== false && (await running()) ? await installed() : []
+    const rungs = await usable(store, secrets, providers)
+    return {
+      models,
+      local,
+      rungs,
+      // Asked fresh with the rest of it, and for the same reason: an allowance can run out
+      // mid-sentence exactly the way a free tier can.
+      today: today(store),
+      // What failed here in the last day, so a model that just timed out is not first again (D159).
+      strikes: store.strikes(),
+      // What Alexia thinks of each model, from 30 days of tries (D161). Judged on every ask, so a
+      // key saved a moment ago brings back a provider set aside for wanting one, without a restart.
+      health: judge(
+        store.tries(),
+        store.seen(),
+        [...models, ...local],
+        new Set(rungs.filter((rung) => rung.keyed === true).map((rung) => rung.provider.id)),
+        Date.now(),
+        store.waits(),
+      ),
+      // Nothing is reported from anywhere else: the hook for a shared record, decided later (§4 J, D160).
+      reported: new Set<string>(),
+    }
+  }
 
   /**
    * One question at a time, waiting for an answer from the screen.
@@ -502,6 +627,32 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
    * `notifications/cancelled`. The plugin that ignores that is why `callMs` exists.
    */
   let task: AbortController | undefined
+
+  /** A plugin's sampling requests on their way — answers somebody may be waiting for (§4 E). */
+  let sampling = 0
+
+  /**
+   * **Plugins whose button somebody has just pressed** (§4 F, D161). A request a plugin makes while
+   * its own press is in flight is somebody watching a progress bar — Adapt is the case — and counts
+   * as the chat for free requests; anything else a plugin asks for is background. Without a run id
+   * on a press (G13's build, not yet), this is how core tells the two apart.
+   */
+  const pressing = new Map<string, number>()
+  const background = (pluginId: string): boolean => (pressing.get(pluginId) ?? 0) === 0
+
+  /**
+   * **Today's test messages** (§4 E): a minute after start, and on every six-hour tick. Never while
+   * a task runs or a plugin's request is being answered — asked before each test, so an answer
+   * that starts mid-round stops the round — and never more than the day allows, which the store
+   * remembers across a restart.
+   */
+  const answering = (): boolean => task !== undefined || sampling > 0
+  const testModels = async (): Promise<void> => {
+    if (answering()) return
+    await trial({ world: await world(), store, secrets, busy: answering }).catch(() => undefined)
+  }
+  const firstTests = setTimeout(() => void testModels(), 60_000)
+  firstTests.unref()
 
   /**
    * The last task worth learning from, waiting for an answer (M4-5).
@@ -560,36 +711,124 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
    * should grey a button, not empty the screen.
    */
   const connected = async (): Promise<ReadonlySet<string>> => {
+    // The keyless floor's switch (D154). A key is asked about first, so a provider somebody
+    // pasted one into is keyed rather than the floor and stays connected either way.
+    const floor = keylessOn(store)
     const found = await Promise.all(
       providers.map(async (p) =>
-        anonymous(p) || (await secrets.get(CORE, keyOf(p)).catch(() => undefined)) !== undefined ?
-          [p.id]
+        (await secrets.get(CORE, keyOf(p)).catch(() => undefined)) !== undefined ? [p.id]
+        : anonymous(p) && floor ? [p.id]
         : [],
       ),
     )
     return new Set(found.flat())
   }
 
+  const capitalised = (line: string): string => line.charAt(0).toUpperCase() + line.slice(1)
+
+  /** `14 free models`, `1 free model`. */
+  const models = (n: number, kind: string): string => `${String(n)} ${kind}model${n === 1 ? '' : 's'}`
+
   /**
-   * Whether money has been agreed to in this conversation (§9.5).
-   *
-   * Once per task is what the loop guarantees; **for the session** is what this adds, by
-   * being the same answer the next task finds. A router that asks about money on every
-   * request is a nag, and a nag is clicked through without being read.
-   *
-   * Cleared when a different conversation is opened, because consent given in one is not
-   * consent given in another.
+   * **How long a saved key waits for its provider's list** (§1 step 3, D163). Long enough for
+   * OpenRouter's, the biggest, on a slow connection; short enough that a provider that never
+   * answers leaves a Save button that answered. The fetch goes on behind it either way.
    */
-  let spending: boolean | undefined
+  const LIST_WAIT = 15_000
+
+  /**
+   * A key was just saved: fetch that provider's list with it and say what it unlocked.
+   *
+   * The count is what the slider lets answer, from the same `allowed()` the Models tab and the
+   * router read (D154) — *14 free models* on *free only* should not quietly include paid rows
+   * a person will never see. A list that does not arrive is said too, because the commonest
+   * reason for that on a list that needs a key is the key.
+   */
+  const connectedNow = async (provider: Provider, key: string): Promise<string> => {
+    const fetched = fetchList(provider, 0, key)
+    const waited = await Promise.race([
+      fetched,
+      new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), LIST_WAIT).unref()),
+    ])
+    if (waited === undefined) {
+      return `${provider.name} connected. Its model list is still arriving — open the Models tab again in a moment.`
+    }
+    if (waited.failed !== undefined) {
+      return `${provider.name}'s key is saved, but its model list did not arrive (${waited.failed}). If it says 401 or 403, the key was not accepted.`
+    }
+    // What the account is, where the provider says: it decides the day's allowance and whether its
+    // paid models can be bought, so it is asked before the count below is taken (§4 D).
+    const account = await readAccount(provider, key)
+    const spend = pins(store).spend ?? 'mixed'
+    const funded = fundedBy(account)
+    const listed = catalog.models.filter((m) => m.provider === provider.id && allowed(m, spend) && !(paid(m.tier) && funded === false))
+    const free = listed.filter((m) => !paid(m.tier)).length
+    const priced = listed.length - free
+    return (
+      `${provider.name} connected — ${models(free, 'free ')}${priced > 0 ? ` and ${String(priced)} paid` : ''}.` +
+      (funded === false ? ` Its paid models are not listed: ${provider.name} says ${account?.freeTier === true ? 'this account has no credit yet' : "this key's credit limit is used up"}.` : '')
+    )
+  }
+
+  /**
+   * **Take a key out of the keychain** (§1 step 4). The provider is disconnected, unless it
+   * answers without a key, in which case it goes back to the shared floor.
+   *
+   * **A pin and a list are never edited by this** — D155's *Alexia never edits a list* — so
+   * whatever named this provider's models stays named, and the Models tab and the ladder show
+   * it as *not available* until a key is back. The sentence says so, because the alternative is
+   * somebody finding a list entry greyed out a week later with no memory of why.
+   */
+  const disconnect = async (provider: Provider): Promise<string> => {
+    await secrets.delete(CORE, keyOf(provider))
+    // What the provider said about that key's account goes with the key.
+    store.kvDelete(CORE, accountKey(provider.id))
+    if (anonymous(provider)) {
+      return `The ${provider.name} key is removed. ${provider.name} still answers without one, on its shared free tier.`
+    }
+    const standing = pins(store)
+    const ids = new Set(catalog.models.filter((m) => m.provider === provider.id).map((m) => m.id))
+    // A model another connected provider also serves still answers, so it is not named here.
+    const reachable = await connected()
+    const still = new Set(catalog.models.filter((m) => reachable.has(m.provider)).map((m) => m.id))
+    const lost = (id: string): boolean => ids.has(id) && !still.has(id)
+    const pinned = standing.model !== undefined && lost(standing.model)
+    const listed = (standing.order ?? []).filter(lost).length
+    const kept = [
+      ...(pinned ? ['the model you chose stays chosen'] : []),
+      ...(listed > 0 ? [`your list keeps ${listed === 1 ? 'the one it names' : `the ${String(listed)} it names`}`] : []),
+    ]
+    return (
+      `The ${provider.name} key is removed, and its ${models(ids.size, '')} are no longer listed.` +
+      (kept.length === 0 ? '' : ` ${capitalised(kept.join(' and '))}, shown as not available until a key is back.`)
+    )
+  }
+
+  /**
+   * **The conversations in which somebody pressed *Allow switching to a paid model*** (§4 H).
+   *
+   * One press covers the conversation it was pressed in, and only that one: consent given in one
+   * conversation is not consent given in another. Kept per conversation rather than cleared when
+   * another is opened, so going back to one where it was allowed finds it still allowed — and a
+   * Telegram conversation's yes is its own.
+   */
+  const paidIn = new Set<number>()
+
+  /**
+   * **The world a task in this conversation sees** (§4 H): everything `world()` gathers, and
+   * whether paid may be crossed into by itself — the paid switch on, or *Allow* pressed here.
+   */
+  const worldFor = (conversation: number) => async () => ({
+    ...(await world()),
+    cross: caps(store).cross === true || paidIn.has(conversation),
+  })
 
   const surface = {
-    skills, tooling, plugins, skillsDir, trace, dataDir: root, store, catalog, connected, world,
+    skills, tooling, plugins, skillsDir, trace, dataDir: root, store, catalog, connected, providers, world,
+    news: () => (headlines.size === 0 ? undefined : [...headlines.values()].join(' ')),
     refresh: pollAll,
     session: () => session,
-    openSession: (id: number) => {
-      spending = undefined
-      return (session = id)
-    },
+    openSession: (id: number) => (session = id),
     // Broadcast, to whoever is running and cares. Nothing is spawned to hear it and nothing
     // waits for it — a new conversation must not be held up by a plugin letting go of a
     // graphics card.
@@ -709,10 +948,10 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
    * asks the person in front of it, and a plugin's own command below, which asks wherever
    * `ask.confirm` is answered. The ruling differs; what running it *is* does not.
    */
-  async function commandTool(plugin: string, tool: string): Promise<string> {
+  async function commandTool(plugin: string, tool: string, args?: Record<string, unknown>): Promise<string> {
     const process = plugins.process(plugin)
     if (!process) throw new Error(`${plugin} is not running`)
-    const result = await process.callTool(tool)
+    const result = await process.callTool(tool, args)
     const said = (result.content ?? [])
       .map((block) => (block.type === 'text' ? block.text : `[${block.type}]`))
       .join('\n')
@@ -754,7 +993,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
       store,
       manifests: manifests(),
       newChat: () => freshFor(pluginId),
-      call: async (plugin, tool) => {
+      call: async (plugin, tool, args) => {
         const ruling = await rulingFor(plugin, tool)
         if (ruling.verdict === 'blocked') throw new Error(ruling.why ?? `${tool} did not run.`)
         if (ruling.verdict === 'ask') {
@@ -766,13 +1005,13 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
           const said = (asked?.content ?? []).map((block) => (block.type === 'text' ? block.text : '')).join('')
           if (said.trim().toLowerCase() !== 'yes') throw new Error('Not approved, so nothing ran.')
         }
-        return commandTool(plugin, tool)
+        return commandTool(plugin, tool, args)
       },
     })
     return { role: 'assistant', model: '', content: { type: 'text', text: ran.note }, stopReason: 'endTurn' }
   }
 
-  async function asTask(pluginId: string, messages: Message[]): Promise<CreateMessageResult> {
+  async function asTask(pluginId: string, messages: Message[], gaveUp?: AbortSignal, behind = true): Promise<CreateMessageResult> {
     if (task) throw new Error('Alexia is already working on something. Try again when it has finished.')
     const started = [...messages].reverse().find((m) => m.role === 'user')
     const text = started === undefined ? '' : textOf(started)
@@ -789,11 +1028,14 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     try {
       const month = allowance(store)
       const chosen = await personality()
-      const result = await run({
-        messages,
+      // What the model will actually be given, counted the way `system()` counts it (M4-4).
+      trace.personality(chosen?.trim().length ?? 0)
+      const once = (asked: Message[]): ReturnType<typeof run> => run({
+        messages: asked,
         tools: tooling,
         pins: pins(store),
-        world,
+        // Whether paid may be crossed into for this conversation: the switch, or a yes on the phone (§4 H).
+        world: worldFor(its),
         store,
         secrets,
         session: its,
@@ -802,9 +1044,12 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
         // The spend lands on the plugin that asked, exactly as a plain `sampling` call's
         // does — and it is a run now, so it is a paid path like any other task (G12, D96).
         plugin: pluginId,
+        // A message from a phone is not the chat on screen: its free requests come second (§4 F).
+        ...(behind && { background: true }),
         paidAllowed: !month.stop,
         maxSteps: limitsNow().steps,
-        signal: stop.signal,
+        // The stop button, and the plugin that started this giving up: either one ends the task.
+        signal: gaveUp === undefined ? stop.signal : AbortSignal.any([stop.signal, gaveUp]),
         guard: gate(text, runId),
         /**
          * The yes, from wherever the person is.
@@ -821,6 +1066,44 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
           return said.trim().toLowerCase() === 'yes'
         },
       })
+      let result = await once(messages)
+      /**
+       * **A pause, asked on the phone** (§4 H). The free models are done and a paid one would answer,
+       * with the switch off: the question goes where the person is, as a yes or no, and waits ten
+       * minutes. A yes covers this conversation and carries on from where it stopped; no, or no
+       * answer, ends the task with the sentence sent back there. With no daily amount there is
+       * nothing a yes could buy, so the sentence says where to set one instead of asking.
+       */
+      if (result.ended === 'paused') {
+        const daily = caps(store).daily ?? 0
+        const why = result.why ?? 'The free models are used up.'
+        if (daily <= 0) {
+          result = { ...result, why: `${why} A paid model needs a daily amount first — set one under the paid switch on the Models tab in the app.` }
+        } else {
+          const yes = await Promise.race([
+            plugins
+              .capability(CORE_CAPABILITIES.ask, {
+                question: `${why} Allow switching to a paid model, up to $${daily.toFixed(2)} today?`,
+                options: ['Yes', 'No'],
+              })
+              .then((asked) => (asked.content ?? []).map((block) => (block.type === 'text' ? block.text : '')).join('').trim().toLowerCase() === 'yes')
+              .catch(() => false),
+            new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), options.allowWaitMs ?? 10 * 60_000).unref()),
+          ])
+          if (yes === true) {
+            paidIn.add(its)
+            result = await once([...messages, ...result.messages])
+          } else {
+            result = {
+              ...result,
+              why:
+                yes === false ?
+                  `${why} Not allowed, so no paid model was asked.`
+                : `${why} Nobody allowed a paid model within ten minutes, so this stopped.`,
+            }
+          }
+        }
+      }
       trace.end(result.ended, {
         ...(result.why !== undefined && { why: result.why }),
         calls: store.callsIn(runId),
@@ -967,6 +1250,8 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
           // Today's side of the same question, and the one that decides whether the router
           // may reach across the price line on its own at all.
           today: today(store),
+          // The paid switch (§4 H), so the screen can say above the message box that paid is on.
+          cross: caps(store).cross === true,
           // The permission controls, and what is standing. Every one of these is a control
           // in the shell, not only a command — same rule as M1-12.
           ceilings: limitsNow(),
@@ -1000,6 +1285,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
               ...(p.callsPerMonth !== undefined && { callsPerMonth: p.callsPerMonth }),
               ...(p.verified !== undefined && { verified: p.verified }),
               ...(p.friction !== undefined && { friction: p.friction }),
+              ...(p.wantsCard === true && { card: true }),
               /** Answers without a key at all, which is the tier the Skip button lands on. */
               keyless: (p.auth ?? 'required') !== 'required',
               /** Its account id goes in the URL, so the key it wants is `account_id:token`. */
@@ -1022,7 +1308,8 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
         theme?: string
         glass?: number
         updates?: boolean
-        provider?: { id: string; key: string }
+        /** A key to store, or `remove` to take the stored one out of the keychain (§1 step 4). */
+        provider?: { id: string; key?: string; remove?: boolean }
       }
       if (chosen.name) store.kvSet(CORE, 'display_name', chosen.name)
       if (chosen.mode && chosen.mode in MODES) store.kvSet(CORE, 'mode', chosen.mode)
@@ -1040,6 +1327,8 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
       // it is the same kind of fact: an answer about this install that outlives the window it
       // was given in.
       if (typeof chosen.updates === 'boolean') store.kvSet(CORE, 'updates_auto', chosen.updates)
+      /** What happened to a key, as the one line the screen shows where it was pressed (§1). */
+      let said: string | undefined
       if (chosen.provider?.key) {
         const provider = providers.find((p) => p.id === chosen.provider?.id)
         /**
@@ -1071,15 +1360,21 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
         }
         // Straight to the keychain, never to the database — the same path a plugin's
         // password takes, and the same check proves it.
-        if (provider) await secrets.set(CORE, keyOf(provider), chosen.provider.key)
-        // And its list, now that there is something to ask with. Four of the six refuse an
-        // unauthenticated request, so this is the moment their models become knowable at
-        // all — waiting for the next restart would mean connecting a provider and finding
-        // the Models tab still empty, with nothing on screen saying why.
-        if (provider) void catalog.refresh(provider, 0, chosen.provider.key)
+        if (provider) {
+          await secrets.set(CORE, keyOf(provider), chosen.provider.key)
+          // And its list, now that there is something to ask with. Four of the six refuse an
+          // unauthenticated request, so this is the moment their models become knowable at
+          // all. **Waited for** (§1 step 3), so the answer can say what the key unlocked and
+          // the shell can redraw the list with it in — it used to be fired and forgotten, and
+          // the Models tab opened straight after showed the provider with nothing in it.
+          said = await connectedNow(provider, chosen.provider.key)
+        }
+      } else if (chosen.provider?.remove === true) {
+        const provider = providers.find((p) => p.id === chosen.provider?.id)
+        if (provider) said = await disconnect(provider)
       }
       response.writeHead(200, { 'content-type': 'application/json' })
-      response.end(JSON.stringify(setup()))
+      response.end(JSON.stringify({ ...setup(), ...(said !== undefined && { said }) }))
       return
     }
 
@@ -1115,13 +1410,14 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
         },
         // A command is bound to the plugin tool of the same name — the whole binding, and
         // why a manifest declares a command with a name and a sentence and nothing else.
-        call: async (plugin, tool) => {
+        // Whatever followed the word rides along under `rest`, unread by core (D177).
+        call: async (plugin, tool, args) => {
           const ruling = await rulingFor(plugin, tool)
           if (ruling.verdict === 'blocked' || (ruling.verdict === 'ask' && approved !== true)) {
             asked = ruling
             throw new Error(ruling.why ?? `${tool} did not run.`)
           }
-          return commandTool(plugin, tool)
+          return commandTool(plugin, tool, args)
         },
       })
       response.writeHead(200, { 'content-type': 'application/json' })
@@ -1676,9 +1972,11 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
       // A press that does not fit its declaration — a row action with no row, or a plain
       // button handed one — is a sentence rather than a 500. The screen shows it beside the
       // control, which is where somebody can do something about it.
+      pressing.set(plugin, (pressing.get(plugin) ?? 0) + 1)
       const result = await plugins
         .action(plugin, press.key ?? '', undefined, press.row)
         .catch((error: unknown) => ({ ok: false, said: error instanceof Error ? error.message : String(error) }))
+        .finally(() => pressing.set(plugin, (pressing.get(plugin) ?? 1) - 1))
       response.writeHead(200, { 'content-type': 'application/json' })
       response.end(JSON.stringify({ ...result, panes: await plugins.panes() }))
       return
@@ -1703,7 +2001,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
         const source = ours[asked.key ?? '']
         const answer =
           source === undefined ? { said: `There is no list called "${asked.key ?? ''}".` }
-          : url.pathname === '/api/rows' ? { rows: await source.rows() }
+          : url.pathname === '/api/rows' ? { rows: await source.rows(), ...(source.note?.() !== undefined && { note: source.note() }) }
           : { text: (await source.detail?.(asked.row ?? '')) ?? 'There is nothing more to say about that.' }
         response.writeHead(200, { 'content-type': 'application/json' })
         response.end(JSON.stringify('said' in answer ? { ok: false, ...answer } : { ok: true, ...answer }))
@@ -2020,48 +2318,107 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
    * with the step events added — so a turn that happens to need no tools looks exactly as
    * it did, which is most of them.
    */
+  /** The tier of the model that wrote a message, from the catalog, when it is still there. */
+  const tierOf = (message: Message): Tier | undefined =>
+    catalog.models.find((model) => model.id === message.model && (message.provider === undefined || model.provider === message.provider))?.tier
+
   async function reply(sent: Body, response: ServerResponse): Promise<void> {
-    const { text: typed, files } = sent as { text?: string; files?: Upload[] }
+    const { text: typed, files, again, automatic, allow, bad } = sent as {
+      text?: string
+      files?: Upload[]
+      again?: boolean
+      automatic?: boolean
+      /**
+       * ***Allow switching to a paid model*** (§4 H), pressed on a pause: this conversation may cross
+       * into paid from now on, and — when there was no daily amount — `daily` is the one typed
+       * into the box beside the button. Sent with `again`, so the question carries on.
+       */
+      allow?: { daily?: number }
+      /**
+       * ***Bad answer*** (§4 I), pressed under the latest answer: it is marked, a *bad answer* is
+       * recorded for the model and provider that wrote it, and the question is asked again without
+       * that model — on Automatic, and above its tier when the paid switch is on. Sent with `again`.
+       */
+      bad?: Record<string, never>
+    }
+    /** The answer just marked bad, when this is a *Bad answer* press. */
+    const marked = again === true && bad !== undefined ? store.markLastAnswerBad(session) : undefined
+    if (again === true && bad !== undefined && marked === undefined) {
+      response.writeHead(409)
+      response.end()
+      return
+    }
+    if (marked?.model !== undefined && marked.provider !== undefined) {
+      // One press, recorded like any other try: two in 30 days tag the model (D161, D162).
+      store.recordTry({ provider: marked.provider, model: marked.model, outcome: 'bad-answer', status: 0, source: 'person' })
+    }
+    if (again === true && allow !== undefined) {
+      paidIn.add(session)
+      const daily = allow.daily
+      if (typeof daily === 'number' && Number.isFinite(daily) && daily > 0) setCaps(store, { ...caps(store), daily: Math.round(daily * 100) / 100 })
+    }
     const uploads = Array.isArray(files) ? files.slice(0, MOST_FILES) : []
+    /**
+     * **The question that stopped, asked again** (D155) — *Try again*, or *Use Automatic for
+     * this answer* with `automatic` beside it.
+     *
+     * Nothing is appended: the question is already in the conversation, and so is every step
+     * the task took before it stopped, so a task that stopped at step six carries on from
+     * step six. Refused when the last thing in the conversation is an answer, because then
+     * there is nothing left to answer and a second reply to the same question is not this.
+     */
+    // What a model may still be shown: a marked answer stays on the page and never goes back out.
+    const history = again === true ? store.history(session).filter((turn) => turn.bad !== true) : []
+    const question = [...history].reverse().find((turn) => turn.role === 'user')
+    const last = history.at(-1)
+    const answered = last?.role === 'assistant' && (last.calls?.length ?? 0) === 0
+    if (again === true && (question === undefined || answered)) {
+      response.writeHead(409)
+      response.end()
+      return
+    }
     // A file with nothing typed is a whole message — *here, read this* — so the line is
     // required only when it is the only thing there is.
-    if (!typed && uploads.length === 0) {
+    if (again !== true && !typed && uploads.length === 0) {
       response.writeHead(400)
       response.end()
       return
     }
-    const text = String(typed ?? '')
+    const text = question === undefined ? String(typed ?? '') : textOf(question)
 
     response.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store' })
     const say = (event: Record<string, unknown>): void => void response.write(`data: ${JSON.stringify(event)}\n\n`)
 
-    /**
-     * The documents, read before anything else happens.
-     *
-     * **`text` stays what the person typed** and only `content` grows, which is the load-
-     * bearing half of this: the permission gate, the boundary sentences and the offer to
-     * learn all read `text`, and every one of them would be wrong to read a document. A file
-     * containing the words *delete everything* is not somebody asking for anything.
-     */
-    const content = uploads.length === 0 ? text : await documents(text, uploads, say)
+    if (question === undefined) {
+      /**
+       * The documents, read before anything else happens.
+       *
+       * **`text` stays what the person typed** and only `content` grows, which is the load-
+       * bearing half of this: the permission gate, the boundary sentences and the offer to
+       * learn all read `text`, and every one of them would be wrong to read a document. A file
+       * containing the words *delete everything* is not somebody asking for anything.
+       */
+      const content = uploads.length === 0 ? text : await documents(text, uploads, say)
 
-    const user: Message = { role: 'user', content }
-    store.append(session, user)
+      const user: Message = { role: 'user', content }
+      store.append(session, user)
+
+      // A boundary the user just spoke, or one they just lifted. Said out loud either way:
+      // a rule that changed silently is a rule they will be surprised by later. Once, when it
+      // was said — asking the same question again does not say it a second time.
+      const standing = scope().boundaries ?? []
+      const spoken = heard(text)
+      if (spoken) {
+        store.kvSet(CORE, 'boundaries', [...standing, spoken])
+        say({ note: boundaryAck(spoken) })
+      } else if (standing.length > 0 && lifts(text)) {
+        store.kvSet(CORE, 'boundaries', [])
+        say({ note: 'Lifted. I can delete and change things again.' })
+      }
+    }
 
     /** Which rung of §8.2's ladder actually answered, for the badge at the end (§8.4). */
     let reached: Bubble | undefined
-
-    // A boundary the user just spoke, or one they just lifted. Said out loud either way:
-    // a rule that changed silently is a rule they will be surprised by later.
-    const standing = scope().boundaries ?? []
-    const spoken = heard(text)
-    if (spoken) {
-      store.kvSet(CORE, 'boundaries', [...standing, spoken])
-      say({ note: boundaryAck(spoken) })
-    } else if (standing.length > 0 && lifts(text)) {
-      store.kvSet(CORE, 'boundaries', [])
-      say({ note: 'Lifted. I can delete and change things again.' })
-    }
 
     const month = allowance(store)
     const limits = ceilings(store)
@@ -2089,13 +2446,23 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     const runId = randomUUID()
     trace.start(runId, text)
     const chosen = await personality()
+    // What the model will actually be given, counted the way `system()` counts it (M4-4).
+    trace.personality(chosen?.trim().length ?? 0)
     try {
       const result = await run({
-        messages: store.history(session),
+        messages: store.history(session).filter((turn) => turn.bad !== true),
         ...(chosen !== undefined && { personality: chosen }),
         tools: tooling,
-        pins: pins(store),
-        world,
+        // *Use Automatic for this answer* is this answer, not a setting (D155): the pin and the
+        // list are still there for the next message, and nothing here writes to them.
+        pins:
+          again === true && (automatic === true || marked !== undefined) ? { ...pins(store), model: undefined, order: undefined } : pins(store),
+        // Without the model somebody just marked, and — with the paid switch on — above its tier (§4 I).
+        ...(marked?.model !== undefined &&
+          marked.provider !== undefined && { avoid: [`${marked.provider}\n${marked.model}`] }),
+        ...(marked !== undefined && caps(store).cross === true && tierOf(marked) !== undefined && { above: tierOf(marked) }),
+        // Whether paid may be crossed into here: the switch, or *Allow* pressed in this conversation (§4 H).
+        world: worldFor(session),
         store,
         secrets,
         session,
@@ -2112,24 +2479,16 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
             pending = resolve
             say({ ask: ruling.why })
           }),
-        // The money question travels the same channel as a permission question, because it
-        // is the same shape: one question, held open, settled by the person at the screen.
-        money: {
-          get allowed(): boolean | undefined {
-            return spending
-          },
-          set allowed(answer: boolean | undefined) {
-            spending = answer
-          },
-          ask: (question) =>
-            new Promise<boolean>((resolve) => {
-              pending = resolve
-              say({ ask: question })
-            }),
-        },
         on: {
           delta: (delta) => say({ delta }),
           note: (note) => say({ note }),
+          // Said twice (§4 G): the screen shows it for three seconds and keeps it on the answer.
+          switch: (event) => say({ switch: event }),
+          // The charge line, in a place of its own above the message box.
+          paid: (line) => say({ paid: line }),
+          // The words on screen since the turn began came from a model that stopped partway;
+          // the answer is starting again on the next one (D155).
+          restart: () => say({ restart: true }),
           turn: (models) => {
             trace.turn(models)
             // §8.4's badge. Held rather than sent per turn: the screen names one state at a
@@ -2178,10 +2537,26 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
         calls: store.callsIn(runId),
       })
 
+      /**
+       * **A pause** (§4 H): the free models are done, a paid one would answer, and the switch is off.
+       * Nothing was billed. The screen shows the reason and *Allow switching to a paid model* — with
+       * a box for the daily amount when there is none, since at $0 the press alone would buy nothing.
+       */
+      if (result.ended === 'paused') {
+        say({ paused: result.why, daily: caps(store).daily ?? 0 })
+        response.end()
+        return
+      }
+
       if (result.ended === 'refused') {
         // The refusal is the answer. It is written to be read by the person who has to act
-        // on it, so it goes to the screen exactly as the router wrote it.
-        say({ error: result.why })
+        // on it, so it goes to the screen exactly as the router wrote it — and when what
+        // stopped was the person's own choice, a pin or a list, the screen is told which, so
+        // it can offer Automatic for this one answer (D155).
+        say({
+          error: result.why,
+          ...((result.mode === 'pinned' || result.mode === 'sequence') && { chosen: result.mode }),
+        })
         response.end()
         return
       }
@@ -2246,12 +2621,16 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
       // open would read as *still going* to somebody looking at the panel afterwards.
       trace.end('refused', { why: said(error), calls: store.callsIn(runId) })
       say({ error: said(error) })
+    } finally {
+      // Whatever ended the task, an unanswered question outlives nothing. Settling it as a
+      // no rather than leaving it is what keeps a stopped task from holding the next one.
+      //
+      // In a `finally` since §4 H: a refusal returned early and skipped this, so after any
+      // refusal on screen a task from a phone was told Alexia was *already working on something*.
+      pending?.(false)
+      pending = undefined
+      task = undefined
     }
-    // Whatever ended the task, an unanswered question outlives nothing. Settling it as a
-    // no rather than leaving it is what keeps a stopped task from holding the next one.
-    pending?.(false)
-    pending = undefined
-    task = undefined
     response.end()
   }
 
@@ -2262,6 +2641,8 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     token,
     store,
     close: async () => {
+      clearInterval(ticking)
+      clearTimeout(firstTests)
       await new Promise<void>((resolve) => server.close(() => resolve()))
       await plugins.stop()
       store.close()

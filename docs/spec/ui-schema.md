@@ -452,6 +452,50 @@ owns the look.
 
 ---
 
+## A row can explain itself
+
+*`alexia_protocol` 8.* A `table` row may carry a `note` — one sentence, drawn under the row — and
+`tags`, a list of chips drawn in a column whose `key` is `tags`.
+
+```jsonc
+{ "id": "kilo-gateway\nnvidia/nemotron-3-super-120b-a12b:free", "name": "NVIDIA: Nemotron 3 Super",
+  "note": "No key needed, so shared and rationed for everyone. After models on your key.",
+  "tags": [{ "says": "busy", "tone": "caution" }, { "says": "keeps your words", "tone": "quiet" }] }
+```
+
+**A tone is one of three, and core owns what each looks like**: `quiet` is a fact, `caution` is
+something to keep an eye on, `danger` is a reason something is not being used. They are the page's
+only colours besides the accent (`docs/design.md`), so a chip in a colour always means look here.
+A tag with any other tone, or a `tags` that is not a list, is drawn as `quiet` text or not at all —
+never as an error, because a row is data and a panel that refuses to draw over one field is worse
+than one that shows the rest.
+
+**A note is a sentence, not a second column.** It sits under the first cell that is not right-aligned — where a name is, rather than under a number — and wraps; it is
+searched by the filter like any column, because *why is this here* is something a person looks
+for. And a table's groups can be put in order with `groupOrder` on the declaration — see
+[`manifest.md`](./manifest.md#tables).
+
+**A group can say what it is, and a chip is the question asked in one press.** `groupNotes`
+draws one line under a group's heading (`alexia_protocol` 9), which is where a fact about the
+whole group belongs — a column repeating it down every row would be a column of one sentence,
+and the widget's hint is where five such lines go to be unread. `chips` are named filters above
+the table, each narrowing it to a group or to rows carrying any of some tags, and each pressed
+again to put the table back.
+
+**A chip that could match everything is not drawn.** It filters on `groupBy`'s value or on what
+a row's `tags` already say, and nothing else: the bar for a query language here is the same bar
+as for a widget, and *one table wanted it* does not clear it. One chip is pressed at a time and
+the filter box searches inside what that chip left, so a person is never looking at the
+intersection of two controls that each claim to be the filter.
+
+**A row with a `detail` opens when it is clicked, not only from its button.** The button stays,
+because it is what a keyboard reaches and the only thing telling a reader the row has anything
+behind it; the row is the target the mouse was already on. A click that lands on a row action,
+or that ends a drag across the text, is not an open — the first belongs to the button and the
+second is somebody copying.
+
+---
+
 ## Layout
 
 Widgets render **in manifest order**, in one column, on the plugin's own settings page.

@@ -45,7 +45,7 @@ export interface PluginsOptions {
   /** Where `password` settings live. The OS keychain unless a test says otherwise. */
   secrets?: SecretStore
   /** The router (M1-8). Absent means core cannot answer for the model yet, and says so. */
-  sample?(pluginId: string, params: CreateMessageRequestParams): Promise<CreateMessageResult>
+  sample?(pluginId: string, params: CreateMessageRequestParams, signal?: AbortSignal): Promise<CreateMessageResult>
   roots?(pluginId: string): Root[]
   log?(pluginId: string, line: string): void
   /** A plugin's tools changed, or the plugin itself went away. The loop re-plans. */

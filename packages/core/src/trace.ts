@@ -51,7 +51,7 @@ export interface Run {
   /** The user's own line. It is what the run was for, so it is never paraphrased. */
   task: string
   at: number
-  ended?: 'answered' | 'stopped' | 'ceiling' | 'refused'
+  ended?: 'answered' | 'stopped' | 'ceiling' | 'refused' | 'paused'
   /** Set when it ended in a refusal — the router's sentence, or the provider's. */
   why?: string
   /**
@@ -63,6 +63,21 @@ export interface Run {
    */
   asked?: string
   answered?: string
+  /**
+   * How long the personality was, in characters, as the model was actually given it.
+   *
+   * **The reported bug was *the personality is not being sent* and it was being sent** — all
+   * 221 characters of a document that should have been 5,825, because Adapt had saved half
+   * one (D157). Neither the screen nor the trace could tell those two apart, so the first
+   * guess was the wrong one. A number here separates them at a glance: `none sent` is the
+   * fault that was reported, and a suspiciously small number is the fault that was there.
+   *
+   * Counted after trimming and zero when nothing was sent, because {@link system} trims it
+   * and drops it when what is left is empty — so this is the length that reached the model,
+   * not the length that was stored. One personality per run, never re-read mid-task
+   * (`AgentOptions.personality`), so this belongs to the run rather than to each step.
+   */
+  personality?: number
   steps: TraceStep[]
   /**
    * Every charge this run made, from the ledger, looked up by the run's own id (M7-2).
@@ -113,6 +128,18 @@ export class Trace {
     if (!this.#open) return
     this.#open.asked = models.asked
     this.#open.answered = models.answered
+  }
+
+  /**
+   * What personality this run's model calls carry, in characters (M4-4).
+   *
+   * Told once, after whoever starts the run has resolved it — it is read once per task and
+   * cannot change under the loop, so recording it per step would print one number many times
+   * and imply it could have differed.
+   */
+  personality(chars: number): void {
+    if (!this.#open) return
+    this.#open.personality = chars
   }
 
   step(step: Step): void {
@@ -166,6 +193,9 @@ export function asText(run: Run): string {
       [`asked ${run.asked}, answered ${run.answered} — the router fell back`]
     : run.answered !== undefined ? [`model ${run.answered}`]
     : []),
+    // *Was it sent, and how much of it?* — the one question the last personality bug turned
+    // on, and it was unanswerable from here.
+    ...(run.personality === undefined ? [] : [personalityLine(run.personality)]),
     // Every charge, in order, and what each one was for. This is the line somebody came here
     // to read: a fallback costs more than the model on the badge, and this says which call.
     ...(run.calls ?? []).map(
@@ -189,6 +219,18 @@ export function asText(run: Run): string {
     if (step.text !== undefined && step.text !== '') lines.push('', step.text)
   }
   return lines.join('\n') + '\n'
+}
+
+/**
+ * The personality line, which says *sent* or *none sent* in as many words.
+ *
+ * It names the unit, because the number is only useful against the length of the document
+ * somebody wrote — *221* beside a description they know ran to thousands is the whole story,
+ * and *221 tokens* would be a different and wrong story.
+ */
+function personalityLine(chars: number): string {
+  if (chars === 0) return 'personality: none sent'
+  return `personality: ${String(chars)} characters sent`
 }
 
 /**

@@ -20,7 +20,9 @@ mkdirSync(join(root, 'cache'), { recursive: true })
 noPolling(root)
 
 const ui = join(import.meta.dirname, '..', '..', 'ui')
-const alexia: Serving = await serve({ dataDir: root, uiDir: ui, secrets: memorySecrets() })
+// Nothing from this machine either: Local mode *on a machine with no Ollama* is a refusal this
+// file tests, and a laptop with Ollama running would answer it instead.
+const alexia: Serving = await serve({ dataDir: root, uiDir: ui, secrets: memorySecrets(), local: false })
 afterAll(() => alexia.close())
 
 const get = (path: string, init: RequestInit = {}): Promise<Response> =>

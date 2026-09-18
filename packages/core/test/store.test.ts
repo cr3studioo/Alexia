@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { dirname, isAbsolute, join, relative } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { expect, test } from 'vitest'
-import { dataDir, Store } from '../src/store.js'
+import { dataDir, Store, STRUCK, type Outcome } from '../src/store.js'
 
 // What storage gained at M1-1 over the M0 minimum: a real file in the platform's own place,
 // forward-only migrations, and the transaction helper `node:sqlite` does not ship. The rest
@@ -14,7 +14,7 @@ import { dataDir, Store } from '../src/store.js'
 const tmp = (): string => join(mkdtempSync(join(tmpdir(), 'alexia-store-')), 'data', 'alexia.db')
 
 /** How many migrations this build knows. Every fresh database should be at this version. */
-const MIGRATIONS = 5
+const MIGRATIONS = 7
 
 /** The schema version as SQLite holds it, read without going through `Store`. */
 function version(path: string): number {
@@ -99,6 +99,64 @@ test('a database from the previous schema is carried forward, not rebuilt', () =
   expect(store.tables()).toContain('sessions') //     migration 2 did run
   expect(version(path)).toBe(MIGRATIONS)
   store.close()
+})
+
+test('every try is kept for 30 days and then forgotten, and what failed in the last day is still a strike (D159, D161)', () => {
+  const store = new Store(':memory:')
+  const day = 24 * 60 * 60 * 1000
+  const noon = Date.UTC(2026, 8, 15, 12)
+  const tried = (model: string, outcome: Outcome, at: number, provider = 'openrouter'): void =>
+    store.recordTry({ provider, model, outcome, status: outcome === 'answered' ? 200 : 429, source: 'chat', at })
+
+  tried('old', 'busy', noon - 30 * day - 1)
+  tried('a', 'busy', noon - day - 1)
+  tried('b', 'slow', noon - 60_000)
+  tried('b', 'answered', noon - 30_000)
+  tried('c', 'key-refused', noon - 20_000)
+  tried('d', 'too-long', noon - 10_000)
+  tried('e', 'unreachable', noon - 5_000)
+
+  // The record keeps answers and every kind of failure for a month.
+  expect(store.tries(noon).map((one) => `${one.model} ${one.outcome}`)).toEqual([
+    'a busy',
+    'b slow',
+    'b answered',
+    'c key-refused',
+    'd too-long',
+    'e unreachable',
+  ])
+  // A strike is a failure about the model in the last day: not an answer, not a refused key,
+  // not a conversation too long — exactly what the one-day table held before the record.
+  expect(store.strikes(noon).map((one) => `${one.model} ${one.outcome}`)).toEqual(['b slow', 'e unreachable'])
+  expect(STRUCK.has('no-credit')).toBe(true)
+
+  // Writing a new try deletes what has aged out rather than only hiding it: read from a month
+  // earlier, `old` would still be in the window if it were still in the table.
+  tried('f', 'answered', noon, 'kilo-gateway')
+  expect(store.tries(noon - day).map((one) => one.model)).not.toContain('old')
+  store.close()
+})
+
+test('migration 7 runs over a database that never had 6, and leaves the tables it does not own alone', () => {
+  // The installed app on the owner's Mac is at 5: D159's `strikes` never reached it.
+  const path = tmp()
+  const store = new Store(path)
+  store.close()
+  const db = new DatabaseSync(path)
+  db.exec('DROP TABLE tries')
+  db.exec('DROP TABLE seen')
+  db.exec('CREATE TABLE p_persona_personalities (name TEXT, doc TEXT, at INTEGER, active INTEGER)')
+  db.exec(`INSERT INTO p_persona_personalities VALUES ('Alexia', 'kind', 1, 1)`)
+  db.exec('PRAGMA user_version = 5')
+  db.close()
+
+  const again = new Store(path)
+  expect(version(path)).toBe(MIGRATIONS)
+  expect(again.tables()).not.toContain('strikes')
+  expect(again.tries()).toEqual([])
+  expect(again.seen()).toEqual([])
+  expect(again.select('persona', 'personalities')).toHaveLength(1)
+  again.close()
 })
 
 test('a conversation comes back in order, and switching models does not lose it', () => {

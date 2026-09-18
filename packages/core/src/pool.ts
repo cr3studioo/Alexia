@@ -20,6 +20,27 @@ import type { Store } from './store.js'
  * happen *before* the request, or the way you find out is a 429 and a slower answer.
  */
 
+/**
+ * **The keyless floor's switch** (D154, `model_plan.md` §1 step 2).
+ *
+ * Whether providers that answer without a key count as reachable at all. **On by default**,
+ * because hiding them would hide the only thing a fresh install has — the switch exists for
+ * somebody who would rather nothing left this machine for a provider they never signed up to,
+ * which is a real preference and not the one to make everybody state first.
+ *
+ * Off, they leave `available()`, the Models tab and every plan at once. A provider somebody
+ * pasted a key into is **keyed rather than the floor** (D159) and stays either way: the switch
+ * is about asking a stranger, not about that provider.
+ */
+const FLOOR = 'keyless.on'
+
+/** Whether the keyless floor may answer. Absent is on. */
+export const keylessOn = (store: Store): boolean => (store.kvGet(CORE, FLOOR) as boolean | undefined) ?? true
+
+export const setKeylessOn = (store: Store, on: boolean): void => {
+  store.kvSet(CORE, FLOOR, on)
+}
+
 /** A provider the user has connected, and how much of its free tier is left right now. */
 export interface Rung {
   provider: Provider
@@ -30,15 +51,66 @@ export interface Rung {
   minute: number
   day: number
   month: number
+  /**
+   * **A key of the person's own is stored for it** (D159). Always true of a provider that needs
+   * one, since it is not a rung without it; for one that answers without a key, true only when
+   * somebody pasted one in — a paid-up Kilo account is not the keyless floor.
+   *
+   * Absent on a rung built by hand, which reads the provider's `auth` as it always did.
+   */
+  keyed?: boolean
+  /**
+   * **Whether the account can pay for this provider's paid models** (§4 D, §1's *Funded*), as the
+   * provider itself last said. Absent is unknown, which is read as yes: most providers say nothing,
+   * and a 402 on asking is a refusal the router already handles.
+   */
+  funded?: boolean
+  /**
+   * **The day's free requests, and the month's calls, where the row rations by either** (§4 F):
+   * what makes a provider *day-limited*, whose second half of the day is kept for the chat. A
+   * per-minute limit alone is not a daily one. Absent is not rationed that way.
+   */
+  dayLimit?: number
+  monthLimit?: number
 }
+
+/** What a provider's key endpoint said about the account, as core keeps it (§4 D). */
+export interface Account {
+  /** Never bought credit: free models only, at the free tier's daily limit. */
+  freeTier: boolean
+  /** How much of the key's own credit limit is left, in dollars; null for a key with no limit. */
+  limitRemaining: number | null
+  at: number
+}
+
+/** Where an account is kept: the store's core namespace, one entry per provider. */
+export const accountKey = (provider: string): string => `account.${provider}`
+
+/** Whether an account can pay, from what its provider said. Unknown is yes. */
+export const fundedBy = (account: Account | undefined): boolean | undefined =>
+  account === undefined ? undefined : !account.freeTier && (account.limitRemaining === null || account.limitRemaining > 0)
 
 /** Whether a provider has anything left to give at this instant. */
 export function remaining(store: Store, provider: Provider, at: number = Date.now()): Rung {
   const used = store.requests(provider.id, at)
+  /**
+   * **And what the provider itself last said** (§4 D): the lower of the two, so a header can only
+   * ever take the ledger down — a row stays the ceiling, and a provider that says nothing changes
+   * nothing. Groq says the day's requests on every answer; OVHcloud the minute's.
+   */
+  const told = store.heard(provider.id, at)
+  const lower = (counted: number, said: number | undefined): number => Math.max(0, Math.min(counted, said ?? Infinity))
+  /** The real day's allowance once the provider has said the account bought credit (§4 D). */
+  const account = store.kvGet(CORE, accountKey(provider.id)) as Account | undefined
+  const perDay = account !== undefined && !account.freeTier ? (provider.rpdFunded ?? provider.rpd) : provider.rpd
+  const funded = fundedBy(account)
   return {
     provider,
-    minute: provider.rpm === undefined ? Infinity : Math.max(0, provider.rpm - used.minute),
-    day: provider.rpd === undefined ? Infinity : Math.max(0, provider.rpd - used.day),
+    ...(funded !== undefined && { funded }),
+    ...(perDay !== undefined && { dayLimit: perDay }),
+    ...(provider.callsPerMonth !== undefined && { monthLimit: provider.callsPerMonth }),
+    minute: lower(provider.rpm === undefined ? Infinity : provider.rpm - used.minute, told.minute),
+    day: lower(perDay === undefined ? Infinity : perDay - used.day, told.day),
     // Counted in calls, because that is the unit the budget is written in. A long request
     // and a one-word one spend exactly the same amount of it.
     month:
@@ -71,18 +143,21 @@ export async function usable(
   providers: Provider[] = PROVIDERS,
   at: number = Date.now(),
 ): Promise<Rung[]> {
+  // The floor's switch (D154), read once rather than per provider. Off, the keyless rungs are
+  // not built at all, so `route()` and the Models tab lose them together and cannot disagree.
+  const floor = keylessOn(store)
   const connected = await Promise.all(
     providers.map(async (provider) => {
-      if (anonymous(provider)) return provider
+      // Asked of the keyless providers too: a key pasted into one moves it off the floor.
+      const keyed = Boolean(await secrets.get(CORE, keyOf(provider)).catch(() => undefined))
       // Nothing is pooled without a key the user added themselves. No key, not in the pool.
-      const key = await secrets.get(CORE, keyOf(provider)).catch(() => undefined)
-      return key ? provider : undefined
+      return keyed || (anonymous(provider) && floor) ? { provider, keyed } : undefined
     }),
   )
 
   return connected
-    .filter((provider) => provider !== undefined)
-    .map((provider) => remaining(store, provider, at))
+    .filter((found) => found !== undefined)
+    .map(({ provider, keyed }) => ({ ...remaining(store, provider, at), keyed }))
     .sort((a, b) => b.day - a.day || b.minute - a.minute)
 }
 
@@ -93,3 +168,12 @@ export async function usable(
 export function sent(store: Store, provider: Provider, at: number = Date.now()): void {
   store.recordRequest(provider.id, at)
 }
+
+/**
+ * **Whether a background request may still use this provider's free requests** (§4 F): a provider
+ * with no daily or monthly ration always, and one with a ration only while more than half of it is
+ * left — by the ledger or by what the provider said, whichever is lower, which is what `day` and
+ * `month` already are. The second half is the chat's.
+ */
+export const underHalf = (rung: Rung): boolean =>
+  (rung.dayLimit === undefined || rung.day > rung.dayLimit / 2) && (rung.monthLimit === undefined || rung.month > rung.monthLimit / 2)

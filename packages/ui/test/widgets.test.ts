@@ -248,3 +248,188 @@ test('a table row carrying a preview gets the same player, and the column to put
   expect(players).toHaveLength(2)
   expect(players[0]!.getAttribute('preload')).toBe('none')
 })
+
+// ---- the ladder, when a key has gone -----------------------------------------------------
+
+test('a listed model whose provider lost its key stays on the ladder, says why, and survives the next edit', async () => {
+  // What core sends after a key is removed (§1 step 4): the listed row, marked `off`.
+  const host = fakeHost({
+    '/api/rows': {
+      ok: true,
+      rows: [
+        { id: 'stub/free-a', name: 'Free A', provider: 'stub', price: 'free', side: 'free', rank: '1', off: 'not available — no key for Stub' },
+        { id: 'floor/one', name: 'Floor One', provider: 'floor', price: 'free', side: 'free', rank: '2', off: '' },
+        { id: 'floor/two', name: 'Floor Two', provider: 'floor', price: 'free', side: 'free', rank: '', off: '' },
+      ],
+    },
+  })
+  const field = widget(host, {
+    type: 'ladder',
+    key: 'routing',
+    label: 'What may answer',
+    rows: 'routing',
+    stops: [{ value: 'mixed', label: 'Free, then paid', hint: 'Free first.' }],
+    ordered: 'set_order',
+  })
+  await settled()
+
+  const chips = [...field.querySelectorAll<HTMLElement>('.chip')]
+  expect(chips.map((chip) => chip.dataset.id)).toEqual(['stub/free-a', 'floor/one'])
+  expect(chips[0]!.classList.contains('off')).toBe(true)
+  expect(chips[0]!.querySelector('.chip-meta')?.textContent).toBe('not available — no key for Stub')
+  expect(chips[1]!.classList.contains('off')).toBe(false)
+
+  // Taking the other one off the list saves what is left — the unavailable entry included.
+  chips[1]!.querySelector<HTMLButtonElement>('.chip-drop')!.click()
+  expect(host.sent.at(-1)?.body).toMatchObject({ key: 'set_order', row: 'stub/free-a' })
+
+  // And search offers what can be asked and is not listed — never a model nothing can ask.
+  const search = field.querySelector<HTMLInputElement>('.ladder-search')!
+  search.value = 'f'
+  search.dispatchEvent(new Event('input'))
+  expect([...field.querySelectorAll('.ladder-hit .chip-name')].map((one) => one.textContent)).toEqual(['Floor One', 'Floor Two'])
+})
+
+// ---- a table that explains its own order (alexia_protocol 8) -----------------------------
+
+test('groups come in the declared order, a note sits under the row, and tags are chips in their tone', async () => {
+  const host = fakeHost({
+    '/api/rows': {
+      ok: true,
+      rows: [
+        { id: 'p', name: 'Paid one', group: 'Paid', tags: [] },
+        { id: 'a', name: 'Aside one', group: 'Set aside by Alexia', note: 'Set aside: answers with nothing.', tags: [{ says: 'answers empty', tone: 'danger' }] },
+        { id: 'z', name: 'Unnamed group', group: 'Another', tags: 'not a list' },
+        { id: 'f', name: 'Free one', group: 'Automatic, free', note: 'First choice.', tags: [{ says: 'busy', tone: 'caution' }, { says: 'router', tone: 'loud' }, 'talk only'] },
+      ],
+    },
+  })
+  const field = widget(host, {
+    type: 'table',
+    key: 'models',
+    label: 'Models',
+    rows: 'models',
+    filter: true,
+    groupBy: 'group',
+    groupOrder: ['Your list', 'Automatic, free', 'Set aside by Alexia', 'Paid'],
+    columns: [
+      { key: 'name', label: 'Model' },
+      { key: 'tags', label: 'Tags' },
+    ],
+  })
+  await settled()
+
+  // Named groups in their order, an unnamed one after them, and an empty named one not at all.
+  expect([...field.querySelectorAll('tr.group th')].map((th) => th.textContent)).toEqual([
+    'Automatic, free',
+    'Set aside by Alexia',
+    'Paid',
+    'Another',
+  ])
+  const free = [...field.querySelectorAll('tbody tr')].find((tr) => tr.textContent?.includes('Free one'))!
+  expect(free.querySelector('.row-note')?.textContent).toBe('First choice.')
+  // An unknown tone is read as a fact, and a bare string is a quiet tag.
+  expect([...free.querySelectorAll('.tag')].map((tag) => `${tag.textContent} ${tag.className}`)).toEqual([
+    'busy tag caution',
+    'router tag quiet',
+    'talk only tag quiet',
+  ])
+  // Tags that are not a list draw as nothing rather than as "not a list".
+  const odd = [...field.querySelectorAll('tbody tr')].find((tr) => tr.textContent?.includes('Unnamed group'))!
+  expect(odd.textContent).not.toContain('not a list')
+
+  // The filter finds a row by its note and by what its tags say.
+  const filter = field.querySelector<HTMLInputElement>('.table-filter')!
+  filter.value = 'answers with nothing'
+  filter.dispatchEvent(new Event('input'))
+  expect([...field.querySelectorAll('tbody tr:not(.group):not(.detail)')].map((tr) => tr.querySelector('td')?.firstChild?.textContent)).toEqual(['Aside one'])
+  filter.value = 'busy'
+  filter.dispatchEvent(new Event('input'))
+  expect([...field.querySelectorAll('tbody tr:not(.group):not(.detail)')].map((tr) => tr.querySelector('td')?.firstChild?.textContent)).toEqual(['Free one'])
+})
+
+test('a group says what it is, chips narrow the table, and the row itself opens the detail', async () => {
+  const host = fakeHost({
+    '/api/rows': {
+      ok: true,
+      rows: [
+        { id: 'f', name: 'Free one', group: 'Automatic, free', tags: [{ says: 'busy', tone: 'caution' }] },
+        { id: 'n', name: 'New one', group: 'Automatic, free', tags: [{ says: 'new · not tried yet', tone: 'caution' }] },
+        { id: 'a', name: 'Aside one', group: 'Set aside by Alexia', tags: [{ says: 'answers empty', tone: 'danger' }] },
+      ],
+    },
+    '/api/detail': { ok: true, text: 'Everything known about it.' },
+  })
+  const field = widget(host, {
+    type: 'table',
+    key: 'models',
+    label: 'Models',
+    rows: 'models',
+    filter: true,
+    detail: 'model',
+    columns: [
+      { key: 'name', label: 'Model' },
+      { key: 'tags', label: 'Tags' },
+    ],
+    groupBy: 'group',
+    groupOrder: ['Automatic, free', 'Set aside by Alexia'],
+    groupNotes: { 'Set aside by Alexia': 'What Alexia has stopped asking on her own.' },
+    chips: [
+      { key: 'attention', label: 'Needs attention', tags: ['busy'] },
+      { key: 'aside', label: 'Set aside', group: 'Set aside by Alexia' },
+      // Naming neither a group nor a tag: it would match nothing, so it is never drawn.
+      { key: 'dead', label: 'Nothing' },
+    ],
+  })
+  await settled()
+
+  const names = (): (string | null | undefined)[] =>
+    [...field.querySelectorAll('tbody tr:not(.group):not(.detail)')].map((tr) => tr.querySelector('td')?.firstChild?.textContent)
+
+  // The line under the heading it belongs to, and no line under the group that has none.
+  expect([...field.querySelectorAll('tr.group-note td')].map((td) => td.textContent)).toEqual([
+    'What Alexia has stopped asking on her own.',
+  ])
+
+  const chips = [...field.querySelectorAll<HTMLButtonElement>('.table-chip')]
+  expect(chips.map((chip) => chip.textContent)).toEqual(['Needs attention', 'Set aside'])
+  expect(names()).toEqual(['Free one', 'New one', 'Aside one'])
+
+  // A chip on a tag, then the same chip again to put the table back.
+  chips[0]!.click()
+  expect(chips[0]!.getAttribute('aria-pressed')).toBe('true')
+  expect(names()).toEqual(['Free one'])
+  chips[0]!.click()
+  expect(chips[0]!.getAttribute('aria-pressed')).toBe('false')
+  expect(names()).toEqual(['Free one', 'New one', 'Aside one'])
+
+  // A chip on a group, and one chip at a time — pressing the second lets the first go.
+  chips[0]!.click()
+  chips[1]!.click()
+  expect(chips[0]!.getAttribute('aria-pressed')).toBe('false')
+  expect(names()).toEqual(['Aside one'])
+
+  // The filter box searches inside what the chip left rather than fighting it.
+  const filter = field.querySelector<HTMLInputElement>('.table-filter')!
+  filter.value = 'Free'
+  filter.dispatchEvent(new Event('input'))
+  expect(names()).toEqual([])
+  filter.value = ''
+  filter.dispatchEvent(new Event('input'))
+  chips[1]!.click()
+
+  // Clicking the row opens its detail, the same drawer the button opens.
+  const row = [...field.querySelectorAll('tbody tr:not(.group):not(.detail)')].find((tr) =>
+    tr.textContent?.includes('Free one'),
+  )!
+  row.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+  await settled()
+  expect(host.sent.some((one) => one.path === '/api/detail' && one.body.row === 'f')).toBe(true)
+  expect(row.nextElementSibling?.className).toContain('detail')
+  expect((row.nextElementSibling as HTMLElement).hidden).toBe(false)
+  expect(row.querySelector('button')?.textContent).toBe('Hide')
+
+  // A press on a row's own button is that button's, not the row's: it does not toggle twice.
+  row.querySelector<HTMLButtonElement>('button')!.click()
+  expect((row.nextElementSibling as HTMLElement).hidden).toBe(true)
+})

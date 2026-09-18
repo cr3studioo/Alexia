@@ -129,6 +129,11 @@ export interface Rendered {
   detail?: string
   filter?: boolean
   groupBy?: string
+  /** `table`: a line under each group's heading, and the chips above it (`alexia_protocol` 9). */
+  groupNotes?: Record<string, string>
+  chips?: { key: string; label: string; group?: string; tags?: string[] }[]
+  /** `table`: the order groups are drawn in (`alexia_protocol` 8). The rest follow, alphabetically. */
+  groupOrder?: string[]
   /** `cards`: the `state` that means *not here yet*, drawn dimmed rather than hidden (D120). */
   dim?: string
   /** `image`: one picture rather than a grid — *the thing happening now* rather than *everything*. */
@@ -138,6 +143,13 @@ export interface Rendered {
   stops?: { value: string; label: string; hint: string }[]
   chose?: string
   ordered?: string
+  /** `ladder`: the paid switch's action, and where it stands (§4 H). */
+  crossing?: string
+  cross?: boolean
+  daily?: number
+  /** `ladder`: the keyless floor's switch, and where it stands (§1 step 2, D154). */
+  floor?: string
+  keyless?: boolean
 }
 
 /** Which screen is drawing, and how it answers the two questions a widget asks back. */
@@ -173,6 +185,15 @@ export interface WidgetHost {
    */
   redraw?(): void
 }
+
+/**
+ * **Which models can be reached has changed, so the lists that follow the keychain redraw.**
+ *
+ * The same redraw a saved or removed key causes (§1 steps 3–4), reached from a widget rather
+ * than from the settings screen: the keyless floor's switch (D154) changes exactly what a key
+ * changes, and this file draws one widget and knows nothing about the tab it sits on.
+ */
+export const MODELS_CHANGED = 'alexia:models-changed'
 
 export const el = <K extends keyof HTMLElementTagNameMap>(
   tag: K,
@@ -690,12 +711,32 @@ function table(host: WidgetHost, declared: Rendered): HTMLElement {
   const narrow = (): boolean => window.innerWidth < NARROW
   const shown = (): Column[] => columns.filter((column) => !(narrow() && column.hideNarrow === true))
 
-  /** The filter, over the declared columns only. What is not on screen is not searched. */
+  /**
+   * The filter, over the declared columns only — and a row's `note`, which is drawn under the
+   * first of them. What is not on screen is not searched. Tags are searched by what they say.
+   */
+  /**
+   * **Which chip is pressed** (`alexia_protocol` 9), or none. One at a time: two chips at once
+   * is a question nobody asked, and *needs attention and new* narrows to almost nothing.
+   */
+  let chip: string | undefined
+
+  /** A chip takes a whole group, or any row carrying one of its tags — by what the tag says. */
+  const wanted = (row: Row, one: { group?: string; tags?: string[] }): boolean =>
+    (one.group !== undefined && declared.groupBy !== undefined && String(row[declared.groupBy] ?? '') === one.group) ||
+    (one.tags !== undefined && tagsOf(row.tags).some((tag) => one.tags!.includes(tag.says)))
+
   const matching = (): Row[] => {
+    const pressed = declared.chips?.find((one) => one.key === chip)
+    // The chip narrows first and the box searches what is left, so the two read as one filter
+    // rather than fighting: typing while a chip is pressed searches inside it.
+    const within = pressed === undefined ? rows : rows.filter((row) => wanted(row, pressed))
     const needle = query.trim().toLowerCase()
-    if (needle === '') return rows
-    return rows.filter((row) =>
-      columns.some((column) => String(row[column.key] ?? '').toLowerCase().includes(needle)),
+    if (needle === '') return within
+    return within.filter(
+      (row) =>
+        columns.some((column) => cellText(row, column.key).toLowerCase().includes(needle)) ||
+        (typeof row.note === 'string' && row.note.toLowerCase().includes(needle)),
     )
   }
 
@@ -709,6 +750,28 @@ function table(host: WidgetHost, declared: Rendered): HTMLElement {
       paint()
     })
     box.append(search)
+  }
+
+  // The mock-up's chips: the questions people arrive asking, one press instead of a typed word
+  // spelled right. A chip naming neither a group nor a tag would match nothing, so it is not drawn.
+  const usable = (declared.chips ?? []).filter((one) => one.group !== undefined || one.tags !== undefined)
+  if (usable.length > 0) {
+    const chips = el('div', 'table-chips')
+    const buttons = new Map<string, HTMLButtonElement>()
+    for (const one of usable) {
+      const button = el('button', 'table-chip', one.label)
+      button.type = 'button'
+      button.setAttribute('aria-pressed', 'false')
+      button.addEventListener('click', () => {
+        // The same chip again puts the whole table back, so a chip is never a trap.
+        chip = chip === one.key ? undefined : one.key
+        for (const [key, node] of buttons) node.setAttribute('aria-pressed', String(key === chip))
+        paint()
+      })
+      buttons.set(one.key, button)
+      chips.append(button)
+    }
+    box.append(chips)
   }
   box.append(said, scroll)
 
@@ -730,10 +793,13 @@ function table(host: WidgetHost, declared: Rendered): HTMLElement {
   /** The last thing an action said, kept across the redraw that action asked for. */
   let announced = ''
 
+  /** Whether the line above the rows is core's news rather than empty, so a repaint keeps it. */
+  let announcedNews = false
+
   /** One `<tbody>` per group, or one for everything when nothing groups it. */
   function paint(): void {
     const visible = matching()
-    said.hidden = announced === '' && rows.length > 0 && visible.length > 0
+    said.hidden = announced === '' && !announcedNews && rows.length > 0 && visible.length > 0
     if (rows.length > 0 && visible.length === 0) {
       said.hidden = false
       said.textContent = 'Nothing matches that.'
@@ -768,7 +834,12 @@ function table(host: WidgetHost, declared: Rendered): HTMLElement {
               return into
             }, new Map<string, Row[]>())
             .entries(),
-        ].sort(([a], [b]) => a.localeCompare(b))
+        ].sort(([a], [b]) => {
+          // The author's order first (`alexia_protocol` 8), then alphabetically as it always was.
+          const order = declared.groupOrder ?? []
+          const at = (name: string): number => (order.includes(name) ? order.indexOf(name) : order.length)
+          return at(a) - at(b) || a.localeCompare(b)
+        })
 
     for (const [name, group] of groups) {
       const body = el('tbody')
@@ -778,6 +849,18 @@ function table(host: WidgetHost, declared: Rendered): HTMLElement {
         cell.colSpan = shown().length + 1
         heading.append(cell)
         body.append(heading)
+        // What the group is, said once under its own heading (`alexia_protocol` 9) rather than
+        // in the widget's hint, where five of these together were a paragraph nobody reads.
+        const note = declared.groupNotes?.[name]
+        if (note !== undefined && note !== '') {
+          // `group` as well as `group-note`: it belongs to the heading, and everything that
+          // counts data rows already excludes `.group`. A heading is found by its `th`.
+          const line = el('tr', 'group group-note')
+          const lineCell = el('td', undefined, note)
+          lineCell.colSpan = shown().length + 1
+          line.append(lineCell)
+          body.append(line)
+        }
       }
       for (const row of group) body.append(rowOf(host, declared, row, shown(), surface))
       grid.append(body)
@@ -792,6 +875,8 @@ function table(host: WidgetHost, declared: Rendered): HTMLElement {
       rows?: Row[]
       said?: string
       ask?: string
+      /** A line core has to say above its own list — the Models tab's news (§4 D). */
+      note?: string
     }
     if (typeof answer.ask === 'string') {
       // The same two steps an `action` takes. A list that needs permission asks for it in
@@ -830,9 +915,10 @@ function table(host: WidgetHost, declared: Rendered): HTMLElement {
       said.textContent = announced
       said.hidden = false
     } else {
-      said.className = 'hint'
-      said.textContent = rows.length === 0 ? 'Nothing here yet.' : ''
+      said.className = typeof answer.note === 'string' ? 'hint said-news' : 'hint'
+      said.textContent = rows.length === 0 ? 'Nothing here yet.' : (answer.note ?? '')
     }
+    announcedNews = typeof answer.note === 'string' && rows.length > 0
     paint()
   }
 
@@ -1651,6 +1737,25 @@ const MARKS: Record<string, string> = {
   '★': 'is-suggested',
 }
 
+/** How a tag is drawn. Anything else a row sends is read as a fact (`alexia_protocol` 8). */
+const TONES = new Set(['quiet', 'caution', 'danger'])
+
+/** A row's `tags`, as far as they make sense. A field that is not a list is no tags at all. */
+const tagsOf = (value: unknown): { says: string; tone: string }[] =>
+  Array.isArray(value) ?
+    value.flatMap((one) => {
+      if (typeof one === 'string') return [{ says: one, tone: 'quiet' }]
+      if (typeof one !== 'object' || one === null) return []
+      const { says, tone } = one as { says?: unknown; tone?: unknown }
+      if (typeof says !== 'string' || says === '') return []
+      return [{ says, tone: typeof tone === 'string' && TONES.has(tone) ? tone : 'quiet' }]
+    })
+  : []
+
+/** What a cell says, as text: the `tags` column reads as its words, so the filter can find them. */
+const cellText = (row: Row, key: string): string =>
+  key === 'tags' ? tagsOf(row[key]).map((tag) => tag.says).join(' ') : String(row[key] ?? '')
+
 /** One row, its cells, and whatever can be done to it. */
 function rowOf(
   host: WidgetHost,
@@ -1661,7 +1766,19 @@ function rowOf(
 ): DocumentFragment {
   const out = document.createDocumentFragment()
   const line = el('tr')
-  for (const column of columns) {
+  /** Where a row's `note` goes: under the first column read left to right, which is where a name is. */
+  const noteAt = Math.max(0, columns.findIndex((column) => column.align !== 'right'))
+  for (const [at, column] of columns.entries()) {
+    if (column.key === 'tags') {
+      // Chips, each in its tone (`alexia_protocol` 8). The tone is a class and never a colour
+      // written here, and a `tags` that is not a list draws nothing rather than its own text.
+      const cell = el('td', 'tags-cell')
+      const list = el('span', 'tags')
+      for (const tag of tagsOf(row[column.key])) list.append(el('span', `tag ${tag.tone}`, tag.says))
+      cell.append(list)
+      line.append(cell)
+      continue
+    }
     const text = String(row[column.key] ?? '')
     const state = MARKS[text.slice(0, 1)]
     const cell = el(
@@ -1669,6 +1786,9 @@ function rowOf(
       [column.align === 'right' ? 'right tabular' : '', state ?? ''].filter(Boolean).join(' ') || undefined,
       text,
     )
+    // A row's own sentence goes under its name (8): the first cell that is not a right-aligned
+    // number, since a `#` column first would otherwise wrap a sentence down a two-digit width.
+    if (at === noteAt && typeof row.note === 'string' && row.note !== '') cell.append(el('span', 'row-note', row.note))
     line.append(cell)
   }
   out.append(line)
@@ -1704,7 +1824,7 @@ function rowOf(
     more.type = 'button'
     more.setAttribute('aria-expanded', 'false')
     let open = false
-    more.addEventListener('click', () => {
+    const toggle = (): void => {
       open = !open
       more.textContent = open ? 'Hide' : 'Details'
       more.setAttribute('aria-expanded', String(open))
@@ -1718,6 +1838,23 @@ function rowOf(
           body.className = answer.ok === true ? 'detail-text' : 'detail-text error'
           body.textContent = String((answer.ok === true ? answer.text : answer.said) ?? '')
         })
+    }
+    more.addEventListener('click', toggle)
+
+    /**
+     * **The whole row opens it too** (D161's mock-up), and the button stays.
+     *
+     * The button is what a keyboard reaches and what tells the reader there is anything behind
+     * the row at all; the row is the target a mouse was already aiming at. Dropping the button
+     * for the row would be a table with no visible affordance and nothing to tab to.
+     */
+    line.classList.add('opens')
+    line.addEventListener('click', (event) => {
+      // A press on something that does its own thing is not a press on the row.
+      if ((event.target as HTMLElement | null)?.closest('button, a, input, select, textarea, audio') !== null) return
+      // A click that ends a drag across the text is somebody copying a model id, not opening it.
+      if ((window.getSelection()?.toString() ?? '') !== '') return
+      toggle()
     })
     cell.append(more)
   }
@@ -1906,7 +2043,96 @@ function ladder(host: WidgetHost, declared: Rendered): HTMLElement {
     // The side that is out of play is dimmed rather than removed: what you ordered is still
     // what you ordered, and a column that vanished would read as the list being thrown away.
     for (const [side, column] of columns) column.dataset.off = String(spend !== 'mixed' && spend !== side)
+    // The paid switch belongs to *free then paid* alone: the other two stops already said it.
+    crossing.hidden = declared.crossing === undefined || spend !== 'mixed'
   }
+
+  // ---- the paid switch (§4 H) --------------------------------------------------------------
+
+  /**
+   * **Whether Automatic moves to a paid model by itself once the free ones are done.**
+   *
+   * Turning it on asks *up to $__ a day*, starting at $1, and that number is the daily allowance —
+   * one money setting, not a switch beside an amount that could disagree with it. Off keeps the
+   * amount, which still bounds what *Allow* can spend when a conversation pauses.
+   */
+  const crossing = el('div', 'cross')
+  const toggle = el('input', 'cross-toggle')
+  toggle.type = 'checkbox'
+  toggle.id = `${host.screen}-${host.plugin}-${declared.key}-cross`
+  toggle.checked = declared.cross === true
+  const toggleLabel = el('label', 'cross-label', 'Switch to a paid model when the free ones are done')
+  toggleLabel.htmlFor = toggle.id
+  const amountBox = el('span', 'cross-amount')
+  const amount = el('input', 'cross-daily')
+  amount.type = 'number'
+  amount.min = '0.5'
+  amount.step = '0.5'
+  amount.value = ((declared.daily ?? 0) > 0 ? (declared.daily ?? 1) : 1).toFixed(2)
+  amount.setAttribute('aria-label', 'Daily amount for paid models, in dollars')
+  amountBox.append('up to $', amount, ' a day')
+  amountBox.hidden = !toggle.checked
+  const crossSaid = el('p', 'cross-said')
+  crossSaid.hidden = true
+  const cross = async (value: string): Promise<void> => {
+    if (declared.crossing === undefined) return
+    const answer = await host.send('/api/action', { plugin: host.plugin, key: declared.crossing, row: value })
+    crossSaid.textContent = String(answer.said ?? '')
+    crossSaid.className = answer.ok === true ? 'cross-said' : 'cross-said error'
+    crossSaid.hidden = crossSaid.textContent === ''
+  }
+  toggle.addEventListener('change', () => {
+    amountBox.hidden = !toggle.checked
+    void cross(toggle.checked ? `on:${amount.value}` : 'off')
+  })
+  amount.addEventListener('change', () => {
+    if (toggle.checked) void cross(`on:${amount.value}`)
+  })
+  crossing.append(toggle, toggleLabel, amountBox, crossSaid)
+
+  // ---- the keyless floor's switch (§1 step 2, D154) -----------------------------------------
+
+  /**
+   * **Whether providers that answer without a key may be asked at all.**
+   *
+   * On by default, and shown at every stop of the slider rather than at *free then paid* alone:
+   * the paid switch is a money question the other two stops have already answered, and this one
+   * is not — *free only* is exactly where somebody most wants to say which free providers.
+   */
+  const flooring = el('div', 'floor')
+  const floorToggle = el('input', 'floor-toggle')
+  floorToggle.type = 'checkbox'
+  floorToggle.id = `${host.screen}-${host.plugin}-${declared.key}-floor`
+  floorToggle.checked = declared.keyless !== false
+  const floorLabel = el('label', 'floor-label', 'Ask providers that need no key')
+  floorLabel.htmlFor = floorToggle.id
+  /**
+   * **Where a refusal is read.** On success the redraw below replaces this whole widget, so the
+   * sentence it writes is gone within the frame — and that is right, because what the person is
+   * waiting to see is the table gaining or losing rows, not a line about it. A failure does not
+   * redraw, so the reason stays on screen, which is the case that needs words.
+   */
+  const floorSaid = el('p', 'floor-said')
+  floorSaid.hidden = true
+  floorToggle.addEventListener('change', () => {
+    void (async () => {
+      if (declared.floor === undefined) return
+      const answer = await host.send('/api/action', {
+        plugin: host.plugin,
+        key: declared.floor,
+        row: floorToggle.checked ? 'on' : 'off',
+      })
+      floorSaid.textContent = String(answer.said ?? '')
+      floorSaid.className = answer.ok === true ? 'floor-said' : 'floor-said error'
+      floorSaid.hidden = floorSaid.textContent === ''
+      // The lists that follow the keychain follow this switch for the same reason, so it says so
+      // the way a saved key does (§1 steps 3-4) rather than reaching for the screen itself: this
+      // file draws one widget and knows nothing about the tab the Models table is on.
+      if (answer.ok === true) window.dispatchEvent(new CustomEvent(MODELS_CHANGED))
+    })()
+  })
+  flooring.hidden = declared.floor === undefined
+  flooring.append(floorToggle, floorLabel, floorSaid)
 
   for (const stop of stops) {
     const choice = el('label', 'grade-stop')
@@ -1964,7 +2190,9 @@ function ladder(host: WidgetHost, declared: Rendered): HTMLElement {
   // ---- one chip ----------------------------------------------------------------------------
 
   const chip = (row: Row, at: number): HTMLElement => {
-    const item = el('li', 'chip')
+    /** Why it cannot be asked right now, or nothing (§1 step 4). Kept on the list either way. */
+    const off = String(row.off ?? '')
+    const item = el('li', off === '' ? 'chip' : 'chip off')
     item.dataset.id = row.id
     item.dataset.side = String(row.side)
     item.draggable = true
@@ -1975,7 +2203,7 @@ function ladder(host: WidgetHost, declared: Rendered): HTMLElement {
     const what = el('span', 'chip-what')
     what.append(
       el('span', 'chip-name', String(row.name)),
-      el('span', 'chip-meta', `${String(row.provider)} · ${String(row.price)}`),
+      el('span', 'chip-meta', off === '' ? `${String(row.provider)} · ${String(row.price)}` : off),
     )
     item.append(what)
 
@@ -2048,7 +2276,7 @@ function ladder(host: WidgetHost, declared: Rendered): HTMLElement {
       return
     }
     const found = rows
-      .filter((row) => !order.includes(row.id))
+      .filter((row) => !order.includes(row.id) && String(row.off ?? '') === '')
       .filter((row) => `${String(row.name)} ${String(row.provider)}`.toLowerCase().includes(needle))
       .slice(0, HITS)
     hits.replaceChildren(
@@ -2099,7 +2327,9 @@ function ladder(host: WidgetHost, declared: Rendered): HTMLElement {
   function paint(): void {
     const known = new Map(rows.map((row) => [row.id, row]))
     // Whatever core kept, minus anything that has left the catalog since. This screen shows
-    // what will actually happen, and a row naming a model no provider offers will not.
+    // what will actually happen, and a row naming a model no provider offers will not. A model
+    // whose provider has lost its key is still a row — core sends it marked `off` — so it stays
+    // on the list and in what the next drag saves (§1 step 4).
     order = order.filter((id) => known.has(id))
     for (const side of sides) {
       const mine = order
@@ -2131,7 +2361,7 @@ function ladder(host: WidgetHost, declared: Rendered): HTMLElement {
 
   const adding = el('div', 'ladder-add')
   adding.append(search, hits)
-  box.append(track, explains, grid, adding, clear, said)
+  box.append(track, explains, crossing, flooring, grid, adding, clear, said)
   slide()
   void load()
   return box

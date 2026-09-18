@@ -100,6 +100,25 @@ test('a plugin command calls the plugin tool of the same name', async () => {
   store.close()
 })
 
+test('what follows the command is handed over whole, under one key for every plugin', async () => {
+  const store = new Store(':memory:')
+  const manifests = [plugin('persona', 'persona')]
+  const given: (Record<string, unknown> | undefined)[] = []
+  const call = async (_plugin: string, _tool: string, args?: Record<string, unknown>): Promise<string> => {
+    given.push(args)
+    return 'done'
+  }
+
+  await run('/persona', { store, manifests, call })
+  await run('/persona Chief of staff', { store, manifests, call })
+  // Spacing is the typist's, not a meaning: what the plugin gets is what they wrote.
+  await run('/persona   Chief of staff  ', { store, manifests, call })
+  // Nothing typed is nothing passed, so a tool that wanted no argument never sees an empty
+  // one and cannot mistake it for somebody asking for the empty-named thing.
+  expect(given).toEqual([undefined, { rest: 'Chief of staff' }, { rest: 'Chief of staff' }])
+  store.close()
+})
+
 test('a command that is not there says so, and says where to look', async () => {
   const store = new Store(':memory:')
   expect(await run('/nope', { store })).toEqual({

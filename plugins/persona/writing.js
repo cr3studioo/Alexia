@@ -80,15 +80,44 @@ export const clean = (said) => {
 /** Long enough to be a personality, short enough to be one. Roughly 400 words either way. */
 export const LONGEST = 4000
 
+/** The reply budget for Adapt: a 400-word document, plus what a reasoning model thinks first. */
+export const ROOM = 4000
+
+/** How long Adapt waits for that reply: under core's 120 s on a button, over the SDK's 60 s. */
+export const WAIT = 110_000
+
+/** The four headings {@link SHAPE} promises, which is what makes checking for them fair. */
+export const SECTIONS = SHAPE.split('\n')
+  .filter((line) => line.startsWith('## '))
+  .map((line) => line.slice(3))
+
+const heading = (line) => /^#{2,3}\s+(.+?)[\s:]*$/.exec(line)?.[1]?.toLowerCase()
+
 /**
- * Is what came back a personality, or is it a model talking about one?
+ * Is what came back a personality, or is it a model talking about one — or half of one?
  *
- * The check is deliberately shallow — a heading and a length. Anything stricter starts
- * rejecting perfectly good documents for not matching a template nobody promised, and the
- * user can read the thing before using it.
+ * **It used to be a heading and a length**, on the grounds that anything stricter rejects
+ * good documents for not matching a template nobody promised. The brief does promise it, and
+ * the shallow check is what let half a document through (2026-09-15): a title, one sentence
+ * under *Who you are*, and `## How` where the answer ran out of room. It passed, it saved, and
+ * she behaved as if no personality was set.
+ *
+ * So every heading has to be there with something under it. `Nothing.` counts, because it is
+ * an answer. Case, a trailing colon and one extra `#` are forgiven; a missing section is not.
  */
-export const usable = (doc) =>
-  doc.length > 40 && doc.length <= LONGEST && /^#{1,2} /m.test(doc)
+export const usable = (doc) => {
+  if (doc.length <= 40 || doc.length > LONGEST || !/^# /m.test(doc)) return false
+  const known = new Set(SECTIONS.map((name) => name.toLowerCase()))
+  const under = new Map()
+  let at
+  for (const line of doc.split('\n')) {
+    // Only the four open a section. A sub-heading a model adds inside one is content of it.
+    const name = heading(line)
+    if (name !== undefined && known.has(name)) under.set((at = name), '')
+    else if (at !== undefined) under.set(at, under.get(at) + line.trim())
+  }
+  return [...known].every((name) => (under.get(name) ?? '') !== '')
+}
 
 /**
  * The name, when the user did not type one.
@@ -114,4 +143,83 @@ export const nameFrom = (typed, description) => {
 export const unique = (name, taken) => {
   if (!taken.includes(name)) return name
   for (let n = 2; ; n++) if (!taken.includes(`${name} ${n}`)) return `${name} ${n}`
+}
+
+/**
+ * Which saved personality somebody meant by what they typed after `/persona`.
+ *
+ * Exact name first, then a unique prefix, then a unique substring — and **nothing at all when
+ * two could be meant**, because switching to the wrong personality is silent: the next answer
+ * is simply in the wrong voice, with nothing on screen saying why. Ambiguity is returned as
+ * the list of candidates so the caller can say which ones it was torn between.
+ */
+export const matchName = (rows, typed) => {
+  const want = String(typed ?? '').trim().toLowerCase()
+  if (want === '') return { none: true }
+  const named = rows.map((row) => ({ row, name: String(row.name ?? '').toLowerCase() }))
+  const exact = named.filter((one) => one.name === want)
+  if (exact.length === 1) return { row: exact[0].row }
+  const starts = named.filter((one) => one.name.startsWith(want))
+  if (starts.length === 1) return { row: starts[0].row }
+  const has = named.filter((one) => one.name.includes(want))
+  if (has.length === 1) return { row: has[0].row }
+  const among = (starts.length > 0 ? starts : has).map((one) => String(one.row.name))
+  return among.length > 1 ? { among } : { none: true }
+}
+
+/** The day, as a person writes it. */
+const day = (at) => (Number(at) > 0 ? new Date(Number(at)).toISOString().slice(0, 10) : '')
+
+/**
+ * One saved version, pulled off a row.
+ *
+ * Rows written before any of this existed have none of these columns — a plugin table grows a
+ * column the first time a key appears, so everything older reads back `undefined`. That is the
+ * normal case on this Mac, not an error, and every reader below has to survive it.
+ */
+export const versionOf = (row) => ({
+  doc: String(row?.doc ?? ''),
+  described: String(row?.described ?? ''),
+  wrote: String(row?.wrote ?? ''),
+  at: Number(row?.at ?? 0),
+})
+
+/** The kept previous version, or nothing. Stored as JSON text, which is what storage.md promises. */
+export const priorOf = (row) => {
+  const raw = row?.previous
+  if (raw === undefined || raw === null || raw === '') return undefined
+  try {
+    const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw
+    return parsed && typeof parsed === 'object' ? versionOf(parsed) : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Where a personality came from, in the words of whoever reads the row a month later.
+ *
+ * **The description is the part worth keeping.** Adapt turns four words into a page, and until
+ * now the four words were thrown away the moment the page existed — so *Re-adapt* had nothing
+ * to re-adapt from, and nobody could tell what the page had been asked to be. Kept beside the
+ * document, it is both the provenance and the input for writing it again.
+ */
+export const provenance = (row) => {
+  const { described, wrote, at } = versionOf(row)
+  const lines = []
+  if (described !== '') lines.push(`Adapted from your words: “${described}”`)
+  const when = day(at)
+  if (wrote !== '' && when !== '') lines.push(`Written by ${wrote} on ${when}`)
+  else if (wrote !== '') lines.push(`Written by ${wrote}`)
+  else if (when !== '') lines.push(`Written on ${when}`)
+  const prior = priorOf(row)
+  if (prior) {
+    const then = day(prior.at)
+    lines.push(
+      then === '' ?
+        'A previous version is kept — Undo restores it.'
+      : `A previous version from ${then} is kept — Undo restores it.`,
+    )
+  }
+  return lines.join('\n')
 }

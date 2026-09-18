@@ -3,11 +3,25 @@ import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { afterAll, expect, test } from 'vitest'
 import type { Model } from '../src/catalog.js'
-import { SEEDED } from '../src/catalog.js'
+import { borrow, SEEDED } from '../src/catalog.js'
 import { remaining, sent, usable } from '../src/pool.js'
-import { anonymous, keyOf, PROVIDERS, type Provider } from '../src/provider.js'
+import { anonymous, keyOf, ProviderError, PROVIDERS, type Provider } from '../src/provider.js'
 import { OLLAMA } from '../src/ollama.js'
-import { bubble, MODES, route, send, shapeOf, type Choice, type Pins, type World } from '../src/router.js'
+import {
+  bubble,
+  failed,
+  MODES,
+  route,
+  send,
+  shapeOf,
+  stopped,
+  STRIKE_HALF_LIFE,
+  type Choice,
+  type Pins,
+  type Strike,
+  type Switch,
+  type World,
+} from '../src/router.js'
 import { CORE, memorySecrets } from '../src/secrets.js'
 import type { Message } from '../src/store.js'
 import { Store } from '../src/store.js'
@@ -221,11 +235,41 @@ let mute = new Set<string>()
 let gated = new Set<string>()
 /** Models no worker is serving right now, the way a volunteer roster says so. */
 let unserved = new Set<string>()
+/**
+ * Everything else a provider does to an answer (D155), by model: a status with its own words,
+ * a stream that dies after five chunks, a provider that never answers, a reply cut at its ceiling.
+ */
+let behave = new Map<string, { status: number; body?: string } | 'dies' | 'hangs' | 'cut'>()
+/** Every model asked, in order — so a test can say what was *not* asked. */
+const called: string[] = []
 const server: Server = createServer((request, response) => {
   let raw = ''
   request.on('data', (chunk: Buffer) => (raw += chunk.toString()))
   request.on('end', () => {
     const { model: asked } = JSON.parse(raw) as { model: string }
+    called.push(asked)
+    const how = behave.get(asked)
+    if (how === 'hangs') return
+    if (how === 'dies') {
+      response.writeHead(200, { 'content-type': 'text/event-stream' })
+      for (const word of ['one ', 'two ', 'three ', 'four ', 'five ']) {
+        response.write(`data: ${JSON.stringify({ choices: [{ delta: { content: word } }] })}\n\n`)
+      }
+      setTimeout(() => response.destroy(), 20)
+      return
+    }
+    if (how === 'cut') {
+      response.writeHead(200, { 'content-type': 'text/event-stream' })
+      response.end(
+        `data: ${JSON.stringify({ choices: [{ delta: { content: 'half' }, finish_reason: 'length' }] })}\n\ndata: [DONE]\n\n`,
+      )
+      return
+    }
+    if (how !== undefined) {
+      response.writeHead(how.status, { 'content-type': 'text/plain' })
+      response.end(how.body ?? 'no')
+      return
+    }
     if (refuse.has(asked)) {
       response.writeHead(429, { 'content-type': 'text/plain' })
       response.end('slow down')
@@ -514,18 +558,16 @@ test('with the keyed tiers spent, the cascade reaches this machine instead of a 
   ledger.close()
 })
 
-test('the shortlist can move this machine up, because that is somebody typing it', () => {
+test('a list can put this machine first, because that is somebody typing it', () => {
   // The rule above is about a default reaching for local first, not about arguing with a
   // person who dragged their own model to the top. The group still wins — free before paid —
-  // and inside it the list the user wrote themselves is read before the local rule.
+  // and inside it the list the user wrote is the order, ahead of the local rule.
   const work = { messages: asked('sort my downloads'), tools: [{ name: 'fs.list' }] }
   const installed = world({ local: [localSmall] })
-  expect(ids(route(work, pins({ order: ['qwen3:8b'] }), installed))).toEqual([
-    'qwen3:8b',
-    'free/tools',
-    'paid/small',
-    'paid/frontier',
-  ])
+  expect(ids(route(work, pins({ order: ['free/tools', 'qwen3:8b'] }), installed))).toEqual(['free/tools', 'qwen3:8b'])
+  expect(ids(route(work, pins({ order: ['qwen3:8b', 'free/tools'] }), installed))).toEqual(['qwen3:8b', 'free/tools'])
+  // And the list is the whole plan (D155): with only the machine on it, nothing else is behind it.
+  expect(ids(route(work, pins({ order: ['qwen3:8b'] }), installed))).toEqual(['qwen3:8b'])
 })
 
 /**
@@ -727,34 +769,97 @@ test('local placement is still every hosted rung gone, not merely last', () => {
 test('the user’s own order is read within a group, never across one', () => {
   const work = { messages: asked('sort my downloads'), tools: [{ name: 'fs.list' }] }
 
-  // Frontier named first, and it still sorts behind every free model — because it is paid.
-  expect(ids(route(work, pins({ order: ['paid/frontier'] }), world()))).toEqual([
+  // Frontier named first, and it still sorts behind the free model — because it is paid.
+  expect(ids(route(work, pins({ order: ['paid/frontier', 'free/tools'] }), world()))).toEqual([
     'free/tools',
     'paid/frontier',
-    'paid/small',
   ])
 
   // Within the paid group it is the whole point: the dearer one first because it was asked
   // for, ahead of the rule that would otherwise have chosen for you.
-  expect(ids(route(work, pins({ spend: 'paid', order: ['paid/frontier'] }), world()))).toEqual([
+  expect(ids(route(work, pins({ spend: 'paid', order: ['paid/frontier', 'paid/small'] }), world()))).toEqual([
     'paid/frontier',
     'paid/small',
   ])
 
-  // And an empty list is the behaviour this screen had before anybody touched it, which is
-  // what makes the shortlist optional rather than a form to fill in.
-  expect(ids(route(work, pins({ order: [] }), world()))).toEqual(ids(route(work, pins(), world())))
+  // And an empty list is Automatic, which is what makes the list optional rather than a form
+  // to fill in.
+  const empty = route(work, pins({ order: [] }), world())
+  expect(ids(empty)).toEqual(ids(route(work, pins(), world())))
+  expect(empty.mode).toBe('automatic')
 })
 
-test('a model that has left the catalog does not take the order with it', () => {
+test('a model that has left the catalog is skipped in the list, and a list of only those stops', () => {
   const work = { messages: asked('sort my downloads'), tools: [{ name: 'fs.list' }] }
-  // `Infinity - Infinity` is `NaN`, which `Array.sort` reads as *equal* in every direction at
-  // once — so the unlisted rows would have come back in whatever order the engine felt like.
-  // They tie on `order.length` instead, and fall through to the rules underneath.
-  expect(ids(route(work, pins({ order: ['gone/yesterday', 'also/gone'] }), world()))).toEqual([
-    'free/tools',
-    'paid/small',
-    'paid/frontier',
+  // One entry gone: the rest of the list is still the list.
+  expect(ids(route(work, pins({ order: ['gone/yesterday', 'paid/small'] }), world()))).toEqual(['paid/small'])
+
+  // Every entry gone. D112 fell through to everything else here; a list somebody made is the
+  // whole plan now, so it says the list is empty rather than quietly answering from outside it.
+  const stranded = route(work, pins({ order: ['gone/yesterday', 'also/gone'] }), world())
+  expect(stranded).toMatchObject({ ok: false, mode: 'sequence' })
+  expect(ids(stranded)[0]).toContain('none of the models in your order can be reached')
+})
+
+/**
+ * **Three modes, three promises** (D155). Which one a plan is in decides how far a failure may
+ * walk, so the mode travels on the verdict and the rule lives in the plan rather than in `send`.
+ */
+test('the plan says whose choice it is: nobody, a list, or one model', () => {
+  const work = { messages: asked('sort my downloads'), tools: [{ name: 'fs.list' }] }
+  expect(route(work, pins(), world()).mode).toBe('automatic')
+  expect(route(work, pins({ order: ['free/tools'] }), world()).mode).toBe('sequence')
+  expect(route(work, pins({ model: 'free/text', order: ['free/tools'] }), world()).mode).toBe('pinned')
+})
+
+test('a list never reaches past its last entry, even when a model outside it would answer', () => {
+  // The work needs hands and the only model on the list has none. Automatic would hand it to
+  // `free/tools`; a list somebody wrote does not, and it says why in words about the list.
+  const work = { messages: asked('sort my downloads'), tools: [{ name: 'fs.list' }] }
+  const verdict = route(work, pins({ order: ['free/text'] }), world())
+  expect(verdict).toMatchObject({ ok: false, mode: 'sequence' })
+  expect(ids(verdict)).toEqual(['none of the models in your order can use tools, and this needs them'])
+})
+
+test('the ledger does not refuse somebody’s own choice before it has been tried', () => {
+  // alpha has used its day by this machine's count — a count D107 calls a deliberately low
+  // copy of somebody else's number. Automatic leaves alpha's free rows out while anything
+  // else is left; a pin used to be refused outright, *is not available right now*, on a guess.
+  const ledger = new Store(':memory:')
+  for (let i = 0; i < alpha.rpd!; i++) sent(ledger, alpha, noon + i * 61_000)
+  const at = noon + alpha.rpd! * 61_000
+  const freeBeta = model({ id: 'free/beta', tier: 'T1', provider: 'beta', supportsTools: true })
+  const drained = world({
+    models: [freeText, freeTools, freeBeta, cheapPaid],
+    rungs: [remaining(ledger, alpha, at), remaining(ledger, beta, at)],
+  })
+  const work = { messages: asked('sort my downloads'), tools: [{ name: 'fs.list' }] }
+
+  expect(ids(route(work, pins(), drained))).toEqual(['free/beta', 'paid/small'])
+  expect(ids(route(work, pins({ model: 'free/tools' }), drained))).toEqual(['free/tools'])
+  // A list keeps its spent entry, in the place it was written: the one list somebody wanted is
+  // worth a 429.
+  expect(ids(route(work, pins({ order: ['free/tools', 'free/beta'] }), drained))).toEqual(['free/tools', 'free/beta'])
+  ledger.close()
+})
+
+test('one model on two providers, in a list: your key before the keyless floor, whatever the catalog read first', () => {
+  // Measured on this machine's catalog: each Nemotron in the owner's list is served by Kilo's
+  // keyless floor *and* by OpenRouter, and Kilo's rows come first in the file. The list names
+  // the model; which provider serves it first is the ladder's call, not the file's.
+  const floor: Provider = { id: 'floor', name: 'Floor', baseUrl: 'http://127.0.0.1:3', auth: 'optional' }
+  const onFloor = model({ id: 'same/model', tier: 'T1', supportsTools: true, provider: 'floor' })
+  const onKey = model({ id: 'same/model', tier: 'T1', supportsTools: true, provider: 'alpha' })
+  const next = model({ id: 'next/model', tier: 'T1', supportsTools: true, provider: 'floor' })
+  const both = world({
+    models: [onFloor, next, onKey],
+    rungs: [remaining(store, floor), remaining(store, alpha)],
+  })
+  const plan = route({ messages: asked('hello') }, pins({ order: ['same/model', 'next/model'] }), both)
+  expect(plan.ok && plan.choices.map((c) => `${c.model.id}@${c.provider.id}`)).toEqual([
+    'same/model@alpha',
+    'same/model@floor',
+    'next/model@floor',
   ])
 })
 
@@ -1201,4 +1306,558 @@ test('a model nobody is serving right now is a rung failure, not the end of the 
   expect(answer.model.id).toBe(cheapPaid.id)
   unserved = new Set()
   ledger.close()
+})
+
+// ---- D155: a failure is classified once, and the plan decides how far it walks ------------
+
+/** Two providers pointed at the scripted server, both with keys, and a fresh ledger. */
+const scripted = async (): Promise<{ one: Provider; two: Provider; keys: ReturnType<typeof memorySecrets>; ledger: Store }> => {
+  const keys = memorySecrets()
+  const one = { ...alpha, baseUrl: at }
+  const two = { ...beta, baseUrl: at }
+  await keys.set(CORE, keyOf(one), 'sk-a')
+  await keys.set(CORE, keyOf(two), 'sk-b')
+  refuse = new Set()
+  mute = new Set()
+  gated = new Set()
+  unserved = new Set()
+  called.length = 0
+  return { one, two, keys, ledger: new Store(':memory:') }
+}
+
+const free = (id: string, over: Partial<Model> = {}): Model => model({ id, name: id, tier: 'T1', ...over })
+
+test('no credit is the next rung’s turn in Automatic, and the switch is said in one line', async () => {
+  // `402` used to throw and end the answer with every other model untried.
+  const { one, two, keys, ledger } = await scripted()
+  behave = new Map([['free/broke', { status: 402, body: 'Insufficient credits' }]])
+  const notes: string[] = []
+
+  const answer = await send(
+    [
+      { model: free('free/broke'), provider: one },
+      { model: free('free/fine', { provider: 'beta' }), provider: two },
+    ],
+    { messages: asked('hello') },
+    ledger,
+    keys,
+    { onNote: (line) => notes.push(line), onDelta: () => undefined },
+  )
+  expect(answer.model.id).toBe('free/fine')
+  expect(notes).toEqual(['There is no Alpha credit to pay for free/broke — this answer is from free/fine.'])
+  ledger.close()
+})
+
+test('one model that fails stops, with the model and the reason in words', async () => {
+  const { one, keys, ledger } = await scripted()
+  behave = new Map([['free/broke', { status: 402, body: 'Insufficient credits' }]])
+  // A plan of one is what a pin routes to, so there is nothing to walk to.
+  await expect(send([{ model: free('free/broke'), provider: one }], { messages: asked('hello') }, ledger, keys)).rejects.toMatchObject({
+    status: 402,
+    message: 'There is no Alpha credit to pay for free/broke.',
+  })
+  ledger.close()
+})
+
+test('a list that fails all the way down stops at its end, and the model outside it is never asked', async () => {
+  const { one, two, keys, ledger } = await scripted()
+  const first = free('free/first', { supportsTools: true })
+  const second = free('free/second', { supportsTools: true, provider: 'beta' })
+  const outside = free('free/outside', { supportsTools: true })
+  behave = new Map<string, { status: number; body?: string } | 'dies' | 'hangs' | 'cut'>([
+    ['free/first', { status: 429 }],
+    ['free/second', { status: 404, body: 'No endpoints found' }],
+  ])
+  const place: World = world({ models: [first, second, outside], rungs: [remaining(ledger, one), remaining(ledger, two)] })
+
+  const verdict = route({ messages: asked('hello') }, pins({ order: ['free/first', 'free/second'] }), place)
+  expect(verdict).toMatchObject({ ok: true, mode: 'sequence' })
+  const plan = verdict.ok ? verdict.choices.map((c) => ({ ...c, provider: c.provider.id === 'alpha' ? one : two })) : []
+
+  await expect(send(plan, { messages: asked('hello') }, ledger, keys)).rejects.toThrow(
+    'free/first is rate-limited right now, and free/second is no longer offered by Beta.',
+  )
+  expect(called).toEqual(['free/first', 'free/second'])
+  ledger.close()
+})
+
+test('a stream that dies halfway starts again on the next rung, and the half is thrown away', async () => {
+  const { one, two, keys, ledger } = await scripted()
+  behave = new Map([['free/dies', 'dies']])
+  const shown: string[] = []
+
+  const answer = await send(
+    [
+      { model: free('free/dies'), provider: one },
+      { model: free('free/fine', { provider: 'beta' }), provider: two },
+    ],
+    { messages: asked('hello') },
+    ledger,
+    keys,
+    {
+      onDelta: (text) => shown.push(text),
+      // What the shell does with it: the half-written bubble is cleared.
+      onRestart: () => (shown.length = 0),
+      onNote: (line) => shown.push(`[${line}]`),
+    },
+  )
+  expect(answer.model.id).toBe('free/fine')
+  expect(answer.message.content).toBe('here')
+  expect(shown).toEqual(['[free/dies stopped answering partway through — this answer is from free/fine.]', 'here'])
+  ledger.close()
+})
+
+test('a provider that never answers is given up on at its patience, and the next rung asked', async () => {
+  const { one, two, keys, ledger } = await scripted()
+  behave = new Map([['free/silent', 'hangs']])
+  // A tenth of a second standing in for the thirty every row now gets by default.
+  const impatient = { ...one, timeoutMs: 100 }
+
+  const answer = await send(
+    [
+      { model: free('free/silent'), provider: impatient },
+      { model: free('free/fine', { provider: 'beta' }), provider: two },
+    ],
+    { messages: asked('hello') },
+    ledger,
+    keys,
+  )
+  expect(answer.model.id).toBe('free/fine')
+  ledger.close()
+})
+
+test('a refused key skips every model on that provider, and only that provider', async () => {
+  const { one, two, keys, ledger } = await scripted()
+  behave = new Map([['free/a1', { status: 401, body: 'invalid api key' }]])
+  const notes: string[] = []
+
+  const answer = await send(
+    [
+      { model: free('free/a1'), provider: one },
+      { model: free('free/a2'), provider: one },
+      { model: free('free/b1', { provider: 'beta' }), provider: two },
+    ],
+    { messages: asked('hello') },
+    ledger,
+    keys,
+    { onNote: (line) => notes.push(line) },
+  )
+  // Every rung on alpha would have said the same thing, so the second was not asked.
+  expect(called).toEqual(['free/a1', 'free/b1'])
+  expect(answer.model.id).toBe('free/b1')
+  expect(notes).toEqual(['Your Alpha key was refused — this answer is from free/b1.'])
+  ledger.close()
+})
+
+test('a keyless provider saying 401 is one model wanting a key, not the provider gone', async () => {
+  // A keyless floor answers most of its list anonymously and a few models only with a key.
+  const { keys, ledger } = await scripted()
+  const floor: Provider = { id: 'floor', name: 'Floor', baseUrl: at, auth: 'optional' }
+  behave = new Map([['floor/keyed', { status: 401, body: 'missing_api_key' }]])
+
+  const answer = await send(
+    [
+      { model: free('floor/keyed', { provider: 'floor' }), provider: floor },
+      { model: free('floor/open', { provider: 'floor' }), provider: floor },
+    ],
+    { messages: asked('hello') },
+    ledger,
+    keys,
+  )
+  expect(answer.model.id).toBe('floor/open')
+  ledger.close()
+})
+
+test('a conversation too long for one model is only tried on a bigger window', async () => {
+  const { one, two, keys, ledger } = await scripted()
+  behave = new Map([['free/32k', { status: 400, body: "This model's maximum context length is 32768 tokens" }]])
+  const plan = [
+    { model: free('free/32k'), provider: one },
+    // The same window would refuse the same way, and a smaller one worse.
+    { model: free('free/also-32k', { provider: 'beta' }), provider: two },
+    { model: free('free/8k', { provider: 'beta', context: 8_192 }), provider: two },
+    { model: free('free/200k', { provider: 'beta', context: 200_000 }), provider: two },
+  ]
+  const answer = await send(plan, { messages: asked('hello') }, ledger, keys)
+  expect(answer.model.id).toBe('free/200k')
+  expect(called).toEqual(['free/32k', 'free/200k'])
+
+  // And with nothing bigger left, the stop says so rather than blaming the model.
+  called.length = 0
+  await expect(send(plan.slice(0, 3), { messages: asked('hello') }, ledger, keys)).rejects.toThrow(
+    'This conversation is too long for free/32k. Nothing left to try reads more than that — start a new chat.',
+  )
+  ledger.close()
+})
+
+test('a model retired, a connection refused, a server error: each is the next rung’s turn', async () => {
+  const { one, two, keys, ledger } = await scripted()
+  behave = new Map<string, { status: number; body?: string } | 'dies' | 'hangs' | 'cut'>([
+    ['free/retired', { status: 404 }],
+    ['free/broken', { status: 500 }],
+  ])
+  // Nothing listens on port 1, which is what a network that is not there looks like from here.
+  const nowhere: Provider = { ...one, id: 'nowhere', name: 'Nowhere', baseUrl: 'http://127.0.0.1:1/v1' }
+  await keys.set(CORE, keyOf(nowhere), 'sk-n')
+
+  const answer = await send(
+    [
+      { model: free('free/retired'), provider: one },
+      { model: free('free/unreached', { provider: 'nowhere' }), provider: nowhere },
+      { model: free('free/broken'), provider: one },
+      { model: free('free/fine', { provider: 'beta' }), provider: two },
+    ],
+    { messages: asked('hello') },
+    ledger,
+    keys,
+  )
+  expect(answer.model.id).toBe('free/fine')
+  ledger.close()
+})
+
+test('a free answer cut off at its ceiling is the next rung’s turn, and a paid one is not bought twice', async () => {
+  const { one, two, keys, ledger } = await scripted()
+  behave = new Map<string, { status: number; body?: string } | 'dies' | 'hangs' | 'cut'>([
+    ['free/cut', 'cut'],
+    ['paid/cut', 'cut'],
+  ])
+  const walked = await send(
+    [
+      { model: free('free/cut'), provider: one },
+      { model: free('free/fine', { provider: 'beta' }), provider: two },
+    ],
+    { messages: asked('hello') },
+    ledger,
+    keys,
+  )
+  expect(walked.model.id).toBe('free/fine')
+
+  // Billed, and the next paid model would end at the same ceiling for a second bill. So the
+  // cut answer comes back as one, and the caller — Adapt, say — decides what it is worth.
+  const billed = await send(
+    [
+      { model: model({ ...cheapPaid, id: 'paid/cut' }), provider: two },
+      { model: frontier, provider: two },
+    ],
+    { messages: asked('hello'), maxTokens: 200 },
+    ledger,
+    keys,
+  )
+  expect(billed).toMatchObject({ cut: true, message: { content: 'half' } })
+  expect(called).not.toContain('paid/frontier')
+  ledger.close()
+})
+
+test('the stop button is not a failure, so it walks nowhere', async () => {
+  const { one, two, keys, ledger } = await scripted()
+  behave = new Map([['free/silent', 'hangs']])
+  const stop = new AbortController()
+  const asking = send(
+    [
+      { model: free('free/silent'), provider: one },
+      { model: free('free/fine', { provider: 'beta' }), provider: two },
+    ],
+    { messages: asked('hello'), signal: stop.signal },
+    ledger,
+    keys,
+  )
+  setTimeout(() => stop.abort(), 50)
+  await expect(asking).rejects.not.toBeInstanceOf(ProviderError)
+  expect(called).toEqual(['free/silent'])
+  ledger.close()
+})
+
+test('a long stop lists three reasons and counts the rest', () => {
+  const choice = (id: string): Choice => ({ model: free(id), provider: alpha })
+  const failures = ['a', 'b', 'c', 'd', 'e'].map((id) => failed(new ProviderError(429, 'slow down'), choice(id))!)
+  expect(stopped(failures)).toBe(
+    'a is rate-limited right now, b is rate-limited right now, c is rate-limited right now, and 2 more could not answer either.',
+  )
+  // Nothing about a provider failing is a reason to hide the monthly cap behind it.
+  expect(stopped(failures.slice(0, 1), 'the monthly cap is reached — raise it in settings, or use a free model')).toBe(
+    'a is rate-limited right now. The monthly cap is reached — raise it in settings, or use a free model.',
+  )
+})
+
+// ---- Best to worst (D159) -------------------------------------------------------------------
+//
+// `weekly` was the only thing ordering the free tier, and only OpenRouter publishes it, so
+// without an OpenRouter key every free model tied and `kilo-auto/free` — a router — came first.
+
+const work = { messages: asked('sort my downloads'), tools: [{ name: 'fs.list' }] }
+const hands = (id: string, over: Partial<Model> = {}): Model => model({ id, tier: 'T1', supportsTools: true, ...over })
+const where = (verdict: ReturnType<typeof route>): string[] =>
+  verdict.ok ? verdict.choices.map((c) => `${c.model.id}@${c.provider.id}`) : [verdict.why]
+/** Failures of one model on one provider, each so many minutes ago. */
+const failures = (model: string, provider: string, ...minutesAgo: number[]): Strike[] =>
+  minutesAgo.map((ago) => ({ model, provider, at: Date.now() - ago * 60_000 }))
+
+test('a model that failed here lately goes behind the ones that did not, and comes back as it ages', () => {
+  const best = hands('free/best', { weekly: 9_000_000 })
+  const next = hands('free/next', { weekly: 10 })
+  const struck = (...minutesAgo: number[]): World =>
+    world({ models: [best, next], strikes: failures('free/best', 'alpha', ...minutesAgo) })
+
+  expect(ids(route(work, pins(), struck()))).toEqual(['free/best', 'free/next'])
+  // model_plan.md §2's acceptance: a model that timed out twice in the last hour is not first.
+  expect(ids(route(work, pins(), struck(50, 10)))).toEqual(['free/next', 'free/best'])
+  // One failure counts half after an hour and is rounded away, so it is first again — a rate
+  // limit ends and a free tier resets, and nothing here writes a model off for good.
+  expect(ids(route(work, pins(), struck(70)))).toEqual(['free/best', 'free/next'])
+  // Two together count one after an hour, and still sink it.
+  expect(ids(route(work, pins(), struck(70, 70)))).toEqual(['free/next', 'free/best'])
+  expect(STRIKE_HALF_LIFE).toBe(60 * 60 * 1000)
+
+  // What failed orders a plan, and never empties one: the struck model is still asked last,
+  // and a pin on it is still the pin.
+  expect(ids(route(work, pins({ model: 'free/best' }), struck(1, 1, 1)))).toEqual(['free/best'])
+  // Nor does it reorder a list somebody wrote.
+  expect(ids(route(work, pins({ order: ['free/best', 'free/next'] }), struck(1, 1, 1)))).toEqual(['free/best', 'free/next'])
+})
+
+test('a failure is about one model on one provider, so the same model elsewhere is asked first', () => {
+  const floor: Provider = { id: 'floor', name: 'Floor', baseUrl: 'http://127.0.0.1:3', auth: 'optional' }
+  const both = (strikes: Strike[] = []): World =>
+    world({
+      models: [hands('same/model', { provider: 'floor' }), hands('same/model')],
+      rungs: [remaining(store, floor), remaining(store, alpha)],
+      strikes,
+    })
+  // Your key before the floor, as the ladder says…
+  expect(where(route(work, pins(), both()))).toEqual(['same/model@alpha', 'same/model@floor'])
+  // …until your key's copy has just failed twice.
+  expect(where(route(work, pins(), both(failures('same/model', 'alpha', 2, 1))))).toEqual([
+    'same/model@floor',
+    'same/model@alpha',
+  ])
+})
+
+test('a pinned model on two providers is asked on your key, not whichever the catalog read first, and is still one choice', () => {
+  // Measured on this machine: each of the owner's Nemotrons is on Kilo's keyless floor and on
+  // OpenRouter, Kilo first in the file — so a pin took the floor while a key sat in the keychain.
+  const floor: Provider = { id: 'floor', name: 'Floor', baseUrl: 'http://127.0.0.1:3', auth: 'optional' }
+  const both = (strikes: Strike[] = []): World =>
+    world({
+      models: [hands('same/model', { provider: 'floor' }), hands('other/model', { provider: 'floor' }), hands('same/model')],
+      rungs: [remaining(store, floor), remaining(store, alpha)],
+      strikes,
+    })
+  const pinned = route(work, pins({ model: 'same/model' }), both())
+  expect(pinned.mode).toBe('pinned')
+  // One choice: a pin never falls back, not even to the same model on the other provider.
+  expect(where(pinned)).toEqual(['same/model@alpha'])
+  // Picked the way a list picks between one model's providers, so a copy that just failed
+  // hands the pin to the other copy — of the same model, which is still what was chosen.
+  expect(where(route(work, pins({ model: 'same/model' }), both(failures('same/model', 'alpha', 1))))).toEqual([
+    'same/model@floor',
+  ])
+})
+
+test('a router is asked after every model that is one model, and it can still be pinned or listed', () => {
+  // Priced at zero and the busiest thing in the catalog, so nothing but being a router sinks it.
+  const lottery = hands('kilo-auto/free', { name: 'Auto Free', weekly: 900_000_000_000 })
+  const named = hands('openrouter/free', { name: 'Free Models Router' })
+  const real = hands('vendor/real')
+  const tiny = hands('vendor/tiny-2.6b')
+  const catalog = world({ models: [lottery, named, tiny, real] })
+
+  // Behind even a 2.6B: that one is one model somebody can judge, and a router is a
+  // different model on every request, that 2.6B included.
+  expect(ids(route(work, pins(), catalog))).toEqual(['vendor/real', 'vendor/tiny-2.6b', 'kilo-auto/free', 'openrouter/free'])
+  expect(ids(route(work, pins({ model: 'kilo-auto/free' }), catalog))).toEqual(['kilo-auto/free'])
+  expect(ids(route(work, pins({ order: ['openrouter/free', 'vendor/real'] }), catalog))).toEqual([
+    'openrouter/free',
+    'vendor/real',
+  ])
+})
+
+test('a size read from the id: under 7B sinks, and unknown sits in the middle rather than at the bottom', () => {
+  // Listed smallest first and busiest first, so neither the file nor `weekly` can be what
+  // decides it.
+  const tiny = hands('liquid/lfm-2.5-2.6b:free', { weekly: 9_000_000_000 })
+  const unsaid = hands('poolside/laguna-s-2.1:free', { weekly: 5_000_000 })
+  const large = hands('nvidia/nemotron-3-super-120b-a12b:free', { weekly: 1 })
+  expect(ids(route(work, pins(), world({ models: [tiny, unsaid, large] })))).toEqual([
+    'nvidia/nemotron-3-super-120b-a12b:free',
+    'poolside/laguna-s-2.1:free',
+    'liquid/lfm-2.5-2.6b:free',
+  ])
+
+  // An order and never a filter: planning still reaches a hosted 2.6B when it is all there
+  // is, because only a size the runner itself reports keeps a model off planning (D62).
+  const planning = { ...work, messages: asked('refactor the notes module') }
+  expect(ids(route(planning, pins(), world({ models: [tiny] })))).toEqual(['liquid/lfm-2.5-2.6b:free'])
+})
+
+test('a keyless provider with your key in it ranks with your keys, and its bubble says so', () => {
+  const kilo: Provider = { id: 'floor', name: 'Floor', baseUrl: 'http://127.0.0.1:3', auth: 'optional' }
+  const onFloor = hands('floor/model', { provider: 'floor', weekly: 900 })
+  const onKey = hands('keyed/model', { weekly: 1 })
+  const floorRung = remaining(store, kilo)
+
+  // No key in it: the floor, behind a keyed tier however much less that one is used.
+  const stranger = route(work, pins(), world({ models: [onFloor, onKey], rungs: [remaining(store, alpha), floorRung] }))
+  expect(ids(stranger)).toEqual(['keyed/model', 'floor/model'])
+  expect(stranger.ok && bubble(stranger.choices[1]!).says).toBe('free floor, still capable')
+
+  // A paid-up account on the same provider is one of your keys, and the world's usage decides.
+  const paidUp = route(
+    work,
+    pins(),
+    world({ models: [onFloor, onKey], rungs: [remaining(store, alpha), { ...floorRung, keyed: true }] }),
+  )
+  expect(ids(paidUp)).toEqual(['floor/model', 'keyed/model'])
+  expect(paidUp.ok && bubble(paidUp.choices[0]!).says).toBe('ready for anything')
+})
+
+test('/best turns the money round, and leaves what failed and what is a router at the bottom', () => {
+  const lottery = hands('kilo-auto/free', { name: 'Auto Free' })
+  const catalog = world({
+    models: [lottery, freeTools, cheapPaid, frontier],
+    strikes: failures('paid/frontier', 'beta', 1),
+  })
+  // Walking the whole list backwards put the model that failed a minute ago, and a router,
+  // at the top of the strongest-first list.
+  expect(ids(route({ messages: asked('hello'), tools: [{ name: 'fs.list' }] }, pins({ prefer: 'best' }), catalog))).toEqual([
+    'paid/small',
+    'paid/frontier',
+    'free/tools',
+    'kilo-auto/free',
+  ])
+})
+
+test('with no OpenRouter key, Automatic on this machine’s catalog starts with a real model of a real size', () => {
+  // The rows `model_plan.md` §2 measured, cut to what decides the order: Kilo's free list in
+  // Kilo's own order, and OpenRouter's rows for the same models with the figures OpenRouter
+  // published (2026-09-15 cache). Before D159 the first choice here was `kilo-auto/free`.
+  const kiloGateway: Provider = { id: 'kilo-gateway', name: 'Kilo Gateway', baseUrl: 'http://127.0.0.1:4', auth: 'optional' }
+  const openrouter: Provider = { id: 'openrouter', name: 'OpenRouter', baseUrl: 'http://127.0.0.1:5' }
+  const kilo = (id: string, name: string): Model => hands(id, { name, provider: 'kilo-gateway', context: 262_144 })
+  const lent = (id: string, weekly: number): Model => hands(id, { provider: 'openrouter', context: 262_144, weekly })
+  const models = borrow([
+    kilo('kilo-auto/free', 'Auto Free'),
+    kilo('poolside/laguna-s-2.1:free', 'Poolside: Laguna S 2.1 (free)'),
+    kilo('nvidia/nemotron-3-ultra-550b-a55b:free', 'NVIDIA: Nemotron 3 Ultra (free)'),
+    kilo('liquid/lfm-2.5-2.6b:free', 'LiquidAI: LFM2.5-2.6B (free)'),
+    kilo('nvidia/nemotron-3.5-lightning:free', 'NVIDIA: Nemotron 3.5 Lightning (free)'),
+    kilo('nvidia/nemotron-3-super-120b-a12b:free', 'NVIDIA: Nemotron 3 Super (free)'),
+    kilo('openrouter/free', 'OpenRouter Free Models Router'),
+    lent('google/gemma-4-31b-it:free', 391_965_209_752),
+    lent('poolside/laguna-s-2.1:free', 69_326_928_584),
+    lent('nvidia/nemotron-3.5-lightning:free', 51_038_703_166),
+    lent('nvidia/nemotron-3-ultra-550b-a55b:free', 31_889_512_209),
+    lent('nvidia/nemotron-3-super-120b-a12b:free', 10_043_068_411),
+    lent('liquid/lfm-2.5-2.6b:free', 2_056_029),
+    hands('openrouter/free', { name: 'Free Models Router', provider: 'openrouter', context: 200_000 }),
+  ])
+  const floorOnly = route(work, pins(), world({ models, rungs: [remaining(store, kiloGateway)] }))
+  expect(ids(floorOnly)).toEqual([
+    'nvidia/nemotron-3-ultra-550b-a55b:free',
+    'nvidia/nemotron-3-super-120b-a12b:free',
+    'poolside/laguna-s-2.1:free',
+    'nvidia/nemotron-3.5-lightning:free',
+    'liquid/lfm-2.5-2.6b:free',
+    'kilo-auto/free',
+    'openrouter/free',
+  ])
+
+  // With an OpenRouter key the answer is the one the plan found already worked, and the keyless
+  // copies of the same models follow your key's.
+  const keyed = route(work, pins(), world({ models, rungs: [remaining(store, kiloGateway), remaining(store, openrouter)] }))
+  expect(where(keyed).slice(0, 3)).toEqual([
+    'google/gemma-4-31b-it:free@openrouter',
+    'nvidia/nemotron-3-ultra-550b-a55b:free@openrouter',
+    'nvidia/nemotron-3-super-120b-a12b:free@openrouter',
+  ])
+  // A router is last whoever's key it is behind — and among the routers, your key still first.
+  expect(where(keyed).slice(-3)).toEqual(['openrouter/free@openrouter', 'kilo-auto/free@kilo-gateway', 'openrouter/free@kilo-gateway'])
+})
+
+test('what failed is remembered on this machine; a refused key and a conversation too long are not', async () => {
+  const { one, two, keys, ledger } = await scripted()
+  const three: Provider = { ...alpha, id: 'gamma', name: 'Gamma', baseUrl: at }
+  await keys.set(CORE, keyOf(three), 'sk-c')
+  behave = new Map([
+    ['free/limited', { status: 429, body: 'slow down' }],
+    ['free/32k', { status: 400, body: "This model's maximum context length is 32768 tokens" }],
+    ['free/refused', { status: 401, body: 'invalid api key' }],
+  ])
+  mute = new Set(['free/mute'])
+
+  const answer = await send(
+    [
+      { model: free('free/limited'), provider: one },
+      { model: free('free/mute'), provider: one },
+      { model: free('free/32k', { provider: 'beta', context: 32_768 }), provider: two },
+      { model: free('free/refused', { provider: 'beta', context: 200_000 }), provider: two },
+      { model: free('free/fine', { provider: 'gamma', context: 200_000 }), provider: three },
+    ],
+    { messages: asked('hello') },
+    ledger,
+    keys,
+  )
+  expect(answer.model.id).toBe('free/fine')
+  // The rate limit and the empty answer are about those models. The key is the provider's, and
+  // the window was the conversation's — neither says anything about how a model is doing.
+  expect(ledger.strikes().map((one) => `${one.model}@${one.provider}`)).toEqual(['free/limited@alpha', 'free/mute@alpha'])
+  behave = new Map()
+  ledger.close()
+})
+
+test('a model a gateway only kept alive is named with the time it was given, and is the model’s failure (D163)', () => {
+  const gateway: Provider = { id: 'kilo-gateway', name: 'Kilo Gateway', baseUrl: 'http://127.0.0.1:4', auth: 'optional' }
+  const kept = failed(new ProviderError(504, 'kept', 'kept'), { model: free('nvidia/ultra', { name: 'Nemotron 3 Ultra' }), provider: gateway })
+  expect(kept).toMatchObject({ reach: 'model', outcome: 'slow' })
+  expect(kept?.says).toBe('Nemotron 3 Ultra did not answer in 120 seconds, though Kilo Gateway kept the connection open')
+})
+
+test('a switch into a paid model is said twice: the charge line in its place, and the switch as an event (§4 G)', async () => {
+  const { one, two, keys, ledger } = await scripted()
+  refuse = new Set(['free/text'])
+  const switches: Switch[] = []
+  const paidLines: string[] = []
+  const notes: string[] = []
+  const answer = await send(
+    [
+      { model: freeText, provider: one },
+      { model: cheapPaid, provider: two },
+    ],
+    { messages: asked('hello'), maxTokens: 200 },
+    ledger,
+    keys,
+    { onNote: (line) => notes.push(line), onSwitch: (event) => switches.push(event), onPaid: (line) => paidLines.push(line) },
+  )
+  expect(answer.model.id).toBe('paid/small')
+  expect(paidLines).toEqual(['The free models are used up, so this one goes to paid/small, which costs money.'])
+  // Where the switch has a place of its own it is still said, rather than folded into the charge.
+  expect(switches.map((one) => [one.from, one.to])).toEqual([[['free/text'], 'paid/small']])
+  expect(notes).toEqual([])
+  refuse = new Set()
+  ledger.close()
+})
+
+test('with the paid switch off, free done and paid able is a pause with its reason, and nothing else is (§4 H)', () => {
+  const eyes = model({ id: 'paid/eyes', tier: 'T2', priceIn: 1, provider: 'beta', supportsTools: true, context: 128_000, modality: ['text', 'image'] })
+  const off = (over: Partial<World> = {}): World => world({ models: [freeTools, eyes], today: { spent: 0, allowance: 0 }, cross: false, ...over })
+  const hello = { messages: asked('hello'), tools: [{ name: 'fs.list' }] }
+
+  // The free tier spent by the ledger: used up.
+  const spentLedger = new Store(':memory:')
+  for (let i = 0; i < 10; i++) spentLedger.recordRequest('alpha')
+  const usedUp = route(hello, pins(), off({ rungs: [remaining(spentLedger, alpha), remaining(spentLedger, beta)] }))
+  expect(usedUp.ok === false && usedUp.paused).toBe('The free models are used up.')
+
+  // A picture no free model can be given.
+  const picture = route({ ...hello, modality: ['image'] }, pins(), off())
+  expect(picture.ok === false && picture.paused).toBe('No free model can be given a picture.')
+
+  // The switch on with the day's amount spent is the allowance stopping it, not a pause.
+  const spent = route({ ...hello, modality: ['image'] }, pins(), off({ cross: true, today: { spent: 2, allowance: 1 } }))
+  expect(spent.ok === false && spent.paused).toBe(undefined)
+  expect(spent.ok === false && spent.why).toContain("today's $1.00 for paid models is spent")
+
+  // And a world that says nothing about the switch keeps the old rule, where the allowance decides.
+  const unsaid = route({ ...hello, modality: ['image'] }, pins(), world({ models: [freeTools, eyes], today: { spent: 0, allowance: 0 } }))
+  expect(unsaid.ok === false && unsaid.paused).toBe(undefined)
+  spentLedger.close()
 })

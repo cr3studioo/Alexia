@@ -111,13 +111,18 @@ export interface Ran {
  * Run what was typed. `call` invokes a plugin's tool of the same name as the command —
  * which is the whole binding, and why a manifest declares a command with nothing but a name
  * and a sentence.
+ *
+ * Whatever follows that word is handed over whole, under `rest`, the same key for every
+ * plugin command alike (D177). Core does not read it, split it or learn what it means, so a
+ * command still declares nothing but a name and a sentence; the tool on the other end says in
+ * its own schema whether it wanted an argument, and is the only thing that knows.
  */
 export async function run(
   input: string,
   context: {
     store: Store
     manifests?: readonly Manifest[]
-    call?(plugin: string, tool: string): Promise<string>
+    call?(plugin: string, tool: string, args?: Record<string, unknown>): Promise<string>
     /**
      * Start a fresh conversation *here*.
      *
@@ -130,7 +135,9 @@ export async function run(
     providers?: readonly Provider[]
   },
 ): Promise<Ran> {
-  const word = input.trim().replace(/^\//, '').split(/\s+/)[0] ?? ''
+  const typed = input.trim().replace(/^\//, '')
+  const word = typed.split(/\s+/)[0] ?? ''
+  const rest = typed.slice(word.length).trim()
   const { store } = context
 
   const mode = (name: keyof typeof MODES, note: string): Ran => {
@@ -186,7 +193,7 @@ export async function run(
 
   const tool = found.alias?.split('.')[1] ?? found.name
   try {
-    return { ok: true, note: await context.call(found.plugin, tool) }
+    return { ok: true, note: await context.call(found.plugin, tool, rest === '' ? undefined : { rest }) }
   } catch (error) {
     // The plugin's own words, or the reason it could not be reached. Never core's guess.
     return { ok: false, note: error instanceof Error ? error.message : String(error) }

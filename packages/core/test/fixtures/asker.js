@@ -82,7 +82,8 @@ server.registerTool(
       messages: [{ role: 'user', content: { type: 'text', text: 'tidy up' } }],
       maxTokens: 200,
     })
-    return text(answer.content?.type === 'text' ? answer.content.text : '')
+    // The stop reason beside the words, so a test can tell a cut answer from a whole one.
+    return text(`${answer.content?.type === 'text' ? answer.content.text : ''} (${answer.stopReason})`)
   },
 )
 
@@ -127,14 +128,35 @@ server.registerTool(
     annotations: { openWorldHint: true },
     _meta: { 'alexia/provides': ['ask.confirm'] },
   },
-  ({ question: asked }) => {
+  async ({ question: asked }) => {
     question = String(asked ?? '')
+    // Somebody who never answers: the question stays open, which is what a phone left in a
+    // pocket looks like from here (§4 H).
+    if (press === 'never') await new Promise(() => {})
     return text(press)
   },
 )
 
 server.registerTool('asked', { description: 'What the last question was.', annotations: { readOnlyHint: true } }, () =>
   text(question),
+)
+
+server.registerTool(
+  'answer_never',
+  { description: 'Never answer the next question.', annotations: { readOnlyHint: true } },
+  () => {
+    press = 'never'
+    return text('will not answer')
+  },
+)
+
+server.registerTool(
+  'answer_yes',
+  { description: 'Answer the next question with Yes.', annotations: { readOnlyHint: true } },
+  () => {
+    press = 'Yes'
+    return text('will say yes')
+  },
 )
 
 server.registerTool(

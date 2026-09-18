@@ -38,6 +38,55 @@ contract was still moving.
 sentence rather than crashing, exactly as written here while it was still hypothetical. The
 migration for a revision-1 plugin that uses nothing from 2 is one character.
 
+## 8 → 9 *(2026-09-18)*
+
+**The rest of the Models mock-up.** Two additions to `table`, both optional:
+
+| | |
+|---|---|
+| `groupNotes` on the table | `{ "Set aside by Alexia": "What Alexia has stopped asking on her own." }`. One line under a group's heading, keyed by the same value `groupOrder` uses. A group you say nothing about keeps its heading alone. |
+| `chips` on the table | `[{ "key": "new", "label": "New", "tags": ["new · not tried yet"] }]`. Named filters, each narrowing the table to a `group` or to rows carrying any of some `tags`. |
+
+The case was the same Models table 8 was built for (`model_plan.md` §4 C). Three pieces of its
+mock-up were left unbuilt, and two of them were the table's rather than the page's: a line
+saying what each group *is* — five of which, gathered into the widget's hint, were a paragraph
+nobody reads to find the one line they wanted — and the chips for the three questions people
+arrive asking, *what needs attention*, *what is new*, *what has been set aside*.
+
+**Neither adds a query language.** A chip matches on `groupBy`'s value or on what a row's `tags`
+already say, so a chip naming neither matches nothing and is not drawn. One chip is pressed at a
+time and the filter box searches inside what it left, so the two read as one filter.
+
+Both are manifest fields, so both are checked against the revision: declaring either while
+claiming 8 is a load error naming the revision.
+
+### If you are updating a plugin
+
+Nothing to do. Declare 9 only to use `groupNotes` or `chips`.
+
+## 7 → 8 *(2026-09-17, D164)*
+
+**A table that explains its own order.** Three additions to `table`, all optional:
+
+| | |
+|---|---|
+| `groupOrder` on the table | `["Your list", "Automatic, free", "Set aside by Alexia", "Paid"]`. Groups are drawn in that order; any group not named follows, alphabetically, as before. |
+| `note` on a row | One sentence drawn under the row. |
+| `tags` on a row | Chips, each `{ "says": "busy", "tone": "caution" }`, tone `quiet`, `caution` or `danger`, drawn in a column whose `key` is `tags`. |
+
+The case was core's own Models table (`model_plan.md` §4 C): it lists every model in the order
+Alexia would ask them, with a sentence under each saying why it sits below the one above, and
+what Alexia has concluded about it. A core tab is drawn by the same widget a plugin declares
+(M6-4), so what it needed arrived for everyone rather than as something only core could say.
+
+Only `groupOrder` is a manifest field, so only it is checked against the revision: declaring it
+while claiming 7 is a load error naming the revision. `note` and `tags` are row fields, like
+`preview` — a shell older than 8 simply does not draw them.
+
+### If you are updating a plugin
+
+Nothing to do. Declare 8 only to use `groupOrder`.
+
 ## 6 → 7 *(2026-09-02)*
 
 **Four things, and they are one change: a page that shows what applies.**

@@ -4,7 +4,7 @@
   "id": "persona",
   "name": "Personality",
   "summary": "Write Alexia a personality in your own words, save as many as you like, and switch between them.",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "license": "AGPL-3.0-only",
   "entry": {
     "run": "node",
@@ -49,15 +49,18 @@
       "type": "table",
       "key": "saved",
       "label": "Saved personalities",
-      "hint": "Use switches her over from the next thing you say. Open a row to read exactly what she is being told.",
+      "hint": "Use switches her over from the next thing you say. Open a row to read exactly what she is being told, and the words it was adapted from.",
       "rows": "personalities",
       "columns": [
         { "key": "name", "label": "Name" },
         { "key": "using", "label": "In use" },
+        { "key": "wrote", "label": "Written by", "hideNarrow": true },
         { "key": "written", "label": "Written", "align": "right", "hideNarrow": true }
       ],
       "rowActions": [
         { "key": "use", "label": "Use", "tool": "use" },
+        { "key": "readapt", "label": "Re-adapt", "tool": "readapt" },
+        { "key": "undo", "label": "Undo", "tool": "undo" },
         { "key": "forget", "label": "Forget", "tool": "forget", "confirm": "Forget {name}?" }
       ],
       "detail": "about_personality",
@@ -74,6 +77,16 @@
       "type": "status",
       "key": "state",
       "label": "State"
+    }
+  ],
+  "commands": [
+    {
+      "name": "persona",
+      "summary": "List your saved personalities, or switch to one by name"
+    },
+    {
+      "name": "plainly",
+      "summary": "Stop using any personality — Alexia goes back to her own voice"
     }
   ],
   "storage": {

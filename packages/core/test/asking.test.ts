@@ -25,7 +25,7 @@ const root = mkdtempSync(join(tmpdir(), 'alexia-asking-'))
 const from = mkdtempSync(join(tmpdir(), 'alexia-asker-'))
 
 /** A scripted model, on a provider row pushed into the table core reads. */
-let script: ({ call: string } | { say: string })[] = []
+let script: ({ call: string } | { say: string; cut?: true })[] = []
 const served: string[] = []
 const models: Server = createServer((request, response) => {
   let raw = ''
@@ -38,8 +38,9 @@ const models: Server = createServer((request, response) => {
         { tool_calls: [{ index: 0, id: 'c1', function: { name: turn.call, arguments: '{}' } }] }
       : { content: turn.say }
     response.writeHead(200, { 'content-type': 'text/event-stream' })
+    const stopped = 'cut' in turn ? { finish_reason: 'length' } : {}
     response.end(
-      `data: ${JSON.stringify({ choices: [{ delta }] })}\n\n` +
+      `data: ${JSON.stringify({ choices: [{ delta, ...stopped }] })}\n\n` +
         `data: ${JSON.stringify({ usage: { prompt_tokens: 5, completion_tokens: 1 } })}\n\ndata: [DONE]\n\n`,
     )
   })
@@ -110,6 +111,8 @@ const alexia: Serving = await serve({
   // that answer with an empty keychain — so without this the router would quietly prefer one
   // of them and this suite would be measuring somebody else's server over the real network.
   providers: [stub],
+  // And nothing from this machine, which is a rung behind every stub that fails (D155).
+  local: false,
 })
 
 afterAll(async () => {
@@ -147,6 +150,18 @@ test('a plugin that says nothing about tools gets a completion, as it always did
   expect(served).toHaveLength(1)
   expect(served[0]).not.toContain('asker__wipe')
   expect(JSON.parse(served[0]!)).not.toHaveProperty('tools')
+}, 30_000)
+
+test('a completion that ran out of room reaches the plugin as maxTokens, not as finished', async () => {
+  // The personality adapter saved half a document because this said `endTurn` whatever the
+  // provider said. MCP has the word; core was not using it.
+  //
+  // The stub is the only rung, which matters since D155: a free answer cut short with another
+  // model behind it is that model's turn, and only the last rung's cut reaches the plugin.
+  script = [{ say: 'half', cut: true }]
+  expect(String((await press('plain')).said)).toContain('half (maxTokens)')
+  script = [{ say: 'whole' }]
+  expect(String((await press('plain')).said)).toContain('whole (endTurn)')
 }, 30_000)
 
 test('a task started by a plugin asks that plugin, and the yes lets the step run', async () => {

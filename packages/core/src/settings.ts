@@ -53,6 +53,21 @@ export interface CoreWidget {
   /** The action that takes the slider's new value, and the one that takes the running order. */
   chose: string
   ordered: string
+  /**
+   * **The paid switch under the slider** (§4 H): the action that turns it on with a daily amount
+   * (`on:1.50`) or off (`off`), and what it stands at now — filled in when the tab is read.
+   */
+  crossing?: string
+  cross?: boolean
+  daily?: number
+  /**
+   * **The keyless floor's switch** (§1 step 2, D154): the action that turns the providers which
+   * answer without a key on (`on`) or off (`off`), and what it stands at now. Unlike the paid
+   * switch this one is on at every stop of the slider, because *free only* is exactly where
+   * somebody most wants to say which free providers.
+   */
+  floor?: string
+  keyless?: boolean
 }
 
 /** A declaration plus what core knows about it right now. The shell renders this and nothing else. */

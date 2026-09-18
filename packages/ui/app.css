@@ -450,6 +450,13 @@ body[data-view='control'] .view:not(#control) {
   margin: 0 auto;
 }
 
+/* Control is tables, and the Models table is nine columns that each say something (D164):
+   at 50rem its sizes wrapped four lines deep and its tags went past the edge. Its prose keeps
+   its own measure, so only the tables use the width. */
+#control > .centred {
+  max-width: 76rem;
+}
+
 .opening {
   display: block;
   width: var(--space-8);
@@ -871,10 +878,57 @@ body[data-view='control'] .view:not(#control) {
   margin-top: var(--space-3);
 }
 
+/* News above a list — *1 new free model since 09:15* — said once, in the accent, and gone after
+   the next fetch that adds nothing (§4 D). */
+.said-news {
+  color: var(--chosen);
+}
+
 .table-filter {
   width: 100%;
   max-width: var(--measure-short);
   margin-bottom: var(--space-3);
+}
+
+/* The chips above a table (`alexia_protocol` 9): the questions people arrive asking, one press
+   each. Pressed is a filled chip rather than a colour, so the tags below keep tone to themselves. */
+.table-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.table-chip {
+  padding: 0 var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: none;
+  font-size: var(--text-xs);
+  line-height: 1.9;
+  color: var(--ink-quiet);
+  cursor: pointer;
+}
+
+.table-chip[aria-pressed='true'] {
+  border-color: var(--ink-faint);
+  background: var(--wash);
+  color: var(--ink);
+}
+
+/* A line under a group's heading saying what the group is (`alexia_protocol` 9). */
+.group-note td {
+  padding-top: 0;
+  padding-bottom: var(--space-2);
+  max-width: var(--measure);
+  font-size: var(--text-xs);
+  color: var(--ink-quiet);
+  font-weight: 400;
+}
+
+/* A row whose detail opens when it is clicked, not only from its Details button. */
+.opens {
+  cursor: pointer;
 }
 
 /* Its own scroller rather than the panel's, which is what makes the sticky header stick to
@@ -927,6 +981,12 @@ body[data-view='control'] .view:not(#control) {
 
 .grid .right {
   text-align: right;
+}
+
+/* A number is one line. `120B, from its name` wrapped four deep in a narrow column read as four
+   facts; a right-aligned cell is a figure, and the table scrolls sideways before it breaks one. */
+.grid td.right {
+  white-space: nowrap;
 }
 
 /* Somewhere to rest the eye on a long row. Not a stripe on every other row: hover follows
@@ -1556,6 +1616,78 @@ body[data-view='control'] .view:not(#control) {
 
 /* The side the slider has closed. Dimmed rather than removed: what you ordered is still what
    you ordered, and a column that vanished would read as the list having been thrown away. */
+/* The day's amount beside *Allow switching to a paid model*, when there was none (§4 H). */
+.pause-amount {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--text-sm);
+}
+
+.pause-amount input {
+  width: 6em;
+}
+
+/* The paid switch under the slider (§4 H): a checkbox, its sentence, and the day's amount. */
+.cross {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  margin: 0 0 var(--space-4);
+}
+
+.cross-toggle {
+  margin: 0;
+}
+
+.cross-label {
+  font-size: var(--text-sm);
+}
+
+.cross-amount {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--text-sm);
+  color: var(--ink-quiet);
+}
+
+.cross-daily {
+  width: 6em;
+}
+
+.cross-said {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--ink-quiet);
+}
+
+/* The keyless floor's switch (D154), under the paid one and shown at every stop of the slider. */
+.floor {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  margin: 0 0 var(--space-4);
+}
+
+.floor-toggle {
+  margin: 0;
+}
+
+.floor-label {
+  font-size: var(--text-sm);
+}
+
+.floor-said {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--ink-quiet);
+}
+
 .ladder-col[data-off='true'] {
   opacity: 0.45;
 }
@@ -1656,11 +1788,64 @@ body[data-view='control'] .view:not(#control) {
   color: var(--ink-faint);
 }
 
+/* A row's own sentence, under its first cell (`alexia_protocol` 8): why it is where it is. */
+.row-note {
+  display: block;
+  margin-top: 2px;
+  max-width: 62ch;
+  font-size: var(--text-xs);
+  line-height: var(--leading-prose);
+  color: var(--ink-faint);
+  white-space: normal;
+}
+
+/* Tags: chips in a tone, and the tone is the only thing that colours one. */
+.tags-cell {
+  vertical-align: top;
+}
+
+.tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  max-width: 16rem;
+}
+
+.tag {
+  padding: 0 var(--space-2);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: var(--text-xs);
+  line-height: 1.6;
+  color: var(--ink-faint);
+  white-space: nowrap;
+}
+
+.tag.caution {
+  border-color: var(--caution);
+  color: var(--caution);
+}
+
+.tag.danger {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
 .chip-grip {
   flex: none;
   color: var(--ink-faint);
   font-size: var(--text-xs);
   cursor: grab;
+}
+
+/* A model the list still names and nothing can ask: its provider has no key. Kept, and the
+   reason is the line under its name — dimmed like a closed side, not struck out like a deletion. */
+.chip.off .chip-name {
+  color: var(--ink-faint);
+}
+
+.chip.off .chip-meta {
+  color: var(--caution);
 }
 
 .chip-drop {
@@ -2266,6 +2451,15 @@ button[disabled] {
   font-size: var(--text-sm);
 }
 
+/* A stop in somebody's own choice (D155): the reason above, and this one answer's way on. */
+.turn.refusal .stop-offer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  white-space: normal;
+}
+
 /* ---- the step trace -------------------------------------------------------------------
 
    The hardest thing here to draw and the thing people look at most. A log: one row per step,
@@ -2342,6 +2536,81 @@ button[disabled] {
   color: var(--ink-quiet);
   border-top: 1px solid var(--line);
   background: var(--surface);
+}
+
+/* The line before a charge (§4 G): its own row, in the caution colour, because money is the one
+   thing on this screen that should never be replaced by a quieter line. */
+#paid-note {
+  margin: 0;
+  padding: var(--space-2) var(--space-4);
+  font-size: var(--text-sm);
+  color: var(--caution);
+  border-top: 1px solid var(--line);
+  background: var(--surface);
+}
+
+/* A switch to another model, for three seconds (§4 G), over the bottom of the conversation. */
+#popup {
+  position: fixed;
+  left: 50%;
+  /* Clear of the composer, which is the one thing a person is looking at when a switch happens. */
+  bottom: calc(2 * var(--space-8) + var(--space-4));
+  z-index: 20;
+  max-width: min(36rem, calc(100vw - 2 * var(--space-4)));
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  transform: translateX(-50%);
+  font-size: var(--text-sm);
+  color: var(--ink);
+  background: var(--surface-raised);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  box-shadow: 0 6px 24px color-mix(in oklab, var(--ink) 18%, transparent);
+  animation: popup-in 160ms ease-out;
+}
+
+@keyframes popup-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 6px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #popup {
+    animation: none;
+  }
+}
+
+/* The row of things to say about the latest answer (§4 I): quiet, and under the words. */
+.message-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.message-actions .quiet-button {
+  font-size: var(--text-xs);
+}
+
+/* An answer somebody marked bad: still on the page, dimmed, and saying why. */
+.turn.bad {
+  opacity: 0.6;
+}
+
+.bad-line {
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--caution);
+}
+
+/* The same switch, kept on the answer: a small line above the words, drawn again on reload. */
+.switch-line {
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-xs);
+  line-height: var(--leading-prose);
+  color: var(--ink-faint);
 }
 
 /* ---- the permission prompt -------------------------------------------------------------
