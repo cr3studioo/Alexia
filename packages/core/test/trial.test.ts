@@ -52,7 +52,13 @@ const model = (id: string, over: Partial<Model> = {}): Model => ({
 })
 
 const HOUR = 60 * 60 * 1000
-const now = Date.UTC(2026, 8, 17, 12)
+// Noon UTC of whatever day this runs, not a fixed date. This test travels a day forward, and
+// `send()` stamps a try with the real clock rather than the `now` it was handed — so once the
+// real clock passed a hardcoded `now + 24h`, the ten tests sent on day one read as never sent
+// and the cap went out again instead of the remaining four. It ran green for a year and then
+// failed on 2026-09-18 having changed nothing. Noon keeps a day's budget off a UTC midnight.
+const midday = new Date()
+const now = Date.UTC(midday.getUTCFullYear(), midday.getUTCMonth(), midday.getUTCDate(), 12)
 
 /** Twelve new models, two free ones set aside, two paid ones set aside, one wanting a key with none saved, and one that is fine. */
 function setting(): { store: Store; world: (at?: number) => World } {
