@@ -310,6 +310,11 @@ anyone having to explain context windows. An estimate labelled as one (character
 **Why.** Switching today takes the settings screen, a table and a row action. The commands
 work on Telegram too, since slash commands already reach plugins from there.
 
+**Built: the commands 2026-09-18 (D177), the chip 2026-09-19 (D184)**, which is where step 8
+put it. The chip is `persona.in_use`, a capability of its own, and it is hidden when nothing is
+chosen — Alexia's own voice is not a personality, and a chip permanently saying *none* is a
+control always on screen saying nothing.
+
 ### 9. A personality per place — M
 
 **What.** A saved personality can be bound to a channel: *use on Telegram*. Core passes
@@ -341,6 +346,21 @@ she should have said. The last few become examples that **Refine** uses as evide
 words for a system prompt. It needs a message action in the shell, which is the larger part.
 `model_plan.md` §4 I adds *Bad answer* in the same place (D161): that one is about the model,
 this one about the personality, and they are built as one row of message actions.
+
+**Built 2026-09-19 (D184).** *Where it differs from the text above.* **The mark is a pair, not
+a line**: what she was asked, what she said, and — when somebody typed one — what she should
+have said. One half of that is an opinion; all three are an example, and an example is what
+{@link refining} can use. **The press is sent before the box opens**, because the press alone
+is already a usable fact and the box is a kindness rather than a form. **Four are kept**, per
+personality and its own row's only: a brief that is mostly complaints is a brief about
+complaining, and a mark collected under one personality says nothing about another. They go
+**after** the document and labelled as examples rather than instructions, or a model handed
+four complaints first rewrites the personality around them. **Two new capability names**:
+`persona.not_her` for the mark and `persona.in_use` for the chip — the second rather than a
+field on the document, because the document is read once a task and the name on every state
+poll. **The chip is `#character` in the shell, not `#persona`**: invariant 1 caught the first
+name, which was this plugin's id, and the shell may not name a plugin. **Tests:**
+`packages/core/test/nother.test.ts`, `plugins/persona/test/nother.test.js`.
 
 **Also worth doing, later:** starter *descriptions* (not documents: D105 showed a model copies
 a worked example); export and import a personality as a `.md` file, through the §6 check; and
@@ -405,8 +425,8 @@ for paid models, an order that lets provider prompt caching reuse the personalit
    nothing. The Skip is a toggle — *Hear her before switching*, on by default — rather than a
    fourth button, because the samples are two model calls and the honest place to decline them
    is before they are made.
-8. **Improvement 10** with `model_plan.md` §4 I's *Bad answer*, as one row of message actions,
-   and the header chip from 8.
+8. ~~**Improvement 10** with `model_plan.md` §4 I's *Bad answer*, as one row of message actions,
+   and the header chip from 8.~~ Done 2026-09-19 (**D184**). **This order of work is finished.**
 
 ## Open decisions
 

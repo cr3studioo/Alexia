@@ -299,10 +299,18 @@ land on anything not already covered by D154–D171): the same day, in three pla
   Found on the way and fixed: `memory.remember` and `memory.recall` have been shipped by
   `plugins/memory` since it existed and were never in `docs/spec/capabilities.md`'s register.
 
-- [ ] **17. Step 8 — improvement 10, joined with Bad answer.**
+- [x] **17. Step 8 — improvement 10, joined with Bad answer.**
   *"That wasn't her"* joins `model_plan.md` §4 I's *Bad answer* as one row of message actions
   (`answerActions()` in `packages/ui/src/main.ts`) — build them together, not twice. The header
   chip deferred from item 11 (improvement 8) lands here too.
+
+  **Built 2026-09-19 (D184), `b0f5db5`.** Both in one row, as the item required. Two new
+  capability names — `persona.not_her` for the mark and `persona.in_use` for the chip — and no
+  protocol bump, since a capability name is a string in `provides` rather than a manifest field
+  or a method. The chip is `#character` in the shell: **invariant 1 caught `#persona`**, which
+  is a plugin id, and that rule applies to the shell as much as to core.
+
+  **M8-7 is ticked in `plan.md`**: `plan-personality.md`'s order of work is finished.
 
 - [ ] **18. `model_plan.md`'s deferred item: the model record shared with the owner's server.**
   Explicitly "decided later" (D160); the hook already exists and does nothing (D171, §4 J). Do
