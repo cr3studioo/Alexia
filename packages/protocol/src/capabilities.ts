@@ -76,6 +76,36 @@ export const CORE_CAPABILITIES = {
    */
   capture: 'memory.capture',
   /**
+   * **That wasn't her**: one answer marked as out of character (`plan-personality.md`
+   * improvement 10), with an optional line on what she should have said.
+   *
+   * The sibling of *Bad answer* and the opposite question. *Bad answer* is about the **model**
+   * — it was wrong, ask something else — and core handles it itself, because a model's record
+   * is core's. This one is about the **personality**, which is a plugin's document, so core
+   * hands over what was said and forgets about it.
+   *
+   * **Fire and forget, with no answer**, for the same reason `capture` is: the person has
+   * already read the answer and pressed a button about it, and a mark that could delay or
+   * refuse anything would be a button that sometimes fails for reasons about a plugin.
+   *
+   * Nothing provides it → the button is not drawn, which is the honest version of *there is
+   * nothing here this would tell*. Core is complete without it: an Alexia with no personality
+   * plugin has no personality to be out of character for.
+   */
+  notHer: 'persona.not_her',
+  /**
+   * **Which personality is in use, by name** (`plan-personality.md` improvement 8's chip).
+   *
+   * A second name rather than a field on {@link CORE_CAPABILITIES.personality}, because the
+   * two are read at completely different rates: the document once a task, and the name on
+   * every state poll. Folding one into the other would send a page of text to a header label
+   * twenty times a minute.
+   *
+   * Nothing provides it → no chip. The chat header is complete without one: the name is a
+   * convenience, and *which personality is on* has a settings screen either way.
+   */
+  inUse: 'persona.in_use',
+  /**
    * Ask a person a question when they are not at the keyboard, and wait for the answer (M7-5).
    *
    * **The ruling stays in core; only the surface is new.** The permission modes (M15-3) and

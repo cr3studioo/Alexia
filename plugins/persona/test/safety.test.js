@@ -133,7 +133,7 @@ test('every document that can be saved goes through the check — Re-adapt, Refi
   expect(source.match(/await write\(ctx, /g)).toHaveLength(3)
   expect(source).toMatch(/await write\(ctx, brief\(description, name, remembering\)\)/)
   expect(source).toMatch(/await write\(ctx, brief\(was\.described, String\(row\.name\)\)\)/)
-  expect(source).toMatch(/await write\(ctx, refining\(was\.doc, change\), STEPS\.refine\)/)
+  expect(source).toMatch(/await write\(ctx, refining\(was\.doc, change, moments\), STEPS\.refine\)/)
   // **And the one document no model wrote.** Edit is text somebody typed or pasted, which is
   // exactly as able to carry a line telling her to skip asking — more so, since pasting from
   // somewhere else is the import path this plugin does not have yet. It runs the same two.

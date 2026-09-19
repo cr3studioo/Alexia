@@ -95,6 +95,10 @@ interface State {
   today?: { spent: number; allowance: number }
   /** The paid switch is on: Automatic moves to paid by itself once the free models are done (§4 H). */
   cross?: boolean
+  /** The personality in use, by name — the chip in the header. Absent is Alexia's own voice. */
+  character?: string
+  /** Something will listen to *That wasn't her*, so the button is worth drawing (improvement 10). */
+  notHer?: boolean
   providers: Provider[]
   commands: Command[]
 }
@@ -104,6 +108,25 @@ const log = document.querySelector<HTMLElement>('#log')!
 const note = document.querySelector<HTMLElement>('#note')!
 const modelBadge = document.querySelector<HTMLElement>('#model')!
 const rungBadge = document.querySelector<HTMLElement>('#rung')!
+const characterChip = document.querySelector<HTMLElement>('#character')!
+
+/**
+ * **Who is answering, from the last state read** — the chip's value and whether *That wasn't
+ * her* has anywhere to go.
+ *
+ * Held here because a live answer arrives on the stream rather than out of `paint()`, and the
+ * row of actions under it has to be drawn at that moment. Reading the whole state first would
+ * put a round trip between the last word and the buttons; using what was last read draws them
+ * immediately and the refresh below corrects it if it was stale.
+ */
+let inCharacter: { name?: string; notHer: boolean } = { notHer: false }
+
+/** The chip, and the two facts kept beside it. Called from every state read. */
+function characterFrom(state: State): void {
+  inCharacter = { ...(state.character !== undefined && { name: state.character }), notHer: state.notHer === true }
+  characterChip.textContent = state.character ?? ''
+  characterChip.hidden = state.character === undefined || state.character === ''
+}
 
 /**
  * **What Alexia can do right now**, beside the model that just did it.
@@ -185,12 +208,19 @@ function pop(line: string): void {
 }
 
 /**
- * **The row of actions under the latest answer** (§4 I). One row for everything a person can say
- * about an answer: *Bad answer* now, and *that wasn't her* from the personality plan when it lands
- * (D157) — so the two are never two rows competing under one bubble. Only the latest answer has
- * it, because a press asks that question again.
+ * **The row of actions under the latest answer** (§4 I and improvement 10). One row for
+ * everything a person can say about an answer, so the two are never two rows competing under
+ * one bubble. Only the latest answer has it, because *Bad answer* asks that question again.
+ *
+ * **The two ask opposite questions about the same words.** *Bad answer* says it was wrong —
+ * the answer is thrown away and something else is asked, and the model's record carries it.
+ * *That wasn't her* says it was the right answer in the wrong voice — nothing is re-asked and
+ * nothing is discarded, and what changes later is the personality.
+ *
+ * *That wasn't her* is drawn only when something is listening (`state.notHer`), which is the
+ * honest version of *there is nothing here this would tell*.
  */
-function answerActions(answer: HTMLElement): void {
+function answerActions(answer: HTMLElement, canSay = false): void {
   for (const old of log.querySelectorAll('.message-actions')) old.remove()
   const row = document.createElement('div')
   row.className = 'message-actions'
@@ -205,7 +235,76 @@ function answerActions(answer: HTMLElement): void {
     running(() => respond('…', undefined, () => Promise.resolve({ again: true, bad: {} })))
   })
   row.append(bad)
+  if (canSay) row.append(notHerButton(row, answer))
   answer.append(row)
+}
+
+/**
+ * ***That wasn't her***, and the line that makes it worth more than a tally.
+ *
+ * **One press, then an optional sentence.** The press on its own is already a usable fact —
+ * *this did not sound like her* — so it is sent immediately and the box that opens is a
+ * kindness rather than a form: whoever cannot be bothered has already said the useful thing,
+ * and whoever can says *she should have just answered, not explained herself* and turns a
+ * complaint into an example.
+ *
+ * Nothing is re-asked and the answer stays on the page. It was the right answer; it was in
+ * the wrong voice, and that is a thing about the personality rather than about this reply.
+ */
+function notHerButton(row: HTMLElement, answer: HTMLElement): HTMLElement {
+  const said = document.createElement('button')
+  said.type = 'button'
+  said.className = 'quiet-button'
+  said.textContent = 'That wasn’t her'
+  said.title = 'Out of character. The answer stays; the personality is what gets fixed.'
+  said.addEventListener('click', () => {
+    said.disabled = true
+    /**
+     * **One box, however the press arrives.** The row above this is redrawn when a state read
+     * comes back saying something is listening after all, so there are moments where a press
+     * can land on a button whose row is about to be replaced — and two boxes under one answer,
+     * each offering to take the line, is a question asked twice.
+     */
+    if (answer.querySelector('.not-her') !== null) return
+    void post('/api/not-her', {})
+    const box = document.createElement('div')
+    box.className = 'not-her'
+    const field = document.createElement('input')
+    field.type = 'text'
+    field.className = 'not-her-line'
+    field.placeholder = 'What should she have said? (optional)'
+    field.setAttribute('aria-label', 'What she should have said')
+    const send = document.createElement('button')
+    send.type = 'button'
+    send.className = 'quiet-button'
+    send.textContent = 'Add'
+    let sent = false
+    const done = (): void => {
+      // Enter and the button are the same press, and a second one is not a second line.
+      if (sent) return
+      sent = true
+      const typed = field.value.trim()
+      if (typed !== '') void post('/api/not-her', { said: typed })
+      box.replaceChildren(noted(typed === '' ? 'Noted. Refine will use this.' : 'Noted, with what she should have said.'))
+    }
+    send.addEventListener('click', done)
+    field.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') done()
+    })
+    box.append(field, send)
+    row.after(box)
+    field.focus()
+    answer.classList.add('not-her-marked')
+  })
+  return said
+}
+
+/** The line that replaces the box once something has been said, so a press is never silent. */
+function noted(text: string): HTMLElement {
+  const line = document.createElement('p')
+  line.className = 'bad-line'
+  line.textContent = text
+  return line
 }
 
 /** An answer somebody marked bad: dimmed, and saying so, rather than taken off the page. */
@@ -1026,7 +1125,13 @@ function paint(state: State): void {
     latest = turn.role === 'assistant' && turn.bad !== true && turn.content !== '' ? drawn : undefined
   }
   // The latest answer, when the conversation ends on one, carries the row of actions (§4 I).
-  if (latest !== undefined) answerActions(latest)
+  if (latest !== undefined) answerActions(latest, state.notHer === true)
+  /**
+   * **Who is answering** (improvement 8). Hidden when nothing is chosen, because Alexia's own
+   * voice is not a personality and a chip saying *none* would be a control that is always on
+   * screen saying nothing.
+   */
+  characterFrom(state)
   /**
    * **The day, when there is an allowance; otherwise the month.**
    *
@@ -1749,8 +1854,23 @@ async function respond(
       // A conversation is named by the first thing you said in it, so the rail's list and
       // the title above the log are both a turn out of date until this.
       void rail.refresh()
-      // A finished answer can be marked bad (§4 I).
-      if (done.ended === 'answered') answerActions(answer)
+      /**
+       * A finished answer can be marked bad (§4 I), and said not to have sounded like her
+       * (improvement 10). Drawn from what was last read so the buttons are there the moment
+       * the words stop, then read again — because the personality may have been switched on
+       * the settings screen since, and the chip in the header is a turn out of date until
+       * somebody does.
+       */
+      if (done.ended === 'answered') {
+        const was = inCharacter.notHer
+        answerActions(answer, was)
+        void read().then((now) => {
+          characterFrom(now)
+          // Only redrawn when the answer changed, or every finished answer would rebuild its
+          // own buttons a beat after drawing them, which reads as a flicker with no cause.
+          if ((now.notHer === true) !== was) answerActions(answer, now.notHer === true)
+        })
+      }
       if (done.ended === 'stopped') say('Stopped.')
       if (done.ended === 'ceiling') say(`Stopped after ${String(done.steps ?? 0)} steps — that is the ceiling, not the end of the task.`)
     }

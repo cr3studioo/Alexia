@@ -972,6 +972,32 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
   }
 
   /**
+   * **The name of the personality in use**, for the chip in the chat header (improvement 8).
+   *
+   * A second tool on the same plugin rather than a field on `persona.personality`, because the
+   * two questions have different answers at different times: the document is read once a task
+   * and is the thing a model is given, and the name is read on every state poll and is a thing
+   * a person is shown. Folding the name into the document's result would send a page of text
+   * to the header twenty times a minute.
+   *
+   * Nothing provides it, nothing is chosen, or whatever does is having a bad day → no chip,
+   * and a chat that works. This is a label; it is never a reason anything fails.
+   */
+  async function chip(): Promise<string | undefined> {
+    if (!plugins.answers(CORE_CAPABILITIES.inUse)) return undefined
+    try {
+      const answered = await plugins.capability(CORE_CAPABILITIES.inUse)
+      const said = (answered.content ?? [])
+        .map((block) => (block.type === 'text' ? block.text : ''))
+        .join('')
+        .trim()
+      return said === '' ? undefined : said.slice(0, 40)
+    } catch {
+      return undefined
+    }
+  }
+
+  /**
    * One task, asked for by a plugin (M7-5).
    *
    * Everything is the same as a task from the window except where the questions go: there is
@@ -1350,6 +1376,20 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
           // Today's side of the same question, and the one that decides whether the router
           // may reach across the price line on its own at all.
           today: today(store),
+          /**
+           * **Who is answering, and whether there is anything to say she was not her**
+           * (`plan-personality.md` improvements 8 and 10).
+           *
+           * The chip in the chat header is the name of the personality in use, and the whole
+           * point of it is that *which one is on* stops being a settings screen away. Absent
+           * when none is chosen, which is Alexia's own voice and not a chip saying so.
+           *
+           * `notHer` is whether anything will listen if somebody presses *That wasn't her* —
+           * the button is not drawn otherwise, which is the honest version of *there is
+           * nothing here this would tell*. Resolved by capability; core never learns who.
+           */
+          character: await chip(),
+          notHer: plugins.answers(CORE_CAPABILITIES.notHer),
           // The paid switch (§4 H), so the screen can say above the message box that paid is on.
           cross: caps(store).cross === true,
           // The permission controls, and what is standing. Every one of these is a control
@@ -2027,6 +2067,46 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
      * question to the person, and the second call carries their answer. `blocked` has no
      * second call: that is the difference between a question and a floor.
      */
+    /**
+     * ***That wasn't her*** (`plan-personality.md` improvement 10), pressed under the latest
+     * answer, beside *Bad answer* and asking the opposite question.
+     *
+     * **It does not ask the question again**, and that is the whole difference. *Bad answer*
+     * says the answer was wrong, so the answer is thrown away and something else is asked;
+     * this says the answer was hers to give and did not sound like her, so the answer stays on
+     * the page and what changes is the personality — later, deliberately, through Refine.
+     *
+     * **Core hands it over and forgets it.** The mark is about a plugin's document, so it goes
+     * out under a capability name and core never learns who took it, never reads it back, and
+     * never fails the press on the strength of it: a button that sometimes errors for reasons
+     * about a plugin is a button people stop pressing.
+     */
+    if (url.pathname === '/api/not-her' && request.method === 'POST') {
+      const { said } = sent as { said?: string }
+      const history = store.history(session)
+      const answer = [...history].reverse().find((turn) => turn.role === 'assistant' && (turn.calls?.length ?? 0) === 0)
+      response.writeHead(200, { 'content-type': 'application/json' })
+      if (answer === undefined) {
+        response.end(JSON.stringify({ ok: false, said: 'There is no answer to mark yet.' }))
+        return
+      }
+      // The turn it was answering, because an example is a pair: what she was asked, and the
+      // thing she said that did not sound like her. One on its own teaches nothing.
+      const at = history.lastIndexOf(answer)
+      const asked = [...history.slice(0, at)].reverse().find((turn) => turn.role === 'user')
+      await plugins
+        .capability(CORE_CAPABILITIES.notHer, {
+          answer: textOf(answer).slice(0, 2000),
+          ...(asked !== undefined && { asked: textOf(asked).slice(0, 500) }),
+          ...(typeof said === 'string' && said.trim() !== '' && { said: said.trim().slice(0, 500) }),
+        })
+        .catch((error: unknown) => {
+          console.error(`[not-her] ${error instanceof Error ? error.message : String(error)}`)
+        })
+      response.end(JSON.stringify({ ok: true }))
+      return
+    }
+
     if (url.pathname === '/api/action' && request.method === 'POST') {
       const press = sent as { plugin?: string; key?: string; row?: string; approved?: boolean }
       const plugin = press.plugin ?? ''

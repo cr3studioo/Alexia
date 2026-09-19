@@ -880,6 +880,12 @@ body[data-view='control'] .view:not(#control) {
 
 /* News above a list — *1 new free model since 09:15* — said once, in the accent, and gone after
    the next fetch that adds nothing (§4 D). */
+/* Which personality is answering (improvement 8). It reads as a fact rather than a warning,
+   so it takes the quiet end of the status row: the name, and nothing about it. */
+.character {
+  color: var(--chosen);
+}
+
 .said-news {
   color: var(--chosen);
 }
@@ -2618,6 +2624,33 @@ button[disabled] {
   margin: 0 0 var(--space-2);
   font-size: var(--text-xs);
   color: var(--caution);
+}
+
+/* ***That wasn't her***, and the sentence it invites (plan-personality.md improvement 10).
+
+   It sits under the action row rather than over the page, for the same reason the permission
+   prompt does: what is being talked about is the answer above it, and a modal would cover the
+   one thing somebody is looking at while they decide what she should have said instead. */
+.not-her {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  margin-top: var(--space-2);
+}
+
+.not-her-line {
+  flex: 1;
+  min-width: 0;
+  max-width: var(--measure-short);
+  font-size: var(--text-xs);
+}
+
+/* Marked out of character, and **not** dimmed the way a bad answer is: this answer was the
+   right one in the wrong voice, so it stays exactly as readable as it was. The mark is the
+   line under it, which is the only thing that changed. */
+.turn.not-her-marked {
+  border-inline-start: 2px solid var(--caution);
+  padding-inline-start: var(--space-2);
 }
 
 /* The same switch, kept on the answer: a small line above the words, drawn again on reload. */

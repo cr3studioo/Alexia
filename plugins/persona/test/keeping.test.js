@@ -116,7 +116,7 @@ test('the model call is made once, so Adapt, Re-adapt and Refine cannot drift ap
   // and a sentence instead of the 1,300-token description that ran a model out of room.
   expect(source).toMatch(/const written = await write\(ctx, brief\(description, name, remembering\)\)/)
   expect(source).toMatch(/const written = await write\(ctx, brief\(was\.described, String\(row\.name\)\)\)/)
-  expect(source).toMatch(/const written = await write\(ctx, refining\(was\.doc, change\), STEPS\.refine\)/)
+  expect(source).toMatch(/const written = await write\(ctx, refining\(was\.doc, change, moments\), STEPS\.refine\)/)
   // And the previous version is kept by one function, not by each of them remembering to.
   // *The version it replaces is kept* is printed on three row-action labels.
   expect(source.match(/await keep\(row, was, /g)).toHaveLength(3)

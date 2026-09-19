@@ -18,7 +18,9 @@
     { "cap": "memory.remember", "why": "to offer the facts about you it found in your description to long-term memory, once, when you press the button" }
   ],
   "provides": [
-    "persona.personality"
+    "persona.personality",
+    "persona.in_use",
+    "persona.not_her"
   ],
   "settings": [
     {
@@ -128,7 +130,8 @@
   "storage": {
     "namespace": "persona",
     "tables": [
-      "personalities"
+      "personalities",
+      "moments"
     ]
   },
   "min_tier": "T0"

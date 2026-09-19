@@ -298,6 +298,12 @@ export const ROUTES: Readonly<Record<string, Route>> = {
     ),
   },
 
+  '/api/not-her': {
+    otherwise: safe(
+      'Marking one answer as out of character. Nothing is deleted, nothing is re-asked, and the answer stays on the page exactly as it was — what it changes is a note a personality plugin keeps about itself, which that plugin then shows you before it acts on it. A confirm here would be a confirm on saying *that did not sound right*.',
+    ),
+  },
+
   '/api/chat': {
     otherwise: safe(
       'Sending a sentence is the product. Everything it can then do goes through the permission gate, the never-touch list and the ceilings, and the preview asks before an expensive task starts — a confirm on the message box would be a confirm on typing.',

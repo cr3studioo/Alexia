@@ -58,6 +58,15 @@ const alexia = plugin()
 
 const settings = () => alexia.settings()
 
+/**
+ * **How many *that wasn't her* moments a personality carries.**
+ *
+ * Four, because they are sent whole to Refine and a brief that is mostly complaints is a brief
+ * about complaining. The plan's own word is *the last few*, and four is few enough that the
+ * oldest is still recent and many enough that one bad evening is not the whole evidence.
+ */
+const MOMENTS = 4
+
 /** Every saved personality, newest first. */
 const saved = () => alexia.storage.select('personalities', { order: [['at', 'desc']] })
 
@@ -337,6 +346,76 @@ const standing = alexia.tool(
 )
 
 /**
+ * **The name in the chat header** (improvement 8's chip).
+ *
+ * A tool of its own rather than a field on the document, because the two are read at
+ * completely different rates: the document once a task, this on every state poll. Sending a
+ * page of text to a header label twenty times a minute would be the wrong trade in the one
+ * place it is most obviously wrong.
+ */
+const named = alexia.tool(
+  'in_use',
+  {
+    description:
+      'The name of the personality Alexia is running with, or nothing when none is chosen. ' +
+      'A label for the chat header; there is no reason for a model to call it.',
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+  },
+  async () => text(String((await active())?.name ?? '')),
+)
+
+/**
+ * ***That wasn't her***, arriving from the chat (improvement 10).
+ *
+ * **The answer is not the point; the pair is.** What she was asked, what she said, and — when
+ * somebody bothered — what she should have said instead. One of those on its own teaches
+ * nothing: *that was too formal* is an opinion, and *he asked X, she said Y, she should have
+ * said Z* is an example, which is what {@link refining} can actually use.
+ *
+ * **Kept against the personality in use at the time**, because that is what the mark is about.
+ * A mark collected under one personality is not evidence about another, and Refine reads only
+ * its own row's.
+ *
+ * **It answers nothing.** Core hands this over and forgets it, so there is nobody to tell
+ * about a failure — and a mark that could fail would be a button that sometimes does not work
+ * for reasons about a plugin.
+ */
+const outOf = alexia.tool(
+  'not_her',
+  {
+    description:
+      'Mark one answer as out of character, with an optional line on what she should have ' +
+      'said. Nothing is re-asked and nothing is deleted; it becomes evidence for Refine.',
+    inputSchema: fromJsonSchema({
+      type: 'object',
+      properties: {
+        answer: { type: 'string', description: 'What she said that did not sound like her.' },
+        asked: { type: 'string', description: 'What she was answering, so the mark is a pair.' },
+        said: { type: 'string', description: 'What she should have said instead, if anybody typed one.' },
+      },
+      required: ['answer'],
+    }),
+    annotations: { destructiveHint: false, openWorldHint: false },
+  },
+  async ({ answer, asked, said }) => {
+    const using = await active()
+    if (!using) return text('Nothing is in use, so there is no personality for that to be out of character for.')
+    await alexia.storage.insert('moments', {
+      personality: Number(using.rowid),
+      answer: String(answer ?? '').slice(0, 2000),
+      asked: String(asked ?? '').slice(0, 500),
+      said: String(said ?? '').slice(0, 500),
+      at: Date.now(),
+    })
+    // Kept to the newest few per personality: Refine sends them, and a year of complaints in a
+    // brief is a brief that is mostly complaints.
+    const mine = await alexia.storage.select('moments', { where: { personality: Number(using.rowid) }, order: [['at', 'desc']] })
+    for (const old of mine.slice(MOMENTS)) await alexia.storage.delete('moments', { rowid: Number(old.rowid) })
+    return text('Noted against “' + String(using.name) + '”. Refine will use it.')
+  },
+)
+
+/**
  * Adapt (the button), and the whole of what it is for.
  *
  * Somebody who knows how they want to be spoken to should not also have to know how to
@@ -399,6 +478,9 @@ alexia.tool(
       // Kept on the row rather than only announced, so the offer is still there tomorrow —
       // and cleared by the press that takes it up, so it cannot be taken up twice.
       facts: JSON.stringify(written.facts ?? []),
+      // Written empty so the column exists from the first row: everything that reads it can
+      // then do so without asking whether anybody has ever bound anything.
+      channel: '',
       wrote: written.wrote,
       removed: written.removed,
       at: Date.now(),
@@ -770,7 +852,14 @@ alexia.tool(
     const was = versionOf(row)
     if (was.doc === '') return nope(`“${String(row.name)}” has no document to change.`)
 
-    const written = await write(ctx, refining(was.doc, change), STEPS.refine)
+    // The last few *That wasn't her* moments on this row, as evidence (improvement 10). Its
+    // own row's only: a mark collected under one personality says nothing about another.
+    const moments = await alexia.storage.select('moments', {
+      where: { personality: Number(row.rowid) },
+      order: [['at', 'desc']],
+      limit: MOMENTS,
+    })
+    const written = await write(ctx, refining(was.doc, change, moments), STEPS.refine)
     if (written.error !== undefined) return nope(written.error)
 
     alexia.progress(ctx, 3, 3, 'Saving')
@@ -780,7 +869,10 @@ alexia.tool(
       [
         reply(
           `Changed “${String(row.name)}”.${using ? ' She is using it from your next message.' : ''}` +
-            ' Undo brings the previous one back.',
+            ' Undo brings the previous one back.' +
+            (moments.length === 0 ?
+              ''
+            : ` ${String(moments.length)} answer${moments.length === 1 ? '' : 's'} you marked as not sounding like her went with the change, as examples.`),
           written.removed,
           written.doc,
           written,
@@ -1017,7 +1109,34 @@ alexia.tool(
  */
 async function bind() {
   const using = await active()
-  standing.update({ _meta: using ? { 'alexia/provides': ['persona.personality'] } : {} })
+  /**
+   * **A column that does not exist yet is not an error, it is a machine where nobody has
+   * bound anything.** A plugin table grows a column the first time a key appears (storage.md),
+   * so `channel` is simply absent until something is bound — and a throw here would leave
+   * every binding below unset, which is the whole plugin silently not providing a personality.
+   */
+  const bound = await alexia.storage
+    .count('personalities', { channel: { ne: '' } })
+    .then((many) => many > 0)
+    .catch(() => false)
+  /**
+   * **Three bindings, and each says something different about what is here.**
+   *
+   * `persona.personality` is offered whenever *anything* would answer — the one in use, or a
+   * row bound to a place (improvement 9) — because core asks it per task and per channel, and
+   * a task from a phone whose personality is bound is a task this plugin has an answer for
+   * even when nothing is in use at the desk.
+   *
+   * `persona.in_use` is offered only when something is in use, because the chip's whole job is
+   * to name it and there is nothing to name otherwise.
+   *
+   * `persona.not_her` is offered on the same terms as the chip: *that was out of character* is
+   * a thing to say about a personality, and with none in use there is no character it was out
+   * of — so the button is not drawn, rather than drawn and answering nothing.
+   */
+  standing.update({ _meta: using || bound ? { 'alexia/provides': ['persona.personality'] } : {} })
+  named.update({ _meta: using ? { 'alexia/provides': ['persona.in_use'] } : {} })
+  outOf.update({ _meta: using ? { 'alexia/provides': ['persona.not_her'] } : {} })
   await report()
 }
 

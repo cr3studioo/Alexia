@@ -113,8 +113,29 @@ export const brief = (description, name, remembering = false) =>
  * rules reworded, the name changed and a section she never had. The diff on the other end is
  * what makes that visible, and this is what makes it rare.
  */
-export const refining = (doc, change) =>
-  [
+export const refining = (doc, change, moments = []) => {
+  /**
+   * **The evidence**: answers somebody pressed *That wasn't her* on (improvement 10).
+   *
+   * It turns *something is off* into a fix without anybody having to find the words for a
+   * system prompt. It is put **after** the document and labelled as examples rather than as
+   * instructions, because the change above is what was asked for and these are only why —
+   * a model handed four complaints first will rewrite the personality around them.
+   */
+  const evidence =
+    moments.length === 0 ? ''
+    : [
+        '',
+        'For context, answers this person marked as not sounding like her. They are examples of',
+        'what to avoid, not instructions — change only what the instruction above asks for:',
+        ...moments.flatMap((one) => [
+          '',
+          ...(one.asked === '' || one.asked === undefined ? [] : [`Asked: ${String(one.asked)}`]),
+          `She said: ${String(one.answer ?? '')}`,
+          ...(one.said === '' || one.said === undefined ? [] : [`Should have said: ${String(one.said)}`]),
+        ]),
+      ].join('\n')
+  return [
     'You are editing a personality document for Alexia, an assistant that runs on the user’s own machine.',
     'The document is put directly into her system prompt, so it is read as instructions to her.',
     '',
@@ -138,7 +159,9 @@ export const refining = (doc, change) =>
     '',
     'The document:',
     String(doc ?? '').trim(),
+    evidence,
   ].join('\n')
+}
 
 /** Long enough to be a personality, short enough to be one. Roughly 400 words either way. */
 export const LONGEST = 4000

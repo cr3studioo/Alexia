@@ -100,6 +100,8 @@ name and becomes a drop-in alternative rather than a competitor.
 | `voice.transcribe` | audio file in, text out | `plugins/voice` (M2) |
 | `voice.speak` | text in, audio played, nothing out | `plugins/voice` (M2) |
 | `persona.personality` | nothing in, the chosen personality's standing instruction out — core appends it to the system prompt once per task. **Optionally in three lengths**: `structuredContent` may carry `{ high, medium?, small? }`, and core sends the one the weakest model in that step's plan can read. `text` is still the long one and still the whole contract | `plugins/persona` (M4) |
+| `persona.in_use` | nothing in, the name of the personality in use out — one short line, for the chip in the chat header |     `plugins/persona` (M8-7) |
+| `persona.not_her` | one answer and an optional line on what she should have said in, **nothing out** — core hands it over and forgets it | `plugins/persona` (M8-7) |
 | `memory.remember` | a sentence in, **nothing out** — it is kept across conversations and read back by `memory.recall` | `plugins/memory` (M7) |
 | `memory.recall` | words in, what was remembered about them out | `plugins/memory` (M7) |
 | `memory.capture` | one finished exchange in, **nothing out** — core never reads it back | `plugins/memory` (M7) |
@@ -114,7 +116,7 @@ it* and *something that promises it is installed and switched off*
 ([`wire-protocol.md`](./wire-protocol.md#alexiaanswers), `alexia_protocol` 10). It is the
 reading half of `alexia/capability/call` and keeps the same invariant.
 
-Eleven entries, because eleven exist — `memory.remember` and `memory.recall` were shipped by
+Thirteen entries, because thirteen exist — `memory.remember` and `memory.recall` were shipped by
 `plugins/memory` from the day it existed and were missing from this table until 2026-09-19,
 which is the failure mode the paragraph below warns about read from the other end: a name in a
 manifest that the register never learned about. `demo.greet` is real: `plugins/hello` provides it and
