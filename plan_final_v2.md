@@ -233,7 +233,7 @@ land on anything not already covered by D154–D171): the same day, in three pla
 
 ## Beyond this session — later work, same rules, don't start without cause
 
-- [ ] **14. `plan-personality.md` step 5 — §1, the writer.**
+- [x] **14. `plan-personality.md` step 5 — §1, the writer.**
   In this order, because the plan's own sub-items have this dependency shape:
   1. **M8-1 first.** `intelligencePriority` sorts best-first; manifest `min_tier` becomes
      `Ask.minTier`. Confirmed unbuilt by grep (`Ask.minTier` exists and is read in `router.ts`,
@@ -247,6 +247,17 @@ land on anything not already covered by D154–D171): the same day, in three pla
 
   *Already done, don't redo:* "prefer a model that answers" (D160/D162) and "Adapt counts as the
   chat" (D161/D168) — both sub-items of this same section in `plan-personality.md`.
+
+  **Built 2026-09-19 (D178), `9a1d745`.** All three sub-items in one change, because the first is
+  decorative without the third. Four questions were asked before any code: the order of items
+  14–16, the pin contradiction, how hard the two filters should be, and what carries G13's run id.
+  Every recommendation was taken. Two things differ from the text above:
+  - **`min_tier` and `modelPreferences` are honoured on both sampling paths**, not only the plain
+    one — the tools flag does not make it a different request.
+  - **A pin still wins outright, except a pin on a router.** `plan.md` M8-1 and
+    `plan-personality.md` §1.2 said opposite things here; the owner chose the narrow reading.
+
+  M8-1 is ticked in `plan.md`. **M8-7 stays unticked** — items 15–17 are still open.
 
 - [ ] **15. Step 6 — §2, three sizes.**
   Small (~100 words), medium (~300), high (~600), chosen per call for the weakest model in that

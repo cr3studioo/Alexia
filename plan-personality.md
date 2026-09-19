@@ -69,23 +69,34 @@ being sent. What was sent was one sentence, to a random model.
 ## 1. The writer: which model adapts
 
 **Today:** Adapt goes through Automatic, free only (D96), and its own request for a smart
-model is ignored (M8-1).
+model is ignored (M8-1). ***Was* today. All five sub-items below are built as of 2026-09-19
+(D178); each says so in place.***
 
-1. **M8-1.** `intelligencePriority` sorts best-first; manifest `min_tier` becomes
-   `Ask.minTier`.
-2. **Never a router, and never a model Alexia doubts.** Adapt asks for one real model, even when
-   the chat pin is a router. `model_plan.md` §2 gives the router a recognisable label (`routes()`
-   in `catalog.ts`, D159), so this is one filter; §4 B's tags add the rest (*new · not tried yet*,
-   set aside, *too many errors*, *gave bad answers*), read from the same `judge()`.
+1. ~~**M8-1.** `intelligencePriority` sorts best-first; manifest `min_tier` becomes
+   `Ask.minTier`.~~ **Done 2026-09-19 (D178).** Both, plus the honest half the item asked for and
+   the schema would not allow: `speedPriority` and `hints` cannot be deleted from MCP's own field,
+   so `wire-protocol.md` says they are read and not acted on, and why.
+2. ~~**Never a router, and never a model Alexia doubts.** Adapt asks for one real model, even when
+   the chat pin is a router.~~ **Done 2026-09-19 (D178)**, and *even when the chat pin is a router*
+   contradicted `plan.md` M8-1's *a preference is not a way past a pin* in as many words. The owner
+   was asked and chose the narrow reading: a pin on a **router** is not a pin on a model, so a
+   capable request falls through to Automatic's own order; a pin on a real model still wins
+   outright. The router half is a filter and the doubt half is not — a router is not a capable
+   model on its best day, while a model with three failures behind it might be the only one awake
+   at eleven at night, so the tags (*new · not tried yet*, set aside, *too many errors*, *gave bad
+   answers*) are skipped while anything else fits and asked when nothing else can.
 3. **Prefer a model that answers, not one that thinks forever.** `model_plan.md` §2's strikes
    are built (D159): `send()` records a timeout or a cut-off free answer, and the model sinks for
    about an hour, so one that ran out on Adapt is not first on the next press. What is left here
    is the plugin's side: when Adapt gives up at 110 s, core is not told (the sampling request
    drops its cancel signal), so `send()` goes on walking the plan behind a refusal already shown.
    Fixed as `model_plan.md` §4 A (D160).
-4. **G13 is answered: yes** (D156). A button somebody pressed is a run: Adapt carries a run
-   id, so it may use a paid model under the monthly cap and the spend preview. That matters
-   most for §2, because the small size is a distillation and weak models distil worst.
+4. **G13 is answered: yes** (D156), and **built 2026-09-19 (D178)**. A button somebody pressed is
+   a run: a request a plugin makes while its own press is in flight carries a run id, so it may use
+   a paid model under the paid switch, the day's amount and the monthly cap. Derived from core's
+   `pressing` map rather than declared, so it is not a flag a plugin can set for itself and not one
+   a call site can forget. That matters most for §2, because the small size is a distillation and
+   weak models distil worst.
 5. **Adapt counts as the chat, not as a plugin** (D161). Background requests keep off
    day-limited providers so the chat keeps its free requests (`model_plan.md` §4 F), and Adapt
    is exempt: somebody pressed it and is watching its progress bar, so it may use the OpenRouter
@@ -271,9 +282,20 @@ for paid models, an order that lets provider prompt caching reuse the personalit
    fix — core kept only the first word of a command — and needed **D177**, which hands whatever
    follows a command to the plugin whole under `rest`. The header chip from improvement 8 is *not*
    here: it waits for step 8.
-5. **§1, the writer:** M8-1; never a router, and never a model `model_plan.md` §4 B tags as new,
+5. ~~**§1, the writer:** M8-1; never a router, and never a model `model_plan.md` §4 B tags as new,
    set aside or doubted (so after §4 B); then G13's build (D156), a run id on Adapt, which also
-   makes it the chat for free requests (D161, `model_plan.md` §4 F).
+   makes it the chat for free requests (D161, `model_plan.md` §4 F).~~ Done 2026-09-19 (**D178**),
+   all three sub-items in one change because the first is decorative without the third: best-first
+   among free models is all a plugin could ever have got while `send()` read *attributed to a
+   plugin, belonging to no run* as free-tiers-only. `intelligencePriority` (largest of the three
+   and at least a half) becomes `Ask.capable`, which is best-first **and** the two filters; the
+   router half is a filter rather than an order, and the doubt half is D161's *skipped while
+   anything else fits*. A pin still wins outright **except a pin on a router**, which the owner
+   was asked about because this plan and `plan.md`'s M8-1 said opposite things — and it is the
+   pin that caused the bug at the top of this document. A press carries a run id, derived from
+   core's `pressing` map rather than declared, so Adapt may reach a paid model under the paid
+   switch, the day's amount and the monthly cap. `min_tier: "T1"` on this plugin is now read,
+   which also means **Adapt never uses a model on this machine**.
 6. **§2, three sizes**, at about 100, 300 and 600 words (D160), with *small* also for a model §4 B
    doubts.
 7. **Improvements 2, 3, 4, 5, 9.** The preview (3) shows with **Skip** from the first time; facts
