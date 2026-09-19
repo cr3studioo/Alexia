@@ -82,9 +82,9 @@ test('every button that saves a document says what it costs, not just the first 
   // One reply() carries the cost, and every button that saves a document goes through it.
   // Four of them now: Adapt, Re-adapt, Refine and Edit. The count is the assertion — a fifth
   // way to save that did not reach reply() would be a document whose cost is never said.
-  expect(source).toMatch(/cannot, sizesLine\(shorter\), costLine\(doc, shorter\), budgetLine\(doc\), doc/)
+  expect(source).toMatch(/cannot, factsLine\(facts\), sizesLine\(shorter\), costLine\(doc, shorter\), budgetLine\(doc\), doc/)
   expect(source.match(/reply\(/g)).toHaveLength(4)
-  expect(source).toMatch(/reply\(headline, written\.removed, written\.doc, written, cannot\)/)
+  expect(source).toMatch(/reply\(headline, written\.removed, written\.doc, written, cannot, written\.facts\)/)
   expect(source).toMatch(/reply\(\s*`Wrote /)
   expect(source).toMatch(/reply\(\s*`Changed /)
   expect(source).toMatch(/reply\(\s*`Saved your own /)

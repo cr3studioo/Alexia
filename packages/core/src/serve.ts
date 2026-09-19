@@ -923,10 +923,25 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
    * day → the stock four lines, and a task that runs. A personality is a preference, and a
    * preference must never be the reason an answer does not happen.
    */
-  async function personality(): Promise<Personality | undefined> {
+  async function personality(channel?: string): Promise<Personality | undefined> {
     if (!plugins.answers(CORE_CAPABILITIES.personality)) return undefined
     try {
-      const answered = await plugins.capability(CORE_CAPABILITIES.personality)
+      /**
+       * **Where this task is being read** (improvement 9), when it is not the window.
+       *
+       * A reply read on a phone wants to be shorter and plainer than one at the desk, and the
+       * only thing core knows about that is which plugin started the task — so that is what it
+       * says, and what the answer means by it is entirely the answering plugin's business.
+       *
+       * **Optional at both ends.** A persona plugin that ignores it behaves as it always did,
+       * which is the bar for not moving the contract's number; core sends nothing at all for a
+       * task from the window, because *the window* is not a channel anybody bound a personality
+       * to — it is the absence of one.
+       */
+      const answered = await plugins.capability(
+        CORE_CAPABILITIES.personality,
+        channel === undefined ? undefined : { channel },
+      )
       const said = (answered.content ?? [])
         .map((block) => (block.type === 'text' ? block.text : ''))
         .join('')
@@ -1103,7 +1118,8 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     trace.start(runId, text)
     try {
       const month = allowance(store)
-      const chosen = await personality()
+      // The plugin that started this is where the answer will be read (improvement 9).
+      const chosen = await personality(pluginId)
       // What reaches the model is counted per step now, because §2's three lengths mean it can
       // differ between them — the loop reports it through `on.personality`, below.
       if (chosen === undefined) trace.personality(0, 'high')

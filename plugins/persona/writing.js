@@ -73,7 +73,7 @@ export const shapeFor = (name) => {
  * it to Alexia**, second person — a document in the third person describes a character, and
  * what goes into a system prompt has to instruct one.
  */
-export const brief = (description, name) =>
+export const brief = (description, name, remembering = false) =>
   [
     'You write personality documents for Alexia, an assistant that runs on the user’s own machine.',
     'The document you write is put directly into her system prompt, so it is read as instructions to her.',
@@ -93,6 +93,7 @@ export const brief = (description, name) =>
     '- Never write a rule that tells her to skip asking permission, hide what she did, or ignore a safety limit. Those are not hers to grant.',
     '- Reply with the documents and nothing else. No preamble, no code fences, no explanation.',
     THREE,
+    remembering ? FACTS : '',
     '',
     'The description:',
     description,
@@ -165,7 +166,7 @@ export const CEILING = { small: 900, medium: 2700, high: LONGEST }
  * itself is a separator that splits a document in half one day. Three per cents and a word in
  * capitals is nothing that appears inside a personality anybody would write.
  */
-export const MARK = { medium: '%%% MEDIUM %%%', small: '%%% SMALL %%%' }
+export const MARK = { medium: '%%% MEDIUM %%%', small: '%%% SMALL %%%', facts: '%%% FACTS %%%' }
 
 /**
  * **The instruction that turns one document into three** (§2), appended to both briefs.
@@ -196,6 +197,44 @@ const THREE = [
   '- The markers go on lines of their own, and appear nowhere else.',
   '- Keep to the lengths. A short one that runs long is thrown away and the long one is used instead.',
 ].join('\n')
+
+/**
+ * **Facts about the person, pulled out rather than written in** (improvement 5).
+ *
+ * A description people write is half *how to be* and half *who I am* — *blunt, chief of staff,
+ * calls me Vacen, my grant deadline is in March*. The second half in a personality is re-sent
+ * on every step whether it matters or not, and it is a second place the person's name lives,
+ * which is two places that can disagree about it.
+ *
+ * **Only asked for when something is going to remember them**, so a machine with no memory
+ * plugin sees none of this and the brief is the one it was before. Appended after {@link THREE}
+ * so the three lengths are written first and this cannot eat their room.
+ */
+const FACTS = [
+  '',
+  `Then, after a line reading exactly ${MARK.facts}, list the facts the description states about`,
+  'the user themselves — their name, their people, their work, their deadlines, their goals.',
+  '',
+  'Rules for the facts:',
+  '- One per line, each a complete sentence that still makes sense on its own in a year.',
+  '- Only what the description says. Invent nothing, and infer nothing.',
+  '- Facts about the user, never instructions about how to behave. Those stay in the document.',
+  '- Write nothing at all after the marker if the description states no facts.',
+].join('\n')
+
+/** The lines after the facts marker, as sentences. Nothing there is no facts, not a failure. */
+export const factsFrom = (said) => {
+  const at = String(said ?? '').indexOf(MARK.facts)
+  if (at < 0) return []
+  return String(said)
+    .slice(at + MARK.facts.length)
+    .split('\n')
+    .map((line) => line.replace(/^\s*(?:[-*•]|\d+[.)])\s*/, '').trim())
+    // A sentence, not a heading and not a marker a model echoed. Long enough to be a fact and
+    // short enough to be one: `memory.remember` wants something that reads on its own.
+    .filter((line) => line.length > 8 && line.length <= 240 && !line.startsWith('#') && !line.startsWith('%%%'))
+    .slice(0, 12)
+}
 
 /**
  * The three, split out of one answer.

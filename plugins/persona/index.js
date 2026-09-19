@@ -8,6 +8,7 @@ import {
   brief,
   CEILING,
   clean,
+  factsFrom,
   HEAR,
   HEAR_UNASKED,
   HEARD,
@@ -64,6 +65,28 @@ const saved = () => alexia.storage.select('personalities', { order: [['at', 'des
 const active = async () =>
   (await alexia.storage.select('personalities', { where: { active: 1 }, limit: 1 }))[0]
 
+/**
+ * **The one to use where this is being read** (improvement 9), falling back to the one in use.
+ *
+ * A reply read on a phone wants to be shorter and plainer than one at the desk. Binding is a
+ * row's own business: a row says where it belongs and this reads it, so nothing about the
+ * ordinary case changes — one personality, in use, everywhere.
+ *
+ * **The channel is a word core handed over, and it is compared and never interpreted.** Core
+ * says which plugin started the task; what that means is this plugin's business, and here it
+ * means *the word somebody typed into the box*. A row bound to a channel is not *in use* and
+ * does not become it: it answers there and nowhere else, which is what keeps the two
+ * independent.
+ */
+const forChannel = async (channel) => {
+  const said = channel.trim().toLowerCase()
+  if (said !== '') {
+    const bound = (await alexia.storage.select('personalities', { where: { channel: said }, limit: 1 }))[0]
+    if (bound) return bound
+  }
+  return active()
+}
+
 const text = (said) => ({ content: [{ type: 'text', text: said }] })
 const nope = (said) => ({ isError: true, content: [{ type: 'text', text: said }] })
 
@@ -75,8 +98,8 @@ const nope = (said) => ({ isError: true, content: [{ type: 'text', text: said }]
  * either is owed the same account of it — and because the next one along (Refine, improvement
  * 2) is a third caller that should not have to reassemble this from parts.
  */
-const reply = (headline, removed, doc, shorter = {}, cannot = '') =>
-  [headline, noteOf(removed), cannot, sizesLine(shorter), costLine(doc, shorter), budgetLine(doc), doc]
+const reply = (headline, removed, doc, shorter = {}, cannot = '', facts = []) =>
+  [headline, noteOf(removed), cannot, factsLine(facts), sizesLine(shorter), costLine(doc, shorter), budgetLine(doc), doc]
     .filter((part) => part !== '')
     .join('\n\n')
 
@@ -241,6 +264,10 @@ async function write(ctx, prompt, [reading, writing] = STEPS.adapt) {
    * that is fine. What survived is said out loud rather than left to be noticed.
    */
   const three = sizesFrom(said)
+  // Facts about the person, out of the same answer and never out of a second call (improvement
+  // 5). They are offered, never saved here: what goes into long-term memory is the person's
+  // decision, and one press is the whole of the asking (D160).
+  const facts = factsFrom(said)
   const checked = check(clean(three.high))
   const shorter = {}
   for (const name of ['medium', 'small']) {
@@ -258,7 +285,7 @@ async function write(ctx, prompt, [reading, writing] = STEPS.adapt) {
         : 'That came back without all four parts of a personality, so nothing was saved. Press Adapt again.',
     }
   }
-  return { doc, wrote, removed, ...shorter }
+  return { doc, wrote, removed, facts, ...shorter }
 }
 
 /**
@@ -276,6 +303,16 @@ const standing = alexia.tool(
       'The standing instruction Alexia is currently running with, or nothing when none is ' +
       'chosen. Alexia reads this herself at the start of a task; there is no reason for a ' +
       'model to call it.',
+    inputSchema: fromJsonSchema({
+      type: 'object',
+      properties: {
+        channel: {
+          type: 'string',
+          description: 'Where this task is being read, when it is not Alexia’s own window.',
+        },
+      },
+      required: [],
+    }),
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
   },
   /**
@@ -286,8 +323,8 @@ const standing = alexia.tool(
    * `structuredContent` is the addition, and it is MCP's own field, so nothing in the plugin
    * contract moved for it.
    */
-  async () => {
-    const using = await active()
+  async (args) => {
+    const using = await forChannel(String(args?.channel ?? ''))
     const high = String(using?.doc ?? '')
     if (high === '') return text('')
     const small = String(using?.doc_small ?? '').trim()
@@ -341,7 +378,10 @@ alexia.tool(
       existing.map((row) => String(row.name)),
     )
 
-    const written = await write(ctx, brief(description, name))
+    // Only ask for facts when something is going to remember them: a machine with no memory
+    // plugin gets the brief it always had, and pays nothing for a feature it cannot use.
+    const remembering = (await alexia.answers('memory.remember').catch(() => ({ answers: false }))).answers === true
+    const written = await write(ctx, brief(description, name, remembering))
     if (written.error !== undefined) return nope(written.error)
 
     alexia.progress(ctx, 3, 3, hearFirst ? 'Hearing her' : 'Saving')
@@ -356,6 +396,9 @@ alexia.tool(
       described: description,
       doc_small: written.small ?? '',
       doc_medium: written.medium ?? '',
+      // Kept on the row rather than only announced, so the offer is still there tomorrow —
+      // and cleared by the press that takes it up, so it cannot be taken up twice.
+      facts: JSON.stringify(written.facts ?? []),
       wrote: written.wrote,
       removed: written.removed,
       at: Date.now(),
@@ -369,7 +412,10 @@ alexia.tool(
     const cannot = await inertLines(written.doc)
     const heard = hearFirst ? asHeard(await hearing(written.doc)) : ''
     return text(
-      [reply(headline, written.removed, written.doc, written, cannot), ...(heard === '' ? [] : ['---', heard])].join('\n\n'),
+      [
+        reply(headline, written.removed, written.doc, written, cannot, written.facts),
+        ...(heard === '' ? [] : ['---', heard]),
+      ].join('\n\n'),
     )
   },
 )
@@ -388,7 +434,7 @@ alexia.tool(
         rows: rows.map((row) => ({
           id: String(row.rowid),
           name: String(row.name),
-          using: row.active === 1 ? 'in use' : '',
+          using: row.active === 1 ? 'in use' : String(row.channel ?? '') === '' ? '' : `on ${String(row.channel)}`,
           // Blank for everything saved before the writer was recorded, which is every row
           // already on this machine. A blank cell is the honest answer; a guess is not.
           wrote: String(row.wrote ?? ''),
@@ -454,6 +500,135 @@ alexia.tool(
     if (doc === '') return nope(`“${String(row.name)}” has no document to read out.`)
     const heard = await hearing(doc)
     return text(`“${String(row.name)}”, out loud.\n\n${asHeard(heard)}`)
+  },
+)
+
+/**
+ * Use there: bind one saved personality to one place (improvement 9).
+ *
+ * **Not a second kind of *in use*.** The row in use is the one that answers everywhere nothing
+ * else claims; a bound row answers in its own place and nowhere else, and neither touches the
+ * other. That is why this does not clear `active` and `use` does not clear `channel`.
+ *
+ * **One place, one personality.** Binding a second row to the same word unbinds the first,
+ * because two rows claiming one channel is a coin toss nobody would be able to see.
+ */
+alexia.tool(
+  'usethere',
+  {
+    description:
+      'Use one saved personality wherever you talk to Alexia through another plugin — a phone, ' +
+      'a chat app. Takes the row it is, and reads the box on the settings screen for where. ' +
+      'An empty box unbinds it.',
+    inputSchema: fromJsonSchema(one),
+    annotations: { destructiveHint: false, openWorldHint: false },
+  },
+  async ({ id }) => {
+    const row = await byId(id)
+    if (!row) return nope('There is no saved personality with that id.')
+    const { use_on: typed } = await settings()
+    const where = String(typed ?? '').trim().toLowerCase()
+    if (where === '') {
+      if (String(row.channel ?? '') === '') return nope(`“${String(row.name)}” is not bound anywhere, so there is nothing to unbind.`)
+      await alexia.storage.update('personalities', { channel: '' }, { rowid: Number(row.rowid) })
+      await bind()
+      return text(`“${String(row.name)}” is no longer bound anywhere. Whatever is in use answers there now.`)
+    }
+    // One place, one personality: the row that had it lets go first.
+    await alexia.storage.update('personalities', { channel: '' }, { channel: where })
+    await alexia.storage.update('personalities', { channel: where }, { rowid: Number(row.rowid) })
+    await bind()
+    return text(
+      `“${String(row.name)}” answers on ${where} from the next message there. It is not in use ` +
+        'anywhere else, and whatever is in use is untouched.',
+    )
+  },
+)
+
+/** The facts still on offer for a row, as sentences. Anything unreadable is no facts. */
+const factsOn = (row) => {
+  try {
+    const held = row?.facts
+    const parsed = typeof held === 'string' ? JSON.parse(held) : held
+    return Array.isArray(parsed) ? parsed.filter((one) => typeof one === 'string' && one.trim() !== '') : []
+  } catch {
+    return []
+  }
+}
+
+/**
+ * **The offer**: facts about you, found in your own words, going to Memory rather than into
+ * the personality (improvement 5).
+ *
+ * **Why they should not be in the personality.** A personality is sent on every step, so a
+ * deadline written into it is re-sent fifteen times a task whether it matters or not — and it
+ * is a second place the person's name lives, which is two places that can disagree about it.
+ * Memory recalls a fact when it is relevant and costs nothing when it is not.
+ *
+ * **Shown, never taken.** They are listed here and saved only by the button, because what goes
+ * into long-term memory is the person's decision and a plugin that wrote to it on their behalf
+ * would be a plugin they had to audit.
+ */
+const factsLine = (facts) => {
+  if (facts.length === 0) return ''
+  return [
+    facts.length === 1 ?
+      'One thing in your description is a fact about you rather than a way to behave, so it belongs in memory rather than in every step of every task:'
+    : `${String(facts.length)} things in your description are facts about you rather than ways to behave, so they belong in memory rather than in every step of every task:`,
+    ...facts.map((one) => `• ${one}`),
+    'Nothing has been remembered. “Remember the facts” on the row saves all of them at once.',
+  ].join('\n')
+}
+
+/**
+ * Remember the facts, all of them, on one press (D160).
+ *
+ * **One confirm for all of them** is the decision, and one button is the whole of it here: a
+ * list with every fact ticked is the shape D160 proposed and did not settle, and it is not one
+ * the widget set can draw — a plugin may write only its own `status` settings, so it cannot put
+ * a dynamic list into a control for somebody. The facts are on screen above the button and on
+ * the row's own detail, which is the same information in the order it can actually be shown.
+ *
+ * **It clears the offer**, so a second press cannot remember everything twice — and `memory`'s
+ * own `remember` already refuses a sentence it has, so even a stale row costs nothing.
+ */
+alexia.tool(
+  'recall',
+  {
+    description:
+      'Save the facts found in one personality’s description to long-term memory, all at once. ' +
+      'Takes the row it is. The personality itself is not changed.',
+    inputSchema: fromJsonSchema(one),
+    annotations: { destructiveHint: false, openWorldHint: false },
+  },
+  async ({ id }) => {
+    const row = await byId(id)
+    if (!row) return nope('There is no saved personality with that id.')
+    const facts = factsOn(row)
+    if (facts.length === 0) return nope(`There are no facts waiting from “${String(row.name)}”.`)
+    const { answers } = await alexia.answers('memory.remember').catch(() => ({ answers: false }))
+    if (!answers) {
+      return nope('Nothing here remembers things between conversations, so there is nowhere to put them. Install or switch on a memory plugin and press this again.')
+    }
+
+    const failed = []
+    for (const fact of facts) {
+      // One call per fact, because that is the shape `memory.remember` promises: one fact, one
+      // sentence that still reads on its own in a year. The single press is the person's.
+      await alexia.capability('memory.remember', { text: fact }).catch((error) => {
+        log.warn('could not remember', error)
+        failed.push(fact)
+      })
+    }
+    await alexia.storage.update('personalities', { facts: '[]' }, { rowid: Number(row.rowid) })
+    const saved = facts.length - failed.length
+    return text(
+      [
+        `Remembered ${String(saved)} of ${String(facts.length)}.`,
+        ...(failed.length === 0 ? [] : ['These did not save:', ...failed.map((one) => `• ${one}`)]),
+        'They are in long-term memory now, not in the personality, so they cost nothing on a step that does not need them.',
+      ].join('\n'),
+    )
   },
 )
 
@@ -775,6 +950,7 @@ alexia.tool(
       // finding saved in September is a finding about September. This is read at the moment
       // somebody opens the row, which is the moment it is true.
       await inertLines(String(row.doc)),
+      factsLine(factsOn(row)),
       sizesLine(shorterOf(row)),
       costLine(String(row.doc), shorterOf(row)),
       budgetLine(String(row.doc)),

@@ -61,10 +61,13 @@ test('the markers are nothing a personality would contain on its own', () => {
   // A separator a model might plausibly have written — `---`, `##`, a blank line — is a
   // separator that splits somebody's document in half one day. Both appear in neither the
   // shape the writer is given nor anything a person would type.
-  for (const mark of Object.values(MARK)) {
-    expect(long).not.toContain(mark)
-    expect(brief('blunt', 'Chief of staff').split(mark)).toHaveLength(2)
-  }
+  for (const mark of Object.values(MARK)) expect(long).not.toContain(mark)
+  // Each marker appears exactly once in the brief that asks for what it separates. The facts
+  // marker is only there when something is going to remember them (improvement 5), which is
+  // what keeps a machine with no memory plugin paying nothing for a feature it cannot use.
+  const asking = brief('blunt', 'Chief of staff', true)
+  for (const mark of Object.values(MARK)) expect(asking.split(mark), mark).toHaveLength(2)
+  expect(brief('blunt', 'Chief of staff')).not.toContain(MARK.facts)
 })
 
 test('a marker a model repeated is still one boundary, not three documents', () => {

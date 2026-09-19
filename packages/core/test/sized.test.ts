@@ -180,3 +180,16 @@ test('a personality with one document still reaches every model, which is what i
   await post('/api/plugin', { id: 'voice', action: 'disable' })
   await post('/api/plugin', { id: 'sized', action: 'enable' })
 }, 30_000)
+
+test('core says which channel a task is being read in, and nothing for the window', async () => {
+  // Improvement 9. Core knows one thing about where an answer will be read — which plugin
+  // started the task — so that is what it says; what the word means is the answering plugin's
+  // business. The window sends nothing at all, because *the window* is not a channel anybody
+  // bound a personality to, it is the absence of one.
+  const source = readFileSync(join(import.meta.dirname, '..', 'src', 'serve.ts'), 'utf8')
+  expect(source).toMatch(/async function personality\(channel\?: string\)/)
+  expect(source).toMatch(/channel === undefined \? undefined : \{ channel \}/)
+  // The plugin path names its own plugin; the window path calls it with nothing.
+  expect(source).toMatch(/await personality\(pluginId\)/)
+  expect(source).toMatch(/const chosen = await personality\(\)/)
+})

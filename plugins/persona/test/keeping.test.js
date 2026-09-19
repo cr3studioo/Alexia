@@ -114,7 +114,7 @@ test('the model call is made once, so Adapt, Re-adapt and Refine cannot drift ap
   // All three buttons reach it through the one helper rather than calling a model themselves,
   // handing in a brief rather than a description — which is what lets Refine send a document
   // and a sentence instead of the 1,300-token description that ran a model out of room.
-  expect(source).toMatch(/const written = await write\(ctx, brief\(description, name\)\)/)
+  expect(source).toMatch(/const written = await write\(ctx, brief\(description, name, remembering\)\)/)
   expect(source).toMatch(/const written = await write\(ctx, brief\(was\.described, String\(row\.name\)\)\)/)
   expect(source).toMatch(/const written = await write\(ctx, refining\(was\.doc, change\), STEPS\.refine\)/)
   // And the previous version is kept by one function, not by each of them remembering to.

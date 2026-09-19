@@ -150,7 +150,7 @@ test('both buttons decide the name before the model writes anything', () => {
   const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8')
   // Adapt: unique(nameFrom(...)) has to come first, then the brief that is handed it.
   const adapt = source.indexOf('const name = unique(')
-  const writes = source.indexOf('await write(ctx, brief(description, name))')
+  const writes = source.indexOf('await write(ctx, brief(description, name, remembering))')
   expect(adapt, 'Adapt no longer computes a name').toBeGreaterThan(-1)
   expect(writes, 'Adapt no longer hands the name to brief()').toBeGreaterThan(adapt)
   // Re-adapt keeps the row's own name rather than retitling it.

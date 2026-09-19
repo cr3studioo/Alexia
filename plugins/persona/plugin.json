@@ -14,7 +14,9 @@
   },
   "alexia_protocol": 10,
   "mcp_protocol": "2025-11-25",
-  "requires": [],
+  "requires": [
+    { "cap": "memory.remember", "why": "to offer the facts about you it found in your description to long-term memory, once, when you press the button" }
+  ],
   "provides": [
     "persona.personality"
   ],
@@ -32,6 +34,13 @@
       "label": "Save it as",
       "placeholder": "Chief of staff",
       "hint": "The name it appears under below. Leave it empty and the wording above names it."
+    },
+    {
+      "type": "text",
+      "key": "use_on",
+      "label": "Use one of them somewhere else",
+      "placeholder": "telegram",
+      "hint": "Type where — the name of the plugin you talk to her through — then press Use there on the row. A reply read on a phone wants to be shorter than one at the desk. Leave it empty and press Use there to unbind."
     },
     {
       "type": "text",
@@ -71,7 +80,7 @@
       "type": "table",
       "key": "saved",
       "label": "Saved personalities",
-      "hint": "Use switches her over from the next thing you say. Hear her asks two sample questions in her voice first. Open a row to read exactly what she is being told, and the words it was adapted from.",
+      "hint": "Use switches her over from the next thing you say. Use there binds one to a place you talk to her through instead. Hear her asks two sample questions in her voice first. Open a row to read exactly what she is being told, and the words it was adapted from.",
       "rows": "personalities",
       "columns": [
         { "key": "name", "label": "Name" },
@@ -82,6 +91,8 @@
       "rowActions": [
         { "key": "use", "label": "Use", "tool": "use" },
         { "key": "hear", "label": "Hear her", "tool": "hear" },
+        { "key": "recall", "label": "Remember the facts", "tool": "recall" },
+        { "key": "usethere", "label": "Use there", "tool": "usethere" },
         { "key": "readapt", "label": "Re-adapt", "tool": "readapt" },
         { "key": "refine", "label": "Refine", "tool": "refine" },
         { "key": "edit", "label": "Edit", "tool": "edit" },

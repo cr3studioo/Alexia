@@ -131,7 +131,7 @@ test('every document that can be saved goes through the check — Re-adapt, Refi
   // is checked, so the call reads off `three.high` now rather than off the raw answer.
   expect(source.match(/check\(clean\(three\.high\)\)/g)).toHaveLength(1)
   expect(source.match(/await write\(ctx, /g)).toHaveLength(3)
-  expect(source).toMatch(/await write\(ctx, brief\(description, name\)\)/)
+  expect(source).toMatch(/await write\(ctx, brief\(description, name, remembering\)\)/)
   expect(source).toMatch(/await write\(ctx, brief\(was\.described, String\(row\.name\)\)\)/)
   expect(source).toMatch(/await write\(ctx, refining\(was\.doc, change\), STEPS\.refine\)/)
   // **And the one document no model wrote.** Edit is text somebody typed or pasted, which is
