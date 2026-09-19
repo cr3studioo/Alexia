@@ -84,12 +84,14 @@ async function report() {
  * is D157's, and it is load-bearing: a personality that saves half-written reads as chosen and
  * behaves as if nothing was set, which is the bug that started the rebuild.
  */
-async function write(ctx, description) {
+async function write(ctx, description, name) {
   alexia.progress(ctx, 1, 3, 'Reading what you wrote')
   let answered
   try {
     answered = await alexia.server.server.createMessage({
-      messages: [{ role: 'user', content: { type: 'text', text: brief(description) } }],
+      // The name goes in rather than coming back: the title is the row's own name, so the
+      // document cannot end up called one thing and listed as another (2026-09-18).
+      messages: [{ role: 'user', content: { type: 'text', text: brief(description, name) } }],
       // Room to think as well as to write. It was 1,200, and a reasoning model spent almost
       // all of it thinking — which is counted and never shown — so the document it did
       // write stopped at `## How` (2026-09-15). Nearly every free model is a reasoning
@@ -183,14 +185,17 @@ alexia.tool(
       return nope('Write a line or two describing how she should be, then press Adapt.')
     }
 
-    const written = await write(ctx, description)
-    if (written.error !== undefined) return nope(written.error)
-
+    // Named before it is written, not after: the brief is given this exact name for the first
+    // line, so the saved document and the row it lands in cannot disagree about who she is.
     const existing = await saved()
     const name = unique(
       nameFrom(called, description),
       existing.map((row) => String(row.name)),
     )
+
+    const written = await write(ctx, description, name)
+    if (written.error !== undefined) return nope(written.error)
+
     alexia.progress(ctx, 3, 3, 'Saving')
     // Exactly one is in use, and the one just written is it. Switching is a row action; a
     // person who pressed Adapt has already said which one they want.
@@ -296,7 +301,8 @@ alexia.tool(
       )
     }
 
-    const written = await write(ctx, was.described)
+    // Its own name, so writing it again does not retitle it — the row keeps the name it has.
+    const written = await write(ctx, was.described, String(row.name))
     if (written.error !== undefined) return nope(written.error)
 
     alexia.progress(ctx, 3, 3, 'Saving')

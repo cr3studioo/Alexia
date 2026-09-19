@@ -88,8 +88,8 @@ const source = readFileSync(join(import.meta.dirname, '..', 'index.js'), 'utf8')
 test('the model call is made once, so Adapt and Re-adapt cannot drift apart', () => {
   expect(source.match(/createMessage\(/g)).toHaveLength(1)
   // Both buttons reach it through the one helper rather than calling a model themselves.
-  expect(source).toMatch(/const written = await write\(ctx, description\)/)
-  expect(source).toMatch(/const written = await write\(ctx, was\.described\)/)
+  expect(source).toMatch(/const written = await write\(ctx, description, name\)/)
+  expect(source).toMatch(/const written = await write\(ctx, was\.described, String\(row\.name\)\)/)
 })
 
 test('D157 survives the extraction: room to think, time to answer, and a cut answer refused', () => {

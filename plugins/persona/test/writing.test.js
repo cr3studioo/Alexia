@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+import { readFileSync } from 'node:fs'
 import { expect, test } from 'vitest'
-import { brief, clean, LONGEST, nameFrom, SECTIONS, SHAPE, unique, usable } from '../writing.js'
+import { brief, clean, LONGEST, nameFrom, nameSaid, SECTIONS, shapeFor, SHAPE, unique, usable } from '../writing.js'
 
 /**
  * Adapting (M4-4), minus the model.
@@ -88,4 +89,72 @@ test('two rows never share a name, which is what makes a list readable a week la
   expect(unique('Chief of staff', [])).toBe('Chief of staff')
   expect(unique('Chief of staff', ['Chief of staff'])).toBe('Chief of staff 2')
   expect(unique('Chief of staff', ['Chief of staff', 'Chief of staff 2'])).toBe('Chief of staff 3')
+})
+
+/**
+ * 2026-09-18, live: the brief said *write a real name of your own on the first line*, two lines
+ * above a rule forbidding it to invent a name. A description headed `Name: Alexia` came back
+ * titled `# Jordan` and saved into a row called *Alexia*.
+ */
+test('the title is given to the model, not chosen by it', () => {
+  const said = brief('blunt, no emojis', 'Alexia')
+  expect(said).toContain('# Alexia')
+  // The instruction that caused it must be gone, not merely contradicted somewhere below.
+  expect(said).not.toMatch(/write a real name of your own/i)
+  expect(said).toMatch(/never invent a name of your own/i)
+  // A caller with no name still gets the skeleton, so the bare shape stays usable on its own.
+  expect(brief('blunt')).toContain(SHAPE)
+})
+
+test('a name is copied whole, and a name that looks like a backreference survives it', () => {
+  expect(shapeFor('Alexia')).toMatch(/^# Alexia$/m)
+  expect(shapeFor('  Chief of staff  ')).toMatch(/^# Chief of staff$/m)
+  expect(shapeFor('')).toBe(SHAPE)
+  expect(shapeFor(undefined)).toBe(SHAPE)
+  // `$&` in a replacement string means "the whole match" — a name is text, not a pattern.
+  expect(shapeFor('$& and $1')).toMatch(/^# \$& and \$1$/m)
+})
+
+/**
+ * 2026-09-18, live: `<bullets: register, length, what to call them, what is banned>` came back
+ * as `Register: casual` / `Length: concise` / `What to call them: "you"` / `Banned: rushing`.
+ * The note was filled in rather than written from.
+ */
+test('the notes are instructions to the writer, and may not surface as labels', () => {
+  expect(brief('anything')).toMatch(/never let a note’s own words appear in the document as a label/i)
+  // A note that reads as a list of field names is a note a model will hand back as fields.
+  const notes = SHAPE.split('\n').filter((line) => line.startsWith('<'))
+  expect(notes.length).toBeGreaterThan(0)
+  for (const note of notes) {
+    expect(/^<[a-z]+:/.test(note), `reads as a field list: ${note}`).toBe(false)
+  }
+})
+
+test('a description that states its own name is believed before its opening words', () => {
+  // The real paste that started this: one long line, fields run together, no newlines at all.
+  const pasted = 'Alexia — AI Agent Personality Document Core Identity Name: Alexia Role: Top-level orchestrator'
+  expect(nameSaid(pasted)).toBe('Alexia')
+  // Without it, the name would have been the first four words of the heading.
+  expect(nameFrom('', pasted)).toBe('Alexia')
+  // What they typed in the box still wins over anything the description says.
+  expect(nameFrom('Butler', pasted)).toBe('Butler')
+  expect(nameSaid('blunt, no emojis')).toBe('')
+  expect(nameSaid(undefined)).toBe('')
+})
+
+/**
+ * A cross-file assumption: the title can only match the row if the caller knows the name before
+ * it asks. Naming after the answer came back is what let the two disagree.
+ */
+test('both buttons decide the name before the model writes anything', () => {
+  const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8')
+  // Adapt: unique(nameFrom(...)) has to come first, then the write that is handed it.
+  const adapt = source.indexOf('const name = unique(')
+  const writes = source.indexOf('await write(ctx, description, name)')
+  expect(adapt, 'Adapt no longer computes a name').toBeGreaterThan(-1)
+  expect(writes, 'Adapt no longer hands the name to write()').toBeGreaterThan(adapt)
+  // Re-adapt keeps the row's own name rather than retitling it.
+  expect(source).toMatch(/await write\(ctx, was\.described, String\(row\.name\)\)/)
+  // And nothing calls write() without one.
+  expect(source).not.toMatch(/await write\(ctx, [a-z.]+\)/)
 })

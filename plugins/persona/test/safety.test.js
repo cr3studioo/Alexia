@@ -128,8 +128,8 @@ const source = readFileSync(join(import.meta.dirname, '..', 'index.js'), 'utf8')
 test('every document that can be saved goes through the check, Re-adapt included', () => {
   // One call, inside the one helper both buttons use.
   expect(source.match(/check\(clean\(said\)\)/g)).toHaveLength(1)
-  expect(source).toMatch(/const written = await write\(ctx, description\)/)
-  expect(source).toMatch(/const written = await write\(ctx, was\.described\)/)
+  expect(source).toMatch(/const written = await write\(ctx, description, name\)/)
+  expect(source).toMatch(/const written = await write\(ctx, was\.described, String\(row\.name\)\)/)
   // And what came out is kept on the row by both of them, not just announced once.
   expect(source.match(/removed: written\.removed/g)).toHaveLength(2)
 })

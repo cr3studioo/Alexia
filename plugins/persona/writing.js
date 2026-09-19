@@ -20,25 +20,50 @@
  * So there is nothing here to lift. Angle brackets say what belongs under each heading and
  * name nobody.
  *
+ * **The notes read as instructions, not as fields.** `<bullets: register, length, what to
+ * call them, what is banned>` was a list of four words, and a free model returned it as four
+ * labels — `Register: casual` / `Length: concise` / `What to call them: "you"` / `Banned:
+ * rushing` (2026-09-18). It filled the note in rather than writing from it, which is the same
+ * failure as copying the worked example wearing different clothes. Each note is a sentence
+ * telling the writer what to produce, and {@link brief} forbids a note's words reaching the page.
+ *
  * The headings are chosen for what changes behaviour, because a personality now goes into
  * the **system prompt** in front of every decision the loop makes. *How you talk* is
  * wording. *What you do without being asked* is the one that makes an assistant feel like
  * someone who works there — and the one a thin description will happily invent, hence
  * `Nothing.` as an allowed answer rather than a guess.
  */
-export const SHAPE = `# <a short name for this personality>
+export const SHAPE = `# <the name this personality is saved under>
 
 ## Who you are
-<one or two sentences: what role she plays for this person, in their words>
+<One or two sentences saying what role she plays for this person, in their own words.>
 
 ## How you talk
-<bullets: register, length, what to call them, what is banned>
+<Bullets describing how she speaks: how plain or formal she is, how long her answers run, what she calls this person, and what she must never do. Write each as a sentence, never as a "Label: value" pair.>
 
 ## What you do without being asked
-<bullets: things she raises or chases on her own. "Nothing." if the description says none>
+<Bullets naming what she raises or chases on her own. Write "Nothing." if the description says none.>
 
 ## Hard rules
-<numbered: the lines that must hold every time. "Nothing." if the description gives none>`
+<A numbered list of the lines that must hold every time. Write "Nothing." if the description gives none.>`
+
+/**
+ * The shape with the title already written, because the title was never the model's to choose.
+ *
+ * **It used to say "write a real name of your own on the first line"**, two lines above a rule
+ * forbidding it to invent a name. Handed a description whose own first line read `Name: Alexia`,
+ * a free model titled the document `# Jordan` and it saved into a row called *Alexia*
+ * (2026-09-18) — a personality whose document disagreed with the list it was listed in.
+ *
+ * The caller knows the name before it asks: it is the row's name, decided by {@link nameFrom}
+ * and made unique by {@link unique}. Passing it in makes the title the one thing about the
+ * answer that is not a guess. No name is still allowed, for a caller that has none.
+ */
+export const shapeFor = (name) => {
+  const title = String(name ?? '').trim()
+  // A function replacement: a name containing `$&` would otherwise be read as a backreference.
+  return title === '' ? SHAPE : SHAPE.replace(/^# .*/, () => `# ${title}`)
+}
 
 /**
  * What the adapter is told, and the two sentences carrying the weight.
@@ -48,17 +73,19 @@ export const SHAPE = `# <a short name for this personality>
  * it to Alexia**, second person — a document in the third person describes a character, and
  * what goes into a system prompt has to instruct one.
  */
-export const brief = (description) =>
+export const brief = (description, name) =>
   [
     'You write personality documents for Alexia, an assistant that runs on the user’s own machine.',
     'The document you write is put directly into her system prompt, so it is read as instructions to her.',
     '',
     'Fill in this shape. The angle brackets say what belongs under each heading — replace each',
-    'one, keep the headings, and write a real name of your own on the first line:',
+    'one, keep the four headings exactly as they are, and copy the first line exactly as it stands:',
     '',
-    SHAPE,
+    shapeFor(name),
     '',
     'Rules:',
+    '- The notes in angle brackets are instructions to you, not text to reuse. Replace each note with what it asks for, and never let a note’s own words appear in the document as a label or a heading.',
+    '- The first line is already decided. Copy it exactly, and never invent a name of your own.',
     '- Use only what the description below says or plainly implies. Invent nothing about the user’s life, work, name, or relationships.',
     '- Address Alexia directly, as "you". Never describe her in the third person.',
     '- If the description says nothing about a section, write "Nothing." under it rather than filling it in.',
@@ -120,14 +147,40 @@ export const usable = (doc) => {
 }
 
 /**
+ * A name the description states outright, as `Name: Alexia`.
+ *
+ * Worth reading because a description written elsewhere and pasted in usually says who she is
+ * in its first few words, and the alternative is the first four words of the paste — which for
+ * a document headed *Alexia — AI Agent Personality Document* is a name nobody would choose.
+ *
+ * A pasted document arrives as one long line with its fields run together, so the value ends
+ * at the next `Label:` rather than at a newline. Empty string when nothing says a name.
+ */
+export const nameSaid = (description) => {
+  const found = /\bname\s*[:–—-]\s*(.{1,60})/i.exec(String(description ?? ''))
+  if (!found) return ''
+  const upTo = found[1].split(/\s+(?=[A-Z][A-Za-z]*\s*:)/)[0] ?? ''
+  return upTo
+    .replace(/[#*_`]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 40)
+    .trim()
+}
+
+/**
  * The name, when the user did not type one.
  *
  * Their own words, trimmed to something that fits a column — never the model's, because a
- * name that appeared out of nowhere is a name nobody recognises in a list a week later.
+ * name that appeared out of nowhere is a name nobody recognises in a list a week later. What
+ * they typed in the box wins, then a name the description states outright, and only then the
+ * opening words — each one a better guess than the one after it.
  */
 export const nameFrom = (typed, description) => {
   const said = String(typed ?? '').trim()
   if (said !== '') return said.slice(0, 40)
+  const stated = nameSaid(description)
+  if (stated !== '') return stated
   const words = String(description ?? '')
     .replace(/[#*_`]/g, ' ')
     .split(/[\s,.;:!?\n]+/)
