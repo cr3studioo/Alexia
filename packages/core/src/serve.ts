@@ -48,7 +48,7 @@ import {
 } from './permissions.js'
 import { anonymous, keyOf, PROVIDERS, type Provider } from './provider.js'
 import { redactSecrets } from './redact.js'
-import { allowed, MODES, paid, route, send, shapeOf, type Bubble, type Tier } from './router.js'
+import { allowed, MODES, paid, route, send, shapeOf, wantsCapable, type Bubble, type Personality, type Tier } from './router.js'
 import { CORE, keychain, type SecretStore } from './secrets.js'
 // For `boot.mjs`, which imports the bundle this file is the entry of and nothing else (D153).
 export { fromShell } from './secrets.js'
@@ -459,12 +459,46 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
       const typed = lastAsked === undefined ? '' : textOf(lastAsked).trim()
       if (!typed.includes('\n') && /^\/[a-z][a-z0-9.-]*(?:\s|$)/i.test(typed)) return asCommand(pluginId, typed)
 
-      if (params._meta?.[TOOLS_META] === true) return asTask(pluginId, asked, signal, background(pluginId))
+      if (params._meta?.[TOOLS_META] === true) {
+        return asTask(pluginId, asked, signal, background(pluginId), declaredFor(pluginId, params.modelPreferences))
+      }
 
+      /**
+       * **What the plugin declared about the model it needs** (M8-1), and both halves of it
+       * were fields nobody read until this line.
+       *
+       * `min_tier` is the manifest's floor — *the cheapest rung my work is safe on* — and it
+       * is passed on both sampling paths, this one and `asTask`, because the spec's sentence
+       * is about `sampling/createMessage` and the tools flag does not make a request a
+       * different request. `modelPreferences` is MCP's own, and {@link wantsCapable} is the
+       * whole of what core reads from it.
+       */
+      const declared = declaredFor(pluginId, params.modelPreferences)
+      /**
+       * **A button somebody pressed is a run, and may spend like one** (G13, D156).
+       *
+       * `send` reads *attributed to a plugin, belonging to no run* as *free tiers only* (G12,
+       * D96), and that ceiling is right for a poll loop that woke up at 3am with nobody there.
+       * A press is the other thing: somebody is at the screen watching a progress bar, which
+       * is exactly the audience the spend preview was missing on this path. So a press gets a
+       * run id, and with it the same money rails a task at the keyboard has — the paid switch,
+       * today's amount, and the monthly cap. Derived from `pressing`, the same map that
+       * already decides chat-or-background, so no call site has a flag to forget.
+       */
+      const behind = background(pluginId)
+      const asRun = behind ? undefined : randomUUID()
       const verdict = route(
-        { messages: asked, shape: shapeOf({ messages: asked }), ...(background(pluginId) && { background: true }) },
+        {
+          messages: asked,
+          shape: shapeOf({ messages: asked }),
+          ...(behind && { background: true }),
+          ...declared,
+        },
         pins(store),
-        await world(),
+        // The paid switch, for a press that may now reach across the price line (§4 H). No
+        // conversation to have said *Allow* in — a press is not a chat — so it is the switch
+        // alone. Left unasked without a run, where paid was never reachable anyway.
+        asRun === undefined ? await world() : { ...(await world()), cross: caps(store).cross === true },
       )
       if (!verdict.ok) throw new Error(verdict.why)
       sampling += 1
@@ -479,10 +513,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
         },
         store,
         secrets,
-        // No `run`, because there is no task: a plugin asked. **That is also the ceiling**
-        // — `send` reads *attributed to a plugin, belonging to no run* as *free tiers only*
-        // (G12, D96), so the rule is the router's rather than this call site's.
-        { plugin: pluginId },
+        { plugin: pluginId, ...(asRun !== undefined && { run: asRun, paidAllowed: !allowance(store).stop }) },
       ).finally(() => (sampling -= 1))
       return {
         role: 'assistant',
@@ -892,17 +923,76 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
    * day → the stock four lines, and a task that runs. A personality is a preference, and a
    * preference must never be the reason an answer does not happen.
    */
-  async function personality(): Promise<string | undefined> {
+  async function personality(channel?: string): Promise<Personality | undefined> {
     if (!plugins.answers(CORE_CAPABILITIES.personality)) return undefined
     try {
-      const answered = await plugins.capability(CORE_CAPABILITIES.personality)
+      /**
+       * **Where this task is being read** (improvement 9), when it is not the window.
+       *
+       * A reply read on a phone wants to be shorter and plainer than one at the desk, and the
+       * only thing core knows about that is which plugin started the task — so that is what it
+       * says, and what the answer means by it is entirely the answering plugin's business.
+       *
+       * **Optional at both ends.** A persona plugin that ignores it behaves as it always did,
+       * which is the bar for not moving the contract's number; core sends nothing at all for a
+       * task from the window, because *the window* is not a channel anybody bound a personality
+       * to — it is the absence of one.
+       */
+      const answered = await plugins.capability(
+        CORE_CAPABILITIES.personality,
+        channel === undefined ? undefined : { channel },
+      )
       const said = (answered.content ?? [])
         .map((block) => (block.type === 'text' ? block.text : ''))
         .join('')
         .trim()
-      return said === '' ? undefined : said
+      if (said === '') return undefined
+      /**
+       * **The three lengths, where the plugin offers them** (§2, D160). `content` is still the
+       * long one and still the only required half, so a persona plugin too old to know about
+       * sizes — or a row written before there were any — hands over one document and every
+       * model gets it, which is exactly what happened before this line existed.
+       *
+       * Read defensively rather than parsed: `structuredContent` is whatever the plugin put
+       * there, a shorter size that is not a string is no shorter size, and a personality is a
+       * preference that must never be the reason an answer does not happen.
+       */
+      const shorter = (answered.structuredContent ?? {}) as Record<string, unknown>
+      const one = (key: string): string | undefined => {
+        const held = shorter[key]
+        return typeof held === 'string' && held.trim() !== '' ? held.trim() : undefined
+      }
+      const small = one('small')
+      const medium = one('medium')
+      return { high: said, ...(small !== undefined && { small }), ...(medium !== undefined && { medium }) }
     } catch (error) {
       console.error(`[personality] ${error instanceof Error ? error.message : String(error)}`)
+      return undefined
+    }
+  }
+
+  /**
+   * **The name of the personality in use**, for the chip in the chat header (improvement 8).
+   *
+   * A second tool on the same plugin rather than a field on `persona.personality`, because the
+   * two questions have different answers at different times: the document is read once a task
+   * and is the thing a model is given, and the name is read on every state poll and is a thing
+   * a person is shown. Folding the name into the document's result would send a page of text
+   * to the header twenty times a minute.
+   *
+   * Nothing provides it, nothing is chosen, or whatever does is having a bad day → no chip,
+   * and a chat that works. This is a label; it is never a reason anything fails.
+   */
+  async function chip(): Promise<string | undefined> {
+    if (!plugins.answers(CORE_CAPABILITIES.inUse)) return undefined
+    try {
+      const answered = await plugins.capability(CORE_CAPABILITIES.inUse)
+      const said = (answered.content ?? [])
+        .map((block) => (block.type === 'text' ? block.text : ''))
+        .join('')
+        .trim()
+      return said === '' ? undefined : said.slice(0, 40)
+    } catch {
       return undefined
     }
   }
@@ -1011,7 +1101,34 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     return { role: 'assistant', model: '', content: { type: 'text', text: ran.note }, stopReason: 'endTurn' }
   }
 
-  async function asTask(pluginId: string, messages: Message[], gaveUp?: AbortSignal, behind = true): Promise<CreateMessageResult> {
+  /**
+   * **What a plugin declared about the model it needs**, both halves of it (M8-1).
+   *
+   * A function rather than two lines at each call site because there are two sampling paths —
+   * one completion, and the whole loop behind the tools flag — and a declaration honoured on
+   * one of them is the contract being wrong about itself in a subtler way than never reading
+   * it at all. `min_tier` is the manifest's floor; the rest is {@link wantsCapable}'s reading
+   * of MCP's `modelPreferences`, which is the whole of what core takes from that field.
+   */
+  function declaredFor(
+    pluginId: string,
+    prefs?: Parameters<typeof wantsCapable>[0],
+  ): { minTier?: Tier; capable?: boolean } {
+    const manifest = plugins.manifest(pluginId)
+    return {
+      ...(manifest?.min_tier !== undefined && { minTier: manifest.min_tier }),
+      ...(wantsCapable(prefs) && { capable: true }),
+    }
+  }
+
+  async function asTask(
+    pluginId: string,
+    messages: Message[],
+    gaveUp?: AbortSignal,
+    behind = true,
+    /** What the plugin declared about the model it needs (M8-1) — the same two on either path. */
+    declared: { minTier?: Tier; capable?: boolean } = {},
+  ): Promise<CreateMessageResult> {
     if (task) throw new Error('Alexia is already working on something. Try again when it has finished.')
     const started = [...messages].reverse().find((m) => m.role === 'user')
     const text = started === undefined ? '' : textOf(started)
@@ -1027,9 +1144,11 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     trace.start(runId, text)
     try {
       const month = allowance(store)
-      const chosen = await personality()
-      // What the model will actually be given, counted the way `system()` counts it (M4-4).
-      trace.personality(chosen?.trim().length ?? 0)
+      // The plugin that started this is where the answer will be read (improvement 9).
+      const chosen = await personality(pluginId)
+      // What reaches the model is counted per step now, because §2's three lengths mean it can
+      // differ between them — the loop reports it through `on.personality`, below.
+      if (chosen === undefined) trace.personality(0, 'high')
       const once = (asked: Message[]): ReturnType<typeof run> => run({
         messages: asked,
         tools: tooling,
@@ -1046,11 +1165,18 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
         plugin: pluginId,
         // A message from a phone is not the chat on screen: its free requests come second (§4 F).
         ...(behind && { background: true }),
+        // The manifest's floor and MCP's own preference, on this path as well as the plain
+        // one: the tools flag does not make it a different request (M8-1).
+        ...(declared.minTier !== undefined && { minTier: declared.minTier }),
+        ...(declared.capable === true && { capable: true }),
         paidAllowed: !month.stop,
         maxSteps: limitsNow().steps,
         // The stop button, and the plugin that started this giving up: either one ends the task.
         signal: gaveUp === undefined ? stop.signal : AbortSignal.any([stop.signal, gaveUp]),
         guard: gate(text, runId),
+        // How much of her this step's model was given (§2). The only `on` this path wants:
+        // there is no stream here to write a step to, but the record is still worth keeping.
+        on: { personality: (chars, size) => trace.personality(chars, size) },
         /**
          * The yes, from wherever the person is.
          *
@@ -1250,6 +1376,20 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
           // Today's side of the same question, and the one that decides whether the router
           // may reach across the price line on its own at all.
           today: today(store),
+          /**
+           * **Who is answering, and whether there is anything to say she was not her**
+           * (`plan-personality.md` improvements 8 and 10).
+           *
+           * The chip in the chat header is the name of the personality in use, and the whole
+           * point of it is that *which one is on* stops being a settings screen away. Absent
+           * when none is chosen, which is Alexia's own voice and not a chip saying so.
+           *
+           * `notHer` is whether anything will listen if somebody presses *That wasn't her* —
+           * the button is not drawn otherwise, which is the honest version of *there is
+           * nothing here this would tell*. Resolved by capability; core never learns who.
+           */
+          character: await chip(),
+          notHer: plugins.answers(CORE_CAPABILITIES.notHer),
           // The paid switch (§4 H), so the screen can say above the message box that paid is on.
           cross: caps(store).cross === true,
           // The permission controls, and what is standing. Every one of these is a control
@@ -1927,6 +2067,46 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
      * question to the person, and the second call carries their answer. `blocked` has no
      * second call: that is the difference between a question and a floor.
      */
+    /**
+     * ***That wasn't her*** (`plan-personality.md` improvement 10), pressed under the latest
+     * answer, beside *Bad answer* and asking the opposite question.
+     *
+     * **It does not ask the question again**, and that is the whole difference. *Bad answer*
+     * says the answer was wrong, so the answer is thrown away and something else is asked;
+     * this says the answer was hers to give and did not sound like her, so the answer stays on
+     * the page and what changes is the personality — later, deliberately, through Refine.
+     *
+     * **Core hands it over and forgets it.** The mark is about a plugin's document, so it goes
+     * out under a capability name and core never learns who took it, never reads it back, and
+     * never fails the press on the strength of it: a button that sometimes errors for reasons
+     * about a plugin is a button people stop pressing.
+     */
+    if (url.pathname === '/api/not-her' && request.method === 'POST') {
+      const { said } = sent as { said?: string }
+      const history = store.history(session)
+      const answer = [...history].reverse().find((turn) => turn.role === 'assistant' && (turn.calls?.length ?? 0) === 0)
+      response.writeHead(200, { 'content-type': 'application/json' })
+      if (answer === undefined) {
+        response.end(JSON.stringify({ ok: false, said: 'There is no answer to mark yet.' }))
+        return
+      }
+      // The turn it was answering, because an example is a pair: what she was asked, and the
+      // thing she said that did not sound like her. One on its own teaches nothing.
+      const at = history.lastIndexOf(answer)
+      const asked = [...history.slice(0, at)].reverse().find((turn) => turn.role === 'user')
+      await plugins
+        .capability(CORE_CAPABILITIES.notHer, {
+          answer: textOf(answer).slice(0, 2000),
+          ...(asked !== undefined && { asked: textOf(asked).slice(0, 500) }),
+          ...(typeof said === 'string' && said.trim() !== '' && { said: said.trim().slice(0, 500) }),
+        })
+        .catch((error: unknown) => {
+          console.error(`[not-her] ${error instanceof Error ? error.message : String(error)}`)
+        })
+      response.end(JSON.stringify({ ok: true }))
+      return
+    }
+
     if (url.pathname === '/api/action' && request.method === 'POST') {
       const press = sent as { plugin?: string; key?: string; row?: string; approved?: boolean }
       const plugin = press.plugin ?? ''
@@ -2446,8 +2626,8 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     const runId = randomUUID()
     trace.start(runId, text)
     const chosen = await personality()
-    // What the model will actually be given, counted the way `system()` counts it (M4-4).
-    trace.personality(chosen?.trim().length ?? 0)
+    // Said per step by the loop (§2's three lengths); *none sent* has no step to wait for.
+    if (chosen === undefined) trace.personality(0, 'high')
     try {
       const result = await run({
         messages: store.history(session).filter((turn) => turn.bad !== true),
@@ -2495,6 +2675,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
             // time, and the one worth naming is the one the answer actually came from.
             reached = models.bubble
           },
+          personality: (chars, size) => trace.personality(chars, size),
           step: (step) => {
             trace.step(step)
             say({ step: { n: step.n, name: step.name, args: step.args } })

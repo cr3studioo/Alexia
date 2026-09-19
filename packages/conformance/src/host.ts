@@ -150,6 +150,17 @@ export function fakeHost(options: FakeHostOptions): FakeHost {
       case 'alexia/host/info':
         return info()
 
+      case 'alexia/answers':
+        /**
+         * **Nothing is here, which is the honest answer for a plugin under test.**
+         *
+         * The harness runs one folder with no neighbours, so no capability is provided and
+         * none is installed-and-off. Answering `false` twice is not a stub: it is the truth
+         * of this machine, and it is the case an author most needs to have handled — a
+         * plugin that only works when something else is switched on.
+         */
+        return { answers: false, here: false }
+
       case 'alexia/capability/call': {
         const cap = String(p.cap)
         if (!manifest.requires?.some((r) => r.cap === cap)) {

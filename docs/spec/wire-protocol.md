@@ -366,6 +366,39 @@ assume.
 > apply to a plugin's model use exactly as they apply to Alexia's own. If MCP removes them,
 > they become `alexia/*` methods — the contract a plugin author writes against does not move.
 
+#### `modelPreferences` — what core reads, and what it does not
+
+MCP's own field, and **one of its three numbers reaches the router** (M8-1). Core is honest
+about the other two here rather than leaving you to find out by measuring.
+
+```jsonc
+{ "method": "sampling/createMessage",
+  "params": {
+    "messages": [ … ],
+    "maxTokens": 4000,
+    "modelPreferences": { "intelligencePriority": 0.8, "speedPriority": 0.3, "costPriority": 0.3 } } }
+```
+
+| | |
+|---|---|
+| `intelligencePriority` | **Honoured**, when it is the largest of the three *and* at least `0.5`. Your request is then ranked strongest-first rather than cheapest-first; a **router** — a model id that hands the request on to a different model each time — is not a candidate at all; and a model Alexia's own record doubts (never tried, too many errors, bad answers, set aside) waits until nothing else fits. |
+| `costPriority` | **Honoured by already being true.** Cheapest-that-fits is what core does when nobody says otherwise, so asking for it changes nothing. |
+| `speedPriority` | **Read and not acted on.** Nothing core knows about a model says how fast it answers; the nearest thing is a record of what has timed out *on this machine*, which already sinks a slow model for everybody. A speed order invented out of size or price would be a guess wearing a knob's clothing. |
+| `hints` | **Read and not acted on.** They name models by substring, which is a plugin choosing a vendor — the one thing core will not let a plugin do. The user's pins, slider and allowance decide who answers. |
+
+**None of it is a way past the user.** A preference is a sort, not a permission: the privacy
+mode, the free/paid slider, the daily amount and the monthly cap all apply exactly as they
+did, and a model the user pinned still wins outright. The single exception is a pin on a
+*router*, which is the user asking for a different model each time and therefore not an
+answer to *give me one that can do this* — a request with `intelligencePriority` high routes
+around it, and around nothing else.
+
+**A press is a run.** A `sampling/createMessage` a plugin makes on its own clock — a poll
+loop, a timer — is capped at free tiers and the local machine, and always has been. One made
+while a **button the user pressed** is still in flight is not: somebody is at the screen
+watching, so it may reach a paid model under the same paid switch, daily amount and monthly
+cap as a task started in Alexia's own window. You do not declare this; core derives it.
+
 #### `alexia/tools` — *use my tools, and ask me when you must*
 
 One optional key on the request's `_meta`, and it turns a completion into a **task**:
@@ -416,18 +449,19 @@ one the log panel always shows.
 
 ## 6. The `alexia/*` layer
 
-Six methods. Everything MCP covers is MCP; this is the remainder. **If you want a seventh,
+Seven methods. Everything MCP covers is MCP; this is the remainder. **If you want an eighth,
 argue it against MCP first** — the whole value of adopting MCP evaporates one private
 extension at a time. The sixth was argued and won on 2026-08-28: see
-[`alexia/settings/set`](#alexiasettingsset).
+[`alexia/settings/set`](#alexiasettingsset). The seventh on 2026-09-19: see
+[`alexia/answers`](#alexiaanswers).
 
-> **These require the `2025-11-25` era**, because five of the six are requests a plugin
+> **These require the `2025-11-25` era**, because six of the seven are requests a plugin
 > sends to core and `2026-07-28` has no such direction. A server that speaks only the newer
 > revision still connects and its tools still work; it simply has no Alexia layer, and any
 > `alexia/*` request it sends is dropped unanswered. See
 > [§1.1](#11-two-eras-and-why-a-plugin-lives-on-the-older-one).
 
-All six are called **plugin → core**, except `alexia/settings/changed`, which is a
+All seven are called **plugin → core**, except `alexia/settings/changed`, which is a
 notification core sends you.
 
 ### `alexia/settings/get`
@@ -524,6 +558,38 @@ honest answers. `@alexia/sdk` waits `CAPABILITY_CALL_MS` from `@alexia/protocol`
 speaking the wire directly should wait at least as long. Names
 come from [`capabilities.md`](./capabilities.md); adding one is a pull request, not a string
 you invent.
+
+### `alexia/answers`
+
+*`alexia_protocol` 10.* **Would anything here answer this capability?** — and, separately, is
+something that would **installed and switched off**?
+
+```jsonc
+// → { "jsonrpc":"2.0", "id":11, "method":"alexia/answers", "params": { "cap": "memory.remember" } }
+// ← { "jsonrpc":"2.0", "id":11, "result": { "answers": false, "here": true } }
+```
+
+For deciding whether to offer something at all, and for the sentence when you cannot. It is
+the reading half of [`alexia/capability/call`](#alexiacapabilitycall), and it keeps the same
+invariant at both ends: you ask about a **capability**, never a plugin, and you are told two
+booleans, never a name.
+
+**Why it is not MCP.** A capability is Alexia's own idea — a name one plugin promises and
+another depends on, resolved by core and never by plugin id. `tools/list` is *your* tools, and
+MCP has no cross-server *does anybody offer X*, so there is nothing upstream to argue against.
+
+**`answers` is the promise, not the runtime binding**, exactly as core reads it for itself: a
+plugin whose model is still downloading says yes here and fails the call. That is the right way
+round — you are deciding whether to plan around it, and the answer is *usually*.
+
+**`here` is the difference between two afternoons.** *Nothing here can do that* sends somebody
+to a library; *something that could is installed and switched off* sends them to a switch two
+inches away. Saying which costs no name.
+
+**It does not need the capability in your `requires[]`.** Calling one runs somebody else's code
+on your say-so and is gated; asking whether one exists runs nothing and changes nothing, and a
+plugin made to declare a dependency it does not have in order to *check* for it would be
+declaring something untrue.
 
 ### `alexia/host/info`
 

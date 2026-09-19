@@ -10,11 +10,15 @@ import {
   route,
   send,
   shapeOf,
+  sizedFor,
+  weakest,
   type Ask,
   type Bubble,
   type Mode,
+  type Personality,
   type Pins,
   type Shape,
+  type Size,
   type Switch,
   type Tier,
   type World,
@@ -145,6 +149,12 @@ export interface AgentEvents {
   /** A call is about to run. Fired before the work, because that is the point of a trace. */
   step?(step: Step): void
   /**
+   * **How much personality this step's model was given**, in characters, and which of §2's
+   * three lengths that was. Fired once per step, because the model is chosen per step and the
+   * three lengths are the reason that can now change under the same task.
+   */
+  personality?(chars: number, size: Size): void
+  /**
    * The same step, still running, with something new to say about how far along it is (M2-6).
    *
    * **Silence is what kills a first run, not time.** A step that will take four minutes and
@@ -175,6 +185,18 @@ export interface RunOptions {
   avoid?: string[]
   /** Every step above this tier — *Bad answer* with the paid switch on asks a smarter model (§4 I). */
   above?: Tier
+  /**
+   * **The floor the asking plugin declared** — `min_tier` in its manifest (M8-1). Absent for a
+   * task from the window, which is nobody's plugin and has no floor but `T0`.
+   */
+  minTier?: Tier
+  /**
+   * **The asking plugin wants a capable model, not the cheapest that fits** (M8-1), read from
+   * MCP's `modelPreferences`. Carried on every step, because a fallback mid-task is the case
+   * it exists for: a plugin that asked for one real model does not want step nine handed to a
+   * router because step eight was busy.
+   */
+  capable?: boolean
   tools: Tooling
   pins: Pins
   /** Re-asked every step: a tier can be exhausted mid-task, which is the whole point. */
@@ -215,12 +237,16 @@ export interface RunOptions {
    */
   trimming?: TrimOptions
   /**
-   * The chosen personality, already resolved (M4-4). Read once per task by whoever calls
-   * this, because a plugin asked every step is a plugin woken twenty-four times to say the
-   * same sentence — and a personality that changed halfway through a task would be worse
-   * than one that did not.
+   * The chosen personality, already resolved (M4-4), **in its three lengths** (§2, D160).
+   *
+   * Read once per task by whoever calls this, because a plugin asked every step is a plugin
+   * woken twenty-four times to say the same sentence — and a personality that changed halfway
+   * through a task would be worse than one that did not. **Which of the three goes out is
+   * decided per step**, and that is not the same thing: the document does not change, but the
+   * model does, and the one a fallback lands on may be a 2B router that cannot hold six
+   * hundred words. {@link weakest} picks for the weakest rung in that step's plan.
    */
-  personality?: string
+  personality?: Personality
   signal?: AbortSignal
   /**
    * May this call run? (M15-3.) The loop does not know what a permission is — it asks, and
@@ -485,6 +511,8 @@ export async function run(options: RunOptions): Promise<RunResult> {
         above: answered,
         ...(options.background === true && { background: true }),
         ...(options.avoid !== undefined && { avoid: options.avoid }),
+        ...(options.minTier !== undefined && { minTier: options.minTier }),
+        ...(options.capable === true && { capable: true }),
         ...(named.length > 0 && { tools: named }),
         ...(seeing.length > 0 && { modality: seeing }),
       }
@@ -505,6 +533,8 @@ export async function run(options: RunOptions): Promise<RunResult> {
       ...(options.background === true && { background: true }),
       ...(options.avoid !== undefined && { avoid: options.avoid }),
       ...(options.above !== undefined && { above: options.above }),
+      ...(options.minTier !== undefined && { minTier: options.minTier }),
+      ...(options.capable === true && { capable: true }),
       ...(named.length > 0 && { tools: named }),
       ...(seeing.length > 0 && { modality: seeing }),
     }
@@ -567,6 +597,18 @@ export async function run(options: RunOptions): Promise<RunResult> {
      */
     const billable = verdict.choices.some((c) => paid(c.model.tier))
 
+    /**
+     * **Which length of the personality this step sends** (§2). Chosen for the *weakest* rung
+     * in the plan rather than the first one, because a 429 on the first hands the step to the
+     * second and the document has already gone with it.
+     */
+    const worn =
+      options.personality === undefined ? undefined : sizedFor(options.personality, weakest(verdict.choices, now))
+    const wearing = worn?.text
+    // Counted the way `system` counts it, so this is the length that reached the model rather
+    // than the length that was stored — and said per step now that it can differ between them.
+    if (worn !== undefined) on?.personality?.(wearing?.trim().length ?? 0, worn.size)
+
     /** What this turn's switches said, kept on the answer they belong to (§4 G). */
     const noted: string[] = []
     let answer
@@ -576,7 +618,7 @@ export async function run(options: RunOptions): Promise<RunResult> {
         {
           // Trimmed here rather than in the store: what is kept is what a model is shown,
           // and the history itself stays whole so a reload shows every step that happened.
-          messages: [system(available, options.personality, standing), ...trim(messages, trimming)],
+          messages: [system(available, wearing, standing), ...trim(messages, trimming)],
           ...(available.length > 0 && { tools: available }),
           ...(billable && { maxTokens: options.maxTokens ?? REPLY_CEILING }),
           ...(options.signal && { signal: options.signal }),

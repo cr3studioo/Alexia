@@ -229,11 +229,19 @@ land on anything not already covered by D154–D171): the same day, in three pla
   date with nothing changed. The fixture is now anchored to noon UTC of the day it runs. The
   seam itself is untouched — `send()` still reads the wall clock — and is worth closing properly.
 
+  **The seam is closed, 2026-09-19 (`56549d1`).** `send()` takes an optional `at` and passes it
+  to `recordTry`; absent is the wall clock, which is every other caller. `trial()` passes its
+  own. Two assertions in `trial.test.ts` were reading the record at `Date.now()` after writing
+  into the fixture's clock and now read at the clock they wrote with, and a third test pins the
+  property so it cannot reopen quietly. No decision number: nothing was chosen, a fact was made
+  true. It is not a test-only seam — `judge()` reasons in days, and a record timestamped by one
+  clock and queried by another disagrees with itself about where a day ends.
+
 ---
 
 ## Beyond this session — later work, same rules, don't start without cause
 
-- [ ] **14. `plan-personality.md` step 5 — §1, the writer.**
+- [x] **14. `plan-personality.md` step 5 — §1, the writer.**
   In this order, because the plan's own sub-items have this dependency shape:
   1. **M8-1 first.** `intelligencePriority` sorts best-first; manifest `min_tier` becomes
      `Ask.minTier`. Confirmed unbuilt by grep (`Ask.minTier` exists and is read in `router.ts`,
@@ -248,19 +256,69 @@ land on anything not already covered by D154–D171): the same day, in three pla
   *Already done, don't redo:* "prefer a model that answers" (D160/D162) and "Adapt counts as the
   chat" (D161/D168) — both sub-items of this same section in `plan-personality.md`.
 
-- [ ] **15. Step 6 — §2, three sizes.**
+  **Built 2026-09-19 (D178), `9a1d745`.** All three sub-items in one change, because the first is
+  decorative without the third. Four questions were asked before any code: the order of items
+  14–16, the pin contradiction, how hard the two filters should be, and what carries G13's run id.
+  Every recommendation was taken. Two things differ from the text above:
+  - **`min_tier` and `modelPreferences` are honoured on both sampling paths**, not only the plain
+    one — the tools flag does not make it a different request.
+  - **A pin still wins outright, except a pin on a router.** `plan.md` M8-1 and
+    `plan-personality.md` §1.2 said opposite things here; the owner chose the narrow reading.
+
+  M8-1 is ticked in `plan.md`. **M8-7 stays unticked** — items 15–17 are still open.
+
+- [x] **15. Step 6 — §2, three sizes.**
   Small (~100 words), medium (~300), high (~600), chosen per call for the weakest model in that
   step's plan. Once this lands, revisit item 10 if it was deferred rather than built against the
   single-document estimate.
 
-- [ ] **16. Step 7 — improvements 2, 3, 4, 5, 9.**
+  **Built 2026-09-19 (D181), `093f9c4`.** Item 10 was built rather than deferred (D176), and
+  `costOf()` did take one document as that note promised — so the cost line now names all three
+  and the function did not change.
+
+  Two things the item's text does not cover, both recorded in the decision: **what is reported
+  is the size that was sent rather than the size the model deserved**, so a personality with one
+  document reads as `high`; and the **trace line moved from per run to per step**, which narrows
+  D175 on its own terms — that decision rested on a personality read once per task being unable
+  to differ between steps, and three lengths are exactly that changing.
+
+- [x] **16. Step 7 — improvements 2, 3, 4, 5, 9.**
   Refine (2), the preview with Skip (3), flagging inert behaviour lines (4), facts to Memory with
   one confirm for all (5), and a personality per channel (9).
 
-- [ ] **17. Step 8 — improvement 10, joined with Bad answer.**
+  **2 and 3 built 2026-09-19** — `887a7c8` (**D179**, Refine and Edit) and `22d491b` (**D180**,
+  the preview). Asked before coding and answered by the owner: the preview saves the row without
+  switching rather than holding an unsaved draft, because this plugin is `lazy`; and improvement
+  2 was built first so the preview's button row is complete rather than carrying a Refine with
+  nothing behind it. The Skip is a toggle, on by default, rather than a fourth button — two model
+  calls are best declined before they are made.
+
+  **4 built 2026-09-19** — `2e5ed4b` (**D182**), with `alexia_protocol` 9 → 10 for the seventh
+  `alexia/*` method. The owner chose the plan's literal `alexia/answers` over a broader list of
+  abilities, having been shown that the plan's own two examples (*Telegram reminders*,
+  *Obsidian*) cannot be expressed as capability names and so cannot be caught. The build says
+  how many lines it looked at rather than implying it looked at all of them.
+
+  **5 and 9 built 2026-09-19** — `0d1887d` (**D183**). Facts come out of the same Adapt call and
+  are offered rather than taken, with one button for all of them: D160's *one confirm* in the
+  only shape the widget set can draw. The channel is optional at both ends and the window sends
+  none, so no contract number moved for it.
+
+  Found on the way and fixed: `memory.remember` and `memory.recall` have been shipped by
+  `plugins/memory` since it existed and were never in `docs/spec/capabilities.md`'s register.
+
+- [x] **17. Step 8 — improvement 10, joined with Bad answer.**
   *"That wasn't her"* joins `model_plan.md` §4 I's *Bad answer* as one row of message actions
   (`answerActions()` in `packages/ui/src/main.ts`) — build them together, not twice. The header
   chip deferred from item 11 (improvement 8) lands here too.
+
+  **Built 2026-09-19 (D184), `b0f5db5`.** Both in one row, as the item required. Two new
+  capability names — `persona.not_her` for the mark and `persona.in_use` for the chip — and no
+  protocol bump, since a capability name is a string in `provides` rather than a manifest field
+  or a method. The chip is `#character` in the shell: **invariant 1 caught `#persona`**, which
+  is a plugin id, and that rule applies to the shell as much as to core.
+
+  **M8-7 is ticked in `plan.md`**: `plan-personality.md`'s order of work is finished.
 
 - [ ] **18. `model_plan.md`'s deferred item: the model record shared with the owner's server.**
   Explicitly "decided later" (D160); the hook already exists and does nothing (D171, §4 J). Do

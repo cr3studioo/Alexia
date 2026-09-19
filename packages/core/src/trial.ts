@@ -94,6 +94,10 @@ export async function trial(options: {
     sent += 1
     await send([choice], { messages: [{ role: 'user', content: TEST_MESSAGE }], maxTokens: TEST_ROOM }, store, secrets, {
       source: 'test',
+      // This function reasons in days and takes its own `now`; a try it makes has to be
+      // stamped by the same clock, or a test sent "today" reads back as a try from another day
+      // and `due()` offers the model again tomorrow morning.
+      ...(options.now !== undefined && { at: now }),
     }).catch(() => undefined)
   }
   return sent

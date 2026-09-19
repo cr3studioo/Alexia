@@ -12,11 +12,15 @@
       "index.js"
     ]
   },
-  "alexia_protocol": 2,
+  "alexia_protocol": 10,
   "mcp_protocol": "2025-11-25",
-  "requires": [],
+  "requires": [
+    { "cap": "memory.remember", "why": "to offer the facts about you it found in your description to long-term memory, once, when you press the button" }
+  ],
   "provides": [
-    "persona.personality"
+    "persona.personality",
+    "persona.in_use",
+    "persona.not_her"
   ],
   "settings": [
     {
@@ -34,11 +38,40 @@
       "hint": "The name it appears under below. Leave it empty and the wording above names it."
     },
     {
+      "type": "text",
+      "key": "use_on",
+      "label": "Use one of them somewhere else",
+      "placeholder": "telegram",
+      "hint": "Type where — the name of the plugin you talk to her through — then press Use there on the row. A reply read on a phone wants to be shorter than one at the desk. Leave it empty and press Use there to unbind."
+    },
+    {
+      "type": "text",
+      "key": "refine_with",
+      "label": "Change something about one of them",
+      "placeholder": "more blunt, and stop saying \u201cman to man\u201d",
+      "hint": "Type the change, then press Refine on the row it is about. The previous version is kept."
+    },
+    {
+      "type": "text",
+      "key": "edit_doc",
+      "multiline": true,
+      "label": "Or write it yourself",
+      "placeholder": "# Chief of staff\n\n## Who you are\n\u2026",
+      "hint": "Open a row to read what she is being told, paste it here, change it, then press Edit on that row. The same checks run as on Adapt."
+    },
+    {
+      "type": "toggle",
+      "key": "hear_first",
+      "label": "Hear her before switching",
+      "default": true,
+      "hint": "Adapt saves her without switching, and two sample answers come back so you know what you are choosing. Turn this off and Adapt switches straight away, the way it used to."
+    },
+    {
       "type": "action",
       "key": "adapt",
       "label": "Adapt",
       "tool": "adapt",
-      "hint": "One model call. It writes the personality, saves it, and starts using it."
+      "hint": "One model call to write it, and two short ones to hear her. Nothing switches until you press Use."
     },
     {
       "type": "progress",
@@ -49,7 +82,7 @@
       "type": "table",
       "key": "saved",
       "label": "Saved personalities",
-      "hint": "Use switches her over from the next thing you say. Open a row to read exactly what she is being told, and the words it was adapted from.",
+      "hint": "Use switches her over from the next thing you say. Use there binds one to a place you talk to her through instead. Hear her asks two sample questions in her voice first. Open a row to read exactly what she is being told, and the words it was adapted from.",
       "rows": "personalities",
       "columns": [
         { "key": "name", "label": "Name" },
@@ -59,7 +92,12 @@
       ],
       "rowActions": [
         { "key": "use", "label": "Use", "tool": "use" },
+        { "key": "hear", "label": "Hear her", "tool": "hear" },
+        { "key": "recall", "label": "Remember the facts", "tool": "recall" },
+        { "key": "usethere", "label": "Use there", "tool": "usethere" },
         { "key": "readapt", "label": "Re-adapt", "tool": "readapt" },
+        { "key": "refine", "label": "Refine", "tool": "refine" },
+        { "key": "edit", "label": "Edit", "tool": "edit" },
         { "key": "undo", "label": "Undo", "tool": "undo" },
         { "key": "forget", "label": "Forget", "tool": "forget", "confirm": "Forget {name}?" }
       ],
@@ -92,8 +130,9 @@
   "storage": {
     "namespace": "persona",
     "tables": [
-      "personalities"
+      "personalities",
+      "moments"
     ]
   },
-  "min_tier": "T1"
+  "min_tier": "T0"
 }

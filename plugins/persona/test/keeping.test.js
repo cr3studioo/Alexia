@@ -25,6 +25,11 @@ const row = {
 test('a row carries the words it was adapted from, who wrote it, and when', () => {
   expect(versionOf(row)).toEqual({
     doc: '# Chief of staff\n\nBe blunt.',
+    // §2's two shorter lengths, empty on a row written before they existed — empty rather than
+    // absent, because Undo writes a version back whole and a missing key would leave the old
+    // short one beside the restored long one.
+    docSmall: '',
+    docMedium: '',
     described: 'blunt, calls me Vacen, no emojis',
     wrote: 'anthropic/claude-opus-4',
     at: Date.parse('2026-09-18T10:00:00Z'),
@@ -38,7 +43,14 @@ test('a row carries the words it was adapted from, who wrote it, and when', () =
 test('a personality saved before any of this was kept still reads back', () => {
   // Exactly what is in the database on this Mac today: a name, a document, a date, nothing else.
   const old = { rowid: 2, name: 'Old one', doc: '# Old one\n\nBe kind.', at: Date.parse('2026-08-01T10:00:00Z') }
-  expect(versionOf(old)).toEqual({ doc: '# Old one\n\nBe kind.', described: '', wrote: '', at: Date.parse('2026-08-01T10:00:00Z') })
+  expect(versionOf(old)).toEqual({
+    doc: '# Old one\n\nBe kind.',
+    docSmall: '',
+    docMedium: '',
+    described: '',
+    wrote: '',
+    at: Date.parse('2026-08-01T10:00:00Z'),
+  })
   // No invented description and no invented writer — only the one thing that is actually known.
   const said = provenance(old)
   expect(said).toBe('Written on 2026-08-01')
@@ -48,7 +60,7 @@ test('a personality saved before any of this was kept still reads back', () => {
 })
 
 test('the previous version comes back off the row as JSON text, the way storage returns it', () => {
-  const was = { doc: '# Chief of staff\n\nBe terse.', described: 'terse', wrote: 'meta/llama', at: 1 }
+  const was = { doc: '# Chief of staff\n\nBe terse.', docSmall: '', docMedium: '', described: 'terse', wrote: 'meta/llama', at: 1 }
   // storage.md: objects are stored as JSON text and come back as text. A reader that assumed
   // an object would work in a unit test and fail against the real database.
   expect(priorOf({ ...row, previous: JSON.stringify(was) })).toEqual(was)
@@ -83,13 +95,39 @@ test('provenance says a previous version is kept, so Undo is discoverable before
  * on import. So it reads the file. A structural check is weaker than a behaviour one, and it
  * is the strongest thing available here that fails if the clamps go missing.
  */
-const source = readFileSync(join(import.meta.dirname, '..', 'index.js'), 'utf8')
+/**
+ * **Line endings normalised, because git hands a Windows checkout CRLF.**
+ *
+ * Every structural test in this folder reads a source file and matches patterns against it,
+ * and a pattern that spans a line break passes on the machine it was written on and fails on
+ * the first build that matters. `12-version-in-step.test.ts` documents the same trap from the
+ * other side; it caught these three on the first CI run after they were written.
+ */
+const source = readFileSync(join(import.meta.dirname, '..', 'index.js'), 'utf8').replace(/\r\n/g, '\n')
 
-test('the model call is made once, so Adapt and Re-adapt cannot drift apart', () => {
-  expect(source.match(/createMessage\(/g)).toHaveLength(1)
-  // Both buttons reach it through the one helper rather than calling a model themselves.
-  expect(source).toMatch(/const written = await write\(ctx, description\)/)
-  expect(source).toMatch(/const written = await write\(ctx, was\.described\)/)
+test('the model call is made once, so Adapt, Re-adapt and Refine cannot drift apart', () => {
+  // Two calls in the file, and they are two different jobs. The document is written by one
+  // helper that every button goes through; the samples are asked by another, and the samples
+  // must **not** carry `modelPreferences` — a sample written by a better model than the one
+  // that will actually read her is a sample that lies in the one direction that matters.
+  expect(source.match(/createMessage\(/g)).toHaveLength(2)
+  // One of the two asks for a capable model; the other must not, so it is the only `:` form —
+  // and it is not the one inside `hearing()`, whose body is read out here and checked.
+  expect(source.match(/modelPreferences: /g)).toHaveLength(1)
+  const from = source.indexOf('async function hearing')
+  expect(from).toBeGreaterThan(-1)
+  const body = source.slice(from, source.indexOf('\n}', from))
+  expect(body).toContain('createMessage(')
+  expect(body).not.toContain('modelPreferences')
+  // All three buttons reach it through the one helper rather than calling a model themselves,
+  // handing in a brief rather than a description — which is what lets Refine send a document
+  // and a sentence instead of the 1,300-token description that ran a model out of room.
+  expect(source).toMatch(/const written = await write\(ctx, brief\(description, name, remembering\)\)/)
+  expect(source).toMatch(/const written = await write\(ctx, brief\(was\.described, String\(row\.name\)\)\)/)
+  expect(source).toMatch(/const written = await write\(ctx, refining\(was\.doc, change, moments\), STEPS\.refine\)/)
+  // And the previous version is kept by one function, not by each of them remembering to.
+  // *The version it replaces is kept* is printed on three row-action labels.
+  expect(source.match(/await keep\(row, was, /g)).toHaveLength(3)
 })
 
 test('D157 survives the extraction: room to think, time to answer, and a cut answer refused', () => {

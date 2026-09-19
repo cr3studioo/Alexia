@@ -277,13 +277,13 @@ built.
 
 ### M8 — What the contract says and core does not do *(inserted 2026-08-29 — see Change log)*
 
-- [ ] **M8-1** `modelPreferences` and `min_tier` are honoured, or they stop being fields
+- [x] **M8-1** `modelPreferences` and `min_tier` are honoured, or they stop being fields *(built 2026-09-19, D178)*
 - [x] **M8-2** More than one conversation, and a way back into one
 - [x] **M8-3** Settings is two pages, and every plugin has one of its own
 - [x] **M8-4** *Recommended* was a word covering a rule, and the rule was not on the screen
 - [x] **M8-5** The workflows a person built, run from Alexia *(inserted 2026-09-01 — see Change log)*
 - [x] **M8-6** Models: listed when usable, ranked best to worst, and three fallback modes *(inserted 2026-09-15, D154–D155, D158–D161; built out 2026-09-18, D172–D174 — see [`model_plan.md`](./model_plan.md))*
-- [ ] **M8-7** Personality v2: three sizes and ten improvements *(inserted 2026-09-15, D156–D157, D160–D161 — see [`plan-personality.md`](./plan-personality.md))*
+- [x] **M8-7** Personality v2: three sizes and ten improvements *(inserted 2026-09-15, D156–D157, D160–D161; built out 2026-09-18/19, D175–D177, D179–D184 — see [`plan-personality.md`](./plan-personality.md))*
 
 ### M9 — Local media generation, as a product *(inserted 2026-09-01 — see [`comfyui_engine_plan.md`](./comfyui_engine_plan.md))*
 
@@ -3520,6 +3520,68 @@ is **G13**, open in `questions.md`, and this task does not pre-empt it. *G13 was
 - The free-only ceiling for a run-less plugin call is unchanged, and its test still passes.
 - Any priority core decides not to honour is **gone from the schema**, not silently accepted.
 
+**Built 2026-09-19 (D178)** — *where the build differs from the text above.*
+
+- **"Gone from the schema" could not be done, and the honest half is written down instead.**
+  `modelPreferences` is MCP's own field on MCP's own method; core cannot delete a key from
+  somebody else's schema, and the manifest's `min_tier` is the only half of this that was ever
+  ours to remove. So `speedPriority` and `hints` are **documented as read and not acted on**,
+  in `wire-protocol.md`'s sampling section, with the reason: nothing core knows about a model
+  says how fast it answers, and a hint naming a model is a plugin choosing a vendor. That is
+  the same promise this item asked for — nobody believes a knob is connected — reached the
+  only way the field allows. `costPriority` is honoured by already being true.
+- **A preference turned out to be more than a sort.** The text expected `intelligencePriority`
+  to reverse `cheapest` and nothing else. `plan-personality.md` §1.2 wants two filters with it
+  — never a router, never a model Alexia doubts — and they cannot live in the plugin, which
+  cannot see the model list. So one flag, `Ask.capable`, carries all three, and the router half
+  is a filter rather than an order: sorting a router last still walks to it when the models
+  above it are busy, and *a different model each time, 2.6B included* is not a worse answer to
+  *give me one that can write* but not an answer to it. The doubt half is D161's reading of
+  *set aside* — skipped while anything else fits, asked when nothing else can — so a busy
+  evening does not turn Adapt into a button that cannot be pressed.
+- **One acceptance was narrowed, on purpose and with the owner's answer.** *A model pin still
+  wins outright* holds, except for a pin on a **router**, which this plan and
+  `plan-personality.md` disagreed about in as many words. A router pin is not somebody
+  choosing a model, it is somebody choosing *surprise me*, and it was that exact pin
+  (`openrouter/free`) that answered a 5,825-character description with a 2.6B model. Asked
+  with the question tool rather than decided quietly; every other pin is untouched.
+- **A floor that removes models has to be able to say so.** `min_tier` was inert, so no
+  refusal had ever needed to name it; a plugin declaring `T3` on a free-only install would
+  have read *no model fits this request right now — try again shortly*. It now names the
+  floor, in words rather than in the tier's letter.
+- **G13's half is here rather than in a later item**, because the preference is decorative
+  without it: `send()` reads *attributed to a plugin, belonging to no run* as free-tiers-only,
+  so best-first among free models is all a plugin could ever have got. A request made while
+  the plugin's own press is in flight now carries a run id, derived from the `pressing` map
+  that already tells the chat from background. Paid still needs the paid switch, the day's
+  amount and the monthly cap; a call on a plugin's own clock is free-tiers-only exactly as
+  before.
+- **No protocol bump.** No manifest field is added or removed and nothing on the wire changes.
+  Honouring a documented field is the contract becoming true, not changing.
+
+- **Two corrections, found by probing this Mac's shape before trusting any of it.** Neither is
+  a refinement; each was the change making the thing it was built to fix worse.
+  1. ***Best-first* is not *exactly what `prefer: 'best'` does*, and this text said it was.**
+     `/best` turns §8.2's rungs round along with the money — a leftover of the comparator
+     having one `money` boolean — so a request for a model that can write chose one with no
+     tools, and then the keyless floor's 7B ahead of a 550B model on the owner's own key. The
+     keys now name an **axis**: `price` (free/paid, tier, cost), `reach` (tools, whose key it
+     is on) and `sure` (what failed here, router, size, usage). `/best` turns `price` and
+     `reach` exactly as it always has; a capable request turns `price` alone; nothing turns
+     `sure`. Among free models the price axis ties, so a free-only install gets the same order
+     it always did — there, it is the two filters that earn their keep.
+  2. **`min_tier: "T1"` killed the personality plugin in Local mode.** Honoured, it means
+     *never a model on this machine* — and in Local mode the pool **is** this machine, so
+     Adapt became a button that cannot be pressed for exactly the people who chose Alexia for
+     privacy. `plugins/persona` declares `T0` now and asks for a capable model by preference
+     instead; `manifest.md` warns the next author, because a field that was inert for a year
+     is a field nobody's declaration was ever tested against.
+
+Tests: `packages/core/test/writer.test.ts` (the rules, including all five acceptances above),
+`packages/core/test/serve.writer.test.ts` (both declarations off a real manifest and a real
+`sampling/createMessage`, and a press reaching a paid model, through `serve()`). The existing
+*a plugin working on its own clock spends nothing but free* in `router.test.ts` still passes.
+
 ### M8-2 More than one conversation, and a way back into one
 
 **Core had exactly one conversation, for the life of the install.** `serve.ts` read
@@ -3976,6 +4038,14 @@ Newest first. Every entry here is also in Alexia.md's decision log.
 
 | Date | Entry |
 |---|---|
+| 2026-09-19 | **A try is stamped by the clock its caller reasons in.** Not a decision — a fact made true. `send()` wrote every try to the model record with `Date.now()` whatever the caller thought the time was, so `trial.ts`, which takes its own `now` and reasons in days, wrote tests into one day and read them back as another. That is what made `trial.test.ts` fail on 2026-09-18 with nothing changed (`61e33b8` anchored the fixture and left the seam). `send()` takes an optional `at`; absent is the wall clock, which is every other caller. `56549d1`. |
+| 2026-09-19 | **D184** — ***That wasn't her*, in one row with *Bad answer*, and the chip.** Improvement 10 and improvement 8's chip, built together as item 17 required — separately they are two rows competing under one bubble. The two ask opposite questions: *Bad answer* is about the model and re-asks; this is about the personality and re-asks nothing, leaving the answer on the page marked rather than dimmed. One press sends the fact, the optional line turns it into an example, and a new capability `persona.not_her` carries it to whoever keeps it — core forgets it and never fails the press on a plugin. Refine reads the last four, its own row's, after the document and as examples. The chip is `persona.in_use`, a second capability because the two are read at completely different rates, hidden when nothing is chosen. Invariant 1 caught the chip's first name, `#persona`; it is `#character`. `b0f5db5`. **M8-7**, `plan-personality.md` improvement 10. |
+| 2026-09-19 | **D183** — **facts to memory on one press, and a personality bound to a place.** Improvements 5 and 9. Facts come out of the same Adapt call as the three lengths, only when `alexia/answers` says something will remember them, and are **offered rather than taken** — one button for all of them, which is D160's *one confirm* in the only shape the widget set can draw (a plugin writes only its own `status` settings, so a dynamic tick-list is not one of them). Core passes `{ channel }` to `persona.personality`, naming the plugin that started the task; optional at both ends, nothing sent for the window, so no contract number moved. A bound row is not a second kind of *in use* and neither action touches the other flag. `0d1887d`. **M8-7**, `plan-personality.md` improvements 5 and 9. |
+| 2026-09-19 | **D182** — **lines she cannot act on, and `alexia_protocol` 10.** Improvement 4, and the seventh `alexia/*` method — the first since 2026-08-28, argued as `wire-protocol.md` requires: a capability is Alexia's own idea and MCP has no cross-server *does anybody offer X*. `alexia/answers` returns two booleans, names nobody at either end, and does not need the capability in `requires[]` because asking runs nothing. No manifest field moved, so the schema is untouched. The owner chose the plan's literal method over a broader ability list with the trade stated — only capability names can be asked about, so a line naming nothing a capability covers cannot be checked, and the note says how many lines were **looked at** rather than implying it looked at all of them. Deterministic whole-word matching, on save and again when a row is opened; it flags and never removes. Found on the way: `memory.remember` and `memory.recall` were shipped and never registered in `capabilities.md`. `2e5ed4b`. **M8-7**, `plan-personality.md` improvement 4. |
+| 2026-09-19 | **D181** — **three lengths of a personality, chosen for the weakest rung in a step's plan.** §2, and the reason it matters: a personality is in the system prompt on every step, so six hundred words across a fifteen-step task is 7–8k tokens re-sent. Core's `sizeFor()` keeps the section's own rule — *when in doubt, the weaker reader*: small for under 7B, a window under 32k, any router, or an unpublished size on a model the record doubts; high for a paid model; medium for the rest. `weakest()` picks for the whole plan, because a 429 hands the step to the second rung. What is reported is what was *sent* rather than what was deserved, so a one-document personality reads as `high`. **This narrows D175**: the trace line moves per step, because the three lengths are exactly the thing D175 said could not change under a task — repeats collapse, so one length across fifteen steps still reads as one fact. The plugin writes all three in one call on two markers, drops rather than trims a shorter one that ran long (§2's instruction — the hard rules are at the end), raises `ROOM` to 6,000, and clears the shorter two on Edit. `structuredContent` carries the three; `text` is still the long one, so no contract moved. `093f9c4`. **M8-7**, `plan-personality.md` §2. |
+| 2026-09-19 | **D180** — **hearing her before she goes live: Adapt stops switching, and the Skip is a toggle.** Adapt saved and switched in one press, so the first anybody heard of a new personality was a real conversation in it. It now saves the row **not in use** and asks her two questions; **Use** changes how she behaves and **Forget** throws it away. Saved-but-not-in-use rather than the plan's unsaved draft, chosen by the owner from three: the plugin is `lazy`, so a draft held between two presses is sometimes gone by the time somebody decides. The Skip is one toggle, on by default, and off is exactly what Adapt always did; the checks run either way. The questions are *who are you?* and a plain moment built from her own *What you do without being asked*, with the line it watches for quoted — never a scene a model invented, which is a third call and puts made-up facts about this person on screen. Answered with no `modelPreferences`, so it is the model the chat would use. Refine and Edit do not run it; **Hear her** is a row action for any time. `22d491b`. **M8-7**, `plan-personality.md` improvement 3. |
+| 2026-09-19 | **D179** — **Refine and Edit: a sentence rather than a rewrite, and the change shown line by line.** Brought forward ahead of the preview on the owner's choice. Refine sends the document and one sentence instead of the 1,300-token description that ran a reasoning model out of room (D157), through the same helper and therefore the same clamps; Edit is a `multiline` box for changing the words by hand, through both checks, recorded as written by *you*. It cannot be prefilled — a plugin writes only its own `status` settings and core offers no `elicitation` — so the hint says to copy from the row. The diff is an exact LCS over lines with no dependency, after the save with Undo as the way back. It uncovered a shell bug: a tool's answer renders into a `<p class="hint">` and every newline collapsed, so Adapt's Markdown document has always arrived as one paragraph; `.said-lines` fixes it at the four places a tool's words land. Manifest declares `alexia_protocol` 7 for `multiline`; no contract field moved. `887a7c8`. **M8-7**, `plan-personality.md` improvement 2. |
+| 2026-09-19 | **D178** — **`modelPreferences` and `min_tier` are honoured, a router pin is stepped around, and a press spends like a run.** M8-1, and `plan-personality.md` §1. One of MCP's three priorities reaches the router — `intelligencePriority`, largest of the three and at least a half — and the other two are documented as read-and-not-acted-on rather than left to be measured: nothing core knows says how fast a model answers, and a `hints` entry is a plugin choosing a vendor. It becomes `Ask.capable`: best-first, **never a router** (a filter, because a different model each time is not an answer to *give me one that can write*), and never a model the record doubts while anything else fits (D161's reading of *set aside*). A pin still wins outright with one owner-chosen exception — a pin on a router is not a pin on a model — which is the one point where this plan's *a preference is not a way past a pin* and `plan-personality.md`'s *even when the chat pin is a router* disagreed. `min_tier` comes off the manifest on both sampling paths, and a floor nothing reaches now names itself. G13/D156 is built: a request made while the plugin's own press is in flight carries a run id, so it may reach paid under the switch, the day's amount and the monthly cap; without a press, G12/D96 is unchanged. Two corrections came out of probing this Mac's own catalog before trusting it: *best-first* is **not** *exactly what `/best` does* — `/best` also turns §8.2's rungs round, which chose a model with no tools and the keyless floor's 7B over a 550B on the owner's key — so the ranking's keys now name an axis (price · reach · sure) and a capable request turns price alone; and `plugins/persona`'s `min_tier: "T1"`, honoured, killed Adapt in Local mode, so it declares `T0` and asks by preference. No manifest field moved, so no protocol bump. `9a1d745`, `dc227b9`. **M8-1**, **M8-7**, `plan-personality.md` step 5. |
 | 2026-09-18 | **D177** — **`/persona <name>`, and the rest of the line under one key.** `/persona <name>` could not work: `run()` in `commands.ts` kept only the first word and `commandTool()` called `callTool` with no arguments, so a name never left core. Owner's answer, from four options: one generic key. Whatever follows a command is handed over whole under `rest`, the same key for every plugin command alike and unread by core, so a command still declares nothing but a name and a sentence. No manifest change, so no protocol bump; the persona tool's property is called `rest` even though what it holds is a name. `9e62958`. **M8-7**, `plan-personality.md` step 4d. |
 | 2026-09-18 | **D176** — **what a personality costs, against today's single document.** Tokens per step and roughly per a 15-step task, with a line at Adapt time when it is over budget; characters ÷ 4, labelled an estimate wherever it appears. Owner's answer, asked before coding as the plan required: build it now against the single document rather than wait for §2's three sizes. `costOf()` takes one document, so item 15 calls it three times rather than rewriting it. `d1e61e4`. **M8-7**, `plan-personality.md` step 4c. |
 | 2026-09-18 | **D175** — **the personality's length on the trace, per run and not per step.** A deliberate deviation from the plan's wording: `AgentOptions.personality` is read once per task, and a personality that changed halfway through a task would be worse than one that did not, so a per-step line would print one identical number many times and imply it could have differed. Counted the way `system()` counts it — after trimming, zero when what remains is empty — so it is the length that reached the model, not the length that was stored. A run never told about a personality says nothing at all, because `trial.ts` deliberately sends none and a *none sent* line there would read as a finding. `84233f2`. **M8-7**, `plan-personality.md` step 3. |

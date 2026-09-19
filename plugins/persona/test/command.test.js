@@ -54,14 +54,17 @@ test('the manifest declares both commands, and declares them as core dispatches 
     expect(pattern.test(one.name), one.name).toBe(true)
     expect(one.summary.length).toBeLessThanOrEqual(120)
   }
-  // `commands` is an existing manifest field, so none of this moves the protocol.
-  expect(manifest.alexia_protocol).toBe(2)
+  // `commands` is an existing manifest field, so none of *this* moved the protocol. The
+  // declaration went 2 → 7 for `multiline` on the Edit box (improvement 2) and 7 → 10 for
+  // `alexia/answers` (improvement 4) — each time, the oldest Alexia that knows what it needs.
+  expect(manifest.alexia_protocol).toBe(10)
+  expect(manifest.settings.some((one) => one.multiline === true)).toBe(true)
 })
 
 test('each declared command has a tool of the same name behind it', () => {
   // Core binds `/x` to the plugin tool called `x` and nothing else, so a command declared
   // without one is a command that answers "is not running" the first time it is typed.
-  const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8')
+  const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n')
   const manifest = JSON.parse(readFileSync(new URL('../plugin.json', import.meta.url), 'utf8'))
   for (const one of manifest.commands) {
     expect(source, one.name).toMatch(new RegExp(`alexia\\.tool\\(\\s*'${one.name}'`))
@@ -69,7 +72,7 @@ test('each declared command has a tool of the same name behind it', () => {
 })
 
 test('the argument is called what core passes it as, not what it holds', () => {
-  const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8')
+  const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n')
   // Core hands whatever followed the command over under `rest`, the same key for every
   // plugin command (D177). Naming this property anything else — `name`, which is what it
   // actually holds — silently receives nothing, and `/persona Butler` goes back to listing.

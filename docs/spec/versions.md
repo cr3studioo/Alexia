@@ -5,9 +5,9 @@ handshake, handled by the SDK. **`alexia_protocol` is ours**: an integer, bumped
 `alexia/*` layer or the manifest changes, and checked *before your process is spawned*.
 
 ```
-you say alexia_protocol 3    Alexia speaks 2..7   ->  loads
-you say alexia_protocol 1    Alexia speaks 2..7   ->  "X was written for an older version"
-you say alexia_protocol 8    Alexia speaks 2..7   ->  "X needs a newer Alexia"
+you say alexia_protocol 3    Alexia speaks 2..10  ->  loads
+you say alexia_protocol 1    Alexia speaks 2..10  ->  "X was written for an older version"
+you say alexia_protocol 11   Alexia speaks 2..10  ->  "X needs a newer Alexia"
 ```
 
 ## The other version: `min_app` *(2026-08-31, D118)*
@@ -37,6 +37,35 @@ contract was still moving.
 **It was kept at 3, on 2026-08-29.** Plugins declaring 1 stopped loading and said so in a
 sentence rather than crashing, exactly as written here while it was still hypothetical. The
 migration for a revision-1 plugin that uses nothing from 2 is one character.
+
+## 9 → 10 *(2026-09-19, D182)*
+
+**A seventh `alexia/*` method**, and the first since 2026-08-28. Nothing in the manifest
+changed, so the schema is untouched and a plugin that never calls it needs no edit at all.
+
+| | |
+|---|---|
+| `alexia/answers` | `{ "cap": "memory.remember" }` → `{ "answers": false, "here": true }`. Would anything enabled answer this capability, and is something that would installed and switched off? |
+
+The case was `plan-personality.md`'s improvement 4: a personality's *What you do without being
+asked* section is the part that changes behaviour, and a line in it with nothing behind it is
+**inert** — she does not do it, nothing says why, and the person reads it as *she ignores me*.
+The plugin cannot see other plugins by design, so it could not tell.
+
+**Why a seventh name rather than MCP.** A capability is Alexia's own idea; `tools/list` is your
+own tools and there is no cross-server *does anybody offer X*, so there was nothing upstream to
+argue against — which is the bar [`wire-protocol.md`](./wire-protocol.md) sets.
+
+**The invariant holds at both ends.** You ask about a capability, never a plugin id, and you are
+told two booleans, never a name. It is the reading half of `alexia/capability/call`, and unlike
+that one it does not need the capability in your `requires[]`: asking runs nothing, and a plugin
+made to declare a dependency in order to check for one would be declaring something untrue.
+
+### If you are updating a plugin
+
+Nothing to do unless you want it. Declare `alexia_protocol: 10` only if you call it — an older
+declaration still loads, and `alexia/answers` on an Alexia that predates it is dropped
+unanswered, which a caller should read as *not checked* rather than as *no*.
 
 ## 8 → 9 *(2026-09-18)*
 

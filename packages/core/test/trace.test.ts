@@ -133,19 +133,38 @@ test('a run nothing ended reads as unfinished rather than as finished', () => {
 test('a personality that was sent reads as its length, not as a yes', () => {
   const trace = new Trace()
   trace.start('eight', 'who are you')
-  trace.personality(221)
+  // Fifteen steps, one length: the ordinary case, and it still reads as one fact.
+  for (let n = 0; n < 15; n++) trace.personality(221, 'high')
   trace.end('answered')
 
-  expect(trace.runs[0]?.personality).toBe(221)
+  expect(trace.runs[0]?.personality).toEqual([{ chars: 221, size: 'high' }])
   // The number, and the unit — 221 against a description somebody knows ran to thousands is
   // the whole story, and it is a story a bare *sent* cannot tell.
-  expect(asText(trace.runs[0]!)).toContain('personality: 221 characters sent')
+  expect(asText(trace.runs[0]!)).toContain('personality: 221 characters (high) sent')
+})
+
+test('a task that fell back to a weaker model says both lengths, in the order they went out', () => {
+  // §2, and the reason D175's one-number-per-run no longer tells the truth: the document is
+  // still read once per task, but which of its three lengths goes out is decided per step for
+  // the weakest rung in that step's plan — so a fallback genuinely changes what she was told.
+  const trace = new Trace()
+  trace.start('eight-b', 'refactor this')
+  trace.personality(612, 'high')
+  trace.personality(612, 'high')
+  trace.personality(98, 'small')
+  trace.end('answered')
+
+  expect(trace.runs[0]?.personality).toEqual([
+    { chars: 612, size: 'high' },
+    { chars: 98, size: 'small' },
+  ])
+  expect(asText(trace.runs[0]!)).toContain('personality: 612 characters (high), then 98 characters (small) sent')
 })
 
 test('no personality reads as none sent, which is a different fault from a short one', () => {
   const trace = new Trace()
   trace.start('nine', 'who are you')
-  trace.personality(0)
+  trace.personality(0, 'high')
   trace.end('answered')
 
   const text = asText(trace.runs[0]!)
@@ -168,7 +187,7 @@ test('a personality told after the run ended is dropped rather than misfiled', (
   const trace = new Trace()
   trace.start('eleven', 'first')
   trace.end('answered')
-  trace.personality(500)
+  trace.personality(500, 'high')
   expect(trace.runs[0]?.personality).toBeUndefined()
 })
 

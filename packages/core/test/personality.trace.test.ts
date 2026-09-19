@@ -125,7 +125,9 @@ test('the trace says how long the personality was, so *was it sent* is readable'
   const opened = (await post('/api/detail', { key: 'activity', row: id })) as { text?: string }
   // The number, and the unit. 221 against a description somebody knows ran to thousands is
   // the whole story, and a bare *sent* cannot tell it.
-  expect(opened.text).toContain(`personality: ${String(DOC.length)} characters sent`)
+  // The length, and which of §2's three it was — this fixture's plugin offers one document,
+  // so every model gets it and the size reads as `high` (`sized()`'s fallback).
+  expect(opened.text).toContain(`personality: ${String(DOC.length)} characters (high) sent`)
 })
 
 test('with nothing answering the capability, the same line says none sent', async () => {

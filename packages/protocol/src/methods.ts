@@ -212,6 +212,40 @@ export const ALEXIA_METHODS = {
   },
 
   'alexia/host/info': { params: OnlyMeta, result: HostInfo },
+
+  /**
+   * **Is anything here going to answer this capability?** (`plan-personality.md` improvement 4.)
+   *
+   * **Why this is a seventh family rather than MCP.** A capability is Alexia's own idea — a
+   * name a plugin promises and another plugin depends on, resolved by core and never by plugin
+   * id. MCP has no notion of it and nothing to ask: `tools/list` is *this* server's tools, and
+   * there is no cross-server *does anybody offer X*. So there is nothing upstream to argue
+   * against, which is the bar `wire-protocol.md` sets before a seventh name exists.
+   *
+   * **It names nobody, in both directions.** The question is a capability, never a plugin id;
+   * the answer is two booleans, never a name. A plugin learns whether to plan around something
+   * and learns nothing about who would do it — which is exactly what `alexia/capability/call`
+   * already gives it, one step earlier.
+   *
+   * **`here` is the distinction a refusal lives or dies on**, and core already draws it for
+   * itself (`plugins.couldAnswer`): *nothing here can do that* sends somebody to a library,
+   * and *something that could is installed and switched off* sends them to a switch two inches
+   * away. Saying which costs no name.
+   *
+   * **`requires[]` is not needed to ask.** Calling a capability needs it declared, because
+   * calling one runs somebody else's code on your say-so; asking whether one exists runs
+   * nothing and changes nothing, and a plugin made to declare a dependency it does not have in
+   * order to *check* for it would be declaring something untrue.
+   */
+  'alexia/answers': {
+    params: z.object({ cap: z.string().min(1) }),
+    result: z.object({
+      /** Something enabled promises it, so plan around it. The promise, not the runtime binding. */
+      answers: z.boolean(),
+      /** Something that promises it is installed and switched off. */
+      here: z.boolean(),
+    }),
+  },
 } as const
 
 export type AlexiaMethod = keyof typeof ALEXIA_METHODS

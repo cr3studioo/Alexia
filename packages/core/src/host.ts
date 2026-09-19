@@ -33,6 +33,14 @@ export interface HostOptions {
   roots?(pluginId: string): Root[]
   /** Route a capability to whichever plugin provides it. The resolver lands at M0-7. */
   capability?(cap: string, args?: Record<string, unknown>): Promise<CallToolResult>
+  /**
+   * **Would anything answer this capability, and is something that would switched off?**
+   *
+   * The reading half of the line above, and it names nobody at either end. Absent is read as
+   * *no* rather than as *unknown*: a caller asking this is deciding whether to plan around
+   * something, and a host that cannot say is a host where nothing is going to answer.
+   */
+  answers?(cap: string): { answers: boolean; here: boolean }
   log?(pluginId: string, line: string): void
   /** A plugin's tool list changed under us. The aggregate the model sees is now stale. */
   toolsChanged?(pluginId: string): void
@@ -131,6 +139,14 @@ export class Host implements HostServices {
 
       case 'alexia/host/info':
         return this.#info(manifest)
+
+      case 'alexia/answers': {
+        const p = params as AlexiaParams<'alexia/answers'>
+        // No `requires[]` check, deliberately: asking whether something exists runs nothing and
+        // changes nothing, and a plugin made to declare a dependency it does not have in order
+        // to check for one would be declaring something untrue.
+        return this.options.answers?.(p.cap) ?? { answers: false, here: false }
+      }
 
       case 'alexia/capability/call': {
         const p = params as AlexiaParams<'alexia/capability/call'>

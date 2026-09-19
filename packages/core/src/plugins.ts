@@ -134,6 +134,10 @@ export class Plugins {
       secrets: this.#secrets,
       manifest: (id) => this.#entries.get(id)?.manifest,
       capability: (cap, args) => this.capability(cap, args),
+      // The reading half of the same question (improvement 4). `couldAnswer()` returns display
+      // names because a *sentence on screen* needs one; this hands over only whether the list
+      // is empty, because a plugin asking does not.
+      answers: (cap) => ({ answers: this.answers(cap), here: this.couldAnswer(cap).length > 0 }),
       sample: options.sample,
       roots: options.roots,
       log: options.log,

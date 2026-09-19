@@ -66,7 +66,7 @@ test('an empty document costs nothing and warns about nothing', () => {
  * a cross-file assumption, and the sort that rots silently when the brief is reworded.
  */
 test('the budget is still derived from the word limit the brief actually asks for', () => {
-  const written = readFileSync(new URL('../writing.js', import.meta.url), 'utf8')
+  const written = readFileSync(new URL('../writing.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n')
   const asked = /under (\d+) words/.exec(written)
   expect(asked, 'brief() no longer states a word limit — BUDGET has nothing to stand on').not.toBeNull()
   const words = Number(asked[1])
@@ -77,14 +77,17 @@ test('the budget is still derived from the word limit the brief actually asks fo
   expect(Math.abs(BUDGET - expected) / BUDGET).toBeLessThan(0.2)
 })
 
-test('both buttons say what it costs, not just the first one', () => {
-  const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8')
-  // One reply() carries the cost, and both buttons go through it — Adapt and Re-adapt, and
-  // nothing else that saves a document.
-  expect(source).toMatch(/costLine\(doc\), budgetLine\(doc\), doc/)
-  expect(source.match(/reply\(/g)).toHaveLength(2)
-  expect(source).toMatch(/reply\(`Saved as/)
+test('every button that saves a document says what it costs, not just the first one', () => {
+  const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n')
+  // One reply() carries the cost, and every button that saves a document goes through it.
+  // Four of them now: Adapt, Re-adapt, Refine and Edit. The count is the assertion — a fifth
+  // way to save that did not reach reply() would be a document whose cost is never said.
+  expect(source).toMatch(/cannot, factsLine\(facts\), sizesLine\(shorter\), costLine\(doc, shorter\), budgetLine\(doc\), doc/)
+  expect(source.match(/reply\(/g)).toHaveLength(4)
+  expect(source).toMatch(/reply\(headline, written\.removed, written\.doc, written, cannot, written\.facts\)/)
   expect(source).toMatch(/reply\(\s*`Wrote /)
+  expect(source).toMatch(/reply\(\s*`Changed /)
+  expect(source).toMatch(/reply\(\s*`Saved your own /)
   // And the row itself says so later, which is when somebody actually wonders.
-  expect(source).toMatch(/costLine\(String\(row\.doc\)\)/)
+  expect(source).toMatch(/costLine\(String\(row\.doc\), shorterOf\(row\)\)/)
 })
