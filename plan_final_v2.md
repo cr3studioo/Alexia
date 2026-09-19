@@ -274,7 +274,7 @@ land on anything not already covered by D154–D171): the same day, in three pla
   D175 on its own terms — that decision rested on a personality read once per task being unable
   to differ between steps, and three lengths are exactly that changing.
 
-- [ ] **16. Step 7 — improvements 2, 3, 4, 5, 9.**
+- [x] **16. Step 7 — improvements 2, 3, 4, 5, 9.**
   Refine (2), the preview with Skip (3), flagging inert behaviour lines (4), facts to Memory with
   one confirm for all (5), and a personality per channel (9).
 
@@ -285,9 +285,19 @@ land on anything not already covered by D154–D171): the same day, in three pla
   nothing behind it. The Skip is a toggle, on by default, rather than a fourth button — two model
   calls are best declined before they are made.
 
-  **4, 5 and 9 are what is left of this item**, so it stays unticked. Improvement 4 needs the
-  read-only `alexia/answers` call the plan describes, which is a core change; 5 needs the Memory
-  plugin; 9 needs `{ channel }` on the capability call.
+  **4 built 2026-09-19** — `2e5ed4b` (**D182**), with `alexia_protocol` 9 → 10 for the seventh
+  `alexia/*` method. The owner chose the plan's literal `alexia/answers` over a broader list of
+  abilities, having been shown that the plan's own two examples (*Telegram reminders*,
+  *Obsidian*) cannot be expressed as capability names and so cannot be caught. The build says
+  how many lines it looked at rather than implying it looked at all of them.
+
+  **5 and 9 built 2026-09-19** — `0d1887d` (**D183**). Facts come out of the same Adapt call and
+  are offered rather than taken, with one button for all of them: D160's *one confirm* in the
+  only shape the widget set can draw. The channel is optional at both ends and the window sends
+  none, so no contract number moved for it.
+
+  Found on the way and fixed: `memory.remember` and `memory.recall` have been shipped by
+  `plugins/memory` since it existed and were never in `docs/spec/capabilities.md`'s register.
 
 - [ ] **17. Step 8 — improvement 10, joined with Bad answer.**
   *"That wasn't her"* joins `model_plan.md` §4 I's *Bad answer* as one row of message actions

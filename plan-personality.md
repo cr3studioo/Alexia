@@ -246,6 +246,22 @@ and the person reads it as *she ignores me*. The personality on this machine has
 `alexia/answers` call returning whether a capability is promised, the same check core already
 has in `plugins.answers()`. It names nobody.
 
+**Built 2026-09-19 (D182).** *Where it differs from the text above.* **The two examples above
+cannot be caught, and the build says so rather than pretending.** Core can be asked about
+capability names, and no capability names *Telegram reminders* or *Obsidian* — so a line whose
+words match nothing in the register is **left alone**, and the note reports how many lines were
+*looked at* as well as which failed, because a check that reports only failures reads as a
+guarantee about everything it did not mention. The owner was shown a broader alternative (a
+list of what Alexia can do right now, off the enabled tool list) and chose this one with that
+trade stated. `alexia/answers` also returns **`here`** — something that would answer is
+installed and switched off — because core already draws that line for itself in
+`couldAnswer()`, it costs no name, and *a switch two inches away* and *a search through a
+library* are different afternoons. `ALEXIA_PROTOCOL_MAX` 9 → 10; no manifest field moved, so
+the schema is untouched. Matching is deterministic and whole-word, run on save and again when a
+row is opened — what is installed changes, and a finding saved in September is a finding about
+September. It **flags and never removes**. **Tests:** `packages/core/test/answers.test.ts`,
+`plugins/persona/test/promises.test.js`.
+
 ### 5. Facts to memory, behaviour in the personality — M
 
 **What.** When the Memory plugin is enabled, Adapt splits what it reads. Facts about the
@@ -256,6 +272,17 @@ wrong one can be unticked and the rest still saved with one press. How to behave
 **Why.** Efficiency: facts in the personality are re-sent on every step whether they matter
 or not, and Memory recalls them only when they do. It also stops two places from disagreeing
 about the person's name.
+
+**Built 2026-09-19 (D183).** *Where it differs from the text above.* **The tick-list stayed
+proposed.** D160 settled *one confirm for all of them* and proposed a list with every fact
+ticked; that shape cannot be drawn here — a plugin may write only its own `status` settings and
+core offers no `elicitation`, so there is no way to put a dynamic list into a control for
+somebody. The facts are listed under the save and on the row, and one button saves all of them,
+which is the settled decision in the only shape available. **They come out of the same Adapt
+call**, after a fourth marker, rather than out of a second one, and are asked for only when
+`alexia/answers` says something will remember them — so a machine with no memory plugin gets
+the brief it always had. The press clears the offer, so it cannot be taken up twice.
+**Tests:** `plugins/persona/test/elsewhere.test.js`.
 
 ### 6. A safety check in code, not only in the prompt — S
 
@@ -291,6 +318,19 @@ which plugin started the task. The default is the same one everywhere.
 
 **Why.** A reply read on a phone wants to be shorter and plainer than one at the desk. The
 argument is optional, so an older persona plugin simply ignores it.
+
+**Built 2026-09-19 (D183).** *Where it differs from the text above.* **The window sends no
+channel at all**, rather than a word meaning *the window*: there is nothing to bind a
+personality to there, and an absent argument is what makes this optional at both ends and keeps
+the contract's number where it is. The channel core sends is the id of the plugin that started
+the task — the one thing core knows about where an answer will be read — and what it means is
+entirely the answering plugin's business; here it means the word somebody typed into the box.
+**A bound row is not a second kind of *in use***: the row in use answers everywhere nothing else
+claims, a bound row answers in its own place and nowhere else, and neither action touches the
+other flag. Two rows claiming one place is a coin toss nobody could see, so binding one unbinds
+the other. The table's *In use* column shows *on telegram*, or the binding would be a setting
+nobody can see. **Tests:** `plugins/persona/test/elsewhere.test.js`, and the core half in
+`packages/core/test/sized.test.ts`.
 
 ### 10. "That wasn't her" — L
 
@@ -358,9 +398,9 @@ for paid models, an order that lets provider prompt caching reuse the personalit
    one with the document already attached. The trace line moves from per run to per step with it —
    D175's reasoning was that a personality read once per task cannot differ between steps, and the
    three lengths are exactly that changing.
-7. **Improvements 2, 3, 4, 5, 9.** ~~The preview (3) shows with **Skip** from the first time~~;
-   facts (5) go to Memory with one yes for all (D160). **2 and 3 done 2026-09-19 (D179, D180);
-   4, 5 and 9 are what is left of this step.** Improvement 2 was built first, on the owner's
+7. ~~**Improvements 2, 3, 4, 5, 9.** The preview (3) shows with **Skip** from the first time;
+   facts (5) go to Memory with one yes for all (D160).~~ **All five done 2026-09-19** — 2 and 3
+   (D179, D180), 4 (D182), 5 and 9 (D183). Improvement 2 was built first, on the owner's
    choice, so the preview's button row ships complete rather than with a Refine that does
    nothing. The Skip is a toggle — *Hear her before switching*, on by default — rather than a
    fourth button, because the samples are two model calls and the honest place to decline them
