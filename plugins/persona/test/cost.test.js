@@ -84,7 +84,7 @@ test('every button that saves a document says what it costs, not just the first 
   // way to save that did not reach reply() would be a document whose cost is never said.
   expect(source).toMatch(/costLine\(doc\), budgetLine\(doc\), doc/)
   expect(source.match(/reply\(/g)).toHaveLength(4)
-  expect(source).toMatch(/reply\(`Saved as/)
+  expect(source).toMatch(/reply\(headline, written\.removed, written\.doc\)/)
   expect(source).toMatch(/reply\(\s*`Wrote /)
   expect(source).toMatch(/reply\(\s*`Changed /)
   expect(source).toMatch(/reply\(\s*`Saved your own /)

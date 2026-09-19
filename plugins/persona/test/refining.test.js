@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { expect, test } from 'vitest'
 import { changed, LINES, marks, sizeOf } from '../diff.js'
-import { refining, SECTIONS, sectionOf, usable } from '../writing.js'
+import { HEAR, HEAR_UNASKED, HEARD, HEARING, refining, ROOM, SECTIONS, sectionOf, unasked, usable, WAIT } from '../writing.js'
 
 /**
  * **Refine and Edit** (`plan-personality.md` improvement 2, step 7).
@@ -172,4 +172,71 @@ test('Refine and Edit both say when the personality they changed is the one in u
   expect(source.match(/const using = row\.active === 1/g)).toHaveLength(2)
   expect(source.match(/She is using it from your next message\./g)).toHaveLength(2)
   expect(source.match(/Undo brings the previous one back\./g)).toHaveLength(3)
+})
+
+// ---- hearing her before she goes live (improvement 3) -------------------------------------------
+
+test('the second question comes from her own *What you do without being asked*', () => {
+  expect(unasked(doc)).toBe('Chase the dates he set himself.')
+  // The marker goes, whichever kind it is, because the line is quoted back on screen.
+  expect(unasked(doc.replace('- Chase the dates', '* Chase the dates'))).toBe('Chase the dates he set himself.')
+  expect(unasked(doc.replace('- Chase the dates', '1. Chase the dates'))).toBe('Chase the dates he set himself.')
+})
+
+test('a personality that does nothing unasked is asked one question, not two', () => {
+  // `Nothing.` is an answer the brief explicitly allows, so it is the common case rather than a
+  // broken document — and a sample proving she does nothing is a model call spent on a
+  // foregone conclusion.
+  const quiet = doc.replace('- Chase the dates he set himself.', 'Nothing.')
+  expect(usable(quiet)).toBe(true)
+  expect(unasked(quiet)).toBe('')
+  expect(unasked(doc.replace('## What you do without being asked\n- Chase the dates he set himself.\n', ''))).toBe('')
+  expect(unasked('')).toBe('')
+})
+
+test('the questions are a fixed one and a plain moment, never a scene somebody made up', () => {
+  // The obvious alternative — asking a model to invent a situation from the section — is a
+  // third call *and* puts invented facts about this person's life on screen, which is the one
+  // thing every brief in this plugin forbids. So the moment is real and empty.
+  expect(HEAR).toBe('who are you?')
+  expect(HEAR_UNASKED.length).toBeLessThan(60)
+  // Short replies and a short wait: two of these run after the document is already saved.
+  expect(HEARD).toBeLessThan(ROOM)
+  expect(HEARING).toBeLessThan(WAIT)
+})
+
+test('Adapt saves without switching, and the toggle is what switches that off', () => {
+  // D160's Skip, from the very first time: one toggle, on by default, and off is exactly what
+  // this button always did. The checks that refuse a cut-off document run either way.
+  expect(source).toMatch(/const hearFirst = listen !== false/)
+  expect(source).toMatch(/active: hearFirst \? 0 : 1/)
+  expect(source).toMatch(/if \(!hearFirst\) await alexia\.storage\.update\('personalities', \{ active: 0 \}, \{ active: 1 \}\)/)
+  const toggle = manifest.settings.find((one) => one.key === 'hear_first')
+  expect(toggle.type).toBe('toggle')
+  expect(toggle.default).toBe(true)
+  // The label is a statement that is true when it is on (ui-schema.md).
+  expect(toggle.label).toBe('Hear her before switching')
+})
+
+test('a sample that fails is a sentence about the sample, never a document lost', () => {
+  // The row is already saved when the samples run, which is what makes *Skip* free: the
+  // automatic checks ran whether or not anybody listens.
+  const at = source.indexOf('async function hearing')
+  const body = source.slice(at, source.indexOf('\n}', at))
+  expect(body).toMatch(/catch \(error\)/)
+  expect(body).toMatch(/failed:/)
+  // And it never writes to storage — it reads a document it was handed.
+  expect(body).not.toContain('alexia.storage')
+})
+
+test('Hear her is a row action of its own, so it works after Refine and Edit too', () => {
+  const table = manifest.settings.find((one) => one.key === 'saved')
+  const actions = table.rowActions.map((one) => one.key)
+  expect(actions).toContain('hear')
+  // Beside Use, which is the press it is a second opinion on.
+  expect(actions.indexOf('hear')).toBe(actions.indexOf('use') + 1)
+  // Read-only: it changes nothing and switches nothing, so the gate has no reason to ask.
+  const at = source.indexOf("  'hear',")
+  expect(at).toBeGreaterThan(-1)
+  expect(source.slice(at, at + 700)).toContain('readOnlyHint: true')
 })

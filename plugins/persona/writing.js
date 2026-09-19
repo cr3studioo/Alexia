@@ -152,6 +152,51 @@ export const ROOM = 4000
 /** How long Adapt waits for that reply: under core's 120 s on a button, over the SDK's 60 s. */
 export const WAIT = 110_000
 
+/** The reply budget for one sample answer. Short on purpose: this is a voice, not an essay. */
+export const HEARD = 400
+
+/**
+ * How long one sample waits.
+ *
+ * Deliberately under {@link WAIT}: two of these run after a document is already saved, and the
+ * document is the thing that mattered. A sample that is still thinking after a minute has
+ * already failed at its job, which is to tell somebody what she sounds like before they press
+ * Use — and the row is safe either way, so giving up on it costs nothing but the sample.
+ */
+export const HEARING = 60_000
+
+/**
+ * The two questions asked of a new personality before anybody relies on it (improvement 3).
+ *
+ * **The first is fixed**, because *who are you* is the question whose answer is the voice, and
+ * it is the one that came back in a stranger's voice on this machine when a 2.6B model was
+ * answering (D157's opening bug).
+ *
+ * **The second comes from her own *What you do without being asked*** — the section that makes
+ * an assistant feel like someone who works there, and the one a thin description will happily
+ * invent. It is a plain opener rather than a scene, and that is the restraint that matters: the
+ * obvious alternative is to ask a model to make up a situation from the section, which is a
+ * third call *and* puts invented facts about this person's life on the screen, which is the one
+ * thing every brief in this file forbids. So the moment is real and empty, the behaviour either
+ * fires in it or does not, and the caller is told which line it was watching for.
+ *
+ * A section that says `Nothing.` gets no second question. There is nothing to listen for, and a
+ * sample proving that she does nothing is a model call spent on a foregone conclusion.
+ */
+export const HEAR = 'who are you?'
+export const HEAR_UNASKED = 'That is me done for today.'
+
+/** The first behaviour line of *What you do without being asked*, or nothing when there is none. */
+export const unasked = (doc) => {
+  const said = sectionOf(doc, 'What you do without being asked')
+  if (said === '' || /^nothing\.?$/i.test(said.trim())) return ''
+  const first = said
+    .split('\n')
+    .map((line) => line.replace(/^\s*(?:[-*•]|\d+[.)])\s*/, '').trim())
+    .find((line) => line !== '')
+  return first ?? ''
+}
+
 /** The four headings {@link SHAPE} promises, which is what makes checking for them fair. */
 export const SECTIONS = SHAPE.split('\n')
   .filter((line) => line.startsWith('## '))

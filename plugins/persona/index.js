@@ -6,12 +6,17 @@ import { check, noteOf, removedOf } from './safety.js'
 import {
   brief,
   clean,
+  HEAR,
+  HEAR_UNASKED,
+  HEARD,
+  HEARING,
   matchName,
   nameFrom,
   priorOf,
   provenance,
   refining,
   ROOM,
+  unasked,
   unique,
   usable,
   versionOf,
@@ -75,6 +80,72 @@ async function report() {
     : count > 0 ? '■ Speaking plainly — none of them in use'
     : '■ Nothing written yet'
   await alexia.status('state', state).catch(() => {})
+}
+
+/**
+ * **Hear her before she goes live** (improvement 3).
+ *
+ * Adapt used to save and switch in one press, so the first time anybody heard a new
+ * personality was in a real conversation — and on this machine the first time was a 2.6B model
+ * answering *who are you* in a stranger's voice, with nothing on screen to say so (D157).
+ *
+ * **Answered by the model Automatic would use for chat**, which is why this call carries no
+ * `modelPreferences`: a sample written by a better model than the one that will actually read
+ * her is a sample that lies in the one direction that matters. The pins, the slider and the
+ * allowance are the person's own, exactly as in the chat.
+ *
+ * **It cannot be the whole truth and says so.** Core writes its own opening lines in front of a
+ * personality and a plugin cannot see them — that is the invariant, not an omission — so this
+ * is her document and this model, and the line above the samples says as much.
+ *
+ * **Nothing here can lose a document.** The row is already saved when this runs, so a sample
+ * that times out, refuses or comes back empty is a sentence about the sample. The automatic
+ * checks ran whether or not anybody listens, which is D160's own wording for the Skip.
+ */
+async function hearing(doc) {
+  const line = unasked(doc)
+  const asking = [{ ask: HEAR }, ...(line === '' ? [] : [{ ask: HEAR_UNASKED, watching: line }])]
+  const heard = []
+  for (const one of asking) {
+    try {
+      const answer = await alexia.server.server.createMessage(
+        {
+          messages: [{ role: 'user', content: { type: 'text', text: one.ask } }],
+          // The document, as the system prompt — which is where core puts it too (D103).
+          systemPrompt: doc,
+          maxTokens: HEARD,
+        },
+        { timeout: HEARING },
+      )
+      const said = answer.content?.type === 'text' ? answer.content.text.trim() : ''
+      heard.push({
+        ...one,
+        model: String(answer.model ?? ''),
+        said: said === '' ? '(she said nothing at all, which is itself an answer about this model)' : said,
+        cut: answer.stopReason === 'maxTokens',
+      })
+    } catch (error) {
+      log.warn('could not hear her', error)
+      heard.push({ ...one, failed: error instanceof Error ? error.message : String(error) })
+    }
+  }
+  return heard
+}
+
+/** The samples, written out under a line saying what they are and are not. */
+const asHeard = (heard) => {
+  if (heard.length === 0) return ''
+  const model = heard.find((one) => one.model !== undefined && one.model !== '')?.model
+  const lines = [
+    model === undefined ?
+      'Nothing could be asked, so there is nothing to listen to:'
+    : `Here is how she answers, on ${model} — the model your chat would use. Alexia's own opening lines are not in this; only your personality is.`,
+  ]
+  for (const one of heard) {
+    lines.push('', `You: ${one.ask}${one.watching === undefined ? '' : `   (listening for “${one.watching}”)`}`)
+    lines.push(one.failed === undefined ? `Her: ${one.said}${one.cut === true ? ' …' : ''}` : `Her: — ${one.failed}`)
+  }
+  return lines.join('\n')
 }
 
 /** What the progress bar says while each button waits, so the three do not read alike. */
@@ -194,17 +265,29 @@ const standing = alexia.tool(
  * Somebody who knows how they want to be spoken to should not also have to know how to
  * write a system prompt. They type the four words they actually mean, and a model turns it
  * into the document — once, at the moment they ask, on a rung that can write.
+ *
+ * **It no longer switches by itself** (improvement 3). It saved and switched in one press, so
+ * the first anybody heard of a new personality was a real conversation in it. Now it saves the
+ * row not in use, asks her two questions, and leaves **Use** as the press that changes how she
+ * behaves — so nothing is committed by the thing that wrote it.
+ *
+ * **And skipping that is one toggle, from the very first time** (D160). *Hear her before
+ * switching* off is exactly what this button always did: save, switch, done. The checks that
+ * refuse a cut-off or unusable document run either way, which is the half of the Skip that is
+ * not optional.
  */
 alexia.tool(
   'adapt',
   {
     description:
-      'Turn the description in Personality settings into a saved personality and start ' +
-      'using it. Takes no arguments — it reads the box on the settings screen.',
+      'Turn the description in Personality settings into a saved personality. Takes no ' +
+      'arguments — it reads the box on the settings screen. It does not switch to it unless ' +
+      '*Hear her before switching* is off; Use is what switches.',
     annotations: { destructiveHint: false, openWorldHint: false },
   },
   async (ctx) => {
-    const { custom_voice: described, save_as: called } = await settings()
+    const { custom_voice: described, save_as: called, hear_first: listen } = await settings()
+    const hearFirst = listen !== false
     const description = String(described ?? '').trim()
     if (description === '') {
       return nope('Write a line or two describing how she should be, then press Adapt.')
@@ -221,10 +304,10 @@ alexia.tool(
     const written = await write(ctx, brief(description, name))
     if (written.error !== undefined) return nope(written.error)
 
-    alexia.progress(ctx, 3, 3, 'Saving')
-    // Exactly one is in use, and the one just written is it. Switching is a row action; a
-    // person who pressed Adapt has already said which one they want.
-    await alexia.storage.update('personalities', { active: 0 }, { active: 1 })
+    alexia.progress(ctx, 3, 3, hearFirst ? 'Hearing her' : 'Saving')
+    // At most one row is in use. With the toggle on, the new one is not it: nothing about how
+    // she behaves changes until somebody presses Use, having read what came back below.
+    if (!hearFirst) await alexia.storage.update('personalities', { active: 0 }, { active: 1 })
     await alexia.storage.insert('personalities', {
       name,
       doc: written.doc,
@@ -234,12 +317,15 @@ alexia.tool(
       wrote: written.wrote,
       removed: written.removed,
       at: Date.now(),
-      active: 1,
+      active: hearFirst ? 0 : 1,
     })
     await bind()
-    return text(
-      reply(`Saved as “${name}” and in use from your next message.`, written.removed, written.doc),
-    )
+    const headline =
+      hearFirst ?
+        `Saved as “${name}”. Nothing has changed yet — press Use on its row to switch to her, or Forget to throw it away.`
+      : `Saved as “${name}” and in use from your next message.`
+    const heard = hearFirst ? asHeard(await hearing(written.doc)) : ''
+    return text([reply(headline, written.removed, written.doc), ...(heard === '' ? [] : ['---', heard])].join('\n\n'))
   },
 )
 
@@ -295,6 +381,34 @@ alexia.tool(
     await alexia.storage.update('personalities', { active: 1 }, { rowid: Number(row.rowid) })
     await bind()
     return text(`Using “${String(row.name)}” from your next message.`)
+  },
+)
+
+/**
+ * Hear her, on any row and at any time.
+ *
+ * The same two questions Adapt asks, available afterwards — which is what makes this useful
+ * past the first press: after Refine, after Edit, after a month on a different model. Refine
+ * and Edit deliberately do **not** run it themselves; they already come back with a document
+ * and a diff, and two more model calls on every tuning press is the thing that makes people
+ * stop tuning. One press away is close enough for a sample; automatic is not free.
+ */
+alexia.tool(
+  'hear',
+  {
+    description:
+      'Ask one saved personality two questions and show how she answers, in her voice, on the ' +
+      'model your chat would use. Takes the row it is. Nothing is changed or switched.',
+    inputSchema: fromJsonSchema(one),
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+  },
+  async ({ id }) => {
+    const row = await byId(id)
+    if (!row) return nope('There is no saved personality with that id.')
+    const doc = String(row.doc ?? '')
+    if (doc === '') return nope(`“${String(row.name)}” has no document to read out.`)
+    const heard = await hearing(doc)
+    return text(`“${String(row.name)}”, out loud.\n\n${asHeard(heard)}`)
   },
 )
 

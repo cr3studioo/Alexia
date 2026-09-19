@@ -86,7 +86,19 @@ test('provenance says a previous version is kept, so Undo is discoverable before
 const source = readFileSync(join(import.meta.dirname, '..', 'index.js'), 'utf8')
 
 test('the model call is made once, so Adapt, Re-adapt and Refine cannot drift apart', () => {
-  expect(source.match(/createMessage\(/g)).toHaveLength(1)
+  // Two calls in the file, and they are two different jobs. The document is written by one
+  // helper that every button goes through; the samples are asked by another, and the samples
+  // must **not** carry `modelPreferences` — a sample written by a better model than the one
+  // that will actually read her is a sample that lies in the one direction that matters.
+  expect(source.match(/createMessage\(/g)).toHaveLength(2)
+  // One of the two asks for a capable model; the other must not, so it is the only `:` form —
+  // and it is not the one inside `hearing()`, whose body is read out here and checked.
+  expect(source.match(/modelPreferences: /g)).toHaveLength(1)
+  const from = source.indexOf('async function hearing')
+  expect(from).toBeGreaterThan(-1)
+  const body = source.slice(from, source.indexOf('\n}', from))
+  expect(body).toContain('createMessage(')
+  expect(body).not.toContain('modelPreferences')
   // All three buttons reach it through the one helper rather than calling a model themselves,
   // handing in a brief rather than a description — which is what lets Refine send a document
   // and a sentence instead of the 1,300-token description that ran a model out of room.
