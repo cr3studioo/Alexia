@@ -229,6 +229,14 @@ land on anything not already covered by D154–D171): the same day, in three pla
   date with nothing changed. The fixture is now anchored to noon UTC of the day it runs. The
   seam itself is untouched — `send()` still reads the wall clock — and is worth closing properly.
 
+  **The seam is closed, 2026-09-19 (`56549d1`).** `send()` takes an optional `at` and passes it
+  to `recordTry`; absent is the wall clock, which is every other caller. `trial()` passes its
+  own. Two assertions in `trial.test.ts` were reading the record at `Date.now()` after writing
+  into the fixture's clock and now read at the clock they wrote with, and a third test pins the
+  property so it cannot reopen quietly. No decision number: nothing was chosen, a fact was made
+  true. It is not a test-only seam — `judge()` reasons in days, and a record timestamped by one
+  clock and queried by another disagrees with itself about where a day ends.
+
 ---
 
 ## Beyond this session — later work, same rules, don't start without cause
