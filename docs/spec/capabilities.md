@@ -100,13 +100,24 @@ name and becomes a drop-in alternative rather than a competitor.
 | `voice.transcribe` | audio file in, text out | `plugins/voice` (M2) |
 | `voice.speak` | text in, audio played, nothing out | `plugins/voice` (M2) |
 | `persona.personality` | nothing in, the chosen personality's standing instruction out — core appends it to the system prompt once per task. **Optionally in three lengths**: `structuredContent` may carry `{ high, medium?, small? }`, and core sends the one the weakest model in that step's plan can read. `text` is still the long one and still the whole contract | `plugins/persona` (M4) |
+| `memory.remember` | a sentence in, **nothing out** — it is kept across conversations and read back by `memory.recall` | `plugins/memory` (M7) |
+| `memory.recall` | words in, what was remembered about them out | `plugins/memory` (M7) |
 | `memory.capture` | one finished exchange in, **nothing out** — core never reads it back | `plugins/memory` (M7) |
 | `ask.confirm` | a question and its options in, the chosen option out | `plugins/telegram` (M7) |
 | `voice.render` | text in, **audio bytes out** — for audio that has to go somewhere other than these speakers | `plugins/voice` (M7) |
 | `document.extract` | **a file in, markdown out** — what a document says | `plugins/documents` |
 | `image.ocr` | **a picture in, the words in it out** — a path or the bytes, text in reading order | `plugins/ocr` |
 
-Nine entries, because nine exist. `demo.greet` is real: `plugins/hello` provides it and
+**A plugin can ask whether any of them is going to be answered**, without learning who would:
+`alexia/answers` takes a capability name and returns two booleans — *something enabled promises
+it* and *something that promises it is installed and switched off*
+([`wire-protocol.md`](./wire-protocol.md#alexiaanswers), `alexia_protocol` 10). It is the
+reading half of `alexia/capability/call` and keeps the same invariant.
+
+Eleven entries, because eleven exist — `memory.remember` and `memory.recall` were shipped by
+`plugins/memory` from the day it existed and were missing from this table until 2026-09-19,
+which is the failure mode the paragraph below warns about read from the other end: a name in a
+manifest that the register never learned about. `demo.greet` is real: `plugins/hello` provides it and
 `plugins/vanisher` requires it, which is how *delete the provider and the consumer keeps
 running* stays a test rather than a claim. Three of them are ones **core itself** reaches
 for — they are also in `CORE_CAPABILITIES`, and the rule for being there is that core works

@@ -54,10 +54,10 @@ test('the manifest declares both commands, and declares them as core dispatches 
     expect(pattern.test(one.name), one.name).toBe(true)
     expect(one.summary.length).toBeLessThanOrEqual(120)
   }
-  // `commands` is an existing manifest field, so none of *this* moved the protocol — the
-  // declaration went 2 → 7 for `multiline` on the Edit box (improvement 2), which is the
-  // oldest Alexia that knows what that key means.
-  expect(manifest.alexia_protocol).toBe(7)
+  // `commands` is an existing manifest field, so none of *this* moved the protocol. The
+  // declaration went 2 → 7 for `multiline` on the Edit box (improvement 2) and 7 → 10 for
+  // `alexia/answers` (improvement 4) — each time, the oldest Alexia that knows what it needs.
+  expect(manifest.alexia_protocol).toBe(10)
   expect(manifest.settings.some((one) => one.multiline === true)).toBe(true)
 })
 

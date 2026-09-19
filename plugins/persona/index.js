@@ -2,6 +2,7 @@
 import { fromJsonSchema, log, plugin } from '@alexia/sdk'
 import { budgetLine, costLine } from './cost.js'
 import { changed, sizeOf } from './diff.js'
+import { asked, inert, inertNote, wants } from './promises.js'
 import { check, noteOf, removedOf } from './safety.js'
 import {
   brief,
@@ -18,6 +19,7 @@ import {
   provenance,
   refining,
   ROOM,
+  sectionOf,
   shorterOf,
   sizesFrom,
   sizesIn,
@@ -73,8 +75,8 @@ const nope = (said) => ({ isError: true, content: [{ type: 'text', text: said }]
  * either is owed the same account of it — and because the next one along (Refine, improvement
  * 2) is a third caller that should not have to reassemble this from parts.
  */
-const reply = (headline, removed, doc, shorter = {}) =>
-  [headline, noteOf(removed), sizesLine(shorter), costLine(doc, shorter), budgetLine(doc), doc]
+const reply = (headline, removed, doc, shorter = {}, cannot = '') =>
+  [headline, noteOf(removed), cannot, sizesLine(shorter), costLine(doc, shorter), budgetLine(doc), doc]
     .filter((part) => part !== '')
     .join('\n\n')
 
@@ -364,9 +366,10 @@ alexia.tool(
       hearFirst ?
         `Saved as “${name}”. Nothing has changed yet — press Use on its row to switch to her, or Forget to throw it away.`
       : `Saved as “${name}” and in use from your next message.`
+    const cannot = await inertLines(written.doc)
     const heard = hearFirst ? asHeard(await hearing(written.doc)) : ''
     return text(
-      [reply(headline, written.removed, written.doc, written), ...(heard === '' ? [] : ['---', heard])].join('\n\n'),
+      [reply(headline, written.removed, written.doc, written, cannot), ...(heard === '' ? [] : ['---', heard])].join('\n\n'),
     )
   },
 )
@@ -494,6 +497,7 @@ alexia.tool(
         written.removed,
         written.doc,
         written,
+        await inertLines(written.doc),
       ),
     )
   },
@@ -524,6 +528,28 @@ async function keep(row, was, written) {
     { rowid: Number(row.rowid) },
   )
   await bind()
+}
+
+/**
+ * **Which of her unasked behaviours have nothing behind them** (improvement 4).
+ *
+ * Asked of core one capability at a time, and only about the ones a line actually named —
+ * `alexia/answers` runs nothing and tells this plugin nothing about who would answer, so the
+ * invariant holds the same way `alexia/capability/call` keeps it one step further on.
+ *
+ * Every failure here is silence. A core too old to know the method, a method that throws, a
+ * capability nobody recognises: the line is simply not checked, and the note says how many
+ * were looked at rather than claiming the rest are fine.
+ */
+async function inertLines(doc) {
+  const section = sectionOf(doc, 'What you do without being asked')
+  const looked = wants(section)
+  if (looked.length === 0) return ''
+  const answered = {}
+  for (const cap of asked(section)) {
+    answered[cap] = await alexia.answers(cap).catch(() => ({ answers: true, here: false }))
+  }
+  return inertNote(inert(section, answered), looked.length)
 }
 
 /** What a change did, over the words it did it to — the sentence, then the lines. */
@@ -583,6 +609,7 @@ alexia.tool(
           written.removed,
           written.doc,
           written,
+          await inertLines(written.doc),
         ),
         '---',
         showing(was.doc, written.doc),
@@ -660,6 +687,8 @@ alexia.tool(
             : ' The shorter lengths went with the version you replaced, so every model now gets what you wrote — Refine or Re-adapt writes them again.'),
           removed,
           doc,
+          {},
+          await inertLines(doc),
         ),
         '---',
         showing(was.doc, doc),
@@ -742,6 +771,10 @@ alexia.tool(
     const trailer = [
       provenance(row),
       noteOf(removedOf(row)),
+      // Asked again here rather than stored with the row: what is installed changes, and a
+      // finding saved in September is a finding about September. This is read at the moment
+      // somebody opens the row, which is the moment it is true.
+      await inertLines(String(row.doc)),
       sizesLine(shorterOf(row)),
       costLine(String(row.doc), shorterOf(row)),
       budgetLine(String(row.doc)),

@@ -130,6 +130,19 @@ export interface AlexiaPlugin {
    * answered, and there is no way to ask — that is the invariant, not politeness.
    */
   capability(cap: string, args?: Args): Promise<CallToolResult>
+  /**
+   * **Would anything here answer this capability?** — and, separately, is something that
+   * would **installed and switched off**?
+   *
+   * For deciding whether to offer something at all, and for the sentence when you cannot. It
+   * runs nothing and changes nothing, so unlike {@link capability} it does not need the name
+   * in your `requires[]`: a plugin made to declare a dependency in order to check for one
+   * would be declaring something untrue.
+   *
+   * It names nobody at either end. You ask about a capability and you are told two booleans —
+   * *plan around it* and *the fix is a switch rather than an install*.
+   */
+  answers(cap: string): Promise<{ answers: boolean; here: boolean }>
   readonly storage: Storage
   /**
    * The context to pass is the one your handler was given — and **which argument that is
@@ -255,6 +268,7 @@ export function plugin(options: PluginOptions = {}): AlexiaPlugin {
     // Another plugin's work rather than a row in core's database, so it gets core's patience
     // for that work instead of MCP's sixty seconds (D149).
     capability: (cap, args) => call('alexia/capability/call', { cap, arguments: args }, CAPABILITY_CALL_MS),
+    answers: (cap) => call('alexia/answers', { cap }),
     storage,
     progress: (ctx, progress, total, message, work) => {
       const progressToken = ctx.mcpReq._meta?.progressToken

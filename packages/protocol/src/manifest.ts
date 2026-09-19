@@ -69,7 +69,7 @@ import { APP_VERSION, newer } from './version.js'
  * existing manifest means changes and the floor stays at 2 again.
  */
 export const ALEXIA_PROTOCOL_MIN = 2
-export const ALEXIA_PROTOCOL_MAX = 9
+export const ALEXIA_PROTOCOL_MAX = 10
 
 /**
  * The two MCP revisions core speaks, in preference order (D55, corrected by D57).
