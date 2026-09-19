@@ -1631,6 +1631,19 @@ export async function send(
     run?: string
     /** Who is asking, for the model record (D161). Absent is a plugin when `plugin` is set, else the chat. */
     source?: Source
+    /**
+     * **What time it is, for a caller that has its own clock.**
+     *
+     * Every try this walk makes is written to the record, and until this line it was stamped
+     * `Date.now()` regardless of what the caller thought the time was — so a caller that
+     * travels (the daily test, `trial.ts`, which takes a `now` and reasons in days) wrote
+     * tries into *today* and then read them back as *tomorrow's*. That is not a test-only
+     * seam: a record whose timestamps come from a different clock than the queries over it is
+     * a record that disagrees with itself about a day boundary.
+     *
+     * Absent is the wall clock, which is every other caller and is what this always did.
+     */
+    at?: number
   } = {},
 ): Promise<Answer> {
   const failures: Failure[] = []
@@ -1672,7 +1685,14 @@ export async function send(
    */
   const source: Source = hooks.source ?? (hooks.plugin !== undefined ? 'plugin' : 'chat')
   const record = (choice: Choice, outcome: Outcome, status: number): void => {
-    store.recordTry({ provider: choice.provider.id, model: choice.model.id, outcome, status, source })
+    store.recordTry({
+      provider: choice.provider.id,
+      model: choice.model.id,
+      outcome,
+      status,
+      source,
+      ...(hooks.at !== undefined && { at: hooks.at }),
+    })
   }
 
   for (const [at, choice] of choices.entries()) {

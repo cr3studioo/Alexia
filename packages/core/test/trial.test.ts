@@ -118,7 +118,11 @@ test('fourteen due, ten go out: free only, the one fixed sentence, recorded as t
   expect(store.spendBy('model', 0)).toEqual([])
 
   // A new model that answered a test is not new any more.
-  const answered = judge(store.tries(Date.now()), store.seen(), world().models, new Set(['stub']), Date.now())
+  //
+  // **Read at the fixture's own clock, not the wall's.** A try is stamped by whichever clock
+  // the caller reasons in, so a test that travels a day forward and then reads the record at
+  // `Date.now()` is asking about a different day than the one it just wrote into.
+  const answered = judge(store.tries(now), store.seen(), world().models, new Set(['stub']), now)
   expect(answered.get('stub\nnew/00')?.untested).toBe(false)
 
   // The day's ten are spent, and a second round the same day sends nothing — a restart included,
@@ -129,9 +133,42 @@ test('fourteen due, ten go out: free only, the one fixed sentence, recorded as t
   received.length = 0
   expect(await trial({ world: world(now + 24 * HOUR), store, secrets, busy: () => false, now: now + 24 * HOUR })).toBe(4)
   expect(received.map((one) => one.model).sort()).toEqual(['aside/busy', 'aside/empty', 'new/10', 'new/11'])
-  // And one good reply brings a set-aside model back.
-  const back = judge(store.tries(Date.now()), store.seen(), world().models, new Set(['stub']), Date.now())
+  // And one good reply brings a set-aside model back — asked the day the reply was given.
+  const tomorrow = now + 24 * HOUR
+  const back = judge(store.tries(tomorrow), store.seen(), world().models, new Set(['stub']), tomorrow)
   expect([back.get('stub\naside/empty')?.aside, back.get('stub\naside/busy')?.aside]).toEqual([undefined, undefined])
+  store.close()
+})
+
+test('a try is stamped by the clock its caller reasons in, not by the wall', async () => {
+  /**
+   * **The seam `trial.test.ts` was hiding, closed.** `send()` wrote every try with
+   * `Date.now()` no matter what the caller thought the time was, so this file's own day-travel
+   * wrote tries into *today* and then read them back as *tomorrow's* — which is why the ten
+   * day-one assertions started failing on a date nobody changed anything on (2026-09-18), a
+   * year after they were written.
+   *
+   * It is not a test-only seam. A record whose rows are timestamped by one clock and queried
+   * by another is a record that disagrees with itself about where a day ends, and `judge()`
+   * reasons in days: a whole day of refusals sets a model aside, and the daily test's
+   * allowance is per day.
+   */
+  const { store, world } = setting()
+  received.length = 0
+  const later = now + 24 * HOUR
+  expect(await trial({ world: world(later), store, secrets, busy: () => false, now: later })).toBe(TESTS_A_DAY)
+
+  // Every try that round made carries the caller's clock, to the minute, and none carries the
+  // wall's — which on this machine is a different day from the fixture's whenever it matters.
+  const written = store.tries(later).filter((one) => one.source === 'test' && one.at >= now)
+  expect(written.length).toBeGreaterThan(0)
+  expect(written.every((one) => Math.abs(one.at - later) < 60_000)).toBe(true)
+  // And `judge()` — which is the reader that reasons in days — sees none of them a day
+  // earlier, which is the whole property: a day boundary means the same thing to the writer
+  // and to the reader. (`store.tries(at)` is a 30-day window with no upper bound; `judge()` is
+  // where the *at or before* half lives.)
+  const earlier = judge(store.tries(now), store.seen(), world(now).models, new Set(['stub']), now)
+  expect(earlier.get('stub\nnew/00')?.untested).toBe(true)
   store.close()
 })
 
