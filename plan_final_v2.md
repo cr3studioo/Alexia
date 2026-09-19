@@ -259,10 +259,20 @@ land on anything not already covered by D154–D171): the same day, in three pla
 
   M8-1 is ticked in `plan.md`. **M8-7 stays unticked** — items 15–17 are still open.
 
-- [ ] **15. Step 6 — §2, three sizes.**
+- [x] **15. Step 6 — §2, three sizes.**
   Small (~100 words), medium (~300), high (~600), chosen per call for the weakest model in that
   step's plan. Once this lands, revisit item 10 if it was deferred rather than built against the
   single-document estimate.
+
+  **Built 2026-09-19 (D181), `093f9c4`.** Item 10 was built rather than deferred (D176), and
+  `costOf()` did take one document as that note promised — so the cost line now names all three
+  and the function did not change.
+
+  Two things the item's text does not cover, both recorded in the decision: **what is reported
+  is the size that was sent rather than the size the model deserved**, so a personality with one
+  document reads as `high`; and the **trace line moved from per run to per step**, which narrows
+  D175 on its own terms — that decision rested on a personality read once per task being unable
+  to differ between steps, and three lengths are exactly that changing.
 
 - [ ] **16. Step 7 — improvements 2, 3, 4, 5, 9.**
   Refine (2), the preview with Skip (3), flagging inert behaviour lines (4), facts to Memory with

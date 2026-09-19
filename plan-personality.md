@@ -32,7 +32,7 @@ being sent. What was sent was one sentence, to a random model.
 | Core passes `finish_reason: 'length'` through as `stopReason: 'maxTokens'` | **Done**, tested in `provider.test.ts` and end to end in `asking.test.ts` |
 | Adapt refuses a cut-off answer; 4,000-token budget; waits 110 s, not the SDK's 60 s | **Done**, `plugins/persona/index.js` |
 | `usable()` requires all four sections with something under each | **Done**, `writing.js`, tested with the real cut-off shape |
-| A trace line with the personality's length per step, so *was it sent?* is readable | **Done 2026-09-18 (D175)** — recorded per *run*, not per step: `AgentOptions.personality` is read once per task, so a per-step number would repeat itself and imply it could have differed |
+| A trace line with the personality's length per step, so *was it sent?* is readable | **Done 2026-09-18 (D175)**, per *run* — and **per step since 2026-09-19 (D181)**: D175's reasoning was that a personality read once per task cannot differ between steps, and §2's three lengths are exactly that changing. Repeats collapse, so one length across fifteen steps still reads as one fact |
 | Routers labelled on the Models screen | **Done** in `model_plan.md` §2 (D159): *a different free model each time*, ranked last |
 
 ### This machine
@@ -139,6 +139,31 @@ behaviour.
 
 **Acceptance.** A plan with a 2B local model and a paid model sends small. A paid model alone
 gets high. An old one-document row still reaches every model.
+
+**Built 2026-09-19 (D181).** *Where the build differs from the text above.*
+- **`text` and `structuredContent`, as written** — and nothing in the plugin contract moved for
+  it, because `structuredContent` is MCP's own field on a tool result. A core that knows nothing
+  about sizes reads `text` and gives the long document to every model, which is what it did.
+- **`sizedFor()` reports the size that was *sent*, not the size the model deserved.** A row with
+  one document is judged `small` and still sends the long one; a trace saying *small* about six
+  hundred words that went out would be the record lying in the one place it exists to tell the
+  truth. This is the half the section did not have to think about because it assumed three
+  documents always exist.
+- **A shorter size that came back empty, over its ceiling, or emptied by the safety check is
+  dropped on its own**, rather than failing the press. Dropping one costs a weak model a longer
+  document; failing the press throws away a long one that was fine. The screen names which of the
+  three survived.
+- **`ROOM` 4,000 → 6,000.** One call now writes about a thousand words rather than six hundred,
+  and three arriving cut off is D157's bug wearing different clothes.
+- **Refine writes the three again; Edit clears the shorter two.** Edit is one document somebody
+  typed, and the other two describe the version it replaced — keeping them would leave a weak
+  model reading a personality two versions old with nothing on screen saying so.
+- **The trace line went per step** (D175's own condition changed — see the order of work, step 6).
+
+**Tests:** `packages/core/test/sizes.test.ts` (the rules), `packages/core/test/sized.test.ts`
+(all four acceptances over `/api/chat`, reading the system prompt off what the provider was
+actually sent), `plugins/persona/test/sizes.test.js` (the split, the ceilings, the briefs, the
+columns, the cost).
 
 ---
 
@@ -326,8 +351,13 @@ for paid models, an order that lets provider prompt caching reuse the personalit
    core's `pressing` map rather than declared, so Adapt may reach a paid model under the paid
    switch, the day's amount and the monthly cap. `min_tier: "T1"` on this plugin is now read,
    which also means **Adapt never uses a model on this machine**.
-6. **§2, three sizes**, at about 100, 300 and 600 words (D160), with *small* also for a model §4 B
-   doubts.
+6. ~~**§2, three sizes**, at about 100, 300 and 600 words (D160), with *small* also for a model §4 B
+   doubts.~~ Done 2026-09-19 (**D181**). Small also for **any router** and for a window under 32k,
+   which the section names and this line did not; and the size is picked for the **weakest rung in
+   a step's plan** rather than for the model asked first, because a 429 hands the step to the next
+   one with the document already attached. The trace line moves from per run to per step with it —
+   D175's reasoning was that a personality read once per task cannot differ between steps, and the
+   three lengths are exactly that changing.
 7. **Improvements 2, 3, 4, 5, 9.** ~~The preview (3) shows with **Skip** from the first time~~;
    facts (5) go to Memory with one yes for all (D160). **2 and 3 done 2026-09-19 (D179, D180);
    4, 5 and 9 are what is left of this step.** Improvement 2 was built first, on the owner's
