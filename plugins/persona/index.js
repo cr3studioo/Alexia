@@ -101,6 +101,13 @@ async function write(ctx, description, name) {
       // it once per personality, so it is worth a rung that can actually write. The old
       // node's cheapest-possible preference was right for a task that ran on every answer
       // and wrong for this one.
+      //
+      // **Read by core since M8-1 (2026-09-19).** It was ignored from the day this line was
+      // written, which is how a 5,825-character description came back as a paragraph from a
+      // 2.6B model: intelligence first now means strongest-first, never a router — not even
+      // a pinned one — and never a model Alexia's own record doubts while another fits. With
+      // the manifest's `min_tier: "T1"` beside it, that is the whole of what this plugin gets
+      // to say about the model, and the user's pins, slider and allowance still decide.
       modelPreferences: { intelligencePriority: 0.8, speedPriority: 0.3, costPriority: 0.3 },
     }, {
       // The SDK's own default is sixty seconds, and a model thinking before it writes four

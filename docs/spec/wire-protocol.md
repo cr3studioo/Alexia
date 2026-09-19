@@ -366,6 +366,39 @@ assume.
 > apply to a plugin's model use exactly as they apply to Alexia's own. If MCP removes them,
 > they become `alexia/*` methods — the contract a plugin author writes against does not move.
 
+#### `modelPreferences` — what core reads, and what it does not
+
+MCP's own field, and **one of its three numbers reaches the router** (M8-1). Core is honest
+about the other two here rather than leaving you to find out by measuring.
+
+```jsonc
+{ "method": "sampling/createMessage",
+  "params": {
+    "messages": [ … ],
+    "maxTokens": 4000,
+    "modelPreferences": { "intelligencePriority": 0.8, "speedPriority": 0.3, "costPriority": 0.3 } } }
+```
+
+| | |
+|---|---|
+| `intelligencePriority` | **Honoured**, when it is the largest of the three *and* at least `0.5`. Your request is then ranked strongest-first rather than cheapest-first; a **router** — a model id that hands the request on to a different model each time — is not a candidate at all; and a model Alexia's own record doubts (never tried, too many errors, bad answers, set aside) waits until nothing else fits. |
+| `costPriority` | **Honoured by already being true.** Cheapest-that-fits is what core does when nobody says otherwise, so asking for it changes nothing. |
+| `speedPriority` | **Read and not acted on.** Nothing core knows about a model says how fast it answers; the nearest thing is a record of what has timed out *on this machine*, which already sinks a slow model for everybody. A speed order invented out of size or price would be a guess wearing a knob's clothing. |
+| `hints` | **Read and not acted on.** They name models by substring, which is a plugin choosing a vendor — the one thing core will not let a plugin do. The user's pins, slider and allowance decide who answers. |
+
+**None of it is a way past the user.** A preference is a sort, not a permission: the privacy
+mode, the free/paid slider, the daily amount and the monthly cap all apply exactly as they
+did, and a model the user pinned still wins outright. The single exception is a pin on a
+*router*, which is the user asking for a different model each time and therefore not an
+answer to *give me one that can do this* — a request with `intelligencePriority` high routes
+around it, and around nothing else.
+
+**A press is a run.** A `sampling/createMessage` a plugin makes on its own clock — a poll
+loop, a timer — is capped at free tiers and the local machine, and always has been. One made
+while a **button the user pressed** is still in flight is not: somebody is at the screen
+watching, so it may reach a paid model under the same paid switch, daily amount and monthly
+cap as a task started in Alexia's own window. You do not declare this; core derives it.
+
 #### `alexia/tools` — *use my tools, and ask me when you must*
 
 One optional key on the request's `_meta`, and it turns a completion into a **task**:

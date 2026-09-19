@@ -175,6 +175,18 @@ export interface RunOptions {
   avoid?: string[]
   /** Every step above this tier — *Bad answer* with the paid switch on asks a smarter model (§4 I). */
   above?: Tier
+  /**
+   * **The floor the asking plugin declared** — `min_tier` in its manifest (M8-1). Absent for a
+   * task from the window, which is nobody's plugin and has no floor but `T0`.
+   */
+  minTier?: Tier
+  /**
+   * **The asking plugin wants a capable model, not the cheapest that fits** (M8-1), read from
+   * MCP's `modelPreferences`. Carried on every step, because a fallback mid-task is the case
+   * it exists for: a plugin that asked for one real model does not want step nine handed to a
+   * router because step eight was busy.
+   */
+  capable?: boolean
   tools: Tooling
   pins: Pins
   /** Re-asked every step: a tier can be exhausted mid-task, which is the whole point. */
@@ -485,6 +497,8 @@ export async function run(options: RunOptions): Promise<RunResult> {
         above: answered,
         ...(options.background === true && { background: true }),
         ...(options.avoid !== undefined && { avoid: options.avoid }),
+        ...(options.minTier !== undefined && { minTier: options.minTier }),
+        ...(options.capable === true && { capable: true }),
         ...(named.length > 0 && { tools: named }),
         ...(seeing.length > 0 && { modality: seeing }),
       }
@@ -505,6 +519,8 @@ export async function run(options: RunOptions): Promise<RunResult> {
       ...(options.background === true && { background: true }),
       ...(options.avoid !== undefined && { avoid: options.avoid }),
       ...(options.above !== undefined && { above: options.above }),
+      ...(options.minTier !== undefined && { minTier: options.minTier }),
+      ...(options.capable === true && { capable: true }),
       ...(named.length > 0 && { tools: named }),
       ...(seeing.length > 0 && { modality: seeing }),
     }

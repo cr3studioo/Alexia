@@ -476,10 +476,18 @@ type. Declaring a key twice is a load error. Which half a widget belongs in is y
 ```
 
 The cheapest router rung your work is safe on — `T0` local, `T1` free hosted, `T2` small
-paid, `T3` frontier. Core will not route a `sampling/createMessage` from you below it.
+paid, `T3` frontier. Core will not route a `sampling/createMessage` from you below it, on
+either path: one completion, or the whole loop behind `alexia/tools`.
 
 Default `T0`, and think before raising it: **a plugin that demands T3 does not work for a
 user with no paid key**, and working with no paid key is a founding goal, not a nice-to-have.
+When nothing the user has connected reaches your floor, they are told which floor it was and
+that it is what refused — so a floor you did not need costs somebody an evening.
+
+*Read for the first time in M8-1 (2026-09-19). It was declared, documented and ignored from
+the day the field existed; honouring it is the contract becoming true rather than changing,
+so `alexia_protocol` does not move for it. See [`wire-protocol.md`](./wire-protocol.md)'s
+sampling section for `modelPreferences`, the other half of the same fix.*
 
 ---
 

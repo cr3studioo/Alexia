@@ -37,6 +37,18 @@ import { affordable, costOf, type Today } from './usage.js'
 export type Tier = 'T0' | 'T1' | 'T2' | 'T3'
 const TIERS: Tier[] = ['T0', 'T1', 'T2', 'T3']
 const rank = (tier: Tier): number => TIERS.indexOf(tier)
+
+/**
+ * **What a plugin's declared floor means in words** (M8-1, `Ask.minTier`). A refusal names
+ * the next action, and *T2* is not a thing anybody outside this file has read. `T0` is never
+ * a wall — every model is at or above it — and is here so the map is total.
+ */
+const FLOOR_SAYS: Record<Tier, string> = {
+  T0: 'a model',
+  T1: 'a hosted model rather than one on this machine',
+  T2: 'a paid model',
+  T3: 'a frontier model',
+}
 /** Which side of the price line a tier sits on. Exported because the caller that has to bound a billed reply needs the same answer this file uses. */
 export const paid = (tier: Tier): boolean => rank(tier) >= rank('T2')
 
@@ -197,6 +209,60 @@ export interface Ask {
    * answer, when the same question is asked again. Nothing else about the plan changes.
    */
   avoid?: readonly string[]
+  /**
+   * **The asking plugin wants a model that can do the work, not the cheapest that fits**
+   * (M8-1) — read from MCP's `modelPreferences` by {@link wantsCapable}.
+   *
+   * It is one flag rather than three because a plugin asking for intelligence means all
+   * three of these and has no way to ask for them one at a time:
+   *
+   * 1. **Best-first.** The ranking is walked from the other end, exactly as `/best` walks it.
+   * 2. **Never a router.** A router is a different model each time, 2.6B included ({@link
+   *    routes}, D159), so it is not an answer to *give me one that can write*. It is not a
+   *    candidate at all here, and a pin on one is ignored rather than obeyed — a pin on a
+   *    router is not somebody choosing a model, it is somebody choosing *surprise me*, and
+   *    that is the one pin this cannot honour and still mean anything. A pin on a real model
+   *    still wins outright, as it does over every other preference.
+   * 3. **Never a model Alexia doubts**, while anything else fits: new and not tried yet, too
+   *    many errors, bad answers, set aside. The reading D161 already gives *set aside* —
+   *    skipped while something else can answer, asked when nothing else can, so this never
+   *    turns a button into one that cannot be pressed on a busy evening.
+   *
+   * **Why this is here and not in the plugin.** The plugin cannot see the model list by
+   * design, so *one real model, and not a bad one* is not a thing it can do for itself. It
+   * is why the personality adapter asked for `intelligencePriority: 0.8` from the day it was
+   * written and was answered by whichever free model a JSON feed happened to list first.
+   */
+  capable?: boolean
+}
+
+/**
+ * **What core honours of MCP's `modelPreferences`, and what it does not** (M8-1).
+ *
+ * Three numbers between 0 and 1, and the honest answer is that exactly one of them maps onto
+ * a signal this router has. **Intelligence first, and meant**: the largest of the three and
+ * at least half, which is the adapter's 0.8/0.3/0.3 and is not a plugin that set all three
+ * to 0.5 and moved on. That becomes {@link Ask.capable}.
+ *
+ * - **`costPriority` is already the answer.** Cheapest-first is what this router does when
+ *   nobody says otherwise, so a plugin asking for it is asking for the default and there is
+ *   nothing to change. Honoured by being true already.
+ * - **`speedPriority` is read and not acted on**, and that is written here rather than left
+ *   to be discovered: nothing in the catalog says how fast a model answers. The nearest
+ *   thing is D159's strikes, which record a model that timed out *here* and already sink it
+ *   for everybody. Inventing a speed order out of size or price would be a guess wearing a
+ *   knob's clothing, which is the exact failure M8-1 exists to end.
+ * - **`hints` are read and not acted on.** They name models by substring — *claude-3-sonnet*
+ *   — which is a plugin choosing a vendor, and the one thing this router will not let a
+ *   plugin do: the user's own pins, slider and allowance decide who answers.
+ *
+ * MCP 2.0.0 marks `modelPreferences` deprecated (SEP-2577, 2026-07-28) in favour of calling
+ * a provider directly, which is the one thing a plugin here must never do — so it is
+ * honoured while it exists, and the day it leaves the schema this is what has to be replaced.
+ */
+export const wantsCapable = (prefs?: { intelligencePriority?: number; speedPriority?: number; costPriority?: number }): boolean => {
+  const mind = prefs?.intelligencePriority
+  return mind !== undefined && mind >= 0.5 && mind > (prefs?.costPriority ?? 0) && mind > (prefs?.speedPriority ?? 0)
 }
 
 export interface Choice {
@@ -435,6 +501,19 @@ export function route(ask: Ask, pins: Pins, world: World): Verdict {
     return `the rest of today's ${said} requests are kept for your chat`
   }
 
+  /**
+   * **One real model, asked for by the plugin that needs one** ({@link Ask.capable}, M8-1).
+   *
+   * Declared here rather than beside the filters below because the pin is answered first and
+   * this is the one preference a pin does not simply win over — see the field's own note.
+   */
+  const capable = ask.capable === true
+  /** A model Alexia has doubts about: new and not tried yet, too many errors, bad answers (D161). */
+  const doubted = (c: Choice): boolean => {
+    const known = world.health?.get(`${c.provider.id}\n${c.model.id}`)
+    return known?.untested === true || known?.doubted === true
+  }
+
   if (pins.model) {
     // The user named one. Their choice, including past a flag nobody has verified — and past
     // the ledger, which is this machine's low copy of somebody else's number (D107). Refusing a
@@ -445,13 +524,25 @@ export function route(ask: Ask, pins: Pins, world: World): Verdict {
     // floor ahead of the person's own OpenRouter key on this machine. Still one choice: a pin
     // never falls back, not even to the same model somewhere else.
     const [named] = everything.filter((c) => c.model.id === pins.model).sort(listed([pins.model], tired, ranked, aside))
-    // A pin is held to the same half for background (§4 F): somebody chose it, but not for this.
-    if (named !== undefined && ask.background === true && !keptFor(named)) {
-      return { ok: false, mode: 'pinned', why: chatsHalf([named]) }
+    /**
+     * **A pin on a router is not a pin on a model** (M8-1), and it is the only pin
+     * {@link Ask.capable} steps around: whoever pinned `openrouter/free` asked for a
+     * different free model each time, which cannot also be an answer to *one that can
+     * write*. It was this exact pin that answered a 5,825-character description with a
+     * 2.6B model and started the personality rebuild.
+     *
+     * Falling through rather than refusing, because the pin has said nothing about which
+     * model this should be — so Automatic's own order below is what is left of it.
+     */
+    if (!(capable && named !== undefined && routes(named.model))) {
+      // A pin is held to the same half for background (§4 F): somebody chose it, but not for this.
+      if (named !== undefined && ask.background === true && !keptFor(named)) {
+        return { ok: false, mode: 'pinned', why: chatsHalf([named]) }
+      }
+      return named ?
+          { ok: true, mode: 'pinned', choices: [named] }
+        : { ok: false, mode: 'pinned', why: `${pins.model} is not available right now.` }
     }
-    return named ?
-        { ok: true, mode: 'pinned', choices: [named] }
-      : { ok: false, mode: 'pinned', why: `${pins.model} is not available right now.` }
   }
 
   /**
@@ -540,7 +631,7 @@ export function route(ask: Ask, pins: Pins, world: World): Verdict {
    * the same filters with the line open and see. Inferring it from which filter emptied the
    * list gets the sentence wrong, and the sentence is the half the user meets.
    */
-  const fitting = (spend: Spend, sidegrades = false, from: readonly Choice[] = pool): Choice[] =>
+  const fitting = (spend: Spend, sidegrades = false, from: readonly Choice[] = pool, routersToo = false): Choice[] =>
     from
       .filter((c) => rank(c.model.tier) >= rank(floor))
       .filter((c) => ask.above === undefined || rank(c.model.tier) > rank(ask.above))
@@ -566,11 +657,22 @@ export function route(ask: Ask, pins: Pins, world: World): Verdict {
       // And a paid model that is no better than the free rung it stands in for is not a
       // rung, it is the same answer for money.
       .filter((c) => sidegrades || !middle || !paid(c.model.tier) || stepUp(c.model, replacing))
+      /**
+       * **A plugin that asked for a capable model is not handed a router** ({@link Ask.capable}).
+       *
+       * A filter and not an order, which is the difference between this and the `router` key
+       * in {@link ranking}: sorting one last still walks to it when the models above it are
+       * busy, and *a different model each time, 2.6B included* is not a worse answer to this
+       * question, it is not an answer to it. Applied to a list somebody made as well, for the
+       * same reason the pin above is: what a list says about a router is still *surprise me*.
+       */
+      .filter((c) => !capable || routersToo || !routes(c.model))
       .sort(
         mode === 'sequence' ? listed(order, tired, ranked, aside)
-          // `/best` walks Automatic's ranking from the other end. A list somebody put in order is
-          // not a ranking to walk backwards.
-        : pins.prefer === 'best' ? ranking(world, 'best').compare
+          // `/best` walks Automatic's ranking from the other end, and so does a plugin that
+          // asked for a capable model. A list somebody put in order is not a ranking to walk
+          // backwards.
+        : pins.prefer === 'best' || capable ? ranking(world, 'best').compare
         : ranked,
       )
 
@@ -597,6 +699,20 @@ export function route(ask: Ask, pins: Pins, world: World): Verdict {
    */
   const kept = fitted.filter((c) => !aside(c))
   const choices = kept.length > 0 ? kept : fitted
+  /**
+   * **And a model Alexia doubts waits the same way, for a plugin that asked for a capable one**
+   * ({@link Ask.capable}, M8-1). Same shape, one step further in: set aside is *skipped while
+   * anything else fits* for everybody, and new-and-untried, too-many-errors and gave-bad-answers
+   * join it for the plugin that said the work needs a model that can do it.
+   *
+   * Not a filter, deliberately, and this is where it differs from the router above. A router is
+   * not a capable model on its best day; a model with three failures behind it might be the only
+   * one awake at eleven at night, and a button that refuses rather than trying it is worse than
+   * one that tries it. So this narrows the plan while there is anything to narrow to, and gets
+   * out of the way when there is not.
+   */
+  const sure = capable ? choices.filter((c) => !doubted(c)) : choices
+  if (sure.length > 0) return { ok: true, mode, choices: sure }
   if (choices.length > 0) return { ok: true, mode, choices }
   // Was the allowance the wall? Only if opening the price line would actually have produced
   // something — otherwise the real wall is one of the others and saying *set an allowance*
@@ -605,6 +721,29 @@ export function route(ask: Ask, pins: Pins, world: World): Verdict {
   // And the other new wall, asked the same way: was everything paid here merely equal to
   // what ran out? Relax the one rule and see whether anything appears.
   const sidegrade = !capped && middle && fitting(spend, true).length > 0
+  /**
+   * **The wall a plugin asking for a capable model meets** (M8-1), proved the same way the two
+   * above are: put the routers back and see whether that was the only thing in the way. Said
+   * before every sentence below, because each of those would send somebody to fix a different
+   * thing — add a key, move the slider, start a new chat — and none of them is this.
+   */
+  /**
+   * **The floor the asking plugin declared** (M8-1), which is a wall that could not exist
+   * before `min_tier` was read: nothing reachable is at or above it. Said in the words a
+   * person uses rather than in the tier's name, and asked only when the floor is the whole
+   * reason — a `T2` floor on a machine that has paid models and no allowance is the money
+   * wall below, not this one.
+   */
+  if (pool.length > 0 && !pool.some((c) => rank(c.model.tier) >= rank(floor))) {
+    return { ok: false, mode, why: `what asked for this needs ${FLOOR_SAYS[floor]}, and nothing you have connected is one — connect a provider that offers one` }
+  }
+  if (capable && fitting(spend, false, pool, true).length > 0) {
+    return {
+      ok: false,
+      mode,
+      why: 'every model that fits this hands the request on to a different model each time, and this needs one model — pin one on the Models tab, or connect a provider that offers one of its own',
+    }
+  }
   /**
    * **Why the free models are done, when the switch is what stopped paid** (§4 H): used up, or not
    * one of them can do this — a picture, a long conversation, tools. Said beside *Allow*.

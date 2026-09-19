@@ -48,7 +48,7 @@ import {
 } from './permissions.js'
 import { anonymous, keyOf, PROVIDERS, type Provider } from './provider.js'
 import { redactSecrets } from './redact.js'
-import { allowed, MODES, paid, route, send, shapeOf, type Bubble, type Tier } from './router.js'
+import { allowed, MODES, paid, route, send, shapeOf, wantsCapable, type Bubble, type Tier } from './router.js'
 import { CORE, keychain, type SecretStore } from './secrets.js'
 // For `boot.mjs`, which imports the bundle this file is the entry of and nothing else (D153).
 export { fromShell } from './secrets.js'
@@ -459,12 +459,46 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
       const typed = lastAsked === undefined ? '' : textOf(lastAsked).trim()
       if (!typed.includes('\n') && /^\/[a-z][a-z0-9.-]*(?:\s|$)/i.test(typed)) return asCommand(pluginId, typed)
 
-      if (params._meta?.[TOOLS_META] === true) return asTask(pluginId, asked, signal, background(pluginId))
+      if (params._meta?.[TOOLS_META] === true) {
+        return asTask(pluginId, asked, signal, background(pluginId), declaredFor(pluginId, params.modelPreferences))
+      }
 
+      /**
+       * **What the plugin declared about the model it needs** (M8-1), and both halves of it
+       * were fields nobody read until this line.
+       *
+       * `min_tier` is the manifest's floor — *the cheapest rung my work is safe on* — and it
+       * is passed on both sampling paths, this one and `asTask`, because the spec's sentence
+       * is about `sampling/createMessage` and the tools flag does not make a request a
+       * different request. `modelPreferences` is MCP's own, and {@link wantsCapable} is the
+       * whole of what core reads from it.
+       */
+      const declared = declaredFor(pluginId, params.modelPreferences)
+      /**
+       * **A button somebody pressed is a run, and may spend like one** (G13, D156).
+       *
+       * `send` reads *attributed to a plugin, belonging to no run* as *free tiers only* (G12,
+       * D96), and that ceiling is right for a poll loop that woke up at 3am with nobody there.
+       * A press is the other thing: somebody is at the screen watching a progress bar, which
+       * is exactly the audience the spend preview was missing on this path. So a press gets a
+       * run id, and with it the same money rails a task at the keyboard has — the paid switch,
+       * today's amount, and the monthly cap. Derived from `pressing`, the same map that
+       * already decides chat-or-background, so no call site has a flag to forget.
+       */
+      const behind = background(pluginId)
+      const asRun = behind ? undefined : randomUUID()
       const verdict = route(
-        { messages: asked, shape: shapeOf({ messages: asked }), ...(background(pluginId) && { background: true }) },
+        {
+          messages: asked,
+          shape: shapeOf({ messages: asked }),
+          ...(behind && { background: true }),
+          ...declared,
+        },
         pins(store),
-        await world(),
+        // The paid switch, for a press that may now reach across the price line (§4 H). No
+        // conversation to have said *Allow* in — a press is not a chat — so it is the switch
+        // alone. Left unasked without a run, where paid was never reachable anyway.
+        asRun === undefined ? await world() : { ...(await world()), cross: caps(store).cross === true },
       )
       if (!verdict.ok) throw new Error(verdict.why)
       sampling += 1
@@ -479,10 +513,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
         },
         store,
         secrets,
-        // No `run`, because there is no task: a plugin asked. **That is also the ceiling**
-        // — `send` reads *attributed to a plugin, belonging to no run* as *free tiers only*
-        // (G12, D96), so the rule is the router's rather than this call site's.
-        { plugin: pluginId },
+        { plugin: pluginId, ...(asRun !== undefined && { run: asRun, paidAllowed: !allowance(store).stop }) },
       ).finally(() => (sampling -= 1))
       return {
         role: 'assistant',
@@ -1011,7 +1042,34 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     return { role: 'assistant', model: '', content: { type: 'text', text: ran.note }, stopReason: 'endTurn' }
   }
 
-  async function asTask(pluginId: string, messages: Message[], gaveUp?: AbortSignal, behind = true): Promise<CreateMessageResult> {
+  /**
+   * **What a plugin declared about the model it needs**, both halves of it (M8-1).
+   *
+   * A function rather than two lines at each call site because there are two sampling paths —
+   * one completion, and the whole loop behind the tools flag — and a declaration honoured on
+   * one of them is the contract being wrong about itself in a subtler way than never reading
+   * it at all. `min_tier` is the manifest's floor; the rest is {@link wantsCapable}'s reading
+   * of MCP's `modelPreferences`, which is the whole of what core takes from that field.
+   */
+  function declaredFor(
+    pluginId: string,
+    prefs?: Parameters<typeof wantsCapable>[0],
+  ): { minTier?: Tier; capable?: boolean } {
+    const manifest = plugins.manifest(pluginId)
+    return {
+      ...(manifest?.min_tier !== undefined && { minTier: manifest.min_tier }),
+      ...(wantsCapable(prefs) && { capable: true }),
+    }
+  }
+
+  async function asTask(
+    pluginId: string,
+    messages: Message[],
+    gaveUp?: AbortSignal,
+    behind = true,
+    /** What the plugin declared about the model it needs (M8-1) — the same two on either path. */
+    declared: { minTier?: Tier; capable?: boolean } = {},
+  ): Promise<CreateMessageResult> {
     if (task) throw new Error('Alexia is already working on something. Try again when it has finished.')
     const started = [...messages].reverse().find((m) => m.role === 'user')
     const text = started === undefined ? '' : textOf(started)
@@ -1046,6 +1104,10 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
         plugin: pluginId,
         // A message from a phone is not the chat on screen: its free requests come second (§4 F).
         ...(behind && { background: true }),
+        // The manifest's floor and MCP's own preference, on this path as well as the plain
+        // one: the tools flag does not make it a different request (M8-1).
+        ...(declared.minTier !== undefined && { minTier: declared.minTier }),
+        ...(declared.capable === true && { capable: true }),
         paidAllowed: !month.stop,
         maxSteps: limitsNow().steps,
         // The stop button, and the plugin that started this giving up: either one ends the task.
