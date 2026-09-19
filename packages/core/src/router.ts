@@ -109,6 +109,110 @@ export const allowed = (model: Model, spend: Spend): boolean =>
   spend === 'mixed' || paid(model.tier) === (spend === 'paid')
 
 /**
+ * **How much personality a model can be trusted to read** (`plan-personality.md` §2, D160).
+ *
+ * A personality goes into the system prompt on **every step**, so a 600-word one re-sent
+ * fifteen times is 7–8k tokens of a task's budget. On a paid model that is money; on a free
+ * one it is context, rate limit, and instructions followed halfway. Three lengths, written in
+ * one Adapt call, and this is the axis that decides which of them a given model is handed.
+ */
+export type Size = 'small' | 'medium' | 'high'
+
+/** Order, weakest reader first — what {@link weakest} compares and nothing else. */
+const SIZES: Size[] = ['small', 'medium', 'high']
+
+/**
+ * **A window this small is a window the personality is competing with** (§2).
+ *
+ * 32k is the keyless floor's own size, and the number the router already treats as the small
+ * end of the catalog. Below it the trace, the tools and the answer are already close together,
+ * and six hundred words of standing instruction is the part that gets squeezed out silently.
+ * A model that does not publish a window is not judged by it — silence is not smallness, which
+ * is the reading every other filter in this file gives it.
+ */
+export const READS_SHORT = 32_768
+
+/**
+ * **Which size this model gets, by capability rather than by price** (§2).
+ *
+ * The order is *small first*, deliberately, and it is the rule the section states in as many
+ * words: **when in doubt, the weaker reader**. A short document handed to a model that could
+ * have read the long one costs a little character; the long one handed to a model that cannot
+ * hold it costs the whole feature, silently, which is the failure this plan opened with.
+ *
+ * - **Small** — known to be under {@link PLANNER}B, a window under {@link READS_SHORT}, **any
+ *   router** (a different model each time, so plan for the worst one it might be), or a model
+ *   whose size nobody publishes *and* that this machine's own record doubts: new and not tried
+ *   yet, too many errors, gave bad answers (D161), or a failure still counting against it
+ *   (D159). Unknown alone is not enough — most closed models never say.
+ * - **High** — a paid model. Not because it is dear, but because a model somebody is billed
+ *   for is one that holds a long document and follows it, and it is the one place the full
+ *   six hundred words earn their tokens.
+ * - **Medium** — everything else: the free hosted models, and this machine's own from 7B up.
+ */
+export function sizeFor(choice: Choice, world: Pick<World, 'health' | 'strikes'>, at: number = Date.now()): Size {
+  const { model } = choice
+  const known = world.health?.get(`${choice.provider.id}\n${model.id}`)
+  const doubted = known?.untested === true || known?.doubted === true || known?.aside !== undefined
+  const struck = (sunk(world.strikes ?? [], at).get(`${choice.provider.id}\n${model.id}`) ?? 0) > 0
+  if (
+    stature(model) === 'small' ||
+    (model.context > 0 && model.context < READS_SHORT) ||
+    routes(model) ||
+    (stature(model) === 'unknown' && (doubted || struck))
+  ) {
+    return 'small'
+  }
+  return paid(model.tier) ? 'high' : 'medium'
+}
+
+/**
+ * **The size the weakest model in a plan can read** (§2).
+ *
+ * The personality is read once per task and the model is chosen per *step* — and a step falls
+ * back down its own plan when the first rung says 429. So the size cannot be decided from the
+ * model that is asked first: it has to be one every rung in that plan can hold, or a fallback
+ * quietly hands a 2B model six hundred words and the answer that comes back is the one this
+ * whole plan started with. An empty plan reads as `small`, which is the same direction every
+ * other unknown here takes.
+ */
+export const weakest = (choices: readonly Choice[], world: Pick<World, 'health' | 'strikes'>, at: number = Date.now()): Size =>
+  choices.length === 0 ? 'small' : (
+    choices.reduce<Size>((so, choice) => {
+      const its = sizeFor(choice, world, at)
+      return SIZES.indexOf(its) < SIZES.indexOf(so) ? its : so
+    }, 'high')
+  )
+
+/**
+ * **One personality in three lengths** (§2), as the plugin hands it over and core reads it.
+ *
+ * `high` is required and the other two are not: a row saved before any of this existed has one
+ * document and nothing else, and falling back to it for every size is exactly what happened
+ * before there were sizes. So an older plugin, an older row, and a hand-written document all
+ * behave as they always did rather than as a missing field.
+ */
+export interface Personality {
+  high: string
+  small?: string
+  medium?: string
+}
+
+/**
+ * **What a model of this size is actually given, and which size that turned out to be.**
+ *
+ * Both, because they are not the same question and the trace needs the second one. A plugin
+ * that offers one document is handed a `small` verdict and still sends the long one — there is
+ * nothing else to send — and a line saying *small* about six hundred words that went out would
+ * be the trace lying in the one place it exists to tell the truth. So what comes back is what
+ * happened: the text, and the size the text actually is.
+ */
+export const sizedFor = (personality: Personality, size: Size): { text: string; size: Size } =>
+  size === 'small' && personality.small !== undefined ? { text: personality.small, size: 'small' }
+  : size !== 'high' && personality.medium !== undefined ? { text: personality.medium, size: 'medium' }
+  : { text: personality.high, size: 'high' }
+
+/**
  * **A model somebody could send a request to right now** (D154): its provider is connected,
  * and the slider lets its side of the price line answer.
  *

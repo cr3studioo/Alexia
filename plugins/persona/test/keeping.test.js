@@ -25,6 +25,11 @@ const row = {
 test('a row carries the words it was adapted from, who wrote it, and when', () => {
   expect(versionOf(row)).toEqual({
     doc: '# Chief of staff\n\nBe blunt.',
+    // §2's two shorter lengths, empty on a row written before they existed — empty rather than
+    // absent, because Undo writes a version back whole and a missing key would leave the old
+    // short one beside the restored long one.
+    docSmall: '',
+    docMedium: '',
     described: 'blunt, calls me Vacen, no emojis',
     wrote: 'anthropic/claude-opus-4',
     at: Date.parse('2026-09-18T10:00:00Z'),
@@ -38,7 +43,14 @@ test('a row carries the words it was adapted from, who wrote it, and when', () =
 test('a personality saved before any of this was kept still reads back', () => {
   // Exactly what is in the database on this Mac today: a name, a document, a date, nothing else.
   const old = { rowid: 2, name: 'Old one', doc: '# Old one\n\nBe kind.', at: Date.parse('2026-08-01T10:00:00Z') }
-  expect(versionOf(old)).toEqual({ doc: '# Old one\n\nBe kind.', described: '', wrote: '', at: Date.parse('2026-08-01T10:00:00Z') })
+  expect(versionOf(old)).toEqual({
+    doc: '# Old one\n\nBe kind.',
+    docSmall: '',
+    docMedium: '',
+    described: '',
+    wrote: '',
+    at: Date.parse('2026-08-01T10:00:00Z'),
+  })
   // No invented description and no invented writer — only the one thing that is actually known.
   const said = provenance(old)
   expect(said).toBe('Written on 2026-08-01')
@@ -48,7 +60,7 @@ test('a personality saved before any of this was kept still reads back', () => {
 })
 
 test('the previous version comes back off the row as JSON text, the way storage returns it', () => {
-  const was = { doc: '# Chief of staff\n\nBe terse.', described: 'terse', wrote: 'meta/llama', at: 1 }
+  const was = { doc: '# Chief of staff\n\nBe terse.', docSmall: '', docMedium: '', described: 'terse', wrote: 'meta/llama', at: 1 }
   // storage.md: objects are stored as JSON text and come back as text. A reader that assumed
   // an object would work in a unit test and fail against the real database.
   expect(priorOf({ ...row, previous: JSON.stringify(was) })).toEqual(was)

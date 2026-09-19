@@ -48,7 +48,7 @@ import {
 } from './permissions.js'
 import { anonymous, keyOf, PROVIDERS, type Provider } from './provider.js'
 import { redactSecrets } from './redact.js'
-import { allowed, MODES, paid, route, send, shapeOf, wantsCapable, type Bubble, type Tier } from './router.js'
+import { allowed, MODES, paid, route, send, shapeOf, wantsCapable, type Bubble, type Personality, type Tier } from './router.js'
 import { CORE, keychain, type SecretStore } from './secrets.js'
 // For `boot.mjs`, which imports the bundle this file is the entry of and nothing else (D153).
 export { fromShell } from './secrets.js'
@@ -923,7 +923,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
    * day → the stock four lines, and a task that runs. A personality is a preference, and a
    * preference must never be the reason an answer does not happen.
    */
-  async function personality(): Promise<string | undefined> {
+  async function personality(): Promise<Personality | undefined> {
     if (!plugins.answers(CORE_CAPABILITIES.personality)) return undefined
     try {
       const answered = await plugins.capability(CORE_CAPABILITIES.personality)
@@ -931,7 +931,25 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
         .map((block) => (block.type === 'text' ? block.text : ''))
         .join('')
         .trim()
-      return said === '' ? undefined : said
+      if (said === '') return undefined
+      /**
+       * **The three lengths, where the plugin offers them** (§2, D160). `content` is still the
+       * long one and still the only required half, so a persona plugin too old to know about
+       * sizes — or a row written before there were any — hands over one document and every
+       * model gets it, which is exactly what happened before this line existed.
+       *
+       * Read defensively rather than parsed: `structuredContent` is whatever the plugin put
+       * there, a shorter size that is not a string is no shorter size, and a personality is a
+       * preference that must never be the reason an answer does not happen.
+       */
+      const shorter = (answered.structuredContent ?? {}) as Record<string, unknown>
+      const one = (key: string): string | undefined => {
+        const held = shorter[key]
+        return typeof held === 'string' && held.trim() !== '' ? held.trim() : undefined
+      }
+      const small = one('small')
+      const medium = one('medium')
+      return { high: said, ...(small !== undefined && { small }), ...(medium !== undefined && { medium }) }
     } catch (error) {
       console.error(`[personality] ${error instanceof Error ? error.message : String(error)}`)
       return undefined
@@ -1086,8 +1104,9 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     try {
       const month = allowance(store)
       const chosen = await personality()
-      // What the model will actually be given, counted the way `system()` counts it (M4-4).
-      trace.personality(chosen?.trim().length ?? 0)
+      // What reaches the model is counted per step now, because §2's three lengths mean it can
+      // differ between them — the loop reports it through `on.personality`, below.
+      if (chosen === undefined) trace.personality(0, 'high')
       const once = (asked: Message[]): ReturnType<typeof run> => run({
         messages: asked,
         tools: tooling,
@@ -1113,6 +1132,9 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
         // The stop button, and the plugin that started this giving up: either one ends the task.
         signal: gaveUp === undefined ? stop.signal : AbortSignal.any([stop.signal, gaveUp]),
         guard: gate(text, runId),
+        // How much of her this step's model was given (§2). The only `on` this path wants:
+        // there is no stream here to write a step to, but the record is still worth keeping.
+        on: { personality: (chars, size) => trace.personality(chars, size) },
         /**
          * The yes, from wherever the person is.
          *
@@ -2508,8 +2530,8 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     const runId = randomUUID()
     trace.start(runId, text)
     const chosen = await personality()
-    // What the model will actually be given, counted the way `system()` counts it (M4-4).
-    trace.personality(chosen?.trim().length ?? 0)
+    // Said per step by the loop (§2's three lengths); *none sent* has no step to wait for.
+    if (chosen === undefined) trace.personality(0, 'high')
     try {
       const result = await run({
         messages: store.history(session).filter((turn) => turn.bad !== true),
@@ -2557,6 +2579,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
             // time, and the one worth naming is the one the answer actually came from.
             reached = models.bubble
           },
+          personality: (chars, size) => trace.personality(chars, size),
           step: (step) => {
             trace.step(step)
             say({ step: { n: step.n, name: step.name, args: step.args } })

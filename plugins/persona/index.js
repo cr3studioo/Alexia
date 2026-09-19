@@ -5,6 +5,7 @@ import { changed, sizeOf } from './diff.js'
 import { check, noteOf, removedOf } from './safety.js'
 import {
   brief,
+  CEILING,
   clean,
   HEAR,
   HEAR_UNASKED,
@@ -12,10 +13,15 @@ import {
   HEARING,
   matchName,
   nameFrom,
+  asRow,
   priorOf,
   provenance,
   refining,
   ROOM,
+  shorterOf,
+  sizesFrom,
+  sizesIn,
+  sizesLine,
   unasked,
   unique,
   usable,
@@ -67,8 +73,8 @@ const nope = (said) => ({ isError: true, content: [{ type: 'text', text: said }]
  * either is owed the same account of it — and because the next one along (Refine, improvement
  * 2) is a third caller that should not have to reassemble this from parts.
  */
-const reply = (headline, removed, doc) =>
-  [headline, noteOf(removed), costLine(doc), budgetLine(doc), doc]
+const reply = (headline, removed, doc, shorter = {}) =>
+  [headline, noteOf(removed), sizesLine(shorter), costLine(doc, shorter), budgetLine(doc), doc]
     .filter((part) => part !== '')
     .join('\n\n')
 
@@ -223,10 +229,24 @@ async function write(ctx, prompt, [reading, writing] = STEPS.adapt) {
   // Which model wrote it, as core reported it back. Empty when whatever answered did not say.
   const wrote = String(answered.model ?? '')
 
-  // Every document this plugin saves comes through here, so this is the one place the check
-  // has to be: Adapt and Re-adapt both land on it, and anything added later (Refine, import)
-  // reaches a save the same way.
-  const { doc, removed } = check(clean(said))
+  /**
+   * **Three documents out of one answer** (§2), and the check runs on every one of them.
+   *
+   * The long one is the personality: if it is not usable, nothing saved, exactly as before.
+   * The two shorter ones are each dropped on their own if they came back missing, over their
+   * ceiling, or emptied by the safety check — dropping one costs a weaker model a shorter
+   * document and nothing else, while failing the press over it would throw away a document
+   * that is fine. What survived is said out loud rather than left to be noticed.
+   */
+  const three = sizesFrom(said)
+  const checked = check(clean(three.high))
+  const shorter = {}
+  for (const name of ['medium', 'small']) {
+    if (three[name] === undefined) continue
+    const its = check(three[name])
+    if (its.doc.trim() !== '' && its.doc.length <= CEILING[name]) shorter[name] = its.doc
+  }
+  const { doc, removed } = checked
   if (!usable(doc)) {
     return {
       error:
@@ -236,7 +256,7 @@ async function write(ctx, prompt, [reading, writing] = STEPS.adapt) {
         : 'That came back without all four parts of a personality, so nothing was saved. Press Adapt again.',
     }
   }
-  return { doc, wrote, removed }
+  return { doc, wrote, removed, ...shorter }
 }
 
 /**
@@ -256,7 +276,25 @@ const standing = alexia.tool(
       'model to call it.',
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
   },
-  async () => text(String((await active())?.doc ?? '')),
+  /**
+   * **The long one as `text`, and all three beside it** (§2, D160).
+   *
+   * `text` is still the whole contract for a core that knows nothing about sizes — it gets the
+   * long document and gives it to every model, which is what it did before there were three.
+   * `structuredContent` is the addition, and it is MCP's own field, so nothing in the plugin
+   * contract moved for it.
+   */
+  async () => {
+    const using = await active()
+    const high = String(using?.doc ?? '')
+    if (high === '') return text('')
+    const small = String(using?.doc_small ?? '').trim()
+    const medium = String(using?.doc_medium ?? '').trim()
+    return {
+      ...text(high),
+      structuredContent: { high, ...(small !== '' && { small }), ...(medium !== '' && { medium }) },
+    }
+  },
 )
 
 /**
@@ -314,6 +352,8 @@ alexia.tool(
       // The words that produced it, kept beside it: provenance to read, and the input
       // Re-adapt writes from.
       described: description,
+      doc_small: written.small ?? '',
+      doc_medium: written.medium ?? '',
       wrote: written.wrote,
       removed: written.removed,
       at: Date.now(),
@@ -325,7 +365,9 @@ alexia.tool(
         `Saved as “${name}”. Nothing has changed yet — press Use on its row to switch to her, or Forget to throw it away.`
       : `Saved as “${name}” and in use from your next message.`
     const heard = hearFirst ? asHeard(await hearing(written.doc)) : ''
-    return text([reply(headline, written.removed, written.doc), ...(heard === '' ? [] : ['---', heard])].join('\n\n'))
+    return text(
+      [reply(headline, written.removed, written.doc, written), ...(heard === '' ? [] : ['---', heard])].join('\n\n'),
+    )
   },
 )
 
@@ -451,6 +493,7 @@ alexia.tool(
         `Wrote “${String(row.name)}” again. Undo brings the previous one back.`,
         written.removed,
         written.doc,
+        written,
       ),
     )
   },
@@ -466,7 +509,18 @@ alexia.tool(
 async function keep(row, was, written) {
   await alexia.storage.update(
     'personalities',
-    { doc: written.doc, wrote: written.wrote, removed: written.removed, at: Date.now(), previous: was },
+    {
+      doc: written.doc,
+      // Always both, always together (§2). Written as empty strings where a size did not come
+      // back, because leaving a column alone would keep a short document beside a long one it
+      // no longer describes — the one failure mode three lengths can have that one cannot.
+      doc_small: written.small ?? '',
+      doc_medium: written.medium ?? '',
+      wrote: written.wrote,
+      removed: written.removed,
+      at: Date.now(),
+      previous: was,
+    },
     { rowid: Number(row.rowid) },
   )
   await bind()
@@ -528,6 +582,7 @@ alexia.tool(
             ' Undo brings the previous one back.',
           written.removed,
           written.doc,
+          written,
         ),
         '---',
         showing(was.doc, written.doc),
@@ -583,15 +638,26 @@ alexia.tool(
       )
     }
 
-    // Written by whoever typed it, and said so: a document with no model behind it should not
-    // read as one a model wrote, on a row whose other column is *Written by*.
+    /**
+     * Written by whoever typed it, and said so: a document with no model behind it should not
+     * read as one a model wrote, on a row whose other column is *Written by*.
+     *
+     * **And the shorter two go with it** (§2). You typed one document; the other two were
+     * derived from the one you replaced, and keeping them would leave a weak model reading a
+     * personality two versions old with nothing on screen saying so. `keep()` writes them
+     * empty, every model gets what you wrote, and Refine or Re-adapt writes the three again.
+     */
     await keep(row, was, { doc, wrote: 'you', removed })
+    const had = sizesIn(shorterOf(row))
     const using = row.active === 1
     return text(
       [
         reply(
           `Saved your own “${String(row.name)}”.${using ? ' She is using it from your next message.' : ''}` +
-            ' Undo brings the previous one back.',
+            ' Undo brings the previous one back.' +
+            (had.length === 0 ?
+              ''
+            : ' The shorter lengths went with the version you replaced, so every model now gets what you wrote — Refine or Re-adapt writes them again.'),
           removed,
           doc,
         ),
@@ -625,7 +691,7 @@ alexia.tool(
     if (!prior) return nope(`“${String(row.name)}” has only ever had the one version.`)
     await alexia.storage.update(
       'personalities',
-      { ...prior, previous: versionOf(row) },
+      { ...asRow(prior), previous: versionOf(row) },
       { rowid: Number(row.rowid) },
     )
     await bind()
@@ -676,7 +742,8 @@ alexia.tool(
     const trailer = [
       provenance(row),
       noteOf(removedOf(row)),
-      costLine(String(row.doc)),
+      sizesLine(shorterOf(row)),
+      costLine(String(row.doc), shorterOf(row)),
       budgetLine(String(row.doc)),
     ]
       .filter((part) => part !== '')

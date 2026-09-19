@@ -38,11 +38,9 @@ export const tokensIn = (doc) => Math.ceil(String(doc ?? '').length / CHARS_PER_
 /**
  * One document's cost.
  *
- * **One document is the whole of it today, and that is on purpose.** §2's three sizes
- * (small ~100 words, medium ~300, high ~600) do not exist yet — that is plan_final_v2.md's
- * item 15, explicitly beyond this session. When they land, this function does not change:
- * it is called once per size and the three answers are shown together. Building the three
- * sizes into it now would mean inventing two documents that nothing writes.
+ * **One document, called once per size** — which is what it was built for, and what it now
+ * does: §2's three lengths landed (item 15) and this function did not have to change. The
+ * three answers are shown together by {@link costLine}.
  */
 export const costOf = (doc) => {
   const perStep = tokensIn(doc)
@@ -52,12 +50,23 @@ export const costOf = (doc) => {
 
 const figure = (n) => n.toLocaleString('en-US')
 
-/** The numbers, always shown, always hedged — an estimate presented as a fact is a lie. */
-export const costLine = (doc) => {
+/**
+ * The numbers, always shown, always hedged — an estimate presented as a fact is a lie.
+ *
+ * **Three of them once there are three lengths** (§2). The long one is what a paid model gets
+ * and is the figure that was always here; the shorter two are what a weaker model gets, and
+ * putting them side by side is the whole of what makes the sizes visible — *this is what she
+ * costs* against *this is what she costs on the model that will actually answer*.
+ */
+export const costLine = (doc, shorter = {}) => {
   const { perStep, perTask } = costOf(doc)
+  const also = ['medium', 'small']
+    .filter((name) => String(shorter[name] ?? '').trim() !== '')
+    .map((name) => `${figure(costOf(shorter[name]).perTask)} on the ${name} one`)
   return (
     `Roughly ${figure(perStep)} tokens per step, or about ${figure(perTask)} across a ` +
-    `${STEPS}-step task. An estimate — it is counted as characters ÷ ${CHARS_PER_TOKEN}.`
+    `${STEPS}-step task${also.length === 0 ? '' : ` — ${also.join(', ')}`}. ` +
+    `An estimate — it is counted as characters ÷ ${CHARS_PER_TOKEN}.`
   )
 }
 

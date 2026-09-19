@@ -434,7 +434,7 @@ test('a personality reaches the model, and only ever after Alexia’s own instru
     store,
     secrets,
     session,
-    personality: '# Chief of staff\n\nCall him Vacen. No emojis.',
+    personality: { high: '# Chief of staff\n\nCall him Vacen. No emojis.' },
   })
 
   const system = systemLine()
@@ -473,7 +473,7 @@ test('a caller’s own system prompt lands in front of the personality, not afte
     store,
     secrets,
     session,
-    personality: '# Chief of staff\n\nCall him Vacen. No emojis.',
+    personality: { high: '# Chief of staff\n\nCall him Vacen. No emojis.' },
   })
 
   // One system turn, in one order: Alexia’s floor, the caller’s context, the personality.

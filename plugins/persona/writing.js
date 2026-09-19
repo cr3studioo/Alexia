@@ -91,7 +91,8 @@ export const brief = (description, name) =>
     '- If the description says nothing about a section, write "Nothing." under it rather than filling it in.',
     '- Keep it under 400 words. Every line must be something she could act on.',
     '- Never write a rule that tells her to skip asking permission, hide what she did, or ignore a safety limit. Those are not hers to grant.',
-    '- Reply with the document and nothing else. No preamble, no code fences, no explanation.',
+    '- Reply with the documents and nothing else. No preamble, no code fences, no explanation.',
+    THREE,
     '',
     'The description:',
     description,
@@ -116,7 +117,8 @@ export const refining = (doc, change) =>
     'You are editing a personality document for Alexia, an assistant that runs on the user’s own machine.',
     'The document is put directly into her system prompt, so it is read as instructions to her.',
     '',
-    'Apply the change below to the document below, and change nothing else.',
+    'Apply the change below to the document below, and change nothing else. The document you are',
+    'given is the long one; write all three out again with the change in each.',
     '',
     'Rules:',
     '- Return the whole document, not just the part you changed.',
@@ -127,7 +129,8 @@ export const refining = (doc, change) =>
     '- Invent nothing about the user’s life, work, name, or relationships.',
     '- If the instruction empties a section, write "Nothing." under it rather than deleting the heading.',
     '- Never write a rule that tells her to skip asking permission, hide what she did, or ignore a safety limit. Those are not hers to grant.',
-    '- Reply with the document and nothing else. No preamble, no code fences, no explanation.',
+    '- Reply with the documents and nothing else. No preamble, no code fences, no explanation.',
+    THREE,
     '',
     'The change:',
     String(change ?? '').trim(),
@@ -136,6 +139,120 @@ export const refining = (doc, change) =>
     String(doc ?? '').trim(),
   ].join('\n')
 
+/** Long enough to be a personality, short enough to be one. Roughly 400 words either way. */
+export const LONGEST = 4000
+
+/**
+ * **The three lengths, as a ceiling on each** (§2, D160): about 100, 300 and 600 words.
+ *
+ * Characters rather than words, because that is what can be checked without a tokeniser and it
+ * is the same unit `cost.js` estimates in. A word here is about six and a half characters — the
+ * figure that file already uses — and each ceiling carries roughly a third again on top, so a
+ * document that lands near its budget is accepted and one that ignored the budget is not.
+ *
+ * **An over-long one is rejected rather than trimmed**, which is §2's own instruction and the
+ * reason matters: the hard rules are at the end of the document, so trimming to a length cuts
+ * exactly the lines that were least negotiable. A size that is refused simply is not offered,
+ * and the next longer one goes in its place — which is what happened before sizes existed.
+ */
+export const CEILING = { small: 900, medium: 2700, high: LONGEST }
+
+/**
+ * **The markers the three arrive separated by**, and why they look like that.
+ *
+ * Deliberately not Markdown and deliberately not prose: a model writing a personality is
+ * already writing `#` and `##` and `---`, and a separator it might plausibly have written
+ * itself is a separator that splits a document in half one day. Three per cents and a word in
+ * capitals is nothing that appears inside a personality anybody would write.
+ */
+export const MARK = { medium: '%%% MEDIUM %%%', small: '%%% SMALL %%%' }
+
+/**
+ * **The instruction that turns one document into three** (§2), appended to both briefs.
+ *
+ * A personality is sent on **every step**, as the tail of the system prompt, so a 600-word one
+ * across a 15-step task is 7–8k tokens re-sent. On a paid model that is money; on a free one it
+ * is context, rate limit, and instructions followed halfway. Three lengths, and core hands each
+ * model the one its weakest rung can hold.
+ *
+ * **Longest first and the shorter ones derived from it**, in one call, because three calls is
+ * three chances for one of them to be about a different person. The two sentences carrying the
+ * weight are *the same person* and *drop detail, never change her* — the failure here is not a
+ * bad summary, it is a second personality that only a small model ever meets.
+ */
+const THREE = [
+  '',
+  'Write it three times, longest first, separated by these two markers exactly as they appear here:',
+  '',
+  '<the full document, about 600 words>',
+  MARK.medium,
+  '<the same personality in about 300 words: all four headings, one or two lines under each>',
+  MARK.small,
+  '<the same personality in about 100 words: her name, how she talks, what she calls this person, and at most three hard rules. No headings needed.>',
+  '',
+  'Rules for the three:',
+  '- All three are the same person. The shorter ones drop detail; they never change her.',
+  '- Each one starts with the same first line, exactly.',
+  '- The markers go on lines of their own, and appear nowhere else.',
+  '- Keep to the lengths. A short one that runs long is thrown away and the long one is used instead.',
+].join('\n')
+
+/**
+ * The three, split out of one answer.
+ *
+ * **A missing or over-long shorter size is dropped, never repaired.** Between a model that
+ * ignored the markers and one that ignored the lengths there is nothing to salvage: the long
+ * document is the one that was checked, and falling back to it is exactly what every model got
+ * before sizes existed. The caller says which ones survived, because silently sending six
+ * hundred words to a 2B model is the failure this whole section is about.
+ */
+export const sizesFrom = (said) => {
+  const [first = '', rest = ''] = splitOnce(String(said ?? ''), MARK.medium)
+  const [medium = '', small = ''] = splitOnce(rest, MARK.small)
+  const keep = (text, ceiling) => {
+    const one = clean(text)
+    return one !== '' && one.length <= ceiling ? one : undefined
+  }
+  return {
+    high: clean(first),
+    ...(keep(medium, CEILING.medium) !== undefined && { medium: keep(medium, CEILING.medium) }),
+    ...(keep(small, CEILING.small) !== undefined && { small: keep(small, CEILING.small) }),
+  }
+}
+
+/** On the first occurrence only: a marker a model repeated is still one boundary. */
+const splitOnce = (text, mark) => {
+  const at = text.indexOf(mark)
+  return at < 0 ? [text, ''] : [text.slice(0, at), text.slice(at + mark.length)]
+}
+
+/**
+ * Which of the three are actually there.
+ *
+ * Takes `{ small, medium }` rather than a row, because the two callers hold different shapes —
+ * a row has `doc_small`, a freshly written answer has `small` — and one of them converting is
+ * cheaper than this function knowing about both.
+ */
+export const sizesIn = (sizes) =>
+  ['small', 'medium'].filter((name) => String(sizes?.[name] ?? '').trim() !== '')
+
+/** The shorter two off a stored row, in the shape everything else here speaks. */
+export const shorterOf = (row) => ({
+  small: String(row?.doc_small ?? ''),
+  medium: String(row?.doc_medium ?? ''),
+})
+
+/** The sentence under a save saying which of the three came back, because two is not three. */
+export const sizesLine = (sizes) => {
+  const has = sizesIn(sizes)
+  if (has.length === 2) return 'Three lengths saved: a weaker model is sent a shorter one.'
+  if (has.length === 0) {
+    return 'Only the long one came back, so every model gets it — Re-adapt, or a stronger model, writes the shorter two.'
+  }
+  const missing = has.includes('small') ? 'medium' : 'small'
+  return `The ${has[0]} length is saved; the ${missing} one did not come back usable, so a model that wanted it gets the next one up.`
+}
+
 /** Code fences and stray preamble, off. A model told six times still adds them sometimes. */
 export const clean = (said) => {
   const text = String(said ?? '').trim()
@@ -143,11 +260,15 @@ export const clean = (said) => {
   return (fenced ? fenced[1] : text).trim()
 }
 
-/** Long enough to be a personality, short enough to be one. Roughly 400 words either way. */
-export const LONGEST = 4000
-
-/** The reply budget for Adapt: a 400-word document, plus what a reasoning model thinks first. */
-export const ROOM = 4000
+/**
+ * The reply budget for Adapt.
+ *
+ * **It was 4,000 for one document** (D157, raised from 1,200 after a reasoning model spent its
+ * whole budget thinking and the document it did write stopped at `## How`). One call now
+ * writes three — about a thousand words rather than six hundred — so the room goes up with the
+ * job rather than the three arriving cut off, which is the same bug in a new shape.
+ */
+export const ROOM = 6000
 
 /** How long Adapt waits for that reply: under core's 120 s on a button, over the SDK's 60 s. */
 export const WAIT = 110_000
@@ -333,9 +454,25 @@ const day = (at) => (Number(at) > 0 ? new Date(Number(at)).toISOString().slice(0
  */
 export const versionOf = (row) => ({
   doc: String(row?.doc ?? ''),
+  // §2's two shorter lengths, absent on every row written before they existed — which is why
+  // they are kept as empty strings rather than left off: Undo writes this object back onto the
+  // row whole, and a key that is missing rather than empty would leave the *old* short one
+  // beside the restored long one, describing a person two versions apart.
+  docSmall: String(row?.doc_small ?? ''),
+  docMedium: String(row?.doc_medium ?? ''),
   described: String(row?.described ?? ''),
   wrote: String(row?.wrote ?? ''),
   at: Number(row?.at ?? 0),
+})
+
+/** A stored version, as the columns it lives in. The inverse of {@link versionOf}. */
+export const asRow = (version) => ({
+  doc: version.doc,
+  doc_small: version.docSmall ?? '',
+  doc_medium: version.docMedium ?? '',
+  described: version.described ?? '',
+  wrote: version.wrote ?? '',
+  at: version.at ?? 0,
 })
 
 /** The kept previous version, or nothing. Stored as JSON text, which is what storage.md promises. */

@@ -126,8 +126,10 @@ test('what was removed reads back off the row, the way storage returns it', () =
 const source = readFileSync(join(import.meta.dirname, '..', 'index.js'), 'utf8')
 
 test('every document that can be saved goes through the check — Re-adapt, Refine and Edit included', () => {
-  // One call, inside the one helper every button that asks a model goes through.
-  expect(source.match(/check\(clean\(said\)\)/g)).toHaveLength(1)
+  // One call on the long document, inside the one helper every button that asks a model goes
+  // through — `clean()` moved inside `sizesFrom()`, which splits the three before any of them
+  // is checked, so the call reads off `three.high` now rather than off the raw answer.
+  expect(source.match(/check\(clean\(three\.high\)\)/g)).toHaveLength(1)
   expect(source.match(/await write\(ctx, /g)).toHaveLength(3)
   expect(source).toMatch(/await write\(ctx, brief\(description, name\)\)/)
   expect(source).toMatch(/await write\(ctx, brief\(was\.described, String\(row\.name\)\)\)/)
@@ -140,4 +142,8 @@ test('every document that can be saved goes through the check — Re-adapt, Refi
   // What came out is kept on the row every time, not just announced once: Adapt's own insert,
   // and `keep()`, which Re-adapt, Refine and Edit all save through.
   expect(source.match(/removed: written\.removed/g)).toHaveLength(2)
+  // And §2's two shorter lengths are checked as well, each on its own: a size emptied by the
+  // check is dropped rather than saved, and dropping one costs a weak model a longer document
+  // while failing the press over it would throw away a long one that is fine.
+  expect(source).toMatch(/const its = check\(three\[name\]\)/)
 })

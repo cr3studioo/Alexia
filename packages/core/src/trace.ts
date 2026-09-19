@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import type { Step } from './agent.js'
+import type { Size } from './router.js'
 
 /**
  * The trace, with a memory (M6-5).
@@ -74,10 +75,17 @@ export interface Run {
    *
    * Counted after trimming and zero when nothing was sent, because {@link system} trims it
    * and drops it when what is left is empty — so this is the length that reached the model,
-   * not the length that was stored. One personality per run, never re-read mid-task
-   * (`AgentOptions.personality`), so this belongs to the run rather than to each step.
+   * not the length that was stored.
+   *
+   * **Every distinct length this run sent, in the order it first sent them.** D175 recorded
+   * one number per run, on the grounds that a personality is read once per task and a per-step
+   * number would print the same figure many times and imply it could have differed. §2's three
+   * lengths are exactly that changing: the document is still read once, but *which of its three
+   * sizes goes out* is decided per step, for the weakest rung in that step's plan — so a task
+   * that falls back from a paid model to a 2B router genuinely does send two different
+   * personalities, and one number here would now be the misleading one.
    */
-  personality?: number
+  personality?: { chars: number; size: Size }[]
   steps: TraceStep[]
   /**
    * Every charge this run made, from the ledger, looked up by the run's own id (M7-2).
@@ -131,15 +139,18 @@ export class Trace {
   }
 
   /**
-   * What personality this run's model calls carry, in characters (M4-4).
+   * What personality this step's model call carries, in characters and in §2's own words.
    *
-   * Told once, after whoever starts the run has resolved it — it is read once per task and
-   * cannot change under the loop, so recording it per step would print one number many times
-   * and imply it could have differed.
+   * Told **per step**, because the loop picks a length per step for the weakest rung in that
+   * step's plan. Repeats collapse, so the common case — one length, fifteen steps — still
+   * reads as one fact, and two entries mean a fallback genuinely changed what she was told.
    */
-  personality(chars: number): void {
+  personality(chars: number, size: Size): void {
     if (!this.#open) return
-    this.#open.personality = chars
+    const so = (this.#open.personality ??= [])
+    // Distinct, in the order they first went out. A fifteen-step task that sends the same
+    // length fifteen times is one entry, which is what makes several entries worth reading.
+    if (!so.some((one) => one.chars === chars && one.size === size)) so.push({ chars, size })
   }
 
   step(step: Step): void {
@@ -228,9 +239,13 @@ export function asText(run: Run): string {
  * somebody wrote — *221* beside a description they know ran to thousands is the whole story,
  * and *221 tokens* would be a different and wrong story.
  */
-function personalityLine(chars: number): string {
-  if (chars === 0) return 'personality: none sent'
-  return `personality: ${String(chars)} characters sent`
+function personalityLine(sent: readonly { chars: number; size: Size }[]): string {
+  const real = sent.filter((one) => one.chars > 0)
+  if (real.length === 0) return 'personality: none sent'
+  const said = real.map((one) => `${String(one.chars)} characters (${one.size})`)
+  // Two lengths in one run is a fallback that changed the reader, and saying which way it
+  // went is the whole reason the sizes exist. One is the ordinary case and reads as it did.
+  return `personality: ${said.join(', then ')} sent`
 }
 
 /**
