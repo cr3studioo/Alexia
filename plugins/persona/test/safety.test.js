@@ -123,7 +123,7 @@ test('what was removed reads back off the row, the way storage returns it', () =
  * one `write()`, and the check sits inside it, so there is one place to look and no way for a
  * document to reach storage around it.
  */
-const source = readFileSync(join(import.meta.dirname, '..', 'index.js'), 'utf8')
+const source = readFileSync(join(import.meta.dirname, '..', 'index.js'), 'utf8').replace(/\r\n/g, '\n')
 
 test('every document that can be saved goes through the check — Re-adapt, Refine and Edit included', () => {
   // One call on the long document, inside the one helper every button that asks a model goes

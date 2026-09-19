@@ -117,7 +117,7 @@ test('every capability this file names is one a shipped plugin actually provides
 })
 
 test('the plugin asks core one capability at a time, and fails silent', () => {
-  const source = readFileSync(join(import.meta.dirname, '..', 'index.js'), 'utf8')
+  const source = readFileSync(join(import.meta.dirname, '..', 'index.js'), 'utf8').replace(/\r\n/g, '\n')
   expect(source).toMatch(/await alexia\.answers\(cap\)/)
   // A core too old to know the method, a method that throws, a name nobody recognises: the
   // line is simply not checked. Reading a failure as *missing* would put a finding on screen

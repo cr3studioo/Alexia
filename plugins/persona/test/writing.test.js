@@ -147,7 +147,7 @@ test('a description that states its own name is believed before its opening word
  * it asks. Naming after the answer came back is what let the two disagree.
  */
 test('both buttons decide the name before the model writes anything', () => {
-  const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8')
+  const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n')
   // Adapt: unique(nameFrom(...)) has to come first, then the brief that is handed it.
   const adapt = source.indexOf('const name = unique(')
   const writes = source.indexOf('await write(ctx, brief(description, name, remembering))')

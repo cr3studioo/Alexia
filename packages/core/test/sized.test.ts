@@ -186,7 +186,9 @@ test('core says which channel a task is being read in, and nothing for the windo
   // started the task — so that is what it says; what the word means is the answering plugin's
   // business. The window sends nothing at all, because *the window* is not a channel anybody
   // bound a personality to, it is the absence of one.
-  const source = readFileSync(join(import.meta.dirname, '..', 'src', 'serve.ts'), 'utf8')
+  // Line endings normalised: git hands a Windows checkout CRLF, and the patterns below span
+  // line breaks (`12-version-in-step.test.ts` documents the same trap).
+  const source = readFileSync(join(import.meta.dirname, '..', 'src', 'serve.ts'), 'utf8').replace(/\r\n/g, '\n')
   expect(source).toMatch(/async function personality\(channel\?: string\)/)
   expect(source).toMatch(/channel === undefined \? undefined : \{ channel \}/)
   // The plugin path names its own plugin; the window path calls it with nothing.

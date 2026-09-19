@@ -174,7 +174,7 @@ test('with one document the cost line reads exactly as it did before there were 
 
 // ---- the capability, and the one place the three leave this plugin ---------------------------------
 
-const source = readFileSync(join(import.meta.dirname, '..', 'index.js'), 'utf8')
+const source = readFileSync(join(import.meta.dirname, '..', 'index.js'), 'utf8').replace(/\r\n/g, '\n')
 
 test('the capability answers with the long one as text and all three beside it', () => {
   // `text` is the whole contract for a core that knows nothing about sizes, so it stays the

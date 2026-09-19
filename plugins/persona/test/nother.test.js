@@ -14,7 +14,7 @@ import { refining } from '../writing.js'
  * the **personality**, so nothing is re-asked and nothing is discarded.
  */
 
-const source = readFileSync(join(import.meta.dirname, '..', 'index.js'), 'utf8')
+const source = readFileSync(join(import.meta.dirname, '..', 'index.js'), 'utf8').replace(/\r\n/g, '\n')
 const manifest = JSON.parse(readFileSync(join(import.meta.dirname, '..', 'plugin.json'), 'utf8'))
 
 test('a mark is a pair, because one half of it teaches nothing', () => {

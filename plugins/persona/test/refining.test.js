@@ -138,7 +138,7 @@ test('the diff marks every line exactly once, in order, whichever way it is hand
 
 // ---- the two buttons ---------------------------------------------------------------------------
 
-const source = readFileSync(join(import.meta.dirname, '..', 'index.js'), 'utf8')
+const source = readFileSync(join(import.meta.dirname, '..', 'index.js'), 'utf8').replace(/\r\n/g, '\n')
 const manifest = JSON.parse(readFileSync(join(import.meta.dirname, '..', 'plugin.json'), 'utf8'))
 
 test('Refine and Edit are row actions, each with a tool behind it and a box to read', () => {

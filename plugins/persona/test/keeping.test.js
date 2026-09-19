@@ -95,7 +95,15 @@ test('provenance says a previous version is kept, so Undo is discoverable before
  * on import. So it reads the file. A structural check is weaker than a behaviour one, and it
  * is the strongest thing available here that fails if the clamps go missing.
  */
-const source = readFileSync(join(import.meta.dirname, '..', 'index.js'), 'utf8')
+/**
+ * **Line endings normalised, because git hands a Windows checkout CRLF.**
+ *
+ * Every structural test in this folder reads a source file and matches patterns against it,
+ * and a pattern that spans a line break passes on the machine it was written on and fails on
+ * the first build that matters. `12-version-in-step.test.ts` documents the same trap from the
+ * other side; it caught these three on the first CI run after they were written.
+ */
+const source = readFileSync(join(import.meta.dirname, '..', 'index.js'), 'utf8').replace(/\r\n/g, '\n')
 
 test('the model call is made once, so Adapt, Re-adapt and Refine cannot drift apart', () => {
   // Two calls in the file, and they are two different jobs. The document is written by one

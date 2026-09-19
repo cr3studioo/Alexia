@@ -66,7 +66,7 @@ test('an empty document costs nothing and warns about nothing', () => {
  * a cross-file assumption, and the sort that rots silently when the brief is reworded.
  */
 test('the budget is still derived from the word limit the brief actually asks for', () => {
-  const written = readFileSync(new URL('../writing.js', import.meta.url), 'utf8')
+  const written = readFileSync(new URL('../writing.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n')
   const asked = /under (\d+) words/.exec(written)
   expect(asked, 'brief() no longer states a word limit — BUDGET has nothing to stand on').not.toBeNull()
   const words = Number(asked[1])
@@ -78,7 +78,7 @@ test('the budget is still derived from the word limit the brief actually asks fo
 })
 
 test('every button that saves a document says what it costs, not just the first one', () => {
-  const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8')
+  const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n')
   // One reply() carries the cost, and every button that saves a document goes through it.
   // Four of them now: Adapt, Re-adapt, Refine and Edit. The count is the assertion — a fifth
   // way to save that did not reach reply() would be a document whose cost is never said.

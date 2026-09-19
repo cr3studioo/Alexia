@@ -15,10 +15,21 @@ import { CORE_CAPABILITIES } from '@alexia/protocol'
  * took it.
  */
 
-const shell = readFileSync(join(import.meta.dirname, '..', '..', 'ui', 'src', 'main.ts'), 'utf8')
-const serve = readFileSync(join(import.meta.dirname, '..', 'src', 'serve.ts'), 'utf8')
-const guard = readFileSync(join(import.meta.dirname, '..', 'src', 'guard.ts'), 'utf8')
-const markup = readFileSync(join(import.meta.dirname, '..', '..', 'ui', 'index.html'), 'utf8')
+/**
+ * **Source read for assertions, with its line endings normalised.**
+ *
+ * Git hands a Windows checkout CRLF, so a pattern that spans a line break matches on the
+ * machine it was written on and fails on the first build that mattered — which is exactly what
+ * `12-version-in-step.test.ts` warns about in its own comment, and exactly what these tests
+ * did. Normalising once here is cheaper than remembering `\r?` in every pattern, and it cannot
+ * be forgotten by the next test added to this file.
+ */
+const source = (...where: string[]): string => readFileSync(join(...where), 'utf8').replace(/\r\n/g, '\n')
+
+const shell = source(import.meta.dirname, '..', '..', 'ui', 'src', 'main.ts')
+const serve = source(import.meta.dirname, '..', 'src', 'serve.ts')
+const guard = source(import.meta.dirname, '..', 'src', 'guard.ts')
+const markup = source(import.meta.dirname, '..', '..', 'ui', 'index.html')
 
 test('the two live in one row, which is the whole reason item 17 built them together', () => {
   // Two rows competing under one bubble is what building them separately produces, and it is
