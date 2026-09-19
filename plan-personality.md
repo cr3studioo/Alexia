@@ -163,6 +163,21 @@ again. Every improvement below that changes a personality needs this first.
 current document and that sentence; the change is shown line by line before it saves. Plus
 **Edit** for changing the text by hand (the SDK's `multiline` text setting).
 
+**Built 2026-09-19 (D179).** *Where it differs from the text above.* **The box is on the page,
+not on the row** — there is no per-row input in the widget set, and there cannot be a modal
+either: core does not offer `elicitation`, and a plugin may write only its own `status`
+settings, so it cannot prefill a box for somebody. Type the change, press Refine on the row it
+is about; for **Edit**, open the row (which already shows exactly what she is being told), copy,
+change, press Edit. The hints say so. **The diff is shown after the save, not before it**, with
+the previous version kept and Undo as the way back — same reason as D180's, that this plugin is
+`lazy` and a draft held between two presses is sometimes gone by the time somebody decides.
+`diff.js` is an exact longest-common-subsequence over lines with no dependency; it shows only
+what changed, a line either side, and says *nothing changed* when a small model hands back what
+it was given. Both buttons go through Adapt's own `write()`, so D157's clamps cover them.
+**Tests:** `plugins/persona/test/refining.test.js`, and the shell fix (`.said-lines`) is what
+makes a column of `-` and `+` lines legible at all — a tool's answer had been drawn with its
+newlines collapsed since the widget existed.
+
 **Why.** Feel: a personality gets tuned the way a person talks. Efficiency: the call is a
 500-token document and a sentence, not a 1,300-token description, so it is faster and far less
 likely to run a reasoning model out of room.
@@ -178,6 +193,21 @@ personality, run whether or not the samples are heard.
 **Why.** Adapt currently saves and switches in one press, so the first time anybody hears the
 new personality is in a real conversation. The preview also catches the case this plan
 started with: a model too small to follow it at all.
+
+**Built 2026-09-19 (D180).** *Where it differs from the text above.* **Saved, not in use** —
+the samples come after the save rather than before it (the owner chose this from three options;
+the plugin is `lazy` and an unsaved draft does not reliably survive between two presses), and
+**Use** is the press that changes anything. **The Skip is a toggle**, *Hear her before
+switching*, on by default: the samples are two model calls, so the honest place to decline them
+is before they are made rather than after. **Refine does not run them** — it already returns a
+document and a diff, and two more calls on every tuning press is what stops people tuning — so
+**Hear her** is a row action available at any time, on any row. **Refine as a button in the
+preview** is unnecessary for the same reason: the row it would refine is right there. The
+second question is a plain empty moment with the behaviour line quoted beside it, never a scene
+a model invented: that is a third call and puts made-up facts about this person's life on
+screen, which every brief in this plugin forbids. It is answered with no `modelPreferences`, so
+it is the model the chat would use — and the screen says core's own opening lines are not in it,
+because a plugin cannot see them. **Tests:** `plugins/persona/test/refining.test.js`.
 
 ### 4. Flag the lines she cannot act on — M
 
@@ -298,8 +328,13 @@ for paid models, an order that lets provider prompt caching reuse the personalit
    which also means **Adapt never uses a model on this machine**.
 6. **§2, three sizes**, at about 100, 300 and 600 words (D160), with *small* also for a model §4 B
    doubts.
-7. **Improvements 2, 3, 4, 5, 9.** The preview (3) shows with **Skip** from the first time; facts
-   (5) go to Memory with one yes for all (D160).
+7. **Improvements 2, 3, 4, 5, 9.** ~~The preview (3) shows with **Skip** from the first time~~;
+   facts (5) go to Memory with one yes for all (D160). **2 and 3 done 2026-09-19 (D179, D180);
+   4, 5 and 9 are what is left of this step.** Improvement 2 was built first, on the owner's
+   choice, so the preview's button row ships complete rather than with a Refine that does
+   nothing. The Skip is a toggle — *Hear her before switching*, on by default — rather than a
+   fourth button, because the samples are two model calls and the honest place to decline them
+   is before they are made.
 8. **Improvement 10** with `model_plan.md` §4 I's *Bad answer*, as one row of message actions,
    and the header chip from 8.
 

@@ -268,6 +268,17 @@ land on anything not already covered by D154–D171): the same day, in three pla
   Refine (2), the preview with Skip (3), flagging inert behaviour lines (4), facts to Memory with
   one confirm for all (5), and a personality per channel (9).
 
+  **2 and 3 built 2026-09-19** — `887a7c8` (**D179**, Refine and Edit) and `22d491b` (**D180**,
+  the preview). Asked before coding and answered by the owner: the preview saves the row without
+  switching rather than holding an unsaved draft, because this plugin is `lazy`; and improvement
+  2 was built first so the preview's button row is complete rather than carrying a Refine with
+  nothing behind it. The Skip is a toggle, on by default, rather than a fourth button — two model
+  calls are best declined before they are made.
+
+  **4, 5 and 9 are what is left of this item**, so it stays unticked. Improvement 4 needs the
+  read-only `alexia/answers` call the plan describes, which is a core change; 5 needs the Memory
+  plugin; 9 needs `{ channel }` on the capability call.
+
 - [ ] **17. Step 8 — improvement 10, joined with Bad answer.**
   *"That wasn't her"* joins `model_plan.md` §4 I's *Bad answer* as one row of message actions
   (`answerActions()` in `packages/ui/src/main.ts`) — build them together, not twice. The header
