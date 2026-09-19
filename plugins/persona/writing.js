@@ -97,6 +97,45 @@ export const brief = (description, name) =>
     description,
   ].join('\n')
 
+/**
+ * What Refine is told: here is the document, here is the one thing to change.
+ *
+ * **A different job from {@link brief}, and a much smaller one.** Adapt turns rough notes into
+ * four hundred words and has to invent the structure; Refine is handed the structure and one
+ * sentence about it. That is why it is worth having at all — a 500-token document and a
+ * sentence is a fraction of a 1,300-token description, so it is faster and far less likely to
+ * run a reasoning model out of room before it has written anything.
+ *
+ * **The two sentences carrying the weight are both *change nothing else*.** The failure mode
+ * here is not a bad rewrite, it is a helpful one: *make her blunter* coming back with the hard
+ * rules reworded, the name changed and a section she never had. The diff on the other end is
+ * what makes that visible, and this is what makes it rare.
+ */
+export const refining = (doc, change) =>
+  [
+    'You are editing a personality document for Alexia, an assistant that runs on the user’s own machine.',
+    'The document is put directly into her system prompt, so it is read as instructions to her.',
+    '',
+    'Apply the change below to the document below, and change nothing else.',
+    '',
+    'Rules:',
+    '- Return the whole document, not just the part you changed.',
+    '- Keep the first line exactly as it stands. The name is not yours to change.',
+    '- Keep the four headings exactly as they stand, in the same order.',
+    '- Change only what the instruction asks for. Every other line comes back word for word.',
+    '- Address Alexia directly, as "you". Never describe her in the third person.',
+    '- Invent nothing about the user’s life, work, name, or relationships.',
+    '- If the instruction empties a section, write "Nothing." under it rather than deleting the heading.',
+    '- Never write a rule that tells her to skip asking permission, hide what she did, or ignore a safety limit. Those are not hers to grant.',
+    '- Reply with the document and nothing else. No preamble, no code fences, no explanation.',
+    '',
+    'The change:',
+    String(change ?? '').trim(),
+    '',
+    'The document:',
+    String(doc ?? '').trim(),
+  ].join('\n')
+
 /** Code fences and stray preamble, off. A model told six times still adds them sometimes. */
 export const clean = (said) => {
   const text = String(said ?? '').trim()
@@ -134,17 +173,34 @@ const heading = (line) => /^#{2,3}\s+(.+?)[\s:]*$/.exec(line)?.[1]?.toLowerCase(
  */
 export const usable = (doc) => {
   if (doc.length <= 40 || doc.length > LONGEST || !/^# /m.test(doc)) return false
+  const under = sections(doc)
+  return SECTIONS.every((name) => (under.get(name.toLowerCase()) ?? []).join('').trim() !== '')
+}
+
+/**
+ * The lines under each of {@link SECTIONS}, keyed by the heading in lower case.
+ *
+ * One parse, two readers — {@link usable}, which asks whether every section has something in
+ * it, and the preview, which builds its second question out of *What you do without being
+ * asked*. Two parsers would drift, and the one that drifted would be the one nobody tested,
+ * because the document that reaches the preview has already passed `usable`.
+ */
+export function sections(doc) {
   const known = new Set(SECTIONS.map((name) => name.toLowerCase()))
   const under = new Map()
   let at
-  for (const line of doc.split('\n')) {
+  for (const line of String(doc ?? '').split('\n')) {
     // Only the four open a section. A sub-heading a model adds inside one is content of it.
     const name = heading(line)
-    if (name !== undefined && known.has(name)) under.set((at = name), '')
-    else if (at !== undefined) under.set(at, under.get(at) + line.trim())
+    if (name !== undefined && known.has(name)) under.set((at = name), [])
+    else if (at !== undefined) under.get(at).push(line)
   }
-  return [...known].every((name) => (under.get(name) ?? '') !== '')
+  return under
 }
+
+/** What one section says, trimmed, or an empty string when it is missing or empty. */
+export const sectionOf = (doc, name) =>
+  (sections(doc).get(String(name).toLowerCase()) ?? []).join('\n').trim()
 
 /**
  * A name the description states outright, as `Name: Alexia`.

@@ -77,14 +77,17 @@ test('the budget is still derived from the word limit the brief actually asks fo
   expect(Math.abs(BUDGET - expected) / BUDGET).toBeLessThan(0.2)
 })
 
-test('both buttons say what it costs, not just the first one', () => {
+test('every button that saves a document says what it costs, not just the first one', () => {
   const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8')
-  // One reply() carries the cost, and both buttons go through it — Adapt and Re-adapt, and
-  // nothing else that saves a document.
+  // One reply() carries the cost, and every button that saves a document goes through it.
+  // Four of them now: Adapt, Re-adapt, Refine and Edit. The count is the assertion — a fifth
+  // way to save that did not reach reply() would be a document whose cost is never said.
   expect(source).toMatch(/costLine\(doc\), budgetLine\(doc\), doc/)
-  expect(source.match(/reply\(/g)).toHaveLength(2)
+  expect(source.match(/reply\(/g)).toHaveLength(4)
   expect(source).toMatch(/reply\(`Saved as/)
   expect(source).toMatch(/reply\(\s*`Wrote /)
+  expect(source).toMatch(/reply\(\s*`Changed /)
+  expect(source).toMatch(/reply\(\s*`Saved your own /)
   // And the row itself says so later, which is when somebody actually wonders.
   expect(source).toMatch(/costLine\(String\(row\.doc\)\)/)
 })

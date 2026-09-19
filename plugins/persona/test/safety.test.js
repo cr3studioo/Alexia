@@ -125,11 +125,19 @@ test('what was removed reads back off the row, the way storage returns it', () =
  */
 const source = readFileSync(join(import.meta.dirname, '..', 'index.js'), 'utf8')
 
-test('every document that can be saved goes through the check, Re-adapt included', () => {
-  // One call, inside the one helper both buttons use.
+test('every document that can be saved goes through the check — Re-adapt, Refine and Edit included', () => {
+  // One call, inside the one helper every button that asks a model goes through.
   expect(source.match(/check\(clean\(said\)\)/g)).toHaveLength(1)
-  expect(source).toMatch(/const written = await write\(ctx, description, name\)/)
-  expect(source).toMatch(/const written = await write\(ctx, was\.described, String\(row\.name\)\)/)
-  // And what came out is kept on the row by both of them, not just announced once.
+  expect(source.match(/await write\(ctx, /g)).toHaveLength(3)
+  expect(source).toMatch(/await write\(ctx, brief\(description, name\)\)/)
+  expect(source).toMatch(/await write\(ctx, brief\(was\.described, String\(row\.name\)\)\)/)
+  expect(source).toMatch(/await write\(ctx, refining\(was\.doc, change\), STEPS\.refine\)/)
+  // **And the one document no model wrote.** Edit is text somebody typed or pasted, which is
+  // exactly as able to carry a line telling her to skip asking — more so, since pasting from
+  // somewhere else is the import path this plugin does not have yet. It runs the same two.
+  expect(source).toMatch(/check\(clean\(written\)\)/)
+  expect(source.match(/!usable\(doc\)/g)).toHaveLength(2)
+  // What came out is kept on the row every time, not just announced once: Adapt's own insert,
+  // and `keep()`, which Re-adapt, Refine and Edit all save through.
   expect(source.match(/removed: written\.removed/g)).toHaveLength(2)
 })

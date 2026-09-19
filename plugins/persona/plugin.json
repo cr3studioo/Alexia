@@ -12,7 +12,7 @@
       "index.js"
     ]
   },
-  "alexia_protocol": 2,
+  "alexia_protocol": 7,
   "mcp_protocol": "2025-11-25",
   "requires": [],
   "provides": [
@@ -32,6 +32,21 @@
       "label": "Save it as",
       "placeholder": "Chief of staff",
       "hint": "The name it appears under below. Leave it empty and the wording above names it."
+    },
+    {
+      "type": "text",
+      "key": "refine_with",
+      "label": "Change something about one of them",
+      "placeholder": "more blunt, and stop saying \u201cman to man\u201d",
+      "hint": "Type the change, then press Refine on the row it is about. The previous version is kept."
+    },
+    {
+      "type": "text",
+      "key": "edit_doc",
+      "multiline": true,
+      "label": "Or write it yourself",
+      "placeholder": "# Chief of staff\n\n## Who you are\n\u2026",
+      "hint": "Open a row to read what she is being told, paste it here, change it, then press Edit on that row. The same checks run as on Adapt."
     },
     {
       "type": "action",
@@ -60,6 +75,8 @@
       "rowActions": [
         { "key": "use", "label": "Use", "tool": "use" },
         { "key": "readapt", "label": "Re-adapt", "tool": "readapt" },
+        { "key": "refine", "label": "Refine", "tool": "refine" },
+        { "key": "edit", "label": "Edit", "tool": "edit" },
         { "key": "undo", "label": "Undo", "tool": "undo" },
         { "key": "forget", "label": "Forget", "tool": "forget", "confirm": "Forget {name}?" }
       ],

@@ -85,11 +85,17 @@ test('provenance says a previous version is kept, so Undo is discoverable before
  */
 const source = readFileSync(join(import.meta.dirname, '..', 'index.js'), 'utf8')
 
-test('the model call is made once, so Adapt and Re-adapt cannot drift apart', () => {
+test('the model call is made once, so Adapt, Re-adapt and Refine cannot drift apart', () => {
   expect(source.match(/createMessage\(/g)).toHaveLength(1)
-  // Both buttons reach it through the one helper rather than calling a model themselves.
-  expect(source).toMatch(/const written = await write\(ctx, description, name\)/)
-  expect(source).toMatch(/const written = await write\(ctx, was\.described, String\(row\.name\)\)/)
+  // All three buttons reach it through the one helper rather than calling a model themselves,
+  // handing in a brief rather than a description — which is what lets Refine send a document
+  // and a sentence instead of the 1,300-token description that ran a model out of room.
+  expect(source).toMatch(/const written = await write\(ctx, brief\(description, name\)\)/)
+  expect(source).toMatch(/const written = await write\(ctx, brief\(was\.described, String\(row\.name\)\)\)/)
+  expect(source).toMatch(/const written = await write\(ctx, refining\(was\.doc, change\), STEPS\.refine\)/)
+  // And the previous version is kept by one function, not by each of them remembering to.
+  // *The version it replaces is kept* is printed on three row-action labels.
+  expect(source.match(/await keep\(row, was, /g)).toHaveLength(3)
 })
 
 test('D157 survives the extraction: room to think, time to answer, and a cut answer refused', () => {

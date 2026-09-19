@@ -597,7 +597,7 @@ export function widget(host: WidgetHost, declared: Rendered): HTMLElement {
         button.disabled = true
         button.title = declared.reason ?? 'That tool is not there right now.'
       }
-      const said = el('p', 'hint')
+      const said = el('p', 'hint said-lines')
       said.hidden = true
 
       /** Press it, and put the permission question where the thing being decided is. */
@@ -618,7 +618,7 @@ export function widget(host: WidgetHost, declared: Rendered): HTMLElement {
           }
           said.textContent = String(answer.said ?? '')
           said.hidden = said.textContent === ''
-          said.className = answer.ok === true ? 'hint' : 'error'
+          said.className = answer.ok === true ? 'hint said-lines' : 'error said-lines'
           // Deliberately not a redraw. The first version drew the whole list from the
           // answer and so threw away the sentence it had just written into it — the one
           // thing the person who pressed the button is waiting to read. What did change
@@ -785,7 +785,7 @@ function table(host: WidgetHost, declared: Rendered): HTMLElement {
     say: (text: string, ok: boolean): void => {
       announced = text
       said.hidden = text === ''
-      said.className = ok ? 'hint said-ok' : 'error'
+      said.className = ok ? 'hint said-ok said-lines' : 'error said-lines'
       said.textContent = text
     },
   }
@@ -902,7 +902,7 @@ function table(host: WidgetHost, declared: Rendered): HTMLElement {
       return
     }
     if (answer.ok !== true) {
-      said.className = 'error'
+      said.className = 'error said-lines'
       said.textContent = String(answer.said ?? 'That did not work.')
       said.hidden = false
       return
@@ -911,11 +911,11 @@ function table(host: WidgetHost, declared: Rendered): HTMLElement {
     if (announced !== '') {
       // Whatever the last action said stays on screen: it is the answer to the press that
       // asked for this very reload, and blanking it here would make the press look silent.
-      said.className = 'hint said-ok'
+      said.className = 'hint said-ok said-lines'
       said.textContent = announced
       said.hidden = false
     } else {
-      said.className = typeof answer.note === 'string' ? 'hint said-news' : 'hint'
+      said.className = typeof answer.note === 'string' ? 'hint said-news said-lines' : 'hint said-lines'
       said.textContent = rows.length === 0 ? 'Nothing here yet.' : (answer.note ?? '')
     }
     announcedNews = typeof answer.note === 'string' && rows.length > 0
@@ -1898,7 +1898,7 @@ function rowOf(
           return
         }
         said.hidden = false
-        said.className = 'error'
+        said.className = 'error said-lines'
         said.textContent = String(answer.said ?? '')
       } finally {
         button.disabled = false

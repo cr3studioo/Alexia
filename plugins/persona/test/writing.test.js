@@ -148,13 +148,15 @@ test('a description that states its own name is believed before its opening word
  */
 test('both buttons decide the name before the model writes anything', () => {
   const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8')
-  // Adapt: unique(nameFrom(...)) has to come first, then the write that is handed it.
+  // Adapt: unique(nameFrom(...)) has to come first, then the brief that is handed it.
   const adapt = source.indexOf('const name = unique(')
-  const writes = source.indexOf('await write(ctx, description, name)')
+  const writes = source.indexOf('await write(ctx, brief(description, name))')
   expect(adapt, 'Adapt no longer computes a name').toBeGreaterThan(-1)
-  expect(writes, 'Adapt no longer hands the name to write()').toBeGreaterThan(adapt)
+  expect(writes, 'Adapt no longer hands the name to brief()').toBeGreaterThan(adapt)
   // Re-adapt keeps the row's own name rather than retitling it.
-  expect(source).toMatch(/await write\(ctx, was\.described, String\(row\.name\)\)/)
-  // And nothing calls write() without one.
-  expect(source).not.toMatch(/await write\(ctx, [a-z.]+\)/)
+  expect(source).toMatch(/await write\(ctx, brief\(was\.described, String\(row\.name\)\)\)/)
+  // And nothing asks for a document without saying which name it is for: every call to the
+  // one model helper carries a brief that was given a name, or Refine's, which is handed the
+  // document the name is already on and is forbidden to change the first line.
+  expect(source).not.toMatch(/await write\(ctx, [a-z_.]+[,)]/)
 })

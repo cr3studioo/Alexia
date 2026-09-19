@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { fromJsonSchema, log, plugin } from '@alexia/sdk'
 import { budgetLine, costLine } from './cost.js'
+import { changed, sizeOf } from './diff.js'
 import { check, noteOf, removedOf } from './safety.js'
 import {
   brief,
@@ -9,6 +10,7 @@ import {
   nameFrom,
   priorOf,
   provenance,
+  refining,
   ROOM,
   unique,
   usable,
@@ -75,23 +77,32 @@ async function report() {
   await alexia.status('state', state).catch(() => {})
 }
 
+/** What the progress bar says while each button waits, so the three do not read alike. */
+const STEPS = {
+  adapt: ['Reading what you wrote', 'Writing it'],
+  refine: ['Reading her as she is', 'Changing it'],
+}
+
 /**
- * The one model call this plugin makes, and the two buttons that make it.
+ * The one model call this plugin makes, and the three buttons that make it.
  *
  * Adapt writes a personality that does not exist yet; Re-adapt writes one that does, from the
- * same words it came from the first time. Same brief, same rung, same clamp — all that differs
- * is which row the answer lands on, so the call lives here instead of twice. Every clamp below
- * is D157's, and it is load-bearing: a personality that saves half-written reads as chosen and
- * behaves as if nothing was set, which is the bug that started the rebuild.
+ * same words it came from the first time; Refine writes one that exists from itself and a
+ * sentence. Same rung, same room, same patience, same clamps — all that differs is the brief
+ * the caller hands in and which row the answer lands on, so the call lives here instead of
+ * three times. Every clamp below is D157's, and it is load-bearing: a personality that saves
+ * half-written reads as chosen and behaves as if nothing was set, which is the bug that
+ * started the rebuild. Refine is held to them too, because *changed and then truncated* is the
+ * same half-a-personality with a different cause.
  */
-async function write(ctx, description, name) {
-  alexia.progress(ctx, 1, 3, 'Reading what you wrote')
+async function write(ctx, prompt, [reading, writing] = STEPS.adapt) {
+  alexia.progress(ctx, 1, 3, reading)
   let answered
   try {
     answered = await alexia.server.server.createMessage({
       // The name goes in rather than coming back: the title is the row's own name, so the
       // document cannot end up called one thing and listed as another (2026-09-18).
-      messages: [{ role: 'user', content: { type: 'text', text: brief(description, name) } }],
+      messages: [{ role: 'user', content: { type: 'text', text: prompt } }],
       // Room to think as well as to write. It was 1,200, and a reasoning model spent almost
       // all of it thinking — which is counted and never shown — so the document it did
       // write stopped at `## How` (2026-09-15). Nearly every free model is a reasoning
@@ -131,7 +142,7 @@ async function write(ctx, description, name) {
     return { error: `Could not write it: ${error instanceof Error ? error.message : String(error)}` }
   }
 
-  alexia.progress(ctx, 2, 3, 'Writing it')
+  alexia.progress(ctx, 2, 3, writing)
   // Half a personality is worse than none: it saves, it reads as chosen, and she acts as
   // if nothing was. An Alexia too old to say `maxTokens` still gets caught by `usable`.
   if (answered.stopReason === 'maxTokens') {
@@ -207,7 +218,7 @@ alexia.tool(
       existing.map((row) => String(row.name)),
     )
 
-    const written = await write(ctx, description, name)
+    const written = await write(ctx, brief(description, name))
     if (written.error !== undefined) return nope(written.error)
 
     alexia.progress(ctx, 3, 3, 'Saving')
@@ -316,28 +327,163 @@ alexia.tool(
     }
 
     // Its own name, so writing it again does not retitle it — the row keeps the name it has.
-    const written = await write(ctx, was.described, String(row.name))
+    const written = await write(ctx, brief(was.described, String(row.name)))
     if (written.error !== undefined) return nope(written.error)
 
     alexia.progress(ctx, 3, 3, 'Saving')
-    await alexia.storage.update(
-      'personalities',
-      {
-        doc: written.doc,
-        wrote: written.wrote,
-        removed: written.removed,
-        at: Date.now(),
-        previous: was,
-      },
-      { rowid: Number(row.rowid) },
-    )
-    await bind()
+    await keep(row, was, written)
     return text(
       reply(
         `Wrote “${String(row.name)}” again. Undo brings the previous one back.`,
         written.removed,
         written.doc,
       ),
+    )
+  },
+)
+
+/**
+ * One new version onto a row, with the one it replaces kept.
+ *
+ * Re-adapt wrote this first and Refine and Edit want the same five lines, which is the whole
+ * reason it is a function: *the previous version is kept* is a promise made on the row action's
+ * label, and a third copy of it is a third place it could quietly stop being true.
+ */
+async function keep(row, was, written) {
+  await alexia.storage.update(
+    'personalities',
+    { doc: written.doc, wrote: written.wrote, removed: written.removed, at: Date.now(), previous: was },
+    { rowid: Number(row.rowid) },
+  )
+  await bind()
+}
+
+/** What a change did, over the words it did it to — the sentence, then the lines. */
+const showing = (was, now) => `What changed (${sizeOf(was, now)}):\n\n${changed(was, now)}`
+
+/**
+ * Refine: the same personality, one thing about it different.
+ *
+ * **Why this is not Re-adapt.** Re-adapt throws the document away and writes it again from the
+ * original description, so *more blunt* would mean editing the description and hoping the
+ * second draft keeps everything you liked about the first. Refine is the way a person actually
+ * talks about this: here is who she is, make her blunter, leave the rest alone.
+ *
+ * It is also the cheap call. A document is about 500 tokens and the instruction is a sentence;
+ * the description Adapt reads was 1,300 on this machine, and it is the one that ran a reasoning
+ * model out of room before it had written anything (D157).
+ *
+ * **The change is shown line by line, and the previous version is kept.** The plan asked for
+ * the diff *before* it saves. It saves and then shows it, with Undo as the way back, because
+ * this plugin is `lazy` — core may stop it between two presses, and a draft held in memory for
+ * a decision nobody has made yet is a draft that is sometimes gone when they make it. A saved
+ * version with a kept predecessor is the same promise kept by the storage rather than by the
+ * process staying alive.
+ */
+alexia.tool(
+  'refine',
+  {
+    description:
+      'Change one thing about a saved personality, in your own words. Takes the row it is, ' +
+      'and reads the sentence in the Refine box on the settings screen. The version it ' +
+      'replaces is kept, and Undo brings it back.',
+    inputSchema: fromJsonSchema(one),
+    annotations: { destructiveHint: false, openWorldHint: false },
+  },
+  async ({ id }, ctx) => {
+    const row = await byId(id)
+    if (!row) return nope('There is no saved personality with that id.')
+    const { refine_with: asked } = await settings()
+    const change = String(asked ?? '').trim()
+    if (change === '') {
+      return nope('Write what should change — “more blunt”, “stop saying man to man” — then press Refine.')
+    }
+    const was = versionOf(row)
+    if (was.doc === '') return nope(`“${String(row.name)}” has no document to change.`)
+
+    const written = await write(ctx, refining(was.doc, change), STEPS.refine)
+    if (written.error !== undefined) return nope(written.error)
+
+    alexia.progress(ctx, 3, 3, 'Saving')
+    await keep(row, was, written)
+    const using = row.active === 1
+    return text(
+      [
+        reply(
+          `Changed “${String(row.name)}”.${using ? ' She is using it from your next message.' : ''}` +
+            ' Undo brings the previous one back.',
+          written.removed,
+          written.doc,
+        ),
+        '---',
+        showing(was.doc, written.doc),
+      ].join('\n\n'),
+    )
+  },
+)
+
+/**
+ * Edit: the words, by hand, with every check still standing.
+ *
+ * **Why it is a box on the page and not a field on the row.** A plugin may write exactly one
+ * kind of setting — its own `status` — so there is no way for this one to put a document into
+ * an editable box for you; and core does not offer `elicitation`, so there is no modal to
+ * prefill either. What is left is the honest flow: open the row, which already shows exactly
+ * what she is being told, copy it, change it here, press Edit on that row.
+ *
+ * **The checks are not optional here, and that is the point of routing it through the same
+ * two.** A document somebody typed is exactly as able to be half a personality, or to carry a
+ * line telling her to skip asking, as one a model wrote — more so, because a person pasting
+ * from somewhere else is the import path this plugin does not have yet. `usable` and `check`
+ * run on it unchanged (improvement 6, D157).
+ */
+alexia.tool(
+  'edit',
+  {
+    description:
+      'Replace one saved personality with the text in the Edit box on the settings screen. ' +
+      'Takes the row it is. The version it replaces is kept, and Undo brings it back.',
+    inputSchema: fromJsonSchema(one),
+    annotations: { destructiveHint: false, openWorldHint: false },
+  },
+  async ({ id }) => {
+    const row = await byId(id)
+    if (!row) return nope('There is no saved personality with that id.')
+    const { edit_doc: typed } = await settings()
+    const written = String(typed ?? '').trim()
+    if (written === '') {
+      return nope('The Edit box is empty. Open the row, copy what she is being told, change it there, then press Edit.')
+    }
+    const was = versionOf(row)
+    if (written === was.doc) return nope(`That is what “${String(row.name)}” already says.`)
+
+    const { doc, removed } = check(clean(written))
+    if (!usable(doc)) {
+      return nope(
+        removed.length > 0 ?
+          'What is left after the lines below were taken out is not a personality, so nothing ' +
+            `was saved.\n\n${noteOf(removed)}`
+        : 'That is missing one of the four parts of a personality — # a name, then Who you ' +
+            'are, How you talk, What you do without being asked, and Hard rules, each with ' +
+            'something under it. Nothing was saved.',
+      )
+    }
+
+    // Written by whoever typed it, and said so: a document with no model behind it should not
+    // read as one a model wrote, on a row whose other column is *Written by*.
+    await keep(row, was, { doc, wrote: 'you', removed })
+    const using = row.active === 1
+    return text(
+      [
+        reply(
+          `Saved your own “${String(row.name)}”.${using ? ' She is using it from your next message.' : ''}` +
+            ' Undo brings the previous one back.',
+          removed,
+          doc,
+        ),
+        '---',
+        showing(was.doc, doc),
+      ].join('\n\n'),
     )
   },
 )

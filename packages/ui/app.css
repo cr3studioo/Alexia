@@ -1072,6 +1072,21 @@ body[data-view='control'] .view:not(#control) {
   color: var(--danger);
 }
 
+/* **What a button said, with its newlines still in it.**
+
+   A tool's answer is prose most of the time and a one-line `.hint` drew it correctly, so
+   nothing here noticed that a `<p>` collapses every newline — until an answer *was* the
+   layout. The personality adapter has returned a Markdown document since it was written and
+   it has always arrived as one run-on paragraph; the diff under Refine, which is a column of
+   `-` and `+` lines, is unreadable without this.
+
+   Only the three places a tool's own words land, never `.hint` itself: a hint the author wrote
+   into the manifest is a sentence, and pre-wrap on all of them would turn a wrapped sentence
+   into a shape that depends on where the author's editor happened to break the line. */
+.said-lines {
+  white-space: pre-wrap;
+}
+
 /* The map (D113). The canvas is the only surface in this sheet that paints itself, so what is
    here is its frame and the note that opens beside it — the colours it draws with are read
    off these same custom properties at paint time, which is what keeps one palette. */
