@@ -86,7 +86,9 @@ writeFileSync(
     entry: { run: 'node', args: [join(import.meta.dirname, 'fixtures', 'writer.js')] },
     alexia_protocol: 2,
     mcp_protocol: '2025-11-25',
-    // The adapter's own declaration: never this machine's model, however cheap it is.
+    // A floor that changes nothing here — `local: false`, so there is no `T0` row to exclude.
+    // It is on the fixture so that *the manifest was read* and *the floor did something* are
+    // two separate facts, and the second is the `demanding` plugin below.
     min_tier: 'T1',
     settings: [
       { type: 'action', key: 'adapt', label: 'Adapt', tool: 'adapt' },

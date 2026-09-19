@@ -106,8 +106,15 @@ async function write(ctx, description, name) {
       // written, which is how a 5,825-character description came back as a paragraph from a
       // 2.6B model: intelligence first now means strongest-first, never a router — not even
       // a pinned one — and never a model Alexia's own record doubts while another fits. With
-      // the manifest's `min_tier: "T1"` beside it, that is the whole of what this plugin gets
-      // to say about the model, and the user's pins, slider and allowance still decide.
+      // that is the whole of what this plugin gets to say about the model, and the user's pins,
+      // slider and allowance still decide.
+      //
+      // **The manifest's floor went the other way, and to `T0`.** It said `T1` — never a model
+      // on this machine — written while the field was inert, so nobody could see what it meant:
+      // in Local mode the pool *is* this machine, so honouring `T1` would have made Adapt a
+      // button that cannot be pressed for exactly the people who chose Alexia for privacy. The
+      // preference below already prefers the strongest thing reachable, which is the honest way
+      // to want a good writer; a floor is a way to refuse everybody who has not got one.
       modelPreferences: { intelligencePriority: 0.8, speedPriority: 0.3, costPriority: 0.3 },
     }, {
       // The SDK's own default is sixty seconds, and a model thinking before it writes four

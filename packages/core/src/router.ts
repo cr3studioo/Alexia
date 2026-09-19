@@ -216,7 +216,11 @@ export interface Ask {
    * It is one flag rather than three because a plugin asking for intelligence means all
    * three of these and has no way to ask for them one at a time:
    *
-   * 1. **Best-first.** The ranking is walked from the other end, exactly as `/best` walks it.
+   * 1. **Best-first.** The ranking is walked from the other end on the price axis — paid
+   *    before free, the bigger tier, the dearer model — and **only** that axis. `/best` also
+   *    turns §8.2's rungs round, which is right for somebody typing *give me the strongest
+   *    thing you can reach* and wrong here: a talker is not a better writer than a model with
+   *    tools, and a stranger's shared floor is not better than the key you paid for.
    * 2. **Never a router.** A router is a different model each time, 2.6B included ({@link
    *    routes}, D159), so it is not an answer to *give me one that can write*. It is not a
    *    candidate at all here, and a pin on one is ignored rather than obeyed — a pin on a
@@ -672,7 +676,8 @@ export function route(ask: Ask, pins: Pins, world: World): Verdict {
           // `/best` walks Automatic's ranking from the other end, and so does a plugin that
           // asked for a capable model. A list somebody put in order is not a ranking to walk
           // backwards.
-        : pins.prefer === 'best' || capable ? ranking(world, 'best').compare
+        : capable ? ranking(world, 'capable').compare
+        : pins.prefer === 'best' ? ranking(world, 'best').compare
         : ranked,
       )
 
@@ -911,10 +916,31 @@ export interface Ranking {
   explain: (a: Choice, b: Choice) => string
 }
 
+/**
+ * **Which axis a ranking key is on**, and therefore who turns it round.
+ *
+ * It was one boolean, `money`, and two keys were on the wrong side of it — which nobody could
+ * see while `/best` was the only thing that turned anything and the two keys in question
+ * rarely decided a chat. `Ask.capable` made it visible immediately: asking for a model that
+ * can write put a model with no tools first, and the keyless floor's 7B ahead of a 550B model
+ * on the person's own key.
+ *
+ * - `price` — free-before-paid, the tier ladder, the per-token cost. Turning these round is
+ *   what *strongest first* means, so both `/best` and {@link Ask.capable} turn them.
+ * - `reach` — whether it has hands, and whose key it is on (§8.2's ladder). `/best` turns
+ *   these because it always has and a chat asking for the strongest thing is asking to be
+ *   sent as far up as the rungs go; {@link Ask.capable} does not, because a talker is not a
+ *   better writer than a model with tools and a stranger's shared floor is not a better
+ *   anything than the key you paid for.
+ * - `sure` — what predicts an answer at all: what failed here, whether it is a router, how
+ *   big it is, how much the world uses it. Nobody turns these; a bigger, busier model that
+ *   answered last time is the better one from either end.
+ */
+type Axis = 'price' | 'reach' | 'sure'
+
 interface Key {
   name: RankKey
-  /** One of the keys `/best` turns round: the money half. */
-  money: boolean
+  axis: Axis
   compare: (a: Choice, b: Choice) => number
   /** Why `a` comes after `b` on this key, cheapest first. */
   says: (a: Choice, b: Choice) => string
@@ -967,7 +993,11 @@ const dollars = (n: number): string => `$${n === 0 || n >= 0.01 ? n.toFixed(2) :
  */
 export function ranking(
   world: Pick<World, 'strikes' | 'health'>,
-  from: 'cheap' | 'best' = 'cheap',
+  /**
+   * Which end to walk from: the default, `/best`, or a plugin that asked for a model that can
+   * do the work ({@link Ask.capable}). The last two differ by exactly one axis — see {@link Axis}.
+   */
+  from: 'cheap' | 'best' | 'capable' = 'cheap',
   at: number = Date.now(),
 ): Ranking {
   const idOf = (c: Choice): string => `${c.provider.id}\n${c.model.id}`
@@ -984,7 +1014,7 @@ export function ranking(
     {
       // The group comes first (D112). Free before paid, whatever else is true of either.
       name: 'group',
-      money: true,
+      axis: 'price',
       compare: (a, b) => Number(paid(a.model.tier)) - Number(paid(b.model.tier)),
       says: () => 'Costs money, so it comes after every free model.',
     },
@@ -992,7 +1022,7 @@ export function ranking(
       // **Then not tried yet** (D161). A new model starts at the bottom of its group, and its
       // first good reply — to a real question or a daily test — lets the keys below place it.
       name: 'untested',
-      money: false,
+      axis: 'sure',
       compare: (a, b) => Number(judged(a)?.untested === true) - Number(judged(b)?.untested === true),
       says: () => 'New and not tried yet, so it waits below every model that has answered. One good reply moves it up.',
     },
@@ -1000,7 +1030,7 @@ export function ranking(
       // **Then doubted** (D161): too many errors here, or two *Bad answer* presses. Still listed
       // and still asked, after every model in its group that nobody has doubts about.
       name: 'doubted',
-      money: false,
+      axis: 'sure',
       compare: (a, b) => Number(judged(a)?.doubted === true) - Number(judged(b)?.doubted === true),
       says: (a) =>
         judged(a)?.tags.some((tag) => tag.says === 'gave bad answers') === true ?
@@ -1026,7 +1056,7 @@ export function ranking(
        * hand is not a rung a shipped cascade can walk onto by itself.
        */
       name: 'tools',
-      money: true,
+      axis: 'reach',
       compare: (a, b) => Number(!a.model.supportsTools) - Number(!b.model.supportsTools),
       says: () => 'Can only talk, not use tools, so it comes after every model that can.',
     },
@@ -1037,7 +1067,7 @@ export function ranking(
        * behind the ones that did not, and comes back as the failure ages.
        */
       name: 'struck',
-      money: false,
+      axis: 'sure',
       compare: (a, b) => struck(a) - struck(b),
       says: (a, b) =>
         `${lately.get(idOf(a)) === 'busy' ? 'Was busy' : 'Failed here'} recently, so it sits below ${b.model.name} for ${struck(a) > 1 ? 'a few hours' : 'about an hour'}.`,
@@ -1046,7 +1076,7 @@ export function ranking(
       // **Then not a router** (D159). A router is a different model each time, 2.6B included,
       // so it is asked after every model that is one model. It stays pinnable.
       name: 'router',
-      money: false,
+      axis: 'sure',
       compare: (a, b) => Number(routes(a.model)) - Number(routes(b.model)),
       says: (a) =>
         `A router: a different ${paid(a.model.tier) ? '' : 'free '}model each time, some of them tiny. Asked after every single model.`,
@@ -1060,7 +1090,7 @@ export function ranking(
        * front of every keyed free tier — the exact opposite of the rung §8.3 put it on.
        */
       name: 'ladder',
-      money: true,
+      axis: 'reach',
       compare: (a, b) => standing(a) - standing(b),
       says: (a, b) =>
         standing(a) === RUNGS.machine ? 'Runs on this Mac: free and private, but slow. After the free models on your key.'
@@ -1068,7 +1098,7 @@ export function ranking(
     },
     {
       name: 'tier',
-      money: true,
+      axis: 'price',
       compare: (a, b) => rank(a.model.tier) - rank(b.model.tier),
       says: (a, b) =>
         a.model.tier === 'T3' ? 'A frontier model, so it comes after the smaller paid ones.'
@@ -1076,7 +1106,7 @@ export function ranking(
     },
     {
       name: 'price',
-      money: true,
+      axis: 'price',
       compare: (a, b) => a.model.priceIn - b.model.priceIn || a.model.priceOut - b.model.priceOut,
       says: (a, b) =>
         a.model.priceIn !== b.model.priceIn ?
@@ -1092,7 +1122,7 @@ export function ranking(
        * `/best`: a bigger, busier model is the better one from either end.
        */
       name: 'size',
-      money: false,
+      axis: 'sure',
       compare: (a, b) => STATURE[stature(a.model)] - STATURE[stature(b.model)],
       says: (a) =>
         stature(a.model) === 'unknown' ?
@@ -1103,7 +1133,7 @@ export function ranking(
       // A new model that has answered and has no figure yet ranks on its stand-in: the middle of
       // models its size, until its own figure or a lent one replaces it (D161).
       name: 'usage',
-      money: false,
+      axis: 'sure',
       compare: (a, b) => figure(b) - figure(a),
       says: (a, b) => {
         if (figure(a) < 0) return 'Nobody publishes how much it is used, so it comes after the models that have a figure.'
@@ -1118,11 +1148,19 @@ export function ranking(
   ]
 
   /**
-   * `/best` turns the money half of the ranking round — paid first, the dearest first — and
-   * leaves the half about whether an answer will come alone. Walking the whole list backwards
-   * put the model that failed a minute ago, and a router, at the top of the strongest-first list.
+   * **Who turns which axis round** ({@link Axis}). Walking the whole list backwards put the
+   * model that failed a minute ago, and a router, at the top of the strongest-first list, so
+   * `sure` is never turned.
+   *
+   * `/best` turns `price` and `reach` — paid first, the dearest first, and as far up §8.2's
+   * rungs as they go — which is what it has always done and what somebody typing it is asking
+   * for. **A plugin asking for a capable model turns only `price`**, and the difference is not
+   * a nicety: with `reach` turned as well, *write me a personality* on this Mac's own catalog
+   * chose a model with no tools, and then the keyless floor's 7B ahead of a 550B model on the
+   * owner's OpenRouter key. A stranger's shared floor is not a stronger model, it is a cheaper
+   * one — the ladder is only on the money half by accident of having been one boolean.
    */
-  const way = (key: Key): number => (from === 'best' && key.money ? -1 : 1)
+  const way = (key: Key): number => ((from === 'best' && key.axis !== 'sure') || (from === 'capable' && key.axis === 'price') ? -1 : 1)
   const deciding = (a: Choice, b: Choice): Key | undefined => keys.find((key) => key.compare(a, b) !== 0)
   return {
     compare: (a, b) => {
@@ -1138,7 +1176,11 @@ export function ranking(
       if (key === undefined) return `Ties with ${b.model.name} on everything Alexia knows; the provider’s own order decides.`
       // Said about the lower of the two, whichever way round they were handed over.
       const [lower, upper] = way(key) * key.compare(a, b) > 0 ? [a, b] : [b, a]
-      if (way(key) < 0) return `/best turns the money order round, so it comes after ${upper.model.name}.`
+      if (way(key) < 0) {
+        return from === 'best' ?
+            `/best turns the money order round, so it comes after ${upper.model.name}.`
+          : `What asked for this wants the strongest model, so it comes after ${upper.model.name}.`
+      }
       return key.says(lower, upper)
     },
   }

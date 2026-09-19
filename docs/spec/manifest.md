@@ -484,6 +484,14 @@ user with no paid key**, and working with no paid key is a founding goal, not a 
 When nothing the user has connected reaches your floor, they are told which floor it was and
 that it is what refused — so a floor you did not need costs somebody an evening.
 
+**`T1` is the sharpest edge, and it does not read like one.** In Local mode the pool *is* the
+user's machine, so `min_tier: "T1"` does not mean *prefer a hosted model* — it means your
+plugin does not work at all for the people who chose Alexia for privacy. If what you want is
+a capable model rather than a hosted one, ask for it with `modelPreferences` on the request
+and leave the floor at `T0`: a preference reaches for the strongest thing available, while a
+floor refuses everybody who has not got one. `plugins/persona` declared `T1` and meant the
+first thing; it declares `T0` now.
+
 *Read for the first time in M8-1 (2026-09-19). It was declared, documented and ignored from
 the day the field existed; honouring it is the contract becoming true rather than changing,
 so `alexia_protocol` does not move for it. See [`wire-protocol.md`](./wire-protocol.md)'s

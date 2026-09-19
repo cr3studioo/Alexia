@@ -101,6 +101,36 @@ test('a plugin asking for intelligence and one asking for cost get different mod
   expect(ids(route(purse, pins(), pool))).toEqual(['vendor/writer-120b', 'vendor/tiny-2.6b', 'paid/strong'])
 })
 
+test('best-first turns the price axis and not the rungs, which is where it differs from /best', () => {
+  // Found by probing this Mac's own shape before trusting the change: one big model on the
+  // owner's own key, a small one on the keyless floor, and a big one with no tools. `/best`
+  // turns §8.2's rungs round as well as the money, which is right for somebody typing *the
+  // strongest thing you can reach* and wrong for *write me a personality*: it chose the
+  // talker, and then the floor's 7B ahead of the 550B on the key.
+  const big = model({ id: 'vendor/big-550b', params: 550, weekly: 50_000 })
+  const onFloor = model({ id: 'vendor/mini-7b', provider: 'beta', params: 7, weekly: 100 })
+  const mouth = model({ id: 'vendor/mouth-200b', params: 200, weekly: 30_000, supportsTools: false })
+  const pool: World = {
+    ...world([big, onFloor, mouth]),
+    // Beta answers a stranger, and nobody has pasted a key into it: the keyless floor.
+    rungs: [
+      { provider: alpha, minute: Infinity, day: Infinity, month: Infinity, keyed: true },
+      { provider: { ...beta, auth: 'optional' }, minute: Infinity, day: Infinity, month: Infinity, keyed: false },
+    ],
+  }
+  const order = ['vendor/big-550b', 'vendor/mini-7b', 'vendor/mouth-200b']
+  expect(ids(route({ messages: asked('write me a personality'), capable: true }, pins(), pool))).toEqual(order)
+  // The same order the default walks, because among free models the whole price axis ties —
+  // which is the honest answer, and it is the two filters above that earn their keep there.
+  expect(ids(route({ messages: asked('write me a personality') }, pins(), pool))).toEqual(order)
+  // `/best` is untouched, and still turns the rungs round.
+  expect(ids(route({ messages: asked('write me a personality') }, pins({ prefer: 'best' }), pool))).toEqual([
+    'vendor/mouth-200b',
+    'vendor/mini-7b',
+    'vendor/big-550b',
+  ])
+})
+
 // ---- the manifest's floor -----------------------------------------------------------------
 
 test('a plugin whose manifest says min_tier T2 is never routed to a T0 or a T1 model', () => {
@@ -133,6 +163,20 @@ test('a floor nothing reaches says which floor, rather than *try again shortly*'
   // floor with a paid model behind a closed price line is the money wall, not this one.
   const closed = route({ messages: asked('anything'), minTier: 'T2' }, pins({ spend: 'free' }), world([writer, strong]))
   expect(ids(closed)[0]).toContain('set to free only')
+})
+
+test('in Local mode a capable ask takes the model on this machine, rather than refusing', () => {
+  // The trap `min_tier` sets for its own author, and the reason `plugins/persona` no longer
+  // declares one: in Local mode the pool **is** this machine, so a `T1` floor is not *prefer a
+  // hosted model*, it is *this button does not work for anybody who chose Alexia for privacy*.
+  // A preference asks for the strongest thing reachable; a floor refuses everybody without one.
+  const here8b = model({ id: 'qwen3:8b', provider: 'ollama', tier: 'T0', params: 8 })
+  const onlyHere = { ...world([here8b]), local: [here8b], models: [] }
+  const local = pins({ placement: MODES.local })
+  expect(ids(route({ messages: asked('write me a personality'), capable: true }, local, onlyHere))).toEqual(['qwen3:8b'])
+  expect(ids(route({ messages: asked('write me a personality'), capable: true, minTier: 'T1' }, local, onlyHere))).toEqual([
+    'what asked for this needs a hosted model rather than one on this machine, and nothing you have connected is one — connect a provider that offers one',
+  ])
 })
 
 // ---- a pin still wins, and the one pin that is not a pin on a model -------------------------
