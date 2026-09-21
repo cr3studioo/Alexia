@@ -13,9 +13,12 @@ import {
   HEAR_UNASKED,
   HEARD,
   HEARING,
+  HEARING_AT_LEAST,
+  LONGEST,
   matchName,
   nameFrom,
   asRow,
+  PRESS,
   priorOf,
   provenance,
   refining,
@@ -86,11 +89,19 @@ const active = async () =>
  * means *the word somebody typed into the box*. A row bound to a channel is not *in use* and
  * does not become it: it answers there and nowhere else, which is what keeps the two
  * independent.
+ *
+ * **A `channel` column that does not exist yet means nothing is bound**, the same reading
+ * `bind()` gives it. A plugin table grows a column the first time a key is written, so every
+ * row saved before this release has none — and asking `WHERE channel = ?` of that table is
+ * SQLite's *no such column*, which left every task a phone started with no personality at all
+ * until somebody happened to press Adapt.
  */
 const forChannel = async (channel) => {
   const said = channel.trim().toLowerCase()
   if (said !== '') {
-    const bound = (await alexia.storage.select('personalities', { where: { channel: said }, limit: 1 }))[0]
+    const bound = (
+      await alexia.storage.select('personalities', { where: { channel: said }, limit: 1 }).catch(() => [])
+    )[0]
     if (bound) return bound
   }
   return active()
@@ -141,12 +152,21 @@ async function report() {
  * **Nothing here can lose a document.** The row is already saved when this runs, so a sample
  * that times out, refuses or comes back empty is a sentence about the sample. The automatic
  * checks ran whether or not anybody listens, which is D160's own wording for the Skip.
+ *
+ * **Fitted into what is left of the press** ({@link PRESS}). `until` is when the button that
+ * asked runs out; a sample with too little of that left is not started, and says so, rather
+ * than taking the whole press down with it after the document was already saved.
  */
-async function hearing(doc) {
+async function hearing(doc, until = Date.now() + PRESS) {
   const line = unasked(doc)
   const asking = [{ ask: HEAR }, ...(line === '' ? [] : [{ ask: HEAR_UNASKED, watching: line }])]
   const heard = []
   for (const one of asking) {
+    const left = until - Date.now()
+    if (left < HEARING_AT_LEAST) {
+      heard.push({ ...one, failed: 'not asked, because the press was out of time — Hear her on the row asks it' })
+      continue
+    }
     try {
       const answer = await alexia.server.server.createMessage(
         {
@@ -155,7 +175,7 @@ async function hearing(doc) {
           systemPrompt: doc,
           maxTokens: HEARD,
         },
-        { timeout: HEARING },
+        { timeout: Math.min(HEARING, left) },
       )
       const said = answer.content?.type === 'text' ? answer.content.text.trim() : ''
       heard.push({
@@ -172,14 +192,22 @@ async function hearing(doc) {
   return heard
 }
 
-/** The samples, written out under a line saying what they are and are not. */
-const asHeard = (heard) => {
+/**
+ * The samples, written out under a line saying what they are and are not.
+ *
+ * **Including which length she was given.** A sample is her full document, and in the chat a
+ * model that can read less is sent one of the shorter two — which this plugin cannot predict,
+ * because which model reads it is core's to decide per step. So when shorter ones exist, the
+ * line says the sample is the long one rather than letting it pass for what every model hears.
+ */
+const asHeard = (heard, shorter = false) => {
   if (heard.length === 0) return ''
   const model = heard.find((one) => one.model !== undefined && one.model !== '')?.model
   const lines = [
     model === undefined ?
       'Nothing could be asked, so there is nothing to listen to:'
-    : `Here is how she answers, on ${model} — the model your chat would use. Alexia's own opening lines are not in this; only your personality is.`,
+    : `Here is how she answers, on ${model} — the model your chat would use. Alexia's own opening lines are not in this; only your personality is.` +
+      (shorter ? ' This is her full-length document; in the chat a model that can read less is sent a shorter one.' : ''),
   ]
   for (const one of heard) {
     lines.push('', `You: ${one.ask}${one.watching === undefined ? '' : `   (listening for “${one.watching}”)`}`)
@@ -278,19 +306,31 @@ async function write(ctx, prompt, [reading, writing] = STEPS.adapt) {
   // decision, and one press is the whole of the asking (D160).
   const facts = factsFrom(said)
   const checked = check(clean(three.high))
+  const { doc } = checked
+  /**
+   * **What the check took out of any of the three, said once.** The shorter two are what a weak
+   * model actually reads, so a line removed from one of them is as much the person's business as
+   * a line removed from the long one — and it used to be dropped without a word.
+   */
+  const removed = [...checked.removed]
   const shorter = {}
   for (const name of ['medium', 'small']) {
     if (three[name] === undefined) continue
     const its = check(three[name])
     if (its.doc.trim() !== '' && its.doc.length <= CEILING[name]) shorter[name] = its.doc
+    for (const one of its.removed) if (!removed.some((had) => had.line === one.line)) removed.push(one)
   }
-  const { doc, removed } = checked
   if (!usable(doc)) {
     return {
       error:
-        removed.length > 0 ?
+        checked.removed.length > 0 ?
           'What came back was mostly rules a personality cannot grant, and what was left is ' +
-          `not a personality.\n\n${noteOf(removed)}`
+          `not a personality.\n\n${noteOf(checked.removed)}`
+        : doc.length > LONGEST ?
+          // Its own sentence, because *without all four parts* sends somebody looking for a
+          // missing heading in a document whose only fault is that it ran long.
+          `That came back longer than a personality can be (${String(doc.length)} characters; ` +
+          `the most is ${String(LONGEST)}), so nothing was saved. Press it again.`
         : 'That came back without all four parts of a personality, so nothing was saved. Press Adapt again.',
     }
   }
@@ -400,13 +440,35 @@ const outOf = alexia.tool(
   async ({ answer, asked, said }) => {
     const using = await active()
     if (!using) return text('Nothing is in use, so there is no personality for that to be out of character for.')
-    await alexia.storage.insert('moments', {
+    const mark = {
       personality: Number(using.rowid),
       answer: String(answer ?? '').slice(0, 2000),
       asked: String(asked ?? '').slice(0, 500),
       said: String(said ?? '').slice(0, 500),
-      at: Date.now(),
+    }
+    /**
+     * **One answer is one moment**, however many times it arrives. The press sends the mark at
+     * once and the line typed after it arrives as a second call about the same answer — which
+     * used to be a second moment, the same complaint twice in Refine's brief, and an older real
+     * one pushed out of the four to make room for it. A repeat fills in what the first lacked.
+     */
+    const [again] = await alexia.storage.select('moments', {
+      where: { personality: mark.personality, answer: mark.answer },
+      limit: 1,
     })
+    if (again) {
+      await alexia.storage.update(
+        'moments',
+        {
+          ...(mark.asked !== '' && { asked: mark.asked }),
+          ...(mark.said !== '' && { said: mark.said }),
+          at: Date.now(),
+        },
+        { rowid: Number(again.rowid) },
+      )
+    } else {
+      await alexia.storage.insert('moments', { ...mark, at: Date.now() })
+    }
     // Kept to the newest few per personality: Refine sends them, and a year of complaints in a
     // brief is a brief that is mostly complaints.
     const mine = await alexia.storage.select('moments', { where: { personality: Number(using.rowid) }, order: [['at', 'desc']] })
@@ -442,6 +504,8 @@ alexia.tool(
     annotations: { destructiveHint: false, openWorldHint: false },
   },
   async (ctx) => {
+    // When core stops waiting for this press: the samples below get what writing left of it.
+    const until = Date.now() + PRESS
     const { custom_voice: described, save_as: called, hear_first: listen } = await settings()
     const hearFirst = listen !== false
     const description = String(described ?? '').trim()
@@ -492,7 +556,7 @@ alexia.tool(
         `Saved as “${name}”. Nothing has changed yet — press Use on its row to switch to her, or Forget to throw it away.`
       : `Saved as “${name}” and in use from your next message.`
     const cannot = await inertLines(written.doc)
-    const heard = hearFirst ? asHeard(await hearing(written.doc)) : ''
+    const heard = hearFirst ? asHeard(await hearing(written.doc, until), sizesIn(written).length > 0) : ''
     return text(
       [
         reply(headline, written.removed, written.doc, written, cannot, written.facts),
@@ -580,8 +644,9 @@ alexia.tool(
     if (!row) return nope('There is no saved personality with that id.')
     const doc = String(row.doc ?? '')
     if (doc === '') return nope(`“${String(row.name)}” has no document to read out.`)
-    const heard = await hearing(doc)
-    return text(`“${String(row.name)}”, out loud.\n\n${asHeard(heard)}`)
+    // Two samples at up to a minute each is the whole of core's two minutes, so they share one.
+    const heard = await hearing(doc, Date.now() + PRESS)
+    return text(`“${String(row.name)}”, out loud.\n\n${asHeard(heard, sizesIn(shorterOf(row)).length > 0)}`)
   },
 )
 
@@ -864,6 +929,9 @@ alexia.tool(
 
     alexia.progress(ctx, 3, 3, 'Saving')
     await keep(row, was, written)
+    // The marks that went with this change have been acted on. Kept, they would ride along with
+    // every later Refine — *more blunt* next week rewriting her around complaints already fixed.
+    for (const used of moments) await alexia.storage.delete('moments', { rowid: Number(used.rowid) })
     const using = row.active === 1
     return text(
       [
@@ -1019,6 +1087,10 @@ alexia.tool(
     const row = await byId(id)
     if (!row) return nope('There is no saved personality with that id.')
     await alexia.storage.delete('personalities', { rowid: Number(row.rowid) })
+    // Its *that wasn't her* marks go with it. Left behind they are not merely clutter: a plugin
+    // table's rowid is reused once the highest row is deleted, so the next personality saved
+    // would inherit them and Refine would hand it somebody else's complaints as evidence.
+    await alexia.storage.delete('moments', { personality: Number(row.rowid) })
     await bind()
     return text(`“${String(row.name)}” is gone.`)
   },

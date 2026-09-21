@@ -44,6 +44,32 @@ test('only the last few are kept, because a brief that is mostly complaints is a
   expect(source).toMatch(/limit: MOMENTS/)
 })
 
+test('one answer is one moment, however many times it arrives', () => {
+  // The press sends the mark and the line typed afterwards arrives as a second call about the
+  // same answer. As two moments it was the same complaint twice in Refine's brief, and an older
+  // real one pushed out of the four to make room.
+  expect(source).toMatch(/where: \{ personality: mark\.personality, answer: mark\.answer \}/)
+  expect(source).toMatch(/if \(again\) \{\n\s+await alexia\.storage\.update\(\n\s+'moments'/)
+})
+
+test('a forgotten personality takes its marks with it', () => {
+  // A plugin table reuses the highest rowid once it is deleted, so marks left behind would be
+  // inherited by the next personality saved — and handed to Refine as evidence about her.
+  const at = source.indexOf("'forget',")
+  const body = source.slice(at, source.indexOf('\n)\n', at))
+  expect(body).toMatch(/storage\.delete\('moments', \{ personality: Number\(row\.rowid\) \}\)/)
+})
+
+test('marks that went with a Refine are spent, so the next one does not re-apply them', () => {
+  const at = source.indexOf("'refine',")
+  const body = source.slice(at, source.indexOf('\n)\n', at))
+  const saved = body.indexOf('await keep(row, was, written)')
+  const cleared = body.indexOf("for (const used of moments) await alexia.storage.delete('moments'")
+  expect(saved).toBeGreaterThan(-1)
+  // After the save, so a Refine that failed leaves the evidence for the next attempt.
+  expect(cleared).toBeGreaterThan(saved)
+})
+
 test('the evidence goes after the document and is labelled as evidence, not as instructions', () => {
   const moments = [{ asked: 'how is it going', answer: 'I would be delighted to assist!', said: 'Fine. Two things are late.' }]
   const said = refining('# X\n\ndoc', 'more blunt', moments)

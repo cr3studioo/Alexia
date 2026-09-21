@@ -32,9 +32,9 @@ test('the number is always labelled an estimate, because one presented as a fact
 })
 
 test('a personality that obeys its own brief is under budget; one that overran is not', () => {
-  // brief() asks for under 400 words ≈ 2,600 characters. That is the case the budget is
-  // drawn around, so it must not fire on a document that did as it was told.
-  const obedient = 'a'.repeat(2600)
+  // brief() asks for the long one in about 600 words ≈ 3,900 characters (§2). That is the case
+  // the budget is drawn around, so it must not fire on a document that did as it was told.
+  const obedient = 'a'.repeat(3900)
   expect(costOf(obedient).over).toBe(false)
   expect(budgetLine(obedient)).toBe('')
 
@@ -43,12 +43,12 @@ test('a personality that obeys its own brief is under budget; one that overran i
   expect(costOf(longest).over).toBe(true)
   const warned = budgetLine(longest)
   expect(warned).toContain('every step')
-  expect(warned).toMatch(/400 words/)
+  expect(warned).toMatch(/600 words/)
   expect(warned).toMatch(/Re-adapt/)
 })
 
 test('the budget sits between the two, which is what makes it a threshold and not a rounding', () => {
-  expect(BUDGET).toBeGreaterThan(costOf('a'.repeat(2600)).perTask)
+  expect(BUDGET).toBeGreaterThan(costOf('a'.repeat(3900)).perTask)
   expect(BUDGET).toBeLessThan(costOf('a'.repeat(LONGEST)).perTask)
 })
 
@@ -67,7 +67,9 @@ test('an empty document costs nothing and warns about nothing', () => {
  */
 test('the budget is still derived from the word limit the brief actually asks for', () => {
   const written = readFileSync(new URL('../writing.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n')
-  const asked = /under (\d+) words/.exec(written)
+  // The long one's length, which is what `brief()` asks for since §2's three lengths — it used to
+  // be a flat *under N words*, and the two disagreed for a release.
+  const asked = /<the full document, about (\d+) words>/.exec(written)
   expect(asked, 'brief() no longer states a word limit — BUDGET has nothing to stand on').not.toBeNull()
   const words = Number(asked[1])
   // ~6.5 characters a word including spaces, then characters ÷ 4, then a 15-step task.

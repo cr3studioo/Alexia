@@ -99,7 +99,7 @@ name and becomes a drop-in alternative rather than a competitor.
 | `demo.greet` | a name in, a greeting out | `plugins/hello` (M0) |
 | `voice.transcribe` | audio file in, text out | `plugins/voice` (M2) |
 | `voice.speak` | text in, audio played, nothing out | `plugins/voice` (M2) |
-| `persona.personality` | nothing in, the chosen personality's standing instruction out — core appends it to the system prompt once per task. **Optionally in three lengths**: `structuredContent` may carry `{ high, medium?, small? }`, and core sends the one the weakest model in that step's plan can read. `text` is still the long one and still the whole contract | `plugins/persona` (M4) |
+| `persona.personality` | nothing in, the chosen personality's standing instruction out — core appends it to the system prompt once per task. **Optionally in three lengths**: `structuredContent` may carry `{ high, medium?, small? }`, and core sends each model the one it can read, chosen as that model is asked. `text` is still the long one and still the whole contract | `plugins/persona` (M4) |
 | `persona.in_use` | nothing in, the name of the personality in use out — one short line, for the chip in the chat header |     `plugins/persona` (M8-7) |
 | `persona.not_her` | one answer and an optional line on what she should have said in, **nothing out** — core hands it over and forgets it | `plugins/persona` (M8-7) |
 | `memory.remember` | a sentence in, **nothing out** — it is kept across conversations and read back by `memory.recall` | `plugins/memory` (M7) |

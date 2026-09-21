@@ -3,7 +3,21 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { expect, test } from 'vitest'
 import { changed, LINES, marks, sizeOf } from '../diff.js'
-import { HEAR, HEAR_UNASKED, HEARD, HEARING, refining, ROOM, SECTIONS, sectionOf, unasked, usable, WAIT } from '../writing.js'
+import {
+  HEAR,
+  HEAR_UNASKED,
+  HEARD,
+  HEARING,
+  HEARING_AT_LEAST,
+  PRESS,
+  refining,
+  ROOM,
+  SECTIONS,
+  sectionOf,
+  unasked,
+  usable,
+  WAIT,
+} from '../writing.js'
 
 /**
  * **Refine and Edit** (`plan-personality.md` improvement 2, step 7).
@@ -227,6 +241,23 @@ test('a sample that fails is a sentence about the sample, never a document lost'
   expect(body).toMatch(/failed:/)
   // And it never writes to storage — it reads a document it was handed.
   expect(body).not.toContain('alexia.storage')
+})
+
+test('writing and hearing fit into one press, because core gives a button two minutes in total', () => {
+  // Adapt wrote for up to WAIT and then asked two samples of up to HEARING each — 230 seconds,
+  // so the press timed out after the row was saved, said it had failed, and the retry made a
+  // second row. The press has one clock now, and every sample is fitted into what is left of it.
+  expect(PRESS).toBeLessThan(120_000)
+  expect(WAIT).toBeLessThan(PRESS)
+  expect(HEARING_AT_LEAST).toBeLessThan(HEARING)
+  const at = source.indexOf('async function hearing')
+  const body = source.slice(at, source.indexOf('\n}', at))
+  expect(body).toMatch(/async function hearing\(doc, until = Date\.now\(\) \+ PRESS\)/)
+  expect(body).toMatch(/if \(left < HEARING_AT_LEAST\)/)
+  expect(body).toMatch(/timeout: Math\.min\(HEARING, left\)/)
+  // Adapt starts the clock when the press arrives, not when writing is done.
+  expect(source).toMatch(/const until = Date\.now\(\) \+ PRESS\n/)
+  expect(source).toMatch(/await hearing\(written\.doc, until\)/)
 })
 
 test('Hear her is a row action of its own, so it works after Refine and Edit too', () => {

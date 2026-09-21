@@ -17,9 +17,8 @@ import { caps, setCaps } from '../src/usage.js'
  * every model.*
  *
  * `sizes.test.ts` holds the rules. What only this reaches is the journey — the three lengths
- * leaving a real plugin over `structuredContent`, core choosing between them for the weakest
- * rung in the step's plan, and the chosen one arriving in the system prompt a provider is
- * actually sent. Every link in that was a separate place the long document could have gone
+ * leaving a real plugin over `structuredContent`, core choosing between them for the model each
+ * call goes to, and the chosen one arriving in the system prompt a provider is actually sent. Every link in that was a separate place the long document could have gone
  * out regardless.
  */
 
@@ -34,12 +33,19 @@ const ONE = readFileSync(join(extensions, 'voice', 'doc.txt'), 'utf8').trim()
 
 /** Every system prompt a model was actually sent, in order, with the model that got it. */
 const sent: { model: string; system: string }[] = []
+/** Models that answer 429, so the step falls back to the next rung. */
+const busy = new Set<string>()
 const models: Server = createServer((request, response) => {
   let raw = ''
   request.on('data', (chunk: Buffer) => (raw += chunk.toString()))
   request.on('end', () => {
     const body = JSON.parse(raw) as { model: string; messages: { role: string; content: string }[] }
     sent.push({ model: body.model, system: body.messages.find((one) => one.role === 'system')?.content ?? '' })
+    if (busy.has(body.model)) {
+      response.writeHead(429, { 'content-type': 'application/json' })
+      response.end(JSON.stringify({ error: { message: 'busy' } }))
+      return
+    }
     response.writeHead(200, { 'content-type': 'text/event-stream' })
     response.end(
       `data: ${JSON.stringify({ choices: [{ delta: { content: 'said something' }, finish_reason: 'stop' }] })}\n\n` +
@@ -129,6 +135,7 @@ const traced = async (): Promise<string> => {
 
 beforeEach(() => {
   sent.length = 0
+  busy.clear()
   alexia.store.kvSet(CORE, 'pins', {})
   setCaps(alexia.store, { ...caps(alexia.store), cross: true, daily: 5 })
 })
@@ -145,17 +152,32 @@ test('a paid model on its own gets the long one', async () => {
   expect(await traced()).toContain(`personality: ${String(THREE.high.length)} characters (high) sent`)
 }, 30_000)
 
-test('a plan with a 2.6B model and a paid one sends the short one, because a fallback lands there', async () => {
-  // §2's acceptance in as many words. The size cannot be read off the rung that is asked
-  // first: a 429 on the paid model hands the step to the 2.6B one, and the document has
-  // already gone with it.
-  plan('paid/big', 'vendor/tiny-2.6b')
+test('a strong model at the head of a plan gets its own length, whatever is at the tail', async () => {
+  // The size used to be chosen for the weakest rung in the whole plan, and a plan is every
+  // model that fits — so the 2.6B at the tail decided what the 70B that answered was told, and
+  // in practice nearly every step sent the short one. It is chosen per model asked now.
+  plan('vendor/free-70b', 'vendor/tiny-2.6b')
   await say('who are you')
-  // Which of the two is *asked* first is the list's own business — a paid model ranked first
-  // is still paid and sorts behind every free one (D112). What this is about is the document.
-  expect(sent[0]?.system).toContain(THREE.small)
-  expect(sent[0]?.system).not.toContain(THREE.high)
-  expect(await traced()).toContain(`personality: ${String(THREE.small.length)} characters (small) sent`)
+  expect(sent).toHaveLength(1)
+  expect(sent[0]?.model).toBe('vendor/free-70b')
+  expect(sent[0]?.system).toContain(THREE.medium)
+  expect(sent[0]?.system).not.toContain(THREE.small)
+  expect(await traced()).toContain(`personality: ${String(THREE.medium.length)} characters (medium) sent`)
+}, 30_000)
+
+test('a fallback to a 2.6B model is sent the short one, and the trace says both', async () => {
+  // §2's own worry, and still held: a 429 hands the step to the next rung, and the 2.6B model
+  // that answers it is never handed the long document.
+  busy.add('vendor/free-70b')
+  plan('vendor/free-70b', 'vendor/tiny-2.6b')
+  await say('who are you')
+  expect(sent.map((one) => one.model)).toEqual(['vendor/free-70b', 'vendor/tiny-2.6b'])
+  expect(sent[0]?.system).toContain(THREE.medium)
+  expect(sent[1]?.system).toContain(THREE.small)
+  expect(sent[1]?.system).not.toContain(THREE.medium)
+  expect(await traced()).toContain(
+    `personality: ${String(THREE.medium.length)} characters (medium), then ${String(THREE.small.length)} characters (small) sent`,
+  )
 }, 30_000)
 
 test('a free model of a real size gets the middle one', async () => {

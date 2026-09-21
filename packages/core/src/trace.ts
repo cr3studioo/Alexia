@@ -81,9 +81,9 @@ export interface Run {
    * one number per run, on the grounds that a personality is read once per task and a per-step
    * number would print the same figure many times and imply it could have differed. §2's three
    * lengths are exactly that changing: the document is still read once, but *which of its three
-   * sizes goes out* is decided per step, for the weakest rung in that step's plan — so a task
-   * that falls back from a paid model to a 2B router genuinely does send two different
-   * personalities, and one number here would now be the misleading one.
+   * sizes goes out* is decided for each model asked — so a task that falls back from a paid
+   * model to a 2B router genuinely does send two different personalities, and one number here
+   * would now be the misleading one.
    */
   personality?: { chars: number; size: Size }[]
   steps: TraceStep[]
@@ -139,11 +139,11 @@ export class Trace {
   }
 
   /**
-   * What personality this step's model call carries, in characters and in §2's own words.
+   * What personality a model call carries, in characters and in §2's own words.
    *
-   * Told **per step**, because the loop picks a length per step for the weakest rung in that
-   * step's plan. Repeats collapse, so the common case — one length, fifteen steps — still
-   * reads as one fact, and two entries mean a fallback genuinely changed what she was told.
+   * Told **per model asked**, because the loop picks a length for the model each call goes to.
+   * Repeats collapse, so the common case — one length, fifteen steps — still reads as one
+   * fact, and two entries mean a fallback genuinely changed what she was told.
    */
   personality(chars: number, size: Size): void {
     if (!this.#open) return

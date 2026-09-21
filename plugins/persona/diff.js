@@ -18,7 +18,7 @@
 /**
  * How many lines each side may have before this stops trying.
  *
- * The table is quadratic, and `usable()` already caps a document at 4,000 characters — so a
+ * The table is quadratic, and `usable()` already caps a document at 5,200 characters — so a
  * document that reaches this is not a personality, it is something that got past a check.
  * Saying *the whole thing changed* is the honest answer there, and a cheap one.
  */

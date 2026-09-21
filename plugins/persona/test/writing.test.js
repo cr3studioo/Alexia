@@ -142,6 +142,15 @@ test('a description that states its own name is believed before its opening word
   expect(nameSaid(undefined)).toBe('')
 })
 
+test('a hyphenated word is not a name label, and a spaced dash still is', () => {
+  // `name-dropping` named a personality *dropping, and keep answers short.* once.
+  const described = 'Blunt chief of staff. No name-dropping, and keep answers short.'
+  expect(nameSaid(described)).toBe('')
+  expect(nameFrom('', described)).toBe('Blunt chief of staff')
+  expect(nameSaid('Name – Alexia Role: chief of staff')).toBe('Alexia')
+  expect(nameSaid('name:Alexia')).toBe('Alexia')
+})
+
 /**
  * A cross-file assumption: the title can only match the row if the caller knows the name before
  * it asks. Naming after the answer came back is what let the two disagree.

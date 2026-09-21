@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { expect, test } from 'vitest'
 import type { Model } from '../src/catalog.js'
 import type { Health, Judgement } from '../src/health.js'
-import { READS_SHORT, sizeFor, sizedFor, weakest, type Choice, type Personality, type Strike, type World } from '../src/router.js'
+import { READS_SHORT, sizeFor, sizedFor, type Choice, type Personality, type Strike, type World } from '../src/router.js'
 import type { Provider } from '../src/provider.js'
 
 /**
@@ -83,18 +85,18 @@ test('a size nobody publishes is not smallness on its own — it takes a doubt a
   expect(sizeFor(pick(big), doubts({ doubted: true }))).toBe('medium')
 })
 
-test('the size is the weakest rung in the plan, not the one that is asked first', () => {
-  // §2's acceptance, and the reason it cannot be read off `choices[0]`: a 429 on the first rung
-  // hands the step to the second, and the document has already gone with it.
+test('the size is chosen for the model a call goes to, and the loop asks it per rung', () => {
+  // It was chosen once per step for the weakest rung in the whole plan — and a plan is every
+  // model that fits, so a router or a 2B at its tail decided what the strong model at its head
+  // was told. `send` asks each rung's messages just before asking it, so a fallback to a 2B
+  // still gets the short one and nothing else does. `sized.test.ts` holds this over the wire.
   const paid = pick(model({ id: 'paid/big', tier: 'T2', priceIn: 1 }))
   const local2b = pick(model({ id: 'gemma:2b', tier: 'T0', params: 2 }))
-  const free70b = pick(model({ id: 'vendor/free-70b', params: 70 }))
-  expect(weakest([paid, local2b], world())).toBe('small')
-  expect(weakest([paid], world())).toBe('high')
-  expect(weakest([paid, free70b], world())).toBe('medium')
-  expect(weakest([free70b, paid], world())).toBe('medium')
-  // An empty plan is the same direction every other unknown here takes.
-  expect(weakest([], world())).toBe('small')
+  expect(sizeFor(paid, world())).toBe('high')
+  expect(sizeFor(local2b, world())).toBe('small')
+  const agent = readFileSync(join(import.meta.dirname, '..', 'src', 'agent.ts'), 'utf8').replace(/\r\n/g, '\n')
+  expect(agent).toMatch(/sizedFor\(options\.personality, sizeFor\(choice, now\)\)/)
+  expect(agent).toMatch(/messagesFor: dressed/)
 })
 
 test('what is actually sent is what is said, so a one-document personality reads as the long one', () => {

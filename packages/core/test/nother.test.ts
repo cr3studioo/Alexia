@@ -51,15 +51,43 @@ test('one asks the question again and the other does not, which is the differenc
   expect(body).toContain("post('/api/not-her'")
   // The press alone is already a usable fact, so it is sent before the box opens — whoever
   // cannot be bothered to type has already said the useful thing.
-  expect(body.indexOf("void post('/api/not-her', {})")).toBeLessThan(body.indexOf('placeholder'))
+  expect(body.indexOf("post('/api/not-her', {})")).toBeGreaterThan(-1)
+  expect(body.indexOf("post('/api/not-her', {})")).toBeLessThan(body.indexOf('placeholder'))
+  // And what the line under it says depends on whether anything kept it: *Noted* over a mark
+  // nobody took was the button lying.
+  expect(body).toContain('back.heard !== false')
+  expect(body).toContain('that was not noted')
 })
 
 test('the button is drawn only when something is listening', () => {
   // The honest version of *there is nothing here this would tell*. An Alexia with no
   // personality plugin has no character an answer could have been out of.
   expect(shell).toMatch(/answerActions\(latest, state\.notHer === true\)/)
-  expect(serve).toMatch(/notHer: plugins\.answers\(CORE_CAPABILITIES\.notHer\)/)
+  expect(serve).toMatch(/\.\.\.\(await who\(\)\)/)
+  // **Listening means bound, not promised.** The manifest lists `persona.not_her` whether or not
+  // a personality is in use; the plugin binds it only when one is. Reading the promise drew the
+  // button with nobody behind it.
+  const at = serve.indexOf('const who = ()')
+  const body = serve.slice(at, serve.indexOf('})())', at))
+  expect(body).toMatch(/plugins\.offers\(CORE_CAPABILITIES\.notHer\)/)
   expect(CORE_CAPABILITIES.notHer).toBe('persona.not_her')
+})
+
+test('who is answering is asked once and kept until a plugin changes what it binds', () => {
+  // Read on every state poll, and each answer wakes a plugin to ask — so asked per poll it kept a
+  // lazy plugin running for as long as the window was open. Every change arrives as a tool change.
+  expect(serve).toMatch(/speaking \?\?= /)
+  const at = serve.indexOf('onToolsChanged: () => {')
+  expect(serve.slice(at, serve.indexOf('\n    },', at))).toContain('speaking = undefined')
+})
+
+test('a line typed after the press lands on the answer that was pressed', () => {
+  // The box stays open under its answer while the conversation carries on, so resolving
+  // *the latest answer* again when the line arrives filed it against whatever came next.
+  const at = serve.indexOf("url.pathname === '/api/not-her'")
+  const body = serve.slice(at, serve.indexOf('\n    }\n', at))
+  expect(body).toMatch(/line !== undefined && pressed\?\.session === session \? pressed : undefined/)
+  expect(body).toMatch(/pressed = pair/)
 })
 
 test('core hands the mark over and forgets it, and never fails the press on a plugin', () => {
@@ -69,7 +97,7 @@ test('core hands the mark over and forgets it, and never fails the press on a pl
   // Caught, logged, and the press still says yes: a button that sometimes errors for reasons
   // about a plugin is a button people stop pressing.
   expect(body).toMatch(/\.catch\(\(error: unknown\) => \{/)
-  expect(body).toMatch(/ok: true/)
+  expect(body).toMatch(/ok: true, heard/)
   // Nothing is marked, nothing is deleted, and the model's record is untouched — all three
   // belong to *Bad answer*, which is a different press about a different thing.
   expect(body).not.toContain('markLastAnswerBad')
@@ -89,7 +117,7 @@ test('the chip names who is answering, and is absent rather than saying none', (
   // is a control that is always there saying nothing.
   expect(markup).toContain('id="character"')
   expect(shell).toMatch(/characterChip\.hidden = state\.character === undefined \|\| state\.character === ''/)
-  expect(serve).toMatch(/character: await chip\(\)/)
+  expect(serve).toMatch(/chip\(\),\n\s+plugins\.answers\(CORE_CAPABILITIES\.notHer\)/)
   // **And it is called a character, not a persona** — invariant 1 caught the first name, which
   // was the plugin's. What the shell shows is who is answering; the plugin that supplies it is
   // core's business to resolve and nobody else's to name.

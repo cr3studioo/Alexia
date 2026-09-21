@@ -139,6 +139,7 @@ export class ModelChecker implements Checker {
           // The checker never spends money without being told to. A reviewer that quietly
           // costs more than the task is a reviewer people turn off.
           paidAllowed: placement === 'cloud',
+          ...(verdict.left !== undefined && { left: verdict.left }),
           plugin: 'checker',
         },
       )

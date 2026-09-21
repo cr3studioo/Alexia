@@ -165,6 +165,25 @@ test('a floor nothing reaches says which floor, rather than *try again shortly*'
   expect(ids(closed)[0]).toContain('set to free only')
 })
 
+test('a floor the spent free tiers meet asks them anyway, rather than sending somebody to connect one', () => {
+  // The ledger marks both free tiers spent and this machine has a model: without the floor the
+  // local one answers, as it always did. With a `T1` floor that local model is not a candidate,
+  // and *connect a provider* would be said to somebody with two connected — so the ledger's
+  // pre-check steps aside the way D107 says it does when honouring it leaves nothing.
+  const tired: World = {
+    ...world([here, writer, tiny]),
+    rungs: [
+      { provider: alpha, minute: Infinity, day: 0, month: Infinity, keyed: true },
+      { provider: beta, minute: Infinity, day: 0, month: Infinity, keyed: true },
+    ],
+  }
+  expect(ids(route({ messages: asked('anything') }, pins(), tired))).toEqual(['qwen3:8b'])
+  expect(ids(route({ messages: asked('anything'), minTier: 'T1' }, pins(), tired))).toEqual([
+    'vendor/writer-120b',
+    'vendor/tiny-2.6b',
+  ])
+})
+
 test('in Local mode a capable ask takes the model on this machine, rather than refusing', () => {
   // The trap `min_tier` sets for its own author, and the reason `plugins/persona` no longer
   // declares one: in Local mode the pool **is** this machine, so a `T1` floor is not *prefer a

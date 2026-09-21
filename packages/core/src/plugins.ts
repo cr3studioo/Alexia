@@ -353,6 +353,27 @@ export class Plugins {
    * answered and there is no way to ask, which is the invariant rather than politeness.
    */
   async capability(cap: string, args?: Record<string, unknown>): Promise<CallToolResult> {
+    const found = await this.#binding(cap)
+    if (found) return found.entry.process.callTool(found.tool, args)
+    throw new ProtocolError(ErrorCode.CAPABILITY_NOT_AVAILABLE, `nothing enabled provides ${cap}`)
+  }
+
+  /**
+   * **Would a call to this capability find a tool right now?** — the runtime half that
+   * {@link answers} deliberately does not ask.
+   *
+   * `answers()` reads the promise off the manifest and spawns nothing. This asks the binding,
+   * which is what a plugin withholds while it has nothing to answer with — a persona plugin with
+   * no personality in use still *promises* `persona.not_her`, and does not bind it. A caller
+   * about to draw a button that only works when something is bound needs this one. It wakes the
+   * plugin to ask, so a caller that asks often should keep the answer until tools change.
+   */
+  async offers(cap: string): Promise<boolean> {
+    return (await this.#binding(cap)) !== undefined
+  }
+
+  /** The enabled plugin and the tool that answer this capability, if any does. */
+  async #binding(cap: string): Promise<{ entry: Entry; tool: string } | undefined> {
     for (const entry of this.#entries.values()) {
       if (!this.#enabled.has(entry.manifest.id)) continue
       if (!entry.manifest.provides?.includes(cap)) continue
@@ -361,9 +382,9 @@ export class Plugins {
       const tool = (await entry.process.listTools().catch(() => [])).find((t) =>
         provided(t).includes(cap),
       )
-      if (tool) return entry.process.callTool(tool.name, args)
+      if (tool) return { entry, tool: tool.name }
     }
-    throw new ProtocolError(ErrorCode.CAPABILITY_NOT_AVAILABLE, `nothing enabled provides ${cap}`)
+    return undefined
   }
 
   /**

@@ -86,6 +86,16 @@ test('the capability takes an optional channel, and ignoring it is the old behav
   expect(source).toMatch(/return active\(\)/)
 })
 
+test('a table from before channels existed still answers with the row in use', () => {
+  // A plugin table grows a column the first time a key is written, so every row saved before
+  // this release has no `channel` — and `WHERE channel = ?` on it is SQLite's *no such column*.
+  // Uncaught, every task a phone started had no personality at all on an upgraded install.
+  const at = source.indexOf('const forChannel = async')
+  const body = source.slice(at, source.indexOf('\n}\n', at))
+  expect(body).toMatch(/where: \{ channel: said \}, limit: 1 \}\)\.catch\(\(\) => \[\]\)/)
+  expect(body).toMatch(/return active\(\)/)
+})
+
 test('a bound row is not a second kind of *in use*, and neither clears the other', () => {
   // The row in use answers everywhere nothing else claims; a bound row answers in its own place
   // and nowhere else. Two flags, two meanings, and a row action that touches only its own.

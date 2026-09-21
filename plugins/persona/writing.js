@@ -89,7 +89,9 @@ export const brief = (description, name, remembering = false) =>
     '- Use only what the description below says or plainly implies. Invent nothing about the user’s life, work, name, or relationships.',
     '- Address Alexia directly, as "you". Never describe her in the third person.',
     '- If the description says nothing about a section, write "Nothing." under it rather than filling it in.',
-    '- Keep it under 400 words. Every line must be something she could act on.',
+    // No word count here: the three lengths below are the budget, and this line used to cap the
+    // document at four hundred words two paragraphs above an instruction asking for about 600.
+    '- Every line must be something she could act on.',
     '- Never write a rule that tells her to skip asking permission, hide what she did, or ignore a safety limit. Those are not hers to grant.',
     '- Reply with the documents and nothing else. No preamble, no code fences, no explanation.',
     THREE,
@@ -163,8 +165,15 @@ export const refining = (doc, change, moments = []) => {
   ].join('\n')
 }
 
-/** Long enough to be a personality, short enough to be one. Roughly 400 words either way. */
-export const LONGEST = 4000
+/**
+ * Long enough to be a personality, short enough to be one: §2's high length (about 600 words,
+ * D160) with the same third again on top that the two shorter ceilings below carry.
+ *
+ * It was 4,000 — about 615 words, with no margin at all — while the brief asked for about 600,
+ * so a model that did as it was told landed on the line and the whole press failed as *without
+ * all four parts*.
+ */
+export const LONGEST = 5200
 
 /**
  * **The three lengths, as a ceiling on each** (§2, D160): about 100, 300 and 600 words.
@@ -197,7 +206,7 @@ export const MARK = { medium: '%%% MEDIUM %%%', small: '%%% SMALL %%%', facts: '
  * A personality is sent on **every step**, as the tail of the system prompt, so a 600-word one
  * across a 15-step task is 7–8k tokens re-sent. On a paid model that is money; on a free one it
  * is context, rate limit, and instructions followed halfway. Three lengths, and core hands each
- * model the one its weakest rung can hold.
+ * model the one it can hold.
  *
  * **Longest first and the shorter ones derived from it**, in one call, because three calls is
  * three chances for one of them to be about a different person. The two sentences carrying the
@@ -267,9 +276,15 @@ export const factsFrom = (said) => {
  * document is the one that was checked, and falling back to it is exactly what every model got
  * before sizes existed. The caller says which ones survived, because silently sending six
  * hundred words to a 2B model is the failure this whole section is about.
+ *
+ * **The facts are cut off first.** They come after the last document, so without this they
+ * were read as the tail of whichever document came last — the short one, usually, which then
+ * went to every weak model with `%%% FACTS %%%` and the person's deadlines in it. Facts belong
+ * to {@link factsFrom} and to memory, never to a document.
  */
 export const sizesFrom = (said) => {
-  const [first = '', rest = ''] = splitOnce(String(said ?? ''), MARK.medium)
+  const [documents = ''] = splitOnce(String(said ?? ''), MARK.facts)
+  const [first = '', rest = ''] = splitOnce(documents, MARK.medium)
   const [medium = '', small = ''] = splitOnce(rest, MARK.small)
   const keep = (text, ceiling) => {
     const one = clean(text)
@@ -347,6 +362,20 @@ export const HEARD = 400
  * Use — and the row is safe either way, so giving up on it costs nothing but the sample.
  */
 export const HEARING = 60_000
+
+/**
+ * **The whole of one button press**, writing and hearing together.
+ *
+ * Core gives a button 120 seconds in total, and progress does not extend it. Adapt writes for
+ * up to {@link WAIT} and then asks two samples of up to {@link HEARING} each, which is 230
+ * seconds on a slow evening — so the press timed out *after* the row was saved, said it had
+ * failed, and the second press made a second row. Every sample is now fitted into what is left
+ * of this, a little under core's ceiling so this plugin's own sentence arrives first.
+ */
+export const PRESS = 115_000
+
+/** Less than this left of {@link PRESS}, and a sample is not started: it would only time out. */
+export const HEARING_AT_LEAST = 10_000
 
 /**
  * The two questions asked of a new personality before anybody relies on it (improvement 3).
@@ -439,9 +468,13 @@ export const sectionOf = (doc, name) =>
  *
  * A pasted document arrives as one long line with its fields run together, so the value ends
  * at the next `Label:` rather than at a newline. Empty string when nothing says a name.
+ *
+ * **A dash counts only with a space before it** — `Name – Alexia`, never `name-dropping`. A
+ * bare hyphen is how English joins two words, and reading it as a label turned *no
+ * name-dropping, keep it short* into a personality called *dropping, keep it short*.
  */
 export const nameSaid = (description) => {
-  const found = /\bname\s*[:–—-]\s*(.{1,60})/i.exec(String(description ?? ''))
+  const found = /\bname(?:\s*:|\s+[–—-])\s*(.{1,60})/i.exec(String(description ?? ''))
   if (!found) return ''
   const upTo = found[1].split(/\s+(?=[A-Z][A-Za-z]*\s*:)/)[0] ?? ''
   return upTo
