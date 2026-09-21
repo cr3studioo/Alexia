@@ -3,7 +3,7 @@ import { PLANNER, routes, stature, type Model } from './catalog.js'
 import { OLLAMA } from './ollama.js'
 import { sent, spent, underHalf, type Rung } from './pool.js'
 import type { Judgement, Health } from './health.js'
-import { anonymous, chat, PATIENCE, ProviderError, PROVIDERS, type ChatRequest, type Provider, type Usage } from './provider.js'
+import { anonymous, chat, PATIENCE, ProviderError, PROVIDERS, type ChatRequest, type Heard, type Provider, type Usage } from './provider.js'
 import { redact, summarise } from './redact.js'
 import type { SecretStore } from './secrets.js'
 import { textOf, type Message, type Outcome, type Source, type Store } from './store.js'
@@ -802,7 +802,10 @@ export function route(ask: Ask, pins: Pins, world: World): Verdict {
    */
   const everyone = fitting(spend)
   const background = ask.background === true
-  const unrationed = background && mode === 'automatic' ? fitting(spend, false, pool.filter((c) => !dayLimited(c))) : []
+  // Free with no ration, not merely no ration: a paid model has none either, and counting it here
+  // put money — or, on a plugin's own clock, a refusal — ahead of free requests nobody had used.
+  const unrationed =
+    background && mode === 'automatic' ? fitting(spend, false, pool.filter((c) => !dayLimited(c) && !paid(c.model.tier))) : []
   const fitted =
     !background ? everyone
     : unrationed.length > 0 ? unrationed
@@ -1041,11 +1044,9 @@ export interface Ranking {
  *
  * - `price` — free-before-paid, the tier ladder, the per-token cost. Turning these round is
  *   what *strongest first* means, so both `/best` and {@link Ask.capable} turn them.
- * - `reach` — whether it has hands, and whose key it is on (§8.2's ladder). `/best` turns
- *   these because it always has and a chat asking for the strongest thing is asking to be
- *   sent as far up as the rungs go; {@link Ask.capable} does not, because a talker is not a
- *   better writer than a model with tools and a stranger's shared floor is not a better
- *   anything than the key you paid for.
+ * - `reach` — whether it has hands, and whose key it is on (§8.2's ladder). Nobody turns
+ *   these: a talker is not stronger than a model with tools, and a stranger's shared floor is
+ *   not a better anything than the key you paid for.
  * - `sure` — what predicts an answer at all: what failed here, whether it is a router, how
  *   big it is, how much the world uses it. Nobody turns these; a bigger, busier model that
  *   answered last time is the better one from either end.
@@ -1266,15 +1267,14 @@ export function ranking(
    * model that failed a minute ago, and a router, at the top of the strongest-first list, so
    * `sure` is never turned.
    *
-   * `/best` turns `price` and `reach` — paid first, the dearest first, and as far up §8.2's
-   * rungs as they go — which is what it has always done and what somebody typing it is asking
-   * for. **A plugin asking for a capable model turns only `price`**, and the difference is not
-   * a nicety: with `reach` turned as well, *write me a personality* on this Mac's own catalog
-   * chose a model with no tools, and then the keyless floor's 7B ahead of a 550B model on the
-   * owner's OpenRouter key. A stranger's shared floor is not a stronger model, it is a cheaper
-   * one — the ladder is only on the money half by accident of having been one boolean.
+   * **`/best` and a plugin asking for a capable model turn only `price`** — paid first, the
+   * dearest first. With `reach` turned as well, *write me a personality* on this Mac's own
+   * catalog chose a model with no tools, and then the keyless floor's 7B ahead of a 550B model
+   * on the owner's OpenRouter key; `/best` did the same, putting a talk-only model ahead of a
+   * frontier one with hands. A stranger's shared floor is not a stronger model, it is a cheaper
+   * one — the ladder was only on the money half by accident of having been one boolean.
    */
-  const way = (key: Key): number => ((from === 'best' && key.axis !== 'sure') || (from === 'capable' && key.axis === 'price') ? -1 : 1)
+  const way = (key: Key): number => ((from === 'best' || from === 'capable') && key.axis === 'price' ? -1 : 1)
   const deciding = (a: Choice, b: Choice): Key | undefined => keys.find((key) => key.compare(a, b) !== 0)
   return {
     compare: (a, b) => {
@@ -1517,6 +1517,16 @@ export interface Failure {
 
 /** How providers say *this conversation is longer than this model reads*. A 400 that says anything else is about the model. */
 const TOO_LONG = /context|too long|too large|too many tokens|maximum.{0,40}tokens|token limit|reduce the length/i
+/**
+ * **How providers say *that reply ceiling is more than this model writes*** — `max_tokens is too
+ * large`, Groq's *must be less than … the `context_window`*. Every one of these also matches
+ * {@link TOO_LONG}, and read that way a plugin asking for 4,000 tokens from a model that writes
+ * 2,000 was told *this conversation is too long — start a new chat* on its first message, with
+ * every model the same size then skipped. It is about the model, so the next one is asked.
+ */
+const REPLY_CAP = /max_tokens|max_completion_tokens|max_new_tokens|max_output_tokens|maximum output/i
+/** …unless it counts the conversation in as well, which is the conversation being too long for the window. */
+const COUNTS_INPUT = /messages|prompt|input/i
 
 /**
  * What a thrown error means for the walk, or `undefined` when it is not a provider failing at
@@ -1532,6 +1542,9 @@ export function failed(error: unknown, choice: Choice): Failure | undefined {
     // saying that *this model* wants one — the rest of its list still answers.
     if (trouble === 'keyless' && anonymous(provider)) return of('model', `${model.name} needs a ${provider.name} key`, 'needs-key')
     return of('provider', trouble === 'keyless' ? `${provider.name} has no key yet` : `your ${provider.name} key was refused`, 'key-refused')
+  }
+  if (status === 400 && REPLY_CAP.test(error.message) && !COUNTS_INPUT.test(error.message)) {
+    return of('model', `${model.name} cannot write a reply as long as this asks for`, 'failed')
   }
   if (status === 413 || (status === 400 && TOO_LONG.test(error.message))) {
     return of('request', `this conversation is too long for ${model.name}`, 'too-long')
@@ -1589,6 +1602,23 @@ export function stopped(failures: readonly Failure[], blocked?: string): string 
   if (last?.reach === 'request') lines.push('Nothing left to try reads more than that — start a new chat.')
   if (blocked !== undefined) lines.push(`${capital(blocked)}.`)
   return lines.join(' ')
+}
+
+/**
+ * **What a provider said about its limits, kept where it applies** (§4 D).
+ *
+ * Most count per key, so what one answer says is the whole provider's. Groq counts per model: read
+ * as the provider's, one model's day running out set every Groq model aside with it, 14,400-a-day
+ * ones included. On such a provider a count that reaches nothing is a wait on the one model — until
+ * the reset it named, or the end of that minute or day — and a count with some left says nothing
+ * about the others.
+ */
+export function listen(store: Store, choice: Choice, heard: Heard, at: number = Date.now()): void {
+  if (choice.provider.limitsPerModel !== true) return store.hear(choice.provider.id, heard, choice.model.id, at)
+  const minute = heard.minute !== undefined && heard.minute.remaining <= 0 ? (heard.minute.resets ?? at + 60_000) : 0
+  const day = heard.day !== undefined && heard.day.remaining <= 0 ? (heard.day.resets ?? Date.UTC(new Date(at).getUTCFullYear(), new Date(at).getUTCMonth(), new Date(at).getUTCDate() + 1)) : 0
+  const until = Math.max(heard.retryAt ?? 0, minute, day)
+  if (until > at) store.hear(choice.provider.id, { retryAt: until }, choice.model.id, at)
 }
 
 /**
@@ -1717,6 +1747,11 @@ export async function send(
   const refused = new Set<string>()
   /** The biggest window that has already proved too small for this conversation. */
   let outgrown: number | undefined
+  /** What today's allowance still has for this answer (D186), less anything a rung here has already billed. */
+  let left = hooks.left
+  /** Whether a paid rung's worst case fits in that — asked of the request as the first rung was dressed. */
+  const affords = (choice: Choice, messages: Message[] = request.messages): boolean =>
+    !paid(choice.model.tier) || left === undefined || dearest(choice.model, messages, request) <= left
   /** Whether a rung is still worth asking, given what this answer has already ruled out. */
   const open = (choice: Choice): boolean =>
     !unpaid(choice) && !refused.has(choice.provider.id) && (outgrown === undefined || choice.model.context > outgrown)
@@ -1779,12 +1814,9 @@ export async function send(
      * to what today has left; one that could go past it is skipped as the cap skips it, and the
      * walk goes on to a cheaper rung or a free one. Nothing is said unless nothing answers.
      */
-    if (paid(choice.model.tier) && hooks.left !== undefined) {
-      const worst = dearest(choice.model, messages, request)
-      if (worst > hooks.left) {
-        blocked = `${choice.model.name} could cost up to ${money(worst)} for this and today's allowance has ${money(Math.max(0, hooks.left))} left — raise it under the paid switch on the Models tab, or wait for tomorrow`
-        continue
-      }
+    if (left !== undefined && !affords(choice, messages)) {
+      blocked = `${choice.model.name} could cost up to ${money(dearest(choice.model, messages, request))} for this and today's allowance has ${money(Math.max(0, left))} left — raise it under the paid switch on the Models tab, or wait for tomorrow`
+      continue
     }
     // One plain line before the charge, not after it. Nobody is surprised by a bill from
     // something that did not say anything. It is also this rung's switch line, so the one
@@ -1836,7 +1868,9 @@ export async function send(
     // with money behind it talked itself out of the pool halfway through a day.
     if (!paid(choice.model.tier)) sent(store, choice.provider)
     hooks.onAsk?.(choice)
-    const later = choices.slice(at + 1).some(open)
+    // A rung the allowance will skip is not one that could still answer, so an empty or cut reply
+    // here is not thrown away for it.
+    const later = choices.slice(at + 1).some((next) => open(next) && affords(next))
     try {
       const { message, usage, cut, heard } = await chat(
         choice.provider,
@@ -1868,7 +1902,7 @@ export async function send(
        * the caller decides.
        */
       // What the provider said about its limits on this answer (§4 D).
-      if (heard !== undefined) store.hear(choice.provider.id, heard, choice.model.id)
+      if (heard !== undefined) listen(store, choice, heard)
       const empty = textOf(message).trim() === '' && (message.calls?.length ?? 0) === 0
       const short =
         empty ? `${choice.model.name} answered with nothing`
@@ -1876,27 +1910,39 @@ export async function send(
         : undefined
       const outcome: Outcome = short === undefined ? 'answered' : empty ? 'empty' : 'cut'
       record(choice, outcome, short === undefined ? 200 : 502)
+      // A daily test (§4 E) is evidence about a model, not somebody's spending: it goes to the
+      // record above and never into the ledger a person reads their costs from.
+      const bill = (): void => {
+        const cost = costOf(choice.model, usage)
+        if (left !== undefined) left -= cost
+        if (source !== 'test') store.recordUsage({
+          session: hooks.session,
+          plugin: hooks.plugin,
+          run: hooks.run,
+          model: choice.model.id,
+          // Who was asked for, which is the plan's first rung whether or not it answered. The
+          // two differ exactly when something fell back, and that is the cost worth explaining.
+          asked: choices[0]?.model.id ?? choice.model.id,
+          provider: choice.provider.id,
+          tokensIn: usage.in,
+          tokensOut: usage.out,
+          cost,
+        })
+      }
       if (short !== undefined && later) {
+        /**
+         * **A paid rung that answered with nothing was still billed for it** — a reasoning model
+         * can spend two thousand tokens thinking and stream no words. Moving on without writing
+         * that down left the day's allowance and the monthly cap short by exactly what it cost,
+         * so the next paid rung was held to money that had already gone.
+         */
+        if (paid(choice.model.tier)) bill()
         failures.push({ choice, reach: 'model', status: 502, says: short, outcome })
         if (spoke) hooks.onRestart?.()
         continue
       }
       if (!spoke) switched()
-      // A daily test (§4 E) is evidence about a model, not somebody's spending: it goes to the
-      // record above and never into the ledger a person reads their costs from.
-      if (source !== 'test') store.recordUsage({
-        session: hooks.session,
-        plugin: hooks.plugin,
-        run: hooks.run,
-        model: choice.model.id,
-        // Who was asked for, which is the plan's first rung whether or not it answered. The
-        // two differ exactly when something fell back, and that is the cost worth explaining.
-        asked: choices[0]?.model.id ?? choice.model.id,
-        provider: choice.provider.id,
-        tokensIn: usage.in,
-        tokensOut: usage.out,
-        cost: costOf(choice.model, usage),
-      })
+      bill()
       return {
         message,
         usage,
@@ -1907,7 +1953,7 @@ export async function send(
       }
     } catch (error) {
       // A refusal says the most about limits: *try again in 20 seconds* is on the 429 (§4 D).
-      if (error instanceof ProviderError && error.heard !== undefined) store.hear(choice.provider.id, error.heard, choice.model.id)
+      if (error instanceof ProviderError && error.heard !== undefined) listen(store, choice, error.heard)
       const failure = failed(error, choice)
       // The stop button, or a bug in core. Neither is somebody else's turn.
       if (failure === undefined || request.signal?.aborted === true) throw error
@@ -1922,5 +1968,6 @@ export async function send(
   if (last === undefined) throw new ProviderError(blocked === undefined ? 503 : 402, blocked ?? 'nothing was available to ask')
   const stop = new ProviderError(last.status, stopped(failures, blocked))
   if (refused.size > 0) stop.refused = [...refused]
+  if (failures.every((one) => one.outcome === 'unreachable')) stop.offline = true
   throw stop
 }

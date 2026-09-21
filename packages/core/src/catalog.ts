@@ -77,8 +77,21 @@ export interface Model {
  * own list says `tokenizer: "Router"`, which was not used: it also marks the `~vendor/…-latest`
  * aliases, each of which is one model, and Kilo's routers say `"Other"`.
  */
-export const routes = (model: Pick<Model, 'id' | 'name'>): boolean =>
-  /(?:^|[\s/:_-])(?:auto|router)(?:$|[\s/:_-])/i.test(model.id) || /\brouter\b|^auto\b/i.test(model.name)
+export const routes = (model: Pick<Model, 'id' | 'name'>): boolean => {
+  const known = routing.get(model)
+  if (known !== undefined) return known
+  const found = /(?:^|[\s/:_-])(?:auto|router)(?:$|[\s/:_-])/i.test(model.id) || /\brouter\b|^auto\b/i.test(model.name)
+  routing.set(model, found)
+  return found
+}
+
+/**
+ * **Read once per model, not once per comparison.** Automatic sorts hundreds of rows on every
+ * step, and the ranking asks both of these of each pair it compares — a regex over the same id
+ * thousands of times for an answer that cannot change while the row does not.
+ */
+const routing = new WeakMap<object, boolean>()
+const sized = new WeakMap<object, number | null>()
 
 /**
  * **Billions of parameters, from what the runner says or else from the id** (D159) — `-2.6b`,
@@ -92,9 +105,12 @@ export const routes = (model: Pick<Model, 'id' | 'name'>): boolean =>
  */
 export function sizeOf(model: Pick<Model, 'id' | 'params'>): number | undefined {
   if (model.params !== undefined) return model.params
+  const known = sized.get(model)
+  if (known !== undefined) return known ?? undefined
   const found = /(?:^|[\s/:_-])(?:(\d+)x)?e?(\d+(?:\.\d+)?)b(?=$|[\s/:_.-])/i.exec(model.id)
-  if (found === null) return undefined
-  return (found[1] === undefined ? 1 : Number(found[1])) * Number(found[2])
+  const billions = found === null ? undefined : (found[1] === undefined ? 1 : Number(found[1])) * Number(found[2])
+  sized.set(model, billions ?? null)
+  return billions
 }
 
 /**
@@ -501,14 +517,16 @@ export class Catalog {
  * only when the list was known before — the first fetch on a fresh install is not four hundred
  * new models. *1 new free model since 09:15: GLM 5.2 on OpenRouter. Not tried yet.*
  */
-export function news(change: Change, named?: { provider: string; since: string }): string | undefined {
+export function news(change: Change, named?: { provider: string; since?: string }): string | undefined {
   const free = change.added.filter((m) => m.tier === 'T1')
   if (named !== undefined) {
     if (!change.listKnown || free.length === 0) return undefined
     const shown = free.slice(0, 3).map((m) => m.name)
     const more = free.length - shown.length
     const names = more > 0 ? `${shown.join(', ')} and ${String(more)} more` : shown.join(' and ')
-    return `${String(free.length)} new free model${free.length === 1 ? '' : 's'} since ${named.since}: ${names} on ${named.provider}. Not tried yet.`
+    // No time when there is none to say: a list whose clock a parser change reset was last read at
+    // some unknown moment, and printing it made *since 01:00* out of the epoch.
+    return `${String(free.length)} new free model${free.length === 1 ? '' : 's'} since ${named.since ?? 'the list was last read'}: ${names} on ${named.provider}. Not tried yet.`
   }
   const [count, kind] = free.length > 0 ? [free.length, 'free '] : [change.added.length, '']
   if (count === 0) return undefined

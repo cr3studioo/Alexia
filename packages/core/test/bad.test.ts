@@ -32,8 +32,10 @@ const models: Server = createServer((request, response) => {
     bodies.push(raw)
     response.writeHead(200, { 'content-type': 'text/event-stream' })
     const words = model === 'model/first' ? 'a confidently wrong answer' : `an answer from ${model}`
+    // A router answers under the name of whatever it picked, and says so on the chunk.
+    const reported = raw.includes('route me') ? { model: `resolved/${model}` } : {}
     response.end(
-      `data: ${JSON.stringify({ choices: [{ delta: { content: words }, finish_reason: 'stop' }] })}\n\n` +
+      `data: ${JSON.stringify({ ...reported, choices: [{ delta: { content: words }, finish_reason: 'stop' }] })}\n\n` +
         `data: ${JSON.stringify({ usage: { prompt_tokens: 10, completion_tokens: 10 } })}\n\ndata: [DONE]\n\n`,
     )
   })
@@ -148,4 +150,24 @@ test('with the paid switch on, the question is asked again above the tier of the
   asked.length = 0
   expect((await chat({ again: true, bad: {} })).said).toBe('an answer from model/paid')
   expect(asked).toEqual(['model/paid'])
+}, 30_000)
+
+test('marked bad on the highest tier there is, it is asked again at any tier rather than refused', async () => {
+  // The switch is still on and the last answer came from model/paid: nothing here is above it.
+  asked.length = 0
+  const again = await chat({ again: true, bad: {} })
+  expect(again.status).toBe(200)
+  expect(again.said).toBe('an answer from model/second')
+  expect(asked).toEqual(['model/second'])
+}, 30_000)
+
+test('an answer a router gave under another name is marked, avoided and recorded as the row that was asked', async () => {
+  expect((await post('/api/action', { key: 'set_cross', row: 'off' })).ok).toBe(true)
+  await post('/api/action', { key: 'new_chat' })
+  expect((await chat({ text: 'route me somewhere' })).said).toBe('an answer from model/second')
+  asked.length = 0
+  await chat({ again: true, bad: {} })
+  // Not the same row again under the name it came back with.
+  expect(asked).toEqual(['model/first'])
+  expect(alexia.store.tries().filter((one) => one.outcome === 'bad-answer').at(-1)?.model).toBe('model/second')
 }, 30_000)

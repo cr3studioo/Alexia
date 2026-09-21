@@ -120,6 +120,12 @@ export interface Provider {
   rpm?: number
   rpd?: number
   /**
+   * **Its limits are counted per model, not per key** — Groq and Cerebras. What its headers say is
+   * then about the one model asked: a model whose day runs out waits until the reset, and the rest
+   * of the provider's models, each with a day of their own, carry on (§4 D).
+   */
+  limitsPerModel?: true
+  /**
    * **The day's free requests once the account has bought credit** (§4 D), where that differs —
    * OpenRouter's 50 becomes 1,000 after a one-off $10. Read only when {@link keyInfo} has said the
    * account is past its free tier; until then {@link rpd} is the deliberately low guess (D107).
@@ -217,6 +223,7 @@ export const PROVIDERS: Provider[] = [
     trainsOnYourData: 'unknown',
     rpm: 30,
     rpd: 1_000,
+    limitsPerModel: true,
   },
   {
     id: 'cerebras',
@@ -238,6 +245,7 @@ export const PROVIDERS: Provider[] = [
     friction: 'Wants a verified payment method, and its $5 of free credit runs out after 30 days',
     wantsCard: true,
     rpm: 5,
+    limitsPerModel: true,
   },
   {
     id: 'google',
@@ -921,6 +929,12 @@ export class ProviderError extends Error {
    * pause and offer *Allow*.
    */
   refused?: string[]
+  /**
+   * **Nothing in the plan could be reached at all** — every rung failed to connect. That is this
+   * Mac offline far more often than every provider down, and a paid model is behind the same
+   * network, so it is no reason to pause and offer *Allow* either.
+   */
+  offline?: true
 
   constructor(
     readonly status: number,
@@ -1157,6 +1171,9 @@ export async function chat(
           content += delta.content
           onDelta?.(delta.content)
         }
+        // A provider sending its calls as anything but a list has broken the answer, and saying so
+        // here keeps it the provider's failure rather than a TypeError that reads as core's.
+        if (delta.tool_calls !== undefined && !Array.isArray(delta.tool_calls)) throw new Broke('it sent tool calls in a shape nobody reads')
         for (const call of delta.tool_calls ?? []) {
           // Streamed in pieces and keyed by index: the id and name arrive once, the arguments
           // in fragments that only mean anything concatenated.
@@ -1168,7 +1185,14 @@ export async function chat(
       }
       if (!finished) throw new Broke('the stream ended before the answer did')
     } catch (error) {
-      gaveUp(error)
+      /**
+       * **Only what the stream threw is the provider's**: a read that broke, a frame that said it
+       * failed, a clock that ran out, the stop button. Anything else — a bug here, a caller's
+       * `onDelta` that threw — goes out as itself, because read as *could not be reached* it made
+       * `send()` walk the whole plan into the same bug, striking every model on the way.
+       */
+      if (error instanceof ProviderError || error instanceof Broke || patience.signal.aborted || request.signal?.aborted === true) gaveUp(error)
+      throw error
     }
 
     const asked = calls.filter((c) => c !== undefined)

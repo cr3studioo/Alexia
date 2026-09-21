@@ -643,3 +643,22 @@ test('the four rows found wrong in D161 say what their providers publish now (D1
   // And only Cerebras asks for a card, which is what the key wall now works out from the rows.
   expect(PROVIDERS.filter((one) => one.wantsCard === true).map((one) => one.id)).toEqual(['cerebras'])
 })
+
+test('a bug on this side of the stream is thrown as itself, never as a provider that could not be reached', async () => {
+  answer = { status: 200, frames: [JSON.stringify({ choices: [{ delta: { content: 'Hello' }, finish_reason: 'stop' }] })] }
+  const bug = new TypeError('the screen fell over')
+  const thrown = await chat(
+    provider,
+    { model: 'm', messages: [] },
+    () => {
+      throw bug
+    },
+    secrets,
+  ).catch((error: unknown) => error)
+  // Not a `ProviderError`: `send()` stops on it rather than walking every model into the same bug.
+  expect(thrown).toBe(bug)
+
+  // Calls sent as anything but a list are the provider breaking its answer, and read as that.
+  answer = { status: 200, frames: [JSON.stringify({ choices: [{ delta: { tool_calls: { index: 0 } }, finish_reason: 'stop' }] })] }
+  await expect(chat(provider, { model: 'm', messages: [] }, undefined, secrets)).rejects.toMatchObject({ status: 0, trouble: 'dropped' })
+})

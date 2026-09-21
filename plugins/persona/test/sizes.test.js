@@ -151,7 +151,7 @@ test('Adapt and Refine both ask for the three, in the same words', () => {
 
 test('a version carries all three, and a row written before them reads back empty rather than missing', () => {
   const row = { doc: long, doc_small: 'short', doc_medium: 'middle', described: 'blunt', wrote: 'a/model', at: 5 }
-  expect(versionOf(row)).toEqual({ doc: long, docSmall: 'short', docMedium: 'middle', described: 'blunt', wrote: 'a/model', at: 5 })
+  expect(versionOf(row)).toEqual({ doc: long, docSmall: 'short', docMedium: 'middle', described: 'blunt', wrote: 'a/model', removed: '[]', at: 5 })
   // Empty, not absent: Undo writes a version back onto the row whole, and a missing key would
   // leave the *old* short one beside the restored long one — a person two versions apart.
   expect(versionOf({ doc: long, at: 5 })).toMatchObject({ docSmall: '', docMedium: '' })

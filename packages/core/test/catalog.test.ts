@@ -513,6 +513,8 @@ test('the lists are fetched again after six hours and not after five', async () 
     // The line the Models tab shows, once, and only for a list that was known before.
     expect(news(later, { provider: 'OpenRouter', since: '09:15' })).toBe('1 new free model since 09:15: GLM 5.2 on OpenRouter. Not tried yet.')
     expect(news({ ...later, listKnown: false }, { provider: 'OpenRouter', since: '09:15' })).toBeUndefined()
+    // A list whose clock a parser change reset has no time to name, and never names the epoch.
+    expect(news(later, { provider: 'OpenRouter' })).toBe('1 new free model since the list was last read: GLM 5.2 on OpenRouter. Not tried yet.')
   } finally {
     Date.now = real
   }

@@ -11,6 +11,7 @@ import {
   bubble,
   dearest,
   failed,
+  listen,
   MODES,
   route,
   send,
@@ -106,12 +107,13 @@ test('the cheapest rung that can do the job, and nothing dearer', () => {
   const withTools = { messages: asked('sort my downloads'), tools: [{ name: 'fs.list' }] }
   expect(ids(route(withTools, pins(), world()))).toEqual(['free/tools', 'paid/small', 'paid/frontier'])
 
-  // And `/best` walks from the other end.
+  // And `/best` walks the money from the other end — but not the hands: a model that can only
+  // talk is not stronger than one that can use tools, from either end.
   expect(ids(route({ messages: asked('refactor this') }, pins({ prefer: 'best' }), world()))).toEqual([
     'paid/frontier',
     'paid/small',
-    'free/text',
     'free/tools',
+    'free/text',
   ])
 })
 
@@ -1925,5 +1927,77 @@ test('when every paid rung could go past what today has left, the stop says so a
   // A rung the allowance does not govern is asked as before.
   const asked_ = await send([{ model: dear, provider: two }], { messages: asked('hello'), maxTokens: 6_000 }, ledger, keys)
   expect(asked_.model.id).toBe('paid/dear')
+  ledger.close()
+})
+
+test('a reply ceiling the model cannot write is about the model, not a conversation that is too long', () => {
+  const choice = { model: free('free/short-writer'), provider: alpha }
+  const capped = failed(new ProviderError(400, 'max_tokens is too large: 4000. This model supports at most 2048 completion tokens'), choice)
+  expect(capped).toMatchObject({ reach: 'model' })
+  expect(capped?.says).toBe('free/short-writer cannot write a reply as long as this asks for')
+  // Groq's wording names the window too, and is still about the reply.
+  const groq = failed(new ProviderError(400, '`max_tokens` must be less than or equal to `8192`, the maximum value for `max_tokens` is less than the `context_window` for this model'), choice)
+  expect(groq).toMatchObject({ reach: 'model' })
+  // One that counts the conversation in is the conversation being too long, as it always was.
+  const long = failed(new ProviderError(400, "This model's maximum context length is 8192 tokens. However, you requested 9000 tokens (5000 in the messages, 4000 in the completion)."), choice)
+  expect(long).toMatchObject({ reach: 'request', outcome: 'too-long' })
+})
+
+test('a paid rung that answered with nothing is still written down as spent, and held against the rest of the day', async () => {
+  const { two, keys, ledger } = await scripted()
+  const thinker = model({ id: 'paid/thinker', tier: 'T3', priceIn: 1_000, priceOut: 1_000, provider: 'beta' })
+  mute = new Set(['paid/thinker'])
+  const answer = await send(
+    [
+      { model: thinker, provider: two },
+      { model: cheapPaid, provider: two },
+    ],
+    { messages: asked('hello'), maxTokens: 200 },
+    ledger,
+    keys,
+    { left: 1 },
+  )
+  expect(answer.model.id).toBe('paid/small')
+  // The empty one's ten prompt tokens at $1,000 a million: a cent, billed and now in the ledger
+  // beside whatever the answer that followed cost.
+  expect(ledger.spend(0)).toBeGreaterThanOrEqual(0.01)
+  mute = new Set()
+  ledger.close()
+})
+
+test('background asks the free first half of a rationed day before a paid model (§4 F)', () => {
+  // Every free model here is on a provider with a daily ration; the only unrationed thing is paid.
+  const plan = route({ messages: asked('check my messages'), background: true }, pins(), world({ models: [freeTools, cheapPaid] }))
+  expect(ids(plan)[0]).toBe('free/tools')
+})
+
+test('a provider that counts per model runs out one model at a time, not all of them (§4 D)', () => {
+  const ledger = new Store(':memory:')
+  const groq: Provider = { id: 'groq', name: 'Groq', baseUrl: 'http://127.0.0.1:9', rpm: 30, rpd: 1_000, limitsPerModel: true }
+  const at = Date.UTC(2026, 8, 21, 12, 0, 0)
+  const resets = at + 3 * 60 * 60 * 1000
+  listen(ledger, { model: free('openai/gpt-oss-120b', { provider: 'groq' }), provider: groq }, { day: { remaining: 0, resets } }, at)
+  // The provider's count is untouched, so every other Groq model is still in the pool…
+  expect(ledger.heard('groq', at)).toEqual({})
+  expect(remaining(ledger, groq, at).day).toBe(1_000)
+  // …and the one that ran out waits until its own reset.
+  expect(ledger.waits(at).get('groq\nopenai/gpt-oss-120b')).toBe(resets)
+  // A count with some left says nothing about the others.
+  listen(ledger, { model: free('llama-3.1-8b-instant', { provider: 'groq' }), provider: groq }, { day: { remaining: 12 } }, at)
+  expect(ledger.heard('groq', at)).toEqual({})
+  // A provider that counts per key is read as it always was.
+  listen(ledger, { model: free('free/text'), provider: alpha }, { day: { remaining: 3 } }, at)
+  expect(ledger.heard('alpha', at)).toEqual({ day: 3 })
+  ledger.close()
+})
+
+test('a plan nothing in which could be reached says so, and is no reason to offer a paid model', async () => {
+  const keys = memorySecrets()
+  await keys.set(CORE, keyOf(alpha), 'sk-a')
+  const ledger = new Store(':memory:')
+  // Port 1 refuses the connection: this Mac offline, as far as the walk can tell.
+  const stop = await send([{ model: freeText, provider: alpha }], { messages: asked('hello') }, ledger, keys).catch((error: unknown) => error)
+  expect(stop).toBeInstanceOf(ProviderError)
+  expect((stop as ProviderError).offline).toBe(true)
   ledger.close()
 })

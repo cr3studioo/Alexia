@@ -111,6 +111,13 @@ export interface Judgement {
   tags: Tag[]
   /** Set aside, and why: Automatic and a list skip it while anything else is left (D161). */
   aside?: Aside
+  /**
+   * **Set aside for what its provider's other models said, not for anything it said itself** —
+   * *needs a key* because two of them wanted one before any of them answered (D165). The daily
+   * test still asks it without a key: nothing in its own record says it needs one, and on a fresh
+   * install the two refusals can arrive before the model that works keyless is ever tried.
+   */
+  byProvider?: true
   /** New, and has not answered here yet: the bottom of its group. */
   untested: boolean
   /** Too many errors, or bad answers: below every model in its group without doubts. */
@@ -227,11 +234,15 @@ export function judge(
     const standIn = newish && answeredAt !== undefined && model.weekly === undefined ? middle(model) : undefined
 
     const reasons: Aside[] = []
+    /** Set aside for wanting a key by its provider's record alone (D165). */
+    let byProvider = false
     if (!keyed.has(model.provider)) {
-      const byProvider = refused.get(model.provider)
-      const whole = byProvider !== undefined && byProvider.size >= KEYLESS.models && !answeredOn.has(model.provider)
-      if (count('needs-key') >= KEYLESS.refusals || whole) {
+      const refusing = refused.get(model.provider)
+      const whole = refusing !== undefined && refusing.size >= KEYLESS.models && !answeredOn.has(model.provider)
+      const itself = count('needs-key') >= KEYLESS.refusals
+      if (itself || whole) {
         reasons.push('needs a key')
+        byProvider = !itself && !(refusing?.has(model.id) ?? false)
       }
     }
     if (count('retired') >= GONE || listed?.goneAt !== undefined || (model.expires !== undefined && now >= model.expires)) {
@@ -265,6 +276,7 @@ export function judge(
     health.set(key, {
       tags,
       ...(reasons[0] !== undefined && { aside: reasons[0] }),
+      ...(reasons[0] === 'needs a key' && byProvider && { byProvider: true }),
       untested,
       doubted: errors || bad,
       ...(standIn !== undefined && { standIn }),

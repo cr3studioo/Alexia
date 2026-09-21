@@ -33,7 +33,13 @@
  * matches nothing here.
  */
 const SKIPPING = [
-  /\b(?:do not|don'?t|never|dont)\s+(?:ask|confirm|check|clear|verify|wait for)\b/,
+  /*
+   * *Never ask before sending* and *never ask more than one question at a time* share their first
+   * two words, and only the first is about the gate. So the verb counts only where what follows
+   * it is the ask itself — nothing, *first*, *before*, *for permission*, *whether*, optionally
+   * with a *me* in between — and *don't check in constantly* is a style rule again.
+   */
+  /\b(?:do not|don'?t|never|dont)\s+(?:ask|confirm|check|clear|verify|wait for)(?:\s+(?:with\s+)?(?:me|us|them|him|anyone|anybody))?(?:\s+(?:first|before|beforehand|permission|approval|confirmation|whether|if|for\s+(?:permission|approval|confirmation|the ok|a yes|sign-off)|my\s+(?:ok|okay|approval|permission|go-ahead|say-so))\b|\s*(?:$|[.,;:!—–-]))/,
   /\bwithout\s+(?:asking|checking|confirming|permission|approval|clearance|consent|my ok)\b/,
   /\bskip(?:ping|s)?\s+(?:the\s+|any\s+)?(?:ask|asking|question|questions|confirmation|approval|permission|check|checks)\b/,
   /\bno\s+need\s+to\s+(?:ask|confirm|check|clear)\b/,
@@ -70,15 +76,18 @@ const IGNORING = [
   // No bare `caps` here: *no caps* is somebody asking her not to shout, and a check that
   // reads it as *no spending cap* removes a style rule and tells them it was a safety line.
   // The word only counts as a limit where a verb above put it beyond doubt.
-  /\b(?:no|without)\s+(?:\w+\s+){0,2}?(?:limits?|restrictions?|guardrails?)\b/,
+  // *There are no limits to her curiosity* is praise, not a spending rule: a limit *to* somebody's
+  // quality is left alone, and *no limits to what you spend* still comes out.
+  /\b(?:no|without)\s+(?:\w+\s+){0,2}?(?:limits?|restrictions?|guardrails?)\b(?!\s+to\s+(?:her|his|your|my|their|its|the)\b)/,
   /\bregardless\s+of\s+(?:\w+\s+){0,3}?(?:limit|limits|cap|caps|policy|policies|rule|rules|budget|cost)\b/,
   /\beven\s+if\s+(?:you(?:'re| are)\s+not\s+allowed|it(?:'s| is)\s+(?:not allowed|forbidden|against))\b/,
   /\b(?:spend|use)\s+whatever\s+(?:it takes|you (?:need|want))\b/,
 ]
 
 const HUMAN = [
-  /\byou\s+(?:are|'re)\s+(?:a\s+)?(?:real\s+)?(?:human|person|man|woman)\b/,
-  /\byou\s+(?:are|'re)\s+not\s+(?:an?\s+)?(?:ai|a\.i\.|assistant|bot|robot|model|program|machine)\b/,
+  // *You're*, which is how most people write it, as well as *you are*.
+  /\byou(?:\s+are|'re)\s+(?:a\s+)?(?:real\s+)?(?:human|person|man|woman)\b/,
+  /\byou(?:\s+are|'re)\s+not\s+(?:an?\s+)?(?:ai|a\.i\.|assistant|bot|robot|model|program|machine)\b/,
   /\b(?:pretend|claim|insist|say|tell them|tell people)\s+(?:that\s+)?(?:you(?:'re| are)\s+)?(?:a\s+)?(?:human|person|not an ai|not a bot)\b/,
   /\b(?:do not|don'?t|never)\s+(?:say|admit|reveal|mention|disclose)\s+(?:that\s+)?you(?:'re| are)?\s*(?:an?\s+)?(?:ai|a\.i\.|assistant|bot|robot|model|program)\b/,
   /\bdeny\s+(?:being|that you(?:'re| are))\b/,

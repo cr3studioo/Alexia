@@ -557,6 +557,10 @@ export const versionOf = (row) => ({
   docMedium: String(row?.doc_medium ?? ''),
   described: String(row?.described ?? ''),
   wrote: String(row?.wrote ?? ''),
+  // What the check took out of that version, as stored. It goes back with the version: Undo that
+  // left the other version's notes on the row said lines were removed that never were, and the
+  // other way round.
+  removed: typeof row?.removed === 'string' ? row.removed : JSON.stringify(row?.removed ?? []),
   at: Number(row?.at ?? 0),
 })
 
@@ -567,6 +571,7 @@ export const asRow = (version) => ({
   doc_medium: version.docMedium ?? '',
   described: version.described ?? '',
   wrote: version.wrote ?? '',
+  removed: version.removed ?? '[]',
   at: version.at ?? 0,
 })
 
