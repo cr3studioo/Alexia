@@ -67,6 +67,18 @@
       "hint": "Adapt saves her without switching, and two sample answers come back so you know what you are choosing. Turn this off and Adapt switches straight away, the way it used to."
     },
     {
+      "type": "choice",
+      "key": "hear_length",
+      "label": "Hear her at",
+      "default": "chat",
+      "options": [
+        { "value": "chat", "label": "What your chat gives her", "hint": "The length the model your chat asks first is given, on that model. The sample says which one that is." },
+        { "value": "small", "label": "Short", "hint": "About 100 words, on a model your chat would give the short one to: a small model or a router." },
+        { "value": "medium", "label": "Medium", "hint": "About 300 words, on a model your chat would give the medium one to: a free model of 7B or more." },
+        { "value": "high", "label": "Full", "hint": "About 600 words, on a model your chat would give the full one to. Those are paid models, so with paid models on under Models this costs money, and the sample says how much. With them off, it is heard on the strongest free model instead." }
+      ]
+    },
+    {
       "type": "action",
       "key": "adapt",
       "label": "Adapt",

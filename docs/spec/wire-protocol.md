@@ -426,6 +426,35 @@ that does not know the key ignores it and answers without tools — precisely wh
 the key existed. Nothing a plugin can see goes wrong, which is the bar
 [`versions.md`](./versions.md) sets for moving the number.
 
+#### `alexia/lengths` — *a personality in three lengths, and which one to hear*
+
+One optional key on the request's `_meta`, for a plugin handing core a personality to be
+heard (D189):
+
+```jsonc
+{ "method": "sampling/createMessage",
+  "params": {
+    "messages": [ … ],
+    "systemPrompt": "…the long one…",
+    "_meta": { "alexia/lengths": { "high": "…", "medium": "…", "small": "…", "hear": "small" } } } }
+```
+
+Core sends each model the length the chat would give it — or, with `hear` set to `small`,
+`medium` or `high`, that length, on a model the chat would give it to, under the person's own
+pins, slider and paid switch. A length only paid models are given is out of reach with paid
+off, and then the strongest model that may answer hears it instead. The **result** carries the
+same key, saying what happened:
+
+```jsonc
+"_meta": { "alexia/lengths": { "sent": "high", "model": "Paid One", "paid": true, "cost": 0.0045,
+                               "matched": true, "asked": "high",
+                               "chat": { "model": "Big 70B", "size": "medium" } } }
+```
+
+`chat` is the model the chat asks first right now and the length it is given — the answer to
+*which length will she get?* **No revision of `alexia_protocol`**: an Alexia that does not
+know the key sends `systemPrompt` as it always did and puts nothing on the result.
+
 ### Elicitation
 
 `elicitation/create` is how a plugin asks the user a question — an API key, a folder, a

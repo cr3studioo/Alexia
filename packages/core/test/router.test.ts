@@ -11,6 +11,7 @@ import {
   bubble,
   dearest,
   failed,
+  hearingPlan,
   listen,
   MODES,
   route,
@@ -2000,4 +2001,20 @@ test('a plan nothing in which could be reached says so, and is no reason to offe
   expect(stop).toBeInstanceOf(ProviderError)
   expect((stop as ProviderError).offline).toBe(true)
   ledger.close()
+})
+
+test('heard at one length, a sample goes to a model the chat gives that length to, and says when none could (D189)', () => {
+  const tiny = { model: model({ id: 'free/tiny-2b', tier: 'T1' }), provider: alpha }
+  const big = { model: model({ id: 'free/big-70b', tier: 'T1', supportsTools: true }), provider: alpha }
+  const dear = { model: model({ id: 'paid/big', tier: 'T3', priceIn: 3, provider: 'beta' }), provider: beta }
+  const plan = [big, tiny, dear]
+  const at = (want: 'small' | 'medium' | 'high', from = plan) => {
+    const heard = hearingPlan(from, {}, want)
+    return [heard.choices.map((one) => one.model.id), heard.matched]
+  }
+  expect(at('small')).toEqual([['free/tiny-2b'], true])
+  expect(at('medium')).toEqual([['free/big-70b'], true])
+  expect(at('high')).toEqual([['paid/big'], true])
+  // Paid out of the plan — the switch off — and the full one goes to the strongest free model instead.
+  expect(at('high', [tiny, big])).toEqual([['free/big-70b', 'free/tiny-2b'], false])
 })

@@ -5,6 +5,7 @@ import { describe, expect, test } from 'vitest'
 import {
   ALEXIA_METHODS,
   ErrorCode,
+  LENGTHS_META,
   PERMISSIONS,
   PREVIEW_META,
   PROVIDES_META,
@@ -35,8 +36,9 @@ describe('the specs and the code say the same thing', () => {
       .filter((n) => !n.endsWith('/'))
     expect(named.length).toBeGreaterThan(8) // the scanner is actually reading the specs
     // Some are not methods: one notification core sends down, and the `_meta` keys — the two
-    // extension flags on a request, and the two a plugin puts on a progress notification.
-    const known = [SETTINGS_CHANGED, PROVIDES_META, TOOLS_META, PREVIEW_META, STAGES_META] as string[]
+    // extension flags on a request (and a personality's lengths, D189), and the two a plugin puts on
+    // a progress notification.
+    const known = [SETTINGS_CHANGED, PROVIDES_META, TOOLS_META, LENGTHS_META, PREVIEW_META, STAGES_META] as string[]
     const unknown = [...new Set(named)].filter((n) => !isAlexiaMethod(n) && !known.includes(n))
     expect(unknown, 'documented but not implemented').toEqual([])
   })

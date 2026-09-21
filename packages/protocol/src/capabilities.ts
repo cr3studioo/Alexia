@@ -181,6 +181,21 @@ export const PROVIDES_META = 'alexia/provides'
  */
 export const FILES_META = 'alexia/files'
 
+/**
+ * The `_meta` key a plugin puts on a `sampling/createMessage` to hand over **a personality in
+ * its three lengths, and which one to hear** (D189).
+ *
+ * On the request: `{ high, medium?, small?, hear? }` — the three documents, and `hear` one of
+ * `small`, `medium`, `high`, or absent for *as the chat would*. Core sends each model the length
+ * the chat would give it; with `hear` set it sends that length, to a model the chat would give it
+ * to, under the person's own pins and paid switch. On the **result**, the same key says what
+ * happened: `{ sent, model, paid, cost, matched, chat?: { model, size } }`.
+ *
+ * A flag a plugin cannot see going wrong, like the others: an Alexia that does not know it sends
+ * `systemPrompt` as it always did and puts nothing on the result.
+ */
+export const LENGTHS_META = 'alexia/lengths'
+
 
 /**
  * The `_meta` key a plugin puts on a progress notification to send **a picture of the work

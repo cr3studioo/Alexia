@@ -614,3 +614,77 @@ export const provenance = (row) => {
   }
   return lines.join('\n')
 }
+
+/** The lengths {@link hearing} may be asked for, beside `chat` — *as the chat would*. */
+export const LENGTHS = ['small', 'medium', 'high']
+
+/** Each length the way the person reads it. */
+export const LENGTH_SAYS = { small: 'short (about 100 words)', medium: 'medium (about 300 words)', high: 'full (about 600 words)' }
+
+/**
+ * **Which length she will get, and which she was heard at** (D189) — from what core said about
+ * the sample, when it said anything. The chat line answers *which length will she get?*; the
+ * sample line says what was actually sent, on what, and — when it could not be a model the chat
+ * would give that length to — why not; and a sample that ran on a paid model says so, and what
+ * it cost, every time.
+ */
+export const toldLines = (told, shorter) => {
+  const lines = []
+  if (told.chat !== undefined && told.chat !== null) {
+    lines.push(`In your chat right now, ${String(told.chat.model)} answers first and is given her ${LENGTH_SAYS[told.chat.size] ?? String(told.chat.size)} version.`)
+  }
+  const sent = LENGTH_SAYS[told.sent] ?? 'full (about 600 words)'
+  let sample = `This sample is her ${sent} version, on ${String(told.model)}`
+  if (told.asked !== undefined && told.sent !== told.asked) {
+    sample += ` — she has no ${LENGTH_SAYS[told.asked] ?? told.asked} version yet${shorter ? '' : '; Re-adapt writes all three'}`
+  } else if (told.asked !== undefined && told.matched === false) {
+    sample +=
+      told.asked === 'high' ?
+        ' — only paid models are given the full version in the chat, and paid models are off under Models, so this is it on the strongest free model'
+      : ` — no model you can use right now is given the ${LENGTH_SAYS[told.asked] ?? told.asked} version in the chat, so this is it on the model your chat asks`
+  }
+  lines.push(`${sample}.`)
+  if (told.paid === true) {
+    const cost = Number(told.cost ?? 0)
+    lines.push(
+      `⚠ ${String(told.model)} is a paid model: hearing her cost about $${cost < 0.01 ? cost.toFixed(4) : cost.toFixed(2)}. ` +
+        'Paid models are on under Models; hear her at a shorter length, or turn paid off there, to keep samples free.',
+    )
+  }
+  return lines
+}
+
+/**
+ * The samples, written out under a line saying what they are and are not.
+ *
+ * **Including which length she was given**, and which length the chat would give her — which core
+ * says, since which model reads her is core's to decide per step (D189). An Alexia too old to say
+ * leaves the old sentence: the sample is her full-length document, and a model that can read less
+ * is sent a shorter one.
+ */
+export const asHeard = (heard, shorter = false) => {
+  if (heard.length === 0) return ''
+  const model = heard.find((one) => one.model !== undefined && one.model !== '')?.model
+  const first = heard.find((one) => one.told !== undefined)?.told
+  // Every sample's cost, and paid if any was: two questions are two charges.
+  const told =
+    first === undefined ? undefined : (
+      {
+        ...first,
+        paid: heard.some((one) => one.told?.paid === true),
+        cost: heard.reduce((sum, one) => sum + Number(one.told?.cost ?? 0), 0),
+      }
+    )
+  const lines =
+    model === undefined ? ['Nothing could be asked, so there is nothing to listen to:']
+    : told !== undefined ? [...toldLines(told, shorter), "Alexia's own opening lines are not in this; only your personality is."]
+    : [
+        `Here is how she answers, on ${model} — the model your chat would use. Alexia's own opening lines are not in this; only your personality is.` +
+          (shorter ? ' This is her full-length document; in the chat a model that can read less is sent a shorter one.' : ''),
+      ]
+  for (const one of heard) {
+    lines.push('', `You: ${one.ask}${one.watching === undefined ? '' : `   (listening for “${one.watching}”)`}`)
+    lines.push(one.failed === undefined ? `Her: ${one.said}${one.cut === true ? ' …' : ''}` : `Her: — ${one.failed}`)
+  }
+  return lines.join('\n')
+}
