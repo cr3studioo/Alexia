@@ -717,8 +717,15 @@ export class Plugins {
     // ponytail: the key names come from the manifest, so a folder someone deleted by hand
     // before asking Alexia to purge it takes its own list with it. Record the names in the
     // settings table the day that stops being a corner case.
+    //
+    // **A keychain that refuses does not stop the rest.** The rows above are already gone, so
+    // stopping here left a plugin half-deleted with its folder still on disk; the entry it could
+    // not remove is said, by name, and the purge goes on.
     for (const setting of entry?.manifest.settings ?? []) {
-      if (setting.type === 'password') await this.#secrets.delete(id, setting.key)
+      if (setting.type !== 'password') continue
+      await this.#secrets.delete(id, setting.key).catch((error: unknown) => {
+        console.error(`[plugins] ${id}: its saved ${setting.key} could not be removed from the keychain (${error instanceof Error ? error.message : String(error)}).`)
+      })
     }
     rmSync(this.#host.ownDir(id), { recursive: true, force: true })
     if (entry) rmSync(entry.dir, { recursive: true, force: true })

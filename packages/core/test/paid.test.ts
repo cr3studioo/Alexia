@@ -133,7 +133,8 @@ test('switch off: the free models done, the answer pauses and nothing is billed;
   busy = new Set(['free/one'])
   asked.length = 0
   const paused = await chat({ text: 'what is on today' })
-  expect(paused.find((event) => 'paused' in event)).toEqual({ paused: 'The free models are used up.', daily: 0 })
+  // What happened to the free one, said beside *Allow* — not a fixed *used up*.
+  expect(paused.find((event) => 'paused' in event)).toEqual({ paused: 'Free One is rate-limited right now.', daily: 0 })
   expect(asked).toEqual(['free/one'])
   expect(alexia.store.spend(0)).toBe(0)
 
@@ -153,7 +154,7 @@ test('switch off: the free models done, the answer pauses and nothing is billed;
   // A new conversation is a new question about money.
   await post('/api/action', { key: 'new_chat' })
   const fresh = await chat({ text: 'and the day after' })
-  expect(fresh.find((event) => 'paused' in event)).toEqual({ paused: 'The free models are used up.', daily: 1 })
+  expect(fresh.find((event) => 'paused' in event)).toEqual({ paused: 'Free One is rate-limited right now.', daily: 1 })
 }, 30_000)
 
 test('switch on: paid answers once the free ones are done, and stops when the day’s amount is spent', async () => {
@@ -186,7 +187,7 @@ test('a task from a phone asks on the phone: yes answers from paid, and no answe
   const allowed = await post('/api/action', { plugin: 'asker', key: 'go', approved: true })
   expect(String(allowed.said)).toContain('from paid/one')
   expect(String((await post('/api/action', { plugin: 'asker', key: 'asked' })).said)).toBe(
-    'The free models are used up. Allow switching to a paid model, up to $5.00 today?',
+    'Free One is rate-limited right now. Allow switching to a paid model, up to $5.00 today?',
   )
 
   // A new conversation for the phone, and nobody answers this time.

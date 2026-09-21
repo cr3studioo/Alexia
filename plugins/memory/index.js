@@ -49,8 +49,15 @@ async function report() {
   await alexia.status('state', `${remembers}${noticing}`).catch(() => {})
 }
 
-/** Every note, newest first. It is hundreds of short rows — see the ceiling in `search.js`. */
-const notes = () => alexia.storage.select('facts', { order: [['at', 'desc']], limit: 2000 })
+/**
+ * Every note, newest first. It is hundreds of short rows — see the ceiling in `search.js`.
+ *
+ * **Ties broken by the row, latest written first.** Notes written in one pass share a
+ * millisecond often enough, and `at` alone left their order to SQLite — the list came back in a
+ * different order from one read to the next.
+ */
+const NEWEST = [['at', 'desc'], ['rowid', 'desc']]
+const notes = () => alexia.storage.select('facts', { order: NEWEST, limit: 2000 })
 
 /** A note's own name, which is what a link points at. Older rows never had one. */
 const nameOf = (row) => String(row.name ?? row.text ?? '').trim()
@@ -269,7 +276,7 @@ alexia.tool(
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
   },
   async () => {
-    const rows = await alexia.storage.select('facts', { order: [['at', 'desc']], limit: 50 })
+    const rows = await alexia.storage.select('facts', { order: NEWEST, limit: 50 })
     const text =
       rows.length === 0 ?
         'Nothing has been remembered yet. Things get written down when you say something worth keeping.'

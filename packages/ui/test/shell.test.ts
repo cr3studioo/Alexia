@@ -135,3 +135,15 @@ test('shell: the key wall is every provider, and no fork between two of them', (
   // The dropdown-and-one-key-box this replaced is gone, rather than left behind next to it.
   expect(html).not.toContain('id="provider"')
 })
+
+test('shell: one answer at a time — every way of starting a run asks first, before it touches the screen', () => {
+  const main = source.find(({ file }) => file === 'main.ts')?.text ?? ''
+  // `running` refuses a second run itself…
+  expect(main).toMatch(/function running\(task: \(\) => Promise<void>\): void \{\s*if \(!idle\(\)\) return/)
+  // …and every button left on an older bubble asks before it removes itself or marks anything,
+  // since the press would otherwise tidy the screen and then be refused.
+  const calls = [...main.matchAll(/running\(\(\) =>/g)].map((found) => found.index)
+  const pressed = calls.map((at) => main.slice(main.lastIndexOf("addEventListener('", at), at)).filter((from) => from.startsWith("addEventListener('click'"))
+  expect(pressed.length).toBeGreaterThanOrEqual(3)
+  for (const handler of pressed) expect(handler.split('\n')[1]?.trim(), handler).toBe('if (!idle()) return')
+})

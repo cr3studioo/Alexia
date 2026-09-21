@@ -56,7 +56,9 @@ export function due(world: World, tries: readonly Try[]): Choice[] {
       if (!underHalf(rung)) return []
       const judged = world.health?.get(`${model.provider}\n${model.id}`)
       if (judged === undefined) return []
-      const aside = judged.aside !== undefined && !(judged.aside === 'needs a key' && rung.keyed !== true)
+      // *Needs a key* is not tested without one — unless only its provider's other models said so,
+      // which is the one way a model that answers keyless gets set aside with them (D165).
+      const aside = judged.aside !== undefined && !(judged.aside === 'needs a key' && rung.keyed !== true && judged.byProvider !== true)
       if (!judged.untested && !aside) return []
       return [{ model, provider: rung.provider, ...(rung.keyed !== undefined && { keyed: rung.keyed }) }]
     })

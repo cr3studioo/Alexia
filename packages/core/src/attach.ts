@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { basename, extname, join } from 'node:path'
+import { textOf, type Message } from './store.js'
 
 /**
  * **Uploading is core's half; reading is a plugin's** — and this file is the seam.
@@ -184,6 +185,17 @@ export function withDocuments(text: string, readings: readonly Reading[]): strin
   )
   return [text.trim(), ...blocks].filter((part) => part !== '').join('\n\n')
 }
+
+/**
+ * **What the person typed in a turn**, without the documents {@link withDocuments} merged in.
+ *
+ * `typed` where the turn has it, which is every turn with attachments since it was added. A turn
+ * stored before that is cut at its first attachment block, which is where `withDocuments` put
+ * them — so a question asked again never hands a document to something that reads it as an
+ * instruction.
+ */
+export const typedOf = (message: Message): string =>
+  message.typed ?? textOf(message).replace(/(?:^|\n\n)\[attached: [\s\S]*$/, '')
 
 /** What the shell puts under the composer: one line per attachment, in the reader's words. */
 export const noteFor = (one: Reading): string =>

@@ -936,11 +936,15 @@ export function actions(
     // A Models row is one model on one provider (D161); a pin is the model, and which of its
     // providers answers is the router's to pick, key first (D159). A bare id still works.
     const [provider, id] = row.includes('\n') ? (row.split('\n', 2) as [string, string]) : [undefined, row]
+    // This Mac's own models are rows on the same table and are not in the catalog, which lists what
+    // providers serve: looked for among what is installed, and needing no key.
+    const here = (await options.world()).local
     const model =
       options.catalog.models.find((one) => one.id === id && (provider === undefined || one.provider === provider)) ??
+      here.find((one) => one.id === id && (provider === undefined || one.provider === provider)) ??
       options.catalog.models.find((one) => one.id === id)
     if (!model) return { ok: false, said: 'That model is not in the catalog any more.' }
-    if (!(await options.connected()).has(model.provider)) {
+    if (model.tier !== 'T0' && !(await options.connected()).has(model.provider)) {
       return {
         ok: false,
         said: `${model.name} comes from ${model.provider}, which has no key yet. Add one in settings and try again.`,

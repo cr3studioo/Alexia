@@ -309,11 +309,40 @@ if (windows) {
  * **This script plays the shell** (D153). Under `ALEXIA_TAURI` core will not start until it
  * is handed a vault on stdin, so a stand-in is opened here and its line written down the
  * pipe — which also means the packaged handover is exercised, not just the unpackaged one.
- * It answers *nothing stored* to everything, which is the truth about a fresh install.
+ *
+ * **It keeps what it is given, and it says there is nothing older to move** (D187). It used to
+ * answer *ok* to every write and keep nothing — and core, finding nothing in it, moved a real
+ * install's keys out of the old place into it and deleted them there, so building the app
+ * deleted a developer's keys. A throwaway data folder does not isolate a keychain: Windows'
+ * is per user whatever `LOCALAPPDATA` says. So the one entry is seeded with `moved: 'all'`,
+ * which is the stand-in telling core never to look in the old places at all.
  */
-const vault = createServer((socket) =>
-  socket.once('data', () => socket.end(`${JSON.stringify({ ok: true, secret: null })}\n`)),
-)
+const kept = new Map([['_core.vault', JSON.stringify({ secrets: {}, looked: [], moved: 'all' })]])
+const vault = createServer((socket) => {
+  let heard = ''
+  socket.setEncoding('utf8')
+  socket.on('data', (chunk) => {
+    heard += chunk
+    const end = heard.indexOf('\n')
+    if (end === -1) return
+    let answer
+    try {
+      const ask = JSON.parse(heard.slice(0, end))
+      if (ask.token !== 'package-check') answer = { error: 'refused' }
+      else if (ask.op === 'get') answer = { ok: true, secret: kept.get(ask.account) ?? null }
+      else if (ask.op === 'set' && typeof ask.secret === 'string') {
+        kept.set(ask.account, ask.secret)
+        answer = { ok: true, secret: null }
+      } else if (ask.op === 'delete') {
+        kept.delete(ask.account)
+        answer = { ok: true, secret: null }
+      } else answer = { error: 'not an operation' }
+    } catch {
+      answer = { error: 'not a request' }
+    }
+    socket.end(`${JSON.stringify(answer)}\n`)
+  })
+})
 await new Promise((resolve) => vault.listen(0, '127.0.0.1', resolve))
 const home = mkdtempSync(join(tmpdir(), 'alexia-package-check-'))
 const app = spawn(join(out, runtime), ['--disable-sigusr1', 'boot.mjs'], {
@@ -332,14 +361,23 @@ app.stderr.on('data', (chunk) => (said += String(chunk)))
 
 try {
   const url = await new Promise((resolve, reject) => {
-    const gaveUp = setTimeout(() => reject(new Error(`it never said where it was:
-${said}`)), 30_000)
-    const look = setInterval(() => {
-      const found = /http:\/\/127\.0\.0\.1:\d+/.exec(said)
-      if (!found) return
+    // Every way out clears both clocks, so a build that fails says why and ends rather than
+    // hanging with an interval still ticking.
+    const done = (error, found) => {
       clearInterval(look)
       clearTimeout(gaveUp)
-      resolve(found[0])
+      app.off('exit', exited)
+      if (error) reject(error)
+      else resolve(found)
+    }
+    // A core that refused the handover, or crashed, has exited well before the clock runs out,
+    // and what it said is the whole of the diagnosis.
+    const exited = (code, signal) => done(new Error(`it exited (${signal ?? code}) before saying where it was:\n${said}`))
+    app.once('exit', exited)
+    const gaveUp = setTimeout(() => done(new Error(`it never said where it was:\n${said}`)), 30_000)
+    const look = setInterval(() => {
+      const found = /http:\/\/127\.0\.0\.1:\d+/.exec(said)
+      if (found) done(undefined, found[0])
     }, 200)
   })
   const page = await (await fetch(url)).text()
@@ -352,9 +390,12 @@ ${said}`)), 30_000)
 } finally {
   // Waited for, not just signalled: Windows will not let go of a directory a live process is
   // sitting in, and removing it a millisecond early fails the build over nothing.
-  const gone = new Promise((resolve) => app.once('exit', resolve))
-  app.kill()
-  await gone
+  // One that has already exited will never say so again, and waiting for it would hang the build.
+  if (app.exitCode === null && app.signalCode === null) {
+    const gone = new Promise((resolve) => app.once('exit', resolve))
+    app.kill()
+    await gone
+  }
   vault.close()
   try {
     rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })

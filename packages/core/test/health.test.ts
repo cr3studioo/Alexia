@@ -6,6 +6,7 @@ import { remaining } from '../src/pool.js'
 import type { Provider } from '../src/provider.js'
 import { MODES, ranking, route, type Choice, type Pins, type World } from '../src/router.js'
 import { Store, type Outcome, type Seen, type Try } from '../src/store.js'
+import { due } from '../src/trial.js'
 
 /**
  * **The model record and the tags** (`model_plan.md` §4 B, D161): what Alexia thinks of each
@@ -178,6 +179,15 @@ test('a keyless provider refusing two of its models, and answering none, sets ev
     at(3),
   )
   expect(['floor/a', 'floor/b', 'floor/c'].map((id) => of(twiceEach, id, 'floor')?.aside)).toEqual(['needs a key', undefined, undefined])
+
+  // The one never asked is set aside for what the other two said, and says so — which is what lets
+  // the daily test ask it without a key, where it would otherwise wait out thirty days (D165).
+  expect(['floor/a', 'floor/b', 'floor/c'].map((id) => of(stranger, id, 'floor')?.byProvider)).toEqual([undefined, undefined, true])
+  const floor: Provider = { id: 'floor', name: 'Floor', baseUrl: 'http://127.0.0.1:1', auth: 'none' }
+  const ledger = new Store(':memory:')
+  const tests = due({ models, local: [], rungs: [remaining(ledger, floor)], health: stranger }, refusals)
+  expect(tests.map((one) => one.model.id)).toEqual(['floor/c'])
+  ledger.close()
 })
 
 // ---- Set aside is never deleted: lists, pins, and a plan with nothing else ------------------

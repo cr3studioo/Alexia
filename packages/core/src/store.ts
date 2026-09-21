@@ -403,11 +403,27 @@ export interface Message {
   /** Which provider answered, beside `model`: the model record and *Bad answer* are per provider (§4 I). */
   provider?: string
   /**
+   * **The catalog row that was asked, when the provider named a different model** — a router
+   * resolving `kilo-auto/free` to whatever it picked, or an id rewritten on the way back. `model`
+   * keeps what the provider said, which is the truer thing to show; this is what *Bad answer*
+   * avoids, records and prices, since those are all read against the catalog. Absent when the two
+   * are the same, which is almost always.
+   */
+  row?: string
+  /**
    * **Somebody pressed *Bad answer* on it** (§4 I). It stays in the conversation, marked, so what
    * happened is still on the page — and it is never shown to a model again, so the next answer is
    * not written in its shadow.
    */
   bad?: true
+  /**
+   * **What the person typed, when attachments were read into `content`.** A question asked
+   * again — *Try again*, *Allow*, *Bad answer* — is rebuilt from the stored turn, and `content`
+   * is the typed line with every document merged in; this is the line on its own, so the
+   * permission gate, the offer to learn, the trace and Memory never read a document as though
+   * somebody had typed it. Saved in the JSON body and never sent to a model.
+   */
+  typed?: string
 }
 
 export interface Session {

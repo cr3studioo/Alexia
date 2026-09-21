@@ -230,6 +230,7 @@ function answerActions(answer: HTMLElement, canSay = false): void {
   bad.textContent = 'Bad answer'
   bad.title = 'Ask again with a different model. Two of these in a month move a model down.'
   bad.addEventListener('click', () => {
+    if (!idle()) return
     row.remove()
     markBad(answer)
     running(() => respond('…', undefined, () => Promise.resolve({ again: true, bad: {} })))
@@ -1730,6 +1731,7 @@ function offerPaid(paused: HTMLElement, daily: number): void {
     buttons.append(box)
   }
   allow.addEventListener('click', () => {
+    if (!idle()) return
     const typed = amount === undefined ? undefined : Number(amount.value)
     if (typed !== undefined && !(typed > 0)) {
       say('Say how much a day paid models may spend — a number above $0.')
@@ -1924,6 +1926,7 @@ function offerInstead(stopped: HTMLElement, chosen: 'pinned' | 'sequence'): void
     one.textContent = label
     if (!automatic) one.className = 'quiet-button'
     one.addEventListener('click', () => {
+      if (!idle()) return
       buttons.remove()
       running(() => again(automatic))
     })
@@ -2070,6 +2073,8 @@ form.addEventListener('submit', (event) => {
     void command(question)
     return
   }
+  // Enter submits the form whether or not the send button is held.
+  if (!idle()) return
   const files = carrying
   carrying = []
   drawAttached()
@@ -2078,8 +2083,23 @@ form.addEventListener('submit', (event) => {
   running(() => ask(question, files))
 })
 
+/**
+ * **One task at a time.** The send button is held while one runs, but a *Try again*, *Allow* or
+ * *Bad answer* left on an older bubble was not — and a press there started a second run in the
+ * same conversation, both appending to it, with Stop reaching only the newer. Every way to start
+ * one asks this first, before it changes anything on screen.
+ */
+let working = false
+function idle(): boolean {
+  if (!working) return true
+  say('One answer at a time — wait for this one, or press Stop.')
+  return false
+}
+
 /** A task on screen: the send button held, the stop button shown, and the tray saying so. */
 function running(task: () => Promise<void>): void {
+  if (!idle()) return
+  working = true
   button.disabled = true
   stop.hidden = false
   // The tray is the only answer to *is it running?* the target user has, so it says so for
@@ -2091,6 +2111,7 @@ function running(task: () => Promise<void>): void {
       tray('error')
     })
     .finally(() => {
+      working = false
       button.disabled = false
       stop.hidden = true
       prompt.hidden = true

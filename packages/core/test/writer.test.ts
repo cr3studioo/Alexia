@@ -101,12 +101,11 @@ test('a plugin asking for intelligence and one asking for cost get different mod
   expect(ids(route(purse, pins(), pool))).toEqual(['vendor/writer-120b', 'vendor/tiny-2.6b', 'paid/strong'])
 })
 
-test('best-first turns the price axis and not the rungs, which is where it differs from /best', () => {
+test('best-first turns the price axis and not the rungs, and so does /best (D188)', () => {
   // Found by probing this Mac's own shape before trusting the change: one big model on the
-  // owner's own key, a small one on the keyless floor, and a big one with no tools. `/best`
-  // turns §8.2's rungs round as well as the money, which is right for somebody typing *the
-  // strongest thing you can reach* and wrong for *write me a personality*: it chose the
-  // talker, and then the floor's 7B ahead of the 550B on the key.
+  // owner's own key, a small one on the keyless floor, and a big one with no tools. Turning
+  // §8.2's rungs round as well as the money chose the talker, and then the floor's 7B ahead of
+  // the 550B on the key — wrong for *write me a personality*, and as wrong for `/best`.
   const big = model({ id: 'vendor/big-550b', params: 550, weekly: 50_000 })
   const onFloor = model({ id: 'vendor/mini-7b', provider: 'beta', params: 7, weekly: 100 })
   const mouth = model({ id: 'vendor/mouth-200b', params: 200, weekly: 30_000, supportsTools: false })
@@ -123,12 +122,8 @@ test('best-first turns the price axis and not the rungs, which is where it diffe
   // The same order the default walks, because among free models the whole price axis ties —
   // which is the honest answer, and it is the two filters above that earn their keep there.
   expect(ids(route({ messages: asked('write me a personality') }, pins(), pool))).toEqual(order)
-  // `/best` is untouched, and still turns the rungs round.
-  expect(ids(route({ messages: asked('write me a personality') }, pins({ prefer: 'best' }), pool))).toEqual([
-    'vendor/mouth-200b',
-    'vendor/mini-7b',
-    'vendor/big-550b',
-  ])
+  // `/best` turns only the money now, so among free models it walks the same order.
+  expect(ids(route({ messages: asked('write me a personality') }, pins({ prefer: 'best' }), pool))).toEqual(order)
 })
 
 // ---- the manifest's floor -----------------------------------------------------------------

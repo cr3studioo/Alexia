@@ -182,6 +182,12 @@ test('removing the key of a provider that answers without one leaves it on the s
     'The Floor key is removed. Floor still answers without one, on its shared free tier.',
   )
   expect(await table()).toContain('Your list: floor/one@floor')
+
+  // With the shared floor switched off it does not still answer, and the sentence does not say so.
+  expect((await post('/api/action', { key: 'set_keyless', row: 'off' })).ok).toBe(true)
+  await secrets.set(CORE, keyOf(floor), 'sk-floor')
+  expect(String((await post('/api/setup', { provider: { id: 'floor', remove: true } })).said)).not.toContain('still answers')
+  expect((await post('/api/action', { key: 'set_keyless', row: 'on' })).ok).toBe(true)
 }, 30_000)
 
 /**

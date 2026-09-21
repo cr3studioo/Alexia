@@ -144,19 +144,30 @@ fn in_dock(_app: &AppHandle, _shown: bool) {}
 static SUMMONED: Mutex<Option<Instant>> = Mutex::new(None);
 const SETTLING: Duration = Duration::from_millis(400);
 
-/// Environment that changes what Node runs or whom it trusts, rather than where things are.
+/// Environment the core is allowed to see: **a short list of what it needs, and nothing else.**
 ///
 /// The core this process starts is handed the vault, so whatever can steer that core can read
-/// every secret in it. `NODE_OPTIONS=--import` would put somebody else's code inside it,
-/// `NODE_TLS_REJECT_UNAUTHORIZED` and a proxy would read a key on its way to a provider, and
-/// the loader and OpenSSL variables are the same thing one layer down. None of them is set on
-/// an app started from the Dock; all of them are one `export` away from a terminal.
+/// every secret in it. `NODE_OPTIONS=--import` puts somebody else's code inside it; the loader,
+/// OpenSSL and glibc variables (`GCONV_PATH` loads a shared object) do the same one layer down.
+/// A list of what to block has to name every such variable on every platform forever, and had
+/// already missed some — so this names what may pass instead: where things are, who is running,
+/// and the language. None of it is set in a way that steers Node.
+///
+/// **On Windows the certificate variables pass too.** Its credential store has no per-program
+/// access list, so stripping them protects no secret there — and a machine behind a
+/// TLS-inspecting proxy whose IT set `NODE_EXTRA_CA_CERTS` could otherwise reach no provider.
 ///
 /// Asked of the raw name, because `std::env::vars()` panics on a variable that is not valid
 /// Unicode, and with `panic = "abort"` that is an app that will not open on that machine.
-fn steers_node(name: &std::ffi::OsStr) -> bool {
+fn passes(name: &std::ffi::OsStr) -> bool {
     let name = name.to_string_lossy().to_ascii_uppercase();
-    ["NODE_", "DYLD_", "LD_", "OPENSSL_", "SSL"].iter().any(|prefix| name.starts_with(prefix))
+    const NEEDED: [&str; 24] = [
+        "PATH", "HOME", "USER", "LOGNAME", "LANG", "LANGUAGE", "TZ", "TMPDIR", "TMP", "TEMP", "SYSTEMROOT", "WINDIR",
+        "SYSTEMDRIVE", "COMSPEC", "PATHEXT", "USERPROFILE", "USERNAME", "USERDOMAIN", "APPDATA", "LOCALAPPDATA",
+        "PROGRAMDATA", "HOMEDRIVE", "HOMEPATH", "NUMBER_OF_PROCESSORS",
+    ];
+    let trusts = cfg!(windows) && ["NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE", "SSL_CERT_DIR"].contains(&name.as_str());
+    NEEDED.contains(&name.as_str()) || name.starts_with("LC_") || name.starts_with("XDG_") || trusts
 }
 
 fn reveal(app: &AppHandle) {
@@ -226,7 +237,7 @@ fn main() {
                 .shell()
                 .sidecar("alexia-core")?
                 .env_clear()
-                .envs(std::env::vars_os().filter(|(name, _)| !steers_node(name)))
+                .envs(std::env::vars_os().filter(|(name, _)| passes(name)))
                 // The sidecar *is* the Node runtime, so it needs something to run. Passing
                 // Node nothing opens a REPL and waits forever, which looks exactly like a
                 // core that started and never answered.
@@ -242,13 +253,18 @@ fn main() {
                 // than a build step that flattens it, and it is one place rather than four
                 // path joins inside the core it starts.
                 .current_dir(app.path().resource_dir()?.join("resources"));
-            let (_events, mut child) = sidecar.spawn()?;
-            // Where the vault is and the token that opens it, down the one channel only this
-            // process and that child share. Written before core has booted; the pipe holds
-            // it until `boot.mjs` reads it.
-            child.write(vault::open()?.as_bytes())?;
-            if let Ok(mut held) = handle.state::<Mutex<Option<CommandChild>>>().lock() {
-                *held = Some(child);
+            // The vault is opened **before** core is started: failing here leaves nothing running,
+            // where failing after the spawn left a core that nothing held and nothing would stop.
+            let handover = vault::open()?;
+            let (_events, child) = sidecar.spawn()?;
+            {
+                // Held first, so a failed write below still leaves it where quitting stops it.
+                let state = handle.state::<Mutex<Option<CommandChild>>>();
+                let mut held = state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+                // Where the vault is and the token that opens it, down the one channel only this
+                // process and that child share. Written before core has booted; the pipe holds
+                // it until `boot.mjs` reads it.
+                held.insert(child).write(handover.as_bytes())?;
             }
 
             let target: WebviewUrl = WebviewUrl::External(url.parse()?);

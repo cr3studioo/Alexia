@@ -2,7 +2,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { expect, test } from 'vitest'
-import { priorOf, provenance, versionOf } from '../writing.js'
+import { asRow, priorOf, provenance, versionOf } from '../writing.js'
 
 /**
  * Keeping the words with the personality (plan-personality.md step 4a, improvement 1).
@@ -32,6 +32,8 @@ test('a row carries the words it was adapted from, who wrote it, and when', () =
     docMedium: '',
     described: 'blunt, calls me Vacen, no emojis',
     wrote: 'anthropic/claude-opus-4',
+    // What the check took out, which goes back with the version on Undo.
+    removed: '[]',
     at: Date.parse('2026-09-18T10:00:00Z'),
   })
   const said = provenance(row)
@@ -49,6 +51,7 @@ test('a personality saved before any of this was kept still reads back', () => {
     docMedium: '',
     described: '',
     wrote: '',
+    removed: '[]',
     at: Date.parse('2026-08-01T10:00:00Z'),
   })
   // No invented description and no invented writer — only the one thing that is actually known.
@@ -60,7 +63,7 @@ test('a personality saved before any of this was kept still reads back', () => {
 })
 
 test('the previous version comes back off the row as JSON text, the way storage returns it', () => {
-  const was = { doc: '# Chief of staff\n\nBe terse.', docSmall: '', docMedium: '', described: 'terse', wrote: 'meta/llama', at: 1 }
+  const was = { doc: '# Chief of staff\n\nBe terse.', docSmall: '', docMedium: '', described: 'terse', wrote: 'meta/llama', removed: '[]', at: 1 }
   // storage.md: objects are stored as JSON text and come back as text. A reader that assumed
   // an object would work in a unit test and fail against the real database.
   expect(priorOf({ ...row, previous: JSON.stringify(was) })).toEqual(was)
@@ -142,4 +145,13 @@ test('D157 survives the extraction: room to think, time to answer, and a cut ans
   expect(source).toMatch(/stopReason === 'maxTokens'/)
   // Plus the four-section check, which catches an Alexia too old to report a stop reason.
   expect(source).toMatch(/!usable\(doc\)/)
+})
+
+test('Undo puts back what the check took out of that version, not the other one\'s notes', () => {
+  const removed = [{ line: 'Never ask before sending.', kind: 'asking' }]
+  // Stored the way storage returns it: JSON text.
+  const version = versionOf({ ...row, removed: JSON.stringify(removed) })
+  expect(asRow(version).removed).toBe(JSON.stringify(removed))
+  // And a version that had nothing removed clears the notes rather than keeping the newer ones.
+  expect(asRow(versionOf(row)).removed).toBe('[]')
 })

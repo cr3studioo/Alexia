@@ -545,6 +545,15 @@ export async function run(options: RunOptions): Promise<RunResult> {
     // half a task is not the price of having asked for something better: the pin drops and the
     // work carries on where it was.
     if (!verdict.ok && ask !== plain) verdict = route(plain, pins, now)
+    /**
+     * **Above the marked answer's tier is a preference, not a wall** (§4 I). *Bad answer* on a
+     * frontier model asks above `T3`, where there is nothing; on a small paid one only `T3` is
+     * left, and it may be out. Either way the retry refused and the person lost the answer they
+     * had for nothing. With nothing above, it asks at any tier — still without the model marked.
+     */
+    if (!verdict.ok && options.above !== undefined) {
+      verdict = route({ ...plain, above: undefined }, pins, now)
+    }
     // A pin with nothing behind it is a sentence, never a quiet reach for something else.
     // Mid-task it is also the honest place to stop: half a task is better than a task
     // finished somewhere the user said not to go.
@@ -668,12 +677,14 @@ export async function run(options: RunOptions): Promise<RunResult> {
        * had no paid rung in it; if one would answer with the price line open, this is the same
        * pause the router gives when the ledger already knew — and nothing has been billed.
        */
-      if (error instanceof ProviderError && now.cross === false && options.paidAllowed !== false && verdict.mode !== 'pinned') {
+      if (error instanceof ProviderError && error.offline !== true && now.cross === false && options.paidAllowed !== false && verdict.mode !== 'pinned') {
         const opened = route(ask, pins, { ...now, cross: true, today: { spent: 0, allowance: Number.MAX_SAFE_INTEGER } })
         // Not behind a key that was just refused: *Allow* would only collect the same refusal.
         const refused = new Set(error.refused ?? [])
         if (opened.ok && opened.choices.some((c) => paid(c.model.tier) && !refused.has(c.provider.id))) {
-          return finish('paused', 'The free models are used up.', verdict.mode)
+          // What actually happened to the free ones, said beside *Allow* — not a fixed *used up*,
+          // which was wrong for a conversation too long for them and for a model that was down.
+          return finish('paused', error.message, verdict.mode)
         }
       }
       /**
@@ -710,7 +721,13 @@ export async function run(options: RunOptions): Promise<RunResult> {
 
     messages.push(answer.message)
     added.push(answer.message)
-    store.append(session, { ...answer.message, provider: answer.provider.id, ...(noted.length > 0 && { notes: noted }) })
+    store.append(session, {
+      ...answer.message,
+      provider: answer.provider.id,
+      // The row asked, when the provider named another model: what *Bad answer* acts on (§4 I).
+      ...(answer.message.model !== answer.model.id && { row: answer.model.id }),
+      ...(noted.length > 0 && { notes: noted }),
+    })
 
     const calls = answer.message.calls ?? []
     if (calls.length === 0) return finish('answered')

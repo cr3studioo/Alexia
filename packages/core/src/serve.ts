@@ -14,6 +14,7 @@ import {
   MOST_TOGETHER,
   noteFor,
   receive,
+  typedOf,
   withDocuments,
   type Reading,
   type Saved,
@@ -266,7 +267,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     })
     const line = news(change, {
       provider: provider.name,
-      since: new Date(since).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }),
+      ...(since > 0 && { since: new Date(since).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }) }),
     })
     if (line === undefined) headlines.delete(provider.id)
     else headlines.set(provider.id, line)
@@ -842,7 +843,9 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     await secrets.delete(CORE, keyOf(provider))
     // What the provider said about that key's account goes with the key.
     store.kvDelete(CORE, accountKey(provider.id))
-    if (anonymous(provider)) {
+    // Only while the keyless switch is on: off, the shared floor is not asked at all, and saying
+    // it *still answers* sent somebody looking for answers that were never coming.
+    if (anonymous(provider) && keylessOn(store)) {
       return `The ${provider.name} key is removed. ${provider.name} still answers without one, on its shared free tier.`
     }
     const standing = pins(store)
@@ -2149,7 +2152,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
         // thing she said that did not sound like her. One on its own teaches nothing.
         const at = history.lastIndexOf(answer)
         const asked = [...history.slice(0, at)].reverse().find((turn) => turn.role === 'user')
-        pair = { session, answer: textOf(answer).slice(0, 2000), ...(asked !== undefined && { asked: textOf(asked).slice(0, 500) }) }
+        pair = { session, answer: textOf(answer).slice(0, 2000), ...(asked !== undefined && { asked: typedOf(asked).slice(0, 500) }) }
       }
       pressed = pair
       const heard = await plugins
@@ -2562,7 +2565,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
    */
   /** The tier of the model that wrote a message, from the catalog, when it is still there. */
   const tierOf = (message: Message): Tier | undefined =>
-    catalog.models.find((model) => model.id === message.model && (message.provider === undefined || model.provider === message.provider))?.tier
+    catalog.models.find((model) => model.id === (message.row ?? message.model) && (message.provider === undefined || model.provider === message.provider))?.tier
 
   async function reply(sent: Body, response: ServerResponse): Promise<void> {
     const { text: typed, files, again, automatic, allow, bad } = sent as {
@@ -2590,9 +2593,11 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
       response.end()
       return
     }
-    if (marked?.model !== undefined && marked.provider !== undefined) {
+    /** The catalog row the marked answer came from — not the id a router reported back (§4 I). */
+    const markedRow = marked === undefined ? undefined : (marked.row ?? marked.model)
+    if (markedRow !== undefined && marked?.provider !== undefined) {
       // One press, recorded like any other try: two in 30 days tag the model (D161, D162).
-      store.recordTry({ provider: marked.provider, model: marked.model, outcome: 'bad-answer', status: 0, source: 'person' })
+      store.recordTry({ provider: marked.provider, model: markedRow, outcome: 'bad-answer', status: 0, source: 'person' })
     }
     if (again === true && allow !== undefined) {
       paidIn.add(session)
@@ -2626,7 +2631,9 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
       response.end()
       return
     }
-    const text = question === undefined ? String(typed ?? '') : textOf(question)
+    // What the person typed — on a question asked again too, where the stored turn has every
+    // document merged into it and reading that as typed would hand a document to the gate.
+    const text = question === undefined ? String(typed ?? '') : typedOf(question)
 
     response.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store' })
     const say = (event: Record<string, unknown>): void => void response.write(`data: ${JSON.stringify(event)}\n\n`)
@@ -2642,7 +2649,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
        */
       const content = uploads.length === 0 ? text : await documents(text, uploads, say)
 
-      const user: Message = { role: 'user', content }
+      const user: Message = { role: 'user', content, ...(content !== text && { typed: text }) }
       store.append(session, user)
 
       // A boundary the user just spoke, or one they just lifted. Said out loud either way:
@@ -2667,7 +2674,9 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
 
     // Once, at the only moment the answer can still change anything. A cheap or free task
     // never sees this, which is what keeps the question worth reading when it does appear.
-    const guess = estimate(store.history(session), (await world()).models[0])
+    // The catalog's first row, which is all the estimate reads of the world — gathered whole, it
+    // was every provider's key and thirty days of tries for one price.
+    const guess = estimate(store.history(session), catalog.models[0])
     if (worthAsking(guess, limits)) {
       const allowed = await new Promise<boolean>((resolve) => {
         pending = resolve
@@ -2700,8 +2709,8 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
         pins:
           again === true && (automatic === true || marked !== undefined) ? { ...pins(store), model: undefined, order: undefined } : pins(store),
         // Without the model somebody just marked, and — with the paid switch on — above its tier (§4 I).
-        ...(marked?.model !== undefined &&
-          marked.provider !== undefined && { avoid: [`${marked.provider}\n${marked.model}`] }),
+        ...(markedRow !== undefined &&
+          marked?.provider !== undefined && { avoid: [`${marked.provider}\n${markedRow}`] }),
         ...(marked !== undefined && caps(store).cross === true && tierOf(marked) !== undefined && { above: tierOf(marked) }),
         // Whether paid may be crossed into here: the switch, or *Allow* pressed in this conversation (§4 H).
         world: worldFor(session),

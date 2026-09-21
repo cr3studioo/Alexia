@@ -36,8 +36,10 @@ test('one Alexia at a time: the shell keeps the sidecar handle and kills it on e
   const source = shell()
   // Kept rather than dropped. `sidecar.spawn()?;` on its own is the bug this replaced.
   expect(source, 'the sidecar handle must be kept — dropping it does not stop the process').toMatch(
-    /let \(_events, mut child\) = sidecar\.spawn\(\)\?;/,
+    /let \(_events, child\) = sidecar\.spawn\(\)\?;/,
   )
+  // Held before the handover is written, so a failed write still leaves it where Exit stops it.
+  expect(source).toContain('held.insert(child).write(handover.as_bytes())?;')
   expect(source).toContain('Mutex::<Option<CommandChild>>::new(None)')
 
   // And killed when the app actually ends. `.run(generate_context!())` cannot do this —
