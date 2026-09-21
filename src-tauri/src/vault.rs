@@ -18,10 +18,11 @@
 //! What is **not** here: deciding anything. Which entry, when, and what it is for are core's.
 //! This reads or writes the one it is named and says what happened.
 
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
+use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -49,26 +50,41 @@ pub fn open() -> std::io::Result<String> {
     let token: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
     let line = format!("{}\n", json!({ "port": port, "token": token }));
 
-    // One request at a time. A keychain call takes milliseconds, and the one that does not is
-    // a prompt waiting on a person, which nothing else should be answered around either.
+    // Each connection is read on a thread of its own, so one that connects and dribbles holds
+    // only itself: the port is reachable by every process on the machine, and a single thread
+    // reading them in turn could be held shut by any of them, a byte every few seconds. Each
+    // thread lives five seconds at most (`serve`), so there is no pile of them to cap.
+    let token = Arc::new(token);
     thread::spawn(move || {
         for stream in listener.incoming().flatten() {
-            serve(stream, &token);
+            let token = Arc::clone(&token);
+            thread::spawn(move || serve(stream, &token));
         }
     });
     Ok(line)
 }
 
-fn serve(stream: TcpStream, token: &str) {
-    // The port is reachable by every process on the machine, and one that connects and then
-    // says nothing must not hold the vault shut behind it.
-    let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
-    let Ok(reading) = stream.try_clone() else { return };
-    let mut line = String::new();
-    if BufReader::new(reading.take(64 * 1024)).read_line(&mut line).is_err() {
-        return;
+/// The keychain, one call at a time. A call takes milliseconds, and the one that does not is a
+/// prompt waiting on a person, which nothing else should be answered around either.
+static KEYCHAIN: Mutex<()> = Mutex::new(());
+
+fn serve(mut stream: TcpStream, token: &str) {
+    // Five seconds for the **whole** request, not for each read: a client that sends a byte
+    // every four would otherwise never time out.
+    let until = Instant::now() + Duration::from_secs(5);
+    let (mut line, mut chunk) = (Vec::new(), [0u8; 4096]);
+    while !line.contains(&b'\n') {
+        let left = until.saturating_duration_since(Instant::now());
+        if left.is_zero() || line.len() > 64 * 1024 || stream.set_read_timeout(Some(left)).is_err() {
+            return;
+        }
+        match stream.read(&mut chunk) {
+            Ok(0) | Err(_) => return,
+            Ok(read) => line.extend_from_slice(&chunk[..read]),
+        }
     }
-    let _ = (&stream).write_all(format!("{}\n", answer(&line, token)).as_bytes());
+    let said = answer(&String::from_utf8_lossy(&line), token);
+    let _ = stream.write_all(format!("{said}\n").as_bytes());
 }
 
 fn answer(line: &str, token: &str) -> Value {
@@ -78,6 +94,7 @@ fn answer(line: &str, token: &str) -> Value {
     if !same(ask.token.as_bytes(), token.as_bytes()) {
         return json!({ "error": "refused" });
     }
+    let _one = KEYCHAIN.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     let entry = match keyring::Entry::new(SERVICE, &ask.account) {
         Ok(entry) => entry,
         Err(error) => return json!({ "error": error.to_string() }),

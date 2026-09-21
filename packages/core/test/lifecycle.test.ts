@@ -128,3 +128,27 @@ test('delete is the only one that removes anything', async () => {
   // rather than at a yes somebody gave to a different copy.
   expect(plugins.enabled('hello')).toBe(false)
 }, 30_000)
+
+test('a keychain that refuses to delete a password does not leave the plugin half-deleted', async () => {
+  const into = mkdtempSync(join(tmpdir(), 'alexia-lifecycle-refused-'))
+  const refusing = new Plugins({
+    dir: into,
+    store,
+    dataDir,
+    secrets: { ...memorySecrets(), delete: () => Promise.reject(new Error('The keychain refused (delete hello.api_key): locked')) },
+  })
+  const error = console.error
+  const said: string[] = []
+  console.error = (line: string) => said.push(line)
+  try {
+    expect(refusing.install(join(from, 'hello'))).toEqual({ id: 'hello' })
+    await refusing.purge('hello')
+    expect(refusing.ids).toEqual([])
+    expect(existsSync(join(into, 'hello'))).toBe(false)
+    expect(said.join('\n')).toContain('hello: its saved api_key could not be removed from the keychain')
+  } finally {
+    console.error = error
+    await refusing.stop()
+    rmSync(into, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+  }
+}, 30_000)
