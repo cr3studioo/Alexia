@@ -26,12 +26,15 @@ export const STEPS = 15
 /**
  * Over this, and Adapt says so.
  *
- * Not an arbitrary round number: `brief()` asks for **under 400 words**, which is roughly
- * 2,600 characters, ~650 tokens a step, ~9,750 across a 15-step task. So the line fires in
- * exactly the case worth firing in — the document overran the length its own brief asked for
- * — rather than at a threshold nobody can account for.
+ * Not an arbitrary round number: `brief()` asks for the long document in **about 600 words**
+ * (§2, D160), which is roughly 3,900 characters, ~975 tokens a step, ~14,600 across a 15-step
+ * task. So the line fires in exactly the case worth firing in — the document overran the
+ * length its own brief asked for — rather than at a threshold nobody can account for.
+ *
+ * It was 10,000, drawn around the *under 400 words* the brief said before §2's three lengths;
+ * left there, it fired on every long document that did exactly as it was asked.
  */
-export const BUDGET = 10_000
+export const BUDGET = 15_000
 
 export const tokensIn = (doc) => Math.ceil(String(doc ?? '').length / CHARS_PER_TOKEN)
 
@@ -76,7 +79,7 @@ export const budgetLine = (doc) => {
   if (perTask <= BUDGET) return ''
   return (
     `That is over the ${figure(BUDGET)} this screen treats as a lot, because a personality is ` +
-    'sent again with every step rather than once. It is longer than the 400 words it was ' +
+    'sent again with every step rather than once. It is longer than the 600 words it was ' +
     'asked for — Re-adapt, or shorten it, and everything gets cheaper.'
   )
 }

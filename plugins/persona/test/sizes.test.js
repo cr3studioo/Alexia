@@ -57,6 +57,22 @@ test('one answer becomes three, longest first, split on the markers', () => {
   expect(usable(got.high)).toBe(true)
 })
 
+test('the facts after the last document are never part of a document', () => {
+  // With a memory plugin on, Adapt asks for facts after the three. They used to be read as the
+  // tail of the short one, which then went to every weak model with the marker in it.
+  const facts = [MARK.facts, '- His name is Vacen.', '- His grant deadline is in March.'].join('\n')
+  const got = sizesFrom(`${three}\n${facts}`)
+  expect(got.small).toBe('# Chief of staff\n\nBlunt. Ask first.')
+  for (const size of [got.high, got.medium, got.small]) {
+    expect(size).not.toContain(MARK.facts)
+    expect(size).not.toContain('grant deadline')
+  }
+  // And a model that skipped the size markers does not carry them into the long one either.
+  const only = sizesFrom(`${long}\n${facts}`)
+  expect(only.high).toBe(long)
+  expect(usable(only.high)).toBe(true)
+})
+
 test('the markers are nothing a personality would contain on its own', () => {
   // A separator a model might plausibly have written — `---`, `##`, a blank line — is a
   // separator that splits somebody's document in half one day. Both appear in neither the

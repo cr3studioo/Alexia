@@ -162,6 +162,7 @@ export async function distil(
   try {
     const answer = await send(verdict.choices, { messages, maxTokens: 1200 }, context.store, context.secrets, {
       ...(context.paidAllowed !== undefined && { paidAllowed: context.paidAllowed }),
+      ...(verdict.left !== undefined && { left: verdict.left }),
     })
     said = textOf(answer.message).trim()
   } catch (error) {

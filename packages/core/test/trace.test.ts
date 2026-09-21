@@ -145,8 +145,8 @@ test('a personality that was sent reads as its length, not as a yes', () => {
 
 test('a task that fell back to a weaker model says both lengths, in the order they went out', () => {
   // §2, and the reason D175's one-number-per-run no longer tells the truth: the document is
-  // still read once per task, but which of its three lengths goes out is decided per step for
-  // the weakest rung in that step's plan — so a fallback genuinely changes what she was told.
+  // still read once per task, but which of its three lengths goes out is decided for each model
+  // asked — so a fallback genuinely changes what she was told.
   const trace = new Trace()
   trace.start('eight-b', 'refactor this')
   trace.personality(612, 'high')

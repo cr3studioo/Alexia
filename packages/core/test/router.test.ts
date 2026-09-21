@@ -9,6 +9,7 @@ import { anonymous, keyOf, ProviderError, PROVIDERS, type Provider } from '../sr
 import { OLLAMA } from '../src/ollama.js'
 import {
   bubble,
+  dearest,
   failed,
   MODES,
   route,
@@ -1860,4 +1861,69 @@ test('with the paid switch off, free done and paid able is a pause with its reas
   const unsaid = route({ ...hello, modality: ['image'] }, pins(), world({ models: [freeTools, eyes], today: { spent: 0, allowance: 0 } }))
   expect(unsaid.ok === false && unsaid.paused).toBe(undefined)
   spentLedger.close()
+})
+
+test('the worst a rung could bill is everything sent at three characters a token, and the whole reply ceiling (D186)', () => {
+  const dear = model({ id: 'paid/dear', tier: 'T3', priceIn: 3, priceOut: 15 })
+  // 3,000 characters is 1,000 tokens in at $3 a million, and 2,000 out at $15 a million.
+  const worst = dearest(dear, [{ role: 'user', content: 'x'.repeat(3_000) }], { maxTokens: 2_000 })
+  expect(worst).toBeCloseTo(0.003 + 0.03, 10)
+  // The tool list goes with the request, so it is counted with it.
+  const tooled = dearest(dear, [{ role: 'user', content: 'x'.repeat(3_000) }], { maxTokens: 2_000, tools: [{ name: 'fs.list', description: 'd'.repeat(300) } as never] })
+  expect(tooled).toBeGreaterThan(worst)
+})
+
+test('what today has left travels with a plan only where the allowance let paid in (D186)', () => {
+  const hello = { messages: asked('hello') }
+  // The slider's middle, with money allowed: the allowance governs, so its remainder is on the plan.
+  const middle = route(hello, pins(), world({ today: { spent: 0.25, allowance: 1 } }))
+  expect(middle.ok && middle.left).toBe(0.75)
+  // *Paid only* is somebody saying the words, and a pin is somebody naming the model: neither is held to it.
+  const said = route(hello, pins({ spend: 'paid' }), world({ today: { spent: 0.25, allowance: 1 } }))
+  expect(said.ok && said.left).toBe(undefined)
+  const pinned = route(hello, pins({ model: 'paid/frontier' }), world({ today: { spent: 0.25, allowance: 1 } }))
+  expect(pinned.ok && pinned.left).toBe(undefined)
+  // Nothing allowed: nothing paid is in the plan, so there is nothing to hold it to.
+  const none = route(hello, pins(), world({ today: { spent: 0, allowance: 0 } }))
+  expect(none.ok && none.left).toBe(undefined)
+})
+
+test('a paid rung that could cost more than today has left is skipped for a cheaper one, unannounced (D186)', async () => {
+  const { two, keys, ledger } = await scripted()
+  const dear = model({ id: 'paid/dear', tier: 'T3', priceIn: 5, priceOut: 25, provider: 'beta' })
+  const paidLines: string[] = []
+  const asking: string[] = []
+  // 6,000 tokens of reply at $25 a million is $0.15 at worst, and the day has a dime.
+  const answer = await send(
+    [
+      { model: dear, provider: two },
+      { model: cheapPaid, provider: two },
+    ],
+    { messages: asked('hello'), maxTokens: 6_000 },
+    ledger,
+    keys,
+    { left: 0.1, onPaid: (line) => paidLines.push(line), onAsk: (choice) => asking.push(choice.model.id) },
+  )
+  expect(answer.model.id).toBe('paid/small')
+  // Never asked, never announced as a charge, and never recorded as sent anything.
+  expect(called).toEqual(['paid/small'])
+  expect(asking).toEqual(['paid/small'])
+  expect(paidLines).toEqual(['The free models are used up, so this one goes to paid/small, which costs money.'])
+  ledger.close()
+})
+
+test('when every paid rung could go past what today has left, the stop says so and nothing is billed (D186)', async () => {
+  const { two, keys, ledger } = await scripted()
+  const dear = model({ id: 'paid/dear', tier: 'T3', priceIn: 5, priceOut: 25, provider: 'beta' })
+  const stop = await send([{ model: dear, provider: two }], { messages: asked('hello'), maxTokens: 6_000 }, ledger, keys, { left: 0.1 }).catch(
+    (error: unknown) => error,
+  )
+  expect(stop).toBeInstanceOf(ProviderError)
+  expect((stop as ProviderError).status).toBe(402)
+  expect((stop as ProviderError).message).toContain("paid/dear could cost up to $0.15 for this and today's allowance has $0.10 left")
+  expect(called).toEqual([])
+  // A rung the allowance does not govern is asked as before.
+  const asked_ = await send([{ model: dear, provider: two }], { messages: asked('hello'), maxTokens: 6_000 }, ledger, keys)
+  expect(asked_.model.id).toBe('paid/dear')
+  ledger.close()
 })

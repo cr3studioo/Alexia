@@ -266,9 +266,23 @@ function notHerButton(row: HTMLElement, answer: HTMLElement): HTMLElement {
      * each offering to take the line, is a question asked twice.
      */
     if (answer.querySelector('.not-her') !== null) return
-    void post('/api/not-her', {})
     const box = document.createElement('div')
     box.className = 'not-her'
+    /**
+     * The press goes at once, and what comes back decides what the line under it may say.
+     * `heard: false` is nothing having kept it — the plugin switched off since the last state
+     * read, or nothing in use — and *Noted* over that would be the button lying.
+     */
+    const heard = post('/api/not-her', {})
+      .then((back) => back.heard !== false)
+      .catch(() => false)
+    const unheard = (): void => {
+      answer.classList.remove('not-her-marked')
+      box.replaceChildren(noted('Nothing is keeping these right now, so that was not noted.'))
+    }
+    void heard.then((kept) => {
+      if (!kept) unheard()
+    })
     const field = document.createElement('input')
     field.type = 'text'
     field.className = 'not-her-line'
@@ -284,8 +298,26 @@ function notHerButton(row: HTMLElement, answer: HTMLElement): HTMLElement {
       if (sent) return
       sent = true
       const typed = field.value.trim()
-      if (typed !== '') void post('/api/not-her', { said: typed })
-      box.replaceChildren(noted(typed === '' ? 'Noted. Refine will use this.' : 'Noted, with what she should have said.'))
+      // The line is about the answer the press was about; core pairs the two, and the plugin
+      // files it on the same moment rather than as a second one.
+      void heard.then(async (kept) => {
+        if (!kept) {
+          unheard()
+          return
+        }
+        const added =
+          typed === '' ||
+          (await post('/api/not-her', { said: typed })
+            .then((back) => back.heard !== false)
+            .catch(() => false))
+        box.replaceChildren(
+          noted(
+            !added ? 'Marked, but the line did not reach anything that keeps it.'
+            : typed === '' ? 'Noted. Refine will use this.'
+            : 'Noted, with what she should have said.',
+          ),
+        )
+      })
     }
     send.addEventListener('click', done)
     field.addEventListener('keydown', (event) => {

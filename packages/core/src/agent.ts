@@ -11,9 +11,10 @@ import {
   send,
   shapeOf,
   sizedFor,
-  weakest,
+  sizeFor,
   type Ask,
   type Bubble,
+  type Choice,
   type Mode,
   type Personality,
   type Pins,
@@ -149,9 +150,9 @@ export interface AgentEvents {
   /** A call is about to run. Fired before the work, because that is the point of a trace. */
   step?(step: Step): void
   /**
-   * **How much personality this step's model was given**, in characters, and which of §2's
-   * three lengths that was. Fired once per step, because the model is chosen per step and the
-   * three lengths are the reason that can now change under the same task.
+   * **How much personality a model was given**, in characters, and which of §2's three lengths
+   * that was. Fired for every rung actually asked — once a step when the first answers, again
+   * when a fallback is asked — because the length is chosen for the model it goes to.
    */
   personality?(chars: number, size: Size): void
   /**
@@ -242,9 +243,9 @@ export interface RunOptions {
    * Read once per task by whoever calls this, because a plugin asked every step is a plugin
    * woken twenty-four times to say the same sentence — and a personality that changed halfway
    * through a task would be worse than one that did not. **Which of the three goes out is
-   * decided per step**, and that is not the same thing: the document does not change, but the
-   * model does, and the one a fallback lands on may be a 2B router that cannot hold six
-   * hundred words. {@link weakest} picks for the weakest rung in that step's plan.
+   * decided per model asked**, and that is not the same thing: the document does not change,
+   * but the model does, and the one a fallback lands on may be a 2B router that cannot hold six
+   * hundred words. `sizeFor` picks for each rung as `send` reaches it.
    */
   personality?: Personality
   signal?: AbortSignal
@@ -598,16 +599,27 @@ export async function run(options: RunOptions): Promise<RunResult> {
     const billable = verdict.choices.some((c) => paid(c.model.tier))
 
     /**
-     * **Which length of the personality this step sends** (§2). Chosen for the *weakest* rung
-     * in the plan rather than the first one, because a 429 on the first hands the step to the
-     * second and the document has already gone with it.
+     * **Which length of the personality each model is sent** (§2) — chosen per rung, as that
+     * rung is asked, by the model it is asked of.
+     *
+     * It was chosen once per step for the *weakest* rung in the plan, on the grounds that a 429
+     * hands the step to the next rung and the document has already gone with it. But a plan is
+     * every model that fits — a hundred free ones, a router, this Mac's 3B — so the weakest was
+     * nearly always small, and a 550B paid model at the head of the plan was handed a hundred
+     * words. Sending is per rung, so the document is too: `send` asks for each rung's messages
+     * just before asking it, and a fallback to a 2B still never gets the long one.
      */
-    const worn =
-      options.personality === undefined ? undefined : sizedFor(options.personality, weakest(verdict.choices, now))
-    const wearing = worn?.text
-    // Counted the way `system` counts it, so this is the length that reached the model rather
-    // than the length that was stored — and said per step now that it can differ between them.
-    if (worn !== undefined) on?.personality?.(wearing?.trim().length ?? 0, worn.size)
+    const trimmed = trim(messages, trimming)
+    const wear = (choice: Choice): { text: string; size: Size } | undefined =>
+      options.personality === undefined ? undefined : sizedFor(options.personality, sizeFor(choice, now))
+    const first = verdict.choices[0]
+    const dressed = (choice: Choice): Message[] => [system(available, wear(choice)?.text, standing), ...trimmed]
+    const asking = (choice: Choice): void => {
+      const worn = wear(choice)
+      // Counted the way `system` counts it, so this is the length that reached the model rather
+      // than the length that was stored — said per rung asked, which is what reached a model.
+      if (worn !== undefined) on?.personality?.(worn.text.trim().length, worn.size)
+    }
 
     /** What this turn's switches said, kept on the answer they belong to (§4 G). */
     const noted: string[] = []
@@ -618,7 +630,8 @@ export async function run(options: RunOptions): Promise<RunResult> {
         {
           // Trimmed here rather than in the store: what is kept is what a model is shown,
           // and the history itself stays whole so a reload shows every step that happened.
-          messages: [system(available, wearing, standing), ...trim(messages, trimming)],
+          // Each rung is actually sent `dressed(choice)`; this is the first rung's, for the record.
+          messages: [system(available, first === undefined ? undefined : wear(first)?.text, standing), ...trimmed],
           ...(available.length > 0 && { tools: available }),
           ...(billable && { maxTokens: options.maxTokens ?? REPLY_CEILING }),
           ...(options.signal && { signal: options.signal }),
@@ -630,6 +643,7 @@ export async function run(options: RunOptions): Promise<RunResult> {
           ...(options.run !== undefined && { run: options.run }),
           ...(options.plugin !== undefined && { plugin: options.plugin }),
           ...(options.paidAllowed !== undefined && { paidAllowed: options.paidAllowed }),
+          ...(verdict.left !== undefined && { left: verdict.left }),
           ...(on?.delta && { onDelta: on.delta }),
           ...(on?.note && { onNote: on.note }),
           onSwitch: (event: Switch) => {
@@ -640,6 +654,8 @@ export async function run(options: RunOptions): Promise<RunResult> {
           },
           ...(on?.paid && { onPaid: on.paid }),
           ...(on?.restart && { onRestart: on.restart }),
+          messagesFor: dressed,
+          onAsk: asking,
         },
       )
     } catch (error) {

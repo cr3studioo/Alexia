@@ -8,7 +8,7 @@ import { redact, summarise } from './redact.js'
 import type { SecretStore } from './secrets.js'
 import { textOf, type Message, type Outcome, type Source, type Store } from './store.js'
 import { floor, PER_TOKEN, size, summary } from './trim.js'
-import { affordable, costOf, type Today } from './usage.js'
+import { affordable, costOf, dollars as money, type Today } from './usage.js'
 
 /**
  * Which model, and why that one.
@@ -118,9 +118,6 @@ export const allowed = (model: Model, spend: Spend): boolean =>
  */
 export type Size = 'small' | 'medium' | 'high'
 
-/** Order, weakest reader first — what {@link weakest} compares and nothing else. */
-const SIZES: Size[] = ['small', 'medium', 'high']
-
 /**
  * **A window this small is a window the personality is competing with** (§2).
  *
@@ -149,6 +146,10 @@ export const READS_SHORT = 32_768
  *   for is one that holds a long document and follows it, and it is the one place the full
  *   six hundred words earn their tokens.
  * - **Medium** — everything else: the free hosted models, and this machine's own from 7B up.
+ *
+ * **Asked of the model a call actually goes to**, as `send` reaches each rung — not of the
+ * weakest model in a whole plan. A plan is every model that fits, so its weakest was nearly
+ * always a router or a 2B, and the strong model at its head was handed a hundred words.
  */
 export function sizeFor(choice: Choice, world: Pick<World, 'health' | 'strikes'>, at: number = Date.now()): Size {
   const { model } = choice
@@ -165,24 +166,6 @@ export function sizeFor(choice: Choice, world: Pick<World, 'health' | 'strikes'>
   }
   return paid(model.tier) ? 'high' : 'medium'
 }
-
-/**
- * **The size the weakest model in a plan can read** (§2).
- *
- * The personality is read once per task and the model is chosen per *step* — and a step falls
- * back down its own plan when the first rung says 429. So the size cannot be decided from the
- * model that is asked first: it has to be one every rung in that plan can hold, or a fallback
- * quietly hands a 2B model six hundred words and the answer that comes back is the one this
- * whole plan started with. An empty plan reads as `small`, which is the same direction every
- * other unknown here takes.
- */
-export const weakest = (choices: readonly Choice[], world: Pick<World, 'health' | 'strikes'>, at: number = Date.now()): Size =>
-  choices.length === 0 ? 'small' : (
-    choices.reduce<Size>((so, choice) => {
-      const its = sizeFor(choice, world, at)
-      return SIZES.indexOf(its) < SIZES.indexOf(so) ? its : so
-    }, 'high')
-  )
 
 /**
  * **One personality in three lengths** (§2), as the plugin hands it over and core reads it.
@@ -394,7 +377,18 @@ export interface Choice {
 export type Mode = 'automatic' | 'sequence' | 'pinned'
 
 export type Verdict =
-  | { ok: true; mode: Mode; choices: Choice[] }
+  | {
+      ok: true
+      mode: Mode
+      choices: Choice[]
+      /**
+       * **Dollars today's allowance has left, when the allowance is what let paid in** (D186).
+       * Handed to {@link send} as `left`, which skips a paid rung whose worst case is more than
+       * this. Absent where the allowance does not govern — the slider at *paid only*, somebody
+       * saying the words — and where nothing paid could be in the plan at all.
+       */
+      left?: number
+    }
   | {
       ok: false
       mode: Mode
@@ -661,14 +655,22 @@ export function route(ask: Ask, pins: Pins, world: World): Verdict {
    */
   const order = pins.order ?? []
   const mode: Mode = order.length > 0 ? 'sequence' : 'automatic'
+  const floor = ask.minTier ?? 'T0'
+  /** At or above the floor the asking plugin declared (M8-1). `T0` is every model. */
+  const meetsFloor = (c: Choice): boolean => rank(c.model.tier) >= rank(floor)
   const withHeadroom = everything.filter((c) => !tired.has(c))
+  /**
+   * **The ledger steps aside when honouring it would leave nothing the floor allows** (D107).
+   * *Anything else left* has to mean anything that could answer this: with the free tiers
+   * marked spent and a model on this machine still there, a `T1` floor used to find only the
+   * local model, refuse it, and tell somebody with two providers connected to connect one.
+   */
   const pool: Choice[] =
     mode === 'sequence' ? everything.filter((c) => order.includes(c.model.id))
-    : withHeadroom.length > 0 ? withHeadroom
+    : withHeadroom.some(meetsFloor) ? withHeadroom
     : everything
 
   const shape = ask.shape ?? shapeOf(ask)
-  const floor = ask.minTier ?? 'T0'
   const needsTools = shape === 'tools' || (ask.tools?.length ?? 0) > 0
   /** Anything beyond words. `text` is every model's answer, so asking about it says nothing. */
   const carried = (ask.modality ?? []).filter((kind) => kind !== 'text')
@@ -703,6 +705,14 @@ export function route(ask: Ask, pins: Pins, world: World): Verdict {
    * about money rather than about which model (D155 changed the second, not the first).
    */
   const middle = asked === 'mixed'
+  /**
+   * **What the allowance still has, for `send` to hold each paid rung to** (D186). *Is anything
+   * left?* is the only question asked above, and it lets a day with a cent left reach a model
+   * whose one reply could cost a dollar — the allowance a line crossed after the fact rather
+   * than a limit. Scoped exactly as `capped` is: where the allowance decides whether paid is in
+   * the plan, it also decides which paid rung can afford this request.
+   */
+  const left = asked === 'mixed' && where === 'cloud' && !capped && world.today !== undefined ? world.today.allowance - world.today.spent : undefined
 
   /**
    * **Why free failed**, which is the question that decides where money comes in the order —
@@ -741,7 +751,7 @@ export function route(ask: Ask, pins: Pins, world: World): Verdict {
    */
   const fitting = (spend: Spend, sidegrades = false, from: readonly Choice[] = pool, routersToo = false): Choice[] =>
     from
-      .filter((c) => rank(c.model.tier) >= rank(floor))
+      .filter(meetsFloor)
       .filter((c) => ask.above === undefined || rank(c.model.tier) > rank(ask.above))
       .filter((c) => !needsTools || c.model.supportsTools)
       // What the request carries, against what the model can be given. A model that says
@@ -821,8 +831,8 @@ export function route(ask: Ask, pins: Pins, world: World): Verdict {
    * out of the way when there is not.
    */
   const sure = capable ? choices.filter((c) => !doubted(c)) : choices
-  if (sure.length > 0) return { ok: true, mode, choices: sure }
-  if (choices.length > 0) return { ok: true, mode, choices }
+  if (sure.length > 0) return { ok: true, mode, choices: sure, ...(left !== undefined && { left }) }
+  if (choices.length > 0) return { ok: true, mode, choices, ...(left !== undefined && { left }) }
   // Was the allowance the wall? Only if opening the price line would actually have produced
   // something — otherwise the real wall is one of the others and saying *set an allowance*
   // sends somebody to spend money on a problem money does not fix.
@@ -843,7 +853,7 @@ export function route(ask: Ask, pins: Pins, world: World): Verdict {
    * reason — a `T2` floor on a machine that has paid models and no allowance is the money
    * wall below, not this one.
    */
-  if (pool.length > 0 && !pool.some((c) => rank(c.model.tier) >= rank(floor))) {
+  if (pool.length > 0 && !pool.some(meetsFloor)) {
     return { ok: false, mode, why: `what asked for this needs ${FLOOR_SAYS[floor]}, and nothing you have connected is one — connect a provider that offers one` }
   }
   if (capable && fitting(spend, false, pool, true).length > 0) {
@@ -1582,6 +1592,17 @@ export function stopped(failures: readonly Failure[], blocked?: string): string 
 }
 
 /**
+ * **The most one rung could bill for a request** (D186): everything sent counted at
+ * {@link PER_TOKEN}, which over-counts on purpose, and the whole reply ceiling at the output
+ * price. A worst case rather than a guess, because it is held against money somebody set aside.
+ */
+export const dearest = (model: Model, messages: Message[], request: Pick<ChatRequest, 'tools' | 'maxTokens'>): number =>
+  costOf(model, {
+    in: Math.ceil((size(messages) + (request.tools === undefined ? 0 : JSON.stringify(request.tools).length)) / PER_TOKEN),
+    out: request.maxTokens ?? 0,
+  })
+
+/**
  * Walk the plan until one of them answers.
  *
  * A rung that fails is not an error, it is the next rung's turn — how far the turn moves is
@@ -1644,6 +1665,30 @@ export async function send(
      * Absent is the wall clock, which is every other caller and is what this always did.
      */
     at?: number
+    /**
+     * **The messages for one rung, when they depend on which model is asked** (§2).
+     *
+     * Called just before a rung is asked, never for one that is skipped, and its answer is sent
+     * instead of `request.messages`. The personality's three lengths are why: the one a model
+     * can hold is a fact about that model, so it is chosen here, per rung, rather than once for
+     * a whole plan whose tail — a router, a 2B, this Mac's small model — would otherwise decide
+     * what the strong model at its head is told. Absent is the same messages for every rung,
+     * which is every other caller.
+     */
+    messagesFor?: (choice: Choice) => Message[]
+    /**
+     * **A rung is about to be asked** — called once, after every check that could skip it and
+     * just before the request goes. Where a caller records what a rung was sent, it records it
+     * here: `messagesFor` is asked before the money check, so a rung it dressed may still be skipped.
+     */
+    onAsk?: (choice: Choice) => void
+    /**
+     * **Dollars today's allowance has left** (D186), from the verdict's `left`. A paid rung whose
+     * worst case — {@link dearest} — is more than this is not asked, and the walk goes on down
+     * the plan to something cheaper or free. Absent is no check, which is every rung the allowance
+     * does not govern.
+     */
+    left?: number
   } = {},
 ): Promise<Answer> {
   const failures: Failure[] = []
@@ -1726,6 +1771,21 @@ export async function send(
         `${choice.model.name} costs money and no maxTokens was set — a billed call must bound its reply.`,
       )
     }
+    // What this rung is sent — the same for every rung unless the caller dresses it per model (§2).
+    const messages = hooks.messagesFor?.(choice) ?? request.messages
+    /**
+     * **The day's allowance is a limit, not a line crossed afterwards** (D186). Before a paid rung
+     * is asked, the most it could bill — everything sent, and the whole reply ceiling — is held
+     * to what today has left; one that could go past it is skipped as the cap skips it, and the
+     * walk goes on to a cheaper rung or a free one. Nothing is said unless nothing answers.
+     */
+    if (paid(choice.model.tier) && hooks.left !== undefined) {
+      const worst = dearest(choice.model, messages, request)
+      if (worst > hooks.left) {
+        blocked = `${choice.model.name} could cost up to ${money(worst)} for this and today's allowance has ${money(Math.max(0, hooks.left))} left — raise it under the paid switch on the Models tab, or wait for tomorrow`
+        continue
+      }
+    }
     // One plain line before the charge, not after it. Nobody is surprised by a bill from
     // something that did not say anything. It is also this rung's switch line, so the one
     // below stays quiet for it.
@@ -1765,7 +1825,7 @@ export async function send(
     // `T0` means the model is on this machine (only `ollama.ts` ever writes it), so the
     // payload is not going anywhere and stripping it would cost accuracy to protect against
     // nothing. Everything else is a third party, free tiers most of all.
-    const outbound = choice.model.tier === 'T0' ? { messages: request.messages, kinds: [] } : redact(request.messages)
+    const outbound = choice.model.tier === 'T0' ? { messages, kinds: [] } : redact(messages)
     if (outbound.kinds.length > 0) {
       // Enforcement that says so. Silently editing what somebody wrote is the same
       // surprise as a bill nobody announced.
@@ -1775,6 +1835,7 @@ export async function send(
     // request is billed to credit and spends none of it, and counting it here is how a key
     // with money behind it talked itself out of the pool halfway through a day.
     if (!paid(choice.model.tier)) sent(store, choice.provider)
+    hooks.onAsk?.(choice)
     const later = choices.slice(at + 1).some(open)
     try {
       const { message, usage, cut, heard } = await chat(

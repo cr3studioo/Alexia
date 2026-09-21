@@ -378,6 +378,20 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
   const offers = new Offers()
 
   /**
+   * **Who is answering, kept until a plugin's tools change** (improvements 8 and 10).
+   *
+   * The chip and *That wasn't her* are read on every state poll — twenty a minute with the
+   * window open — and each is a question a plugin's *binding* answers, which means waking the
+   * plugin to ask. Asked per poll, that kept a lazy plugin running for as long as the window
+   * was open, and put a plugin round trip in front of every state read. Neither answer changes
+   * unless a plugin changes what it binds, and every such change arrives as `onToolsChanged`
+   * below: switching, forgetting, enabling, disabling, a crash. So it is asked once, then kept.
+   *
+   * Declared before the plugins it listens to, because their loading already reports changes.
+   */
+  let speaking: Promise<{ character?: string; notHer: boolean }> | undefined
+
+  /**
    * Everything installed, and the aggregate of what it can do (M15-2).
    *
    * The loop asks `tooling.list()` on every step and this cache answers it, so a folder
@@ -395,6 +409,8 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
       // A plugin arriving or going away takes its bundled skills with it, and the index the
       // model is shown is a tool description built from that list.
       skills.invalidate()
+      // And who is answering is asked again on the next state read.
+      speaking = undefined
     },
     // The folders the user chose, as MCP roots. A plugin is told where it may work by the
     // protocol's own mechanism rather than by anything Alexia invented.
@@ -513,7 +529,13 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
         },
         store,
         secrets,
-        { plugin: pluginId, ...(asRun !== undefined && { run: asRun, paidAllowed: !allowance(store).stop }) },
+        {
+          plugin: pluginId,
+          ...(asRun !== undefined && { run: asRun, paidAllowed: !allowance(store).stop }),
+          // Today's allowance holds each paid rung to what the reply could cost (D186), so a press
+          // asking for a capable model cannot buy the dearest one past what the day has left.
+          ...(verdict.left !== undefined && { left: verdict.left }),
+        },
       ).finally(() => (sampling -= 1))
       return {
         role: 'assistant',
@@ -693,6 +715,12 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
    * from last Tuesday is a backlog nobody clears.
    */
   let lesson: Episode | undefined
+
+  /**
+   * The answer the last *That wasn't her* press was about, so the line typed after it lands on
+   * the same one (improvement 10). One, like `lesson`: the box is under the latest answer only.
+   */
+  let pressed: { session: typeof session; answer: string; asked?: string } | undefined
 
   /**
    * The second opinion (M15-4). Local by default — a reviewer that ships what it is
@@ -996,6 +1024,24 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
       return undefined
     }
   }
+
+  /**
+   * **The chip, and whether *That wasn't her* has anywhere to go**, as the state read gets them
+   * — asked once and kept until tools change ({@link speaking}).
+   *
+   * `notHer` is the **binding**, not the manifest's promise. A persona plugin with nothing in use
+   * still lists `persona.not_her` among what it provides and withholds the tool, so reading the
+   * promise drew the button with nobody behind it, and a press was dropped while the screen said
+   * *Noted*.
+   */
+  const who = (): Promise<{ character?: string; notHer: boolean }> =>
+    (speaking ??= (async () => {
+      const [character, notHer] = await Promise.all([
+        chip(),
+        plugins.answers(CORE_CAPABILITIES.notHer) ? plugins.offers(CORE_CAPABILITIES.notHer) : false,
+      ])
+      return { ...(character !== undefined && { character }), notHer }
+    })())
 
   /**
    * One task, asked for by a plugin (M7-5).
@@ -1387,9 +1433,9 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
            * `notHer` is whether anything will listen if somebody presses *That wasn't her* —
            * the button is not drawn otherwise, which is the honest version of *there is
            * nothing here this would tell*. Resolved by capability; core never learns who.
+           * Both come from {@link who}, which keeps them until a plugin's tools change.
            */
-          character: await chip(),
-          notHer: plugins.answers(CORE_CAPABILITIES.notHer),
+          ...(await who()),
           // The paid switch (§4 H), so the screen can say above the message box that paid is on.
           cross: caps(store).cross === true,
           // The permission controls, and what is standing. Every one of these is a control
@@ -2083,27 +2129,43 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
      */
     if (url.pathname === '/api/not-her' && request.method === 'POST') {
       const { said } = sent as { said?: string }
-      const history = store.history(session)
-      const answer = [...history].reverse().find((turn) => turn.role === 'assistant' && (turn.calls?.length ?? 0) === 0)
+      const line = typeof said === 'string' && said.trim() !== '' ? said.trim().slice(0, 500) : undefined
       response.writeHead(200, { 'content-type': 'application/json' })
-      if (answer === undefined) {
-        response.end(JSON.stringify({ ok: false, said: 'There is no answer to mark yet.' }))
-        return
+      /**
+       * **A line typed after the press is about the answer that was pressed**, not about whatever
+       * is newest by the time somebody finishes typing it. The box stays open under its answer
+       * while the conversation carries on, so the follow-up reuses the pair the press sent; the
+       * plugin reads a second call about the same answer as the same moment, filled in.
+       */
+      let pair = line !== undefined && pressed?.session === session ? pressed : undefined
+      if (pair === undefined) {
+        const history = store.history(session)
+        const answer = [...history].reverse().find((turn) => turn.role === 'assistant' && (turn.calls?.length ?? 0) === 0)
+        if (answer === undefined) {
+          response.end(JSON.stringify({ ok: false, said: 'There is no answer to mark yet.' }))
+          return
+        }
+        // The turn it was answering, because an example is a pair: what she was asked, and the
+        // thing she said that did not sound like her. One on its own teaches nothing.
+        const at = history.lastIndexOf(answer)
+        const asked = [...history.slice(0, at)].reverse().find((turn) => turn.role === 'user')
+        pair = { session, answer: textOf(answer).slice(0, 2000), ...(asked !== undefined && { asked: textOf(asked).slice(0, 500) }) }
       }
-      // The turn it was answering, because an example is a pair: what she was asked, and the
-      // thing she said that did not sound like her. One on its own teaches nothing.
-      const at = history.lastIndexOf(answer)
-      const asked = [...history.slice(0, at)].reverse().find((turn) => turn.role === 'user')
-      await plugins
+      pressed = pair
+      const heard = await plugins
         .capability(CORE_CAPABILITIES.notHer, {
-          answer: textOf(answer).slice(0, 2000),
-          ...(asked !== undefined && { asked: textOf(asked).slice(0, 500) }),
-          ...(typeof said === 'string' && said.trim() !== '' && { said: said.trim().slice(0, 500) }),
+          answer: pair.answer,
+          ...(pair.asked !== undefined && { asked: pair.asked }),
+          ...(line !== undefined && { said: line }),
         })
+        .then((result) => result.isError !== true)
         .catch((error: unknown) => {
           console.error(`[not-her] ${error instanceof Error ? error.message : String(error)}`)
+          return false
         })
-      response.end(JSON.stringify({ ok: true }))
+      // Still `ok`: a press never fails on the strength of a plugin. `heard` is the other half —
+      // whether anything kept it — so the screen does not say *Noted* over a mark nobody took.
+      response.end(JSON.stringify({ ok: true, heard }))
       return
     }
 
