@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { afterEach, beforeEach, expect, test } from 'vitest'
-import { chunk, LIMIT, send, sendDocument, sendRich, sendVoice } from '../api.js'
+import { chunk, LIMIT, send, sendDocument, sendDraft, sendRich, sendRichDraft, sendVoice, setMyCommands, updates } from '../api.js'
 
 // The one piece of real logic in this plugin that is not a network call: Telegram refuses
 // a message over 4096 characters, and a long answer arriving as an API error the user
@@ -125,4 +125,51 @@ test('a voice note carries extra the same way, and without it is unchanged', asy
   expect(JSON.parse(sent[0].init.body.get('reply_parameters'))).toEqual({ message_id: 7 })
   await sendVoice('T', 42, Buffer.from('ogg'))
   expect(sent[1].init.body.get('reply_parameters')).toBeNull()
+})
+
+/**
+ * What Phase 3 adds to the wire (D195).
+ *
+ * A draft that names the wrong field is a draft that never appears, and a `setMyCommands`
+ * with the wrong scope is a menu offered to every group this bot is in. Both fail silently
+ * against a real bot — Telegram answers `ok: true` to a body it understood and this end
+ * cannot tell the difference from here — so the body is the thing worth pinning down.
+ */
+
+test('an empty draft is the "Thinking…" one, and it carries the Stop button', async () => {
+  await sendDraft('T', 42, 12345, '', true)
+  expect(sent[0].url).toContain('/sendMessageDraft')
+  expect(body()).toEqual({ chat_id: 42, draft_id: 12345, text: '', can_stop: true })
+})
+
+test('a draft without can_stop does not send the field at all', async () => {
+  await sendDraft('T', 42, 12345, 'half an answer')
+  expect(body()).toEqual({ chat_id: 42, draft_id: 12345, text: 'half an answer' })
+})
+
+test('a rich draft wraps its markdown the same way a rich message does', async () => {
+  await sendRichDraft('T', 42, 12345, '**half** an answer', true)
+  expect(sent[0].url).toContain('/sendRichMessageDraft')
+  expect(body()).toEqual({
+    chat_id: 42,
+    draft_id: 12345,
+    rich_message: { markdown: '**half** an answer' },
+    can_stop: true,
+  })
+})
+
+test('the command menu is set for private chats, not for every chat this bot is in', async () => {
+  await setMyCommands('T', [{ command: 'help', description: 'What you can type' }])
+  expect(sent[0].url).toContain('/setMyCommands')
+  expect(body()).toEqual({
+    commands: [{ command: 'help', description: 'What you can type' }],
+    scope: { type: 'all_private_chats' },
+  })
+})
+
+test('the Stop button is asked for, or Telegram never sends the press', async () => {
+  await updates('T', 7, 50)
+  expect(body().allowed_updates).toContain('stopped_message_generation')
+  expect(body().allowed_updates).toContain('message')
+  expect(body().allowed_updates).toContain('callback_query')
 })

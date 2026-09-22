@@ -68,8 +68,10 @@ export const updates = (token, offset, seconds, signal) =>
     token,
     'getUpdates',
     // Button presses arrive as their own update kind. Asking for messages only is what made
-    // a keyboard impossible rather than merely absent (M7-5).
-    { offset, timeout: seconds, allowed_updates: ['message', 'callback_query'] },
+    // a keyboard impossible rather than merely absent (M7-5). `stopped_message_generation` is
+    // the Stop button on a draft, which is the same stop `/stop` is (D195) — and a kind left
+    // off this list is one Telegram never sends, so the button would simply do nothing.
+    { offset, timeout: seconds, allowed_updates: ['message', 'callback_query', 'stopped_message_generation'] },
     signal,
   )
 
@@ -101,6 +103,50 @@ export const send = (token, chatId, text, signal, buttons, extra) =>
  */
 export const sendRich = (token, chatId, markdown, extra, signal) =>
   call(token, 'sendRichMessage', { chat_id: chatId, rich_message: { markdown }, ...extra }, signal)
+
+/**
+ * The answer while it is still being written, as Telegram's own draft (D195).
+ *
+ * A draft is not a message: it is the line the chat shows where a message is being composed,
+ * it belongs to this bot in this chat, and **it expires after about thirty seconds** unless it
+ * is sent again. That expiry is the whole reason this is a draft rather than one message
+ * edited over and over — an edit per delta is an edit Telegram rate-limits and a notification
+ * per word on somebody's phone, while a draft that is never finished simply vanishes, which is
+ * exactly the right behaviour for words that were never an answer.
+ *
+ * `can_stop` is what puts the Stop button on it, and pressing that button sends a
+ * `stopped_message_generation` update carrying the same `draft_id` this call chose. Two
+ * methods, the same shape, for the same reason `sendMessage` and `sendRichMessage` are two:
+ * one renders Markdown and the older one does not.
+ */
+export const sendDraft = (token, chatId, draftId, text, canStop, signal) =>
+  call(
+    token,
+    'sendMessageDraft',
+    { chat_id: chatId, draft_id: draftId, text, ...(canStop && { can_stop: true }) },
+    signal,
+  )
+
+export const sendRichDraft = (token, chatId, draftId, markdown, canStop, signal) =>
+  call(
+    token,
+    'sendRichMessageDraft',
+    { chat_id: chatId, draft_id: draftId, rich_message: { markdown }, ...(canStop && { can_stop: true }) },
+    signal,
+  )
+
+/**
+ * The list behind the *"/"* button in the chat (D195).
+ *
+ * `all_private_chats` rather than the default scope, which is *every* chat including groups a
+ * bot has been added to: this plugin answers one paired account in a private chat, and a menu
+ * offering Alexia's commands to a group it happens to be in would be offering something it
+ * will refuse. Telegram replaces the whole list each time, so this is the only call — there is
+ * nothing to remove first, and a list built from core's own commands cannot drift out of step
+ * by being appended to.
+ */
+export const setMyCommands = (token, commands, scope = { type: 'all_private_chats' }, signal) =>
+  call(token, 'setMyCommands', { commands, scope }, signal)
 
 /**
  * Telegram's cap on what a button may carry, and the reason the real action never goes on

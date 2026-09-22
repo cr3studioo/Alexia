@@ -4,7 +4,7 @@
   "id": "telegram",
   "name": "Telegram",
   "summary": "Talk to Alexia from Telegram. Every message crosses Telegram's servers, and every reply says so.",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "license": "AGPL-3.0-only",
   "entry": {
     "run": "node",
@@ -49,6 +49,13 @@
     },
     {
       "type": "text",
+      "key": "morning_summary",
+      "label": "Send what is due each morning at",
+      "placeholder": "08:30",
+      "hint": "A time in 24-hour form, in this machine's own clock. Leave it empty for no summary. It needs a plugin that keeps track of what you owe — without one there is nothing to list, so no summary goes out."
+    },
+    {
+      "type": "text",
       "key": "ntfy_topic",
       "label": "ntfy topic, if Telegram is down",
       "placeholder": "something-nobody-would-guess",
@@ -76,7 +83,8 @@
   "storage": {
     "namespace": "telegram",
     "tables": [
-      "chats"
+      "chats",
+      "reminders"
     ]
   },
   "commands": [

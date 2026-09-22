@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { expect, test } from 'vitest'
-import { bare, stops } from '../slash.js'
+import { bare, isCommand, stops } from '../slash.js'
 
 // Two patterns, both of which fail quietly when they are wrong: a `/stop` test that is too
 // eager swallows an ordinary message, and an `@BotName` suffix left on turns every command
@@ -37,4 +37,56 @@ test('bare touches nothing that is not an addressed command', () => {
   expect(bare('what about bob@example.com?')).toBe('what about bob@example.com?')
   expect(bare('')).toBe('')
   expect(bare(undefined)).toBe('')
+})
+
+/**
+ * The routing decision (D195).
+ *
+ * This end and core have to agree about what a command is, and the failure when they do not
+ * is silent: a line core would have answered as a question, sent down the command path, comes
+ * back without history, without being written into the conversation, and capped at a few
+ * hundred tokens. Every near-miss below is a line somebody could actually type.
+ */
+
+test('isCommand agrees with core about the ordinary commands', () => {
+  expect(isCommand('/help')).toBe(true)
+  expect(isCommand('/new')).toBe(true)
+  expect(isCommand('/cheap')).toBe(true)
+  expect(isCommand('/HELP')).toBe(true)
+  expect(isCommand('/help me')).toBe(true)
+  expect(isCommand('  /help  ')).toBe(true)
+  // Namespaced and hyphenated, which is what a plugin's own command looks like.
+  expect(isCommand('/commitments.due')).toBe(true)
+  expect(isCommand('/new-chat')).toBe(true)
+})
+
+test('isCommand refuses what core refuses, so those go down the answer path', () => {
+  // A digit after the slash: core reads this as a question, and so must this end.
+  expect(isCommand('/2fa reset the code')).toBe(false)
+  // Punctuation glued to the name, with no space before the end.
+  expect(isCommand('/help!')).toBe(false)
+  expect(isCommand('/help?')).toBe(false)
+  // A path, which is the other thing a slash starts.
+  expect(isCommand('/usr/local/bin')).toBe(false)
+  expect(isCommand('//stop')).toBe(false)
+  expect(isCommand('/')).toBe(false)
+})
+
+test('isCommand refuses anything with a newline in it, because core does', () => {
+  // A wrapped prompt that happens to begin with a slash is a question, not a command.
+  expect(isCommand('/help\nand also tell me the time')).toBe(false)
+})
+
+test('isCommand is false for ordinary words and for nothing at all', () => {
+  expect(isCommand('hello')).toBe(false)
+  expect(isCommand('')).toBe(false)
+  expect(isCommand('   ')).toBe(false)
+  expect(isCommand(undefined)).toBe(false)
+})
+
+test('bare and isCommand are used in that order, which is what makes a menu tap work', () => {
+  // `/status@AlexiaBot` is not a command until the suffix comes off — the `@` is not in
+  // core's pattern, so asking in the other order routes a tapped menu entry to the model.
+  expect(isCommand('/status@AlexiaBot')).toBe(false)
+  expect(isCommand(bare('/status@AlexiaBot'))).toBe(true)
 })

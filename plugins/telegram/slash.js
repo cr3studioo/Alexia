@@ -17,11 +17,40 @@
  * stop, and neither is a sentence that happens to begin with the word. The pattern wants the
  * word whole — end of message, or whitespace after it, with the optional `@BotName` between.
  *
- * Two regexes with no state and no I/O, kept out of `index.js` so both can be held to a test.
+ * **And a leading slash is not a command** (D195). This end used to send anything starting
+ * with `/` down the command path, while core only reads a line as a command when it matches
+ * its own pattern (`packages/core/src/serve.ts`) and otherwise runs it as an ordinary question
+ * with tools. The two disagreeing is not a cosmetic difference: `/2fa reset the code` is not a
+ * command to core, so from the phone it was sent with no history, capped at a command's few
+ * hundred tokens, and never written into the conversation — the answer arrived, and the
+ * question it answered was not in the transcript. `isCommand` is core's test, copied
+ * deliberately, so the two ends route the same line the same way.
+ *
+ * Regexes with no state and no I/O, kept out of `index.js` so every one can be held to a test.
  */
 
 /** `/stop`, `/stop@AlexiaBot`, `/stop now` — and nothing that merely starts with those letters. */
 const STOP_RE = /^\/stop(@\w+)?(\s|$)/i
+
+/**
+ * Core's own test, character for character: a slash, a letter, then letters, digits, dots and
+ * dashes, and then either whitespace or the end. A dot is in it because a plugin's command is
+ * namespaced (`commitments.due`).
+ */
+const COMMAND_RE = /^\/[a-z][a-z0-9.-]*(?:\s|$)/i
+
+/**
+ * Whether core will read this line as a slash command.
+ *
+ * Trimmed and single-line, both because core trims and because core refuses a line with a
+ * newline in it — a wrapped prompt that happens to begin with a slash is a question, not a
+ * command, and that check is the thing keeping it one. Pass it the text with any `@BotName`
+ * already taken off by `bare`, since core has never heard of that suffix.
+ */
+export function isCommand(text) {
+  const typed = String(text ?? '').trim()
+  return !typed.includes('\n') && COMMAND_RE.test(typed)
+}
 
 /** Whether this message is the stop command. */
 export function stops(text) {

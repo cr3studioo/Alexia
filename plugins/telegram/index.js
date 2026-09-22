@@ -12,20 +12,27 @@ import {
   react,
   send,
   sendDocument,
+  sendDraft,
   sendPhoto,
   sendRich,
+  sendRichDraft,
   sendVoice,
+  setMyCommands,
   TelegramError,
   unbutton,
   updates,
 } from './api.js'
 import { Asking } from './asking.js'
+import { Draft } from './draft.js'
 import { forRich, MARKER, RICH_LIMIT, withMarker } from './format.js'
 import { bestPhoto, fileTurn, kindOf, photoNote, safeName, tooBig } from './incoming.js'
 import { Line } from './line.js'
+import { commandsFrom, helpLines, menu } from './menu.js'
 import { EVERY, Presence } from './presence.js'
+import { dayKey, dueNow, morningDue, parseAt, reminderText } from './reminders.js'
 import { speaks, voiceMode } from './reply.js'
-import { bare, stops } from './slash.js'
+import { frameOf, sampling, Stopped, wasStopped } from './sampling.js'
+import { bare, isCommand, stops } from './slash.js'
 
 /**
  * Telegram (M4-1) — the shape the contract had not met yet.
@@ -56,14 +63,14 @@ const POLL_SECONDS = 50
 /** Say it again after a gap this long. A mark on message one is not a mark on message fifty. */
 const REMARK_AFTER = 60 * 60 * 1000
 /**
- * How long an answer may go without a word from core (D192).
+ * How often the reminders that are due are looked for (D195).
  *
- * The SDK's own default is sixty seconds, and every task from the phone that took longer —
- * a permission question, a picture, a slow tool — was cancelled at exactly one minute, which
- * core rightly reads as this plugin giving up. Ten minutes, reset whenever core reports
- * progress: until core sends any, a ceiling; once it does, ten minutes of silence.
+ * Half a minute is the resolution of every reminder this holds, and that is the right trade: a
+ * person asking to be nudged at five is not counting the seconds, and a timer that wakes twice
+ * a minute to read a handful of rows is a cost nobody can measure. It is `unref`'d, so it is
+ * never the reason this process is still alive.
  */
-const ANSWER_WAIT = 10 * 60_000
+const TICK = 30_000
 
 /** Everything the poll loop needs to be stopped and restarted when the token changes. */
 let running
@@ -99,32 +106,20 @@ const presence = new Presence(
 )
 
 /**
- * The answer being written now, and the way to stop it (D192): `{ controller, chatId }`,
+ * The work being done now, and the way to stop it (D192, D195): `{ controller, chatId, draft }`,
  * or undefined between answers.
  *
- * Out here rather than inside `answer` so that whatever stops it — `/stop`, next — can reach
- * it from the poll loop, without being queued behind the very answer it is stopping. Aborting
- * `controller` cancels the `sampling` request, and core ends the task when a plugin cancels.
+ * Out here rather than inside `answer` so that whatever stops it — `/stop`, the Stop button on
+ * the draft, a token being replaced — can reach it from the poll loop, without being queued
+ * behind the very answer it is stopping. Aborting `controller` cancels the `sampling` request,
+ * and core ends the task when a plugin cancels.
+ *
+ * **A command sets it too** (D195). `/new` is instant, but a plugin's own command can be gated,
+ * and a gated command asks this plugin's `confirm` and then waits for a person — which is
+ * minutes, not milliseconds, and was the one long-running thing on this path that `/stop`
+ * could not reach.
  */
 let current
-
-/** An answer that was stopped on purpose. Not a failure, and nothing more to say about it. */
-class Stopped extends Error {}
-
-/**
- * Was that the stop, or something genuinely going wrong (D194)?
- *
- * The signal is the answer that can be trusted: `/stop` aborts the controller, and whatever
- * the rejection turns out to look like, the abort is why it happened. The other two are what
- * an abort looks like from further away — the platform's own `AbortError`, and the sentence
- * MCP wraps a cancelled request in on its way back across the wire. A stop dressed up as
- * *something went wrong here* would be the plugin reporting a fault the person just asked for.
- */
-function wasStopped(signal, error) {
-  if (signal.aborted) return true
-  if (error?.name === 'AbortError') return true
-  return /\b(?:aborted|cancell?ed)\b/i.test(String(error?.message ?? error))
-}
 
 /**
  * Whether rich messages have been given up on for the rest of the session (D194).
@@ -136,6 +131,17 @@ function wasStopped(signal, error) {
  * message is tried rendered again.
  */
 let plainOnly = false
+
+/**
+ * Whether drafts are worth trying, for the rest of the session (D195).
+ *
+ * One object shared by every `Draft`, because the answer to *can this chat show a draft* does
+ * not change between answers: an old client or a chat that does not support them fails the same
+ * way on the next message, and retrying per answer is a retry that was never going to work.
+ * `draft.js` is the only thing that sets it, and Phase 1's typing indicator is what still
+ * covers the chat once it is off.
+ */
+const drafting = { off: false }
 
 /**
  * The field that makes a message quote the one it answers (D194).
@@ -244,25 +250,92 @@ const remember = (chatId, role, text) =>
  * and the history the model is *shown* is this plugin's, in its own namespace. Clearing it
  * is what makes a new chat new; without it the words would keep arriving in the next one.
  */
-async function command(token, chatId, text, quote = () => undefined) {
-  /**
-   * `/status@AlexiaBot` is what the *"/"* menu sends (D194).
-   *
-   * The suffix is Telegram's own way of saying which bot a command in a group was meant for,
-   * and it has done its job by the time the update is read here. Core has never heard of it,
-   * so leaving it on turns every command tapped from the menu into one core answers *there is
-   * no such thing* to — a menu whose own entries do not work.
-   */
-  const typed = bare(text)
+async function command(token, chatId, typed, quote = () => undefined) {
   if (/^\/new\b/i.test(typed)) await alexia.storage.delete('chats', { chat_id: String(chatId) })
-  const result = await alexia.server.server.createMessage({
-    messages: [{ role: 'user', content: { type: 'text', text: typed } }],
-    maxTokens: 400,
-    _meta: { 'alexia/tools': true },
-  })
+  const result = await ran(token, chatId, typed)
   const said = result.content?.type === 'text' ? result.content.text : ''
-  for (const part of chunk(said || 'Done.', plainOnly ? LIMIT : RICH_LIMIT)) {
+  // The two this plugin answers itself are not in core's list and never will be, so a relayed
+  // `/help` says so — and the same list becomes the "/" menu, from the same reply (D195).
+  const whole = /^\/help\b/i.test(typed) ? `${said || 'Done.'}\n${helpLines()}` : said || 'Done.'
+  for (const part of chunk(whole, plainOnly ? LIMIT : RICH_LIMIT)) {
     await say(token, chatId, part, { extra: quote() })
+  }
+  if (/^\/help\b/i.test(typed)) await refreshMenu(token, result)
+}
+
+/**
+ * The command itself, run by core, with everything an answer gets (D195).
+ *
+ * **The same option bag as `answer`**, which is the fault this was pulled out to fix: a
+ * command used to be sent with no options at all, so it carried the SDK's sixty-second
+ * default — and a plugin command whose ruling is *ask* sends a question to this very chat and
+ * then waits for somebody to read it. A minute is not a person's reply time, so the request
+ * was cancelled, core read the cancel as this plugin giving up, and a tap on a menu entry
+ * turned into an error about something that had not failed.
+ *
+ * **And `asked`, for the same question.** `confirm` sends to the chat whose message started
+ * the work; a command never set it, so the question fell back to the home chat — usually the
+ * right one, and not always, and on a freshly paired account with no home chat yet it was an
+ * error core reads as *no*.
+ */
+async function ran(token, chatId, typed) {
+  const controller = new AbortController()
+  // A background `/help` for the menu is nobody's message: there is no chat to ask a permission
+  // question in and nothing `/stop` could mean, so it does not take the handle an answer owns.
+  const owned = chatId !== undefined
+  if (owned) {
+    asked = { token, chatId }
+    current = { controller, chatId }
+  }
+  try {
+    return await alexia.server.server.createMessage(
+      {
+        messages: [{ role: 'user', content: { type: 'text', text: typed } }],
+        maxTokens: 400,
+        _meta: { 'alexia/tools': true },
+      },
+      // No draft: a command's answer is one line that is already written, so core sends no
+      // frames for it (D193) and there would be nothing to stream.
+      sampling(controller.signal),
+    )
+  } catch (error) {
+    if (wasStopped(controller.signal, error)) throw new Stopped('stopped from the phone')
+    throw error
+  } finally {
+    if (owned) {
+      asked = undefined
+      if (current?.controller === controller) current = undefined
+    }
+  }
+}
+
+/**
+ * The list behind the *"/"* button, built from core's own (D195, D111).
+ *
+ * **Asked for rather than kept in step.** Core knows every command every manifest declares —
+ * that is what answers `/help` — and a second copy of that list living here is the kind of
+ * thing that is right on the day it is written: a plugin ships a command, nobody remembers
+ * this file, and the menu quietly lies about what typing `/` will do. So the menu is whatever
+ * `/help` just said, plus this plugin's own two, which core has never heard of because `/stop`
+ * is intercepted before it reaches core and `/panel` opens a page core does not own.
+ *
+ * Cosmetic, like every other thing on the chat's furniture: a failure is one line in the log,
+ * once, and never costs an answer.
+ */
+let menuFailed = false
+async function refreshMenu(token, known) {
+  if (!token) return
+  try {
+    const result = known ?? (await ran(token, undefined, '/help'))
+    const list = menu(commandsFrom(result))
+    // An empty list would *clear* the menu rather than leave it alone, which is worse than
+    // whatever is up there now.
+    if (list.length === 0) return
+    await setMyCommands(token, list)
+  } catch (error) {
+    if (menuFailed) return
+    menuFailed = true
+    log.warn('could not set the command menu — answers are unaffected', error)
   }
 }
 
@@ -294,9 +367,21 @@ async function answer(token, chatId, turn, messageId) {
     unsent = undefined
     return held
   }
-  // Not remembered and carrying no history: a command is an instruction to Alexia, not a
-  // turn in the conversation, and `/new` clears the conversation it would have been in.
-  if (turn.image === undefined && turn.text.startsWith('/')) return command(token, chatId, turn.text, quote)
+  /**
+   * A command, and **core's own test for what one is** (D195).
+   *
+   * Not remembered and carrying no history: a command is an instruction to Alexia, not a turn
+   * in the conversation, and `/new` clears the conversation it would have been in.
+   *
+   * This used to be *starts with a slash*, which is looser than core's rule and wrong in the
+   * direction that loses words. Core reads `/2fa reset the code` as an ordinary question,
+   * because a command's name starts with a letter — so sending it down here meant a question
+   * answered with no history behind it, capped at a command's few hundred tokens, and left out
+   * of the transcript entirely. `isCommand` is core's pattern, and `bare` runs first because
+   * the `@BotName` a menu tap adds is not in it.
+   */
+  const typed = turn.image === undefined ? bare(turn.text) : turn.text
+  if (turn.image === undefined && isCommand(typed)) return command(token, chatId, typed, quote)
   // What is written down is the short form when there is one: a photo is `[a photo]` and a
   // file is its name, because the bytes and the whole of a document's text are this turn's
   // business and not every turn after it.
@@ -322,7 +407,27 @@ async function answer(token, chatId, turn, messageId) {
   // question can arrive before the answer does.
   asked = { token, chatId }
   const controller = new AbortController()
-  current = { controller, chatId }
+  /**
+   * **The answer, shown while it is written** (D195).
+   *
+   * A draft is Telegram's own preview of a message being composed: an empty one reads
+   * *Thinking…*, and each refresh replaces it with the words so far. Refreshed rather than
+   * edited, because an edit per delta is a rate limit and a notification per word, while a
+   * draft that is never finished simply disappears — which is the right end for words that
+   * were never an answer. `can_stop` puts a Stop button on it, and the final answer, sent as
+   * an ordinary message below, is what replaces the draft.
+   *
+   * Phase 1's *typing…* stays on underneath: it costs one small request every four seconds
+   * and it is what the chat still has on a client where drafts do not work.
+   */
+  const draft = new Draft({
+    plain: (id, text) => sendDraft(token, chatId, id, text, true),
+    rich: (id, markdown) => sendRichDraft(token, chatId, id, markdown, true),
+    session: drafting,
+    log: (message, error) => log.warn(message, error),
+  })
+  current = { controller, chatId, draft }
+  draft.open()
   let result
   try {
     result = await alexia.server.server.createMessage({
@@ -347,15 +452,20 @@ async function answer(token, chatId, turn, messageId) {
        * somewhere, and the tools come back with it.
        */
       _meta: { 'alexia/tools': true },
-    }, {
-      signal: controller.signal,
-      // Not the SDK's sixty seconds, which a question waiting on a person outlasts (D192).
-      timeout: ANSWER_WAIT,
-      resetTimeoutOnProgress: true,
-      // Asking for progress is what puts a token on the request for core to report against;
-      // the words themselves are for later, so nothing listens yet.
-      onprogress: () => {},
-    })
+    }, sampling(controller.signal, (params) => {
+      /**
+       * The words as core writes them (D193, D195).
+       *
+       * `delta` is what has been written since the last frame and is appended; `restart` means
+       * the model writing them stopped partway and another is starting over, so what is on
+       * screen is somebody else's half-sentence and has to go (D155). A `phase` needs nothing
+       * drawn — it is the keep-alive, and it has already done its job by resetting the clock
+       * on the way in.
+       */
+      const frame = frameOf(params)
+      if (frame?.restart) draft.restart()
+      if (typeof frame?.delta === 'string' && frame.delta !== '') draft.add(frame.delta)
+    }))
   } catch (error) {
     // `/stop` pressed the button on this one. It is not a fault and the loop has already said
     // so in this chat, so it travels as its own kind of error and dies quietly in `handled`.
@@ -363,6 +473,9 @@ async function answer(token, chatId, turn, messageId) {
     throw error
   } finally {
     asked = undefined
+    // The words are about to arrive as a real message, or they are never going to. Either way
+    // nothing more should be refreshing a preview of them.
+    draft.close()
     // Only while it is still this answer's: the handle belongs to whichever answer is running,
     // and one that finishes late must never take it from the answer after it.
     if (current?.controller === controller) current = undefined
@@ -787,6 +900,9 @@ async function failed(token, chatId, error) {
  */
 async function stop(token, chatId, messageId) {
   const was = current !== undefined || line.waiting > 0
+  // The preview first, so nothing refreshes a half-written answer after the chat has been
+  // told it stopped (D195). The answer's own `finally` closes it too; both are idempotent.
+  current?.draft?.close()
   current?.controller.abort()
   line.clear()
   await say(token, chatId, was ? 'Stopped.' : 'Nothing was running.', {
@@ -916,6 +1032,34 @@ async function poll(token, signal) {
           continue
         }
 
+        /**
+         * The Stop button on the draft was pressed (D195).
+         *
+         * **The same stop `/stop` is**, and it has to be: the button is on a preview of the
+         * answer being written, and the only honest thing a person means by pressing it is
+         * *end this*. So it goes through the same path, and the chat gets the same sentence.
+         *
+         * The draft id is what makes it safe to act on. An update of this kind carries a chat
+         * and the id of the draft it belongs to and no `from` at all, so the identity checks
+         * are those two: the chat has to be a paired account's — in a private chat the chat id
+         * *is* the account's id — and the draft has to be the one being written right now.
+         * A press on a draft from a minute ago must not end the answer that replaced it.
+         */
+        const pressedStop = update.stopped_message_generation
+        if (pressedStop) {
+          const where = pressedStop.chat?.id
+          const mine = current?.draft?.id !== undefined && current.draft.id === pressedStop.draft_id
+          if (where !== undefined && mine && (await allowed()).has(String(where))) {
+            try {
+              await stop(token, where)
+            } catch (error) {
+              await failed(token, where, error)
+            }
+          }
+          await done(id)
+          continue
+        }
+
         const message = update.message
         const from = message?.from?.id
         const chatId = message?.chat?.id
@@ -1004,6 +1148,18 @@ async function connect() {
   asking.close()
   // And *typing…* sent over a connection that is going away is a promise nobody is keeping.
   presence.stopAll()
+  /**
+   * **And the queue goes with it** (D195).
+   *
+   * The loop was stopped and the indicators were, and the work itself carried on: whatever was
+   * being answered kept going, and everything queued behind it started in turn. All of it
+   * belongs to the bot that is being replaced — so it would put *typing…* into chats through a
+   * token that no longer exists, spend the month's allowance on answers, and then fail to
+   * deliver a single one of them. A stop that leaves the work running is not a stop.
+   */
+  current?.draft?.close()
+  current?.controller.abort()
+  line.clear()
 
   const { bot_token: token } = await settings()
   if (!token) {
@@ -1023,6 +1179,9 @@ async function connect() {
   void poll(token, stopping.signal)
   await report()
   bind()
+  // The "/" menu, from core's own list. Not waited for: it is furniture, and an answer must
+  // never be behind it (D195).
+  void refreshMenu(token)
 }
 
 /**
@@ -1112,6 +1271,11 @@ const confirmed = alexia.tool(
     // The next move is the person's, and *typing…* under the buttons would say it was
     // Alexia's (D192). Back on the moment the question settles, however it settles.
     presence.pause(chatId)
+    // The draft goes quiet for the same moment and for a second reason: sending a message into
+    // a chat takes the draft down anyway, so a refresh arriving after the question would put a
+    // half-written answer *below* the thing it is waiting on (D195).
+    const held = current?.draft
+    held?.pause()
     try {
       // No ntfy fallback for this one: a question with no way to answer it is worse than a
       // question that did not arrive, because it looks answered to whoever sent it.
@@ -1120,6 +1284,7 @@ const confirmed = alexia.tool(
       return { content: [{ type: 'text', text: chose ?? 'No' }] }
     } finally {
       presence.resume(chatId)
+      held?.resume()
     }
   },
 )
@@ -1157,6 +1322,153 @@ alexia.tool(
   },
 )
 
+/**
+ * Reminders, and why they live here (D195).
+ *
+ * **This is the plugin that is awake and has somewhere to say it.** A reminder is two things:
+ * something remembered, and something that arrives at a time nobody is looking at a screen.
+ * Core has no timer that outlives a conversation and the window is not open at half past four
+ * — but this plugin is `resident`, because a message can arrive from outside at any hour, and
+ * it holds a chat on a device that is in somebody's pocket. Everything else about a reminder
+ * follows from that and is deliberately small: a row, a 30-second look at the clock, and
+ * `say()`, which is the same path an answer takes and therefore has the same ntfy fallback.
+ *
+ * **The model resolves the time, not this.** *Remind me at five* is a sentence about a person's
+ * own day — their timezone, whether five has already gone — and a model reading it in context
+ * is better at that than a parser here would be. What comes back is an ISO date-time, and
+ * `reminders.js` only checks it is one that could happen.
+ */
+/** A tool refusing, in the one shape a model can read as *this did not happen*. */
+const refused = (text) => ({ isError: true, content: [{ type: 'text', text }] })
+
+/** Every reminder that has not been sent. Few enough to read whole, by construction. */
+const waiting = async () => {
+  const rows = await alexia.storage.select('reminders', { order: [['at', 'asc']], limit: 500 })
+  return rows.filter((row) => !row.sent)
+}
+
+alexia.tool(
+  'remind',
+  {
+    description:
+      'Send the user a reminder on their phone at a given time. Use when they ask to be ' +
+      'reminded, nudged or told about something later. `at` is an ISO 8601 date-time — work ' +
+      'out what the user means ("at 5pm", "in 20 minutes", "tomorrow morning") in their own ' +
+      'local time and pass the result. The reminder goes through Telegram servers.',
+    inputSchema: fromJsonSchema({
+      type: 'object',
+      properties: {
+        text: { type: 'string', description: 'What to remind them about, in their own words.' },
+        at: { type: 'string', description: 'When, as an ISO 8601 date-time in their local time.' },
+      },
+      required: ['text', 'at'],
+    }),
+    // It puts a message on somebody's phone at a time of its choosing, which is a thing that
+    // happens in the world and leaves this machine. The same annotation `send` carries.
+    annotations: { openWorldHint: true },
+  },
+  async ({ text, at }) => {
+    const said = String(text ?? '').trim()
+    if (said === '') return refused('There was nothing to be reminded about.')
+    // Refused now rather than stored and silently never delivered: a reminder with nowhere to
+    // arrive is a promise this plugin cannot keep, and the model can say so while somebody is
+    // still listening.
+    if ((await home()) === undefined) return refused('Telegram is not paired, so a reminder has nowhere to go.')
+    const when = parseAt(at, Date.now())
+    // Said and not understood is worth saying out loud, in the words the model can act on:
+    // a time silently dropped is a reminder that will never arrive and nobody would know why.
+    if (!when.ok) return refused(`That reminder was not set, because ${when.why}.`)
+    await alexia.storage.insert('reminders', { text: said, at: when.at, sent: 0, made: Date.now() })
+    return { content: [{ type: 'text', text: `Set: “${said}”, for ${new Date(when.at).toLocaleString()}.` }] }
+  },
+)
+
+alexia.tool(
+  'reminders',
+  {
+    description: 'List the reminders waiting to be sent to the phone, with when each one is due.',
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+  },
+  async () => {
+    const rows = await waiting()
+    if (rows.length === 0) return { content: [{ type: 'text', text: 'Nothing is waiting.' }] }
+    const lines = rows
+      .sort((a, b) => a.at - b.at)
+      .map((row) => `${String(row.rowid)}. ${String(row.text)} — ${new Date(row.at).toLocaleString()}`)
+    return { content: [{ type: 'text', text: lines.join('\n') }] }
+  },
+)
+
+alexia.tool(
+  'forget_reminder',
+  {
+    description: 'Drop a reminder that has not been sent yet, by the number the reminders list gives it.',
+    inputSchema: fromJsonSchema({
+      type: 'object',
+      properties: { id: { type: 'number', description: 'The number from the reminders list.' } },
+      required: ['id'],
+    }),
+    annotations: { destructiveHint: true, openWorldHint: false },
+  },
+  async ({ id }) => {
+    const gone = await alexia.storage.delete('reminders', { rowid: Number(id) })
+    return {
+      content: [{ type: 'text', text: gone > 0 ? 'Dropped.' : 'There is no reminder with that number.' }],
+    }
+  },
+)
+
+/**
+ * The clock, every thirty seconds (D195).
+ *
+ * **Marked sent before it is sent** would be a reminder lost to one failed request, and marked
+ * after would be one sent twice if the mark failed — so it is sent first and marked
+ * immediately after, which loses at worst a duplicate on a crash between the two. A reminder
+ * arriving twice is a nuisance; one that never arrives is the thing somebody trusted this with.
+ *
+ * A reminder whose time came while the machine was off is still sent, and says how late it is
+ * rather than arriving as though it were on time.
+ */
+async function ring() {
+  const { bot_token: token, morning_summary: at } = await settings()
+  if (!token) return
+  const chatId = await home()
+  if (chatId === undefined) return
+  const now = Date.now()
+  for (const row of dueNow(await waiting(), now)) {
+    // Plain: a reminder is the person's own sentence read back to them, and a stray asterisk
+    // in it is not Markdown they asked to have rendered.
+    await say(token, chatId, reminderText(row, now), { rich: false })
+    await alexia.storage.update('reminders', { sent: 1 }, { rowid: row.rowid })
+  }
+  await summary(token, chatId, at, now)
+}
+
+/**
+ * What is due, once a morning (D195, D193).
+ *
+ * **It asks by capability and never learns whose ledger it is.** `commitments.due` is a name in
+ * the registry; something answers it or nothing does, and this plugin cannot tell which plugin
+ * that was — which is the whole point of the registry and the reason a channel can push a
+ * summary without a line of code about commitments in it.
+ *
+ * The day is written down *before* the summary is sent, so a failure costs one morning rather
+ * than retrying every thirty seconds until midnight.
+ */
+async function summary(token, chatId, at, now) {
+  if (!morningDue(at, await alexia.storage.get('morning_day'), now)) return
+  await alexia.storage.set('morning_day', dayKey(now))
+  const { answers } = await alexia.answers('commitments.due')
+  if (!answers) return
+  // The day this machine is having, since whatever keeps the ledger may be counting from
+  // somewhere else and *due today* is a question about the reader's morning.
+  const got = await alexia.capability('commitments.due', { today: dayKey(now) })
+  if (got.isError) return
+  const text = (got.content ?? []).map((block) => (block.type === 'text' ? block.text : '')).join('\n').trim()
+  if (text === '') return
+  await say(token, chatId, text)
+}
+
 await alexia.start()
 await connect()
 // A token typed, replaced or cleared means the connection this plugin is holding is the
@@ -1164,4 +1476,10 @@ await connect()
 alexia.onSettingsChanged((changed) => {
   if ('bot_token' in changed) void connect()
 })
+// The reminder clock. `unref`'d, so it is never the reason this process is still running, and
+// every tick is wrapped: a database blip at 4am must not be the end of the timer.
+const clock = setInterval(() => {
+  void ring().catch((error) => log.warn('could not look for reminders that are due', error))
+}, TICK)
+clock.unref?.()
 log.info(`${alexia.manifest.name} is ready`)
