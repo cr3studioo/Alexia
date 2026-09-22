@@ -128,6 +128,10 @@ export function streamer(
     },
     alive() {
       if (ended || now() - saidAt < aliveEvery) return
+      // Words first, here as in `phase`: a frame never overtakes what was written before it.
+      // Nothing reachable today sends one of these before a `phase` has flushed — but *the
+      // rule holds at every emitter* is the kind of thing that is true until one is added.
+      flush()
       saidAt = now()
       out({ phase: stage ?? 'tool' })
     },
