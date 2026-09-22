@@ -4,10 +4,9 @@ import { PLANNER, routes, stature, type Model } from './catalog.js'
 import { OLLAMA } from './ollama.js'
 import { sent, spent, underHalf, type Rung } from './pool.js'
 import { BUSY_HALF_LIFE, type Judgement, type Health } from './health.js'
-import { anonymous, chat, PATIENCE, ProviderError, PROVIDERS, type ChatRequest, type Heard, type Provider, type Usage } from './provider.js'
+import { anonymous, chat, HEDGE_AFTER, PATIENCE, ProviderError, PROVIDERS, RETRY_STEP, STAR_WAIT, type ChatRequest, type Heard, type Provider, type Sign, type Usage } from './provider.js'
 import { redact, summarise } from './redact.js'
 import { CORE, type SecretStore } from './secrets.js'
-import { HEDGE_AFTER, RETRY_STEP, STAR_WAIT, type Sign } from './provider.js'
 import { textOf, type Message, type Outcome, type Source, type Store } from './store.js'
 import { floor, PER_TOKEN, size, summary } from './trim.js'
 import { affordable, costOf, dollars as money, type Today } from './usage.js'
@@ -1646,7 +1645,9 @@ export function failed(error: unknown, choice: Choice): Failure | undefined {
     return of('provider', trouble === 'keyless' ? `${provider.name} has no key yet` : `your ${provider.name} key was refused`, 'key-refused')
   }
   if (status === 400 && REPLY_CAP.test(error.message) && !COUNTS_INPUT.test(error.message)) {
-    return of('model', `${model.name} cannot write a reply as long as this asks for`, 'failed')
+    // Recorded as the request's, not the model's: the same model answers anything asking for less,
+    // so three of these from a plugin that asks for a long reply must not set it aside for the chat.
+    return of('model', `${model.name} cannot write a reply as long as this asks for`, 'reply-too-long')
   }
   if (status === 413 || (status === 400 && TOO_LONG.test(error.message))) {
     return of('request', `this conversation is too long for ${model.name}`, 'too-long')

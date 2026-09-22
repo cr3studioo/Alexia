@@ -139,10 +139,12 @@ const MIGRATIONS: string[] = [
 /**
  * **How one try of one model went** (D161), in the words the record keeps.
  *
- * The first nine are the plan's. The last four were implied by it and needed a name to be kept
+ * The first nine are the plan's. The last five were implied by it and needed a name to be kept
  * apart, because none of them is about the model: `no-credit` is the account's, `key-refused`
- * the provider's, `too-long` the conversation's, and `unreachable` is as likely this Mac's
- * network as the provider (D162). They are recorded, and never tag a model.
+ * the provider's, `too-long` the conversation's, `reply-too-long` the request's — a reply
+ * ceiling above what the model writes, which the same model meets for anything asking less —
+ * and `unreachable` is as likely this Mac's network as the provider (D162). They are recorded,
+ * and never tag a model.
  */
 export type Outcome =
   | 'answered'
@@ -157,6 +159,7 @@ export type Outcome =
   | 'no-credit'
   | 'key-refused'
   | 'too-long'
+  | 'reply-too-long'
   | 'unreachable'
 
 /** Who asked: the app's chat, a plugin, a daily test (§4 E), or a person pressing *Bad answer* (§4 I). */

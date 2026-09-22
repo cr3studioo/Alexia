@@ -45,7 +45,7 @@ test('a report is counts per model per provider by week, and nothing else', () =
   ])
 
   // Exactly the listed fields on every row, and failures keyed only by kinds of failure.
-  const kinds: readonly string[] = ['busy', 'failed', 'slow', 'empty', 'cut', 'retired', 'needs-key', 'no-credit', 'key-refused', 'too-long', 'unreachable']
+  const kinds: readonly string[] = ['busy', 'failed', 'slow', 'empty', 'cut', 'retired', 'needs-key', 'no-credit', 'key-refused', 'too-long', 'reply-too-long', 'unreachable']
   for (const row of report) {
     expect(Object.keys(row).sort()).toEqual(['answers', 'badAnswers', 'failures', 'model', 'provider', 'tries', 'week'])
     expect(Object.keys(row.failures).every((kind) => kinds.includes(kind))).toBe(true)

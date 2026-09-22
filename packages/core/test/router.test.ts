@@ -1935,7 +1935,7 @@ test('when every paid rung could go past what today has left, the stop says so a
 test('a reply ceiling the model cannot write is about the model, not a conversation that is too long', () => {
   const choice = { model: free('free/short-writer'), provider: alpha }
   const capped = failed(new ProviderError(400, 'max_tokens is too large: 4000. This model supports at most 2048 completion tokens'), choice)
-  expect(capped).toMatchObject({ reach: 'model' })
+  expect(capped).toMatchObject({ reach: 'model', outcome: 'reply-too-long' })
   expect(capped?.says).toBe('free/short-writer cannot write a reply as long as this asks for')
   // Groq's wording names the window too, and is still about the reply.
   const groq = failed(new ProviderError(400, '`max_tokens` must be less than or equal to `8192`, the maximum value for `max_tokens` is less than the `context_window` for this model'), choice)

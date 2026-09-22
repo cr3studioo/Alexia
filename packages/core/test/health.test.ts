@@ -154,6 +154,8 @@ test('the same 400 three times in a row sets a model aside; an answer, or anythi
   expect(evening([burst[0]!, burst[1]!, other502, burst[2]!])).toBeUndefined()
   // A conversation too long for it is a 400 as well, and is recorded as `too-long`: never this.
   expect(evening([0, 5, 10].map((minute): Try => ({ ...tried('groq/compound', 'too-long', at(20, minute)), status: 400 })))).toBeUndefined()
+  // Nor a reply ceiling above what it writes — a plugin asking for a long reply, three times.
+  expect(evening([0, 5, 10].map((minute): Try => ({ ...tried('groq/compound', 'reply-too-long', at(20, minute)), status: 400 })))).toBeUndefined()
   // Once set aside it stays so until a good reply, like every other reason: a busy reply after is not one.
   expect(evening([...burst, tried('groq/compound', 'busy', at(20, 15))])).toBe('turns every request down')
 })

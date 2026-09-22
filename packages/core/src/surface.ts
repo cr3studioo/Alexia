@@ -154,6 +154,7 @@ const DID: Record<Outcome, string> = {
   'no-credit': 'Had no credit to pay for it',
   'key-refused': 'Had its key refused',
   'too-long': 'Found the conversation too long',
+  'reply-too-long': 'Could not write a reply as long as was asked',
   'bad-answer': 'Was marked a bad answer',
 }
 
