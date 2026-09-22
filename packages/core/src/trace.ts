@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import type { Step } from './agent.js'
-import type { Size } from './router.js'
+import type { Phase, Size } from './router.js'
 
 /**
  * The trace, with a memory (M6-5).
@@ -47,6 +47,27 @@ export interface TraceStep {
   ms?: number
 }
 
+/**
+ * **One stage of the wait, and how long it lasted** — the same {@link Phase} the screen turns
+ * into a status line, kept here as a record of where the seconds went.
+ *
+ * The complaint this answers is *seventy seconds before the first word*, and the only number
+ * there was to read was the seventy. A try is stamped when it *ends*, so a walk could not be
+ * split into choosing, waiting on a busy model, and writing — and a fix aimed at the wrong one
+ * of those is a fix that changes nothing. This splits it.
+ *
+ * Kept flat, as facts rather than a sentence: `detail` is the model asked or the tool run, and
+ * the attempt for a retry, because *which* model was slow is the whole of the finding.
+ */
+export interface TracePhase {
+  kind: Phase['kind']
+  /** The model or the tool, and the attempt for `retrying`. Absent for `choosing` and `reading`. */
+  detail?: string
+  at: number
+  /** Filled in when the next stage begins, or when the run ends. Absent is still going. */
+  ms?: number
+}
+
 export interface Run {
   id: string
   /** The user's own line. It is what the run was for, so it is never paraphrased. */
@@ -87,6 +108,16 @@ export interface Run {
    */
   personality?: { chars: number; size: Size }[]
   steps: TraceStep[]
+  /**
+   * **Where the time went**, stage by stage, in the order the stages began.
+   *
+   * Beside the steps rather than inside them, because most of the wait happens where no step
+   * is: before the first tool call, a model is being chosen, asked, asked again and waited on,
+   * and a run that needed no tool has no steps at all — only the wait. Absent on a run nothing
+   * reported a stage for: one stopped before the loop began, or one started by a path that
+   * does not report its stages — a plugin's task, which has no screen waiting on it.
+   */
+  phases?: TracePhase[]
   /**
    * Every charge this run made, from the ledger, looked up by the run's own id (M7-2).
    *
@@ -175,8 +206,39 @@ export class Trace {
     found.ms = Date.now() - found.at
   }
 
+  /**
+   * **A stage began**, so the one before it is over and now has a length.
+   *
+   * Timed by the gap to the next stage rather than by anything a stage says about itself: every
+   * stage is followed by another one or by the end, so the gaps add up to the whole wait, and
+   * there is no second clock to keep in step with the first.
+   *
+   * **The same stage told twice is one stage.** A model reasoning is still the same model
+   * reasoning when it says so again, and two rows for it would split one wait into two numbers
+   * that each look smaller than the thing somebody came here to find. A retry is not a repeat —
+   * its attempt is part of what it is — so five retries read as five, which is the point.
+   *
+   * `over` is a stage that finished before the run opened — the attachments, read before the
+   * question is even written down — with its own start and length, so the time it took is
+   * neither lost nor charged to whatever came next.
+   */
+  phase(phase: Phase, over?: { at: number; ms: number }): void {
+    if (!this.#open) return
+    const kept = (this.#open.phases ??= [])
+    const detail = detailOf(phase)
+    const last = kept.at(-1)
+    if (last?.kind === phase.kind && last.detail === detail) return
+    const at = over?.at ?? Date.now()
+    if (last !== undefined) last.ms ??= at - last.at
+    kept.push({ kind: phase.kind, ...(detail !== undefined && { detail }), at, ...(over !== undefined && { ms: over.ms }) })
+  }
+
   end(ended: Run['ended'], extra: { why?: string; calls?: Charge[] } = {}): void {
     if (!this.#open) return
+    // The last stage ends with the run. Left open, the stage the answer was written in would
+    // read as *still going* on a run that has finished.
+    const last = this.#open.phases?.at(-1)
+    if (last !== undefined) last.ms ??= Date.now() - last.at
     this.#open.ended = ended
     if (extra.why !== undefined) this.#open.why = extra.why
     if (extra.calls !== undefined) this.#open.calls = extra.calls
@@ -220,6 +282,12 @@ export function asText(run: Run): string {
     ...(run.why !== undefined ? ['', run.why] : []),
   ]
 
+  // The wait, before the steps it was spent around: *why did that take a minute* is usually
+  // the question an export is sent to answer, and the steps cannot answer it on their own.
+  if (run.phases !== undefined && run.phases.length > 0) {
+    lines.push('', '## Where the time went', ...run.phases.map(phaseLine))
+  }
+
   for (const step of run.steps) {
     lines.push(
       '',
@@ -230,6 +298,39 @@ export function asText(run: Run): string {
     if (step.text !== undefined && step.text !== '') lines.push('', step.text)
   }
   return lines.join('\n') + '\n'
+}
+
+/**
+ * The fact that tells one stage of a kind from another — which model, which tool, which
+ * attempt. Nothing for the two stages that are about no model: choosing one, and reading files.
+ */
+function detailOf(phase: Phase): string | undefined {
+  switch (phase.kind) {
+    case 'choosing':
+    case 'reading':
+      return undefined
+    case 'retrying':
+      return `${phase.model}, attempt ${String(phase.attempt)}`
+    case 'asking':
+    case 'backup':
+    case 'thinking':
+    case 'writing':
+      return phase.model
+    case 'tool':
+      return phase.name
+  }
+}
+
+/**
+ * One stage and how long it lasted, in seconds to a tenth.
+ *
+ * Tenths, because the stages worth reading are seconds long: a millisecond column would be
+ * noise that looked like precision, and a whole-second one would round a quick *choosing* to
+ * nothing and hide it. Time first, like the charges above it, so the eye runs down one column.
+ */
+function phaseLine(phase: TracePhase): string {
+  const took = phase.ms === undefined ? 'still going' : `${(phase.ms / 1000).toFixed(1)}s`
+  return `  ${took}  ${phase.kind}${phase.detail === undefined ? '' : ` ${phase.detail}`}`
 }
 
 /**

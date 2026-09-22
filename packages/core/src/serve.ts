@@ -2695,6 +2695,14 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     response.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store' })
     const say = (event: Record<string, unknown>): void => void response.write(`data: ${JSON.stringify(event)}\n\n`)
 
+    /**
+     * When the attachments were read, and how long that took — held for the trace, which does
+     * not open until the question is written down and any price agreed. A document read page by
+     * page can be most of a slow first answer, and a record that started after it would charge
+     * those seconds to nothing.
+     */
+    let reading: { at: number; ms: number } | undefined
+
     if (question === undefined) {
       /**
        * The documents, read before anything else happens.
@@ -2703,8 +2711,18 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
        * bearing half of this: the permission gate, the boundary sentences and the offer to
        * learn all read `text`, and every one of them would be wrong to read a document. A file
        * containing the words *delete everything* is not somebody asking for anything.
+       *
+       * **Said before it starts.** Reading is the first wait after sending a file and it comes
+       * before any model is asked, so without the stage on screen it is the same silent `…` —
+       * and silence is what kills a first run, not time.
        */
-      const content = uploads.length === 0 ? text : await documents(text, uploads, say)
+      let content: string | Part[] = text
+      if (uploads.length > 0) {
+        say({ phase: { kind: 'reading' } })
+        const from = Date.now()
+        content = await documents(text, uploads, say)
+        reading = { at: from, ms: Date.now() - from }
+      }
 
       const user: Message = { role: 'user', content, ...(content !== text && { typed: text }) }
       store.append(session, user)
@@ -2753,6 +2771,8 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     // of that would be one decision serving two jobs badly.
     const runId = randomUUID()
     trace.start(runId, text)
+    // The reading that happened before the run could hold it, with its own length (see `reading`).
+    if (reading !== undefined) trace.phase({ kind: 'reading' }, reading)
     const chosen = await personality()
     // Said per step by the loop (§2's three lengths); *none sent* has no step to wait for.
     if (chosen === undefined) trace.personality(0, 'high')
@@ -2792,6 +2812,16 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
           note: (note) => say({ note }),
           // Said twice (§4 G): the screen shows it for three seconds and keeps it on the answer.
           switch: (event) => say({ switch: event }),
+          /**
+           * **The stage the wait is in** — choosing, asking, retrying, writing, a tool — for the
+           * line under the question that replaces a silent `…`. The screen's own stream, not the
+           * plugin wire, so `alexia_protocol` does not move. Kept by the trace too, where the gaps
+           * between stages are the only record of where a slow answer's seconds went.
+           */
+          phase: (phase) => {
+            trace.phase(phase)
+            say({ phase })
+          },
           // The charge line, in a place of its own above the message box.
           paid: (line) => say({ paid: line }),
           // The words on screen since the turn began came from a model that stopped partway;

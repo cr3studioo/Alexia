@@ -457,6 +457,13 @@ export async function run(options: RunOptions): Promise<RunResult> {
   for (;;) {
     if (options.signal?.aborted) return finish('stopped')
 
+    /**
+     * **Choosing, said before it happens.** Every step re-asks the router, and the router reads
+     * a fresh world first — what is installed here, which keys are saved, thirty days of tries —
+     * so the first thing a step does is quiet work nobody can see. Said here, it is the first
+     * stage of the wait on screen instead of a `…`, and the trace can time it against the rest.
+     */
+    on?.phase?.({ kind: 'choosing' })
     const available = await tools.list()
     const named = available.map((t) => ({ name: t.name }))
     const now = await options.world()
@@ -745,6 +752,9 @@ export async function run(options: RunOptions): Promise<RunResult> {
       const step: Step = { n: steps.length + 1, name: call.name, args: parse(call.arguments) }
       steps.push(step)
       on?.step?.(step)
+      // The stage the wait is in now: a tool, by name, rather than the model that asked for it.
+      // Beside `step`, so the stage begins where the step's own clock does, approval and all.
+      on?.phase?.({ kind: 'tool', name: step.name })
 
       const outcome = await permitted(step)
       step.outcome = outcome
