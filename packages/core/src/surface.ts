@@ -1101,7 +1101,7 @@ export function actions(
       said:
         fastest ?
           `On. Up to ${spelled(MOST_AT_ONCE)} free models on different providers are asked together, and after ${spelled(seconds)} second${seconds === 1 ? '' : 's'} whichever answers first is shown. It uses your free requests about ${spelled(MOST_AT_ONCE)} times as fast.`
-        : 'Off. One model at a time, with a second asked beside it when the first is slow or was busy a moment ago.',
+        : 'Off. One model at a time, with a second asked beside it when the first is slow, or has been busy or slow lately.',
     })
   }
 

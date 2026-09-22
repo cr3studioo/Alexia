@@ -98,7 +98,7 @@ function backup(phase: Extract<Phase, { kind: 'backup' }>): string {
     case 'slow':
       return `${phase.behind} is slow to start — asking ${phase.model} too`
     case 'lately':
-      return `${phase.behind} was busy a moment ago — asking ${phase.model} too`
+      return `${phase.behind} has been busy or slow lately — asking ${phase.model} too`
     case 'fastest':
       return `asking ${phase.model} too, for speed`
   }

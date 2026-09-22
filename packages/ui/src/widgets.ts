@@ -2161,7 +2161,7 @@ function ladder(host: WidgetHost, declared: Rendered): HTMLElement {
   const speedHint = el(
     'p',
     'speed-hint',
-    'Off is Balanced: one model at a time, and a second asked beside it only when the first is slow or was busy a moment ago.',
+    'Off is Balanced: one model at a time, and a second asked beside it only when the first is slow, or has been busy or slow lately.',
   )
   const speedSaid = el('p', 'speed-said')
   speedSaid.hidden = true

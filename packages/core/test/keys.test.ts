@@ -258,7 +258,7 @@ test('the speed switch is kept, shown on the ladder, and says what it costs', as
   const off = await post('/api/action', { plugin: '', key: 'set_speed', row: 'off' })
   expect(off).toEqual({
     ok: true,
-    said: 'Off. One model at a time, with a second asked beside it when the first is slow or was busy a moment ago.',
+    said: 'Off. One model at a time, with a second asked beside it when the first is slow, or has been busy or slow lately.',
   })
   expect(speedOf(alexia.store)).toBe('balanced')
   expect(await fastest()).toBe(false)
