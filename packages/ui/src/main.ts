@@ -18,6 +18,7 @@ import { mountSettings } from './settings.js'
 import { mountGlass, mountTheme, type Theme } from './theme.js'
 import { mountLive, type Stage } from './live.js'
 import { mountRail } from './rail.js'
+import { isPhase, mountStatus } from './status.js'
 import { el, MODELS_CHANGED } from './widgets.js'
 
 interface Turn {
@@ -233,7 +234,7 @@ function answerActions(answer: HTMLElement, canSay = false): void {
     if (!idle()) return
     row.remove()
     markBad(answer)
-    running(() => respond('…', undefined, () => Promise.resolve({ again: true, bad: {} })))
+    running(() => respond('choosing', undefined, () => Promise.resolve({ again: true, bad: {} })))
   })
   row.append(bad)
   if (canSay) row.append(notHerButton(row, answer))
@@ -1666,7 +1667,7 @@ async function ask(question: string, files: File[] = []): Promise<void> {
       said.append(shown)
     }
   }
-  await respond(files.length > 0 ? 'Reading…' : '…', said, async () => {
+  await respond(files.length > 0 ? 'reading' : 'choosing', said, async () => {
     /**
      * Made small enough to send, before anything is sent.
      *
@@ -1701,7 +1702,7 @@ async function ask(question: string, files: File[] = []): Promise<void> {
  * question already in the conversation, from wherever the task stopped.
  */
 function again(automatic: boolean, allow?: { daily?: number }): Promise<void> {
-  return respond('…', undefined, () =>
+  return respond('choosing', undefined, () =>
     Promise.resolve({ again: true, ...(automatic && { automatic }), ...(allow !== undefined && { allow }) }),
   )
 }
@@ -1748,12 +1749,14 @@ function offerPaid(paused: HTMLElement, daily: number): void {
 /**
  * One answer, streamed into a bubble of its own: everything core says while it is made.
  *
- * `body` is a promise so the caller can do slow work — shrinking a photograph — after the
- * waiting bubble is already on screen. `said` is the question's own bubble, when this answer
- * has one to hang what was read out of the attachments under.
+ * `first` is what the line under the answer says before core has said anything (`status.ts`):
+ * `reading` when the message carries files, because reading them is what happens first, and
+ * `choosing` otherwise. `body` is a promise so the caller can do slow work — shrinking a
+ * photograph — after the waiting bubble is already on screen. `said` is the question's own
+ * bubble, when this answer has one to hang what was read out of the attachments under.
  */
 async function respond(
-  waiting: string,
+  first: 'choosing' | 'reading',
   said: HTMLElement | undefined,
   body: () => Promise<Record<string, unknown>>,
 ): Promise<void> {
@@ -1765,9 +1768,14 @@ async function respond(
    * a step made is appended to the same bubble by `showFiles`, and `answer.textContent = ''`
    * on the first token would take the picture with it. The node stays; only its data moves.
    */
-  const prose = document.createTextNode(waiting)
+  const prose = document.createTextNode('')
   answer.replaceChildren(prose)
-  let started = false
+  /**
+   * **What is happening, under her words, until the answer is over** — in place of the `…`
+   * that used to sit here saying nothing for as long as the wait lasted. Mounted before the
+   * request goes out, so its clock counts from the moment the message was sent.
+   */
+  const status = mountStatus(answer, { first: { kind: first } })
   /**
    * Where the model turn now streaming began in `prose`. A task's turns share one bubble, so a
    * turn that is withdrawn (`restart`) takes back its own words and leaves the earlier ones.
@@ -1776,138 +1784,145 @@ async function respond(
   // A new question: a charge line from the last answer is not about this one (§4 G).
   warnPaid()
 
-  const response = await fetch('/api/chat', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-alexia-token': token },
-    body: JSON.stringify(await body()),
-  })
-  if (response.status === 409) {
-    // Asked again after the question had its answer: there is nothing left to answer.
-    answer.remove()
-    return
-  }
-  if (!response.body) {
-    prose.data = 'Alexia is not answering.'
-    return
-  }
+  // `finally`, because the line has a clock: an answer that ends any way at all — finished,
+  // stopped, refused, or a request that threw — must not leave a timer counting under nothing.
+  try {
+    const response = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-alexia-token': token },
+      body: JSON.stringify(await body()),
+    })
+    if (response.status === 409) {
+      // Asked again after the question had its answer: there is nothing left to answer.
+      answer.remove()
+      return
+    }
+    if (!response.body) {
+      prose.data = 'Alexia is not answering.'
+      return
+    }
 
-  for await (const event of frames(response.body)) {
-    if (typeof event.delta === 'string') {
-      if (!started) {
-        prose.data = ''
-        started = true
+    for await (const event of frames(response.body)) {
+      // What the walk is doing right now — choosing, asking, a busy model asked again.
+      if (isPhase(event.phase)) status.set(event.phase)
+      if (typeof event.delta === 'string') {
+        prose.data += event.delta
+        log.scrollTop = log.scrollHeight
       }
-      prose.data += event.delta
-      log.scrollTop = log.scrollHeight
-    }
-    // The model writing this turn stopped partway and another is starting it again (D155).
-    // Its half-sentence goes, so two models' words are never run together in one bubble.
-    if (event.restart === true) {
-      prose.data = prose.data.slice(0, turnFrom)
-      if (prose.data === '') {
-        prose.data = waiting
-        started = false
+      // The model writing this turn stopped partway and another is starting it again (D155).
+      // Its half-sentence goes, so two models' words are never run together in one bubble. The
+      // line under it stays, and says who is being asked next as soon as core does.
+      if (event.restart === true) prose.data = prose.data.slice(0, turnFrom)
+      // The monthly warning and core's other plain lines land in the same place.
+      if (typeof event.note === 'string') say(event.note)
+      // Another model is answering: said for three seconds, and kept above the words (§4 G).
+      const switched = event.switch as { says?: string } | undefined
+      if (switched !== undefined && typeof switched.says === 'string') {
+        pop(switched.says)
+        answer.insertBefore(switchLine(switched.says), prose)
       }
-    }
-    // The monthly warning and core's other plain lines land in the same place.
-    if (typeof event.note === 'string') say(event.note)
-    // Another model is answering: said for three seconds, and kept above the words (§4 G).
-    const switched = event.switch as { says?: string } | undefined
-    if (switched !== undefined && typeof switched.says === 'string') {
-      pop(switched.says)
-      answer.insertBefore(switchLine(switched.says), prose)
-    }
-    // The charge line, in its own place, where no other line can replace it (§4 G).
-    if (typeof event.paid === 'string') warnPaid(event.paid)
-    const attached = event.attached as { name: string; text?: string; refusal?: string }[] | undefined
-    if (attached && said) showRead(said, attached)
-    if (typeof event.ask === 'string') askPermission(event.ask)
-    // A learned skill just fired, and it can be wrong. Attribution goes where the work is
-    // happening, with the two things you would want at that moment beside it (M4-5).
-    if (typeof event.learned === 'string') attribute(event.learned)
-    const offer = event.learn as { about?: string; outline?: string } | undefined
-    if (offer) offerToLearn(offer)
-    const step = event.step as
-      | {
-          n: number
-          name: string
-          ok?: boolean
-          text?: string
-          args?: Record<string, unknown>
-          progress?: { progress: number; total?: number; message?: string; preview?: string; stages?: Stage[] }
-          files?: { id: string; name: string; bytes: number; mime: string; path: string; openable: boolean }[]
+      // The charge line, in its own place, where no other line can replace it (§4 G).
+      if (typeof event.paid === 'string') warnPaid(event.paid)
+      const attached = event.attached as { name: string; text?: string; refusal?: string }[] | undefined
+      if (attached && said) showRead(said, attached)
+      if (typeof event.ask === 'string') askPermission(event.ask)
+      // A learned skill just fired, and it can be wrong. Attribution goes where the work is
+      // happening, with the two things you would want at that moment beside it (M4-5).
+      if (typeof event.learned === 'string') attribute(event.learned)
+      const offer = event.learn as { about?: string; outline?: string } | undefined
+      if (offer) offerToLearn(offer)
+      const step = event.step as
+        | {
+            n: number
+            name: string
+            ok?: boolean
+            text?: string
+            args?: Record<string, unknown>
+            progress?: { progress: number; total?: number; message?: string; preview?: string; stages?: Stage[] }
+            files?: { id: string; name: string; bytes: number; mime: string; path: string; openable: boolean }[]
+          }
+        | undefined
+      if (step) {
+        // Whatever her next words are, they belong to the turn after this step.
+        turnFrom = prose.data.length
+        if (step.progress) {
+          live.moving(step.n, step.progress)
+        } else if (step.ok === undefined) {
+          live.step(step.n, step.name, step.args)
+          // The conversation says only that a tool was used, and which. The panel beside it
+          // has the whole of it.
+          tools.saw(step.name)
+          // Her answer moves below the line it came after, so the log reads in the order it
+          // happened rather than the order the elements were created.
+          log.append(answer)
+        } else {
+          live.done(step.n, step.ok, step.text ?? '')
+          // A file the step made goes in the conversation rather than in the live panel: the
+          // panel is a trace of what happened and closes, and this is a thing the person now
+          // has. It lands under the answer the way an attachment lands under the question.
+          if (step.files && step.files.length > 0) showFiles(answer, step.files)
         }
-      | undefined
-    if (step) {
-      // Whatever her next words are, they belong to the turn after this step.
-      turnFrom = started ? prose.data.length : 0
-      if (step.progress) {
-        live.moving(step.n, step.progress)
-      } else if (step.ok === undefined) {
-        live.step(step.n, step.name, step.args)
-        // The conversation says only that a tool was used, and which. The panel beside it
-        // has the whole of it.
-        tools.saw(step.name)
-        // Her answer moves below the line it came after, so the log reads in the order it
-        // happened rather than the order the elements were created.
-        log.append(answer)
-      } else {
-        live.done(step.n, step.ok, step.text ?? '')
-        // A file the step made goes in the conversation rather than in the live panel: the
-        // panel is a trace of what happened and closes, and this is a thing the person now
-        // has. It lands under the answer the way an attachment lands under the question.
-        if (step.files && step.files.length > 0) showFiles(answer, step.files)
+      }
+      if (typeof event.error === 'string') {
+        status.stop()
+        answer.remove()
+        const stopped = bubble('refusal', event.error)
+        if (event.chosen === 'pinned' || event.chosen === 'sequence') offerInstead(stopped, event.chosen)
+      }
+      // Paused rather than stopped: nothing was billed, and a press lets paid answer (§4 H).
+      if (typeof event.paused === 'string') {
+        status.stop()
+        answer.remove()
+        offerPaid(bubble('refusal', event.paused), typeof event.daily === 'number' ? event.daily : 0)
+      }
+      const done = event.done as
+        | { model?: string; bubble?: Bubble; spent?: number; warning?: string; ended?: string; steps?: number }
+        | undefined
+      if (done) {
+        // Over, however it ended: the line goes before the buttons under the answer arrive.
+        status.stop()
+        if (done.model) modelBadge.textContent = done.model
+        wearing(done.bubble)
+        if (typeof done.spent === 'number') {
+          const shown = spendBadge.textContent ?? ''
+          const cap = shown.includes(' of ') ? shown.slice(shown.indexOf(' of ')) : ''
+          spendBadge.textContent = money(done.spent) + cap
+        }
+        if (done.warning) say(done.warning)
+        prompt.hidden = true
+        // A task that hit a limit says which one. Silence after a stop looks like a crash.
+        tray(done.ended === 'answered' || done.ended === undefined ? 'idle' : 'error')
+        live.end()
+        // A conversation is named by the first thing you said in it, so the rail's list and
+        // the title above the log are both a turn out of date until this.
+        void rail.refresh()
+        /**
+         * A finished answer can be marked bad (§4 I), and said not to have sounded like her
+         * (improvement 10). Drawn from what was last read so the buttons are there the moment
+         * the words stop, then read again — because the personality may have been switched on
+         * the settings screen since, and the chip in the header is a turn out of date until
+         * somebody does.
+         */
+        if (done.ended === 'answered') {
+          const was = inCharacter.notHer
+          answerActions(answer, was)
+          void read().then((now) => {
+            characterFrom(now)
+            // Only redrawn when the answer changed, or every finished answer would rebuild its
+            // own buttons a beat after drawing them, which reads as a flicker with no cause.
+            if ((now.notHer === true) !== was) answerActions(answer, now.notHer === true)
+          })
+        }
+        if (done.ended === 'stopped') say('Stopped.')
+        if (done.ended === 'ceiling') say(`Stopped after ${String(done.steps ?? 0)} steps — that is the ceiling, not the end of the task.`)
       }
     }
-    if (typeof event.error === 'string') {
-      answer.remove()
-      const stopped = bubble('refusal', event.error)
-      if (event.chosen === 'pinned' || event.chosen === 'sequence') offerInstead(stopped, event.chosen)
-    }
-    // Paused rather than stopped: nothing was billed, and a press lets paid answer (§4 H).
-    if (typeof event.paused === 'string') {
-      answer.remove()
-      offerPaid(bubble('refusal', event.paused), typeof event.daily === 'number' ? event.daily : 0)
-    }
-    const done = event.done as
-      | { model?: string; bubble?: Bubble; spent?: number; warning?: string; ended?: string; steps?: number }
-      | undefined
-    if (done) {
-      if (done.model) modelBadge.textContent = done.model
-      wearing(done.bubble)
-      if (typeof done.spent === 'number') {
-        const shown = spendBadge.textContent ?? ''
-        const cap = shown.includes(' of ') ? shown.slice(shown.indexOf(' of ')) : ''
-        spendBadge.textContent = money(done.spent) + cap
-      }
-      if (done.warning) say(done.warning)
-      prompt.hidden = true
-      // A task that hit a limit says which one. Silence after a stop looks like a crash.
-      tray(done.ended === 'answered' || done.ended === undefined ? 'idle' : 'error')
-      live.end()
-      // A conversation is named by the first thing you said in it, so the rail's list and
-      // the title above the log are both a turn out of date until this.
-      void rail.refresh()
-      /**
-       * A finished answer can be marked bad (§4 I), and said not to have sounded like her
-       * (improvement 10). Drawn from what was last read so the buttons are there the moment
-       * the words stop, then read again — because the personality may have been switched on
-       * the settings screen since, and the chip in the header is a turn out of date until
-       * somebody does.
-       */
-      if (done.ended === 'answered') {
-        const was = inCharacter.notHer
-        answerActions(answer, was)
-        void read().then((now) => {
-          characterFrom(now)
-          // Only redrawn when the answer changed, or every finished answer would rebuild its
-          // own buttons a beat after drawing them, which reads as a flicker with no cause.
-          if ((now.notHer === true) !== was) answerActions(answer, now.notHer === true)
-        })
-      }
-      if (done.ended === 'stopped') say('Stopped.')
-      if (done.ended === 'ceiling') say(`Stopped after ${String(done.steps ?? 0)} steps — that is the ceiling, not the end of the task.`)
-    }
+  } finally {
+    status.stop()
+    // Nothing was ever written into it: stopped before the first word, or a request that threw
+    // and is said in a bubble of its own. The `…` used to stay behind in this case; an empty
+    // turn under her name would read as a blank answer rather than one that never came.
+    if (answer.isConnected && prose.data === '' && answer.childNodes.length === 1) answer.remove()
   }
 }
 
