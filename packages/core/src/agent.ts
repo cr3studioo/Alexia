@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import type { Ruling } from './permissions.js'
-import { ProviderError, type ToolSpec } from './provider.js'
-import type { Speed } from './pool.js'
+import { FASTEST_STAR_WAIT, MOST_AT_ONCE, ProviderError, type ToolSpec } from './provider.js'
+import { spent, underHalf, type Speed } from './pool.js'
 // The shape `notifications/progress` arrives in. It belongs to neither module, and it is one
 // interface — a third file to hold it would be the abstraction, not the sharing.
 import type { Progress } from './settings.js'
@@ -180,6 +180,14 @@ export interface AgentEvents {
  * paid for twice, once in money and once in a truncated answer nobody asked for.
  */
 export const REPLY_CEILING = 2_000
+
+/**
+ * **The favourite and one partner, started together** — Balanced speed, when the record says the
+ * favourite was busy or slow to start a moment ago (`shaky` in `health.ts`). One partner rather
+ * than {@link MOST_AT_ONCE}: somebody who did not ask for speed spends one extra free request, not
+ * two, and only on a model that has lately needed a backup anyway.
+ */
+const SHAKY_AT_ONCE = 2
 
 export interface RunOptions {
   /** The conversation, ending with the line the user just sent. */
@@ -682,6 +690,27 @@ export async function run(options: RunOptions): Promise<RunResult> {
           ...(on?.phase && { onPhase: on.phase }),
           messagesFor: dressed,
           onAsk: asking,
+          /**
+           * **How many to start together** — the speed switch, read by the caller (`RunOptions`).
+           * Fastest: {@link MOST_AT_ONCE} on every step, with the favourite first for only
+           * {@link FASTEST_STAR_WAIT}. Balanced: the favourite and one partner when the record says
+           * it was busy or slow a moment ago, and otherwise one at a time with the two-second hedge.
+           */
+          atOnce: (head: Choice) =>
+            options.speed === 'fastest' ? MOST_AT_ONCE
+            : now.health?.get(`${head.provider.id}\n${head.model.id}`)?.shaky === true ? SHAKY_AT_ONCE
+            : 1,
+          together: options.speed === 'fastest' ? 'fastest' : 'lately',
+          ...(options.speed === 'fastest' && { starWait: FASTEST_STAR_WAIT }),
+          /**
+           * **A partner started together only from a provider with plenty of its free day left** —
+           * not spent, and more than half of any daily or monthly ration: the same line a
+           * background task is held to (§4 F), so racing for speed never eats the chat's half.
+           */
+          spare: (choice: Choice) => {
+            const rung = now.rungs.find((one) => one.provider.id === choice.provider.id)
+            return rung !== undefined && !spent(rung) && underHalf(rung)
+          },
         },
       )
     } catch (error) {

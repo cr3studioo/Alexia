@@ -4,7 +4,7 @@ import { PLANNER, routes, stature, type Model } from './catalog.js'
 import { OLLAMA } from './ollama.js'
 import { sent, spent, underHalf, type Rung } from './pool.js'
 import { BUSY_HALF_LIFE, type Judgement, type Health } from './health.js'
-import { anonymous, chat, HEDGE_AFTER, PATIENCE, ProviderError, PROVIDERS, RETRY_STEP, STAR_WAIT, type ChatRequest, type Heard, type Provider, type Sign, type Usage } from './provider.js'
+import { anonymous, chat, HEDGE_AFTER, MOST_AT_ONCE, PATIENCE, ProviderError, PROVIDERS, RETRY_STEP, STAR_WAIT, type ChatRequest, type Heard, type Provider, type Sign, type Usage } from './provider.js'
 import { redact, summarise } from './redact.js'
 import { CORE, type SecretStore } from './secrets.js'
 import { textOf, type Message, type Outcome, type Source, type Store } from './store.js'
@@ -1794,7 +1794,7 @@ interface Asking {
   stage: 'running' | 'resting' | 'done' | 'failed' | 'lost'
   /** Requests sent to it in this walk, from 1. */
   attempt: number
-  /** When it was last launched — what a hedge behind it is measured from. */
+  /** When it was last launched — the latest of these among what is out is what a hedge is measured from. */
   began: number
   resume?: number
   /** Its own stop: cancelling a rung that lost stops only that rung. */
@@ -1834,15 +1834,22 @@ interface Asking {
  * rather than at a call site somebody has to remember — a rule enforced by whoever remembers
  * is not enforced. There is one `chat()` in this repo and it is below.
  *
- * **While somebody is waiting, two can be asked at once.** Asked one at a time, a model that hung
- * cost {@link PATIENCE}'s thirty seconds and a gateway's keep-alives two minutes, with a working
- * model behind it the whole time. So a first model that has shown no sign of life after
+ * **While somebody is waiting, several can be asked at once.** Asked one at a time, a model that
+ * hung cost {@link PATIENCE}'s thirty seconds and a gateway's keep-alives two minutes, with a
+ * working model behind it the whole time. So a first model that has shown no sign of life after
  * {@link HEDGE_AFTER} has the next free one asked beside it, and a busy one is asked again in place
- * every second or so. Never more than two requests out; never a paid model beside another one,
- * because a cancelled paid request can still be billed. Each rung's words are held until it is
- * chosen: the plan's first model the moment it shows a sign of life, anything else once
- * {@link STAR_WAIT} has passed or the first has failed for good. The one chosen is streamed and
- * the others are cancelled — and a cancel is not a failure, so it is neither recorded nor said.
+ * every second or so. Never a paid model beside another one, because a cancelled paid request can
+ * still be billed. Each rung's words are held until it is chosen: the plan's first model the
+ * moment it shows a sign of life, anything else once {@link STAR_WAIT} has passed or the first has
+ * failed for good. The one chosen is streamed and the others are cancelled — and a cancel is not a
+ * failure, so it is neither recorded nor said.
+ *
+ * **And some should not wait the two seconds to find out.** A caller can ask for partners from
+ * the first moment (`atOnce`): because the record says the first model was busy or slow a moment
+ * ago, or because somebody asked for speed. Two out at once, or that many where it is more, and
+ * never more than {@link MOST_AT_ONCE}. A partner comes from another provider where there is one,
+ * is never this Mac's model, and — started together, rather than after the first went quiet —
+ * only from a provider with free requests to spare (`spare`).
  *
  * **Only for a person.** The daily test (`trial.ts`) is evidence about one model, and a plugin on
  * its own clock has nobody watching a clock: both walk one rung at a time, as this always did.
@@ -1927,6 +1934,31 @@ export async function send(
     hedgeAfter?: number
     starWait?: number
     retryStep?: number
+    /**
+     * **How many free rungs to start at the walk's first moment**, the first model included —
+     * asked once, of the first rung asked, only while somebody is waiting and only when that rung
+     * is free. Absent, or 1, is one at a time with the two-second hedge, which is what this always
+     * did; more is that many started together, on different providers where there are any, and
+     * never more than {@link MOST_AT_ONCE}. The caller knows why it wants more — the record says
+     * the first model was busy or slow a moment ago, or somebody asked for speed — and this does
+     * not, which is why it is a question and not a rule in here.
+     */
+    atOnce?: (head: Choice) => number
+    /**
+     * **Why the partners `atOnce` started were asked**, for the {@link Phase} that says so: the first
+     * model was busy or slow `lately`, or somebody asked for the `fastest` answer. A separate value
+     * rather than part of `atOnce`'s answer because it is one fact about the caller, not about
+     * the model asked. Absent is `fastest` — more than one at once, for no other reason, is speed.
+     */
+    together?: 'lately' | 'fastest'
+    /**
+     * **Whether a provider has free requests to spare** for a partner started together with the
+     * first model. Three at once spends a free day three times as fast, so a start-together partner
+     * is only taken where the day has plenty left; the two-second hedge is not held to this,
+     * because by then the first model has gone quiet and the request is no longer a luxury.
+     * Absent is yes.
+     */
+    spare?: (choice: Choice) => boolean
   } = {},
 ): Promise<Answer> {
   const failures: Failure[] = []
@@ -2010,8 +2042,18 @@ export async function send(
   const alive = new Set<string>()
 
   const runs: Asking[] = []
-  /** The next rung of the plan not yet asked or skipped. */
-  let next = 0
+  /**
+   * **Places in the plan already asked, or passed over for good** — a cap, an allowance. Not a
+   * cursor, because a partner can be picked from further down: a rung passed over for now (its
+   * provider already has a request out, it is this Mac's, its provider has nothing to spare) is
+   * not here, and is still there for the next pick and for the walk when nothing else is out.
+   */
+  const taken = new Set<number>()
+  /**
+   * **How many requests may be out at once**: two, or what the first moment's `atOnce` asked for
+   * where that is more — never past {@link MOST_AT_ONCE}. Set once, when the first rung is asked.
+   */
+  let most = 2
   /** The first rung asked: the plan's first model, whose priority {@link STAR_WAIT} is. */
   let star: Asking | undefined
   let winner: Asking | undefined
@@ -2147,7 +2189,7 @@ export async function send(
   const hope = (except: Asking): boolean =>
     runs.some((run) => run !== except && (run.stage === 'running' || run.stage === 'resting' || run.stage === 'done' || (run.stage === 'lost' && open(run.choice)))) ||
     // A rung the allowance will skip is not one that could still answer.
-    choices.slice(next).some((choice) => open(choice) && affords(choice))
+    choices.some((choice, at) => !taken.has(at) && open(choice) && affords(choice))
 
   /** The pause before asking a busy first model again ({@link RETRY_STEP}): growing, and spread. */
   const pause = (attempt: number): number => retryStep * attempt * (0.75 + Math.random() / 2)
@@ -2236,8 +2278,12 @@ export async function send(
     fail(run, failure)
   }
 
-  /** One request to one rung: a first ask, an ask again after a busy reply, or a rung that lost asked again. */
-  const ask = (run: Asking, how: { retry?: boolean; behind?: Asking } = {}): void => {
+  /**
+   * One request to one rung: a first ask, an ask again after a busy reply, or a rung that lost
+   * asked again. `behind` is who it was asked beside, and `why` a partner started with the first
+   * model rather than after it went quiet — which the first model's own state cannot say.
+   */
+  const ask = (run: Asking, how: { retry?: boolean; behind?: Asking; why?: 'lately' | 'fastest' } = {}): void => {
     // Whoever was waiting has stopped: the stop button, or a plugin that gave up (D160). Asked
     // before each request as well as inside `chat()`, so a rung is not counted against its
     // provider for a request that is never going to be sent.
@@ -2267,7 +2313,7 @@ export async function send(
       const behind = how.behind
       phase(
         behind === undefined ? { kind: 'asking', model: name }
-        : { kind: 'backup', model: name, behind: behind.choice.model.name, why: behind.busy !== undefined ? 'busy' : 'slow' },
+        : { kind: 'backup', model: name, behind: behind.choice.model.name, why: how.why ?? (behind.busy !== undefined ? 'busy' : 'slow') },
       )
     }
     const attempt = run.attempt
@@ -2316,19 +2362,113 @@ export async function send(
   }
 
   /**
-   * **The next rung to ask**, after every check that could skip it — or `undefined` when there is
-   * none, or when the next is paid and `paidToo` is false: a paid rung is only ever asked alone,
-   * so it waits its turn rather than being skipped. A rung that lost comes before anything new.
+   * **A rung asked for the first time**, once {@link pick} has chosen it: dressed, held to today's
+   * allowance, announced when it costs money, and read before it goes — or `undefined` when the
+   * allowance cannot cover it, which passes it over for good.
    */
-  const pick = (paidToo: boolean): Asking | undefined => {
+  const start = (at: number, choice: Choice): Asking | undefined => {
+    /**
+     * **Nothing is billed without a ceiling on the reply.** Input tokens can be counted
+     * before sending and output tokens cannot, so this is the only thing standing between a
+     * paid model and a cost nobody bounded.
+     *
+     * Loudly, and not as a rung failure. A caller that can reach a paid model and did not
+     * say how much reply it is willing to pay for is a bug in that caller, and quietly
+     * falling to the next rung would hide it until the bill arrived. Free calls are
+     * untouched: there is nothing there to bound.
+     */
+    if (paid(choice.model.tier) && request.maxTokens === undefined) {
+      throw new Error(
+        `${choice.model.name} costs money and no maxTokens was set — a billed call must bound its reply.`,
+      )
+    }
+    // What this rung is sent — the same for every rung unless the caller dresses it per model (§2).
+    const messages = hooks.messagesFor?.(choice) ?? request.messages
+    /**
+     * **The day's allowance is a limit, not a line crossed afterwards** (D186). Before a paid rung
+     * is asked, the most it could bill — everything sent, and the whole reply ceiling — is held
+     * to what today has left; one that could go past it is skipped as the cap skips it, and the
+     * walk goes on to a cheaper rung or a free one. Nothing is said unless nothing answers.
+     */
+    if (left !== undefined && !affords(choice, messages)) {
+      blocked = `${choice.model.name} could cost up to ${money(dearest(choice.model, messages, request))} for this and today's allowance has ${money(Math.max(0, left))} left — raise it under the paid switch on the Models tab, or wait for tomorrow`
+      taken.add(at)
+      return undefined
+    }
+    taken.add(at)
+    // One plain line before the charge, not after it. Nobody is surprised by a bill from
+    // something that did not say anything. It is also this rung's switch line, so the one
+    // below stays quiet for it.
+    if (paid(choice.model.tier)) {
+      ;(hooks.onPaid ?? hooks.onNote)?.(
+        at === 0 ?
+          `Using ${choice.model.name}, which costs money — about $${choice.model.priceIn.toFixed(2)} per million words in.`
+        : `The free models are used up, so this one goes to ${choice.model.name}, which costs money.`,
+      )
+      // Where the switch has a place of its own, it is still said: the charge line is the money,
+      // the switch is the model (§4 G). Where it has not, the charge line was the switch line.
+      if (hooks.onSwitch === undefined) for (const failure of failures) told.add(failure)
+    }
+    // `T0` means the model is on this machine (only `ollama.ts` ever writes it), so the
+    // payload is not going anywhere and stripping it would cost accuracy to protect against
+    // nothing. Everything else is a third party, free tiers most of all.
+    const outbound = choice.model.tier === 'T0' ? { messages, kinds: [] } : redact(messages)
+    if (outbound.kinds.length > 0) {
+      // Enforcement that says so. Silently editing what somebody wrote is the same
+      // surprise as a bill nobody announced.
+      hooks.onNote?.(`Stripped before sending to ${choice.model.name}: ${summarise(outbound.kinds)}.`)
+    }
+    const run: Asking = {
+      at,
+      choice,
+      messages: outbound.messages,
+      stage: 'running',
+      attempt: 0,
+      began: Date.now(),
+      controller: new AbortController(),
+      reasoned: false,
+      held: [],
+      chosen: false,
+      spoke: false,
+      thought: false,
+    }
+    runs.push(run)
+    star ??= run
+    return run
+  }
+
+  /**
+   * **The next rung to ask**, after every check that could skip it — or `undefined` when there is
+   * none. In the plan's order, with a rung that lost asked again in its own place in it.
+   *
+   * **Alone** — nothing else out — it is the first rung left, paid or free, as this always was.
+   * **As a partner** beside what is out (`beside`), four more rules:
+   *
+   * - **A paid rung is only ever asked alone**, so it waits its turn: the pick stops there, and
+   *   nothing behind it jumps ahead of it.
+   * - **Never this Mac's model** (`T0`). Loading an 8B model beside a cloud request costs about
+   *   5 GB of memory — why A10 was dropped — so it is asked only when nothing else is out.
+   * - **Another provider first**: the first rung whose provider has nothing out, and the first
+   *   of those that share one only when every rung left does. A free tier that is full for one
+   *   of a provider's models is usually full for the next — when OpenRouter's free day is out,
+   *   its second model's is too — and a per-minute limit is the provider's, not the model's.
+   * - **Started together, only from a provider with requests to spare** (`spare`). The hedge
+   *   after {@link HEDGE_AFTER} is asked only once something has gone quiet, and is not held to it.
+   *
+   * A rung passed over for one of these is not used up ({@link taken}).
+   */
+  const pick = (beside?: { out: readonly Asking[]; together: boolean }): Asking | undefined => {
     request.signal?.throwIfAborted()
-    const lost = runs.filter((run) => run.stage === 'lost' && open(run.choice)).sort((a, b) => a.at - b.at)[0]
-    if (lost !== undefined) return lost
-    for (; next < choices.length; next++) {
-      const at = next
+    const crowded = new Set(beside?.out.map((run) => run.choice.provider.id))
+    /** The first rung whose provider already has a request out: a partner only when nothing else is left. */
+    let shared: number | undefined
+    for (let at = 0; at < choices.length; at++) {
       const choice = choices[at]
       if (choice === undefined) continue
-      if (unpaid(choice)) {
+      /** This place's rung, if it has been asked: only one that lost is asked again. */
+      const ran = runs.find((run) => run.at === at)
+      if (ran === undefined ? taken.has(at) : ran.stage !== 'lost') continue
+      if (ran === undefined && unpaid(choice)) {
         // A cap that is reached does not quietly pick something worse, and it does not
         // quietly spend either. It stops, and the caller says why — and which wall it was,
         // because *raise your cap* is the wrong advice for the other one.
@@ -2336,99 +2476,73 @@ export async function send(
           onItsOwn ?
             `${hooks.plugin ?? 'a plugin'} works on its own and does not spend money — connect a free provider, or install a local model`
           : 'the monthly cap is reached — raise it in settings, or use a free model'
+        taken.add(at)
         continue
       }
       if (!open(choice)) continue
-      if (paid(choice.model.tier) && !paidToo) return undefined
-      /**
-       * **Nothing is billed without a ceiling on the reply.** Input tokens can be counted
-       * before sending and output tokens cannot, so this is the only thing standing between a
-       * paid model and a cost nobody bounded.
-       *
-       * Loudly, and not as a rung failure. A caller that can reach a paid model and did not
-       * say how much reply it is willing to pay for is a bug in that caller, and quietly
-       * falling to the next rung would hide it until the bill arrived. Free calls are
-       * untouched: there is nothing there to bound.
-       */
-      if (paid(choice.model.tier) && request.maxTokens === undefined) {
-        throw new Error(
-          `${choice.model.name} costs money and no maxTokens was set — a billed call must bound its reply.`,
-        )
+      if (beside !== undefined) {
+        if (paid(choice.model.tier)) break
+        if (choice.model.tier === 'T0') continue
+        if (beside.together && hooks.spare?.(choice) === false) continue
+        if (crowded.has(choice.provider.id)) {
+          shared ??= at
+          continue
+        }
       }
-      // What this rung is sent — the same for every rung unless the caller dresses it per model (§2).
-      const messages = hooks.messagesFor?.(choice) ?? request.messages
-      /**
-       * **The day's allowance is a limit, not a line crossed afterwards** (D186). Before a paid rung
-       * is asked, the most it could bill — everything sent, and the whole reply ceiling — is held
-       * to what today has left; one that could go past it is skipped as the cap skips it, and the
-       * walk goes on to a cheaper rung or a free one. Nothing is said unless nothing answers.
-       */
-      if (left !== undefined && !affords(choice, messages)) {
-        blocked = `${choice.model.name} could cost up to ${money(dearest(choice.model, messages, request))} for this and today's allowance has ${money(Math.max(0, left))} left — raise it under the paid switch on the Models tab, or wait for tomorrow`
-        continue
-      }
-      next = at + 1
-      // One plain line before the charge, not after it. Nobody is surprised by a bill from
-      // something that did not say anything. It is also this rung's switch line, so the one
-      // below stays quiet for it.
-      if (paid(choice.model.tier)) {
-        ;(hooks.onPaid ?? hooks.onNote)?.(
-          at === 0 ?
-            `Using ${choice.model.name}, which costs money — about $${choice.model.priceIn.toFixed(2)} per million words in.`
-          : `The free models are used up, so this one goes to ${choice.model.name}, which costs money.`,
-        )
-        // Where the switch has a place of its own, it is still said: the charge line is the money,
-        // the switch is the model (§4 G). Where it has not, the charge line was the switch line.
-        if (hooks.onSwitch === undefined) for (const failure of failures) told.add(failure)
-      }
-      // `T0` means the model is on this machine (only `ollama.ts` ever writes it), so the
-      // payload is not going anywhere and stripping it would cost accuracy to protect against
-      // nothing. Everything else is a third party, free tiers most of all.
-      const outbound = choice.model.tier === 'T0' ? { messages, kinds: [] } : redact(messages)
-      if (outbound.kinds.length > 0) {
-        // Enforcement that says so. Silently editing what somebody wrote is the same
-        // surprise as a bill nobody announced.
-        hooks.onNote?.(`Stripped before sending to ${choice.model.name}: ${summarise(outbound.kinds)}.`)
-      }
-      const run: Asking = {
-        at,
-        choice,
-        messages: outbound.messages,
-        stage: 'running',
-        attempt: 0,
-        began: Date.now(),
-        controller: new AbortController(),
-        reasoned: false,
-        held: [],
-        chosen: false,
-        spoke: false,
-        thought: false,
-      }
-      runs.push(run)
-      star ??= run
-      return run
+      const run = ran ?? start(at, choice)
+      if (run !== undefined) return run
     }
-    return undefined
+    if (shared === undefined) return undefined
+    // Free, so the allowance cannot pass it over: `start` answers.
+    return runs.find((run) => run.at === shared) ?? start(shared, choices[shared]!)
   }
 
   /**
-   * **Ask whoever should be asked now.** Nothing out: the next rung, paid or free, as this always
-   * did. One out, somebody waiting, no answer held, and no sign of life from it after
-   * {@link HEDGE_AFTER}: the next free rung beside it — never a paid one, and never beside a paid one.
+   * **When one more free rung is asked beside what is out**, or `undefined` when none will be:
+   * somebody is waiting, there is room under {@link most}, nothing out is paid, and nothing out has
+   * shown a sign of life — {@link HEDGE_AFTER} after the latest of them was asked.
+   */
+  const hedgeAt = (out: readonly Asking[]): number | undefined =>
+    racing && out.length > 0 && out.length < most && out.every((run) => !paid(run.choice.model.tier) && run.signed === undefined) ?
+      Math.max(...out.map((run) => run.began)) + hedgeAfter
+    : undefined
+
+  /**
+   * **Ask whoever should be asked now.**
+   *
+   * - **Nothing out**: the next rung, paid or free, as this always did. At the walk's first
+   *   moment, while somebody waits and when that rung is free, it has up to `atOnce - 1`
+   *   partners asked with it straight away — the walk does not spend {@link HEDGE_AFTER} finding
+   *   out what the record already said, or what somebody asked for.
+   * - **Something out**, all of it free and quiet since {@link hedgeAt}, with room under the cap:
+   *   one more free rung beside it — never a paid one, and never beside a paid one.
    */
   const fill = (): void => {
     if (winner !== undefined || runs.some((run) => run.stage === 'done')) return
     const out = runs.filter((run) => run.stage === 'running' || run.stage === 'resting')
     if (out.length === 0) {
-      const run = pick(true)
-      if (run !== undefined) ask(run)
+      const first = runs.length === 0
+      const head = pick()
+      if (head === undefined) return
+      ask(head)
+      if (!first || !racing || paid(head.choice.model.tier)) return
+      const count = hooks.atOnce?.(head.choice) ?? 1
+      most = Math.min(MOST_AT_ONCE, Math.max(2, count))
+      const together = [head]
+      while (together.length < Math.min(count, most)) {
+        const partner = pick({ out: together, together: true })
+        if (partner === undefined) break
+        ask(partner, { behind: head, why: hooks.together ?? 'fastest' })
+        together.push(partner)
+      }
       return
     }
-    const [other] = out
-    if (!racing || out.length > 1 || other === undefined || paid(other.choice.model.tier) || other.signed !== undefined) return
-    if (Date.now() < other.began + hedgeAfter) return
-    const run = pick(false)
-    if (run !== undefined) ask(run, { behind: other })
+    const due = hedgeAt(out)
+    if (due === undefined || Date.now() < due) return
+    // Said as a backup for the plan's highest rung still out, which is the first model while it is.
+    const behind = out.reduce((one, other) => (other.at < one.at ? other : one))
+    const run = pick({ out, together: false })
+    if (run !== undefined) ask(run, { behind })
   }
 
   /** Until something happens: a sign, an answer, a failure, the stop button — or the next moment the clock matters. */
@@ -2437,9 +2551,8 @@ export async function send(
     const moments: number[] = []
     for (const run of runs) if (run.stage === 'resting' && run.resume !== undefined) moments.push(run.resume)
     if (winner === undefined) moments.push(began + starWait)
-    const out = runs.filter((run) => run.stage === 'running' || run.stage === 'resting')
-    const [only] = out
-    if (racing && winner === undefined && out.length === 1 && only !== undefined && only.signed === undefined) moments.push(only.began + hedgeAfter)
+    const due = winner === undefined ? hedgeAt(runs.filter((run) => run.stage === 'running' || run.stage === 'resting')) : undefined
+    if (due !== undefined) moments.push(due)
     const soonest = Math.min(...moments.filter((moment) => moment > now))
     let timer: ReturnType<typeof setTimeout> | undefined
     await new Promise<void>((resolve) => {
