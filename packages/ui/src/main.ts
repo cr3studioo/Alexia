@@ -1320,7 +1320,8 @@ function toolLine(): { saw(name: string): void } {
   const seen: string[] = []
   return {
     saw(name) {
-      const short = name.slice(name.indexOf('__') + 2)
+      // A tool with no plugin prefix — core's own `skill` — is its whole name, not `kill`.
+      const short = name.includes('__') ? name.slice(name.indexOf('__') + 2) : name
       if (!seen.includes(short)) seen.push(short)
       names.textContent = seen.join(', ')
       if (!chip.isConnected) log.append(chip)
