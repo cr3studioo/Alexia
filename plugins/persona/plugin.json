@@ -4,7 +4,7 @@
   "id": "persona",
   "name": "Personality",
   "summary": "Write Alexia a personality in your own words, save as many as you like, and switch between them.",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "license": "AGPL-3.0-only",
   "entry": {
     "run": "node",

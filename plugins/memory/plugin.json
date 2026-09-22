@@ -4,7 +4,7 @@
   "id": "memory",
   "name": "Long-term memory",
   "summary": "Remembers things across conversations — what you told it last month, and where to find it again. Can also write things down by itself, once you turn that on.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "license": "AGPL-3.0-only",
   "entry": {
     "run": "node",
