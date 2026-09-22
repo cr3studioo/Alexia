@@ -2661,6 +2661,83 @@ button[disabled] {
   color: var(--ink-faint);
 }
 
+/* What is happening while an answer is made (status.ts): a word, the true detail, a clock.
+
+   The switch line's size and ink, under the words rather than above them, and gone when the
+   answer is. One line, always: on a narrow window the detail gives way to an ellipsis and the
+   clock keeps its place, because a line that wrapped would push her words up a row every time
+   the detail grew. The mark is --chosen, the machine doing something, and the only colour here. */
+.status-line {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  margin-top: var(--space-2);
+  font-size: var(--text-xs);
+  line-height: var(--leading-prose);
+  color: var(--ink-faint);
+  white-space: nowrap;
+}
+
+/* A bubble sizes to what is in it, and a line that may not wrap would make it as wide as the
+   whole sentence, off the edge of a narrow window. While the line is in it, the bubble takes
+   the log's width instead, so the detail has an edge to stop at. Her prose has no bubble to
+   show the difference. */
+.turn.assistant:has(> .status-line) {
+  width: 100%;
+}
+
+.status-said {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.status-glyph {
+  display: inline-block;
+  color: var(--chosen);
+  animation: pulse 2s ease-in-out infinite;
+}
+
+/* The word shimmers, left to right, in the palette's own two inks. The detail beside it holds
+   still, because the detail is the part somebody reads. */
+.status-word {
+  color: var(--ink-quiet);
+  background: linear-gradient(90deg, var(--ink-quiet) 40%, var(--ink) 50%, var(--ink-quiet) 60%);
+  background-size: 300% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: shimmer 2.4s linear infinite;
+}
+
+/* Tabular figures, so 9s becoming 10s does not nudge anything sideways. */
+.status-time {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+
+@keyframes shimmer {
+  from {
+    background-position: 100% 0;
+  }
+
+  to {
+    background-position: 0 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .status-glyph,
+  .status-word {
+    animation: none;
+  }
+
+  .status-word {
+    background: none;
+    -webkit-text-fill-color: currentColor;
+  }
+}
+
 /* ---- the permission prompt -------------------------------------------------------------
 
    Above the composer, never over the trace. What is being decided is what just happened on
