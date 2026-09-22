@@ -43,6 +43,37 @@ export const PANEL_VERSION = 1
 /** Where the panel page is hosted by default, once Pages is turned on for the repo. */
 export const DEFAULT_PANEL_URL = 'https://cr3studioo.github.io/Alexia/telegram/'
 
+/**
+ * The snapshot, from the two places it comes from (D196).
+ *
+ * `facts` is `/status`'s own `alexia/command` payload and `own` is what only this plugin knows
+ * — the queue, the voice mode, how many accounts are paired, and the moment.
+ *
+ * **Absent rather than empty** is the rule worth stating, because the page draws on it: a
+ * field core did not send is left off entirely, so the page can say *not known* instead of
+ * showing a zero that reads as a number somebody could act on. An Alexia older than D193 sends
+ * no `alexia/command` at all, and the result is a panel with the plugin's own half filled in
+ * and core's half quietly missing — which is a working panel, not a broken one.
+ *
+ * `running` is the one field both ends have an opinion about. Core's wins, because core is
+ * what knows whether a task is running; this end's view is the fallback when core did not say.
+ */
+export function stateOf(facts, own = {}) {
+  const from = facts !== null && typeof facts === 'object' ? facts : {}
+  return {
+    v: PANEL_VERSION,
+    at: Number(own.at) || 0,
+    ...(typeof from.mode === 'string' && { mode: from.mode }),
+    ...(typeof from.prefer === 'string' && { prefer: from.prefer }),
+    ...(from.today !== null && typeof from.today === 'object' && { today: from.today }),
+    ...(from.month !== null && typeof from.month === 'object' && { month: from.month }),
+    running: typeof from.running === 'boolean' ? from.running : own.running === true,
+    waiting: Number(own.waiting) || 0,
+    voice: own.voice,
+    paired: Number(own.paired) || 0,
+  }
+}
+
 /** `state` → JSON → UTF-8 bytes → base64url, with no padding — a URL fragment, not a body. */
 export function encode(state) {
   return Buffer.from(JSON.stringify(state), 'utf8').toString('base64url')

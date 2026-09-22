@@ -28,11 +28,12 @@ import { forRich, MARKER, RICH_LIMIT, withMarker } from './format.js'
 import { bestPhoto, fileTurn, kindOf, photoNote, safeName, tooBig } from './incoming.js'
 import { Line } from './line.js'
 import { commandsFrom, helpLines, menu } from './menu.js'
+import { action, DEFAULT_PANEL_URL, keyboard, panelUrl, stateOf } from './panel.js'
 import { EVERY, Presence } from './presence.js'
 import { dayKey, dueNow, morningDue, parseAt, reminderText } from './reminders.js'
 import { speaks, voiceMode } from './reply.js'
 import { frameOf, sampling, Stopped, wasStopped } from './sampling.js'
-import { bare, isCommand, stops } from './slash.js'
+import { bare, isCommand, panels, stops } from './slash.js'
 
 /**
  * Telegram (M4-1) — the shape the contract had not met yet.
@@ -280,9 +281,18 @@ async function command(token, chatId, typed, quote = () => undefined) {
  */
 async function ran(token, chatId, typed) {
   const controller = new AbortController()
-  // A background `/help` for the menu is nobody's message: there is no chat to ask a permission
-  // question in and nothing `/stop` could mean, so it does not take the handle an answer owns.
-  const owned = chatId !== undefined
+  /**
+   * Whether this is the piece of work `/stop` means, and the one a permission question
+   * belongs to.
+   *
+   * Two things that are not: a background `/help` for the menu, which is nobody's message and
+   * has no chat to ask in; and anything that arrives **while something else is already
+   * running** — a panel tap answered straight off the poll loop while an answer is being
+   * written (D196). Taking the handle there would leave the real answer unstoppable and send
+   * its permission questions to the wrong place, for the sake of a mode switch that takes a
+   * millisecond and that nobody would ever press Stop on.
+   */
+  const owned = chatId !== undefined && current === undefined
   if (owned) {
     asked = { token, chatId }
     current = { controller, chatId }
@@ -337,6 +347,137 @@ async function refreshMenu(token, known) {
     menuFailed = true
     log.warn('could not set the command menu — answers are unaffected', error)
   }
+}
+
+/**
+ * Where things stand, as `/status` hands it over (D193, D196).
+ *
+ * The same command anybody can type, run through the same path, and read from
+ * `alexia/command` rather than from the sentence — the sentence is for a person and the
+ * numbers are for the page. An Alexia that predates that key answers with the sentence and no
+ * `_meta`, and `{}` is exactly the right reading of that: the page draws the fields it was
+ * given and leaves out the ones it was not.
+ */
+async function standing(token) {
+  try {
+    const result = await ran(token, undefined, '/status')
+    const facts = result?._meta?.['alexia/command']
+    return facts !== null && typeof facts === 'object' ? facts : {}
+  } catch (error) {
+    log.warn('could not read the state for the panel', error)
+    return {}
+  }
+}
+
+/**
+ * The snapshot the panel page draws (D196).
+ *
+ * Half of it is core's and half is this plugin's own — the queue, the voice mode and how many
+ * accounts are paired are things core has never heard of, and `/status` is the only way to
+ * learn the rest. `running` prefers core's answer because core is the one that knows whether
+ * a task is running; when it did not say, this end's own view of it is better than nothing.
+ *
+ * Every field is left out rather than sent empty, because the page treats absent as *not
+ * known* and a zero as a number somebody could act on.
+ */
+async function panelState(token) {
+  return stateOf(await standing(token), {
+    at: Date.now(),
+    running: current !== undefined || line.busy,
+    waiting: line.waiting,
+    voice: voiceMode(await settings()),
+    paired: (await allowed()).size,
+  })
+}
+
+/**
+ * The ⚙ Panel button, with this moment's state baked into its link (D196).
+ *
+ * **The state travels in the fragment**, which is the part of a URL a browser does not send to
+ * the host — so the page behind the button is one static file that can be published next to
+ * the source, and it still shows today's spend without anybody's server ever seeing it. The
+ * cost of that is the one thing the page says out loud: what it shows is a snapshot of the
+ * moment the button was made, so every reply that carries a button carries a fresh one.
+ *
+ * `undefined` when there is no safe link to build — an address that is not `https:`, or a state
+ * too long for Telegram's URL. The caller says so in words rather than sending a dead button.
+ */
+async function panelMarkup(token) {
+  const { panel_url: base } = await settings()
+  const url = panelUrl(String(base || DEFAULT_PANEL_URL), await panelState(token))
+  return url === undefined ? undefined : { reply_markup: keyboard(url) }
+}
+
+/** `/panel` — the button, or the reason there is not one. Telegram's own, never core's. */
+async function panel(token, chatId, messageId) {
+  const markup = await panelMarkup(token)
+  if (markup === undefined) {
+    await say(
+      token,
+      chatId,
+      'There is no panel to open: the control panel page in Alexia’s settings is not an https address. ' +
+        'Clear it to go back to the default one.',
+      { rich: false, extra: quoting(messageId) },
+    )
+    return
+  }
+  // Sent rather than said: the point of this message is the keyboard under it, and ntfy has
+  // no keyboard — a fallback here would deliver the sentence and lose the only thing it is for.
+  await send(token, chatId, 'Tap ⚙ Panel below.', undefined, undefined, { ...markup, ...quoting(messageId) })
+}
+
+/**
+ * A tap on the panel, arriving as an ordinary message (D196).
+ *
+ * **The tap is untrusted text**, whatever it came from. The page is trusted to send only what
+ * its own buttons produce, but anybody who can script `sendData` can hand this plugin any JSON
+ * they like — so what arrives is checked against `panel.js`'s allowlist and nothing else ever
+ * runs. Something not on the list is ignored in silence rather than answered: a reply naming
+ * what was not recognised is a way to ask this plugin what it *does* recognise.
+ *
+ * What is on the list runs down the paths that already exist — a command through the same
+ * `/cheap` core runs for a typed one, a stop through the same stop `/stop` is — and the reply
+ * is core's own sentence with a fresh panel under it, so the numbers on it are this moment's.
+ */
+async function tapped(token, chatId, message) {
+  const chosen = action(message.web_app_data?.data)
+  if (chosen === undefined) return
+  if (chosen.stop) {
+    // The same stop, down to the sentence, carrying a button built after it landed.
+    await stop(token, chatId, undefined, () => panelMarkup(token))
+    return
+  }
+  let said
+  if (chosen.voice) {
+    said = await voiceLives()
+  } else {
+    // `/new` rotates core's conversation; the history the model is *shown* is this plugin's,
+    // so clearing it here is what makes a new chat new — exactly as a typed `/new` does.
+    if (/^\/new\b/i.test(chosen.command)) await alexia.storage.delete('chats', { chat_id: String(chatId) })
+    const result = await ran(token, chatId, chosen.command)
+    said = (result.content?.type === 'text' ? result.content.text : '') || 'Done.'
+  }
+  await send(token, chatId, said, undefined, undefined, await panelMarkup(token))
+}
+
+/**
+ * **What the panel cannot do, said plainly** (D196).
+ *
+ * The page offers the three voice-reply modes, and this end cannot set them — by a rule of
+ * core's that is right: a plugin may write its own `status` widgets and nothing else, because
+ * a plugin that could rewrite a setting could quietly undo a decision somebody made on that
+ * screen (`alexia/settings/set` in `host.ts` refuses it in as many words). `voice_replies` is
+ * the person's answer, not this plugin's state.
+ *
+ * So the tap is answered with what it is and where it is changed. The alternative — keeping a
+ * second copy of the choice in this plugin's own storage and preferring it — would work, and
+ * would mean the settings screen showing one thing while the reply that arrives is another.
+ */
+async function voiceLives() {
+  return (
+    `Voice replies are on “${voiceMode(await settings())}”. This panel cannot change that: a plugin may not ` +
+    `overwrite a setting you chose yourself, so it lives in Alexia’s own settings, under Telegram.`
+  )
 }
 
 /**
@@ -898,16 +1039,24 @@ async function failed(token, chatId, error) {
  * somebody who types `/stop` is checking, and being told *yes, stopped* when nothing was would
  * teach them the command lies.
  */
-async function stop(token, chatId, messageId) {
+async function stop(token, chatId, messageId, more) {
   const was = current !== undefined || line.waiting > 0
   // The preview first, so nothing refreshes a half-written answer after the chat has been
   // told it stopped (D195). The answer's own `finally` closes it too; both are idempotent.
   current?.draft?.close()
   current?.controller.abort()
   line.clear()
+  /**
+   * `more` is how a stop that came from the panel carries a fresh panel back (D196): one
+   * message rather than two.
+   *
+   * A function rather than a value, and that is the whole reason it is one — a panel built
+   * before this line would have been built before the abort, and would come back saying
+   * something is still running. Asked for here, it is a snapshot of a stopped Alexia.
+   */
   await say(token, chatId, was ? 'Stopped.' : 'Nothing was running.', {
     rich: false,
-    extra: quoting(messageId),
+    extra: { ...quoting(messageId), ...(await more?.()) },
   })
 }
 
@@ -1068,12 +1217,11 @@ async function poll(token, signal) {
          * (D194). Words, a voice note, a photo, a picture sent as a file, and a document —
          * a sticker or a location is not an answerable question and never was.
          *
-         * `web_app_data` is a tap on the control panel, which is Phase 4's. Named here and
-         * ignored rather than falling into the same `undefined` as a sticker, because the
-         * difference between *not yet* and *never* is worth being able to see.
+         * `web_app_data` is a tap on the control panel, which arrives as a message of its own
+         * kind on this same poll — no callback, no webhook, and nothing new to listen on.
          */
         const kind = kindOf(message)
-        if (!message || from === undefined || chatId === undefined || kind === undefined || kind === 'web_app') {
+        if (!message || from === undefined || chatId === undefined || kind === undefined) {
           await done(id)
           continue
         }
@@ -1097,16 +1245,45 @@ async function poll(token, signal) {
         // — is the one she was last spoken to in (D194).
         await alexia.storage.set('home_chat', String(chatId)).catch(() => {})
 
+        /**
+         * A tap on the panel, from a paired account (D196).
+         *
+         * Before 👀, because a `web_app_data` message is not one anybody can see in the chat —
+         * a reaction on it would be a reaction on nothing. Answered on the spot, like the two
+         * commands below: what it carries is a mode switch or a stop, and neither is worth
+         * queueing behind an answer, least of all the stop.
+         */
+        if (kind === 'web_app') {
+          try {
+            await tapped(token, chatId, message)
+          } catch (error) {
+            await failed(token, chatId, error)
+          }
+          await done(id)
+          continue
+        }
+
         // Seen now, answered in its turn, and never waited for here (D192). The loop has to be
         // back at `getUpdates` while an answer runs, because that is the only way the press on
         // a permission question can reach it.
         seen(token, chatId, message.message_id)
 
-        // Except this one, which is answered on the spot: `/stop` queued behind the answer it
-        // is stopping would arrive after the thing it was meant to prevent (D194).
+        // Except these two, which are answered on the spot: `/stop` queued behind the answer it
+        // is stopping would arrive after the thing it was meant to prevent (D194), and `/panel`
+        // is a button this plugin draws rather than anything core has a word for (D196).
         if (kind === 'text' && stops(message.text)) {
           try {
             await stop(token, chatId, message.message_id)
+          } catch (error) {
+            await failed(token, chatId, error)
+          }
+          await done(id)
+          continue
+        }
+
+        if (kind === 'text' && panels(message.text)) {
+          try {
+            await panel(token, chatId, message.message_id)
           } catch (error) {
             await failed(token, chatId, error)
           }

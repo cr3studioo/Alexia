@@ -1,0 +1,62 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# The Telegram Mini App panel, published to GitHub Pages (M4 Phase 4, #5).
+#
+# `plugins/telegram/panel/index.html` is the whole app: no build step, because there is
+# nothing to build — it is one static file that reads its state from the URL fragment and
+# never calls out to anything (see the file's own header for why). This workflow's only job
+# is to put that one file where `https://cr3studioo.github.io/Alexia/telegram/` expects it.
+#
+# **One-time outward-facing step**: this workflow can run all day and nothing will actually
+# serve until a person turns Pages on for the repository — Settings → Pages → Source: GitHub
+# Actions. That toggle is not something a workflow file can flip for itself, so it is written
+# down here rather than discovered the first time this job's deploy step fails.
+#
+# Triggered by a push that touches the panel (or this file), plus `workflow_dispatch` so it
+# can be re-run by hand — the same shape as re-publishing after a Pages outage or a manual
+# fix, with nothing else in the repo needing to change.
+
+name: panel
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'plugins/telegram/panel/**'
+      - '.github/workflows/panel.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Only one deploy at a time, and a newer push wins over a still-running older one — the same
+# reasoning GitHub's own Pages template uses, and the right one here too: this is a public
+# static page, not a release artifact, so there is nothing to gain from queuing every push.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # `telegram/` so the file lands at .../Alexia/telegram/, which is the URL the bot's
+      # web_app button points at. Pages serves `index.html` at a directory URL for free.
+      - run: mkdir -p _site/telegram && cp plugins/telegram/panel/index.html _site/telegram/index.html
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

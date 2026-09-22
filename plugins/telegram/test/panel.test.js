@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { expect, test } from 'vitest'
-import { ACTIONS, action, decode, encode, keyboard, panelUrl } from '../panel.js'
+import { ACTIONS, action, decode, encode, keyboard, PANEL_VERSION, panelUrl, stateOf } from '../panel.js'
 
 // State rides in the URL fragment, which a static page can read but a host never sees — so
 // `encode`/`decode` are the whole of the privacy story, and `panelUrl` is what has to refuse
@@ -98,4 +98,70 @@ test('keyboard builds a persistent reply keyboard with one web_app button', () =
     resize_keyboard: true,
     is_persistent: true,
   })
+})
+
+/**
+ * The snapshot itself (D196): half of it is core's `/status` and half is this plugin's own.
+ *
+ * The rule the page depends on is *absent rather than empty* — a field core did not send has
+ * to be missing, so the page can draw "—" instead of a zero that reads as a real number. An
+ * Alexia older than D193 sends no `alexia/command` at all, and the panel still has to work.
+ */
+
+const OWN = { at: 1_700_000_000_000, running: false, waiting: 0, voice: 'mirror', paired: 1 }
+
+test('stateOf carries every field core sent', () => {
+  const facts = {
+    mode: 'cloud',
+    prefer: 'best',
+    today: { spent: 0.5, allowance: 2 },
+    month: { spent: 9, cap: 20 },
+    running: true,
+  }
+  expect(stateOf(facts, OWN)).toEqual({
+    v: PANEL_VERSION,
+    at: OWN.at,
+    mode: 'cloud',
+    prefer: 'best',
+    today: { spent: 0.5, allowance: 2 },
+    month: { spent: 9, cap: 20 },
+    running: true,
+    waiting: 0,
+    voice: 'mirror',
+    paired: 1,
+  })
+})
+
+test('an older Alexia that sent nothing still gets a panel, minus what it could not say', () => {
+  const state = stateOf(undefined, { ...OWN, running: true, waiting: 3, paired: 2 })
+  // Core's half is absent, not zeroed — the page draws "—" for these rather than a number.
+  expect('mode' in state).toBe(false)
+  expect('prefer' in state).toBe(false)
+  expect('today' in state).toBe(false)
+  expect('month' in state).toBe(false)
+  // This plugin's own half is all there, including its own view of whether it is busy.
+  expect(state).toMatchObject({ v: PANEL_VERSION, running: true, waiting: 3, voice: 'mirror', paired: 2 })
+})
+
+test("core's answer about what is running wins over this end's guess", () => {
+  expect(stateOf({ running: false }, { ...OWN, running: true }).running).toBe(false)
+  expect(stateOf({ running: true }, { ...OWN, running: false }).running).toBe(true)
+  // And when core did not say, this end's own view is better than nothing.
+  expect(stateOf({}, { ...OWN, running: true }).running).toBe(true)
+})
+
+test('stateOf refuses a field of the wrong shape rather than passing it on', () => {
+  const state = stateOf({ mode: 42, prefer: ['cheap'], today: 'lots', month: null }, OWN)
+  expect('mode' in state).toBe(false)
+  expect('prefer' in state).toBe(false)
+  expect('today' in state).toBe(false)
+  expect('month' in state).toBe(false)
+})
+
+test('a state built with nothing at all is still a state the page can read', () => {
+  const state = stateOf(undefined, undefined)
+  expect(state.v).toBe(PANEL_VERSION)
+  expect(state).toMatchObject({ at: 0, running: false, waiting: 0, paired: 0 })
+  // And it survives the trip it was built for.
+  expect(decode(encode(state))).toEqual(state)
 })

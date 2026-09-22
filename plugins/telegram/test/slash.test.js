@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { expect, test } from 'vitest'
-import { bare, isCommand, stops } from '../slash.js'
+import { bare, isCommand, panels, stops } from '../slash.js'
 
 // Two patterns, both of which fail quietly when they are wrong: a `/stop` test that is too
 // eager swallows an ordinary message, and an `@BotName` suffix left on turns every command
@@ -89,4 +89,32 @@ test('bare and isCommand are used in that order, which is what makes a menu tap 
   // core's pattern, so asking in the other order routes a tapped menu entry to the model.
   expect(isCommand('/status@AlexiaBot')).toBe(false)
   expect(isCommand(bare('/status@AlexiaBot'))).toBe(true)
+})
+
+/**
+ * `/panel` (D196) — the other command core has never heard of, and held to the same
+ * whole-word test for the same reason: one that is slightly too eager is a command that eats
+ * an ordinary message, and this one would eat it and reply with a keyboard button.
+ */
+
+test('panels recognises the command on its own, with a suffix, or with words after it', () => {
+  expect(panels('/panel')).toBe(true)
+  expect(panels('/PANEL')).toBe(true)
+  expect(panels('/panel\n')).toBe(true)
+  expect(panels('/panel@AlexiaBot')).toBe(true)
+  expect(panels('/panel please')).toBe(true)
+})
+
+test('panels leaves alone anything that merely starts with those letters', () => {
+  expect(panels('/panels of the jury')).toBe(false)
+  expect(panels('/panelling')).toBe(false)
+  expect(panels('panel')).toBe(false)
+  expect(panels('open the /panel')).toBe(false)
+  expect(panels('')).toBe(false)
+  expect(panels(undefined)).toBe(false)
+})
+
+test('the two Telegram-only commands do not answer for each other', () => {
+  expect(stops('/panel')).toBe(false)
+  expect(panels('/stop')).toBe(false)
 })

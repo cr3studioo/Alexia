@@ -332,13 +332,17 @@
       { label: 'Strongest', value: 'best' },
     ], state.prefer, function (v) { return v }))
 
-    actions.appendChild(segmented('Voice replies', [
-      { label: 'Never', value: 'never' },
-      { label: 'Mirror', value: 'mirror' },
-      { label: 'Always', value: 'always' },
-    ], state.voice, function (v) { return 'voice:' + v }))
-
     app.appendChild(actions)
+
+    /**
+     * Voice replies are read on the row above and set in Alexia, not here.
+     *
+     * Core refuses a plugin writing any setting of its own but a `status` — "a plugin that
+     * could rewrite a toggle could quietly undo a decision the person made" — and this is one
+     * of the decisions it means. Three buttons that could only answer *go and do it in the
+     * app* would be three buttons pretending, which is worse than the sentence below.
+     */
+    app.appendChild(el('p', 'note', 'Voice replies are changed in Alexia, under Plugins → Telegram.'))
 
     if (!hasTelegram) {
       app.appendChild(el('p', 'note', 'Open this from Telegram to use the buttons.'))

@@ -4,7 +4,7 @@
   "id": "telegram",
   "name": "Telegram",
   "summary": "Talk to Alexia from Telegram. Every message crosses Telegram's servers, and every reply says so.",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "license": "AGPL-3.0-only",
   "entry": {
     "run": "node",
@@ -53,6 +53,13 @@
       "label": "Send what is due each morning at",
       "placeholder": "08:30",
       "hint": "A time in 24-hour form, in this machine's own clock. Leave it empty for no summary. It needs a plugin that keeps track of what you owe — without one there is nothing to list, so no summary goes out."
+    },
+    {
+      "type": "text",
+      "key": "panel_url",
+      "label": "Control panel page",
+      "default": "https://cr3studioo.github.io/Alexia/telegram/",
+      "hint": "The page behind the ⚙ Panel button. It is one static file with no server behind it: the state it shows travels in the part of the link a browser never sends to the host, and the page itself calls nothing. The default address only exists once GitHub Pages has been switched on for the repository, which is a one-time step somebody has to do by hand."
     },
     {
       "type": "text",

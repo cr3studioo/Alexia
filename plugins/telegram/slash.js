@@ -16,6 +16,7 @@
  * test that is slightly too eager is a command that eats messages: `/stopwatch timer` is not a
  * stop, and neither is a sentence that happens to begin with the word. The pattern wants the
  * word whole — end of message, or whitespace after it, with the optional `@BotName` between.
+ * `/panel` is held to the same test for a different reason: core has never heard of it either.
  *
  * **And a leading slash is not a command** (D195). This end used to send anything starting
  * with `/` down the command path, while core only reads a line as a command when it matches
@@ -31,6 +32,9 @@
 
 /** `/stop`, `/stop@AlexiaBot`, `/stop now` — and nothing that merely starts with those letters. */
 const STOP_RE = /^\/stop(@\w+)?(\s|$)/i
+
+/** `/panel`, the same shape. The other command core has never heard of, for the same reason. */
+const PANEL_RE = /^\/panel(@\w+)?(\s|$)/i
 
 /**
  * Core's own test, character for character: a slash, a letter, then letters, digits, dots and
@@ -55,6 +59,18 @@ export function isCommand(text) {
 /** Whether this message is the stop command. */
 export function stops(text) {
   return STOP_RE.test(String(text ?? ''))
+}
+
+/**
+ * Whether this message asks for the control panel (D196).
+ *
+ * The second of the two commands that are this plugin's own and not core's: the panel is a
+ * page core does not know about, opened by a button only Telegram can draw, so sending
+ * `/panel` on to core would come back as *there is no such command*. Held to the same
+ * whole-word test `/stop` gets, because `/panels of the jury` is not a request for one.
+ */
+export function panels(text) {
+  return PANEL_RE.test(String(text ?? ''))
 }
 
 /** `/status@AlexiaBot the rest` → `/status the rest`. Anything not a command is untouched. */
