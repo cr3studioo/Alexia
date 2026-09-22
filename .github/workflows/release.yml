@@ -288,8 +288,10 @@ jobs:
           home=$(mktemp -d)
           # This step plays the shell (D153): under ALEXIA_TAURI the core starts only once it is
           # handed a vault on stdin. A stand-in that answers *nothing stored*, which is the truth
-          # about a fresh install, run by the same core so this job still needs nothing installed.
-          "$GITHUB_WORKSPACE/$core" -e 'const s=require("net").createServer(c=>c.once("data",()=>c.end(JSON.stringify({ok:true,secret:null})+"\n"))).listen(0,"127.0.0.1",()=>console.log(JSON.stringify({port:s.address().port,token:"release-check"})))' > "$home/vault.line" &
+          # about a fresh install, run by the same core so this job still needs nothing installed —
+          # except the one entry, which says there is nothing older to move (D187), so the core
+          # never reaches into this runner's own keychain looking for any.
+          "$GITHUB_WORKSPACE/$core" -e 'const s=require("net").createServer(c=>c.once("data",d=>{const a=JSON.parse(String(d));c.end(JSON.stringify({ok:true,secret:a.account==="_core.vault"?JSON.stringify({secrets:{},looked:[],moved:"all"}):null})+"\n")})).listen(0,"127.0.0.1",()=>console.log(JSON.stringify({port:s.address().port,token:"release-check"})))' > "$home/vault.line" &
           vault=$!
           for _ in $(seq 1 50); do [ -s "$home/vault.line" ] && break; sleep 0.2; done
           HOME="$home" ALEXIA_TAURI=1 "$GITHUB_WORKSPACE/$core" --disable-sigusr1 boot.mjs < "$home/vault.line" > "$home/said.log" 2>&1 &
