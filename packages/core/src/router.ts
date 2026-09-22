@@ -1551,7 +1551,8 @@ function refusal(
  * - `reading` — reading attached files before anything else happens.
  * - `asking` — a request has gone to `model`.
  * - `retrying` — `model` said it was busy right now, and is being asked again (`attempt` from 2).
- * - `backup` — `model` has been asked as well, because `behind` was `busy` or `slow` to start.
+ * - `backup` — `model` has been asked as well: because `behind` was `busy` or `slow` to start, was
+ *   busy or slow a moment ago (`lately`), or because somebody asked for speed (`fastest`).
  * - `thinking` — `model` is reasoning and has not written a word yet.
  * - `writing` — `model` is writing the answer.
  * - `tool` — a tool called `name` is running.
@@ -1561,7 +1562,7 @@ export type Phase =
   | { kind: 'reading' }
   | { kind: 'asking'; model: string }
   | { kind: 'retrying'; model: string; attempt: number }
-  | { kind: 'backup'; model: string; behind: string; why: 'busy' | 'slow' }
+  | { kind: 'backup'; model: string; behind: string; why: 'busy' | 'slow' | 'lately' | 'fastest' }
   | { kind: 'thinking'; model: string }
   | { kind: 'writing'; model: string }
   | { kind: 'tool'; name: string }

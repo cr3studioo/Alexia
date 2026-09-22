@@ -36,7 +36,7 @@ export type Phase =
   | { kind: 'reading' }
   | { kind: 'asking'; model: string }
   | { kind: 'retrying'; model: string; attempt: number }
-  | { kind: 'backup'; model: string; behind: string; why: 'busy' | 'slow' }
+  | { kind: 'backup'; model: string; behind: string; why: 'busy' | 'slow' | 'lately' | 'fastest' }
   | { kind: 'thinking'; model: string }
   | { kind: 'writing'; model: string }
   | { kind: 'tool'; name: string }

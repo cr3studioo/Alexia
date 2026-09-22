@@ -41,6 +41,27 @@ export const setKeylessOn = (store: Store, on: boolean): void => {
   store.kvSet(CORE, FLOOR, on)
 }
 
+/**
+ * **How hard to chase the first words** — the Models screen's speed switch.
+ *
+ * `balanced`, the default: one model at a time, a second one beside it when the first is silent
+ * for two seconds, and the two started together only when the first was busy or slow a moment ago.
+ * `fastest`: up to three free models on different providers started together on every message and
+ * every step, the favourite first for two seconds. Balanced by default because most people are on
+ * a free tier's daily allowance — OpenRouter's is fifty without credit — and three at once spends
+ * it three times as fast.
+ */
+export type Speed = 'balanced' | 'fastest'
+
+const SPEED = 'speed'
+
+/** The speed switch as it stands. Absent is `balanced`. */
+export const speedOf = (store: Store): Speed => (store.kvGet(CORE, SPEED) === 'fastest' ? 'fastest' : 'balanced')
+
+export const setSpeed = (store: Store, speed: Speed): void => {
+  store.kvSet(CORE, SPEED, speed)
+}
+
 /** A provider the user has connected, and how much of its free tier is left right now. */
 export interface Rung {
   provider: Provider

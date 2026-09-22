@@ -30,7 +30,7 @@ import { Library, offerable } from './library.js'
 import { distil, forget, learnable, outline, save, type Episode } from './learned.js'
 import { mimeOf, Offers, openable, reach } from './offered.js'
 import { installed, OLLAMA, running } from './ollama.js'
-import { accountKey, fundedBy, keylessOn, usable, type Account } from './pool.js'
+import { accountKey, fundedBy, keylessOn, speedOf, usable, type Account } from './pool.js'
 import { ceilings, estimate, previewLine, setCeilings, worthAsking, type Ceilings } from './preview.js'
 import { Plugins } from './plugins.js'
 import {
@@ -2812,6 +2812,8 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
         run: runId,
         paidAllowed: !month.stop,
         maxSteps: limits.steps,
+        // How hard to chase the first words: the Models screen's speed switch.
+        speed: speedOf(store),
         signal: stop.signal,
         // The gate (M15-3), the same one a task started from a phone meets (M7-5).
         guard: gate(text, runId),

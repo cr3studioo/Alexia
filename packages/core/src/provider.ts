@@ -868,6 +868,22 @@ export const HEDGE_AFTER = 2_000
 export const STAR_WAIT = 6_000
 
 /**
+ * **How long the first model keeps priority when somebody asked for speed** (the Fastest setting).
+ * Two seconds, decided with the person who uses this: the favourite still wins when it starts
+ * answering within that, and when it is busy the backup — already partway through its answer — is
+ * on screen at two seconds rather than six.
+ */
+export const FASTEST_STAR_WAIT = 2_000
+
+/**
+ * **The most requests one answer has out at once.** Three: the favourite and a partner on each of
+ * two other providers. A fourth would mostly land on a provider already asked, where a free tier
+ * that is full for one model is usually full for the next, and every one of them is a request off
+ * somebody's daily allowance and off a per-minute limit shared by every model on that provider.
+ */
+export const MOST_AT_ONCE = 3
+
+/**
  * **The pause before asking a busy model again, and how it grows** — 0.4 s, 0.8 s, 1.2 s, 1.6 s
  * and on, each a quarter either way at random. A host that is full right now frees a slot within
  * a second or two, and a fixed pause from every Alexia on the same free model would arrive

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import type { Ruling } from './permissions.js'
 import { ProviderError, type ToolSpec } from './provider.js'
+import type { Speed } from './pool.js'
 // The shape `notifications/progress` arrives in. It belongs to neither module, and it is one
 // interface — a third file to hold it would be the abstraction, not the sharing.
 import type { Progress } from './settings.js'
@@ -187,6 +188,11 @@ export interface RunOptions {
   background?: boolean
   /** Models not to ask in this task, keyed `provider\nmodel` — the one just marked a bad answer (§4 I). */
   avoid?: string[]
+  /**
+   * **The Models screen's speed switch** (`pool.ts`), read by the caller rather than here so the
+   * loop never reads the store for it. Absent is `balanced`.
+   */
+  speed?: Speed
   /** Every step above this tier — *Bad answer* with the paid switch on asks a smarter model (§4 I). */
   above?: Tier
   /**
