@@ -1,14 +1,17 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "What the two Alexia windows may ask this process to do. Deliberately four things.",
+  "description": "What the two Alexia windows may ask this process to do: set the tray's tooltip, hide the overlay, restart after an update, check for one, and start at sign-in.",
   "windows": ["main", "overlay"],
   "remote": {
-    "comment": "The shell is served by core over loopback, so the page is a remote origin from Tauri's point of view. Only that origin, and only the permissions below — the whole of which is: change a tray tooltip, hide a window, check for an update.",
+    "comment": "The shell is served by core over loopback, so the page is a remote origin from Tauri's point of view. Only that origin, and only the permissions below. A remote origin may call the app's own commands only where they are granted here by name, so every command in main.rs's generate_handler! has its allow- line.",
     "urls": ["http://127.0.0.1:*", "http://localhost:*"]
   },
   "permissions": [
     "core:default",
+    "allow-tray-state",
+    "allow-hide-overlay",
+    "allow-relaunch",
     "core:window:allow-hide",
     "core:window:allow-show",
     "core:window:allow-set-focus",

@@ -57,3 +57,48 @@ test('after the updater installs, the page asks the shell to come back as the ne
   expect(/generate_handler!\[[^\]]*\brelaunch\b[^\]]*\]/.test(shell)).toBe(true)
   expect(shell).toMatch(/fn relaunch\(app: AppHandle\) \{\s*app\.request_restart\(\);/)
 })
+
+/**
+ * **Registered is not allowed** — the half the test above could not see. The page is served by
+ * core over loopback, which Tauri treats as a remote origin, and a remote origin may call a
+ * command only where a capability grants it by name. `relaunch` was registered and never
+ * granted, so every Mac update installed and then failed with *Command relaunch not allowed by
+ * ACL*, and the new version appeared only after somebody quit and reopened Alexia. So every
+ * command the page calls is held to all three: registered in `main.rs`, given a permission in
+ * `build.rs`, and granted in the capability both windows share, for the loopback origin.
+ */
+test('every command the page calls is one the shell registers, and one the capability grants', () => {
+  const tauri = join(import.meta.dirname, '..', '..', '..', 'src-tauri')
+  const build = readFileSync(join(tauri, 'build.rs'), 'utf8')
+  const capability = JSON.parse(readFileSync(join(tauri, 'capabilities', 'default.json'), 'utf8')) as {
+    windows: string[]
+    remote?: { urls: string[] }
+    permissions: string[]
+  }
+  const page = ['desktop.ts', 'main.ts']
+    .map((file) => readFileSync(join(import.meta.dirname, '..', 'src', file), 'utf8'))
+    .join('\n')
+  const called = [...new Set([...page.matchAll(/(?:invoke|call)\('([a-z_:|]+)'/g)].map(([, name]) => name!))]
+  expect(called).toContain('relaunch')
+
+  const registered = /generate_handler!\[([^\]]*)\]/.exec(shell)?.[1]?.split(',').map((one) => one.trim()) ?? []
+  const declared = /\.commands\(&\[([^\]]*)\]\)/.exec(build)?.[1]?.split(',').map((one) => one.trim().replace(/"/g, '')) ?? []
+  const kebab = (name: string): string => name.replace(/_/g, '-')
+
+  for (const name of called) {
+    if (name.startsWith('plugin:')) {
+      // A plugin's command, granted by the plugin's own set or by its one permission.
+      const [plugin, command] = name.slice('plugin:'.length).split('|') as [string, string]
+      expect(capability.permissions.some((one) => one === `${plugin}:default` || one === `${plugin}:allow-${kebab(command)}`), name).toBe(true)
+      continue
+    }
+    expect(registered, `${name} is called by the page and not registered in main.rs`).toContain(name)
+    expect(declared, `${name} has no permission, because build.rs does not name it`).toContain(name)
+    expect(capability.permissions, `${name} is not granted`).toContain(`allow-${kebab(name)}`)
+  }
+  // Every registered command is granted too: one registered and not granted is only refused later.
+  for (const name of registered) expect(capability.permissions).toContain(`allow-${kebab(name)}`)
+  // For both windows, and for the origin the page is actually served from.
+  expect(capability.windows).toEqual(expect.arrayContaining(['main', 'overlay']))
+  expect(capability.remote?.urls).toContain('http://127.0.0.1:*')
+})
