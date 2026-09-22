@@ -190,7 +190,12 @@ test('a pinned model that fails stops, marked as the person’s choice, and Auto
   // Automatic remembers that the pin was rate-limited a moment ago, so it asks the other model
   // first rather than collecting the same 429 again (D159). The pin itself was asked anyway:
   // what failed here orders Automatic, and never refuses somebody's own choice.
-  expect(asked.slice(1)).toEqual(['stub/two'])
+  //
+  // That other model was rate-limited in the test above, so Balanced starts its partner with it
+  // (`shaky`): the pin, the only other model there is, asked beside it rather than ahead of it.
+  const backups = again.events.filter((event) => 'phase' in event && (event.phase as { kind: string }).kind === 'backup')
+  expect(backups.map((event) => event.phase)).toEqual([{ kind: 'backup', model: 'Stub One', behind: 'Stub Two', why: 'lately' }])
+  expect(asked.slice(1).sort()).toEqual(['stub/one', 'stub/two'])
 
   // **One answer, not a setting**: the pin is where the person left it, and the question was
   // asked again rather than written into the conversation a second time.

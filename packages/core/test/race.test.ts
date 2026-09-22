@@ -101,6 +101,9 @@ afterAll(() => void server.close())
 const at = `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`
 const alpha: Provider = { id: 'alpha', name: 'Alpha', baseUrl: at, rpm: 1000, rpd: 1000 }
 const beta: Provider = { id: 'beta', name: 'Beta', baseUrl: at, rpm: 1000, rpd: 1000 }
+const gamma: Provider = { id: 'gamma', name: 'Gamma', baseUrl: at, rpm: 1000, rpd: 1000 }
+/** Where a `T0` model lives, as far as the router can tell: this Mac. */
+const home: Provider = { id: 'home', name: 'Home', baseUrl: at }
 /** A gateway that gives up on keep-alives in a quarter of a second, rather than in two minutes. */
 const impatient: Provider = { id: 'impatient', name: 'Impatient', baseUrl: at, timeoutMs: 250, idleMs: 250, keptAliveMs: 250 }
 const dear: Provider = { id: 'dear', name: 'Dear', baseUrl: at, pricing: 'published', timeoutMs: 250, idleMs: 250, keptAliveMs: 250 }
@@ -108,7 +111,7 @@ const sticky: Provider = { id: 'sticky', name: 'Sticky', baseUrl: at, stickySess
 /** A keyless floor, asked with no key at all. */
 const floor: Provider = { id: 'floor', name: 'Floor', baseUrl: at, auth: 'optional' }
 const secrets = memorySecrets()
-for (const provider of [alpha, beta, impatient, dear, sticky]) await secrets.set(CORE, keyOf(provider), `sk-${provider.id}`)
+for (const provider of [alpha, beta, gamma, home, impatient, dear, sticky]) await secrets.set(CORE, keyOf(provider), `sk-${provider.id}`)
 
 const model = (id: string, provider: Provider, over: Partial<Model> = {}): { model: Model; provider: Provider } => ({
   model: {
@@ -129,6 +132,7 @@ const model = (id: string, provider: Provider, over: Partial<Model> = {}): { mod
 })
 const paidModel = (id: string, provider: Provider): { model: Model; provider: Provider } =>
   model(id, provider, { tier: 'T2', priceIn: 0.2, priceOut: 0.2 })
+const localModel = (id: string): { model: Model; provider: Provider } => model(id, home, { tier: 'T0' })
 
 const hello = { messages: [{ role: 'user' as const, content: 'hello' }] }
 
@@ -410,6 +414,172 @@ test('the line under the question follows the walk: asking, asking again, a back
   // The backup lost, and a rung that lost is not a try.
   expect(store.tries().map((one) => one.model)).toEqual(['busy8/a'])
   store.close()
+})
+
+// ---- Several at once, from the first moment ---------------------------------------------------
+
+test('started together: a partner from another provider at once, even when the next rung shares the first one’s', async () => {
+  const store = fresh([['hang/a', 'hang']])
+  const screen = watching()
+  const started = Date.now()
+  const got = await send([model('hang/a', alpha), model('ok/a2', alpha), model('ok/b', beta)], hello, store, secrets, {
+    ...screen.hooks,
+    hedgeAfter: 1_000,
+    starWait: 150,
+    atOnce: () => 2,
+    together: 'lately',
+  })
+
+  expect(got.model.id).toBe('ok/b')
+  expect(screen.deltas).toEqual(['from ok/b'])
+  // Beside the first straight away — long before any hedge could have asked it — and not the
+  // next rung, whose provider already had a request out.
+  expect(asked.map((one) => one.model).sort()).toEqual(['hang/a', 'ok/b'])
+  expect((asked.find((one) => one.model === 'ok/b')?.at ?? Infinity) - started).toBeLessThan(1_000)
+  expect(screen.phases).toContainEqual({ kind: 'backup', model: 'ok/b', behind: 'hang/a', why: 'lately' })
+  // The first model still had its priority: the partner's answer waited it out.
+  expect(Date.now() - started).toBeGreaterThanOrEqual(140)
+  await until(() => hungUp.includes('hang/a'))
+  expect(store.tries().map((one) => [one.model, one.outcome])).toEqual([['ok/b', 'answered']])
+  store.close()
+
+  // When every rung left shares the first one's provider, the next of them is still the partner.
+  const same = fresh([['hang/a', 'hang']])
+  await send([model('hang/a', alpha), model('ok/a2', alpha)], hello, same, secrets, { hedgeAfter: 1_000, starWait: 100, atOnce: () => 2 })
+  expect(asked.map((one) => one.model).sort()).toEqual(['hang/a', 'ok/a2'])
+  same.close()
+})
+
+test('three at once is three providers and never a fourth; after the wait the first sign wins and the rest are cancelled unrecorded', async () => {
+  const store = fresh([
+    ['hang/a', 'hang'],
+    ['slow/b', 'slow-first:400'],
+    ['slow/c', 'slow-first:150'],
+  ])
+  const screen = watching()
+  const got = await send(
+    [model('hang/a', alpha), model('ok/a2', alpha), model('slow/b', beta), model('slow/c', gamma), model('ok/d', beta)],
+    hello,
+    store,
+    secrets,
+    // A hedge due long before anything answers: with three out, there is no room for it.
+    { ...screen.hooks, hedgeAfter: 30, starWait: 100, atOnce: () => 3, together: 'fastest' },
+  )
+
+  expect(got.model.id).toBe('slow/c')
+  expect(screen.deltas).toEqual(['from slow/c'])
+  expect(asked.map((one) => one.model).sort()).toEqual(['hang/a', 'slow/b', 'slow/c'])
+  expect(screen.phases.filter((one) => one.kind === 'backup')).toEqual([
+    { kind: 'backup', model: 'slow/b', behind: 'hang/a', why: 'fastest' },
+    { kind: 'backup', model: 'slow/c', behind: 'hang/a', why: 'fastest' },
+  ])
+  await until(() => hungUp.includes('hang/a'))
+  expect(hungUp).toContain('hang/a')
+  // Neither the first model nor the slower partner is a try: both were cancelled, not failed.
+  expect(store.tries().map((one) => [one.model, one.outcome])).toEqual([['slow/c', 'answered']])
+  store.close()
+})
+
+test('a first model that answers inside its wait is the answer, and not a word of its partners reaches the screen', async () => {
+  const store = fresh([['slow/a', 'slow-first:120']])
+  const screen = watching()
+  const got = await send([model('slow/a', alpha), model('ok/b', beta), model('ok/c', gamma)], hello, store, secrets, {
+    ...screen.hooks,
+    hedgeAfter: 1_000,
+    starWait: 2_000,
+    atOnce: () => 3,
+  })
+
+  expect(got.model.id).toBe('slow/a')
+  expect(screen.deltas).toEqual(['from slow/a'])
+  expect(screen.switches).toEqual([])
+  // Both partners were asked, and answered, into buffers nobody read. Absent a reason, it is speed.
+  expect(count('ok/b')).toBe(1)
+  expect(count('ok/c')).toBe(1)
+  expect(screen.phases).toContainEqual({ kind: 'backup', model: 'ok/b', behind: 'slow/a', why: 'fastest' })
+  expect(screen.phases.at(-1)).toEqual({ kind: 'writing', model: 'slow/a' })
+  store.close()
+})
+
+test('this Mac’s model and a paid one are never started as partners, and are asked when nothing else is out', async () => {
+  const clock = { hedgeAfter: 30, starWait: 100, retryStep: 10, atOnce: () => 3 }
+  // This Mac's model is passed over for the rung behind it.
+  const store = fresh([['hang/a', 'hang']])
+  const got = await send([model('hang/a', alpha), localModel('local/t0'), model('ok/c', gamma)], hello, store, secrets, clock)
+  expect(got.model.id).toBe('ok/c')
+  expect(asked.map((one) => one.model).sort()).toEqual(['hang/a', 'ok/c'])
+  store.close()
+
+  // With nothing behind it, it waits — neither started together nor hedged — until the first has failed.
+  const alone = fresh([['hang/a', 'hang']])
+  const screen = watching()
+  const started = Date.now()
+  const local = await send([model('hang/a', impatient), localModel('local/t0')], hello, alone, secrets, { ...screen.hooks, ...clock })
+  expect(local.model.id).toBe('local/t0')
+  expect(asked.map((one) => one.model)).toEqual(['hang/a', 'local/t0'])
+  expect((asked[1]?.at ?? 0) - started).toBeGreaterThanOrEqual(200)
+  expect(screen.phases.filter((one) => one.kind === 'backup')).toEqual([])
+  alone.close()
+
+  // A paid rung waits its turn, and nothing free behind it jumps ahead of it.
+  const dearly = fresh([['hang/a', 'hang']])
+  const watched = watching()
+  const began = Date.now()
+  const billed = await send([model('hang/a', impatient), paidModel('paid/p', dear), model('ok/c', gamma)], { ...hello, maxTokens: 100 }, dearly, secrets, {
+    ...watched.hooks,
+    ...clock,
+  })
+  expect(billed.model.id).toBe('paid/p')
+  expect(asked.map((one) => one.model)).toEqual(['hang/a', 'paid/p'])
+  expect((asked[1]?.at ?? 0) - began).toBeGreaterThanOrEqual(200)
+  expect(watched.phases.filter((one) => one.kind === 'backup')).toEqual([])
+  dearly.close()
+})
+
+test('a provider with nothing to spare is not started together, is still asked when nothing else is out, and the hedge does not ask', async () => {
+  const thrifty = { spare: (choice: { provider: Provider }) => choice.provider.id !== 'beta', atOnce: () => 2, starWait: 100 }
+  // Passed over for the rung behind it, which is not used up by the skip.
+  const store = fresh([['hang/a', 'hang']])
+  const got = await send([model('hang/a', alpha), model('ok/b', beta), model('ok/c', gamma)], hello, store, secrets, { ...thrifty, hedgeAfter: 1_000 })
+  expect(got.model.id).toBe('ok/c')
+  expect(asked.map((one) => one.model).sort()).toEqual(['hang/a', 'ok/c'])
+  store.close()
+
+  // Nothing else to start with it: the first is asked alone, and the skipped rung after it fails.
+  const alone = fresh([['hang/a', 'hang']])
+  const screen = watching()
+  const started = Date.now()
+  const after = await send([model('hang/a', impatient), model('ok/b', beta)], hello, alone, secrets, { ...screen.hooks, ...thrifty, hedgeAfter: 1_000 })
+  expect(after.model.id).toBe('ok/b')
+  expect(asked.map((one) => one.model)).toEqual(['hang/a', 'ok/b'])
+  expect((asked[1]?.at ?? 0) - started).toBeGreaterThanOrEqual(200)
+  expect(screen.phases.filter((one) => one.kind === 'backup')).toEqual([])
+  alone.close()
+
+  // Once the first has gone quiet, the hedge asks it anyway: that request is no longer a luxury.
+  const quiet = fresh([['hang/a', 'hang']])
+  const watched = watching()
+  const began = Date.now()
+  const hedged = await send([model('hang/a', alpha), model('ok/b', beta)], hello, quiet, secrets, { ...watched.hooks, ...thrifty, hedgeAfter: 40 })
+  expect(hedged.model.id).toBe('ok/b')
+  expect((asked.find((one) => one.model === 'ok/b')?.at ?? 0) - began).toBeGreaterThanOrEqual(35)
+  expect(watched.phases).toContainEqual({ kind: 'backup', model: 'ok/b', behind: 'hang/a', why: 'slow' })
+  quiet.close()
+})
+
+test('the daily test and a plugin on its own still walk one at a time, whatever atOnce says', async () => {
+  const clock = { hedgeAfter: 20, starWait: 1_000, retryStep: 10, atOnce: () => 3 }
+  for (const who of [{ source: 'test' as const }, { plugin: 'somebody' }]) {
+    const store = fresh([['hang/a', 'hang']])
+    const screen = watching()
+    const started = Date.now()
+    const got = await send([model('hang/a', impatient), model('ok/b', beta), model('ok/c', gamma)], hello, store, secrets, { ...screen.hooks, ...clock, ...who })
+    expect(got.model.id).toBe('ok/b')
+    expect(asked.map((one) => one.model)).toEqual(['hang/a', 'ok/b'])
+    expect((asked[1]?.at ?? 0) - started).toBeGreaterThanOrEqual(200)
+    expect(screen.phases.filter((one) => one.kind === 'backup')).toEqual([])
+    store.close()
+  }
 })
 
 test('a model that thinks first is said to be thinking, then writing', async () => {

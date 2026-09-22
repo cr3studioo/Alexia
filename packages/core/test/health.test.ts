@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { expect, test } from 'vitest'
 import type { Model } from '../src/catalog.js'
-import { BUSY_FOR, BUSY_HALF_LIFE, judge, TURNED_DOWN, type Health } from '../src/health.js'
+import { BUSY_FOR, BUSY_HALF_LIFE, judge, SHAKY_FOR, SHAKY_SAMPLE, TURNED_DOWN, type Health } from '../src/health.js'
 import { remaining } from '../src/pool.js'
-import type { Provider } from '../src/provider.js'
+import { HEDGE_AFTER, type Provider } from '../src/provider.js'
 import { MODES, ranking, route, type Choice, type Pins, type World } from '../src/router.js'
 import { Store, type Outcome, type Seen, type Try } from '../src/store.js'
 import { due } from '../src/trial.js'
@@ -493,4 +493,47 @@ test('each row’s why-line names the key that put it below the row above', () =
     'group',
     'price',
   ])
+})
+
+// ---- Shaky: a fact for the scheduler, not a tag -----------------------------------------------
+
+test('a busy reply in the last ten minutes makes a model shaky, and one older does not', () => {
+  const model = hands('free/qwen', { weekly: 9_000 })
+  const now = at(12)
+  const lately = judge([tried('free/qwen', 'busy', now - 5 * 60_000)], [], [model], new Set(), now)
+  expect(of(lately, 'free/qwen')?.shaky).toBe(true)
+  // An answer after it does not clear it: busy and then fine is the model that may be busy again.
+  const answeredSince = judge([tried('free/qwen', 'busy', now - 5 * 60_000), tried('free/qwen', 'answered', now - 60_000)], [], [model], new Set(), now)
+  expect(of(answeredSince, 'free/qwen')?.shaky).toBe(true)
+  const earlier = judge([tried('free/qwen', 'busy', now - 15 * 60_000)], [], [model], new Set(), now)
+  expect(of(earlier, 'free/qwen')?.shaky).toBeUndefined()
+  expect(15 * 60_000).toBeGreaterThan(SHAKY_FOR)
+  // Not a chip, and not a place in the plan: the tags are what they were without it.
+  expect(says(lately, 'free/qwen')).toEqual(says(earlier, 'free/qwen'))
+})
+
+test('a model whose first word usually comes after the hedge is shaky, over its last five answers and no fewer', () => {
+  const model = hands('free/slow', { weekly: 9_000 })
+  const now = at(12)
+  const answers = (waits: number[]): Try[] => waits.map((waited, i) => ({ ...tried('free/slow', 'answered', at(10, i)), waited }))
+  const late = HEDGE_AFTER + 500
+  const quick = HEDGE_AFTER - 1_500
+
+  // Three of five later than the hedge: the middle one is late.
+  const slow = judge(answers([quick, late, late, quick, late]), [], [model], new Set(), now)
+  expect(of(slow, 'free/slow')?.shaky).toBe(true)
+  // Two of five: the middle one is quick, however late the other two were.
+  const fine = judge(answers([quick, late * 10, quick, late * 10, quick]), [], [model], new Set(), now)
+  expect(of(fine, 'free/slow')?.shaky).toBeUndefined()
+  // Only the last five count: five quick ones after a slow week bring it back.
+  const recovered = judge(answers([late, late, late, late, late, quick, quick, quick, quick, quick]), [], [model], new Set(), now)
+  expect(of(recovered, 'free/slow')?.shaky).toBeUndefined()
+  // A try with no sign of life has nothing to say about how soon the words came.
+  const unsigned = judge([...answers([late, late, late, late]), { ...tried('free/slow', 'answered', at(11)), waited: null }], [], [model], new Set(), now)
+  expect(of(unsigned, 'free/slow')?.shaky).toBeUndefined()
+
+  // Fewer than five answers: every one late is still no verdict, and only the busy rule decides.
+  const few = answers(Array.from({ length: SHAKY_SAMPLE - 1 }, () => late * 3))
+  expect(of(judge(few, [], [model], new Set(), now), 'free/slow')?.shaky).toBeUndefined()
+  expect(of(judge([...few, tried('free/slow', 'busy', now - 60_000)], [], [model], new Set(), now), 'free/slow')?.shaky).toBe(true)
 })

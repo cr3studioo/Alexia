@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { PLANNER, routes, stature, type Model } from './catalog.js'
+import { HEDGE_AFTER } from './provider.js'
 import { TRIES_KEPT, type Outcome, type Seen, type Try } from './store.js'
 
 /**
@@ -108,6 +109,40 @@ export const DOUBT = { tries: 5, share: 0.5 } as const
 /** **Gave bad answers**: two presses in 30 days. One can be the question's fault. */
 export const BAD_PRESSES = 2
 
+/**
+ * **How recently a busy reply makes a model shaky**: ten minutes.
+ *
+ * Shaky is not a tag and not a place in the ranking — it is what the scheduler reads to start a
+ * partner beside a model at once, rather than after two seconds of silence (`send()`'s `atOnce`).
+ * A busy first model is asked again in place while somebody waits, and one that answers on a
+ * retry leaves no busy mark — so a busy reply in the record is mostly a queue that outlasted the
+ * retries, not one unlucky request. Ten
+ * minutes is a few messages of a conversation: long enough that the next message after a busy
+ * one does not wait to find out again, short enough that a model whose queue has cleared is
+ * given its head start back within the same sitting. Five times {@link BUSY_FOR}, because
+ * starting a partner costs one free request and sinking a model costs it its place.
+ */
+export const SHAKY_FOR = 10 * 60 * 1000
+
+/**
+ * **How many answered tries say how slowly a model starts**: its last five, and nothing until it
+ * has five. Their median is read rather than their mean, so one cold start does not make a model
+ * shaky and one quick answer does not clear a slow one; under five, one slow morning would be the
+ * whole record.
+ *
+ * Measured against {@link HEDGE_AFTER}: a model whose first word usually arrives after the point
+ * a backup would be asked anyway gains nothing from being asked alone first — its partner is
+ * asked with it, and two seconds are not spent finding that out again.
+ */
+export const SHAKY_SAMPLE = 5
+
+/** The middle of `figures`, which is not empty — the mean of the two middles for an even count. */
+const median = (figures: readonly number[]): number => {
+  const sorted = [...figures].sort((a, b) => a - b)
+  const half = Math.floor(sorted.length / 2)
+  return sorted.length % 2 === 1 ? sorted[half]! : (sorted[half - 1]! + sorted[half]!) / 2
+}
+
 /** How a tag is drawn: a fact, something to keep an eye on, or a reason it is set aside. */
 export type Tone = 'quiet' | 'caution' | 'danger'
 
@@ -164,6 +199,13 @@ export interface Judgement {
    * the first good reply moves it higher, then OpenRouter's figure places it, up or down.
    */
   standIn?: number
+  /**
+   * **Busy or slow to start a moment ago** — a busy reply inside {@link SHAKY_FOR}, or a median
+   * first sign over its last {@link SHAKY_SAMPLE} answers later than {@link HEDGE_AFTER}. A fact
+   * for the scheduler, which asks a partner beside it from the start; not a tag, and nothing the
+   * ranking reads — a model that is shaky is still the one somebody would rather hear from.
+   */
+  shaky?: true
 }
 
 /** Keyed `provider\nmodel`, like everything else that is about one model on one provider. */
@@ -251,14 +293,7 @@ export function judge(
       const figures = models
         .filter((one) => one.weekly !== undefined && one.weeklyFrom === undefined && !routes(one) && stature(one) === size)
         .map((one) => one.weekly!)
-        .sort((a, b) => a - b)
-      const half = Math.floor(figures.length / 2)
-      middles.set(
-        size,
-        figures.length === 0 ? undefined
-        : figures.length % 2 === 1 ? figures[half]
-        : (figures[half - 1]! + figures[half]!) / 2,
-      )
+      middles.set(size, figures.length === 0 ? undefined : median(figures))
     }
     return middles.get(size)
   }
@@ -310,6 +345,15 @@ export function judge(
       reasons.length === 0 &&
       (since.some((one) => one.outcome === 'busy' && now - one.at < BUSY_FOR) || (waits.get(key) ?? 0) > now)
     const retiring = model.expires !== undefined && now < model.expires && model.expires - now <= RETIRING_WITHIN
+    /**
+     * Read from the whole record, not from `since`: a model that was busy and then answered on the
+     * next message is exactly the one that may be busy again on this one. The first reader of
+     * `waited`, as D190 promised it would have one.
+     */
+    const starts = mine.filter((one) => one.outcome === 'answered' && typeof one.waited === 'number').slice(-SHAKY_SAMPLE)
+    const shaky =
+      mine.some((one) => one.outcome === 'busy' && now - one.at < SHAKY_FOR) ||
+      (starts.length >= SHAKY_SAMPLE && median(starts.map((one) => one.waited!)) > HEDGE_AFTER)
 
     const tags: Tag[] = [
       ...(untested ? [{ says: SAYS.untested, tone: 'caution' as const }] : []),
@@ -331,6 +375,7 @@ export function judge(
       untested,
       doubted: errors || bad,
       ...(standIn !== undefined && { standIn }),
+      ...(shaky && { shaky: true }),
     })
   }
   return health
