@@ -43,7 +43,8 @@ const models: Server = createServer((request, response) => {
     sent.push({ model: body.model, system: body.messages.find((one) => one.role === 'system')?.content ?? '' })
     if (busy.has(body.model)) {
       response.writeHead(429, { 'content-type': 'application/json' })
-      response.end(JSON.stringify({ error: { message: 'busy' } }))
+      // A day's allowance spent, not a host busy for a second: a 429 asking again cannot clear.
+      response.end(JSON.stringify({ error: { message: 'busy: free-models-per-day' } }))
       return
     }
     response.writeHead(200, { 'content-type': 'text/event-stream' })

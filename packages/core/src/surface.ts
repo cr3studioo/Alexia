@@ -6,12 +6,12 @@ import { pins, setPin } from './commands.js'
 import type { Aside } from './health.js'
 import { OLLAMA } from './ollama.js'
 import { MODEL_GROUPS } from './panels.js'
-import { setKeylessOn } from './pool.js'
+import { setKeylessOn, setSpeed } from './pool.js'
 import { available, paid, ranking, route, type Choice, type Spend, type World } from './router.js'
 import { allow, forgetConsent } from './consent.js'
 import { forget } from './learned.js'
 import type { Row } from './plugins.js'
-import { anonymous, type Provider } from './provider.js'
+import { anonymous, FASTEST_STAR_WAIT, MOST_AT_ONCE, type Provider } from './provider.js'
 import { Plugins } from './plugins.js'
 import type { Skills } from './skills.js'
 import type { Searchable } from './palette.js'
@@ -120,7 +120,14 @@ const SET_ASIDE = MODEL_GROUPS.aside
 const PAID = MODEL_GROUPS.paid
 
 /** The set-aside group's order, most final reason first: a key or a retirement before a bad day. */
-const ASIDE: readonly Aside[] = ['needs a key', 'retired', 'answers empty', 'always busy for you', 'not answering']
+const ASIDE: readonly Aside[] = [
+  'needs a key',
+  'retired',
+  'answers empty',
+  'turns every request down',
+  'always busy for you',
+  'not answering',
+]
 
 /** One model on one provider, as a row's id (D161). The detail and the row actions read both halves. */
 const rowId = (provider: string, model: string): string => `${provider}\n${model}`
@@ -147,6 +154,7 @@ const DID: Record<Outcome, string> = {
   'no-credit': 'Had no credit to pay for it',
   'key-refused': 'Had its key refused',
   'too-long': 'Found the conversation too long',
+  'reply-too-long': 'Could not write a reply as long as was asked',
   'bad-answer': 'Was marked a bad answer',
 }
 
@@ -195,6 +203,14 @@ const count = (n: number): string =>
  * table, and the column would rather say so than invent a number.
  */
 const price = (usd: number): string => (usd === 0 ? 'free' : `$${usd.toFixed(2)}`)
+
+/**
+ * **A small count as a word** — *three*, not *3* — for a sentence somebody reads aloud in their
+ * head. Past what is listed it is the digits, which is still true, only less warm.
+ */
+const spelled = (n: number): string => ['no', 'one', 'two', 'three', 'four', 'five', 'six'][n] ?? String(n)
+
+const MS_IN_A_SECOND = 1000
 
 /**
  * Which side of the price line a model is on — the one fact the ladder groups by (D112).
@@ -283,6 +299,7 @@ export function sources(options: SurfaceOptions): Record<string, Source> {
     reason === 'needs a key' ? `Set aside: ${nameOf(provider)} now wants a key for it. Back the moment you add one.`
     : reason === 'retired' ? `Set aside: ${nameOf(provider)} no longer offers it.`
     : reason === 'answers empty' ? `Set aside: it answered with nothing three times in a row.${back(tested)}`
+    : reason === 'turns every request down' ? `Set aside: ${nameOf(provider)} turned down the request to it three times in a row.${back(tested)}`
     : reason === 'always busy for you' ? `Set aside: too busy every time for a whole day.${back(tested)}`
     : `Set aside: it timed out or failed every time for a whole day.${back(tested)}`
 
@@ -1065,6 +1082,29 @@ export function actions(
     }
   }
 
+  /**
+   * **The speed switch** (`pool.ts` `Speed`): `on` asks several free models at once on every
+   * message, anything else is back to one at a time.
+   *
+   * Anything that is not `on` is *balanced* rather than a refusal, because balanced is the
+   * default and the safe side: a garbled value costs somebody nothing but a little speed. The
+   * sentence says what it costs, because the cost is the part nobody sees on the screen — the free
+   * day runs out sooner, and the first they would otherwise hear of it is a busy model at four
+   * in the afternoon. Its numbers are the scheduler's own, so the two cannot drift apart.
+   */
+  const chooseSpeed = (value: string): Promise<{ ok: boolean; said: string }> => {
+    const fastest = value === 'on'
+    setSpeed(options.store, fastest ? 'fastest' : 'balanced')
+    const seconds = FASTEST_STAR_WAIT / MS_IN_A_SECOND
+    return Promise.resolve({
+      ok: true,
+      said:
+        fastest ?
+          `On. Up to ${spelled(MOST_AT_ONCE)} free models on different providers are asked together, and after ${spelled(seconds)} second${seconds === 1 ? '' : 's'} whichever answers first is shown. It uses your free requests about ${spelled(MOST_AT_ONCE)} times as fast.`
+        : 'Off. One model at a time, with a second asked beside it when the first is slow, or has been busy or slow lately.',
+    })
+  }
+
   return {
     new_chat: newChat,
     open_chat: openChat,
@@ -1074,6 +1114,7 @@ export function actions(
     set_order: setOrder,
     set_cross: setCross,
     set_keyless: setKeyless,
+    set_speed: chooseSpeed,
     /**
      * Back to the router choosing. On every row rather than only the pinned one, because a
      * button that appears and disappears as the selection moves is a button people hunt for

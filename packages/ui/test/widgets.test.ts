@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 // SPDX-License-Identifier: AGPL-3.0-only
 import { beforeEach, expect, test, vi } from 'vitest'
-import { widget, type Rendered, type Row, type WidgetHost } from '../src/widgets.js'
+import { MODELS_CHANGED, widget, type Rendered, type Row, type WidgetHost } from '../src/widgets.js'
 
 /**
  * The renderer, actually rendering — which until now nothing here did.
@@ -288,6 +288,82 @@ test('a listed model whose provider lost its key stays on the ladder, says why, 
   search.value = 'f'
   search.dispatchEvent(new Event('input'))
   expect([...field.querySelectorAll('.ladder-hit .chip-name')].map((one) => one.textContent)).toEqual(['Floor One', 'Floor Two'])
+})
+
+// ---- the ladder's speed switch -------------------------------------------------------------
+
+/** The ladder as core declares it, with the speed switch standing where `fastest` says. */
+const speedy = (extra: Partial<Rendered> = {}): Rendered => ({
+  type: 'ladder',
+  key: 'routing',
+  label: 'What may answer',
+  rows: 'routing',
+  stops: [
+    { value: 'free', label: 'Free only', hint: 'Nothing is billed.' },
+    { value: 'mixed', label: 'Free, then paid', hint: 'Free first.' },
+  ],
+  value: 'free',
+  speed: 'set_speed',
+  ...extra,
+})
+
+test('the speed switch stands where core says, and says what off means', async () => {
+  const off = widget(fakeHost({ '/api/rows': { ok: true, rows: [] } }), speedy({ fastest: false }))
+  await settled()
+  const box = off.querySelector<HTMLElement>('.speed')!
+  expect(box.hidden).toBe(false)
+  expect(box.querySelector<HTMLInputElement>('.speed-toggle')!.checked).toBe(false)
+  expect(box.querySelector('.speed-label')?.textContent).toBe('Answer as fast as possible (uses more free requests)')
+  expect(box.querySelector('.speed-hint')?.textContent).toMatch(/^Off is Balanced: one model at a time/)
+
+  const on = widget(fakeHost({ '/api/rows': { ok: true, rows: [] } }), speedy({ fastest: true }))
+  await settled()
+  expect(on.querySelector<HTMLInputElement>('.speed-toggle')!.checked).toBe(true)
+  // At *free only* as well as *free then paid*: unlike the paid switch, it is not a money question.
+  expect(on.querySelector<HTMLElement>('.speed')!.hidden).toBe(false)
+})
+
+test('flipping the speed switch presses its action with on or off, and a refusal stays on screen', async () => {
+  const host = fakeHost({ '/api/rows': { ok: true, rows: [] }, '/api/action': { ok: true, said: 'On. Faster.' } })
+  const field = widget(host, speedy())
+  await settled()
+  const toggle = field.querySelector<HTMLInputElement>('.speed-toggle')!
+  const said = field.querySelector<HTMLElement>('.speed-said')!
+  expect(said.hidden).toBe(true)
+  let changed = 0
+  const heard = (): void => {
+    changed += 1
+  }
+  window.addEventListener(MODELS_CHANGED, heard)
+
+  toggle.checked = true
+  toggle.dispatchEvent(new Event('change'))
+  await settled()
+  expect(host.sent.at(-1)).toEqual({ path: '/api/action', body: { plugin: 'demo', key: 'set_speed', row: 'on' } })
+  expect(said.hidden).toBe(false)
+  expect(said.textContent).toBe('On. Faster.')
+  expect(said.classList.contains('error')).toBe(false)
+  // It changes when models are asked, not which, so the Models table is not told to redraw.
+  window.removeEventListener(MODELS_CHANGED, heard)
+  expect(changed).toBe(0)
+
+  const refusing = fakeHost({ '/api/rows': { ok: true, rows: [] }, '/api/action': { ok: false, said: 'Not now.' } })
+  const again = widget(refusing, speedy({ fastest: true }))
+  await settled()
+  const flip = again.querySelector<HTMLInputElement>('.speed-toggle')!
+  flip.checked = false
+  flip.dispatchEvent(new Event('change'))
+  await settled()
+  expect(refusing.sent.at(-1)?.body).toEqual({ plugin: 'demo', key: 'set_speed', row: 'off' })
+  const refused = again.querySelector<HTMLElement>('.speed-said')!
+  expect(refused.textContent).toBe('Not now.')
+  expect(refused.classList.contains('error')).toBe(true)
+})
+
+test('a ladder that declares no speed switch draws none', async () => {
+  const field = widget(fakeHost({ '/api/rows': { ok: true, rows: [] } }), speedy({ speed: undefined }))
+  await settled()
+  expect(field.querySelector<HTMLElement>('.speed')!.hidden).toBe(true)
 })
 
 // ---- a table that explains its own order (alexia_protocol 8) -----------------------------

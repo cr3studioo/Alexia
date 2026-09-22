@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import type { Ruling } from './permissions.js'
-import { ProviderError, type ToolSpec } from './provider.js'
+import { FASTEST_STAR_WAIT, MOST_AT_ONCE, ProviderError, type ToolSpec } from './provider.js'
+import { spent, underHalf, type Speed } from './pool.js'
 // The shape `notifications/progress` arrives in. It belongs to neither module, and it is one
 // interface — a third file to hold it would be the abstraction, not the sharing.
 import type { Progress } from './settings.js'
@@ -17,6 +18,7 @@ import {
   type Choice,
   type Mode,
   type Personality,
+  type Phase,
   type Pins,
   type Shape,
   type Size,
@@ -128,6 +130,8 @@ export interface AgentEvents {
   switch?(event: Switch): void
   /** The line before a charge, for a place of its own (§4 G). */
   paid?(line: string): void
+  /** **What the loop is doing right now** — choosing, asking, retrying, thinking — for the line under the question. */
+  phase?(phase: Phase): void
   /**
    * **The words streamed since the last turn began are void** (D155): the model writing them
    * stopped partway, and the answer is starting again on the next one.
@@ -177,6 +181,14 @@ export interface AgentEvents {
  */
 export const REPLY_CEILING = 2_000
 
+/**
+ * **The favourite and one partner, started together** — Balanced speed, when the record says the
+ * favourite was busy or slow to start a moment ago (`shaky` in `health.ts`). One partner rather
+ * than {@link MOST_AT_ONCE}: somebody who did not ask for speed spends one extra free request, not
+ * two, and only on a model that has lately needed a backup anyway.
+ */
+const SHAKY_AT_ONCE = 2
+
 export interface RunOptions {
   /** The conversation, ending with the line the user just sent. */
   messages: Message[]
@@ -184,6 +196,11 @@ export interface RunOptions {
   background?: boolean
   /** Models not to ask in this task, keyed `provider\nmodel` — the one just marked a bad answer (§4 I). */
   avoid?: string[]
+  /**
+   * **The Models screen's speed switch** (`pool.ts`), read by the caller rather than here so the
+   * loop never reads the store for it. Absent is `balanced`.
+   */
+  speed?: Speed
   /** Every step above this tier — *Bad answer* with the paid switch on asks a smarter model (§4 I). */
   above?: Tier
   /**
@@ -454,6 +471,13 @@ export async function run(options: RunOptions): Promise<RunResult> {
   for (;;) {
     if (options.signal?.aborted) return finish('stopped')
 
+    /**
+     * **Choosing, said before it happens.** Every step re-asks the router, and the router reads
+     * a fresh world first — what is installed here, which keys are saved, thirty days of tries —
+     * so the first thing a step does is quiet work nobody can see. Said here, it is the first
+     * stage of the wait on screen instead of a `…`, and the trace can time it against the rest.
+     */
+    on?.phase?.({ kind: 'choosing' })
     const available = await tools.list()
     const named = available.map((t) => ({ name: t.name }))
     const now = await options.world()
@@ -663,8 +687,30 @@ export async function run(options: RunOptions): Promise<RunResult> {
           },
           ...(on?.paid && { onPaid: on.paid }),
           ...(on?.restart && { onRestart: on.restart }),
+          ...(on?.phase && { onPhase: on.phase }),
           messagesFor: dressed,
           onAsk: asking,
+          /**
+           * **How many to start together** — the speed switch, read by the caller (`RunOptions`).
+           * Fastest: {@link MOST_AT_ONCE} on every step, with the favourite first for only
+           * {@link FASTEST_STAR_WAIT}. Balanced: the favourite and one partner when the record says
+           * it was busy or slow a moment ago, and otherwise one at a time with the two-second hedge.
+           */
+          atOnce: (head: Choice) =>
+            options.speed === 'fastest' ? MOST_AT_ONCE
+            : now.health?.get(`${head.provider.id}\n${head.model.id}`)?.shaky === true ? SHAKY_AT_ONCE
+            : 1,
+          together: options.speed === 'fastest' ? 'fastest' : 'lately',
+          ...(options.speed === 'fastest' && { starWait: FASTEST_STAR_WAIT }),
+          /**
+           * **A partner started together only from a provider with plenty of its free day left** —
+           * not spent, and more than half of any daily or monthly ration: the same line a
+           * background task is held to (§4 F), so racing for speed never eats the chat's half.
+           */
+          spare: (choice: Choice) => {
+            const rung = now.rungs.find((one) => one.provider.id === choice.provider.id)
+            return rung !== undefined && !spent(rung) && underHalf(rung)
+          },
         },
       )
     } catch (error) {
@@ -742,6 +788,9 @@ export async function run(options: RunOptions): Promise<RunResult> {
       const step: Step = { n: steps.length + 1, name: call.name, args: parse(call.arguments) }
       steps.push(step)
       on?.step?.(step)
+      // The stage the wait is in now: a tool, by name, rather than the model that asked for it.
+      // Beside `step`, so the stage begins where the step's own clock does, approval and all.
+      on?.phase?.({ kind: 'tool', name: step.name })
 
       const outcome = await permitted(step)
       step.outcome = outcome

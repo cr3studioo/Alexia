@@ -128,15 +128,23 @@ const MIGRATIONS: string[] = [
      PRIMARY KEY (provider, model)
    );
    DROP TABLE strikes;`,
+
+  // 8 — how long each try waited for its first sign of life (words, reasoning or a tool call), in
+  // milliseconds. A try is stamped when it *ends*, so without this a seventy-second walk cannot be
+  // split into waiting and writing — and waiting is what a person feels. Null for a try that never
+  // showed one, and for every try recorded before this column existed.
+  `ALTER TABLE tries ADD COLUMN waited INTEGER;`,
 ]
 
 /**
  * **How one try of one model went** (D161), in the words the record keeps.
  *
- * The first nine are the plan's. The last four were implied by it and needed a name to be kept
+ * The first nine are the plan's. The last five were implied by it and needed a name to be kept
  * apart, because none of them is about the model: `no-credit` is the account's, `key-refused`
- * the provider's, `too-long` the conversation's, and `unreachable` is as likely this Mac's
- * network as the provider (D162). They are recorded, and never tag a model.
+ * the provider's, `too-long` the conversation's, `reply-too-long` the request's — a reply
+ * ceiling above what the model writes, which the same model meets for anything asking less —
+ * and `unreachable` is as likely this Mac's network as the provider (D162). They are recorded,
+ * and never tag a model.
  */
 export type Outcome =
   | 'answered'
@@ -151,6 +159,7 @@ export type Outcome =
   | 'no-credit'
   | 'key-refused'
   | 'too-long'
+  | 'reply-too-long'
   | 'unreachable'
 
 /** Who asked: the app's chat, a plugin, a daily test (§4 E), or a person pressing *Bad answer* (§4 I). */
@@ -164,6 +173,8 @@ export interface Try {
   outcome: Outcome
   status: number
   source: Source
+  /** Milliseconds from asking to the first sign of life; absent or null when there was none. */
+  waited?: number | null
 }
 
 /** When a model was first on its provider's list here, and when it left (§4 D writes these). */
@@ -877,8 +888,8 @@ export class Store {
     const at = row.at ?? Date.now()
     this.transaction(() => {
       this.#db
-        .prepare('INSERT INTO tries (at, provider, model, outcome, status, source) VALUES (?, ?, ?, ?, ?, ?)')
-        .run(at, row.provider, row.model, row.outcome, row.status, row.source)
+        .prepare('INSERT INTO tries (at, provider, model, outcome, status, source, waited) VALUES (?, ?, ?, ?, ?, ?, ?)')
+        .run(at, row.provider, row.model, row.outcome, row.status, row.source, row.waited ?? null)
       this.#db.prepare('DELETE FROM tries WHERE at < ?').run(at - TRIES_KEPT)
     })
   }
@@ -886,7 +897,7 @@ export class Store {
   /** The record in the 30 days before `at`, oldest first. */
   tries(at: number = Date.now()): Try[] {
     return this.#db
-      .prepare('SELECT at, provider, model, outcome, status, source FROM tries WHERE at >= ? ORDER BY at')
+      .prepare('SELECT at, provider, model, outcome, status, source, waited FROM tries WHERE at >= ? ORDER BY at')
       .all(at - TRIES_KEPT) as unknown as Try[]
   }
 

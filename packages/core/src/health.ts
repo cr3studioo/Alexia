@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { PLANNER, routes, stature, type Model } from './catalog.js'
+import { HEDGE_AFTER } from './provider.js'
 import { TRIES_KEPT, type Outcome, type Seen, type Try } from './store.js'
 
 /**
@@ -11,9 +12,10 @@ import { TRIES_KEPT, type Outcome, type Seen, type Try } from './store.js'
  * up describing a router that is not there.
  *
  * **Busy is not broken.** Most free failures are an evening's per-minute limits, and a model
- * that was busy an hour ago only sinks (D159's strikes). What sets a model aside is a shape that
- * no rush makes: a whole day of nothing but refusals, three empty answers, *no longer offered*
- * twice, or a keyless provider refusing two of its models for want of a key.
+ * that was busy a moment ago only sinks, for a couple of minutes (D159's strikes). What sets a
+ * model aside is a shape that no rush makes: a whole day of nothing but refusals, three empty
+ * answers, three 400s in a row, *no longer offered* twice, or a keyless provider refusing two of
+ * its models for want of a key.
  *
  * **Set aside is never deleted, and one good reply brings a model back.** Everything below is
  * read from the tries since a model's last good reply, so the reply is the reset. Until §4 E's
@@ -35,8 +37,25 @@ const DAY = 24 * HOUR
  */
 export const NEW_FOR = 14 * DAY
 
-/** **How long a rate limit makes a model busy.** The same hour D159's strikes halve in. */
-export const BUSY_FOR = HOUR
+/**
+ * **How long a busy reply takes to count half as much**: two minutes, where every other failure
+ * takes D159's hour (`STRIKE_HALF_LIFE` in `router.ts`, which reads this one).
+ *
+ * A 429 from a free model is mostly its one host being full for a moment, not the model being
+ * bad. On this Mac Qwen 3.8, the best free model it had, answered after a few retries seconds
+ * apart — and one busy reply sank it below the rest for an hour. For comparison, LiteLLM's
+ * default cooldown after a 429 is five seconds and free-model-router's ten minutes. Two minutes
+ * lets the next message try it again without asking it on every step while it is full.
+ *
+ * An account's quota running out is not this: the pool reads the provider's own headers and waits
+ * for the reset they name, whatever this says. And a model busy for a whole day is still set aside
+ * by {@link WALL}. Here, because the router already reads this file and a number read by both
+ * ends is written once — `router.ts` importing it is the direction that makes no cycle.
+ */
+export const BUSY_HALF_LIFE = 2 * 60 * 1000
+
+/** **How long a rate limit makes a model busy**: the same two minutes a busy reply sinks it for. */
+export const BUSY_FOR = BUSY_HALF_LIFE
 
 /**
  * **A day-long wall**: at least 3 tries spread over at least 2 hours, all inside one day, none
@@ -52,6 +71,18 @@ export const WALL = { tries: 3, spread: 2 * HOUR, within: DAY } as const
  * every time; one empty answer can be a hiccup.
  */
 export const EMPTIES = 3
+
+/**
+ * **Turned down with a 400 three times in a row, and nothing else between.** A 400 is the provider
+ * saying the request is wrong for this model, and a model that says it to every request says it
+ * for good: on 18 September `groq/compound` failed 400 six times in a row and was asked every time.
+ * In a row rather than counted like empties, because one 400 can be one request's own shape — a
+ * picture, a list of tools — and anything else between says the model takes other requests.
+ *
+ * A 400 that means *this conversation is too long* is recorded as `too-long`, not `failed`, so a
+ * long conversation cannot trip this: that is the request outgrowing the model, not the model.
+ */
+export const TURNED_DOWN = 3
 
 /** ***No longer offered* twice with no good reply between.** One 404 can be a provider mid-deploy. */
 export const GONE = 2
@@ -77,6 +108,40 @@ export const DOUBT = { tries: 5, share: 0.5 } as const
 
 /** **Gave bad answers**: two presses in 30 days. One can be the question's fault. */
 export const BAD_PRESSES = 2
+
+/**
+ * **How recently a busy reply makes a model shaky**: ten minutes.
+ *
+ * Shaky is not a tag and not a place in the ranking — it is what the scheduler reads to start a
+ * partner beside a model at once, rather than after two seconds of silence (`send()`'s `atOnce`).
+ * A busy first model is asked again in place while somebody waits, and one that answers on a
+ * retry leaves no busy mark — so a busy reply in the record is mostly a queue that outlasted the
+ * retries, not one unlucky request. Ten
+ * minutes is a few messages of a conversation: long enough that the next message after a busy
+ * one does not wait to find out again, short enough that a model whose queue has cleared is
+ * given its head start back within the same sitting. Five times {@link BUSY_FOR}, because
+ * starting a partner costs one free request and sinking a model costs it its place.
+ */
+export const SHAKY_FOR = 10 * 60 * 1000
+
+/**
+ * **How many answered tries say how slowly a model starts**: its last five, and nothing until it
+ * has five. Their median is read rather than their mean, so one cold start does not make a model
+ * shaky and one quick answer does not clear a slow one; under five, one slow morning would be the
+ * whole record.
+ *
+ * Measured against {@link HEDGE_AFTER}: a model whose first word usually arrives after the point
+ * a backup would be asked anyway gains nothing from being asked alone first — its partner is
+ * asked with it, and two seconds are not spent finding that out again.
+ */
+export const SHAKY_SAMPLE = 5
+
+/** The middle of `figures`, which is not empty — the mean of the two middles for an even count. */
+const median = (figures: readonly number[]): number => {
+  const sorted = [...figures].sort((a, b) => a - b)
+  const half = Math.floor(sorted.length / 2)
+  return sorted.length % 2 === 1 ? sorted[half]! : (sorted[half - 1]! + sorted[half]!) / 2
+}
 
 /** How a tag is drawn: a fact, something to keep an eye on, or a reason it is set aside. */
 export type Tone = 'quiet' | 'caution' | 'danger'
@@ -104,7 +169,13 @@ export const SAYS = {
 } as const
 
 /** Why a model is set aside, in the words of its tag. */
-export type Aside = 'needs a key' | 'retired' | 'answers empty' | 'always busy for you' | 'not answering'
+export type Aside =
+  | 'needs a key'
+  | 'retired'
+  | 'answers empty'
+  | 'turns every request down'
+  | 'always busy for you'
+  | 'not answering'
 
 export interface Judgement {
   /** Everything worth a chip, reasons and facts alike, in the order a row shows them. */
@@ -128,6 +199,13 @@ export interface Judgement {
    * the first good reply moves it higher, then OpenRouter's figure places it, up or down.
    */
   standIn?: number
+  /**
+   * **Busy or slow to start a moment ago** — a busy reply inside {@link SHAKY_FOR}, or a median
+   * first sign over its last {@link SHAKY_SAMPLE} answers later than {@link HEDGE_AFTER}. A fact
+   * for the scheduler, which asks a partner beside it from the start; not a tag, and nothing the
+   * ranking reads — a model that is shaky is still the one somebody would rather hear from.
+   */
+  shaky?: true
 }
 
 /** Keyed `provider\nmodel`, like everything else that is about one model on one provider. */
@@ -160,6 +238,17 @@ function wall(tries: readonly Try[]): readonly Try[] | undefined {
     if (end - start + 1 >= WALL.tries && last.at - tries[start]!.at >= WALL.spread) found = tries.slice(start, end + 1)
   }
   return found
+}
+
+/** The longest run of 400 refusals with nothing else between, in `tries` (oldest first). */
+function turnedDown(tries: readonly Try[]): number {
+  let run = 0
+  let longest = 0
+  for (const one of tries) {
+    run = one.outcome === 'failed' && one.status === 400 ? run + 1 : 0
+    longest = Math.max(longest, run)
+  }
+  return longest
 }
 
 /**
@@ -204,14 +293,7 @@ export function judge(
       const figures = models
         .filter((one) => one.weekly !== undefined && one.weeklyFrom === undefined && !routes(one) && stature(one) === size)
         .map((one) => one.weekly!)
-        .sort((a, b) => a - b)
-      const half = Math.floor(figures.length / 2)
-      middles.set(
-        size,
-        figures.length === 0 ? undefined
-        : figures.length % 2 === 1 ? figures[half]
-        : (figures[half - 1]! + figures[half]!) / 2,
-      )
+      middles.set(size, figures.length === 0 ? undefined : median(figures))
     }
     return middles.get(size)
   }
@@ -249,8 +331,12 @@ export function judge(
       reasons.push('retired')
     }
     if (count('empty') >= EMPTIES) reasons.push('answers empty')
+    const turned = turnedDown(since) >= TURNED_DOWN
+    if (turned) reasons.push('turns every request down')
     const walled = wall(since.filter((one) => WALLED.has(one.outcome)))
-    if (walled !== undefined) reasons.push(walled.every((one) => one.outcome === 'busy') ? 'always busy for you' : 'not answering')
+    // A wall of nothing but those same 400s is the same fact again, and one chip says it.
+    const same = turned && walled?.every((one) => one.outcome === 'failed' && one.status === 400) === true
+    if (walled !== undefined && !same) reasons.push(walled.every((one) => one.outcome === 'busy') ? 'always busy for you' : 'not answering')
 
     const judged = mine.filter((one) => one.outcome === 'answered' || ERRORS.has(one.outcome))
     const errors = judged.length >= DOUBT.tries && judged.filter((one) => one.outcome !== 'answered').length >= judged.length * DOUBT.share
@@ -259,6 +345,15 @@ export function judge(
       reasons.length === 0 &&
       (since.some((one) => one.outcome === 'busy' && now - one.at < BUSY_FOR) || (waits.get(key) ?? 0) > now)
     const retiring = model.expires !== undefined && now < model.expires && model.expires - now <= RETIRING_WITHIN
+    /**
+     * Read from the whole record, not from `since`: a model that was busy and then answered on the
+     * next message is exactly the one that may be busy again on this one. The first reader of
+     * `waited`, as D190 promised it would have one.
+     */
+    const starts = mine.filter((one) => one.outcome === 'answered' && typeof one.waited === 'number').slice(-SHAKY_SAMPLE)
+    const shaky =
+      mine.some((one) => one.outcome === 'busy' && now - one.at < SHAKY_FOR) ||
+      (starts.length >= SHAKY_SAMPLE && median(starts.map((one) => one.waited!)) > HEDGE_AFTER)
 
     const tags: Tag[] = [
       ...(untested ? [{ says: SAYS.untested, tone: 'caution' as const }] : []),
@@ -280,6 +375,7 @@ export function judge(
       untested,
       doubted: errors || bad,
       ...(standIn !== undefined && { standIn }),
+      ...(shaky && { shaky: true }),
     })
   }
   return health

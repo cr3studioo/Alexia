@@ -6,6 +6,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, expect, test } from 'vitest'
 import { noPolling } from './staged.js'
+import type { Tab } from '../src/panels.js'
+import { speedOf } from '../src/pool.js'
 import { keyOf, type Provider } from '../src/provider.js'
 import { CORE, memorySecrets } from '../src/secrets.js'
 import { serve, type Serving } from '../src/serve.js'
@@ -221,4 +223,48 @@ test('the keyless group switches off, marking its models unreachable, and back o
   // It says how much came back, because the table behind the switch may not be on screen.
   expect(String(on.said)).toMatch(/^On\. \d+ models? from \d+ providers? that need no key are back\.$/)
   expect(await reach()).toBe('')
+}, 30_000)
+
+/**
+ * **The speed switch**, the keyless switch's neighbour on the same ladder.
+ *
+ * It changes when models are asked rather than which, so there is no table to watch: what it
+ * has to prove is that the choice is kept, that the Models tab opens showing it, and that the
+ * sentence says the cost — the free day spent faster — at the moment somebody chose it.
+ */
+test('the speed switch is kept, shown on the ladder, and says what it costs', async () => {
+  /** Where the ladder's switch stands on the Models tab as it is first drawn. */
+  const fastest = async (): Promise<unknown> => {
+    const { tabs } = (await (await fetch(new URL('/api/panels', alexia.url), { headers: { 'x-alexia-token': alexia.token } })).json()) as {
+      tabs: Tab[]
+    }
+    const ladder = tabs.find((tab) => tab.id === 'models')?.widgets?.find((widget) => widget.type === 'ladder')
+    expect(ladder).toMatchObject({ speed: 'set_speed' })
+    return ladder?.fastest
+  }
+
+  // Balanced by default: a fresh install spends its free requests one at a time.
+  expect(speedOf(alexia.store)).toBe('balanced')
+  expect(await fastest()).toBe(false)
+
+  const on = await post('/api/action', { plugin: '', key: 'set_speed', row: 'on' })
+  expect(on).toEqual({
+    ok: true,
+    said: 'On. Up to three free models on different providers are asked together, and after two seconds whichever answers first is shown. It uses your free requests about three times as fast.',
+  })
+  expect(speedOf(alexia.store)).toBe('fastest')
+  expect(await fastest()).toBe(true)
+
+  const off = await post('/api/action', { plugin: '', key: 'set_speed', row: 'off' })
+  expect(off).toEqual({
+    ok: true,
+    said: 'Off. One model at a time, with a second asked beside it when the first is slow, or has been busy or slow lately.',
+  })
+  expect(speedOf(alexia.store)).toBe('balanced')
+  expect(await fastest()).toBe(false)
+
+  // Anything that is not `on` is the safe side, not a refusal: a garbled value costs nothing.
+  await post('/api/action', { plugin: '', key: 'set_speed', row: 'on' })
+  expect((await post('/api/action', { plugin: '', key: 'set_speed', row: 'faster please' })).ok).toBe(true)
+  expect(speedOf(alexia.store)).toBe('balanced')
 }, 30_000)

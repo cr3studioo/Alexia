@@ -7,7 +7,7 @@ import type { Model } from '../src/catalog.js'
 import { remaining } from '../src/pool.js'
 import { keyOf, type Provider, type ToolSpec } from '../src/provider.js'
 import { OLLAMA } from '../src/ollama.js'
-import { MODES, type Pins, type World } from '../src/router.js'
+import { MODES, type Phase, type Pins, type World } from '../src/router.js'
 import { CORE, memorySecrets } from '../src/secrets.js'
 import type { Message } from '../src/store.js'
 import { Store } from '../src/store.js'
@@ -886,4 +886,31 @@ test('with the paid switch off, a task going badly is not upgraded into paid eit
   expect(seen.notes).toEqual([])
   expect(store.spend(0)).toBe(0)
   store.close()
+})
+
+test('the speed switch reaches the walk: Fastest starts three providers at once, Balanced one — two when the favourite was shaky', async () => {
+  const beta: Provider = { id: 'beta', name: 'Beta', baseUrl: at, rpm: 100, rpd: 100 }
+  const gamma: Provider = { id: 'gamma', name: 'Gamma', baseUrl: at, rpm: 100, rpd: 100 }
+  await secrets.set(CORE, keyOf(beta), 'sk-b')
+  await secrets.set(CORE, keyOf(gamma), 'sk-g')
+  const three = [model({ id: 'm/a', tier: 'T1' }), model({ id: 'm/b', tier: 'T1', provider: 'beta' }), model({ id: 'm/c', tier: 'T1', provider: 'gamma' })]
+  /** Every one of them shaky, so whichever the plan puts first is. */
+  const shaky = new Map(three.map((one) => [`${one.provider}\n${one.id}`, { tags: [], untested: false, doubted: false, shaky: true as const }]))
+  /** Why each partner of the one step was asked: one entry per model started beside the favourite. */
+  const partners = async (speed: 'balanced' | 'fastest', health?: World['health']): Promise<string[]> => {
+    script = []
+    served = []
+    const store = new Store(':memory:')
+    const phases: Phase[] = []
+    const world = (): Promise<World> =>
+      Promise.resolve({ models: three, local: [], rungs: [alpha, beta, gamma].map((one) => remaining(store, one)), ...(health && { health }) })
+    const result = await run({ messages: start('hello'), tools: tooling(), pins, world, store, secrets, session: store.createSession(), speed, on: { phase: (one) => phases.push(one) } })
+    expect(result.ended).toBe('answered')
+    store.close()
+    return phases.flatMap((one) => (one.kind === 'backup' ? [one.why] : []))
+  }
+
+  expect(await partners('fastest')).toEqual(['fastest', 'fastest'])
+  expect(await partners('balanced', shaky)).toEqual(['lately'])
+  expect(await partners('balanced')).toEqual([])
 })
