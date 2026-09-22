@@ -1,0 +1,352 @@
+<!--
+  SPDX-License-Identifier: AGPL-3.0-only
+
+  The Telegram Mini App control panel (M4 Phase 4, #5) — a page with no server behind it.
+
+  Telegram opens this as a `web_app` URL, with the whole state of the moment — mode, spend,
+  whether something is running — packed into the URL's **fragment** rather than a query
+  string or a request body. A fragment is the one part of a URL a browser never sends to the
+  host, so GitHub Pages, which serves this file, never sees a word of anyone's usage. No
+  token travels here, because none is needed: this page never calls out to anything, ever.
+
+  A tap does not change this page's own state, because this page has none worth keeping. It
+  calls `Telegram.WebApp.sendData(...)`, which Telegram delivers to the bot as a
+  `web_app_data` message on the same long poll every other message arrives on, and then
+  closes the Mini App. The bot — not this page — decides whether the tap came from someone
+  paired and what to do about it; this page only names the action.
+
+  What's on screen is a snapshot, stamped with the moment `plugins/telegram/panel.js` built
+  it. Reopening the ⚙ Panel button gets a fresh one; this page does not and cannot refresh
+  itself, because refreshing would mean asking somebody's server for numbers, and there
+  isn't one.
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<title>Alexia Panel</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: var(--tg-theme-bg-color, #ffffff);
+    --text: var(--tg-theme-text-color, #1c1c1e);
+    --hint: var(--tg-theme-hint-color, #8e8e93);
+    --button: var(--tg-theme-button-color, #2ea6ff);
+    --button-text: var(--tg-theme-button-text-color, #ffffff);
+    --secondary-bg: var(--tg-theme-secondary-bg-color, #f0f0f3);
+    --destructive: var(--tg-theme-destructive-text-color, #ff3b30);
+  }
+
+  /* Telegram sets its own --tg-theme-* variables on this element when the page runs inside
+     the app, and those always win. This block only decides the fallback a plain browser
+     gets when there is no Telegram to ask — so a person poking at the URL in Safari still
+     sees something calm instead of a light page fighting a dark system. */
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: var(--tg-theme-bg-color, #1c1c1e);
+      --text: var(--tg-theme-text-color, #f2f2f7);
+      --hint: var(--tg-theme-hint-color, #98989f);
+      --button: var(--tg-theme-button-color, #3ea6ff);
+      --button-text: var(--tg-theme-button-text-color, #ffffff);
+      --secondary-bg: var(--tg-theme-secondary-bg-color, #2c2c2e);
+      --destructive: var(--tg-theme-destructive-text-color, #ff453a);
+    }
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 16px;
+    line-height: 1.4;
+    overflow-x: hidden;
+  }
+  button { font-family: inherit; }
+
+  #app { padding: 16px; max-width: 480px; margin: 0 auto; }
+
+  header { margin-bottom: 20px; }
+  h1 { margin: 0 0 4px; font-size: 22px; font-weight: 700; }
+  .hint { margin: 0; color: var(--hint); font-size: 13px; }
+
+  .rows { background: var(--secondary-bg); border-radius: 12px; overflow: hidden; margin-bottom: 20px; }
+  .row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 12px;
+    padding: 12px 14px;
+    border-bottom: 1px solid rgba(127, 127, 127, 0.18);
+  }
+  .row:last-child { border-bottom: none; }
+  .row-label { color: var(--hint); font-size: 14px; }
+  .row-value { color: var(--text); font-size: 15px; font-weight: 500; text-align: right; }
+
+  .actions { display: flex; flex-direction: column; gap: 12px; }
+
+  .action-btn {
+    display: block;
+    width: 100%;
+    min-height: 44px;
+    padding: 12px 16px;
+    border: none;
+    border-radius: 12px;
+    background: var(--button);
+    color: var(--button-text);
+    font-size: 16px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .action-btn.destructive {
+    background: transparent;
+    color: var(--destructive);
+    border: 1px solid var(--destructive);
+  }
+
+  .segment { margin-top: 4px; }
+  .segment-label { color: var(--hint); font-size: 13px; margin: 0 0 6px 2px; }
+  .segment-group { display: flex; background: var(--secondary-bg); border-radius: 12px; padding: 4px; gap: 4px; }
+  .segment-btn {
+    flex: 1;
+    min-height: 44px;
+    border: none;
+    border-radius: 9px;
+    background: transparent;
+    color: var(--text);
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+  }
+  .segment-btn.current { background: var(--button); color: var(--button-text); }
+
+  .note { color: var(--hint); font-size: 13px; margin-top: 16px; text-align: center; }
+</style>
+</head>
+<body>
+<main id="app"></main>
+
+<!-- The one external resource this page loads: Telegram's own bridge script, which is what
+     makes `window.Telegram.WebApp` exist and puts the --tg-theme-* variables above on the
+     page. Nothing else here reaches off-page — see the file header. -->
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<script>
+(function () {
+  'use strict'
+
+  var tg = (window.Telegram && window.Telegram.WebApp) || null
+  var hasTelegram = !!(tg && typeof tg.sendData === 'function')
+
+  // A plain browser has no Telegram object at all, and an old Telegram client might be
+  // missing a method this page never uses. Either way, ready()/expand() are asked for and
+  // never required: the page below renders the same either way, just without the wiring
+  // that only Telegram can provide.
+  if (tg) {
+    try { tg.ready() } catch (e) {}
+    try { tg.expand() } catch (e) {}
+  }
+
+  /**
+   * Reverses `panel.js`'s `encode`: base64url (no padding) of the UTF-8 bytes of a JSON
+   * object, read from `location.hash` with the leading `#` stripped. Every step is wrapped,
+   * because a fragment can be edited by hand, truncated by a link shortener, or simply
+   * absent — none of which should ever throw past this function.
+   */
+  function decodeState(hash) {
+    try {
+      if (!hash || hash.length < 2) return null
+      var b64url = hash.charAt(0) === '#' ? hash.slice(1) : hash
+      if (!b64url) return null
+      var b64 = b64url.replace(/-/g, '+').replace(/_/g, '/')
+      var pad = b64.length % 4
+      if (pad === 1) return null
+      if (pad === 2) b64 += '=='
+      else if (pad === 3) b64 += '='
+      var binary = atob(b64)
+      var bytes = new Uint8Array(binary.length)
+      for (var i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+      var json = new TextDecoder('utf-8').decode(bytes)
+      var state = JSON.parse(json)
+      if (!state || typeof state !== 'object' || state.v !== 1) return null
+      return state
+    } catch (e) {
+      return null
+    }
+  }
+
+  /** "just now", "3 min ago", "2 hours ago", "5 days ago" — coarse on purpose. */
+  function relativeTime(at) {
+    var ms = Date.now() - Number(at)
+    if (!isFinite(ms) || ms < 0) ms = 0
+    var sec = Math.floor(ms / 1000)
+    if (sec < 45) return 'just now'
+    var min = Math.floor(sec / 60)
+    if (min < 60) return min + ' min ago'
+    var hr = Math.floor(min / 60)
+    if (hr < 24) return hr + (hr === 1 ? ' hour ago' : ' hours ago')
+    var day = Math.floor(hr / 24)
+    return day + (day === 1 ? ' day ago' : ' days ago')
+  }
+
+  function money(n) {
+    if (typeof n !== 'number' || !isFinite(n)) return '—'
+    return '$' + n.toFixed(2)
+  }
+
+  function modeLabel(mode) {
+    if (mode === 'local') return 'Local — runs on this machine'
+    if (mode === 'combined') return 'Combined — the cloud thinks, this machine makes images and speech'
+    if (mode === 'cloud') return 'Cloud — through the providers you connected'
+    return '—'
+  }
+
+  function preferLabel(prefer) {
+    if (prefer === 'cheap') return 'Cheapest first'
+    if (prefer === 'best') return 'Strongest first'
+    if (prefer === undefined || prefer === null) return 'not set'
+    return '—'
+  }
+
+  function voiceLabel(voice) {
+    if (voice === 'never') return 'Never'
+    if (voice === 'mirror') return 'When you send a voice note'
+    if (voice === 'always') return 'Always'
+    return '—'
+  }
+
+  /** `Telegram.WebApp.sendData`, never fetch — see the file header for why. */
+  function sendAction(doValue) {
+    if (!hasTelegram) return
+    try { tg.HapticFeedback && tg.HapticFeedback.impactOccurred && tg.HapticFeedback.impactOccurred('light') } catch (e) {}
+    try { tg.sendData(JSON.stringify({ do: doValue })) } catch (e) {}
+  }
+
+  function el(tag, className, text) {
+    var node = document.createElement(tag)
+    if (className) node.className = className
+    if (text !== undefined) node.textContent = text
+    return node
+  }
+
+  // Every string below reaches the DOM through `textContent` (via `el`, or set directly),
+  // never through `innerHTML` — state comes from `location.hash`, which is exactly the kind
+  // of input this page cannot trust just because it decoded cleanly.
+
+  function statusRow(label, value) {
+    var row = el('div', 'row')
+    row.appendChild(el('span', 'row-label', label))
+    row.appendChild(el('span', 'row-value', value))
+    return row
+  }
+
+  function actionButton(label, doValue, destructive) {
+    var btn = el('button', 'action-btn' + (destructive ? ' destructive' : ''), label)
+    btn.type = 'button'
+    btn.addEventListener('click', function () { sendAction(doValue) })
+    return btn
+  }
+
+  /**
+   * A row of options where one is "current". Tapping the current one does nothing —
+   * there is nothing to tell the bot that it does not already know. Tapping any other
+   * sends its action and lets the bot's own reply (plus a fresh panel) confirm the change.
+   */
+  function segmented(label, options, current, toDo) {
+    var wrap = el('div', 'segment')
+    wrap.appendChild(el('div', 'segment-label', label))
+    var group = el('div', 'segment-group')
+    group.setAttribute('role', 'group')
+    group.setAttribute('aria-label', label)
+    options.forEach(function (opt) {
+      var isCurrent = opt.value === current
+      var btn = el('button', 'segment-btn' + (isCurrent ? ' current' : ''), opt.label)
+      btn.type = 'button'
+      if (isCurrent) btn.setAttribute('aria-pressed', 'true')
+      btn.addEventListener('click', function () {
+        if (isCurrent) return
+        sendAction(toDo(opt.value))
+      })
+      group.appendChild(btn)
+    })
+    wrap.appendChild(group)
+    return wrap
+  }
+
+  function render(state) {
+    var app = document.getElementById('app')
+    while (app.firstChild) app.removeChild(app.firstChild)
+
+    var header = el('header')
+    header.appendChild(el('h1', null, 'Alexia'))
+
+    if (!state) {
+      header.appendChild(el('p', 'hint', 'Open the panel from the ⚙ Panel button in your chat with Alexia.'))
+      app.appendChild(header)
+      return
+    }
+
+    header.appendChild(el('p', 'hint', 'as of ' + relativeTime(state.at) + ' — a snapshot, reopen the panel for fresh numbers'))
+    app.appendChild(header)
+
+    var rows = el('section', 'rows')
+
+    var waiting = Number(state.waiting) || 0
+    var statusText = (state.running ? 'Working on something' : 'Idle') + (waiting > 0 ? ' · ' + waiting + ' waiting' : '')
+    rows.appendChild(statusRow('Status', statusText))
+
+    rows.appendChild(statusRow('Mode', modeLabel(state.mode)))
+    rows.appendChild(statusRow('Preference', preferLabel(state.prefer)))
+
+    if (state.today && typeof state.today === 'object') {
+      rows.appendChild(statusRow('Today', money(state.today.spent) + ' of ' + money(state.today.allowance)))
+    }
+
+    if (state.month && typeof state.month === 'object') {
+      var monthText = money(state.month.spent)
+      if (typeof state.month.cap === 'number') monthText += ' (of ' + money(state.month.cap) + ')'
+      rows.appendChild(statusRow('This month', monthText))
+    }
+
+    rows.appendChild(statusRow('Voice replies', voiceLabel(state.voice)))
+    rows.appendChild(statusRow('Paired accounts', String(Number(state.paired) || 0)))
+
+    app.appendChild(rows)
+
+    var actions = el('section', 'actions')
+
+    if (state.running) {
+      actions.appendChild(actionButton('Stop', 'stop', true))
+    }
+    actions.appendChild(actionButton('New chat', 'new', false))
+
+    actions.appendChild(segmented('Mode', [
+      { label: 'Local', value: 'local' },
+      { label: 'Combined', value: 'combined' },
+      { label: 'Cloud', value: 'cloud' },
+    ], state.mode, function (v) { return v }))
+
+    actions.appendChild(segmented('Preference', [
+      { label: 'Cheapest', value: 'cheap' },
+      { label: 'Strongest', value: 'best' },
+    ], state.prefer, function (v) { return v }))
+
+    actions.appendChild(segmented('Voice replies', [
+      { label: 'Never', value: 'never' },
+      { label: 'Mirror', value: 'mirror' },
+      { label: 'Always', value: 'always' },
+    ], state.voice, function (v) { return 'voice:' + v }))
+
+    app.appendChild(actions)
+
+    if (!hasTelegram) {
+      app.appendChild(el('p', 'note', 'Open this from Telegram to use the buttons.'))
+    }
+  }
+
+  render(decodeState(location.hash))
+})()
+</script>
+</body>
+</html>
