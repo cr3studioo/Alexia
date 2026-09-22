@@ -17,8 +17,9 @@ import { files } from './invariants/_repo.js'
  * **What this file cannot do is run the Rust.** CI builds no Rust, so the far end here is a
  * stand-in — which is exactly the shape D69 warned about: an interface with one implementation
  * in production and another in every test. The stand-in is checked field for field against
- * `vault.rs` below, which narrows that gap and does not close it: when `vault.rs` moves, build
- * the app, paste a key, and read it back.
+ * `vault.rs` below, which narrows that gap and does not close it: when `vault.rs` or the move
+ * changes, run `pnpm check:keychain`, which builds `vault.rs` and moves test keys through this
+ * machine's real keychain (D187).
  */
 
 /** `vault.rs`, in forty lines of Node: the same fields in, the same fields out. */

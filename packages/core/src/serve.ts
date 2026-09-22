@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { APP_VERSION, CORE_CAPABILITIES, FILES_META, TOOLS_META } from '@alexia/protocol'
+import { APP_VERSION, CORE_CAPABILITIES, FILES_META, LENGTHS_META, TOOLS_META } from '@alexia/protocol'
 import { randomUUID } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import type { CreateMessageResult } from '@modelcontextprotocol/client'
@@ -49,7 +49,24 @@ import {
 } from './permissions.js'
 import { anonymous, keyOf, PROVIDERS, type Provider } from './provider.js'
 import { redactSecrets } from './redact.js'
-import { allowed, MODES, paid, route, send, shapeOf, wantsCapable, type Bubble, type Personality, type Tier } from './router.js'
+import {
+  allowed,
+  hearingPlan,
+  MODES,
+  paid,
+  personalityFrom,
+  route,
+  send,
+  shapeOf,
+  sizedFor,
+  sizeFor,
+  wantsCapable,
+  type Bubble,
+  type Choice,
+  type Personality,
+  type Size,
+  type Tier,
+} from './router.js'
 import { CORE, keychain, type SecretStore } from './secrets.js'
 // For `boot.mjs`, which imports the bundle this file is the entry of and nothing else (D153).
 export { fromShell } from './secrets.js'
@@ -63,7 +80,7 @@ import { dataDir, Store, textOf, type Message, type Part } from './store.js'
 import { PluginTooling } from './tooling.js'
 import { Trace } from './trace.js'
 import { trial } from './trial.js'
-import { allowance, caps, setCaps, today, warning } from './usage.js'
+import { allowance, caps, costOf, setCaps, today, warning } from './usage.js'
 
 /**
  * The chat shell's other half: a loopback bridge between a webview and core.
@@ -492,6 +509,15 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
        */
       const declared = declaredFor(pluginId, params.modelPreferences)
       /**
+       * **A personality in its three lengths, and which one to hear** (D189, *Hear her*). With it,
+       * a rung is sent the length the chat would give that model — or, with `hear` set, that
+       * length, on a model the chat would give it to. Without it, the system prompt as written.
+       */
+      const offered = params._meta?.[LENGTHS_META] as Record<string, unknown> | undefined
+      const lengths = offered === undefined ? undefined : personalityFrom(offered)
+      const hear: Size | undefined =
+        lengths !== undefined && (offered?.hear === 'small' || offered?.hear === 'medium' || offered?.hear === 'high') ? offered.hear : undefined
+      /**
        * **A button somebody pressed is a run, and may spend like one** (G13, D156).
        *
        * `send` reads *attributed to a plugin, belonging to no run* as *free tiers only* (G12,
@@ -504,6 +530,10 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
        */
       const behind = background(pluginId)
       const asRun = behind ? undefined : randomUUID()
+      // The paid switch, for a press that may now reach across the price line (§4 H). No
+      // conversation to have said *Allow* in — a press is not a chat — so it is the switch
+      // alone. Left unasked without a run, where paid was never reachable anyway.
+      const seen = asRun === undefined ? await world() : { ...(await world()), cross: caps(store).cross === true }
       const verdict = route(
         {
           messages: asked,
@@ -512,15 +542,17 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
           ...declared,
         },
         pins(store),
-        // The paid switch, for a press that may now reach across the price line (§4 H). No
-        // conversation to have said *Allow* in — a press is not a chat — so it is the switch
-        // alone. Left unasked without a run, where paid was never reachable anyway.
-        asRun === undefined ? await world() : { ...(await world()), cross: caps(store).cross === true },
+        seen,
       )
       if (!verdict.ok) throw new Error(verdict.why)
+      /** Heard at one length: the rungs the chat would give it to, under the same pins and switch (D189). */
+      const hearAt = hear === undefined ? undefined : hearingPlan(verdict.choices, seen, hear)
+      /** The length a rung is given, as the chat would give it — or the one asked to be heard. */
+      const worn = (choice: Choice): { text: string; size: Size } | undefined =>
+        lengths === undefined ? undefined : sizedFor(lengths, hear ?? sizeFor(choice, seen))
       sampling += 1
       const answer = await send(
-        verdict.choices,
+        hearAt?.choices ?? verdict.choices,
         {
           messages: asked,
           ...(params.maxTokens !== undefined && { maxTokens: params.maxTokens }),
@@ -536,8 +568,39 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
           // Today's allowance holds each paid rung to what the reply could cost (D186), so a press
           // asking for a capable model cannot buy the dearest one past what the day has left.
           ...(verdict.left !== undefined && { left: verdict.left }),
+          // Each rung its own length, in place of the one system prompt the plugin wrote (D189).
+          ...(lengths !== undefined && {
+            messagesFor: (choice: Choice): Message[] => [
+              { role: 'system', content: worn(choice)?.text ?? lengths.high },
+              ...asked.filter((turn) => turn.role !== 'system'),
+            ],
+          }),
         },
       ).finally(() => (sampling -= 1))
+      /**
+       * **What was heard, and what the chat would do** (D189): the length that went out and on
+       * which model, whether that model costs money and what this cost, whether it is a model the
+       * chat would give that length to — and, beside it, the model the chat asks first right now
+       * and the length it is given, which is the answer to *which length will she get?*
+       */
+      const told = async (): Promise<Record<string, unknown>> => {
+        if (lengths === undefined) return {}
+        const chatWorld = { ...(await world()), cross: caps(store).cross === true }
+        const chat = route({ messages: asked, shape: shapeOf({ messages: asked }) }, pins(store), chatWorld)
+        const first = chat.ok ? chat.choices[0] : undefined
+        return {
+          [LENGTHS_META]: {
+            sent: worn({ model: answer.model, provider: answer.provider })?.size,
+            model: answer.model.name,
+            paid: paid(answer.model.tier),
+            cost: costOf(answer.model, answer.usage),
+            matched: hearAt?.matched ?? true,
+            ...(hear !== undefined && { asked: hear }),
+            ...(first !== undefined && { chat: { model: first.model.name, size: sizedFor(lengths, sizeFor(first, chatWorld)).size } }),
+          },
+        }
+      }
+      const meta = await told()
       return {
         role: 'assistant',
         content: { type: 'text', text: textOf(answer.message) },
@@ -545,6 +608,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
         // MCP's own word for *it ran out of room*. A plugin told `endTurn` about half an
         // answer has no way to know it is half, and the personality adapter saved one.
         stopReason: answer.cut ? 'maxTokens' : 'endTurn',
+        ...(Object.keys(meta).length > 0 && { _meta: meta }),
       }
     },
   })
@@ -988,14 +1052,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
        * there, a shorter size that is not a string is no shorter size, and a personality is a
        * preference that must never be the reason an answer does not happen.
        */
-      const shorter = (answered.structuredContent ?? {}) as Record<string, unknown>
-      const one = (key: string): string | undefined => {
-        const held = shorter[key]
-        return typeof held === 'string' && held.trim() !== '' ? held.trim() : undefined
-      }
-      const small = one('small')
-      const medium = one('medium')
-      return { high: said, ...(small !== undefined && { small }), ...(medium !== undefined && { medium }) }
+      return personalityFrom((answered.structuredContent ?? {}) as Record<string, unknown>, said)
     } catch (error) {
       console.error(`[personality] ${error instanceof Error ? error.message : String(error)}`)
       return undefined

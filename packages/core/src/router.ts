@@ -182,6 +182,21 @@ export interface Personality {
 }
 
 /**
+ * **A personality's lengths out of whatever a plugin sent**, read defensively: a length that is
+ * not a string with something in it is no length, and without the long one there is no
+ * personality at all. `high` is the long one when it arrived somewhere else — `content`, for
+ * `persona.personality`.
+ */
+export function personalityFrom(fields: Record<string, unknown>, high: unknown = fields.high): Personality | undefined {
+  const one = (held: unknown): string | undefined => (typeof held === 'string' && held.trim() !== '' ? held.trim() : undefined)
+  const long = one(high)
+  if (long === undefined) return undefined
+  const small = one(fields.small)
+  const medium = one(fields.medium)
+  return { high: long, ...(small !== undefined && { small }), ...(medium !== undefined && { medium }) }
+}
+
+/**
  * **What a model of this size is actually given, and which size that turned out to be.**
  *
  * Both, because they are not the same question and the trace needs the second one. A plugin
@@ -194,6 +209,30 @@ export const sizedFor = (personality: Personality, size: Size): { text: string; 
   size === 'small' && personality.small !== undefined ? { text: personality.small, size: 'small' }
   : size !== 'high' && personality.medium !== undefined ? { text: personality.medium, size: 'medium' }
   : { text: personality.high, size: 'high' }
+
+/**
+ * **Which rungs of a plan hear a personality at one length** (D189) — *Hear her*, asked to be
+ * heard short, medium or full rather than as the chat would.
+ *
+ * The rungs the chat would give that length to, in the plan's own order: a sample of the full one
+ * goes to a model that is given the full one, and a sample of the short one to a model given the
+ * short one. **The plan is already the person's**: it was routed under their pins, the slider and
+ * the paid switch, so a length only paid models are given is out of reach with paid off — and
+ * then the nearest thing is asked rather than nothing. For the full one that is the strongest
+ * model the plan has, walked from the capable end; for the others, the plan as it stands. Which
+ * of the two happened is `matched`, so the sample can say so.
+ */
+export function hearingPlan(
+  choices: readonly Choice[],
+  world: Pick<World, 'health' | 'strikes'>,
+  want: Size,
+  at: number = Date.now(),
+): { choices: Choice[]; matched: boolean } {
+  const given = choices.filter((choice) => sizeFor(choice, world, at) === want)
+  if (given.length > 0) return { choices: given, matched: true }
+  const nearest = want === 'high' ? [...choices].sort(ranking(world, 'capable', at).compare) : [...choices]
+  return { choices: nearest, matched: false }
+}
 
 /**
  * **A model somebody could send a request to right now** (D154): its provider is connected,

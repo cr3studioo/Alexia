@@ -5,6 +5,8 @@ import { changed, sizeOf } from './diff.js'
 import { asked, inert, inertNote, wants } from './promises.js'
 import { check, noteOf, removedOf } from './safety.js'
 import {
+  asHeard,
+  asRow,
   brief,
   CEILING,
   clean,
@@ -14,10 +16,10 @@ import {
   HEARD,
   HEARING,
   HEARING_AT_LEAST,
+  LENGTHS,
   LONGEST,
   matchName,
   nameFrom,
-  asRow,
   PRESS,
   priorOf,
   provenance,
@@ -157,8 +159,24 @@ async function report() {
  * asked runs out; a sample with too little of that left is not started, and says so, rather
  * than taking the whole press down with it after the document was already saved.
  */
-async function hearing(doc, until = Date.now() + PRESS) {
+async function hearing(docs, until = Date.now() + PRESS, want = 'chat') {
+  const doc = docs.high
   const line = unasked(doc)
+  /**
+   * **All three lengths go, and which one to hear** (D189). Core sends each model the length the
+   * chat would give it — or, asked for one, that length, on a model the chat would give it to,
+   * under the person's own pins and paid switch — and says back what went out, on what, what it
+   * cost, and what the chat would give her right now.
+   */
+  const hear = LENGTHS.includes(want) ? want : undefined
+  const lengths = {
+    high: doc,
+    ...(String(docs.medium ?? '').trim() !== '' && { medium: docs.medium }),
+    ...(String(docs.small ?? '').trim() !== '' && { small: docs.small }),
+    ...(hear !== undefined && { hear }),
+  }
+  // What an Alexia that does not know the key reads instead: the length asked for, where there is one.
+  const prompt = (hear !== undefined && hear !== 'high' && lengths[hear]) || doc
   const asking = [{ ask: HEAR }, ...(line === '' ? [] : [{ ask: HEAR_UNASKED, watching: line }])]
   const heard = []
   for (const one of asking) {
@@ -172,15 +190,18 @@ async function hearing(doc, until = Date.now() + PRESS) {
         {
           messages: [{ role: 'user', content: { type: 'text', text: one.ask } }],
           // The document, as the system prompt — which is where core puts it too (D103).
-          systemPrompt: doc,
+          systemPrompt: prompt,
           maxTokens: HEARD,
+          _meta: { 'alexia/lengths': lengths },
         },
         { timeout: Math.min(HEARING, left) },
       )
       const said = answer.content?.type === 'text' ? answer.content.text.trim() : ''
+      const told = answer._meta?.['alexia/lengths']
       heard.push({
         ...one,
         model: String(answer.model ?? ''),
+        ...(told !== null && typeof told === 'object' && { told }),
         said: said === '' ? '(she said nothing at all, which is itself an answer about this model)' : said,
         cut: answer.stopReason === 'maxTokens',
       })
@@ -190,30 +211,6 @@ async function hearing(doc, until = Date.now() + PRESS) {
     }
   }
   return heard
-}
-
-/**
- * The samples, written out under a line saying what they are and are not.
- *
- * **Including which length she was given.** A sample is her full document, and in the chat a
- * model that can read less is sent one of the shorter two — which this plugin cannot predict,
- * because which model reads it is core's to decide per step. So when shorter ones exist, the
- * line says the sample is the long one rather than letting it pass for what every model hears.
- */
-const asHeard = (heard, shorter = false) => {
-  if (heard.length === 0) return ''
-  const model = heard.find((one) => one.model !== undefined && one.model !== '')?.model
-  const lines = [
-    model === undefined ?
-      'Nothing could be asked, so there is nothing to listen to:'
-    : `Here is how she answers, on ${model} — the model your chat would use. Alexia's own opening lines are not in this; only your personality is.` +
-      (shorter ? ' This is her full-length document; in the chat a model that can read less is sent a shorter one.' : ''),
-  ]
-  for (const one of heard) {
-    lines.push('', `You: ${one.ask}${one.watching === undefined ? '' : `   (listening for “${one.watching}”)`}`)
-    lines.push(one.failed === undefined ? `Her: ${one.said}${one.cut === true ? ' …' : ''}` : `Her: — ${one.failed}`)
-  }
-  return lines.join('\n')
 }
 
 /** What the progress bar says while each button waits, so the three do not read alike. */
@@ -506,7 +503,7 @@ alexia.tool(
   async (ctx) => {
     // When core stops waiting for this press: the samples below get what writing left of it.
     const until = Date.now() + PRESS
-    const { custom_voice: described, save_as: called, hear_first: listen } = await settings()
+    const { custom_voice: described, save_as: called, hear_first: listen, hear_length: hearAt } = await settings()
     const hearFirst = listen !== false
     const description = String(described ?? '').trim()
     if (description === '') {
@@ -556,7 +553,10 @@ alexia.tool(
         `Saved as “${name}”. Nothing has changed yet — press Use on its row to switch to her, or Forget to throw it away.`
       : `Saved as “${name}” and in use from your next message.`
     const cannot = await inertLines(written.doc)
-    const heard = hearFirst ? asHeard(await hearing(written.doc, until), sizesIn(written).length > 0) : ''
+    const heard =
+      hearFirst ?
+        asHeard(await hearing({ high: written.doc, medium: written.medium, small: written.small }, until, String(hearAt ?? 'chat')), sizesIn(written).length > 0)
+      : ''
     return text(
       [
         reply(headline, written.removed, written.doc, written, cannot, written.facts),
@@ -634,8 +634,9 @@ alexia.tool(
   'hear',
   {
     description:
-      'Ask one saved personality two questions and show how she answers, in her voice, on the ' +
-      'model your chat would use. Takes the row it is. Nothing is changed or switched.',
+      'Ask one saved personality two questions and show how she answers, in her voice — at the ' +
+      'length Hear her at is set to, on a model your chat would give that length to — and which ' +
+      'length your chat gives her now. Takes the row it is. Nothing is changed or switched.',
     inputSchema: fromJsonSchema(one),
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
   },
@@ -645,7 +646,8 @@ alexia.tool(
     const doc = String(row.doc ?? '')
     if (doc === '') return nope(`“${String(row.name)}” has no document to read out.`)
     // Two samples at up to a minute each is the whole of core's two minutes, so they share one.
-    const heard = await hearing(doc, Date.now() + PRESS)
+    const { hear_length: hearAt } = await settings()
+    const heard = await hearing({ high: doc, ...shorterOf(row) }, Date.now() + PRESS, String(hearAt ?? 'chat'))
     return text(`“${String(row.name)}”, out loud.\n\n${asHeard(heard, sizesIn(shorterOf(row)).length > 0)}`)
   },
 )

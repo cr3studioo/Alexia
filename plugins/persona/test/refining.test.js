@@ -252,12 +252,12 @@ test('writing and hearing fit into one press, because core gives a button two mi
   expect(HEARING_AT_LEAST).toBeLessThan(HEARING)
   const at = source.indexOf('async function hearing')
   const body = source.slice(at, source.indexOf('\n}', at))
-  expect(body).toMatch(/async function hearing\(doc, until = Date\.now\(\) \+ PRESS\)/)
+  expect(body).toMatch(/async function hearing\(docs, until = Date\.now\(\) \+ PRESS, want = 'chat'\)/)
   expect(body).toMatch(/if \(left < HEARING_AT_LEAST\)/)
   expect(body).toMatch(/timeout: Math\.min\(HEARING, left\)/)
   // Adapt starts the clock when the press arrives, not when writing is done.
   expect(source).toMatch(/const until = Date\.now\(\) \+ PRESS\n/)
-  expect(source).toMatch(/await hearing\(written\.doc, until\)/)
+  expect(source).toMatch(/await hearing\(\{ high: written\.doc, medium: written\.medium, small: written\.small \}, until, /)
 })
 
 test('Hear her is a row action of its own, so it works after Refine and Edit too', () => {
