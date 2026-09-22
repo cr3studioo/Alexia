@@ -1513,11 +1513,6 @@ function refusal(
 }
 
 /**
- * **A switch to another model**, with its parts (D160, §4 G): which models could not answer, which
- * one is answering instead, why, and the sentence. Said twice on screen — a pop-up for three
- * seconds, and a line on the answer that is saved with it.
- */
-/**
  * **What Alexia is doing right now, while nobody is being answered yet** — the line under the
  * question that replaces a silent `…`. Alexia.md: *silence is what kills, not time.*
  *
@@ -1543,6 +1538,11 @@ export type Phase =
   | { kind: 'writing'; model: string }
   | { kind: 'tool'; name: string }
 
+/**
+ * **A switch to another model**, with its parts (D160, §4 G): which models could not answer, which
+ * one is answering instead, why, and the sentence. Said twice on screen — a pop-up for three
+ * seconds, and a line on the answer that is saved with it.
+ */
 export interface Switch {
   from: string[]
   to: string

@@ -114,8 +114,7 @@ export interface Run {
    * Beside the steps rather than inside them, because most of the wait happens where no step
    * is: before the first tool call, a model is being chosen, asked, asked again and waited on,
    * and a run that needed no tool has no steps at all — only the wait. Absent on a run nothing
-   * reported a stage for: one stopped before the loop began, or one started by a path that
-   * does not report its stages — a plugin's task, which has no screen waiting on it.
+   * reported a stage for: one stopped before the loop began.
    */
   phases?: TracePhase[]
   /**

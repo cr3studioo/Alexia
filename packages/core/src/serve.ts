@@ -1280,9 +1280,10 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
         // The stop button, and the plugin that started this giving up: either one ends the task.
         signal: gaveUp === undefined ? stop.signal : AbortSignal.any([stop.signal, gaveUp]),
         guard: gate(text, runId),
-        // How much of her this step's model was given (§2). The only `on` this path wants:
-        // there is no stream here to write a step to, but the record is still worth keeping.
-        on: { personality: (chars, size) => trace.personality(chars, size) },
+        // How much of her this step's model was given (§2), and how long each stage took. The only
+        // `on` this path wants: there is no stream here to write a step to, but the record is still
+        // worth keeping — a task started from a phone waits exactly as long as one at the desk.
+        on: { personality: (chars, size) => trace.personality(chars, size), phase: (p) => trace.phase(p) },
         /**
          * The yes, from wherever the person is.
          *
