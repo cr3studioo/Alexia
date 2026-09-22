@@ -9,8 +9,8 @@ import { ALIVE_EVERY, STREAM_EVERY, streamer } from '../src/streaming.js'
  * A provider streams a few characters at a time, and a frame per token is a pipe to another
  * process busy with framing. What is held still here is the order of things: the first words
  * at once, the rest at most every {@link STREAM_EVERY}, nothing overtaking words written
- * before it, and nothing left behind when the answer ends. The wire half — a real plugin, a
- * real token — is `serve.stream.test.ts`.
+ * before it, and the tail dropped rather than raced against the result it would lose to. The
+ * wire half — a real plugin, a real token — is `serve.stream.test.ts`.
  */
 
 let sent: StreamFrame[] = []
@@ -42,12 +42,18 @@ test('the first words go at once, and the rest are gathered into one frame on th
   live.end()
 })
 
-test('what is still held goes out when the answer ends, and nothing goes after', () => {
+test('what is still held when the answer ends is dropped, not raced against it', () => {
   const live = streamer((frame) => sent.push(frame))
   live.delta('a')
   live.delta('b')
   live.end()
-  expect(words().join('')).toBe('ab')
+  /**
+   * The held `b` never goes. A response is dispatched by the receiving SDK as it is read and a
+   * notification a microtask later, so a frame written just before the result is handled after
+   * it — against a request that has finished, which earns the plugin *a progress notification
+   * for an unknown token* in its log instead of the word. The result carries `ab` regardless.
+   */
+  expect(words().join('')).toBe('a')
   // No clock left running, and nothing after the end: the request has been answered.
   expect(vi.getTimerCount()).toBe(0)
   live.delta('late')
@@ -55,8 +61,8 @@ test('what is still held goes out when the answer ends, and nothing goes after',
   live.restart()
   vi.advanceTimersByTime(ALIVE_EVERY * 2)
   live.alive()
-  expect(words().join('')).toBe('ab')
-  expect(sent).toHaveLength(2)
+  expect(words().join('')).toBe('a')
+  expect(sent).toHaveLength(1)
 })
 
 test('a stage never overtakes the words written before it', () => {
@@ -74,6 +80,9 @@ test('a restart drops what it voids rather than sending it to be thrown away', (
   live.delta('of')
   live.restart()
   live.delta('Whole')
+  // The clock, not `end()`: what is held at the end of an answer is dropped, so a test that
+  // asked `end()` for it would be asking the one question the answer is allowed to refuse.
+  vi.advanceTimersByTime(STREAM_EVERY)
   live.end()
   // `of` was held when the model failed: the plugin is never shown it at all.
   expect(sent).toEqual([{ delta: 'Half ' }, { restart: true }, { delta: 'Whole' }])
@@ -85,6 +94,7 @@ test('the words after a tool are set apart from the words before it', () => {
   live.phase({ kind: 'tool', name: 'look' })
   live.phase({ kind: 'asking', model: 'm' })
   live.delta('Found it.')
+  vi.advanceTimersByTime(STREAM_EVERY)
   live.end()
   expect(words().join('')).toBe('Let me look.\n\nFound it.')
 
@@ -93,6 +103,7 @@ test('the words after a tool are set apart from the words before it', () => {
   const fresh = streamer((frame) => sent.push(frame))
   fresh.phase({ kind: 'tool', name: 'look' })
   fresh.delta('Found it.')
+  vi.advanceTimersByTime(STREAM_EVERY)
   fresh.end()
   expect(words()).toEqual(['Found it.'])
 })

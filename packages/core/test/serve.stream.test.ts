@@ -17,7 +17,7 @@ import { serve, type Serving } from '../src/serve.js'
  * A channel plugin used to get the finished answer and nothing before it, so a phone showed a
  * typing dot for as long as a slow model took and then everything at once. What is held still
  * here is the contract: a plugin that passes `onprogress` to `createMessage` gets the words on
- * its own token, gathered into a few frames, ahead of the result — and a plugin that does not
+ * its own token, gathered into a few frames, ahead of the result — its opening, never a word written so late that it would arrive after the answer — and a plugin that does not
  * gets exactly what it always got. The gathering itself has its own suite, with a fake clock.
  */
 
@@ -168,8 +168,15 @@ test('a plugin that sent a progress token gets the words while they are written,
   // An answer does not know how long it will be, so no frame pretends to.
   expect(seen.frames.every((frame) => frame.total === undefined)).toBe(true)
 
-  // The deltas, joined, are the answer — all of it arrived before the result did.
-  expect(joined(seen.streamed)).toBe(seen.text)
+  /**
+   * The deltas are the answer's opening, in order — **its opening, and not all of it**. What is
+   * still held when the answer ends is dropped rather than written a beat before the result,
+   * because a notification is dispatched a microtask later than a response and would arrive at a
+   * request that has already finished. The `complaints` check below is that promise kept: an
+   * SDK that was handed a frame too late says so, and it never is.
+   */
+  expect(seen.text.startsWith(joined(seen.streamed))).toBe(true)
+  expect(joined(seen.streamed)).not.toBe('')
   // Gathered rather than forwarded: fewer frames of words than pieces the model sent.
   const deltas = seen.streamed.filter((frame) => frame.delta !== undefined)
   expect(deltas.length).toBeGreaterThan(0)
@@ -195,7 +202,8 @@ test('a task with tools streams too, and says when a tool is the thing being wai
   const stages = seen.streamed.map((frame) => frame.phase).filter(Boolean)
   expect(stages).toContain('tool')
   expect(stages.indexOf('tool')).toBeLessThan(stages.lastIndexOf('writing'))
-  expect(joined(seen.streamed)).toBe(seen.text)
+  expect(seen.text.startsWith(joined(seen.streamed))).toBe(true)
+  expect(seen.complaints).toEqual([])
 }, 30_000)
 
 test('a slash command streams nothing, and hands over its data on the result', async () => {
@@ -226,5 +234,6 @@ test('a model that dies mid-sentence sends a restart, and the words after it are
   expect(kinds[0]).toBe('delta:Half of')
   expect(kinds).toContain('restart')
   expect(kinds.indexOf('restart')).toBeGreaterThan(0)
-  expect(joined(seen.streamed)).toBe(seen.text)
+  expect(seen.text.startsWith(joined(seen.streamed))).toBe(true)
+  expect(seen.complaints).toEqual([])
 }, 30_000)

@@ -135,9 +135,27 @@ export function streamer(
       saidAt = now()
       out({ phase: stage ?? 'tool' })
     },
+    /**
+     * **The last words are not a frame — they are the answer** (D193, corrected).
+     *
+     * This used to flush what was held, on the reasonable-sounding grounds that a plugin should
+     * be streamed every word it is about to be sent. It cannot be. A response is dispatched by
+     * the receiving SDK the moment it is read, while a notification is handed to its handler a
+     * microtask later — so a frame written immediately before the result is read *after* it, by
+     * which time the request is finished and its progress handler is gone. What the plugin gets
+     * for it is not the words but an error in its own log, on every answer: *a progress
+     * notification for an unknown token*.
+     *
+     * So the tail is dropped rather than raced. The result carries the whole answer a moment
+     * later — a draft that stops a few words short and is then replaced by the finished message
+     * is what every streaming surface does anyway, and it is honest about what a notification
+     * can promise.
+     */
     end() {
       if (ended) return
-      flush()
+      if (timer !== undefined) clearTimeout(timer)
+      timer = undefined
+      held = ''
       ended = true
     },
   }

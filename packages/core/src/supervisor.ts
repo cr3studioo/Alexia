@@ -268,7 +268,7 @@ export class PluginProcess {
     })
     // The second argument carries the plugin's cancel. It was dropped here, so when Adapt gave
     // up at 110 s, `send()` went on down the plan behind a refusal already on screen (D159).
-    client.setRequestHandler('sampling/createMessage', (request, ctx) => {
+    client.setRequestHandler('sampling/createMessage', async (request, ctx) => {
       /**
        * **The answer while it is written, on the plugin's own token** (`alexia/stream`).
        *
@@ -285,22 +285,39 @@ export class PluginProcess {
        */
       const progressToken = ctx.mcpReq._meta?.progressToken
       let progress = 0
+      /**
+       * **Every frame is on the wire before the result is** — which is not free, because a
+       * notification and a response are two writes and the last frame is sent a tick before
+       * the answer returns. Left to chance, the words a plugin was streamed could end one
+       * delta short of the answer it then receives, and *under load* is exactly when that
+       * happens: a draft stuck mid-sentence while the final message says something longer.
+       *
+       * So each send is chained, and the result waits for the chain. A frame that fails is
+       * still dropped — the plugin went away, or the request ended — and the answer still
+       * arrives.
+       */
+      let sent: Promise<void> = Promise.resolve()
       const stream =
         progressToken === undefined ? undefined : (
           (frame: StreamFrame): void => {
-            try {
-              void ctx.mcpReq
-                .notify({
-                  method: 'notifications/progress',
-                  params: { progressToken, progress: ++progress, _meta: { [STREAM_META]: frame } },
-                })
-                .catch(() => {})
-            } catch {
-              // Thrown rather than rejected — a context with no live request to relate it to.
-            }
+            sent = sent.then(() => {
+              try {
+                return ctx.mcpReq
+                  .notify({
+                    method: 'notifications/progress',
+                    params: { progressToken, progress: ++progress, _meta: { [STREAM_META]: frame } },
+                  })
+                  .catch(() => {})
+              } catch {
+                // Thrown rather than rejected — a context with no live request to relate it to.
+                return undefined
+              }
+            })
           }
         )
-      return this.host.sampling(this.id, request.params, ctx.mcpReq.signal, stream)
+      const answer = await this.host.sampling(this.id, request.params, ctx.mcpReq.signal, stream)
+      await sent
+      return answer
     })
     client.setRequestHandler('roots/list', async () => ({ roots: await this.host.roots(this.id) }))
 
