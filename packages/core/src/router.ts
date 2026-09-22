@@ -479,6 +479,14 @@ export interface World {
    * would read it as one more piece of evidence and never as a deletion. Absent is nothing reported.
    */
   reported?: ReadonlySet<string>
+  /**
+   * **Models whose every host is down right now, by their provider's own published status**, keyed
+   * `provider\nmodel`. OpenRouter publishes each model's hosts with their last few minutes of
+   * uptime, and reading it spends no request of anybody's. A model in here is asked after every
+   * model that is not, and still asked: a status page can be wrong, and a pin is a pin. Absent is
+   * nothing known to be down.
+   */
+  down?: ReadonlySet<string>
 }
 
 /** One failure of one model on one provider, as {@link send} recorded it. */
@@ -1509,6 +1517,32 @@ function refusal(
  * one is answering instead, why, and the sentence. Said twice on screen — a pop-up for three
  * seconds, and a line on the answer that is saved with it.
  */
+/**
+ * **What Alexia is doing right now, while nobody is being answered yet** — the line under the
+ * question that replaces a silent `…`. Alexia.md: *silence is what kills, not time.*
+ *
+ * A stage and the facts of it, never a sentence: the screen owns the words, and every fact here
+ * is literally true — the model named is the one being asked, the attempt is the attempt.
+ *
+ * - `choosing` — working out which models fit this step (the router, the world it reads).
+ * - `reading` — reading attached files before anything else happens.
+ * - `asking` — a request has gone to `model`.
+ * - `retrying` — `model` said it was busy right now, and is being asked again (`attempt` from 2).
+ * - `backup` — `model` has been asked as well, because `behind` was `busy` or `slow` to start.
+ * - `thinking` — `model` is reasoning and has not written a word yet.
+ * - `writing` — `model` is writing the answer.
+ * - `tool` — a tool called `name` is running.
+ */
+export type Phase =
+  | { kind: 'choosing' }
+  | { kind: 'reading' }
+  | { kind: 'asking'; model: string }
+  | { kind: 'retrying'; model: string; attempt: number }
+  | { kind: 'backup'; model: string; behind: string; why: 'busy' | 'slow' }
+  | { kind: 'thinking'; model: string }
+  | { kind: 'writing'; model: string }
+  | { kind: 'tool'; name: string }
+
 export interface Switch {
   from: string[]
   to: string
@@ -1702,6 +1736,8 @@ export async function send(
     onSwitch?: (event: Switch) => void
     /** **The line before a charge**, in a place of its own (§4 G). Without it, `onNote` has it. */
     onPaid?: (line: string) => void
+    /** **What the walk is doing right now** ({@link Phase}), for the line under the question. */
+    onPhase?: (phase: Phase) => void
     /**
      * **Throw away what was streamed** (D155). A rung that had already sent words failed, and
      * the answer starts again on the next one — a half-written bubble left on screen would be

@@ -17,6 +17,7 @@ import {
   type Choice,
   type Mode,
   type Personality,
+  type Phase,
   type Pins,
   type Shape,
   type Size,
@@ -128,6 +129,8 @@ export interface AgentEvents {
   switch?(event: Switch): void
   /** The line before a charge, for a place of its own (§4 G). */
   paid?(line: string): void
+  /** **What the loop is doing right now** — choosing, asking, retrying, thinking — for the line under the question. */
+  phase?(phase: Phase): void
   /**
    * **The words streamed since the last turn began are void** (D155): the model writing them
    * stopped partway, and the answer is starting again on the next one.
