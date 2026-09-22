@@ -276,7 +276,8 @@ const server: Server = createServer((request, response) => {
     }
     if (refuse.has(asked)) {
       response.writeHead(429, { 'content-type': 'text/plain' })
-      response.end('slow down')
+      // A day's allowance spent, not a host busy for a second: a 429 asking again cannot clear.
+      response.end('slow down: free-models-per-day')
       return
     }
     if (gated.has(asked)) {
@@ -1369,7 +1370,7 @@ test('a list that fails all the way down stops at its end, and the model outside
   const second = free('free/second', { supportsTools: true, provider: 'beta' })
   const outside = free('free/outside', { supportsTools: true })
   behave = new Map<string, { status: number; body?: string } | 'dies' | 'hangs' | 'cut'>([
-    ['free/first', { status: 429 }],
+    ['free/first', { status: 429, body: 'daily limit reached' }],
     ['free/second', { status: 404, body: 'No endpoints found' }],
   ])
   const place: World = world({ models: [first, second, outside], rungs: [remaining(ledger, one), remaining(ledger, two)] })
@@ -1782,7 +1783,7 @@ test('what failed is remembered on this machine; a refused key and a conversatio
   const three: Provider = { ...alpha, id: 'gamma', name: 'Gamma', baseUrl: at }
   await keys.set(CORE, keyOf(three), 'sk-c')
   behave = new Map([
-    ['free/limited', { status: 429, body: 'slow down' }],
+    ['free/limited', { status: 429, body: 'slow down: free-models-per-day' }],
     ['free/32k', { status: 400, body: "This model's maximum context length is 32768 tokens" }],
     ['free/refused', { status: 401, body: 'invalid api key' }],
   ])

@@ -666,6 +666,7 @@ export async function run(options: RunOptions): Promise<RunResult> {
           },
           ...(on?.paid && { onPaid: on.paid }),
           ...(on?.restart && { onRestart: on.restart }),
+          ...(on?.phase && { onPhase: on.phase }),
           messagesFor: dressed,
           onAsk: asking,
         },

@@ -35,7 +35,8 @@ const models: Server = createServer((request, response) => {
     asked.push(model)
     if (busy.has(model)) {
       response.writeHead(429, { 'content-type': 'text/plain' })
-      response.end('slow down')
+      // A day's allowance spent, not a host busy for a second: a 429 asking again cannot clear.
+      response.end('slow down: free-models-per-day')
       return
     }
     response.writeHead(200, { 'content-type': 'text/event-stream' })

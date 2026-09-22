@@ -138,6 +138,17 @@ export interface Provider {
    */
   keyInfo?: string
   /**
+   * **It can send one conversation's turns to the same host, if asked by a `session_id`** — so the
+   * host that already holds the conversation in its prompt cache reads the next turn, rather than
+   * a cold one reading the whole of it again. OpenRouter documents it (openrouter.ai/docs/guides/
+   * best-practices/prompt-caching) and forgets the pairing after ten minutes idle.
+   *
+   * A row rather than a branch, and never sent where it is not set: the id is a salted hash that
+   * says nothing about the conversation, but a field a provider did not ask for is a field that
+   * provider may one day reject — and one more thing leaving this machine for no reason.
+   */
+  stickySessions?: true
+  /**
    * **What it costs you to get in, in the currency that is not money** (§6.6, §12.2).
    *
    * Not every free tier is free of trouble: one of these wants a Telegram channel joined and
@@ -204,6 +215,9 @@ export const PROVIDERS: Provider[] = [
     rpd: 50, //                                 1,000 after a one-off $10 of credit
     rpdFunded: 1000,
     keyInfo: '/key',
+    // A follow-up turn goes back to the host that already read the conversation, and starts
+    // sooner for it: prefill is most of the wait on a long agent conversation.
+    stickySessions: true,
   },
   {
     id: 'groq',
@@ -795,6 +809,12 @@ export interface ChatRequest {
   maxTokens?: number
   /** The stop control (M15-5). Aborting mid-stream is the point of it. */
   signal?: AbortSignal
+  /**
+   * **Which conversation this turn belongs to, as an id that says nothing about it** — sent as
+   * `session_id` only to a row with {@link Provider.stickySessions}, and to nobody else.
+   * `send()` in `router.ts` makes it: a salted hash of the chat's own number.
+   */
+  session?: string
 }
 
 /** Tokens in and out. What M1-9 turns into money, and the only usage core keeps. */
@@ -822,6 +842,40 @@ export interface Usage {
 export const PATIENCE = { first: 30_000, between: 20_000, keptAlive: 120_000 } as const
 
 /**
+ * **How long the first model may show no sign of life before the next free one is asked as
+ * well** — in parallel, with its words held back until it is chosen.
+ *
+ * {@link PATIENCE} is how long before a model is *given up on*, and it has to be generous: a
+ * working model can take twenty seconds to start. But waiting to be sure, one model at a time,
+ * is what made a hung model cost thirty seconds and a gateway's keep-alives two minutes, while
+ * the model behind it could have answered in three. Two seconds is past the ordinary start of a
+ * free model that is working, and early enough that a person has not yet begun to wonder.
+ * Glide and llm-resiliency-router hedge at 1.5–3 seconds for the same reason.
+ */
+export const HEDGE_AFTER = 2_000
+
+/**
+ * **How long the plan's first model keeps priority** over a backup that is already answering.
+ *
+ * The first model is first for a reason — it is the best that fits, or the one somebody chose —
+ * and a busy reply from it is often gone a second later. So a backup's answer, however ready, is
+ * held until this has passed or the first model has failed for good, and the first model is
+ * asked again in the meantime. Six seconds was decided with the person who uses this: long
+ * enough for two or three quick retries, short enough that the backup does not feel like a
+ * punishment. Twice this for a plan with nothing else in it — a pin, a list of one — where the
+ * only alternative to waiting is stopping.
+ */
+export const STAR_WAIT = 6_000
+
+/**
+ * **The pause before asking a busy model again, and how it grows** — 0.4 s, 0.8 s, 1.2 s, 1.6 s
+ * and on, each a quarter either way at random. A host that is full right now frees a slot within
+ * a second or two, and a fixed pause from every Alexia on the same free model would arrive
+ * together and fill it again; the spread is what lets one of them in.
+ */
+export const RETRY_STEP = 400
+
+/**
  * What went wrong, where the status alone cannot say it.
  *
  * - `slow` — nothing arrived inside the first-byte patience.
@@ -830,8 +884,33 @@ export const PATIENCE = { first: 30_000, between: 20_000, keptAlive: 120_000 } a
  * - `dropped` — the stream broke, or ended without saying it had finished.
  * - `keyless` — a 401 with none of the person's keys on the request.
  * - `kept` — only keep-alives, for longer than a row may keep a request open on them (D163).
+ * - `quota` — a 429 that is an allowance spent: the minute's or the day's requests, the credits.
+ *   Asking again before it resets collects the same 429.
+ * - `contended` — any other 429: the host serving that model is full right now, and a second
+ *   later it may not be. The one 429 worth asking again.
  */
-export type Trouble = 'slow' | 'stalled' | 'unreachable' | 'dropped' | 'keyless' | 'kept'
+export type Trouble = 'slow' | 'stalled' | 'unreachable' | 'dropped' | 'keyless' | 'kept' | 'quota' | 'contended'
+
+/**
+ * **How providers say a 429 is an allowance spent**, rather than a host that is full: OpenRouter's
+ * `free-models-per-day` and `free-models-per-min`, a daily limit, a quota, credits. Everything
+ * else a 429 says — *temporarily rate-limited upstream*, *slow down*, nothing at all — is read as
+ * the host being busy, which is the one worth asking again.
+ */
+const SPENT = /per[- ]?day|per[- ]?min|free-models-per|quota|credits|daily limit/i
+
+/** Which 429 it was, from what its headers already said and what its body says. */
+const busyOrSpent = (said: string, limits?: Heard): Trouble =>
+  (limits?.minute !== undefined && limits.minute.remaining <= 0) || (limits?.day !== undefined && limits.day.remaining <= 0) || SPENT.test(said) ?
+    'quota'
+  : 'contended'
+
+/**
+ * **The first sign of life of each kind** from a model being asked: reasoning, words, or a tool
+ * call. A keep-alive comment is not one — it is a gateway holding the line, which is what a model
+ * that is not answering looks like too.
+ */
+export type Sign = 'reasoning' | 'content' | 'call'
 
 /**
  * **What a provider said about its own limits**, on an answer or on a refusal (§4 D, D161).
@@ -959,6 +1038,13 @@ interface Chunk {
     finish_reason?: string | null
     delta?: {
       content?: string
+      /**
+       * A reasoning model's thinking, streamed before its words: `reasoning` on OpenRouter and
+       * the gateways that copy it, `reasoning_content` on DeepSeek's shape and vLLM. Never kept or
+       * shown — it is read only as the model being alive and thinking.
+       */
+      reasoning?: string | null
+      reasoning_content?: string | null
       tool_calls?: {
         index: number
         id?: string
@@ -975,13 +1061,19 @@ interface Chunk {
  * `onDelta` gets the text as it arrives. What comes back is a `Message` — the same shape
  * the history stores and re-sends, so an answer needs no translation to become the next
  * request's context.
+ *
+ * `onSign` hears the first {@link Sign} of each kind, with the milliseconds since the request
+ * went out — before the `onDelta` of the same words — and `waited` on the answer is the first of
+ * them. It is what lets `send()` tell a model that is answering from one that is only connected,
+ * and what the record keeps as how long a try waited.
  */
 export async function chat(
   provider: Provider,
   request: ChatRequest,
   onDelta?: (text: string) => void,
   secrets: SecretStore = keychain,
-): Promise<{ message: Message; usage: Usage; cut: boolean; heard?: Heard }> {
+  options: { onSign?: (kind: Sign, waited: number) => void } = {},
+): Promise<{ message: Message; usage: Usage; cut: boolean; heard?: Heard; waited?: number }> {
   // What credential goes on the wire, in three cases — and the difference between the last
   // two is the entire reason `auth` replaced a boolean.
   //
@@ -1055,6 +1147,19 @@ export async function chat(
   // stored string.
   const reach = reaching(provider, key)
 
+  /** When the request went out, which is what a sign of life is measured from. */
+  const began = Date.now()
+  /** The kinds of sign already heard, each told once, and how long the first of them took. */
+  const signs = new Set<Sign>()
+  let waited: number | undefined
+  const sign = (kind: Sign): void => {
+    if (signs.has(kind)) return
+    signs.add(kind)
+    const after = Date.now() - began
+    waited ??= after
+    options.onSign?.(kind, after)
+  }
+
   wait()
   try {
     const response = await fetch(`${reach.baseUrl}/chat/completions`, {
@@ -1073,6 +1178,8 @@ export async function chat(
         // `tools` field politely — they 500 on it.
         ...(provider.tools !== false && request.tools && { tools: request.tools.map(asFunction) }),
         ...(request.maxTokens !== undefined && { max_tokens: request.maxTokens }),
+        // Only where the row says the provider reads it (`stickySessions`), and nowhere else.
+        ...(provider.stickySessions === true && request.session !== undefined && { session_id: request.session }),
         stream: true,
         // The only way to be told what a streamed answer cost. A provider that ignores it
         // leaves usage at zero, which is the honest number to show rather than a guess.
@@ -1092,7 +1199,11 @@ export async function chat(
         // **A 401 with nothing of the person's on it is not their key being refused.** A
         // keyless provider answers most of its models anonymously and a few only with a key,
         // so this one model wants a key; the rest of that provider's list still answers.
-        response.status === 401 && stored === undefined ? 'keyless' : undefined,
+        response.status === 401 && stored === undefined ? 'keyless'
+        // **Two different 429s**: an allowance spent, and a host that is full right now. Only
+        // the second is worth asking again, and `send()` does, for a few seconds.
+        : response.status === 429 ? busyOrSpent(said, limits)
+        : undefined,
       ), limits)
     }
 
@@ -1150,9 +1261,12 @@ export async function chat(
         if (chunk.error) {
           // Failing after `200` has been sent leaves a provider only this way to say so.
           const code = Number(chunk.error.code)
+          const message = String(chunk.error.message ?? chunk.error.code ?? 'an error')
           throw new ProviderError(
             code >= 400 && code < 600 ? code : 502,
-            `${provider.name} said: ${String(chunk.error.message ?? chunk.error.code ?? 'an error')}`.slice(0, 240),
+            `${provider.name} said: ${message}`.slice(0, 240),
+            // Its headers were the answer's, sent before anything went wrong, so only the words say which.
+            code === 429 ? busyOrSpent(message) : undefined,
           )
         }
         if (chunk.model) model = chunk.model
@@ -1167,13 +1281,16 @@ export async function chat(
         if (reason === 'length') cut = true
         const delta = chunk.choices?.[0]?.delta
         if (!delta) continue
+        if (delta.reasoning || delta.reasoning_content) sign('reasoning')
         if (delta.content) {
+          sign('content')
           content += delta.content
           onDelta?.(delta.content)
         }
         // A provider sending its calls as anything but a list has broken the answer, and saying so
         // here keeps it the provider's failure rather than a TypeError that reads as core's.
         if (delta.tool_calls !== undefined && !Array.isArray(delta.tool_calls)) throw new Broke('it sent tool calls in a shape nobody reads')
+        if (delta.tool_calls !== undefined && delta.tool_calls.length > 0) sign('call')
         for (const call of delta.tool_calls ?? []) {
           // Streamed in pieces and keyed by index: the id and name arrive once, the arguments
           // in fragments that only mean anything concatenated.
@@ -1201,6 +1318,7 @@ export async function chat(
       usage,
       cut,
       ...(limits !== undefined && { heard: limits }),
+      ...(waited !== undefined && { waited }),
     }
   } finally {
     clearTimeout(timer)

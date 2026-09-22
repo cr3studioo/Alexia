@@ -37,7 +37,9 @@ const models: Server = createServer((request, response) => {
     const how = behave.get(model)
     if (typeof how === 'number') {
       response.writeHead(how, { 'content-type': 'text/plain' })
-      response.end('no')
+      // A 429 here is a day's allowance spent, which asking again cannot clear — not a host busy
+      // for a second, which `send()` asks again for a few seconds before it moves on.
+      response.end(how === 429 ? 'free-models-per-day' : 'no')
       return
     }
     response.writeHead(200, { 'content-type': 'text/event-stream' })

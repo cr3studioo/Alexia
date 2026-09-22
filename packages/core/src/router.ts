@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+import { createHash, randomBytes } from 'node:crypto'
 import { PLANNER, routes, stature, type Model } from './catalog.js'
 import { OLLAMA } from './ollama.js'
 import { sent, spent, underHalf, type Rung } from './pool.js'
 import type { Judgement, Health } from './health.js'
 import { anonymous, chat, PATIENCE, ProviderError, PROVIDERS, type ChatRequest, type Heard, type Provider, type Usage } from './provider.js'
 import { redact, summarise } from './redact.js'
-import type { SecretStore } from './secrets.js'
+import { CORE, type SecretStore } from './secrets.js'
+import { HEDGE_AFTER, RETRY_STEP, STAR_WAIT, type Sign } from './provider.js'
 import { textOf, type Message, type Outcome, type Source, type Store } from './store.js'
 import { floor, PER_TOKEN, size, summary } from './trim.js'
 import { affordable, costOf, dollars as money, type Today } from './usage.js'
@@ -1706,6 +1708,88 @@ export const dearest = (model: Model, messages: Message[], request: Pick<ChatReq
   })
 
 /**
+ * **A provider that has refused this many models for want of a key, in one walk, is skipped for
+ * the rest of it** — unless one of its models showed a sign of life in the same walk.
+ *
+ * Each such refusal is about one model: a keyless provider answers most of its list anonymously
+ * and a few only with a key (D165). But on 18 Sep a single walk asked 116 Kilo models in seventeen
+ * seconds, every one of them wanting a key, and ended with no answer — the third in a row is the
+ * provider's anonymous door being shut tonight, not three unlucky models. Only for the walk: the
+ * record still judges each model on its own, so the one that does answer without a key climbs by
+ * answering, and is asked first next time.
+ */
+export const KEY_REFUSALS = 3
+
+/** Where the salt for {@link conversation} is kept, in core's own settings. */
+const SALT = 'session.salt'
+
+/**
+ * **The id a sticky provider is sent for one conversation** ({@link Provider.stickySessions}): a
+ * salted SHA-256 of the chat's number, cut to 32 characters. The provider can keep a conversation's
+ * turns on one host and learns nothing from the id — not which conversation, not how many there
+ * are. The salt is made once, on first use, and kept on this machine; without it the hash of *1*
+ * would be the same for everybody who has ever opened a first chat.
+ */
+export function conversation(store: Store, session: number | undefined): string | undefined {
+  if (session === undefined) return undefined
+  const kept = store.kvGet(CORE, SALT)
+  const salt = typeof kept === 'string' && kept !== '' ? kept : randomBytes(16).toString('hex')
+  if (salt !== kept) store.kvSet(CORE, SALT, salt)
+  return createHash('sha256').update(`${salt}:${String(session)}`).digest('hex').slice(0, 32)
+}
+
+/** `6 seconds`, `1 second` — never `0 seconds`, which reads as not having waited at all. */
+const inSeconds = (ms: number): string => {
+  const whole = Math.max(1, Math.round(ms / 1000))
+  return `${String(whole)} second${whole === 1 ? '' : 's'}`
+}
+
+/**
+ * **One rung while it is being asked** — what {@link send} keeps per model, now that two can be
+ * out at once.
+ */
+interface Asking {
+  /** Its place in the plan: the lower wins a tie, and a switch names only what stood ahead of it. */
+  at: number
+  choice: Choice
+  /** What it is sent, already redacted, the same on every attempt. */
+  messages: Message[]
+  /**
+   * - `running` — a request is out.
+   * - `resting` — it said it was busy, and is asked again at `resume`.
+   * - `done` — it has answered, and the answer is held until it is chosen.
+   * - `failed` — it will not answer in this walk.
+   * - `lost` — another was chosen while it was being asked. Not a failure: never recorded, never
+   *   said, and asked again if the one chosen dies before it finishes.
+   */
+  stage: 'running' | 'resting' | 'done' | 'failed' | 'lost'
+  /** Requests sent to it in this walk, from 1. */
+  attempt: number
+  /** When it was last launched — what a hedge behind it is measured from. */
+  began: number
+  resume?: number
+  /** Its own stop: cancelling a rung that lost stops only that rung. */
+  controller: AbortController
+  /** Milliseconds from this attempt going out to its first sign of life, once there has been one. */
+  waited?: number
+  /** When that sign arrived, for which of two rungs showed one first. */
+  signed?: number
+  /** When its answer finished, for a rung that finished without a sign — an empty last answer. */
+  finished?: number
+  reasoned: boolean
+  /** Its words not yet on screen, because it has not been chosen. */
+  held: string[]
+  chosen: boolean
+  /** Whether any of its words reached the screen, so a failure now has to clear them (D155). */
+  spoke: boolean
+  /** Whether `thinking` has been said for it. */
+  thought: boolean
+  answer?: Awaited<ReturnType<typeof chat>>
+  /** Its last busy reply while it is asked again: what is recorded, once, if the wait runs out. */
+  busy?: Failure
+}
+
+/**
  * Walk the plan until one of them answers.
  *
  * A rung that fails is not an error, it is the next rung's turn — how far the turn moves is
@@ -1720,6 +1804,19 @@ export const dearest = (model: Model, messages: Message[], request: Pick<ChatReq
  * anything but `T0` is stripped of credentials and location here, one line above the send,
  * rather than at a call site somebody has to remember — a rule enforced by whoever remembers
  * is not enforced. There is one `chat()` in this repo and it is below.
+ *
+ * **While somebody is waiting, two can be asked at once.** Asked one at a time, a model that hung
+ * cost {@link PATIENCE}'s thirty seconds and a gateway's keep-alives two minutes, with a working
+ * model behind it the whole time. So a first model that has shown no sign of life after
+ * {@link HEDGE_AFTER} has the next free one asked beside it, and a busy one is asked again in place
+ * every second or so. Never more than two requests out; never a paid model beside another one,
+ * because a cancelled paid request can still be billed. Each rung's words are held until it is
+ * chosen: the plan's first model the moment it shows a sign of life, anything else once
+ * {@link STAR_WAIT} has passed or the first has failed for good. The one chosen is streamed and
+ * the others are cancelled — and a cancel is not a failure, so it is neither recorded nor said.
+ *
+ * **Only for a person.** The daily test (`trial.ts`) is evidence about one model, and a plugin on
+ * its own clock has nobody watching a clock: both walk one rung at a time, as this always did.
  */
 export async function send(
   choices: Choice[],
@@ -1794,6 +1891,13 @@ export async function send(
      * does not govern.
      */
     left?: number
+    /**
+     * **The clock of a race, for a caller that cannot wait seconds for one** — a test. Absent is
+     * {@link HEDGE_AFTER}, {@link STAR_WAIT} and {@link RETRY_STEP}, which is every real caller.
+     */
+    hedgeAfter?: number
+    starWait?: number
+    retryStep?: number
   } = {},
 ): Promise<Answer> {
   const failures: Failure[] = []
@@ -1818,7 +1922,7 @@ export async function send(
    */
   const onItsOwn = hooks.plugin !== undefined && hooks.run === undefined
   const unpaid = (choice: Choice): boolean => paid(choice.model.tier) && (hooks.paidAllowed === false || onItsOwn)
-  /** Providers whose key was refused during this answer. */
+  /** Providers whose key was refused during this answer — or that wanted one too often ({@link KEY_REFUSALS}). */
   const refused = new Set<string>()
   /** The biggest window that has already proved too small for this conversation. */
   let outgrown: number | undefined
@@ -1830,16 +1934,15 @@ export async function send(
   /** Whether a rung is still worth asking, given what this answer has already ruled out. */
   const open = (choice: Choice): boolean =>
     !unpaid(choice) && !refused.has(choice.provider.id) && (outgrown === undefined || choice.model.context > outgrown)
-  /** How many failures a note has already told the person about. */
-  let told = 0
   /**
    * **Every try is remembered on this machine** (D161), answers included: the record is what
    * sinks a model that just failed (D159) and what, over 30 days, sets one aside. What each
    * outcome counts for is read later — a refused key is kept and never held against the model.
-   * A try the stop button or a plugin's cancel ended is not a try of the model, and is not kept.
+   * A try the stop button or a plugin's cancel ended is not a try of the model, and is not kept;
+   * nor is one cancelled because another rung was chosen.
    */
   const source: Source = hooks.source ?? (hooks.plugin !== undefined ? 'plugin' : 'chat')
-  const record = (choice: Choice, outcome: Outcome, status: number): void => {
+  const record = (choice: Choice, outcome: Outcome, status: number, waited?: number): void => {
     store.recordTry({
       provider: choice.provider.id,
       model: choice.model.id,
@@ -1847,201 +1950,516 @@ export async function send(
       status,
       source,
       ...(hooks.at !== undefined && { at: hooks.at }),
+      ...(waited !== undefined && { waited }),
     })
   }
 
-  for (const [at, choice] of choices.entries()) {
-    // Whoever was waiting has stopped: the stop button, or a plugin that gave up (D160). Asked
-    // before each rung as well as inside `chat()`, so a rung is not counted against its
-    // provider for a request that is never going to be sent.
-    request.signal?.throwIfAborted()
-    if (unpaid(choice)) {
-      // A cap that is reached does not quietly pick something worse, and it does not
-      // quietly spend either. It stops, and the caller says why — and which wall it was,
-      // because *raise your cap* is the wrong advice for the other one.
-      blocked =
-        onItsOwn ?
-          `${hooks.plugin ?? 'a plugin'} works on its own and does not spend money — connect a free provider, or install a local model`
-        : 'the monthly cap is reached — raise it in settings, or use a free model'
-      continue
-    }
-    if (!open(choice)) continue
-    /**
-     * **Nothing is billed without a ceiling on the reply.** Input tokens can be counted
-     * before sending and output tokens cannot, so this is the only thing standing between a
-     * paid model and a cost nobody bounded.
-     *
-     * Loudly, and not as a rung failure. A caller that can reach a paid model and did not
-     * say how much reply it is willing to pay for is a bug in that caller, and quietly
-     * falling to the next rung would hide it until the bill arrived. Free calls are
-     * untouched: there is nothing there to bound.
-     */
-    if (paid(choice.model.tier) && request.maxTokens === undefined) {
-      throw new Error(
-        `${choice.model.name} costs money and no maxTokens was set — a billed call must bound its reply.`,
-      )
-    }
-    // What this rung is sent — the same for every rung unless the caller dresses it per model (§2).
-    const messages = hooks.messagesFor?.(choice) ?? request.messages
-    /**
-     * **The day's allowance is a limit, not a line crossed afterwards** (D186). Before a paid rung
-     * is asked, the most it could bill — everything sent, and the whole reply ceiling — is held
-     * to what today has left; one that could go past it is skipped as the cap skips it, and the
-     * walk goes on to a cheaper rung or a free one. Nothing is said unless nothing answers.
-     */
-    if (left !== undefined && !affords(choice, messages)) {
-      blocked = `${choice.model.name} could cost up to ${money(dearest(choice.model, messages, request))} for this and today's allowance has ${money(Math.max(0, left))} left — raise it under the paid switch on the Models tab, or wait for tomorrow`
-      continue
-    }
-    // One plain line before the charge, not after it. Nobody is surprised by a bill from
-    // something that did not say anything. It is also this rung's switch line, so the one
-    // below stays quiet for it.
-    if (paid(choice.model.tier)) {
-      ;(hooks.onPaid ?? hooks.onNote)?.(
-        at === 0 ?
-          `Using ${choice.model.name}, which costs money — about $${choice.model.priceIn.toFixed(2)} per million words in.`
-        : `The free models are used up, so this one goes to ${choice.model.name}, which costs money.`,
-      )
-      // Where the switch has a place of its own, it is still said: the charge line is the money,
-      // the switch is the model (§4 G). Where it has not, the charge line was the switch line.
-      if (hooks.onSwitch === undefined) told = failures.length
-    }
-    /**
-     * **One line when the answer comes from somewhere else** (D155), said as this rung starts
-     * answering rather than as it is asked: a switch announced before it has worked is a
-     * promise, and on a rate-limited evening the next three might not keep it.
-     */
-    const switched = (): void => {
-      if (told < failures.length) {
-        const these = failures.slice(told)
-        const says = `${reasons(these, 'could not answer')} — this answer is from ${choice.model.name}.`
-        if (hooks.onSwitch !== undefined) {
-          hooks.onSwitch({ from: these.map((one) => one.choice.model.name), to: choice.model.name, reasons: these.map((one) => one.says), says })
-        } else {
-          hooks.onNote?.(says)
-        }
-      }
-      told = failures.length
-    }
-    let spoke = false
-    const onDelta = (text: string): void => {
-      if (!spoke) switched()
-      spoke = true
-      hooks.onDelta?.(text)
-    }
-    // `T0` means the model is on this machine (only `ollama.ts` ever writes it), so the
-    // payload is not going anywhere and stripping it would cost accuracy to protect against
-    // nothing. Everything else is a third party, free tiers most of all.
-    const outbound = choice.model.tier === 'T0' ? { messages, kinds: [] } : redact(messages)
-    if (outbound.kinds.length > 0) {
-      // Enforcement that says so. Silently editing what somebody wrote is the same
-      // surprise as a bill nobody announced.
-      hooks.onNote?.(`Stripped before sending to ${choice.model.name}: ${summarise(outbound.kinds)}.`)
-    }
-    // Against the **free tier**, which is the only allowance this ledger knows about. A paid
-    // request is billed to credit and spends none of it, and counting it here is how a key
-    // with money behind it talked itself out of the pool halfway through a day.
-    if (!paid(choice.model.tier)) sent(store, choice.provider)
-    hooks.onAsk?.(choice)
-    // A rung the allowance will skip is not one that could still answer, so an empty or cut reply
-    // here is not thrown away for it.
-    const later = choices.slice(at + 1).some((next) => open(next) && affords(next))
-    try {
-      const { message, usage, cut, heard } = await chat(
-        choice.provider,
-        { ...request, messages: outbound.messages, model: choice.model.id },
-        onDelta,
-        secrets,
-      )
-      /**
-       * **A rung that says nothing has not answered**, and until this it counted as one.
-       *
-       * The free tier is full of rows that are not chat models — a content-safety classifier,
-       * a preview that was withdrawn, a router alias pointing at nothing. They accept the
-       * request, return `200`, stream zero tokens, and close. Every check here passed: no
-       * throw, no error status, a `Message` with `content: ''`. So `send` returned it, the
-       * loop ended `answered`, and **the person got an empty bubble after a long wait** with
-       * nothing anywhere saying which model had done it or that anything had gone wrong.
-       *
-       * Found by attaching a picture, and it was never about pictures: those same models
-       * return nothing for a typed sentence too. What the image filter did was narrow the
-       * pool to a few hundred rows and put three of them at the top, which is how a fault
-       * that had always been there became the ordinary case.
-       *
-       * A tool call with no prose is a real answer and must not be caught by this — that is
-       * most of what the agent loop's turns look like.
-       *
-       * **A reply cut off at its ceiling is the same kind of failure** (D155), with one
-       * exception: a paid one has been billed, and asking the next paid model would pay a
-       * second time for an answer that ends at the same ceiling. That one comes back cut, and
-       * the caller decides.
-       */
-      // What the provider said about its limits on this answer (§4 D).
-      if (heard !== undefined) listen(store, choice, heard)
-      const empty = textOf(message).trim() === '' && (message.calls?.length ?? 0) === 0
-      const short =
-        empty ? `${choice.model.name} answered with nothing`
-        : cut && !paid(choice.model.tier) ? `${choice.model.name} ran out of room before finishing`
-        : undefined
-      const outcome: Outcome = short === undefined ? 'answered' : empty ? 'empty' : 'cut'
-      record(choice, outcome, short === undefined ? 200 : 502)
-      // A daily test (§4 E) is evidence about a model, not somebody's spending: it goes to the
-      // record above and never into the ledger a person reads their costs from.
-      const bill = (): void => {
-        const cost = costOf(choice.model, usage)
-        if (left !== undefined) left -= cost
-        if (source !== 'test') store.recordUsage({
-          session: hooks.session,
-          plugin: hooks.plugin,
-          run: hooks.run,
-          model: choice.model.id,
-          // Who was asked for, which is the plan's first rung whether or not it answered. The
-          // two differ exactly when something fell back, and that is the cost worth explaining.
-          asked: choices[0]?.model.id ?? choice.model.id,
-          provider: choice.provider.id,
-          tokensIn: usage.in,
-          tokensOut: usage.out,
-          cost,
-        })
-      }
-      if (short !== undefined && later) {
-        /**
-         * **A paid rung that answered with nothing was still billed for it** — a reasoning model
-         * can spend two thousand tokens thinking and stream no words. Moving on without writing
-         * that down left the day's allowance and the monthly cap short by exactly what it cost,
-         * so the next paid rung was held to money that had already gone.
-         */
-        if (paid(choice.model.tier)) bill()
-        failures.push({ choice, reach: 'model', status: 502, says: short, outcome })
-        if (spoke) hooks.onRestart?.()
-        continue
-      }
-      if (!spoke) switched()
-      bill()
-      return {
-        message,
-        usage,
-        cut,
-        model: choice.model,
-        provider: choice.provider,
-        ...(choice.keyed !== undefined && { keyed: choice.keyed }),
-      }
-    } catch (error) {
-      // A refusal says the most about limits: *try again in 20 seconds* is on the 429 (§4 D).
-      if (error instanceof ProviderError && error.heard !== undefined) listen(store, choice, error.heard)
-      const failure = failed(error, choice)
-      // The stop button, or a bug in core. Neither is somebody else's turn.
-      if (failure === undefined || request.signal?.aborted === true) throw error
-      failures.push(failure)
-      record(choice, failure.outcome, failure.status)
-      if (spoke) hooks.onRestart?.()
-      if (failure.reach === 'provider') refused.add(choice.provider.id)
-      if (failure.reach === 'request') outgrown = Math.max(outgrown ?? 0, choice.model.context)
+  /** Whether somebody is waiting on this — the only walk that races and asks again (see above). */
+  const racing = source !== 'test' && !onItsOwn
+  const hedgeAfter = hooks.hedgeAfter ?? HEDGE_AFTER
+  const starWait = hooks.starWait ?? STAR_WAIT
+  const retryStep = hooks.retryStep ?? RETRY_STEP
+  const began = Date.now()
+  /**
+   * **How long the first model is asked again while it says it is busy.** {@link STAR_WAIT}, and
+   * twice that when the plan has nothing else in it — a pin, a list of one — where the only other
+   * thing to do is stop. Measured from the start of the walk, not of the retries.
+   */
+  const deadline = began + (choices.filter((choice) => open(choice)).length === 1 ? 2 : 1) * starWait
+  /** The conversation's id for a provider that keeps one conversation on one host; nobody else is sent it. */
+  const session = choices.some((choice) => choice.provider.stickySessions === true) ? conversation(store, hooks.session) : undefined
+  const phase = (now: Phase): void => hooks.onPhase?.(now)
+
+  /** Where each failure stood in the plan: a switch names only what stood ahead of the answer. */
+  const place = new Map<Failure, number>()
+  /** Failures already told to the person, so none is said twice. */
+  const told = new Set<Failure>()
+  /** Failures of a rung that had been chosen — on screen already, so always said. */
+  const shown = new Set<Failure>()
+  /** Models each provider refused for want of a key in this walk, and providers that showed life. */
+  const wantsKey = new Map<string, number>()
+  const alive = new Set<string>()
+
+  const runs: Asking[] = []
+  /** The next rung of the plan not yet asked or skipped. */
+  let next = 0
+  /** The first rung asked: the plan's first model, whose priority {@link STAR_WAIT} is. */
+  let star: Asking | undefined
+  let winner: Asking | undefined
+  /** A bug in core, or the stop button — thrown on, never walked past. */
+  let fatal: { error: unknown } | undefined
+  let halted: { error: unknown } | undefined
+  /** The walk is over; anything a cancelled rung still says goes nowhere. */
+  let closed = false
+  let wake = (): void => undefined
+
+  /**
+   * **One line when the answer comes from somewhere else** (D155), said as a rung starts
+   * answering rather than as it is asked: a switch announced before it has worked is a
+   * promise, and on a rate-limited evening the next three might not keep it. It names what
+   * stood ahead of the answer in the plan — a backup that failed behind the first model while
+   * the first model answered is nobody's business.
+   */
+  const switched = (run: Asking): void => {
+    const ahead = (failure: Failure): boolean => (place.get(failure) ?? -1) < run.at || shown.has(failure)
+    const these = failures.filter((failure) => ahead(failure) && !told.has(failure)).sort((a, b) => (place.get(a) ?? 0) - (place.get(b) ?? 0))
+    for (const failure of failures) if (ahead(failure)) told.add(failure)
+    if (these.length === 0) return
+    const says = `${reasons(these, 'could not answer')} — this answer is from ${run.choice.model.name}.`
+    if (hooks.onSwitch !== undefined) {
+      hooks.onSwitch({ from: these.map((one) => one.choice.model.name), to: run.choice.model.name, reasons: these.map((one) => one.says), says })
+    } else {
+      hooks.onNote?.(says)
     }
   }
-  const last = failures.at(-1)
+
+  /** Words on screen: the chosen rung's, and the first of them are where its switch is said. */
+  const deliver = (run: Asking, text: string): void => {
+    if (!run.spoke) {
+      switched(run)
+      phase({ kind: 'writing', model: run.choice.model.name })
+    }
+    run.spoke = true
+    hooks.onDelta?.(text)
+  }
+
+  // A daily test (§4 E) is evidence about a model, not somebody's spending: it goes to the
+  // record and never into the ledger a person reads their costs from.
+  const bill = (run: Asking): void => {
+    const usage = run.answer?.usage ?? { in: 0, out: 0 }
+    const cost = costOf(run.choice.model, usage)
+    if (left !== undefined) left -= cost
+    if (source !== 'test') store.recordUsage({
+      session: hooks.session,
+      plugin: hooks.plugin,
+      run: hooks.run,
+      model: run.choice.model.id,
+      // Who was asked for, which is the plan's first rung whether or not it answered. The
+      // two differ exactly when something fell back, and that is the cost worth explaining.
+      asked: choices[0]?.model.id ?? run.choice.model.id,
+      provider: run.choice.provider.id,
+      tokensIn: usage.in,
+      tokensOut: usage.out,
+      cost,
+    })
+  }
+
+  /** A rung that will not answer in this walk: kept, recorded, and what it rules out for the rest. */
+  const fail = (run: Asking, failure: Failure, recorded = true): void => {
+    failures.push(failure)
+    place.set(failure, run.at)
+    if (run.chosen) shown.add(failure)
+    if (recorded) record(run.choice, failure.outcome, failure.status, run.waited)
+    run.stage = 'failed'
+    if (run.spoke) hooks.onRestart?.()
+    if (winner === run) winner = undefined
+    const provider = run.choice.provider.id
+    if (failure.reach === 'provider') refused.add(provider)
+    if (failure.reach === 'request') outgrown = Math.max(outgrown ?? 0, run.choice.model.context)
+    if (failure.outcome === 'needs-key') {
+      const count = (wantsKey.get(provider) ?? 0) + 1
+      wantsKey.set(provider, count)
+      if (count >= KEY_REFUSALS && !alive.has(provider)) refused.add(provider)
+    }
+  }
+
+  /**
+   * **Passed over, because another rung was chosen.** Cancelled, and not a failure of anybody's —
+   * except the plan's first model, whose switch has to say why it was not the one: busy until the
+   * wait ran out is its one try (recorded once, as busy), and merely not started is said and not
+   * recorded, because it was never given its full patience.
+   */
+  const lose = (run: Asking): void => {
+    run.controller.abort()
+    if (run !== star) {
+      run.stage = 'lost'
+      return
+    }
+    if (run.busy !== undefined) return fail(run, run.busy)
+    const says = `${run.choice.model.name} had not started answering after ${inSeconds(Date.now() - run.began)}`
+    fail(run, { choice: run.choice, reach: 'model', status: 0, says, outcome: 'slow' }, false)
+  }
+
+  /** The rung whose words the person gets: its held words go out, and every other request is cancelled. */
+  const crown = (run: Asking): void => {
+    winner = run
+    run.chosen = true
+    for (const other of runs) if (other !== run && (other.stage === 'running' || other.stage === 'resting')) lose(other)
+    if (run.reasoned && run.held.length === 0 && !run.thought) {
+      run.thought = true
+      phase({ kind: 'thinking', model: run.choice.model.name })
+    }
+    const held = run.held
+    run.held = []
+    for (const text of held) deliver(run, text)
+  }
+
+  /**
+   * **Who is chosen, if anybody yet.** The first model the moment it shows a sign of life, and
+   * alone while {@link STAR_WAIT} lasts and it is still being asked. After that, or once it has
+   * failed for good, whichever rung showed a sign first — the lower in the plan on a tie.
+   */
+  const choose = (): void => {
+    if (winner !== undefined) return
+    if (star !== undefined && Date.now() < began + starWait && star.stage !== 'failed' && star.stage !== 'lost') {
+      if (star.stage === 'done' || star.waited !== undefined) crown(star)
+      return
+    }
+    const when = (run: Asking): number => run.signed ?? run.finished ?? Infinity
+    let best: Asking | undefined
+    for (const run of runs) {
+      if (!(run.stage === 'done' || (run.stage === 'running' && run.signed !== undefined))) continue
+      if (best === undefined || when(run) < when(best) || (when(run) === when(best) && run.at < best.at)) best = run
+    }
+    if (best !== undefined) crown(best)
+  }
+
+  /** Whether anything else in this walk could still answer — so an empty reply need not be the answer. */
+  const hope = (except: Asking): boolean =>
+    runs.some((run) => run !== except && (run.stage === 'running' || run.stage === 'resting' || run.stage === 'done' || (run.stage === 'lost' && open(run.choice)))) ||
+    // A rung the allowance will skip is not one that could still answer.
+    choices.slice(next).some((choice) => open(choice) && affords(choice))
+
+  /** The pause before asking a busy first model again ({@link RETRY_STEP}): growing, and spread. */
+  const pause = (attempt: number): number => retryStep * attempt * (0.75 + Math.random() / 2)
+
+  /** When a busy first model is asked again, or `undefined` when it is not: only a host that is full right now, only while the wait lasts. */
+  const again = (run: Asking, error: unknown): number | undefined => {
+    if (!racing || run !== star || run.waited !== undefined) return undefined
+    if (!(error instanceof ProviderError) || error.trouble !== 'contended') return undefined
+    // A `retry-after` is the provider saying when; one past the wait says there is no point.
+    const resume = Math.max(Date.now() + pause(run.attempt), error.heard?.retryAt ?? 0)
+    return resume < deadline ? resume : undefined
+  }
+
+  const answered = (run: Asking, answer: Awaited<ReturnType<typeof chat>>): void => {
+    const { message, cut, heard } = answer
+    // What the provider said about its limits on this answer (§4 D).
+    if (heard !== undefined) listen(store, run.choice, heard)
+    run.answer = answer
+    /**
+     * **A rung that says nothing has not answered**, and until this it counted as one.
+     *
+     * The free tier is full of rows that are not chat models — a content-safety classifier,
+     * a preview that was withdrawn, a router alias pointing at nothing. They accept the
+     * request, return `200`, stream zero tokens, and close. Every check here passed: no
+     * throw, no error status, a `Message` with `content: ''`. So `send` returned it, the
+     * loop ended `answered`, and **the person got an empty bubble after a long wait** with
+     * nothing anywhere saying which model had done it or that anything had gone wrong.
+     *
+     * Found by attaching a picture, and it was never about pictures: those same models
+     * return nothing for a typed sentence too. What the image filter did was narrow the
+     * pool to a few hundred rows and put three of them at the top, which is how a fault
+     * that had always been there became the ordinary case.
+     *
+     * A tool call with no prose is a real answer and must not be caught by this — that is
+     * most of what the agent loop's turns look like.
+     *
+     * **A reply cut off at its ceiling is the same kind of failure** (D155), with one
+     * exception: a paid one has been billed, and asking the next paid model would pay a
+     * second time for an answer that ends at the same ceiling. That one comes back cut, and
+     * the caller decides.
+     */
+    const empty = textOf(message).trim() === '' && (message.calls?.length ?? 0) === 0
+    const short =
+      empty ? `${run.choice.model.name} answered with nothing`
+      : cut && !paid(run.choice.model.tier) ? `${run.choice.model.name} ran out of room before finishing`
+      : undefined
+    const outcome: Outcome = short === undefined ? 'answered' : empty ? 'empty' : 'cut'
+    if (short !== undefined && hope(run)) {
+      /**
+       * **A paid rung that answered with nothing was still billed for it** — a reasoning model
+       * can spend two thousand tokens thinking and stream no words. Moving on without writing
+       * that down left the day's allowance and the monthly cap short by exactly what it cost,
+       * so the next paid rung was held to money that had already gone.
+       */
+      if (paid(run.choice.model.tier)) bill(run)
+      return fail(run, { choice: run.choice, reach: 'model', status: 502, says: short, outcome })
+    }
+    // Recorded as it finishes, chosen or not: a backup that answered in full did answer.
+    record(run.choice, outcome, short === undefined ? 200 : 502, run.waited)
+    if (outcome === 'answered') alive.add(run.choice.provider.id)
+    run.stage = 'done'
+    run.finished = Date.now()
+  }
+
+  const fell = (run: Asking, error: unknown): void => {
+    // The stop button: nobody is waiting, so it is nobody's failure and nobody else's turn.
+    if (request.signal?.aborted === true) {
+      halted ??= { error }
+      return
+    }
+    // A refusal says the most about limits: *try again in 20 seconds* is on the 429 (§4 D).
+    if (error instanceof ProviderError && error.heard !== undefined) listen(store, run.choice, error.heard)
+    const failure = failed(error, run.choice)
+    // A bug in core. Not somebody else's turn.
+    if (failure === undefined) {
+      fatal ??= { error }
+      return
+    }
+    const resume = again(run, error)
+    if (resume !== undefined) {
+      run.stage = 'resting'
+      run.resume = resume
+      run.busy = failure
+      return
+    }
+    fail(run, failure)
+  }
+
+  /** One request to one rung: a first ask, an ask again after a busy reply, or a rung that lost asked again. */
+  const ask = (run: Asking, how: { retry?: boolean; behind?: Asking } = {}): void => {
+    // Whoever was waiting has stopped: the stop button, or a plugin that gave up (D160). Asked
+    // before each request as well as inside `chat()`, so a rung is not counted against its
+    // provider for a request that is never going to be sent.
+    request.signal?.throwIfAborted()
+    run.attempt += 1
+    run.stage = 'running'
+    delete run.resume
+    delete run.waited
+    delete run.signed
+    run.reasoned = false
+    run.thought = false
+    run.held = []
+    run.controller = new AbortController()
+    if (how.retry !== true) run.began = Date.now()
+    const signal = request.signal === undefined ? run.controller.signal : AbortSignal.any([request.signal, run.controller.signal])
+    const { choice } = run
+    // Against the **free tier**, which is the only allowance this ledger knows about. A paid
+    // request is billed to credit and spends none of it, and counting it here is how a key
+    // with money behind it talked itself out of the pool halfway through a day. Every ask again
+    // is a request of its own, and counted as one.
+    if (!paid(choice.model.tier)) sent(store, choice.provider)
+    const name = choice.model.name
+    if (how.retry === true) {
+      phase({ kind: 'retrying', model: name, attempt: run.attempt })
+    } else {
+      hooks.onAsk?.(choice)
+      const behind = how.behind
+      phase(
+        behind === undefined ? { kind: 'asking', model: name }
+        : { kind: 'backup', model: name, behind: behind.choice.model.name, why: behind.busy !== undefined ? 'busy' : 'slow' },
+      )
+    }
+    const attempt = run.attempt
+    /** Whether what this request says still matters: the walk goes on, and this is the rung's current request. */
+    const current = (): boolean => !closed && run.attempt === attempt && run.stage === 'running'
+    const settle = (then: () => void): void => {
+      if (!current()) return
+      try {
+        then()
+      } catch (error) {
+        fatal ??= { error }
+      }
+      wake()
+    }
+    void chat(
+      choice.provider,
+      { ...request, messages: run.messages, model: choice.model.id, signal, ...(session !== undefined && { session }) },
+      (text) => {
+        if (!current()) return
+        if (run.chosen) deliver(run, text)
+        else run.held.push(text)
+      },
+      secrets,
+      {
+        onSign: (kind: Sign, waited: number) => {
+          if (!current()) return
+          if (run.waited === undefined) {
+            run.waited = waited
+            run.signed = Date.now()
+          }
+          alive.add(choice.provider.id)
+          if (kind === 'reasoning') {
+            run.reasoned = true
+            if (run.chosen && !run.spoke && !run.thought) {
+              run.thought = true
+              phase({ kind: 'thinking', model: name })
+            }
+          }
+          wake()
+        },
+      },
+    ).then(
+      (answer) => settle(() => answered(run, answer)),
+      (error: unknown) => settle(() => fell(run, error)),
+    )
+  }
+
+  /**
+   * **The next rung to ask**, after every check that could skip it — or `undefined` when there is
+   * none, or when the next is paid and `paidToo` is false: a paid rung is only ever asked alone,
+   * so it waits its turn rather than being skipped. A rung that lost comes before anything new.
+   */
+  const pick = (paidToo: boolean): Asking | undefined => {
+    request.signal?.throwIfAborted()
+    const lost = runs.filter((run) => run.stage === 'lost' && open(run.choice)).sort((a, b) => a.at - b.at)[0]
+    if (lost !== undefined) return lost
+    for (; next < choices.length; next++) {
+      const at = next
+      const choice = choices[at]
+      if (choice === undefined) continue
+      if (unpaid(choice)) {
+        // A cap that is reached does not quietly pick something worse, and it does not
+        // quietly spend either. It stops, and the caller says why — and which wall it was,
+        // because *raise your cap* is the wrong advice for the other one.
+        blocked =
+          onItsOwn ?
+            `${hooks.plugin ?? 'a plugin'} works on its own and does not spend money — connect a free provider, or install a local model`
+          : 'the monthly cap is reached — raise it in settings, or use a free model'
+        continue
+      }
+      if (!open(choice)) continue
+      if (paid(choice.model.tier) && !paidToo) return undefined
+      /**
+       * **Nothing is billed without a ceiling on the reply.** Input tokens can be counted
+       * before sending and output tokens cannot, so this is the only thing standing between a
+       * paid model and a cost nobody bounded.
+       *
+       * Loudly, and not as a rung failure. A caller that can reach a paid model and did not
+       * say how much reply it is willing to pay for is a bug in that caller, and quietly
+       * falling to the next rung would hide it until the bill arrived. Free calls are
+       * untouched: there is nothing there to bound.
+       */
+      if (paid(choice.model.tier) && request.maxTokens === undefined) {
+        throw new Error(
+          `${choice.model.name} costs money and no maxTokens was set — a billed call must bound its reply.`,
+        )
+      }
+      // What this rung is sent — the same for every rung unless the caller dresses it per model (§2).
+      const messages = hooks.messagesFor?.(choice) ?? request.messages
+      /**
+       * **The day's allowance is a limit, not a line crossed afterwards** (D186). Before a paid rung
+       * is asked, the most it could bill — everything sent, and the whole reply ceiling — is held
+       * to what today has left; one that could go past it is skipped as the cap skips it, and the
+       * walk goes on to a cheaper rung or a free one. Nothing is said unless nothing answers.
+       */
+      if (left !== undefined && !affords(choice, messages)) {
+        blocked = `${choice.model.name} could cost up to ${money(dearest(choice.model, messages, request))} for this and today's allowance has ${money(Math.max(0, left))} left — raise it under the paid switch on the Models tab, or wait for tomorrow`
+        continue
+      }
+      next = at + 1
+      // One plain line before the charge, not after it. Nobody is surprised by a bill from
+      // something that did not say anything. It is also this rung's switch line, so the one
+      // below stays quiet for it.
+      if (paid(choice.model.tier)) {
+        ;(hooks.onPaid ?? hooks.onNote)?.(
+          at === 0 ?
+            `Using ${choice.model.name}, which costs money — about $${choice.model.priceIn.toFixed(2)} per million words in.`
+          : `The free models are used up, so this one goes to ${choice.model.name}, which costs money.`,
+        )
+        // Where the switch has a place of its own, it is still said: the charge line is the money,
+        // the switch is the model (§4 G). Where it has not, the charge line was the switch line.
+        if (hooks.onSwitch === undefined) for (const failure of failures) told.add(failure)
+      }
+      // `T0` means the model is on this machine (only `ollama.ts` ever writes it), so the
+      // payload is not going anywhere and stripping it would cost accuracy to protect against
+      // nothing. Everything else is a third party, free tiers most of all.
+      const outbound = choice.model.tier === 'T0' ? { messages, kinds: [] } : redact(messages)
+      if (outbound.kinds.length > 0) {
+        // Enforcement that says so. Silently editing what somebody wrote is the same
+        // surprise as a bill nobody announced.
+        hooks.onNote?.(`Stripped before sending to ${choice.model.name}: ${summarise(outbound.kinds)}.`)
+      }
+      const run: Asking = {
+        at,
+        choice,
+        messages: outbound.messages,
+        stage: 'running',
+        attempt: 0,
+        began: Date.now(),
+        controller: new AbortController(),
+        reasoned: false,
+        held: [],
+        chosen: false,
+        spoke: false,
+        thought: false,
+      }
+      runs.push(run)
+      star ??= run
+      return run
+    }
+    return undefined
+  }
+
+  /**
+   * **Ask whoever should be asked now.** Nothing out: the next rung, paid or free, as this always
+   * did. One out, somebody waiting, no answer held, and no sign of life from it after
+   * {@link HEDGE_AFTER}: the next free rung beside it — never a paid one, and never beside a paid one.
+   */
+  const fill = (): void => {
+    if (winner !== undefined || runs.some((run) => run.stage === 'done')) return
+    const out = runs.filter((run) => run.stage === 'running' || run.stage === 'resting')
+    if (out.length === 0) {
+      const run = pick(true)
+      if (run !== undefined) ask(run)
+      return
+    }
+    const [other] = out
+    if (!racing || out.length > 1 || other === undefined || paid(other.choice.model.tier) || other.signed !== undefined) return
+    if (Date.now() < other.began + hedgeAfter) return
+    const run = pick(false)
+    if (run !== undefined) ask(run, { behind: other })
+  }
+
+  /** Until something happens: a sign, an answer, a failure, the stop button — or the next moment the clock matters. */
+  const rest = async (): Promise<void> => {
+    const now = Date.now()
+    const moments: number[] = []
+    for (const run of runs) if (run.stage === 'resting' && run.resume !== undefined) moments.push(run.resume)
+    if (winner === undefined) moments.push(began + starWait)
+    const out = runs.filter((run) => run.stage === 'running' || run.stage === 'resting')
+    const [only] = out
+    if (racing && winner === undefined && out.length === 1 && only !== undefined && only.signed === undefined) moments.push(only.began + hedgeAfter)
+    const soonest = Math.min(...moments.filter((moment) => moment > now))
+    let timer: ReturnType<typeof setTimeout> | undefined
+    await new Promise<void>((resolve) => {
+      wake = resolve
+      if (Number.isFinite(soonest)) timer = setTimeout(resolve, soonest - now)
+    })
+    clearTimeout(timer)
+    wake = () => undefined
+  }
+
+  const finish = (run: Asking, answer: Awaited<ReturnType<typeof chat>>): Answer => {
+    const { message, usage, cut } = answer
+    if (!run.spoke) switched(run)
+    bill(run)
+    return {
+      message,
+      usage,
+      cut,
+      model: run.choice.model,
+      provider: run.choice.provider,
+      ...(run.choice.keyed !== undefined && { keyed: run.choice.keyed }),
+    }
+  }
+
+  const woken = (): void => wake()
+  request.signal?.addEventListener('abort', woken)
+  try {
+    for (;;) {
+      if (halted !== undefined) throw halted.error
+      request.signal?.throwIfAborted()
+      if (fatal !== undefined) throw fatal.error
+      const now = Date.now()
+      for (const run of runs) if (run.stage === 'resting' && (run.resume ?? 0) <= now) ask(run, { retry: true })
+      choose()
+      if (winner?.stage === 'done' && winner.answer !== undefined) return finish(winner, winner.answer)
+      fill()
+      if (winner === undefined && !runs.some((run) => run.stage === 'running' || run.stage === 'resting' || run.stage === 'done')) break
+      await rest()
+    }
+  } finally {
+    closed = true
+    request.signal?.removeEventListener('abort', woken)
+    for (const run of runs) if (run.stage === 'running') run.controller.abort()
+  }
+  // In the plan's order, whatever order they failed in: two can be out at once.
+  const all = [...failures].sort((a, b) => (place.get(a) ?? 0) - (place.get(b) ?? 0))
+  const last = all.at(-1)
   if (last === undefined) throw new ProviderError(blocked === undefined ? 503 : 402, blocked ?? 'nothing was available to ask')
-  const stop = new ProviderError(last.status, stopped(failures, blocked))
+  const stop = new ProviderError(last.status, stopped(all, blocked))
   if (refused.size > 0) stop.refused = [...refused]
   if (failures.every((one) => one.outcome === 'unreachable')) stop.offline = true
   throw stop
