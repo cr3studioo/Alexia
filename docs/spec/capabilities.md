@@ -109,6 +109,7 @@ name and becomes a drop-in alternative rather than a competitor.
 | `voice.render` | text in, **audio bytes out** — for audio that has to go somewhere other than these speakers | `plugins/voice` (M7) |
 | `document.extract` | **a file in, markdown out** — what a document says | `plugins/documents` |
 | `image.ocr` | **a picture in, the words in it out** — a path or the bytes, text in reading order | `plugins/ocr` |
+| `commitments.due` | nothing in (or `today`, the caller's own date as `YYYY-MM-DD`), **what is due out** — the open commitments due today or already late, one per line, oldest first, and empty when there are none. `structuredContent` carries the same as `{ items: [{ id, text, by, overdue, mine }] }` | `plugins/commitments` |
 
 **A plugin can ask whether any of them is going to be answered**, without learning who would:
 `alexia/answers` takes a capability name and returns two booleans — *something enabled promises
@@ -116,7 +117,7 @@ it* and *something that promises it is installed and switched off*
 ([`wire-protocol.md`](./wire-protocol.md#alexiaanswers), `alexia_protocol` 10). It is the
 reading half of `alexia/capability/call` and keeps the same invariant.
 
-Thirteen entries, because thirteen exist — `memory.remember` and `memory.recall` were shipped by
+Fourteen entries, because fourteen exist — `memory.remember` and `memory.recall` were shipped by
 `plugins/memory` from the day it existed and were missing from this table until 2026-09-19,
 which is the failure mode the paragraph below warns about read from the other end: a name in a
 manifest that the register never learned about. `demo.greet` is real: `plugins/hello` provides it and

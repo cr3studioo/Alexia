@@ -8,6 +8,7 @@ import { commands, pins, run } from '../src/commands.js'
 import type { Provider } from '../src/provider.js'
 import { MODES } from '../src/router.js'
 import { Store } from '../src/store.js'
+import { setCaps } from '../src/usage.js'
 
 // M1-12. Commands come off manifests, so deleting a folder removes them — which is the
 // invariant again, wearing a different hat. Naming plugins here is fine: the rule is about
@@ -159,6 +160,65 @@ test('/help is the list, so a place with no palette still has one', async () => 
   expect(note).toContain('/new —')
   expect(note).toContain('/local —')
   expect(note).toContain('/paired —')
+})
+
+test('/help hands over the list as data too, so a phone builds its menu without parsing a paragraph', async () => {
+  const store = new Store(':memory:')
+  const manifests = [plugin('telegram', 'paired'), plugin('voice', 'new')]
+  const ran = await run('/help', { store, manifests })
+  const data = ran.data as { name: string; summary: string }[]
+
+  // The same list the lines were written from, in the same order, and nothing else on a row:
+  // which plugin a command came from is core's business, not the menu's.
+  expect(data).toEqual(commands(manifests).map(({ name, summary }) => ({ name, summary })))
+  expect(data.map((one) => one.name)).toEqual(expect.arrayContaining(['new', 'status', 'paired', 'voice.new']))
+  expect(ran.note.split('\n')).toEqual(data.map((one) => `/${one.name} — ${one.summary}`))
+  // A command with nothing more than its sentence carries nothing more.
+  expect((await run('/cheap', { store })).data).toBeUndefined()
+  store.close()
+})
+
+test('/status says where things stand, in one line and as the facts that line was made of', async () => {
+  const store = new Store(':memory:')
+
+  // Nobody has said anything yet: the defaults, and no limit written as though somebody hit one.
+  const fresh = await run('/status', { store })
+  expect(fresh).toEqual({
+    ok: true,
+    note: 'Combined · cheapest first · $0.00 today · $0.00 this month',
+    data: { mode: 'combined', prefer: 'cheap', today: { spent: 0, allowance: 0 }, month: { spent: 0 }, running: false },
+  })
+
+  // Set, spent and capped — each part of the line appears once there is something to say.
+  await run('/cloud', { store })
+  await run('/best', { store })
+  setCaps(store, { monthly: 20, daily: 1 })
+  store.recordUsage({ at: Date.now(), model: 'm', provider: 'p', tokensIn: 1, tokensOut: 1, cost: 0.12 })
+  const set = await run('/status', { store, running: () => true })
+  expect(set.note).toBe('Cloud · strongest first · $0.12 of $1.00 today · $0.12 this month of $20.00 · working on something')
+  expect(set.data).toEqual({
+    mode: 'cloud',
+    prefer: 'best',
+    today: { spent: expect.closeTo(0.12), allowance: 1 },
+    month: { spent: expect.closeTo(0.12), cap: 20 },
+    running: true,
+  })
+
+  // It reports and never acts: nothing it read has moved.
+  expect(pins(store)).toEqual({ placement: MODES.cloud, prefer: 'best' })
+  store.close()
+})
+
+test('/status asks the caller whether anything is running, and says nothing when it cannot know', async () => {
+  const store = new Store(':memory:')
+  // *Running* belongs to whoever holds the task, which this file never does — so it is a
+  // hook, like `/new`'s, and a caller without one gets no guess.
+  expect((await run('/status', { store, running: () => false })).note).toContain('· nothing running')
+  const unknown = await run('/status', { store })
+  expect(unknown.note).not.toContain('running')
+  expect(unknown.note).not.toContain('working')
+  expect((unknown.data as { running: boolean }).running).toBe(false)
+  store.close()
 })
 
 // `/providers`. Free tiers die monthly, and a table copied from somewhere goes stale in

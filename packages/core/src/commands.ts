@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import type { Manifest } from '@alexia/protocol'
+import type { Manifest, Standing } from '@alexia/protocol'
 import { report, verify, type Provider } from './provider.js'
 import { MODES, type Pins } from './router.js'
 import { CORE } from './secrets.js'
 import type { Store } from './store.js'
+import { allowance, dollars, today } from './usage.js'
 
 /**
  * Slash commands: the shortcut, never the only route. Every one of these has a control in
@@ -59,6 +60,13 @@ const BUILT_IN: Command[] = [
    * that says which half of that it actually is.
    */
   { name: 'providers', summary: 'Check every provider: which answer, and how old each check is.' },
+  /**
+   * The other question a place with no screen cannot answer by looking: **what is it set to,
+   * what has it cost, and is it busy?** The window shows all of that without being asked — the
+   * mode on its switch, the spend above the message box, a stop button while something runs —
+   * and a phone shows none of it. Reports, never acts, like `/providers`.
+   */
+  { name: 'status', summary: 'Where things stand: the mode, the preference, what has been spent, and whether anything is running.' },
 ]
 
 /**
@@ -95,16 +103,58 @@ export function setPin(store: Store, change: Omit<Pins, 'placement'>): void {
   store.kvSet(CORE, 'pins', { ...chosen(store), ...change })
 }
 
+/** Where the work runs, as the person last said it. Combined until they have said anything. */
+const modeOf = (store: Store): keyof typeof MODES => (store.kvGet(CORE, 'mode') as keyof typeof MODES | undefined) ?? 'combined'
+
 /** The pins as they stand, which is what every request is routed against. */
 export function pins(store: Store): Pins {
-  const mode = (store.kvGet(CORE, 'mode') as keyof typeof MODES | undefined) ?? 'combined'
-  return { ...chosen(store), placement: MODES[mode] }
+  return { ...chosen(store), placement: MODES[modeOf(store)] }
+}
+
+/**
+ * **Where things stand**, as facts and as the one line that says them (`/status`).
+ *
+ * Only the parts that exist: a month with no cap is money spent, not money spent *of* nothing,
+ * and an allowance of zero — the default, and the reason paid models are never reached for on
+ * their own — is not written as *$0.00 of $0.00*, which reads as a limit somebody hit. Whether
+ * something is running is said only by a caller that can know; this file cannot.
+ */
+export function standing(store: Store, running?: () => boolean): { note: string; data: Standing } {
+  const mode = modeOf(store)
+  const prefer = chosen(store).prefer ?? 'cheap'
+  const day = today(store)
+  const { spent, cap } = allowance(store)
+  const busy = running?.()
+  const note = [
+    `${mode.charAt(0).toUpperCase()}${mode.slice(1)}`,
+    prefer === 'best' ? 'strongest first' : 'cheapest first',
+    day.allowance > 0 ? `${dollars(day.spent)} of ${dollars(day.allowance)} today` : `${dollars(day.spent)} today`,
+    cap === undefined ? `${dollars(spent)} this month` : `${dollars(spent)} this month of ${dollars(cap)}`,
+    ...(busy === undefined ? [] : [busy ? 'working on something' : 'nothing running']),
+  ].join(' · ')
+  return {
+    note,
+    data: {
+      mode,
+      prefer,
+      today: { spent: day.spent, allowance: day.allowance },
+      month: { spent, ...(cap !== undefined && { cap }) },
+      running: busy === true,
+    },
+  }
 }
 
 export interface Ran {
   ok: boolean
   /** What to show. One line, in the words the person typing would use. */
   note: string
+  /**
+   * **The same answer as data**, for a surface that draws it itself — the structured twin of
+   * `note`, never a replacement for it. `/help` hands over the list it wrote the lines from, so a
+   * phone's own `/` menu is not built by parsing a paragraph; `/status` hands over the facts its
+   * sentence was made of. Absent for a command that has nothing more than its sentence.
+   */
+  data?: unknown
 }
 
 /**
@@ -131,6 +181,12 @@ export async function run(
      * Neither knows about the other, and this file knows about neither.
      */
     newChat?(): Promise<Ran>
+    /**
+     * **Is a task running right now?** For `/status`, and a hook for the same reason `newChat`
+     * is: *running* is a fact about whoever holds the task, and this file holds none. Absent,
+     * and the line says nothing either way rather than guessing *no*.
+     */
+    running?(): boolean
     /** The table to check, defaulting to all of it. A seam, so the test does not need a network. */
     providers?: readonly Provider[]
   },
@@ -157,13 +213,14 @@ export async function run(
           note: 'there is nowhere to start a new conversation from here',
         }
       )
-    case 'help':
+    case 'help': {
+      const list = commands(context.manifests)
       return {
         ok: true,
-        note: commands(context.manifests)
-          .map((one) => `/${one.name} — ${one.summary}`)
-          .join('\n'),
+        note: list.map((one) => `/${one.name} — ${one.summary}`).join('\n'),
+        data: list.map(({ name, summary }) => ({ name, summary })),
       }
+    }
     case 'local':
       return mode('local', 'Local: everything runs on this machine, including the models.')
     case 'combined':
@@ -183,6 +240,8 @@ export async function run(
       // disabling it here would hide the one thing worth knowing, and writing today's date
       // over its `verified` would be a check nobody performed.
       return { ok: true, note: report(await verify(context.providers)) }
+    case 'status':
+      return { ok: true, ...standing(store, context.running) }
   }
 
   // A plugin's, then — by the bare word it won, or by its namespaced form, which works

@@ -3,10 +3,12 @@ import {
   ALEXIA_METHODS,
   MCP_REVISIONS,
   mcpRefusal,
+  STREAM_META,
   versionVerdict,
   type AlexiaMethod,
   type AlexiaParams,
   type Manifest,
+  type StreamFrame,
 } from '@alexia/protocol'
 import {
   Client,
@@ -50,8 +52,16 @@ export interface HostServices {
    *
    * `signal` aborts when the plugin stops waiting (D160): the SDK's own cancellation, so a
    * plugin that has already shown its refusal does not leave core asking model after model.
+   *
+   * `stream` is there only when the plugin's request carried a progress token, and it is where
+   * the answer's words go while they are written (`alexia/stream`). Absent, no frame goes out.
    */
-  sampling(pluginId: string, params: CreateMessageRequestParams, signal?: AbortSignal): Promise<CreateMessageResult>
+  sampling(
+    pluginId: string,
+    params: CreateMessageRequestParams,
+    signal?: AbortSignal,
+    stream?: (frame: StreamFrame) => void,
+  ): Promise<CreateMessageResult>
   /** The folders the user has put in scope. A fixed stub at M0. */
   roots(pluginId: string): Root[] | Promise<Root[]>
   /** One line the plugin wrote to stderr. stdout is the wire; stderr is the log. */
@@ -258,9 +268,40 @@ export class PluginProcess {
     })
     // The second argument carries the plugin's cancel. It was dropped here, so when Adapt gave
     // up at 110 s, `send()` went on down the plan behind a refusal already on screen (D159).
-    client.setRequestHandler('sampling/createMessage', (request, ctx) =>
-      this.host.sampling(this.id, request.params, ctx.mcpReq.signal),
-    )
+    client.setRequestHandler('sampling/createMessage', (request, ctx) => {
+      /**
+       * **The answer while it is written, on the plugin's own token** (`alexia/stream`).
+       *
+       * A plugin that passes `onprogress` to `createMessage` puts a `progressToken` on its
+       * request, and MCP's own `notifications/progress` on that token is the one channel back
+       * to it that exists before the result does — the same call a plugin makes to core about
+       * a tool (`@alexia/sdk`'s `progress`), in the other direction. No token, no frames, which
+       * is every plugin written before this.
+       *
+       * `progress` counts up from one because MCP says it must rise, and has no `total`
+       * because an answer does not know its own length. A frame that cannot be sent is
+       * dropped: the plugin went away or the request already ended, and either way the
+       * result is still the answer.
+       */
+      const progressToken = ctx.mcpReq._meta?.progressToken
+      let progress = 0
+      const stream =
+        progressToken === undefined ? undefined : (
+          (frame: StreamFrame): void => {
+            try {
+              void ctx.mcpReq
+                .notify({
+                  method: 'notifications/progress',
+                  params: { progressToken, progress: ++progress, _meta: { [STREAM_META]: frame } },
+                })
+                .catch(() => {})
+            } catch {
+              // Thrown rather than rejected — a context with no live request to relate it to.
+            }
+          }
+        )
+      return this.host.sampling(this.id, request.params, ctx.mcpReq.signal, stream)
+    })
     client.setRequestHandler('roots/list', async () => ({ roots: await this.host.roots(this.id) }))
 
     // The `alexia/*` layer, straight off the protocol package's table: one handler per

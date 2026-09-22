@@ -182,6 +182,101 @@ export const PROVIDES_META = 'alexia/provides'
 export const FILES_META = 'alexia/files'
 
 /**
+ * The `_meta` key on the `notifications/progress` core sends back **while a plugin's
+ * `sampling/createMessage` is still being answered** — the answer's words as they are written.
+ *
+ * The window has had them since M1: the model's words land on screen as they arrive, and the
+ * line under the question says what the wait is doing. A channel plugin had the finished answer
+ * and nothing before it, so a phone showed a typing dot for as long as a slow model took and
+ * then the whole reply at once — which reads as nothing happening, and then everything. The
+ * door was already open: MCP lets a request carry a `progressToken`, and a plugin that passes
+ * `onprogress` to `createMessage` gets one on its request for free. Core now answers on it.
+ *
+ * **Only on the plugin's own token, only when it sent one.** No token, no frames — which is
+ * every plugin written before this, and every call that did not ask. `progress` rises strictly
+ * from one, as MCP requires, and has no `total`: an answer does not know how long it will be.
+ * Each frame carries one {@link StreamFrame} under this key, and a frame may carry more than
+ * one of its three fields.
+ *
+ * A flag a plugin cannot see going wrong, like the others: an Alexia that has never heard of it
+ * sends nothing on the token and the finished answer arrives as it always did, so
+ * `alexia_protocol` does not move. A slash command sends no frames — its answer is one line
+ * that is already written.
+ */
+export const STREAM_META = 'alexia/stream'
+
+/**
+ * One frame of a streamed answer, as {@link STREAM_META} carries it.
+ *
+ * Three fields because a channel showing an answer while it is written needs to be told three
+ * different things, and each of them is something the window is already told on its own stream:
+ */
+export interface StreamFrame {
+  /**
+   * **The words written since the last frame** — appended, never a replacement. Core gathers
+   * them and sends at most a few frames a second, because a pipe carrying one frame per token
+   * is a pipe busy with framing; join every `delta` in order and you have the answer so far.
+   */
+  delta?: string
+  /**
+   * **Throw away every word so far** (D155). The model writing them stopped partway, and the
+   * answer is starting again on the next one — so a draft left showing would be two models'
+   * sentences run together. The words after this frame are the new answer's first.
+   */
+  restart?: true
+  /**
+   * **What the wait is doing** — `choosing`, `asking`, `retrying`, `backup`, `thinking`,
+   * `writing`, `tool` — the same stage names the line under the question in the window reads.
+   * It doubles as a keep-alive: a long tool step sends `tool` every few seconds, so a plugin
+   * that resets its timeout on progress is not left guessing whether a silent minute is a
+   * slow answer or a dead one. A name this list does not have yet is a stage a newer Alexia
+   * added; show nothing for it rather than failing.
+   */
+  phase?: string
+}
+
+/**
+ * The `_meta` key core puts on a `sampling/createMessage` **result that a slash command
+ * answered**, carrying what the command knows as data rather than as a sentence.
+ *
+ * A command's answer is one line in the words the person typing would use, and that stays the
+ * `content` — every channel before this one relayed it and was right to. But a surface with a
+ * shape of its own wants the thing the sentence was written from: a phone's `/` menu is a list
+ * of names and summaries, not a paragraph to parse, and a panel drawing the state wants
+ * numbers it can lay out. So when a command has any, they ride here:
+ *
+ * - `/help` — `[{ name, summary }]`, every command you could type right now, in the order
+ *   `/help` lists them.
+ * - `/status` — a {@link Standing}.
+ *
+ * Absent when the command has nothing more than its sentence, which is most of them. A flag a
+ * plugin cannot see going wrong, like the others: an Alexia that does not set it hands back
+ * the sentence alone, which is every command before this existed, so `alexia_protocol` does
+ * not move. A plugin that needs the list from one parses `/name — summary` lines, which is
+ * what the sentence has always been.
+ */
+export const COMMAND_META = 'alexia/command'
+
+/**
+ * **Where things stand**, as `/status` hands it over on {@link COMMAND_META}.
+ *
+ * The same facts as the sentence, and only the ones core actually has: a month with no cap
+ * has no `cap`, rather than a zero that reads as *nothing may be spent*.
+ */
+export interface Standing {
+  /** Where the work runs: `local`, `combined` or `cloud`. */
+  mode: string
+  /** Cheapest first, or strongest first — the `/cheap` and `/best` pin. */
+  prefer: 'cheap' | 'best'
+  /** Dollars spent today, against the day's allowance for paid models. */
+  today: { spent: number; allowance: number }
+  /** Dollars spent this month, against the monthly cap when somebody has set one. */
+  month: { spent: number; cap?: number }
+  /** Whether a task is running right now. */
+  running: boolean
+}
+
+/**
  * The `_meta` key a plugin puts on a `sampling/createMessage` to hand over **a personality in
  * its three lengths, and which one to hear** (D189).
  *

@@ -78,7 +78,7 @@ export class Presence {
     if (held.paused === 0) this.#beat(held)
   }
 
-  /** Nothing is sent until the matching `resume`. */
+  /** No tick goes out until the matching `resume`. */
   pause(chatId) {
     const held = this.#chats.get(String(chatId))
     if (!held) return
@@ -108,7 +108,7 @@ export class Presence {
     this.#chats.clear()
   }
 
-  /** Send now, then every `EVERY` from now — so a switch never leaves a tick about to fire twice. */
+  /** Send now, then every `EVERY` from now — so a switch leaves no tick about to fire twice. */
   #beat(held) {
     this.#quiet(held)
     this.#send(held)

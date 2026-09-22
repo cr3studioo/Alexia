@@ -1,5 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { APP_VERSION, CORE_CAPABILITIES, FILES_META, LENGTHS_META, TOOLS_META } from '@alexia/protocol'
+import {
+  APP_VERSION,
+  COMMAND_META,
+  CORE_CAPABILITIES,
+  FILES_META,
+  LENGTHS_META,
+  TOOLS_META,
+  type StreamFrame,
+} from '@alexia/protocol'
 import { randomUUID } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import type { CreateMessageResult } from '@modelcontextprotocol/client'
@@ -64,6 +72,7 @@ import {
   type Bubble,
   type Choice,
   type Personality,
+  type Phase,
   type Size,
   type Tier,
 } from './router.js'
@@ -77,6 +86,7 @@ import { tabs as coreTabs } from './panels.js'
 import { actions as coreActions, sources as coreSources, searchable } from './surface.js'
 import { Skills, SKILL_TOOL } from './skills.js'
 import { dataDir, Store, textOf, type Message, type Part } from './store.js'
+import { streamer } from './streaming.js'
 import { PluginTooling } from './tooling.js'
 import { Trace } from './trace.js'
 import { trial } from './trial.js'
@@ -445,8 +455,12 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
      *
      * **The spend lands on the plugin that spent it.** That is the whole reason
      * `usage.plugin` exists, and until something called this it was a column nothing wrote.
+     *
+     * **And the words reach it while they are written**, when it asked for them with a
+     * progress token (`alexia/stream`): the same hooks that feed the window's stream, gathered
+     * into a few frames a second. A slash command sends none — its answer is already written.
      */
-    sample: async (pluginId, params, signal) => {
+    sample: async (pluginId, params, signal, stream) => {
       const asked: Message[] = [
         ...(params.systemPrompt === undefined ? [] : [{ role: 'system' as const, content: params.systemPrompt }]),
         ...params.messages.map((turn) => ({
@@ -495,7 +509,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
       if (!typed.includes('\n') && /^\/[a-z][a-z0-9.-]*(?:\s|$)/i.test(typed)) return asCommand(pluginId, typed)
 
       if (params._meta?.[TOOLS_META] === true) {
-        return asTask(pluginId, asked, signal, background(pluginId), declaredFor(pluginId, params.modelPreferences))
+        return asTask(pluginId, asked, signal, background(pluginId), declaredFor(pluginId, params.modelPreferences), stream)
       }
 
       /**
@@ -552,6 +566,8 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
       const worn = (choice: Choice): { text: string; size: Size } | undefined =>
         lengths === undefined ? undefined : sizedFor(lengths, hear ?? sizeFor(choice, seen))
       sampling += 1
+      // Only for a plugin that asked: without a token there is no clock and nothing to gather.
+      const live = stream === undefined ? undefined : streamer(stream)
       const answer = await send(
         hearAt?.choices ?? verdict.choices,
         {
@@ -565,6 +581,13 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
         secrets,
         {
           plugin: pluginId,
+          // The words, a model that stopped partway, and what the wait is doing — the three
+          // things the window's stream is told, told to the plugin that asked (`alexia/stream`).
+          ...(live !== undefined && {
+            onDelta: (text: string) => live.delta(text),
+            onRestart: () => live.restart(),
+            onPhase: (phase: Phase) => live.phase(phase),
+          }),
           ...(asRun !== undefined && { run: asRun, paidAllowed: !allowance(store).stop }),
           // Today's allowance holds each paid rung to what the reply could cost (D186), so a press
           // asking for a capable model cannot buy the dearest one past what the day has left.
@@ -577,7 +600,12 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
             ],
           }),
         },
-      ).finally(() => (sampling -= 1))
+      ).finally(() => {
+        sampling -= 1
+        // Whatever is still held goes before the result does: they share a pipe, and a frame
+        // arriving after its request was answered arrives at nothing.
+        live?.end()
+      })
       /**
        * **What was heard, and what the chat would do** (D189): the length that went out and on
        * which model, whether that model costs money and what this cost, whether it is a model the
@@ -1201,6 +1229,8 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
       store,
       manifests: manifests(),
       newChat: () => freshFor(pluginId),
+      // For `/status`: the one task this core runs at a time, whoever started it.
+      running: () => task !== undefined,
       call: async (plugin, tool, args) => {
         const ruling = await rulingFor(plugin, tool)
         if (ruling.verdict === 'blocked') throw new Error(ruling.why ?? `${tool} did not run.`)
@@ -1216,7 +1246,15 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
         return commandTool(plugin, tool, args)
       },
     })
-    return { role: 'assistant', model: '', content: { type: 'text', text: ran.note }, stopReason: 'endTurn' }
+    return {
+      role: 'assistant',
+      model: '',
+      content: { type: 'text', text: ran.note },
+      stopReason: 'endTurn',
+      // What the command knows as data, for a channel that draws it itself — a phone's own `/`
+      // menu from `/help`'s list rather than from its lines. A key an older Alexia never sets.
+      ...(ran.data !== undefined && { _meta: { [COMMAND_META]: ran.data } }),
+    }
   }
 
   /**
@@ -1246,6 +1284,8 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     behind = true,
     /** What the plugin declared about the model it needs (M8-1) — the same two on either path. */
     declared: { minTier?: Tier; capable?: boolean } = {},
+    /** Where the answer's words go while they are written, when the plugin asked (`alexia/stream`). */
+    stream?: (frame: StreamFrame) => void,
   ): Promise<CreateMessageResult> {
     if (task) throw new Error('Alexia is already working on something. Try again when it has finished.')
     const started = [...messages].reverse().find((m) => m.role === 'user')
@@ -1260,6 +1300,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     const stop = new AbortController()
     task = stop
     trace.start(runId, text)
+    const live = stream === undefined ? undefined : streamer(stream)
     try {
       const month = allowance(store)
       // The plugin that started this is where the answer will be read (improvement 9).
@@ -1292,10 +1333,23 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
         // The stop button, and the plugin that started this giving up: either one ends the task.
         signal: gaveUp === undefined ? stop.signal : AbortSignal.any([stop.signal, gaveUp]),
         guard: gate(text, runId),
-        // How much of her this step's model was given (§2), and how long each stage took. The only
-        // `on` this path wants: there is no stream here to write a step to, but the record is still
-        // worth keeping — a task started from a phone waits exactly as long as one at the desk.
-        on: { personality: (chars, size) => trace.personality(chars, size), phase: (p) => trace.phase(p) },
+        // How much of her this step's model was given (§2), and how long each stage took — the
+        // record is worth keeping, since a task started from a phone waits exactly as long as one
+        // at the desk. And, for a plugin that asked, **the words while they are written**
+        // (`alexia/stream`): the same `delta`, `restart` and `phase` the window's `/api/chat`
+        // hears, and a tool's progress as a keep-alive, so a long step is not a silent one.
+        on: {
+          personality: (chars, size) => trace.personality(chars, size),
+          phase: (p) => {
+            trace.phase(p)
+            live?.phase(p)
+          },
+          ...(live !== undefined && {
+            delta: (words: string) => live.delta(words),
+            restart: () => live.restart(),
+            progress: () => live.alive(),
+          }),
+        },
         /**
          * The yes, from wherever the person is.
          *
@@ -1368,6 +1422,8 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
       trace.end('refused', { why: said(error), calls: store.callsIn(runId) })
       throw error
     } finally {
+      // Before the result, which shares the pipe: a frame after its answer arrives at nothing.
+      live?.end()
       task = undefined
     }
   }
@@ -1658,6 +1714,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
       const ran = await runCommand(input ?? '', {
         store,
         manifests: manifests(),
+        running: () => task !== undefined,
         // The conversation on screen, which is the one whoever typed this is looking at —
         // and the same action the Chats screen's button runs, rather than a second copy of
         // *what a new conversation is* waiting to disagree with the first.

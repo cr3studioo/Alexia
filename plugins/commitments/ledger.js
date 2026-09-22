@@ -30,6 +30,20 @@ export const overdue = (row, today) =>
   row.state === 'open' && typeof row.by === 'string' && row.by !== '' && row.by < today
 
 /**
+ * **What wants saying this morning**: open, and due today or already past its day
+ * (`commitments.due`).
+ *
+ * Oldest day first, because the one that has waited longest is the one a summary should lead
+ * with. A commitment with no day is left out rather than listed every morning forever: it is
+ * outstanding, and `promised` says so, but nothing about it is due — and a summary that repeats
+ * the same undated line every day is a summary somebody stops reading.
+ */
+export const due = (rows, today) =>
+  rows
+    .filter((row) => row.state === 'open' && typeof row.by === 'string' && row.by !== '' && row.by <= today)
+    .sort((a, b) => (a.by < b.by ? -1 : a.by > b.by ? 1 : 0))
+
+/**
  * One line, as a person reads it.
  *
  * **Whether you imposed it yourself is on the line**, because it is the difference between

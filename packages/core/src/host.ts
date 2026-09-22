@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { ErrorCode, type AlexiaMethod, type AlexiaParams, type HostInfo, type Manifest } from '@alexia/protocol'
+import { ErrorCode, type AlexiaMethod, type AlexiaParams, type HostInfo, type Manifest, type StreamFrame } from '@alexia/protocol'
 import { ProtocolError, type CallToolResult, type CreateMessageRequestParams, type CreateMessageResult, type Root } from '@modelcontextprotocol/client'
 import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
@@ -27,8 +27,16 @@ export interface HostOptions {
   /** What the user renamed Alexia to. Plugins show this, not "Alexia". */
   displayName?: string
   privacyMode?: HostInfo['privacyMode']
-  /** The router (M1-8). Absent means core cannot answer for the model yet, and says so. */
-  sample?(pluginId: string, params: CreateMessageRequestParams, signal?: AbortSignal): Promise<CreateMessageResult>
+  /**
+   * The router (M1-8). Absent means core cannot answer for the model yet, and says so.
+   * `stream`, when the plugin asked for one, takes the answer's words as they are written.
+   */
+  sample?(
+    pluginId: string,
+    params: CreateMessageRequestParams,
+    signal?: AbortSignal,
+    stream?: (frame: StreamFrame) => void,
+  ): Promise<CreateMessageResult>
   /** The folders the user has put in scope. A fixed stub until the UI has a way to add one. */
   roots?(pluginId: string): Root[]
   /** Route a capability to whichever plugin provides it. The resolver lands at M0-7. */
@@ -88,13 +96,18 @@ export class Host implements HostServices {
     return this.options.roots?.(pluginId) ?? []
   }
 
-  async sampling(pluginId: string, params: CreateMessageRequestParams, signal?: AbortSignal): Promise<CreateMessageResult> {
+  async sampling(
+    pluginId: string,
+    params: CreateMessageRequestParams,
+    signal?: AbortSignal,
+    stream?: (frame: StreamFrame) => void,
+  ): Promise<CreateMessageResult> {
     if (!this.options.sample) {
       // Honest rather than convenient: a canned answer here would look like a working model
       // to every plugin author who tried it before M1-8.
       return fail(ErrorCode.INTERNAL_ERROR, 'Alexia has no model wired up yet.')
     }
-    return this.options.sample(pluginId, params, signal)
+    return this.options.sample(pluginId, params, signal, stream)
   }
 
   /** Every `alexia/*` request, already validated against the wire schema by the supervisor. */

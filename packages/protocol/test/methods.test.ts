@@ -4,12 +4,14 @@ import { join } from 'node:path'
 import { describe, expect, test } from 'vitest'
 import {
   ALEXIA_METHODS,
+  COMMAND_META,
   ErrorCode,
   LENGTHS_META,
   PERMISSIONS,
   PREVIEW_META,
   PROVIDES_META,
   STAGES_META,
+  STREAM_META,
   TOOLS_META,
   isAlexiaMethod,
   KV_MAX_BYTES,
@@ -36,9 +38,19 @@ describe('the specs and the code say the same thing', () => {
       .filter((n) => !n.endsWith('/'))
     expect(named.length).toBeGreaterThan(8) // the scanner is actually reading the specs
     // Some are not methods: one notification core sends down, and the `_meta` keys — the two
-    // extension flags on a request (and a personality's lengths, D189), and the two a plugin puts on
-    // a progress notification.
-    const known = [SETTINGS_CHANGED, PROVIDES_META, TOOLS_META, LENGTHS_META, PREVIEW_META, STAGES_META] as string[]
+    // extension flags on a request (and a personality's lengths, D189), the two a plugin puts on
+    // a progress notification, the one core puts on the progress it sends back while a plugin's
+    // answer is written, and a command's data on a result.
+    const known = [
+      SETTINGS_CHANGED,
+      PROVIDES_META,
+      TOOLS_META,
+      LENGTHS_META,
+      PREVIEW_META,
+      STAGES_META,
+      STREAM_META,
+      COMMAND_META,
+    ] as string[]
     const unknown = [...new Set(named)].filter((n) => !isAlexiaMethod(n) && !known.includes(n))
     expect(unknown, 'documented but not implemented').toEqual([])
   })
