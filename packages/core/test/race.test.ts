@@ -287,7 +287,9 @@ test('a first model still busy when the wait runs out gives way to the backup, a
 test('a pinned model that is busy a few times answers, and one busy for good stops after twice the wait', async () => {
   const clock = { hedgeAfter: 20, starWait: 300, retryStep: 10 }
   const store = fresh([['busy3/a', 'busy-then-ok:3']])
-  const got = await send([model('busy3/a', alpha)], hello, store, secrets, clock)
+  // A wait long enough that four round trips fit in it however busy the machine running the whole
+  // suite is: this half is about answering after three busy replies, not about the deadline.
+  const got = await send([model('busy3/a', alpha)], hello, store, secrets, { ...clock, starWait: 5_000 })
   expect(got.message.content).toBe('from busy3/a')
   expect(store.tries().map((one) => one.outcome)).toEqual(['answered'])
   store.close()
