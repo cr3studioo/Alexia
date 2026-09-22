@@ -80,6 +80,7 @@ import { dataDir, Store, textOf, type Message, type Part } from './store.js'
 import { PluginTooling } from './tooling.js'
 import { Trace } from './trace.js'
 import { trial } from './trial.js'
+import { Uptime, watched } from './uptime.js'
 import { allowance, caps, costOf, setCaps, today, warning } from './usage.js'
 
 /**
@@ -697,11 +698,19 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
   /** Every enabled plugin's manifest, which is where its commands come from (M1-12). */
   const manifests = () => plugins.ids.flatMap((id) => plugins.manifest(id) ?? [])
 
+  /**
+   * Which models' hosts are down by their provider's own status (`uptime.ts`): the last read, held
+   * for the life of this core, with the next one started behind it and never waited for.
+   */
+  const uptime = new Uptime()
+
   /** Everything the router needs to know, asked fresh: a tier can be exhausted mid-sentence. */
   const world = async () => {
     const models = catalog.models
     const local = options.local !== false && (await running()) ? await installed() : []
     const rungs = await usable(store, secrets, providers)
+    const tries = store.tries()
+    const standing = pins(store)
     return {
       models,
       local,
@@ -714,7 +723,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
       // What Alexia thinks of each model, from 30 days of tries (D161). Judged on every ask, so a
       // key saved a moment ago brings back a provider set aside for wanting one, without a restart.
       health: judge(
-        store.tries(),
+        tries,
         store.seen(),
         [...models, ...local],
         new Set(rungs.filter((rung) => rung.keyed === true).map((rung) => rung.provider.id)),
@@ -723,6 +732,9 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
       ),
       // Nothing is reported from anywhere else: the hook for a shared record, decided later (§4 J, D160).
       reported: new Set<string>(),
+      // Down by the provider's own status, as last read: a minute old at most, and never waited for.
+      // Not looked at when text is answered on this Mac, where no hosted model is asked.
+      down: standing.placement.text === 'local' ? new Set<string>() : uptime.down(() => watched(rungs, models, tries, standing.model)),
     }
   }
 

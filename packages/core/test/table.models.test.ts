@@ -229,3 +229,23 @@ test('the Models table declares a line per group and chips that match what judge
     for (const tag of chip.tags ?? []) expect(said.has(tag)).toBe(true)
   }
 })
+
+test('a model turned down with a 400 three times in a row is set aside, and its row says so in plain words', async () => {
+  const at = Date.now() - 30 * 60_000
+  for (const later of [0, 5, 10]) {
+    alexia.store.recordTry({
+      provider: 'openrouter',
+      model: 'liquid/lfm-2.5-2.6b:free',
+      outcome: 'failed',
+      status: 400,
+      source: 'chat',
+      at: at + later * 60_000,
+    })
+  }
+  const row = (await rows()).find((one) => one.id === 'openrouter\nliquid/lfm-2.5-2.6b:free')
+  expect(row).toMatchObject({
+    group: MODEL_GROUPS.aside,
+    note: 'Set aside: OpenRouter turned down the request to it three times in a row. Alexia sends it a test message on its own, and one good reply brings it back.',
+    state: '■ set aside · turns every request down',
+  })
+})

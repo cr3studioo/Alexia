@@ -2,7 +2,7 @@
 import { PLANNER, routes, stature, type Model } from './catalog.js'
 import { OLLAMA } from './ollama.js'
 import { sent, spent, underHalf, type Rung } from './pool.js'
-import type { Judgement, Health } from './health.js'
+import { BUSY_HALF_LIFE, type Judgement, type Health } from './health.js'
 import { anonymous, chat, PATIENCE, ProviderError, PROVIDERS, type ChatRequest, type Heard, type Provider, type Usage } from './provider.js'
 import { redact, summarise } from './redact.js'
 import type { SecretStore } from './secrets.js'
@@ -505,8 +505,12 @@ export interface Strike {
  * carrying, rounded. So one failure sinks a model for an hour, two together for two, four for
  * three, and a model that fails every time it is tried is tried again about every hour and a
  * half — never written off, because a rate limit ends and a free tier resets. An hour because
- * the failures this is for mostly are that short: a per-minute limit, a busy worker, a slow
- * evening. The store forgets a strike after a day.
+ * the failures this is for mostly are that short: a timeout, a slow evening, a provider having a
+ * bad afternoon. The store forgets a strike after a day.
+ *
+ * **Except a busy reply, which halves in {@link BUSY_HALF_LIFE}'s two minutes.** A 429 is a host
+ * full for a moment, and an hour of it kept the best free model on this Mac below the rest after
+ * one. Four busy replies together sink a model for six minutes, not three hours.
  */
 export const STRIKE_HALF_LIFE = 60 * 60 * 1000
 
@@ -515,7 +519,8 @@ export function sunk(strikes: readonly Strike[], at: number = Date.now()): Map<s
   const carried = new Map<string, number>()
   for (const strike of strikes) {
     const key = `${strike.provider}\n${strike.model}`
-    carried.set(key, (carried.get(key) ?? 0) + 0.5 ** (Math.max(0, at - strike.at) / STRIKE_HALF_LIFE))
+    const half = strike.outcome === 'busy' ? BUSY_HALF_LIFE : STRIKE_HALF_LIFE
+    carried.set(key, (carried.get(key) ?? 0) + 0.5 ** (Math.max(0, at - strike.at) / half))
   }
   return new Map([...carried].map(([key, weight]) => [key, Math.round(weight)] as const).filter(([, level]) => level > 0))
 }
@@ -1064,6 +1069,7 @@ export type RankKey =
   | 'doubted'
   | 'tools'
   | 'struck'
+  | 'down'
   | 'router'
   | 'ladder'
   | 'tier'
@@ -1145,8 +1151,9 @@ const dollars = (n: number): string => `$${n === 0 || n >= 0.01 ? n.toFixed(2) :
  * **It was not enough on its own** (D159). Only OpenRouter publishes `weekly`, so without an
  * OpenRouter key every free model tied again and `kilo-auto/free`, a router, came first. So a
  * model is now ranked on what predicts a good answer, strongest signal first: what failed on
- * this machine, not a router, the ladder and the price as before, size, then `weekly` lent
- * across providers. Every one of them comes from outside this repo or from this machine.
+ * this machine, what its provider says is down right now, not a router, the ladder and the price
+ * as before, size, then `weekly` lent across providers. Every one of them comes from outside this
+ * repo or from this machine.
  *
  * **An ordered list of named keys, each a comparison and a sentence** (D161). The Models table
  * puts a reason under every row, and a reason written anywhere but here would drift from the
@@ -1154,7 +1161,7 @@ const dollars = (n: number): string => `$${n === 0 || n >= 0.01 ? n.toFixed(2) :
  * key on which two rows differ, which is exactly the key that put one below the other.
  */
 export function ranking(
-  world: Pick<World, 'strikes' | 'health'>,
+  world: Pick<World, 'strikes' | 'health' | 'down'>,
   /**
    * Which end to walk from: the default, `/best`, or a plugin that asked for a model that can
    * do the work ({@link Ask.capable}). The last two differ by exactly one axis — see {@link Axis}.
@@ -1166,8 +1173,11 @@ export function ranking(
   /** How far each model on each provider has sunk on what failed here ({@link sunk}). */
   const weights = sunk(world.strikes ?? [], at)
   const struck = (c: Choice): number => weights.get(idOf(c)) ?? 0
-  /** How each model's latest failure went, for its sentence. */
-  const lately = new Map<string, Outcome | undefined>((world.strikes ?? []).map((one) => [`${one.provider}\n${one.model}`, one.outcome]))
+  /** What it would still carry without its busy replies: what holds it for hours rather than minutes. */
+  const failures = sunk((world.strikes ?? []).filter((one) => one.outcome !== 'busy'), at)
+  const lasting = (c: Choice): number => failures.get(idOf(c)) ?? 0
+  /** What its provider's own status says is down right now (`uptime.ts`). */
+  const down = world.down ?? new Set<string>()
   const judged = (c: Choice): Judgement | undefined => world.health?.get(idOf(c))
   /** Its own usage figure, or one lent to it, or a new model's stand-in. -1 is none, which sorts last. */
   const figure = (c: Choice): number => c.model.weekly ?? judged(c)?.standIn ?? -1
@@ -1226,13 +1236,30 @@ export function ranking(
       /*
        * **Then what failed on this machine** (D159), the strongest signal there is about *this*
        * person's keys and network, and the only one. A model that timed out a minute ago goes
-       * behind the ones that did not, and comes back as the failure ages.
+       * behind the ones that did not, and comes back as the failure ages — in minutes when all it
+       * did was say it was busy ({@link sunk}), so the sentence says which.
        */
       name: 'struck',
       axis: 'sure',
       compare: (a, b) => struck(a) - struck(b),
       says: (a, b) =>
-        `${lately.get(idOf(a)) === 'busy' ? 'Was busy' : 'Failed here'} recently, so it sits below ${b.model.name} for ${struck(a) > 1 ? 'a few hours' : 'about an hour'}.`,
+        lasting(a) > 0 ?
+          `Failed here recently, so it sits below ${b.model.name} for ${lasting(a) > 1 ? 'a few hours' : 'about an hour'}.`
+        : `Was busy recently, so it sits below ${b.model.name} for ${struck(a) > 1 ? 'a few minutes' : 'a couple of minutes'}.`,
+    },
+    {
+      /*
+       * **Then what its provider says is down right now.** OpenRouter publishes, for every host
+       * serving a model, how much of the last five minutes it answered; a model all of whose
+       * hosts are under half is read as down (`uptime.ts`). After what failed here, because that
+       * is about this person's keys and network and a status page is about everyone's. Still
+       * asked, only later: a status page can be wrong, and a pin is a pin.
+       */
+      name: 'down',
+      axis: 'sure',
+      compare: (a, b) => Number(down.has(idOf(a))) - Number(down.has(idOf(b))),
+      says: () =>
+        'Its provider’s own status shows every host serving it down in the last five minutes, so it comes after models that are up.',
     },
     {
       // **Then not a router** (D159). A router is a different model each time, 2.6B included,

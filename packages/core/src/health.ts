@@ -11,9 +11,10 @@ import { TRIES_KEPT, type Outcome, type Seen, type Try } from './store.js'
  * up describing a router that is not there.
  *
  * **Busy is not broken.** Most free failures are an evening's per-minute limits, and a model
- * that was busy an hour ago only sinks (D159's strikes). What sets a model aside is a shape that
- * no rush makes: a whole day of nothing but refusals, three empty answers, *no longer offered*
- * twice, or a keyless provider refusing two of its models for want of a key.
+ * that was busy a moment ago only sinks, for a couple of minutes (D159's strikes). What sets a
+ * model aside is a shape that no rush makes: a whole day of nothing but refusals, three empty
+ * answers, three 400s in a row, *no longer offered* twice, or a keyless provider refusing two of
+ * its models for want of a key.
  *
  * **Set aside is never deleted, and one good reply brings a model back.** Everything below is
  * read from the tries since a model's last good reply, so the reply is the reset. Until §4 E's
@@ -35,8 +36,25 @@ const DAY = 24 * HOUR
  */
 export const NEW_FOR = 14 * DAY
 
-/** **How long a rate limit makes a model busy.** The same hour D159's strikes halve in. */
-export const BUSY_FOR = HOUR
+/**
+ * **How long a busy reply takes to count half as much**: two minutes, where every other failure
+ * takes D159's hour (`STRIKE_HALF_LIFE` in `router.ts`, which reads this one).
+ *
+ * A 429 from a free model is mostly its one host being full for a moment, not the model being
+ * bad. On this Mac Qwen 3.8, the best free model it had, answered after a few retries seconds
+ * apart — and one busy reply sank it below the rest for an hour. For comparison, LiteLLM's
+ * default cooldown after a 429 is five seconds and free-model-router's ten minutes. Two minutes
+ * lets the next message try it again without asking it on every step while it is full.
+ *
+ * An account's quota running out is not this: the pool reads the provider's own headers and waits
+ * for the reset they name, whatever this says. And a model busy for a whole day is still set aside
+ * by {@link WALL}. Here, because the router already reads this file and a number read by both
+ * ends is written once — `router.ts` importing it is the direction that makes no cycle.
+ */
+export const BUSY_HALF_LIFE = 2 * 60 * 1000
+
+/** **How long a rate limit makes a model busy**: the same two minutes a busy reply sinks it for. */
+export const BUSY_FOR = BUSY_HALF_LIFE
 
 /**
  * **A day-long wall**: at least 3 tries spread over at least 2 hours, all inside one day, none
@@ -52,6 +70,18 @@ export const WALL = { tries: 3, spread: 2 * HOUR, within: DAY } as const
  * every time; one empty answer can be a hiccup.
  */
 export const EMPTIES = 3
+
+/**
+ * **Turned down with a 400 three times in a row, and nothing else between.** A 400 is the provider
+ * saying the request is wrong for this model, and a model that says it to every request says it
+ * for good: on 18 September `groq/compound` failed 400 six times in a row and was asked every time.
+ * In a row rather than counted like empties, because one 400 can be one request's own shape — a
+ * picture, a list of tools — and anything else between says the model takes other requests.
+ *
+ * A 400 that means *this conversation is too long* is recorded as `too-long`, not `failed`, so a
+ * long conversation cannot trip this: that is the request outgrowing the model, not the model.
+ */
+export const TURNED_DOWN = 3
 
 /** ***No longer offered* twice with no good reply between.** One 404 can be a provider mid-deploy. */
 export const GONE = 2
@@ -104,7 +134,13 @@ export const SAYS = {
 } as const
 
 /** Why a model is set aside, in the words of its tag. */
-export type Aside = 'needs a key' | 'retired' | 'answers empty' | 'always busy for you' | 'not answering'
+export type Aside =
+  | 'needs a key'
+  | 'retired'
+  | 'answers empty'
+  | 'turns every request down'
+  | 'always busy for you'
+  | 'not answering'
 
 export interface Judgement {
   /** Everything worth a chip, reasons and facts alike, in the order a row shows them. */
@@ -160,6 +196,17 @@ function wall(tries: readonly Try[]): readonly Try[] | undefined {
     if (end - start + 1 >= WALL.tries && last.at - tries[start]!.at >= WALL.spread) found = tries.slice(start, end + 1)
   }
   return found
+}
+
+/** The longest run of 400 refusals with nothing else between, in `tries` (oldest first). */
+function turnedDown(tries: readonly Try[]): number {
+  let run = 0
+  let longest = 0
+  for (const one of tries) {
+    run = one.outcome === 'failed' && one.status === 400 ? run + 1 : 0
+    longest = Math.max(longest, run)
+  }
+  return longest
 }
 
 /**
@@ -249,8 +296,12 @@ export function judge(
       reasons.push('retired')
     }
     if (count('empty') >= EMPTIES) reasons.push('answers empty')
+    const turned = turnedDown(since) >= TURNED_DOWN
+    if (turned) reasons.push('turns every request down')
     const walled = wall(since.filter((one) => WALLED.has(one.outcome)))
-    if (walled !== undefined) reasons.push(walled.every((one) => one.outcome === 'busy') ? 'always busy for you' : 'not answering')
+    // A wall of nothing but those same 400s is the same fact again, and one chip says it.
+    const same = turned && walled?.every((one) => one.outcome === 'failed' && one.status === 400) === true
+    if (walled !== undefined && !same) reasons.push(walled.every((one) => one.outcome === 'busy') ? 'always busy for you' : 'not answering')
 
     const judged = mine.filter((one) => one.outcome === 'answered' || ERRORS.has(one.outcome))
     const errors = judged.length >= DOUBT.tries && judged.filter((one) => one.outcome !== 'answered').length >= judged.length * DOUBT.share
