@@ -6,9 +6,14 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, expect, test } from 'vitest'
 import { noPolling } from './staged.js'
+import type { Model } from '../src/catalog.js'
+import { BUSY_HALF_LIFE } from '../src/health.js'
+import { remaining } from '../src/pool.js'
 import type { Provider } from '../src/provider.js'
+import { MODES, ranking, route, sunk, type Choice, type Pins, type Strike, type World } from '../src/router.js'
 import { memorySecrets } from '../src/secrets.js'
 import { serve, type Serving } from '../src/serve.js'
+import { Store, type Outcome } from '../src/store.js'
 
 /**
  * **Best to worst, on the screen** (D159).
@@ -149,3 +154,108 @@ test('a model that fails in a conversation loses the ★, and the next conversat
   expect(asked).toEqual(['vendor/busy:free'])
   failing = new Set()
 }, 30_000)
+
+// ---- Busy for minutes, failed for the hour, and down by the provider's own word --------------
+
+const MINUTE = 60_000
+/** Noon UTC on 22 September 2026. */
+const noon = Date.UTC(2026, 8, 22, 12)
+const alpha: Provider = { id: 'alpha', name: 'Alpha', baseUrl: 'http://127.0.0.1:1', rpm: 1000, rpd: 1000 }
+const hands = (id: string, over: Partial<Model> = {}): Model => ({
+  id,
+  name: id,
+  provider: 'alpha',
+  tier: 'T1',
+  priceIn: 0,
+  priceOut: 0,
+  context: 32_768,
+  supportsTools: true,
+  modality: ['text'],
+  nsfwOk: 'unknown',
+  trainsOnYourData: 'unknown',
+  ...over,
+})
+const choice = (model: Model): Choice => ({ model, provider: alpha })
+const strike = (model: string, outcome: Outcome, minutesAgo: number): Strike => ({
+  provider: 'alpha',
+  model,
+  at: noon - minutesAgo * MINUTE,
+  outcome,
+})
+const work = { messages: [{ role: 'user' as const, content: 'sort my downloads' }], tools: [{ name: 'fs.list' }] }
+const pins = (over: Partial<Pins> = {}): Pins => ({ placement: MODES.combined, ...over })
+const ids = (verdict: ReturnType<typeof route>): string[] => (verdict.ok ? verdict.choices.map((c) => c.model.id) : [verdict.why])
+
+test('a busy reply sinks a model for a couple of minutes; any other failure still for about an hour', () => {
+  const key = 'alpha\nm'
+  const busy = [strike('m', 'busy', 0)]
+  expect(BUSY_HALF_LIFE).toBe(2 * MINUTE)
+  expect(sunk(busy, noon).get(key)).toBe(1)
+  expect(sunk(busy, noon + MINUTE).get(key)).toBe(1)
+  expect(sunk(busy, noon + 2.5 * MINUTE).get(key)).toBeUndefined()
+  expect(sunk(busy, noon + 4 * MINUTE).get(key)).toBeUndefined()
+
+  const failed = [strike('m', 'failed', 0)]
+  expect(sunk(failed, noon + 4 * MINUTE).get(key)).toBe(1)
+  expect(sunk(failed, noon + 55 * MINUTE).get(key)).toBe(1)
+  expect(sunk(failed, noon + 65 * MINUTE).get(key)).toBeUndefined()
+  // A strike made by hand says nothing of how it went, and counts as a failure.
+  expect(sunk([{ provider: 'alpha', model: 'm', at: noon }], noon + 30 * MINUTE).get(key)).toBe(1)
+
+  // Four busy replies together sink it for six minutes, where four failures would take three hours.
+  const four = [0, 0, 0, 0].map(() => strike('m', 'busy', 0))
+  expect(sunk(four, noon + 5.5 * MINUTE).get(key)).toBe(1)
+  expect(sunk(four, noon + 6.5 * MINUTE).get(key)).toBeUndefined()
+})
+
+test('a model busy three minutes ago is back beside its equal, and the why-line says minutes for busy and the hour for a failure', () => {
+  const qwen = hands('qwen/qwen3.8-27b:free', { name: 'Qwen 3.8' })
+  const twin = hands('vendor/twin-27b', { name: 'Twin' })
+  const busyAgo = (minutes: number) => ranking({ strikes: [strike(qwen.id, 'busy', minutes)] }, 'cheap', noon)
+
+  expect(busyAgo(1).decides(choice(qwen), choice(twin))).toBe('struck')
+  expect(busyAgo(1).explain(choice(qwen), choice(twin))).toBe('Was busy recently, so it sits below Twin for a couple of minutes.')
+  expect(busyAgo(3).compare(choice(qwen), choice(twin))).toBe(0)
+  expect(busyAgo(3).decides(choice(qwen), choice(twin))).toBeUndefined()
+
+  const streak = ranking({ strikes: [1, 1, 1].map((ago) => strike(qwen.id, 'busy', ago)) }, 'cheap', noon)
+  expect(streak.explain(choice(qwen), choice(twin))).toBe('Was busy recently, so it sits below Twin for a few minutes.')
+
+  // A failure keeps its hour, and says so even when the latest strike was a busy reply.
+  const failed = ranking({ strikes: [strike(qwen.id, 'slow', 10), strike(qwen.id, 'busy', 1)] }, 'cheap', noon)
+  expect(failed.explain(choice(qwen), choice(twin))).toBe('Failed here recently, so it sits below Twin for about an hour.')
+  expect(ranking({ strikes: [strike(qwen.id, 'failed', 3)] }, 'cheap', noon).decides(choice(qwen), choice(twin))).toBe('struck')
+})
+
+test('a model its provider says is down is asked after one that is up, never dropped, and a pin on it still wins', () => {
+  const qwen = hands('qwen/qwen3.8-27b:free', { name: 'Qwen 3.8', weekly: 9_000 })
+  const other = hands('vendor/other-27b', { name: 'Other', weekly: 1 })
+  const down = new Set(['alpha\nqwen/qwen3.8-27b:free'])
+
+  const ranked = ranking({ down })
+  expect(ranked.decides(choice(qwen), choice(other))).toBe('down')
+  expect(ranked.explain(choice(qwen), choice(other))).toBe(
+    'Its provider’s own status shows every host serving it down in the last five minutes, so it comes after models that are up.',
+  )
+  // Handed over the other way round, it is still the lower one's sentence.
+  expect(ranked.explain(choice(other), choice(qwen))).toBe(ranked.explain(choice(qwen), choice(other)))
+  // Without a status, the busier model is first.
+  expect(ranking({}).decides(choice(other), choice(qwen))).toBe('usage')
+
+  const ledger = new Store(':memory:')
+  const world = (over: Partial<World> = {}): World => ({
+    models: [qwen, other],
+    local: [],
+    rungs: [remaining(ledger, alpha)],
+    today: { spent: 0, allowance: 1 },
+    ...over,
+  })
+  expect(ids(route(work, pins(), world()))).toEqual([qwen.id, other.id])
+  expect(ids(route(work, pins(), world({ down })))).toEqual([other.id, qwen.id])
+  expect(ids(route(work, pins({ model: qwen.id }), world({ down })))).toEqual([qwen.id])
+
+  // What failed on this machine comes before a status page about everyone's.
+  const both = ranking({ down, strikes: [strike(other.id, 'failed', 1)] }, 'cheap', noon)
+  expect(both.decides(choice(other), choice(qwen))).toBe('struck')
+  ledger.close()
+})
