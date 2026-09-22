@@ -15,6 +15,8 @@
  * Eight calls rather than two. The sanction stands and the day it is taken will be a day this
  * file is doing something a framework is better at than eighty lines of `fetch`, which it is
  * not yet.
+ *
+ * D192 made it ten — *typing…* and 👀 are one `call` each — and that sentence still holds.
  */
 
 const BASE = 'https://api.telegram.org/bot'
@@ -96,6 +98,30 @@ export const answered = (token, queryId, text, signal) =>
 /** Take the buttons off a message that has been answered, so it cannot be answered twice. */
 export const unbutton = (token, chatId, messageId, signal) =>
   call(token, 'editMessageReplyMarkup', { chat_id: chatId, message_id: messageId, reply_markup: { inline_keyboard: [] } }, signal)
+
+/**
+ * *Typing…*, *sending photo…*, *recording voice…* — the line under the chat's name while an
+ * answer is being made (D192).
+ *
+ * Telegram shows it for five seconds at most, or until this bot's next message arrives, so one
+ * call is one blink. Keeping it up for a whole answer is `presence.js`'s job, not this one's.
+ */
+export const act = (token, chatId, action, signal) => call(token, 'sendChatAction', { chat_id: chatId, action }, signal)
+
+/**
+ * A reaction on somebody's message — 👀, for *seen* (D192).
+ *
+ * The Bot API has no call that marks a message read in an ordinary bot chat, so a reaction is
+ * the one sign a bot can give that a message landed before the answer to it exists. A bot gets
+ * one reaction per message; an empty `emoji` takes it off again.
+ */
+export const react = (token, chatId, messageId, emoji, signal) =>
+  call(
+    token,
+    'setMessageReaction',
+    { chat_id: chatId, message_id: messageId, reaction: emoji ? [{ type: 'emoji', emoji }] : [] },
+    signal,
+  )
 
 /** Where a file Telegram is holding actually lives, so it can be fetched. */
 export const filePath = async (token, fileId, signal) => {

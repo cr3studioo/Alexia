@@ -1,8 +1,24 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { writeFile } from 'node:fs/promises'
 import { fromJsonSchema, log, plugin } from '@alexia/sdk'
-import { answered, chunk, filePath, me, send, sendDocument, sendPhoto, sendVoice, TelegramError, unbutton, updates } from './api.js'
+import {
+  act,
+  answered,
+  chunk,
+  filePath,
+  me,
+  react,
+  send,
+  sendDocument,
+  sendPhoto,
+  sendVoice,
+  TelegramError,
+  unbutton,
+  updates,
+} from './api.js'
 import { Asking } from './asking.js'
+import { Line } from './line.js'
+import { EVERY, Presence } from './presence.js'
 
 /**
  * Telegram (M4-1) — the shape the contract had not met yet.
@@ -32,10 +48,48 @@ const alexia = plugin()
 const POLL_SECONDS = 50
 /** Say it again after a gap this long. A mark on message one is not a mark on message fifty. */
 const REMARK_AFTER = 60 * 60 * 1000
+/**
+ * How long an answer may go without a word from core (D192).
+ *
+ * The SDK's own default is sixty seconds, and every task from the phone that took longer —
+ * a permission question, a picture, a slow tool — was cancelled at exactly one minute, which
+ * core rightly reads as this plugin giving up. Ten minutes, reset whenever core reports
+ * progress: until core sends any, a ceiling; once it does, ten minutes of silence.
+ */
+const ANSWER_WAIT = 10 * 60_000
 
 /** Everything the poll loop needs to be stopped and restarted when the token changes. */
 let running
 let stopping
+/**
+ * The token the loop was started with, for the one caller that is not the loop: the typing
+ * heartbeat, which ticks every four seconds and has no business reading the keychain each
+ * time. Held exactly as long as `poll` holds the same string, and dropped with it.
+ */
+let live
+
+/**
+ * The messages from paired accounts, answered one at a time in the order they came (D192).
+ * The poll loop pushes and goes back to listening — see `line.js` for why it must.
+ */
+const line = new Line((error) => log.warn('a queued message failed', error))
+
+/** *Typing…* while an answer is being made. Cosmetic: a failure is one log line, once. */
+const presence = new Presence(
+  (chatId, action) => (live ? act(live, chatId, action) : undefined),
+  EVERY,
+  (error) => log.warn('could not show typing — answers are unaffected', error),
+)
+
+/**
+ * The answer being written now, and the way to stop it (D192): `{ controller, chatId }`,
+ * or undefined between answers.
+ *
+ * Out here rather than inside `answer` so that whatever stops it — `/stop`, next — can reach
+ * it from the poll loop, without being queued behind the very answer it is stopping. Aborting
+ * `controller` cancels the `sampling` request, and core ends the task when a plugin cancels.
+ */
+let current
 
 /**
  * The open questions, and the chat they belong in (M7-5).
@@ -154,6 +208,8 @@ async function answer(token, chatId, text) {
   // Where the permission questions go while this runs. Set before the call, because the
   // question can arrive before the answer does.
   asked = { token, chatId }
+  const controller = new AbortController()
+  current = { controller, chatId }
   let result
   try {
     result = await alexia.server.server.createMessage({
@@ -175,9 +231,20 @@ async function answer(token, chatId, text) {
        * somewhere, and the tools come back with it.
        */
       _meta: { 'alexia/tools': true },
+    }, {
+      signal: controller.signal,
+      // Not the SDK's sixty seconds, which a question waiting on a person outlasts (D192).
+      timeout: ANSWER_WAIT,
+      resetTimeoutOnProgress: true,
+      // Asking for progress is what puts a token on the request for core to report against;
+      // the words themselves are for later, so nothing listens yet.
+      onprogress: () => {},
     })
   } finally {
     asked = undefined
+    // Only while it is still this answer's: the handle belongs to whichever answer is running,
+    // and one that finishes late must never take it from the answer after it.
+    if (current?.controller === controller) current = undefined
   }
   const said = result.content?.type === 'text' ? result.content.text : ''
   await remember(chatId, 'assistant', said)
@@ -210,6 +277,8 @@ async function delivered(token, chatId, result) {
     const bytes = Buffer.from(String(file?.data ?? ''), 'base64')
     if (bytes.length === 0) continue
     const asPhoto = /^image\/(png|jpe?g|webp|gif)$/i.test(String(file.mime)) && bytes.length <= 10 * 1024 * 1024
+    // *Sending photo…* rather than *typing…* over an upload (D192).
+    presence.as(chatId, asPhoto ? 'upload_photo' : 'upload_document')
     try {
       if (asPhoto) await sendPhoto(token, chatId, bytes, file.name)
       else await sendDocument(token, chatId, bytes, file.name)
@@ -217,6 +286,7 @@ async function delivered(token, chatId, result) {
       // A photo Telegram would not take (odd dimensions, say) still goes as a document.
       if (asPhoto) {
         try {
+          presence.as(chatId, 'upload_document')
           await sendDocument(token, chatId, bytes, file.name)
           continue
         } catch {
@@ -240,9 +310,12 @@ async function spoken(token, chatId, said) {
   const { voice_notes: wanted } = await settings()
   if (wanted !== true) return false
   try {
+    // *Recording voice…* while it is made and *sending voice…* while it goes (D192).
+    presence.as(chatId, 'record_voice')
     const made = await alexia.capability('voice.render', { text: said })
     const audio = (made.content ?? []).find((block) => block.type === 'audio' && block.mimeType === 'audio/ogg')
     if (!audio) return false
+    presence.as(chatId, 'upload_voice')
     await sendVoice(token, chatId, Buffer.from(audio.data, 'base64'))
     return true
   } catch {
@@ -329,6 +402,54 @@ async function heard(token, message) {
 }
 
 /**
+ * One message from a paired account, start to finish — the job the line runs (D192).
+ *
+ * *Typing…* from the moment its turn comes until its last word is sent: through the
+ * transcription, the answer, and the sentence that says something went wrong, because the
+ * person is waiting through every one of them.
+ */
+async function handled(token, chatId, message) {
+  presence.start(chatId)
+  try {
+    // A voice note is a message too, and the other direction already existed: this is
+    // `voice.transcribe`, which has been in the registry since M2.
+    const text = typeof message.text === 'string' ? message.text : await heard(token, message)
+    if (typeof text !== 'string' || text === '') return
+    await answer(token, chatId, text)
+  } catch (error) {
+    await failed(token, chatId, error)
+  } finally {
+    presence.stop(chatId)
+  }
+}
+
+/**
+ * The person on the other end is waiting. Silence is the one answer that is certainly wrong,
+ * so whatever went wrong is said in their chat.
+ */
+async function failed(token, chatId, error) {
+  log.warn('could not answer', error)
+  await say(token, chatId, `Something went wrong here: ${String(error?.message ?? error)}`).catch(() => {})
+}
+
+/**
+ * 👀 on a message the moment it is heard (D192).
+ *
+ * Before it is queued, so one sent while another is being answered says *seen* rather than
+ * looking lost. It stays on: swapping it for ✅ later is one more notification on the phone
+ * for news the answer is about to deliver anyway. Never waited for, and a failure is one line
+ * in the log the first time — a reaction is not worth an answer.
+ */
+let unseen = false
+function seen(token, chatId, messageId) {
+  react(token, chatId, messageId, '👀').catch((error) => {
+    if (unseen) return
+    unseen = true
+    log.warn('could not mark a message as seen — answers are unaffected', error)
+  })
+}
+
+/**
  * The long poll.
  *
  * One request that Telegram holds open until something arrives. No webhook, no port, no
@@ -339,6 +460,10 @@ async function heard(token, message) {
  * message that fails to answer, a model that refused — all of them are one iteration going
  * wrong, and the loop that exits on the first of them is a bridge that silently stops
  * working at 3am.
+ *
+ * **And nothing in here waits for an answer** (D192). It used to, and a permission question
+ * asked from the phone could never be answered: the press arrives through this loop, and the
+ * loop was waiting on the task that was waiting on the press. Answers go to the `line`.
  */
 async function poll(token, signal) {
   let offset
@@ -378,19 +503,28 @@ async function poll(token, signal) {
         const from = message?.from?.id
         const chatId = message?.chat?.id
         if (!message || from === undefined || chatId === undefined) continue
-        // A voice note is a message too, and the other direction already existed: this is
-        // `voice.transcribe`, which has been in the registry since M2.
-        const text = typeof message.text === 'string' ? message.text : await heard(token, message)
-        if (typeof text !== 'string' || text === '') continue
-        try {
-          if ((await allowed()).has(String(from))) await answer(token, chatId, text)
-          else await greet(token, chatId, from, text)
-        } catch (error) {
-          log.warn('could not answer', error)
-          // The person on the other end is waiting. Silence is the one answer that is
-          // certainly wrong, so whatever went wrong is said in their chat.
-          await say(token, chatId, `Something went wrong here: ${String(error?.message ?? error)}`).catch(() => {})
+        const typed = typeof message.text === 'string'
+        const voiced = (message.voice?.file_id ?? message.audio?.file_id) !== undefined
+        if (!typed && !voiced) continue
+
+        // Who first, and only then any work (D192). A stranger's voice note used to be
+        // downloaded and put through `voice.transcribe` before anything asked whose it was —
+        // this machine's time, spent on somebody Alexia does not answer. A stranger gets the
+        // one question, and a voice note cannot be the pairing code.
+        if (!(await allowed()).has(String(from))) {
+          try {
+            await greet(token, chatId, from, typed ? message.text : '')
+          } catch (error) {
+            await failed(token, chatId, error)
+          }
+          continue
         }
+
+        // Seen now, answered in its turn, and never waited for here (D192). The loop has to be
+        // back at `getUpdates` while an answer runs, because that is the only way the press on
+        // a permission question can reach it.
+        seen(token, chatId, message.message_id)
+        void line.push(() => handled(token, chatId, message))
       }
     } catch (error) {
       if (signal.aborted) return
@@ -399,6 +533,7 @@ async function poll(token, signal) {
         // so on the screen where the token is typed.
         log.error('Telegram refused the bot token')
         running = undefined
+        live = undefined
         await alexia.status('state', '▲ Telegram refused that bot token').catch(() => {})
         return
       }
@@ -414,9 +549,12 @@ async function connect() {
   stopping?.abort()
   stopping = undefined
   running = undefined
+  live = undefined
   // Nobody is listening for a press any more, so every open question settles as unanswered
   // — which core reads as no. A token that outlived its loop is a button that does nothing.
   asking.close()
+  // And *typing…* sent over a connection that is going away is a promise nobody is keeping.
+  presence.stopAll()
 
   const { bot_token: token } = await settings()
   if (!token) {
@@ -432,6 +570,7 @@ async function connect() {
     return
   }
   stopping = new AbortController()
+  live = token
   void poll(token, stopping.signal)
   await report()
   bind()
@@ -522,11 +661,18 @@ const confirmed = alexia.tool(
     }
     const choices = Array.isArray(options) && options.length > 0 ? options.map(String) : ['Yes', 'No']
     const { buttons, answer } = asking.ask(choices)
-    // No ntfy fallback for this one: a question with no way to answer it is worse than a
-    // question that did not arrive, because it looks answered to whoever sent it.
-    await send(token, chatId, String(question ?? 'Alexia is asking.'), undefined, buttons)
-    const chose = await answer
-    return { content: [{ type: 'text', text: chose ?? 'No' }] }
+    // The next move is the person's, and *typing…* under the buttons would say it was
+    // Alexia's (D192). Back on the moment the question settles, however it settles.
+    presence.pause(chatId)
+    try {
+      // No ntfy fallback for this one: a question with no way to answer it is worse than a
+      // question that did not arrive, because it looks answered to whoever sent it.
+      await send(token, chatId, String(question ?? 'Alexia is asking.'), undefined, buttons)
+      const chose = await answer
+      return { content: [{ type: 'text', text: chose ?? 'No' }] }
+    } finally {
+      presence.resume(chatId)
+    }
   },
 )
 
