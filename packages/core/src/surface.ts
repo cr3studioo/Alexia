@@ -120,7 +120,14 @@ const SET_ASIDE = MODEL_GROUPS.aside
 const PAID = MODEL_GROUPS.paid
 
 /** The set-aside group's order, most final reason first: a key or a retirement before a bad day. */
-const ASIDE: readonly Aside[] = ['needs a key', 'retired', 'answers empty', 'always busy for you', 'not answering']
+const ASIDE: readonly Aside[] = [
+  'needs a key',
+  'retired',
+  'answers empty',
+  'turns every request down',
+  'always busy for you',
+  'not answering',
+]
 
 /** One model on one provider, as a row's id (D161). The detail and the row actions read both halves. */
 const rowId = (provider: string, model: string): string => `${provider}\n${model}`
@@ -283,6 +290,7 @@ export function sources(options: SurfaceOptions): Record<string, Source> {
     reason === 'needs a key' ? `Set aside: ${nameOf(provider)} now wants a key for it. Back the moment you add one.`
     : reason === 'retired' ? `Set aside: ${nameOf(provider)} no longer offers it.`
     : reason === 'answers empty' ? `Set aside: it answered with nothing three times in a row.${back(tested)}`
+    : reason === 'turns every request down' ? `Set aside: ${nameOf(provider)} turned down the request to it three times in a row.${back(tested)}`
     : reason === 'always busy for you' ? `Set aside: too busy every time for a whole day.${back(tested)}`
     : `Set aside: it timed out or failed every time for a whole day.${back(tested)}`
 

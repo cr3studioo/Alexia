@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { expect, test } from 'vitest'
+import { expect, test, vi } from 'vitest'
 import type { Step } from '../src/agent.js'
 import { asText, KEPT, spentOn, Trace } from '../src/trace.js'
 
@@ -201,4 +201,144 @@ test('events for a run that has already ended are dropped rather than misfiled',
   trace.step(step(9, 'late'))
   trace.done(done(9, 'late', true))
   expect(trace.runs[0]?.steps).toEqual([])
+})
+
+/**
+ * **Where the time went** — the stages of the wait, each timed by the gap to the next.
+ *
+ * The complaint was *a minute before the first word*, and the one number there was to read
+ * was the minute: a try is stamped when it ends, so a walk could not be split into choosing,
+ * waiting on a busy model and writing. These hold the split still.
+ */
+function clocked(body: (at: (ms: number) => void) => void): void {
+  const clock = vi.spyOn(Date, 'now')
+  try {
+    body((ms) => clock.mockReturnValue(ms))
+  } finally {
+    clock.mockRestore()
+  }
+}
+
+test('each stage lasts until the next begins, and the last one until the run ends', () => {
+  clocked((at) => {
+    const trace = new Trace()
+    at(1_000)
+    trace.start('twelve', 'why so slow')
+    trace.phase({ kind: 'choosing' })
+    at(1_150)
+    trace.phase({ kind: 'asking', model: 'free/one' })
+    at(2_650)
+    trace.phase({ kind: 'retrying', model: 'free/one', attempt: 2 })
+    at(4_000)
+    trace.phase({ kind: 'writing', model: 'free/one' })
+    at(9_250)
+    trace.end('answered')
+
+    // The model, and the attempt for a retry, because *which* model was slow is the finding.
+    expect(trace.runs[0]?.phases).toEqual([
+      { kind: 'choosing', at: 1_000, ms: 150 },
+      { kind: 'asking', detail: 'free/one', at: 1_150, ms: 1_500 },
+      { kind: 'retrying', detail: 'free/one, attempt 2', at: 2_650, ms: 1_350 },
+      { kind: 'writing', detail: 'free/one', at: 4_000, ms: 5_250 },
+    ])
+  })
+})
+
+test('the same stage told twice is one stage, and a retry is not a repeat', () => {
+  clocked((at) => {
+    const trace = new Trace()
+    at(0)
+    trace.start('thirteen', 'think hard')
+    trace.phase({ kind: 'thinking', model: 'free/one' })
+    at(800)
+    // Still the same model reasoning: one wait, not two smaller-looking ones.
+    trace.phase({ kind: 'thinking', model: 'free/one' })
+    at(2_000)
+    trace.phase({ kind: 'retrying', model: 'free/two', attempt: 2 })
+    at(2_400)
+    trace.phase({ kind: 'retrying', model: 'free/two', attempt: 3 })
+    at(3_000)
+    trace.phase({ kind: 'tool', name: 'notes.read' })
+    trace.phase({ kind: 'tool', name: 'notes.read' })
+    at(3_500)
+    trace.end('answered')
+
+    expect(trace.runs[0]?.phases).toEqual([
+      { kind: 'thinking', detail: 'free/one', at: 0, ms: 2_000 },
+      { kind: 'retrying', detail: 'free/two, attempt 2', at: 2_000, ms: 400 },
+      { kind: 'retrying', detail: 'free/two, attempt 3', at: 2_400, ms: 600 },
+      { kind: 'tool', detail: 'notes.read', at: 3_000, ms: 500 },
+    ])
+  })
+})
+
+test('a stage over before the run opened keeps its own start and length', () => {
+  // The attachments are read before the question is written down, and the run opens after.
+  // Their seconds are neither lost nor charged to choosing, which is what comes next.
+  clocked((at) => {
+    const trace = new Trace()
+    at(5_000)
+    trace.start('fourteen', 'read this')
+    trace.phase({ kind: 'reading' }, { at: 2_000, ms: 2_500 })
+    at(5_100)
+    trace.phase({ kind: 'choosing' })
+    at(6_000)
+    trace.end('answered')
+
+    expect(trace.runs[0]?.phases).toEqual([
+      { kind: 'reading', at: 2_000, ms: 2_500 },
+      { kind: 'choosing', at: 5_100, ms: 900 },
+    ])
+  })
+})
+
+test('an export says where the time went, in seconds to a tenth, before the steps', () => {
+  clocked((at) => {
+    const trace = new Trace()
+    at(0)
+    trace.start('fifteen', 'sort my downloads')
+    trace.phase({ kind: 'choosing' })
+    at(120)
+    trace.phase({ kind: 'asking', model: 'free/one' })
+    at(1_620)
+    trace.phase({ kind: 'writing', model: 'free/one' })
+    at(13_960)
+    trace.step(step(1, 'list_files'))
+    trace.phase({ kind: 'tool', name: 'list_files' })
+    trace.done(done(1, 'list_files', true))
+    at(14_260)
+    trace.end('answered')
+
+    const text = asText(trace.runs[0]!)
+    expect(text).toContain(
+      [
+        '## Where the time went',
+        '  0.1s  choosing',
+        '  1.5s  asking free/one',
+        '  12.3s  writing free/one',
+        '  0.3s  tool list_files',
+      ].join('\n'),
+    )
+    // The summary first, then the story it summarises.
+    expect(text.indexOf('## Where the time went')).toBeLessThan(text.indexOf('## 1. list_files'))
+  })
+})
+
+test('a stage still going reads as still going, and a run with no stages says nothing about time', () => {
+  const trace = new Trace()
+  trace.start('sixteen', 'something that hung')
+  trace.phase({ kind: 'asking', model: 'free/one' })
+  expect(asText(trace.runs[0]!)).toContain('  still going  asking free/one')
+
+  trace.start('seventeen', 'a run that never reached the loop')
+  trace.end('refused', { why: 'No model fits.' })
+  expect(asText(trace.runs[0]!)).not.toContain('Where the time went')
+})
+
+test('a stage told after the run ended is dropped rather than misfiled', () => {
+  const trace = new Trace()
+  trace.start('eighteen', 'first')
+  trace.end('stopped')
+  trace.phase({ kind: 'writing', model: 'free/one' })
+  expect(trace.runs[0]?.phases).toBeUndefined()
 })

@@ -290,7 +290,7 @@ const MODELS: Rendered = table({
     [MODEL_GROUPS.chosen]: 'Every request goes to this one until you press Automatic. It never falls back: if it cannot answer, Alexia stops and says why.',
     [MODEL_GROUPS.listed]: 'Your own running order. While anything is listed here, only these models answer, each one tried when the one above it fails.',
     [MODEL_GROUPS.automatic]: 'What Automatic walks for an ordinary free request, best first. The sentence under a row says why it sits below the one above.',
-    [MODEL_GROUPS.aside]: 'What Alexia has stopped asking on her own, after a day of refusals, three empty answers, a retirement or a provider that now wants a key. Nothing is deleted, and one good reply brings a model back.',
+    [MODEL_GROUPS.aside]: 'What Alexia has stopped asking on her own, after a day of refusals, three empty answers, three turned-down requests in a row, a retirement or a provider that now wants a key. Nothing is deleted, and one good reply brings a model back.',
     [MODEL_GROUPS.paid]: 'The order Automatic would pay in, once the free models are done and the slider allows it: tools first, then cheapest.',
   },
   /**

@@ -80,6 +80,7 @@ import { dataDir, Store, textOf, type Message, type Part } from './store.js'
 import { PluginTooling } from './tooling.js'
 import { Trace } from './trace.js'
 import { trial } from './trial.js'
+import { Uptime, watched } from './uptime.js'
 import { allowance, caps, costOf, setCaps, today, warning } from './usage.js'
 
 /**
@@ -697,11 +698,19 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
   /** Every enabled plugin's manifest, which is where its commands come from (M1-12). */
   const manifests = () => plugins.ids.flatMap((id) => plugins.manifest(id) ?? [])
 
+  /**
+   * Which models' hosts are down by their provider's own status (`uptime.ts`): the last read, held
+   * for the life of this core, with the next one started behind it and never waited for.
+   */
+  const uptime = new Uptime()
+
   /** Everything the router needs to know, asked fresh: a tier can be exhausted mid-sentence. */
   const world = async () => {
     const models = catalog.models
     const local = options.local !== false && (await running()) ? await installed() : []
     const rungs = await usable(store, secrets, providers)
+    const tries = store.tries()
+    const standing = pins(store)
     return {
       models,
       local,
@@ -714,7 +723,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
       // What Alexia thinks of each model, from 30 days of tries (D161). Judged on every ask, so a
       // key saved a moment ago brings back a provider set aside for wanting one, without a restart.
       health: judge(
-        store.tries(),
+        tries,
         store.seen(),
         [...models, ...local],
         new Set(rungs.filter((rung) => rung.keyed === true).map((rung) => rung.provider.id)),
@@ -723,6 +732,9 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
       ),
       // Nothing is reported from anywhere else: the hook for a shared record, decided later (§4 J, D160).
       reported: new Set<string>(),
+      // Down by the provider's own status, as last read: a minute old at most, and never waited for.
+      // Not looked at when text is answered on this Mac, where no hosted model is asked.
+      down: standing.placement.text === 'local' ? new Set<string>() : uptime.down(() => watched(rungs, models, tries, standing.model)),
     }
   }
 
@@ -1280,9 +1292,10 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
         // The stop button, and the plugin that started this giving up: either one ends the task.
         signal: gaveUp === undefined ? stop.signal : AbortSignal.any([stop.signal, gaveUp]),
         guard: gate(text, runId),
-        // How much of her this step's model was given (§2). The only `on` this path wants:
-        // there is no stream here to write a step to, but the record is still worth keeping.
-        on: { personality: (chars, size) => trace.personality(chars, size) },
+        // How much of her this step's model was given (§2), and how long each stage took. The only
+        // `on` this path wants: there is no stream here to write a step to, but the record is still
+        // worth keeping — a task started from a phone waits exactly as long as one at the desk.
+        on: { personality: (chars, size) => trace.personality(chars, size), phase: (p) => trace.phase(p) },
         /**
          * The yes, from wherever the person is.
          *
@@ -2695,6 +2708,14 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     response.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store' })
     const say = (event: Record<string, unknown>): void => void response.write(`data: ${JSON.stringify(event)}\n\n`)
 
+    /**
+     * When the attachments were read, and how long that took — held for the trace, which does
+     * not open until the question is written down and any price agreed. A document read page by
+     * page can be most of a slow first answer, and a record that started after it would charge
+     * those seconds to nothing.
+     */
+    let reading: { at: number; ms: number } | undefined
+
     if (question === undefined) {
       /**
        * The documents, read before anything else happens.
@@ -2703,8 +2724,18 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
        * bearing half of this: the permission gate, the boundary sentences and the offer to
        * learn all read `text`, and every one of them would be wrong to read a document. A file
        * containing the words *delete everything* is not somebody asking for anything.
+       *
+       * **Said before it starts.** Reading is the first wait after sending a file and it comes
+       * before any model is asked, so without the stage on screen it is the same silent `…` —
+       * and silence is what kills a first run, not time.
        */
-      const content = uploads.length === 0 ? text : await documents(text, uploads, say)
+      let content: string | Part[] = text
+      if (uploads.length > 0) {
+        say({ phase: { kind: 'reading' } })
+        const from = Date.now()
+        content = await documents(text, uploads, say)
+        reading = { at: from, ms: Date.now() - from }
+      }
 
       const user: Message = { role: 'user', content, ...(content !== text && { typed: text }) }
       store.append(session, user)
@@ -2753,6 +2784,8 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     // of that would be one decision serving two jobs badly.
     const runId = randomUUID()
     trace.start(runId, text)
+    // The reading that happened before the run could hold it, with its own length (see `reading`).
+    if (reading !== undefined) trace.phase({ kind: 'reading' }, reading)
     const chosen = await personality()
     // Said per step by the loop (§2's three lengths); *none sent* has no step to wait for.
     if (chosen === undefined) trace.personality(0, 'high')
@@ -2792,6 +2825,16 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
           note: (note) => say({ note }),
           // Said twice (§4 G): the screen shows it for three seconds and keeps it on the answer.
           switch: (event) => say({ switch: event }),
+          /**
+           * **The stage the wait is in** — choosing, asking, retrying, writing, a tool — for the
+           * line under the question that replaces a silent `…`. The screen's own stream, not the
+           * plugin wire, so `alexia_protocol` does not move. Kept by the trace too, where the gaps
+           * between stages are the only record of where a slow answer's seconds went.
+           */
+          phase: (phase) => {
+            trace.phase(phase)
+            say({ phase })
+          },
           // The charge line, in a place of its own above the message box.
           paid: (line) => say({ paid: line }),
           // The words on screen since the turn began came from a model that stopped partway;
