@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { pins } from './commands.js'
 import { SAYS } from './health.js'
-import { keylessOn } from './pool.js'
+import { keylessOn, speedOf } from './pool.js'
 import { caps } from './usage.js'
 import type { Rendered } from './settings.js'
 import type { Store } from './store.js'
@@ -235,6 +235,7 @@ const LADDER: Rendered = {
   ordered: 'set_order',
   crossing: 'set_cross',
   floor: 'set_keyless',
+  speed: 'set_speed',
 }
 
 /**
@@ -357,6 +358,7 @@ export function tabs(options: TabOptions): Tab[] {
         cross: caps(options.store).cross === true,
         daily: caps(options.store).daily ?? 0,
         keyless: keylessOn(options.store),
+        fastest: speedOf(options.store) === 'fastest',
       }
     : widget
 

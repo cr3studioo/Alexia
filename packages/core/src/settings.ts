@@ -68,6 +68,15 @@ export interface CoreWidget {
    */
   floor?: string
   keyless?: boolean
+  /**
+   * **The speed switch** (`pool.ts` `Speed`): the action that asks several free models at once
+   * on every message (`on`, *fastest*) or one at a time with a backup when it is needed (`off`,
+   * *balanced*), and whether it is on now. At every stop of the slider like the floor's switch,
+   * even *paid only*, where it has nothing to start — paid models are never asked beside each
+   * other — because a switch that comes and goes as the slider moves is one people hunt for.
+   */
+  speed?: string
+  fastest?: boolean
 }
 
 /** A declaration plus what core knows about it right now. The shell renders this and nothing else. */

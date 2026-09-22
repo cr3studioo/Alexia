@@ -85,6 +85,26 @@ function shortTool(name: string): string {
 }
 
 /**
+ * **Why a second model is being asked**, in the words for each reason.
+ *
+ * Each names only what is known. *Lately* is the record rather than right now — the first model
+ * may be fine this time — so it says *was*, not *is*. *Fastest* is a choice somebody made, so it
+ * blames nobody.
+ */
+function backup(phase: Extract<Phase, { kind: 'backup' }>): string {
+  switch (phase.why) {
+    case 'busy':
+      return `${phase.behind} is busy — asking ${phase.model} as backup`
+    case 'slow':
+      return `${phase.behind} is slow to start — asking ${phase.model} too`
+    case 'lately':
+      return `${phase.behind} was busy a moment ago — asking ${phase.model} too`
+    case 'fastest':
+      return `asking ${phase.model} too, for speed`
+  }
+}
+
+/**
  * **The true half**: what is happening, in words, from the event's own fields and nothing else.
  *
  * No guessing and no softening. *Busy* is what a 429 says. *Slow to start* is what a model that
@@ -101,9 +121,7 @@ export function detail(phase: Phase): string {
     case 'retrying':
       return `${phase.model} is busy, trying again (${String(phase.attempt)})`
     case 'backup':
-      return phase.why === 'busy' ?
-          `${phase.behind} is busy — asking ${phase.model} as backup`
-        : `${phase.behind} is slow to start — asking ${phase.model} too`
+      return backup(phase)
     case 'thinking':
       return `${phase.model} is thinking`
     case 'writing':

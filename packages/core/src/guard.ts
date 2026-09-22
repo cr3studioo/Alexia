@@ -94,6 +94,9 @@ const REVERSIBLE_CORE = new Set([
   // The keyless floor's switch (§1 step 2, D154). A preference, one press from being put back,
   // and it deletes nothing — the same argument as the slider and the running order above.
   'set_keyless',
+  // The speed switch beside it. It changes when free models are asked, never which, deletes
+  // nothing, and its reply already says what it costs — a dialog would say it twice.
+  'set_speed',
   // Starting a conversation and moving between them (M8-2). Nothing is written over and
   // nothing is lost: the one you were in is still in the list, one press away. `forget_chat`
   // is deliberately **not** here — it deletes a conversation and everything said in it.

@@ -43,6 +43,11 @@ test('every stage says what is happening, built from its own fields', () => {
       { kind: 'backup', model: 'Nemotron', behind: 'Qwen 3.8', why: 'slow' },
       'Qwen 3.8 is slow to start — asking Nemotron too',
     ],
+    [
+      { kind: 'backup', model: 'Nemotron', behind: 'Qwen 3.8', why: 'lately' },
+      'Qwen 3.8 was busy a moment ago — asking Nemotron too',
+    ],
+    [{ kind: 'backup', model: 'Nemotron', behind: 'Qwen 3.8', why: 'fastest' }, 'asking Nemotron too, for speed'],
     [{ kind: 'thinking', model: 'Qwen 3.8' }, 'Qwen 3.8 is thinking'],
     [{ kind: 'writing', model: 'Qwen 3.8' }, 'Qwen 3.8 is writing'],
     [{ kind: 'tool', name: 'files__search' }, 'using search'],

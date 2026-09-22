@@ -150,6 +150,9 @@ export interface Rendered {
   /** `ladder`: the keyless floor's switch, and where it stands (§1 step 2, D154). */
   floor?: string
   keyless?: boolean
+  /** `ladder`: the speed switch's action, and whether several free models are asked at once now. */
+  speed?: string
+  fastest?: boolean
 }
 
 /** Which screen is drawing, and how it answers the two questions a widget asks back. */
@@ -2134,6 +2137,50 @@ function ladder(host: WidgetHost, declared: Rendered): HTMLElement {
   flooring.hidden = declared.floor === undefined
   flooring.append(floorToggle, floorLabel, floorSaid)
 
+  // ---- the speed switch ----------------------------------------------------------------------
+
+  /**
+   * **Whether several free models are asked at once, on every message.**
+   *
+   * Off by default, and the label says the price before anybody pays it: three at once spends a
+   * free day three times as fast. The hint under it says what *off* is, because *off* is not
+   * *slow* — it is one at a time with a backup when the first one stalls, which is what most
+   * people want most days.
+   *
+   * At every stop of the slider, like the floor's switch. And **no redraw on success**, unlike
+   * that one: this changes when models are asked, not which, so the table beside it is still
+   * right, and the sentence core sends back is the only place the person reads what it costs.
+   */
+  const speeding = el('div', 'speed')
+  const speedToggle = el('input', 'speed-toggle')
+  speedToggle.type = 'checkbox'
+  speedToggle.id = `${host.screen}-${host.plugin}-${declared.key}-speed`
+  speedToggle.checked = declared.fastest === true
+  const speedLabel = el('label', 'speed-label', 'Answer as fast as possible (uses more free requests)')
+  speedLabel.htmlFor = speedToggle.id
+  const speedHint = el(
+    'p',
+    'speed-hint',
+    'Off is Balanced: one model at a time, and a second asked beside it only when the first is slow or was busy a moment ago.',
+  )
+  const speedSaid = el('p', 'speed-said')
+  speedSaid.hidden = true
+  speedToggle.addEventListener('change', () => {
+    void (async () => {
+      if (declared.speed === undefined) return
+      const answer = await host.send('/api/action', {
+        plugin: host.plugin,
+        key: declared.speed,
+        row: speedToggle.checked ? 'on' : 'off',
+      })
+      speedSaid.textContent = String(answer.said ?? '')
+      speedSaid.className = answer.ok === true ? 'speed-said' : 'speed-said error'
+      speedSaid.hidden = speedSaid.textContent === ''
+    })()
+  })
+  speeding.hidden = declared.speed === undefined
+  speeding.append(speedToggle, speedLabel, speedHint, speedSaid)
+
   for (const stop of stops) {
     const choice = el('label', 'grade-stop')
     const input = el('input')
@@ -2361,7 +2408,7 @@ function ladder(host: WidgetHost, declared: Rendered): HTMLElement {
 
   const adding = el('div', 'ladder-add')
   adding.append(search, hits)
-  box.append(track, explains, crossing, flooring, grid, adding, clear, said)
+  box.append(track, explains, crossing, flooring, speeding, grid, adding, clear, said)
   slide()
   void load()
   return box
