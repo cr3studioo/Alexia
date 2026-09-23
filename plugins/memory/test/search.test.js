@@ -50,3 +50,41 @@ test('a year-old fact is still found, because it is still true', () => {
   const rows = [fact('The grant deadline is in March', 400)]
   expect(rank(rows, 'when is the grant deadline', now)).toHaveLength(1)
 })
+
+test('Czech words survive whole, and with and without their accents', () => {
+  // The old split on [a-z] turned "ČVUT" into "vut" and "Václav" into "clav".
+  expect(words('Václav studuje na ČVUT')).toEqual([
+    'václav',
+    'vaclav',
+    'studuje',
+    'čvut',
+    'cvut',
+  ])
+  // Czech stop words go the way "the" does, typed with accents or without.
+  expect(words('jak jsem ale když kdyz')).toEqual([])
+})
+
+test('a question typed without accents finds the row written with them', () => {
+  const rows = [fact('Václav studuje na ČVUT FEL', 30), fact('Bought milk', 1)]
+  expect(rank(rows, 'kde studuje cvut', now)[0]?.text).toMatch(/ČVUT FEL/)
+  expect(rank(rows, 'Vaclav', now)).toHaveLength(1)
+  // One word asked is one word counted, however many spellings it has — so the accented
+  // row does not outscore the plain one, and recency decides.
+  const tied = rank([fact('Václav was here', 400), fact('Vaclav was here', 1)], 'Václav', now)
+  expect(tied[0]?.at).toBe(now - DAY)
+})
+
+test('a bent Czech word counts half, so two of them find a row and one does not', () => {
+  const rows = [fact('Niki se učí programovat s přítelkyní', 30)]
+  expect(rank(rows, 'programování přítelkyně', now)).toHaveLength(1)
+  // One prefix alone is too easily luck.
+  expect(rank(rows, 'programování', now)).toEqual([])
+  // Exact words still beat bent ones, whatever the ages.
+  const both = [
+    fact('Niki se učí programovat s přítelkyní', 1),
+    fact('Programování a přítelkyně', 400),
+  ]
+  expect(rank(both, 'programování přítelkyně', now)[0]?.text).toMatch(/^Programování/)
+  // Czech stop words alone ask for nothing.
+  expect(rank(rows, 'jak jsem ale', now)).toEqual([])
+})
