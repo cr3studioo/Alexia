@@ -222,3 +222,45 @@ test('a send never throws or rejects to the caller, even when both methods fail'
   expect(() => draft.add('hello')).not.toThrow()
   await vi.advanceTimersByTimeAsync(1000)
 })
+
+test('a status line is the whole draft before the first word, and sent at once', () => {
+  const { draft, plainCalls, richCalls } = harness()
+  draft.status('Thinking…')
+  // Nothing before `open()` — the status is what the first draft says, not a draft of its own.
+  expect(plainCalls).toEqual([])
+  draft.open()
+  draft.status('Asking small_v1…')
+  expect(plainCalls).toEqual([
+    [draft.id, 'Thinking…'],
+    [draft.id, 'Asking small_v1…'],
+  ])
+  expect(richCalls).toEqual([])
+  draft.close()
+})
+
+test('a status line sits under the words so far, escaped, and comes off with an empty string', () => {
+  const { draft, richCalls } = harness()
+  draft.open()
+  draft.add('Found *it*.')
+  vi.advanceTimersByTime(FLUSH_MS)
+  draft.status('Using web_search…')
+  draft.status('')
+  expect(richCalls).toEqual([
+    [draft.id, forRich('Found *it*.')],
+    [draft.id, `${forRich('Found *it*.')}\n\nUsing web\\_search…`],
+    [draft.id, forRich('Found *it*.')],
+  ])
+  draft.close()
+})
+
+test('the same status twice is one send', () => {
+  const { draft, plainCalls } = harness()
+  draft.open()
+  draft.status('Thinking…')
+  draft.status('Thinking…')
+  expect(plainCalls).toEqual([
+    [draft.id, ''],
+    [draft.id, 'Thinking…'],
+  ])
+  draft.close()
+})

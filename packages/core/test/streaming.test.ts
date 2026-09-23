@@ -70,7 +70,7 @@ test('a stage never overtakes the words written before it', () => {
   live.delta('one ')
   live.delta('two')
   live.phase({ kind: 'tool', name: 'look' })
-  expect(sent).toEqual([{ delta: 'one ' }, { delta: 'two' }, { phase: 'tool' }])
+  expect(sent).toEqual([{ delta: 'one ' }, { delta: 'two' }, { phase: 'tool', tool: 'look' }])
   live.end()
 })
 
@@ -117,11 +117,24 @@ test('a busy tool keeps the line alive every few seconds, not every time it repo
     live.alive()
     vi.advanceTimersByTime(100)
   }
-  expect(sent).toEqual([{ phase: 'tool' }, { phase: 'tool' }])
+  expect(sent).toEqual([{ phase: 'tool', tool: 'render' }, { phase: 'tool', tool: 'render' }])
   vi.advanceTimersByTime(ALIVE_EVERY)
   live.alive()
   live.alive()
   expect(sent).toHaveLength(3)
+  live.end()
+})
+
+test('a stage about a model names it, so a phone can say which', () => {
+  const live = streamer((frame) => sent.push(frame))
+  live.phase({ kind: 'choosing' })
+  live.phase({ kind: 'thinking', model: 'small-v1' })
+  live.phase({ kind: 'backup', model: 'big-v2', behind: 'small-v1', why: 'slow' })
+  expect(sent).toEqual([
+    { phase: 'choosing' },
+    { phase: 'thinking', model: 'small-v1' },
+    { phase: 'backup', model: 'big-v2' },
+  ])
   live.end()
 })
 

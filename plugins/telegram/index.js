@@ -9,7 +9,8 @@ import {
   filePath,
   LIMIT,
   me,
-  react,
+  remove,
+  retext,
   send,
   sendDocument,
   sendDraft,
@@ -33,6 +34,7 @@ import { action, DEFAULT_PANEL_URL, keyboard, panelUrl, stateOf } from './panel.
 import { EVERY, Presence } from './presence.js'
 import { dayKey, dueNow, morningDue, parseAt, reminderText, sendTo } from './reminders.js'
 import { speaks, voiceMode } from './reply.js'
+import { FIRST, StatusMessage, statusOf } from './status.js'
 import { frameOf, sampling, Stopped, wasStopped } from './sampling.js'
 import { bare, isCommand, panels, stops } from './slash.js'
 
@@ -541,6 +543,11 @@ async function answer(token, chatId, turn, messageId) {
    *
    * Phase 1's *typing…* stays on underneath: it costs one small request every four seconds
    * and it is what the chat still has on a client where drafts do not work.
+   *
+   * **And it says what the wait is doing** (D198) — *Choosing a model…*, *Asking small-v1…*,
+   * *Generating answer…* — in the draft while drafts work, and in a status message of its own,
+   * deleted when the answer lands, where they do not. *Typing…* is Telegram's word and cannot
+   * be changed; these are this plugin's.
    */
   const draft = new Draft({
     plain: (id, text) => sendDraft(token, chatId, id, text, true),
@@ -548,7 +555,19 @@ async function answer(token, chatId, turn, messageId) {
     session: drafting,
     log: (message, error) => log.warn(message, error),
   })
+  const note = new StatusMessage({
+    send: async (text) => (await send(token, chatId, text, undefined, undefined, { disable_notification: true })).message_id,
+    edit: (id, text) => retext(token, chatId, id, text),
+    remove: (id) => remove(token, chatId, id),
+    log: (message, error) => log.warn(message, error),
+  })
+  /** One stage in words, wherever words can go right now. */
+  const status = (text) => {
+    draft.status(text)
+    if (drafting.off) void note.set(text)
+  }
   current = { controller, chatId, draft }
+  status(FIRST)
   draft.open()
   let result
   try {
@@ -586,7 +605,13 @@ async function answer(token, chatId, turn, messageId) {
        */
       const frame = frameOf(params)
       if (frame?.restart) draft.restart()
-      if (typeof frame?.delta === 'string' && frame.delta !== '') draft.add(frame.delta)
+      // Words are their own news: the status line under them goes until the next stage.
+      if (typeof frame?.delta === 'string' && frame.delta !== '') {
+        draft.status('')
+        draft.add(frame.delta)
+      }
+      const stage = statusOf(frame)
+      if (stage) status(stage)
     }))
   } catch (error) {
     // `/stop` pressed the button on this one. It is not a fault and the loop has already said
@@ -600,6 +625,8 @@ async function answer(token, chatId, turn, messageId) {
     // The words are about to arrive as a real message, or they are never going to. Either way
     // nothing more should be refreshing a preview of them.
     draft.close()
+    // Down before the answer goes up, so the chat ends on the answer and not on *Generating…*.
+    await note.clear()
     // The handle belongs to whichever answer is running, and one that finishes late must never
     // take it from the answer after it.
     if (current?.controller === controller) current = undefined
@@ -1036,23 +1063,6 @@ async function stop(token, chatId, messageId, more) {
 }
 
 /**
- * 👀 on a message the moment it is heard (D192).
- *
- * Before it is queued, so one sent while another is being answered says *seen* rather than
- * looking lost. It stays on: swapping it for ✅ later is one more notification on the phone
- * for news the answer is about to deliver anyway. Never waited for, and a failure is one line
- * in the log the first time — a reaction is not worth an answer.
- */
-let unseen = false
-function seen(token, chatId, messageId) {
-  react(token, chatId, messageId, '👀').catch((error) => {
-    if (unseen) return
-    unseen = true
-    log.warn('could not mark a message as seen — answers are unaffected', error)
-  })
-}
-
-/**
  * Where the last run of this plugin got to (D194).
  *
  * Anything but a whole number is read as *nowhere*: `undefined` asks Telegram for whatever it
@@ -1223,10 +1233,8 @@ async function poll(token, signal) {
         /**
          * A tap on the panel, from a paired account (D196).
          *
-         * Before 👀, because a `web_app_data` message is not one anybody can see in the chat —
-         * a reaction on it would be a reaction on nothing. Answered on the spot, like the two
-         * commands below: what it carries is a mode switch or a stop, and neither is worth
-         * queueing behind an answer, least of all the stop.
+         * Answered on the spot, like the two commands below: what it carries is a mode switch
+         * or a stop, and neither is worth queueing behind an answer, least of all the stop.
          */
         if (kind === 'web_app') {
           try {
@@ -1238,10 +1246,10 @@ async function poll(token, signal) {
           continue
         }
 
-        // Seen now, answered in its turn, and never waited for here (D192). The loop has to be
-        // back at `getUpdates` while an answer runs, because that is the only way the press on
-        // a permission question can reach it.
-        seen(token, chatId, message.message_id)
+        // Answered in its turn, and never waited for here (D192). The loop has to be back at
+        // `getUpdates` while an answer runs, because that is the only way the press on a
+        // permission question can reach it. No reaction for *seen* any more (D198): fetching
+        // the update is what gives the message its read ticks in a bot chat.
 
         // Except these two, which are answered on the spot: `/stop` queued behind the answer it
         // is stopping would arrive after the thing it was meant to prevent (D194), and `/panel`
