@@ -3,8 +3,8 @@
   "manifest_version": 1,
   "id": "memory",
   "name": "Long-term memory",
-  "summary": "Remembers things across conversations — what you told it last month, and where to find it again. Can also write things down by itself, once you turn that on.",
-  "version": "0.1.1",
+  "summary": "Remembers things across conversations, and always knows the few you pin — your name, how to talk to you. Can also write things down by itself, once you turn that on.",
+  "version": "0.2.0",
   "license": "AGPL-3.0-only",
   "entry": {
     "run": "node",
@@ -18,7 +18,8 @@
   "provides": [
     "memory.remember",
     "memory.recall",
-    "memory.capture"
+    "memory.capture",
+    "memory.profile"
   ],
   "settings": [
     {
@@ -110,6 +111,11 @@
             "label": "How it got here"
           },
           {
+            "key": "pinned",
+            "label": "Always known",
+            "hideNarrow": true
+          },
+          {
             "key": "when",
             "label": "Written down",
             "align": "right",
@@ -117,6 +123,16 @@
           }
         ],
         "rowActions": [
+          {
+            "key": "pin",
+            "label": "Always know this",
+            "tool": "pin"
+          },
+          {
+            "key": "unpin",
+            "label": "Stop always knowing",
+            "tool": "unpin"
+          },
           {
             "key": "forget_one",
             "label": "Forget",
