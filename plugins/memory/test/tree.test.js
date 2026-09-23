@@ -134,7 +134,7 @@ test('fallback by kind, and the root when a section has been renamed away', () =
   expect(at('preference')).toBe('You/Preferences')
   expect(at('task')).toBe('You/Goals & plans')
   expect(at('place')).toBe('You/Identity & how to talk to me')
-  expect(at('fact')).toBe('You/Identity & how to talk to me')
+  expect(at('fact')).toBe('You')
   expect(at('other')).toBe('You')
   expect(at(undefined)).toBe('You')
   const renamed = build(seedRows().map((row) => (row.name === 'People' ? { ...row, name: 'Friends' } : row)))

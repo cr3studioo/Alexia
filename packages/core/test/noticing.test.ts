@@ -133,7 +133,7 @@ test('a thing said in passing is written down without anybody calling remember',
   expect(asked).toHaveLength(3)
   expect(asked[1]).toContain('not filed yet')
   const branch = (id: unknown): unknown => store.select('memory', 'branches', { where: { rowid: Number(id) } })[0]?.name
-  expect(written.map((row) => branch(row.branch))).toEqual(['Identity & how to talk to me', 'Goals & plans'])
+  expect(written.map((row) => branch(row.branch))).toEqual(['You', 'Goals & plans'])
 })
 
 test('recall brings back the hit and what it hangs off, and says which it was told', async () => {

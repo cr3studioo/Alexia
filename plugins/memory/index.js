@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { fromJsonSchema, log, plugin } from '@alexia/sdk'
 import { BATCH, parse, plan, prompt, TRIES } from './capture.js'
+import { clean, DEFAULT_FILLER, worthSorting } from './prefilter.js'
 import {
   chain,
   due,
@@ -1249,12 +1250,44 @@ const noticed = alexia.tool(
     annotations: { destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
   async ({ said, answered, at }) => {
-    const text = `They said: ${String(said ?? '').trim()}\nAlexia answered: ${String(answered ?? '').trim()}`
+    // The filter first, and no model in it: *ok*, *continue* and a dot are most of a day, and
+    // the cheapest call is the one never queued. Cleaned before it is kept, too — a pasted
+    // image or a code block is thousands of characters the sorting pass would read for nothing.
+    const { skip } = await settings()
+    const filler = [...DEFAULT_FILLER, ...String(skip ?? '').split(',').map((one) => one.trim()).filter(Boolean)]
+    if (!worthSorting({ said, answered }, { filler })) return { content: [{ type: 'text', text: 'not worth keeping' }] }
+    const text = `They said: ${clean(said)}\nAlexia answered: ${clean(answered)}`
     await alexia.storage.insert('buffer', { text, tries: 0, at: Number(at) || Date.now() })
     await report()
+    void enough()
     return { content: [{ type: 'text', text: 'kept' }] }
   },
 )
+
+/**
+ * Sorting by count as well as by clock (the owner's *every five messages*).
+ *
+ * The timer alone meant a busy half hour waited for the next tick and a note said at 9:01 was
+ * not known at 9:05. So once `every` exchanges are waiting, the pass runs now. **One at a
+ * time**: a second capture arriving mid-pass joins the one in flight rather than starting a
+ * second call over the same rows. The timer stays, for the three that never reach five.
+ */
+let sorting
+/** The timer's pass and the count's pass are the same pass, and only one is ever in flight. */
+const sortOnce = () =>
+  (sorting ??= tick()
+    .catch((error) => log.info(String(error)))
+    // Only when the pass wrote something; an empty buffer still asks nothing.
+    .then((done) => (done?.written ? filing() : undefined))
+    .finally(() => {
+      sorting = undefined
+    }))
+async function enough() {
+  if (sorting) return sorting
+  const { every } = await settings()
+  if ((await alexia.storage.count('buffer')) < Math.max(1, Number(every) || 5)) return
+  return sortOnce()
+}
 
 /**
  * One pass over the buffer.
@@ -1578,6 +1611,8 @@ alexia.tool(
     annotations: { destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
   async () => {
+    // A button press waits for a pass already running rather than racing it over the same rows.
+    if (sorting) await sorting
     const { done, looked, filed } = await pass()
     // The gardener is only mentioned when it did something; it is quiet on almost every pass.
     const tended =
@@ -1660,14 +1695,7 @@ async function follow() {
   clearInterval(timer)
   if (capture === true) {
     const minutes = Math.min(240, Math.max(1, Number(interval) || 12))
-    timer = setInterval(
-      () =>
-        void tick()
-          .catch((error) => log.info(String(error)))
-          // Only when the pass wrote something; an empty buffer still asks nothing.
-          .then((done) => (done?.written ? filing() : undefined)),
-      minutes * 60_000,
-    )
+    timer = setInterval(() => void sortOnce(), minutes * 60_000)
     // Nothing is waiting on it. A timer that holds the process open is a resident plugin
     // that cannot be shut down, which is a different bug from the one it was added for.
     timer.unref?.()

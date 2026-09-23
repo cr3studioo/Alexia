@@ -50,6 +50,23 @@
       "hint": "Minutes between passes. An empty buffer costs nothing — no model is called when there is nothing to sort."
     },
     {
+      "type": "number",
+      "key": "every",
+      "label": "Sort after this many messages",
+      "min": 1,
+      "max": 50,
+      "step": 1,
+      "default": 5,
+      "hint": "Once this many exchanges are waiting, they are sorted straight away instead of waiting for the timer. The timer still catches the rest on a quiet day."
+    },
+    {
+      "type": "text",
+      "key": "skip",
+      "label": "Also not worth writing down",
+      "placeholder": "e.g. lol, brb, jo jasně",
+      "hint": "Comma-separated. Anything you say that is exactly one of these is never kept for sorting — on top of the built-in list (ok, continue, why, test, díky, pokračuj…) and anything under three words."
+    },
+    {
       "type": "status",
       "key": "state",
       "label": "State"

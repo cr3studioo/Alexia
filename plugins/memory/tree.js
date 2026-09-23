@@ -273,8 +273,13 @@ export function destination(tree, path) {
  * | preference | Preferences                    | it is what they like                              |
  * | task       | Goals & plans                  | it is something to do                             |
  * | place      | Identity & how to talk to me   | where they live is part of who they are           |
- * | fact       | Identity & how to talk to me   | a bare fact about a person is mostly about them   |
+ * | fact       | You (the root)                 | a bare fact could be anything — see below         |
  * | other      | You (the root)                 | honest: filed nowhere in particular, still found  |
+ *
+ * *Fact* used to go under Identity, on the theory that a bare fact about a person is mostly
+ * about them. On the owner's own notes it would have filed *studies at ČVUT FEL* and *uses Orca
+ * on the Mac* as who he is and how to talk to him — a section a model reads for tone. The
+ * root says *not sorted* honestly, is still found by `recall`, and is one `move` from right.
  *
  * The root is also where anything goes when its section has been renamed or merged away, so a
  * person reshaping the tree never makes a note unplaceable.
@@ -284,7 +289,6 @@ export const HOMES = {
   preference: 'Preferences',
   task: 'Goals & plans',
   place: 'Identity & how to talk to me',
-  fact: 'Identity & how to talk to me',
 }
 
 export function fallback(tree, kind) {
