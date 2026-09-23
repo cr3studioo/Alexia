@@ -26,9 +26,6 @@
 /** Telegram's own cap on `rich_message.markdown`. */
 export const RICH_LIMIT = 32768
 
-/** The same sentence `marked()` already says over plain text, said once more for rich replies. */
-export const MARKER = "— via Telegram. This conversation goes through Telegram's servers."
-
 /** A fenced block (```…```, across lines) or an inline span (`…`) — neither gets rewritten. */
 const CODE_RE = /```[\s\S]*?```|`[^`\n]*`/g
 
@@ -87,12 +84,4 @@ export function forRich(markdown) {
   }
   out += rewriteLinks(text.slice(last))
   return out
-}
-
-/**
- * The privacy line, in whichever alphabet the message is being sent in — italic Markdown for
- * a rich message, plain text for the fallback that has no Markdown to render it with.
- */
-export function withMarker(text, rich) {
-  return rich ? `${text}\n\n_${MARKER}_` : `${text}\n\n${MARKER}`
 }

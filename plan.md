@@ -2069,9 +2069,8 @@ core calling in. Owns storage (chat-to-session mappings), so it exercises purge.
 grammY, long polling — no webhook, no port, no firewall dialog. Auth is a **one-time pairing
 code shown in the desktop UI** that allowlists your Telegram user ID. No account system.
 
-**The persistent marker is not optional.** Every Telegram conversation carries a visible mark
-that it crossed Telegram's servers. Local mode means *the model runs on your machine* and
-never claims more. Invariant 8 is watching the strings.
+Local mode means *the model runs on your machine* and never claims more. Invariant 8 is
+watching the strings. (The per-reply *"via Telegram"* marker was dropped by D197.)
 
 ### M4-2 `plugins/computer` — computer control
 

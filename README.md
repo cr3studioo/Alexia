@@ -113,7 +113,7 @@ same footing as anybody else's.
 | 🖼️ **Local media generation** | Makes pictures, sound and video on your own machine with ComfyUI — and shows the picture forming as it works. |
 | 🖱️ **Computer control** | Sees the screen, moves the mouse, presses things and types. Anything a person at the keyboard could do. |
 | 🧠 **Long-term memory** | Remembers across conversations, and draws what it knows as a map you can explore. |
-| ✈️ **Telegram** | Talk to Alexia from your phone. Every reply says that it crossed Telegram's servers. |
+| ✈️ **Telegram** | Talk to Alexia from your phone. |
 | 🔤 **Text in pictures** | Reads the words in a scan, photo or screenshot, using the OCR built into Windows and macOS. |
 | 🎭 **Personality** | Write Alexia a personality in your own words, keep as many as you like, switch between them. |
 | ✅ **Commitments** | Keeps track of what you said you would do — and whether you did. |

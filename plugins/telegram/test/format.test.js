@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { expect, test } from 'vitest'
-import { forRich, MARKER, withMarker } from '../format.js'
+import { forRich } from '../format.js'
 
 // A Markdown image makes Telegram's own servers fetch the URL — a model, or a prompt
 // injected into something it read, can turn that into an exfiltration channel. `forRich`
@@ -46,11 +46,6 @@ test('an inline code span is not rewritten', () => {
 test('code is left alone while the surrounding text is still rewritten', () => {
   const text = 'see ![a cat](https://example.com/cat.png) and `![alt](url)` too'
   expect(forRich(text)).toBe('see [a cat](https://example.com/cat.png) and `![alt](url)` too')
-})
-
-test('the marker is italic in a rich message and plain otherwise', () => {
-  expect(withMarker('hello', true)).toBe(`hello\n\n_${MARKER}_`)
-  expect(withMarker('hello', false)).toBe(`hello\n\n${MARKER}`)
 })
 
 test('an image the link pattern cannot read is still not an image', () => {

@@ -25,7 +25,7 @@ import {
 import { Asking } from './asking.js'
 import { Clock } from './clock.js'
 import { Draft } from './draft.js'
-import { forRich, MARKER, RICH_LIMIT, withMarker } from './format.js'
+import { forRich, RICH_LIMIT } from './format.js'
 import { bestPhoto, fileTurn, kindOf, photoNote, safeName, tooBig } from './incoming.js'
 import { Line } from './line.js'
 import { commandsFrom, helpLines, menu } from './menu.js'
@@ -51,19 +51,12 @@ import { bare, isCommand, panels, stops } from './slash.js'
  *   and is read back per use. It is never in the database and never in a log.
  * - **Storage it owns.** The conversation per chat is in this plugin's namespace, so
  *   deleting the plugin takes every message with it and invariant 5 can prove it.
- *
- * **The marker is not optional.** Local mode means the model runs on this machine. It has
- * never meant that words stay here, and Telegram is the plugin that makes that concrete —
- * so a conversation carries a visible mark that it crossed Telegram's servers, and the
- * mark is written here rather than left to whoever reads the log.
  */
 
 const alexia = plugin()
 
 /** How long Telegram holds the poll open. Long enough that the loop is nearly always waiting. */
 const POLL_SECONDS = 50
-/** Say it again after a gap this long. A mark on message one is not a mark on message fifty. */
-const REMARK_AFTER = 60 * 60 * 1000
 /**
  * How often the reminders that are due are looked for (D195).
  *
@@ -202,28 +195,6 @@ async function report() {
     : `● Listening — ${who.size} account${who.size === 1 ? '' : 's'} allowed`
   await alexia.status('state', state).catch(() => {})
   await alexia.status('pairing_code', who.size === 0 ? await code() : 'paired').catch(() => {})
-}
-
-/**
- * Is the mark due in this conversation?
- *
- * Said on the first reply in a chat and again after a gap, rather than on every message —
- * a line repeated fifty times is a line nobody reads, and the point is that it is read.
- * It says what happened; it does not editorialise and it does not promise anything.
- *
- * **Whether, not what** (D194). The sentence used to be glued on here, which was fine while
- * there was one way to send it; there are three now — italic inside a rendered message, plain
- * in the fallback, and on its own line after a voice note that cannot carry it. `withMarker`
- * in `format.js` composes it, and asking counts as saying it, so the caller has to be the one
- * that gets it out.
- */
-async function marked(chatId) {
-  const last = (await alexia.storage.get('marked')) ?? {}
-  const now = Date.now()
-  const said = last[chatId]
-  if (typeof said === 'number' && now - said < REMARK_AFTER) return false
-  await alexia.storage.set('marked', { ...last, [chatId]: now })
-  return true
 }
 
 /** What has been said in this chat, oldest first, as the model gets it. */
@@ -636,24 +607,16 @@ async function answer(token, chatId, turn, messageId) {
   const said = result.content?.type === 'text' ? result.content.text : ''
   await remember(chatId, 'assistant', said)
   const words = said || 'I had nothing to say to that.'
-  const due = await marked(chatId)
 
   // A file the task made — a picture, a report — first (D122). It is usually the thing that
-  // was asked for, and it crosses Telegram's servers like the words next to it, which the
-  // marker says.
+  // was asked for.
   await delivered(token, chatId, result, quote)
 
   // A voice note when the form the question came in asks for one, and words when it does not.
-  // The marker line is text either way: a promise about where words went, read out loud, is a
-  // promise nobody can scroll back to.
-  if (await spoken(token, chatId, said, turn.cameAsVoice, quote)) {
-    if (due) await say(token, chatId, MARKER, { rich: false })
-    return
-  }
+  if (await spoken(token, chatId, said, turn.cameAsVoice, quote)) return
   // Rendered, so the limit is Telegram's rich one — eight times the room, which is the whole
   // difference between an answer arriving as one bubble and as eight (D194).
-  const whole = due ? withMarker(words, !plainOnly) : words
-  for (const part of chunk(whole, plainOnly ? LIMIT : RICH_LIMIT)) {
+  for (const part of chunk(words, plainOnly ? LIMIT : RICH_LIMIT)) {
     await say(token, chatId, part, { extra: quote() })
   }
 }
