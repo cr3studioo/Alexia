@@ -292,6 +292,15 @@
 
     if (!state) {
       header.appendChild(el('p', 'hint', 'Open the panel from the ⚙ Panel button in your chat with Alexia.'))
+      // What did arrive, by name only: Telegram's own parameters carry who you are, so their
+      // values stay off the screen. Enough to tell a fragment Telegram replaced from one that
+      // never had the state in it.
+      var names = location.hash.replace(/^#/, '').split('&').filter(Boolean).map(function (part) {
+        var eq = part.indexOf('=')
+        return eq === -1 ? '(' + part.length + ' characters, no name)' : part.slice(0, eq)
+      })
+      header.appendChild(el('p', 'hint', 'The link brought: ' + (names.length ? names.join(', ') : 'nothing after #') +
+        (location.search ? '; and a query of ' + location.search.length + ' characters' : '') + '.'))
       app.appendChild(header)
       return
     }
