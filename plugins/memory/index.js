@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { fromJsonSchema, log, plugin } from '@alexia/sdk'
 import { BATCH, parse, plan, prompt, TRIES } from './capture.js'
+import { pinnedOf, profile, seedable } from './profile.js'
 import { rank } from './search.js'
 
 /**
@@ -34,6 +35,24 @@ const settings = () => alexia.settings()
  */
 const STATED = 'stated'
 const INFERRED = 'inferred'
+
+/**
+ * Pinned: in what Alexia always knows about you (`profile.js`), rather than only in what it can
+ * find when it looks.
+ *
+ * **A column on `facts`, not a side table.** Plugin storage is schemaless — core adds a column
+ * the first time a key appears in an insert *or* an update (`#ensure` in core's store) — so the
+ * first `update(..., { pinned: true })` grows the column on a database that already holds rows,
+ * and every older row reads it as `null`, which is *not pinned*. A side table would be a second
+ * thing for `forget_one` and `forget_all` to remember to clean, and forgetting a pinned note
+ * must take its pin with it by construction rather than by care.
+ *
+ * The one catch, and why nothing here says `where: { pinned: … }`: until the first pin, the
+ * column does not exist, and filtering on a column that does not exist is an error on
+ * purpose. So pinned notes are picked out of `notes()` with `pinnedOf`, which is hundreds of
+ * rows and fine.
+ */
+const SEEDED = 'profile_seeded'
 
 async function report() {
   const held = await alexia.storage.count('facts')
@@ -137,6 +156,12 @@ const kept = alexia.tool(
             'The thing to remember, as a complete sentence. "Vaclav’s deadline for the grant is in March" — not "March".',
         },
         kind: { type: 'string', enum: KINDS, description: 'Roughly what sort of thing it is.' },
+        pin: {
+          type: 'boolean',
+          description:
+            'Put this in what Alexia always knows about you — name, language, how to talk to you. ' +
+            'Keep it rare: everything pinned is read before every task.',
+        },
       },
       required: ['text'],
     }),
@@ -145,13 +170,19 @@ const kept = alexia.tool(
     // treating remembering a preference like deleting a file.
     annotations: { destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
-  async ({ text, kind }) => {
+  async ({ text, kind, pin }) => {
     const said = String(text ?? '').trim()
     if (said === '') return { isError: true, content: [{ type: 'text', text: 'There was nothing to remember.' }] }
     // Said before, near enough. Remembering the same sentence four times is how recall
     // fills up with one fact and returns nothing else.
-    const already = await alexia.storage.select('facts', { where: { text: said }, limit: 1 })
-    if (already.length > 0) {
+    const [already] = await alexia.storage.select('facts', { where: { text: said }, limit: 1 })
+    if (already) {
+      // Asked to pin something already held is still a pin — and saying it out loud makes it
+      // stated, whatever it was before.
+      if (pin === true && !pinnedOf(already)) {
+        await alexia.storage.update('facts', { pinned: true, source: STATED }, { rowid: Number(already.rowid) })
+        return { content: [{ type: 'text', text: `Already remembered, and now always known: ${said}` }] }
+      }
       return { content: [{ type: 'text', text: 'Already remembered, so nothing changed.' }] }
     }
     await alexia.storage.insert('facts', {
@@ -164,10 +195,12 @@ const kept = alexia.tool(
       // Somebody said this out loud. That is a different kind of true from something worked
       // out on a timer, and recall says which one it is reading back.
       source: STATED,
+      // Only when asked. A key left off is a column left null, which reads as not pinned.
+      ...(pin === true ? { pinned: true } : {}),
       at: Date.now(),
     })
     await report()
-    return { content: [{ type: 'text', text: `Remembered: ${said}` }] }
+    return { content: [{ type: 'text', text: `${pin === true ? 'Remembered, and always known' : 'Remembered'}: ${said}` }] }
   },
 )
 
@@ -280,7 +313,12 @@ alexia.tool(
     const text =
       rows.length === 0 ?
         'Nothing has been remembered yet. Things get written down when you say something worth keeping.'
-      : rows.map((row) => `- ${String(row.text)}  (${new Date(Number(row.at)).toISOString().slice(0, 10)})`).join('\n')
+      : rows
+          .map(
+            (row) =>
+              `- ${String(row.text)}  (${new Date(Number(row.at)).toISOString().slice(0, 10)}${pinnedOf(row) ? ', always known' : ''}; id ${String(row.rowid)})`,
+          )
+          .join('\n')
     return { content: [{ type: 'text', text }] }
   },
 )
@@ -314,6 +352,9 @@ alexia.tool(
           // this out* are different kinds of true, and the second is the one worth checking.
           from: row.source === INFERRED ? 'Alexia noticed it' : 'you said it',
           when: new Date(Number(row.at)).toISOString().slice(0, 10),
+          // In what Alexia reads before every task. `suggested` is the sorting pass saying
+          // *this one might belong there*, which only a person can act on.
+          pinned: pinnedOf(row) ? 'always known' : row.suggest_pin ? 'suggested' : '',
         })),
       },
     }
@@ -412,6 +453,9 @@ alexia.tool(
             row.source === INFERRED ?
               'Alexia worked this out from something you said rather than being told it.'
             : 'You said this.',
+            ...(pinnedOf(row) ? ['Alexia always knows this: it is read before every task.']
+            : row.suggest_pin ? ['Alexia thinks this might belong in what it always knows. Pin it if it does.']
+            : []),
             // What it hangs off, by name. The reason a person can tell a note that belongs
             // somewhere from one that is floating on its own.
             ...(links.length === 0 ? [] : [`Filed under: ${links.join(', ')}.`]),
@@ -421,6 +465,94 @@ alexia.tool(
     }
   },
 )
+
+/**
+ * Pinning one note, and unpinning it — by the row, like `forget_one`, because on a screen the
+ * person is pointing at a row, and in a conversation `remembered` has just listed them with ids.
+ *
+ * A person may pin a note Alexia worked out rather than being told. That is them vouching for
+ * it, and it is the only way an inferred note reaches the profile — where it still sorts after
+ * every stated one (`profile.js`). The sorting pass itself never pins; see capture.js.
+ */
+async function pinning(id, on) {
+  const rowid = Number(id)
+  if (!Number.isInteger(rowid)) return { isError: true, content: [{ type: 'text', text: 'That is not a row.' }] }
+  const [row] = await alexia.storage.select('facts', { where: { rowid }, limit: 1 })
+  if (!row) return { isError: true, content: [{ type: 'text', text: 'That one is already gone.' }] }
+  if (pinnedOf(row) === on) {
+    return { content: [{ type: 'text', text: `${on ? 'Already always known' : 'Was not pinned'}, so nothing changed.` }] }
+  }
+  await alexia.storage.update('facts', { pinned: on }, { rowid })
+  return {
+    content: [{ type: 'text', text: `${on ? 'Always known now' : 'No longer always known, still remembered'}: ${String(row.text)}` }],
+  }
+}
+
+const byRow = fromJsonSchema({
+  type: 'object',
+  properties: { id: { type: 'string', description: 'Which row.' } },
+  required: ['id'],
+})
+
+alexia.tool(
+  'pin',
+  {
+    description:
+      'Put one remembered thing in what Alexia always knows about the user, which is read before ' +
+      'every task. For who they are and how they want to be spoken to, and only when they ask. ' +
+      'Takes that row’s id.',
+    inputSchema: byRow,
+    annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  async ({ id }) => pinning(id, true),
+)
+
+alexia.tool(
+  'unpin',
+  {
+    description:
+      'Take one remembered thing out of what Alexia always knows. It stays remembered and can ' +
+      'still be recalled. Takes that row’s id.',
+    inputSchema: byRow,
+    annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  async ({ id }) => pinning(id, false),
+)
+
+/**
+ * What core reads once per task and puts in the system prompt (`memory.profile`).
+ *
+ * Text and nothing else, and an empty string when nothing is pinned — core reads that as
+ * *nothing to add*, which is the right answer for somebody who has pinned nothing.
+ */
+const known = alexia.tool(
+  'profile',
+  {
+    description:
+      'What Alexia always knows about the user: the pinned notes, one per line, short. Called by ' +
+      'Alexia itself before each task. Takes no arguments.',
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+  },
+  async () => ({ content: [{ type: 'text', text: profile(await notes()) }] }),
+)
+
+/**
+ * The first profile, for somebody who had notes before pinning existed.
+ *
+ * Once, ever, and written down as having run — so unpinning everything it chose does not bring
+ * it all back on the next start. It pins nothing when something is already pinned: that is a
+ * person who has started choosing, and a seed on top of their choices is a second opinion
+ * nobody asked for. What it picks is `seedable`, in `profile.js`, where it is tested.
+ */
+async function seed() {
+  // An object once it has run; missing (or null, depending on the wire) before.
+  if (await alexia.storage.get(SEEDED)) return
+  const rows = await notes()
+  const chosen = rows.some(pinnedOf) ? [] : rows.filter(seedable)
+  for (const row of chosen) await alexia.storage.update('facts', { pinned: true }, { rowid: Number(row.rowid) })
+  await alexia.storage.set(SEEDED, { at: Date.now(), pinned: chosen.length })
+  if (chosen.length > 0) log.info(`pinned ${chosen.length} existing note(s) for the profile`)
+}
 
 alexia.tool(
   'forget_all',
@@ -530,6 +662,9 @@ async function tick() {
       links: JSON.stringify(one.links),
       // Nobody asked for this one. Recall says so when it reads it back.
       source: INFERRED,
+      // Never `pinned` — see the end of capture.js. The model's opinion is kept as a
+      // suggestion for a person to act on, and only when it had one.
+      ...(one.suggestPin ? { suggest_pin: true } : {}),
       at: Date.now(),
     })
     // The link goes on both, which is what lets one note sit under two parents with no new
@@ -621,11 +756,16 @@ async function follow() {
 }
 
 await alexia.start()
-// All three are answerable the moment this plugin is running: there is nothing to download
-// and no credential to wait for, so those two bindings go on once and stay on. `capture` is
+// All four are answerable the moment this plugin is running: there is nothing to download
+// and no credential to wait for, so those three bindings go on once and stay on. `capture` is
 // the exception, and `follow` is why.
 kept.update({ _meta: { 'alexia/provides': ['memory.remember'] } })
 found.update({ _meta: { 'alexia/provides': ['memory.recall'] } })
+known.update({ _meta: { 'alexia/provides': ['memory.profile'] } })
 alexia.onSettingsChanged(() => void follow())
 await follow()
+// Last, after every binding is in place: a seed walks the whole table, and nothing else about
+// starting up should wait on it. One that fails leaves the marker unwritten and tries again
+// next start; it is never a reason for memory not to come up.
+await seed().catch((error) => log.info(`could not seed the profile: ${String(error)}`))
 log.info(`${alexia.manifest.name} is ready`)

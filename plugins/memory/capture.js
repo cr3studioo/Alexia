@@ -68,6 +68,8 @@ export function prompt(rows, names) {
     '  kind        one of: fact, preference, person, place, task, other',
     '  links       names from the list below that this belongs under. [] if none fit.',
     '  duplicate_of  the name of an existing note this already says. Omit unless it does.',
+    '  pin         true only for who the user is and how they want to be spoken to, and only',
+    '              if they said it themselves. Omit otherwise.',
     '',
     'Write [] if there is nothing worth keeping.',
     '',
@@ -113,6 +115,8 @@ export function parse(said) {
       kind: String(one?.kind ?? 'other').trim(),
       links: Array.isArray(one?.links) ? one.links.map((l) => String(l).trim()).filter(Boolean) : [],
       duplicateOf: typeof one?.duplicate_of === 'string' ? one.duplicate_of.trim() : '',
+      // Only a real `true`. A small model writing "pin": "no" has not asked for anything.
+      pin: one?.pin === true,
     }))
     .filter((one) => one.text !== '')
     .map((one) => ({ ...one, name: one.name === '' ? one.text.slice(0, 60) : one.name }))
@@ -149,7 +153,8 @@ export function duplicate(candidate, note) {
  * - a claim naming a note that does not exist is not a claim;
  * - a link to a note the model was not shown is dropped, because a link to nothing reads on
  *   screen as a memory that has gone missing;
- * - and a sentence already held is not written twice, whatever the model said about it.
+ * - a sentence already held is not written twice, whatever the model said about it;
+ * - and a `pin` from the model is carried as `suggestPin`, never as a pin — see below.
  *
  * What is held grows as it goes, so a note written earlier in the same batch can be linked
  * to, and claimed as a duplicate of, by a later one — which is the case a pass that only
@@ -167,7 +172,7 @@ export function plan(candidates, held) {
     }
     if (texts.has(candidate.text)) continue
     const links = candidate.links.filter((name) => names.has(name))
-    const one = { name: candidate.name, text: candidate.text, kind: candidate.kind, links }
+    const one = { name: candidate.name, text: candidate.text, kind: candidate.kind, links, suggestPin: candidate.pin === true }
     write.push(one)
     known.push(one)
     names.add(one.name)
@@ -175,6 +180,15 @@ export function plan(candidates, held) {
   }
   return write
 }
+
+/**
+ * **The sorting pass never pins.** Every note it writes is `inferred` — nobody said it out loud,
+ * a model worked it out — and the profile goes into every prompt. A guess in every prompt is how
+ * a wrong fact becomes permanent: it is read back as true on every task, acted on, and never
+ * questioned, because nothing ever searched for it. So the model's `pin` is kept on the note as
+ * a suggestion (`suggest_pin`), which the panel can show and a person can act on with one click.
+ * A pin is honoured only on a `stated` note, and this pass writes none.
+ */
 
 /** What a link points at. Notes written before M7-3 have no name, so their text is one. */
 const named = (row) => String(row.name ?? row.text ?? '').trim()

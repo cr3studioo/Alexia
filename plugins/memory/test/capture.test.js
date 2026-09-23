@@ -75,7 +75,7 @@ test('an answer that is not JSON is a failure the rows survive, not an empty res
   // The difference matters: `[]` means *nothing worth keeping* and the buffer drains, while
   // `null` means *ask again*. Confusing them is how an hour of conversation disappears.
   expect(parse('here you go: [ {"text": "He prefers tea."} ] hope that helps')).toEqual([
-    { name: 'He prefers tea.', text: 'He prefers tea.', kind: 'other', links: [], duplicateOf: '' },
+    { name: 'He prefers tea.', text: 'He prefers tea.', kind: 'other', links: [], duplicateOf: '', pin: false },
   ])
   // Saying nothing, in the format. The buffer drains on this one and only this one.
   expect(parse('nothing much in there: []')).toEqual([])
