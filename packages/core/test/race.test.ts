@@ -99,17 +99,37 @@ await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
 afterAll(() => void server.close())
 
 const at = `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`
-const alpha: Provider = { id: 'alpha', name: 'Alpha', baseUrl: at, rpm: 1000, rpd: 1000 }
-const beta: Provider = { id: 'beta', name: 'Beta', baseUrl: at, rpm: 1000, rpd: 1000 }
-const gamma: Provider = { id: 'gamma', name: 'Gamma', baseUrl: at, rpm: 1000, rpd: 1000 }
+
+/**
+ * **A test's patience, the way the clock above is a test's** — and the reason this exists is a
+ * flake that read as anything but what it was.
+ *
+ * {@link PATIENCE} is production's: thirty seconds to a first byte, two minutes of keep-alives.
+ * Every row here left it there, so a walk that ended up *waiting* on a rung — a `hang` nobody
+ * switched away from yet, a request slow to be answered on a loaded runner — was waiting thirty
+ * seconds against a suite whose whole budget per test is thirty seconds. The wait won every time,
+ * and what CI printed was `Test timed out in 30000ms` naming neither the rung nor the reason. Two
+ * different tests in this file failed that way on two different runners in one afternoon, and
+ * neither failure was about the thing its name describes.
+ *
+ * So patience is sized like everything else here: far enough above what these tests actually
+ * wait for that nothing under test reaches it, far enough below the suite's budget that reaching
+ * it is an assertion failing rather than a clock running out. `impatient` and `dear` keep their
+ * quarter-second, which is the contrast they exist to draw.
+ */
+const PATIENT = { timeoutMs: 5_000, idleMs: 5_000, keptAliveMs: 20_000 } as const
+
+const alpha: Provider = { id: 'alpha', name: 'Alpha', baseUrl: at, rpm: 1000, rpd: 1000, ...PATIENT }
+const beta: Provider = { id: 'beta', name: 'Beta', baseUrl: at, rpm: 1000, rpd: 1000, ...PATIENT }
+const gamma: Provider = { id: 'gamma', name: 'Gamma', baseUrl: at, rpm: 1000, rpd: 1000, ...PATIENT }
 /** Where a `T0` model lives, as far as the router can tell: this Mac. */
-const home: Provider = { id: 'home', name: 'Home', baseUrl: at }
+const home: Provider = { id: 'home', name: 'Home', baseUrl: at, ...PATIENT }
 /** A gateway that gives up on keep-alives in a quarter of a second, rather than in two minutes. */
 const impatient: Provider = { id: 'impatient', name: 'Impatient', baseUrl: at, timeoutMs: 250, idleMs: 250, keptAliveMs: 250 }
 const dear: Provider = { id: 'dear', name: 'Dear', baseUrl: at, pricing: 'published', timeoutMs: 250, idleMs: 250, keptAliveMs: 250 }
-const sticky: Provider = { id: 'sticky', name: 'Sticky', baseUrl: at, stickySessions: true }
+const sticky: Provider = { id: 'sticky', name: 'Sticky', baseUrl: at, stickySessions: true, ...PATIENT }
 /** A keyless floor, asked with no key at all. */
-const floor: Provider = { id: 'floor', name: 'Floor', baseUrl: at, auth: 'optional' }
+const floor: Provider = { id: 'floor', name: 'Floor', baseUrl: at, auth: 'optional', ...PATIENT }
 const secrets = memorySecrets()
 for (const provider of [alpha, beta, gamma, home, impatient, dear, sticky]) await secrets.set(CORE, keyOf(provider), `sk-${provider.id}`)
 
