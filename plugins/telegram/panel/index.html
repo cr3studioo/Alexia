@@ -155,14 +155,15 @@
    * absent — none of which should ever throw past this function.
    *
    * **Telegram writes into the same fragment.** Opening a Mini App appends its launch
-   * parameters — `&tgWebAppData=…&tgWebAppVersion=…` — to whatever fragment the button's URL
-   * already had, so the state is one `&`-separated segment among Telegram's. It is the one
-   * without an `=`: base64url carries no padding here and never contains `&` or `=`.
+   * parameters to whatever fragment the button's URL already had — and joins them with a `?`,
+   * as measured on the phone and the Mac: `#<state>?tgWebAppVersion=…&tgWebAppPlatform=…`.
+   * So the fragment is split on both `?` and `&`, and the state is the one segment without an
+   * `=`: base64url carries no padding here and never contains `?`, `&` or `=`.
    */
   function decodeState(hash) {
     try {
       if (!hash || hash.length < 2) return null
-      var parts = (hash.charAt(0) === '#' ? hash.slice(1) : hash).split('&')
+      var parts = (hash.charAt(0) === '#' ? hash.slice(1) : hash).split(/[?&]/)
       var b64url = ''
       for (var p = 0; p < parts.length; p++) {
         if (parts[p] && parts[p].indexOf('=') === -1) { b64url = parts[p]; break }
@@ -295,7 +296,7 @@
       // What did arrive, by name only: Telegram's own parameters carry who you are, so their
       // values stay off the screen. Enough to tell a fragment Telegram replaced from one that
       // never had the state in it.
-      var names = location.hash.replace(/^#/, '').split('&').filter(Boolean).map(function (part) {
+      var names = location.hash.replace(/^#/, '').split(/[?&]/).filter(Boolean).map(function (part) {
         var eq = part.indexOf('=')
         return eq === -1 ? '(' + part.length + ' characters, no name)' : part.slice(0, eq)
       })
