@@ -1155,10 +1155,19 @@ async function pass() {
  * binding was always separate from the manifest's declaration for exactly this sort of
  * reason (D73, M6-9).
  *
- * The gardener rides the same timer, so it too only runs while that switch is on: it is the
- * other half of Alexia looking at memory by itself, and the switch is where that was agreed to.
- * `sort_now` runs it as well, because a button press is somebody asking.
+ * **The gardener has a clock of its own**, and it does not follow the switch. It used to ride
+ * this timer, which meant that with capture off a note saved through `remember` as time-bound
+ * was never looked at again — the switch is about *the conversation* reaching a model, and
+ * the gardener sends none: only a note already written, and only when one is due. So it runs
+ * once at start (a plugin is spawned on demand and may never live long enough for a timer)
+ * and then every `GARDEN_LOOK`; `garden` itself holds the weekly gate and the *anything due*
+ * check, so almost every one of these is a read of the table and nothing else.
  */
+const GARDEN_LOOK = 6 * 60 * 60_000
+const gardening = () =>
+  void garden().catch((error) => log.info(`could not look after old notes: ${String(error)}`))
+setInterval(gardening, GARDEN_LOOK).unref?.()
+
 let timer
 async function follow() {
   const { capture, interval } = await settings()
@@ -1166,7 +1175,7 @@ async function follow() {
   clearInterval(timer)
   if (capture === true) {
     const minutes = Math.min(240, Math.max(1, Number(interval) || 12))
-    timer = setInterval(() => void pass().catch((error) => log.info(String(error))), minutes * 60_000)
+    timer = setInterval(() => void tick().catch((error) => log.info(String(error))), minutes * 60_000)
     // Nothing is waiting on it. A timer that holds the process open is a resident plugin
     // that cannot be shut down, which is a different bug from the one it was added for.
     timer.unref?.()
@@ -1183,6 +1192,7 @@ found.update({ _meta: { 'alexia/provides': ['memory.recall'] } })
 known.update({ _meta: { 'alexia/provides': ['memory.profile'] } })
 alexia.onSettingsChanged(() => void follow())
 await follow()
+gardening()
 // Last, after every binding is in place: a seed walks the whole table, and nothing else about
 // starting up should wait on it. One that fails leaves the marker unwritten and tries again
 // next start; it is never a reason for memory not to come up.

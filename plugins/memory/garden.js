@@ -85,7 +85,7 @@ const RELATIVE = [
   /(?:first|second|third|fourth|fifth|final|last|1st|2nd|3rd|4th|5th)[- ]year/,
   /freshman|sophomore|\d+ years? old|aged \d+/,
   // Czech.
-  /letos\w*|ted|nyni|momentalne|aktualne|v soucasnosti|soucasne|zrovna|prave ted/,
+  /letos\w*|nyni|momentalne|aktualne|v soucasnosti|soucasne|zrovna/,
   /dnes\w*|zitra|vcera|brzy|nedavno|loni|lonsk\w*/,
   /(?:tento|tenhle|letosni|pristi|minuly|minulej) (?:rok|semestr|mesic|tyden|rocnik)\w*/,
   /(?:prvn|druh|tret|ctvrt|pat|posledn)\w* (?:rocnik|semestr)\w*|prvak\w*|druhak\w*/,
@@ -98,9 +98,16 @@ const fold = (text) =>
     .toLowerCase()
 const WHOLE = RELATIVE.map((pattern) => new RegExp(`(?<![\\p{L}\\p{N}])(?:${pattern.source})(?![\\p{L}\\p{N}])`, 'u'))
 
+/**
+ * *Teď* is the one word matched with its accent. Folded, it is *ted*, which is also a name —
+ * and a note about somebody's friend Ted is not a note about the present. The cost is *ted*
+ * typed on an English keyboard going unnoticed, which is a miss, and a miss is the cheap side.
+ */
+const NOW_CZ = /(?<![\p{L}\p{N}])teď(?![\p{L}\p{N}])/u
+
 export function relative(text) {
   const plain = fold(text)
-  return WHOLE.some((pattern) => pattern.test(plain))
+  return WHOLE.some((pattern) => pattern.test(plain)) || NOW_CZ.test(String(text ?? '').toLowerCase())
 }
 
 /**

@@ -49,7 +49,6 @@ test('relative time, in English and Czech, with or without the accents', () => {
     'He moved to Brno recently.',
     'Letos začal studovat na ČVUT.',
     'Teď bydlí v Brně.',
-    'Ted bydli v Brne.',
     'Momentálně pracuje na diplomce.',
     'Je v prvním ročníku.',
     'Je prvák na FELu.',
@@ -63,6 +62,9 @@ test('relative time, in English and Czech, with or without the accents', () => {
     'He knows how to snowboard.',
     'He prefers answers in Czech.',
     'Bydlí v Praze od roku 2020.',
+    // A name, not the Czech *now*: only *teď* with its accent counts.
+    'His friend Ted studies in Brno.',
+    'Ted bydli v Brne.',
   ]) {
     expect(relative(text), text).toBe(false)
   }
