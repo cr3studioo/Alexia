@@ -66,7 +66,8 @@ export function streamer(
   let sentAt = -Infinity
   /** When a stage was last said, which is what a keep-alive is measured from. */
   let saidAt = -Infinity
-  let stage: string | undefined
+  /** The last stage said, as a frame — what a keep-alive says again. */
+  let stage: StreamFrame | undefined
   /** Words have gone out since the last restart — so a tool after them is a break in the text. */
   let spoke = false
   /** The next words follow a tool, and are set apart from the words before it. */
@@ -122,9 +123,13 @@ export function streamer(
       if (ended) return
       flush()
       if (phase.kind === 'tool' && spoke) gap = true
-      stage = phase.kind
+      stage = {
+        phase: phase.kind,
+        ...('model' in phase && { model: phase.model }),
+        ...(phase.kind === 'tool' && { tool: phase.name }),
+      }
       saidAt = now()
-      out({ phase: phase.kind })
+      out(stage)
     },
     alive() {
       if (ended || now() - saidAt < aliveEvery) return
@@ -133,7 +138,7 @@ export function streamer(
       // rule holds at every emitter* is the kind of thing that is true until one is added.
       flush()
       saidAt = now()
-      out({ phase: stage ?? 'tool' })
+      out(stage ?? { phase: 'tool' })
     },
     /**
      * **The last words are not a frame — they are the answer** (D193, corrected).

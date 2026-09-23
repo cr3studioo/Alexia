@@ -16,7 +16,7 @@
  * file is doing something a framework is better at than eighty lines of `fetch`, which it is
  * not yet.
  *
- * D192 made it ten — *typing…* and 👀 are one `call` each — and that sentence still holds.
+ * D192 made it ten — *typing…* is one `call` — and that sentence still holds.
  *
  * **D194 adds `extra`, which is the one shape decision in this file.** Threading a reply,
  * formatting one, and whatever Telegram adds next are all *one more field on the same call*,
@@ -178,22 +178,14 @@ export const unbutton = (token, chatId, messageId, signal) =>
  */
 export const act = (token, chatId, action, signal) => call(token, 'sendChatAction', { chat_id: chatId, action }, signal)
 
-/**
- * A reaction on somebody's message — 👀, for *seen* (D192).
- *
- * The Bot API has no call that marks a message read in an ordinary bot chat, so a reaction is
- * the one sign a bot can give that a message landed before the answer to it exists. A bot gets
- * one reaction per message; an empty `emoji` takes it off again.
- */
-export const react = (token, chatId, messageId, emoji, signal) =>
-  call(
-    token,
-    'setMessageReaction',
-    { chat_id: chatId, message_id: messageId, reaction: emoji ? [{ type: 'emoji', emoji }] : [] },
-    signal,
-  )
+/** Change the words of a message this bot sent — the status line where drafts do not work (D198). */
+export const retext = (token, chatId, messageId, text, signal) =>
+  call(token, 'editMessageText', { chat_id: chatId, message_id: messageId, text }, signal)
 
-/** Where a file Telegram is holding actually lives, so it can be fetched. */
+/** Delete a message this bot sent. */
+export const remove = (token, chatId, messageId, signal) =>
+  call(token, 'deleteMessage', { chat_id: chatId, message_id: messageId }, signal)
+
 export const filePath = async (token, fileId, signal) => {
   const file = await call(token, 'getFile', { file_id: fileId }, signal)
   return `${BASE}${token}`.replace('/bot', '/file/bot') + `/${file.file_path}`

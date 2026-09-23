@@ -48,6 +48,8 @@ export class Draft {
   #log
   #id = draftId()
   #text = ''
+  #status = ''
+  #opened = false
   #richOk = true
   #paused = false
   #closed = false
@@ -72,11 +74,28 @@ export class Draft {
     return this.#text
   }
 
-  /** The empty "Thinking…" draft, and the keep-alive that will refresh it while this runs. */
+  /**
+   * The first draft — the status line if one is set, Telegram's own empty *Thinking…* if not —
+   * and the keep-alive that will refresh it while this runs.
+   */
   open() {
     if (this.#session.off || this.#closed) return
-    this.#send('')
+    this.#opened = true
+    this.#send()
     this.#startKeepAlive()
+  }
+
+  /**
+   * What the wait is doing, in words (D198): the whole draft before the answer's first word,
+   * and a line under the words so far after — a tool running halfway through an answer is
+   * still worth saying. Sent at once rather than on the throttle, because stages are few and
+   * the first one is the point. An empty string takes it off.
+   */
+  status(text) {
+    const next = String(text ?? '')
+    if (this.#closed || next === this.#status) return
+    this.#status = next
+    if (this.#opened) this.#send()
   }
 
   /** A piece of the answer, arrived. Schedules the throttled flush rather than sending now. */
@@ -89,7 +108,7 @@ export class Draft {
   /** A model failed mid-answer and another is starting over — the draft starts over with it. */
   restart() {
     this.#text = ''
-    this.#send('')
+    this.#send()
   }
 
   /** A question with buttons is about to be sent, which removes the draft anyway. */
@@ -100,7 +119,7 @@ export class Draft {
   /** The question is answered. Resend the current state immediately, draft or no draft. */
   resume() {
     this.#paused = false
-    this.#send(this.#text)
+    this.#send()
   }
 
   /** Stop every timer. Idempotent, and nothing this `Draft` does sends anything after it. */
@@ -114,7 +133,7 @@ export class Draft {
     if (this.#closed || this.#session.off || this.#flushTimer) return
     const timer = setTimeout(() => {
       this.#flushTimer = undefined
-      this.#send(this.#text)
+      this.#send()
     }, this.#flushMs)
     timer.unref?.()
     this.#flushTimer = timer
@@ -122,7 +141,7 @@ export class Draft {
 
   #startKeepAlive() {
     if (this.#keepTimer) return
-    const timer = setInterval(() => this.#send(this.#text), this.#keepMs)
+    const timer = setInterval(() => this.#send(), this.#keepMs)
     timer.unref?.()
     this.#keepTimer = timer
   }
@@ -135,21 +154,26 @@ export class Draft {
   }
 
   /**
-   * The one place anything is actually sent: rich when there is text and rich has not already
+   * The one place anything is actually sent: rich when there are words and rich has not already
    * failed on this draft, plain otherwise — and plain again, as the fallback, if rich just
-   * failed. If nothing lands, the session is turned off and every timer stops.
+   * failed. A status line on its own is always plain: it is this plugin's words, and a model
+   * name with an underscore in it is not asking to be italic. If nothing lands, the session is
+   * turned off and every timer stops.
    */
-  async #send(text) {
+  async #send() {
     if (this.#closed || this.#paused || this.#session.off) return
-    if (text !== '' && this.#richOk) {
+    const words = this.#text
+    const status = this.#status
+    if (words !== '' && this.#richOk) {
       try {
-        await this.#rich(this.#id, forRich(text))
+        await this.#rich(this.#id, status ? `${forRich(words)}\n\n${escape(status)}` : forRich(words))
         return
       } catch {
         // Remembered for the rest of this draft — no point trying rich again this answer.
         this.#richOk = false
       }
     }
+    const text = words && status ? `${words}\n\n${status}` : words || status
     try {
       await this.#plain(this.#id, text.slice(0, 4096))
     } catch (error) {
@@ -167,4 +191,9 @@ export class Draft {
       this.#log?.('Telegram stopped accepting drafts, so drafts are off for this session', error)
     }
   }
+}
+
+/** A status line inside Markdown, read as the characters it is and not as formatting. */
+function escape(text) {
+  return text.replace(/[\\`*_[\]()~>#|]/g, '\\$&')
 }

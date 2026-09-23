@@ -233,6 +233,14 @@ export interface StreamFrame {
    * added; show nothing for it rather than failing.
    */
   phase?: string
+  /**
+   * **Which model the stage is about**, on `asking`, `retrying`, `backup`, `thinking` and
+   * `writing` — the name the window's line reads, so a phone can say it too. Absent from an
+   * Alexia older than this field, and from stages that are not about one model.
+   */
+  model?: string
+  /** **Which tool is running**, on `tool`. Absent where the stage is not a tool. */
+  tool?: string
 }
 
 /**
