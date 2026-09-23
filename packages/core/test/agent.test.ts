@@ -484,6 +484,81 @@ test('a caller’s own system prompt lands in front of the personality, not afte
   store.close()
 })
 
+test('a memory is mentioned only when there is one and a tool to reach it', async () => {
+  /**
+   * *Who am I?* answered *I don't know you*, with the answer one `memory__recall` away. The
+   * sentence telling a weak model to look is the fix, and it is only true — and only worth its
+   * tokens — when both halves hold: something remembers, and the model was given tools.
+   */
+  const { store, session, world } = bench()
+  const memory = 'You have a long-term memory about this user.'
+  const ask = async (tools: ToolSpec[], remembers?: boolean): Promise<string> => {
+    script = [{ say: 'Noted.' }]
+    body = undefined
+    await run({
+      messages: start('who am i?'),
+      tools: tooling({ list: tools }),
+      pins,
+      world,
+      store,
+      secrets,
+      session,
+      ...(remembers !== undefined && { remembers }),
+    })
+    return systemLine()
+  }
+  const recall: ToolSpec = { name: 'memory__recall', description: 'Recall what is remembered.' }
+
+  expect(await ask([recall], true)).toContain(
+    `${memory} Before saying you don’t know something about them, check it with the recall tool.`,
+  )
+  expect(await ask([recall], false)).not.toContain(memory)
+  expect(await ask([recall])).not.toContain(memory)
+  // No tools, no sentence: pointing at a tool the model was not given is an order it can only fail.
+  expect(await ask([], true)).not.toContain(memory)
+  store.close()
+})
+
+test('the profile sits after the caller and before the personality, under its own header', async () => {
+  /**
+   * Facts, then voice. The profile is who the user is and the personality is how to sound, and
+   * the personality goes last so that where they brush against each other on style, the one the
+   * user chose wins.
+   */
+  script = [{ say: 'Noted.' }]
+  body = undefined
+  const { store, session, world } = bench()
+
+  await run({
+    messages: [{ role: 'system', content: 'This conversation is happening over Telegram.' }, ...start('who am i?')],
+    tools: tooling({ list: [] }),
+    pins,
+    world,
+    store,
+    secrets,
+    session,
+    profile: '  Name: Václav. Speaks Czech and English. Lives in Prague.\n',
+    personality: { high: '# Chief of staff\n\nCall him Vacen. No emojis.' },
+  })
+
+  expect(systemTurns()).toBe(1)
+  const line = systemLine()
+  expect(line).toContain('What you know about the user:\nName: Václav. Speaks Czech and English. Lives in Prague.')
+  expect(line.indexOf('You are Alexia')).toBeLessThan(line.indexOf('over Telegram'))
+  expect(line.indexOf('over Telegram')).toBeLessThan(line.indexOf('What you know about the user'))
+  expect(line.indexOf('What you know about the user')).toBeLessThan(line.indexOf('Chief of staff'))
+
+  // Nothing to say is no block at all — never a header over an empty line.
+  for (const empty of ['', '   \n ']) {
+    script = [{ say: 'Noted.' }]
+    body = undefined
+    await run({ messages: start('hey'), tools: tooling({ list: [] }), pins, world, store, secrets, session, profile: empty })
+    expect(systemLine()).toContain('You are Alexia')
+    expect(systemLine()).not.toContain('What you know about the user')
+  }
+  store.close()
+})
+
 test('the trace is trimmed to the window that won, not to a number picked in advance', async () => {
   // A long task already behind it, and one more step to take. What the model is *shown* is
   // decided after the routing, because the budget is a property of the model rather than of
