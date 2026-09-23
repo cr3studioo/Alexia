@@ -649,15 +649,21 @@ export class Plugins {
     try {
       const result = await entry.process.callTool(table.rows)
       if (result.isError === true) return { why: said(result) || `${entry.manifest.name} could not list those.` }
-      const structured = result.structuredContent as { rows?: unknown } | undefined
-      const rows = structured?.rows
+      // A `tree` answers with `nodes` (`alexia_protocol` 11) — they are not rows of anything,
+      // and calling them that in the contract would be a word every author had to translate.
+      // What goes back to the shell is the same list under the same name either way.
+      const field = table.type === 'tree' ? 'nodes' : 'rows'
+      const structured = result.structuredContent as Record<string, unknown> | undefined
+      const rows = structured?.[field]
       // Named rather than shrugged at. An author who gets this wrong reads a sentence saying
       // exactly what was expected, which is the whole of what they need.
       if (!Array.isArray(rows)) {
-        return { why: `"${table.rows}" answered without structuredContent.rows, so there is nothing to show.` }
+        return { why: `"${table.rows}" answered without structuredContent.${field}, so there is nothing to show.` }
       }
       const bad = rows.findIndex((row) => typeof row !== 'object' || row === null || typeof (row as Row).id !== 'string')
-      if (bad !== -1) return { why: `"${table.rows}" answered with a row that has no id (row ${String(bad + 1)}).` }
+      if (bad !== -1) {
+        return { why: `"${table.rows}" answered with a ${field === 'nodes' ? 'node' : 'row'} that has no id (${field === 'nodes' ? 'node' : 'row'} ${String(bad + 1)}).` }
+      }
       return { rows: rows as Row[] }
     } catch (error) {
       return { why: error instanceof Error ? error.message : String(error) }

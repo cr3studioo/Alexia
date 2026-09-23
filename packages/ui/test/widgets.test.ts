@@ -1,7 +1,19 @@
 // @vitest-environment happy-dom
 // SPDX-License-Identifier: AGPL-3.0-only
 import { beforeEach, expect, test, vi } from 'vitest'
-import { MODELS_CHANGED, widget, type Rendered, type Row, type WidgetHost } from '../src/widgets.js'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import {
+  applies,
+  MODELS_CHANGED,
+  treeMatches,
+  treeNodes,
+  treeShape,
+  widget,
+  type Rendered,
+  type Row,
+  type WidgetHost,
+} from '../src/widgets.js'
 
 /**
  * The renderer, actually rendering — which until now nothing here did.
@@ -508,4 +520,375 @@ test('a group says what it is, chips narrow the table, and the row itself opens 
   // A press on a row's own button is that button's, not the row's: it does not toggle twice.
   row.querySelector<HTMLButtonElement>('button')!.click()
   expect((row.nextElementSibling as HTMLElement).hidden).toBe(true)
+})
+
+// ---- tree (`alexia_protocol` 11) ---------------------------------------------------------
+
+/** What `memory_tree` answers, per the contract — the rows core hands the shell. */
+const memoryTree = (
+  JSON.parse(readFileSync(join(import.meta.dirname, 'fixtures', 'memory-tree.json'), 'utf8')) as { nodes: Row[] }
+).nodes
+
+/** The memory panel's own declaration, near enough: the actions, with where each one applies. */
+const treeWidget: Rendered = {
+  type: 'tree',
+  key: 'remembered_tree',
+  label: 'The shape of it',
+  rows: 'memory_tree',
+  detail: 'about_memory',
+  filter: true,
+  rowActions: [
+    { key: 'note_pin', label: 'Always know this', unless: { tag: 'always known' } },
+    { key: 'note_unpin', label: 'Stop always knowing', when: { tag: 'always known' } },
+    { key: 'note_accept_suggestion', label: 'Accept suggestion', when: { tag: 'suggestion' } },
+    { key: 'note_still_true', label: 'Still true', when: { tag: 'may be out of date' } },
+    { key: 'note_no_longer_true', label: 'No longer true', unless: { tag: 'no longer true' } },
+    { key: 'note_history', label: 'History' },
+    { key: 'note_forget', label: 'Forget', confirm: 'Forget it, and every earlier version of it?' },
+  ],
+}
+
+const treeHost = () =>
+  fakeHost({ '/api/rows': { ok: true, rows: memoryTree }, '/api/detail': { ok: true, text: 'The whole of it.' } })
+
+/** Every item a person could see right now — inside no closed branch — by its label. */
+const visibleLabels = (field: HTMLElement): string[] =>
+  [...field.querySelectorAll<HTMLElement>('[role="treeitem"]')]
+    .filter((item) => item.parentElement?.closest('[hidden]') === null)
+    .map((item) => item.querySelector(':scope > .tree-row .tree-label')?.textContent ?? '')
+
+const itemFor = (field: HTMLElement, label: string, nth = 0): HTMLElement =>
+  [...field.querySelectorAll<HTMLElement>('[role="treeitem"]')].filter(
+    (item) => item.querySelector(':scope > .tree-row .tree-label')?.textContent === label,
+  )[nth]!
+
+/**
+ * A fresh store for every test. Stubbed rather than borrowed: under this runner `localStorage`
+ * is Node's own, which is absent without a flag — and the tree must work either way.
+ */
+beforeEach(() => {
+  const held = new Map<string, string>()
+  vi.stubGlobal('localStorage', {
+    getItem: (key: string) => held.get(key) ?? null,
+    setItem: (key: string, value: string) => void held.set(key, value),
+  })
+  return () => {
+    vi.unstubAllGlobals()
+  }
+})
+
+test('a tree opens at the top, with each section closed and saying how much is in it', async () => {
+  const field = widget(treeHost(), treeWidget)
+  await settled()
+
+  const tree = field.querySelector('[role="tree"]')!
+  expect(tree.getAttribute('aria-label')).toBe('The shape of it')
+  // The root is open and the sections under it are shut, so the first screen is a table of contents.
+  expect(visibleLabels(field)).toEqual(['You', 'People', 'Studies', 'Projects & code', 'Identity & how to talk to me'])
+  expect(itemFor(field, 'You').getAttribute('aria-expanded')).toBe('true')
+  expect(itemFor(field, 'People').getAttribute('aria-expanded')).toBe('false')
+  expect(itemFor(field, 'People').getAttribute('aria-level')).toBe('2')
+
+  // The count the tool said, or — where it said none — the notes actually under it.
+  const count = (label: string): string | null | undefined =>
+    itemFor(field, label).querySelector(':scope > .tree-row .tree-count')?.textContent
+  expect(count('People')).toBe('2')
+  expect(count('Studies')).toBe('2')
+  expect(count('Family')).toBe('1')
+  // And its summary as a quiet line under it.
+  expect(itemFor(field, 'People').querySelector(':scope > .tree-row .tree-summary')?.textContent).toBe(
+    'Who is who in your life.',
+  )
+
+  // A note's tags are a table's tags.
+  const ted = itemFor(field, 'Ted is his flatmate, not the Czech teacher')
+  expect([...ted.querySelectorAll('.tag')].map((tag) => `${tag.textContent} ${tag.className}`)).toEqual([
+    'worked out tag quiet',
+    'may be out of date tag quiet',
+  ])
+
+  // One tab stop in the whole tree.
+  expect([...field.querySelectorAll<HTMLElement>('[role="treeitem"]')].filter((item) => item.tabIndex === 0)).toHaveLength(1)
+})
+
+test('a note filed in two places is under both, and each says where else it lives', async () => {
+  const field = widget(treeHost(), treeWidget)
+  await settled()
+
+  const grant = 'The grant deadline is in March'
+  const underStudies = itemFor(field, grant, 0)
+  const underProjects = itemFor(field, grant, 1)
+  expect(underStudies.closest('.is-branch')?.querySelector('.tree-label')?.textContent).toBe('Studies')
+  expect(underProjects.closest('.is-branch')?.querySelector('.tree-label')?.textContent).toBe('Projects & code')
+  expect(underStudies.querySelector('.tree-also')?.textContent).toBe('also filed under Projects & code')
+  expect(underProjects.querySelector('.tree-also')?.textContent).toBe('also filed under Studies')
+  // A note filed once says nothing about it.
+  expect(itemFor(field, 'Alexia is written in TypeScript').querySelector('.tree-also')).toBeNull()
+})
+
+test('the filter keeps the notes that match and every branch they are filed under', async () => {
+  const field = widget(treeHost(), treeWidget)
+  await settled()
+  const filter = field.querySelector<HTMLInputElement>('.table-filter')!
+
+  filter.value = 'marta'
+  filter.dispatchEvent(new Event('input'))
+  // Three levels up to the root, all opened, and nothing else.
+  expect(visibleLabels(field)).toEqual(['You', 'People', 'Family', 'His sister is called Marta'])
+
+  // A tag is something a note says about itself, so it is searched too — and a note in two
+  // places is kept in both.
+  filter.value = 'suggestion'
+  filter.dispatchEvent(new Event('input'))
+  expect(visibleLabels(field)).toEqual([
+    'You',
+    'Studies',
+    'The grant deadline is in March',
+    'Projects & code',
+    'The grant deadline is in March',
+  ])
+
+  // A branch whose own name matches brings what is in it.
+  filter.value = 'family'
+  filter.dispatchEvent(new Event('input'))
+  expect(visibleLabels(field)).toEqual(['You', 'People', 'Family', 'His sister is called Marta'])
+
+  filter.value = 'nothing like this'
+  filter.dispatchEvent(new Event('input'))
+  expect(visibleLabels(field)).toEqual([])
+  expect(field.querySelector('.hint:not([hidden])')?.textContent).toBe('Nothing matches that.')
+
+  // Clearing it puts the tree back as it was left, rather than as the filter opened it.
+  filter.value = ''
+  filter.dispatchEvent(new Event('input'))
+  expect(visibleLabels(field)).toEqual(['You', 'People', 'Studies', 'Projects & code', 'Identity & how to talk to me'])
+})
+
+test('the keyboard walks what is visible, opens branches, and opens a note', async () => {
+  const host = treeHost()
+  const field = widget(host, treeWidget)
+  host.root().append(field)
+  await settled()
+  const press = (key: string): void => {
+    ;(document.activeElement ?? field).dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }))
+  }
+  const focused = (): string | null | undefined =>
+    (document.activeElement as HTMLElement | null)?.querySelector(':scope > .tree-row .tree-label')?.textContent
+
+  itemFor(field, 'You').focus()
+  press('ArrowDown')
+  expect(focused()).toBe('People')
+  press('ArrowRight')
+  expect(itemFor(field, 'People').getAttribute('aria-expanded')).toBe('true')
+  press('ArrowRight')
+  expect(focused()).toBe('Family')
+  press('ArrowDown')
+  // Family is shut, so the next thing is the note beside it.
+  expect(focused()).toBe('Ted is his flatmate, not the Czech teacher')
+  press('ArrowLeft')
+  expect(focused()).toBe('People')
+  press('ArrowLeft')
+  expect(itemFor(field, 'People').getAttribute('aria-expanded')).toBe('false')
+  press('End')
+  expect(focused()).toBe('Identity & how to talk to me')
+  press('Enter')
+  press('ArrowDown')
+  expect(focused()).toBe('Call him Vaclav')
+  press('Enter')
+  await settled()
+  expect(host.sent.some((one) => one.path === '/api/detail' && one.body.row === '15')).toBe(true)
+  expect(itemFor(field, 'Call him Vaclav').getAttribute('aria-expanded')).toBe('true')
+  expect(itemFor(field, 'Call him Vaclav').querySelector('.detail-text')?.textContent).toBe('The whole of it.')
+})
+
+test('which branches are open is remembered for the next time the tree is drawn', async () => {
+  const first = widget(treeHost(), treeWidget)
+  await settled()
+  itemFor(first, 'Studies').querySelector<HTMLElement>(':scope > .tree-row')!.click()
+  itemFor(first, 'You').querySelector<HTMLElement>(':scope > .tree-row')!.click()
+  expect(visibleLabels(first)).toEqual(['You'])
+
+  const again = widget(treeHost(), treeWidget)
+  await settled()
+  expect(itemFor(again, 'You').getAttribute('aria-expanded')).toBe('false')
+  itemFor(again, 'You').querySelector<HTMLElement>(':scope > .tree-row')!.click()
+  expect(visibleLabels(again)).toEqual([
+    'You',
+    'People',
+    'Studies',
+    'The grant deadline is in March',
+    'Studied physics in Brno',
+    'Projects & code',
+    'Identity & how to talk to me',
+  ])
+})
+
+test('a tree still draws when this browser will not remember anything', async () => {
+  // A private window, a blocked site: every read and write throws.
+  vi.stubGlobal('localStorage', {
+    getItem: () => {
+      throw new Error('denied')
+    },
+    setItem: () => {
+      throw new Error('denied')
+    },
+  })
+  const field = widget(treeHost(), treeWidget)
+  await settled()
+  expect(visibleLabels(field)[0]).toBe('You')
+  itemFor(field, 'People').querySelector<HTMLElement>(':scope > .tree-row')!.click()
+  expect(itemFor(field, 'People').getAttribute('aria-expanded')).toBe('true')
+
+  // And a browser with no storage at all, which is what this test runner is.
+  vi.stubGlobal('localStorage', undefined)
+  const bare = widget(treeHost(), treeWidget)
+  await settled()
+  expect(visibleLabels(bare)[0]).toBe('You')
+})
+
+test('an open note shows only the actions that apply to it, and they press with its id', async () => {
+  const host = treeHost()
+  const field = widget(host, treeWidget)
+  await settled()
+  const actionsOn = (label: string): string[] => {
+    const item = itemFor(field, label)
+    if (item.getAttribute('aria-expanded') !== 'true') item.querySelector<HTMLElement>(':scope > .tree-row')!.click()
+    return [...item.querySelectorAll('.tree-actions button')].map((button) => button.textContent ?? '')
+  }
+
+  itemFor(field, 'Identity & how to talk to me').querySelector<HTMLElement>(':scope > .tree-row')!.click()
+  expect(actionsOn('Call him Vaclav')).toEqual(['Stop always knowing', 'No longer true', 'History', 'Forget'])
+
+  itemFor(field, 'Studies').querySelector<HTMLElement>(':scope > .tree-row')!.click()
+  expect(actionsOn('The grant deadline is in March')).toEqual([
+    'Always know this',
+    'Accept suggestion',
+    'No longer true',
+    'History',
+    'Forget',
+  ])
+  expect(actionsOn('Studied physics in Brno')).toEqual(['Always know this', 'History', 'Forget'])
+
+  itemFor(field, 'People').querySelector<HTMLElement>(':scope > .tree-row')!.click()
+  expect(actionsOn('Ted is his flatmate, not the Czech teacher')).toEqual([
+    'Always know this',
+    'Still true',
+    'No longer true',
+    'History',
+    'Forget',
+  ])
+
+  // A press carries the note's own id — the one `about_memory` and the table's actions take —
+  // and does not close the note it was pressed in.
+  const ted = itemFor(field, 'Ted is his flatmate, not the Czech teacher')
+  const still = [...ted.querySelectorAll<HTMLButtonElement>('.tree-actions button')].find((b) => b.textContent === 'Still true')!
+  still.click()
+  await settled()
+  expect(host.sent.find((one) => one.path === '/api/action')?.body).toMatchObject({ key: 'note_still_true', row: '12' })
+
+  // Branches have no actions: they are where things are filed, not things.
+  expect(itemFor(field, 'People').querySelector(':scope > .tree-body')).toBeNull()
+})
+
+test('the tree’s shape is worked out without a document', () => {
+  const nodes = treeNodes(memoryTree)
+  const shape = treeShape(nodes)
+  expect(shape.roots.map((node) => node.id)).toEqual(['b1'])
+  expect(shape.children.get('b4')?.map((node) => node.id)).toEqual(['13', '14'])
+  expect(shape.notesUnder('b1')).toBe(6)
+
+  // A parent that is not there, or that is a note, is no parent: the node goes to the top.
+  const odd = treeShape(
+    treeNodes([
+      { id: 'b1', parent: null, kind: 'branch', label: 'Root' },
+      { id: '2', parent: 'b9', kind: 'note', label: 'Orphan' },
+      { id: '3', parent: '2', kind: 'note', label: 'Under a note' },
+      // And a branch filed inside itself is counted, not recursed into forever.
+      { id: 'b4', parent: 'b5', kind: 'branch', label: 'Loop A' },
+      { id: 'b5', parent: 'b4', kind: 'branch', label: 'Loop B' },
+      { id: '6', parent: 'b4', kind: 'note', label: 'In the loop' },
+    ]),
+  )
+  expect(odd.roots.map((node) => node.id)).toEqual(['b1', '2', '3'])
+  expect(odd.notesUnder('b4')).toBe(1)
+  expect(odd.notesUnder('b5')).toBe(1)
+
+  expect(treeMatches(nodes, '  ')).toBeUndefined()
+  expect([...treeMatches(nodes, 'typescript')!].sort()).toEqual(['14', 'b1', 'b4'])
+})
+
+test('a branch loop is drawn once rather than until the stack runs out', async () => {
+  const host = fakeHost({
+    '/api/rows': {
+      ok: true,
+      rows: [
+        { id: 'b1', parent: null, kind: 'branch', label: 'Root' },
+        { id: 'b2', parent: 'b1', kind: 'branch', label: 'A', also: ['b3'] },
+        { id: 'b3', parent: 'b2', kind: 'branch', label: 'B' },
+      ],
+    },
+  })
+  const field = widget(host, { ...treeWidget, filter: false })
+  await settled()
+  expect(field.querySelectorAll('[role="treeitem"]').length).toBeLessThan(10)
+})
+
+// ---- row actions that apply (`alexia_protocol` 11) ------------------------------------------
+
+test('a table row shows only the actions that apply, and a table that says nothing shows them all', async () => {
+  const rows = [
+    { id: '1', text: 'Pinned one', pinned: 'always known', tags: [] },
+    { id: '2', text: 'Doubtful one', pinned: '', tags: [{ says: 'may be out of date', tone: 'caution' }] },
+    { id: '3', text: 'Gone one', pinned: '', tags: [{ says: 'no longer true', tone: 'quiet' }] },
+    { id: '4', text: 'Suggested one', pinned: 'suggested', tags: [{ says: 'suggestion', tone: 'quiet' }] },
+  ]
+  const declared: Rendered = {
+    type: 'table',
+    key: 'remembered_list',
+    label: 'Remembered',
+    rows: 'memories',
+    columns: [{ key: 'text', label: 'What' }],
+    rowActions: [
+      { key: 'still_true', label: 'Still true', when: { tag: 'may be out of date' } },
+      { key: 'no_longer_true', label: 'No longer true', unless: { tag: 'no longer true' } },
+      { key: 'accept_suggestion', label: 'Accept suggestion', when: { tag: 'suggestion' } },
+      { key: 'history', label: 'History' },
+      { key: 'pin', label: 'Always know this', unless: { field: 'pinned', is: 'always known' } },
+      { key: 'unpin', label: 'Stop always knowing', when: { field: 'pinned', is: 'always known' } },
+      { key: 'forget_one', label: 'Forget', confirm: 'Forget it?' },
+    ],
+  }
+  const field = widget(fakeHost({ '/api/rows': { ok: true, rows } }), declared)
+  await settled()
+  const buttons = (text: string): string[] => {
+    const row = [...field.querySelectorAll('tbody tr')].find((tr) => tr.querySelector('td')?.textContent === text)!
+    return [...row.querySelectorAll('.row-actions button')].map((button) => button.textContent ?? '')
+  }
+  expect(buttons('Pinned one')).toEqual(['No longer true', 'History', 'Stop always knowing', 'Forget'])
+  expect(buttons('Doubtful one')).toEqual(['Still true', 'No longer true', 'History', 'Always know this', 'Forget'])
+  expect(buttons('Gone one')).toEqual(['History', 'Always know this', 'Forget'])
+  expect(buttons('Suggested one')).toEqual(['No longer true', 'Accept suggestion', 'History', 'Always know this', 'Forget'])
+
+  // An older plugin, with no `when` anywhere: every action on every row, exactly as before.
+  const plain = widget(fakeHost({ '/api/rows': { ok: true, rows } }), {
+    ...declared,
+    rowActions: declared.rowActions!.map(({ key, label }) => ({ key, label })),
+  })
+  await settled()
+  for (const row of plain.querySelectorAll('tbody tr')) expect(row.querySelectorAll('.row-actions button')).toHaveLength(7)
+})
+
+test('a field condition without a value means the field is there and not empty', () => {
+  const action = { key: 'k', label: 'K', when: { field: 'owner' } }
+  expect(applies(action, { id: '1', owner: 'Marta' })).toBe(true)
+  expect(applies(action, { id: '1', owner: '' })).toBe(false)
+  expect(applies(action, { id: '1', owner: [] })).toBe(false)
+  expect(applies(action, { id: '1' })).toBe(false)
+  // Tags as bare strings — a tree's — are read the same as a table's.
+  expect(applies({ key: 'k', label: 'K', when: { tag: 'x' } }, { id: '1', tags: ['x'] })).toBe(true)
+  // `when` and `unless` together: both must hold.
+  expect(applies({ key: 'k', label: 'K', when: { tag: 'x' }, unless: { tag: 'y' } }, { id: '1', tags: ['x', 'y'] })).toBe(false)
+  // And a card's bare `state` still means what it always did.
+  expect(applies({ key: 'k', label: 'K', when: 'installed' }, { id: '1', state: 'installed' })).toBe(true)
+  expect(applies({ key: 'k', label: 'K', when: 'installed' }, { id: '1', state: 'available' })).toBe(false)
 })

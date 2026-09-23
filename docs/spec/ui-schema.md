@@ -10,7 +10,7 @@
 >
 > **Two lists, one renderer, since M6-2.** These widgets are also what a plugin's `panel`
 > declares — the second half of its page, under the settings that drive it. Everything below
-> is true of both: the same fifteen, the same rules, the same file drawing them. What differs
+> is true of both: the same sixteen, the same rules, the same file drawing them. What differs
 > is what each half is *for*, and that difference is in [`manifest.md`](./manifest.md#panel)
 > rather than here, because nothing about the rendering changes. (Until D118 a panel was a tab
 > on a screen of its own, which is why some of the prose below still says *screen*.)
@@ -26,10 +26,10 @@ renders them", and both were looked at and left. A general schema renderer accep
 nesting, arbitrary widgets and arbitrary layout hints — which re-opens the exact door this
 design closed, and adds about 175 KB to do it.
 
-Fifteen hand-written widgets is a smaller amount of code than the adapter would have been.
-**If you need a sixteenth, that is a conversation** — open an issue saying what the fifteen
+Sixteen hand-written widgets is a smaller amount of code than the adapter would have been.
+**If you need a seventeenth, that is a conversation** — open an issue saying what the sixteen
 could not do. It is not a config option, and it is not a `"type": "custom"` with an escape
-hatch. Five of these have now been that conversation, and one of them was refused three times
+hatch. Six of these have now been that conversation, and one of them was refused three times
 before the sentence refusing it stopped being true; the record of each is below, kept in full
 rather than tidied, because the reasoning is what the bar is made of.
 
@@ -94,7 +94,16 @@ its manifest, and core has no manifest — so the screen that shows which model 
 picked had nowhere to decide it, and *recommended* stayed a word covering a rule. It presses
 `/api/action` like a row action does, so it adds no write path and no gate, and it is drawn by
 the same renderer as everything on this page. If you want it, the answer is the one above:
-open an issue saying what the fifteen could not do.
+open an issue saying what the sixteen could not do.
+
+**The sixteenth replaced a picture that answered the wrong question** (`alexia_protocol` 11).
+The memory plugin's `graph` drew sixty notes and their sections as a force layout, and the person
+it belonged to called it *points floating in space* — which it was, because the store had become a
+filing system: *You*, then sections, then topics, then notes. The question somebody opens it to ask
+is *what is under People*, and every file manager already answers that one. `tree` is that answer,
+drawn as text, so the keyboard, the screen reader and the phone get it without anybody having to
+remember them. It has one user today, and it is granted on what the alternative costs: a `table`
+grouped by section flattens the topics away, and a graph was the thing being replaced.
 
 The shape of the declaration is borrowed from VS Code's `contributes.configuration`, which
 has been proving this exact idea at enormous scale for a decade. The shape, narrowed — not
@@ -102,7 +111,7 @@ the size.
 
 ---
 
-## The fifteen
+## The sixteen
 
 Every widget takes `key`, `label`, an optional `hint`, and an optional `when`. The hint renders
 under the control in smaller type; it is one sentence, and it says something the label does not.
@@ -367,6 +376,65 @@ tool genuinely is not there.
 If the tool's annotations say it is destructive, core asks before calling it, in every mode
 except Full trust. Same rule as any other tool call, no exception for buttons.
 
+### `tree`
+
+```jsonc
+{ "key": "filed", "type": "tree", "label": "The shape of it",
+  "rows": "list_tree", "detail": "about_note", "filter": true,
+  "rowActions": [{ "key": "note_forget", "label": "Forget", "tool": "forget_one",
+                   "confirm": "Forget it?", "unless": { "tag": "always known" } }] }
+```
+
+```
+  The shape of it
+  [ Filter the shape of it        ]
+  ┌──────────────────────────────────────────────────────────┐
+  │ ▾ You  6                                                 │
+  │     Everything Alexia remembers about you.               │
+  │   ▸ People  2                                            │
+  │       Who is who in your life.                           │
+  │   ▾ Studies  2                                           │
+  │     · The grant deadline is in March  (suggestion)       │
+  │         also filed under Projects & code                 │
+  │       ┌────────────────────────────────────────────────┐ │
+  │       │ The grant deadline is in March. Filed under …  │ │
+  │       │ [Accept suggestion] [No longer true] [History] │ │
+  │       └────────────────────────────────────────────────┘ │
+  │     · Studied physics in Brno  (no longer true)          │
+  └──────────────────────────────────────────────────────────┘
+```
+
+Things filed inside each other. The tool answers `{ "nodes": [ … ] }` — each with an `id`, a
+`parent` (or `null`), a `kind` of `branch` or `note`, a `label`, and optionally a branch's
+`summary` and `count`, a note's `tags`, and `also`, more parents for a note filed twice. Field
+list in [`manifest.md`](./manifest.md#trees).
+
+What core owns:
+
+- **What is open.** The top is open and every section under it is shut, so the first screen is a
+  table of contents rather than everything at once. What somebody opens or closes is remembered
+  per widget in that browser — and when the browser will not remember, the tree still draws, at
+  its default.
+- **What a branch says about itself**: its name, a count — the author's, or the distinct notes
+  under it — and its summary as a quiet line underneath.
+- **A note filed twice** is drawn under both parents, and each copy says *also filed under* the
+  other, so nobody wonders why it appears twice or thinks forgetting one copy leaves the other.
+- **Opening a note** calls `detail` with its id and draws the answer under it, with the row
+  actions that apply to it (`when` and `unless`, exactly as on a table). Branches have none.
+- **The filter** keeps the notes whose label, summary or tags match, every branch they are filed
+  under — opened, while the filter is on — and everything inside a branch whose own name matches.
+  Clearing it puts the tree back as it was left.
+- **The keyboard**, by the WAI-ARIA tree pattern: one tab stop, Up and Down through what is
+  visible, Right to open or step in, Left to close or step out, Home and End, Enter or Space to
+  open. Keys pressed on a button inside an open note are that button's.
+- **Narrow screens**: less indent per level, and everything wraps, so four levels deep is still a
+  line somebody can read on a phone.
+
+A loop — a branch filed, however indirectly, inside itself — is drawn once rather than until the
+stack runs out, and a parent that is not in the answer puts the node at the top rather than
+losing it. A tree is data, and a panel that refuses to draw over one bad node is worse than one
+that shows the rest.
+
 ### `graph`
 
 ```jsonc
@@ -487,6 +555,13 @@ a row's `tags` already say, and nothing else: the bar for a query language here 
 as for a widget, and *one table wanted it* does not clear it. One chip is pressed at a time and
 the filter box searches inside what that chip left, so a person is never looking at the
 intersection of two controls that each claim to be the filter.
+
+**A row action can be drawn only where it applies** (`alexia_protocol` 11). `when` draws it on
+rows that match and `unless` on every row but those, each either `{ "tag": "…" }` — a row whose
+`tags` say that — or `{ "field": "…", "is": "…" }` — a row whose field is that value, or one of
+some, or without `is`, present at all. On a list where every action is about a row's state, the
+difference is seven buttons of which five answer *nothing to do here*, against the two that
+apply. A table or tree that declares none of it draws every action on every row, as before.
 
 **A row with a `detail` opens when it is clicked, not only from its button.** The button stays,
 because it is what a keyboard reaches and the only thing telling a reader the row has anything

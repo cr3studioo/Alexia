@@ -12,7 +12,7 @@
       "index.js"
     ]
   },
-  "alexia_protocol": 9,
+  "alexia_protocol": 11,
   "mcp_protocol": "2025-11-25",
   "requires": [],
   "provides": [
@@ -87,13 +87,66 @@
     "label": "Memory",
     "widgets": [
       {
-        "key": "remembered_map",
-        "type": "graph",
+        "key": "remembered_tree",
+        "type": "tree",
         "label": "The shape of it",
-        "hint": "Every remembered thing, and what it is filed under. Drag one to move it, scroll to zoom, click one to read the whole of it. A ring means Alexia worked that one out from something you said rather than being told it — those are the ones worth checking.",
-        "rows": "memory_graph",
+        "hint": "Everything remembered, filed the way Alexia files it: you at the top, then a section for each part of your life, then the topics inside it. Open a section to see what is in it, and press a note to read the whole of it and to change it. A note filed in two places shows up in both and says where else it lives.",
+        "rows": "memory_tree",
         "detail": "about_memory",
-        "filter": true
+        "filter": true,
+        "rowActions": [
+          {
+            "key": "note_pin",
+            "label": "Always know this",
+            "tool": "pin",
+            "unless": {
+              "tag": "always known"
+            }
+          },
+          {
+            "key": "note_unpin",
+            "label": "Stop always knowing",
+            "tool": "unpin",
+            "when": {
+              "tag": "always known"
+            }
+          },
+          {
+            "key": "note_accept_suggestion",
+            "label": "Accept suggestion",
+            "tool": "accept_suggestion",
+            "when": {
+              "tag": "suggestion"
+            }
+          },
+          {
+            "key": "note_still_true",
+            "label": "Still true",
+            "tool": "still_true",
+            "when": {
+              "tag": "may be out of date"
+            }
+          },
+          {
+            "key": "note_no_longer_true",
+            "label": "No longer true",
+            "tool": "no_longer_true",
+            "unless": {
+              "tag": "no longer true"
+            }
+          },
+          {
+            "key": "note_history",
+            "label": "History",
+            "tool": "history"
+          },
+          {
+            "key": "note_forget",
+            "label": "Forget",
+            "tool": "forget_one",
+            "confirm": "Forget it, and every earlier version of it?"
+          }
+        ]
       },
       {
         "key": "remembered_list",
@@ -131,17 +184,26 @@
           {
             "key": "still_true",
             "label": "Still true",
-            "tool": "still_true"
+            "tool": "still_true",
+            "when": {
+              "tag": "may be out of date"
+            }
           },
           {
             "key": "no_longer_true",
             "label": "No longer true",
-            "tool": "no_longer_true"
+            "tool": "no_longer_true",
+            "unless": {
+              "tag": "no longer true"
+            }
           },
           {
             "key": "accept_suggestion",
             "label": "Accept suggestion",
-            "tool": "accept_suggestion"
+            "tool": "accept_suggestion",
+            "when": {
+              "tag": "suggestion"
+            }
           },
           {
             "key": "history",
@@ -151,12 +213,20 @@
           {
             "key": "pin",
             "label": "Always know this",
-            "tool": "pin"
+            "tool": "pin",
+            "unless": {
+              "field": "pinned",
+              "is": "always known"
+            }
           },
           {
             "key": "unpin",
             "label": "Stop always knowing",
-            "tool": "unpin"
+            "tool": "unpin",
+            "when": {
+              "field": "pinned",
+              "is": "always known"
+            }
           },
           {
             "key": "forget_one",

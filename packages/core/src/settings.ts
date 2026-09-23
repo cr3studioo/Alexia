@@ -429,7 +429,7 @@ export function refuse(declared: Setting, value: unknown): string | undefined {
   if (driven(declared)) {
     if (declared.type === 'action') return `"${declared.label}" is a button, not a value.`
     // A table is edited a row at a time, through the actions its author declared on it.
-    if (declared.type === 'table') return `"${declared.label}" is a list, not a value.`
+    if (declared.type === 'table' || declared.type === 'tree') return `"${declared.label}" is a list, not a value.`
     return `"${declared.label}" is driven by the plugin, not by you.`
   }
   // The one value the user has but core writes. Its bytes arrive at `/api/upload`, which puts

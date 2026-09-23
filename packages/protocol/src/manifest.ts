@@ -67,9 +67,16 @@ import { APP_VERSION, newer } from './version.js'
  * the table to a group or to rows carrying any of some tags. Both read off what `table` already
  * has — `groupBy`'s value and a row's `tags` — rather than adding a query language, so nothing an
  * existing manifest means changes and the floor stays at 2 again.
+ *
+ * **10 on 2026-09-19 (D182).** `alexia/answers`, a seventh method. Nothing in the manifest moved.
+ *
+ * **11 on 2026-09-23.** `tree` — rows that sit inside each other, for a store that is filed
+ * rather than linked — and `when`/`unless` on a `table`'s or a `tree`'s row actions, so a row
+ * shows the buttons that apply to it rather than all seven. Both optional, both read off what a
+ * row already carries (its `tags`, or one of its fields), and the floor stays at 2.
  */
 export const ALEXIA_PROTOCOL_MIN = 2
-export const ALEXIA_PROTOCOL_MAX = 10
+export const ALEXIA_PROTOCOL_MAX = 11
 
 /**
  * The two MCP revisions core speaks, in preference order (D55, corrected by D57).
@@ -125,6 +132,50 @@ const gated = {
     .strict()
     .optional(),
 }
+
+/**
+ * **Which rows a row action is drawn on** (`alexia_protocol` 11).
+ *
+ * The case was the memory panel: seven actions on every row, most of them answering *nothing to
+ * do here* — *Accept suggestion* on a note nobody suggested anything about, *Always know this* on
+ * one that already is. A button that does nothing on this row is a question the reader has to
+ * answer before they can find the one that does something.
+ *
+ * Two forms, and deliberately no more. `tag` reads a row's `tags` — the chips it already carries
+ * (`alexia_protocol` 8), by what they say — because a row's state is usually already on screen as
+ * one. `field` reads one of the row's own fields, for a state that is not a tag: present and
+ * non-empty, or with `is`, equal to one of some values. Like a widget's `when`, it is one key and a
+ * string compare, not an expression language.
+ */
+const rowCondition = z.union([
+  z.object({ tag: z.string().min(1).max(64) }).strict(),
+  z
+    .object({
+      field: z.string().regex(IDENT),
+      is: z.union([z.string(), z.array(z.string()).min(1)]).optional(),
+    })
+    .strict(),
+])
+
+/** A `table`'s or a `tree`'s row action. Pressing it calls `tool` with `{ id }` — the row's own. */
+const rowAction = z
+  .object({
+    key: z.string().regex(IDENT),
+    label: z.string().min(1),
+    /** Called with `{ id }` — the row's own. */
+    tool: z.string().min(1),
+    /**
+     * A second press that has already said what goes, with `{column}` filled in from
+     * the row. The old dashboard's Delete → Confirm delete, which is a good pattern
+     * because the first press costs nothing and the second one is unambiguous.
+     */
+    confirm: z.string().min(1).max(160).optional(),
+    /** Drawn only on rows this matches (`alexia_protocol` 11). Absent means every row. */
+    when: rowCondition.optional(),
+    /** Not drawn on rows this matches (`alexia_protocol` 11). Both may be given; both must hold. */
+    unless: rowCondition.optional(),
+  })
+  .strict()
 
 /**
  * One option of a `choice`, either as a bare value or as a value with something to read.
@@ -346,24 +397,7 @@ const setting = z.discriminatedUnion('type', [
           .strict(),
       )
       .min(1),
-    rowActions: z
-      .array(
-        z
-          .object({
-            key: z.string().regex(IDENT),
-            label: z.string().min(1),
-            /** Called with `{ id }` — the row's own. */
-            tool: z.string().min(1),
-            /**
-             * A second press that has already said what goes, with `{column}` filled in from
-             * the row. The old dashboard's Delete → Confirm delete, which is a good pattern
-             * because the first press costs nothing and the second one is unambiguous.
-             */
-            confirm: z.string().min(1).max(160).optional(),
-          })
-          .strict(),
-      )
-      .optional(),
+    rowActions: z.array(rowAction).optional(),
     /** A tool called with `{ id }`, whose text expands under the row. */
     detail: z.string().min(1).optional(),
     /** A filter box, applied in the page over the declared columns. */
@@ -446,6 +480,40 @@ const setting = z.discriminatedUnion('type', [
     /** A tool called with `{ id }`, whose text opens beside the map when a node is clicked. */
     detail: z.string().min(1).optional(),
     /** A filter box, applied in the page over the node labels. */
+    filter: z.boolean().optional(),
+  }),
+
+  z.object({
+    /**
+     * The sixteenth widget: **things filed inside each other** (`alexia_protocol` 11).
+     *
+     * A `graph` answers *what points at what*, and for a store whose shape is a filing system
+     * it answered the wrong question: sixty notes and their sections drawn as points in space,
+     * which the person whose memory it was described as exactly that. What they wanted to know
+     * was *what is filed under People*, and the answer to that is a tree — the same shape every
+     * file manager has taught everybody to read.
+     *
+     * A node is fixed by the contract the way a `graph`'s is: `id`, `parent` (null for a root),
+     * `kind` — `branch` or `note` — and `label`, with an optional `summary` and `count` on a
+     * branch, `tags` on a note (drawn as a table's tags are), and `also`, more parent ids for a
+     * note filed in two places. Branches open and close, a note opens its `detail`, and its
+     * row actions are a `table`'s, `when` and all.
+     */
+    ...gated,
+    type: z.literal('tree'),
+    key: z.string().regex(IDENT),
+    label: z.string().min(1),
+    hint: z.string().optional(),
+    /**
+     * The tool that answers with the nodes, called with no arguments when the panel opens.
+     * It answers `structuredContent: { nodes: [...] }`, and every node carries a string `id`.
+     */
+    rows: z.string().min(1),
+    /** A tool called with `{ id }`, whose text opens under the note that was pressed. */
+    detail: z.string().min(1).optional(),
+    /** Called with `{ id }` — the note's own — and drawn on notes, never on branches. */
+    rowActions: z.array(rowAction).optional(),
+    /** A filter box: the notes that match, and the branches they are filed under. */
     filter: z.boolean().optional(),
   }),
 
@@ -772,6 +840,13 @@ export const Manifest = ManifestShape.superRefine((m, ctx) => {
       if (s.type === 'table' && s.groupOrder !== undefined) since(8, 'groupOrder', [...at(i), 'groupOrder'])
       if (s.type === 'table' && s.groupNotes !== undefined) since(9, 'groupNotes', [...at(i), 'groupNotes'])
       if (s.type === 'table' && s.chips !== undefined) since(9, 'chips', [...at(i), 'chips'])
+      if (s.type === 'tree') since(11, 'tree')
+      if (s.type === 'table' || s.type === 'tree') {
+        for (const [n, action] of (s.rowActions ?? []).entries()) {
+          if (action.when !== undefined) since(11, 'when on a row action', [...at(i), 'rowActions', n, 'when'])
+          if (action.unless !== undefined) since(11, 'unless on a row action', [...at(i), 'rowActions', n, 'unless'])
+        }
+      }
       if (s.when !== undefined) {
         since(7, 'when', [...at(i), 'when'])
         // A `when` naming a key nobody declared is a widget that is never drawn, silently.
@@ -820,7 +895,7 @@ export const Manifest = ManifestShape.superRefine((m, ctx) => {
   // possible meanings, and core would have to guess which.
   const everyKey = [...(m.settings ?? []), ...(m.panel?.widgets ?? [])].flatMap((w) => [
     w.key,
-    ...(w.type === 'table' ? (w.rowActions ?? []).map((a) => a.key) : []),
+    ...(w.type === 'table' || w.type === 'tree' ? (w.rowActions ?? []).map((a) => a.key) : []),
   ])
   for (const d of new Set(dupes(everyKey))) {
     fail(
