@@ -15,6 +15,16 @@
  * Eight calls rather than two. The sanction stands and the day it is taken will be a day this
  * file is doing something a framework is better at than eighty lines of `fetch`, which it is
  * not yet.
+ *
+ * D192 made it ten — *typing…* and 👀 are one `call` each — and that sentence still holds.
+ *
+ * **D194 adds `extra`, which is the one shape decision in this file.** Threading a reply,
+ * formatting one, and whatever Telegram adds next are all *one more field on the same call*,
+ * and a positional argument each would be four more slots nobody can read at the call site.
+ * So every send takes an optional object that is spread into the body as it stands. It is a
+ * deliberately thin place: this file does not know what `reply_parameters` means, only that
+ * the caller wants it sent, which keeps the knowledge of *why* next to the answer it belongs
+ * to rather than smeared across the transport.
  */
 
 const BASE = 'https://api.telegram.org/bot'
@@ -58,12 +68,14 @@ export const updates = (token, offset, seconds, signal) =>
     token,
     'getUpdates',
     // Button presses arrive as their own update kind. Asking for messages only is what made
-    // a keyboard impossible rather than merely absent (M7-5).
-    { offset, timeout: seconds, allowed_updates: ['message', 'callback_query'] },
+    // a keyboard impossible rather than merely absent (M7-5). `stopped_message_generation` is
+    // the Stop button on a draft, which is the same stop `/stop` is (D195) — and a kind left
+    // off this list is one Telegram never sends, so the button would simply do nothing.
+    { offset, timeout: seconds, allowed_updates: ['message', 'callback_query', 'stopped_message_generation'] },
     signal,
   )
 
-export const send = (token, chatId, text, signal, buttons) =>
+export const send = (token, chatId, text, signal, buttons, extra) =>
   call(
     token,
     'sendMessage',
@@ -72,9 +84,69 @@ export const send = (token, chatId, text, signal, buttons) =>
       text,
       disable_web_page_preview: true,
       ...(buttons && { reply_markup: { inline_keyboard: [buttons.map(({ label, data }) => ({ text: label, callback_data: data }))] } }),
+      ...extra,
     },
     signal,
   )
+
+/**
+ * The same message, rendered (D194).
+ *
+ * `sendRichMessage` takes real Markdown — bold, lists, tables, a fenced code block — and
+ * renders it, where `sendMessage` shows the asterisks. It is what a model has been writing all
+ * along and what a chat window has always shown; the phone was the one place it arrived as
+ * source. What goes in has been through `forRich()` first, because Telegram's servers fetch a
+ * Markdown image's URL and a model's Markdown is not always the model's idea.
+ *
+ * Newer than most of this file, so the caller has to survive its absence: a Bot API that does
+ * not have it answers 404, and `say()` in `index.js` stops asking for the rest of the session.
+ */
+export const sendRich = (token, chatId, markdown, extra, signal) =>
+  call(token, 'sendRichMessage', { chat_id: chatId, rich_message: { markdown }, ...extra }, signal)
+
+/**
+ * The answer while it is still being written, as Telegram's own draft (D195).
+ *
+ * A draft is not a message: it is the line the chat shows where a message is being composed,
+ * it belongs to this bot in this chat, and **it expires after about thirty seconds** unless it
+ * is sent again. That expiry is the whole reason this is a draft rather than one message
+ * edited over and over — an edit per delta is an edit Telegram rate-limits and a notification
+ * per word on somebody's phone, while a draft that is never finished simply vanishes, which is
+ * exactly the right behaviour for words that were never an answer.
+ *
+ * `can_stop` is what puts the Stop button on it, and pressing that button sends a
+ * `stopped_message_generation` update carrying the same `draft_id` this call chose. Two
+ * methods, the same shape, for the same reason `sendMessage` and `sendRichMessage` are two:
+ * one renders Markdown and the older one does not.
+ */
+export const sendDraft = (token, chatId, draftId, text, canStop, signal) =>
+  call(
+    token,
+    'sendMessageDraft',
+    { chat_id: chatId, draft_id: draftId, text, ...(canStop && { can_stop: true }) },
+    signal,
+  )
+
+export const sendRichDraft = (token, chatId, draftId, markdown, canStop, signal) =>
+  call(
+    token,
+    'sendRichMessageDraft',
+    { chat_id: chatId, draft_id: draftId, rich_message: { markdown }, ...(canStop && { can_stop: true }) },
+    signal,
+  )
+
+/**
+ * The list behind the *"/"* button in the chat (D195).
+ *
+ * `all_private_chats` rather than the default scope, which is *every* chat including groups a
+ * bot has been added to: this plugin answers one paired account in a private chat, and a menu
+ * offering Alexia's commands to a group it happens to be in would be offering something it
+ * will refuse. Telegram replaces the whole list each time, so this is the only call — there is
+ * nothing to remove first, and a list built from core's own commands cannot drift out of step
+ * by being appended to.
+ */
+export const setMyCommands = (token, commands, scope = { type: 'all_private_chats' }, signal) =>
+  call(token, 'setMyCommands', { commands, scope }, signal)
 
 /**
  * Telegram's cap on what a button may carry, and the reason the real action never goes on
@@ -97,6 +169,30 @@ export const answered = (token, queryId, text, signal) =>
 export const unbutton = (token, chatId, messageId, signal) =>
   call(token, 'editMessageReplyMarkup', { chat_id: chatId, message_id: messageId, reply_markup: { inline_keyboard: [] } }, signal)
 
+/**
+ * *Typing…*, *sending photo…*, *recording voice…* — the line under the chat's name while an
+ * answer is being made (D192).
+ *
+ * Telegram shows it for five seconds at most, or until this bot's next message arrives, so one
+ * call is one blink. Keeping it up for a whole answer is `presence.js`'s job, not this one's.
+ */
+export const act = (token, chatId, action, signal) => call(token, 'sendChatAction', { chat_id: chatId, action }, signal)
+
+/**
+ * A reaction on somebody's message — 👀, for *seen* (D192).
+ *
+ * The Bot API has no call that marks a message read in an ordinary bot chat, so a reaction is
+ * the one sign a bot can give that a message landed before the answer to it exists. A bot gets
+ * one reaction per message; an empty `emoji` takes it off again.
+ */
+export const react = (token, chatId, messageId, emoji, signal) =>
+  call(
+    token,
+    'setMessageReaction',
+    { chat_id: chatId, message_id: messageId, reaction: emoji ? [{ type: 'emoji', emoji }] : [] },
+    signal,
+  )
+
 /** Where a file Telegram is holding actually lives, so it can be fetched. */
 export const filePath = async (token, fileId, signal) => {
   const file = await call(token, 'getFile', { file_id: fileId }, signal)
@@ -111,16 +207,31 @@ export const filePath = async (token, fileId, signal) => {
  * format before reaching this, and there is no conversion here: a converter is ffmpeg, and
  * ffmpeg is a dependency this plugin has managed not to have.
  */
-export async function sendVoice(token, chatId, ogg, signal) {
+export async function sendVoice(token, chatId, ogg, signal, extra) {
   const form = new FormData()
   form.set('chat_id', String(chatId))
   form.set('voice', new Blob([ogg], { type: 'audio/ogg' }), 'reply.ogg')
+  fill(form, extra)
   const response = await fetch(`${BASE}${token}/sendVoice`, { method: 'POST', body: form, ...(signal && { signal }) })
   const answer = await response.json().catch(() => ({}))
   if (!response.ok || answer.ok !== true) {
     throw new TelegramError(response.status, answer.description ?? `Telegram answered ${response.status}`)
   }
   return answer.result
+}
+
+/**
+ * `extra`, put into a multipart upload rather than a JSON body (D194).
+ *
+ * The same fields, and Telegram takes them either way — but a form field is a string, so an
+ * object like `reply_parameters` goes in as its JSON text. Telegram's own documentation says
+ * to do exactly this, and it is the one line of difference between the two kinds of send.
+ */
+function fill(form, extra) {
+  for (const [key, value] of Object.entries(extra ?? {})) {
+    if (value === undefined) continue
+    form.set(key, typeof value === 'string' ? value : JSON.stringify(value))
+  }
 }
 
 /**
@@ -131,11 +242,12 @@ export async function sendVoice(token, chatId, ogg, signal) {
  * shows it as an attachment. The caller picks by mime type, and a photo that Telegram
  * rejects falls back to a document rather than not arriving.
  */
-async function upload(token, method, field, chatId, bytes, name, caption, signal) {
+async function upload(token, method, field, chatId, bytes, name, caption, signal, extra) {
   const form = new FormData()
   form.set('chat_id', String(chatId))
   form.set(field, new Blob([bytes]), name || 'file')
   if (caption) form.set('caption', String(caption).slice(0, 1024))
+  fill(form, extra)
   const response = await fetch(`${BASE}${token}/${method}`, { method: 'POST', body: form, ...(signal && { signal }) })
   const answer = await response.json().catch(() => ({}))
   if (!response.ok || answer.ok !== true) {
@@ -144,22 +256,30 @@ async function upload(token, method, field, chatId, bytes, name, caption, signal
   return answer.result
 }
 
-export const sendPhoto = (token, chatId, bytes, name, caption, signal) =>
-  upload(token, 'sendPhoto', 'photo', chatId, bytes, name, caption, signal)
+export const sendPhoto = (token, chatId, bytes, name, caption, signal, extra) =>
+  upload(token, 'sendPhoto', 'photo', chatId, bytes, name, caption, signal, extra)
 
-export const sendDocument = (token, chatId, bytes, name, caption, signal) =>
-  upload(token, 'sendDocument', 'document', chatId, bytes, name, caption, signal)
+export const sendDocument = (token, chatId, bytes, name, caption, signal, extra) =>
+  upload(token, 'sendDocument', 'document', chatId, bytes, name, caption, signal, extra)
 
 /** Telegram's own cap. A longer answer is split rather than refused by the API mid-sentence. */
 export const LIMIT = 4096
 
-export function chunk(text) {
+/**
+ * Split at whatever this particular call is capped at.
+ *
+ * A plain `sendMessage` refuses anything over 4096 characters; a rich message takes 32768
+ * (`RICH_LIMIT` in `format.js`). Same splitting, eight times the room — so the limit is an
+ * argument rather than a second copy of this function, and a rich answer that would have been
+ * cut into eight bubbles arrives as one (D194).
+ */
+export function chunk(text, limit = LIMIT) {
   const parts = []
   let left = String(text)
-  while (left.length > LIMIT) {
+  while (left.length > limit) {
     // Break on a line if there is one in reach, so a split does not land mid-word.
-    const cut = left.lastIndexOf('\n', LIMIT)
-    const at = cut > LIMIT / 2 ? cut : LIMIT
+    const cut = left.lastIndexOf('\n', limit)
+    const at = cut > limit / 2 ? cut : limit
     parts.push(left.slice(0, at))
     left = left.slice(at)
   }

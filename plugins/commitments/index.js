@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { fromJsonSchema, log, plugin } from '@alexia/sdk'
-import { day, line, mark, overdue, STATES } from './ledger.js'
+import { day, due, line, mark, overdue, STATES } from './ledger.js'
 
 /**
  * Commitments — the accountability ledger (M6-8).
@@ -102,6 +102,53 @@ alexia.tool(
     const open = (await all()).filter((row) => row.state === 'open')
     if (open.length === 0) return { content: [{ type: 'text', text: 'Nothing outstanding.' }] }
     return { content: [{ type: 'text', text: open.map((row) => `- ${line(row, now)}`).join('\n') }] }
+  },
+)
+
+/**
+ * **What is due, for another plugin to say** (`commitments.due`).
+ *
+ * `promised` is the model's question — everything open, for a conversation about what somebody
+ * owes. This is a morning's: only what is due today or already late, for a plugin that pushes a
+ * summary to wherever the person is, and an empty answer when there is nothing, so the caller's
+ * rule is one line — *send it if it says anything*. Bound at registration, like
+ * `document.extract`: nothing has to load before this can answer, so it never has to move.
+ */
+alexia.tool(
+  'due',
+  {
+    description:
+      'The open commitments that are due today or overdue, one per line, oldest first — for a morning summary. ' +
+      'Empty when nothing is due. Takes an optional `today`, the caller’s own date as YYYY-MM-DD.',
+    inputSchema: fromJsonSchema({
+      type: 'object',
+      properties: {
+        today: {
+          type: 'string',
+          description: 'The day to count from, as YYYY-MM-DD — the caller’s local date. Defaults to today.',
+        },
+      },
+    }),
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+    _meta: { 'alexia/provides': ['commitments.due'] },
+  },
+  async ({ today: asked } = {}) => {
+    // The caller's day when it gave a real one — a summary is read in the morning where the
+    // person is, and it knows what their morning's date is. Otherwise this plugin's own.
+    const now = day(asked) ?? today()
+    const rows = due(await all(), now)
+    return {
+      content: [{ type: 'text', text: rows.map((row) => `- ${line(row, now)}`).join('\n') }],
+      structuredContent: {
+        items: rows.map((row) => ({
+          id: String(row.rowid),
+          text: String(row.text),
+          by: row.by,
+          overdue: overdue(row, now),
+          mine: row.mine === 1 || row.mine === true,
+        })),
+      },
+    }
   },
 )
 

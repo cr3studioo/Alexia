@@ -4,7 +4,7 @@
   "id": "telegram",
   "name": "Telegram",
   "summary": "Talk to Alexia from Telegram. Every message crosses Telegram's servers, and every reply says so.",
-  "version": "0.1.2",
+  "version": "0.4.0",
   "license": "AGPL-3.0-only",
   "entry": {
     "run": "node",
@@ -12,7 +12,7 @@
       "index.js"
     ]
   },
-  "alexia_protocol": 2,
+  "alexia_protocol": 7,
   "mcp_protocol": "2025-11-25",
   "requires": [
     {
@@ -21,7 +21,7 @@
     },
     {
       "cap": "fs.own_dir",
-      "why": "To hold a voice note for a moment while it is turned into words, then drop it."
+      "why": "To hold a voice note or a file you sent for a moment while it is turned into words, then drop it."
     }
   ],
   "provides": [
@@ -36,11 +36,30 @@
       "hint": "From @BotFather on Telegram. Send it /newbot and it hands you one. It goes to this machine's credential store, never to the database."
     },
     {
-      "type": "toggle",
-      "key": "voice_notes",
+      "type": "choice",
+      "key": "voice_replies",
       "label": "Answer with a voice note",
-      "default": false,
-      "hint": "Only works while a cloned voice is chosen in Voice — that is the one that makes the format a voice bubble takes. Otherwise replies are text."
+      "default": "mirror",
+      "hint": "Any of these needs a cloned voice chosen in Voice — that is the one that makes the format a voice bubble takes. Without it, replies are text whatever is set here.",
+      "options": [
+        { "value": "never", "label": "Never", "hint": "Every reply is text, even to a voice note." },
+        { "value": "mirror", "label": "When you send a voice note", "hint": "The reply comes back in the form the question went out in: speak and she speaks, type and she types." },
+        { "value": "always", "label": "Always", "hint": "Every reply is a voice bubble, including the answer to something you typed." }
+      ]
+    },
+    {
+      "type": "text",
+      "key": "morning_summary",
+      "label": "Send what is due each morning at",
+      "placeholder": "08:30",
+      "hint": "A time in 24-hour form, in this machine's own clock. Leave it empty for no summary. It needs a plugin that keeps track of what you owe — without one there is nothing to list, so no summary goes out."
+    },
+    {
+      "type": "text",
+      "key": "panel_url",
+      "label": "Control panel page",
+      "default": "https://cr3studioo.github.io/Alexia/telegram/",
+      "hint": "The page behind the ⚙ Panel button. It is one static file with no server behind it: the state it shows travels in the part of the link a browser never sends to the host, and the page itself calls nothing. The default address only exists once GitHub Pages has been switched on for the repository, which is a one-time step somebody has to do by hand."
     },
     {
       "type": "text",
@@ -71,7 +90,8 @@
   "storage": {
     "namespace": "telegram",
     "tables": [
-      "chats"
+      "chats",
+      "reminders"
     ]
   },
   "commands": [

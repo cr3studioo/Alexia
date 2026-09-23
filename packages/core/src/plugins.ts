@@ -1,5 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { CONVERSATION_ENDED, ErrorCode, isPermission, Manifest, PROVIDES_META, SETTINGS_CHANGED } from '@alexia/protocol'
+import {
+  CONVERSATION_ENDED,
+  ErrorCode,
+  isPermission,
+  Manifest,
+  PROVIDES_META,
+  SETTINGS_CHANGED,
+  type StreamFrame,
+} from '@alexia/protocol'
 import {
   ProtocolError,
   type CallToolResult,
@@ -44,8 +52,16 @@ export interface PluginsOptions {
   dataDir: string
   /** Where `password` settings live. The OS keychain unless a test says otherwise. */
   secrets?: SecretStore
-  /** The router (M1-8). Absent means core cannot answer for the model yet, and says so. */
-  sample?(pluginId: string, params: CreateMessageRequestParams, signal?: AbortSignal): Promise<CreateMessageResult>
+  /**
+   * The router (M1-8). Absent means core cannot answer for the model yet, and says so.
+   * `stream` is the plugin's own progress token, when its request carried one (`alexia/stream`).
+   */
+  sample?(
+    pluginId: string,
+    params: CreateMessageRequestParams,
+    signal?: AbortSignal,
+    stream?: (frame: StreamFrame) => void,
+  ): Promise<CreateMessageResult>
   roots?(pluginId: string): Root[]
   log?(pluginId: string, line: string): void
   /** A plugin's tools changed, or the plugin itself went away. The loop re-plans. */

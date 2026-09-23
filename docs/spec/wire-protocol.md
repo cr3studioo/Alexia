@@ -455,6 +455,59 @@ same key, saying what happened:
 *which length will she get?* **No revision of `alexia_protocol`**: an Alexia that does not
 know the key sends `systemPrompt` as it always did and puts nothing on the result.
 
+#### `alexia/stream` — *the answer, while it is written*
+
+Send your request with a `progressToken` — in the TypeScript SDK, pass `onprogress` to
+`createMessage` and it puts one there for you — and core answers on it with MCP's own
+`notifications/progress` while the answer is being written, before the result arrives:
+
+```jsonc
+// plugin → core
+{ "jsonrpc": "2.0", "id": 102, "method": "sampling/createMessage",
+  "params": { "messages": [ … ], "_meta": { "progressToken": 102 } } }
+// core → plugin, any number of these, then the result as usual
+{ "jsonrpc": "2.0", "method": "notifications/progress",
+  "params": { "progressToken": 102, "progress": 3,
+              "_meta": { "alexia/stream": { "delta": "The first few words" } } } }
+```
+
+Each frame carries one object under `alexia/stream`, with any of three fields:
+
+| | |
+|---|---|
+| `delta` | **The words written since the last frame** — append them. Core gathers them and sends a few frames a second rather than one per token, the first at once. Joined in order, from the last `restart`, they are the answer so far. In a task with tools, words a model says before calling one stream too, set apart from the next turn's by a blank line; the result is still the answer to keep. |
+| `restart` | `true`: **throw away every word so far.** The model writing them stopped partway, and the answer starts again on the next one — what follows is the new answer's first words. |
+| `phase` | **What the wait is doing**: `choosing`, `asking`, `retrying`, `backup`, `thinking`, `writing` or `tool` — the stage names the window's own line reads. During a long tool step it is sent again every few seconds, so it doubles as a keep-alive for a plugin that resets its timeout on progress. A name you do not know is a stage a newer Alexia added: show nothing for it. |
+
+`progress` rises from `1` and there is no `total`, because an answer does not know how long it
+will be. Every frame for a request arrives before its result does. **No token, no frames** —
+and a slash command sends none either, because its answer is already written.
+
+**No revision of `alexia_protocol`.** An Alexia that has never heard of the key sends nothing on
+your token and the result arrives as it always did, so a plugin written for it keeps working
+unchanged against one that has.
+
+#### `alexia/command` — *what a command knows, as data*
+
+A slash command sent through `sampling/createMessage` is answered by core, not by a model — one
+line in `content`, as it always was. When the command has more than its sentence, the **result**
+carries it too:
+
+```jsonc
+// /help — every command you could type right now, in the order the lines list them
+"_meta": { "alexia/command": [ { "name": "new", "summary": "Start a new conversation. …" }, … ] }
+// /status — where things stand
+"_meta": { "alexia/command": { "mode": "combined", "prefer": "cheap",
+                               "today": { "spent": 0.12, "allowance": 1 },
+                               "month": { "spent": 3.4, "cap": 20 },
+                               "running": false } }
+```
+
+`month.cap` is absent when nobody has set one, and dollars are dollars. A command with nothing
+but its sentence carries no key at all. **No revision of `alexia_protocol`**: an Alexia that does
+not set it hands back the sentence alone, and `/help`'s sentence has always been one
+`/name — summary` line per command, which is the fallback worth parsing.
+
 ### Elicitation
 
 `elicitation/create` is how a plugin asks the user a question — an API key, a folder, a
