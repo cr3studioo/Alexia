@@ -153,11 +153,20 @@
    * object, read from `location.hash` with the leading `#` stripped. Every step is wrapped,
    * because a fragment can be edited by hand, truncated by a link shortener, or simply
    * absent — none of which should ever throw past this function.
+   *
+   * **Telegram writes into the same fragment.** Opening a Mini App appends its launch
+   * parameters — `&tgWebAppData=…&tgWebAppVersion=…` — to whatever fragment the button's URL
+   * already had, so the state is one `&`-separated segment among Telegram's. It is the one
+   * without an `=`: base64url carries no padding here and never contains `&` or `=`.
    */
   function decodeState(hash) {
     try {
       if (!hash || hash.length < 2) return null
-      var b64url = hash.charAt(0) === '#' ? hash.slice(1) : hash
+      var parts = (hash.charAt(0) === '#' ? hash.slice(1) : hash).split('&')
+      var b64url = ''
+      for (var p = 0; p < parts.length; p++) {
+        if (parts[p] && parts[p].indexOf('=') === -1) { b64url = parts[p]; break }
+      }
       if (!b64url) return null
       var b64 = b64url.replace(/-/g, '+').replace(/_/g, '/')
       var pad = b64.length % 4
