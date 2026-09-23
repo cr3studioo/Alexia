@@ -107,6 +107,13 @@ export interface Run {
    * would now be the misleading one.
    */
   personality?: { chars: number; size: Size }[]
+  /**
+   * How long the user's profile (`memory.profile`) was, in characters, as the model was given
+   * it — zero when something provides one and it said nothing. Absent when nothing provides one,
+   * so a run with no memory plugin reads exactly as it did. One number, not a list: unlike the
+   * personality it has one length for every model.
+   */
+  profile?: number
   steps: TraceStep[]
   /**
    * **Where the time went**, stage by stage, in the order the stages began.
@@ -181,6 +188,12 @@ export class Trace {
     // Distinct, in the order they first went out. A fifteen-step task that sends the same
     // length fifteen times is one entry, which is what makes several entries worth reading.
     if (!so.some((one) => one.chars === chars && one.size === size)) so.push({ chars, size })
+  }
+
+  /** How much of the user's profile went out with this run. */
+  profile(chars: number): void {
+    if (!this.#open) return
+    this.#open.profile = chars
   }
 
   step(step: Step): void {
@@ -268,6 +281,9 @@ export function asText(run: Run): string {
     // *Was it sent, and how much of it?* — the one question the last personality bug turned
     // on, and it was unanswerable from here.
     ...(run.personality === undefined ? [] : [personalityLine(run.personality)]),
+    // The same question about the one thing core reads back from memory.
+    ...(run.profile === undefined ? []
+    : [run.profile > 0 ? `profile: ${String(run.profile)} characters sent` : 'profile: none sent']),
     // Every charge, in order, and what each one was for. This is the line somebody came here
     // to read: a fallback costs more than the model on the badge, and this says which call.
     ...(run.calls ?? []).map(

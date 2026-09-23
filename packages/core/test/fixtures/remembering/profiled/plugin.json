@@ -1,0 +1,17 @@
+{
+  "manifest_version": 1,
+  "id": "profiled",
+  "name": "Profiled",
+  "summary": "Answers the profile and recall capabilities, and starts a task the way a phone would.",
+  "version": "0.1.0",
+  "license": "AGPL-3.0-only",
+  "entry": {
+    "run": "node",
+    "args": ["index.js"]
+  },
+  "alexia_protocol": 2,
+  "mcp_protocol": "2025-11-25",
+  "requires": [],
+  "provides": ["memory.profile", "memory.recall"],
+  "settings": [{ "type": "action", "key": "phone", "label": "phone", "tool": "phone" }]
+}

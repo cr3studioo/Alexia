@@ -1100,6 +1100,36 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
   }
 
   /**
+   * **What the user has asked to be known about them** (`memory.profile`), or nothing.
+   *
+   * The one place core reads memory back, and read the way the personality is: **once per
+   * task**, and never the reason an answer does not happen. A memory plugin having a bad day is
+   * a prompt without the block, which is the prompt every task had before this existed.
+   *
+   * No redaction here, and not because it is exempt: it becomes part of the system turn, and
+   * the router runs `redact()` over every message bound for a model off this machine — the
+   * system turn included — so it meets the same egress policy as a typed sentence.
+   */
+  async function profile(): Promise<{ profile?: string; remembers: boolean }> {
+    const remembers = plugins.answers(CORE_CAPABILITIES.recall)
+    if (!plugins.answers(CORE_CAPABILITIES.profile)) return { remembers }
+    try {
+      const answered = await plugins.capability(CORE_CAPABILITIES.profile)
+      // A tool that failed still answers, with its error as the text — and an error message
+      // presented to a model under *what you know about the user* is worse than nothing.
+      if (answered.isError === true) throw new Error(`the provider failed: ${JSON.stringify(answered.content)}`)
+      const said = (answered.content ?? [])
+        .map((block) => (block.type === 'text' ? block.text : ''))
+        .join('')
+        .trim()
+      return { profile: said, remembers }
+    } catch (error) {
+      console.error(`[profile] ${error instanceof Error ? error.message : String(error)}`)
+      return { profile: '', remembers }
+    }
+  }
+
+  /**
    * **The name of the personality in use**, for the chip in the chat header (improvement 8).
    *
    * A second tool on the same plugin rather than a field on `persona.personality`, because the
@@ -1308,6 +1338,10 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
       // What reaches the model is counted per step now, because §2's three lengths mean it can
       // differ between them — the loop reports it through `on.personality`, below.
       if (chosen === undefined) trace.personality(0, 'high')
+      // Who the user is, read once like the personality; a phone asking *who am I* is exactly
+      // the question this is for.
+      const known = await profile()
+      if (known.profile === '') trace.profile(0)
       const once = (asked: Message[]): ReturnType<typeof run> => run({
         messages: asked,
         tools: tooling,
@@ -1319,6 +1353,8 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
         session: its,
         run: runId,
         ...(chosen !== undefined && { personality: chosen }),
+        ...(known.profile !== undefined && known.profile !== '' && { profile: known.profile }),
+        ...(known.remembers && { remembers: true }),
         // The spend lands on the plugin that asked, exactly as a plain `sampling` call's
         // does — and it is a run now, so it is a paid path like any other task (G12, D96).
         plugin: pluginId,
@@ -1340,6 +1376,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
         // hears, and a tool's progress as a keep-alive, so a long step is not a silent one.
         on: {
           personality: (chars, size) => trace.personality(chars, size),
+          profile: (chars) => trace.profile(chars),
           phase: (p) => {
             trace.phase(p)
             live?.phase(p)
@@ -2846,10 +2883,15 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     const chosen = await personality()
     // Said per step by the loop (§2's three lengths); *none sent* has no step to wait for.
     if (chosen === undefined) trace.personality(0, 'high')
+    // What the user asked to be known about them, read once, like the personality above.
+    const known = await profile()
+    if (known.profile === '') trace.profile(0)
     try {
       const result = await run({
         messages: store.history(session).filter((turn) => turn.bad !== true),
         ...(chosen !== undefined && { personality: chosen }),
+        ...(known.profile !== undefined && known.profile !== '' && { profile: known.profile }),
+        ...(known.remembers && { remembers: true }),
         tools: tooling,
         // *Use Automatic for this answer* is this answer, not a setting (D155): the pin and the
         // list are still there for the next message, and nothing here writes to them.
@@ -2906,6 +2948,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
             reached = models.bubble
           },
           personality: (chars, size) => trace.personality(chars, size),
+          profile: (chars) => trace.profile(chars),
           step: (step) => {
             trace.step(step)
             say({ step: { n: step.n, name: step.name, args: step.args } })

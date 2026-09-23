@@ -160,6 +160,11 @@ export interface AgentEvents {
    */
   personality?(chars: number, size: Size): void
   /**
+   * **How much of the user's profile went out**, in characters, once per run and only when there
+   * was one. Once rather than per rung, because unlike the personality it has one length.
+   */
+  profile?(chars: number): void
+  /**
    * The same step, still running, with something new to say about how far along it is (M2-6).
    *
    * **Silence is what kills a first run, not time.** A step that will take four minutes and
@@ -265,6 +270,20 @@ export interface RunOptions {
    * hundred words. `sizeFor` picks for each rung as `send` reaches it.
    */
   personality?: Personality
+  /**
+   * **What the user has asked to be known about them** (`memory.profile`), already resolved and
+   * bounded by whoever provides it. Read once per task for the same reason the personality is,
+   * and placed in front of it by {@link system}.
+   */
+  profile?: string
+  /**
+   * **Whether a long-term memory exists** to be looked in (`memory.recall`). It adds one sentence
+   * to the floor telling the model to check before saying it does not know something about the
+   * user — which is the whole fix for *who am I?* answered *I don't know you* with the answer one
+   * tool call away. Only said when there are tools, because a sentence pointing at a tool the
+   * model was not given is a sentence it can only fail to obey.
+   */
+  remembers?: boolean
   signal?: AbortSignal
   /**
    * May this call run? (M15-3.) The loop does not know what a permission is — it asks, and
@@ -427,11 +446,15 @@ export async function run(options: RunOptions): Promise<RunResult> {
    * plugin, and later wins. It read exactly like a personality being ignored, and on the
    * one surface where nobody can open the settings screen to check.
    *
-   * So there is one system turn again: Alexia's floor, then the caller's context, then the
-   * personality last, which is the order {@link system} already promised.
+   * So there is one system turn again: Alexia's floor, then the caller's context, then what is
+   * known about the user, then the personality last, which is the order {@link system} promises.
    */
   const standing = options.messages.filter((m) => m.role === 'system').map((m) => textOf(m))
   const messages = options.messages.filter((m) => m.role !== 'system')
+  // The profile is one length for every model, so it is said once, here, rather than per rung.
+  const profile = options.profile?.trim() ?? ''
+  if (profile !== '') on?.profile?.(profile.length)
+  const about = { profile, remembers: options.remembers === true }
   const added: Message[] = []
   const steps: Step[] = []
 
@@ -646,7 +669,7 @@ export async function run(options: RunOptions): Promise<RunResult> {
     const wear = (choice: Choice): { text: string; size: Size } | undefined =>
       options.personality === undefined ? undefined : sizedFor(options.personality, sizeFor(choice, now))
     const first = verdict.choices[0]
-    const dressed = (choice: Choice): Message[] => [system(available, wear(choice)?.text, standing), ...trimmed]
+    const dressed = (choice: Choice): Message[] => [system(available, wear(choice)?.text, standing, about), ...trimmed]
     const asking = (choice: Choice): void => {
       const worn = wear(choice)
       // Counted the way `system` counts it, so this is the length that reached the model rather
@@ -664,7 +687,7 @@ export async function run(options: RunOptions): Promise<RunResult> {
           // Trimmed here rather than in the store: what is kept is what a model is shown,
           // and the history itself stays whole so a reload shows every step that happened.
           // Each rung is actually sent `dressed(choice)`; this is the first rung's, for the record.
-          messages: [system(available, first === undefined ? undefined : wear(first)?.text, standing), ...trimmed],
+          messages: [system(available, first === undefined ? undefined : wear(first)?.text, standing, about), ...trimmed],
           ...(available.length > 0 && { tools: available }),
           ...(billable && { maxTokens: options.maxTokens ?? REPLY_CEILING }),
           ...(options.signal && { signal: options.signal }),
@@ -890,8 +913,24 @@ function parse(raw: string): Record<string, unknown> {
  * same reason and in the same direction: it is context core cannot know — *this is a phone*
  * — and it is not the user saying how they want to be spoken to. Sent as a second `system`
  * message, which is how it used to arrive, it landed after the personality and won.
+ *
+ * So the order is **floor, caller, profile, personality**. The profile (`memory.profile`) is
+ * *facts* — a name, a language, a life stage — and the personality is *voice*; facts go first
+ * and the voice goes last, so that where the two brush against each other on style (*speak to
+ * him informally*), the personality the user chose is what wins. The profile has a header of
+ * its own so a model reads it as what is known rather than as another instruction, and no
+ * header at all when there is nothing under it.
+ *
+ * One more floor line when a memory exists and there are tools to reach it: weak models answer
+ * *I don't know you* without looking, and the sentence telling them to look is cheaper than
+ * every fact they would otherwise have to be handed up front.
  */
-function system(available: ToolSpec[], personality?: string, caller: string[] = []): Message {
+function system(
+  available: ToolSpec[],
+  personality?: string,
+  caller: string[] = [],
+  about: { profile?: string; remembers?: boolean } = {},
+): Message {
   const lines = [
     'You are Alexia, an assistant running on the user’s own machine.',
     available.length > 0 ?
@@ -899,8 +938,19 @@ function system(available: ToolSpec[], personality?: string, caller: string[] = 
     : 'You have no tools available right now, so answer from what you know.',
     'When a tool fails, read the error and try a different approach rather than repeating the call.',
     'Stop calling tools and answer as soon as you can. Say what you did, briefly.',
+    ...(available.length > 0 && about.remembers === true ?
+      [
+        'You have a long-term memory about this user. Before saying you don’t know something about them, check it with the recall tool.',
+      ]
+    : []),
   ]
-  const parts = [lines.join(' '), ...caller.map((one) => one.trim()), personality?.trim() ?? '']
+  const profile = about.profile?.trim() ?? ''
+  const parts = [
+    lines.join(' '),
+    ...caller.map((one) => one.trim()),
+    profile === '' ? '' : `What you know about the user:\n${profile}`,
+    personality?.trim() ?? '',
+  ]
   return { role: 'system', content: parts.filter((part) => part !== '').join('\n\n') }
 }
 
