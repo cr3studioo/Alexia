@@ -69,6 +69,17 @@ export function words(text) {
   return [...new Set(terms(text).flat())]
 }
 
+/**
+ * The words that say what a note is *about*, as a set.
+ *
+ * `words` minus the ones every note about a person shares: *user*, *wants*, *prefers*. Those
+ * are true of half the table, so two notes sharing one of them says nothing about whether they
+ * are on the same subject — and "are these two about the same thing" is what both the seed's
+ * repeat check (`profile.js`) and the replace check (`capture.js`) are asking.
+ */
+const COMMON = new Set(['user', "user's", 'users', 'assistant', 'alexia', 'wants', 'prefers', 'likes', 'she', 'him'])
+export const content = (text) => new Set(words(text).filter((word) => !COMMON.has(word)))
+
 /** The first five letters, which is where a Czech word keeps its meaning. */
 const stem = (word) => [...word].slice(0, 5).join('')
 

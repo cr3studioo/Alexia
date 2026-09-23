@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+import { valid } from './garden.js'
+import { content } from './search.js'
 
 /**
  * The profile: the few notes Alexia reads before every task, rather than when it thinks to ask.
@@ -34,7 +36,9 @@ export const CAP = 600
  * (see `tick` in index.js) — and they still sort after everything that was said out loud.
  */
 export function profile(rows, cap = CAP) {
-  const pinned = rows.filter((row) => pinnedOf(row))
+  // A note that is no longer true stays in the table as history and never reaches a prompt.
+  // Checked here as well as by the caller, because this is the one read that is in every prompt.
+  const pinned = rows.filter((row) => pinnedOf(row) && valid(row))
   const newest = (a, b) => Number(b.at ?? 0) - Number(a.at ?? 0) || Number(b.rowid ?? 0) - Number(a.rowid ?? 0)
   const said = (row) => (row.source === 'inferred' ? 1 : 0)
   const ordered = pinned.sort((a, b) => tier(a) - tier(b) || said(a) - said(b) || newest(a, b))
@@ -150,17 +154,9 @@ export function seedable(row) {
  * the earlier one already known. Words any profile line shares (*user*, *wants*) are not
  * evidence of a repeat and are left out of the count; what is left must overlap by half of
  * the shorter sentence, which is stricter than the sorting pass's third because a wrong
- * call here silently drops something from every prompt.
+ * call here silently drops something from every prompt. The words are `content`'s, in
+ * `search.js`, which the sorting pass's replace check shares.
  */
-const COMMON = new Set(['user', "user's", 'users', 'the', 'assistant', 'alexia', 'wants', 'prefers', 'they', 'when', 'with'])
-const content = (text) =>
-  new Set(
-    String(text ?? '')
-      .toLowerCase()
-      .split(/[^\p{L}\p{N}]+/u)
-      .filter((word) => [...word].length >= 3 && !COMMON.has(word)),
-  )
-
 export function distinct(rows) {
   const kept = []
   const newestFirst = [...rows].sort((a, b) => Number(b.at ?? 0) - Number(a.at ?? 0) || Number(b.rowid ?? 0) - Number(a.rowid ?? 0))

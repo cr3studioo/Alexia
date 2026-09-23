@@ -4,7 +4,7 @@
   "id": "memory",
   "name": "Long-term memory",
   "summary": "Remembers things across conversations, and always knows the few you pin — your name, how to talk to you. Can also write things down by itself, once you turn that on.",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "license": "AGPL-3.0-only",
   "entry": {
     "run": "node",
@@ -12,7 +12,7 @@
       "index.js"
     ]
   },
-  "alexia_protocol": 4,
+  "alexia_protocol": 9,
   "mcp_protocol": "2025-11-25",
   "requires": [],
   "provides": [
@@ -99,7 +99,7 @@
         "key": "remembered_list",
         "type": "table",
         "label": "Remembered",
-        "hint": "Everything Alexia has written down about you, and whether you said it or it worked it out. Forgetting one is the reason this screen exists.",
+        "hint": "Everything Alexia has written down about you, whether you said it or it worked it out, and whether it is still true. What stopped being true is kept at the bottom as history; forgetting one takes every version of it.",
         "rows": "memories",
         "columns": [
           {
@@ -109,6 +109,11 @@
           {
             "key": "from",
             "label": "How it got here"
+          },
+          {
+            "key": "tags",
+            "label": "State",
+            "hideNarrow": true
           },
           {
             "key": "pinned",
@@ -124,6 +129,26 @@
         ],
         "rowActions": [
           {
+            "key": "still_true",
+            "label": "Still true",
+            "tool": "still_true"
+          },
+          {
+            "key": "no_longer_true",
+            "label": "No longer true",
+            "tool": "no_longer_true"
+          },
+          {
+            "key": "accept_suggestion",
+            "label": "Accept suggestion",
+            "tool": "accept_suggestion"
+          },
+          {
+            "key": "history",
+            "label": "History",
+            "tool": "history"
+          },
+          {
             "key": "pin",
             "label": "Always know this",
             "tool": "pin"
@@ -137,12 +162,35 @@
             "key": "forget_one",
             "label": "Forget",
             "tool": "forget_one",
-            "confirm": "Forget it?"
+            "confirm": "Forget it, and every earlier version of it?"
           }
         ],
         "detail": "about_memory",
         "filter": true,
-        "groupBy": "kind"
+        "groupBy": "kind",
+        "chips": [
+          {
+            "key": "doubtful",
+            "label": "May be out of date",
+            "tags": [
+              "may be out of date"
+            ]
+          },
+          {
+            "key": "suggested",
+            "label": "Suggestions",
+            "tags": [
+              "suggestion"
+            ]
+          },
+          {
+            "key": "gone",
+            "label": "No longer true",
+            "tags": [
+              "no longer true"
+            ]
+          }
+        ]
       }
     ]
   },
