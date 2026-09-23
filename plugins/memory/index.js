@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { fromJsonSchema, log, plugin } from '@alexia/sdk'
 import { BATCH, parse, plan, prompt, TRIES } from './capture.js'
-import { pinnedOf, profile, seedable } from './profile.js'
+import { distinct, pinnedOf, profile, seedable } from './profile.js'
 import { rank } from './search.js'
 
 /**
@@ -548,7 +548,7 @@ async function seed() {
   // An object once it has run; missing (or null, depending on the wire) before.
   if (await alexia.storage.get(SEEDED)) return
   const rows = await notes()
-  const chosen = rows.some(pinnedOf) ? [] : rows.filter(seedable)
+  const chosen = rows.some(pinnedOf) ? [] : distinct(rows.filter(seedable))
   for (const row of chosen) await alexia.storage.update('facts', { pinned: true }, { rowid: Number(row.rowid) })
   await alexia.storage.set(SEEDED, { at: Date.now(), pinned: chosen.length })
   if (chosen.length > 0) log.info(`pinned ${chosen.length} existing note(s) for the profile`)

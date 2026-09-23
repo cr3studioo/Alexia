@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { expect, test } from 'vitest'
 import { plan } from '../capture.js'
-import { CAP, cityOnly, pinnedOf, profile, seedable } from '../profile.js'
+import { CAP, cityOnly, distinct, pinnedOf, profile, seedable } from '../profile.js'
 
 /**
  * The profile (`memory.profile`): what Alexia reads before every task. Everything in it is paid
@@ -11,7 +11,7 @@ import { CAP, cityOnly, pinnedOf, profile, seedable } from '../profile.js'
 
 const note = (text, more = {}) => ({ text, source: 'stated', pinned: 1, at: 1, ...more })
 
-test('pinned notes only, what they said before what was worked out, newest first within each', () => {
+test('pinned notes only: name, then language, then the rest — said before worked out, newest first within each', () => {
   const rows = [
     note('He prefers tea.', { at: 1 }),
     note('He wants the assistant to answer in Czech.', { at: 3 }),
@@ -20,7 +20,7 @@ test('pinned notes only, what they said before what was worked out, newest first
     note('His name is Vaclav.', { at: 2 }),
   ]
   expect(profile(rows)).toBe(
-    ['- He wants the assistant to answer in Czech.', '- His name is Vaclav.', '- He prefers tea.', '- He probably works late.'].join(
+    ['- His name is Vaclav.', '- He wants the assistant to answer in Czech.', '- He prefers tea.', '- He probably works late.'].join(
       '\n',
     ),
   )
@@ -44,6 +44,12 @@ test('the cap drops whole lines, never half a sentence, and a long one does not 
   expect(cut.length).toBeLessThanOrEqual(CAP)
   for (const line of cut.split('\n')) expect(line).toMatch(/^- Note number \d+ is a sentence of some length\.$/)
   expect(cut.startsWith('- Note number 59 ')).toBe(true)
+})
+
+test('the name survives a full profile, however old it is', () => {
+  const filler = Array.from({ length: 30 }, (_, i) => note(`He prefers thing number ${i} in some particular way.`, { at: 100 + i }))
+  const said = profile([note('His name is Vaclav.', { at: 1 }), note('His language is Czech.', { at: 2 }), ...filler])
+  expect(said.split('\n').slice(0, 2)).toEqual(['- His name is Vaclav.', '- His language is Czech.'])
 })
 
 test('storage hands a pin back as 1, true, 0, or not at all', () => {
@@ -84,7 +90,7 @@ test('the profile applies the city rule, and the note itself is not touched', ()
 test('the one-time seed pins who they are and how to talk to them, and nothing it was not told', () => {
   const stated = (text, kind = 'fact') => ({ text, kind, source: 'stated' })
   expect(seedable(stated('He prefers short answers.', 'preference'))).toBe(true)
-  expect(seedable(stated('Anything at all, filed as a preference.', 'preference'))).toBe(true)
+  expect(seedable(stated('When being taught, he wants one point explained and then a pause.', 'preference'))).toBe(true)
   expect(seedable(stated('His name is Vaclav.'))).toBe(true)
   expect(seedable(stated('The user’s name is Vaclav Nejedly.'))).toBe(true)
   expect(seedable(stated('His preferred language is Czech.'))).toBe(true)
@@ -102,6 +108,19 @@ test('the one-time seed pins who they are and how to talk to them, and nothing i
   // True and useful, and not who he is.
   expect(seedable(stated('The grant application is due in March.', 'task'))).toBe(false)
   expect(seedable(stated('He is doing a PhD at CTU FEL.'))).toBe(false)
+  // Filed as a preference is not enough: the owner's favourite colour and an essay layout.
+  expect(seedable(stated('User’s favourite color is dark blue, almost navy.', 'preference'))).toBe(false)
+  expect(seedable(stated('For school essays he wants the same structure as the reference text.', 'preference'))).toBe(false)
+})
+
+test('the seed keeps one of two sentences saying the same thing, the newer', () => {
+  const kept = distinct([
+    { rowid: 8, at: 1, text: 'The user’s language is Czech and they prefer tasks and questions to be posed in Czech when that makes sense.' },
+    { rowid: 16, at: 2, text: 'The user’s language is Czech.' },
+    { rowid: 14, at: 2, text: 'The user prefers slow, step-by-step instructions with only a few steps at a time.' },
+    { rowid: 11, at: 2, text: 'The user prefers a more masculine, casual "man to man" conversational tone.' },
+  ])
+  expect(kept.map((row) => row.rowid).sort()).toEqual([11, 14, 16])
 })
 
 test('the sorting pass never pins: the model’s pin is carried as a suggestion only', () => {
