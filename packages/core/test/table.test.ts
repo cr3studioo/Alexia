@@ -42,7 +42,7 @@ writeFileSync(
     version: '0.1.0',
     license: 'AGPL-3.0-only',
     entry: { run: 'node', args: [join(folder, 'index.js')] },
-    alexia_protocol: 3,
+    alexia_protocol: 11,
     mcp_protocol: '2025-11-25',
     panel: {
       label: 'Shelf',
@@ -63,6 +63,15 @@ writeFileSync(
         },
         { key: 'broken', type: 'table', label: 'Broken', rows: 'bad_rows', columns: [{ key: 'name', label: 'Name' }] },
         { key: 'idless', type: 'table', label: 'No ids', rows: 'rows_without_ids', columns: [{ key: 'name', label: 'Name' }] },
+        {
+          key: 'shelves',
+          type: 'tree',
+          label: 'Shelves',
+          rows: 'list_tree',
+          detail: 'explain_thing',
+          rowActions: [{ key: 'remove_loose', label: 'Remove', tool: 'remove_thing', when: { tag: 'loose' } }],
+        },
+        { key: 'misfiled', type: 'tree', label: 'Misfiled', rows: 'list_things' },
       ],
     },
   }),
@@ -88,6 +97,7 @@ const TOOLS = [
   { name: 'explain_thing', description: 'Say more about one.', inputSchema: { type: 'object' }, annotations: { readOnlyHint: true, destructiveHint: false } },
   { name: 'remove_thing', description: 'Take one off the shelf.', inputSchema: { type: 'object' }, annotations: { destructiveHint: true } },
   { name: 'bad_rows', description: 'Answers with no structuredContent.', inputSchema: { type: 'object' }, annotations: { readOnlyHint: true, destructiveHint: false } },
+  { name: 'list_tree', description: 'The things, on shelves.', inputSchema: { type: 'object' }, annotations: { readOnlyHint: true, destructiveHint: false } },
   { name: 'rows_without_ids', description: 'Answers with rows that have no id.', inputSchema: { type: 'object' }, annotations: { readOnlyHint: true, destructiveHint: false } },
 ]
 
@@ -119,6 +129,13 @@ process.stdin.on('data', (chunk) => {
         const at = things.findIndex((t) => t.id === which)
         if (at !== -1) things.splice(at, 1)
         reply(id, { content: [{ type: 'text', text: at === -1 ? 'nothing to remove' : 'Removed.' }], isError: at === -1 })
+      } else if (called === 'list_tree') {
+        const nodes = [
+          { id: 'b1', parent: null, kind: 'branch', label: 'Workshop' },
+          { id: 'b2', parent: 'b1', kind: 'branch', label: 'Heavy', summary: 'What needs two hands.' },
+          ...things.map((t) => ({ id: t.id, parent: 'b2', kind: 'note', label: t.name, tags: t.uses > 10 ? ['worn'] : ['loose'] })),
+        ]
+        reply(id, { content: [{ type: 'text', text: 'ok' }], structuredContent: { nodes } })
       } else if (called === 'bad_rows') {
         reply(id, { content: [{ type: 'text', text: '[]' }] })
       } else if (called === 'rows_without_ids') {
@@ -234,6 +251,25 @@ test('the three ways an author gets the answer wrong are three sentences, not a 
   const missing = await post('/api/rows', { plugin: 'shelf', key: 'imaginary' })
   expect(missing.ok).toBe(false)
   expect(missing.said).toContain('no list called')
+})
+
+test('a tree answers with nodes, and core hands them to the shell the way it hands rows', async () => {
+  const answer = await post('/api/rows', { plugin: 'shelf', key: 'shelves' })
+  expect(answer.ok).toBe(true)
+  const nodes = answer.rows as Row[]
+  expect(nodes.filter((node) => node.kind === 'branch').map((node) => node.label)).toEqual(['Workshop', 'Heavy'])
+  expect(nodes.find((node) => node.id === 'b2')?.summary).toBe('What needs two hands.')
+
+  // A note's detail and its row actions are a table row's, by the note's own id.
+  const detail = await post('/api/detail', { plugin: 'shelf', key: 'shelves', row: 'b' })
+  expect(detail.text).toBe('Bellows has been used 11 times.')
+  const asked = await post('/api/action', { plugin: 'shelf', key: 'remove_loose', row: 'a' })
+  expect(asked.ask).toContain('remove_thing')
+
+  // A tree whose tool answers with `rows` is told which word it was supposed to use.
+  const misfiled = await post('/api/rows', { plugin: 'shelf', key: 'misfiled' })
+  expect(misfiled.ok).toBe(false)
+  expect(misfiled.said).toContain('structuredContent.nodes')
 })
 
 test('a boundary the person spoke stops a table filling itself in, and says whose words did it', async () => {

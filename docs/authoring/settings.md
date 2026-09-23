@@ -18,6 +18,7 @@ the ordinary case.
 | `action` | a button that calls one of your tools with no arguments | `tool: "install"` |
 | `table` | a list of things, with actions on each one | `rows`, `columns`, and see below |
 | `graph` | things that point at each other, drawn as a map | `rows`, and see below |
+| `tree` | things filed inside each other | `rows`, `rowActions`, and see below |
 
 ## Reading them
 
@@ -96,6 +97,20 @@ A `rowActions` tool is called with `{ id }` and goes through that same gate. `co
 second press, with `{column}` filled in from the row. Mark with `hideNarrow` the columns you
 would drop first on a phone — the buttons are what has to stay reachable.
 
+**Put an action only on the rows it applies to** (*needs `"alexia_protocol": 11`*). `when` draws
+it on rows that match, `unless` on every row but those:
+
+```jsonc
+{ "key": "still_true", "label": "Still true", "tool": "still_true", "when": { "tag": "may be out of date" } }
+{ "key": "unpin", "label": "Unpin", "tool": "unpin", "when": { "field": "pinned", "is": "always known" } }
+{ "key": "retire", "label": "No longer true", "tool": "retire", "unless": { "tag": "no longer true" } }
+```
+
+`tag` reads your row's `tags` by what they say; `field` reads one of your row's fields — equal to
+`is` (a value or a list), or without `is`, present and not empty. One condition each, not an
+expression language: if a state needs two fields, compute it into a tag in your `rows` tool. It
+only decides where the button is drawn, so your tool still refuses a row it cannot act on.
+
 ## `graph`: things that point at each other
 
 *Needs `"alexia_protocol": 4`.*
@@ -131,6 +146,40 @@ similar, a table grouped by category is the honest picture: a graph of guesses l
 meaningful and nobody looking at it can tell that it is not. And a map is not
 keyboard-reachable, so if a person needs to *act* on one of these things, put a `table` beside
 it — that is where a row has a name and a button.
+
+## `tree`: things filed inside each other
+
+*Needs `"alexia_protocol": 11`.*
+
+```jsonc
+{ "key": "filed", "type": "tree", "label": "The shape of it",
+  "rows": "list_tree", "detail": "about_note", "filter": true,
+  "rowActions": [{ "key": "note_forget", "label": "Forget", "tool": "forget_one", "confirm": "Forget it?" }] }
+```
+
+Your `rows` tool answers with **`nodes`**, not `rows`:
+
+```js
+return {
+  content: [{ type: 'text', text: '3 things' }],
+  structuredContent: {
+    nodes: [
+      { id: 'b1', parent: null, kind: 'branch', label: 'You', summary: 'Everything remembered.' },
+      { id: 'b2', parent: 'b1', kind: 'branch', label: 'People', count: 1 },
+      { id: 'b3', parent: 'b1', kind: 'branch', label: 'Studies' },
+      // A note filed in two places: `parent`, then `also`. It is drawn under both.
+      { id: '7', parent: 'b2', kind: 'note', label: 'Marta is his sister', tags: ['always known'], also: ['b3'] },
+    ],
+  },
+}
+```
+
+The top is open and everything under it starts shut; what somebody opens is remembered in their
+browser. A branch shows its `count` (or the notes Alexia counts under it) and its `summary`. A
+note shows its `tags` as chips; pressing it calls `detail` with the note's `id` and shows the
+`rowActions` that apply — `when` and `unless` work exactly as on a table. The filter keeps the
+notes that match and the branches they are filed under. Row action keys share the one namespace,
+so a tree beside a table over the same store needs its own keys for the same tools.
 
 ## A panel: the same widgets, a different screen
 
