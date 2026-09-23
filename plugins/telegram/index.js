@@ -23,6 +23,7 @@ import {
   updates,
 } from './api.js'
 import { Asking } from './asking.js'
+import { Clock } from './clock.js'
 import { Draft } from './draft.js'
 import { forRich, MARKER, RICH_LIMIT, withMarker } from './format.js'
 import { bestPhoto, fileTurn, kindOf, photoNote, safeName, tooBig } from './incoming.js'
@@ -30,7 +31,7 @@ import { Line } from './line.js'
 import { commandsFrom, helpLines, menu } from './menu.js'
 import { action, DEFAULT_PANEL_URL, keyboard, panelUrl, stateOf } from './panel.js'
 import { EVERY, Presence } from './presence.js'
-import { dayKey, dueNow, morningDue, parseAt, reminderText } from './reminders.js'
+import { dayKey, dueNow, morningDue, parseAt, reminderText, sendTo } from './reminders.js'
 import { speaks, voiceMode } from './reply.js'
 import { frameOf, sampling, Stopped, wasStopped } from './sampling.js'
 import { bare, isCommand, panels, stops } from './slash.js'
@@ -293,8 +294,9 @@ async function ran(token, chatId, typed) {
    * millisecond and that nobody would ever press Stop on.
    */
   const owned = chatId !== undefined && current === undefined
+  const question = { token, chatId }
   if (owned) {
-    asked = { token, chatId }
+    asked = question
     current = { controller, chatId }
   }
   try {
@@ -312,8 +314,15 @@ async function ran(token, chatId, typed) {
     if (wasStopped(controller.signal, error)) throw new Stopped('stopped from the phone')
     throw error
   } finally {
+    /**
+     * **Only while they are still this one's.** `current` was already guarded that way; `asked`
+     * was not, and the two are set independently — so a panel tap still in flight when the
+     * `Line` started a queued answer would clear that answer's `asked` on its way out, and the
+     * answer's permission question would go to the home chat rather than to the chat somebody
+     * is sitting in waiting for it.
+     */
     if (owned) {
-      asked = undefined
+      if (asked === question) asked = undefined
       if (current?.controller === controller) current = undefined
     }
   }
@@ -546,7 +555,8 @@ async function answer(token, chatId, turn, messageId) {
   }
   // Where the permission questions go while this runs. Set before the call, because the
   // question can arrive before the answer does.
-  asked = { token, chatId }
+  const question = { token, chatId }
+  asked = question
   const controller = new AbortController()
   /**
    * **The answer, shown while it is written** (D195).
@@ -613,12 +623,14 @@ async function answer(token, chatId, turn, messageId) {
     if (wasStopped(controller.signal, error)) throw new Stopped('stopped from the phone')
     throw error
   } finally {
-    asked = undefined
+    // Only while they are still this answer's, both of them: whatever finishes last must not
+    // take a handle from work that started while it was running.
+    if (asked === question) asked = undefined
     // The words are about to arrive as a real message, or they are never going to. Either way
     // nothing more should be refreshing a preview of them.
     draft.close()
-    // Only while it is still this answer's: the handle belongs to whichever answer is running,
-    // and one that finishes late must never take it from the answer after it.
+    // The handle belongs to whichever answer is running, and one that finishes late must never
+    // take it from the answer after it.
     if (current?.controller === controller) current = undefined
   }
   const said = result.content?.type === 'text' ? result.content.text : ''
@@ -1393,8 +1405,16 @@ const pushed = alexia.tool(
   },
   async ({ text }) => {
     const { bot_token: token } = await settings()
-    // The chat somebody is actually in, rather than the last row written (D194).
-    const chatId = await home()
+    /**
+     * **The chat the task came from**, and the home chat only when it came from somewhere with
+     * no chat of its own — the window, a timer, a plugin.
+     *
+     * This is a tool a model calls in the middle of somebody's task, and *tell me on my phone
+     * when this is done* means the phone of the person who asked. The home chat is whichever
+     * paired account messaged most recently, which is the same answer only when one person is
+     * paired; with two it is a message about one person's task arriving on the other's phone.
+     */
+    const chatId = asked?.chatId ?? (await home())
     if (!token || chatId === undefined) {
       return {
         isError: true,
@@ -1518,11 +1538,26 @@ alexia.tool(
 /** A tool refusing, in the one shape a model can read as *this did not happen*. */
 const refused = (text) => ({ isError: true, content: [{ type: 'text', text }] })
 
-/** Every reminder that has not been sent. Few enough to read whole, by construction. */
-const waiting = async () => {
-  const rows = await alexia.storage.select('reminders', { order: [['at', 'asc']], limit: 500 })
-  return rows.filter((row) => !row.sent)
-}
+/**
+ * Every reminder still waiting to be sent.
+ *
+ * **Asked of the database rather than filtered afterwards**, which is the difference between a
+ * query and a bug: this used to read the oldest five hundred rows and drop the delivered ones
+ * from the result. Delivered rows keep the time they were due, so they sort to the front — and
+ * once five hundred of them had accumulated, the window was full of them, every real reminder
+ * fell outside it, and the clock quietly went silent forever while `/reminders` said *nothing
+ * is waiting*.
+ *
+ * **And a delivered reminder is deleted, not marked** (the other half of the same fault). It
+ * has done the one thing it existed to do; keeping it means a table that only grows, in a
+ * namespace deleting the plugin is supposed to empty. The `sent` column stays in the query
+ * because it costs nothing and it is what a row left over from an older build looks like.
+ *
+ * The limit stays too, and is harmless now: five hundred rows ordered by when they are due are
+ * the five hundred *soonest*, so the next one to fire is always inside the window, and each one
+ * delivered and deleted brings the one behind it into view.
+ */
+const waiting = () => alexia.storage.select('reminders', { where: { sent: 0 }, order: [['at', 'asc']], limit: 500 })
 
 alexia.tool(
   'remind',
@@ -1547,15 +1582,31 @@ alexia.tool(
   async ({ text, at }) => {
     const said = String(text ?? '').trim()
     if (said === '') return refused('There was nothing to be reminded about.')
+    /**
+     * **Whose reminder this is, written down now** — the chat the task asking for it came
+     * from, and the home chat only when it came from somewhere with no chat of its own, like
+     * the window.
+     *
+     * It used to be neither: nothing was stored and the clock sent to whatever the home chat
+     * was hours later, which is *whichever paired account messaged most recently*. With two
+     * accounts paired that is a reminder one person set arriving on the other person's phone.
+     */
+    const chatId = asked?.chatId ?? (await home())
     // Refused now rather than stored and silently never delivered: a reminder with nowhere to
     // arrive is a promise this plugin cannot keep, and the model can say so while somebody is
     // still listening.
-    if ((await home()) === undefined) return refused('Telegram is not paired, so a reminder has nowhere to go.')
+    if (chatId === undefined) return refused('Telegram is not paired, so a reminder has nowhere to go.')
     const when = parseAt(at, Date.now())
     // Said and not understood is worth saying out loud, in the words the model can act on:
     // a time silently dropped is a reminder that will never arrive and nobody would know why.
     if (!when.ok) return refused(`That reminder was not set, because ${when.why}.`)
-    await alexia.storage.insert('reminders', { text: said, at: when.at, sent: 0, made: Date.now() })
+    await alexia.storage.insert('reminders', {
+      text: said,
+      at: when.at,
+      chat_id: String(chatId),
+      sent: 0,
+      made: Date.now(),
+    })
     return { content: [{ type: 'text', text: `Set: “${said}”, for ${new Date(when.at).toLocaleString()}.` }] }
   },
 )
@@ -1606,19 +1657,34 @@ alexia.tool(
  * A reminder whose time came while the machine was off is still sent, and says how late it is
  * rather than arriving as though it were on time.
  */
+const clock = new Clock({
+  due: async (now) => dueNow(await waiting(), now),
+  send: (row, now) => reminded(row, now),
+  // Finished with, and gone: a delivered reminder has done the only thing it was for, and a
+  // table that only grows is residue in a namespace that is supposed to empty when the plugin
+  // does. `forget_reminder` deletes a row the same way, so there is one meaning of *not here*.
+  done: (row) => alexia.storage.delete('reminders', { rowid: row.rowid }),
+  retry: (row, tries) => alexia.storage.update('reminders', { tries }, { rowid: row.rowid }),
+  summary: (now) => summary(now),
+  log: (message, error) => log.warn(message, error),
+})
+
+/** One reminder, on the phone it was set from. Throws if it did not arrive — the clock counts. */
+async function reminded(row, now) {
+  const { bot_token: token } = await settings()
+  if (!token) throw new Error('there is no bot token to send a reminder with')
+  const chatId = sendTo(row, await home())
+  if (chatId === undefined) throw new Error('there is nowhere to send that reminder')
+  // Plain: a reminder is the person's own sentence read back to them, and a stray asterisk
+  // in it is not Markdown they asked to have rendered.
+  await say(token, chatId, reminderText(row, now), { rich: false })
+}
+
+/** The tick the interval calls. Nothing to send with is not a failure of any one reminder. */
 async function ring() {
-  const { bot_token: token, morning_summary: at } = await settings()
+  const { bot_token: token } = await settings()
   if (!token) return
-  const chatId = await home()
-  if (chatId === undefined) return
-  const now = Date.now()
-  for (const row of dueNow(await waiting(), now)) {
-    // Plain: a reminder is the person's own sentence read back to them, and a stray asterisk
-    // in it is not Markdown they asked to have rendered.
-    await say(token, chatId, reminderText(row, now), { rich: false })
-    await alexia.storage.update('reminders', { sent: 1 }, { rowid: row.rowid })
-  }
-  await summary(token, chatId, at, now)
+  await clock.tick(Date.now())
 }
 
 /**
@@ -1630,10 +1696,16 @@ async function ring() {
  * summary without a line of code about commitments in it.
  *
  * The day is written down *before* the summary is sent, so a failure costs one morning rather
- * than retrying every thirty seconds until midnight.
+ * than retrying every thirty seconds until midnight — and after everything that would make
+ * today a day it could not have been sent at all, so a machine with nothing paired does not
+ * spend its mornings marking them done.
  */
-async function summary(token, chatId, at, now) {
+async function summary(now) {
+  const { bot_token: token, morning_summary: at } = await settings()
+  if (!token) return
   if (!morningDue(at, await alexia.storage.get('morning_day'), now)) return
+  const chatId = await home()
+  if (chatId === undefined) return
   await alexia.storage.set('morning_day', dayKey(now))
   const { answers } = await alexia.answers('commitments.due')
   if (!answers) return
@@ -1653,10 +1725,15 @@ await connect()
 alexia.onSettingsChanged((changed) => {
   if ('bot_token' in changed) void connect()
 })
+// A reminder that was delivered is deleted now rather than marked, and this is the one-off for
+// rows an earlier build marked instead: dead weight in a table nothing else will ever read.
+void alexia.storage
+  .delete('reminders', { sent: 1 })
+  .catch((error) => log.warn('could not clear out delivered reminders', error))
 // The reminder clock. `unref`'d, so it is never the reason this process is still running, and
 // every tick is wrapped: a database blip at 4am must not be the end of the timer.
-const clock = setInterval(() => {
+const ticking = setInterval(() => {
   void ring().catch((error) => log.warn('could not look for reminders that are due', error))
 }, TICK)
-clock.unref?.()
+ticking.unref?.()
 log.info(`${alexia.manifest.name} is ready`)

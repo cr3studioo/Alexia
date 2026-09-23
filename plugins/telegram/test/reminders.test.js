@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { expect, test } from 'vitest'
-import { dayKey, dueNow, morningDue, parseAt, parseHHMM, reminderText } from '../reminders.js'
+import { dayKey, dueNow, morningDue, parseAt, parseHHMM, reminderText, sendTo, TRIES } from '../reminders.js'
 
 // Reminders pushed to the phone, and the morning summary's own "once a day" — both come down
 // to comparing a clock against a stored value, which is exactly the kind of arithmetic that
@@ -109,4 +109,42 @@ test('morningDue is false for an unset or unparseable time', () => {
   expect(morningDue('', undefined, now)).toBe(false)
   expect(morningDue(undefined, undefined, now)).toBe(false)
   expect(morningDue('nonsense', undefined, now)).toBe(false)
+})
+
+/**
+ * The two rules the clock leans on, and the failures they exist for: a row nobody can deliver
+ * becoming a row nobody can get past, and a reminder arriving on the wrong person's phone.
+ */
+
+test('dueNow leaves out a row that has run out of tries', () => {
+  const rows = [
+    { text: 'stuck', at: 1, tries: TRIES },
+    { text: 'fine', at: 1 },
+    { text: 'trying', at: 1, tries: TRIES - 1 },
+  ]
+  expect(dueNow(rows, 100).map((row) => row.text)).toEqual(['fine', 'trying'])
+})
+
+test('dueNow reads a missing or nonsense tries count as none', () => {
+  const rows = [
+    { text: 'none', at: 1 },
+    { text: 'undefined', at: 1, tries: undefined },
+    { text: 'nonsense', at: 1, tries: 'lots' },
+  ]
+  expect(dueNow(rows, 100)).toHaveLength(3)
+})
+
+test('sendTo prefers the chat the reminder was set in', () => {
+  expect(sendTo({ chat_id: '111' }, '999')).toBe('111')
+  expect(sendTo({ chat_id: 111 }, '999')).toBe(111)
+})
+
+test('sendTo falls back to the home chat only for a row that has no chat of its own', () => {
+  // What a row written before the column existed looks like.
+  expect(sendTo({ text: 'old' }, '999')).toBe('999')
+  expect(sendTo({ chat_id: null }, '999')).toBe('999')
+  expect(sendTo({ chat_id: '' }, '999')).toBe('999')
+  expect(sendTo(undefined, '999')).toBe('999')
+  // And nothing at either end is nothing, not a crash.
+  expect(sendTo({ text: 'old' }, undefined)).toBeUndefined()
 })

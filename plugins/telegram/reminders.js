@@ -31,6 +31,19 @@ const FUTURE_LIMIT_MS = 366 * 24 * 60 * 60 * 1000
 /** More than this late, a reminder says so rather than arriving as if it were on time. */
 const LATE_AFTER_MS = 2 * 60 * 1000
 
+/**
+ * How many times a reminder that will not send is tried before it is given up on.
+ *
+ * **A bound is the whole point, not the number.** Telegram refuses for two very different
+ * reasons and they look identical from here: a connection that will be back in a minute, and a
+ * chat that is gone for good because the account blocked the bot or deleted it. Retrying the
+ * first is right; retrying the second is a row that is due forever, tried every thirty seconds,
+ * with every reminder behind it and the morning summary never reached. Three tries is about a
+ * minute and a half of a blip, and then the row is dropped with a line in the log — because
+ * there is, by construction, nowhere to send *a reminder could not be delivered* to.
+ */
+export const TRIES = 3
+
 /** An ISO date-time, checked against `now` — unreadable, too far past, or too far ahead. */
 export function parseAt(at, now = Date.now()) {
   const ms = Date.parse(String(at ?? ''))
@@ -41,10 +54,34 @@ export function parseAt(at, now = Date.now()) {
   return { ok: true, at: ms }
 }
 
-/** The rows due to fire right now — not yet sent, and their time has come — earliest first. */
+/**
+ * The rows due to fire right now — not yet sent, not given up on, and their time has come —
+ * earliest first.
+ *
+ * The `tries` half is the belt to the clock's braces: a row that has run out of tries is
+ * dropped the moment it does, so one should never be seen here. Should is not the same as
+ * cannot — a crash between the last failed send and the row being deleted would leave one
+ * behind, and a reminder nobody can deliver must not become a reminder nobody can get past.
+ */
 export function dueNow(rows, now) {
   const nowMs = Number(now)
-  return (Array.isArray(rows) ? rows : []).filter((row) => !row.sent && row.at <= nowMs).sort((a, b) => a.at - b.at)
+  return (Array.isArray(rows) ? rows : [])
+    .filter((row) => !row.sent && (Number(row.tries) || 0) < TRIES && row.at <= nowMs)
+    .sort((a, b) => a.at - b.at)
+}
+
+/**
+ * Which chat a reminder belongs in.
+ *
+ * **The one who asked, not the one who spoke last.** The chat is written on the row when the
+ * reminder is made, because the home chat is whichever paired account messaged most recently —
+ * so with two accounts paired, a reminder set by one could arrive in the other's chat, which is
+ * somebody else's private business read out on the wrong phone. `fallback` is for a row written
+ * before the column existed, where the home chat is the only guess there is.
+ */
+export function sendTo(row, fallback) {
+  const held = row?.chat_id
+  return held === undefined || held === null || held === '' ? fallback : held
 }
 
 /** What a due reminder says — plain, unless it is arriving late enough to need saying so. */

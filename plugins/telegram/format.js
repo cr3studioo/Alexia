@@ -35,11 +35,20 @@ const CODE_RE = /```[\s\S]*?```|`[^`\n]*`/g
 /** An (optional `!`) Markdown link, its label, and everything between the parentheses. */
 const LINK_RE = /(!?)\[([^\]]*)\]\(([^)]*)\)/g
 
-/** Split `(url "title")` into the two halves. A title is optional; a url is whatever is left. */
+/**
+ * Split `(url "title")` into the two halves. A title is optional; a url is whatever is left.
+ *
+ * **And a destination may be wrapped in angle brackets** — `[tap](<tg://resolve?domain=x>)` is
+ * CommonMark's own way of writing a link target that contains spaces, and every renderer
+ * unwraps it. This did not, so the `tg://` test was run against `<tg://…>`, did not match, and
+ * the one kind of link that is supposed to be impossible to send went through untouched. One
+ * pair, stripped before anything is asked about what the url points at.
+ */
 function urlOf(inside) {
   const trimmed = inside.trim()
   const titled = /^(\S*)\s+"([^"]*)"$/.exec(trimmed)
-  return titled ? titled[1] : trimmed
+  const url = titled ? titled[1] : trimmed
+  return url.startsWith('<') && url.endsWith('>') ? url.slice(1, -1).trim() : url
 }
 
 /** The rewrite, applied to text known to hold no code — the one place link syntax is real. */
