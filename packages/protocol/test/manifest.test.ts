@@ -283,3 +283,57 @@ test('a chip naming neither a group nor a tag is still parsed, and simply matche
   }
   expect(Manifest.safeParse(m).success).toBe(true)
 })
+
+test('a tree, and when on a row action, arrived in revision 11 and a manifest claiming 10 is told so', () => {
+  const withPanel = (revision: number, widgets: unknown[]): Record<string, unknown> => {
+    const m = structuredClone(voice) as Record<string, unknown>
+    m.alexia_protocol = revision
+    m.panel = { label: 'Things', widgets }
+    return m
+  }
+  const tree = {
+    key: 'shelves',
+    type: 'tree',
+    label: 'Shelves',
+    rows: 'list_tree',
+    detail: 'explain_thing',
+    filter: true,
+    rowActions: [
+      { key: 'pin', label: 'Pin', tool: 'pin', unless: { tag: 'pinned' } },
+      { key: 'unpin', label: 'Unpin', tool: 'unpin', when: { field: 'pinned', is: ['yes', 'always'] } },
+      { key: 'forget', label: 'Forget', tool: 'forget', confirm: 'Forget {label}?' },
+    ],
+  }
+  const refused = Manifest.safeParse(withPanel(10, [tree]))
+  expect(refused.success).toBe(false)
+  const said = refused.success === false ? refused.error.issues.map((i) => i.message).join() : ''
+  expect(said).toContain('tree arrived in alexia_protocol 11')
+  expect(said).toContain('when on a row action arrived in alexia_protocol 11')
+  expect(said).toContain('unless on a row action arrived in alexia_protocol 11')
+  const accepted = Manifest.safeParse(withPanel(11, [tree]))
+  expect(accepted.success ? null : accepted.error.issues).toBe(null)
+
+  // A table's row action takes the same condition, and one without it means what it always did.
+  const table = {
+    key: 'things',
+    type: 'table',
+    label: 'Things',
+    rows: 'list_things',
+    columns: [{ key: 'name', label: 'Name' }],
+    rowActions: [
+      { key: 'still', label: 'Still true', tool: 'still', when: { tag: 'may be out of date' } },
+      { key: 'plain', label: 'Plain', tool: 'plain' },
+    ],
+  }
+  expect(Manifest.safeParse(withPanel(10, [table])).success).toBe(false)
+  expect(Manifest.safeParse(withPanel(11, [table])).success).toBe(true)
+  expect(Manifest.safeParse(withPanel(9, [{ ...table, rowActions: [table.rowActions[1]] }])).success).toBe(true)
+
+  // One form at a time: a condition naming a tag and a field is a question with two answers.
+  const both = { ...table, rowActions: [{ key: 'x', label: 'X', tool: 'x', when: { tag: 'a', field: 'b' } }] }
+  expect(Manifest.safeParse(withPanel(11, [both])).success).toBe(false)
+
+  // A tree's row actions share the one namespace, like a table's.
+  const clash = { ...tree, rowActions: [{ key: 'things', label: 'Clash', tool: 'x' }] }
+  expect(Manifest.safeParse(withPanel(11, [table, clash])).success).toBe(false)
+})

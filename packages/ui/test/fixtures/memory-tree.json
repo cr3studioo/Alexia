@@ -1,0 +1,17 @@
+{
+  "_comment": "What `memory_tree` answers, per the contract the back end builds to: structuredContent.nodes. Branch ids are b<rowid>, note ids are the plain rowid.",
+  "nodes": [
+    { "id": "b1", "parent": null, "kind": "branch", "label": "You", "summary": "Everything Alexia remembers about you.", "count": 6 },
+    { "id": "b2", "parent": "b1", "kind": "branch", "label": "People", "summary": "Who is who in your life.", "count": 2 },
+    { "id": "b3", "parent": "b1", "kind": "branch", "label": "Studies", "summary": "What you are learning, and where." },
+    { "id": "b4", "parent": "b1", "kind": "branch", "label": "Projects & code", "count": 2 },
+    { "id": "b5", "parent": "b1", "kind": "branch", "label": "Identity & how to talk to me", "count": 1 },
+    { "id": "b6", "parent": "b2", "kind": "branch", "label": "Family", "summary": "Parents, siblings." },
+    { "id": "11", "parent": "b6", "kind": "note", "label": "His sister is called Marta", "tags": ["always known"] },
+    { "id": "12", "parent": "b2", "kind": "note", "label": "Ted is his flatmate, not the Czech teacher", "tags": ["worked out", "may be out of date"] },
+    { "id": "13", "parent": "b3", "kind": "note", "label": "The grant deadline is in March", "tags": ["suggestion"], "also": ["b4"] },
+    { "id": "14", "parent": "b4", "kind": "note", "label": "Alexia is written in TypeScript" },
+    { "id": "15", "parent": "b5", "kind": "note", "label": "Call him Vaclav", "tags": ["always known"] },
+    { "id": "16", "parent": "b3", "kind": "note", "label": "Studied physics in Brno", "tags": ["no longer true"] }
+  ]
+}

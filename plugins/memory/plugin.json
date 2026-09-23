@@ -3,8 +3,8 @@
   "manifest_version": 1,
   "id": "memory",
   "name": "Long-term memory",
-  "summary": "Remembers things across conversations — what you told it last month, and where to find it again. Can also write things down by itself, once you turn that on.",
-  "version": "0.1.1",
+  "summary": "Remembers things across conversations, and always knows the few you pin — your name, how to talk to you. Can also write things down by itself, once you turn that on.",
+  "version": "0.4.0",
   "license": "AGPL-3.0-only",
   "entry": {
     "run": "node",
@@ -12,13 +12,14 @@
       "index.js"
     ]
   },
-  "alexia_protocol": 4,
+  "alexia_protocol": 11,
   "mcp_protocol": "2025-11-25",
   "requires": [],
   "provides": [
     "memory.remember",
     "memory.recall",
-    "memory.capture"
+    "memory.capture",
+    "memory.profile"
   ],
   "settings": [
     {
@@ -49,6 +50,23 @@
       "hint": "Minutes between passes. An empty buffer costs nothing — no model is called when there is nothing to sort."
     },
     {
+      "type": "number",
+      "key": "every",
+      "label": "Sort after this many messages",
+      "min": 1,
+      "max": 50,
+      "step": 1,
+      "default": 5,
+      "hint": "Once this many exchanges are waiting, they are sorted straight away instead of waiting for the timer. The timer still catches the rest on a quiet day."
+    },
+    {
+      "type": "text",
+      "key": "skip",
+      "label": "Also not worth writing down",
+      "placeholder": "e.g. lol, brb, jo jasně",
+      "hint": "Comma-separated. Anything you say that is exactly one of these is never kept for sorting — on top of the built-in list (ok, continue, why, test, díky, pokračuj…) and anything under three words."
+    },
+    {
       "type": "status",
       "key": "state",
       "label": "State"
@@ -73,7 +91,8 @@
     "tables": [
       "facts",
       "buffer",
-      "forgotten"
+      "forgotten",
+      "branches"
     ]
   },
   "commands": [
@@ -86,19 +105,72 @@
     "label": "Memory",
     "widgets": [
       {
-        "key": "remembered_map",
-        "type": "graph",
+        "key": "remembered_tree",
+        "type": "tree",
         "label": "The shape of it",
-        "hint": "Every remembered thing, and what it is filed under. Drag one to move it, scroll to zoom, click one to read the whole of it. A ring means Alexia worked that one out from something you said rather than being told it — those are the ones worth checking.",
-        "rows": "memory_graph",
+        "hint": "Everything remembered, filed the way Alexia files it: you at the top, then a section for each part of your life, then the topics inside it. Open a section to see what is in it, and press a note to read the whole of it and to change it. A note filed in two places shows up in both and says where else it lives.",
+        "rows": "memory_tree",
         "detail": "about_memory",
-        "filter": true
+        "filter": true,
+        "rowActions": [
+          {
+            "key": "note_pin",
+            "label": "Always know this",
+            "tool": "pin",
+            "unless": {
+              "tag": "always known"
+            }
+          },
+          {
+            "key": "note_unpin",
+            "label": "Stop always knowing",
+            "tool": "unpin",
+            "when": {
+              "tag": "always known"
+            }
+          },
+          {
+            "key": "note_accept_suggestion",
+            "label": "Accept suggestion",
+            "tool": "accept_suggestion",
+            "when": {
+              "tag": "suggestion"
+            }
+          },
+          {
+            "key": "note_still_true",
+            "label": "Still true",
+            "tool": "still_true",
+            "when": {
+              "tag": "may be out of date"
+            }
+          },
+          {
+            "key": "note_no_longer_true",
+            "label": "No longer true",
+            "tool": "no_longer_true",
+            "unless": {
+              "tag": "no longer true"
+            }
+          },
+          {
+            "key": "note_history",
+            "label": "History",
+            "tool": "history"
+          },
+          {
+            "key": "note_forget",
+            "label": "Forget",
+            "tool": "forget_one",
+            "confirm": "Forget it, and every earlier version of it?"
+          }
+        ]
       },
       {
         "key": "remembered_list",
         "type": "table",
         "label": "Remembered",
-        "hint": "Everything Alexia has written down about you, and whether you said it or it worked it out. Forgetting one is the reason this screen exists.",
+        "hint": "Everything Alexia has written down about you, whether you said it or it worked it out, and whether it is still true. What stopped being true is kept at the bottom as history; forgetting one takes every version of it.",
         "rows": "memories",
         "columns": [
           {
@@ -110,6 +182,16 @@
             "label": "How it got here"
           },
           {
+            "key": "tags",
+            "label": "State",
+            "hideNarrow": true
+          },
+          {
+            "key": "pinned",
+            "label": "Always known",
+            "hideNarrow": true
+          },
+          {
             "key": "when",
             "label": "Written down",
             "align": "right",
@@ -118,15 +200,85 @@
         ],
         "rowActions": [
           {
+            "key": "still_true",
+            "label": "Still true",
+            "tool": "still_true",
+            "when": {
+              "tag": "may be out of date"
+            }
+          },
+          {
+            "key": "no_longer_true",
+            "label": "No longer true",
+            "tool": "no_longer_true",
+            "unless": {
+              "tag": "no longer true"
+            }
+          },
+          {
+            "key": "accept_suggestion",
+            "label": "Accept suggestion",
+            "tool": "accept_suggestion",
+            "when": {
+              "tag": "suggestion"
+            }
+          },
+          {
+            "key": "history",
+            "label": "History",
+            "tool": "history"
+          },
+          {
+            "key": "pin",
+            "label": "Always know this",
+            "tool": "pin",
+            "unless": {
+              "field": "pinned",
+              "is": "always known"
+            }
+          },
+          {
+            "key": "unpin",
+            "label": "Stop always knowing",
+            "tool": "unpin",
+            "when": {
+              "field": "pinned",
+              "is": "always known"
+            }
+          },
+          {
             "key": "forget_one",
             "label": "Forget",
             "tool": "forget_one",
-            "confirm": "Forget it?"
+            "confirm": "Forget it, and every earlier version of it?"
           }
         ],
         "detail": "about_memory",
         "filter": true,
-        "groupBy": "kind"
+        "groupBy": "kind",
+        "chips": [
+          {
+            "key": "doubtful",
+            "label": "May be out of date",
+            "tags": [
+              "may be out of date"
+            ]
+          },
+          {
+            "key": "suggested",
+            "label": "Suggestions",
+            "tags": [
+              "suggestion"
+            ]
+          },
+          {
+            "key": "gone",
+            "label": "No longer true",
+            "tags": [
+              "no longer true"
+            ]
+          }
+        ]
       }
     ]
   },

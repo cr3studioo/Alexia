@@ -5,9 +5,9 @@ handshake, handled by the SDK. **`alexia_protocol` is ours**: an integer, bumped
 `alexia/*` layer or the manifest changes, and checked *before your process is spawned*.
 
 ```
-you say alexia_protocol 3    Alexia speaks 2..10  ->  loads
-you say alexia_protocol 1    Alexia speaks 2..10  ->  "X was written for an older version"
-you say alexia_protocol 11   Alexia speaks 2..10  ->  "X needs a newer Alexia"
+you say alexia_protocol 3    Alexia speaks 2..11  ->  loads
+you say alexia_protocol 1    Alexia speaks 2..11  ->  "X was written for an older version"
+you say alexia_protocol 12   Alexia speaks 2..11  ->  "X needs a newer Alexia"
 ```
 
 ## The other version: `min_app` *(2026-08-31, D118)*
@@ -37,6 +37,35 @@ contract was still moving.
 **It was kept at 3, on 2026-08-29.** Plugins declaring 1 stopped loading and said so in a
 sentence rather than crashing, exactly as written here while it was still hypothetical. The
 migration for a revision-1 plugin that uses nothing from 2 is one character.
+
+## 10 → 11 *(2026-09-23)*
+
+**A panel that shows what is filed where, and a row that shows what applies to it.** Two
+additions, both optional:
+
+| | |
+|---|---|
+| `tree` | A sixteenth widget. `rows` names a tool answering `structuredContent: { "nodes": [ … ] }`, each node `{ id, parent, kind: "branch" \| "note", label, summary?, count?, tags?, also? }`. Branches open and close; a note opens its `detail` and its `rowActions`. |
+| `when` / `unless` on a row action | On a `table`'s or a `tree`'s `rowActions`: `{ "tag": "suggestion" }` — a row whose `tags` say that — or `{ "field": "pinned", "is": "always known" }` — a row whose field is that value (or one of several; without `is`, present and not empty). `when` draws the action only where it matches, `unless` everywhere but. |
+
+The case was the memory plugin's page. Its `graph` drew a store that had become a filing system
+— *You*, then sections, then topics — as points floating in space, which is how its owner put it;
+and its table put seven actions on every row, most of them answering *nothing to do here*. A tree
+answers *what is under People* the way every file manager does, and a row action that says where
+it applies turns seven buttons into the two or three that do something.
+
+**Neither adds a query language.** A condition is one tag or one field, read off what a row
+already carries, like a widget's own `when` (7) and a chip (9). Something that needs *and*
+across fields is something the tool can compute into a tag.
+
+Both are manifest fields, so both are checked against the revision: declaring a `tree`, or a
+`when` or `unless` on a row action, while claiming 10 is a load error naming the revision. `cards`
+row actions keep their bare-string `when` (6), which means what it always did.
+
+### If you are updating a plugin
+
+Nothing to do. Declare 11 only to use `tree`, or `when`/`unless` on a row action. A table
+without them draws every action on every row, exactly as before.
 
 ## 9 → 10 *(2026-09-19, D182)*
 
