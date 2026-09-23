@@ -17,6 +17,35 @@ import {
 } from './garden.js'
 import { distinct, pinnedOf, profile, seedable } from './profile.js'
 import { rank } from './search.js'
+import {
+  bare,
+  below,
+  browse as browsing,
+  build,
+  depthOf,
+  destination,
+  DEPTH,
+  group,
+  header,
+  height,
+  homesOf,
+  nodes as treeNodes,
+  nameOk,
+  PLACE_MOST,
+  parseArray,
+  pathOf,
+  placePrompt,
+  plan as planned,
+  readSummaries,
+  ROOT,
+  SECTIONS,
+  counts,
+  childNamed,
+  summaryPrompt,
+  SUMMARY_MOST,
+  touched,
+  alsoOf,
+} from './tree.js'
 
 /**
  * Long-term memory (M4-3).
@@ -71,6 +100,20 @@ const SEEDED = 'profile_seeded'
 /** When the gardener last looked, in kv like `SEEDED` — see `garden` below. */
 const GARDENED = 'gardened'
 
+/**
+ * The tree (`tree.js`): written once, like the profile seed, so pruning a section a person did
+ * not want does not bring it back on the next start. `forget_all` plants it again.
+ */
+const PLANTED = 'tree_seeded'
+
+/**
+ * Branches whose summaries are behind what is under them, in kv as `{ ids }`. Anything that
+ * changes what a branch holds — a placement, a note closed, replaced, forgotten or moved — adds
+ * to it, and the next `arrange` re-summarises them in one call. Kept rather than done on the
+ * spot, so that a person forgetting something is never waiting on a model.
+ */
+const BEHIND = 'resummarise'
+
 async function report() {
   const live = await current()
   const held = live.length
@@ -118,6 +161,73 @@ const day = (ms) => new Date(Number(ms)).toISOString().slice(0, 10)
 const cleared = (row, keys) => Object.fromEntries(keys.filter((key) => key in row).map((key) => [key, null]))
 
 /**
+ * The tree, as `tree.js` reads it. A few dozen rows; read whole, like the notes.
+ */
+const tree = async () => build(await alexia.storage.select('branches', { limit: 2000 }))
+
+/**
+ * The root and its sections, once. The root is written **without** a `parent` key, so the
+ * column is created by the first section as a number — writing `null` first would make it TEXT
+ * and every parent after it would come back a string (the same trap as `cleared`).
+ */
+let planting
+const plant = () => {
+  // One at a time: the start-up run and a panel opening in the same second would plant twice.
+  planting ??= plantOnce().finally(() => {
+    planting = undefined
+  })
+  return planting
+}
+async function plantOnce() {
+  if (await alexia.storage.get(PLANTED)) return
+  if ((await alexia.storage.count('branches')) === 0) {
+    const now = Date.now()
+    const root = await alexia.storage.insert('branches', { name: ROOT, summary: '', seed: true, at: now, updated_at: now })
+    for (const name of SECTIONS) {
+      await alexia.storage.insert('branches', { parent: root, name, summary: '', seed: true, at: now, updated_at: now })
+    }
+  }
+  await alexia.storage.set(PLANTED, { at: Date.now() })
+}
+
+/** A new branch under `parent`. Returns its rowid. */
+const sprout = (parent, name, now = Date.now()) =>
+  alexia.storage.insert('branches', { parent, name, summary: '', seed: false, at: now, updated_at: now })
+
+/** Branches to re-summarise next `arrange`, added to what is already waiting. */
+async function behind(ids) {
+  const more = [...ids].map(Number).filter((id) => Number.isInteger(id) && id > 0)
+  if (more.length === 0) return
+  const held = (await alexia.storage.get(BEHIND))?.ids ?? []
+  await alexia.storage.set(BEHIND, { ids: [...new Set([...held.map(Number), ...more])] })
+}
+
+/**
+ * The branches a note is filed in, marked behind — and, when `now`, their summaries blanked on
+ * the spot along with every summary above them. That is for forgetting: a summary that still
+ * says *Niki, his girlfriend, likes anime* after *forget Niki* has not forgotten anything, so
+ * it goes before the forget returns, and a fresh one is written from what is left next run.
+ */
+async function unsettle(rows, { blank = false } = {}) {
+  const t = await tree()
+  const ids = touched(t, rows.flatMap((row) => homesOf(t, row)))
+  if (blank) {
+    for (const id of ids) {
+      if (t.nodes.get(id)?.summary !== '') await alexia.storage.update('branches', { summary: '', updated_at: Date.now() }, { rowid: id })
+    }
+  }
+  await behind(ids)
+}
+
+/**
+ * What a new version of a note takes from the old one: where it was filed. A replacement is
+ * the same subject said better or later, and making the placer find *Niki* again for it would
+ * be a call spent learning what was already known.
+ */
+const filedLike = (old) =>
+  old && when(old.branch) !== null ? { branch: when(old.branch), ...(alsoOf(old).length > 0 ? { also: JSON.stringify(alsoOf(old)) } : {}) } : {}
+
+/**
  * Close `old` because `rowid` says what it said, better or later. Invalidate, never delete: the
  * old version is what `history` reads, and a wrong replacement stays one person's click from
  * undone rather than gone. Its pin goes to the new note (the caller writes that one), because
@@ -129,6 +239,8 @@ async function supersede(old, rowid, now) {
     { invalid_at: now, replaced_by: rowid, ...(pinnedOf(old) ? { pinned: false } : {}) },
     { rowid: Number(old.rowid) },
   )
+  // What its branch says is now about a version that stopped being true.
+  await unsettle([old])
 }
 
 /** A note's own name, which is what a link points at. Older rows never had one. */
@@ -191,6 +303,12 @@ async function forgetting(about, going) {
       if (!links.some((l) => names.has(l))) continue
       await alexia.storage.update('facts', { links: JSON.stringify(links.filter((l) => !names.has(l))) }, { rowid: Number(row.rowid) })
     }
+    // The tree forgets too: every summary above what went is blanked now and rewritten from
+    // what is left next run, and a bubble left with nothing in it goes (`bare` in tree.js) —
+    // a branch called *Niki* after *forget Niki* is the thing forgotten, one screen away.
+    // Nothing else points at a note by id (`also` holds branches), so there is nothing to mend.
+    await unsettle(closing, { blank: true })
+    for (const id of bare(await tree(), left)) await alexia.storage.delete('branches', { rowid: id })
   }
 
   await alexia.storage.insert('forgotten', {
@@ -295,10 +413,12 @@ const kept = alexia.tool(
       // Only when asked. A key left off is a column left null, which reads as not pinned.
       ...(pinning ? { pinned: true } : {}),
       ...(bound === true ? { time_bound: true, review_at: now + REVIEW_AFTER } : {}),
+      ...filedLike(old),
       at: now,
       valid_from: now,
     })
     if (old) await supersede(old, rowid, now)
+    else soon()
     await report()
     const how = pinning ? 'Remembered, and always known' : 'Remembered'
     return { content: [{ type: 'text', text: `${how}: ${said}${old ? `\nIt replaces, kept as history: ${String(old.text)}` : ''}` }] }
@@ -311,7 +431,8 @@ const found = alexia.tool(
     description:
       'Search what was remembered from earlier conversations and bring back what fits. Use at ' +
       'the start of a task when the user refers to something that is not in this conversation ' +
-      '— a name, a preference, a decision, "the usual". Returns nothing when nothing matches, ' +
+      '— a name, a preference, a decision, "the usual". Hits come grouped under the branch of the ' +
+      'memory tree they are filed in, with its summary; `browse` opens a branch. Returns nothing when nothing matches, ' +
       'which means it was never written down rather than that it does not exist.',
     inputSchema: fromJsonSchema({
       type: 'object',
@@ -360,7 +481,16 @@ const found = alexia.tool(
     // that can ask rather than assert.
     const line = (row, why) =>
       `- ${String(row.text)}  (${day(row.at)}${row.source === INFERRED ? ', worked out rather than said' : ''}${stale(row) ? ', may be out of date' : ''}${why})`
-    const text = [...hits.map((row) => line(row, '')), ...linked.map((row) => line(row, ', linked'))].join('\n')
+    /**
+     * Shown by where they live. The ranking above is untouched — MemTree found that searching
+     * every note at once finds more than walking down the tree — and the tree only says where
+     * each hit sits: `You/People/Niki — her summary`, then the notes. A reader gets the
+     * neighbourhood for free, and can `browse` there if the neighbourhood is what it wanted.
+     */
+    const why = new Map([...hits.map((row) => [row, '']), ...linked.map((row) => [row, ', linked'])])
+    const text = group(await tree(), [...why.keys()])
+      .map((one) => [header(one.path, one.summary), ...one.rows.map((row) => line(row, why.get(row)))].join('\n'))
+      .join('\n\n')
     return { content: [{ type: 'text', text }] }
   },
 )
@@ -550,6 +680,211 @@ alexia.tool(
   },
 )
 
+/**
+ * Walking down the tree, one level at a time — the ladder MemTree says is *worse* than a search
+ * for finding one thing, and better for the other question a model has: *what is in this area*.
+ * Which language to write code in lives somewhere under *Projects & code*, and no single word of
+ * the task would find it; opening the branch does.
+ */
+alexia.tool(
+  'browse',
+  {
+    description:
+      'Look through what is remembered by area, like folders. With no path: the main sections, ' +
+      'each with how many notes it holds and a one-line summary. With a path such as ' +
+      '"You/Projects & code": that branch\'s sub-branches and the notes filed there. Use it to ' +
+      'narrow down before `recall` when you want everything about one area — e.g. open ' +
+      '"Projects & code" before writing code, to see which language and tools the user prefers.',
+    inputSchema: fromJsonSchema({
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'The branch to open, e.g. "You/People" or "People/Niki". Leave out for the top.' },
+      },
+    }),
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+  },
+  async ({ path }) => {
+    await plant()
+    const t = await tree()
+    const line = (row) =>
+      `- ${String(row.text)}  (${day(row.at)}${row.source === INFERRED ? ', worked out rather than said' : ''}${stale(row) ? ', may be out of date' : ''}; id ${String(row.rowid)})`
+    const live = await current()
+    const text = browsing(t, live, path, line)
+    if (text !== null) return { content: [{ type: 'text', text }] }
+    return refused(`There is no branch ${String(path)}. The sections are:\n${browsing(t, live, undefined, () => '') ?? ''}`)
+  },
+)
+
+/**
+ * The tree, for the panel: every branch and every note as one flat list of nodes with parents,
+ * which a screen can draw as a tree, a map or an outline without asking twice.
+ *
+ * **The shape is a contract** the panel is built against: `{ nodes: [{ id, parent, kind, label,
+ * summary?, count?, tags?, also? }] }`, branch ids `b<rowid>`, note ids the plain rowid (so
+ * `about_memory` and the row actions work on them unchanged). Notes that are no longer true
+ * are included under the branch they were filed in, tagged so; the ones closed before the tree
+ * existed were never filed anywhere and are left out rather than piled on the root.
+ */
+alexia.tool(
+  'memory_tree',
+  {
+    description: 'Everything remembered as a tree: the branches, and the notes filed under each. Takes no arguments.',
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+  },
+  async () => {
+    await plant()
+    const t = await tree()
+    const all = await notes()
+    const shown = [...all.filter(valid), ...all.filter((row) => !valid(row) && when(row.branch) !== null && t.nodes.has(when(row.branch)))]
+    const tags = (row) => [
+      ...tagsOf(row).map((tag) => tag.says),
+      ...(valid(row) && pinnedOf(row) ? ['always known'] : []),
+      ...(row.source === INFERRED ? ['worked out'] : []),
+    ]
+    const nodes = treeNodes(t, shown, tags)
+    return {
+      content: [{ type: 'text', text: `${t.nodes.size} branches, ${all.filter(valid).length} remembered` }],
+      structuredContent: { nodes },
+    }
+  },
+)
+
+/** `b12` or `12` for a branch; the plain rowid for a note. */
+const branchId = (id) => {
+  const n = Number(String(id ?? '').trim().replace(/^b/i, ''))
+  return Number.isInteger(n) ? n : null
+}
+
+/** Where a person asked to put something: an existing branch, or one new one made for it. */
+async function destined(t, path) {
+  const where = destination(t, path)
+  if (where.error !== undefined) return where
+  if (where.create === undefined) return { branch: where.branch, made: false }
+  return { branch: await sprout(where.branch, where.create), made: true }
+}
+
+alexia.tool(
+  'move',
+  {
+    description:
+      'Move one remembered thing, or a whole branch, under another branch. Takes the id (a note\'s ' +
+      'row id, or a branch id like "b12") and the path to move it under, e.g. "You/People/Niki". ' +
+      'The last name in the path may be new, and is then made.',
+    inputSchema: fromJsonSchema({
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'A note\'s id, or a branch id starting with b.' },
+        path: { type: 'string', description: 'Where to put it, from the root.' },
+      },
+      required: ['id', 'path'],
+    }),
+    annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  async ({ id, path }) => {
+    await plant()
+    const t = await tree()
+    if (/^b/i.test(String(id ?? '').trim())) {
+      const moving = branchId(id)
+      const node = t.nodes.get(moving)
+      if (!node) return refused('There is no such branch.')
+      if (moving === t.root) return refused('The root cannot be moved.')
+      const where = destination(t, path)
+      if (where.error !== undefined) return refused(where.error)
+      // Into itself or anything under it would make a loop, and a loop is a tree nobody can read.
+      if (where.branch === moving || below(t, moving).includes(where.branch)) return refused('A branch cannot go inside itself.')
+      const depth = depthOf(t, where.branch) + (where.create === undefined ? 1 : 2) + height(t, moving)
+      if (depth > DEPTH) return refused(`That would put part of it deeper than ${DEPTH} levels.`)
+      if (where.create === undefined && childNamed(t, where.branch, node.name) !== undefined) {
+        return refused(`There is already a ${node.name} there. Merge the two instead.`)
+      }
+      const from = node.parent
+      const under = where.create === undefined ? where.branch : await sprout(where.branch, where.create)
+      await alexia.storage.update('branches', { parent: under, updated_at: Date.now() }, { rowid: moving })
+      await behind([...touched(t, [from, where.branch]), under])
+      return answered(`Moved ${node.name} under ${pathOf(await tree(), under)}.`)
+    }
+    const { one, error } = await lookup(id)
+    if (error) return refused(error)
+    const where = await destined(t, path)
+    if (where.error !== undefined) return refused(where.error)
+    const also = alsoOf(one).filter((other) => other !== where.branch)
+    await alexia.storage.update('facts', { branch: where.branch, also: JSON.stringify(also) }, { rowid: Number(one.rowid) })
+    await unsettle([one])
+    await behind([...touched(await tree(), [where.branch])])
+    return answered(`Moved under ${pathOf(await tree(), where.branch)}: ${String(one.text)}`)
+  },
+)
+
+alexia.tool(
+  'rename_branch',
+  {
+    description: 'Rename one branch of the memory tree. Takes the branch id (like "b12") and the new name, at most four words.',
+    inputSchema: fromJsonSchema({
+      type: 'object',
+      properties: { id: { type: 'string', description: 'The branch id.' }, name: { type: 'string', description: 'The new name.' } },
+      required: ['id', 'name'],
+    }),
+    annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  async ({ id, name }) => {
+    const t = await tree()
+    const node = t.nodes.get(branchId(id))
+    if (!node) return refused('There is no such branch.')
+    const called = String(name ?? '').replace(/\s+/g, ' ').trim()
+    if (!nameOk(called)) return refused('A branch name is at most four words and forty characters, with no slash.')
+    const clash = node.parent === null ? undefined : childNamed(t, node.parent, called)
+    if (clash !== undefined && clash !== node.id) return refused(`There is already a ${called} there. Merge the two instead.`)
+    await alexia.storage.update('branches', { name: called, updated_at: Date.now() }, { rowid: node.id })
+    if (node.parent !== null) await behind([...touched(t, [node.parent])])
+    return answered(`Renamed ${node.name} to ${called}.`)
+  },
+)
+
+alexia.tool(
+  'merge_branch',
+  {
+    description:
+      'Fold one branch of the memory tree into another: its notes and sub-branches move over and ' +
+      'it goes. Takes the two branch ids, `from` and `into`.',
+    inputSchema: fromJsonSchema({
+      type: 'object',
+      properties: {
+        from: { type: 'string', description: 'The branch that goes, like "b12".' },
+        into: { type: 'string', description: 'The branch that takes what was in it.' },
+      },
+      required: ['from', 'into'],
+    }),
+    annotations: { destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  },
+  async ({ from, into }) => {
+    const t = await tree()
+    const going = t.nodes.get(branchId(from))
+    const staying = t.nodes.get(branchId(into))
+    if (!going || !staying) return refused('There is no such branch.')
+    if (going.id === t.root) return refused('The root cannot be merged away.')
+    if (going.id === staying.id || below(t, going.id).includes(staying.id)) return refused('A branch cannot be merged into itself.')
+    const kids = t.children.get(going.id) ?? []
+    for (const kid of kids) {
+      const name = t.nodes.get(kid).name
+      if (childNamed(t, staying.id, name) !== undefined) return refused(`Both have a ${name}. Merge those two first.`)
+      if (depthOf(t, staying.id) + 1 + height(t, kid) > DEPTH) return refused(`That would put ${name} deeper than ${DEPTH} levels.`)
+    }
+    for (const kid of kids) await alexia.storage.update('branches', { parent: staying.id, updated_at: Date.now() }, { rowid: kid })
+    // Every note filed in it, as home or as a link, now points at the one that stays — so no
+    // `also` is left naming a branch that is gone.
+    for (const row of await notes()) {
+      const home = when(row.branch) === going.id ? staying.id : when(row.branch)
+      const had = alsoOf(row)
+      if (home === when(row.branch) && !had.includes(going.id)) continue
+      const also = [...new Set(had.map((other) => (other === going.id ? staying.id : other)))].filter((other) => other !== home)
+      await alexia.storage.update('facts', { ...(home === null ? {} : { branch: home }), also: JSON.stringify(also) }, { rowid: Number(row.rowid) })
+    }
+    await alexia.storage.delete('branches', { rowid: going.id })
+    await behind([...touched(t, [staying.id, going.parent])].filter((id) => id !== going.id))
+    return answered(`Merged ${going.name} into ${staying.name}.`)
+  },
+)
+
 alexia.tool(
   'forget_one',
   {
@@ -593,6 +928,8 @@ alexia.tool(
     const links = linksOf(row)
     const byId = new Map(all.map((one) => [Number(one.rowid), one]))
     const versions = chain(all, row.rowid)
+    const t = await tree()
+    const filed = when(row.branch) === null || t.root === null ? [] : homesOf(t, row).map((id) => pathOf(t, id))
     return {
       content: [
         {
@@ -614,6 +951,8 @@ alexia.tool(
             // What it hangs off, by name. The reason a person can tell a note that belongs
             // somewhere from one that is floating on its own.
             ...(links.length === 0 ? [] : [`Filed under: ${links.join(', ')}.`]),
+            // Where it lives in the tree, and where else it is linked from.
+            ...(filed.length === 0 ? [] : [`In the tree at ${filed[0]}${filed.length > 1 ? `, and also under ${filed.slice(1).join(', ')}` : ''}.`]),
             // Every version, oldest first, when there is more than this one.
             ...(versions.length > 1 ? ['', 'Its history:', ...versions.map(version)] : []),
           ].join('\n'),
@@ -745,6 +1084,7 @@ alexia.tool(
       { invalid_at: Date.now(), ...(pinnedOf(one) ? { pinned: false } : {}), ...cleared(one, ['stale_since', 'review_at']) },
       { rowid: Number(one.rowid) },
     )
+    await unsettle([one])
     return answered(`No longer true, kept as history: ${String(one.text)}`)
   },
 )
@@ -865,6 +1205,11 @@ alexia.tool(
     // Everything means everything, buffer included. Emptying the notes and leaving an hour
     // of exchanges to be written up on the next tick is the same bug one row at a time.
     await alexia.storage.delete('buffer', { all: true })
+    // The tree goes back to its seed: branch names and summaries are made of what was forgotten.
+    await alexia.storage.delete('branches', { all: true })
+    await alexia.storage.set(BEHIND, { ids: [] })
+    await alexia.storage.remove(PLANTED)
+    await plant()
     await alexia.storage.insert('forgotten', { about: 'everything', matched: held, buffered: waiting, at: Date.now() })
     await report()
     return {
@@ -973,6 +1318,7 @@ async function tick() {
       ...(one.suggestPin ? { suggest_pin: true } : {}),
       ...(one.suggestReplaces !== undefined ? { suggest_replaces: one.suggestReplaces } : {}),
       ...(one.timeBound ? { time_bound: true, review_at: one.reviewAt } : {}),
+      ...filedLike(old),
       at: now,
       valid_from: now,
     })
@@ -1012,6 +1358,124 @@ async function sample(text, systemPrompt, maxTokens) {
     maxTokens,
   })
   return answer.content?.type === 'text' ? answer.content.text : ''
+}
+
+/**
+ * Filing, and keeping the tree's summaries true: at most **two** free-model calls a run, and
+ * none at all when nothing is unplaced and no branch is behind — an idle Alexia still makes no
+ * calls.
+ *
+ * 1. **Placing.** Every valid note with no branch — at most `PLACE_MOST`, oldest first, so a
+ *    table from before the tree drains in order — goes to the model in one prompt with the
+ *    outline of the tree (names and summaries, never the notes). What comes back is checked
+ *    item by item in `tree.js` (`plan`): an id it was not shown is ignored, a path that does not
+ *    fit goes to the nearest branch that does, and a note it missed or misfiled is put by its
+ *    kind. If the model cannot be reached at all, nothing is placed and the notes wait for the
+ *    next run — filing all of them by kind because a model was briefly away would throw away
+ *    the one thing this is for, on the owner's whole table at once.
+ * 2. **Summarising.** Every branch a placement touched, and every branch marked behind since
+ *    (`BEHIND`), with everything above them: one prompt, each branch shown what is directly
+ *    under it. A summary that is not one sentence of at most 160 characters is not believed and
+ *    the old one stays. A branch with nothing valid under it gets no call and an empty summary.
+ *    What is past `SUMMARY_MOST` stays behind for the next run.
+ *
+ * One run at a time: the gardener's clock, the timer and a button can all ask at once, and two
+ * placers reading the same unplaced notes would file them twice and make two *Niki*s.
+ */
+let arranging = Promise.resolve()
+const arrange = () => {
+  const run = arranging.catch(() => {}).then(arrangeOnce)
+  arranging = run
+  return run
+}
+
+async function arrangeOnce() {
+  await plant()
+  const all = await current()
+  const unplaced = all
+    .filter((row) => when(row.branch) === null)
+    .sort((a, b) => Number(a.at ?? 0) - Number(b.at ?? 0) || Number(a.rowid) - Number(b.rowid))
+    .slice(0, PLACE_MOST)
+  const waiting = new Set(((await alexia.storage.get(BEHIND))?.ids ?? []).map(Number))
+  if (unplaced.length === 0 && waiting.size === 0) return {}
+
+  const done = { placed: 0, byModel: 0, made: 0, summarised: 0 }
+  if (unplaced.length > 0) {
+    const t = await tree()
+    let said
+    try {
+      said = await sample(placePrompt(t, unplaced), 'You file short notes about a person into a tree. Answer with JSON only.', 1500)
+    } catch (error) {
+      log.info(`could not place notes: ${error instanceof Error ? error.message : String(error)}`)
+      return done
+    }
+    const { create, place } = planned(t, unplaced, parseArray(said))
+    // New branches first, parents before children, so a planned id can be swapped for a real one.
+    const real = new Map()
+    const now = Date.now()
+    for (const one of create) {
+      const parent = one.parent < 0 ? real.get(one.parent) : one.parent
+      real.set(one.id, await sprout(parent, one.name, now))
+    }
+    const swap = (id) => (id < 0 ? real.get(id) : id)
+    for (const one of place) {
+      const branch = swap(one.branch)
+      if (branch === null || branch === undefined) continue
+      const also = one.also.map(swap).filter((id) => id !== undefined)
+      await alexia.storage.update('facts', { branch, ...(also.length > 0 ? { also: JSON.stringify(also) } : {}) }, { rowid: one.id })
+      waiting.add(branch)
+      for (const id of also) waiting.add(id)
+    }
+    done.placed = place.length
+    done.byModel = place.filter((one) => one.by === 'model').length
+    done.made = create.length
+    log.info(`filed ${done.placed} note(s), ${done.byModel} where the model said, ${done.made} new branch(es)`)
+  }
+
+  const t = await tree()
+  const fresh = await current()
+  const count = counts(t, fresh)
+  const behindNow = [...touched(t, [...waiting].filter((id) => t.nodes.has(id)))]
+  for (const id of behindNow) {
+    if ((count.get(id) ?? 0) === 0 && t.nodes.get(id).summary !== '') {
+      await alexia.storage.update('branches', { summary: '', updated_at: Date.now() }, { rowid: id })
+    }
+  }
+  const asking = behindNow.filter((id) => (count.get(id) ?? 0) > 0).slice(0, SUMMARY_MOST)
+  let left = behindNow.filter((id) => (count.get(id) ?? 0) > 0).slice(SUMMARY_MOST)
+  if (asking.length > 0) {
+    try {
+      const said = await sample(summaryPrompt(t, asking, fresh), 'You summarise branches of a tree of notes. Answer with JSON only.', 1500)
+      // Asked once, whatever came back: a model that answers badly would otherwise be asked the
+      // same thing every run forever. A bad summary keeps the old one, which is only stale.
+      for (const [id, summary] of readSummaries(t, asking, parseArray(said))) {
+        await alexia.storage.update('branches', { summary, updated_at: Date.now() }, { rowid: id })
+        done.summarised += 1
+      }
+    } catch (error) {
+      // Unreachable is not an answer: they stay behind for the next run.
+      log.info(`could not summarise branches: ${error instanceof Error ? error.message : String(error)}`)
+      left = [...left, ...asking]
+    }
+  }
+  await alexia.storage.set(BEHIND, { ids: left })
+  return done
+}
+
+/**
+ * A note saved with `remember` is filed a little later rather than never: the placer runs on
+ * the sorting timer and the gardener's six-hour clock, and with capture off only the second
+ * one ticks. So a `remember` also asks for a run a minute on — one, however many notes arrive
+ * in that minute, which is what keeps a burst of remembering to one call.
+ */
+let pending
+function soon() {
+  if (pending) return
+  pending = setTimeout(() => {
+    pending = undefined
+    void arrange().catch((error) => log.info(`could not file notes: ${String(error)}`))
+  }, 60_000)
+  pending.unref?.()
 }
 
 /**
@@ -1069,6 +1533,7 @@ async function garden(now = Date.now()) {
         ...(timeBound(note) ? { time_bound: true } : {}),
         ...doubt,
         ...(pinned ? { suggest_replaces: Number(note.rowid) } : {}),
+        ...filedLike(note),
         at: now,
         valid_from: now,
       })
@@ -1113,18 +1578,24 @@ alexia.tool(
     annotations: { destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
   async () => {
-    const { done, looked } = await pass()
+    const { done, looked, filed } = await pass()
     // The gardener is only mentioned when it did something; it is quiet on almost every pass.
     const tended =
       looked?.due === undefined ? ''
       : ` Checked ${looked.due} note${looked.due === 1 ? '' : 's'} that may have changed: rewrote ${looked.rewritten}, marked ${looked.marked} as may be out of date.`
+    // Filing is mentioned the same way: only when it filed something.
+    const put =
+      !filed?.placed ? ''
+      : ` Filed ${filed.placed} note${filed.placed === 1 ? '' : 's'} in the tree${filed.made ? `, ${filed.made} new branch${filed.made === 1 ? '' : 'es'}` : ''}.`
     return {
       content: [
         {
           type: 'text',
           text:
             (done.why !== undefined ? done.why
-            : `Read ${done.read} exchange${done.read === 1 ? '' : 's'} and wrote ${done.written} note${done.written === 1 ? '' : 's'}.`) + tended,
+            : `Read ${done.read} exchange${done.read === 1 ? '' : 's'} and wrote ${done.written} note${done.written === 1 ? '' : 's'}.`) +
+            tended +
+            put,
         },
       ],
     }
@@ -1142,8 +1613,17 @@ async function pass() {
     log.info(`could not look after old notes: ${String(error)}`)
     return undefined
   })
-  return { done, looked }
+  // Filing last, so what the sorting pass and the gardener just wrote is filed in this pass.
+  const filed = await filing()
+  return { done, looked, filed }
 }
+
+/** `arrange`, never throwing: a filing run that failed is no reason for anything else to. */
+const filing = () =>
+  arrange().catch((error) => {
+    log.info(`could not file notes: ${String(error)}`)
+    return {}
+  })
 
 /**
  * The binding, and it is where the consent lives (D73, M6-9).
@@ -1165,7 +1645,12 @@ async function pass() {
  */
 const GARDEN_LOOK = 6 * 60 * 60_000
 const gardening = () =>
-  void garden().catch((error) => log.info(`could not look after old notes: ${String(error)}`))
+  void garden()
+    .catch((error) => log.info(`could not look after old notes: ${String(error)}`))
+    // Filing rides the same clock, for the same reason: notes saved with `remember`, and the
+    // ones written before the tree existed, get filed with capture off. Nothing unplaced and
+    // nothing behind is a read of two tables and no call.
+    .then(filing)
 setInterval(gardening, GARDEN_LOOK).unref?.()
 
 let timer
@@ -1175,7 +1660,14 @@ async function follow() {
   clearInterval(timer)
   if (capture === true) {
     const minutes = Math.min(240, Math.max(1, Number(interval) || 12))
-    timer = setInterval(() => void tick().catch((error) => log.info(String(error))), minutes * 60_000)
+    timer = setInterval(
+      () =>
+        void tick()
+          .catch((error) => log.info(String(error)))
+          // Only when the pass wrote something; an empty buffer still asks nothing.
+          .then((done) => (done?.written ? filing() : undefined)),
+      minutes * 60_000,
+    )
     // Nothing is waiting on it. A timer that holds the process open is a resident plugin
     // that cannot be shut down, which is a different bug from the one it was added for.
     timer.unref?.()

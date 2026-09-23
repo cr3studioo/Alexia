@@ -4,7 +4,7 @@
   "id": "memory",
   "name": "Long-term memory",
   "summary": "Remembers things across conversations, and always knows the few you pin — your name, how to talk to you. Can also write things down by itself, once you turn that on.",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "license": "AGPL-3.0-only",
   "entry": {
     "run": "node",
@@ -74,7 +74,8 @@
     "tables": [
       "facts",
       "buffer",
-      "forgotten"
+      "forgotten",
+      "branches"
     ]
   },
   "commands": [
