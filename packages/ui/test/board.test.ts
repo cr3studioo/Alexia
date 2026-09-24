@@ -420,6 +420,15 @@ test('a page dragged in edit view moves by transform, blur off, and its spot is 
   expect(price.style.top).toBe(`${String(g.offY + (start.y - 3) * SP)}px`)
   expect(saves(sent)).toHaveLength(1)
   expect(saves(sent)[0]!.pages.find((p) => p.id === 'price')!.anchor).toEqual({ x: start.x, y: start.y - 3 })
+
+  // Dropped far below the window: the preview, what is saved and what is drawn all agree.
+  const bottom = g.rows - start.h
+  pointer(grab, 'pointerdown', 600, 600)
+  pointer(grab, 'pointermove', 600, 600 + 200 * SP)
+  expect(price.style.transform).toBe(`translate(0px, ${String((bottom - (start.y - 3)) * SP)}px)`)
+  pointer(grab, 'pointerup', 600, 600 + 200 * SP)
+  expect(saves(sent).at(-1)!.pages.find((p) => p.id === 'price')!.anchor).toEqual({ x: start.x, y: bottom })
+  expect(price.style.top).toBe(`${String(g.offY + bottom * SP)}px`)
   vi.unstubAllGlobals()
 })
 
