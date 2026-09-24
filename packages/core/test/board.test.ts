@@ -62,7 +62,7 @@ const arranged: Layout = {
 const alexia: Serving = await serve({ dataDir: root, pluginsDir: extensions, secrets: memorySecrets(), local: false })
 afterAll(async () => {
   await alexia.close()
-  for (const path of [root, from, extensions]) rmSync(path, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+  for (const path of [root, from, extensions]) rmSync(path, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })
 })
 
 const call = (path: string, body?: unknown): Promise<Response> =>
@@ -165,6 +165,9 @@ test('a crashed plugin’s page carries its reason, and Restart clears it', asyn
   const back = restarted.panes.find((one) => one.id === 'crasher')
   expect(back?.state).toBeUndefined()
   expect(back?.reason).toBeUndefined()
+  // Off again before the folders go: a crasher that dies on start is respawned, and on Windows a
+  // process still starting holds its folder open when afterAll deletes it.
+  await call('/api/plugin', { id: 'crasher', action: 'disable' })
 }, 30_000)
 
 test('pruning touches plugin pages whose plugin is not here, and nothing else', () => {
