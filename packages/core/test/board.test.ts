@@ -60,10 +60,13 @@ const arranged: Layout = {
 }
 
 const alexia: Serving = await serve({ dataDir: root, pluginsDir: extensions, secrets: memorySecrets(), local: false })
+// Windows keeps a folder while a process that was just stopped is still letting go of it, and
+// this test stops more plugins than most (one deleted by hand, one that crashes on every start):
+// up to ten seconds for the last of them. One that never lets go still fails here, as it should.
 afterAll(async () => {
   await alexia.close()
-  for (const path of [root, from, extensions]) rmSync(path, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })
-})
+  for (const path of [root, from, extensions]) rmSync(path, { recursive: true, force: true, maxRetries: 50, retryDelay: 200 })
+}, 30_000)
 
 const call = (path: string, body?: unknown): Promise<Response> =>
   fetch(new URL(path, alexia.url), {
