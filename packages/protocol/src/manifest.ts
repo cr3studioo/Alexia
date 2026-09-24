@@ -74,9 +74,14 @@ import { APP_VERSION, newer } from './version.js'
  * rather than linked — and `when`/`unless` on a `table`'s or a `tree`'s row actions, so a row
  * shows the buttons that apply to it rather than all seven. Both optional, both read off what a
  * row already carries (its `tags`, or one of its fields), and the floor stays at 2.
+ *
+ * **12 on 2026-09-24 (D204).** `page` — a plugin's own page on the board, declared as sizes
+ * that each name which of its widgets to show. Additive: nothing is drawn that a plugin did not
+ * already declare, a plugin with a `panel` and no `page` gets one built from the panel, and a
+ * manifest that says nothing about pages means what it meant yesterday. The floor stays at 2.
  */
 export const ALEXIA_PROTOCOL_MIN = 2
-export const ALEXIA_PROTOCOL_MAX = 11
+export const ALEXIA_PROTOCOL_MAX = 12
 
 /**
  * The two MCP revisions core speaks, in preference order (D55, corrected by D57).
@@ -637,6 +642,27 @@ const setting = z.discriminatedUnion('type', [
   }),
 ])
 
+/**
+ * A width and height in board dots (`page`, `alexia_protocol` 12).
+ *
+ * Whole dots, because a page edge between two dots is an edge nothing else can line up
+ * with. Eighty is two thousand pixels — past the widest board anybody will have, so the
+ * ceiling catches a typo'd `800` rather than limiting a real page.
+ */
+const dots = z.tuple([z.int().min(1).max(80), z.int().min(1).max(80)])
+
+/** One size of a page: how big, and which of the plugin's own widgets it shows at that size. */
+const tier = z
+  .object({
+    at: dots,
+    show: z.array(z.string().regex(IDENT)).min(1).max(32),
+  })
+  .strict()
+
+/** The page sizes, smallest first — the order the tiers must also grow in. */
+export const PAGE_TIERS = ['S', 'M', 'L'] as const
+export type PageTier = (typeof PAGE_TIERS)[number]
+
 export const ManifestShape = z
   .object({
     /** Editors read this to find the schema. Core ignores it. */
@@ -773,6 +799,62 @@ export const ManifestShape = z
       })
       .strict()
       .optional(),
+
+    /**
+     * **A page of its own on the board** (`alexia_protocol` 12, D204).
+     *
+     * The shell stopped being three fixed columns and became a board of pages somebody
+     * arranges on a grid of dots, and the question that raised is the one `panel` answered
+     * for the plugins page: how does a plugin get a place on a screen core draws, without
+     * core ever typing its name? The same way. It declares one, and the page exists because
+     * the manifest is in a folder and somebody enabled it — which is the whole reason it goes
+     * when the folder does.
+     *
+     * **It adds no widgets and no drawing.** `show` names keys the plugin already declared in
+     * `settings` or `panel.widgets` — one namespace, as `panel` already made it — and core
+     * draws them with the renderer the plugins page uses. What a plugin says here is only
+     * *which of my widgets, at which size*: S, M and L are how much room the person gave it,
+     * and a small page showing what matters most is the difference between a page that
+     * earns its corner of the board and a squashed copy of the big one.
+     *
+     * Sizes are in **dots** — the board's 25px grid — rather than pixels, because the board
+     * is laid out in dots and a page that asked for pixels would be asking for a size the
+     * grid cannot give it. A plugin that declares a `panel` and no `page` gets one anyway,
+     * built from the panel (see {@link pageOf}), so nothing written before this needs
+     * touching to appear.
+     */
+    page: z
+      .object({
+        /** What the page says at its top. Short, because an S page is eight dots wide. */
+        title: z.string().min(1).max(40),
+        /**
+         * The sizes on offer, and what each one shows. **Omit a tier to not offer it** — a
+         * graph has nothing useful to say in eight dots by four, and saying so here is what
+         * keeps the size picker from offering a page nobody can read.
+         */
+        sizes: z
+          .object({
+            S: tier.optional(),
+            M: tier.optional(),
+            L: tier.optional(),
+          })
+          .strict(),
+        /**
+         * Whether, and how far, the page stretches between tiers. Absent means it snaps to
+         * the tiers only; `max` absent means as big as the board.
+         */
+        scale: z
+          .object({
+            min: dots,
+            max: dots.optional(),
+          })
+          .strict()
+          .optional(),
+        /** One size, never resized: a meter reads wrong at any size but its own. */
+        fixed: z.boolean().optional(),
+      })
+      .strict()
+      .optional(),
   })
   // Strict on purpose. A typo'd `provide` that is silently ignored is a plugin that asks
   // for nothing and fails at runtime, which is a far worse morning than a load error.
@@ -880,6 +962,55 @@ export const Manifest = ManifestShape.superRefine((m, ctx) => {
     })
   }
 
+  if (m.page !== undefined) {
+    const page = m.page
+    if (m.alexia_protocol < 12) {
+      fail(['page'], 'page arrived in alexia_protocol 12 — declare "alexia_protocol": 12 to use it')
+    }
+    const offered = PAGE_TIERS.flatMap((name) => {
+      const one = page.sizes[name]
+      return one ? [{ name, ...one }] : []
+    })
+    if (offered.length === 0) fail(['page', 'sizes'], 'page.sizes needs at least one of S, M or L')
+    const size = ([w, h]: readonly [number, number]): string => `${String(w)}×${String(h)}`
+    let before: (typeof offered)[number] | undefined
+    for (const one of offered) {
+      // Anything else is a page that draws nothing at that size, silently — the same failure
+      // `when.key` is checked for, and in the same words.
+      one.show.forEach((key, i) => {
+        if (!declared.has(key)) fail(['page', 'sizes', one.name, 'show', i], `show "${key}" is not a widget this plugin declares`)
+      })
+      // Bigger means bigger in both directions. An M that is wider and shorter than its S is
+      // a page that loses rows when somebody asks for more room, and the size picker would be
+      // offering a step that goes sideways.
+      if (before && (one.at[0] < before.at[0] || one.at[1] < before.at[1])) {
+        fail(
+          ['page', 'sizes', one.name, 'at'],
+          `${one.name} (${size(one.at)}) is smaller than ${before.name} (${size(before.at)}) — S, M and L must not shrink in either direction`,
+        )
+      }
+      if (page.scale) {
+        const { min, max } = page.scale
+        const under = one.at[0] < min[0] || one.at[1] < min[1]
+        const over = max !== undefined && (one.at[0] > max[0] || one.at[1] > max[1])
+        if (under || over) {
+          fail(
+            ['page', 'sizes', one.name, 'at'],
+            `${one.name} (${size(one.at)}) is outside scale (${size(min)} to ${max ? size(max) : 'any'}) — a size the page offers must be one it can be stretched to`,
+          )
+        }
+      }
+      before = one
+    }
+    if (page.scale?.max && (page.scale.max[0] < page.scale.min[0] || page.scale.max[1] < page.scale.min[1])) {
+      fail(['page', 'scale', 'max'], `scale.max (${size(page.scale.max)}) is smaller than scale.min (${size(page.scale.min)})`)
+    }
+    if (page.fixed === true) {
+      if (offered.length > 1) fail(['page', 'fixed'], 'a fixed page has exactly one size — declare one of S, M or L')
+      if (page.scale) fail(['page', 'scale'], 'a fixed page does not stretch — remove scale, or fixed')
+    }
+  }
+
   m.skills?.forEach((p, i) => {
     if (/^([A-Za-z]:|[\\/])/.test(p) || p.split(/[\\/]/).includes('..')) {
       fail(['skills', i], 'a skill path must stay inside the plugin folder')
@@ -914,6 +1045,66 @@ export const Manifest = ManifestShape.superRefine((m, ctx) => {
 })
 
 export type Manifest = z.infer<typeof Manifest>
+
+/**
+ * A plugin's page as the board reads it (`alexia_protocol` 12): the declared one, or the one
+ * a `panel` implies.
+ *
+ * `fixed` is always there and `scale` only when the manifest said so, so a reader never has
+ * to tell *absent* from *false*.
+ */
+export interface NormalizedPage {
+  title: string
+  sizes: Partial<Record<PageTier, { at: [number, number]; show: string[] }>>
+  scale?: { min: [number, number]; max?: [number, number] }
+  fixed: boolean
+}
+
+/** The size a page gets when its plugin declared a panel and no page: an M, twelve by ten. */
+export const DEFAULT_PAGE_AT: readonly [number, number] = [12, 10]
+
+/**
+ * What page a plugin has on the board, or `null` for none.
+ *
+ * **A `panel` and no `page` is a page anyway**, of any protocol: one M, titled as the panel is,
+ * showing every panel widget in order. The board arriving must not make every plugin written
+ * before it disappear from the screen until its author notices, and a panel is already a
+ * plugin saying *here is what I am doing, for you to read* — which is what a page is. A plugin
+ * with neither has nothing to read and gets nothing, which is most of them.
+ *
+ * Kept here, beside the rules, so the shell, core and the conformance suite cannot grow three
+ * opinions about what a missing page means.
+ */
+export function pageOf(m: Pick<Manifest, 'name' | 'panel' | 'page'>): NormalizedPage | null {
+  if (m.page) {
+    const sizes: NormalizedPage['sizes'] = {}
+    for (const name of PAGE_TIERS) {
+      const one = m.page.sizes[name]
+      if (one) sizes[name] = { at: [one.at[0], one.at[1]], show: [...one.show] }
+    }
+    return {
+      title: m.page.title,
+      sizes,
+      ...(m.page.scale && {
+        scale: {
+          min: [m.page.scale.min[0], m.page.scale.min[1]],
+          ...(m.page.scale.max && { max: [m.page.scale.max[0], m.page.scale.max[1]] as [number, number] }),
+        },
+      }),
+      fixed: m.page.fixed === true,
+    }
+  }
+  if (m.panel) {
+    return {
+      // `label` is required on a panel, so the name is only ever a fallback for a caller that
+      // hands this something looser than a parsed manifest.
+      title: m.panel.label || m.name,
+      sizes: { M: { at: [DEFAULT_PAGE_AT[0], DEFAULT_PAGE_AT[1]], show: m.panel.widgets.map((w) => w.key) } },
+      fixed: false,
+    }
+  }
+  return null
+}
 
 /**
  * Whether core will load this manifest's declared contract versions, and why not.

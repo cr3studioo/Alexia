@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import type { D1Database, Env } from './d1.js'
+import { SOON } from './soon.js'
 
 /**
  * The registry (M3-1). A read API over a table, plus an admin path for one person.
@@ -150,7 +151,11 @@ export async function handle(request: Request, env: Env): Promise<Response> {
 
   if (request.method === 'GET' && path === '/v0/plugins') {
     const { results } = await db.prepare('SELECT * FROM plugins WHERE revoked_at IS NULL ORDER BY name').all()
-    return json({ plugins: results.map(asPlugin) })
+    const real = results.map(asPlugin)
+    // After the real rows, and only under ids nobody has submitted: a placeholder is what an
+    // id is until there is something behind it, never beside it (`soon.ts`).
+    const listed = new Set(real.map((row) => row.id))
+    return json({ plugins: [...real, ...SOON.filter((row) => !listed.has(row.id))] })
   }
 
   if (request.method === 'GET' && path === '/v0/skills') {
@@ -182,7 +187,12 @@ export async function handle(request: Request, env: Env): Promise<Response> {
   const one = /^\/v0\/plugins\/([a-z][a-z0-9-]*)$/.exec(path)
   if (request.method === 'GET' && one) {
     const row = await db.prepare('SELECT * FROM plugins WHERE id = ?').bind(one[1]).first()
-    if (!row) return json({ error: 'no such plugin' }, 404)
+    if (!row) {
+      // Answered rather than 404'd, so the client refuses it with *not out yet* instead of
+      // *no such plugin* — the second is false, and it is the one a person would repeat.
+      const placeholder = SOON.find((entry) => entry.id === one[1])
+      return placeholder ? json(placeholder) : json({ error: 'no such plugin' }, 404)
+    }
     // 410 rather than 404: it existed, it is gone on purpose, and the reason is the point.
     if (row.revoked_at != null) {
       return json({ error: 'revoked', reason: row.revoked_reason ?? 'withdrawn' }, 410)

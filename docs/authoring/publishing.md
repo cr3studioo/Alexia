@@ -133,6 +133,26 @@ Alexia offers the update on the Plugins screen with what it keeps spelled out �
 stored data, and the plugin's own directory all survive, because an update replaces the
 install folder and nothing else.
 
+### Announcing one that is not ready (coming soon)
+
+A plugin can be on the shelf before there is anything to download (D204). Alexia draws it
+greyed with *Coming soon* — on the Plugins screen and in the board's *Add page* — and refuses
+to install it in words.
+
+```sh
+node scripts/publish.mjs --coming-soon vtuber --name "Vtuber model" \
+  --summary "A face for Alexia that moves while she talks." --dry-run   # prints the notes
+node scripts/publish.mjs --coming-soon vtuber --name "Vtuber model" \
+  --summary "A face for Alexia that moves while she talks."             # cuts the release
+```
+
+It cuts a release tagged `<id>-soon` whose block is `{ id, name, summary, "coming_soon": true }`
+and which has **nothing attached** — an archive is what would make it installable. Nothing is
+built and `plugins/<id>` must not exist yet; a plugin that exists is published for real. The
+same rules as a real release otherwise: `--latest=false`, `--repo` to publish elsewhere, and a
+tag that already exists is skipped. When `<id>-v1.0.0` is published it replaces the placeholder
+whichever order the two are read in, and the `-soon` release can be deleted afterwards.
+
 ## Signing
 
 Optional, and useful once a plugin has users. A detached ed25519 signature over the sha256

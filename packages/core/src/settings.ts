@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { optionValue, type Manifest, type Stage } from '@alexia/protocol'
+import { optionValue, pageOf, type Manifest, type NormalizedPage, type Stage } from '@alexia/protocol'
 import { existsSync, statSync } from 'node:fs'
 import { isAbsolute } from 'node:path'
 import type { SecretStore } from './secrets.js'
@@ -145,6 +145,14 @@ export interface Pane {
   enabled: boolean
   /** Whether a process is up. Not a promise that one will stay up — lazy spawn owns that. */
   running: boolean
+  /**
+   * `'unhealthy'` when the supervisor switched it off after stopping too often, and absent
+   * otherwise. Only the one word is sent, because *stopped* and *running* are already
+   * `running`, and the only state a page has to draw differently is the one with a Restart.
+   */
+  state?: 'unhealthy'
+  /** The supervisor's own sentence for why, with `state`. What the page shows above Restart. */
+  reason?: string
   /** The author's own sentences, never rewritten: this is what the user reads. */
   requires: { cap: string; why: string }[]
   settings: Rendered[]
@@ -158,6 +166,17 @@ export interface Pane {
    * declares no panel, which most plugins do not.
    */
   panel?: { label: string; widgets: Rendered[] }
+  /**
+   * The plugin's page on the board (`alexia_protocol` 12, D204), or `null` for none.
+   *
+   * Declared, or built from `panel` when a plugin has one and no page — see `pageOf`. It is
+   * **names, not rendered widgets**: which keys to show at which size, read off the manifest.
+   * The widgets themselves are the ones above, already rendered, so a page and the plugins
+   * page cannot disagree about what a widget says. Sent whether or not the plugin is enabled;
+   * the shell decides from `enabled` and `running` whether a page is on the board, which is
+   * where *disabled keeps its place* has to be decided anyway.
+   */
+  page: NormalizedPage | null
 }
 
 /**
@@ -190,6 +209,8 @@ export interface PaneOptions {
   enabled?(pluginId: string): boolean
   /** Whether a process is up, asked without starting one. */
   running(pluginId: string): boolean
+  /** Why the supervisor switched it off, or undefined while it has not. Absent means never. */
+  unhealthy?(pluginId: string): string | undefined
   /** A running plugin's tool names, or undefined while it is stopped. Never spawns. */
   tools(pluginId: string): string[] | undefined
   /**
@@ -397,6 +418,7 @@ export async function render(
 
 /** One plugin's page: its chrome, its form filled in, and its panel under it (D118). */
 export async function pane(manifest: Manifest, options: PaneOptions): Promise<Pane> {
+  const off = options.unhealthy?.(manifest.id)
   return {
     id: manifest.id,
     name: manifest.name,
@@ -405,6 +427,7 @@ export async function pane(manifest: Manifest, options: PaneOptions): Promise<Pa
     license: manifest.license,
     enabled: options.enabled?.(manifest.id) ?? true,
     running: options.running(manifest.id),
+    ...(off !== undefined && { state: 'unhealthy' as const, reason: off }),
     requires: manifest.requires?.map((r) => ({ cap: r.cap, why: r.why })) ?? [],
     settings: await render(manifest, manifest.settings ?? [], options),
     // Rendered by the same function as the settings above it, which is what stops the two
@@ -415,6 +438,7 @@ export async function pane(manifest: Manifest, options: PaneOptions): Promise<Pa
         widgets: await render(manifest, manifest.panel.widgets, options),
       },
     }),
+    page: pageOf(manifest),
   }
 }
 

@@ -15,6 +15,13 @@
 > rather than here, because nothing about the rendering changes. (Until D118 a panel was a tab
 > on a screen of its own, which is why some of the prose below still says *screen*.)
 >
+> **A third list, the same rules, since D204 (2026-09-24).** A plugin's `page` on the board
+> names widgets per size — `show`, keyed into `settings` and `panel.widgets` — and draws them
+> with this renderer, in the order listed, one column, exactly as here. It declares no widget
+> of its own and cannot: a key it names has to exist in one of the other two lists. The page's
+> frame, its size and its place on the board are core's, like the chrome described under
+> *Layout*. Fields in [`manifest.md`](./manifest.md#page).
+>
 > Companions: [`manifest.md`](./manifest.md) · [`wire-protocol.md`](./wire-protocol.md)
 
 ---

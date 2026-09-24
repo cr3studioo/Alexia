@@ -134,6 +134,13 @@ const MIGRATIONS: string[] = [
   // split into waiting and writing — and waiting is what a person feels. Null for a try that never
   // showed one, and for every try recorded before this column existed.
   `ALTER TABLE tries ADD COLUMN waited INTEGER;`,
+
+  // 9 — how long each answer took to write, in milliseconds, from its first sign of life to its
+  // last streamed byte (D204). `tokens_out` alone is a length, not a speed, and `tries` keeps the
+  // wait before the first word but stamps only the end — so *how fast did it write* had half its
+  // numbers. On `usage` rather than `tries` because the tokens are here, and a speed is the two
+  // divided. Null for an answer that showed no sign, and for every answer before this column.
+  `ALTER TABLE usage ADD COLUMN writing INTEGER;`,
 ]
 
 /**
@@ -1003,12 +1010,14 @@ export class Store {
     tokensIn: number
     tokensOut: number
     cost: number
+    /** Milliseconds from the answer's first sign of life to its end, when it showed one (D204). */
+    writing?: number
     at?: number
   }): void {
     this.#db
       .prepare(
-        'INSERT INTO usage (at, session_id, plugin, run_id, model, asked, provider, tokens_in, tokens_out, cost)' +
-          ' VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        'INSERT INTO usage (at, session_id, plugin, run_id, model, asked, provider, tokens_in, tokens_out, cost, writing)' +
+          ' VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       )
       .run(
         row.at ?? Date.now(),
@@ -1021,7 +1030,25 @@ export class Store {
         row.tokensIn,
         row.tokensOut,
         row.cost,
+        row.writing ?? null,
       )
+  }
+
+  /**
+   * **The newest answer from one provider that can be read as a speed** (D204): tokens written
+   * and the milliseconds spent writing them, both above zero. The Local stats page asks this of
+   * `ollama` — what this machine's own model last managed, which is the one speed a person can do
+   * something about. `undefined` when no answer from it has both numbers, which is every
+   * database before migration 9 and every machine that has never run a local model.
+   */
+  lastWriting(provider: string): { model: string; tokensOut: number; writing: number } | undefined {
+    const row = this.#db
+      .prepare(
+        'SELECT model, tokens_out AS tokensOut, writing FROM usage' +
+          ' WHERE provider = ? AND tokens_out > 0 AND writing > 0 ORDER BY at DESC, id DESC LIMIT 1',
+      )
+      .get(provider) as { model: string; tokensOut: number; writing: number } | undefined
+    return row === undefined ? undefined : { ...row }
   }
 
   /**

@@ -34,10 +34,11 @@ import { commands, pins, type Ran, run as runCommand } from './commands.js'
 import { preauthorise, record } from './consent.js'
 import { refuse, type Body } from './guard.js'
 import { judge } from './health.js'
+import { readLayout, type Layout } from './layout.js'
 import { Library, offerable } from './library.js'
 import { distil, forget, learnable, outline, save, type Episode } from './learned.js'
 import { mimeOf, Offers, openable, reach } from './offered.js'
-import { installed, OLLAMA, running } from './ollama.js'
+import { installed, local, OLLAMA, running } from './ollama.js'
 import { accountKey, fundedBy, keylessOn, speedOf, usable, type Account } from './pool.js'
 import { ceilings, estimate, previewLine, setCeilings, worthAsking, type Ceilings } from './preview.js'
 import { Plugins } from './plugins.js'
@@ -85,6 +86,7 @@ import { search } from './palette.js'
 import { tabs as coreTabs } from './panels.js'
 import { actions as coreActions, sources as coreSources, searchable } from './surface.js'
 import { Skills, SKILL_TOOL } from './skills.js'
+import { systemStats } from './system.js'
 import { dataDir, Store, textOf, type Message, type Part } from './store.js'
 import { streamer } from './streaming.js'
 import { PluginTooling } from './tooling.js'
@@ -705,6 +707,9 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
      */
     updates: (store.kvGet(CORE, 'updates_auto') as boolean | undefined) ?? true,
   })
+
+  /** The board as last arranged (D204), or `null` for never. Checked on the way in, so read as is. */
+  const layout = (): Layout | null => (store.kvGet(CORE, 'layout') as Layout | undefined) ?? null
 
   /**
    * Where Alexia may work and how much it may do unasked (M15-3). One kv entry, because
@@ -1570,6 +1575,19 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
         JSON.stringify({
           setup: setup(),
           /**
+           * Where the pages sit on the board (D204), or `null` when nobody has arranged it —
+           * which the shell reads as *the default board*, rather than core inventing a default
+           * that would have to name which pages exist.
+           */
+          layout: layout(),
+          /**
+           * How many other ways in there are (D204): enabled plugins providing
+           * `CORE_CAPABILITIES.channel` with every key they declared stored. The board asks
+           * before the Chat page comes off only when this is 0. Read by capability, so core
+           * counts them and never learns which they are.
+           */
+          channels: await plugins.reachable(CORE_CAPABILITIES.channel),
+          /**
            * What this build is (D121).
            *
            * Sent with every state read rather than fetched from the shelf, because the About
@@ -1660,6 +1678,8 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
         theme?: string
         glass?: number
         updates?: boolean
+        /** Where the pages sit (D204), or `null` to forget it and go back to the default board. */
+        layout?: unknown
         /** A key to store, or `remove` to take the stored one out of the keychain (§1 step 4). */
         provider?: { id: string; key?: string; remove?: boolean }
       }
@@ -1679,6 +1699,24 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
       // it is the same kind of fact: an answer about this install that outlives the window it
       // was given in.
       if (typeof chosen.updates === 'boolean') store.kvSet(CORE, 'updates_auto', chosen.updates)
+      /**
+       * The board (D204), beside the theme for the reason the theme is here: the window and a
+       * tab on the same core are one Alexia. Checked for shape and refused whole rather than
+       * half-stored, because a layout with one bad page is not a layout minus that page — the
+       * shell would pack the rest into places the person never put them. The fields above
+       * are each their own answer and stay written when this one is refused, as they do when
+       * a key is.
+       */
+      if (chosen.layout === null) store.kvDelete(CORE, 'layout')
+      else if (chosen.layout !== undefined) {
+        const read = readLayout(chosen.layout)
+        if (!read.ok) {
+          response.writeHead(400, { 'content-type': 'application/json' })
+          response.end(JSON.stringify({ ok: false, said: read.why }))
+          return
+        }
+        store.kvSet(CORE, 'layout', read.layout)
+      }
       /** What happened to a key, as the one line the screen shows where it was pressed (§1). */
       let said: string | undefined
       if (chosen.provider?.key) {
@@ -1726,7 +1764,45 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
         if (provider) said = await disconnect(provider)
       }
       response.writeHead(200, { 'content-type': 'application/json' })
-      response.end(JSON.stringify({ ...setup(), ...(said !== undefined && { said }) }))
+      response.end(JSON.stringify({ ...setup(), layout: layout(), ...(said !== undefined && { said }) }))
+      return
+    }
+
+    /**
+     * **The Local stats page** (D204): what models are on this machine, which are in memory,
+     * and how fast the last local answer came.
+     *
+     * A GET that never fails. Ollama not running is the answer most people have, and it comes
+     * back as `running: false` with nothing in the lists rather than as an error — the page
+     * says *Ollama is not running*, which is true and is not a fault. A test core
+     * (`local: false`) answers the same way, for the reason `world()` does: the laptop running
+     * the suite may well have an Ollama, and it is not the one being tested.
+     *
+     * **`speed` is the newest local answer's tokens over its writing time** — the `ollama` row in
+     * `usage` with both above zero, `writing` being the milliseconds from its first sign of life
+     * to its end (migration 9). Not from the request going out, so a model loading from disk
+     * does not read as a slow one. `null` until a local model has answered since that column
+     * existed: a guess from the parts kept before it would look measured and not be. Read from
+     * the record whatever `local` says — it is this core's own database, not this laptop's
+     * Ollama, so a test core has nothing in it unless the test put it there.
+     *
+     * **`system` is the machine itself** — processor, graphics chip, memory and its pressure,
+     * temperature where it can be read, uptime, and the last few minutes of each (`system.ts`).
+     * Read here and only here, in the same request as the rest: the page asks every few seconds
+     * while it is on screen and not otherwise, so the machine is measured exactly when somebody
+     * is looking at it. Not gated on `local` — it is the laptop's own `os` and `ioreg`, it
+     * cannot pick up anything a test did not intend, and a test core measuring the laptop it
+     * runs on is measuring the right thing.
+     */
+    if (url.pathname === '/api/local-stats') {
+      const [here, system] = await Promise.all([
+        options.local === false ? { running: false, installed: [], loaded: [] } : local(),
+        systemStats(),
+      ])
+      const last = store.lastWriting('ollama')
+      const speed = last === undefined ? null : { model: last.model, tokensPerSecond: last.tokensOut / (last.writing / 1000) }
+      response.writeHead(200, { 'content-type': 'application/json' })
+      response.end(JSON.stringify({ ...here, speed, system }))
       return
     }
 
@@ -1924,6 +2000,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
      * for, in its author's words — and `disable` is its cheap opposite: the process stops and
      * everything it owns stays. `delete` is the one that removes things, which is why the
      * screen puts it a step further back and why invariant 5 is the check that guards it.
+     * `restart` is the page's answer to a pane carrying `state: 'unhealthy'` (D204).
      */
     if (url.pathname === '/api/plugin' && request.method === 'POST') {
       const asked = sent as { id?: string; action?: string }
@@ -1936,6 +2013,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
       if (asked.action === 'enable') plugins.enable(id)
       else if (asked.action === 'disable') await plugins.disable(id)
       else if (asked.action === 'delete') await plugins.purge(id)
+      else if (asked.action === 'restart') plugins.restart(id)
       else {
         response.writeHead(200, { 'content-type': 'application/json' })
         response.end(JSON.stringify({ ok: false, said: `“${asked.action ?? ''}” is not something to do to a plugin.` }))
@@ -2011,8 +2089,11 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
             // Whether a signature can be checked at all. `false` is shown, because an
             // unverified signature is exactly as good as none and must not look better.
             verifying: library.publisherKey !== undefined,
+            // A placeholder (`coming_soon: true`, D204) passes through whatever its protocol
+            // says, because it has none: it is a name on the shelf, drawn greyed, and
+            // `/api/library/install` refuses it in words.
             plugins: shelf
-              .filter((entry) => entry.offer === 'ok')
+              .filter((entry) => entry.offer === 'ok' || entry.coming_soon === true)
               .map((entry) => ({ ...entry, installed: installed.has(entry.id) })),
             updates: updates
               .filter((row) => row.offer === 'ok')
@@ -2025,7 +2106,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
              * actionable, and the list arrives with the update that makes it real.
              */
             needsNewerApp: {
-              plugins: shelf.filter((entry) => entry.offer === 'newer-app' && !installed.has(entry.id)).length,
+              plugins: shelf.filter((entry) => entry.offer === 'newer-app' && entry.coming_soon !== true && !installed.has(entry.id)).length,
               updates: updates.filter((row) => row.offer === 'newer-app').length,
             },
             skills: offered.map((entry) => ({ ...entry, installed: here.has(entry.name) })),

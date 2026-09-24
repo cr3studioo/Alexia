@@ -2100,6 +2100,11 @@ export async function send(
     const usage = run.answer?.usage ?? { in: 0, out: 0 }
     const cost = costOf(run.choice.model, usage)
     if (left !== undefined) left -= cost
+    // **Writing time** (D204): from this attempt's first sign of life — the first streamed word,
+    // reasoning or tool call — to the moment its stream ended. Not from the request going out:
+    // that is `waited` plus this, and a cold local model spending ten seconds loading would read
+    // as a slow writer. No sign, no number, rather than one that looks measured and is not.
+    const writing = run.signed === undefined ? undefined : (run.finished ?? Date.now()) - run.signed
     if (source !== 'test') store.recordUsage({
       session: hooks.session,
       plugin: hooks.plugin,
@@ -2112,6 +2117,7 @@ export async function send(
       tokensIn: usage.in,
       tokensOut: usage.out,
       cost,
+      ...(writing !== undefined && { writing }),
     })
   }
 

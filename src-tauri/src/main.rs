@@ -25,6 +25,7 @@
 //! parsing of anything the core says. If something needs deciding, it is decided on the
 //! other side of the port.
 
+mod temps;
 mod vault;
 
 use std::net::TcpListener;
@@ -39,6 +40,7 @@ use tauri_plugin_autostart::MacosLauncher;
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 use tauri_plugin_shell::process::CommandChild;
 use tauri_plugin_shell::ShellExt;
+use temps::system_temps;
 
 /// The summon. One combination, shown once at first run and then never again.
 ///
@@ -226,7 +228,7 @@ fn main() {
         // does *not* stop the process — which is how quitting used to leave a core running
         // with the database open, and the next launch made a second one beside it.
         .manage(Mutex::<Option<CommandChild>>::new(None))
-        .invoke_handler(tauri::generate_handler![tray_state, hide_overlay, relaunch])
+        .invoke_handler(tauri::generate_handler![tray_state, hide_overlay, relaunch, system_temps])
         .setup(move |app| {
             let handle = app.handle().clone();
 

@@ -34,6 +34,10 @@
   --space-6: 2rem;
   --space-8: 3rem;
 
+  /* The strip along the bottom of the window that belongs to the corner and its pill: as tall
+     as the 48-pixel corner, and the board ends above it. */
+  --corner-strip: 3rem;
+
   --radius-sm: 0.375rem;
   --radius-md: 0.5rem;
   --radius-lg: 0.75rem;
@@ -210,35 +214,58 @@ body {
     sans-serif;
 }
 
-/* The shell: three panels laid on a ground that is allowed to show between them.
+/* The board (D204): pages of glass laid on a ground that is allowed to show between them.
 
-   The gaps are the design. A panel that runs edge to edge against its neighbour needs a
-   rule to separate them, and a screen of rules is what made the old header read as a stack
-   of pills — here the ground does that job and costs nothing. */
-#shell {
-  display: grid;
-  grid-template-columns: 17rem 0.875rem minmax(0, 1fr) 0.875rem 25.5rem;
-  padding: var(--space-4);
+   The gaps are the design. A page that runs edge to edge against its neighbour needs a rule
+   to separate them, and a screen of rules is what made the old header read as a stack of
+   pills — here the ground does that job and costs nothing. `layout.ts` keeps one empty dot
+   between any two pages so there is always a gap to do it.
+
+   The board scrolls and the body does not: a page placed below the window is still on the
+   board, and somebody who put it there can reach it. */
+#board {
+  position: relative;
   min-height: 0;
+  /* The strip along the bottom is the corner's, and nothing of the board's is ever in it: the
+     pill comes out into it, and in edit view it stays there. Put anywhere over the board, the
+     pill sat on a page — General's Activity and Settings in the corner, Chat's composer in the
+     middle — and no single spot is free on every arrangement. So the board ends above the
+     strip, in both views, and a page is never drawn under the pill. */
+  margin-bottom: var(--corner-strip);
+  overflow-x: hidden;
+  overflow-y: auto;
+  /* A board taller than the window says so: the thin bar is always drawn, not only while the
+     wheel is turning, because a page below the fold is otherwise a page nobody knows is there. */
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
 }
 
-/* Settings and Control are read at width, and neither has anything running beside it. */
-body[data-view='settings'] #shell,
-body[data-view='control'] #shell {
-  grid-template-columns: 17rem 0.875rem minmax(0, 1fr);
+/* Hidden until board.ts has placed every page. One frame of nothing beats one frame of every
+   page stacked at the top-left and then flying to its spot. */
+#board:not([data-ready]) {
+  visibility: hidden;
 }
 
-body[data-view='settings'] #live,
-body[data-view='control'] #live,
-body[data-view='settings'] .grip-b,
-body[data-view='control'] .grip-b {
-  display: none;
+.board-field {
+  position: relative;
+  min-height: 100%;
 }
 
-/* And the rail goes with it. Before there is a model or a spend, a model badge and a spend
-   are noise — and the mark and the name were being drawn twice, because that view carries its
-   own. A view that stands alone stands alone. */
-body[data-view='first-run'] #shell {
+/* Every page: an absolutely placed pane on its dots. board.ts writes the four numbers. */
+.page {
+  position: absolute;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  overflow: hidden;
+}
+
+/* First run stands alone: before there is a model or a spend, a board of them is noise, and
+   the mark and the name were being drawn twice. So is the way into edit view. */
+body[data-view='first-run'] #board,
+body[data-view='first-run'] #corner {
   display: none;
 }
 
@@ -262,13 +289,18 @@ body[data-view='first-run'] #shell {
   min-height: 0;
 }
 
-/* Three panels that can be dragged apart. The grip is the whole affordance — 3px of line in
-   the gutter, and nothing else in the gap. */
+/* The two column grips. The grip is the whole affordance — 3px of line in the gutter, and
+   nothing else in the gap. It sits on a guide (D204), as tall as the pages it moves, and is
+   hidden when it would move none. */
 .grip {
+  position: absolute;
+  z-index: 2;
+  width: 25px;
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: col-resize;
+  touch-action: none;
 }
 
 .grip span {
@@ -278,8 +310,17 @@ body[data-view='first-run'] #shell {
   background: var(--line);
 }
 
-.grip:hover span {
+.grip:hover span,
+.grip.held span,
+.grip:focus-visible span {
   background: var(--line-strong);
+}
+
+/* Grips are for the normal view. Edit view has its own handles on every page, and the one
+   column of a narrow window has no columns to move. */
+#board.editing .grip,
+#board.compact .grip {
+  display: none;
 }
 
 /* Numbers that are compared. A figure that changes width as it counts looks like it is
@@ -308,10 +349,7 @@ body[data-view='first-run'] #shell {
    look like a figure. */
 
 #rail {
-  display: flex;
-  flex-direction: column;
   gap: var(--space-3);
-  padding: var(--space-4);
   overflow-y: auto;
   overflow-x: hidden;
 }
@@ -423,16 +461,15 @@ body[data-view='first-run'] #shell {
    makes "first run and the composer are never on screen together" structural rather than a
    rule somebody has to remember: on this view the composer is not rendered at all.
 
-   Four of them now (M6-2). Written as "hide every view that is not this one" rather than as
-   a matrix: the matrix was twelve lines at three views and the fourth would have made it
-   twenty, and a list that grows by n every time is a list somebody eventually gets wrong by
-   one. Each view keeps its own `display` further down — `#chat` is a grid — which is why
-   this rule only ever says `none`. */
+   Four of them (M6-2), and since D204 only first run replaces anything: the conversation is
+   a page on the board, and Settings and Control are a sheet over it, so each rule below says
+   when one thing is *not* shown and the board stays underneath. Each keeps its own `display`
+   further down — `#chat` is a grid — which is why these only ever say `none`. */
 
-body[data-view='first-run'] .view:not(#first-run),
-body[data-view='chat'] .view:not(#chat),
-body[data-view='settings'] .view:not(#settings),
-body[data-view='control'] .view:not(#control) {
+body:not([data-view='first-run']) #first-run,
+body:not([data-view='settings']) #settings,
+body:not([data-view='control']) #control,
+body:not([data-view='settings']):not([data-view='control']) #sheet {
   display: none;
 }
 
@@ -2543,10 +2580,50 @@ button[disabled] {
    talking. Yours keep a shape, because on a page of her prose the thing worth finding is
    what you asked. */
 
+/* Every row is named and every part is put in its own, so a part that is hidden leaves its row
+   empty rather than moving the rest up one. Placed by order, Chat at S — whose heading is
+   hidden — put the composer in the conversation's stretching row, and it grew to the height of
+   the page as a slab of solid surface. The one column is `minmax(0, 1fr)` for the same kind of
+   reason: an `auto` column is as wide as the widest thing's minimum, and the composer's was
+   wider than a narrow page, which pushed Send past its edge. */
 #chat {
   display: grid;
-  grid-template-rows: auto 1fr auto auto auto auto;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto auto auto auto auto auto;
+  grid-template-areas: 'top' 'log' 'prompt' 'paid' 'note' 'menu' 'attached' 'ask';
   min-height: 0;
+}
+
+#chat-top {
+  grid-area: top;
+}
+
+#log {
+  grid-area: log;
+}
+
+#prompt {
+  grid-area: prompt;
+}
+
+#paid-note {
+  grid-area: paid;
+}
+
+#note {
+  grid-area: note;
+}
+
+#menu {
+  grid-area: menu;
+}
+
+#attached {
+  grid-area: attached;
+}
+
+#ask {
+  grid-area: ask;
 }
 
 /* The conversation's own name, and which model answered. */
@@ -2994,6 +3071,9 @@ button[disabled] {
 
 #ask textarea {
   flex: 1;
+  /* A text box's own minimum is twenty columns, which on a small page is wider than the room
+     left beside Attach and Send. It gives way to them, not they to it. */
+  min-width: 0;
   resize: none;
   max-height: 40vh;
   border-radius: var(--radius-md);
@@ -3008,6 +3088,15 @@ button[disabled] {
 #ask #attach {
   flex: none;
   cursor: pointer;
+  /* And the button's own box: a label gets none of the `button` rule, so it sat on the
+     composer as a bare word on a white patch, lower than the button beside it. */
+  display: inline-flex;
+  align-items: center;
+  padding: var(--space-3) var(--space-5);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  font-weight: 500;
+  line-height: var(--leading-tight);
 }
 
 /* ---- what is coming with the next message ------------------------------------------------
@@ -3240,11 +3329,16 @@ button[disabled] {
    The rail never moves; the middle is what changes. Settings and Control are the same panel
    with something else in it, which is why neither of them draws its own frame. */
 
-#stage {
+/* Settings and Control, as one sheet over the board (D204). They used to take the middle
+   column; now the board is somebody's own arrangement, and opening a settings screen should
+   not rearrange it. The same glass as the pages, a little in from the edges, over all of it. */
+#sheet {
+  position: fixed;
+  inset: var(--space-4);
+  z-index: 30;
   display: grid;
   min-height: 0;
   overflow: hidden;
-  position: relative;
 }
 
 #settings,
@@ -3257,7 +3351,8 @@ button[disabled] {
    nothing on most of them. */
 #rail::-webkit-scrollbar,
 #log::-webkit-scrollbar,
-#live::-webkit-scrollbar,
+#board::-webkit-scrollbar,
+.page-body::-webkit-scrollbar,
 #settings::-webkit-scrollbar,
 #control::-webkit-scrollbar,
 .detail-body::-webkit-scrollbar,
@@ -3267,13 +3362,20 @@ button[disabled] {
 
 #rail::-webkit-scrollbar-thumb,
 #log::-webkit-scrollbar-thumb,
-#live::-webkit-scrollbar-thumb,
+#board::-webkit-scrollbar-thumb,
 #settings::-webkit-scrollbar-thumb,
 #control::-webkit-scrollbar-thumb,
 .detail-body::-webkit-scrollbar-thumb,
 .code::-webkit-scrollbar-thumb {
   background: var(--line);
   border-radius: var(--radius-full);
+}
+
+/* The board and a page's body scroll over the painting, where --line is the colour of the
+   ground itself; theirs is the stronger line, so the bar is there to be seen. */
+#board::-webkit-scrollbar-thumb,
+.page-body::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
 }
 
 /* ---- the rail's lists, which all open in place ----------------------------------------
@@ -3620,24 +3722,19 @@ kbd {
    why, and what the tool actually said. A person who wants to know what happened should not
    have to take the chat's word for it. */
 
-#live {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-  min-height: 0;
+[data-page='running'],
+[data-page='steps'] {
   overflow-y: auto;
 }
 
-#live > .panel {
-  padding: var(--space-4);
-  flex: none;
+[data-page='current-step'] {
+  gap: 0;
 }
 
-#live > .panel.grow {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
+/* Its name, like Running now and Steps have theirs — with no step picked the page was a
+   sentence with nothing saying what it was the page of. The gap the page itself does not keep. */
+[data-page='current-step'] > .rail-label {
+  margin-bottom: var(--space-2);
 }
 
 .detail-head {
@@ -4023,4 +4120,469 @@ kbd {
 .bento-small .bento-label {
   grid-column: 1 / -1;
   margin: var(--space-2) 0 0;
+}
+
+/* ---- the board's pages at their sizes (D204) -------------------------------------------
+
+   A page's size is a tier — S, M or L — and the tier decides what it shows. board.ts writes
+   `data-tier` on the page; everything below is what each page does with it. Nothing here
+   changes what a page *is*: the markup is the same at every size, and a tier only hides. */
+
+/* Chat carries its own padding in its parts, and at L the conversations sit beside it. */
+[data-page='chat'] {
+  padding: 0;
+  flex-direction: row;
+  gap: 0;
+}
+
+[data-page='chat'] > #chat {
+  flex: 1;
+  min-width: 0;
+}
+
+.chat-recent {
+  display: none;
+  flex: none;
+  width: 12rem;
+  padding: var(--space-4) var(--space-2) var(--space-4) var(--space-4);
+  border-right: 1px solid var(--line);
+  overflow-y: auto;
+}
+
+[data-page='chat'][data-tier='L'] > .chat-recent {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+/* S: the last thing said, and the box to answer in. The heading and the history go. */
+[data-page='chat'][data-tier='S'] #chat-top,
+[data-page='chat'][data-tier='S'] #log > :not(:last-child) {
+  display: none;
+}
+
+/* Price: the figure at S, what it is measured against at M, the day and the month at L. */
+.price-more {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.price-more .hint {
+  margin: 0;
+}
+
+[data-page='price'][data-tier='S'] .price-more,
+[data-page='price']:not([data-tier='L']) .price-both {
+  display: none;
+}
+
+[data-page='price'] .money-value {
+  font-family: var(--serif);
+  font-size: var(--text-xl);
+  font-weight: 400;
+}
+
+/* A page drawn from a manifest, or from local stats: a heading and whatever fits under it.
+
+   What does not fit scrolls, and says so twice: a thin bar that is always drawn, and the last
+   lines fading out while there is more below. Without either, a page cut at its bottom edge
+   read as a sentence that simply stopped. The fade follows the scroll — gone at the end, and
+   never there on a page that fits — where the engine can tie an animation to it; elsewhere
+   the bar says it alone. */
+@property --more {
+  syntax: '<length>';
+  inherits: false;
+  initial-value: 0px;
+}
+
+.page-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - var(--more)), transparent);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - var(--more)), transparent);
+}
+
+@supports (animation-timeline: scroll()) {
+  .page-body {
+    animation: more-below linear both;
+    animation-timeline: scroll(self);
+  }
+}
+
+@keyframes more-below {
+  from {
+    --more: 2.5rem;
+  }
+  /* Held until the last few lines, then gone by the end. */
+  85% {
+    --more: 2.5rem;
+  }
+  to {
+    --more: 0px;
+  }
+}
+
+/* Local stats' machine half. Numbers are the content, so they are the serif figures Price uses;
+   everything else is the rail's quiet small type. The bars are --chosen because they are the
+   machine doing something; memory's badge is the only thing here that turns caution or danger,
+   and only when the system itself says so. */
+.machine-glance,
+.machine-temps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.machine-figure,
+.machine-temp {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.machine-figure {
+  flex: 1;
+}
+
+.machine-temp {
+  flex: 1 1 4.5rem;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+}
+
+.machine-value {
+  font-family: var(--serif);
+  font-size: var(--text-xl);
+  line-height: var(--leading-tight);
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.machine-what,
+.machine-up {
+  font-size: var(--text-xs);
+  color: var(--ink-quiet);
+}
+
+.machine-row {
+  display: grid;
+  grid-template-columns: 4.5rem minmax(0, 1fr) 3rem;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--ink-quiet);
+}
+
+.machine-row .value {
+  text-align: right;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.machine-row .bar > span {
+  background: var(--chosen);
+}
+
+/* The last few minutes, under the bar it belongs to: 0–100 like the bar, so the two agree. */
+.machine-row .spark {
+  grid-column: 2 / 3;
+  width: 100%;
+  height: 1.25rem;
+  color: var(--chosen);
+  opacity: 0.8;
+}
+
+.machine-memory {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.badge.danger {
+  background: color-mix(in oklab, var(--danger) 14%, transparent);
+  color: var(--danger);
+}
+
+/* ---- edit view ------------------------------------------------------------------------
+
+   The dots appear, the ground is washed back so the pages read as things to pick up, and every
+   page grows two handles: the whole of it to move, the corner to size one that scales. */
+
+.board-dots {
+  display: none;
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-color: color-mix(in oklab, var(--surface) 55%, transparent);
+  background-image: radial-gradient(circle, color-mix(in oklab, var(--ink) 55%, transparent) 1.4px, transparent 2px);
+  background-size: 25px 25px;
+}
+
+#board.editing .board-dots {
+  display: block;
+}
+
+.page-grab,
+.page-size {
+  display: none;
+}
+
+#board.editing .page-grab {
+  display: block;
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-lg);
+  background: transparent;
+  cursor: grab;
+  touch-action: none;
+}
+
+#board.editing.compact .page-grab {
+  cursor: pointer;
+}
+
+#board.editing .page-size:not([hidden]) {
+  display: flex;
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  z-index: 4;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  align-items: flex-end;
+  justify-content: flex-end;
+  border: 0;
+  background: transparent;
+  color: var(--ink-quiet);
+  cursor: nwse-resize;
+  touch-action: none;
+}
+
+/* The page in the hand. No blur while it moves — thirty pixels of backdrop repainting on every
+   frame is the stutter — and a ring that says whether letting go here will work. */
+.page.lifted {
+  z-index: 5;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  background: color-mix(in oklab, var(--surface-raised) 92%, transparent);
+  box-shadow: 0 24px 60px -16px rgb(0 0 0 / 45%);
+}
+
+.page.lifted .page-grab {
+  cursor: grabbing;
+}
+
+.page.picked {
+  box-shadow:
+    0 10px 40px -12px rgb(0 0 0 / 25%),
+    0 0 0 2px var(--chosen);
+}
+
+.page.lifted.lands {
+  box-shadow:
+    0 24px 60px -16px rgb(0 0 0 / 45%),
+    0 0 0 2px var(--chosen);
+}
+
+.page.lifted.blocked {
+  box-shadow:
+    0 24px 60px -16px rgb(0 0 0 / 45%),
+    0 0 0 2px var(--danger);
+}
+
+/* The tapped page's bar: its name, its sizes, and a way off the board. */
+.page-bar {
+  position: absolute;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 2.75rem;
+  /* Never wider than the board: board.ts keeps it in from both sides, which needs it to fit. */
+  max-width: calc(100% - 2 * var(--space-2));
+  box-sizing: border-box;
+  padding: var(--space-1) var(--space-2) var(--space-1) var(--space-4);
+  white-space: nowrap;
+  font-size: var(--text-sm);
+}
+
+.page-tiers {
+  display: flex;
+  gap: 2px;
+}
+
+.page-tier {
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  background: transparent;
+  color: var(--ink);
+}
+
+.page-tier:hover {
+  background: var(--wash);
+}
+
+.page-tier[aria-pressed='true'] {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.page-note {
+  font-family: var(--mono);
+  font-size: var(--text-xs);
+  color: var(--ink-quiet);
+  white-space: normal;
+}
+
+.page-bar .quiet-button {
+  padding: var(--space-2) var(--space-3);
+}
+
+.quiet-button.danger {
+  color: var(--danger);
+}
+
+/* ---- the corner, and the pill that comes out of it --------------------------------------
+
+   48 pixels in the bottom-left. Resting there for a moment slides the pill out to the right;
+   Tab reaches it too, because the pill is always in the page, only moved out of sight. In
+   edit view it stays out and becomes Add page · Reset · Done. */
+
+#corner {
+  position: fixed;
+  left: 0;
+  bottom: 0;
+  z-index: 20;
+  width: 48px;
+  height: 48px;
+}
+
+/* In the strip under the board (`#board`'s margin), so it covers no page in either view. */
+.edit-pill {
+  position: absolute;
+  left: var(--space-3);
+  bottom: var(--space-1);
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border-radius: var(--radius-full);
+  white-space: nowrap;
+  opacity: 0;
+  transform: translateX(-110%);
+  pointer-events: none;
+  transition:
+    transform 180ms ease-out,
+    opacity 180ms ease-out;
+}
+
+#corner.out .edit-pill,
+.edit-pill:focus-within {
+  opacity: 1;
+  transform: none;
+  pointer-events: auto;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .edit-pill {
+    transition: none;
+  }
+}
+
+.pill-button {
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--ink);
+  font-size: var(--text-sm);
+  font-weight: 400;
+}
+
+.pill-button:hover {
+  background: var(--wash);
+}
+
+.pill-button.quiet {
+  color: var(--ink-quiet);
+}
+
+.pill-button.done {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+/* Add page: what is not on the board, then what is only a promise, greyed. */
+.add-menu {
+  position: fixed;
+  /* Straight above the pill, which is in the bottom-left strip whenever this list can open. It
+     is the one thing here that opens over a page, and only while it is being chosen from. */
+  left: var(--space-3);
+  bottom: calc(var(--corner-strip) + var(--space-1));
+  z-index: 21;
+  display: flex;
+  flex-direction: column;
+  width: 17rem;
+  max-width: calc(100vw - 2 * var(--space-3));
+  max-height: 60vh;
+  overflow-y: auto;
+  box-sizing: border-box;
+  padding: var(--space-1);
+}
+
+.add-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--ink);
+  font-size: var(--text-sm);
+  font-weight: 400;
+  text-align: left;
+}
+
+button.add-row:hover {
+  background: var(--wash);
+}
+
+.add-row.soon {
+  color: var(--ink-faint);
+}
+
+.add-soon {
+  margin-left: auto;
+  font-size: var(--text-xs);
+}
+
+.add-menu > .nothing {
+  padding: var(--space-2) var(--space-3);
+}
+
+/* "Voice page added." Said for three seconds, where the pill is, and never in the way. */
+.board-note {
+  position: fixed;
+  left: 50%;
+  bottom: var(--space-4);
+  z-index: 22;
+  transform: translateX(-50%);
+  margin: 0;
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-full);
+  font-size: var(--text-sm);
 }

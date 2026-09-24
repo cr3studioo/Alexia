@@ -4,7 +4,7 @@
   "id": "persona",
   "name": "Personality",
   "summary": "Write Alexia a personality in your own words, save as many as you like, and switch between them.",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "license": "AGPL-3.0-only",
   "entry": {
     "run": "node",
@@ -12,7 +12,7 @@
       "index.js"
     ]
   },
-  "alexia_protocol": 10,
+  "alexia_protocol": 12,
   "mcp_protocol": "2025-11-25",
   "requires": [
     { "cap": "memory.remember", "why": "to offer the facts about you it found in your description to long-term memory, once, when you press the button" }
@@ -129,6 +129,14 @@
       "label": "State"
     }
   ],
+  "page": {
+    "title": "Personality",
+    "sizes": {
+      "S": { "at": [8, 4], "show": ["state"] },
+      "M": { "at": [12, 8], "show": ["state", "hear_first", "saved", "plainly"] }
+    },
+    "fixed": false
+  },
   "commands": [
     {
       "name": "persona",

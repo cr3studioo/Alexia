@@ -4,7 +4,7 @@
   "id": "memory",
   "name": "Long-term memory",
   "summary": "Remembers things across conversations, and always knows the few you pin — your name, how to talk to you. Can also write things down by itself, once you turn that on.",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "license": "AGPL-3.0-only",
   "entry": {
     "run": "node",
@@ -12,7 +12,7 @@
       "index.js"
     ]
   },
-  "alexia_protocol": 11,
+  "alexia_protocol": 12,
   "mcp_protocol": "2025-11-25",
   "requires": [],
   "provides": [
@@ -281,6 +281,31 @@
         ]
       }
     ]
+  },
+  "page": {
+    "title": "Memory",
+    "sizes": {
+      "M": {
+        "at": [
+          12,
+          10
+        ],
+        "show": [
+          "remembered_tree"
+        ]
+      },
+      "L": {
+        "at": [
+          20,
+          14
+        ],
+        "show": [
+          "remembered_tree",
+          "remembered_list"
+        ]
+      }
+    },
+    "fixed": false
   },
   "lifetime": "resident"
 }

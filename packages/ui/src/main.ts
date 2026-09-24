@@ -11,6 +11,9 @@
  * bill.
  */
 
+import { escapeTakes, mountBoard } from './board.js'
+import type { Layout } from './layout.js'
+import { drawPrice } from './pages.js'
 import { autostart, dismiss, HOTKEY, inApp, installUpdate, setAutostart, tray, updateAvailable } from './desktop.js'
 import { mountControl } from './control.js'
 import { mountPalette } from './palette.js'
@@ -102,9 +105,23 @@ interface State {
   notHer?: boolean
   providers: Provider[]
   commands: Command[]
+  /** The board's arrangement (D204). `null` is the default; absent is a core that predates it. */
+  layout?: Layout | null
+  /** Other ways in that are connected (D204) — whether taking Chat off the board needs asking. */
+  channels?: number
 }
 
 const token = document.querySelector<HTMLElement>('[data-token]')?.dataset.token ?? ''
+
+/**
+ * The board (D204), placed before anything else is drawn into it: the layout the head script
+ * left is read synchronously here, so the first frame is somebody's own arrangement rather
+ * than the default with a jump to follow. Core's copy arrives with the first state read.
+ */
+const board = mountBoard(document.querySelector<HTMLElement>('#board')!, token)
+
+/** One of the board's pages, by the name the layout knows it by. */
+const page = (id: string): HTMLElement => document.querySelector<HTMLElement>(`[data-page="${id}"]`)!
 const log = document.querySelector<HTMLElement>('#log')!
 const note = document.querySelector<HTMLElement>('#note')!
 const modelBadge = document.querySelector<HTMLElement>('#model')!
@@ -745,6 +762,9 @@ function show(view: 'first-run' | 'chat' | 'settings' | 'control'): void {
   document.body.dataset.view = view
 }
 
+/** Whether Settings or Control is the sheet over the board right now. */
+const sheetOpen = (): boolean => document.body.dataset.view === 'settings' || document.body.dataset.view === 'control'
+
 function firstRun(state: State): void {
   const connect = document.querySelector<HTMLElement>('#connect')!
   const name = document.querySelector<HTMLInputElement>('#name')!
@@ -1188,10 +1208,13 @@ function paint(state: State): void {
     day && day.allowance > 0 ?
       `Spent ${money(day.spent)} of ${money(day.allowance)} today.`
     : 'No daily allowance, so nothing is spent without you asking for it.'
+  drawPrice(page('price'), state)
 }
 
 async function load(): Promise<void> {
   const state = await read()
+  board.adopt(state.layout)
+  board.reach(state.channels)
   called(state.setup.name)
   known = state.commands
   for (const picker of modes) picker.value = state.setup.mode
@@ -1298,7 +1321,7 @@ async function* frames(body: ReadableStream<Uint8Array>): AsyncGenerator<Record<
  * So the conversation keeps one line — the names, and a way through — and `live.ts` has the
  * rest: the arguments, the plugin, what it holds and why, and what came back.
  */
-const live = mountLive(token)
+const live = mountLive(token, { running: page('running'), steps: page('steps'), current: page('current-step') })
 
 /**
  * The one line the conversation keeps about a run of tool calls.
@@ -2054,23 +2077,29 @@ if (inApp()) {
   box.addEventListener('change', () => setAutostart(box.checked))
 }
 
-document.querySelector('#close-settings')!.addEventListener('click', () => {
+/**
+ * Put the sheet away and go back to the board. Settings can install, enable, disable and
+ * remove plugins, and each of those can add or take away a page, so the board re-reads; the
+ * Chats tab under Control can change which conversation is open, so that re-reads too.
+ */
+function closeSheet(): void {
+  const was = document.body.dataset.view
   show('chat')
   text.focus()
-})
+  void board.refresh()
+  // The Chats tab is behind Control (M8-2), so which conversation is open may have changed
+  // while it was on screen. Re-read rather than remember: the shell does not track the open
+  // conversation, and core is one localhost call away.
+  if (was === 'control') void read().then(paint)
+}
+
+document.querySelector('#close-settings')!.addEventListener('click', closeSheet)
 
 // ---- the control surface (M6-2) ---------------------------------------------------------
 
 const control = mountControl(token)
 
-document.querySelector('#close-control')!.addEventListener('click', () => {
-  show('chat')
-  text.focus()
-  // The Chats tab is behind this button (M8-2), so which conversation is open may have
-  // changed while it was on screen. Re-read rather than remember: the shell does not track
-  // the open conversation, and core is one localhost call away.
-  void read().then(paint)
-})
+document.querySelector('#close-control')!.addEventListener('click', closeSheet)
 
 text.addEventListener('input', showMenu)
 for (const picker of modes) picker.addEventListener('change', () => void command(`/${picker.value}`))
@@ -2162,7 +2191,18 @@ const palette = mountPalette(token, (tab, filter) => {
   }
   show('control')
   control.open(tab, filter)
-})
+}, [
+  // The shell's own entry (D204): the same edit view the bottom-left corner opens.
+  {
+    label: 'Edit layout',
+    detail: 'Move, size, add and remove pages',
+    words: ['edit', 'layout', 'board', 'pages', 'arrange', 'view'],
+    run: () => {
+      if (sheetOpen()) show('chat')
+      board.edit(true)
+    },
+  },
+])
 
 // Escape puts the overlay away, and **puts it away without cancelling anything**: the task
 // carries on and the tray goes on saying so. Stop is a separate control on purpose — a key
@@ -2173,7 +2213,14 @@ document.addEventListener('keydown', (event) => {
     palette.open()
     return
   }
-  if (event.key === 'Escape') dismiss()
+  // Escape takes one step back, and only the last one is putting the window away: out of
+  // edit view first, then off the sheet, then the overlay.
+  if (event.key === 'Escape') {
+    const step = escapeTakes(board.editing(), sheetOpen())
+    if (step === 'edit') board.edit(false)
+    else if (step === 'sheet') closeSheet()
+    else dismiss()
+  }
 })
 
 /**
@@ -2181,7 +2228,10 @@ document.addEventListener('keydown', (event) => {
  * palette, and a rail that could open a control surface that did not exist yet would be a
  * button that does nothing on the first press and works on the second.
  */
-const rail = mountRail(token, {
+const rail = mountRail(document.querySelector<HTMLElement>('#rail')!, token, {
+  heading: document.querySelector<HTMLElement>('#chat-title')!,
+  alsoInto: document.querySelector<HTMLElement>('#chat-recent')!,
+  refreshed: () => void board.refresh(),
   openPalette: () => palette.open(),
   openControl: (tab, filter) => {
     show('control')

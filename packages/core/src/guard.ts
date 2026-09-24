@@ -119,7 +119,13 @@ export const ROUTES: Readonly<Record<string, Route>> = {
 
   '/api/setup': {
     otherwise: safe(
-      'The first-run answers plus the theme, each written by the screen that shows it and each writable again. The only thing it can replace is a provider key, and only with one somebody has just typed into the box beside it.',
+      'The first-run answers plus the theme and where the pages sit, each written by the screen that shows it and each writable again. The only thing it can replace is a provider key, and only with one somebody has just typed into the box beside it.',
+    ),
+  },
+
+  '/api/local-stats': {
+    otherwise: read(
+      'The models on this machine and the ones in memory, read from Ollama’s own listing, and how busy, full and warm the machine is, read from the operating system’s own counters. It loads nothing, downloads nothing and writes nothing, and when Ollama is not there it says so rather than failing.',
     ),
   },
 
@@ -185,6 +191,9 @@ export const ROUTES: Readonly<Record<string, Route>> = {
       ),
       disable: safe(
         'The process stops and everything it owns stays: its folder, its settings, its stored data, its keychain entries. It is the cheap opposite of enable, which is why the screen offers it first.',
+      ),
+      restart: safe(
+        'A plugin the supervisor switched off after stopping too often is allowed to start again. It clears a tally and nothing else — nothing is deleted, nothing new is consented to, and if it keeps stopping the supervisor switches it off again.',
       ),
     },
     // `delete`, and anything nobody declared, lands here. Purge is the whole reason this

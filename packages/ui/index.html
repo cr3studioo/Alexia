@@ -24,166 +24,222 @@
           var gb = Math.round(glass * 0.5)
           document.documentElement.style.setProperty('--glass-filter', gb === 0 ? 'none' : 'blur(' + gb + 'px)')
         }
+        // And the board's layout (D204), for the same reason: a layout that waited for
+        // /api/state would paint the default and then jump. Only the shape is checked here;
+        // src/board.ts reads the string off the root element and does the rest.
+        var layout = localStorage.getItem('alexia.layout')
+        if (layout) {
+          var parsed = JSON.parse(layout)
+          if (parsed && parsed.v === 1 && parsed.pages instanceof Array) document.documentElement.dataset.layout = layout
+        }
       } catch (unavailable) {
-        /* Storage off. One frame of the desktop's own theme, then core's answer. */
+        /* Storage off, or a copy that does not parse. One frame of the desktop's own theme
+           and the default board, then core's answer. */
       }
     </script>
   </head>
   <!-- Four views, one at a time. `data-view` is the switch, which is what makes "first run
        and the composer are never on screen together" structural: on the first-run view the
-       shell is not rendered at all, rather than hidden and hoping. -->
+       board is not rendered at all, rather than hidden and hoping. Settings and Control are
+       a sheet over the board, so on those two the board is still there underneath. -->
   <body data-view="chat">
-    <!-- Three panels on a ground that is allowed to show between them. The rail never moves;
-         the middle is what changes. -->
-    <div id="shell">
-      <!-- Identity, then which conversation, then the four things somebody changes. The old
-           header's job turned on its side and given room: a control you can change, a status
-           the app is reporting and a number that matters are three different things, and
-           they used to be three identical pills in a row. -->
-      <aside id="rail" class="panel">
-        <div class="brand">
-          <span class="mark" aria-hidden="true"></span>
-          <span class="name">Alexia</span>
-        </div>
-        <span class="band" aria-hidden="true"></span>
-
-        <button id="new-chat" type="button" title="Start an empty conversation">New chat</button>
-
-        <!-- The command palette's own entry, for people who do not know the shortcut yet. A
-             shortcut nobody can discover is a feature for whoever wrote it. -->
-        <button id="find" class="rail-row" type="button">
-          <span class="what">Find a run, a skill, a tool</span>
-          <kbd>Ctrl K</kbd>
-        </button>
-
-        <!-- The three most recent, and a way to the rest. Named by the first thing you said
-             in each — Alexia writes no title for them, because your own words are already on
-             disk and a second name is a second thing that can be wrong. -->
-        <div class="rail-group">
-          <p class="rail-label"><span>Recent</span><span class="count" id="recent-count"></span></p>
-          <div id="recent"></div>
-          <button id="recent-more" class="more" type="button" hidden></button>
-        </div>
-
-        <div class="rail-group">
-          <div class="rail-tabs" role="tablist">
-            <button id="tab-setup" class="on" type="button" role="tab" aria-selected="true">Setup</button>
-            <button id="tab-plugins" type="button" role="tab" aria-selected="false">Plugins</button>
+    <!-- The board (D204): pages of glass on the painting, each on its dots. Where each one
+         sits is `src/board.ts`'s business and the arithmetic is `src/layout.ts`'s; this markup
+         is only what the pages hold. The columns the shell used to have are two guides in
+         that layout now, and the grips between them are drawn by the board and actually
+         move. Hidden until the board has placed everything, so nothing paints at a default
+         spot and jumps. -->
+    <div id="board">
+      <div class="board-field">
+        <!-- General: identity, which conversation, and the four things somebody changes. The
+             one page that cannot be taken off the board, because it holds the way back to
+             everything else. The old header's job turned on its side and given room. -->
+        <aside id="rail" class="page panel" data-page="general" aria-label="General">
+          <div class="brand">
+            <span class="mark" aria-hidden="true"></span>
+            <span class="name">Alexia</span>
           </div>
+          <span class="band" aria-hidden="true"></span>
 
-          <div id="rail-setup">
-            <!-- Which model, chosen by hand rather than by the router. The list opens in
-                 place: a popover anchored to a row in a column that scrolls is a popover
-                 that gets left behind. -->
-            <button id="model-row" class="rail-row" type="button" aria-expanded="false">
-              <span class="what">Model</span>
-              <span class="value" id="model-value">Automatic</span>
-              <svg class="chev" width="12" height="12" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
-                <path d="M5 8l5 5 5-5" />
-              </svg>
-            </button>
-            <div id="model-drop" class="drop" hidden></div>
+          <button id="new-chat" type="button" title="Start an empty conversation">New chat</button>
 
-            <!-- The UI equivalent of /local, /cloud and /combined. Every command has one: the
-                 commands are a shortcut for people who like them, never the only route. -->
-            <label class="rail-group">
-              <span class="rail-label">Where it runs</span>
-              <select class="mode rail-select" title="Where the work happens" aria-label="Where the work happens">
-                <option value="local">Local</option>
-                <option value="combined">Combined</option>
-                <option value="cloud">Cloud</option>
-              </select>
-            </label>
-
-            <!-- What Alexia may do unasked. The number one thing a person changes after being
-                 surprised once, so it is a control on the rail and not a settings page. -->
-            <label class="rail-group">
-              <span class="rail-label">What she may do</span>
-              <select id="permission" class="rail-select" title="What Alexia may do without asking"></select>
-            </label>
-          </div>
-
-          <!-- Every installed plugin, and the switch that turns it off. Delete the folder and
-               the row goes with it — nothing here names one. -->
-          <div id="rail-plugins" hidden></div>
-        </div>
-
-        <div class="rail-foot">
-          <button id="open-control" class="quiet-button" type="button" title="What Alexia has been doing, and what it knows">
-            Activity
+          <!-- The command palette's own entry, for people who do not know the shortcut yet. A
+               shortcut nobody can discover is a feature for whoever wrote it. -->
+          <button id="find" class="rail-row" type="button">
+            <span class="what">Find a run, a skill, a tool</span>
+            <kbd>Ctrl K</kbd>
           </button>
-          <button id="open-settings" class="quiet-button" type="button" title="What was asked at first run, plugins, and the skills installed">
-            Settings
-          </button>
-        </div>
-      </aside>
 
-      <div class="grip grip-a" aria-hidden="true"><span></span></div>
-
-      <!-- Whichever of the three screens is open. Settings and Control are the same panel
-           with something else in it, which is why neither draws its own frame. -->
-      <div id="stage" class="panel">
-        <div id="chat" class="view">
-          <div id="chat-top">
-            <h1 id="chat-title">New chat</h1>
-            <!-- Which model answered, so you know where your words went, and what state
-                 that leaves you in: what Alexia can still *do*, never what it cost. -->
-            <span id="model" class="status">no model yet</span>
-            <span id="rung" class="status rung" hidden></span>
-            <!-- Which personality is answering (plan-personality.md improvement 8). It sits
-                 with the model and the rung because it answers the same kind of question —
-                 *who am I talking to* — and because the alternative is that the only place
-                 which one is on can be read is a settings screen two clicks away. Hidden when
-                 none is chosen: that is Alexia's own voice, not a chip saying so. -->
-            <span id="character" class="status character" hidden></span>
+          <!-- The three most recent, and a way to the rest. Named by the first thing you said
+               in each — Alexia writes no title for them, because your own words are already on
+               disk and a second name is a second thing that can be wrong. -->
+          <div class="rail-group">
+            <p class="rail-label"><span>Recent</span><span class="count" id="recent-count"></span></p>
+            <div id="recent"></div>
+            <button id="recent-more" class="more" type="button" hidden></button>
           </div>
 
-          <main id="log" aria-live="polite"></main>
-
-          <!-- The permission prompt. It sits above the composer rather than over the page: a
-               modal here would cover what is being decided about. -->
-          <div id="prompt" hidden>
-            <p id="prompt-why"></p>
-            <div class="row">
-              <button id="allow" type="button">Allow once</button>
-              <button id="deny" type="button" class="quiet-button">Not this time</button>
+          <div class="rail-group">
+            <div class="rail-tabs" role="tablist">
+              <button id="tab-setup" class="on" type="button" role="tab" aria-selected="true">Setup</button>
+              <button id="tab-plugins" type="button" role="tab" aria-selected="false">Plugins</button>
             </div>
+
+            <div id="rail-setup">
+              <!-- Which model, chosen by hand rather than by the router. The list opens in
+                   place: a popover anchored to a row in a column that scrolls is a popover
+                   that gets left behind. -->
+              <button id="model-row" class="rail-row" type="button" aria-expanded="false">
+                <span class="what">Model</span>
+                <span class="value" id="model-value">Automatic</span>
+                <svg class="chev" width="12" height="12" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+                  <path d="M5 8l5 5 5-5" />
+                </svg>
+              </button>
+              <div id="model-drop" class="drop" hidden></div>
+
+              <!-- The UI equivalent of /local, /cloud and /combined. Every command has one: the
+                   commands are a shortcut for people who like them, never the only route. -->
+              <label class="rail-group">
+                <span class="rail-label">Where it runs</span>
+                <select class="mode rail-select" title="Where the work happens" aria-label="Where the work happens">
+                  <option value="local">Local</option>
+                  <option value="combined">Combined</option>
+                  <option value="cloud">Cloud</option>
+                </select>
+              </label>
+
+              <!-- What Alexia may do unasked. The number one thing a person changes after being
+                   surprised once, so it is a control on the rail and not a settings page. -->
+              <label class="rail-group">
+                <span class="rail-label">What she may do</span>
+                <select id="permission" class="rail-select" title="What Alexia may do without asking"></select>
+              </label>
+            </div>
+
+            <!-- Every installed plugin, and the switch that turns it off. Delete the folder and
+                 the row goes with it — nothing here names one. -->
+            <div id="rail-plugins" hidden></div>
           </div>
 
-          <!-- The line before a charge, in a place of its own (§4 G): a switch or a file note
-               in the line below must never be what takes a price off the screen. -->
-          <p id="paid-note" hidden></p>
+          <div class="rail-foot">
+            <button id="open-control" class="quiet-button" type="button" title="What Alexia has been doing, and what it knows">
+              Activity
+            </button>
+            <button id="open-settings" class="quiet-button" type="button" title="What was asked at first run, plugins, and the skills installed">
+              Settings
+            </button>
+          </div>
+        </aside>
 
-          <p id="note" hidden></p>
+        <!-- Chat, which can be taken off the board: for somebody who talks to Alexia from a
+             phone, the window is somewhere to watch her work. At L it gets the conversations
+             beside it; at S it is the last reply and the box to answer in. -->
+        <section class="page panel" data-page="chat" aria-label="Chat">
+          <aside id="chat-recent" class="chat-recent" aria-label="Conversations"></aside>
+          <div id="chat" class="view">
+            <div id="chat-top">
+              <h1 id="chat-title">New chat</h1>
+              <!-- Which model answered, so you know where your words went, and what state
+                   that leaves you in: what Alexia can still *do*, never what it cost. -->
+              <span id="model" class="status">no model yet</span>
+              <span id="rung" class="status rung" hidden></span>
+              <!-- Which personality is answering (plan-personality.md improvement 8). It sits
+                   with the model and the rung because it answers the same kind of question —
+                   *who am I talking to* — and because the alternative is that the only place
+                   which one is on can be read is a settings screen two clicks away. Hidden when
+                   none is chosen: that is Alexia's own voice, not a chip saying so. -->
+              <span id="character" class="status character" hidden></span>
+            </div>
 
-          <!-- A switch to another model, said for three seconds (§4 G). It is also kept on the
-               answer as a line, so the pop-up is the notice and never the record. -->
-          <p id="popup" role="status" aria-live="polite" hidden></p>
+            <main id="log" aria-live="polite"></main>
 
-          <!-- Typing `/` lists what there is, with a line each. Nobody is going to read
-               documentation to find a command. -->
-          <ul id="menu" hidden></ul>
+            <!-- The permission prompt. It sits above the composer rather than over the page: a
+                 modal here would cover what is being decided about. -->
+            <div id="prompt" hidden>
+              <p id="prompt-why"></p>
+              <div class="row">
+                <button id="allow" type="button">Allow once</button>
+                <button id="deny" type="button" class="quiet-button">Not this time</button>
+              </div>
+            </div>
 
-          <!-- What is coming with the next message. Above the composer rather than inside
-               it, because a file being carried is a thing to see and remove, not a thing to
-               type into. Empty and hidden until something is dropped, pasted or picked. -->
-          <ul id="attached" hidden></ul>
+            <!-- The line before a charge, in a place of its own (§4 G): a switch or a file note
+                 in the line below must never be what takes a price off the screen. -->
+            <p id="paid-note" hidden></p>
 
-          <form id="ask">
-            <!-- A label, not a button: the input it opens has to be a real file input, and a
-                 real file input is the only control that can hand a webview bytes. -->
-            <label id="attach" class="quiet-button" title="Attach a document">
-              Attach
-              <input id="file" type="file" multiple hidden />
-            </label>
-            <textarea id="text" rows="1" placeholder="Ask Alexia" autofocus></textarea>
-            <button type="submit">Send</button>
-            <!-- Not a cancel that takes effect at the end of the step. It works while a tool
-                 call is in flight, which is the only kind worth having. -->
-            <button id="stop" type="button" class="quiet-button" hidden>Stop</button>
-          </form>
-        </div>
+            <p id="note" hidden></p>
 
+            <!-- A switch to another model, said for three seconds (§4 G). It is also kept on the
+                 answer as a line, so the pop-up is the notice and never the record. -->
+            <p id="popup" role="status" aria-live="polite" hidden></p>
+
+            <!-- Typing `/` lists what there is, with a line each. Nobody is going to read
+                 documentation to find a command. -->
+            <ul id="menu" hidden></ul>
+
+            <!-- What is coming with the next message. Above the composer rather than inside
+                 it, because a file being carried is a thing to see and remove, not a thing to
+                 type into. Empty and hidden until something is dropped, pasted or picked. -->
+            <ul id="attached" hidden></ul>
+
+            <form id="ask">
+              <!-- A label, not a button: the input it opens has to be a real file input, and a
+                   real file input is the only control that can hand a webview bytes. -->
+              <label id="attach" class="quiet-button" title="Attach a document">
+                Attach
+                <input id="file" type="file" multiple hidden />
+              </label>
+              <textarea id="text" rows="1" placeholder="Ask Alexia" autofocus></textarea>
+              <button type="submit">Send</button>
+              <!-- Not a cancel that takes effect at the end of the step. It works while a tool
+                   call is in flight, which is the only kind worth having. -->
+              <button id="stop" type="button" class="quiet-button" hidden>Stop</button>
+            </form>
+          </div>
+        </section>
+
+        <!-- What she is doing, and exactly how, as three pages rather than one column. The
+             conversation says "computer.control" and stops; everything else about a step is
+             here — which plugin offers it, which capability it needed and the manifest's own
+             sentence for why, and what the tool actually said. -->
+        <section class="page panel" data-page="running" aria-label="Running now">
+          <p class="rail-label"><span>Running now</span><span class="count" id="running-count"></span></p>
+          <div id="running"></div>
+        </section>
+
+        <section class="page panel" data-page="steps" aria-label="Steps">
+          <p class="rail-label"><span>Steps</span><span class="count" id="step-count"></span></p>
+          <div id="trace"></div>
+        </section>
+
+        <section class="page panel" data-page="current-step" aria-label="Current step">
+          <p class="rail-label"><span>Current step</span></p>
+          <div class="detail-head" id="detail-head"></div>
+          <div class="detail-body" id="detail"></div>
+        </section>
+
+        <!-- The number that matters, and never a bare figure: the label is what stops "$0.00"
+             reading as decoration. Nobody is ever surprised by a bill. M adds what the figure
+             is measured against, L the day and the month side by side. -->
+        <section class="page panel" data-page="price" aria-label="Price">
+          <p class="money">
+            <span class="money-label">this month</span>
+            <span id="spend" class="money-value">$0.00</span>
+          </p>
+          <div class="price-more">
+            <div class="bar"><span id="spend-bar"></span></div>
+            <p class="hint" id="spend-against"></p>
+            <p class="hint price-both" id="spend-both"></p>
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <!-- Settings and Activity, as one sheet of glass over the board rather than a swap of the
+         middle: the board is somebody's arrangement, and opening a settings screen should not
+         rearrange it. Escape or Back closes it. Neither screen draws its own frame. -->
+    <div id="sheet" class="panel">
         <!-- The settings screen (M2-1), in two pages (M8-3). General is what first run asked
              and the know-how that is installed; Plugins is every plugin as a card, and one
              card each behind it. The tab strip is the control surface's, reused rather than
@@ -398,39 +454,16 @@
             <div id="panel"></div>
           </div>
         </section>
-      </div>
-
-      <div class="grip grip-b" aria-hidden="true"><span></span></div>
-
-      <!-- What she is doing, and exactly how. The conversation says "computer.control" and
-           stops; everything else about a step is here — which plugin offers it, which
-           capability it needed and the manifest's own sentence for why, and what the tool
-           actually said. A person who wants to know what happened should not have to take
-           the chat's word for it. -->
-      <div id="live">
-        <div class="panel">
-          <p class="rail-label"><span>Running now</span><span class="count" id="running-count"></span></p>
-          <div id="running"></div>
-        </div>
-
-        <div class="panel">
-          <p class="rail-label"><span>Steps</span><span class="count" id="step-count"></span></p>
-          <div id="trace"></div>
-        </div>
-
-        <div class="panel grow">
-          <div class="detail-head" id="detail-head"></div>
-          <div class="detail-body" id="detail"></div>
-        </div>
-
-        <!-- The number that matters, and never a bare figure: the label is what stops "$0.00"
-             reading as decoration. Nobody is ever surprised by a bill. -->
-        <p class="money">
-          <span class="money-label">this month</span>
-          <span id="spend" class="money-value">$0.00</span>
-        </p>
-      </div>
     </div>
+
+    <!-- The way into edit view: rest the pointer in the bottom-left corner and a pill slides
+         out. Also reachable with Tab, and from the palette as "Edit layout" — a button that
+         exists only on hover is a button only its author can find. -->
+    <div id="corner">
+      <div class="edit-pill panel" role="toolbar" aria-label="Layout"></div>
+    </div>
+    <div id="add-menu" class="add-menu panel" hidden></div>
+    <p id="board-note" class="board-note panel" role="status" aria-live="polite" hidden></p>
 
     <!-- A newer Alexia exists (D119). One line and one button: the download happens in the
          background and the installer replaces this program in place, so the only thing asked

@@ -14,7 +14,7 @@ import { dataDir, Store, STRUCK, type Outcome } from '../src/store.js'
 const tmp = (): string => join(mkdtempSync(join(tmpdir(), 'alexia-store-')), 'data', 'alexia.db')
 
 /** How many migrations this build knows. Every fresh database should be at this version. */
-const MIGRATIONS = 8
+const MIGRATIONS = 9
 
 /** The schema version as SQLite holds it, read without going through `Store`. */
 function version(path: string): number {
@@ -145,6 +145,7 @@ test('migration 7 runs over a database that never had 6, and leaves the tables i
   const db = new DatabaseSync(path)
   db.exec('DROP TABLE tries')
   db.exec('DROP TABLE seen')
+  db.exec('ALTER TABLE usage DROP COLUMN writing') // 9's, which a database at 5 never had either
   db.exec('CREATE TABLE p_persona_personalities (name TEXT, doc TEXT, at INTEGER, active INTEGER)')
   db.exec(`INSERT INTO p_persona_personalities VALUES ('Alexia', 'kind', 1, 1)`)
   db.exec('PRAGMA user_version = 5')
@@ -157,6 +158,32 @@ test('migration 7 runs over a database that never had 6, and leaves the tables i
   expect(again.seen()).toEqual([])
   expect(again.select('persona', 'personalities')).toHaveLength(1)
   again.close()
+})
+
+test('migration 9 gives usage a writing time, keeps the rows before it, and a speed needs both numbers (D204)', () => {
+  // A database at 8 with an answer already in the ledger: it has tokens and no writing time.
+  const path = tmp()
+  new Store(path).close()
+  const db = new DatabaseSync(path)
+  db.exec('ALTER TABLE usage DROP COLUMN writing')
+  db.exec(
+    `INSERT INTO usage (at, model, provider, tokens_in, tokens_out, cost) VALUES (1, 'qwen3:8b', 'ollama', 10, 200, 0)`,
+  )
+  db.exec('PRAGMA user_version = 8')
+  db.close()
+
+  const store = new Store(path)
+  expect(version(path)).toBe(MIGRATIONS)
+  // The old row is still there, and is not a speed: nothing measured how long it took.
+  expect(store.lastWriting('ollama')).toBeUndefined()
+
+  store.recordUsage({ model: 'qwen3:8b', provider: 'ollama', tokensIn: 10, tokensOut: 120, cost: 0, writing: 4000, at: 2 })
+  store.recordUsage({ model: 'llama3.2', provider: 'ollama', tokensIn: 10, tokensOut: 0, cost: 0, writing: 900, at: 3 })
+  store.recordUsage({ model: 'gpt-oss-120b', provider: 'groq', tokensIn: 10, tokensOut: 500, cost: 0, writing: 1000, at: 4 })
+  // Newest local row with tokens *and* a writing time: the empty answer after it does not count,
+  // and a cloud answer is not this machine's speed.
+  expect(store.lastWriting('ollama')).toEqual({ model: 'qwen3:8b', tokensOut: 120, writing: 4000 })
+  store.close()
 })
 
 test('a conversation comes back in order, and switching models does not lose it', () => {

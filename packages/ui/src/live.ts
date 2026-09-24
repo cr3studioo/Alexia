@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 /**
- * The live panel: what she is doing, and exactly how.
+ * Running now, Steps and Current step: what she is doing, and exactly how.
  *
  * The conversation says `computer.control` and stops. That is deliberate — the trace used to
  * sit in the log and it was the loudest thing in the room, a wall of tool names between two
@@ -130,13 +130,25 @@ const segment = (stage: Stage): HTMLLIElement => {
   return li
 }
 
-export function mountLive(token: string): Live {
-  const runningBox = document.querySelector<HTMLElement>('#running')!
-  const runningCount = document.querySelector<HTMLElement>('#running-count')!
-  const traceBox = document.querySelector<HTMLElement>('#trace')!
-  const stepCount = document.querySelector<HTMLElement>('#step-count')!
-  const head = document.querySelector<HTMLElement>('#detail-head')!
-  const body = document.querySelector<HTMLElement>('#detail')!
+/**
+ * The three pages this draws into (D204). They used to be one column and are three pages on
+ * the board now, each of which can be moved, sized or taken off — so each is handed over
+ * rather than looked up in the document. A page that is off the board is still in the
+ * markup, hidden, and keeps being written to: putting it back shows the task as it is now.
+ */
+export interface LiveRoots {
+  running: HTMLElement
+  steps: HTMLElement
+  current: HTMLElement
+}
+
+export function mountLive(token: string, roots: LiveRoots): Live {
+  const runningBox = roots.running.querySelector<HTMLElement>('#running')!
+  const runningCount = roots.running.querySelector<HTMLElement>('#running-count')!
+  const traceBox = roots.steps.querySelector<HTMLElement>('#trace')!
+  const stepCount = roots.steps.querySelector<HTMLElement>('#step-count')!
+  const head = roots.current.querySelector<HTMLElement>('#detail-head')!
+  const body = roots.current.querySelector<HTMLElement>('#detail')!
 
   const rows = new Map<number, Row>()
   let open = 0

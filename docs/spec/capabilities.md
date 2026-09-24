@@ -111,6 +111,7 @@ name and becomes a drop-in alternative rather than a competitor.
 | `document.extract` | **a file in, markdown out** — what a document says | `plugins/documents` |
 | `image.ocr` | **a picture in, the words in it out** — a path or the bytes, text in reading order | `plugins/ocr` |
 | `commitments.due` | nothing in (or `today`, the caller's own date as `YYYY-MM-DD`), **what is due out** — the open commitments due today or already late, one per line, oldest first, and empty when there are none. `structuredContent` carries the same as `{ items: [{ id, text, by, overdue, mine }] }` | `plugins/commitments` |
+| `channel.chat` | **a mark, not a call** — nothing in, nothing out, and no tool binds it. A plugin lists it in `provides` to say *somebody can talk to Alexia through me from somewhere else*. Core counts the enabled ones whose declared `password` settings are all stored and sends the number as `channels` on `/api/state`; the board asks before the Chat page is removed only when it is 0 | `plugins/telegram` (D204) |
 
 **A plugin can ask whether any of them is going to be answered**, without learning who would:
 `alexia/answers` takes a capability name and returns two booleans — *something enabled promises
@@ -123,12 +124,23 @@ Fifteen entries, because fifteen exist — `memory.remember` and `memory.recall`
 which is the failure mode the paragraph below warns about read from the other end: a name in a
 manifest that the register never learned about. `demo.greet` is real: `plugins/hello` provides it and
 `plugins/vanisher` requires it, which is how *delete the provider and the consumer keeps
-running* stays a test rather than a claim. Three of them are ones **core itself** reaches
+running* stays a test rather than a claim. Seven of them are ones **core itself** reaches
 for — they are also in `CORE_CAPABILITIES`, and the rule for being there is that core works
-completely when nothing provides them. **This table grows by pull request, never by a string
+completely when nothing provides them. One of the seven, `channel.chat`, is never called at all:
+it is a marker core counts (D204), so the board can tell whether anybody has another way in. **This table grows by pull request, never by a string
 somebody typed.** A name invented locally is a name the next plugin will spell differently,
 and then there are two capabilities that mean the same thing and no drop-in alternative for
 either.
+
+`channel.chat` is the one row that is **never called**. It marks a plugin as a way in — a
+phone, a chat app — so that the board can tell *removing Chat leaves her unreachable* from
+*removing Chat leaves the phone*, without core learning which plugin that is. *Connected* is
+read without waking anything: enabled, and every `password` it declared is in the keychain. A
+channel with no token reaches nobody and is not counted; one with a token and nobody paired
+is, because telling those two apart needs the plugin's own process. Erring either way costs
+one question at most. Conformance reports it as *declared but not bound*, and that is correct
+for this row — there is nothing to bind. It is in `CORE_CAPABILITIES` as `channel`, and
+nothing providing it means the board asks every time, as it did before the name existed.
 
 `document.extract` is the newest and it is the clearest example of why the column on the
 right says *first* provided by. What ships in the box is a text-layer reader: no Python, no

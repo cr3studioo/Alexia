@@ -11,7 +11,7 @@
 
   "entry": { "run": "node", "args": ["index.js"] },
 
-  "alexia_protocol": 2,
+  "alexia_protocol": 12,
   "mcp_protocol": "2025-11-25",
 
   "requires": [
@@ -43,6 +43,16 @@
       "tool": "download_model"
     }
   ],
+
+  "page": {
+    "title": "Voice in/out",
+    "sizes": {
+      "S": { "at": [8, 4], "show": ["download_state"] },
+      "M": { "at": [12, 8], "show": ["model_size", "download_state", "redownload"] }
+    },
+    "scale": { "min": [8, 4], "max": [24, 16] },
+    "fixed": false
+  },
 
   "storage": { "namespace": "voice", "tables": ["transcripts"], "dir": true },
 

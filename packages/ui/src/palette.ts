@@ -20,11 +20,26 @@ interface Hit {
   kind: string
   label: string
   detail?: string
+  /** A thing the shell does itself rather than a place to go. Only ever one of `local`. */
+  run?: () => void
+}
+
+/**
+ * Something the shell itself can do, found by typing any of its words — *Edit layout* is the
+ * first (D204). It changes how the window is arranged and nothing else, which is why it may
+ * sit in a palette that otherwise only navigates: it runs no command and asks no permission.
+ */
+export interface Local {
+  label: string
+  detail?: string
+  words: string[]
+  run: () => void
 }
 
 export function mountPalette(
   token: string,
   go: (tab: string, filter: string) => void,
+  local: readonly Local[] = [],
 ): { open: () => void } {
   const box = document.querySelector<HTMLElement>('#palette')!
   const input = document.querySelector<HTMLInputElement>('#palette-input')!
@@ -46,7 +61,8 @@ export function mountPalette(
     if (!hit) return
     const filter = input.value.trim()
     close()
-    go(hit.tab, filter)
+    if (hit.run) hit.run()
+    else go(hit.tab, filter)
   }
 
   function draw(): void {
@@ -82,11 +98,16 @@ export function mountPalette(
       draw()
       return
     }
+    const asking = query.toLowerCase()
+    const ours: Hit[] = local
+      .filter((one) => one.words.some((word) => word.startsWith(asking) || asking.includes(word)))
+      .map((one) => ({ tab: '', kind: 'layout', label: one.label, run: one.run, ...(one.detail !== undefined && { detail: one.detail }) }))
     void fetch(`/api/search?q=${encodeURIComponent(query)}`, { headers: { 'x-alexia-token': token } })
       .then(async (answer) => (await answer.json()) as { hits: Hit[] })
+      .catch(() => ({ hits: [] as Hit[] }))
       .then((answer) => {
         if (mine !== asked) return
-        hits = answer.hits
+        hits = [...ours, ...answer.hits]
         at = 0
         draw()
       })
