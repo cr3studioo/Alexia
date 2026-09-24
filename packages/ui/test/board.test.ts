@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { expect, test, vi } from 'vitest'
 import { escapeTakes, mountBoard } from '../src/board.js'
-import { arrange, dragGuide, fits, grid, type Layout, limits, SP } from '../src/layout.js'
+import { arrange, dragGuide, fits, grid, type Layout, limits, MARGIN, SP } from '../src/layout.js'
 import { mountPalette } from '../src/palette.js'
 import {
   CORE_PAGES,
@@ -330,17 +330,19 @@ test('launch paints the kept layout first: the head script hands it over and the
   vi.unstubAllGlobals()
 })
 
-test('the ways into edit view:the corner after 150 ms, Tab, a long press on the empty board, the palette (M10-4)', async () => {
+test('the ways into edit view: the dock after 150 ms, Tab, a long press on the empty board, the palette (M10-4)', async () => {
   vi.useFakeTimers()
   try {
     const { board, root } = mountReal()
     const corner = document.querySelector<HTMLElement>('#corner')!
-    const pill = corner.querySelector<HTMLElement>('.edit-pill')!
+    const pill = document.querySelector<HTMLElement>('.edit-pill')!
+    const tab = corner.querySelector<HTMLButtonElement>('#edit-tab')!
 
-    // The pill says one thing out of edit view, and the corner holds it.
-    expect([...pill.querySelectorAll('button')].map((b) => b.textContent)).toEqual(['Edit view'])
+    // Out of edit view the pill is not there at all; the dock's tab is the way in.
+    expect(pill.hidden).toBe(true)
+    expect(tab.getAttribute('aria-pressed')).toBe('false')
 
-    // Resting in the corner: nothing at 149 ms, the pill at 150. Leaving puts it back.
+    // Resting on the dock: nothing at 149 ms, the tabs out at 150. Leaving puts them back.
     pointerEvent('pointerenter', corner, { pointerType: 'mouse' })
     vi.advanceTimersByTime(149)
     expect(corner.classList.contains('out')).toBe(false)
@@ -355,18 +357,22 @@ test('the ways into edit view:the corner after 150 ms, Tab, a long press on the 
     vi.advanceTimersByTime(100)
     expect(corner.classList.contains('out')).toBe(false)
 
-    // Tab: the button is in the tab order while the pill is tucked away, and focusing it
-    // brings the pill out — the stylesheet's `:focus-within`, since it is never display:none.
-    const button = pill.querySelector<HTMLButtonElement>('button')!
-    expect(button.tabIndex).toBe(0)
-    expect(button.hidden).toBe(false)
+    // Tab: every tab is in the tab order while tucked away, and focusing one brings them out —
+    // the stylesheet's `:focus-within`, since they are never display:none.
+    expect(tab.tabIndex).toBe(0)
+    expect(tab.hidden).toBe(false)
     const css = readFileSync(join(ui, 'app.css'), 'utf8')
-    expect(css).toMatch(/\.edit-pill:focus-within\s*\{[^}]*opacity:\s*1/)
-    expect(css).toMatch(/#corner\s*\{[^}]*width:\s*48px;[^}]*height:\s*48px;/)
-    expect(css).toMatch(/#corner\s*\{[^}]*left:\s*0;[^}]*bottom:\s*0;/)
-    button.click()
+    expect(css).toMatch(/\.dock:focus-within \.dock-label\s*\{[^}]*opacity:\s*1/)
+    expect(css).toMatch(/#corner\s*\{[^}]*left:\s*0;/)
+    tab.click()
     expect(board.editing()).toBe(true)
-    board.edit(false)
+    expect(tab.getAttribute('aria-pressed')).toBe('true')
+    expect(pill.hidden).toBe(false)
+    expect([...pill.querySelectorAll('button')].map((b) => b.textContent)).toEqual(['Add page', 'Reset', 'Done'])
+    // The same tab again is Done.
+    tab.click()
+    expect(board.editing()).toBe(false)
+    expect(pill.hidden).toBe(true)
 
     // A long press on the empty board, on touch. A mouse held there is not one, a finger on a
     // page is not one, and a finger that moves is scrolling.
@@ -583,21 +589,23 @@ test("the selected page's bar is in the window and over no other page: above, be
   vi.unstubAllGlobals()
 })
 
-test('the pill lives in a strip of its own under the board, in both views, so it covers no page (M10-4)', () => {
+test('the board runs to the bottom of the window, and the dock stays in the margin beside it', () => {
   const css = readFileSync(join(ui, 'app.css'), 'utf8')
   const rule = (selector: string): string => {
     const at = css.indexOf(`\n${selector} {`)
     expect(at, selector).toBeGreaterThan(-1)
     return css.slice(at, css.indexOf('}', at))
   }
-  // The board stops above the strip, and the strip is as tall as the 48-pixel corner.
-  expect(rule('#board')).toMatch(/margin-bottom:\s*var\(--corner-strip\);/)
-  expect(css).toMatch(/--corner-strip:\s*3rem;/)
-  // The pill sits inside it, and edit view does not move it out over the board.
-  expect(rule('.edit-pill')).toMatch(/bottom:\s*var\(--space-1\);/)
-  expect(css).not.toMatch(/#corner\.editing[^{]*\{/)
-  // The Add page list opens from the strip, above the pill.
-  expect(rule('.add-menu')).toMatch(/bottom:\s*calc\(var\(--corner-strip\)/)
+  // No strip under the board: its bottom margin is the grid's, the same as the top.
+  expect(rule('#board')).not.toMatch(/margin-bottom/)
+  expect(css).not.toMatch(/--corner-strip/)
+  // A collapsed tab is narrower than the least margin layout.ts keeps beside the board.
+  const collapsed = Number(/max-width:\s*(\d+)px/.exec(rule('.dock-tab'))![1])
+  expect(collapsed).toBeLessThan(MARGIN)
+  // Activity and Settings are in the dock, not on the General page.
+  const html = readFileSync(join(ui, 'index.html'), 'utf8')
+  const dock = html.slice(html.indexOf('<nav class="dock"'), html.indexOf('</nav>', html.indexOf('<nav class="dock"')))
+  for (const id of ['open-control', 'open-settings', 'edit-tab']) expect(dock).toContain(`id="${id}"`)
 })
 
 test("Chat's parts each have a row of their own, so hiding the heading at S moves nothing", () => {

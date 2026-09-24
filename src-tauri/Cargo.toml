@@ -48,6 +48,15 @@ sysinfo = { version = "0.37", default-features = false, features = ["component"]
 # pinned to a commit, because it is published from git rather than crates.io.
 [target.'cfg(target_os = "macos")'.dependencies]
 tauri-nspanel = { git = "https://github.com/ahkohd/tauri-nspanel", rev = "c9ec2130422200f0863b23dfdad02b133a529b07" }
+# The genie's picture of the sheet (`snapshot.rs`): WKWebView's own `takeSnapshot`, which a page
+# cannot reach. Not new code in the tree — Tauri's web view (wry) is built on these same crates at
+# these same versions, so this names features of what is already compiled in rather than adding.
+block2 = "0.6"
+objc2 = "0.6"
+objc2-core-foundation = { version = "0.3", default-features = false, features = ["std", "CFCGTypes"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSDictionary", "NSError", "NSValue", "NSData"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSImage", "NSImageRep", "NSBitmapImageRep", "NSGraphicsContext", "objc2-core-graphics", "objc2-core-foundation"] }
+objc2-web-kit = { version = "0.3", default-features = false, features = ["std", "WKWebView", "WKSnapshotConfiguration", "block2", "objc2-app-kit", "objc2-core-foundation"] }
 
 [profile.release]
 # A smaller installer is a shorter download in front of somebody who has not yet seen the

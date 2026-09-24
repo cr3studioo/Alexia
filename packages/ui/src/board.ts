@@ -13,8 +13,10 @@
  * - **Edit view.** The dots appear and every page can be picked up. Drop it on a dot where it
  *   fits and it lands (blue); anywhere else it goes back (red). A page that scales has a
  *   corner to drag; a tapped page gets a small bar with its sizes and a way off the board.
- *   The way in is the bottom-left corner — hover it and a pill slides out — or Tab, or the
- *   palette's *Edit layout*, or on touch a long press on the empty board. A button that only
+ *   The way in is the Edit layout tab in the dock in the bottom-left corner — hover the dock
+ *   and its tabs slide out with their names — or Tab, or the palette's *Edit layout*, or on
+ *   touch a long press on the empty board. In edit view a pill at the bottom holds Add page,
+ *   Reset and Done. A button that only
  *   appears on hover is a button nobody finds, so it is never only that.
  *
  * **The arithmetic is `layout.ts` and the pages are `pages.ts`.** This file turns dots into
@@ -70,7 +72,7 @@ import { el, refreshDriven, type WidgetHost } from './widgets.js'
 /** Where the head script leaves the saved layout. Written down twice; `index.html` is the other. */
 export const REMEMBERED_LAYOUT = 'alexia.layout'
 
-/** How long the pointer rests in the corner before the pill comes out. Long enough to mean it. */
+/** How long the pointer rests on the dock before its tabs slide out. Long enough to mean it. */
 const HOVER_MS = 150
 
 /** How long a finger rests on the empty board before edit view opens — the platform's long press. */
@@ -202,6 +204,9 @@ export function mountBoard(root: HTMLElement, token: string): Board {
   function settle(now: readonly Placed[], guides?: [number, number]): void {
     const pinned = base(now)
     const was = new Map(placed.map((p) => [p.id, p]))
+    // Every page is written at the size it is drawn, squeezed or not: the spots were pinned
+    // against those sizes, and a squeezed page saved at its full height runs into whatever was
+    // just put under it — which `pack` then moves, and the drop looks like it never happened.
     const changed = g.compact ? now.filter((p) => was.get(p.id)?.w !== p.w || was.get(p.id)?.h !== p.h) : now
     const by = new Map(changed.map((p) => [p.id, p]))
     keep({
@@ -292,6 +297,9 @@ export function mountBoard(root: HTMLElement, token: string): Board {
     field.style.height = `${String(Math.max(root.clientHeight, g.offY * 2 + bottom * SP))}px`
     dots.style.backgroundPosition = `${String(g.offX - SP / 2)}px ${String(g.offY - SP / 2)}px`
     root.classList.toggle('compact', g.compact)
+    // Only when even the smallest size of every page is taller than the window: the one case
+    // where the alternative to a scroll is a page nobody can reach.
+    root.classList.toggle('overfull', bottom > g.rows)
     grips()
     bar()
   }
@@ -441,11 +449,12 @@ export function mountBoard(root: HTMLElement, token: string): Board {
       const r = { ...start }
       if (mode === 'move') {
         r.x = Math.min(Math.max(0, start.x + dx), Math.max(0, g.cols - r.w))
-        // No lower than `pack` keeps an anchor, or the ring says it lands and it is drawn elsewhere.
+        // Not past the bottom: the board does not scroll, and one dropped there is squeezed back up.
         r.y = Math.min(Math.max(0, start.y + dy), Math.max(0, g.rows - r.h))
       } else {
         r.w = Math.min(Math.max(start.w + dx, lim.minW), Math.min(lim.maxW, g.cols - start.x))
-        r.h = Math.min(Math.max(start.h + dy, lim.minH), lim.maxH)
+        // No taller than the window: the board does not scroll, so a page past the bottom is squeezed straight back.
+        r.h = Math.min(Math.max(start.h + dy, lim.minH), Math.min(lim.maxH, Math.max(lim.minH, g.rows - start.y)))
       }
       return { ...r, ok: fits(others, r.x, r.y, r.w, r.h, g.cols) }
     }
@@ -498,6 +507,7 @@ export function mountBoard(root: HTMLElement, token: string): Board {
       const lim = limits(info.shape)
       r.w = Math.min(Math.max(r.w + dx, lim.minW), lim.maxW)
       r.h = Math.min(Math.max(r.h + dy, lim.minH), lim.maxH)
+      if (dy > 0 && r.y + r.h > g.rows) return
     } else {
       r.x += dx
       r.y += dy
@@ -645,10 +655,12 @@ export function mountBoard(root: HTMLElement, token: string): Board {
     render()
   }
 
-  // ---- the corner, the pill, and Add page ---------------------------------------------------------
+  // ---- the dock, the pill, and Add page -----------------------------------------------------------
 
   const corner = document.querySelector<HTMLElement>('#corner')!
-  const pill = corner.querySelector<HTMLElement>('.edit-pill')!
+  const editTab = corner.querySelector<HTMLButtonElement>('#edit-tab')!
+  const pill = document.querySelector<HTMLElement>('.edit-pill')!
+  editTab.addEventListener('click', () => edit(!editing))
   const addMenu = document.querySelector<HTMLElement>('#add-menu')!
   const note = document.querySelector<HTMLElement>('#board-note')!
   let hover: number | undefined
@@ -657,10 +669,15 @@ export function mountBoard(root: HTMLElement, token: string): Board {
     window.clearTimeout(hover)
     hover = window.setTimeout(() => corner.classList.add('out'), HOVER_MS)
   })
-  corner.addEventListener('pointerleave', () => {
+  const tuck = (): void => {
     window.clearTimeout(hover)
-    if (!editing) corner.classList.remove('out')
-  })
+    corner.classList.remove('out')
+  }
+  corner.addEventListener('pointerleave', tuck)
+  // A pointer that leaves the window straight from the corner — down into the macOS Dock, or
+  // away while the app is opening — does not always tell the corner it left.
+  document.documentElement.addEventListener('pointerleave', tuck)
+  window.addEventListener('blur', tuck)
 
   /**
    * On touch there is no hovering, so a finger held on the empty board is the corner: still for
@@ -705,8 +722,10 @@ export function mountBoard(root: HTMLElement, token: string): Board {
   }
 
   function drawPill(): void {
+    pill.hidden = !editing
+    editTab.setAttribute('aria-pressed', String(editing))
     if (!editing) {
-      pill.replaceChildren(pillButton('Edit view', 'pill-button', () => edit(true)))
+      pill.replaceChildren()
       return
     }
     const add = pillButton('Add page', 'pill-button', () => void toggleAdd())
@@ -788,13 +807,12 @@ export function mountBoard(root: HTMLElement, token: string): Board {
     const at = placed.find((p) => p.id === id)
     if (!info || !at) return
     const below = g.offY + (at.y + at.h) * SP > root.scrollTop + root.clientHeight
-    say(below ? `${info.title} page added below — scroll down to see it.` : `${info.title} page added.`)
+    say(below ? `${info.title} page added below — there is no room left to fit it.` : `${info.title} page added.`)
   }
 
   function edit(on: boolean): void {
     editing = on
     root.classList.toggle('editing', on)
-    corner.classList.toggle('out', on)
     corner.classList.toggle('editing', on)
     if (!on) {
       selected = undefined
