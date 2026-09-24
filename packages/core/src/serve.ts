@@ -708,7 +708,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     updates: (store.kvGet(CORE, 'updates_auto') as boolean | undefined) ?? true,
   })
 
-  /** The board as last arranged (D199), or `null` for never. Checked on the way in, so read as is. */
+  /** The board as last arranged (D204), or `null` for never. Checked on the way in, so read as is. */
   const layout = (): Layout | null => (store.kvGet(CORE, 'layout') as Layout | undefined) ?? null
 
   /**
@@ -1575,13 +1575,13 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
         JSON.stringify({
           setup: setup(),
           /**
-           * Where the pages sit on the board (D199), or `null` when nobody has arranged it —
+           * Where the pages sit on the board (D204), or `null` when nobody has arranged it —
            * which the shell reads as *the default board*, rather than core inventing a default
            * that would have to name which pages exist.
            */
           layout: layout(),
           /**
-           * How many other ways in there are (D199): enabled plugins providing
+           * How many other ways in there are (D204): enabled plugins providing
            * `CORE_CAPABILITIES.channel` with every key they declared stored. The board asks
            * before the Chat page comes off only when this is 0. Read by capability, so core
            * counts them and never learns which they are.
@@ -1678,7 +1678,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
         theme?: string
         glass?: number
         updates?: boolean
-        /** Where the pages sit (D199), or `null` to forget it and go back to the default board. */
+        /** Where the pages sit (D204), or `null` to forget it and go back to the default board. */
         layout?: unknown
         /** A key to store, or `remove` to take the stored one out of the keychain (§1 step 4). */
         provider?: { id: string; key?: string; remove?: boolean }
@@ -1700,7 +1700,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
       // was given in.
       if (typeof chosen.updates === 'boolean') store.kvSet(CORE, 'updates_auto', chosen.updates)
       /**
-       * The board (D199), beside the theme for the reason the theme is here: the window and a
+       * The board (D204), beside the theme for the reason the theme is here: the window and a
        * tab on the same core are one Alexia. Checked for shape and refused whole rather than
        * half-stored, because a layout with one bad page is not a layout minus that page — the
        * shell would pack the rest into places the person never put them. The fields above
@@ -1769,7 +1769,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     }
 
     /**
-     * **The Local stats page** (D199): what models are on this machine, which are in memory,
+     * **The Local stats page** (D204): what models are on this machine, which are in memory,
      * and how fast the last local answer came.
      *
      * A GET that never fails. Ollama not running is the answer most people have, and it comes
@@ -2000,7 +2000,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
      * for, in its author's words — and `disable` is its cheap opposite: the process stops and
      * everything it owns stays. `delete` is the one that removes things, which is why the
      * screen puts it a step further back and why invariant 5 is the check that guards it.
-     * `restart` is the page's answer to a pane carrying `state: 'unhealthy'` (D199).
+     * `restart` is the page's answer to a pane carrying `state: 'unhealthy'` (D204).
      */
     if (url.pathname === '/api/plugin' && request.method === 'POST') {
       const asked = sent as { id?: string; action?: string }
@@ -2089,7 +2089,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
             // Whether a signature can be checked at all. `false` is shown, because an
             // unverified signature is exactly as good as none and must not look better.
             verifying: library.publisherKey !== undefined,
-            // A placeholder (`coming_soon: true`, D199) passes through whatever its protocol
+            // A placeholder (`coming_soon: true`, D204) passes through whatever its protocol
             // says, because it has none: it is a name on the shelf, drawn greyed, and
             // `/api/library/install` refuses it in words.
             plugins: shelf

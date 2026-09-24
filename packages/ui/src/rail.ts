@@ -3,7 +3,7 @@
 /**
  * The rail: identity, which conversation, and the four things somebody changes.
  *
- * It is the General page on the board (D199), the one page that cannot be taken off it — so
+ * It is the General page on the board (D204), the one page that cannot be taken off it — so
  * what earns a place here is what a person reaches for mid-sentence: a new
  * conversation, an old one, which model answers, where the work happens, and what Alexia may
  * do without asking.
@@ -66,7 +66,7 @@ const RECENT = 3
 const MODELS = 8
 
 /**
- * Mounted into the page it is handed rather than reaching into the document: since D199 a
+ * Mounted into the page it is handed rather than reaching into the document: since D204 a
  * page is one of several on a board, and a module that looked things up by id anywhere would
  * be one duplicated page away from wiring up the wrong one.
  */

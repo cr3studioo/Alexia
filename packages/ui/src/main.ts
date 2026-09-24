@@ -105,16 +105,16 @@ interface State {
   notHer?: boolean
   providers: Provider[]
   commands: Command[]
-  /** The board's arrangement (D199). `null` is the default; absent is a core that predates it. */
+  /** The board's arrangement (D204). `null` is the default; absent is a core that predates it. */
   layout?: Layout | null
-  /** Other ways in that are connected (D199) — whether taking Chat off the board needs asking. */
+  /** Other ways in that are connected (D204) — whether taking Chat off the board needs asking. */
   channels?: number
 }
 
 const token = document.querySelector<HTMLElement>('[data-token]')?.dataset.token ?? ''
 
 /**
- * The board (D199), placed before anything else is drawn into it: the layout the head script
+ * The board (D204), placed before anything else is drawn into it: the layout the head script
  * left is read synchronously here, so the first frame is somebody's own arrangement rather
  * than the default with a jump to follow. Core's copy arrives with the first state read.
  */
@@ -2192,7 +2192,7 @@ const palette = mountPalette(token, (tab, filter) => {
   show('control')
   control.open(tab, filter)
 }, [
-  // The shell's own entry (D199): the same edit view the bottom-left corner opens.
+  // The shell's own entry (D204): the same edit view the bottom-left corner opens.
   {
     label: 'Edit layout',
     detail: 'Move, size, add and remove pages',

@@ -173,7 +173,7 @@ export const CORE_CAPABILITIES = {
   extract: 'document.extract',
   /**
    * **Somebody can talk to her from somewhere other than this window** — a phone, a chat app,
-   * anything that carries a conversation in and an answer out (D199's Chat page).
+   * anything that carries a conversation in and an answer out (D204's Chat page).
    *
    * The first name on this list that is **a mark rather than a call**. Nothing ever calls it
    * and no tool binds it: a plugin puts it in `provides` to say *I am a way in*, and core only

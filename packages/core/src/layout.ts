@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 /**
- * **Where the pages sit on the board** (D199), as core keeps it.
+ * **Where the pages sit on the board** (D204), as core keeps it.
  *
  * Stored the way the theme is — one kv entry, written through `/api/setup` and read back on
  * `/api/state` — because it is the same kind of fact: an answer about this install, and the
@@ -83,7 +83,7 @@ export const PLUGIN_PAGE = 'plugin:'
 
 /**
  * The layout without the pages of plugins that are no longer here, or `undefined` when it
- * already has none (D199).
+ * already has none (D204).
  *
  * **Deleting a plugin's folder takes its page off the board and out of `layout`** — core's
  * half of that, run every time the plugin folder is read. The shell drops the page too when it

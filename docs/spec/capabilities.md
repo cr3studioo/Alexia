@@ -111,7 +111,7 @@ name and becomes a drop-in alternative rather than a competitor.
 | `document.extract` | **a file in, markdown out** — what a document says | `plugins/documents` |
 | `image.ocr` | **a picture in, the words in it out** — a path or the bytes, text in reading order | `plugins/ocr` |
 | `commitments.due` | nothing in (or `today`, the caller's own date as `YYYY-MM-DD`), **what is due out** — the open commitments due today or already late, one per line, oldest first, and empty when there are none. `structuredContent` carries the same as `{ items: [{ id, text, by, overdue, mine }] }` | `plugins/commitments` |
-| `channel.chat` | **a mark, not a call** — nothing in, nothing out, and no tool binds it. A plugin lists it in `provides` to say *somebody can talk to Alexia through me from somewhere else*. Core counts the enabled ones whose declared `password` settings are all stored and sends the number as `channels` on `/api/state`; the board asks before the Chat page is removed only when it is 0 | `plugins/telegram` (D199) |
+| `channel.chat` | **a mark, not a call** — nothing in, nothing out, and no tool binds it. A plugin lists it in `provides` to say *somebody can talk to Alexia through me from somewhere else*. Core counts the enabled ones whose declared `password` settings are all stored and sends the number as `channels` on `/api/state`; the board asks before the Chat page is removed only when it is 0 | `plugins/telegram` (D204) |
 
 **A plugin can ask whether any of them is going to be answered**, without learning who would:
 `alexia/answers` takes a capability name and returns two booleans — *something enabled promises
@@ -127,7 +127,7 @@ manifest that the register never learned about. `demo.greet` is real: `plugins/h
 running* stays a test rather than a claim. Seven of them are ones **core itself** reaches
 for — they are also in `CORE_CAPABILITIES`, and the rule for being there is that core works
 completely when nothing provides them. One of the seven, `channel.chat`, is never called at all:
-it is a marker core counts (D199), so the board can tell whether anybody has another way in. **This table grows by pull request, never by a string
+it is a marker core counts (D204), so the board can tell whether anybody has another way in. **This table grows by pull request, never by a string
 somebody typed.** A name invented locally is a name the next plugin will spell differently,
 and then there are two capabilities that mean the same thing and no drop-in alternative for
 either.

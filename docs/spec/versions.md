@@ -38,7 +38,7 @@ contract was still moving.
 sentence rather than crashing, exactly as written here while it was still hypothetical. The
 migration for a revision-1 plugin that uses nothing from 2 is one character.
 
-## 11 → 12 *(2026-09-24, D199)*
+## 11 → 12 *(2026-09-24, D204)*
 
 **One manifest field.** `page`, optional.
 

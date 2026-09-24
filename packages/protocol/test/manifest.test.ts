@@ -293,7 +293,7 @@ test('a chip naming neither a group nor a tag is still parsed, and simply matche
   expect(Manifest.safeParse(m).success).toBe(true)
 })
 
-describe('page — a page of its own on the board (alexia_protocol 12, D199)', () => {
+describe('page — a page of its own on the board (alexia_protocol 12, D204)', () => {
   /** The example with its page bent, and every message it was refused with. */
   const said = (bend: (page: Record<string, unknown>) => void, revision = 12): string => {
     const m = structuredClone(example) as Record<string, unknown>

@@ -24,7 +24,7 @@
           var gb = Math.round(glass * 0.5)
           document.documentElement.style.setProperty('--glass-filter', gb === 0 ? 'none' : 'blur(' + gb + 'px)')
         }
-        // And the board's layout (D199), for the same reason: a layout that waited for
+        // And the board's layout (D204), for the same reason: a layout that waited for
         // /api/state would paint the default and then jump. Only the shape is checked here;
         // src/board.ts reads the string off the root element and does the rest.
         var layout = localStorage.getItem('alexia.layout')
@@ -43,7 +43,7 @@
        board is not rendered at all, rather than hidden and hoping. Settings and Control are
        a sheet over the board, so on those two the board is still there underneath. -->
   <body data-view="chat">
-    <!-- The board (D199): pages of glass on the painting, each on its dots. Where each one
+    <!-- The board (D204): pages of glass on the painting, each on its dots. Where each one
          sits is `src/board.ts`'s business and the arithmetic is `src/layout.ts`'s; this markup
          is only what the pages hold. The columns the shell used to have are two guides in
          that layout now, and the grips between them are drawn by the board and actually

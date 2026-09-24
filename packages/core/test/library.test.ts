@@ -341,7 +341,7 @@ test('a first run that has never reached GitHub says so rather than showing noth
   await expect(library.plugins()).rejects.toThrow(/rate-limiting/)
 })
 
-test('a plugin that is coming is on the shelf with nothing to download, and install says so (D199)', async () => {
+test('a plugin that is coming is on the shelf with nothing to download, and install says so (D204)', async () => {
   const packed = pack('weather')
   const placeholder = {
     tag_name: 'soon-placeholder',

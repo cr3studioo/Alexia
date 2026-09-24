@@ -72,7 +72,7 @@ test('a plugin that dies on a missing dependency is caught', async () => {
   expect(level(report.checks, 'degrades')).not.toBe('fail')
 }, 60_000)
 
-test('a plugin with a page is told which page the board draws (D199)', async () => {
+test('a plugin with a page is told which page the board draws (D204)', async () => {
   // Memory declares one; its checks report it before anything is spawned, so what the
   // process does afterwards is not this test's business.
   const report = await conform(join(root, 'plugins', 'memory'), { exercise: false })
@@ -84,7 +84,7 @@ test('a plugin with a page is told which page the board draws (D199)', async () 
   expect(plain.checks.find((c) => c.name === 'page')).toBeUndefined()
 }, 60_000)
 
-test('a page on a plugin that claims alexia_protocol 11 is a manifest that does not load (D199)', async () => {
+test('a page on a plugin that claims alexia_protocol 11 is a manifest that does not load (D204)', async () => {
   const dir = join(staging, 'voice')
   mkdirSync(dir, { recursive: true })
   const manifest = JSON.parse(readFileSync(join(root, 'plugins', 'voice', 'plugin.json'), 'utf8')) as Record<string, unknown>

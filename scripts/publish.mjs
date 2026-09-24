@@ -52,7 +52,7 @@
  * serving strangers, for one reason: its `/v0/revoked.json` is a kill switch that reaches
  * people who already installed something, and deleting a GitHub release reaches nobody.
  *
- * **`--coming-soon <id>` cuts a placeholder** (D199): a release whose ```alexia block is
+ * **`--coming-soon <id>` cuts a placeholder** (D204): a release whose ```alexia block is
  * `{ id, name, summary, coming_soon: true }` and which has **nothing attached**. The library
  * reads it as a greyed *Coming soon* row — on the Plugins screen and in the board's *Add page*
  * — and refuses to install it in words. Nothing is built and nothing in `plugins/` is read,
@@ -126,7 +126,7 @@ const gh = (argv, quiet) => {
 const ID = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/
 
 if (args.includes('--coming-soon')) {
-  // ---- a placeholder: a name and a sentence, and nothing to download (D199) --------------
+  // ---- a placeholder: a name and a sentence, and nothing to download (D204) --------------
   const id = flag('coming-soon')
   const called = flag('name')
   const summary = flag('summary')

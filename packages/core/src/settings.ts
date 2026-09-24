@@ -167,7 +167,7 @@ export interface Pane {
    */
   panel?: { label: string; widgets: Rendered[] }
   /**
-   * The plugin's page on the board (`alexia_protocol` 12, D199), or `null` for none.
+   * The plugin's page on the board (`alexia_protocol` 12, D204), or `null` for none.
    *
    * Declared, or built from `panel` when a plugin has one and no page — see `pageOf`. It is
    * **names, not rendered widgets**: which keys to show at which size, read off the manifest.

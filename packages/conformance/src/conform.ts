@@ -122,7 +122,7 @@ export async function conform(given: string, options: ConformOptions = {}): Prom
   )
 
   /**
-   * The page it gets on the board (D199), said out loud either way. The rules are in the
+   * The page it gets on the board (D204), said out loud either way. The rules are in the
    * manifest check above, so a page that got this far is valid; what is worth a line is
    * *which* page — an author with a panel and no `page` should know the board is drawing one
    * for them, twelve by ten, with every panel widget on it, and that declaring sizes is how

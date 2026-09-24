@@ -1,6 +1,6 @@
 # Give your plugin a page
 
-*Needs `"alexia_protocol": 12`. Decided 2026-09-24 (D199).*
+*Needs `"alexia_protocol": 12`. Decided 2026-09-24 (D204).*
 
 Alexia's window is a **board**: a grid of dots with pages on it, and the person arranges the
 pages. Chat is one, General is one, Running now is one. Yours can be one too. You say which of

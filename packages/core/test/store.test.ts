@@ -160,7 +160,7 @@ test('migration 7 runs over a database that never had 6, and leaves the tables i
   again.close()
 })
 
-test('migration 9 gives usage a writing time, keeps the rows before it, and a speed needs both numbers (D199)', () => {
+test('migration 9 gives usage a writing time, keeps the rows before it, and a speed needs both numbers (D204)', () => {
   // A database at 8 with an answer already in the ledger: it has tokens and no writing time.
   const path = tmp()
   new Store(path).close()

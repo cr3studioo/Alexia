@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 /**
- * The board (D199): pages of glass laid on the painting, each on its dots.
+ * The board (D204): pages of glass laid on the painting, each on its dots.
  *
  * It replaced three fixed columns whose grips were drawn and did nothing. The columns are
  * still there — as two **guides** in one free layout — and the grips now move them: every page

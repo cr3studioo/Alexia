@@ -26,7 +26,7 @@ interface Hit {
 
 /**
  * Something the shell itself can do, found by typing any of its words — *Edit layout* is the
- * first (D199). It changes how the window is arranged and nothing else, which is why it may
+ * first (D204). It changes how the window is arranged and nothing else, which is why it may
  * sit in a palette that otherwise only navigates: it runs no command and asks no permission.
  */
 export interface Local {

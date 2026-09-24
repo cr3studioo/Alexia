@@ -70,7 +70,7 @@ export async function installed(host: string = HOST): Promise<Model[]> {
     .map(({ model, shown }) => describe(model, shown))
 }
 
-/** What the Local stats page draws (D199): the models here, and the ones in memory now. */
+/** What the Local stats page draws (D204): the models here, and the ones in memory now. */
 export interface Local {
   /** Whether Ollama answered at all. `false` is an ordinary state, not an error. */
   running: boolean
@@ -85,7 +85,7 @@ export interface Local {
 }
 
 /**
- * **The machine's side of local models, read without waking anything** (D199).
+ * **The machine's side of local models, read without waking anything** (D204).
  *
  * Two requests, both cheap: `list` is the folder listing and `ps` is what is in memory, and
  * neither loads a model or describes one — which is why this does not go through

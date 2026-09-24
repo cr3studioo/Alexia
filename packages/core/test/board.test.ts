@@ -12,7 +12,7 @@ import { noPolling, stage } from './staged.js'
 
 /**
  * **M10-G, core's half**: the board with no plugins, one arriving, switched off, deleted by
- * hand, and one that crashed (D199).
+ * hand, and one that crashed (D204).
  *
  * Driven over the same HTTP the shell uses, with this test standing in for the shell where the
  * shell would write — it saves the layout the way `board.ts` does, through `/api/setup`. What

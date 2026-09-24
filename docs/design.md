@@ -297,7 +297,7 @@ against its neighbour needs a rule to separate them, and a screen of rules is wh
 old header read as a stack of pills — here the ground does that job and costs nothing. The
 gutters carry a grip apiece, because the three widths are the reader's to set.
 
-*Superseded 2026-09-24 by D199, in arrangement not in look.* The ground showing between
+*Superseded 2026-09-24 by D204, in arrangement not in look.* The ground showing between
 panels stays; the three fixed panels go. The shell is now **a board of pages** on a 25 px dot
 grid, centred so the spare pixels split evenly on both sides, one clear dot between any two
 pages. The rail became the **General** page (never removable), the conversation the **Chat**

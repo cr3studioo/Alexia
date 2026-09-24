@@ -129,7 +129,7 @@ test('no Ollama is an answer, not a crash', async () => {
   expect(await installed('http://127.0.0.1:1')).toEqual([])
 })
 
-test('local stats: what is on the disk and what is in memory, in bytes (D199)', async () => {
+test('local stats: what is on the disk and what is in memory, in bytes (D204)', async () => {
   expect(await local(host)).toEqual({
     running: true,
     installed: [

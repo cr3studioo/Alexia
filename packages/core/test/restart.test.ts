@@ -11,7 +11,7 @@ import { DEFAULT_TIMINGS } from '../src/supervisor.js'
 import { stage } from './staged.js'
 
 /**
- * Two things a board page reads off core that core did not used to say (D199).
+ * Two things a board page reads off core that core did not used to say (D204).
  *
  * - **A plugin the supervisor switched off** arrives on its pane as `state: 'unhealthy'` with
  *   the supervisor's own sentence, and `restart` takes it back to an ordinary stopped plugin.

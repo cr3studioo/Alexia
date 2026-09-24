@@ -214,7 +214,7 @@ body {
     sans-serif;
 }
 
-/* The board (D199): pages of glass laid on a ground that is allowed to show between them.
+/* The board (D204): pages of glass laid on a ground that is allowed to show between them.
 
    The gaps are the design. A page that runs edge to edge against its neighbour needs a rule
    to separate them, and a screen of rules is what made the old header read as a stack of
@@ -290,7 +290,7 @@ body[data-view='first-run'] #corner {
 }
 
 /* The two column grips. The grip is the whole affordance — 3px of line in the gutter, and
-   nothing else in the gap. It sits on a guide (D199), as tall as the pages it moves, and is
+   nothing else in the gap. It sits on a guide (D204), as tall as the pages it moves, and is
    hidden when it would move none. */
 .grip {
   position: absolute;
@@ -461,7 +461,7 @@ body[data-view='first-run'] #corner {
    makes "first run and the composer are never on screen together" structural rather than a
    rule somebody has to remember: on this view the composer is not rendered at all.
 
-   Four of them (M6-2), and since D199 only first run replaces anything: the conversation is
+   Four of them (M6-2), and since D204 only first run replaces anything: the conversation is
    a page on the board, and Settings and Control are a sheet over it, so each rule below says
    when one thing is *not* shown and the board stays underneath. Each keeps its own `display`
    further down — `#chat` is a grid — which is why these only ever say `none`. */
@@ -3329,7 +3329,7 @@ button[disabled] {
    The rail never moves; the middle is what changes. Settings and Control are the same panel
    with something else in it, which is why neither of them draws its own frame. */
 
-/* Settings and Control, as one sheet over the board (D199). They used to take the middle
+/* Settings and Control, as one sheet over the board (D204). They used to take the middle
    column; now the board is somebody's own arrangement, and opening a settings screen should
    not rearrange it. The same glass as the pages, a little in from the edges, over all of it. */
 #sheet {
@@ -4122,7 +4122,7 @@ kbd {
   margin: var(--space-2) 0 0;
 }
 
-/* ---- the board's pages at their sizes (D199) -------------------------------------------
+/* ---- the board's pages at their sizes (D204) -------------------------------------------
 
    A page's size is a tier — S, M or L — and the tier decides what it shows. board.ts writes
    `data-tier` on the page; everything below is what each page does with it. Nothing here

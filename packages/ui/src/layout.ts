@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 /**
- * Where the pages sit on the board (D199).
+ * Where the pages sit on the board (D204).
  *
  * The board is a dot grid: a dot every {@link SP} pixels, and a page's corners sit on dots.
  * Everything a person does to the layout — dragging a page, dragging a corner, dragging one of

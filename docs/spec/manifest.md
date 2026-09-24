@@ -548,7 +548,7 @@ type. Declaring a key twice is a load error. Which half a widget belongs in is y
 }
 ```
 
-*Arrived in `alexia_protocol` 12 (D199, 2026-09-24). Declaring it while claiming 11 or lower
+*Arrived in `alexia_protocol` 12 (D204, 2026-09-24). Declaring it while claiming 11 or lower
 is a load error: `page arrived in alexia_protocol 12`.*
 
 **Your plugin's place on the board.** The window is a grid of dots, 25 px apart, and a page is
@@ -676,7 +676,7 @@ The plugin contract broke at M4, which is what M4 was for: `alexia_protocol` wen
 working — a plugin outside the range gets the refusal message above rather than a crash,
 which is the entire reason third-party plugins could be accepted this early.
 
-It has kept moving the same way since, and is at **12** as of 2026-09-24, for `page` (D199).
+It has kept moving the same way since, and is at **12** as of 2026-09-24, for `page` (D204).
 Every step from 3 was additive: a manifest that does not use what a revision added is still
 valid, and the floor is still 2.
 

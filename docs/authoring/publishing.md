@@ -135,7 +135,7 @@ install folder and nothing else.
 
 ### Announcing one that is not ready (coming soon)
 
-A plugin can be on the shelf before there is anything to download (D199). Alexia draws it
+A plugin can be on the shelf before there is anything to download (D204). Alexia draws it
 greyed with *Coming soon* — on the Plugins screen and in the board's *Add page* — and refuses
 to install it in words.
 

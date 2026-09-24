@@ -98,7 +98,7 @@ export interface Entry {
   provides: string[]
   updated_at: number
   /**
-   * **Listed so people know it is coming, and not installable** (D199).
+   * **Listed so people know it is coming, and not installable** (D204).
    *
    * A row the shelf carries before there is anything to download: an id, a name and a
    * sentence, and no archive or checksum behind them. The screen draws it greyed with
@@ -555,7 +555,7 @@ function readReleases(releases: Release[]): Shelf {
       // it. `scripts/publish.mjs` is where a mistake in this block is caught.
       continue
     }
-    // A placeholder (D199) is a release with a block and nothing attached: there is nothing
+    // A placeholder (D204) is a release with a block and nothing attached: there is nothing
     // to download yet, which is the point of it. Kept as the block says and nothing more.
     if (block.coming_soon === true && typeof block.id === 'string' && !plugins.has(block.id)) {
       plugins.set(block.id, block as unknown as Entry)

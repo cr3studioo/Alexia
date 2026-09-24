@@ -407,7 +407,7 @@ test('a file with nothing typed beside it is a whole message', async () => {
   expect(empty.status).toBe(400)
 })
 
-test('the board is kept where the theme is, checked whole, and forgotten on null (D199)', async () => {
+test('the board is kept where the theme is, checked whole, and forgotten on null (D204)', async () => {
   const post = (body: unknown) =>
     get('/api/setup', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
   const state = async () => ((await (await get('/api/state')).json()) as { layout: unknown }).layout
@@ -502,7 +502,7 @@ test('the board is back after a relaunch: what /api/setup kept, a fresh core rea
   await third.close()
 })
 
-test('local stats never fail: no Ollama is running:false with nothing in the lists (D199)', async () => {
+test('local stats never fail: no Ollama is running:false with nothing in the lists (D204)', async () => {
   const response = await get('/api/local-stats')
   expect(response.status).toBe(200)
   expect(await response.json()).toMatchObject({ running: false, installed: [], loaded: [], speed: null })
@@ -521,7 +521,7 @@ test('local stats read the machine itself, and keep a history of the readings be
   expect(second.system.cpu.percent).not.toBeNull()
 })
 
-test('local stats say how fast the last local answer wrote, and only a local one (D199)', async () => {
+test('local stats say how fast the last local answer wrote, and only a local one (D204)', async () => {
   // A cloud answer is not this machine's speed, and a local one with no writing time is not a speed.
   alexia.store.recordUsage({ model: 'gpt-oss-120b', provider: 'groq', tokensIn: 5, tokensOut: 900, cost: 0, writing: 1000 })
   alexia.store.recordUsage({ model: 'qwen3:8b', provider: 'ollama', tokensIn: 5, tokensOut: 40, cost: 0 })

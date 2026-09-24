@@ -147,7 +147,7 @@ test('the .json spelling reaches the same routes', async () => {
   expect((await handle(at('/v0/plugins/weather.json'), e)).status).toBe(410)
 })
 
-test('a plugin that is coming is listed with nothing to download, until a real one takes its id (D199)', async () => {
+test('a plugin that is coming is listed with nothing to download, until a real one takes its id (D204)', async () => {
   const e = env()
   const list = async () =>
     ((await (await handle(at('/v0/plugins'), e)).json()) as { plugins: Record<string, unknown>[] }).plugins

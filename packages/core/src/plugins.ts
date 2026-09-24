@@ -316,7 +316,7 @@ export class Plugins {
   }
 
   /**
-   * Take the pages of plugins that are no longer here out of the kept board (D199).
+   * Take the pages of plugins that are no longer here out of the kept board (D204).
    *
    * *Here* is every plugin that loaded, and every folder that is here and did not — a plugin
    * mid-update, or one whose manifest someone is fixing, is not gone, and its page keeping its
@@ -464,7 +464,7 @@ export class Plugins {
 
   /**
    * How many enabled plugins promise this **and have every key they declared** — the board's
-   * *is another way in connected* (D199), asked with `CORE_CAPABILITIES.channel`.
+   * *is another way in connected* (D204), asked with `CORE_CAPABILITIES.channel`.
    *
    * **Keys, not a live connection**, and on purpose. Whether a bot is really holding its line
    * open is the plugin's own knowledge, and asking would wake a process on every state read.
@@ -492,7 +492,7 @@ export class Plugins {
   }
 
   /**
-   * The *Restart* on a plugin the supervisor switched off (D199's page, and the Plugins page).
+   * The *Restart* on a plugin the supervisor switched off (D204's page, and the Plugins page).
    *
    * Clears the crash tally and the reason, and nothing more: the next call spawns it again, as
    * lazy spawn always has. The one exception is a resident plugin, which is woken now for the

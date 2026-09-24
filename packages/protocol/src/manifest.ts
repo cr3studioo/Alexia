@@ -75,7 +75,7 @@ import { APP_VERSION, newer } from './version.js'
  * shows the buttons that apply to it rather than all seven. Both optional, both read off what a
  * row already carries (its `tags`, or one of its fields), and the floor stays at 2.
  *
- * **12 on 2026-09-24 (D199).** `page` — a plugin's own page on the board, declared as sizes
+ * **12 on 2026-09-24 (D204).** `page` — a plugin's own page on the board, declared as sizes
  * that each name which of its widgets to show. Additive: nothing is drawn that a plugin did not
  * already declare, a plugin with a `panel` and no `page` gets one built from the panel, and a
  * manifest that says nothing about pages means what it meant yesterday. The floor stays at 2.
@@ -801,7 +801,7 @@ export const ManifestShape = z
       .optional(),
 
     /**
-     * **A page of its own on the board** (`alexia_protocol` 12, D199).
+     * **A page of its own on the board** (`alexia_protocol` 12, D204).
      *
      * The shell stopped being three fixed columns and became a board of pages somebody
      * arranges on a grid of dots, and the question that raised is the one `panel` answered

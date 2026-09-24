@@ -1015,7 +1015,7 @@ test('local stats at L add the last few minutes, the models in memory, and how l
   expect(section.querySelector('.spark')).toBeNull()
 })
 
-test('local stats say the last speed with its model, and draw no speed row before one is measured (D199)', () => {
+test('local stats say the last speed with its model, and draw no speed row before one is measured (D204)', () => {
   const section = document.createElement('section')
   drawLocalStats(section, { ...ollama, system: machine }, 'L')
   expect(section.textContent).not.toContain('Last speed')
@@ -1037,7 +1037,7 @@ test('uptime and memory read the way the operating system says them', () => {
   expect(memoryGB(11.44 * 2 ** 30)).toBe('11.4 GB')
 })
 
-test('a plugin the supervisor switched off says why, and Restart asks core to clear it (D199)', async () => {
+test('a plugin the supervisor switched off says why, and Restart asks core to clear it (D204)', async () => {
   const section = document.createElement('section')
   const sent: { path: string; body: unknown }[] = []
   const redraw = vi.fn()
@@ -1070,7 +1070,7 @@ test('a plugin the supervisor switched off says why, and Restart asks core to cl
  * once on a board nobody has arranged, and once on one somebody has.
  */
 for (const arranged of [false, true]) {
-  test(`plugins come and go on ${arranged ? 'an arranged' : 'a never-arranged'} board: added, hidden with its spot kept, gone (D199)`, async () => {
+  test(`plugins come and go on ${arranged ? 'an arranged' : 'a never-arranged'} board: added, hidden with its spot kept, gone (D204)`, async () => {
     const html = readFileSync(join(ui, 'index.html'), 'utf8')
     document.body.innerHTML = /<body[^>]*>([\s\S]*)<\/body>/.exec(html)![1]!.replace(/<script[\s\S]*?<\/script>/g, '')
     let here: PagePane[] = []

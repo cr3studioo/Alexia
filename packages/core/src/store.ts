@@ -136,7 +136,7 @@ const MIGRATIONS: string[] = [
   `ALTER TABLE tries ADD COLUMN waited INTEGER;`,
 
   // 9 — how long each answer took to write, in milliseconds, from its first sign of life to its
-  // last streamed byte (D199). `tokens_out` alone is a length, not a speed, and `tries` keeps the
+  // last streamed byte (D204). `tokens_out` alone is a length, not a speed, and `tries` keeps the
   // wait before the first word but stamps only the end — so *how fast did it write* had half its
   // numbers. On `usage` rather than `tries` because the tokens are here, and a speed is the two
   // divided. Null for an answer that showed no sign, and for every answer before this column.
@@ -1010,7 +1010,7 @@ export class Store {
     tokensIn: number
     tokensOut: number
     cost: number
-    /** Milliseconds from the answer's first sign of life to its end, when it showed one (D199). */
+    /** Milliseconds from the answer's first sign of life to its end, when it showed one (D204). */
     writing?: number
     at?: number
   }): void {
@@ -1035,7 +1035,7 @@ export class Store {
   }
 
   /**
-   * **The newest answer from one provider that can be read as a speed** (D199): tokens written
+   * **The newest answer from one provider that can be read as a speed** (D204): tokens written
    * and the milliseconds spent writing them, both above zero. The Local stats page asks this of
    * `ollama` — what this machine's own model last managed, which is the one speed a person can do
    * something about. `undefined` when no answer from it has both numbers, which is every

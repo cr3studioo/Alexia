@@ -131,7 +131,7 @@ const segment = (stage: Stage): HTMLLIElement => {
 }
 
 /**
- * The three pages this draws into (D199). They used to be one column and are three pages on
+ * The three pages this draws into (D204). They used to be one column and are three pages on
  * the board now, each of which can be moved, sized or taken off — so each is handed over
  * rather than looked up in the document. A page that is off the board is still in the
  * markup, hidden, and keeps being written to: putting it back shows the task as it is now.

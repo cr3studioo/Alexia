@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 /**
- * What can be on the board (D199): core's seven pages, and whatever the installed plugins
+ * What can be on the board (D204): core's seven pages, and whatever the installed plugins
  * declare.
  *
  * `layout.ts` answers *where*; this file answers *what*. A page here is a name, whether it can
@@ -418,7 +418,7 @@ const PRESSURE: Record<Pressure, string> = { normal: 'Normal', warning: 'Warning
 const BADGE: Record<Pressure, string> = { normal: 'badge', warning: 'badge warn', critical: 'badge danger' }
 
 /**
- * Local stats (D199): the machine, and what it is doing for the models on it.
+ * Local stats (D204): the machine, and what it is doing for the models on it.
  *
  * - **S** is the two numbers that answer *is it the machine?* — the processor's share and the
  *   hottest sensor.

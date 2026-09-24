@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 /**
- * **Plugins that are coming, listed before there is anything to download** (D199).
+ * **Plugins that are coming, listed before there is anything to download** (D204).
  *
  * The board's *Add page* list shows what a person could put on it, and a page that is being
  * built is worth showing greyed with *Coming soon* — it answers *can Alexia do that?* with
