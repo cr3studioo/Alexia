@@ -527,6 +527,118 @@ test('Add page can always bring Chat back, even after it was removed with no oth
   vi.unstubAllGlobals()
 })
 
+test("the selected page's bar is in the window and over no other page: above, below, else inside its own top (M10-4)", () => {
+  const { board, root } = mountReal()
+  board.edit(true)
+  const bar = root.querySelector<HTMLElement>('.page-bar')!
+  // happy-dom has no layout, so the bar is the size board.ts assumes without one.
+  const high = 44
+  const wide = 320
+  const boxOf = (el: HTMLElement): { left: number; top: number; right: number; bottom: number } => {
+    const left = parseFloat(el.style.left)
+    const top = parseFloat(el.style.top)
+    const w = el === bar ? wide : parseFloat(el.style.width)
+    const h = el === bar ? high : parseFloat(el.style.height)
+    return { left, top, right: left + w, bottom: top + h }
+  }
+  const check = (id: string): { left: number; top: number; right: number; bottom: number } => {
+    root.querySelector<HTMLButtonElement>(`[data-page="${id}"] > .page-grab`)!.click()
+    expect(bar.hidden, id).toBe(false)
+    const b = boxOf(bar)
+    expect(b.top, id).toBeGreaterThanOrEqual(0)
+    expect(b.bottom, id).toBeLessThanOrEqual(900)
+    expect(b.left, id).toBeGreaterThanOrEqual(0)
+    expect(b.right, id).toBeLessThanOrEqual(1440)
+    for (const other of root.querySelectorAll<HTMLElement>('.board-field > [data-page]')) {
+      if (other.dataset.page === id || other.hidden) continue
+      const o = boxOf(other)
+      const apart = o.left >= b.right || o.right <= b.left || o.top >= b.bottom || o.bottom <= b.top
+      expect(apart, `${id}'s bar over ${String(other.dataset.page)}`).toBe(true)
+    }
+    return b
+  }
+
+  // Every page on the default board, the full-height ones included: below those was past the
+  // bottom of the window, and below Running now was on top of Steps.
+  for (const id of ['general', 'chat', 'running', 'steps', 'current-step', 'price']) check(id)
+  const general = boxOf(root.querySelector<HTMLElement>('[data-page="general"]')!)
+  expect(check('general').top).toBe(general.top + 8)
+
+  // With room above, it goes above; at the right edge it is kept in from the side.
+  const g = grid(1440, 900)
+  const price = arrange(defaultLayout(g.cols, g.rows), shapes, g).find((p) => p.id === 'price')!
+  board.adopt({
+    v: 1,
+    cols: g.cols,
+    guides: defaultLayout(g.cols, g.rows).guides,
+    pages: [
+      { id: 'general', w: 11, h: 20, anchor: { x: 0, y: 0 } },
+      { id: 'price', w: price.w, h: price.h, anchor: { x: g.cols - price.w, y: 12 } },
+    ],
+  })
+  const priceBox = boxOf(root.querySelector<HTMLElement>('[data-page="price"]')!)
+  const b = check('price')
+  expect(b.bottom).toBe(priceBox.top - 8)
+  expect(b.right).toBeLessThanOrEqual(1440 - 8)
+  board.edit(false)
+  vi.unstubAllGlobals()
+})
+
+test('the pill lives in a strip of its own under the board, in both views, so it covers no page (M10-4)', () => {
+  const css = readFileSync(join(ui, 'app.css'), 'utf8')
+  const rule = (selector: string): string => {
+    const at = css.indexOf(`\n${selector} {`)
+    expect(at, selector).toBeGreaterThan(-1)
+    return css.slice(at, css.indexOf('}', at))
+  }
+  // The board stops above the strip, and the strip is as tall as the 48-pixel corner.
+  expect(rule('#board')).toMatch(/margin-bottom:\s*var\(--corner-strip\);/)
+  expect(css).toMatch(/--corner-strip:\s*3rem;/)
+  // The pill sits inside it, and edit view does not move it out over the board.
+  expect(rule('.edit-pill')).toMatch(/bottom:\s*var\(--space-1\);/)
+  expect(css).not.toMatch(/#corner\.editing[^{]*\{/)
+  // The Add page list opens from the strip, above the pill.
+  expect(rule('.add-menu')).toMatch(/bottom:\s*calc\(var\(--corner-strip\)/)
+})
+
+test("Chat's parts each have a row of their own, so hiding the heading at S moves nothing", () => {
+  const css = readFileSync(join(ui, 'app.css'), 'utf8')
+  const chat = /\n#chat \{[^}]*\}/.exec(css)![0]
+  // One column no wider than the page, whatever the composer's minimum is.
+  expect(chat).toMatch(/grid-template-columns:\s*minmax\(0, 1fr\);/)
+  const areas = /grid-template-areas:([^;]*);/.exec(chat)![1]!.match(/'[a-z]+'/g)!.map((one) => one.slice(1, -1))
+  const rows = /grid-template-rows:([^;]*);/.exec(chat)![1]!.trim().split(/\s+(?![^(]*\))/)
+  expect(rows.length).toBe(areas.length)
+  // The conversation is the one row that stretches.
+  expect(rows[areas.indexOf('log')]).toBe('minmax(0, 1fr)')
+  expect(rows.filter((row) => row !== 'auto')).toHaveLength(1)
+  const parts = [
+    ['chat-top', 'top'],
+    ['log', 'log'],
+    ['prompt', 'prompt'],
+    ['paid-note', 'paid'],
+    ['note', 'note'],
+    ['menu', 'menu'],
+    ['attached', 'attached'],
+    ['ask', 'ask'],
+  ]
+  for (const [id, area] of parts) expect(css, id).toMatch(new RegExp(`\\n#${String(id)} \\{\\s*grid-area: ${String(area)};`))
+})
+
+test('Current step has its heading, like Running now and Steps', () => {
+  const html = readFileSync(join(ui, 'index.html'), 'utf8')
+  document.body.innerHTML = /<body[^>]*>([\s\S]*)<\/body>/.exec(html)![1]!.replace(/<script[\s\S]*?<\/script>/g, '')
+  const titles = [
+    ['running', 'Running now'],
+    ['steps', 'Steps'],
+    ['current-step', 'Current step'],
+  ]
+  for (const [id, title] of titles) {
+    const label = document.querySelector(`[data-page="${String(id)}"] > .rail-label`)
+    expect(label?.textContent?.trim().startsWith(String(title)), id).toBe(true)
+  }
+})
+
 /** A Mac at rest: every number core can read, and a history of four readings. */
 const machine: MachineStats = {
   cpu: { percent: 23.4, cores: 10, model: 'Apple M2 Pro' },
