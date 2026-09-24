@@ -2549,15 +2549,20 @@ export async function send(
   const rest = async (): Promise<void> => {
     const now = Date.now()
     const moments: number[] = []
-    for (const run of runs) if (run.stage === 'resting' && run.resume !== undefined) moments.push(run.resume)
     if (winner === undefined) moments.push(began + starWait)
     const due = winner === undefined ? hedgeAt(runs.filter((run) => run.stage === 'running' || run.stage === 'resting')) : undefined
     if (due !== undefined) moments.push(due)
-    const soonest = Math.min(...moments.filter((moment) => moment > now))
+    /**
+     * **A rung resting is asked again even if its moment went by on the way here.** Nothing else
+     * wakes the walk for it — no request is out — so dropping a resume already past with the other
+     * stale moments left a pin, once its wait had gone, asleep for good.
+     */
+    const resumes = runs.flatMap((run) => (run.stage === 'resting' && run.resume !== undefined ? [run.resume] : []))
+    const soonest = Math.min(...resumes, ...moments.filter((moment) => moment > now))
     let timer: ReturnType<typeof setTimeout> | undefined
     await new Promise<void>((resolve) => {
       wake = resolve
-      if (Number.isFinite(soonest)) timer = setTimeout(resolve, soonest - now)
+      if (Number.isFinite(soonest)) timer = setTimeout(resolve, Math.max(0, soonest - now))
     })
     clearTimeout(timer)
     wake = () => undefined
