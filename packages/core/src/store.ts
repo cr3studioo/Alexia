@@ -20,6 +20,11 @@ import { DatabaseSync } from 'node:sqlite'
  * update or a reinstall cannot take someone's history with it. On Windows that is the local
  * one rather than the roaming one: a roaming profile syncing a live SQLite file is a
  * corrupted database waiting for a slow network.
+ *
+ * `ALEXIA_DATA_NAME` is set only by the desktop shell of a dev build (`pnpm app:dev`), which
+ * names itself *Alexia Dev* so that trying a change never reads or writes the real Alexia's
+ * history. A plain folder name or nothing: anything with a separator in it is ignored, so the
+ * variable can move the folder sideways and never anywhere else.
  */
 export function dataDir(): string {
   const home = homedir()
@@ -27,7 +32,8 @@ export function dataDir(): string {
     process.platform === 'win32' ? (process.env.LOCALAPPDATA ?? join(home, 'AppData', 'Local'))
     : process.platform === 'darwin' ? join(home, 'Library', 'Application Support')
     : (process.env.XDG_DATA_HOME ?? join(home, '.local', 'share'))
-  return join(base, 'Alexia')
+  const named = process.env.ALEXIA_DATA_NAME
+  return join(base, named && /^[\w .-]+$/.test(named) && !/^\.+$/.test(named) ? named : 'Alexia')
 }
 
 /**

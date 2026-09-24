@@ -304,7 +304,8 @@ test('the stand-in above is vault.rs: the same fields in and the same answers ou
   expect(source).toContain('Err(keyring::Error::NoEntry) => json!({ "ok": true, "secret": null })')
   expect(source).toContain('json!({ "port": port, "token": token })')
   // Its own name, never core's old one — reading an entry Node created would prompt.
-  expect(source).toContain('const SERVICE: &str = "dev.alexia.app";')
+  // The released app's name for it. Alexia Dev (`pnpm app:dev`) compiles in its own instead.
+  expect(source).toContain('None => "dev.alexia.app" };')
 })
 
 test('the core the shell hands the vault to cannot be steered from outside', () => {

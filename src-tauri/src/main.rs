@@ -136,6 +136,10 @@ fn in_dock(app: &AppHandle, shown: bool) {
 #[cfg(not(target_os = "macos"))]
 fn in_dock(_app: &AppHandle, _shown: bool) {}
 
+/// Set only when `pnpm app:dev` compiles *Alexia Dev*: the name it shows, and the folder its core
+/// keeps data in, so a change can be tried on this machine without touching the real Alexia.
+const DEV: Option<&str> = option_env!("ALEXIA_DEV_NAME");
+
 /// When the overlay was last summoned — the guard D66 asked M5-2 for and M5-2 never built.
 ///
 /// A blur already in flight can land a moment *after* the show meant to open the overlay, and
@@ -250,6 +254,7 @@ fn main() {
                 .args(["--disable-sigusr1", "boot.mjs"])
                 .env("ALEXIA_PORT", port.to_string())
                 .env("ALEXIA_TAURI", "1")
+                .env("ALEXIA_DATA_NAME", DEV.unwrap_or("Alexia"))
                 // Tauri preserves a resource's path relative to this crate, so the folder
                 // `scripts/sidecar.mjs` fills lands one level in. Naming it here is cheaper
                 // than a build step that flattens it, and it is one place rather than four
@@ -272,7 +277,7 @@ fn main() {
             let target: WebviewUrl = WebviewUrl::External(url.parse()?);
 
             WebviewWindowBuilder::new(app, "main", target.clone())
-                .title("Alexia")
+                .title(DEV.unwrap_or("Alexia"))
                 .inner_size(880.0, 720.0)
                 .min_inner_size(420.0, 420.0)
                 .build()?;
@@ -280,7 +285,7 @@ fn main() {
             // The overlay, exactly as the spike proved it survives: frameless, on top, out
             // of the taskbar, and hidden by its own blur rather than by anything else.
             let overlay = WebviewWindowBuilder::new(app, "overlay", target)
-                .title("Alexia")
+                .title(DEV.unwrap_or("Alexia"))
                 .inner_size(640.0, 320.0)
                 .decorations(false)
                 .always_on_top(true)
