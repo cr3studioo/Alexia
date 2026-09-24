@@ -4,7 +4,7 @@
   "id": "telegram",
   "name": "Telegram",
   "summary": "Talk to Alexia from Telegram. Every message crosses Telegram's servers.",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "license": "AGPL-3.0-only",
   "entry": {
     "run": "node",
@@ -26,7 +26,8 @@
   ],
   "provides": [
     "telegram.send",
-    "ask.confirm"
+    "ask.confirm",
+    "channel.chat"
   ],
   "settings": [
     {

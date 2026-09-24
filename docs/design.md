@@ -297,6 +297,36 @@ against its neighbour needs a rule to separate them, and a screen of rules is wh
 old header read as a stack of pills — here the ground does that job and costs nothing. The
 gutters carry a grip apiece, because the three widths are the reader's to set.
 
+*Superseded 2026-09-24 by D199, in arrangement not in look.* The ground showing between
+panels stays; the three fixed panels go. The shell is now **a board of pages** on a 25 px dot
+grid, centred so the spare pixels split evenly on both sides, one clear dot between any two
+pages. The rail became the **General** page (never removable), the conversation the **Chat**
+page (removable — Telegram can be somebody's only channel), and the live panel split into
+**Running now**, **Steps**, **Current step** and **Price**, joined by **Local stats**. The
+three columns survive as **guides**: dragging a grip — which until now were drawn and did
+nothing — resizes every page whose edge sits on it. Dots show only in **Edit view**, reached
+from a pill in the bottom-left corner or *Edit layout* in the palette. Under 28 dot spaces
+(about 740 px, the overlay) the pages stack in one column. Settings and Activity no longer swap
+the middle out; they open as a glass sheet over the board and Esc closes it. What each page
+below *says* is unchanged, so the paragraphs that follow still describe the content, with
+*panel* read as *page*.
+
+**Local stats** is the one page with no panel before it, so it is described here. It is the
+machine, then the models on it: at S the processor's share and the hottest sensor; at M a tile
+per temperature (CPU, GPU, battery) there is a number for, a thin bar each for CPU, GPU and RAM
+with the percent beside it, and memory as the system's own pressure badge (Normal, or caution
+for Warning, danger for Critical) with *11.4 GB / 16 GB*; at L the same with the last three
+minutes drawn as a line under each bar, the Ollama models in memory and the last local speed,
+and *Up for 1h 11min*. It is read every three seconds only while it is on the board and the
+window is on screen. Core reads CPU from `os`, the GPU from `ioreg`'s `IOAccelerator` on a Mac
+(and `nvidia-smi` elsewhere when it is on the PATH), memory from `vm_stat` and its pressure from
+`kern.memorystatus_vm_pressure_level` on a Mac or `MemAvailable` on Linux. **Temperature comes
+from where it can be read without asking for rights**: Linux's `/sys/class/thermal` through
+core, and on a Mac or Windows the desktop shell's sensors (`system_temps`, the `sysinfo`
+crate) — on Apple Silicon that is CPU and battery with no GPU sensor, and on Windows whatever
+WMI exposes, which is often nothing. In a browser on a Mac or Windows there is no temperature,
+and a number that cannot be read is a tile or a row left out, never a zero.
+
 **The rail** is identity, then which conversation, then the four things somebody changes:
 which model answers, where the work happens, what Alexia may do unasked, and which plugins are
 on. It is the one panel that never goes away — Settings and Control swap the middle out from

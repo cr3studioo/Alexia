@@ -138,6 +138,24 @@ export const CORE_CAPABILITIES = {
    * being here.
    */
   extract: 'document.extract',
+  /**
+   * **Somebody can talk to her from somewhere other than this window** — a phone, a chat app,
+   * anything that carries a conversation in and an answer out (D199's Chat page).
+   *
+   * The first name on this list that is **a mark rather than a call**. Nothing ever calls it
+   * and no tool binds it: a plugin puts it in `provides` to say *I am a way in*, and core only
+   * counts the enabled ones whose keys are all stored. That count is the whole use — the board
+   * asks before the Chat page comes off only when it is zero, because taking the window's
+   * conversation away is harmless with a phone paired and a lockout without one.
+   *
+   * A capability rather than a list of channel plugins for the reason every entry here is one:
+   * the next way in is a second plugin offering this same name, and the board learns about it
+   * without core ever learning who it is.
+   *
+   * Nothing provides it → the count is zero → the board asks every time, which is what it did
+   * before this name existed.
+   */
+  channel: 'channel.chat',
 } as const
 
 /**

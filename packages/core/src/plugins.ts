@@ -443,9 +443,49 @@ export class Plugins {
       .sort()
   }
 
+  /**
+   * How many enabled plugins promise this **and have every key they declared** — the board's
+   * *is another way in connected* (D199), asked with `CORE_CAPABILITIES.channel`.
+   *
+   * **Keys, not a live connection**, and on purpose. Whether a bot is really holding its line
+   * open is the plugin's own knowledge, and asking would wake a process on every state read.
+   * What core does know without spawning anything is whether each `password` it declared is in
+   * the keychain: a channel with no token cannot be reached through by anybody, so it is not
+   * counted. It errs towards zero, and zero only means the board asks once more than it had to.
+   */
+  async reachable(cap: string): Promise<number> {
+    let count = 0
+    for (const entry of this.#entries.values()) {
+      if (!this.#enabled.has(entry.manifest.id) || !entry.manifest.provides?.includes(cap)) continue
+      if (entry.process.state === 'unhealthy') continue
+      const keys = (entry.manifest.settings ?? []).filter((one) => one.type === 'password')
+      const stored = await Promise.all(
+        keys.map(async (one) => (await this.#secrets.get(entry.manifest.id, one.key).catch(() => undefined)) !== undefined),
+      )
+      if (stored.every(Boolean)) count += 1
+    }
+    return count
+  }
+
   /** Whether a process is up, asked without starting one. Lazy spawn makes `false` normal. */
   running(id: string): boolean {
     return this.#entries.get(id)?.process.pid !== undefined
+  }
+
+  /**
+   * The *Restart* on a plugin the supervisor switched off (D199's page, and the Plugins page).
+   *
+   * Clears the crash tally and the reason, and nothing more: the next call spawns it again, as
+   * lazy spawn always has. The one exception is a resident plugin, which is woken now for the
+   * same reason `enable` wakes it — the thing it holds open has no *next call* to wait for.
+   * Disable-then-enable looked like this and was not: neither touches the supervisor's state,
+   * so the button pressed that way came back to the same *stopped and did not come back*.
+   */
+  restart(id: string): void {
+    const entry = this.#entries.get(id)
+    if (!entry) return
+    entry.process.restart()
+    if (this.#enabled.has(id)) void entry.process.wake()
   }
 
   /**
@@ -472,6 +512,12 @@ export class Plugins {
       store: this.options.store,
       enabled: (of) => this.enabled(of),
       running: (of) => this.running(of),
+      unhealthy: (of) => {
+        const supervised = this.#entries.get(of)?.process
+        return supervised?.state === 'unhealthy' ?
+            (supervised.reason ?? `${supervised.manifest.name} was switched off.`)
+          : undefined
+      },
       tools: (of) => this.#toolNames.get(of),
       progress: (of) => this.#progress.get(of),
       hasSecret: async (of, key) => (await this.#secrets.get(of, key)) !== undefined,

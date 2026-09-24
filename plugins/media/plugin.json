@@ -4,7 +4,7 @@
   "id": "media",
   "name": "Local media generation",
   "summary": "Makes pictures, sound and video on this machine with ComfyUI, starting it if it is not already running, so the media-making half of Combined mode is real.",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "license": "AGPL-3.0-only",
   "entry": {
     "run": "node",
@@ -12,7 +12,7 @@
       "index.js"
     ]
   },
-  "alexia_protocol": 6,
+  "alexia_protocol": 11,
   "mcp_protocol": "2025-11-25",
   "requires": [
     {
@@ -150,5 +150,33 @@
         "label": "On disk"
       }
     ]
+  },
+  "page": {
+    "title": "Local image gen",
+    "sizes": {
+      "M": {
+        "at": [
+          12,
+          10
+        ],
+        "show": [
+          "state",
+          "made"
+        ]
+      },
+      "L": {
+        "at": [
+          20,
+          14
+        ],
+        "show": [
+          "state",
+          "made",
+          "library",
+          "disk"
+        ]
+      }
+    },
+    "fixed": false
   }
 }

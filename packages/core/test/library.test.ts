@@ -340,3 +340,48 @@ test('a first run that has never reached GitHub says so rather than showing noth
   library.url = 'github:cr3studioo/Alexia'
   await expect(library.plugins()).rejects.toThrow(/rate-limiting/)
 })
+
+test('a plugin that is coming is on the shelf with nothing to download, and install says so (D199)', async () => {
+  const packed = pack('weather')
+  const placeholder = {
+    tag_name: 'soon-placeholder',
+    published_at: '2026-09-24T12:00:00Z',
+    // No asset: that is what makes it a placeholder rather than a broken release. The id is
+    // made up on purpose — core's tests name no real plugin either.
+    body: `\`\`\`alexia\n${JSON.stringify({ id: 'someday', name: 'Someday', summary: 'Not yet.', coming_soon: true, sha256: 'b'.repeat(64) })}\n\`\`\`\n`,
+    assets: [],
+  }
+  const { library, extensions } = releases(
+    [placeholder, release({ id: 'weather', version: '0.1.0', sha256: packed.sha256 })],
+    packed.bytes,
+  )
+  const shelf = await library.plugins()
+  // Passed through as a name and a sentence, with anything downloadable it carried dropped.
+  expect(shelf.find((row) => row.id === 'someday')).toEqual({ id: 'someday', name: 'Someday', summary: 'Not yet.', coming_soon: true })
+  expect(shelf.find((row) => row.id === 'weather')?.coming_soon).toBeUndefined()
+
+  expect(await library.install('someday')).toEqual({
+    ok: false,
+    why: 'Someday is not out yet. It is on the shelf so you know it is coming — there is nothing to install.',
+  })
+  expect(existsSync(join(extensions, 'someday'))).toBe(false)
+  // And it is never an update to anything, even under an id somebody has.
+  expect(await library.updates([{ id: 'someday', version: '0.0.1' }])).toEqual([])
+})
+
+test('a real release takes a placeholder’s id, whichever is read first', async () => {
+  const packed = pack('weather')
+  const soon = {
+    tag_name: 'weather-soon',
+    body: `\`\`\`alexia\n${JSON.stringify({ id: 'weather', name: 'Weather', summary: 'Soon.', coming_soon: true })}\n\`\`\`\n`,
+    assets: [],
+  }
+  const real = release({ id: 'weather', version: '0.1.0', sha256: packed.sha256 })
+  for (const order of [[soon, real], [real, soon]]) {
+    const { library } = releases(order, packed.bytes)
+    const shelf = await library.plugins()
+    expect(shelf).toHaveLength(1)
+    expect(shelf[0]!.coming_soon).toBeUndefined()
+    expect(shelf[0]!.sha256).toBe(packed.sha256)
+  }
+})

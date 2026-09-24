@@ -9,13 +9,16 @@
  * before M5. That is what keeps the Tauri port a port rather than a rewrite (invariant 6) —
  * there is still no Node in here, and no import that only resolves inside the app.
  *
- * Four things cross this boundary, and they are the four Rust exists for:
+ * Five things cross this boundary, and they are the five Rust exists for:
  *
  * - the tray's state, because it is the only answer to *is it running?* anyone gets;
  * - Escape, because dismissing the overlay is a keypress the page sees and the window does not;
  * - autostart, because Alexia is a daemon and *with an obvious way to turn it off*;
  * - updating itself, because replacing a running program is the one thing a web page cannot
  *   do for itself at any price (D119);
+ * - the temperature sensors, for Local stats, because on a Mac and on Windows they are behind
+ *   IOKit and WMI, which core could reach only through a native addon — and the shell is
+ *   already the native program on the machine (`temps.rs`). Read-only, three numbers;
  * - and nothing else. If a sixth appears, it probably belongs on the other side of the port.
  */
 
@@ -73,6 +76,28 @@ export async function autostart(): Promise<boolean | undefined> {
   if (!invoke) return undefined
   try {
     return (await invoke('plugin:autostart|is_enabled')) === true
+  } catch {
+    return undefined
+  }
+}
+
+/** What the shell's sensors say, in °C. Each is `null` where this machine has no such sensor. */
+export interface Temps {
+  cpu: number | null
+  gpu: number | null
+  battery: number | null
+}
+
+/**
+ * How warm the machine is, from the shell (`system_temps`). `undefined` in a browser, and on an
+ * older shell that has no such command — both mean *ask core instead*, which reads Linux's own
+ * files and has nothing on the other two.
+ */
+export async function temps(): Promise<Temps | undefined> {
+  const invoke = bridge()?.invoke
+  if (!invoke) return undefined
+  try {
+    return ((await invoke('system_temps')) as Temps | null) ?? undefined
   } catch {
     return undefined
   }

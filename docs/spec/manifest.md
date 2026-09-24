@@ -90,7 +90,7 @@ plugins are downloads rather than something that ships inside the installer, bef
 download too.
 
 `alexia_protocol` is an integer that goes up when the `alexia/*` layer or this file changes.
-Core speaks a range — **2 to 3 today** — and one revision back is supported, which is what
+Core speaks a range — **2 to 11 today** — and one revision back is supported, which is what
 makes raising the floor a deprecation rather than a surprise. Outside the range your plugin
 does not load and the user is told something they can act on:
 
@@ -469,6 +469,66 @@ about.*
 key in both lists would be one value with two declarations that could disagree about its
 type. Declaring a key twice is a load error. Which half a widget belongs in is your call.
 
+### Page
+
+```jsonc
+"page": {
+  "title": "Voice in/out",
+  "sizes": {
+    "S": { "at": [8, 4],  "show": ["listening"] },
+    "M": { "at": [12, 8], "show": ["listening", "which_voice"] }
+  },
+  "scale": { "min": [8, 4], "max": [24, 16] },
+  "fixed": false
+}
+```
+
+*Arrived in `alexia_protocol` 11 (D199, 2026-09-24). Declaring it while claiming 10 or lower
+is a load error: `page arrived in alexia_protocol 11`.*
+
+**Your plugin's place on the board.** The window is a grid of dots, 25 px apart, and a page is
+a rectangle whose corners sit on them. A person arranges the pages; a plugin says only what
+its page shows at each size. Core draws it with the widget renderer your plugin's own page
+already uses, and adds nothing — no widget of its own, no pixels of yours.
+
+| Field | Required | |
+|---|---|---|
+| `title` | ✅ | 1–40 characters. The page's heading and its row in *Add page*. |
+| `sizes` | ✅ | An object with at least one of `S`, `M`, `L`. A tier left out is not offered. |
+| `sizes.<tier>.at` | ✅ | `[width, height]` in dots, whole numbers 1–80. `[12, 8]` is 300 × 200 px. |
+| `sizes.<tier>.show` | ✅ | Widget keys, in the order drawn. Each must be declared in `settings` or `panel.widgets`. |
+| `scale` | — | `{ "min": [w, h], "max": [w, h] }`. The page resizes freely between them; `max` is optional and absent means the board's width. Without `scale` the page snaps to its tiers and nothing between. |
+| `fixed` | — | `true`: one size, never resized — exactly one tier and no `scale`. Default `false`. |
+
+**At a size between tiers, the biggest tier that fits is shown**, and the smallest when none
+does. A tier is chosen by size and never by the plugin, so a page cannot ask to be big.
+
+**The constraints**, each a load error:
+
+- `page` with `alexia_protocol` below 11.
+- A `show` key that is not declared in `settings` or `panel.widgets`. That is **one namespace**,
+  as above, so a page cannot name a widget that is not already on your plugin's own page.
+- A tier that shrinks: M narrower or shorter than S, or L than M.
+- A tier outside `scale.min` or `scale.max`, in either dimension, and a `scale.max` smaller
+  than its `min`.
+- `fixed: true` with more than one tier, or with `scale`.
+
+**The default page.** A plugin with a `panel` and no `page` is given one: M, 12 × 10 dots,
+showing every widget in `panel.widgets`, titled by `panel.label` or else by `name`. That is
+what lets a plugin declaring 3 appear on the board unedited, and why `page` is additive.
+
+**Lifecycle.** Installed and enabled, the page is placed at the first free spot on the board and
+the person is told where. Disabled, it is hidden and its spot remembered. Uninstalled, or its
+folder deleted, it leaves the layout entirely. A plugin the supervisor marks crashed or
+unhealthy has its page show that state with *Restart*, never a blank box. **One page per
+plugin**, and one instance of it on the board.
+
+**Core never names it.** The layout is stored in core (`layout` under core's own namespace,
+written through `/api/setup` and returned in `/api/state`) as page ids and positions. The page
+itself is rebuilt from the manifest every time it is drawn, so a folder that is gone takes its
+page with it and the layout keeps nothing for it. The authoring guide is
+[`../authoring/pages.md`](../authoring/pages.md).
+
 ### `min_tier`
 
 ```jsonc
@@ -521,6 +581,8 @@ mistake a real author makes:
 | `"run": "C:\\Program Files\\node.exe"` | `entry.run` — relative or on PATH |
 | `"version": "v0.1"` | `version` — semantic versions only |
 | `"skills": ["../../etc/passwd"]` | `skills.0` — stay inside your folder |
+| `page.sizes.M.show` naming `wich_voice` | `page.sizes.M.show.0` — `show "wich_voice" is not a widget this plugin declares` |
+| `page.fixed: true` with an S and an M | `page.fixed` — a fixed page has exactly one size |
 
 Cross-field rules — the last one in each pair above — cannot be expressed in JSON Schema.
 They live in the zod schema and run when core loads your plugin. **Your editor will not
@@ -548,6 +610,10 @@ The plugin contract broke at M4, which is what M4 was for: `alexia_protocol` wen
 `lifetime`, and to `3` at M6 for `panel`. Both were additive, and both were the mechanism
 working — a plugin outside the range gets the refusal message above rather than a crash,
 which is the entire reason third-party plugins could be accepted this early.
+
+It has kept moving the same way since, and is at **11** as of 2026-09-24, for `page` (D199).
+Every step from 3 was additive: a manifest that does not use what a revision added is still
+valid, and the floor is still 2.
 
 `1` no longer loads. See [`versions.md`](./versions.md) for what each revision added and what
 updating costs.

@@ -8,6 +8,7 @@ import { noPolling } from './staged.js'
 import { keyOf, PROVIDERS } from '../src/provider.js'
 import { CORE, memorySecrets } from '../src/secrets.js'
 import { serve, type Serving } from '../src/serve.js'
+import type { SystemStats } from '../src/system.js'
 
 // The bridge between a webview and core: the shell it serves, the token that guards it, and
 // one turn end to end. No provider is connected here, so the answer is the router's
@@ -404,4 +405,80 @@ test('a file with nothing typed beside it is a whole message', async () => {
     body: JSON.stringify({ text: '' }),
   })
   expect(empty.status).toBe(400)
+})
+
+test('the board is kept where the theme is, checked whole, and forgotten on null (D199)', async () => {
+  const post = (body: unknown) =>
+    get('/api/setup', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
+  const state = async () => ((await (await get('/api/state')).json()) as { layout: unknown }).layout
+
+  // Never arranged is `null`, which the shell reads as its own default board.
+  expect(await state()).toBeNull()
+
+  const kept = {
+    v: 1,
+    cols: 52,
+    guides: [11, 38],
+    // Ids are the shell's words and core keeps them as strings — it never learns which are plugins.
+    pages: [{ id: 'general', w: 10, h: 16, anchor: { x: 0, y: 0 } }, { id: 'some-plugin', w: 12, h: 8 }],
+  }
+  // A field that is not in the shape is dropped rather than stored.
+  const saved = await post({ layout: { ...kept, extra: 'dropped' } })
+  expect(saved.status).toBe(200)
+  expect(((await saved.json()) as { layout: unknown }).layout).toEqual(kept)
+  expect(await state()).toEqual(kept)
+
+  // A layout with one bad page is refused whole, and the one that was there stays.
+  for (const bad of [
+    { ...kept, v: 2 },
+    { ...kept, cols: 0 },
+    { ...kept, guides: [1] },
+    { ...kept, pages: [{ id: 'chat', w: 0, h: 4 }] },
+    { ...kept, pages: [{ id: 'chat', w: 4, h: 4, anchor: { x: -1, y: 0 } }] },
+    { ...kept, pages: Array.from({ length: 65 }, (_, i) => ({ id: `p${String(i)}`, w: 1, h: 1 })) },
+  ]) {
+    const refused = await post({ layout: bad })
+    expect(refused.status).toBe(400)
+    expect(((await refused.json()) as { said: string }).said).toMatch(/^That layout cannot be kept: /)
+  }
+  expect(await state()).toEqual(kept)
+
+  expect((await post({ layout: null })).status).toBe(200)
+  expect(await state()).toBeNull()
+})
+
+test('local stats never fail: no Ollama is running:false with nothing in the lists (D199)', async () => {
+  const response = await get('/api/local-stats')
+  expect(response.status).toBe(200)
+  expect(await response.json()).toMatchObject({ running: false, installed: [], loaded: [], speed: null })
+})
+
+test('local stats read the machine itself, and keep a history of the readings between requests', async () => {
+  const first = (await (await get('/api/local-stats')).json()) as { system: SystemStats }
+  const second = (await (await get('/api/local-stats')).json()) as { system: SystemStats }
+  // Every field is there on every platform; a number that cannot be read is null, not missing.
+  expect(Object.keys(second.system).sort()).toEqual(['cpu', 'gpu', 'history', 'load', 'memory', 'temperature', 'uptime'])
+  expect(second.system.memory.total).toBeGreaterThan(0)
+  expect(second.system.memory).toHaveProperty('pressure')
+  expect(second.system.gpu).toHaveProperty('percent')
+  // Two requests a moment apart are two readings of one history, and the second has a CPU share.
+  expect(second.system.history.cpu.length).toBe(first.system.history.cpu.length + 1)
+  expect(second.system.cpu.percent).not.toBeNull()
+})
+
+test('local stats say how fast the last local answer wrote, and only a local one (D199)', async () => {
+  // A cloud answer is not this machine's speed, and a local one with no writing time is not a speed.
+  alexia.store.recordUsage({ model: 'gpt-oss-120b', provider: 'groq', tokensIn: 5, tokensOut: 900, cost: 0, writing: 1000 })
+  alexia.store.recordUsage({ model: 'qwen3:8b', provider: 'ollama', tokensIn: 5, tokensOut: 40, cost: 0 })
+  expect(((await (await get('/api/local-stats')).json()) as { speed: unknown }).speed).toBeNull()
+
+  // 150 tokens in 5 seconds of writing: 30 a second.
+  alexia.store.recordUsage({ model: 'qwen3:8b', provider: 'ollama', tokensIn: 5, tokensOut: 150, cost: 0, writing: 5000 })
+  const response = await get('/api/local-stats')
+  expect(await response.json()).toMatchObject({
+    running: false,
+    installed: [],
+    loaded: [],
+    speed: { model: 'qwen3:8b', tokensPerSecond: 30 },
+  })
 })

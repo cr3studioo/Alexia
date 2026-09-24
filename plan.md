@@ -304,6 +304,20 @@ event. Sequenced so nothing waits on something later.
 - [x] **M9-4** Last-run memory, VRAM pre-flight, the model-choice skill, fast defaults
 - [ ] **M9-G** **Done when:** a machine that has never seen ComfyUI installs the plugin, asks for a picture, and watches it happen
 
+### M10 — The board *(inserted 2026-09-24, D199 — in progress)*
+
+The window stops being three fixed columns and becomes a board of pages a person arranges.
+Built in this order, because each step is usable without the next.
+
+- [~] **M10-1** `layout.ts` — the dot grid, packing, guides, rescale and compact mode, as arithmetic with no DOM
+- [~] **M10-2** The board with core pages only, and grips that drag
+- [~] **M10-3** The layout kept in core, with a pre-paint copy
+- [~] **M10-4** The bottom-left pill and Edit view
+- [~] **M10-5** Local stats — Ollama's installed and loaded models, their size, and their last speed
+- [~] **M10-6** `page` in the manifest at `alexia_protocol` 11, four plugin pages, and the Vtuber placeholder in the registry
+- [x] **M10-7** The docs — `docs/authoring/pages.md`, `manifest.md#page`, `versions.md`
+- [ ] **M10-G** **Done when:** with `plugins/` empty the board shows only core pages and nothing breaks; installing `voice` puts its page up, deleting the folder takes it down, and `layout` keeps nothing for it
+
 ---
 
 ## What changed on 2026-08-27, after Alexia.md was written
@@ -3858,6 +3872,80 @@ client-supplied `prompt_id` that would make a retry idempotent instead of double
 
 ---
 
+## M10 — The board *(inserted 2026-09-24, D199)*
+
+**The shell was three columns and two grips that did nothing.** The rail, the stage and the live
+column were fixed; `.grip-a` and `.grip-b` were styled in `app.css` and had no drag code, which
+is the whole of *they are there but not working*. The owner approved a prototype that replaces
+them with a board, and answered the four questions it raised: Chat is a page and can be removed;
+there is one free layout and the columns are guides inside it; the *tabs in the middle* were the
+grips; General is never removed.
+
+### M10-1 `layout.ts`
+
+`packages/ui/src/layout.ts`, and nothing in it touches the DOM — the precedent is `force.ts`, and
+the reason is the same: arithmetic is tested without a browser. `grid(W, H)` puts dots every
+25 px with at least 20 px of margin and splits the spare pixels evenly each side. `pack` places
+the pages a person put somewhere first, then the rest at the first free spot, one clear dot
+between any two. `dragGuide` moves every page edge sitting on a guide, and no further than the
+smallest and largest of those pages allow. `rescale` scales a layout to a new width and packs it
+again. Under 28 dot spaces the pages stack in one column and the saved layout is not touched.
+
+**Acceptance.** Centred at 1337 px and at 520 px; the one-dot gap holds; a guide stops at a
+page's minimum; rescaling and back lands where it started; compact mode leaves `layout` alone.
+
+### M10-2 The board, core pages only
+
+`#shell` becomes `#board`. General (the rail, `mountRail` reused), Chat (`#chat`, unchanged),
+Running now, Steps and Current step (from `live.ts`) and Price are pages, each mounted into a
+root it is handed rather than finding `#id` for itself, and each on the board once, so no id is
+ever duplicated. Settings and Activity open as a glass sheet over the board; Esc closes it. A
+page moves by `transform` while dragged, with its blur off, and writes its position when the
+drag ends — thirty `backdrop-filter`s repainting per pointer move is the stutter otherwise.
+
+**Acceptance.** Both grips drag and the pages on them follow. General shows no remove.
+
+### M10-3 Keeping the layout
+
+`{ v: 1, cols, guides, pages: [{ id, w, h, anchor }] }` in core's kv as `layout`, written through
+`/api/setup` and returned in `/api/state`, the way the theme is. A copy in `localStorage`
+(`alexia.layout`) is read by the pre-paint script, so the layout does not flash on launch.
+
+**Acceptance.** Relaunch: the layout is back, and there is no frame where it was not.
+
+### M10-4 Edit view
+
+A 48 × 48 px corner, bottom left; after 150 ms a pill slides out with **Edit view**. Tab reaches
+it, the palette has *Edit layout*, a long press on the empty board does it on touch. In Edit view
+the dots show; a page snaps to dots, blue where it can land and red where it cannot, and goes
+back if dropped on red. The pill becomes **Add page · Reset · Done**. Removing Chat with no other
+channel connected asks once, and *Add page* can always bring it back.
+
+### M10-5 Local stats
+
+A new core page and `/api/local-stats`: the Ollama models installed, which are loaded
+(`/api/ps`), their size, and the tokens a second they last ran at. Built on `ollama.ts`.
+
+### M10-6 Plugin pages
+
+`page` in the manifest, `alexia_protocol` 10 → 11, MIN stays 2. Validated in
+`packages/protocol`, in `plugin.schema.json`, and in conformance: tiers do not shrink, tiers sit
+inside `scale`, `fixed` has one tier, `show` names only declared keys, and `page` at 10 is a load
+error. A plugin with a `panel` and no `page` gets a default M page from it. Memory (graph),
+persona, voice and media declare one. The Vtuber model is a registry entry with
+`coming_soon: true`, greyed in *Add page* and not installable — core never names it.
+
+**Acceptance.** Install `voice`: *Voice page added*, at the first free spot. Disable it: hidden,
+spot kept. Delete the folder: gone, and `layout` holds no id for it. Crash it: the page shows
+*Restart*.
+
+### M10-7 The docs
+
+[`docs/authoring/pages.md`](./docs/authoring/pages.md), [`manifest.md#page`](./docs/spec/manifest.md#page),
+a paragraph in `ui-schema.md`, *10 → 11* in `versions.md`, and D199. Done 2026-09-24.
+
+---
+
 ## Backlog
 
 Real, ordered, not scheduled. Nothing here blocks a milestone.
@@ -4037,6 +4125,7 @@ Newest first. Every entry here is also in Alexia.md's decision log.
 
 | Date | Entry |
 |---|---|
+| 2026-09-24 | **D199** — **the board.** The three fixed columns become one free layout of pages on a 25 px dot grid, centred, one clear dot between pages; S/M/L tiers, pages that scale within limits, fixed pages. The columns stay as guides and the grips finally drag. Edit view from a bottom-left pill or *Edit layout*; one column under 28 dot spaces. Core pages General (not removable), Chat (removable), Running now, Steps, Current step, Price, Local stats (new, `/api/local-stats`). `page` in the manifest at `alexia_protocol` 11, `show` keyed into `settings` and `panel.widgets`, no new widget; a `panel` with no `page` gets a default M page. Layout in kv `layout` with a pre-paint `localStorage` copy. Vtuber is a registry `coming_soon` entry. **M10**, in progress. |
 | 2026-09-22 | **D191** — **several models at once.** `send()` gains `atOnce`, `together` and `spare`: at the walk's first moment the head and up to `atOnce - 1` free partners are asked together, at most `MOST_AT_ONCE` (3) out, partners from a provider with nothing in flight first, never this Mac's model and never paid, a start-together partner only from a provider with more than half its day left. Balanced (default, `speedOf`) starts two together when `judge()` marks the head `shaky` — busy within `SHAKY_FOR` (10 min), or median `waited` over `SHAKY_SAMPLE` (5) answers above `HEDGE_AFTER`; Fastest starts three with `FASTEST_STAR_WAIT` (2 s). The Models screen's *Answer as fast as possible* switch (`set_speed`); `backup.why` gains `lately` and `fastest`. |
 | 2026-09-22 | **D190** — **faster first words.** `send()` races the next free model after `HEDGE_AFTER` (2 s) without a sign of life — at most two in flight, never paid, only while somebody waits — holding the backup's words while the first model keeps priority for `STAR_WAIT` (6 s; 12 s with nothing behind it); a cancelled loser is not recorded. A `contended` 429 is retried in place on a jittered `RETRY_STEP`, a `quota` one never; one try per model per walk. Busy strikes halve in two minutes (`BUSY_HALF_LIFE`); three key refusals from one provider skip it for the walk (`KEY_REFUSALS`); three 400s in a row set a model aside; `reply-too-long` is the request's. OpenRouter's public endpoint status fills `World.down` in the background (`uptime.ts`); `session_id` goes to rows with `stickySessions`. A `phase` event drives the status line (`packages/ui/src/status.ts`), the trace times each stage, and `tries.waited` (migration 8) records time to first sign of life. |
 | 2026-09-21 | **D189** — **Hear her at a length.** `_meta['alexia/lengths']` carries all three and `hear`; core's `hearingPlan()` sends the chosen length to a model the chat would give it to, under the person's pins and paid switch, and the result says the length sent, the model, paid and cost, and what the chat gives her now. *Hear her at* is a setting (`hear_length`); a paid sample warns with its cost; with paid off the full one is heard on the strongest free model. **M8-7**. |

@@ -7,6 +7,7 @@ import {
   ALEXIA_PROTOCOL_MIN,
   Manifest,
   MCP_PINNED,
+  pageOf,
   pluginJsonSchema,
   SCHEMA_PATH,
   versionVerdict,
@@ -16,7 +17,15 @@ import {
 const repoRoot = join(import.meta.dirname, '..', '..', '..')
 const read = (...p: string[]) => JSON.parse(readFileSync(join(repoRoot, ...p), 'utf8'))
 
-const voice = read('docs', 'spec', 'plugin.example.json') as ManifestInput
+const example = read('docs', 'spec', 'plugin.example.json') as ManifestInput
+/**
+ * The example as it was before it had a page: revision 2 and no `page`. Most of the tests
+ * below bend one field and lower the revision to the one that field arrived in, and a `page`
+ * riding along would be refused at every revision under 11 for a reason none of them is about.
+ */
+const unpaged: Record<string, unknown> = { ...example, alexia_protocol: 2 }
+delete unpaged.page
+const voice = unpaged as ManifestInput
 
 /** The example manifest with one field bent. Returns the list of paths that failed. */
 function reject(bend: (m: Record<string, unknown>) => void): string[] {
@@ -32,7 +41,7 @@ function reject(bend: (m: Record<string, unknown>) => void): string[] {
 }
 
 test('the voice manifest is valid', () => {
-  const r = Manifest.safeParse(voice)
+  const r = Manifest.safeParse(example)
   expect(r.success ? null : r.error.issues).toBe(null)
 })
 
@@ -282,4 +291,92 @@ test('a chip naming neither a group nor a tag is still parsed, and simply matche
     ],
   }
   expect(Manifest.safeParse(m).success).toBe(true)
+})
+
+describe('page — a page of its own on the board (alexia_protocol 11, D199)', () => {
+  /** The example with its page bent, and every message it was refused with. */
+  const said = (bend: (page: Record<string, unknown>) => void, revision = 11): string => {
+    const m = structuredClone(example) as Record<string, unknown>
+    m.alexia_protocol = revision
+    bend(m.page as Record<string, unknown>)
+    const r = Manifest.safeParse(m)
+    expect(r.success, 'expected this page to be refused').toBe(false)
+    return r.success ? '' : r.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('\n')
+  }
+  const sizes = (page: Record<string, unknown>) => page.sizes as Record<string, { at: number[]; show: string[] }>
+
+  test('the example declares one, and it loads', () => {
+    expect(Manifest.safeParse(example).success).toBe(true)
+  })
+
+  test('declaring one while claiming revision 10 is a load error, in the words the others use', () => {
+    expect(said(() => {}, 10)).toContain('page arrived in alexia_protocol 11 — declare "alexia_protocol": 11 to use it')
+  })
+
+  test('a page with no sizes shows nothing, and is refused', () => {
+    expect(said((page) => (page.sizes = {}))).toContain('page.sizes needs at least one of S, M or L')
+  })
+
+  test('show names only widgets the plugin declares — settings and panel alike', () => {
+    expect(said((page) => sizes(page).M!.show.push('nonsense'))).toContain(
+      'page.sizes.M.show.3: show "nonsense" is not a widget this plugin declares',
+    )
+    // A panel widget counts: one namespace (D86).
+    const m = structuredClone(example) as Record<string, unknown>
+    m.panel = { label: 'Voice', widgets: [{ key: 'clips', type: 'status', label: 'Clips' }] }
+    sizes(m.page as Record<string, unknown>).S!.show = ['clips']
+    expect(Manifest.safeParse(m).success).toBe(true)
+  })
+
+  test('S, M and L grow in both directions', () => {
+    expect(said((page) => (sizes(page).M!.at = [12, 3]))).toContain(
+      'M (12×3) is smaller than S (8×4) — S, M and L must not shrink in either direction',
+    )
+  })
+
+  test('a size the page offers is one it can be stretched to', () => {
+    expect(said((page) => (sizes(page).M!.at = [30, 8]))).toContain('M (30×8) is outside scale (8×4 to 24×16)')
+    expect(said((page) => (page.scale = { min: [9, 4] }))).toContain('S (8×4) is outside scale (9×4 to any)')
+  })
+
+  test('a fixed page has one size and does not stretch', () => {
+    expect(said((page) => (page.fixed = true))).toContain('a fixed page has exactly one size')
+    const one = said((page) => {
+      page.fixed = true
+      delete sizes(page).M
+    })
+    expect(one).toContain('a fixed page does not stretch')
+    expect(one).not.toContain('exactly one size')
+  })
+
+  test('a size is whole dots, and not a typo', () => {
+    expect(said((page) => (sizes(page).S!.at = [8.5, 4]))).toContain('page.sizes.S.at.0')
+    expect(said((page) => (sizes(page).L = { at: [800, 16], show: ['model_size'] }))).toContain('page.sizes.L.at.0')
+  })
+
+  test('the page the board reads: the declared one as written, with fixed always said', () => {
+    const parsed = Manifest.parse(example)
+    expect(pageOf(parsed)).toEqual({
+      title: 'Voice in/out',
+      sizes: {
+        S: { at: [8, 4], show: ['download_state'] },
+        M: { at: [12, 8], show: ['model_size', 'download_state', 'redownload'] },
+      },
+      scale: { min: [8, 4], max: [24, 16] },
+      fixed: false,
+    })
+  })
+
+  test('a panel and no page is a default M page, on any revision', () => {
+    const m = Manifest.parse({
+      ...voice,
+      alexia_protocol: 3,
+      panel: { label: 'Clips', widgets: [{ key: 'clips', type: 'status', label: 'Clips' }, { key: 'more', type: 'status', label: 'More' }] },
+    })
+    expect(pageOf(m)).toEqual({ title: 'Clips', sizes: { M: { at: [12, 10], show: ['clips', 'more'] } }, fixed: false })
+  })
+
+  test('neither a panel nor a page is no page at all', () => {
+    expect(pageOf(Manifest.parse(voice))).toBeNull()
+  })
 })

@@ -4,7 +4,7 @@
   "id": "memory",
   "name": "Long-term memory",
   "summary": "Remembers things across conversations — what you told it last month, and where to find it again. Can also write things down by itself, once you turn that on.",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "license": "AGPL-3.0-only",
   "entry": {
     "run": "node",
@@ -12,7 +12,7 @@
       "index.js"
     ]
   },
-  "alexia_protocol": 4,
+  "alexia_protocol": 11,
   "mcp_protocol": "2025-11-25",
   "requires": [],
   "provides": [
@@ -129,6 +129,31 @@
         "groupBy": "kind"
       }
     ]
+  },
+  "page": {
+    "title": "Memory graph",
+    "sizes": {
+      "M": {
+        "at": [
+          12,
+          10
+        ],
+        "show": [
+          "remembered_map"
+        ]
+      },
+      "L": {
+        "at": [
+          20,
+          14
+        ],
+        "show": [
+          "remembered_map",
+          "remembered_list"
+        ]
+      }
+    },
+    "fixed": false
   },
   "lifetime": "resident"
 }

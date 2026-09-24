@@ -71,3 +71,15 @@ test('a plugin that dies on a missing dependency is caught', async () => {
   expect(level(report.checks, 'boots')).toBe('pass')
   expect(level(report.checks, 'degrades')).not.toBe('fail')
 }, 60_000)
+
+test('a plugin with a page is told which page the board draws (D199)', async () => {
+  // Memory declares one; its checks report it before anything is spawned, so what the
+  // process does afterwards is not this test's business.
+  const report = await conform(join(root, 'plugins', 'memory'), { exercise: false })
+  const page = report.checks.find((c) => c.name === 'page')
+  expect(page?.level).toBe('pass')
+  expect(page?.detail).toContain('"Memory graph": M 12×10, L 20×14')
+  // And a plugin with neither a panel nor a page has no line about it.
+  const plain = await conform(join(root, 'plugins', 'hello'))
+  expect(plain.checks.find((c) => c.name === 'page')).toBeUndefined()
+}, 60_000)

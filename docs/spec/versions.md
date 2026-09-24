@@ -5,9 +5,9 @@ handshake, handled by the SDK. **`alexia_protocol` is ours**: an integer, bumped
 `alexia/*` layer or the manifest changes, and checked *before your process is spawned*.
 
 ```
-you say alexia_protocol 3    Alexia speaks 2..10  ->  loads
-you say alexia_protocol 1    Alexia speaks 2..10  ->  "X was written for an older version"
-you say alexia_protocol 11   Alexia speaks 2..10  ->  "X needs a newer Alexia"
+you say alexia_protocol 3    Alexia speaks 2..11  ->  loads
+you say alexia_protocol 1    Alexia speaks 2..11  ->  "X was written for an older version"
+you say alexia_protocol 12   Alexia speaks 2..11  ->  "X needs a newer Alexia"
 ```
 
 ## The other version: `min_app` *(2026-08-31, D118)*
@@ -37,6 +37,49 @@ contract was still moving.
 **It was kept at 3, on 2026-08-29.** Plugins declaring 1 stopped loading and said so in a
 sentence rather than crashing, exactly as written here while it was still hypothetical. The
 migration for a revision-1 plugin that uses nothing from 2 is one character.
+
+## 10 → 11 *(2026-09-24, D199)*
+
+**One manifest field.** `page`, optional.
+
+The window became a board of pages a person arranges: Chat, General, Running now, and a page
+for any plugin that wants one. A plugin's page names the widgets it already declared, per
+size, and core draws them with the renderer it already has.
+
+```jsonc
+{
+  "alexia_protocol": 11,
+  "page": {
+    "title": "Voice in/out",
+    "sizes": {
+      "S": { "at": [8, 4],  "show": ["listening"] },
+      "M": { "at": [12, 8], "show": ["listening", "which_voice"] }
+    },
+    "scale": { "min": [8, 4], "max": [24, 16] }
+  }
+}
+```
+
+Full field list and constraints in [`manifest.md`](./manifest.md#page); the guide is
+[`../authoring/pages.md`](../authoring/pages.md).
+
+**No new widget, and that is what kept it one field.** A page could have been a canvas, or an
+iframe, or a sixteenth widget called `page`. Each of those hands a plugin either pixels or a
+new rule to learn. `show` is a list of keys the plugin had already declared, so everything
+[`ui-schema.md`](./ui-schema.md) says still holds, and a page can show nothing its own
+Settings page could not.
+
+**A plugin that declares a `panel` and no `page` gets a default page** — M, 12 × 10 dots, every
+panel widget, titled by `panel.label` or `name`. So every plugin that declares a panel
+appears on the board without an edit, first-party or not. The floor stays at 2.
+
+### If you are updating a plugin
+
+Nothing to do unless you want a page that is not the default one. Then set
+`"alexia_protocol": 11` and add `page`. Declaring it while saying `10` is a load error —
+`page arrived in alexia_protocol 11` — the same rule every field since `lifetime` has set.
+The cost is that an Alexia older than 11 will not load you at all, so a plugin whose page is
+a nicety rather than the point may prefer the default page and the older number.
 
 ## 9 → 10 *(2026-09-19, D182)*
 

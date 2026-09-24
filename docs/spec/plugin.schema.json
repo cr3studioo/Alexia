@@ -2437,6 +2437,171 @@
         "widgets"
       ],
       "additionalProperties": false
+    },
+    "page": {
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        "sizes": {
+          "type": "object",
+          "properties": {
+            "S": {
+              "type": "object",
+              "properties": {
+                "at": {
+                  "type": "array",
+                  "prefixItems": [
+                    {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 80
+                    },
+                    {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 80
+                    }
+                  ]
+                },
+                "show": {
+                  "minItems": 1,
+                  "maxItems": 32,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_]*$"
+                  }
+                }
+              },
+              "required": [
+                "at",
+                "show"
+              ],
+              "additionalProperties": false
+            },
+            "M": {
+              "type": "object",
+              "properties": {
+                "at": {
+                  "type": "array",
+                  "prefixItems": [
+                    {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 80
+                    },
+                    {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 80
+                    }
+                  ]
+                },
+                "show": {
+                  "minItems": 1,
+                  "maxItems": 32,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_]*$"
+                  }
+                }
+              },
+              "required": [
+                "at",
+                "show"
+              ],
+              "additionalProperties": false
+            },
+            "L": {
+              "type": "object",
+              "properties": {
+                "at": {
+                  "type": "array",
+                  "prefixItems": [
+                    {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 80
+                    },
+                    {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 80
+                    }
+                  ]
+                },
+                "show": {
+                  "minItems": 1,
+                  "maxItems": 32,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_]*$"
+                  }
+                }
+              },
+              "required": [
+                "at",
+                "show"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        "scale": {
+          "type": "object",
+          "properties": {
+            "min": {
+              "type": "array",
+              "prefixItems": [
+                {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 80
+                },
+                {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 80
+                }
+              ]
+            },
+            "max": {
+              "type": "array",
+              "prefixItems": [
+                {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 80
+                },
+                {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 80
+                }
+              ]
+            }
+          },
+          "required": [
+            "min"
+          ],
+          "additionalProperties": false
+        },
+        "fixed": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "title",
+        "sizes"
+      ],
+      "additionalProperties": false
     }
   },
   "required": [

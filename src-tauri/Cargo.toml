@@ -35,6 +35,11 @@ tauri-plugin-shell = "2"
 keyring = "4.2"
 # The vault's token. Already in the tree under Tauri; named here because it is used here.
 getrandom = "0.3"
+# The sixth, and not a thing Rust decides (`temps.rs`): the temperature sensors on a Mac and on
+# Windows, which core could reach only through a native addon. Components only — no process,
+# disk or network walking compiled in. 0.37 because it shares Tauri's `windows` 0.61 rather than
+# bring a second copy of it into the Windows build.
+sysinfo = { version = "0.37", default-features = false, features = ["component"] }
 
 # Not a fifth thing: the hotkey's overlay, on a Mac (D145). macOS shows an ordinary window over
 # another app's full-screen Space only if it does not activate its app, and the one window that

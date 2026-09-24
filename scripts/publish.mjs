@@ -39,6 +39,9 @@
  *     node scripts/publish.mjs --only documents     # one of them
  *     node scripts/publish.mjs --dry-run            # build and print, publish nothing
  *     node scripts/publish.mjs --pages --repo o/n   # the static layout instead (see below)
+ *     node scripts/publish.mjs --coming-soon vtuber --name "Vtuber model" \
+ *       --summary "A face for Alexia that moves while she talks." --dry-run
+ *                                                   # a placeholder, nothing to download (below)
  *
  * A tag that already exists is skipped rather than overwritten: a published version is
  * somebody else's download now, and republishing one silently changes the bytes under a
@@ -48,6 +51,16 @@
  * Pages site or the Worker in `registry/`. It is still the right answer for a registry
  * serving strangers, for one reason: its `/v0/revoked.json` is a kill switch that reaches
  * people who already installed something, and deleting a GitHub release reaches nobody.
+ *
+ * **`--coming-soon <id>` cuts a placeholder** (D199): a release whose ```alexia block is
+ * `{ id, name, summary, coming_soon: true }` and which has **nothing attached**. The library
+ * reads it as a greyed *Coming soon* row — on the Plugins screen and in the board's *Add page*
+ * — and refuses to install it in words. Nothing is built and nothing in `plugins/` is read,
+ * because the point is a plugin that does not exist yet. Same rules as a real release
+ * otherwise: `--dry-run` prints the notes and publishes nothing, `--latest=false`, and a tag
+ * that already exists is skipped. The tag is `<id>-soon`, so it can never collide with a
+ * version; when the real `<id>-vX.Y.Z` is published it replaces the placeholder on the shelf
+ * whatever order the two are read in, and the placeholder release can be deleted at leisure.
  */
 import { build } from 'esbuild'
 import { spawn, spawnSync } from 'node:child_process'
@@ -93,6 +106,77 @@ const site = `https://${owner}.github.io/${name}`
 /** Where the `.tgz` files are readable from, in `--pages` mode. Releases name their own. */
 const base = flag('base', `${site}/tgz`)
 const author = flag('author')
+
+/**
+ * `gh`, because the alternative is a token in an environment variable and three REST calls
+ * with a multipart upload in the middle of them. `gh` is already how a release gets cut by
+ * hand, it already holds the credential, and a publisher who has not got it is one line away
+ * from having it.
+ */
+const gh = (argv, quiet) => {
+  const done = spawnSync('gh', argv, { encoding: 'utf8', stdio: quiet ? 'pipe' : ['ignore', 'pipe', 'inherit'] })
+  if (done.error) {
+    console.error('gh is not on PATH. Install the GitHub CLI (https://cli.github.com) and run `gh auth login`.')
+    process.exit(1)
+  }
+  return done
+}
+
+/** The loader's own id rule, restated: this script reads no manifest for a placeholder. */
+const ID = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/
+
+if (args.includes('--coming-soon')) {
+  // ---- a placeholder: a name and a sentence, and nothing to download (D199) --------------
+  const id = flag('coming-soon')
+  const called = flag('name')
+  const summary = flag('summary')
+  const wrong =
+    id === undefined || !ID.test(id) || id.length > 64 ? `--coming-soon wants a plugin id (lowercase letters, digits and hyphens), not "${id ?? ''}".`
+    : called === undefined || called.length === 0 || called.length > 64 ? '--name wants the name people will see, 1 to 64 characters.'
+    : summary === undefined || summary.length === 0 || summary.length > 200 ? '--summary wants one sentence, 1 to 200 characters.'
+    : existsSync(join(root, 'plugins', id)) ? `plugins/${id} exists — publish it for real rather than as a placeholder.`
+    : undefined
+  if (wrong) {
+    console.error(wrong)
+    process.exit(1)
+  }
+  const tag = `${id}-soon`
+  // The same two audiences as a real release, minus the install line: there is nothing to install.
+  const notes = [
+    summary,
+    '',
+    'Not available yet. Alexia lists it as *Coming soon* and will not install it; the real',
+    'release replaces this entry when it is published.',
+    '',
+    '```alexia',
+    JSON.stringify({ id, name: called, summary, coming_soon: true }, null, 2),
+    '```',
+  ].join('\n')
+  if (dry) {
+    console.log(`--- ${tag} (dry run, nothing published) ---`)
+    console.log(notes)
+    process.exit(0)
+  }
+  if (gh(['auth', 'status'], true).status !== 0) {
+    console.error('gh is not signed in. Run `gh auth login` first.')
+    process.exit(1)
+  }
+  if (gh(['release', 'view', tag, '--repo', repo], true).status === 0) {
+    console.log(`${tag} is already published — edit or delete that release to change it.`)
+    process.exit(0)
+  }
+  const file = join(mkdtempSync(join(tmpdir(), 'alexia-soon-')), `${tag}.md`)
+  writeFileSync(file, notes)
+  // No asset, on purpose: an archive is what would make it installable. `--latest=false` for
+  // the reason in the header — the app's updater reads `releases/latest`.
+  const made = gh(['release', 'create', tag, '--repo', repo, '--title', `${called} (coming soon)`, '--notes-file', file, '--latest=false'])
+  if (made.status !== 0) {
+    console.error(`Could not publish ${tag}.`)
+    process.exit(1)
+  }
+  console.log(`${tag} published to https://github.com/${repo}/releases — Alexia lists ${called} as coming soon.`)
+  process.exit(0)
+}
 
 /**
  * Windows ships bsdtar as `System32\tar.exe`. What is on PATH may be Git for Windows' GNU
@@ -339,21 +423,6 @@ if (pages) {
 }
 
 // ---- releases ----------------------------------------------------------------------------
-
-/**
- * `gh`, because the alternative is a token in an environment variable and three REST calls
- * with a multipart upload in the middle of them. `gh` is already how a release gets cut by
- * hand, it already holds the credential, and a publisher who has not got it is one line away
- * from having it.
- */
-const gh = (argv, quiet) => {
-  const done = spawnSync('gh', argv, { encoding: 'utf8', stdio: quiet ? 'pipe' : ['ignore', 'pipe', 'inherit'] })
-  if (done.error) {
-    console.error('gh is not on PATH. Install the GitHub CLI (https://cli.github.com) and run `gh auth login`.')
-    process.exit(1)
-  }
-  return done
-}
 
 if (!dry && gh(['auth', 'status'], true).status !== 0) {
   console.error('gh is not signed in. Run `gh auth login` first.')

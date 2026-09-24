@@ -4,7 +4,7 @@
   "id": "voice",
   "name": "Voice",
   "summary": "Hears you with Whisper and answers out loud — in Piper on this machine, in Qwen3-TTS if you have the Python for it, or in a voice cloned from a clip of your own.",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "license": "AGPL-3.0-only",
   "entry": {
     "run": "node",
@@ -12,7 +12,7 @@
       "index.js"
     ]
   },
-  "alexia_protocol": 7,
+  "alexia_protocol": 11,
   "mcp_protocol": "2025-11-25",
   "requires": [
     {
@@ -390,5 +390,32 @@
         "hint": "Needed for either fish.audio engine. Leave it empty and everything stays on this machine."
       }
     ]
+  },
+  "page": {
+    "title": "Voice in/out",
+    "sizes": {
+      "S": {
+        "at": [
+          8,
+          4
+        ],
+        "show": [
+          "ready"
+        ]
+      },
+      "M": {
+        "at": [
+          12,
+          8
+        ],
+        "show": [
+          "ready",
+          "engine",
+          "preview_text",
+          "voices"
+        ]
+      }
+    },
+    "fixed": false
   }
 }

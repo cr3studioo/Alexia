@@ -97,7 +97,21 @@ export interface Entry {
   requires: { cap: string; why: string }[]
   provides: string[]
   updated_at: number
+  /**
+   * **Listed so people know it is coming, and not installable** (D199).
+   *
+   * A row the shelf carries before there is anything to download: an id, a name and a
+   * sentence, and no archive or checksum behind them. The screen draws it greyed with
+   * *Coming soon*, and {@link Library.install} refuses it in words. It lives on the shelf
+   * rather than anywhere in core because naming it anywhere in core is naming a plugin that
+   * does not even exist yet (invariant 1).
+   */
+  coming_soon?: true
 }
+
+/** A placeholder row: an id, a name and a sentence, and nothing to download. */
+const soon = (entry: Partial<Entry>): boolean =>
+  entry.coming_soon === true && typeof entry.name === 'string' && typeof entry.summary === 'string'
 
 export interface SkillEntry {
   id: string
@@ -164,7 +178,22 @@ export class Library {
     const found =
       repo ? (await this.#shelf(repo)).plugins
       : (((await this.#get('/v0/plugins.json')) as { plugins?: Entry[] }).plugins ?? [])
-    return found.filter((entry) => ID.test(entry.id) && HEX64.test(entry.sha256))
+    return found.flatMap((entry) => {
+      if (!ID.test(entry.id)) return []
+      // A placeholder carries nothing downloadable, and anything it does carry is dropped
+      // rather than trusted: a row that says it is not out yet must not be one a mistake
+      // elsewhere could install from.
+      const row: Record<string, unknown> = { ...entry }
+      if (soon(entry)) {
+        delete row.url
+        delete row.sha256
+        delete row.signature
+        return [{ ...row, coming_soon: true } as unknown as Entry]
+      }
+      // And a real row cannot half-claim to be one: it is downloadable or it is not listed.
+      delete row.coming_soon
+      return HEX64.test(entry.sha256) ? [row as unknown as Entry] : []
+    })
   }
 
   async skills(): Promise<SkillEntry[]> {
@@ -234,7 +263,8 @@ export class Library {
     const found: { id: string; from: string; to: string; entry: Entry; offer: Offer }[] = []
     for (const installed of here) {
       const entry = available.find((row) => row.id === installed.id)
-      if (!entry) continue
+      // A placeholder is not a newer version of anything, even under an id somebody has.
+      if (!entry || entry.coming_soon === true) continue
       if (!newer(entry.version, installed.version)) continue
       const offer = offerable(entry)
       // Written for an Alexia older than this one: not an update, and not news either.
@@ -267,6 +297,11 @@ export class Library {
     if ('why' in found) return { ok: false, why: `The registry could not be reached: ${found.why}` }
     if ('revoked' in found) {
       return { ok: false, why: `${id} has been withdrawn from the registry: ${found.revoked}` }
+    }
+    // Before the version gate, because a placeholder has no version to judge: the true
+    // sentence is that there is nothing to download yet, not that this build is too old.
+    if (found.coming_soon === true) {
+      return { ok: false, why: `${found.name} is not out yet. It is on the shelf so you know it is coming — there is nothing to install.` }
     }
     // The same gate the shelf and the loader use, asked once more at the moment it matters.
     // A row can sit on a screen while somebody thinks about it, and *this build cannot run
@@ -520,6 +555,12 @@ function readReleases(releases: Release[]): Shelf {
       // it. `scripts/publish.mjs` is where a mistake in this block is caught.
       continue
     }
+    // A placeholder (D199) is a release with a block and nothing attached: there is nothing
+    // to download yet, which is the point of it. Kept as the block says and nothing more.
+    if (block.coming_soon === true && typeof block.id === 'string' && !plugins.has(block.id)) {
+      plugins.set(block.id, block as unknown as Entry)
+      continue
+    }
     const archive = (release.assets ?? []).find((asset) => asset.name.endsWith('.tgz'))
     if (!archive || typeof block.id !== 'string' || typeof block.version !== 'string') continue
     const at = Date.parse(release.published_at ?? '')
@@ -539,7 +580,10 @@ function readReleases(releases: Release[]): Shelf {
       continue
     }
     const held = plugins.get(block.id)
-    if (!held || newer(block.version, held.version)) plugins.set(block.id, common as unknown as Entry)
+    // A real release replaces a placeholder under the same id whatever the order they are read in.
+    if (!held || held.coming_soon === true || newer(block.version, held.version)) {
+      plugins.set(block.id, common as unknown as Entry)
+    }
   }
   return { plugins: [...plugins.values()], skills: [...skills.values()].map((held) => held.entry) }
 }

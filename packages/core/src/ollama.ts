@@ -70,6 +70,57 @@ export async function installed(host: string = HOST): Promise<Model[]> {
     .map(({ model, shown }) => describe(model, shown))
 }
 
+/** What the Local stats page draws (D199): the models here, and the ones in memory now. */
+export interface Local {
+  /** Whether Ollama answered at all. `false` is an ordinary state, not an error. */
+  running: boolean
+  /** Every model on the disk, and how many bytes each one takes there. */
+  installed: { name: string; size: number }[]
+  /**
+   * The models in memory right now (Ollama's `/api/ps`), with how much of each sits in
+   * graphics memory and when Ollama will let it go — its own timestamp, passed on as it
+   * wrote it, and `null` when it did not say.
+   */
+  loaded: { name: string; size: number; vram: number; until: string | null }[]
+}
+
+/**
+ * **The machine's side of local models, read without waking anything** (D199).
+ *
+ * Two requests, both cheap: `list` is the folder listing and `ps` is what is in memory, and
+ * neither loads a model or describes one — which is why this does not go through
+ * {@link installed}, whose one `show` per model is the price of knowing what a model can do,
+ * and is not worth paying for a page that only says how big things are.
+ *
+ * **Never throws.** Ollama not being here is the answer for most people, and a page that
+ * turned it into an error would be telling them something is broken that was never there.
+ * The two are asked separately so an Ollama too old to have `ps` still lists what it has.
+ */
+export async function local(host: string = HOST): Promise<Local> {
+  const ollama = client(host)
+  const listed = await ollama.list().catch(() => undefined)
+  if (listed === undefined) return { running: false, installed: [], loaded: [] }
+  const busy = await ollama.ps().catch(() => ({ models: [] as ModelResponse[] }))
+  return {
+    running: true,
+    installed: listed.models.map((m) => ({ name: m.name, size: bytes(m.size) })),
+    loaded: busy.models.map((m) => {
+      // Typed as a Date by the client and delivered as the string Ollama sent, which is the
+      // form worth passing on anyway: JSON has no dates.
+      const until = m.expires_at as unknown
+      return {
+        name: m.name,
+        size: bytes(m.size),
+        vram: bytes(m.size_vram),
+        until: typeof until === 'string' && until !== '' ? until : null,
+      }
+    }),
+  }
+}
+
+/** A byte count off the wire, or 0 for anything that is not one. */
+const bytes = (n: unknown): number => (typeof n === 'number' && Number.isFinite(n) && n > 0 ? n : 0)
+
 export interface Progress {
   /** Ollama's own words: "pulling manifest", "downloading", "verifying sha256 digest". */
   status: string

@@ -38,7 +38,9 @@ test('submit, list, read one', async () => {
   const e = env()
   expect((await handle(post('/v0/admin/plugins', ENTRY), e)).status).toBe(200)
 
-  const list = (await (await handle(at('/v0/plugins'), e)).json()) as { plugins: (typeof ENTRY)[] }
+  const listed = (await (await handle(at('/v0/plugins'), e)).json()) as { plugins: (typeof ENTRY & { coming_soon?: true })[] }
+  // Placeholders ride along at the end (`soon.ts`); this test is about the submitted row.
+  const list = { plugins: listed.plugins.filter((row) => row.coming_soon !== true) }
   expect(list.plugins).toHaveLength(1)
   // The JSON columns come back as arrays, not as the text they are stored as — the client
   // draws the consent walkthrough from `requires` before anything is downloaded.
@@ -61,8 +63,8 @@ test('revoke: gone now, with the reason, and off the list', async () => {
   expect(await one.json()).toMatchObject({ reason: 'it read the whole home directory' })
   expect(one.headers.get('cache-control')).toBe('no-store')
 
-  const list = (await (await handle(at('/v0/plugins'), e)).json()) as { plugins: unknown[] }
-  expect(list.plugins).toEqual([])
+  const list = (await (await handle(at('/v0/plugins'), e)).json()) as { plugins: { coming_soon?: true }[] }
+  expect(list.plugins.filter((row) => row.coming_soon !== true)).toEqual([])
 
   // And the half that reaches somebody who already installed it.
   const pulled = await handle(at('/v0/revoked'), e)
@@ -130,8 +132,8 @@ test('the .json spelling reaches the same routes', async () => {
   const e = env()
   expect((await handle(post('/v0/admin/plugins', ENTRY), e)).status).toBe(200)
 
-  const list = (await (await handle(at('/v0/plugins.json'), e)).json()) as { plugins: (typeof ENTRY)[] }
-  expect(list.plugins).toHaveLength(1)
+  const list = (await (await handle(at('/v0/plugins.json'), e)).json()) as { plugins: { coming_soon?: true }[] }
+  expect(list.plugins.filter((row) => row.coming_soon !== true)).toHaveLength(1)
 
   const one = (await (await handle(at('/v0/plugins/weather.json'), e)).json()) as typeof ENTRY
   expect(one.id).toBe('weather')
@@ -143,4 +145,22 @@ test('the .json spelling reaches the same routes', async () => {
   // response `Library.entry` reads a withdrawal reason out of.
   expect((await handle(post('/v0/admin/plugins/weather/revoke', { reason: 'withdrawn' }), e)).status).toBe(200)
   expect((await handle(at('/v0/plugins/weather.json'), e)).status).toBe(410)
+})
+
+test('a plugin that is coming is listed with nothing to download, until a real one takes its id (D199)', async () => {
+  const e = env()
+  const list = async () =>
+    ((await (await handle(at('/v0/plugins'), e)).json()) as { plugins: Record<string, unknown>[] }).plugins
+  const soon = (await list()).find((row) => row.id === 'vtuber')
+  expect(soon).toEqual({ id: 'vtuber', name: 'Vtuber model', summary: expect.any(String), coming_soon: true })
+  // Asked for alone it answers too, so the client can say *not out yet* rather than *no such plugin*.
+  const one = await handle(at('/v0/plugins/vtuber'), e)
+  expect(one.status).toBe(200)
+  expect(((await one.json()) as { coming_soon?: boolean }).coming_soon).toBe(true)
+
+  await handle(post('/v0/admin/plugins', { ...ENTRY, id: 'vtuber', name: 'Vtuber model' }), e)
+  const now = (await list()).filter((row) => row.id === 'vtuber')
+  expect(now).toHaveLength(1)
+  expect(now[0]?.coming_soon).toBeUndefined()
+  expect(now[0]?.sha256).toBe('a'.repeat(64))
 })

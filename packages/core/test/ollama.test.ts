@@ -2,7 +2,7 @@
 import { createServer, type IncomingMessage, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { afterAll, expect, test } from 'vitest'
-import { installed, pull, running, type Progress } from '../src/ollama.js'
+import { installed, local, pull, running, type Progress } from '../src/ollama.js'
 
 // A stand-in for Ollama, so this runs on a machine that has never installed it — including
 // every CI runner. What is being tested is the mapping and the progress, not Ollama.
@@ -20,6 +20,19 @@ const shows: Record<string, unknown> = {
   // No capabilities, no model_info: a model that will not describe itself.
   'llava:7b': { capabilities: ['completion', 'vision'], model_info: {} },
   'bge-m3:latest': { capabilities: ['embedding'], model_info: { 'bert.context_length': 8192 } },
+}
+
+const ps = {
+  models: [
+    {
+      name: 'qwen3:8b',
+      model: 'qwen3:8b',
+      size: 6_100_000_000,
+      size_vram: 4_000_000_000,
+      expires_at: '2026-09-24T10:05:00.000Z',
+      details: { family: 'qwen3' },
+    },
+  ],
 }
 
 const steps = [
@@ -47,6 +60,11 @@ const server: Server = createServer((request, response) => {
       const shown = shows[asked.model ?? '']
       response.writeHead(shown ? 200 : 404, { 'content-type': 'application/json' })
       response.end(JSON.stringify(shown ?? { error: 'no such model' }))
+      return
+    }
+    if (request.url === '/api/ps') {
+      response.writeHead(200, { 'content-type': 'application/json' })
+      response.end(JSON.stringify(ps))
       return
     }
     if (request.url === '/api/pull') {
@@ -109,4 +127,25 @@ test('no Ollama is an answer, not a crash', async () => {
   expect(await running(host)).toBe(true)
   expect(await running('http://127.0.0.1:1')).toBe(false)
   expect(await installed('http://127.0.0.1:1')).toEqual([])
+})
+
+test('local stats: what is on the disk and what is in memory, in bytes (D199)', async () => {
+  expect(await local(host)).toEqual({
+    running: true,
+    installed: [
+      { name: 'qwen3:8b', size: 5_200_000_000 },
+      { name: 'llava:7b', size: 4_700_000_000 },
+      { name: 'bge-m3:latest', size: 1_200_000_000 },
+    ],
+    loaded: [{ name: 'qwen3:8b', size: 6_100_000_000, vram: 4_000_000_000, until: '2026-09-24T10:05:00.000Z' }],
+  })
+})
+
+test('local stats with no Ollama is an answer, not an error', async () => {
+  // A port nothing listens on: the one closed a moment ago.
+  const gone = createServer()
+  await new Promise<void>((resolve) => gone.listen(0, '127.0.0.1', resolve))
+  const port = (gone.address() as AddressInfo).port
+  await new Promise<void>((resolve) => gone.close(() => resolve()))
+  expect(await local(`http://127.0.0.1:${String(port)}`)).toEqual({ running: false, installed: [], loaded: [] })
 })

@@ -3,8 +3,8 @@
 /**
  * The rail: identity, which conversation, and the four things somebody changes.
  *
- * It is the one panel that never goes away — Settings and Control swap the middle out from
- * under it — so what earns a place here is what a person reaches for mid-sentence: a new
+ * It is the General page on the board (D199), the one page that cannot be taken off it — so
+ * what earns a place here is what a person reaches for mid-sentence: a new
  * conversation, an old one, which model answers, where the work happens, and what Alexia may
  * do without asking.
  *
@@ -49,6 +49,15 @@ export interface RailOptions {
   openSettings(page?: 'general' | 'plugins'): void
   /** Repaint the conversation, because opening another one changes what the log holds. */
   reload(): Promise<void>
+  /** The conversation's heading, which lives on the Chat page rather than in this one. */
+  heading: HTMLElement
+  /**
+   * Chat's L size puts every conversation beside the log. The same rows, drawn a second time
+   * by the same code, rather than a copy that would open conversations some other way.
+   */
+  alsoInto?: HTMLElement
+  /** Called after every full re-read, because a plugin switched here changes the board. */
+  refreshed?(): void
 }
 
 /** How many conversations the rail shows before you ask for the rest. */
@@ -56,18 +65,23 @@ const RECENT = 3
 /** How many models fit in a column this wide before the list stops being a list. */
 const MODELS = 8
 
-export function mountRail(token: string, options: RailOptions): Rail {
-  const recent = document.querySelector<HTMLElement>('#recent')!
-  const recentCount = document.querySelector<HTMLElement>('#recent-count')!
-  const more = document.querySelector<HTMLButtonElement>('#recent-more')!
-  const title = document.querySelector<HTMLElement>('#chat-title')!
-  const modelRow = document.querySelector<HTMLButtonElement>('#model-row')!
-  const modelValue = document.querySelector<HTMLElement>('#model-value')!
-  const modelDrop = document.querySelector<HTMLElement>('#model-drop')!
-  const setup = document.querySelector<HTMLElement>('#rail-setup')!
-  const plugins = document.querySelector<HTMLElement>('#rail-plugins')!
-  const tabSetup = document.querySelector<HTMLButtonElement>('#tab-setup')!
-  const tabPlugins = document.querySelector<HTMLButtonElement>('#tab-plugins')!
+/**
+ * Mounted into the page it is handed rather than reaching into the document: since D199 a
+ * page is one of several on a board, and a module that looked things up by id anywhere would
+ * be one duplicated page away from wiring up the wrong one.
+ */
+export function mountRail(root: HTMLElement, token: string, options: RailOptions): Rail {
+  const recent = root.querySelector<HTMLElement>('#recent')!
+  const recentCount = root.querySelector<HTMLElement>('#recent-count')!
+  const more = root.querySelector<HTMLButtonElement>('#recent-more')!
+  const title = options.heading
+  const modelRow = root.querySelector<HTMLButtonElement>('#model-row')!
+  const modelValue = root.querySelector<HTMLElement>('#model-value')!
+  const modelDrop = root.querySelector<HTMLElement>('#model-drop')!
+  const setup = root.querySelector<HTMLElement>('#rail-setup')!
+  const plugins = root.querySelector<HTMLElement>('#rail-plugins')!
+  const tabSetup = root.querySelector<HTMLButtonElement>('#tab-setup')!
+  const tabPlugins = root.querySelector<HTMLButtonElement>('#tab-plugins')!
 
   let expanded = false
   let chats: ChatRow[] = []
@@ -114,19 +128,19 @@ export function mountRail(token: string, options: RailOptions): Rail {
     title.textContent = open?.title.trim() ?? 'New chat'
     if ((title.textContent ?? '') === '') title.textContent = 'New chat'
 
-    const shown = expanded ? chats : chats.slice(0, RECENT)
-    recent.replaceChildren(
-      ...shown.map((chat) => {
-        const row = railRow(chat.title.trim() === '' ? 'Nothing said yet' : chat.title, chat.when, () => {
-          void post('/api/action', { key: 'open_chat', row: chat.id }).then(async () => {
-            await options.reload()
-            await refresh()
-          })
+    const rowOf = (chat: ChatRow): HTMLElement => {
+      const row = railRow(chat.title.trim() === '' ? 'Nothing said yet' : chat.title, chat.when, () => {
+        void post('/api/action', { key: 'open_chat', row: chat.id }).then(async () => {
+          await options.reload()
+          await refresh()
         })
-        if (chat.state.includes('open')) row.classList.add('on')
-        return row
-      }),
-    )
+      })
+      if (chat.state.includes('open')) row.classList.add('on')
+      return row
+    }
+    const shown = expanded ? chats : chats.slice(0, RECENT)
+    recent.replaceChildren(...shown.map(rowOf))
+    options.alsoInto?.replaceChildren(...chats.map(rowOf))
     recentCount.textContent = expanded ? String(chats.length) : `${String(Math.min(RECENT, chats.length))} of ${String(chats.length)}`
     more.hidden = chats.length <= RECENT
     more.textContent = expanded ? 'Show fewer' : `Show ${String(chats.length - RECENT)} more`
@@ -137,16 +151,16 @@ export function mountRail(token: string, options: RailOptions): Rail {
     drawChats()
   })
 
-  document.querySelector<HTMLButtonElement>('#new-chat')!.addEventListener('click', () => {
+  root.querySelector<HTMLButtonElement>('#new-chat')!.addEventListener('click', () => {
     void post('/api/action', { key: 'new_chat' }).then(async () => {
       await options.reload()
       await refresh()
     })
   })
 
-  document.querySelector<HTMLButtonElement>('#find')!.addEventListener('click', () => options.openPalette())
-  document.querySelector<HTMLButtonElement>('#open-control')!.addEventListener('click', () => options.openControl())
-  document.querySelector<HTMLButtonElement>('#open-settings')!.addEventListener('click', () => options.openSettings())
+  root.querySelector<HTMLButtonElement>('#find')!.addEventListener('click', () => options.openPalette())
+  root.querySelector<HTMLButtonElement>('#open-control')!.addEventListener('click', () => options.openControl())
+  root.querySelector<HTMLButtonElement>('#open-settings')!.addEventListener('click', () => options.openSettings())
 
   // ---- which model ------------------------------------------------------------------------
 
@@ -294,6 +308,7 @@ export function mountRail(token: string, options: RailOptions): Rail {
     drawChats()
     drawModels()
     drawPlugins(gotPlugins.panes ?? [])
+    options.refreshed?.()
   }
 
   /**

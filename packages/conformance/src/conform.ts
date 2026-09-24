@@ -2,6 +2,7 @@
 import {
   Manifest,
   MCP_REVISIONS,
+  pageOf,
   PROVIDES_META,
   versionVerdict,
   type Manifest as ManifestType,
@@ -119,6 +120,27 @@ export async function conform(given: string, options: ConformOptions = {}): Prom
       `${String((manifest.requires ?? []).length)} asked for, each with a reason a person can read`
     : `these read as labels rather than reasons: ${vague.map((r) => r.cap).join(', ')}`,
   )
+
+  /**
+   * The page it gets on the board (D199), said out loud either way. The rules are in the
+   * manifest check above, so a page that got this far is valid; what is worth a line is
+   * *which* page — an author with a panel and no `page` should know the board is drawing one
+   * for them, twelve by ten, with every panel widget on it, and that declaring sizes is how
+   * to choose what a small one shows.
+   */
+  const page = pageOf(manifest)
+  if (page) {
+    const sizes = Object.entries(page.sizes)
+      .map(([tier, one]) => `${tier} ${String(one.at[0])}×${String(one.at[1])}`)
+      .join(', ')
+    add(
+      'page',
+      'pass',
+      manifest.page ?
+        `"${page.title}": ${sizes}${page.fixed ? ', fixed' : ''}${page.scale ? ', scales' : ''}`
+      : `no page declared, so the board draws the panel as one: "${page.title}", ${sizes}. Declare "page" (alexia_protocol 11) to choose what each size shows`,
+    )
+  }
 
   // ---- 2. boot, handshake, and everything that needs a live process --------------------
 
