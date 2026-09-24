@@ -572,12 +572,47 @@ export function mountBoard(root: HTMLElement, token: string): Board {
       parts.push(remove)
     }
     pageBar.replaceChildren(...parts)
-    const box = px(g, at)
-    let top = box.top - 52
-    if (top < 8) top = box.top + box.height + 10
-    pageBar.style.left = `${String(Math.max(8, Math.min(box.left, root.offsetWidth - 320)))}px`
-    pageBar.style.top = `${String(top)}px`
+    placeBar()
   }
+
+  /**
+   * The bar goes where it can be seen and covers nobody else: above its page, else below it,
+   * else — a page as tall as the window, or one with neighbours pressed against both edges —
+   * just inside the page's own top edge, over nothing but the page it is about. "Seen" is the
+   * part of the board in the window now, since the board scrolls; and it never runs off either
+   * side. Below a full-height page it was drawn past the bottom of the window, and below a
+   * short one on top of the next page down.
+   */
+  function placeBar(): void {
+    if (pageBar.hidden || selected === undefined) return
+    const at = placed.find((p) => p.id === selected)
+    if (!at) return
+    const box = px(g, at)
+    const gap = 8
+    // Measured when there is a layout engine; its min-height and a usual width when there is not.
+    const high = pageBar.offsetHeight || 44
+    const wide = pageBar.offsetWidth || 320
+    const across = root.clientWidth || root.offsetWidth
+    const left = Math.max(gap, Math.min(box.left, across - gap - wide))
+    const viewTop = root.scrollTop + gap
+    const viewBottom = root.scrollTop + root.clientHeight - gap
+    const others = placed.filter((p) => p.id !== at.id).map((p) => px(g, p))
+    const free = (top: number): boolean =>
+      top >= viewTop &&
+      top + high <= viewBottom &&
+      others.every((o) => o.left >= left + wide || o.left + o.width <= left || o.top >= top + high || o.top + o.height <= top)
+    const above = box.top - gap - high
+    const below = box.top + box.height + gap
+    const inside = Math.max(viewTop, Math.min(Math.max(box.top, viewTop - gap) + gap, viewBottom - high))
+    const top =
+      free(above) ? above
+      : free(below) ? below
+      : inside
+    pageBar.style.top = `${String(top)}px`
+    pageBar.style.left = `${String(left)}px`
+  }
+  // A bar placed against the part of the board in view follows the view when it moves.
+  root.addEventListener('scroll', placeBar, { passive: true })
 
   /**
    * Chat is the one page whose absence can leave somebody with no way to talk to her — unless
@@ -598,6 +633,7 @@ export function mountBoard(root: HTMLElement, token: string): Board {
       yes,
       no,
     )
+    placeBar()
     no.focus()
   }
 
