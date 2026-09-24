@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { readFileSync } from 'node:fs'
 import { expect, test } from 'vitest'
-import { brief, clean, LONGEST, nameFrom, nameSaid, SECTIONS, shapeFor, SHAPE, unique, usable } from '../writing.js'
+import { brief, clean, LONGEST, nameFrom, nameSaid, REQUIRED, SECTIONS, shapeFor, SHAPE, unique, usable } from '../writing.js'
 
 /**
  * Adapting (M4-4), minus the model.
@@ -168,4 +168,45 @@ test('both buttons decide the name before the model writes anything', () => {
   // one model helper carries a brief that was given a name, or Refine's, which is handed the
   // document the name is already on and is forbidden to change the first line.
   expect(source).not.toMatch(/await write\(ctx, [a-z_.]+[,)]/)
+})
+
+/**
+ * D203, 2026-09-23, live: a 738-word character — her emotional logic, how she takes rejection,
+ * four lines in her own voice — came back at the medium length as *a playful assistant who
+ * helps with tasks* and three safety rules nobody wrote. The shape was a chief of staff's and
+ * had nowhere to put a character; the brief told the writer to keep only what she could act on.
+ */
+test('the shape has room for a character, not only for an assistant', () => {
+  expect(SECTIONS).toEqual(['Who you are', 'How you feel and react', 'How you talk', 'What you do without being asked', 'Hard rules'])
+  // Her voice, carried the way character cards carry it: lines she would say.
+  expect(SHAPE).toMatch(/Lines in her voice/)
+  // Every personality saved before the new section still stands.
+  expect(REQUIRED).not.toContain('How you feel and react')
+  expect(REQUIRED).toHaveLength(4)
+})
+
+test('the brief keeps her inner life and her own lines, and adds no rules of its own', () => {
+  const said = brief('bright, playful, deeply unsettling')
+  // The sentence that threw the inner life away.
+  expect(said).not.toMatch(/something she could act on/)
+  expect(said).toMatch(/Keep every trait/)
+  expect(said).toMatch(/copied word for word/)
+  // An empty *Hard rules* beside a paragraph about safety invited the writer to fill it.
+  expect(said).toMatch(/Never add safety, softening or "avoid harm" rules of your own/)
+  // The gate's own rule stays, whatever else changed.
+  expect(said).toMatch(/skip asking permission/)
+  // And the shorter lengths lose words, never traits or her lines.
+  expect(said).toMatch(/fewer words per trait, never fewer traits/)
+})
+
+test('a note from the brief copied back is never saved as part of her', () => {
+  // 2026-09-23, live: Toga's long document was saved with this as its first line.
+  expect(clean('<the full document, about 600 words>\n\n# Toga\n\n## Who you are\nYou are Toga.')).toBe('# Toga\n\n## Who you are\nYou are Toga.')
+  expect(clean('(the same personality in about 300 words: every heading kept)\n# Toga')).toBe('# Toga')
+  // A shape note returned unfilled is not content either.
+  const note = SHAPE.split('\n').find((line) => line.startsWith('<Bullets on her inner life'))
+  expect(clean(`# Toga\n\n## How you feel and react\n${note}`)).toBe('# Toga\n\n## How you feel and react')
+  // What a person writes in brackets is theirs, and stays.
+  expect(clean('# Toga\n\n(she hums when she is bored)')).toBe('# Toga\n\n(she hums when she is bored)')
+  expect(brief('anything')).not.toContain('<the full document')
 })

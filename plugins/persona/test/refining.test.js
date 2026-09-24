@@ -12,7 +12,7 @@ import {
   PRESS,
   refining,
   ROOM,
-  SECTIONS,
+  REQUIRED,
   sectionOf,
   unasked,
   usable,
@@ -89,7 +89,7 @@ test('usable still reads the same four sections after the parse was shared', () 
   // One parse, two readers. A second parser is a parser that drifts, and the one that drifts
   // is the one nobody tested, because whatever reaches it has already passed `usable`.
   expect(usable(doc)).toBe(true)
-  for (const name of SECTIONS) expect(sectionOf(doc, name)).not.toBe('')
+  for (const name of REQUIRED) expect(sectionOf(doc, name)).not.toBe('')
   expect(usable(doc.replace('## Hard rules\n1. Ask before anything with an external consequence.', '## Hard rules'))).toBe(false)
 })
 
@@ -270,4 +270,15 @@ test('Hear her is a row action of its own, so it works after Refine and Edit too
   const at = source.indexOf("  'hear',")
   expect(at).toBeGreaterThan(-1)
   expect(source.slice(at, at + 700)).toContain('readOnlyHint: true')
+})
+
+test('a five-heading personality reads her inner life, and a four-heading one still stands (D203)', () => {
+  const five = doc.replace('## How you talk', '## How you feel and react\n- Rejection stings; she turns sarcastic.\n\n## How you talk')
+  expect(usable(five)).toBe(true)
+  expect(sectionOf(five, 'How you feel and react')).toBe('- Rejection stings; she turns sarcastic.')
+  // Her inner life is its own section, not the tail of *Who you are*.
+  expect(sectionOf(five, 'Who you are')).not.toMatch(/Rejection/)
+  // Every personality saved before the section existed.
+  expect(sectionOf(doc, 'How you feel and react')).toBe('')
+  expect(usable(doc)).toBe(true)
 })

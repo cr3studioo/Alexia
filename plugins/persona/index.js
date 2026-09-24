@@ -324,11 +324,11 @@ async function write(ctx, prompt, [reading, writing] = STEPS.adapt) {
           'What came back was mostly rules a personality cannot grant, and what was left is ' +
           `not a personality.\n\n${noteOf(checked.removed)}`
         : doc.length > LONGEST ?
-          // Its own sentence, because *without all four parts* sends somebody looking for a
+          // Its own sentence, because *without all its parts* sends somebody looking for a
           // missing heading in a document whose only fault is that it ran long.
           `That came back longer than a personality can be (${String(doc.length)} characters; ` +
           `the most is ${String(LONGEST)}), so nothing was saved. Press it again.`
-        : 'That came back without all four parts of a personality, so nothing was saved. Press Adapt again.',
+        : 'That came back without all the parts of a personality, so nothing was saved. Press Adapt again.',
     }
   }
   return { doc, wrote, removed, facts, ...shorter }
@@ -996,9 +996,9 @@ alexia.tool(
         removed.length > 0 ?
           'What is left after the lines below were taken out is not a personality, so nothing ' +
             `was saved.\n\n${noteOf(removed)}`
-        : 'That is missing one of the four parts of a personality — # a name, then Who you ' +
-            'are, How you talk, What you do without being asked, and Hard rules, each with ' +
-            'something under it. Nothing was saved.',
+        : 'That is missing one of the parts of a personality — # a name, then Who you are, ' +
+            'How you talk, What you do without being asked, and Hard rules, each with something ' +
+            'under it (How you feel and react is welcome, and optional). Nothing was saved.',
       )
     }
 
