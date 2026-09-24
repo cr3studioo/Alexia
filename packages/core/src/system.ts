@@ -100,6 +100,11 @@ async function cpuPercent(now: () => number): Promise<number | null> {
   if (!previous || now() - previous.at > STALE) {
     previous = { at: now(), ticks: ticks() }
     await new Promise((resolve) => setTimeout(resolve, SAMPLE))
+  } else {
+    // A reading moments after the last one: Linux counts CPU time in 10 ms ticks, so two
+    // readings that close often differ by nothing at all. Watch out the rest of the sample.
+    const rest = SAMPLE - (now() - previous.at)
+    if (rest > 0) await new Promise((resolve) => setTimeout(resolve, rest))
   }
   const current = ticks()
   const total = current.total - previous.ticks.total
