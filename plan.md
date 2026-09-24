@@ -304,19 +304,19 @@ event. Sequenced so nothing waits on something later.
 - [x] **M9-4** Last-run memory, VRAM pre-flight, the model-choice skill, fast defaults
 - [ ] **M9-G** **Done when:** a machine that has never seen ComfyUI installs the plugin, asks for a picture, and watches it happen
 
-### M10 — The board *(inserted 2026-09-24, D199 — in progress)*
+### M10 — The board *(inserted 2026-09-24, D199 — done 2026-09-24)*
 
 The window stops being three fixed columns and becomes a board of pages a person arranges.
 Built in this order, because each step is usable without the next.
 
-- [~] **M10-1** `layout.ts` — the dot grid, packing, guides, rescale and compact mode, as arithmetic with no DOM
-- [~] **M10-2** The board with core pages only, and grips that drag
+- [x] **M10-1** `layout.ts` — the dot grid, packing, guides, rescale and compact mode, as arithmetic with no DOM
+- [x] **M10-2** The board with core pages only, and grips that drag
 - [x] **M10-3** The layout kept in core, with a pre-paint copy
-- [~] **M10-4** The bottom-left pill and Edit view
+- [x] **M10-4** The bottom-left pill and Edit view
 - [x] **M10-5** Local stats — Ollama's installed and loaded models, their size, and their last speed
 - [x] **M10-6** `page` in the manifest at `alexia_protocol` 12, four plugin pages, and the Vtuber placeholder in the registry
 - [x] **M10-7** The docs — `docs/authoring/pages.md`, `manifest.md#page`, `versions.md`
-- [ ] **M10-G** **Done when:** with `plugins/` empty the board shows only core pages and nothing breaks; installing `voice` puts its page up, deleting the folder takes it down, and `layout` keeps nothing for it
+- [x] **M10-G** **Done when:** with `plugins/` empty the board shows only core pages and nothing breaks; installing `voice` puts its page up, deleting the folder takes it down, and `layout` keeps nothing for it
 
 ---
 
@@ -4125,7 +4125,7 @@ Newest first. Every entry here is also in Alexia.md's decision log.
 
 | Date | Entry |
 |---|---|
-| 2026-09-24 | **D199** — **the board.** The three fixed columns become one free layout of pages on a 25 px dot grid, centred, one clear dot between pages; S/M/L tiers, pages that scale within limits, fixed pages. The columns stay as guides and the grips finally drag. Edit view from a bottom-left pill or *Edit layout*; one column under 28 dot spaces. Core pages General (not removable), Chat (removable), Running now, Steps, Current step, Price, Local stats (new, `/api/local-stats`). `page` in the manifest at `alexia_protocol` 12, `show` keyed into `settings` and `panel.widgets`, no new widget; a `panel` with no `page` gets a default M page. Layout in kv `layout` with a pre-paint `localStorage` copy. Vtuber is a registry `coming_soon` entry. **M10**, in progress. |
+| 2026-09-24 | **D199** — **the board.** The three fixed columns become one free layout of pages on a 25 px dot grid, centred, one clear dot between pages; S/M/L tiers, pages that scale within limits, fixed pages. The columns stay as guides and the grips finally drag. Edit view from a bottom-left pill or *Edit layout*; one column under 28 dot spaces. Core pages General (not removable), Chat (removable), Running now, Steps, Current step, Price, Local stats (new, `/api/local-stats`). `page` in the manifest at `alexia_protocol` 12, `show` keyed into `settings` and `panel.widgets`, no new widget; a `panel` with no `page` gets a default M page. Layout in kv `layout` with a pre-paint `localStorage` copy. Vtuber is a registry `coming_soon` entry. **M10**, done. |
 | 2026-09-22 | **D191** — **several models at once.** `send()` gains `atOnce`, `together` and `spare`: at the walk's first moment the head and up to `atOnce - 1` free partners are asked together, at most `MOST_AT_ONCE` (3) out, partners from a provider with nothing in flight first, never this Mac's model and never paid, a start-together partner only from a provider with more than half its day left. Balanced (default, `speedOf`) starts two together when `judge()` marks the head `shaky` — busy within `SHAKY_FOR` (10 min), or median `waited` over `SHAKY_SAMPLE` (5) answers above `HEDGE_AFTER`; Fastest starts three with `FASTEST_STAR_WAIT` (2 s). The Models screen's *Answer as fast as possible* switch (`set_speed`); `backup.why` gains `lately` and `fastest`. |
 | 2026-09-22 | **D190** — **faster first words.** `send()` races the next free model after `HEDGE_AFTER` (2 s) without a sign of life — at most two in flight, never paid, only while somebody waits — holding the backup's words while the first model keeps priority for `STAR_WAIT` (6 s; 12 s with nothing behind it); a cancelled loser is not recorded. A `contended` 429 is retried in place on a jittered `RETRY_STEP`, a `quota` one never; one try per model per walk. Busy strikes halve in two minutes (`BUSY_HALF_LIFE`); three key refusals from one provider skip it for the walk (`KEY_REFUSALS`); three 400s in a row set a model aside; `reply-too-long` is the request's. OpenRouter's public endpoint status fills `World.down` in the background (`uptime.ts`); `session_id` goes to rows with `stickySessions`. A `phase` event drives the status line (`packages/ui/src/status.ts`), the trace times each stage, and `tries.waited` (migration 8) records time to first sign of life. |
 | 2026-09-21 | **D189** — **Hear her at a length.** `_meta['alexia/lengths']` carries all three and `hear`; core's `hearingPlan()` sends the chosen length to a model the chat would give it to, under the person's pins and paid switch, and the result says the length sent, the model, paid and cost, and what the chat gives her now. *Hear her at* is a setting (`hear_length`); a paid sample warns with its cost; with paid off the full one is heard on the strongest free model. **M8-7**. |
