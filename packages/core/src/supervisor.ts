@@ -212,6 +212,12 @@ export class PluginProcess {
   /** Deliberate shutdown — idle, disabled, or Alexia quitting. Never counted as a crash. */
   async stop(): Promise<void> {
     clearTimeout(this.#retry)
+    // A spawn already on its way — a retry that fired, or a call — finishes into `#session`
+    // after this returns unless it is waited for, and that process outlives the stop. On
+    // Windows it then holds its own directory, which nothing can delete while it runs.
+    await this.#starting?.catch(() => undefined)
+    // And one that died while it was waited for has just scheduled its next try.
+    clearTimeout(this.#retry)
     const session = this.#take()
     if (!session) return
     await session.transport.close().catch(() => {})
