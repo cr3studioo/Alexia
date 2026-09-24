@@ -313,8 +313,8 @@ Built in this order, because each step is usable without the next.
 - [~] **M10-2** The board with core pages only, and grips that drag
 - [x] **M10-3** The layout kept in core, with a pre-paint copy
 - [~] **M10-4** The bottom-left pill and Edit view
-- [~] **M10-5** Local stats — Ollama's installed and loaded models, their size, and their last speed
-- [~] **M10-6** `page` in the manifest at `alexia_protocol` 12, four plugin pages, and the Vtuber placeholder in the registry
+- [x] **M10-5** Local stats — Ollama's installed and loaded models, their size, and their last speed
+- [x] **M10-6** `page` in the manifest at `alexia_protocol` 12, four plugin pages, and the Vtuber placeholder in the registry
 - [x] **M10-7** The docs — `docs/authoring/pages.md`, `manifest.md#page`, `versions.md`
 - [ ] **M10-G** **Done when:** with `plugins/` empty the board shows only core pages and nothing breaks; installing `voice` puts its page up, deleting the folder takes it down, and `layout` keeps nothing for it
 

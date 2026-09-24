@@ -99,12 +99,15 @@ export interface Local {
 export async function local(host: string = HOST): Promise<Local> {
   const ollama = client(host)
   const listed = await ollama.list().catch(() => undefined)
-  if (listed === undefined) return { running: false, installed: [], loaded: [] }
-  const busy = await ollama.ps().catch(() => ({ models: [] as ModelResponse[] }))
+  // Something that answered on Ollama's port with anything but a model list is not an Ollama
+  // this can read — said as *not running*, not thrown at a page that polls every few seconds.
+  if (listed === undefined || listed === null || !Array.isArray(listed.models)) return { running: false, installed: [], loaded: [] }
+  const busy = await ollama.ps().catch(() => undefined)
+  const inMemory = Array.isArray(busy?.models) ? busy.models : ([] as ModelResponse[])
   return {
     running: true,
-    installed: listed.models.map((m) => ({ name: m.name, size: bytes(m.size) })),
-    loaded: busy.models.map((m) => {
+    installed: listed.models.filter(named).map((m) => ({ name: m.name, size: bytes(m.size) })),
+    loaded: inMemory.filter(named).map((m) => {
       // Typed as a Date by the client and delivered as the string Ollama sent, which is the
       // form worth passing on anyway: JSON has no dates.
       const until = m.expires_at as unknown
@@ -117,6 +120,10 @@ export async function local(host: string = HOST): Promise<Local> {
     }),
   }
 }
+
+/** A row off the wire with a name to show, which is the least a row on the page needs. */
+const named = (m: unknown): m is ModelResponse =>
+  typeof m === 'object' && m !== null && typeof (m as { name?: unknown }).name === 'string' && (m as { name: string }).name !== ''
 
 /** A byte count off the wire, or 0 for anything that is not one. */
 const bytes = (n: unknown): number => (typeof n === 'number' && Number.isFinite(n) && n > 0 ? n : 0)

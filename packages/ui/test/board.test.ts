@@ -952,3 +952,70 @@ test('a plugin the supervisor switched off says why, and Restart asks core to cl
   await vi.waitFor(() => expect(redraw).toHaveBeenCalled())
   expect(sent).toEqual([{ path: '/api/plugin', body: { id: 'voice', action: 'restart' } }])
 })
+
+/**
+ * M10-G on the real board: nothing installed, then voice arriving, switched off, and gone —
+ * once on a board nobody has arranged, and once on one somebody has.
+ */
+for (const arranged of [false, true]) {
+  test(`plugins come and go on ${arranged ? 'an arranged' : 'a never-arranged'} board: added, hidden with its spot kept, gone (D199)`, async () => {
+    const html = readFileSync(join(ui, 'index.html'), 'utf8')
+    document.body.innerHTML = /<body[^>]*>([\s\S]*)<\/body>/.exec(html)![1]!.replace(/<script[\s\S]*?<\/script>/g, '')
+    let here: PagePane[] = []
+    const sent: { path: string; body: unknown }[] = []
+    vi.stubGlobal('fetch', (path: string, init?: { body?: string }) => {
+      if (init?.body !== undefined) sent.push({ path, body: JSON.parse(init.body) })
+      const answer = path === '/api/plugins' ? { panes: here } : {}
+      return Promise.resolve({ ok: true, json: () => Promise.resolve(answer) })
+    })
+    const kept = new Map<string, string>()
+    if (arranged) kept.set('alexia.layout', JSON.stringify(defaultLayout(56, 34)))
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => kept.get(key) ?? null,
+      setItem: (key: string, value: string) => kept.set(key, value),
+      removeItem: (key: string) => kept.delete(key),
+    })
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        observe(): void {}
+      },
+    )
+    const root = document.querySelector<HTMLElement>('#board')!
+    Object.defineProperty(root, 'offsetWidth', { value: 1440 })
+    Object.defineProperty(root, 'clientHeight', { value: 900 })
+    const note = document.querySelector<HTMLElement>('#board-note')!
+    const board = mountBoard(root, 'token')
+    const shown = (): string[] => [...root.querySelectorAll<HTMLElement>('[data-page]')].filter((s) => !s.hidden).map((s) => s.dataset.page!)
+    const savedIds = (): string[] => (JSON.parse(kept.get('alexia.layout') ?? '{"pages":[]}') as Layout).pages.map((p) => p.id)
+    const id = pageIdOf('voice')
+
+    // Nothing installed: only core's pages, and nothing said.
+    await board.refresh()
+    expect(shown().every((page) => CORE_PAGES.some((core) => core.id === page))).toBe(true)
+    expect(shown()).toContain('general')
+    expect(note.hidden).toBe(true)
+
+    // Voice installed and enabled: its page, announced, somewhere it fits.
+    here = [voice]
+    await board.refresh()
+    expect(shown()).toContain(id)
+    expect(note.hidden).toBe(false)
+    expect(note.textContent).toMatch(/^Voice in\/out page added/)
+    if (arranged) expect(savedIds()).toContain(id)
+
+    // Switched off: not drawn, and an arranged board keeps its entry for the day it is back.
+    here = [{ ...voice, enabled: false }]
+    await board.refresh()
+    expect(shown()).not.toContain(id)
+    if (arranged) expect(savedIds()).toContain(id)
+
+    // Deleted: gone from the board, and from what is kept.
+    here = []
+    await board.refresh()
+    expect(root.querySelector(`[data-page="${id}"]`)).toBeNull()
+    expect(savedIds()).not.toContain(id)
+    if (arranged) expect((sent.filter((one) => one.path === '/api/setup').at(-1)!.body as { layout: Layout }).layout.pages.map((p) => p.id)).not.toContain(id)
+    vi.unstubAllGlobals()
+  })
+}

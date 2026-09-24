@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, expect, test } from 'vitest'
@@ -82,4 +82,17 @@ test('a plugin with a page is told which page the board draws (D199)', async () 
   // And a plugin with neither a panel nor a page has no line about it.
   const plain = await conform(join(root, 'plugins', 'hello'))
   expect(plain.checks.find((c) => c.name === 'page')).toBeUndefined()
+}, 60_000)
+
+test('a page on a plugin that claims alexia_protocol 11 is a manifest that does not load (D199)', async () => {
+  const dir = join(staging, 'voice')
+  mkdirSync(dir, { recursive: true })
+  const manifest = JSON.parse(readFileSync(join(root, 'plugins', 'voice', 'plugin.json'), 'utf8')) as Record<string, unknown>
+  writeFileSync(join(dir, 'plugin.json'), JSON.stringify({ ...manifest, alexia_protocol: 11 }))
+  const report = await conform(dir, { exercise: false })
+  expect(report.ok).toBe(false)
+  expect(level(report.checks, 'manifest')).toBe('fail')
+  expect(report.checks.find((c) => c.name === 'manifest')?.detail).toContain('page arrived in alexia_protocol 12')
+  // Refused before anything is spawned, so there is no line about a page it will never have.
+  expect(report.checks.find((c) => c.name === 'page')).toBeUndefined()
 }, 60_000)

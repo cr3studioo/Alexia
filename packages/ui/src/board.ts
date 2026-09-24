@@ -815,7 +815,12 @@ export function mountBoard(root: HTMLElement, token: string): Board {
       if (squared.layout !== saved) keep(squared.layout)
       render()
       for (const id of squared.added) announce(id)
-    } else render()
+    } else {
+      // Never arranged: the default board already takes every enabled plugin's page, at the
+      // first free spot. Arriving is still news, and said the same way.
+      render()
+      if (known) for (const page of fromPlugins) if (!before?.has(page.id)) announce(page.id)
+    }
     before = new Set(fromPlugins.map((page) => page.id))
     known = true
   }
