@@ -311,7 +311,7 @@ Built in this order, because each step is usable without the next.
 
 - [~] **M10-1** `layout.ts` — the dot grid, packing, guides, rescale and compact mode, as arithmetic with no DOM
 - [~] **M10-2** The board with core pages only, and grips that drag
-- [~] **M10-3** The layout kept in core, with a pre-paint copy
+- [x] **M10-3** The layout kept in core, with a pre-paint copy
 - [~] **M10-4** The bottom-left pill and Edit view
 - [~] **M10-5** Local stats — Ollama's installed and loaded models, their size, and their last speed
 - [~] **M10-6** `page` in the manifest at `alexia_protocol` 12, four plugin pages, and the Vtuber placeholder in the registry

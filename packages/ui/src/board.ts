@@ -14,8 +14,8 @@
  *   fits and it lands (blue); anywhere else it goes back (red). A page that scales has a
  *   corner to drag; a tapped page gets a small bar with its sizes and a way off the board.
  *   The way in is the bottom-left corner — hover it and a pill slides out — or Tab, or the
- *   palette's *Edit layout*. A button that only appears on hover is a button nobody finds, so
- *   it is never only that.
+ *   palette's *Edit layout*, or on touch a long press on the empty board. A button that only
+ *   appears on hover is a button nobody finds, so it is never only that.
  *
  * **The arithmetic is `layout.ts` and the pages are `pages.ts`.** This file turns dots into
  * pixels and pointer movement back into dots, and saves what somebody did.
@@ -72,6 +72,11 @@ export const REMEMBERED_LAYOUT = 'alexia.layout'
 
 /** How long the pointer rests in the corner before the pill comes out. Long enough to mean it. */
 const HOVER_MS = 150
+
+/** How long a finger rests on the empty board before edit view opens — the platform's long press. */
+const PRESS_MS = 500
+/** How far a finger may wander and still be pressing rather than scrolling, in CSS pixels. */
+const PRESS_SLOP = 10
 
 export interface Board {
   /** Core's answer from `/api/state`. `undefined` is a core that does not know about layouts. */
@@ -597,6 +602,41 @@ export function mountBoard(root: HTMLElement, token: string): Board {
   corner.addEventListener('pointerleave', () => {
     window.clearTimeout(hover)
     if (!editing) corner.classList.remove('out')
+  })
+
+  /**
+   * On touch there is no hovering, so a finger held on the empty board is the corner: still for
+   * {@link PRESS_MS} and edit view opens. A finger that moves is scrolling, and one that lands
+   * on a page, a grip or the bar is doing something else, so neither counts.
+   */
+  let pressing: number | undefined
+  const unpress = (): void => {
+    window.clearTimeout(pressing)
+    pressing = undefined
+  }
+  root.addEventListener('pointerdown', (event) => {
+    unpress()
+    if (event.pointerType !== 'touch' || editing) return
+    const target = event.target as Element | null
+    if (!target || target.closest('[data-page], .grip, .page-bar')) return
+    const sx = event.clientX
+    const sy = event.clientY
+    const moved = (ev: PointerEvent): void => {
+      if (Math.hypot(ev.clientX - sx, ev.clientY - sy) > PRESS_SLOP) unpress()
+    }
+    const lifted = (): void => {
+      unpress()
+      root.removeEventListener('pointermove', moved)
+      root.removeEventListener('pointerup', lifted)
+      root.removeEventListener('pointercancel', lifted)
+    }
+    root.addEventListener('pointermove', moved)
+    root.addEventListener('pointerup', lifted)
+    root.addEventListener('pointercancel', lifted)
+    pressing = window.setTimeout(() => {
+      lifted()
+      edit(true)
+    }, PRESS_MS)
   })
 
   const pillButton = (label: string, className: string, press: () => void): HTMLButtonElement => {

@@ -436,6 +436,13 @@ test('the board is kept where the theme is, checked whole, and forgotten on null
     { ...kept, pages: [{ id: 'chat', w: 0, h: 4 }] },
     { ...kept, pages: [{ id: 'chat', w: 4, h: 4, anchor: { x: -1, y: 0 } }] },
     { ...kept, pages: Array.from({ length: 65 }, (_, i) => ({ id: `p${String(i)}`, w: 1, h: 1 })) },
+    { ...kept, pages: [{ id: 'chat', w: 4, h: 4 }, { id: 'chat', w: 6, h: 4 }] },
+    { ...kept, pages: [{ id: '', w: 4, h: 4 }] },
+    { ...kept, pages: [{ id: 'chat', w: 1.5, h: 4 }] },
+    { ...kept, pages: 'chat' },
+    { ...kept, guides: [1, Number.NaN] },
+    'a layout',
+    [kept],
   ]) {
     const refused = await post({ layout: bad })
     expect(refused.status).toBe(400)
@@ -445,6 +452,54 @@ test('the board is kept where the theme is, checked whole, and forgotten on null
 
   expect((await post({ layout: null })).status).toBe(200)
   expect(await state()).toBeNull()
+})
+
+test('the board is back after a relaunch: what /api/setup kept, a fresh core reads from the store (M10-3)', async () => {
+  // The acceptance for M10-3 is *relaunch, and the layout is back*. The window's pre-paint
+  // copy only saves a flash; this is the truth it is corrected by, so it has to outlive core.
+  const dir = mkdtempSync(join(tmpdir(), 'alexia-layout-'))
+  mkdirSync(join(dir, 'cache'), { recursive: true })
+  noPolling(dir)
+  const secrets = memorySecrets()
+  const layoutOf = async (server: Serving) =>
+    (
+      (await (
+        await fetch(new URL('/api/state', server.url), { headers: { 'x-alexia-token': server.token } })
+      ).json()) as { layout: unknown }
+    ).layout
+  const arranged = {
+    v: 1,
+    cols: 56,
+    guides: [12, 40],
+    pages: [
+      { id: 'general', w: 11, h: 30, anchor: { x: 0, y: 0 } },
+      { id: 'chat', w: 27, h: 30, anchor: { x: 13, y: 0 } },
+      { id: 'price', w: 8, h: 4 },
+    ],
+  }
+
+  const first = await serve({ dataDir: dir, uiDir: ui, secrets, local: false })
+  expect(await layoutOf(first)).toBeNull()
+  const saved = await fetch(new URL('/api/setup', first.url), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-alexia-token': first.token },
+    body: JSON.stringify({ layout: arranged }),
+  })
+  expect(saved.status).toBe(200)
+  await first.close()
+
+  const again = await serve({ dataDir: dir, uiDir: ui, secrets, local: false })
+  expect(await layoutOf(again)).toEqual(arranged)
+  // And Reset outlives a relaunch too: forgotten is forgotten, not the last layout coming back.
+  await fetch(new URL('/api/setup', again.url), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-alexia-token': again.token },
+    body: JSON.stringify({ layout: null }),
+  })
+  await again.close()
+  const third = await serve({ dataDir: dir, uiDir: ui, secrets, local: false })
+  expect(await layoutOf(third)).toBeNull()
+  await third.close()
 })
 
 test('local stats never fail: no Ollama is running:false with nothing in the lists (D199)', async () => {

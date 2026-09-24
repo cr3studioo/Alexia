@@ -50,11 +50,16 @@ export function readLayout(sent: unknown): { ok: true; layout: Layout } | { ok: 
   if (!Array.isArray(l.pages)) return no('pages must be a list')
   if (l.pages.length > MAX_PAGES) return no(`there are more than ${String(MAX_PAGES)} pages`)
   const pages: Layout['pages'] = []
+  const seen = new Set<string>()
   for (const [i, one] of (l.pages as unknown[]).entries()) {
     const at = `page ${String(i + 1)}`
     if (typeof one !== 'object' || one === null) return no(`${at} is not an object`)
     const p = one as Record<string, unknown>
     if (typeof p.id !== 'string' || p.id === '' || p.id.length > 64) return no(`${at} has no id`)
+    // Each page is on the board once — the shell draws one element per id, and two entries
+    // for one id would be two places for one page with no saying which is true.
+    if (seen.has(p.id)) return no(`${at} (${p.id}) is on the board twice`)
+    seen.add(p.id)
     if (!whole(p.w, 1) || !whole(p.h, 1)) return no(`${at} (${p.id}) needs a whole width and height of at least 1`)
     let anchor: { x: number; y: number } | undefined
     if (p.anchor !== undefined) {

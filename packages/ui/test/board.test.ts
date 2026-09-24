@@ -4,7 +4,8 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { expect, test, vi } from 'vitest'
 import { mountBoard } from '../src/board.js'
-import { arrange, fits, grid, type Layout, limits } from '../src/layout.js'
+import { arrange, fits, grid, type Layout, limits, SP } from '../src/layout.js'
+import { mountPalette } from '../src/palette.js'
 import {
   CORE_PAGES,
   declOf,
@@ -252,6 +253,277 @@ test('the board mounts on the real markup, places the default pages, and saves w
 
   board.edit(false)
   expect(root.classList.contains('editing')).toBe(false)
+  vi.unstubAllGlobals()
+})
+
+/**
+ * The real board on the real markup at 1440 × 900, with core stubbed: what it posts is kept in
+ * `sent`, and `/api/plugins` answers with no plugins so only core pages are on it.
+ */
+function mountReal(): { board: ReturnType<typeof mountBoard>; root: HTMLElement; sent: { path: string; body: unknown }[] } {
+  const html = readFileSync(join(ui, 'index.html'), 'utf8')
+  document.body.innerHTML = /<body[^>]*>([\s\S]*)<\/body>/.exec(html)![1]!.replace(/<script[\s\S]*?<\/script>/g, '')
+  const sent: { path: string; body: unknown }[] = []
+  vi.stubGlobal('fetch', (path: string, init?: { body?: string }) => {
+    if (init?.body !== undefined) sent.push({ path, body: JSON.parse(init.body) })
+    const answer = path === '/api/plugins' ? { panes: [] } : path.startsWith('/api/search') ? { hits: [] } : {}
+    return Promise.resolve({ ok: true, json: () => Promise.resolve(answer) })
+  })
+  const kept = new Map<string, string>()
+  vi.stubGlobal('localStorage', {
+    getItem: (key: string) => kept.get(key) ?? null,
+    setItem: (key: string, value: string) => kept.set(key, value),
+    removeItem: (key: string) => kept.delete(key),
+  })
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      observe(): void {}
+    },
+  )
+  const root = document.querySelector<HTMLElement>('#board')!
+  Object.defineProperty(root, 'offsetWidth', { value: 1440 })
+  Object.defineProperty(root, 'clientHeight', { value: 900 })
+  return { board: mountBoard(root, 'token'), root, sent }
+}
+
+const pointer = (type: string, target: Element, init: PointerEventInit): void => {
+  target.dispatchEvent(new PointerEvent(type, { bubbles: true, button: 0, pointerId: 1, ...init }))
+}
+
+test('launch paints the kept layout first: the head script hands it over and the first render uses it (M10-3)', () => {
+  const html = readFileSync(join(ui, 'index.html'), 'utf8')
+  const head = /<head>[\s\S]*?<script>([\s\S]*?)<\/script>/.exec(html)![1]!
+  const g = grid(1440, 900)
+  const general = { w: 11, h: 20 }
+  const kept: Layout = {
+    v: 1,
+    cols: g.cols,
+    guides: defaultLayout(g.cols, g.rows).guides,
+    pages: [{ id: 'general', ...general, anchor: { x: 7, y: 3 } }],
+  }
+  delete document.documentElement.dataset.layout
+  // The script as the page runs it, before anything else, reading what the last run left.
+  vi.stubGlobal('localStorage', {
+    getItem: (key: string) => (key === 'alexia.layout' ? JSON.stringify(kept) : null),
+    setItem: () => undefined,
+    removeItem: () => undefined,
+  })
+  new Function(head)()
+  expect(document.documentElement.dataset.layout).toBe(JSON.stringify(kept))
+
+  // Mounted, with nothing asked of core yet, and the board is already where it was left.
+  const { root, sent } = mountReal()
+  expect(sent).toEqual([])
+  const page = root.querySelector<HTMLElement>('[data-page="general"]')!
+  expect(page.style.left).toBe(`${String(g.offX + 7 * SP)}px`)
+  expect(page.style.top).toBe(`${String(g.offY + 3 * SP)}px`)
+  expect(root.querySelector<HTMLElement>('[data-page="chat"]')!.hidden).toBe(true)
+
+  // A copy that is not a layout is not handed over, and the head script does not throw on it.
+  delete document.documentElement.dataset.layout
+  for (const junk of ['{', '{"v":2,"pages":[]}', 'null']) {
+    vi.stubGlobal('localStorage', { getItem: () => junk, setItem: () => undefined, removeItem: () => undefined })
+    new Function(head)()
+    expect(document.documentElement.dataset.layout).toBeUndefined()
+  }
+  vi.unstubAllGlobals()
+})
+
+test('the ways into edit view:the corner after 150 ms, Tab, a long press on the empty board, the palette (M10-4)', async () => {
+  vi.useFakeTimers()
+  try {
+    const { board, root } = mountReal()
+    const corner = document.querySelector<HTMLElement>('#corner')!
+    const pill = corner.querySelector<HTMLElement>('.edit-pill')!
+
+    // The pill says one thing out of edit view, and the corner holds it.
+    expect([...pill.querySelectorAll('button')].map((b) => b.textContent)).toEqual(['Edit view'])
+
+    // Resting in the corner: nothing at 149 ms, the pill at 150. Leaving puts it back.
+    pointer('pointerenter', corner, { pointerType: 'mouse' })
+    vi.advanceTimersByTime(149)
+    expect(corner.classList.contains('out')).toBe(false)
+    vi.advanceTimersByTime(1)
+    expect(corner.classList.contains('out')).toBe(true)
+    pointer('pointerleave', corner, { pointerType: 'mouse' })
+    expect(corner.classList.contains('out')).toBe(false)
+    // Passing through is not resting.
+    pointer('pointerenter', corner, { pointerType: 'mouse' })
+    vi.advanceTimersByTime(100)
+    pointer('pointerleave', corner, { pointerType: 'mouse' })
+    vi.advanceTimersByTime(100)
+    expect(corner.classList.contains('out')).toBe(false)
+
+    // Tab: the button is in the tab order while the pill is tucked away, and focusing it
+    // brings the pill out — the stylesheet's `:focus-within`, since it is never display:none.
+    const button = pill.querySelector<HTMLButtonElement>('button')!
+    expect(button.tabIndex).toBe(0)
+    expect(button.hidden).toBe(false)
+    const css = readFileSync(join(ui, 'app.css'), 'utf8')
+    expect(css).toMatch(/\.edit-pill:focus-within\s*\{[^}]*opacity:\s*1/)
+    expect(css).toMatch(/#corner\s*\{[^}]*width:\s*48px;[^}]*height:\s*48px;/)
+    expect(css).toMatch(/#corner\s*\{[^}]*left:\s*0;[^}]*bottom:\s*0;/)
+    button.click()
+    expect(board.editing()).toBe(true)
+    board.edit(false)
+
+    // A long press on the empty board, on touch. A mouse held there is not one, a finger on a
+    // page is not one, and a finger that moves is scrolling.
+    const field = root.querySelector<HTMLElement>('.board-field')!
+    pointer('pointerdown', field, { pointerType: 'mouse', clientX: 700, clientY: 880 })
+    vi.advanceTimersByTime(1000)
+    expect(board.editing()).toBe(false)
+    pointer('pointerup', field, { pointerType: 'mouse' })
+
+    pointer('pointerdown', root.querySelector('[data-page="chat"]')!, { pointerType: 'touch', clientX: 700, clientY: 200 })
+    vi.advanceTimersByTime(1000)
+    expect(board.editing()).toBe(false)
+    pointer('pointerup', field, { pointerType: 'touch' })
+
+    pointer('pointerdown', field, { pointerType: 'touch', clientX: 700, clientY: 880 })
+    pointer('pointermove', field, { pointerType: 'touch', clientX: 700, clientY: 840 })
+    vi.advanceTimersByTime(1000)
+    expect(board.editing()).toBe(false)
+    pointer('pointerup', field, { pointerType: 'touch' })
+
+    pointer('pointerdown', field, { pointerType: 'touch', clientX: 700, clientY: 880 })
+    vi.advanceTimersByTime(200)
+    pointer('pointerup', field, { pointerType: 'touch' })
+    vi.advanceTimersByTime(1000)
+    expect(board.editing()).toBe(false)
+
+    pointer('pointerdown', field, { pointerType: 'touch', clientX: 700, clientY: 880 })
+    pointer('pointermove', field, { pointerType: 'touch', clientX: 703, clientY: 882 })
+    vi.advanceTimersByTime(500)
+    expect(board.editing()).toBe(true)
+    expect(root.classList.contains('editing')).toBe(true)
+    board.edit(false)
+
+    // The palette's *Edit layout*, the way main.ts registers it.
+    const main = readFileSync(join(ui, 'src', 'main.ts'), 'utf8')
+    expect(main).toMatch(/label: 'Edit layout',[\s\S]{0,300}board\.edit\(true\)/)
+    const palette = mountPalette('token', () => undefined, [
+      { label: 'Edit layout', words: ['edit', 'layout'], run: () => board.edit(true) },
+    ])
+    palette.open()
+    const input = document.querySelector<HTMLInputElement>('#palette-input')!
+    input.value = 'layout'
+    input.dispatchEvent(new Event('input'))
+    await vi.advanceTimersByTimeAsync(0)
+    const hit = [...document.querySelectorAll<HTMLElement>('#palette-hits .hit')].find((row) =>
+      (row.textContent ?? '').includes('Edit layout'),
+    )!
+    hit.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }))
+    expect(board.editing()).toBe(true)
+  } finally {
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+  }
+})
+
+test('edit view: a dragged page snaps to dots, is blue where it lands and red where it cannot, and goes back from red (M10-4)', () => {
+  const { board, root, sent } = mountReal()
+  const general = root.querySelector<HTMLElement>('[data-page="general"]')!
+  const grab = general.querySelector<HTMLElement>(':scope > .page-grab')!
+  const left = general.style.left
+  const top = general.style.top
+
+  // Out of edit view a page does not lift.
+  pointer('pointerdown', grab, { clientX: 0, clientY: 0 })
+  pointer('pointermove', grab, { clientX: SP * 3, clientY: SP * 3 })
+  expect(general.classList.contains('lifted')).toBe(false)
+  pointer('pointerup', grab, { clientX: SP * 3, clientY: SP * 3 })
+
+  board.edit(true)
+  expect(root.classList.contains('editing')).toBe(true) // what shows the dots
+  expect(root.querySelector('.board-dots')).not.toBeNull()
+  const saves = (): number => sent.filter((one) => one.path === '/api/setup').length
+  const before = saves()
+
+  // One dot right puts General against Chat with no clear dot between: red.
+  pointer('pointerdown', grab, { clientX: 0, clientY: 0 })
+  pointer('pointermove', grab, { clientX: SP, clientY: 0 })
+  expect(general.classList.contains('lifted')).toBe(true)
+  expect(general.classList.contains('blocked')).toBe(true)
+  expect(general.classList.contains('lands')).toBe(false)
+  expect(general.style.transform).toBe(`translate(${String(SP)}px, 0px)`)
+  // Dropped on red it goes back, and nothing is saved.
+  pointer('pointerup', grab, { clientX: SP, clientY: 0 })
+  expect(general.classList.contains('blocked')).toBe(false)
+  expect(general.style.transform).toBe('')
+  expect([general.style.left, general.style.top]).toEqual([left, top])
+  expect(saves()).toBe(before)
+
+  // On a board with room — General at the left edge, Price at the right, nothing between —
+  // three dots right is blue and it lands there. The pointer stops between dots and the page
+  // snaps to the nearest one.
+  const g = grid(1440, 900)
+  const drawn = arrange(defaultLayout(g.cols, g.rows), shapes, g)
+  const size = (id: string): { w: number; h: number } => drawn.find((p) => p.id === id)!
+  const price = size('price')
+  board.adopt({
+    v: 1,
+    cols: g.cols,
+    guides: defaultLayout(g.cols, g.rows).guides,
+    pages: [
+      { id: 'general', w: size('general').w, h: size('general').h, anchor: { x: 0, y: 0 } },
+      { id: 'price', w: price.w, h: price.h, anchor: { x: g.cols - price.w, y: 0 } },
+    ],
+  })
+  const priceAt = root.querySelector<HTMLElement>('[data-page="price"]')!.style.left
+  const afterAdopt = saves()
+  const to = { clientX: 3 * SP + 9, clientY: 11 }
+  pointer('pointerdown', grab, { clientX: 0, clientY: 0 })
+  pointer('pointermove', grab, to)
+  expect(general.classList.contains('lands')).toBe(true)
+  expect(general.classList.contains('blocked')).toBe(false)
+  expect(general.style.transform).toBe(`translate(${String(3 * SP)}px, 0px)`)
+  pointer('pointerup', grab, to)
+  expect(saves()).toBe(afterAdopt + 1)
+  const saved = (sent.at(-1)!.body as { layout: Layout }).layout
+  expect(saved.pages.find((p) => p.id === 'general')!.anchor).toEqual({ x: 3, y: 0 })
+  expect(general.style.left).toBe(`${String(g.offX + 3 * SP)}px`)
+  expect(general.style.transform).toBe('')
+  // Nothing else moved.
+  expect(root.querySelector<HTMLElement>('[data-page="price"]')!.style.left).toBe(priceAt)
+  board.edit(false)
+  vi.unstubAllGlobals()
+})
+
+test('Add page can always bring Chat back, even after it was removed with no other channel (M10-4)', () => {
+  const { board, root, sent } = mountReal()
+  board.edit(true)
+  const pill = document.querySelector<HTMLElement>('.edit-pill')!
+  const press = (within: Element, label: string): void =>
+    [...within.querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent === label)!.click()
+
+  // Removing Chat with no channel asks, once, and Keep leaves it where it was.
+  const chat = root.querySelector<HTMLElement>('[data-page="chat"]')!
+  chat.querySelector<HTMLButtonElement>(':scope > .page-grab')!.click()
+  const bar = root.querySelector<HTMLElement>('.page-bar')!
+  press(bar, 'Remove')
+  expect(bar.textContent).toContain('Add page brings it back')
+  press(bar, 'Keep')
+  expect(chat.hidden).toBe(false)
+  expect(bar.textContent).not.toContain('another channel')
+  press(bar, 'Remove')
+  press(bar, 'Remove')
+  expect(chat.hidden).toBe(true)
+
+  // Chat is on the Add page list, and choosing it puts it back and saves that.
+  press(pill, 'Add page')
+  const menu = document.querySelector<HTMLElement>('#add-menu')!
+  expect(menu.hidden).toBe(false)
+  expect([...menu.querySelectorAll('button')].map((b) => b.textContent)).toContain('Chat')
+  press(menu, 'Chat')
+  expect(chat.hidden).toBe(false)
+  expect(menu.hidden).toBe(true)
+  const saved = (sent.filter((one) => one.path === '/api/setup').at(-1)!.body as { layout: Layout }).layout
+  expect(saved.pages.some((p) => p.id === 'chat')).toBe(true)
+  expect(localStorage.getItem('alexia.layout')).toBe(JSON.stringify(saved))
+  expect(document.querySelector<HTMLElement>('#board-note')!.textContent).toMatch(/^Chat page added/)
+  board.edit(false)
   vi.unstubAllGlobals()
 })
 
