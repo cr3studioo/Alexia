@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -60,13 +60,31 @@ const arranged: Layout = {
 }
 
 const alexia: Serving = await serve({ dataDir: root, pluginsDir: extensions, secrets: memorySecrets(), local: false })
-// Windows keeps a folder while a process that was just stopped is still letting go of it, and
-// this test stops more plugins than most (one deleted by hand, one that crashes on every start):
-// up to ten seconds for the last of them. One that never lets go still fails here, as it should.
 afterAll(async () => {
   await alexia.close()
-  for (const path of [root, from, extensions]) rmSync(path, { recursive: true, force: true, maxRetries: 50, retryDelay: 200 })
+  for (const path of [root, from, extensions]) {
+    try {
+      rmSync(path, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })
+    } catch (error) {
+      // Say which files are still held, and by nothing this test can see: the folder alone is
+      // not enough to find a handle left open on Windows.
+      throw new Error(`${String(error)}\nstill held: ${held(path).join(', ') || '(only the folder)'}`, { cause: error })
+    }
+  }
 }, 30_000)
+
+/** Every file and folder under `dir` that cannot be deleted, deepest first. */
+function held(dir: string): string[] {
+  const stuck: string[] = []
+  for (const name of readdirSync(dir, { recursive: true }).map(String).sort((a, b) => b.length - a.length)) {
+    try {
+      rmSync(join(dir, name), { recursive: true, force: true })
+    } catch {
+      stuck.push(name)
+    }
+  }
+  return stuck
+}
 
 const call = (path: string, body?: unknown): Promise<Response> =>
   fetch(new URL(path, alexia.url), {
