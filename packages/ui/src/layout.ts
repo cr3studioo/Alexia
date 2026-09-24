@@ -159,6 +159,9 @@ export function fit(shape: Shape, want: Wanted, cols: number, rows: number): { w
       const t = narrow[narrow.length - 1] ?? tiersOf(shape)[0]
       if (t) [w, h] = shape.tiers![t]!
     }
+    // Still too wide: its smallest tier is wider than the board, or it declares no sizes at
+    // all. Squeezed to the board, because the alternative is laid over whatever is at 0, 0.
+    if (w > cols) w = Math.max(1, cols)
   }
   if (shape.scale && h > rows && rows >= lim.minH) {
     h = rows
@@ -183,7 +186,7 @@ function firstFree(placed: readonly Placed[], w: number, h: number, cols: number
       for (let x = 0; x + w <= cols; x++) if (fits(placed, x, y, w, h, cols)) return { x, y }
     }
   }
-  // Only reachable when the page is wider than the board, which `fit` already prevents.
+  // Only reachable when the page is wider than the board, which `fit` prevents.
   return { x: 0, y: 0 }
 }
 

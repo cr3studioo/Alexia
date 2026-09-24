@@ -78,6 +78,15 @@ const PRESS_MS = 500
 /** How far a finger may wander and still be pressing rather than scrolling, in CSS pixels. */
 const PRESS_SLOP = 10
 
+/**
+ * What one press of Escape puts away: edit view first, then the Settings or Activity sheet,
+ * and only then the window. One step back per press, never two.
+ */
+export function escapeTakes(editing: boolean, sheetOpen: boolean): 'edit' | 'sheet' | 'window' {
+  if (editing) return 'edit'
+  return sheetOpen ? 'sheet' : 'window'
+}
+
 export interface Board {
   /** Core's answer from `/api/state`. `undefined` is a core that does not know about layouts. */
   adopt(layout: Layout | null | undefined): void
@@ -179,13 +188,22 @@ export function mountBoard(root: HTMLElement, token: string): Board {
   }
 
   /**
-   * One change, settled: every drawn page pinned where it is now — so moving one page never
-   * reshuffles the rest — and the pages named given the sizes they were just given.
+   * The layout a change starts from: every drawn page pinned where it is now, so moving one
+   * page never reshuffles the rest. Not on the one-column stack — its spots and widths are the
+   * stack's, not anybody's arrangement, and pinning them would wreck the board the moment the
+   * window is wide again. There the layout is taken as saved.
+   */
+  const base = (now: readonly Placed[]): Layout => (g.compact ? current() : pin(rescale(current(), g.cols), now))
+
+  /**
+   * One change, settled: the pages named given the sizes they were just given. On the stack,
+   * only a size that actually changed is written; everything else is the saved layout's.
    */
   function settle(now: readonly Placed[], guides?: [number, number]): void {
-    const base = rescale(current(), g.cols)
-    const pinned = pin(base, now)
-    const by = new Map(now.map((p) => [p.id, p]))
+    const pinned = base(now)
+    const was = new Map(placed.map((p) => [p.id, p]))
+    const changed = g.compact ? now.filter((p) => was.get(p.id)?.w !== p.w || was.get(p.id)?.h !== p.h) : now
+    const by = new Map(changed.map((p) => [p.id, p]))
     keep({
       ...pinned,
       ...(guides && { guides }),
@@ -334,7 +352,7 @@ export function mountBoard(root: HTMLElement, token: string): Board {
     })
     // The keyboard's grip: one dot per press, saved each time, because there is no "up".
     grip.addEventListener('keydown', (event) => {
-      if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+      if ((event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') || g.compact) return
       event.preventDefault()
       const done = drag(event.key === 'ArrowLeft' ? -1 : 1, placed, guidesNow(), false)
       if (done.moved !== 0) settle(done.placed, done.guides)
@@ -423,7 +441,8 @@ export function mountBoard(root: HTMLElement, token: string): Board {
       const r = { ...start }
       if (mode === 'move') {
         r.x = Math.min(Math.max(0, start.x + dx), Math.max(0, g.cols - r.w))
-        r.y = Math.max(0, start.y + dy)
+        // No lower than `pack` keeps an anchor, or the ring says it lands and it is drawn elsewhere.
+        r.y = Math.min(Math.max(0, start.y + dy), Math.max(0, g.rows - r.h))
       } else {
         r.w = Math.min(Math.max(start.w + dx, lim.minW), Math.min(lim.maxW, g.cols - start.x))
         r.h = Math.min(Math.max(start.h + dy, lim.minH), lim.maxH)
@@ -469,6 +488,8 @@ export function mountBoard(root: HTMLElement, token: string): Board {
     const at = placed.find((p) => p.id === id)
     const info = infoOf(id)
     if (!editing || !step || !at || !info) return
+    // As with the pointer: on the stack a page's place is its order, so only Shift does anything.
+    if (g.compact && !event.shiftKey) return
     event.preventDefault()
     const [dx, dy] = step as [number, number]
     const r = { ...at }
@@ -480,6 +501,7 @@ export function mountBoard(root: HTMLElement, token: string): Board {
     } else {
       r.x += dx
       r.y += dy
+      if (dy > 0 && r.y > Math.max(0, g.rows - r.h)) return
     }
     const others = placed.filter((p) => p.id !== id)
     if (!fits(others, r.x, r.y, r.w, r.h, g.cols)) return
@@ -524,10 +546,10 @@ export function mountBoard(root: HTMLElement, token: string): Board {
           const r = { ...at, w: size[0], h: size[1] }
           // A size that does not fit where the page is goes to the first place it does.
           const others = placed.filter((p) => p.id !== at.id)
-          if (fits(others, r.x, r.y, r.w, r.h, g.cols)) settle(placed.map((p) => (p.id === at.id ? r : p)))
+          if (g.compact || fits(others, r.x, r.y, r.w, r.h, g.cols)) settle(placed.map((p) => (p.id === at.id ? r : p)))
           else {
-            const base = pin(rescale(current(), g.cols), others)
-            keep({ ...base, pages: base.pages.map((p) => (p.id === at.id ? { id: p.id, w: r.w, h: r.h } : p)) })
+            const from = base(others)
+            keep({ ...from, pages: from.pages.map((p) => (p.id === at.id ? { id: p.id, w: r.w, h: r.h } : p)) })
             render()
           }
         })
@@ -582,8 +604,8 @@ export function mountBoard(root: HTMLElement, token: string): Board {
   function takeOff(info: PageInfo): void {
     if (!info.removable) return
     selected = undefined
-    const base = pin(rescale(current(), g.cols), placed)
-    keep({ ...base, pages: base.pages.filter((p) => p.id !== info.id) })
+    const from = base(placed)
+    keep({ ...from, pages: from.pages.filter((p) => p.id !== info.id) })
     render()
   }
 
@@ -709,8 +731,8 @@ export function mountBoard(root: HTMLElement, token: string): Board {
 
   /** Put a page on the board at the first free spot, and say where if that is out of view. */
   function place(page: PageInfo): void {
-    const base = pin(rescale(current(), g.cols), placed)
-    keep({ ...base, pages: [...base.pages.filter((p) => p.id !== page.id), { id: page.id, ...arrival(page.shape) }] })
+    const from = base(placed)
+    keep({ ...from, pages: [...from.pages.filter((p) => p.id !== page.id), { id: page.id, ...arrival(page.shape) }] })
     selected = page.id
     render()
     announce(page.id)
