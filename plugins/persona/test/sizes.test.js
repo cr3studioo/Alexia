@@ -7,6 +7,7 @@ import {
   asRow,
   brief,
   CEILING,
+  floorOf,
   LONGEST,
   MARK,
   refining,
@@ -44,14 +45,20 @@ You are his chief of staff.
 ## Hard rules
 1. Ask before anything with an external consequence.`
 
-const three = [long, MARK.medium, '# Chief of staff\n\nBlunt. Short answers. Chases his dates.', MARK.small, '# Chief of staff\n\nBlunt. Ask first.'].join('\n')
+/**
+ * A medium that is a medium: over {@link floorOf} of the long one, which a toy one-liner is not
+ * (D203 — a fifth of her is refused, and the long one goes in its place).
+ */
+const fine = '# Chief of staff\n\nBlunt, short answers, no small talk. Chases his dates. Asks before anything external.'
+
+const three = [long, MARK.medium, fine, MARK.small, '# Chief of staff\n\nBlunt. Ask first.'].join('\n')
 
 // ---- splitting one answer into three ----------------------------------------------------------
 
 test('one answer becomes three, longest first, split on the markers', () => {
   const got = sizesFrom(three)
   expect(got.high).toBe(long)
-  expect(got.medium).toContain('Chases his dates')
+  expect(got.medium).toBe(fine)
   expect(got.small).toBe('# Chief of staff\n\nBlunt. Ask first.')
   // The long one is the personality: it is the one `usable()` is asked about.
   expect(usable(got.high)).toBe(true)
@@ -87,11 +94,11 @@ test('the markers are nothing a personality would contain on its own', () => {
 })
 
 test('a marker a model repeated is still one boundary, not three documents', () => {
-  const twice = [long, MARK.medium, 'the middle one', MARK.medium, 'oops', MARK.small, 'the short one'].join('\n')
+  const twice = [long, MARK.medium, fine, MARK.medium, 'oops', MARK.small, 'the short one'].join('\n')
   const got = sizesFrom(twice)
   expect(got.high).toBe(long)
   // Split on the first occurrence, so a stray repeat lands inside a size rather than losing one.
-  expect(got.medium).toContain('the middle one')
+  expect(got.medium).toContain(fine)
   expect(got.small).toBe('the short one')
 })
 
@@ -109,12 +116,12 @@ test('a missing shorter size is simply absent, and the long one still stands', (
 test('a short one that ran long is thrown away rather than trimmed', () => {
   // §2's own instruction, and the reason matters: the hard rules are at the end of a
   // personality, so trimming to a length cuts exactly the lines that were least negotiable.
-  const over = [long, MARK.medium, 'fine', MARK.small, 'x'.repeat(CEILING.small + 1)].join('\n')
+  const over = [long, MARK.medium, fine, MARK.small, 'x'.repeat(CEILING.small + 1)].join('\n')
   const got = sizesFrom(over)
   expect(got.small).toBeUndefined()
-  expect(got.medium).toBe('fine')
+  expect(got.medium).toBe(fine)
   // One under the ceiling is kept, so this is a ceiling rather than a ban.
-  const under = [long, MARK.medium, 'fine', MARK.small, 'y'.repeat(CEILING.small)].join('\n')
+  const under = [long, MARK.medium, fine, MARK.small, 'y'.repeat(CEILING.small)].join('\n')
   expect(sizesFrom(under).small).toHaveLength(CEILING.small)
 })
 
@@ -208,4 +215,31 @@ test('every save writes both shorter columns, so a stale short one cannot surviv
   // Edit hands `keep()` a version with neither, which is what clears them — and it says so.
   expect(source).toMatch(/await keep\(row, was, \{ doc, wrote: 'you', removed \}\)/)
   expect(source).toMatch(/The shorter lengths went with the version you replaced/)
+})
+
+/**
+ * D203, 2026-09-23, live: Toga's medium was 960 characters of a 5,000-character document — a
+ * fifth of her, asked for as about half — and it was what every free model in the chat was given.
+ */
+test('a medium that kept a fifth of her is refused, and the long one goes in its place', () => {
+  const her = `# Toga\n\n## Who you are\n${'She wants to know you completely. '.repeat(140)}`
+  expect(floorOf(her)).toBe(1200)
+  const thin = `# Toga\n\n${'Playful. '.repeat(100)}`.trim()
+  expect(thin.length).toBeLessThan(1200)
+  const got = sizesFrom([her, MARK.medium, thin, MARK.small, '# Toga\n\nPlayful, sing-song.'].join('\n'))
+  expect(got.medium).toBeUndefined()
+  // The small one is judged by its own ceiling only: it is meant to be short.
+  expect(got.small).toBe('# Toga\n\nPlayful, sing-song.')
+  expect(sizesLine(got)).toMatch(/medium one did not come back usable/)
+  // At the floor is enough.
+  const enough = 'x'.repeat(1200)
+  expect(sizesFrom([her, MARK.medium, enough].join('\n')).medium).toBe(enough)
+})
+
+test('a personality that is short because she is keeps a medium that is short too', () => {
+  // Four words of description make a long one of a few hundred characters; the floor follows it
+  // down rather than refusing every medium such a personality could have.
+  expect(floorOf(long)).toBe(Math.floor(0.4 * long.length))
+  expect(floorOf(long)).toBeLessThan(fine.length)
+  expect(floorOf('')).toBe(0)
 })

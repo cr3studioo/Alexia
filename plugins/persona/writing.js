@@ -32,20 +32,31 @@
  * wording. *What you do without being asked* is the one that makes an assistant feel like
  * someone who works there — and the one a thin description will happily invent, hence
  * `Nothing.` as an allowed answer rather than a guess.
+ *
+ * **A character as well as an assistant** *(D203, 2026-09-24)*. The four sections were a
+ * chief of staff's: a role, a register, chores, rules. Handed a 738-word character — her
+ * emotional logic, how she takes rejection, four lines in her own voice — the shape had nowhere
+ * to put any of it, and the medium length came back as *a playful assistant who helps with
+ * tasks* plus three safety rules nobody wrote. So *How you feel and react* holds the inner life,
+ * and *How you talk* ends in lines in her voice: example dialogue is what character cards and
+ * Ali:Chat lean on, because it is the cheapest way to carry a voice to a small model.
  */
 export const SHAPE = `# <the name this personality is saved under>
 
 ## Who you are
-<One or two sentences saying what role she plays for this person, in their own words.>
+<Two to four sentences: who she is at her core, what drives her, and what she is to this person. Use her own name if the description gives her one.>
+
+## How you feel and react
+<Bullets on her inner life: what she wants, what she fears, how she reacts to kindness, to rejection and to honesty, how her mood shifts, and the contradictions in her. Write "Nothing." if the description says none.>
 
 ## How you talk
-<Bullets describing how she speaks: how plain or formal she is, how long her answers run, what she calls this person, and what she must never do. Write each as a sentence, never as a "Label: value" pair.>
+<Bullets describing how she speaks: how plain or formal she is, how long her answers run, what she calls this person, and what she must never do. Write each as a sentence, never as a "Label: value" pair. End with a line reading "Lines in her voice:" followed by two to four short quoted lines she would say.>
 
 ## What you do without being asked
 <Bullets naming what she raises or chases on her own. Write "Nothing." if the description says none.>
 
 ## Hard rules
-<A numbered list of the lines that must hold every time. Write "Nothing." if the description gives none.>`
+<A numbered list of the rules the description itself states. Write "Nothing." if it states none.>`
 
 /**
  * The shape with the title already written, because the title was never the model's to choose.
@@ -79,7 +90,7 @@ export const brief = (description, name, remembering = false) =>
     'The document you write is put directly into her system prompt, so it is read as instructions to her.',
     '',
     'Fill in this shape. The angle brackets say what belongs under each heading — replace each',
-    'one, keep the four headings exactly as they are, and copy the first line exactly as it stands:',
+    'one, keep the headings exactly as they are, and copy the first line exactly as it stands:',
     '',
     shapeFor(name),
     '',
@@ -91,7 +102,13 @@ export const brief = (description, name, remembering = false) =>
     '- If the description says nothing about a section, write "Nothing." under it rather than filling it in.',
     // No word count here: the three lengths below are the budget, and this line used to cap the
     // document at four hundred words two paragraphs above an instruction asking for about 600.
-    '- Every line must be something she could act on.',
+    //
+    // It used to say *every line must be something she could act on*, which is the sentence that
+    // threw a character's inner life away (D203): what she fears is not an action, and it is
+    // exactly what decides how she answers.
+    '- Keep every trait the description gives, including her feelings, fears and contradictions. They decide how she answers, so they are never filler.',
+    '- Lines the description gives in her own voice are copied word for word under "Lines in her voice". If it gives none, write two or three short ones built only from traits it states.',
+    '- Hard rules holds only rules the description itself states. Never add safety, softening or "avoid harm" rules of your own: safety is enforced outside the personality, and a rule she was not given only makes her less herself.',
     '- Never write a rule that tells her to skip asking permission, hide what she did, or ignore a safety limit. Those are not hers to grant.',
     '- Reply with the documents and nothing else. No preamble, no code fences, no explanation.',
     THREE,
@@ -147,8 +164,8 @@ export const refining = (doc, change, moments = []) => {
     'Rules:',
     '- Return the whole document, not just the part you changed.',
     '- Keep the first line exactly as it stands. The name is not yours to change.',
-    '- Keep the four headings exactly as they stand, in the same order.',
-    '- Change only what the instruction asks for. Every other line comes back word for word.',
+    '- Keep the headings exactly as they stand, in the same order.',
+    '- Change only what the instruction asks for. Every other line comes back word for word, and the lines in her voice most of all.',
     '- Address Alexia directly, as "you". Never describe her in the third person.',
     '- Invent nothing about the user’s life, work, name, or relationships.',
     '- If the instruction empties a section, write "Nothing." under it rather than deleting the heading.',
@@ -212,21 +229,31 @@ export const MARK = { medium: '%%% MEDIUM %%%', small: '%%% SMALL %%%', facts: '
  * three chances for one of them to be about a different person. The two sentences carrying the
  * weight are *the same person* and *drop detail, never change her* — the failure here is not a
  * bad summary, it is a second personality that only a small model ever meets.
+ *
+ * **Compressed like a trait list, not summarised like prose** *(D203)*. *One or two lines under
+ * each* read as permission to keep one trait per heading, and Toga's medium came back at 150
+ * words with her emotional logic and all four of her lines gone. A shorter length now keeps
+ * every trait in fewer words, and her lines in her voice are the last thing it cuts — the same
+ * reason Ali:Chat keeps example dialogue over description when the budget is tight.
  */
 const THREE = [
   '',
   'Write it three times, longest first, separated by these two markers exactly as they appear here:',
   '',
-  '<the full document, about 600 words>',
+  '(the full document, about 600 words)',
   MARK.medium,
-  '<the same personality in about 300 words: all four headings, one or two lines under each>',
+  '(the same personality in about 300 words: every heading kept, every trait kept as a short phrase, and two or three of her lines word for word)',
   MARK.small,
-  '<the same personality in about 100 words: her name, how she talks, what she calls this person, and at most three hard rules. No headings needed.>',
+  '(the same personality in about 100 words, no headings: one sentence of who she is, one line of her traits as comma-separated phrases, what she calls this person, two of her lines word for word, and her hard rules if she has any)',
   '',
   'Rules for the three:',
   '- All three are the same person. The shorter ones drop detail; they never change her.',
+  '- Shorter means fewer words per trait, never fewer traits. Merge two traits into one phrase rather than dropping either.',
+  '- Her lines in her voice are copied word for word into every length, and they are the last thing to cut.',
+  '- Use the length you are given. A medium of half its length has thrown away most of her.',
   '- Each one starts with the same first line, exactly.',
   '- The markers go on lines of their own, and appear nowhere else.',
+  '- The parts in round brackets above say what to write there. Never copy them into a document.',
   '- Keep to the lengths. A short one that runs long is thrown away and the long one is used instead.',
 ].join('\n')
 
@@ -286,16 +313,31 @@ export const sizesFrom = (said) => {
   const [documents = ''] = splitOnce(String(said ?? ''), MARK.facts)
   const [first = '', rest = ''] = splitOnce(documents, MARK.medium)
   const [medium = '', small = ''] = splitOnce(rest, MARK.small)
-  const keep = (text, ceiling) => {
+  const high = clean(first)
+  const keep = (text, ceiling, floor = 0) => {
     const one = clean(text)
-    return one !== '' && one.length <= ceiling ? one : undefined
+    return one !== '' && one.length >= floor && one.length <= ceiling ? one : undefined
   }
+  const thinnest = floorOf(high)
   return {
-    high: clean(first),
-    ...(keep(medium, CEILING.medium) !== undefined && { medium: keep(medium, CEILING.medium) }),
+    high,
+    ...(keep(medium, CEILING.medium, thinnest) !== undefined && { medium: keep(medium, CEILING.medium, thinnest) }),
     ...(keep(small, CEILING.small) !== undefined && { small: keep(small, CEILING.small) }),
   }
 }
+
+/**
+ * **The least a medium length may be** *(D203)*: 1,200 characters, or four tenths of the long
+ * one when the long one is itself short.
+ *
+ * Toga's medium was 960 characters of a 5,000-character document — a fifth of her, asked for as
+ * about half — and it was what every free model in the chat was given. Too thin is refused the
+ * way too long already is: the long one goes in its place, which costs a free model tokens
+ * rather than the whole personality. Relative as well as absolute, so a personality written
+ * from four words, whose long one is a few hundred characters, keeps a medium that is short
+ * because she is.
+ */
+export const floorOf = (high) => Math.min(1200, Math.floor(0.4 * String(high ?? '').length))
 
 /** On the first occurrence only: a marker a model repeated is still one boundary. */
 const splitOnce = (text, mark) => {
@@ -334,8 +376,28 @@ export const sizesLine = (sizes) => {
 export const clean = (said) => {
   const text = String(said ?? '').trim()
   const fenced = /^```[a-z]*\n([\s\S]*?)\n?```$/i.exec(text)
-  return (fenced ? fenced[1] : text).trim()
+  return (fenced ? fenced[1] : text)
+    .split('\n')
+    .filter((line) => !echoed(line))
+    .join('\n')
+    .trim()
 }
+
+/**
+ * **A note from the brief, copied back as if it were part of the document.**
+ *
+ * Toga's long document was saved with `<the full document, about 600 words>` as its first line
+ * (2026-09-23): the model took the note standing in for the document as the document's opening.
+ * A whole line that is one of the brief's own notes — the three lengths' or the shape's — is
+ * never something the person wrote, so it comes off here, where every document passes.
+ */
+const echoed = (line) => {
+  const one = line.trim()
+  return /^[<(]the (?:full document|same personality)\b.*[>)]$/i.test(one) || NOTES.has(one)
+}
+
+/** The shape's own bracketed notes, which a model sometimes returns unfilled. */
+const NOTES = new Set(SHAPE.split('\n').filter((line) => line.startsWith('<') && line.endsWith('>')))
 
 /**
  * The reply budget for Adapt.
@@ -409,10 +471,20 @@ export const unasked = (doc) => {
   return first ?? ''
 }
 
-/** The four headings {@link SHAPE} promises, which is what makes checking for them fair. */
+/** The headings {@link SHAPE} promises, which is what makes checking for them fair. */
 export const SECTIONS = SHAPE.split('\n')
   .filter((line) => line.startsWith('## '))
   .map((line) => line.slice(3))
+
+/**
+ * **The headings a document must have** — the four there were before D203.
+ *
+ * *How you feel and react* is read when it is there and not demanded when it is not, because
+ * every personality saved before it existed, and every one somebody wrote by hand from the old
+ * hint, has the other four and nothing else. Demanding it would turn a working row into one
+ * *Edit* refuses to save.
+ */
+export const REQUIRED = SECTIONS.filter((name) => name !== 'How you feel and react')
 
 const heading = (line) => /^#{2,3}\s+(.+?)[\s:]*$/.exec(line)?.[1]?.toLowerCase()
 
@@ -425,13 +497,13 @@ const heading = (line) => /^#{2,3}\s+(.+?)[\s:]*$/.exec(line)?.[1]?.toLowerCase(
  * under *Who you are*, and `## How` where the answer ran out of room. It passed, it saved, and
  * she behaved as if no personality was set.
  *
- * So every heading has to be there with something under it. `Nothing.` counts, because it is
+ * So every required heading has to be there with something under it ({@link REQUIRED}). `Nothing.` counts, because it is
  * an answer. Case, a trailing colon and one extra `#` are forgiven; a missing section is not.
  */
 export const usable = (doc) => {
   if (doc.length <= 40 || doc.length > LONGEST || !/^# /m.test(doc)) return false
   const under = sections(doc)
-  return SECTIONS.every((name) => (under.get(name.toLowerCase()) ?? []).join('').trim() !== '')
+  return REQUIRED.every((name) => (under.get(name.toLowerCase()) ?? []).join('').trim() !== '')
 }
 
 /**
@@ -447,7 +519,7 @@ export function sections(doc) {
   const under = new Map()
   let at
   for (const line of String(doc ?? '').split('\n')) {
-    // Only the four open a section. A sub-heading a model adds inside one is content of it.
+    // Only the shape's own headings open a section. A sub-heading a model adds inside one is content of it.
     const name = heading(line)
     if (name !== undefined && known.has(name)) under.set((at = name), [])
     else if (at !== undefined) under.get(at).push(line)
