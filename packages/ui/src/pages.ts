@@ -10,7 +10,7 @@
  * page and the conversation sit on the same dots under the same rules.
  *
  * **Core never names a plugin (invariant 1).** Every plugin page is built from a manifest's
- * `page` (`alexia_protocol` 11), or — for a plugin written before that — from the `panel` it
+ * `page` (`alexia_protocol` 12), or — for a plugin written before that — from the `panel` it
  * already declared, as a single M page. The *Coming soon* rows in *Add page* come from the
  * registry. Nothing below is a list of plugins typed out.
  *

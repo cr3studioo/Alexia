@@ -167,7 +167,7 @@ later for the filesystem and the shell, and nowhere else.
 ]
 ```
 
-There are **fifteen widget types**. Ten, and then five, each argued for one at a time — see
+There are **sixteen widget types**. Ten, and then six, each argued for one at a time — see
 the notes below the table:
 
 | Type | Extra fields | For |
@@ -185,6 +185,7 @@ the notes below the table:
 | `action` | `tool` ✅ | a button that calls one of your tools with no arguments |
 | `table` | `rows` ✅, `columns` ✅, `rowActions`, `detail`, `filter`, `groupBy`, `groupOrder`, `groupNotes`, `chips` | a list of things, with actions on each one — see [Tables](#tables) |
 | `graph` | `rows` ✅, `detail`, `filter` | things that point at each other, drawn as a map — see [Graphs](#graphs). *(4)* |
+| `tree` | `rows` ✅, `rowActions`, `detail`, `filter` | things filed inside each other — see [Trees](#trees). *(11)* |
 | `image` | `rows` ✅, `detail`, `single` | pictures you have made. *(5)* |
 | `cards` | `rows` ✅, `rowActions`, `detail`, `filter`, `dim` | things you hold, drawn the way core draws plugins. *(6)* |
 
@@ -375,6 +376,34 @@ permission gate any tool call does, and the question appears beside the row. `co
 second press that has already said what goes, with `{column}` filled in from the row — the
 first press costs nothing and the second one is unambiguous.
 
+**A row action can say which rows it belongs on** (`alexia_protocol` 11). Without it, every
+action is on every row — which on a list whose actions are about a row's *state* means most
+buttons answer *nothing to do here*:
+
+```jsonc
+"rowActions": [
+  { "key": "still_true", "label": "Still true", "tool": "still_true",
+    "when": { "tag": "may be out of date" } },            // only rows carrying this tag
+  { "key": "no_longer_true", "label": "No longer true", "tool": "no_longer_true",
+    "unless": { "tag": "no longer true" } },              // every row but those
+  { "key": "unpin", "label": "Stop always knowing", "tool": "unpin",
+    "when": { "field": "pinned", "is": "always known" } },  // a field equal to one of `is`
+  { "key": "open", "label": "Open", "tool": "open_thing",
+    "when": { "field": "url" } }                          // a field that is there and not empty
+]
+```
+
+A condition is **one** of two forms. `{ "tag": … }` matches a row whose `tags` include one
+saying exactly that — bare strings or `{ says, tone }` objects, read by what they say. `{ "field":
+…, "is": … }` matches a row whose field equals the value, or one of the values; without `is`, a
+field that is present and not `""`, `false`, `0`, `null` or an empty list. `when` draws the action
+only on rows that match, `unless` never on rows that match, and given both, both must hold. It is
+not an expression language and should not become one — a state that needs *and* across fields is
+a state your tool can compute into a tag.
+
+It is only where the button is drawn. `/api/action` does not re-check it, so a tool that must
+refuse a row still refuses it — the same rule as a disabled button anywhere else.
+
 **Groups are drawn alphabetically unless you say otherwise.** `groupOrder` names them in the
 order you mean; a group you do not name follows, alphabetically, and a named group with no rows
 is not drawn. `groupNotes` says what a group *is*, one line under its heading, keyed by the same
@@ -433,6 +462,42 @@ table grouped by category is the honest picture.
 Core owns the drawing — the physics, the colours, the labels, the pointer, and settling it
 without motion for a reader who asked for that. See [`ui-schema.md`](./ui-schema.md#graph).
 
+### Trees
+
+```jsonc
+{ "key": "filed", "type": "tree", "label": "The shape of it",
+  "rows": "list_tree",                         // your tool, called with no arguments
+  "detail": "about_note",                      // optional, opens under the note
+  "filter": true,                              // the notes that match, and where they are filed
+  "rowActions": [                              // a table's, `when` and all; on notes only
+    { "key": "note_forget", "label": "Forget", "tool": "forget_one", "confirm": "Forget it?" }
+  ] }
+```
+
+*Arrived in `alexia_protocol` 11. Declaring one while claiming 10 is a load error.*
+
+**A `graph` says what points at what; a `tree` says what is filed under what.** The rows tool
+answers `structuredContent: { "nodes": [ … ] }` — nodes, not rows — and every node carries a
+string `id`:
+
+| Field | |
+|---|---|
+| `parent` | the id of the branch it sits under, or `null` at the top. A parent that is not in the answer, or is not a branch, puts the node at the top rather than losing it. |
+| `kind` | `branch` or `note`. A branch opens and closes; a note opens its `detail` and its actions. |
+| `label` | what it is called. |
+| `summary` | optional, on a branch: a quiet line under its name. |
+| `count` | optional, on a branch: the number drawn beside it. Absent, core counts the distinct notes under it. |
+| `tags` | optional, on a note: chips, drawn and matched exactly as a table row's `tags` are. |
+| `also` | optional, on a note: more branch ids it is filed under. It is drawn under each, and each copy says where else it lives. |
+
+The top is open and everything under it is shut, until somebody opens something — which the
+page remembers, per widget, in that browser. The detail tool and every row action are called
+with the **note's** `id`, so a tree and a table over the same store can share both. Branches have
+no actions; they are where things are filed, not things.
+
+Core owns the drawing, the keyboard (the WAI-ARIA tree pattern — arrows, Home and End, Enter)
+and the narrow layout. See [`ui-schema.md`](./ui-schema.md#tree).
+
 ### Panel
 
 ```jsonc
@@ -483,8 +548,8 @@ type. Declaring a key twice is a load error. Which half a widget belongs in is y
 }
 ```
 
-*Arrived in `alexia_protocol` 11 (D199, 2026-09-24). Declaring it while claiming 10 or lower
-is a load error: `page arrived in alexia_protocol 11`.*
+*Arrived in `alexia_protocol` 12 (D199, 2026-09-24). Declaring it while claiming 11 or lower
+is a load error: `page arrived in alexia_protocol 12`.*
 
 **Your plugin's place on the board.** The window is a grid of dots, 25 px apart, and a page is
 a rectangle whose corners sit on them. A person arranges the pages; a plugin says only what
@@ -505,7 +570,7 @@ does. A tier is chosen by size and never by the plugin, so a page cannot ask to 
 
 **The constraints**, each a load error:
 
-- `page` with `alexia_protocol` below 11.
+- `page` with `alexia_protocol` below 12.
 - A `show` key that is not declared in `settings` or `panel.widgets`. That is **one namespace**,
   as above, so a page cannot name a widget that is not already on your plugin's own page.
 - A tier that shrinks: M narrower or shorter than S, or L than M.
@@ -576,7 +641,7 @@ mistake a real author makes:
 | a `requires` entry with no `why` | `requires.0.why` |
 | a `choice` whose `default` is not one of its `options` | `settings.0.default` |
 | `storage.namespace` that no longer matches `id` after a rename | `storage.namespace` |
-| `"type": "slider"` | not one of the twelve widgets |
+| `"type": "slider"` | not one of the sixteen widgets |
 | `"provide"` instead of `"provides"` | unrecognised key `provide` |
 | `"run": "C:\\Program Files\\node.exe"` | `entry.run` — relative or on PATH |
 | `"version": "v0.1"` | `version` — semantic versions only |
@@ -611,7 +676,7 @@ The plugin contract broke at M4, which is what M4 was for: `alexia_protocol` wen
 working — a plugin outside the range gets the refusal message above rather than a crash,
 which is the entire reason third-party plugins could be accepted this early.
 
-It has kept moving the same way since, and is at **11** as of 2026-09-24, for `page` (D199).
+It has kept moving the same way since, and is at **12** as of 2026-09-24, for `page` (D199).
 Every step from 3 was additive: a manifest that does not use what a revision added is still
 valid, and the floor is still 2.
 

@@ -104,7 +104,8 @@ name and becomes a drop-in alternative rather than a competitor.
 | `persona.not_her` | one answer and an optional line on what she should have said in, **nothing out** — core hands it over and forgets it | `plugins/persona` (M8-7) |
 | `memory.remember` | a sentence in, **nothing out** — it is kept across conversations and read back by `memory.recall` | `plugins/memory` (M7) |
 | `memory.recall` | words in, what was remembered about them out | `plugins/memory` (M7) |
-| `memory.capture` | one finished exchange in, **nothing out** — core never reads it back | `plugins/memory` (M7) |
+| `memory.capture` | one finished exchange in, **nothing out** — core never reads it back, and `memory.profile` is the one exception | `plugins/memory` (M7) |
+| `memory.profile` | nothing in, **a short block about the user out** (~600 characters: name, language, how to be spoken to, life stage) — assembled by code, read once per task and put in the system prompt before the personality. Empty text is nothing to say | `plugins/memory` |
 | `ask.confirm` | a question and its options in, the chosen option out | `plugins/telegram` (M7) |
 | `voice.render` | text in, **audio bytes out** — for audio that has to go somewhere other than these speakers | `plugins/voice` (M7) |
 | `document.extract` | **a file in, markdown out** — what a document says | `plugins/documents` |

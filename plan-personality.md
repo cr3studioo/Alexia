@@ -165,6 +165,14 @@ gets high. An old one-document row still reaches every model.
 actually sent), `plugins/persona/test/sizes.test.js` (the split, the ceilings, the briefs, the
 columns, the cost).
 
+**Revised 2026-09-24 (D203): what the shorter lengths keep.** Three lengths were right and the
+shape inside them was not: a chief of staff's four headings had nowhere for a character's inner
+life, and *one or two lines under each* let the medium keep one trait per heading. The shape is
+now five headings — *Who you are*, **How you feel and react**, *How you talk* (ending in **lines
+in her voice**), *What you do without being asked*, *Hard rules* — with the new one optional
+to `usable()`. The shorter lengths keep every trait in fewer words and her lines word for word;
+a medium under `floorOf()` is refused, and the long one goes in its place.
+
 ---
 
 ## 3. Ten improvements

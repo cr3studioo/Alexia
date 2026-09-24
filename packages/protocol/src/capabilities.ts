@@ -76,6 +76,39 @@ export const CORE_CAPABILITIES = {
    */
   capture: 'memory.capture',
   /**
+   * **What the person has asked to be known about them**, as a short block for the system
+   * prompt: a name, a language, how to be spoken to, where they are in life.
+   *
+   * **The one place core reads memory back**, and the exception to `capture`'s *never*. It
+   * exists because recall only happens when a model chooses to call it, and the free models
+   * most answers go to do not: *who am I?* came back *I don't know you* with the answer one
+   * tool call away. Some facts are needed before the model knows it needs them, and a name is
+   * the plainest of those.
+   *
+   * **Bounded, and assembled by code rather than written by a model.** Around six hundred
+   * characters, because it rides on every model call of every task — to third-party free
+   * endpoints, through `redact.ts`, into the context of a 2B router — and a profile that
+   * could grow would be the memory plugin quietly deciding the size of every prompt. And
+   * code, because a block a model summarised is a block a model can get wrong once and then
+   * repeat to every model after it, as a fact, with nobody having said it.
+   *
+   * Read **once per task**, like {@link CORE_CAPABILITIES.personality}, and placed before it:
+   * this is who the user is, the personality is how to sound, and the voice goes last so it
+   * wins on style. Called with no arguments; the text content is the block, and an empty
+   * string is *nothing worth saying yet*.
+   *
+   * Nothing provides it, or it says nothing → no block, and the prompt it always was.
+   */
+  profile: 'memory.profile',
+  /**
+   * **Whether there is a memory to look in** — asked, never called, by core itself.
+   *
+   * A model is only told it has a long-term memory, and to check it before saying it does not
+   * know something about the user, when something answers this. The call itself is the
+   * model's, as a tool like any other; core only needs to know the sentence is true.
+   */
+  recall: 'memory.recall',
+  /**
    * **That wasn't her**: one answer marked as out of character (`plan-personality.md`
    * improvement 10), with an optional line on what she should have said.
    *

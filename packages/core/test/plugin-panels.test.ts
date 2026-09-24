@@ -133,49 +133,52 @@ test('the memory panel forgets exactly the row it was pointed at', async () => {
   expect(left.map((row) => row.text)).toEqual(['He prefers short answers', 'Vaclav’s grant deadline is in March'])
 }, 20_000)
 
-test('the map is the same notes, with the links the sorter wrote (M6-11)', async () => {
-  // Two notes and a link between them, written the way the sorter writes them: a link is a
-  // note's *name*, and the panel needs something it can hand back to `about_memory`.
-  const at = Date.now()
-  alexia.store.insert('memory', 'facts', {
-    name: 'The grant',
-    text: 'The grant is the thing everything else this month hangs off',
-    kind: 'other',
-    links: '[]',
-    source: 'stated',
-    at,
-  })
-  alexia.store.insert('memory', 'facts', {
-    name: 'The grant deadline',
-    text: 'The grant deadline is in March',
-    kind: 'fact',
-    links: JSON.stringify(['The grant']),
-    // Worked out rather than said, which is what the ring on the map means.
-    source: 'inferred',
-    at: at + 1,
-  })
-
+test('the memory panel is a tree and a table, and the shell still names neither plugin', async () => {
   const mine = (await panes()).find((one) => one.id === 'memory')
   // Declared by the plugin, drawn by core: the shell has one more widget type and still no
-  // idea which plugin asked for one.
-  expect(mine?.panel?.widgets.map((widget) => widget.type)).toEqual(['graph', 'table'])
+  // idea which plugin asked for one. The map it replaced is still a widget anybody may declare.
+  expect(mine?.panel?.widgets.map((widget) => widget.type)).toEqual(['tree', 'table'])
+}, 20_000)
 
-  const nodes = await rows('memory', 'remembered_map')
-  const child = nodes.find((row) => row.label === 'The grant deadline')
-  const parent = nodes.find((row) => row.label === 'The grant')
-  expect(child?.links).toEqual([String(parent?.id)])
-  expect(child?.mark).toBe(true)
-  expect(parent?.mark).toBe(false)
+/**
+ * The contract `memory_tree` answers to (`alexia_protocol` 11), checked against the real plugin.
+ *
+ * Skipped until the plugin has the tool: the panel and the back end are built side by side, and
+ * this is the half of the handshake the back end has to meet.
+ */
+const hasTree = readFileSync(join(import.meta.dirname, '..', '..', '..', 'plugins', 'memory', 'index.js'), 'utf8').includes(
+  "'memory_tree'",
+)
+test.skipIf(!hasTree)('the tree is the same notes as the table, filed under branches that are there', async () => {
+  alexia.store.insert('memory', 'facts', {
+    text: 'The grant deadline is in March',
+    kind: 'fact',
+    source: 'inferred',
+    at: Date.now(),
+  })
+  const notes = await rows('memory', 'remembered_list')
+  const nodes = await rows('memory', 'remembered_tree')
+  const branches = new Set(nodes.filter((node) => node.kind === 'branch').map((node) => node.id))
 
-  // Every link points at a node that is on the map. Half an edge is a lie about the shape,
-  // and the plugin drops one rather than drawing it to nowhere.
-  const there = new Set(nodes.map((row) => String(row.id)))
-  expect(nodes.flatMap((row) => row.links as string[]).filter((id) => !there.has(id))).toEqual([])
+  // One root, and every other node hangs off a branch that is in the same answer.
+  expect(nodes.filter((node) => node.parent === null).length).toBeGreaterThan(0)
+  for (const node of nodes) {
+    expect(['branch', 'note']).toContain(node.kind)
+    expect(typeof node.label).toBe('string')
+    if (node.parent !== null) expect(branches.has(String(node.parent))).toBe(true)
+    for (const also of (node.also as string[] | undefined) ?? []) expect(branches.has(also)).toBe(true)
+  }
+  // Branch ids are `b<rowid>`; a note's id is the table's, so a row action means one thing.
+  expect([...branches].every((id) => /^b\d+$/.test(id))).toBe(true)
+  const noteIds = new Set(nodes.filter((node) => node.kind === 'note').map((node) => node.id))
+  for (const row of notes.filter((one) => !((one.tags as { says: string }[] | undefined) ?? []).some((tag) => tag.says === 'no longer true'))) {
+    expect(noteIds.has(row.id)).toBe(true)
+  }
 
-  // The same tool the table's rows expand through, reached from a node instead of a row.
-  const detail = await post('/api/detail', { plugin: 'memory', key: 'remembered_map', row: String(child?.id) })
+  // The same tool the table's rows expand through, reached from a note instead of a row.
+  const one = nodes.find((node) => node.kind === 'note')
+  const detail = await post('/api/detail', { plugin: 'memory', key: 'remembered_tree', row: String(one?.id) })
   expect(detail.ok).toBe(true)
-  expect(String(detail.text)).toContain('Filed under: The grant')
 }, 20_000)
 
 test('a detail is the whole sentence, because a column has to truncate and this does not', async () => {

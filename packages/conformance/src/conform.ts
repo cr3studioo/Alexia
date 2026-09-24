@@ -138,7 +138,7 @@ export async function conform(given: string, options: ConformOptions = {}): Prom
       'pass',
       manifest.page ?
         `"${page.title}": ${sizes}${page.fixed ? ', fixed' : ''}${page.scale ? ', scales' : ''}`
-      : `no page declared, so the board draws the panel as one: "${page.title}", ${sizes}. Declare "page" (alexia_protocol 11) to choose what each size shows`,
+      : `no page declared, so the board draws the panel as one: "${page.title}", ${sizes}. Declare "page" (alexia_protocol 12) to choose what each size shows`,
     )
   }
 

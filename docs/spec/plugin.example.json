@@ -11,7 +11,7 @@
 
   "entry": { "run": "node", "args": ["index.js"] },
 
-  "alexia_protocol": 11,
+  "alexia_protocol": 12,
   "mcp_protocol": "2025-11-25",
 
   "requires": [

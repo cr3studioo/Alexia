@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { expect, test } from 'vitest'
-import { duplicate, parse, plan, prompt, TRIES } from '../capture.js'
+import { duplicate, parse, plan, prompt, replaces, SHOWN, TRIES } from '../capture.js'
+import { REVIEW_AFTER } from '../garden.js'
 
 /**
  * Noticing (M7-3), and specifically the four details that were paid for once already.
@@ -75,7 +76,7 @@ test('an answer that is not JSON is a failure the rows survive, not an empty res
   // The difference matters: `[]` means *nothing worth keeping* and the buffer drains, while
   // `null` means *ask again*. Confusing them is how an hour of conversation disappears.
   expect(parse('here you go: [ {"text": "He prefers tea."} ] hope that helps')).toEqual([
-    { name: 'He prefers tea.', text: 'He prefers tea.', kind: 'other', links: [], duplicateOf: '' },
+    { name: 'He prefers tea.', text: 'He prefers tea.', kind: 'other', links: [], duplicateOf: '', replaces: '', timeBound: false, pin: false },
   ])
   // Saying nothing, in the format. The buffer drains on this one and only this one.
   expect(parse('nothing much in there: []')).toEqual([])
@@ -91,8 +92,10 @@ test('an answer that is not JSON is a failure the rows survive, not an empty res
 })
 
 test('the prompt shows the notes that exist, because a link can only point at one of those', () => {
-  const asked = prompt([{ text: 'They said: my dog is called Bruno' }], ['work', 'the grant'])
-  expect(asked).toContain('"work", "the grant"')
+  const asked = prompt([{ text: 'They said: my dog is called Bruno' }], [note('work', 'He is doing a PhD at CTU FEL.'), 'the grant'])
+  // Name and text: whether a new sentence makes an old one out of date needs the old words.
+  expect(asked).toContain('- "work": He is doing a PhD at CTU FEL.')
+  expect(asked).toContain('- "the grant"')
   expect(asked).toContain('my dog is called Bruno')
   // The low bar, in the prompt rather than in a comment about the prompt. A fact never
   // written cannot be recalled; a trivial one costs almost nothing to skip past.
@@ -101,4 +104,88 @@ test('the prompt shows the notes that exist, because a link can only point at on
   // Nothing written yet is said out loud rather than left as an empty list, which a small
   // model reads as *there is a list and I cannot see it*.
   expect(prompt([], [])).toContain('(none yet)')
+})
+
+/**
+ * Truth over time (Phase B): Mem0's four operations, with the model's claims checked by code.
+ * `plan` sees only valid notes; a held note with a rowid is one that is stored.
+ */
+const held = (rowid, name, text, more = {}) => ({ rowid, name, text, source: 'stated', ...more })
+const candidate = (name, text, more = {}) => ({ name, text, kind: 'fact', links: [], duplicateOf: '', replaces: '', pin: false, ...more })
+
+test('the prompt carries today, asks for dates instead of relative time, and shows at most SHOWN notes', () => {
+  const many = Array.from({ length: SHOWN + 5 }, (_, i) => note(`note ${i}`, `Sentence number ${i}.`))
+  const asked = prompt([], many, new Date(Date.UTC(2026, 8, 23)))
+  expect(asked).toContain('Today is 2026-09-23.')
+  expect(asked).toContain('started at ČVUT FEL in September 2026')
+  expect(asked).toContain('time_bound')
+  expect(asked).toContain('replaces')
+  // Newest first in, so the cut drops the oldest.
+  expect(asked).toContain(`"note ${SHOWN - 1}"`)
+  expect(asked).not.toContain(`"note ${SHOWN}"`)
+})
+
+test('the model’s replaces and time_bound are read, and only a real true is true', () => {
+  const [one] = parse('[{"text": "He lives in Brno.", "replaces": " where he lives ", "time_bound": true}]')
+  expect(one.replaces).toBe('where he lives')
+  expect(one.timeBound).toBe(true)
+  const [other] = parse('[{"text": "He lives in Brno.", "replaces": 7, "time_bound": "yes"}]')
+  expect(other.replaces).toBe('')
+  expect(other.timeBound).toBe(false)
+})
+
+test('UPDATE: a replace naming a real note on the same subject closes it', () => {
+  const old = held(4, 'where he lives', 'He lives in Prague.')
+  const [written] = plan([candidate('where he lives', 'He lives in Brno since August 2026.', { replaces: 'where he lives' })], [old])
+  // Shares only *lives* — a replacement is supposed to say something different.
+  expect(written.replaces).toBe(4)
+  expect(written).not.toHaveProperty('suggestReplaces')
+})
+
+test('a replace claim about something else entirely is overruled, and the candidate is just added', () => {
+  // The 2026-08-10 failure with a different field name: a model calling everything a replace
+  // would retire the table one batch at a time.
+  const old = held(4, 'where he lives', 'He lives in Prague.')
+  const wrong = candidate('the dog', 'His dog is called Bruno.', { replaces: 'where he lives' })
+  expect(replaces(wrong, old)).toBe(false)
+  const [written] = plan([wrong], [old])
+  expect(written.text).toBe('His dog is called Bruno.')
+  expect(written).not.toHaveProperty('replaces')
+
+  // A name that is not a held note is not a claim either.
+  expect(plan([candidate('x', 'He lives in Brno.', { replaces: 'nowhere' })], [old])[0]).not.toHaveProperty('replaces')
+  // And the words every note about a person shares are not a subject.
+  expect(replaces(candidate('x', 'The user prefers tea.'), held(1, 'y', 'The user prefers short answers.'))).toBe(false)
+})
+
+test('a pinned note is never closed by the sorting pass — the replacement is only a suggestion', () => {
+  const name = held(2, 'his name', 'His name is Vaclav.', { pinned: 1 })
+  const [written] = plan([candidate('his name', 'His name is Václav Nejedlý, and he goes by Vašek.', { replaces: 'his name' })], [name])
+  expect(written.suggestReplaces).toBe(2)
+  expect(written).not.toHaveProperty('replaces')
+})
+
+test('NOOP still wins over UPDATE, and one note cannot be replaced twice in a batch', () => {
+  const old = held(4, 'where he lives', 'He lives in Prague.')
+  // A real duplicate is dropped even if it also claims to replace.
+  expect(plan([candidate('again', 'He lives in Prague.', { duplicateOf: 'where he lives', replaces: 'where he lives' })], [old])).toEqual([])
+
+  const first = candidate('where he lives', 'He lives in Brno.', { replaces: 'where he lives' })
+  const second = candidate('city', 'He lives in Ostrava.', { replaces: 'where he lives' })
+  const written = plan([first, second], [old])
+  expect(written[0].replaces).toBe(4)
+  // The second names the note written a moment ago, which has no rowid yet: added, not replacing.
+  expect(written[1]).not.toHaveProperty('replaces')
+})
+
+test('time-bound notes are due for a check REVIEW_AFTER from now; others never are', () => {
+  const now = 5_000
+  const [bound, lasting] = plan(
+    [candidate('study', 'He started at ČVUT FEL in September 2026.', { timeBound: true }), candidate('tea', 'He likes tea.')],
+    [],
+    now,
+  )
+  expect(bound.timeBound).toBe(true)
+  expect(bound.reviewAt).toBe(now + REVIEW_AFTER)
+  expect(lasting).not.toHaveProperty('reviewAt')
 })

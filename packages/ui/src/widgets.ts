@@ -55,6 +55,11 @@ export type WidgetType =
    * plugin's own folder, and the value is the path core made.
    */
   | 'file'
+  /**
+   * The sixteenth (`alexia_protocol` 11). A `graph` says what points at what; this says **what
+   * is filed under what**, for a store whose shape is sections and topics rather than links.
+   */
+  | 'tree'
 
 /** A `table`'s column, as its author declared it. */
 export interface Column {
@@ -65,13 +70,24 @@ export interface Column {
   hideNarrow?: boolean
 }
 
+/**
+ * Which rows a `table`'s or `tree`'s row action is drawn on (`alexia_protocol` 11): a row carrying
+ * a tag, by what it says, or a row whose field is present — or, with `is`, is one of some values.
+ */
+export type RowCondition = { tag: string } | { field: string; is?: string | string[] }
+
 export interface RowAction {
   key: string
   label: string
   /** A second press that has already said what goes, with `{column}` filled in from the row. */
   confirm?: string
-  /** `cards`: only on cards whose `state` is this, so Remove never sits on what is not here. */
-  when?: string
+  /**
+   * Only on the rows this matches. On `cards` it is a bare string — the card's `state` — so
+   * Remove never sits on what is not here; on `table` and `tree` it is a {@link RowCondition}.
+   */
+  when?: string | RowCondition
+  /** `table` and `tree`: never on the rows this matches (`alexia_protocol` 11). */
+  unless?: RowCondition
 }
 
 export interface Row {
@@ -586,6 +602,14 @@ export function widget(host: WidgetHost, declared: Rendered): HTMLElement {
       break
     }
 
+    case 'tree': {
+      // Above, like every widget that grows: the sentence is no use under forty notes.
+      field.append(el('span', 'label', declared.label))
+      if (declared.hint) field.append(el('p', 'hint lede', declared.hint))
+      field.append(tree(host, declared))
+      break
+    }
+
     case 'image': {
       field.append(el('span', 'label', declared.label))
       if (declared.hint) field.append(el('p', 'hint lede', declared.hint))
@@ -650,6 +674,7 @@ export function widget(host: WidgetHost, declared: Rendered): HTMLElement {
     declared.type !== 'password' &&
     declared.type !== 'table' &&
     declared.type !== 'graph' &&
+    declared.type !== 'tree' &&
     declared.type !== 'image' &&
     declared.type !== 'ladder'
   ) {
@@ -1143,7 +1168,7 @@ function cards(host: WidgetHost, declared: Rendered): HTMLElement {
     for (const action of declared.rowActions ?? []) {
       // *Install* belongs on what is not here and *Remove* on what is. Without this both sit
       // on every card, which is how somebody presses Remove on something they never installed.
-      if (action.when !== undefined && action.when !== state) continue
+      if (!applies(action, row)) continue
       const button = el('button', 'quiet-button', action.label)
       button.type = 'button'
       let armed = action.confirm === undefined
@@ -1719,6 +1744,464 @@ function graph(host: WidgetHost, declared: Rendered): HTMLElement {
 }
 
 /**
+ * One node of a `tree`, as the tool answered it (`alexia_protocol` 11).
+ *
+ * Fixed by the contract the way a `graph`'s node is, because a tree offers no choices about
+ * layout a reader would notice. `also` is more parents for a note filed in two places: it is
+ * drawn under each, with a quiet line saying where else it lives.
+ */
+export interface TreeNode {
+  id: string
+  parent: string | null
+  kind: 'branch' | 'note'
+  label: string
+  summary?: string
+  count?: number
+  tags?: unknown
+  also?: string[]
+}
+
+/** The nodes a tool answered with, as far as they make sense. Anything without an id is dropped. */
+export function treeNodes(rows: Row[]): TreeNode[] {
+  return rows.flatMap((row) => {
+    if (typeof row.id !== 'string' || row.id === '') return []
+    return [
+      {
+        id: row.id,
+        parent: typeof row.parent === 'string' && row.parent !== '' ? row.parent : null,
+        kind: row.kind === 'branch' ? 'branch' : 'note',
+        label: String(row.label ?? row.id),
+        ...(typeof row.summary === 'string' && row.summary !== '' && { summary: row.summary }),
+        ...(typeof row.count === 'number' && Number.isFinite(row.count) && { count: row.count }),
+        ...(row.tags !== undefined && { tags: row.tags }),
+        ...(Array.isArray(row.also) && { also: row.also.map((one) => String(one)) }),
+      } satisfies TreeNode,
+    ]
+  })
+}
+
+/**
+ * The tree's shape: who sits under whom, what is at the top, and how many notes each branch
+ * holds. Pure, so it is tested without a document.
+ *
+ * A parent that is not in the answer, or is not a branch, is no parent: the node goes to the
+ * top rather than vanishing, because a note nobody can find is worse than one filed badly.
+ */
+export function treeShape(nodes: TreeNode[]): {
+  byId: Map<string, TreeNode>
+  roots: TreeNode[]
+  children: Map<string, TreeNode[]>
+  /** Every parent of a node, its own first — the one it lives under, then where else. */
+  parents: (node: TreeNode) => string[]
+  /** Distinct notes somewhere under a branch. */
+  notesUnder: (id: string) => number
+} {
+  const byId = new Map(nodes.map((node) => [node.id, node]))
+  const isBranch = (id: string): boolean => byId.get(id)?.kind === 'branch'
+  const parents = (node: TreeNode): string[] => {
+    const all = [...(node.parent === null ? [] : [node.parent]), ...(node.also ?? [])]
+    return [...new Set(all)].filter((id) => id !== node.id && isBranch(id))
+  }
+  const children = new Map<string, TreeNode[]>()
+  const roots: TreeNode[] = []
+  for (const node of nodes) {
+    const under = parents(node)
+    if (under.length === 0) roots.push(node)
+    for (const id of under) children.set(id, [...(children.get(id) ?? []), node])
+  }
+  const counted = new Map<string, number>()
+  /** Every note under a branch, once each, walking each branch once — so a loop ends. */
+  const notesUnder = (id: string): number => {
+    const known = counted.get(id)
+    if (known !== undefined) return known
+    const notes = new Set<string>()
+    const walked = new Set<string>()
+    const walk = (branch: string): void => {
+      if (walked.has(branch)) return
+      walked.add(branch)
+      for (const child of children.get(branch) ?? []) {
+        if (child.kind === 'note') notes.add(child.id)
+        else walk(child.id)
+      }
+    }
+    walk(id)
+    counted.set(id, notes.size)
+    return notes.size
+  }
+  return { byId, roots, children, parents, notesUnder }
+}
+
+/**
+ * What the filter leaves: the notes that match, every branch they are filed under, and — for a
+ * branch whose own name matches — everything in it. `undefined` is no filter at all.
+ */
+export function treeMatches(nodes: TreeNode[], query: string): Set<string> | undefined {
+  const needle = query.trim().toLowerCase()
+  if (needle === '') return undefined
+  const { byId, children, parents } = treeShape(nodes)
+  const kept = new Set<string>()
+  const up = (node: TreeNode): void => {
+    for (const id of parents(node)) {
+      if (kept.has(id)) continue
+      kept.add(id)
+      up(byId.get(id)!)
+    }
+  }
+  const down = (id: string): void => {
+    for (const child of children.get(id) ?? []) {
+      if (kept.has(child.id)) continue
+      kept.add(child.id)
+      down(child.id)
+    }
+  }
+  for (const node of nodes) {
+    const words = [node.label, node.summary ?? '', ...tagsOf(node.tags).map((tag) => tag.says)].join(' ').toLowerCase()
+    if (!words.includes(needle)) continue
+    kept.add(node.id)
+    up(node)
+    if (node.kind === 'branch') down(node.id)
+  }
+  return kept
+}
+
+/**
+ * The sixteenth widget: things filed inside each other (`alexia_protocol` 11).
+ *
+ * **What a `graph` could not say.** Sixty notes and their sections as points on a canvas answered
+ * *what touches what*, and the person whose memory it was asked a different question — *what is
+ * under People* — and called the answer points floating in space. A tree answers it the way every
+ * file manager does, and it is text, so a screen reader, a phone and a keyboard get it for free.
+ *
+ * **The WAI-ARIA tree pattern, and nothing invented.** One item in the tab order at a time; the
+ * arrows walk what is visible, Right opens and Left closes or climbs, Home and End go to the ends,
+ * Enter or Space opens a branch or a note. Which branches are open is remembered per widget in
+ * this browser, because a person who opened People yesterday is looking for something in it today.
+ */
+function tree(host: WidgetHost, declared: Rendered): HTMLElement {
+  // `table-box` because *ask for your rows again* is addressed to that class, and this asks the
+  // same question of the same kind of tool.
+  const box = el('div', 'table-box')
+  const said = el('p', 'hint', 'Loading…')
+  const list = el('ul', 'tree')
+  list.setAttribute('role', 'tree')
+  list.setAttribute('aria-label', declared.label)
+
+  let nodes: TreeNode[] = []
+  let query = ''
+  /** The placement that is open — a note under one of its parents — so a reload can keep it. */
+  let opened: string | undefined
+  /** The placement that holds the tab stop, so a repaint does not throw the keyboard out. */
+  let current: string | undefined
+
+  /** Which branches somebody opened or closed, by id. Everything else is at its default. */
+  const remembered = `alexia.tree.${host.plugin || 'core'}.${declared.key}`
+  const toggled: Record<string, boolean> = (() => {
+    try {
+      const raw = localStorage.getItem(remembered)
+      const parsed = raw === null ? {} : (JSON.parse(raw) as unknown)
+      return typeof parsed === 'object' && parsed !== null ? (parsed as Record<string, boolean>) : {}
+    } catch {
+      // A private window, a full disk, a browser that says no: the tree still draws, it just
+      // starts where it always starts.
+      return {}
+    }
+  })()
+  const keep = (): void => {
+    try {
+      localStorage.setItem(remembered, JSON.stringify(toggled))
+    } catch {
+      // Remembering is a courtesy. Failing to is not worth a word on screen.
+    }
+  }
+  /** The top is open and every section under it is closed, until somebody says otherwise. */
+  const isOpen = (node: TreeNode, top: boolean): boolean => toggled[node.id] ?? top
+
+  if (declared.filter === true) {
+    const search = el('input', 'table-filter')
+    search.type = 'search'
+    search.placeholder = `Filter ${declared.label.toLowerCase()}`
+    search.setAttribute('aria-label', `Filter ${declared.label}`)
+    search.addEventListener('input', () => {
+      query = search.value
+      paint()
+    })
+    box.append(search)
+  }
+  box.append(said, list)
+
+  let announced = ''
+  const surface = {
+    reload: () => load(),
+    say: (text: string, ok: boolean): void => {
+      announced = text
+      said.hidden = text === ''
+      said.className = ok ? 'hint said-ok said-lines' : 'error said-lines'
+      said.textContent = text
+    },
+  }
+
+  /** Every item a keyboard can reach right now: the ones not inside a closed branch. */
+  const reachable = (): HTMLElement[] =>
+    [...list.querySelectorAll<HTMLElement>('[role="treeitem"]')].filter((item) => {
+      const closed = item.parentElement?.closest('[hidden]') ?? null
+      return closed === null || !list.contains(closed)
+    })
+
+  const focusOn = (item: HTMLElement | undefined): void => {
+    if (!item) return
+    for (const one of list.querySelectorAll<HTMLElement>('[role="treeitem"]')) one.tabIndex = -1
+    item.tabIndex = 0
+    current = item.dataset.place
+    item.focus()
+  }
+
+  /** Open or close a branch where it stands, without redrawing anything else. */
+  const setOpen = (item: HTMLElement, node: TreeNode, open: boolean): void => {
+    item.setAttribute('aria-expanded', String(open))
+    const group = item.querySelector<HTMLElement>(':scope > [role="group"]')
+    if (group) group.hidden = !open
+    // Only when nobody is filtering: a filter opens everything it keeps, and remembering that
+    // would be remembering a search rather than a choice.
+    if (query.trim() === '') {
+      toggled[node.id] = open
+      keep()
+    }
+  }
+
+  /** A note's body: what `detail` says about it, and whatever may be done to it. */
+  const openNote = (item: HTMLElement, node: TreeNode): void => {
+    const body = item.querySelector<HTMLElement>(':scope > .tree-body')
+    if (!body) return
+    const open = body.hidden
+    body.hidden = !open
+    item.setAttribute('aria-expanded', String(open))
+    opened = open ? item.dataset.place : undefined
+    if (open) fillNote(body, node)
+  }
+
+  const fillNote = (body: HTMLElement, node: TreeNode): void => {
+    body.replaceChildren()
+    const row: Row = { ...node, id: node.id }
+    if (declared.detail !== undefined) {
+      const text = el('p', 'detail-text', 'Loading…')
+      body.append(text)
+      void host.send('/api/detail', { plugin: host.plugin, key: declared.key, row: node.id }).then((answer) => {
+        text.className = answer.ok === true ? 'detail-text' : 'detail-text error'
+        text.textContent = String((answer.ok === true ? answer.text : answer.said) ?? '')
+      })
+    }
+    const actions = (declared.rowActions ?? []).filter((action) => applies(action, row))
+    if (actions.length > 0) {
+      const bar = el('div', 'tree-actions')
+      const refused = el('p', 'hint')
+      refused.hidden = true
+      for (const action of actions) bar.append(rowButton(host, action, row, { place: bar, said: refused, surface }))
+      bar.append(refused)
+      body.append(bar)
+    }
+  }
+
+  function paint(): void {
+    const shape = treeShape(nodes)
+    const kept = treeMatches(nodes, query)
+    const filtering = kept !== undefined
+
+    said.hidden = announced === '' && nodes.length > 0 && (kept === undefined || kept.size > 0)
+    if (announced === '') {
+      said.className = 'hint'
+      said.textContent =
+        nodes.length === 0 ? 'Nothing here yet.'
+        : kept !== undefined && kept.size === 0 ? 'Nothing matches that.'
+        : ''
+    }
+
+    /** One placement of one node, and — for a branch — everything under it. */
+    const item = (node: TreeNode, under: string | null, level: number, path: Set<string>): HTMLElement => {
+      const place = `${under ?? ''}/${node.id}`
+      const li = el('li', `tree-item ${node.kind === 'branch' ? 'is-branch' : 'is-note'}`)
+      li.setAttribute('role', 'treeitem')
+      li.setAttribute('aria-level', String(level))
+      li.dataset.place = place
+      li.dataset.id = node.id
+      li.tabIndex = -1
+
+      const line = el('div', 'tree-row')
+      const twisty = el('span', 'tree-twisty')
+      twisty.setAttribute('aria-hidden', 'true')
+      line.append(twisty)
+      const words = el('span', 'tree-words')
+      const head = el('span', 'tree-head')
+      head.append(el('span', 'tree-label', node.label))
+      words.append(head)
+      line.append(words)
+      li.append(line)
+
+      if (node.kind === 'branch') {
+        const count = node.count ?? shape.notesUnder(node.id)
+        head.append(el('span', 'tree-count tabular', String(count)))
+        if (node.summary) words.append(el('span', 'tree-summary', node.summary))
+        const group = el('ul', 'tree-group')
+        group.setAttribute('role', 'group')
+        // A branch inside itself is drawn once, not until the stack runs out.
+        const deeper = new Set(path).add(node.id)
+        for (const child of shape.children.get(node.id) ?? []) {
+          if (kept !== undefined && !kept.has(child.id)) continue
+          if (deeper.has(child.id)) continue
+          group.append(item(child, node.id, level + 1, deeper))
+        }
+        const open = filtering || isOpen(node, under === null)
+        li.setAttribute('aria-expanded', String(open))
+        group.hidden = !open
+        li.append(group)
+        line.addEventListener('click', () => {
+          focusOn(li)
+          setOpen(li, node, li.getAttribute('aria-expanded') !== 'true')
+        })
+        return li
+      }
+
+      // A note: its tags as a table draws them, and where else it is filed.
+      const tags = tagsOf(node.tags)
+      if (tags.length > 0) {
+        const chips = el('span', 'tags tree-tags')
+        for (const tag of tags) chips.append(el('span', `tag ${tag.tone}`, tag.says))
+        head.append(chips)
+      }
+      const elsewhere = shape.parents(node).filter((id) => id !== under)
+      if (elsewhere.length > 0 && under !== null) {
+        const names = elsewhere.map((id) => shape.byId.get(id)?.label ?? id)
+        words.append(el('span', 'tree-also', `also filed under ${names.join(', ')}`))
+      }
+      const hasBody = declared.detail !== undefined || (declared.rowActions ?? []).length > 0
+      if (hasBody) {
+        const body = el('div', 'tree-body')
+        body.hidden = true
+        li.append(body)
+        li.setAttribute('aria-expanded', 'false')
+        line.classList.add('opens')
+        line.addEventListener('click', () => {
+          // A click that ends a drag across the text is somebody copying it, not opening it.
+          if ((window.getSelection()?.toString() ?? '') !== '') return
+          focusOn(li)
+          openNote(li, node)
+        })
+        if (opened === place) {
+          body.hidden = false
+          li.setAttribute('aria-expanded', 'true')
+          fillNote(body, node)
+        }
+      }
+      return li
+    }
+
+    const tops = shape.roots.filter((node) => kept === undefined || kept.has(node.id))
+    list.replaceChildren(...tops.map((node) => item(node, null, 1, new Set())))
+
+    // One tab stop: where it was, or the first item.
+    const items = [...list.querySelectorAll<HTMLElement>('[role="treeitem"]')]
+    const stop = items.find((one) => one.dataset.place === current) ?? items[0]
+    if (stop) stop.tabIndex = 0
+  }
+
+  list.addEventListener('keydown', (event) => {
+    const target = event.target as HTMLElement
+    // Keys pressed on a button inside an open note are that button's.
+    if (target.getAttribute('role') !== 'treeitem') return
+    const node = nodes.find((one) => one.id === target.dataset.id)
+    if (!node) return
+    const visible = reachable()
+    const at = visible.indexOf(target)
+    const branch = node.kind === 'branch'
+    const expanded = target.getAttribute('aria-expanded') === 'true'
+    const parentItem = target.parentElement?.closest<HTMLElement>('[role="treeitem"]') ?? undefined
+    switch (event.key) {
+      case 'ArrowDown':
+        focusOn(visible[at + 1])
+        break
+      case 'ArrowUp':
+        focusOn(visible[at - 1])
+        break
+      case 'Home':
+        focusOn(visible[0])
+        break
+      case 'End':
+        focusOn(visible[visible.length - 1])
+        break
+      case 'ArrowRight':
+        if (branch && !expanded) setOpen(target, node, true)
+        else if (branch) focusOn(target.querySelector<HTMLElement>(':scope > [role="group"] > [role="treeitem"]') ?? undefined)
+        break
+      case 'ArrowLeft':
+        if (branch && expanded) setOpen(target, node, false)
+        else focusOn(parentItem)
+        break
+      case 'Enter':
+      case ' ':
+        if (branch) setOpen(target, node, !expanded)
+        else openNote(target, node)
+        break
+      default:
+        return
+    }
+    event.preventDefault()
+  })
+
+  async function load(): Promise<void> {
+    const answer = (await host.send('/api/rows', { plugin: host.plugin, key: declared.key })) as {
+      ok?: boolean
+      rows?: Row[]
+      said?: string
+      ask?: string
+    }
+    if (typeof answer.ask === 'string') {
+      // The same two steps a table takes: the question where the tree would have been.
+      said.textContent = ''
+      list.replaceChildren(
+        confirm(answer.ask, async (approved) => {
+          if (!approved) {
+            said.hidden = false
+            said.textContent = 'Not shown.'
+            return
+          }
+          const again = (await host.send('/api/rows', { plugin: host.plugin, key: declared.key, approved: true })) as {
+            ok?: boolean
+            rows?: Row[]
+            said?: string
+          }
+          if (again.ok !== true) {
+            said.hidden = false
+            said.className = 'error said-lines'
+            said.textContent = String(again.said ?? 'That did not work.')
+            return
+          }
+          nodes = treeNodes(again.rows ?? [])
+          paint()
+        }),
+      )
+      return
+    }
+    if (answer.ok !== true) {
+      said.hidden = false
+      said.className = 'error said-lines'
+      said.textContent = String(answer.said ?? 'That did not work.')
+      return
+    }
+    nodes = treeNodes(answer.rows ?? [])
+    if (announced !== '') {
+      // What the last press said stays: it is the answer to the press that asked for this.
+      said.className = 'hint said-ok said-lines'
+      said.textContent = announced
+      said.hidden = false
+    }
+    paint()
+  }
+
+  box.addEventListener(RELOAD, () => void load())
+  void load()
+  return box
+}
+
+/**
  * The marks a state column speaks in, and what each one means on screen.
  *
  * Read off the cell's first character rather than from any knowledge of which table this is
@@ -1863,68 +2346,119 @@ function rowOf(
   }
 
   for (const action of declared.rowActions ?? []) {
-    const button = el('button', 'quiet-button', action.label)
-    button.type = 'button'
-    let armed = action.confirm === undefined
-
-    /** Press it. The question — permission, or the author's own confirm — is beside the row. */
-    const press = async (approved?: boolean): Promise<void> => {
-      button.disabled = true
-      try {
-        const answer = await host.send('/api/action', {
-          plugin: host.plugin,
-          key: action.key,
-          row: row.id,
-          // The arming above *is* the confirm, so it is what carries it (M6-1). A press
-          // that was never armed carries nothing, and core's own destructive rows are
-          // refused — which is the guard doing its job to a caller that skipped the button.
-          ...(armed && { confirm: true }),
-          ...(approved === true && { approved: true }),
-        })
-        if (typeof answer.ask === 'string') {
-          cell.append(confirm(answer.ask, press))
-          return
-        }
-        if (answer.ok === true) {
-          /**
-           * The list, re-read. It used to fade the row to 55% and stop there, which said
-           * *something happened here* and nothing else: no way to tell what, no way to
-           * undo it, and a state column still showing what was true before the press. On a
-           * list where the action is a **choice** rather than a removal, that fade was the
-           * only feedback there was, and it looked like the row had been switched off.
-           *
-           * The sentence goes above the table, where it survives the redraw — the row it
-           * was written into may not exist a moment later.
-           */
-          table.say(String(answer.said ?? ''), true)
-          await table.reload()
-          return
-        }
-        said.hidden = false
-        said.className = 'error said-lines'
-        said.textContent = String(answer.said ?? '')
-      } finally {
-        button.disabled = false
-      }
-    }
-
-    button.addEventListener('click', () => {
-      // The author's own confirm, which is the destructive half of M6-1 on this screen: the
-      // first press costs nothing and the second one has already said what goes.
-      if (!armed) {
-        armed = true
-        button.textContent = fill(action.confirm ?? '', row)
-        button.classList.add('armed')
-        return
-      }
-      void press()
-    })
-    cell.append(button)
+    // Only where it applies (`alexia_protocol` 11). Without `when` or `unless`, everywhere.
+    if (!applies(action, row)) continue
+    cell.append(rowButton(host, action, row, { place: cell, said, surface: table }))
   }
 
   cell.append(said)
   line.append(cell)
   return out
+}
+
+/**
+ * **Whether a row action belongs on this row** (`alexia_protocol` 11).
+ *
+ * Seven buttons on every row, most of them answering *nothing to do here*, was the complaint —
+ * and every one of them was a question the reader had to answer before finding the button that
+ * did something. So an author says where each one applies, in terms of what the row already
+ * carries: a tag, by what it says, or a field. `cards` said this first, as a bare `state`, and
+ * reads the same way it always did.
+ */
+export function applies(action: RowAction, row: Row): boolean {
+  const matches = (condition: RowCondition): boolean => {
+    if ('tag' in condition) return tagsOf(row.tags).some((tag) => tag.says === condition.tag)
+    const value = row[condition.field]
+    if (condition.is !== undefined) {
+      const wanted = Array.isArray(condition.is) ? condition.is : [condition.is]
+      return wanted.includes(String(value ?? ''))
+    }
+    // Present, in the sense a person reading the row would mean it.
+    return !(value === undefined || value === null || value === '' || value === false || value === 0 || (Array.isArray(value) && value.length === 0))
+  }
+  if (typeof action.when === 'string') return String(row.state ?? '') === action.when
+  if (action.when !== undefined && !matches(action.when)) return false
+  if (action.unless !== undefined && matches(action.unless)) return false
+  return true
+}
+
+/**
+ * One row action's button, for any widget that puts them on rows: a `table`'s row and a
+ * `tree`'s note press the same way, through the same gate, with the same second press.
+ *
+ * `place` is where a permission question goes — beside the thing being decided. `said` is where
+ * a refusal goes, on the row. `surface` is the list the row is in: what a success says goes
+ * there, above it, because the row it was pressed on may not exist once the list is re-read.
+ */
+function rowButton(
+  host: WidgetHost,
+  action: RowAction,
+  row: Row,
+  where: {
+    place: HTMLElement
+    said: HTMLElement
+    surface: { reload(): Promise<void>; say(text: string, ok: boolean): void }
+  },
+): HTMLButtonElement {
+  const button = el('button', 'quiet-button', action.label)
+  button.type = 'button'
+  let armed = action.confirm === undefined
+
+  /** Press it. The question — permission, or the author's own confirm — is beside the row. */
+  const press = async (approved?: boolean): Promise<void> => {
+    button.disabled = true
+    try {
+      const answer = await host.send('/api/action', {
+        plugin: host.plugin,
+        key: action.key,
+        row: row.id,
+        // The arming above *is* the confirm, so it is what carries it (M6-1). A press
+        // that was never armed carries nothing, and core's own destructive rows are
+        // refused — which is the guard doing its job to a caller that skipped the button.
+        ...(armed && { confirm: true }),
+        ...(approved === true && { approved: true }),
+      })
+      if (typeof answer.ask === 'string') {
+        where.place.append(confirm(answer.ask, press))
+        return
+      }
+      if (answer.ok === true) {
+        /**
+         * The list, re-read. It used to fade the row to 55% and stop there, which said
+         * *something happened here* and nothing else: no way to tell what, no way to
+         * undo it, and a state column still showing what was true before the press. On a
+         * list where the action is a **choice** rather than a removal, that fade was the
+         * only feedback there was, and it looked like the row had been switched off.
+         *
+         * The sentence goes above the table, where it survives the redraw — the row it
+         * was written into may not exist a moment later.
+         */
+        where.surface.say(String(answer.said ?? ''), true)
+        await where.surface.reload()
+        return
+      }
+      where.said.hidden = false
+      where.said.className = 'error said-lines'
+      where.said.textContent = String(answer.said ?? '')
+    } finally {
+      button.disabled = false
+    }
+  }
+
+  button.addEventListener('click', (event) => {
+    // A press on a button inside a tree item is not a press on the item.
+    event.stopPropagation()
+    // The author's own confirm, which is the destructive half of M6-1 on this screen: the
+    // first press costs nothing and the second one has already said what goes.
+    if (!armed) {
+      armed = true
+      button.textContent = fill(action.confirm ?? '', row)
+      button.classList.add('armed')
+      return
+    }
+    void press()
+  })
+  return button
 }
 
 /** `Remove {name}?` with the row's own values in it. An unknown field is left as it was. */

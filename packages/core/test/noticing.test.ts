@@ -126,7 +126,14 @@ test('a thing said in passing is written down without anybody calling remember',
   // The buffer drained, so the next pass on an idle Alexia asks nothing at all.
   expect(rows('buffer')).toHaveLength(0)
   expect(await call('sort_now')).toContain('nothing waiting')
-  expect(asked).toHaveLength(1)
+  // Three calls for the one pass that wrote something: sorting, then filing the two new notes
+  // in the tree, then re-summarising the branches they landed in. The scripted answer is the
+  // sorting one both times, so filing fell back to each note's kind — and the idle pass after
+  // it asked nothing at all.
+  expect(asked).toHaveLength(3)
+  expect(asked[1]).toContain('not filed yet')
+  const branch = (id: unknown): unknown => store.select('memory', 'branches', { where: { rowid: Number(id) } })[0]?.name
+  expect(written.map((row) => branch(row.branch))).toEqual(['You', 'Goals & plans'])
 })
 
 test('recall brings back the hit and what it hangs off, and says which it was told', async () => {
@@ -197,7 +204,7 @@ test('emptying it empties the buffer too, and everything lives in the namespace'
   // Invariant 5's precondition, for the two tables M7-3 added: everything this plugin wrote
   // is inside the namespace a purge drops, so deleting the folder still takes all of it.
   const mine = store.tables().filter((name) => name.startsWith('p_memory_'))
-  expect(mine.sort()).toEqual(['p_memory_buffer', 'p_memory_facts', 'p_memory_forgotten'])
+  expect(mine.sort()).toEqual(['p_memory_branches', 'p_memory_buffer', 'p_memory_facts', 'p_memory_forgotten'])
   store.purge('memory')
   expect(store.tables().filter((name) => name.startsWith('p_memory_'))).toEqual([])
 })

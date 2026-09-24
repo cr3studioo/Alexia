@@ -78,7 +78,7 @@ test('a plugin with a page is told which page the board draws (D199)', async () 
   const report = await conform(join(root, 'plugins', 'memory'), { exercise: false })
   const page = report.checks.find((c) => c.name === 'page')
   expect(page?.level).toBe('pass')
-  expect(page?.detail).toContain('"Memory graph": M 12×10, L 20×14')
+  expect(page?.detail).toContain('"Memory": M 12×10, L 20×14')
   // And a plugin with neither a panel nor a page has no line about it.
   const plain = await conform(join(root, 'plugins', 'hello'))
   expect(plain.checks.find((c) => c.name === 'page')).toBeUndefined()

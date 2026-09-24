@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { words } from './search.js'
+import { REVIEW_AFTER } from './garden.js'
+import { pinnedOf } from './profile.js'
+import { content, words } from './search.js'
 
 /**
  * Noticing, rather than being told (M7-3).
@@ -47,20 +49,45 @@ export const TRIES = 3
 export const OVERLAP = 1 / 3
 
 /**
+ * How many existing notes the prompt shows, newest first.
+ *
+ * Each goes in as its name *and* its text now, because deciding that a new sentence makes an
+ * old one out of date needs the old one's words, not just its title. Sixty is a few thousand
+ * characters — about the size of the batch itself — and the notes most likely to be updated or
+ * repeated are the recent ones. A note older than the sixtieth can still be repeated; the
+ * sorting pass then writes a second copy, which is the cheap failure (see the header).
+ */
+export const SHOWN = 60
+
+/**
  * The prompt. Closed, shaped, and it says exactly what the answer must look like — a small
  * model given room to write prose will write prose instead of answering.
  *
- * The existing note names go in because that is what makes a link possible: the model can
- * only link to a note it has been shown, and inventing links to notes that do not exist is
- * the failure this avoids by construction.
+ * The existing notes go in because that is what makes a link possible: the model can only
+ * link to a note it has been shown, and inventing links to notes that do not exist is the
+ * failure this avoids by construction. The same goes for `replaces` and `duplicate_of`.
+ *
+ * **Today's date goes in, and relative time is asked out.** *Is a first-year student* is true
+ * for a year and then quietly false forever; *started at ČVUT FEL in September 2026* is true
+ * forever. A note is read back months after it was written, by a model that does not know when
+ * that was, so the sentence has to carry its own date.
+ *
+ * `notes` are rows (`{ name, text }`), newest first; a bare string is read as a name alone.
  */
-export function prompt(rows, names) {
+export function prompt(rows, notes, today = new Date()) {
+  const shown = notes.slice(0, SHOWN).map((note) =>
+    typeof note === 'string' ? `- "${note}"` : `- "${named(note)}": ${String(note.text ?? '')}`,
+  )
   return [
-    'Below are recent exchanges between a user and their assistant, and the names of notes',
-    'already written about this user. Write down anything worth remembering weeks from now:',
-    'preferences, people, plans, decisions, facts about their life or work.',
+    `Today is ${new Date(today).toISOString().slice(0, 10)}. Below are recent exchanges between a user`,
+    'and their assistant, and the notes already written about this user. Write down anything',
+    'worth remembering weeks from now: preferences, people, plans, decisions, facts about their',
+    'life or work.',
     '',
     'When in doubt, keep it. Skip only small talk and things true of everyone.',
+    '',
+    'Write dates, not relative time: "started at ČVUT FEL in September 2026", not "is a',
+    'first-year student"; "moved to Brno in 2026", not "recently moved".',
     '',
     'Answer with JSON and nothing else: an array of objects with these fields.',
     '  name        a short noun phrase naming the thing, e.g. "the grant deadline"',
@@ -68,10 +95,17 @@ export function prompt(rows, names) {
     '  kind        one of: fact, preference, person, place, task, other',
     '  links       names from the list below that this belongs under. [] if none fit.',
     '  duplicate_of  the name of an existing note this already says. Omit unless it does.',
+    '  replaces    the name of an existing note this makes out of date — a changed name, a',
+    '              moved city, a switched preference. Omit unless it does.',
+    '  time_bound  true if it describes a current state that will stop being true: year of',
+    '              study, job, where they live now, current project. Omit otherwise.',
+    '  pin         true only for who the user is and how they want to be spoken to, and only',
+    '              if they said it themselves. Omit otherwise.',
     '',
     'Write [] if there is nothing worth keeping.',
     '',
-    `Existing notes: ${names.length === 0 ? '(none yet)' : names.map((n) => `"${n}"`).join(', ')}`,
+    'Existing notes:',
+    ...(shown.length === 0 ? ['(none yet)'] : shown),
     '',
     'Exchanges:',
     ...rows.map((row) => `---\n${String(row.text)}`),
@@ -113,6 +147,11 @@ export function parse(said) {
       kind: String(one?.kind ?? 'other').trim(),
       links: Array.isArray(one?.links) ? one.links.map((l) => String(l).trim()).filter(Boolean) : [],
       duplicateOf: typeof one?.duplicate_of === 'string' ? one.duplicate_of.trim() : '',
+      replaces: typeof one?.replaces === 'string' ? one.replaces.trim() : '',
+      // Only a real `true`, like `pin`.
+      timeBound: one?.time_bound === true,
+      // Only a real `true`. A small model writing "pin": "no" has not asked for anything.
+      pin: one?.pin === true,
     }))
     .filter((one) => one.text !== '')
     .map((one) => ({ ...one, name: one.name === '' ? one.text.slice(0, 60) : one.name }))
@@ -139,24 +178,54 @@ export function duplicate(candidate, note) {
 }
 
 /**
- * What to write, given what came back and what is already held.
+ * Does this candidate really make that note out of date?
  *
- * All of the judgement and none of the storage, which is what makes the four rules this
- * carries testable without a database or a model:
- *
- * - a duplicate claim is checked against the named note's real text, and overruled when the
- *   two do not actually say the same thing;
- * - a claim naming a note that does not exist is not a claim;
- * - a link to a note the model was not shown is dropped, because a link to nothing reads on
- *   screen as a memory that has gone missing;
- * - and a sentence already held is not written twice, whatever the model said about it.
- *
- * What is held grows as it goes, so a note written earlier in the same batch can be linked
- * to, and claimed as a duplicate of, by a later one — which is the case a pass that only
- * looked at the database would get wrong once per batch, forever.
+ * The same distrust as `duplicate`, pointed the other way. A replace closes a note, so a model
+ * that answers *replaces* for everything would retire the whole table one batch at a time —
+ * the 2026-08-10 failure with a different field name. So the named note must exist, be one
+ * that is stored (a rowid), and share **at least one subject word** with the candidate
+ * (`content`, which leaves out *user*, *wants*, *prefers*). One word, not a third, because a
+ * replacement is *supposed* to say something different: *lives in Brno* replacing *lives in
+ * Prague* shares *lives* and nothing else. What it must not be is a sentence about something
+ * else entirely.
  */
-export function plan(candidates, held) {
-  const known = [...held]
+export function replaces(candidate, note) {
+  if (!note || note.rowid === undefined || note.rowid === null) return false
+  const mine = content(candidate.text)
+  for (const word of content(String(note.text ?? ''))) if (mine.has(word)) return true
+  return false
+}
+
+/**
+ * What to write, given what came back and what is already held: Mem0's four operations, with
+ * code overruling the model on every one of them.
+ *
+ * - **NOOP** — a `duplicate_of` claim, checked against the named note's real text and believed
+ *   only when the two actually say the same thing; or a sentence already held word for word.
+ * - **UPDATE** — a `replaces` claim naming a held note that shares a subject word with the
+ *   candidate (`replaces` above). The candidate is written with `replaces: <that rowid>`, and
+ *   index.js closes the old one (`invalid_at`, `replaced_by`). **Unless the old one is pinned**:
+ *   a pinned note is what a person chose to have read before every task, and this pass is a
+ *   model's guess, so the new note carries `suggestReplaces` instead and the pinned one stays
+ *   exactly as it was until a person accepts. A claim that fails the check is not a failure —
+ *   the candidate is simply ADDed, which loses nothing.
+ * - **ADD** — everything else.
+ * - **DELETE** — never, from here. A note stops being true by being replaced, or by a person
+ *   saying so (`no_longer_true`); nothing a model says in passing closes a note with nothing
+ *   to take its place.
+ *
+ * And the rules that were here before: a claim naming a note that does not exist is not a
+ * claim; a link to a note the model was not shown is dropped, because a link to nothing reads
+ * on screen as a memory that has gone missing; a `pin` is carried as `suggestPin`, never as a
+ * pin — see below. `timeBound` becomes a `reviewAt`, `REVIEW_AFTER` from `now`.
+ *
+ * `held` must be the *valid* notes. What is held grows as it goes, so a note written earlier in
+ * the same batch can be linked to, and claimed as a duplicate of, by a later one — which is the
+ * case a pass that only looked at the database would get wrong once per batch, forever. A note
+ * replaced earlier in the batch leaves it, so two candidates cannot both retire it.
+ */
+export function plan(candidates, held, now = Date.now()) {
+  let known = [...held]
   const names = new Set(known.map(named))
   const texts = new Set(known.map((row) => String(row.text ?? '')))
   const write = []
@@ -166,15 +235,41 @@ export function plan(candidates, held) {
       if (duplicate(candidate, claimed)) continue
     }
     if (texts.has(candidate.text)) continue
+    const claimed = (candidate.replaces ?? '') === '' ? undefined : known.find((row) => named(row) === candidate.replaces)
+    const old = replaces(candidate, claimed) ? claimed : undefined
+    const kept = old !== undefined && pinnedOf(old)
     const links = candidate.links.filter((name) => names.has(name))
-    const one = { name: candidate.name, text: candidate.text, kind: candidate.kind, links }
+    const one = {
+      name: candidate.name,
+      text: candidate.text,
+      kind: candidate.kind,
+      links,
+      suggestPin: candidate.pin === true,
+      ...(old !== undefined && !kept ? { replaces: Number(old.rowid) } : {}),
+      ...(kept ? { suggestReplaces: Number(old.rowid) } : {}),
+      ...(candidate.timeBound === true ? { timeBound: true, reviewAt: now + REVIEW_AFTER } : {}),
+    }
     write.push(one)
+    if (one.replaces !== undefined) {
+      known = known.filter((row) => row !== old)
+      // A later link to the retired name would point at a closed note, which reads as nothing.
+      if (!known.some((row) => named(row) === named(old))) names.delete(named(old))
+    }
     known.push(one)
     names.add(one.name)
     texts.add(one.text)
   }
   return write
 }
+
+/**
+ * **The sorting pass never pins.** Every note it writes is `inferred` — nobody said it out loud,
+ * a model worked it out — and the profile goes into every prompt. A guess in every prompt is how
+ * a wrong fact becomes permanent: it is read back as true on every task, acted on, and never
+ * questioned, because nothing ever searched for it. So the model's `pin` is kept on the note as
+ * a suggestion (`suggest_pin`), which the panel can show and a person can act on with one click.
+ * A pin is honoured only on a `stated` note, and this pass writes none.
+ */
 
 /** What a link points at. Notes written before M7-3 have no name, so their text is one. */
 const named = (row) => String(row.name ?? row.text ?? '').trim()

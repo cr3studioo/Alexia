@@ -12,7 +12,7 @@
       "index.js"
     ]
   },
-  "alexia_protocol": 11,
+  "alexia_protocol": 12,
   "mcp_protocol": "2025-11-25",
   "requires": [
     { "cap": "memory.remember", "why": "to offer the facts about you it found in your description to long-term memory, once, when you press the button" }

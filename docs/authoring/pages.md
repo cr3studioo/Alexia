@@ -1,6 +1,6 @@
 # Give your plugin a page
 
-*Needs `"alexia_protocol": 11`. Decided 2026-09-24 (D199).*
+*Needs `"alexia_protocol": 12`. Decided 2026-09-24 (D199).*
 
 Alexia's window is a **board**: a grid of dots with pages on it, and the person arranges the
 pages. Chat is one, General is one, Running now is one. Yours can be one too. You say which of
@@ -30,7 +30,7 @@ plugin lets somebody talk to Alexia from elsewhere, list `channel.chat` in `prov
 
 ```jsonc
 {
-  "alexia_protocol": 11,
+  "alexia_protocol": 12,
   "settings": [
     { "key": "which_voice", "type": "choice", "label": "Who speaks", "options": ["Ada", "Rowan"] }
   ],
@@ -140,7 +140,7 @@ Each of these stops your plugin loading, with a sentence naming the field.
 
 | Mistake | What you are told, and what it means |
 |---|---|
-| `page` while claiming `alexia_protocol` 10 or lower | *page arrived in alexia_protocol 11.* Set `"alexia_protocol": 11`. An Alexia older than that refuses you as *needs a newer Alexia*, which is the truth, rather than as a manifest it cannot parse. |
+| `page` while claiming `alexia_protocol` 11 or lower | *page arrived in alexia_protocol 12.* Set `"alexia_protocol": 12`. An Alexia older than that refuses you as *needs a newer Alexia*, which is the truth, rather than as a manifest it cannot parse. |
 | a `show` key you never declared | *show "wich_voice" is not a widget this plugin declares.* There is nothing by that name in `settings` or `panel.widgets`. Usually a typo, or a key moved from one list to the other. |
 | M smaller than S in either dimension, or L smaller than M | *M (12×3) is smaller than S (8×4).* Bigger has to mean bigger both ways, or the size picker offers a step that goes sideways. |
 | a tier outside `scale` | *M (30×8) is outside scale (8×4 to 24×16).* The page could never be stretched to that tier, so its content would never be seen. |
@@ -154,14 +154,14 @@ Each of these stops your plugin loading, with a sentence naming the field.
 
 - **A page makes your process busier only if it shows a `table` or `graph`.** Everything else
   is read from what Alexia already stored.
-- **Declaring revision 11 means an Alexia older than 11 will not load you.** If your page is
+- **Declaring revision 12 means an Alexia older than 12 will not load you.** If your page is
   nice to have and your plugin works without it, weigh that.
 - **You do not choose where the page goes.** The person does. The first free spot is where it
   starts, and that is all.
 
 ## Checklist
 
-- [ ] `"alexia_protocol": 11`
+- [ ] `"alexia_protocol": 12`
 - [ ] `title` says what the page is, in 40 characters, not your plugin's name again if that says nothing
 - [ ] every `show` key is declared in `settings` or `panel.widgets`
 - [ ] S is one fact; L exists only if something needs the room

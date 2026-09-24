@@ -167,7 +167,7 @@ export interface Pane {
    */
   panel?: { label: string; widgets: Rendered[] }
   /**
-   * The plugin's page on the board (`alexia_protocol` 11, D199), or `null` for none.
+   * The plugin's page on the board (`alexia_protocol` 12, D199), or `null` for none.
    *
    * Declared, or built from `panel` when a plugin has one and no page — see `pageOf`. It is
    * **names, not rendered widgets**: which keys to show at which size, read off the manifest.
@@ -453,7 +453,7 @@ export function refuse(declared: Setting, value: unknown): string | undefined {
   if (driven(declared)) {
     if (declared.type === 'action') return `"${declared.label}" is a button, not a value.`
     // A table is edited a row at a time, through the actions its author declared on it.
-    if (declared.type === 'table') return `"${declared.label}" is a list, not a value.`
+    if (declared.type === 'table' || declared.type === 'tree') return `"${declared.label}" is a list, not a value.`
     return `"${declared.label}" is driven by the plugin, not by you.`
   }
   // The one value the user has but core writes. Its bytes arrive at `/api/upload`, which puts
