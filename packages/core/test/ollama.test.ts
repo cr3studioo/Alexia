@@ -149,3 +149,29 @@ test('local stats with no Ollama is an answer, not an error', async () => {
   await new Promise<void>((resolve) => gone.close(() => resolve()))
   expect(await local(`http://127.0.0.1:${String(port)}`)).toEqual({ running: false, installed: [], loaded: [] })
 })
+
+test('local stats from something on the port that is not a readable Ollama is not running, not a throw', async () => {
+  // Three ways to be wrong: a list with no `models`, a list whose rows have no names, and an
+  // Ollama too old to have `/api/ps` (a 404). None of them may take the Local stats page down.
+  let tagsBody: unknown = {}
+  const odd = createServer((request, response) => {
+    if (request.url === '/api/tags') {
+      response.writeHead(200, { 'content-type': 'application/json' })
+      response.end(JSON.stringify(tagsBody))
+      return
+    }
+    response.writeHead(404, { 'content-type': 'application/json' })
+    response.end(JSON.stringify({ error: 'not found' }))
+  })
+  await new Promise<void>((resolve) => odd.listen(0, '127.0.0.1', resolve))
+  const at = `http://127.0.0.1:${String((odd.address() as AddressInfo).port)}`
+  try {
+    expect(await local(at)).toEqual({ running: false, installed: [], loaded: [] })
+    tagsBody = { models: [{ size: 5 }, null, { name: 'qwen3:8b', size: 'lots' }] }
+    // Answered with a list: running, the nameless rows dropped, a size that is not a number is 0,
+    // and no `ps` is nothing in memory rather than an error.
+    expect(await local(at)).toEqual({ running: true, installed: [{ name: 'qwen3:8b', size: 0 }], loaded: [] })
+  } finally {
+    await new Promise<void>((resolve) => odd.close(() => resolve()))
+  }
+})

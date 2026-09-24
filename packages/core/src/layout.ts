@@ -7,11 +7,12 @@
  * `/api/state` — because it is the same kind of fact: an answer about this install, and the
  * window and a tab pointed at the same core should not disagree about where Chat is.
  *
- * **Core checks the shape and reads nothing else.** A page id is the shell's word for a page,
- * and some of those words are plugin ids: a layout naming one is a person having put that
- * plugin's page somewhere, and core learning what the id means would be core naming a plugin
- * by the back door (invariant 1). So an id here is an opaque string, an unknown one is kept,
- * and the shell is what decides a page whose plugin went away is not drawn.
+ * **Core checks the shape and reads one thing more.** A page id is the shell's word for a page,
+ * and core does not learn what any of them mean — naming one would be core naming a plugin by
+ * the back door (invariant 1). The one thing it reads is the prefix the shell puts on every
+ * plugin's page ({@link PLUGIN_PAGE}): not *which* plugin, only *a plugin's*, so that when a
+ * plugin's folder is gone its page goes from the kept layout too ({@link withoutGone}), whether
+ * or not a window was open to notice. Any other id is opaque and kept.
  */
 export interface Layout {
   v: 1
@@ -67,4 +68,26 @@ export function readLayout(sent: unknown): { ok: true; layout: Layout } | { ok: 
     pages.push({ id: p.id, w: p.w, h: p.h, ...(anchor && { anchor }) })
   }
   return { ok: true, layout: { v: 1, cols: l.cols, guides: [guides[0] as number, guides[1] as number], pages } }
+}
+
+/**
+ * The prefix every plugin page id carries (`plugin:<id>`), written down twice: here and in the
+ * shell's `pages.ts`. A test holds the two together.
+ */
+export const PLUGIN_PAGE = 'plugin:'
+
+/**
+ * The layout without the pages of plugins that are no longer here, or `undefined` when it
+ * already has none (D199).
+ *
+ * **Deleting a plugin's folder takes its page off the board and out of `layout`** — core's
+ * half of that, run every time the plugin folder is read. The shell drops the page too when it
+ * next looks, but a folder deleted while no window is open, or before one next asks, would
+ * otherwise leave an id in the kept layout for a plugin that is not there, and a plugin
+ * installed again later would come back to a spot remembered from a previous life. A disabled
+ * plugin is still *here*: its entry is kept, which is what brings it back to the same spot.
+ */
+export function withoutGone(layout: Layout, here: ReadonlySet<string>): Layout | undefined {
+  const pages = layout.pages.filter((p) => !p.id.startsWith(PLUGIN_PAGE) || here.has(p.id.slice(PLUGIN_PAGE.length)))
+  return pages.length === layout.pages.length ? undefined : { ...layout, pages }
 }

@@ -20,6 +20,7 @@ import { cpSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, wa
 import { basename, join } from 'node:path'
 import { receive, type Upload } from './attach.js'
 import { Host } from './host.js'
+import { readLayout, withoutGone } from './layout.js'
 import { CORE, keychain, type SecretStore } from './secrets.js'
 import {
   declaredAction,
@@ -311,6 +312,24 @@ export class Plugins {
       this.#release(entry.process)
       this.options.onToolsChanged?.(id)
     }
+    this.#prune()
+  }
+
+  /**
+   * Take the pages of plugins that are no longer here out of the kept board (D199).
+   *
+   * *Here* is every plugin that loaded, and every folder that is here and did not — a plugin
+   * mid-update, or one whose manifest someone is fixing, is not gone, and its page keeping its
+   * spot is the difference between a typo and losing an arrangement. Disabled is here too.
+   */
+  #prune(): void {
+    const stored = this.options.store.kvGet(CORE, 'layout')
+    if (stored === undefined) return
+    const read = readLayout(stored)
+    if (!read.ok) return
+    const here = new Set([...this.#entries.keys(), ...this.#problems.map((problem) => basename(problem.dir))])
+    const pruned = withoutGone(read.layout, here)
+    if (pruned) this.options.store.kvSet(CORE, 'layout', pruned)
   }
 
   /**
@@ -797,6 +816,7 @@ export class Plugins {
     }
     rmSync(this.#host.ownDir(id), { recursive: true, force: true })
     if (entry) rmSync(entry.dir, { recursive: true, force: true })
+    this.#prune()
     this.options.onToolsChanged?.(id)
   }
 
