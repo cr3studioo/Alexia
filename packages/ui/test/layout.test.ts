@@ -38,6 +38,7 @@ test('the dots are centred: the spare pixels split evenly, on an odd width too',
   for (const [w, h] of [
     [1680, 1000],
     [1337, 811],
+    [520, 720],
     [521, 719],
   ] as const) {
     const g = grid(w, h)
@@ -82,6 +83,9 @@ test('fit: a scaling page narrows, a tiered one steps down, and neither is cut',
   expect(fit(task, { id: 'task', w: 18, h: 12 }, 40, 27)).toEqual({ w: 18, h: 12, fitted: false })
   // A saved size outside the page's own limits is pulled back in, fitted or not.
   expect(fit(voice, { id: 'voice', w: 9, h: 9 }, 40, 27).w).toBe(4)
+  // Narrower than even its smallest tier: squeezed to the board, never wider than it.
+  expect(fit(task, { id: 'task', w: 18, h: 12 }, 8, 27)).toEqual({ w: 8, h: 3, fitted: true })
+  expect(fit({}, { id: 'x', w: 40, h: 5 }, 28, 27)).toEqual({ w: 28, h: 5, fitted: true })
 })
 
 test('pages keep one clear dot between them', () => {
@@ -128,12 +132,60 @@ test('a page with no room in the window goes below it rather than on top of some
   expect(task.y).toBeGreaterThanOrEqual(11)
 })
 
+test('the one clear dot holds after any pack, however crowded and whatever was asked for', () => {
+  // Anchors that collide, anchors past the edge, pages wider than the board: every pair still
+  // has its gutter, at every width from compact's edge to a wide monitor.
+  const pages = [
+    { id: 'chat', w: 26, h: 20, anchor: { x: 3, y: 1 } },
+    { id: 'task', w: 18, h: 12, anchor: { x: 5, y: 4 } },
+    { id: 'voice', w: 4, h: 4, anchor: { x: 90, y: 0 } },
+    { id: 'a', w: 7, h: 3 },
+    { id: 'b', w: 12, h: 6, anchor: { x: 20, y: 2 } },
+    { id: 'c', w: 40, h: 5 },
+    // A page whose smallest size is wider than a narrow board.
+    { id: 'wide', w: 34, h: 6 },
+  ]
+  const wide: Shape = { tiers: { S: [30, 4], M: [34, 6] } }
+  for (const cols of [28, 33, 47, 65, 90]) {
+    const placed = pack(pages, { ...shapes, wide }, cols, 30)
+    expect(placed).toHaveLength(pages.length)
+    for (const p of placed) {
+      expect(p.x + p.w, `${p.id} at ${String(cols)}`).toBeLessThanOrEqual(cols)
+      expect(fits(placed.filter((q) => q.id !== p.id), p.x, p.y, p.w, p.h, cols), `${p.id} at ${String(cols)}`).toBe(true)
+    }
+  }
+})
+
 test('rescale keeps the arrangement in proportion and leaves heights alone', () => {
   const layout: Layout = { v: 1, cols: 64, guides: [16, 48], pages: [{ id: 'chat', w: 32, h: 20, anchor: { x: 17, y: 2 } }] }
   const half = rescale(layout, 32)
   expect(half.guides).toEqual([8, 24])
   expect(half.pages[0]).toEqual({ id: 'chat', w: 16, h: 20, anchor: { x: 9, y: 2 } })
   expect(rescale(layout, 64)).toEqual(layout)
+})
+
+test('a window made smaller and then bigger again draws exactly what it drew before', () => {
+  // The saved layout is what is drawn from, and a resize never writes it — so however lossy
+  // the rounding on the way down, the way back up starts from the original, not the rounding.
+  const layout: Layout = {
+    v: 1,
+    cols: 65,
+    guides: [17, 45],
+    pages: [
+      { id: 'chat', w: 27, h: 20, anchor: { x: 18, y: 0 } },
+      { id: 'task', w: 17, h: 8, anchor: { x: 0, y: 0 } },
+      { id: 'voice', w: 4, h: 4, anchor: { x: 46, y: 0 } },
+    ],
+  }
+  const before = JSON.stringify(layout)
+  const wide = grid(1680, 1000)
+  const first = arrange(layout, shapes, wide)
+  for (const width of [1337, 900, 740, 520]) arrange(layout, shapes, grid(width, 1000))
+  expect(arrange(layout, shapes, wide)).toEqual(first)
+  expect(JSON.stringify(layout)).toBe(before)
+  // And rescale itself comes back to where it started whenever the smaller width can hold it.
+  expect(rescale(rescale(layout, 130), 65)).toEqual(layout)
+  expect(rescale(rescale(layout, 65), 65)).toEqual(layout)
 })
 
 test('arrange stacks the pages in one column on a narrow window without touching the saved layout', () => {

@@ -11,7 +11,7 @@
  * bill.
  */
 
-import { mountBoard } from './board.js'
+import { escapeTakes, mountBoard } from './board.js'
 import type { Layout } from './layout.js'
 import { drawPrice } from './pages.js'
 import { autostart, dismiss, HOTKEY, inApp, installUpdate, setAutostart, tray, updateAvailable } from './desktop.js'
@@ -2216,8 +2216,9 @@ document.addEventListener('keydown', (event) => {
   // Escape takes one step back, and only the last one is putting the window away: out of
   // edit view first, then off the sheet, then the overlay.
   if (event.key === 'Escape') {
-    if (board.editing()) board.edit(false)
-    else if (sheetOpen()) closeSheet()
+    const step = escapeTakes(board.editing(), sheetOpen())
+    if (step === 'edit') board.edit(false)
+    else if (step === 'sheet') closeSheet()
     else dismiss()
   }
 })

@@ -3,8 +3,8 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { expect, test, vi } from 'vitest'
-import { mountBoard } from '../src/board.js'
-import { arrange, fits, grid, type Layout, limits } from '../src/layout.js'
+import { escapeTakes, mountBoard } from '../src/board.js'
+import { arrange, dragGuide, fits, grid, type Layout, limits, SP } from '../src/layout.js'
 import {
   CORE_PAGES,
   declOf,
@@ -26,11 +26,11 @@ import {
 /**
  * The board's half that needs no browser: which pages exist, the board somebody sees before
  * arranging anything, and what happens to the layout when a plugin comes, goes or is switched
- * off. The dragging is `board.ts` and is checked by hand; the arithmetic under it is
- * `layout.test.ts`.
+ * off. The arithmetic under the dragging is `layout.test.ts`.
  *
- * The last test mounts the real board on the real markup under `happy-dom`, which has no
- * layout engine — so it checks what board.ts *writes*, with the window's size stubbed in.
+ * The tests that mount the real board on the real markup run under `happy-dom`, which has no
+ * layout engine — so they check what board.ts *writes*, with the window's size stubbed in and
+ * the pointer events dispatched by hand: the grips, a page picked up and dropped, a resize.
  */
 
 const ui = join(import.meta.dirname, '..')
@@ -253,6 +253,295 @@ test('the board mounts on the real markup, places the default pages, and saves w
   board.edit(false)
   expect(root.classList.contains('editing')).toBe(false)
   vi.unstubAllGlobals()
+})
+
+/**
+ * The real board on the real markup, at a window size the test can change. `resize` is the
+ * `ResizeObserver` firing; animation frames run at once, so the redraw is done when it returns.
+ */
+function mountAt(
+  width: number,
+  height: number,
+  layout?: Layout,
+): {
+  board: ReturnType<typeof mountBoard>
+  root: HTMLElement
+  sent: { path: string; body: unknown }[]
+  kept: Map<string, string>
+  resize: (width: number) => void
+} {
+  const html = readFileSync(join(ui, 'index.html'), 'utf8')
+  document.body.innerHTML = /<body[^>]*>([\s\S]*)<\/body>/.exec(html)![1]!.replace(/<script[\s\S]*?<\/script>/g, '')
+  const sent: { path: string; body: unknown }[] = []
+  vi.stubGlobal('fetch', (path: string, init?: { body?: string }) => {
+    if (init?.body !== undefined) sent.push({ path, body: JSON.parse(init.body) })
+    const answer = path === '/api/plugins' ? { panes: [voice] } : {}
+    return Promise.resolve({ ok: true, json: () => Promise.resolve(answer) })
+  })
+  const kept = new Map<string, string>()
+  if (layout) kept.set('alexia.layout', JSON.stringify(layout))
+  vi.stubGlobal('localStorage', {
+    getItem: (key: string) => kept.get(key) ?? null,
+    setItem: (key: string, value: string) => kept.set(key, value),
+    removeItem: (key: string) => kept.delete(key),
+  })
+  let observed: (() => void) | undefined
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      constructor(callback: () => void) {
+        observed = callback
+      }
+      observe(): void {}
+    },
+  )
+  vi.stubGlobal('requestAnimationFrame', (run: () => void) => {
+    run()
+    return 0
+  })
+  vi.stubGlobal('cancelAnimationFrame', () => undefined)
+  const root = document.querySelector<HTMLElement>('#board')!
+  let wide = width
+  Object.defineProperty(root, 'offsetWidth', { configurable: true, get: () => wide })
+  Object.defineProperty(root, 'clientHeight', { configurable: true, get: () => height })
+  const board = mountBoard(root, 'token')
+  return {
+    board,
+    root,
+    sent,
+    kept,
+    resize: (to) => {
+      wide = to
+      observed!()
+    },
+  }
+}
+
+const pageEl = (root: HTMLElement, id: string): HTMLElement => root.querySelector<HTMLElement>(`[data-page="${id}"]`)!
+const pointer = (target: HTMLElement, type: string, x: number, y = 0): void => {
+  target.dispatchEvent(new PointerEvent(type, { button: 0, clientX: x, clientY: y, pointerId: 1, bubbles: true }))
+}
+const saves = (sent: readonly { path: string; body: unknown }[]): Layout[] =>
+  sent.filter((one) => one.path === '/api/setup').map((one) => (one.body as { layout: Layout }).layout)
+const drawnAt = (root: HTMLElement): string[] =>
+  CORE_PAGES.filter((one) => one.id !== 'local-stats').map((one) => {
+    const style = pageEl(root, one.id).style
+    return `${one.id} ${style.left} ${style.top} ${style.width} ${style.height}`
+  })
+
+test('both grips drag, the pages on them follow while the pointer moves, and the guide is saved on letting go', () => {
+  const { root, sent } = mountAt(1440, 900)
+  const g = grid(1440, 900)
+  const layout = defaultLayout(g.cols, g.rows)
+  const before = arrange(layout, shapes, g)
+  const grips = [...root.querySelectorAll<HTMLElement>('.grip')]
+  expect(grips).toHaveLength(2)
+
+  for (const [which, dx] of [
+    [0, 2],
+    [1, -3],
+  ] as const) {
+    const start = saves(sent).at(-1) ?? layout
+    const drawn = arrange(start, shapes, g)
+    const expected = dragGuide(drawn, shapes, start.guides, which, dx, g.cols)
+    expect(expected.moved, `grip ${String(which)}`).toBe(dx)
+    const count = sent.length
+
+    pointer(grips[which]!, 'pointerdown', 400)
+    pointer(grips[which]!, 'pointermove', 400 + dx * SP)
+    // Mid-drag: every page on the guide is already drawn at its new edge, and nothing is saved.
+    for (const p of expected.placed) {
+      const was = drawn.find((q) => q.id === p.id)!
+      if (was.x === p.x && was.w === p.w) continue
+      expect(pageEl(root, p.id).style.left, `${p.id} on grip ${String(which)}`).toBe(`${String(g.offX + p.x * SP)}px`)
+      expect(pageEl(root, p.id).style.width, `${p.id} on grip ${String(which)}`).toBe(`${String(p.w * SP)}px`)
+    }
+    expect(grips[which]!.style.left).toBe(`${String(g.offX + expected.guides[which] * SP)}px`)
+    expect(sent.length).toBe(count)
+
+    pointer(grips[which]!, 'pointerup', 400 + dx * SP)
+    const saved = saves(sent).at(-1)!
+    expect(saved.guides).toEqual(expected.guides)
+    for (const p of expected.placed) {
+      expect(saved.pages.find((q) => q.id === p.id)).toMatchObject({ w: p.w, anchor: { x: p.x, y: p.y } })
+    }
+  }
+  // Which pages followed: General and Chat on the first grip, Chat and the right column on the second.
+  const after = saves(sent).at(-1)!
+  const moved = before.filter((p) => {
+    const q = after.pages.find((one) => one.id === p.id)!
+    return q.w !== p.w || q.anchor!.x !== p.x
+  })
+  expect(moved.map((p) => p.id).sort()).toEqual(['chat', 'current-step', 'general', 'price', 'running', 'steps'])
+  vi.unstubAllGlobals()
+})
+
+test('a grip moved from the keyboard goes one dot a press, and is saved each time', () => {
+  const { root, sent } = mountAt(1440, 900)
+  const grip = root.querySelectorAll<HTMLElement>('.grip')[1]!
+  const g = grid(1440, 900)
+  const was = defaultLayout(g.cols, g.rows).guides[1]
+  grip.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }))
+  expect(saves(sent).at(-1)!.guides[1]).toBe(was - 1)
+  grip.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }))
+  expect(saves(sent).at(-1)!.guides[1]).toBe(was - 2)
+  vi.unstubAllGlobals()
+})
+
+test('a page dragged in edit view moves by transform, blur off, and its spot is written only when it lands', () => {
+  const g = grid(1440, 900)
+  // The default, with Current step six dots shorter: a gap above Price to drag it into.
+  const base = defaultLayout(g.cols, g.rows)
+  const layout: Layout = { ...base, pages: base.pages.map((p) => (p.id === 'current-step' ? { ...p, h: p.h - 6 } : p)) }
+  const { board, root, sent } = mountAt(1440, 900, layout)
+  board.edit(true)
+  const price = pageEl(root, 'price')
+  const grab = price.querySelector<HTMLElement>(':scope > .page-grab')!
+  const start = arrange(layout, shapes, g).find((p) => p.id === 'price')!
+  const { left, top } = price.style
+
+  // Past the bottom of the window: the preview stops where `pack` would draw it, not below.
+  pointer(grab, 'pointerdown', 600, 600)
+  pointer(grab, 'pointermove', 600, 600 + 30 * SP)
+  expect(price.style.transform).toBe(`translate(0px, ${String((g.rows - start.h - start.y) * SP)}px)`)
+  // Up three dots, into the gap.
+  pointer(grab, 'pointermove', 600, 600 - 3 * SP)
+  expect(price.style.transform).toBe(`translate(0px, ${String(-3 * SP)}px)`)
+  expect(price.style.left).toBe(left)
+  expect(price.style.top).toBe(top)
+  // `.lifted` is the rule that turns the backdrop blur off (app.css), and `.lands` the blue ring.
+  expect(price.classList.contains('lifted')).toBe(true)
+  expect(price.classList.contains('lands')).toBe(true)
+  expect(saves(sent)).toEqual([])
+
+  pointer(grab, 'pointerup', 600, 600 - 3 * SP)
+  expect(price.classList.contains('lifted')).toBe(false)
+  expect(price.style.transform).toBe('')
+  expect(price.style.top).toBe(`${String(g.offY + (start.y - 3) * SP)}px`)
+  expect(saves(sent)).toHaveLength(1)
+  expect(saves(sent)[0]!.pages.find((p) => p.id === 'price')!.anchor).toEqual({ x: start.x, y: start.y - 3 })
+  vi.unstubAllGlobals()
+})
+
+test('a page dropped where it does not fit goes back, and nothing is saved', () => {
+  const { board, root, sent } = mountAt(1440, 900)
+  board.edit(true)
+  const price = pageEl(root, 'price')
+  const grab = price.querySelector<HTMLElement>(':scope > .page-grab')!
+  const { top } = price.style
+  // Up onto Current step.
+  pointer(grab, 'pointerdown', 600, 600)
+  pointer(grab, 'pointermove', 600, 600 - 4 * SP)
+  expect(price.classList.contains('blocked')).toBe(true)
+  pointer(grab, 'pointerup', 600, 600 - 4 * SP)
+  expect(price.style.transform).toBe('')
+  expect(price.style.top).toBe(top)
+  expect(saves(sent)).toEqual([])
+  vi.unstubAllGlobals()
+})
+
+test('every page is on the board once, so no id in the document is ever there twice', async () => {
+  const { board, root, resize } = mountAt(1440, 900)
+  const unique = (): void => {
+    const ids = [...document.querySelectorAll('[id]')].map((one) => one.id)
+    expect(ids.length).toBeGreaterThan(50)
+    expect(ids.filter((id, i) => ids.indexOf(id) !== i)).toEqual([])
+    for (const page of [...CORE_PAGES.map((one) => one.id), pageIdOf('voice')]) {
+      expect(root.querySelectorAll(`[data-page="${page}"]`).length, page).toBeLessThanOrEqual(1)
+    }
+  }
+  unique()
+  // Everything that redraws: plugins read (twice), edit view on and off, a resize, the stack.
+  await board.refresh()
+  await board.refresh()
+  expect(pageEl(root, pageIdOf('voice')).hidden).toBe(false)
+  unique()
+  board.edit(true)
+  board.edit(false)
+  resize(520)
+  resize(1440)
+  unique()
+  vi.unstubAllGlobals()
+})
+
+test('General shows no Remove in its bar, and every other core page does', () => {
+  const { board, root } = mountAt(1440, 900)
+  board.edit(true)
+  const bar = root.querySelector<HTMLElement>('.page-bar')!
+  for (const page of CORE_PAGES.filter((one) => one.id !== 'local-stats')) {
+    pageEl(root, page.id).querySelector<HTMLButtonElement>(':scope > .page-grab')!.click()
+    expect(bar.hidden, page.id).toBe(false)
+    const remove = [...bar.querySelectorAll('button')].some((b) => b.textContent === 'Remove')
+    expect(remove, page.id).toBe(page.id !== 'general')
+  }
+  vi.unstubAllGlobals()
+})
+
+test('a window made narrow and wide again saves nothing and draws the board where it was', () => {
+  const g = grid(1680, 1000)
+  const layout = defaultLayout(g.cols, g.rows)
+  const { root, sent, kept, resize } = mountAt(1680, 1000, layout)
+  const first = drawnAt(root)
+  for (const width of [1337, 900, 520]) {
+    resize(width)
+    expect(root.classList.contains('compact')).toBe(grid(width, 1000).compact)
+  }
+  resize(1680)
+  expect(drawnAt(root)).toEqual(first)
+  expect(saves(sent)).toEqual([])
+  expect(kept.get('alexia.layout')).toBe(JSON.stringify(layout))
+  vi.unstubAllGlobals()
+})
+
+test('on the one-column stack a change touches only what was changed, never the arrangement', () => {
+  const g = grid(1680, 1000)
+  const layout = defaultLayout(g.cols, g.rows)
+  const { board, root, sent, resize } = mountAt(1680, 1000, layout)
+  const first = drawnAt(root)
+  resize(520)
+  board.edit(true)
+  const bar = root.querySelector<HTMLElement>('.page-bar')!
+
+  // Arrows do not move a page on the stack — its place is its order.
+  const grab = pageEl(root, 'price').querySelector<HTMLElement>(':scope > .page-grab')!
+  grab.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+  expect(saves(sent)).toEqual([])
+
+  // A size from the bar: that page's size is written, and every anchor and the width are the saved ones.
+  grab.click()
+  ;[...bar.querySelectorAll('button')].find((b) => b.textContent === 'S')!.click()
+  const sized = saves(sent).at(-1)!
+  expect(sized.cols).toBe(layout.cols)
+  expect(sized.guides).toEqual(layout.guides)
+  expect(sized.pages.find((p) => p.id === 'price')).toEqual({ id: 'price', w: 8, h: 3, anchor: layout.pages.find((p) => p.id === 'price')!.anchor })
+  for (const p of layout.pages.filter((one) => one.id !== 'price')) expect(sized.pages.find((q) => q.id === p.id)).toEqual(p)
+
+  // Removing one: gone, and nothing else moved.
+  pageEl(root, 'steps').querySelector<HTMLButtonElement>(':scope > .page-grab')!.click()
+  ;[...bar.querySelectorAll('button')].find((b) => b.textContent === 'Remove')!.click()
+  const removed = saves(sent).at(-1)!
+  expect(removed.pages.map((p) => p.id)).not.toContain('steps')
+  for (const p of sized.pages.filter((one) => one.id !== 'steps')) expect(removed.pages.find((q) => q.id === p.id)).toEqual(p)
+
+  // Wide again: everything that was not changed is where it was.
+  board.edit(false)
+  resize(1680)
+  const unchanged = (rows: string[]): string[] => rows.filter((row) => !/^(price|steps) /.test(row))
+  expect(unchanged(drawnAt(root))).toEqual(unchanged(first))
+  vi.unstubAllGlobals()
+})
+
+test('Escape takes one step back: edit view, then the Settings or Activity sheet, then the window', () => {
+  expect(escapeTakes(true, true)).toBe('edit')
+  expect(escapeTakes(true, false)).toBe('edit')
+  expect(escapeTakes(false, true)).toBe('sheet')
+  expect(escapeTakes(false, false)).toBe('window')
+  // And the shell does what it says: the sheet step is the one that closes the sheet.
+  const main = readFileSync(join(ui, 'src', 'main.ts'), 'utf8')
+  const handler = /if \(event\.key === 'Escape'\) \{([\s\S]*?)\n {2}\}/.exec(main)?.[1] ?? ''
+  expect(handler).toContain('escapeTakes(board.editing(), sheetOpen())')
+  expect(handler).toMatch(/step === 'sheet'\) closeSheet\(\)/)
+  expect(main).toMatch(/const sheetOpen = \(\): boolean => document\.body\.dataset\.view === 'settings' \|\| document\.body\.dataset\.view === 'control'/)
 })
 
 /** A Mac at rest: every number core can read, and a history of four readings. */
