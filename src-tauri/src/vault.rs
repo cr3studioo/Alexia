@@ -31,7 +31,10 @@ use serde_json::{json, Value};
 /// it held the keychain itself. An entry under that name may still be one Node created, and
 /// reading it from here would always put a keychain prompt in front of somebody, where core —
 /// whose program it trusts — can usually move it without one. `custody()` in `secrets.ts`.
-const SERVICE: &str = "dev.alexia.app";
+///
+/// A dev build (`pnpm app:dev`) is compiled with `ALEXIA_KEYCHAIN` set, so trying a change never
+/// touches the real Alexia's secrets.
+const SERVICE: &str = match option_env!("ALEXIA_KEYCHAIN") { Some(service) => service, None => "dev.alexia.app" };
 
 #[derive(Deserialize)]
 struct Ask {

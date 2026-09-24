@@ -19,7 +19,8 @@
     "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm invariants",
     "sidecar": "tsc -b && node scripts/sidecar.mjs",
     "tauri": "tauri",
-    "app": "pnpm sidecar && tauri build"
+    "app": "pnpm sidecar && tauri build",
+    "app:dev": "node scripts/dev-app.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

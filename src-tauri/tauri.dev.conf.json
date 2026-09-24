@@ -1,0 +1,13 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Alexia Dev",
+  "identifier": "dev.alexia.app.dev",
+  "bundle": {
+    "targets": ["app"]
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": []
+    }
+  }
+}

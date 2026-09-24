@@ -81,6 +81,21 @@ test('the data directory is per-user and absolute, never beside the executable',
   expect(step !== '' && !step.startsWith('..') && !isAbsolute(step)).toBe(false)
 })
 
+test('a dev build keeps its data in a folder of its own, and only ever beside the real one', () => {
+  const before = process.env.ALEXIA_DATA_NAME
+  try {
+    process.env.ALEXIA_DATA_NAME = 'Alexia Dev'
+    expect(dataDir()).toBe(join(dirname(dataDir()), 'Alexia Dev'))
+    for (const sideways of ['..', '../elsewhere', 'a/b', '']) {
+      process.env.ALEXIA_DATA_NAME = sideways
+      expect(dataDir().endsWith('Alexia')).toBe(true)
+    }
+  } finally {
+    if (before === undefined) delete process.env.ALEXIA_DATA_NAME
+    else process.env.ALEXIA_DATA_NAME = before
+  }
+})
+
 // M1-2: the conversation. Core owns it, so deleting the memory plugin (M4) forgets you
 // across sessions without touching what you are saying right now.
 
