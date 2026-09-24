@@ -112,13 +112,19 @@ export function px(g: Grid, p: Placed): { left: number; top: number; width: numb
 
 const tiersOf = (shape: Shape): Tier[] => TIERS.filter((t) => shape.tiers?.[t] !== undefined)
 
-/** The biggest tier whose content fits in this size, or the smallest when none does. */
+/**
+ * The biggest tier whose content fits in this size, or the smallest when none does.
+ *
+ * The height has to fit; the width may be one dot short. A grip dragged a dot past a tier's
+ * edge is not somebody asking for less — and for Chat one dot under M was S, which hides every
+ * turn but the last. One dot is 25 px of a page three hundred or more across.
+ */
 export function tierFor(shape: Shape, w: number, h: number): Tier | undefined {
   const tiers = tiersOf(shape)
   let tier = tiers[0]
   for (const t of tiers) {
     const [tw, th] = shape.tiers![t]!
-    if (tw <= w && th <= h) tier = t
+    if (tw <= w + 1 && th <= h) tier = t
   }
   return tier
 }
@@ -217,7 +223,8 @@ export function pack(pages: readonly Wanted[], shapes: Readonly<Record<string, S
 
 /**
  * The narrow window: one column, page under page, in the order given. Every page takes the
- * full width it is allowed, and keeps the height it asked for.
+ * full width it is allowed — the column for one that scales, its widest tier that fits for one
+ * that does not — keeps the height it asked for, and is centred when that is not the column.
  */
 export function stack(pages: readonly Wanted[], shapes: Readonly<Record<string, Shape>>, cols: number): Placed[] {
   let y = 0
@@ -225,9 +232,10 @@ export function stack(pages: readonly Wanted[], shapes: Readonly<Record<string, 
     const shape = shapes[want.id] ?? {}
     const lim = limits(shape)
     const fitted = fit(shape, want, cols, Infinity)
-    const w = shape.scale ? Math.max(lim.minW, Math.min(cols, lim.maxW)) : fitted.w
+    const w = Math.min(cols, Math.max(fitted.w, lim.maxW))
     const h = fitted.h
-    const p: Placed = { id: want.id, x: 0, y, w, h, tier: tierFor(shape, w, h), fitted: w < want.w }
+    const x = Math.floor((cols - w) / 2)
+    const p: Placed = { id: want.id, x, y, w, h, tier: tierFor(shape, w, h), fitted: w < want.w }
     y += h + 1
     return p
   })

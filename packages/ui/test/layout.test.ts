@@ -17,6 +17,7 @@ import {
   rescale,
   type Shape,
   SP,
+  stack,
   tierFor,
 } from '../src/layout.js'
 
@@ -201,8 +202,47 @@ test('arrange stacks the pages in one column on a narrow window without touching
   const before = JSON.stringify(layout)
   const placed = arrange(layout, shapes, grid(520, 720))
   expect(placed[0]).toMatchObject({ x: 0, y: 0, w: grid(520, 720).cols })
-  expect(placed[1]).toMatchObject({ x: 0, y: placed[0]!.h + 1, w: 4 })
+  // A fixed page keeps its size, centred rather than against the left edge.
+  const cols = grid(520, 720).cols
+  expect(placed[1]).toMatchObject({ x: Math.floor((cols - 4) / 2), y: placed[0]!.h + 1, w: 4 })
   expect(JSON.stringify(layout)).toBe(before)
+})
+
+test('on the stack a tiered page takes its widest tier that fits the column, centred, not the size it was left at', () => {
+  // task is S (10 wide) on the board; the column is 19 at 520 px, so it widens to L's 18.
+  const cols = grid(520, 720).cols
+  expect(cols).toBe(19)
+  const [p] = stack([{ id: 'task', w: 10, h: 3 }], shapes, cols)
+  expect(p).toMatchObject({ x: 0, w: 18, h: 3, tier: 'S' })
+  // Narrower than its widest tier: the whole column. At its own height it still shows what fits.
+  const [q] = stack([{ id: 'task', w: 13, h: 8 }], shapes, 15)
+  expect(q).toMatchObject({ x: 0, w: 15, h: 8, tier: 'M' })
+  // Narrower tiers than the column: its widest, in the middle.
+  const small: Shape = { tiers: { S: [8, 4], M: [12, 8] } }
+  const [r] = stack([{ id: 'small', w: 8, h: 4 }], { small }, 19)
+  expect(r).toMatchObject({ x: 3, w: 12 })
+  // Every page on the stack is inside the column.
+  for (const one of stack([{ id: 'chat', w: 40, h: 20 }, { id: 'task', w: 18, h: 12 }, { id: 'voice', w: 4, h: 4 }], shapes, 19)) {
+    expect(one.x).toBeGreaterThanOrEqual(0)
+    expect(one.x + one.w).toBeLessThanOrEqual(19)
+  }
+})
+
+test('a page a dot narrower than a tier still gets that tier when it is tall enough; two dots short does not', () => {
+  // Chat as core declares it (pages.ts): M is 18 wide. A full-height Chat at 17 is not S.
+  const coreChat: Shape = { tiers: { S: [14, 8], M: [18, 14], L: [34, 16] }, scale: { min: [14, 8] } }
+  expect(tierFor(coreChat, 17, 30)).toBe('M')
+  expect(tierFor(coreChat, 16, 30)).toBe('S')
+  expect(tierFor(coreChat, 33, 30)).toBe('L')
+  // Height is never relaxed: M's content needs its fourteen rows.
+  expect(tierFor(coreChat, 30, 13)).toBe('S')
+  // And a grip that takes it a dot under M leaves it at M.
+  const placed: Placed[] = [
+    { id: 'left', x: 0, y: 0, w: 10, h: 30, fitted: false },
+    { id: 'chat', x: 11, y: 0, w: 18, h: 30, tier: 'M', fitted: false },
+  ]
+  const r = dragGuide(placed, { chat: coreChat }, [10, 29], 0, 1, 60)
+  expect(r.placed.find((p) => p.id === 'chat')).toMatchObject({ w: 17, tier: 'M' })
 })
 
 test('pin writes every page’s drawn spot back as its anchor', () => {
