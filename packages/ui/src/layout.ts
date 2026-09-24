@@ -21,8 +21,9 @@
  * - **A page you placed stays where you put it.** It is laid down first, at its own spot, and
  *   everything that was never placed flows into the gaps around it.
  * - **A page that does not fit is made to fit rather than cut.** One that scales narrows; one
- *   with fixed sizes steps down a size. The layout that was saved is not touched: when the
- *   window grows back, so does the page.
+ *   with fixed sizes steps down a size. The same for height: the board does not scroll, so
+ *   pages too tall for the window together shrink until they fit. The layout that was saved is
+ *   not touched: when the window grows back, so does the page.
  */
 
 /** Pixels between two dots. */
@@ -149,8 +150,8 @@ export function limits(shape: Shape): { minW: number; maxW: number; minH: number
  *
  * Within its own limits first — a saved size from an older version of the page can be outside
  * them. Then within the board: a scaling page narrows to the board, a tiered one drops to the
- * biggest tier that is narrow enough. Height is only ever clamped for a scaling page, because
- * the board scrolls and a tiered page's height is part of what its content was drawn for.
+ * biggest tier that is narrow enough. Height is only ever clamped here for a scaling page taller
+ * than the whole board; fitting the pages together into the window's height is {@link squeeze}.
  */
 export function fit(shape: Shape, want: Wanted, cols: number, rows: number): { w: number; h: number; fitted: boolean } {
   const lim = limits(shape)
@@ -198,7 +199,9 @@ function firstFree(placed: readonly Placed[], w: number, h: number, cols: number
 
 /**
  * Lay every page down: the ones somebody placed first, at their spot (pulled in from the right
- * edge, and up from the bottom, when the window is smaller than when they were placed), then
+ * edge when the window is narrower than when they were placed — never up from the bottom: a
+ * page pulled up runs into the one above it and is thrown into another column, and a window
+ * that is too short is {@link squeeze}'s to fix, by shrinking and keeping every column), then
  * the rest into the first gap that fits. Order is kept within each group.
  */
 export function pack(pages: readonly Wanted[], shapes: Readonly<Record<string, Shape>>, cols: number, rows: number): Placed[] {
@@ -210,7 +213,7 @@ export function pack(pages: readonly Wanted[], shapes: Readonly<Record<string, S
     let at: { x: number; y: number } | undefined
     if (want.anchor) {
       const x = Math.min(Math.max(0, want.anchor.x), Math.max(0, cols - w))
-      const y = Math.max(0, Math.min(want.anchor.y, rows - h))
+      const y = Math.max(0, want.anchor.y)
       if (fits(placed, x, y, w, h, cols)) at = { x, y }
     }
     at ??= firstFree(placed, w, h, cols, rows)
@@ -241,16 +244,104 @@ export function stack(pages: readonly Wanted[], shapes: Readonly<Record<string, 
   })
 }
 
-/** Draw the layout in a window of this size: packed, or stacked when the window is narrow. */
+/**
+ * The window is shorter than the pages: make them fit it rather than scroll.
+ *
+ * Every page keeps its column and its order top to bottom, and moves up until it sits one
+ * gutter under whatever is above it. Then, while the lowest page still runs past the bottom,
+ * the page with the most room to give on the stack that ends lowest gives one dot — a page
+ * that scales loses a dot of height, a tiered one steps down to its next shorter tier. A page
+ * never goes below its smallest size; when every page on that stack is already there, this is
+ * as short as the board gets and what is left over is the board's to scroll.
+ *
+ * Nothing here is saved by itself: when the window grows back, so do the pages. Once somebody
+ * moves or resizes a page, the board is saved as it is drawn — squeezed sizes included —
+ * because the spots they chose were chosen against those sizes.
+ */
+export function squeeze(placed: readonly Placed[], shapes: Readonly<Record<string, Shape>>, rows: number): Placed[] {
+  const bottom = (ps: readonly Placed[]): number => Math.max(0, ...ps.map((p) => p.y + p.h))
+  if (bottom(placed) <= rows) return [...placed]
+  // Top to bottom. Two pages that share a column were never side by side, so the one that was
+  // higher stays higher; the columns are the original widths, which a smaller tier only narrows.
+  const now = [...placed].sort((a, b) => a.y - b.y || a.x - b.x).map((p) => ({ ...p }))
+  const above = now.map((p, i) => now.slice(0, i).filter((q) => p.x < q.x + q.w + 1 && p.x + p.w + 1 > q.x))
+  const lift = (): void => {
+    for (const [i, p] of now.entries()) p.y = Math.max(0, ...above[i]!.map((q) => q.y + q.h + 1))
+  }
+  /** How far a page could still shrink, and the size it goes to next. */
+  const smaller = (p: Placed): { room: number; h: number; w: number } | undefined => {
+    const shape = shapes[p.id] ?? {}
+    if (shape.fixed) return undefined
+    const lim = limits(shape)
+    if (shape.scale) return p.h > lim.minH ? { room: p.h - lim.minH, h: p.h - 1, w: p.w } : undefined
+    const shorter = tiersOf(shape)
+      .map((t) => shape.tiers![t]!)
+      .filter(([tw, th]) => th < p.h && tw <= p.w)
+      .sort((a, b) => b[1] - a[1])[0]
+    return shorter ? { room: p.h - lim.minH, h: shorter[1], w: shorter[0] } : undefined
+  }
+  lift()
+  while (bottom(now) > rows) {
+    // Every page on a stack that ends lowest: the lowest pages, and whatever each sits right under.
+    const low = bottom(now)
+    const critical = new Set(now.filter((p) => p.y + p.h === low))
+    for (const p of critical) {
+      for (const q of above[now.indexOf(p)]!) if (q.y + q.h + 1 === p.y) critical.add(q)
+    }
+    let best: { p: Placed; to: { room: number; h: number; w: number } } | undefined
+    for (const p of critical) {
+      const to = smaller(p)
+      if (to && (!best || to.room > best.to.room)) best = { p, to }
+    }
+    if (!best) break
+    best.p.h = best.to.h
+    best.p.w = best.to.w
+    best.p.fitted = true
+    lift()
+  }
+  const index = new Map(placed.map((p, i) => [p.id, i]))
+  return now
+    .map((p) => ({ ...p, tier: tierFor(shapes[p.id] ?? {}, p.w, p.h) }))
+    .sort((a, b) => index.get(a.id)! - index.get(b.id)!)
+}
+
+/** The most spare dots under the pages that {@link fill} takes up. More than this was left empty on purpose. */
+export const FILL_ROWS = 3
+
+/**
+ * The window is a little taller than the pages: the ones that reach the lowest line stretch
+ * down to the bottom of the board, so the margin under them is the same as the one above.
+ *
+ * A layout arranged in one window and drawn in a slightly taller one otherwise ends a dot or
+ * two short, and the spare dots all go under it — a gap at the bottom that is not at the top.
+ * Only a few dots ({@link FILL_ROWS}); a bigger gap is somebody's, and is left alone. Only the
+ * pages on the lowest line, and only those that scale: a short page higher up keeps its size.
+ */
+export function fill(placed: readonly Placed[], shapes: Readonly<Record<string, Shape>>, rows: number): Placed[] {
+  const low = Math.max(0, ...placed.map((p) => p.y + p.h))
+  if (placed.length === 0 || low >= rows || rows - low > FILL_ROWS) return [...placed]
+  return placed.map((p) => {
+    const shape = shapes[p.id] ?? {}
+    if (p.y + p.h !== low || !shape.scale || shape.fixed) return p
+    const h = Math.min(rows - p.y, limits(shape).maxH)
+    return h > p.h ? { ...p, h, tier: tierFor(shape, p.w, h) } : p
+  })
+}
+
+/**
+ * Draw the layout in a window of this size: packed, or stacked when the window is narrow, and
+ * fitted to the window's height either way — squeezed when it is too tall, filled when it is a
+ * few dots short.
+ */
 export function arrange(layout: Layout, shapes: Readonly<Record<string, Shape>>, g: Grid): Placed[] {
-  if (g.compact) return stack(layout.pages, shapes, g.cols)
-  return pack(rescale(layout, g.cols).pages, shapes, g.cols, g.rows)
+  const placed = g.compact ? stack(layout.pages, shapes, g.cols) : pack(rescale(layout, g.cols).pages, shapes, g.cols, g.rows)
+  return fill(squeeze(placed, shapes, g.rows), shapes, g.rows)
 }
 
 /**
  * The same arrangement for a board of a different width: positions, widths and the guides
- * scale in proportion and round to whole dots. Heights do not change — the window's height is
- * a scroll, not a squeeze.
+ * scale in proportion and round to whole dots. Heights do not change here — the window's height
+ * is {@link squeeze}'s, at draw time, and never saved.
  */
 export function rescale(layout: Layout, cols: number): Layout {
   if (layout.cols === cols || layout.cols <= 0) return { ...layout, cols }

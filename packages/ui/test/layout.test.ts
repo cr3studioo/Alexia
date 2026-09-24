@@ -4,6 +4,8 @@ import {
   arrange,
   COMPACT_BELOW,
   dragGuide,
+  fill,
+  FILL_ROWS,
   fit,
   fits,
   grid,
@@ -17,6 +19,7 @@ import {
   rescale,
   type Shape,
   SP,
+  squeeze,
   stack,
   tierFor,
 } from '../src/layout.js'
@@ -293,4 +296,89 @@ test('a page not touching the guide does not move, and nothing is pushed into it
 test('the two grips never cross', () => {
   const r = dragGuide([], shapes, [20, 24], 0, 10, 65)
   expect(r.guides[0]).toBeLessThan(r.guides[1] - 1)
+})
+
+test('a board taller than the window is squeezed to fit it, and not scrolled', () => {
+  const tall: Shape = { scale: { min: [10, 4] } }
+  const tiered: Shape = { tiers: { S: [10, 3], M: [10, 8] } }
+  const all = { a: tall, b: tall, c: tiered, d: tall }
+  const pages: Placed[] = [
+    { id: 'a', x: 0, y: 0, w: 10, h: 12, fitted: false },
+    { id: 'b', x: 0, y: 13, w: 10, h: 12, fitted: false },
+    { id: 'c', x: 0, y: 26, w: 10, h: 8, tier: 'M', fitted: false },
+    { id: 'd', x: 11, y: 0, w: 10, h: 6, fitted: false },
+  ]
+  const out = squeeze(pages, all, 24)
+  expect(Math.max(...out.map((p) => p.y + p.h))).toBeLessThanOrEqual(24)
+  // Still one clear dot between any two, in the order they were.
+  for (const a of out) for (const b of out) if (a !== b) expect(overlaps(a, b)).toBe(false)
+  expect(out.map((p) => p.id)).toEqual(['a', 'b', 'c', 'd'])
+  expect(out[0]!.y < out[1]!.y && out[1]!.y < out[2]!.y).toBe(true)
+  // Only the stack that ran over gives anything; the page beside it is untouched.
+  expect(out[3]).toEqual(pages[3])
+  expect(out.slice(0, 3).every((p) => p.fitted)).toBe(true)
+})
+
+test('a board that fits is not touched, and one too short for every smallest size stops there', () => {
+  const tall: Shape = { scale: { min: [10, 4] } }
+  const pages: Placed[] = [
+    { id: 'a', x: 0, y: 2, w: 10, h: 6, fitted: false },
+    { id: 'b', x: 0, y: 10, w: 10, h: 6, fitted: false },
+  ]
+  expect(squeeze(pages, { a: tall, b: tall }, 20)).toEqual(pages)
+  const out = squeeze(pages, { a: tall, b: tall }, 5)
+  expect(out.map((p) => [p.y, p.h])).toEqual([
+    [0, 4],
+    [5, 4],
+  ])
+})
+
+test('moving one page on a squeezed board leaves the page under the squeezed one where it is', () => {
+  const tall: Shape = { scale: { min: [4, 4] } }
+  const all = { a: tall, b: tall, c: tall, r: tall }
+  const layout: Layout = {
+    v: 1,
+    cols: 40,
+    guides: [10, 25],
+    // Arranged in a taller window: `c` under `a`. In this shorter one `a` is squeezed to keep
+    // `c` in view, and the right column has room — which is where `c` would be thrown if `a`
+    // were saved back at its full height and ran into it.
+    pages: [
+      { id: 'a', w: 10, h: 13, anchor: { x: 0, y: 0 } },
+      { id: 'b', w: 14, h: 20, anchor: { x: 11, y: 0 } },
+      { id: 'c', w: 10, h: 6, anchor: { x: 0, y: 14 } },
+      { id: 'r', w: 14, h: 6, anchor: { x: 26, y: 0 } },
+    ],
+  }
+  const g = grid(40 * SP + 2 * MARGIN, 16 * SP + 2 * MARGIN)
+  const drawn = arrange(layout, all, g)
+  const c = drawn.find((p) => p.id === 'c')!
+  expect(c.x).toBe(0)
+  // Move `r` down its column, settled the way board.ts does it: every page pinned at its
+  // drawn spot and saved at its drawn size.
+  const moved = drawn.map((p) => (p.id === 'r' ? { ...p, y: 8 } : p))
+  const saved = pin(layout, moved)
+  saved.pages = saved.pages.map((p) => {
+    const q = moved.find((m) => m.id === p.id)!
+    return { ...p, w: q.w, h: q.h }
+  })
+  const after = arrange(saved, all, g)
+  expect(after.find((p) => p.id === 'r')).toMatchObject({ x: 26, y: 8 })
+  expect(after.find((p) => p.id === 'c')).toMatchObject({ x: c.x, y: c.y, h: c.h })
+})
+
+test('a board a few dots shorter than the window fills it; a bigger gap is left alone', () => {
+  const tall: Shape = { scale: { min: [4, 4] } }
+  const task: Shape = { tiers: { S: [10, 3], M: [13, 8] } }
+  const all = { a: tall, b: tall, c: tall, t: task }
+  const pages: Placed[] = [
+    { id: 'a', x: 0, y: 0, w: 10, h: 33, fitted: false },
+    { id: 'b', x: 11, y: 0, w: 10, h: 10, fitted: false },
+    { id: 'c', x: 11, y: 11, w: 10, h: 22, fitted: false },
+    { id: 't', x: 22, y: 25, w: 13, h: 8, tier: 'M', fitted: false },
+  ]
+  const out = fill(pages, all, 34)
+  // The pages on the lowest line reach the bottom; one higher up and one with set sizes do not.
+  expect(out.map((p) => p.h)).toEqual([34, 10, 23, 8])
+  expect(fill(pages, all, 33 + FILL_ROWS + 1)).toEqual(pages)
 })

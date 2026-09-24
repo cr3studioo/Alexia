@@ -122,14 +122,6 @@
             <div id="rail-plugins" hidden></div>
           </div>
 
-          <div class="rail-foot">
-            <button id="open-control" class="quiet-button" type="button" title="What Alexia has been doing, and what it knows">
-              Activity
-            </button>
-            <button id="open-settings" class="quiet-button" type="button" title="What was asked at first run, plugins, and the skills installed">
-              Settings
-            </button>
-          </div>
         </aside>
 
         <!-- Chat, which can be taken off the board: for somebody who talks to Alexia from a
@@ -456,12 +448,30 @@
         </section>
     </div>
 
-    <!-- The way into edit view: rest the pointer in the bottom-left corner and a pill slides
-         out. Also reachable with Tab, and from the palette as "Edit layout" — a button that
-         exists only on hover is a button only its author can find. -->
+    <!-- The dock: Activity, Settings and Edit layout, as bookmark tabs in the bottom-left corner.
+         Each one is a square with its icon, tucked into the margin beside the board so it covers
+         no page; rest the pointer on them, or Tab to one, and they slide out with their names.
+         Edit layout is also in the palette — a button that exists only on hover is a button
+         only its author can find, so these are always drawn, only small. The icons are
+         Lucide's (lucide.dev, ISC): activity, settings and layout-dashboard. -->
     <div id="corner">
-      <div class="edit-pill panel" role="toolbar" aria-label="Layout"></div>
+      <nav class="dock" aria-label="Alexia">
+        <button id="open-control" class="dock-tab panel" type="button" title="What Alexia has been doing, and what it knows">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2"></path></svg>
+          <span class="dock-label">Activity</span>
+        </button>
+        <button id="open-settings" class="dock-tab panel" type="button" title="What was asked at first run, plugins, and the skills installed">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"></path><circle cx="12" cy="12" r="3"></circle></svg>
+          <span class="dock-label">Settings</span>
+        </button>
+        <button id="edit-tab" class="dock-tab panel" type="button" aria-pressed="false" title="Move, resize, add and remove pages">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="7" height="9" x="3" y="3" rx="1"></rect><rect width="7" height="5" x="14" y="3" rx="1"></rect><rect width="7" height="9" x="14" y="12" rx="1"></rect><rect width="7" height="5" x="3" y="16" rx="1"></rect></svg>
+          <span class="dock-label">Edit layout</span>
+        </button>
+      </nav>
     </div>
+    <!-- Edit view's own bar: Add page · Reset · Done. Only there while editing. -->
+    <div class="edit-pill panel" role="toolbar" aria-label="Layout" hidden></div>
     <div id="add-menu" class="add-menu panel" hidden></div>
     <p id="board-note" class="board-note panel" role="status" aria-live="polite" hidden></p>
 

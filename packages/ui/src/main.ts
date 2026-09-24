@@ -14,6 +14,7 @@
 import { escapeTakes, mountBoard } from './board.js'
 import type { Layout } from './layout.js'
 import { drawPrice } from './pages.js'
+import { genieIn, genieOut, stopGenie } from './genie.js'
 import { autostart, dismiss, HOTKEY, inApp, installUpdate, setAutostart, tray, updateAvailable } from './desktop.js'
 import { mountControl } from './control.js'
 import { mountPalette } from './palette.js'
@@ -758,7 +759,42 @@ function called(name: string): void {
  * whose `hidden` flags have to agree — and the one thing this shell must never do is show the
  * composer and first run at once, inviting a question it cannot answer yet.
  */
+let showing = 0
+
 function show(view: 'first-run' | 'chat' | 'settings' | 'control'): void {
+  // A genie still playing is finished first, and a close still waiting to change the view is
+  // overtaken: the last thing asked for is what is on screen.
+  const mine = ++showing
+  stopGenie()
+  const was = document.body.dataset.view
+  const sheet = document.querySelector<HTMLElement>('#sheet')!
+  const tab = (of: string | undefined): HTMLElement | null =>
+    document.querySelector<HTMLElement>(of === 'control' ? '#open-control' : '#open-settings')
+  const inSheet = (one: string | undefined): boolean => one === 'settings' || one === 'control'
+  // Settings and Activity come out of their tab in the dock and go back into it (genie.ts).
+  // Closing keeps the sheet laid out until the picture of it has gone in: the view is what lays
+  // it out, and it is the view that takes it away afterwards.
+  if (inSheet(was) && view === 'chat') {
+    const into = tab(was)
+    if (into) {
+      void genieIn(was!, sheet, into).then(() => {
+        if (showing === mine) document.body.dataset.view = view
+      })
+      return
+    }
+  }
+  if (inSheet(view) && !inSheet(was)) {
+    const from = tab(view)
+    if (from) {
+      // The view changes when the genie is ready to play, a moment later the first time.
+      genieOut(view, sheet, from, () => {
+        if (showing !== mine) return false
+        document.body.dataset.view = view
+        return true
+      })
+      return
+    }
+  }
   document.body.dataset.view = view
 }
 

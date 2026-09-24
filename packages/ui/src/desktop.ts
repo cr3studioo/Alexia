@@ -103,6 +103,22 @@ export async function temps(): Promise<Temps | undefined> {
   }
 }
 
+/**
+ * A picture of a rectangle of this page, from the shell (`sheet_snapshot`), for the genie.
+ * `undefined` in a browser, on an older shell, away from a Mac, and when it takes too long —
+ * all of which mean *no effect this time*.
+ */
+export async function snapshot(box: { left: number; top: number; width: number; height: number }): Promise<ImageBitmap | undefined> {
+  const invoke = bridge()?.invoke
+  if (!invoke) return undefined
+  try {
+    const bytes = (await invoke('sheet_snapshot', { x: box.left, y: box.top, width: box.width, height: box.height })) as ArrayBuffer
+    return await createImageBitmap(new Blob([bytes], { type: 'image/jpeg' }))
+  } catch {
+    return undefined
+  }
+}
+
 export function setAutostart(on: boolean): void {
   call(on ? 'plugin:autostart|enable' : 'plugin:autostart|disable')
 }

@@ -7,7 +7,7 @@ fn main() {
     // could not restart itself. `capabilities/default.json` grants each one.
     tauri_build::try_build(
         tauri_build::Attributes::new()
-            .app_manifest(tauri_build::AppManifest::new().commands(&["tray_state", "hide_overlay", "relaunch", "system_temps"])),
+            .app_manifest(tauri_build::AppManifest::new().commands(&["tray_state", "hide_overlay", "relaunch", "system_temps", "sheet_snapshot"])),
     )
     .expect("tauri-build");
 }

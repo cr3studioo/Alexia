@@ -159,8 +159,9 @@ export function mountRail(root: HTMLElement, token: string, options: RailOptions
   })
 
   root.querySelector<HTMLButtonElement>('#find')!.addEventListener('click', () => options.openPalette())
-  root.querySelector<HTMLButtonElement>('#open-control')!.addEventListener('click', () => options.openControl())
-  root.querySelector<HTMLButtonElement>('#open-settings')!.addEventListener('click', () => options.openSettings())
+  // In the dock in the bottom-left corner, not in this page: they are there whatever is on the board.
+  document.querySelector<HTMLButtonElement>('#open-control')!.addEventListener('click', () => options.openControl())
+  document.querySelector<HTMLButtonElement>('#open-settings')!.addEventListener('click', () => options.openSettings())
 
   // ---- which model ------------------------------------------------------------------------
 
