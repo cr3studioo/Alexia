@@ -4,7 +4,7 @@
   "id": "computer",
   "name": "Computer control",
   "summary": "Lets Alexia see what is on screen, press things, move the mouse and type. Anything a person at this keyboard could do.",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "license": "AGPL-3.0-only",
   "entry": {
     "run": "node",
@@ -12,7 +12,7 @@
       "index.js"
     ]
   },
-  "alexia_protocol": 3,
+  "alexia_protocol": 7,
   "mcp_protocol": "2025-11-25",
   "requires": [
     {
@@ -30,6 +30,10 @@
     {
       "cap": "fs.own_dir",
       "why": "To put the screenshots somewhere. They are deleted when you delete this plugin."
+    },
+    {
+      "cap": "net.request",
+      "why": "Only when TypeSafe Jev decides: to send your goal and the names of the controls on screen to api.typesafe.ai."
     }
   ],
   "provides": [
@@ -43,6 +47,23 @@
       "label": "Allow it to press things, move the mouse and type",
       "default": false,
       "hint": "Off means it can look but not touch — no pressing, no pointer, no keyboard. Looking still works, and it is the useful half most of the time. Turn this on only while you are watching."
+    },
+    {
+      "type": "choice",
+      "key": "decider",
+      "label": "Who decides each step",
+      "default": "model",
+      "hint": "Alexia's model is how it has always worked: the chat model reads the screen and chooses every step itself. Jev is a separate, much faster model that only chooses — the next control from the list on screen, with how sure it is — and stops and hands back when it is not sure. The words it types still come from Alexia's model.",
+      "options": [
+        { "value": "model", "label": "Alexia's model", "hint": "The chat model drives, one turn per step. Nothing new to sign up for." },
+        { "value": "jev", "label": "TypeSafe Jev", "hint": "Needs a TypeSafe key. Each step sends your goal and the names of the controls in the window to TypeSafe, and costs a fraction of a cent." }
+      ]
+    },
+    {
+      "type": "password",
+      "key": "typesafe_key",
+      "label": "TypeSafe key",
+      "hint": "Only used when Jev decides. From console.typesafe.ai. It goes to this machine's credential store, never to the database."
     },
     {
       "type": "number",

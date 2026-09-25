@@ -4,6 +4,8 @@ import { readdirSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { check, free, MAX_STEPS, replay, STEPS } from './replay.js'
 import { desktop } from './desktop.js'
+import { askJev, readText, textPrompt } from './decide.js'
+import { runTask } from './task.js'
 
 /**
  * Computer control (M4-2) — the reason the permission model exists.
@@ -62,11 +64,12 @@ const noted = (what, detail, step) =>
     .catch(() => {})
 
 async function report() {
-  const { allow_input: allow } = await settings()
+  const { allow_input: allow, decider } = await settings()
+  const who = decider === 'jev' ? ' · Jev chooses the steps' : ''
   const state =
     !desktop.supported() ? `▲ Not available on ${process.platform} yet`
-    : allow === true ? '▲ Can move the mouse and type'
-    : '● Looking only'
+    : allow === true ? `▲ Can move the mouse and type${who}`
+    : `● Looking only${who}`
   await alexia.status('state', state).catch(() => {})
 }
 
@@ -497,6 +500,103 @@ alexia.tool(
 )
 
 /**
+ * **Computer use v2: a whole goal, with a fast decider choosing each step.**
+ *
+ * The switch in settings says who decides. *Alexia's model* is version 1 exactly: this tool
+ * is switched off and the chat model drives with `elements` and `press`, a turn per step.
+ * *TypeSafe Jev* turns it on, and each step becomes one call to a model that chooses a control
+ * from the list rather than writing about it (`decide.js`). A local Laya is the third position,
+ * to come; it slots into the same `decide` call.
+ *
+ * What stays the same whichever decides: the input toggle gates every action, every action
+ * lands in the log (so *save what just happened as a plan* works after a Jev run too), and the
+ * words typed into a field always come from Alexia's own model — Jev chooses, it never writes.
+ */
+const task = alexia.tool(
+  'run_task',
+  {
+    description:
+      'Carry out a whole goal on screen — “turn on Bluetooth”, “save this as report.txt” — with ' +
+      'a fast decision model choosing each step from the controls in the window. Give the goal ' +
+      'in one sentence, and the window by process id from the windows tool when it is not the ' +
+      'one in front. It stops and hands back when it is unsure, with what is on screen, so the ' +
+      'step can be finished with elements and press.',
+    inputSchema: fromJsonSchema({
+      type: 'object',
+      properties: {
+        goal: { type: 'string', description: 'What should be true when it is finished, in one sentence.' },
+        pid: targeting.pid,
+      },
+      required: ['goal'],
+    }),
+    annotations: { destructiveHint: true, openWorldHint: true },
+  },
+  async ({ goal, pid }, ctx) => {
+    if (!desktop.supported()) return unsupported()
+    const wanted = String(goal ?? '').trim()
+    if (wanted === '') return refuse('A task needs a goal.')
+    const { decider, typesafe_key: key } = await settings()
+    if (decider !== 'jev') return refuse('The decider is set to Alexia’s model, so drive this step by step with elements and press.')
+    if (typeof key !== 'string' || key.trim() === '') {
+      return refuse('Jev is chosen as the decider but there is no TypeSafe key. Add one in Computer control’s settings, or switch the decider back to Alexia’s model.')
+    }
+    const signal = ctx?.mcpReq?.signal
+    const window = where({ pid })
+    let done
+    try {
+      await mayTouch()
+      if (window.pid) await desktop.focus(window.pid, signal)
+      done = await runTask(wanted, {
+        look: () => desktop.elements({ ...window, limit: 200 }, signal),
+        decide: (body) => askJev({ key: key.trim(), body, signal }),
+        press: (row) => desktop.invoke({ ...window, match: row.name }, signal),
+        click: (row) => desktop.click(row.x, row.y, 'left', false, signal),
+        type: (text) => desktop.type(text, signal),
+        write: async (asked) => {
+          const answer = await alexia.server.server.createMessage({
+            messages: [{ role: 'user', content: { type: 'text', text: textPrompt(asked) } }],
+            maxTokens: 600,
+          })
+          return readText(answer.content?.type === 'text' ? answer.content.text : '')
+        },
+        // In the shape a plan holds, so save_plan can keep a Jev run and replay it for free.
+        note: (step) =>
+          noted(
+            step.how ?? step.operation.toLowerCase(),
+            step.name ?? '',
+            step.how === 'press' ? { do: 'press', match: step.name, ...window }
+            : step.how === 'click' ? { do: 'click', x: step.x, y: step.y }
+            : step.how === 'type' ? { do: 'type', text: step.text }
+            : { do: 'wait', ms: 500 },
+          ),
+        onStep: (n, what) => {
+          alexia.progress(ctx, n, undefined, `Jev: ${what}`)
+          void alexia.status('state', `▲ Driving — step ${String(n)}: ${what}`).catch(() => {})
+        },
+      }, { signal })
+    } catch (error) {
+      return refuse(error.message)
+    } finally {
+      await report()
+    }
+    const did = done.steps.map((step, n) => `${String(n + 1)}. ${step.operation === 'TYPE' ? `typed into “${String(step.name)}”` : step.operation === 'PRESS' ? `pressed “${String(step.name)}”` : 'waited'} (${String(Math.round(step.sure * 100))}% sure)`)
+    const onScreen = done.rows ? `\n\nOn screen now:\n${done.rows.map((row) => `${row.name}  [${row.type}]  ${String(row.x)},${String(row.y)}`).join('\n')}` : ''
+    const weighing = done.decision?.alternatives ? `\nIt was weighing: ${done.decision.alternatives.map((one) => `“${one.name}” ${String(Math.round(one.p * 100))}%`).join(', ')}.` : ''
+    return {
+      content: [
+        {
+          type: 'text',
+          text: `${did.length > 0 ? `${did.join('\n')}\n\n` : ''}${done.said}${done.outcome === 'handback' ? ' Take it from here with elements and press.' : ''}${weighing}${onScreen}`,
+        },
+      ],
+      structuredContent: { outcome: done.outcome, steps: done.steps.length },
+    }
+  },
+)
+// Hidden until the switch says Jev, so a fresh install lists exactly the tools version 1 did.
+task.disable()
+
+/**
  * The runtime half of `provides`. Seeing is answerable wherever this runs; controlling is
  * answerable only when the user turned it on — so the two go on and off separately, and a
  * caller asking for `computer.control` while it is off gets `-32050` rather than a refusal
@@ -507,6 +607,10 @@ async function bind() {
   const here = desktop.supported()
   shot.update({ _meta: here ? { 'alexia/provides': ['computer.screenshot'] } : {} })
   controller.update({ _meta: here && allow === true ? { 'alexia/provides': ['computer.control'] } : {} })
+  // The switch. Alexia's model is version 1 exactly, so the tool is not even offered.
+  const { decider } = await settings()
+  if (decider === 'jev') task.enable()
+  else task.disable()
   await report()
 }
 
@@ -748,6 +852,6 @@ await alexia.start()
 own = (await alexia.host()).paths.ownDir
 await bind()
 alexia.onSettingsChanged((changed) => {
-  if ('allow_input' in changed) void bind()
+  if ('allow_input' in changed || 'decider' in changed) void bind()
 })
 log.info(`${alexia.manifest.name} is ready`)
