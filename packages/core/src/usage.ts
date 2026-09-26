@@ -49,6 +49,13 @@ export interface Caps {
    * asked about. Turning it on asks for the daily amount, so there is still one money setting.
    */
   cross?: boolean
+  /**
+   * **Every money limit lifted until this moment** (D206), as epoch milliseconds: the next local
+   * midnight, set by *No limit today* on a limit pause. Never a permanent change — past it the
+   * monthly budget and the daily amount are what they were, and nothing has to remember to put
+   * them back.
+   */
+  liftedUntil?: number
 }
 
 /**
@@ -96,6 +103,12 @@ export interface Allowance {
   warn: boolean
   /** The hard stop is on and the cap is reached: paid models are off the table. */
   stop: boolean
+  /**
+   * **Dollars left before the hard stop** (D206), when one is on and not lifted for today. `send()`
+   * holds each paid rung's worst case to it as it does the day's (D186), so the budget is a limit
+   * and not a line found crossed after the reply.
+   */
+  room?: number
 }
 
 /**
@@ -121,16 +134,41 @@ export const monthStart = (at: number): number => {
   return new Date(now.getFullYear(), now.getMonth(), 1).getTime()
 }
 
+/**
+ * The first moment of this Mac's next day — local midnight, which is not always 24 hours away:
+ * the day the clocks change is 23 or 25. See {@link dayStart}.
+ */
+export const nextDay = (at: number): number => {
+  const now = new Date(at)
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).getTime()
+}
+
+/** Whether *No limit today* is in force (D206). Read against the clock, so midnight ends it by itself. */
+export const lifted = (store: Store, at: number = Date.now()): boolean => (caps(store).liftedUntil ?? 0) > at
+
+/** ***No limit today*** (D206): the monthly budget and the daily amount, lifted until local midnight. */
+export const liftToday = (store: Store, at: number = Date.now()): void => setCaps(store, { ...caps(store), liftedUntil: nextDay(at) })
+
+/** Settings > Safety's *Undo*: the limits back now rather than at midnight. */
+export function unlift(store: Store): void {
+  const next: Caps = { ...caps(store) }
+  delete next.liftedUntil
+  setCaps(store, next)
+}
+
 /** Where the month stands: this Mac's calendar month, on the same clock as the day. */
 export function allowance(store: Store, at: number = Date.now()): Allowance {
   const spent = store.spend(monthStart(at))
   const { monthly, warnAt, hardStop } = caps(store)
   if (monthly === undefined) return { spent, warn: false, stop: false }
+  // Lifted for today, the budget still warns and no longer stops (D206).
+  const holds = hardStop === true && !lifted(store, at)
   return {
     spent,
     cap: monthly,
     warn: spent >= (warnAt ?? monthly * 0.8),
-    stop: hardStop === true && spent >= monthly,
+    stop: holds && spent >= monthly,
+    ...(holds && { room: Math.max(0, monthly - spent) }),
   }
 }
 
@@ -138,6 +176,8 @@ export function allowance(store: Store, at: number = Date.now()): Allowance {
 export interface Today {
   spent: number
   allowance: number
+  /** *No limit today* is in force (D206): the allowance is shown as it is and does not stop anything. */
+  lifted?: true
 }
 
 /**
@@ -148,6 +188,7 @@ export function today(store: Store, at: number = Date.now()): Today {
   return {
     spent: store.spend(dayStart(at)),
     allowance: caps(store).daily ?? DAILY_DEFAULT,
+    ...(lifted(store, at) && { lifted: true as const }),
   }
 }
 
@@ -159,10 +200,25 @@ export function today(store: Store, at: number = Date.now()): Today {
  * other rung failure is free and this is the only step that cannot be taken back.
  */
 export const affordable = (today: Today | undefined): boolean =>
-  today !== undefined && today.spent < today.allowance
+  today !== undefined && (today.lifted === true || today.spent < today.allowance)
 
 /** Money, as it is written everywhere it is shown. One place, so two screens cannot disagree. */
 export const dollars = (n: number): string => `$${n.toFixed(2)}`
+
+/** **A spending limit, reached** (D206): which one, and the amount it was set to. */
+export interface Limit {
+  kind: 'monthly' | 'daily'
+  amount: number
+}
+
+/** The one sentence a limit pause says, beside its three choices. */
+export const limitSays = ({ kind, amount }: Limit): string =>
+  kind === 'monthly' ?
+    `You've reached your ${dollars(amount)} monthly budget, so Alexia stopped before spending more.`
+  : `You've reached today's ${dollars(amount)} for paid models, so Alexia stopped before spending more.`
+
+/** What *Raise the limit* offers first: double, and at least a dollar more — a step, not a blank cheque. */
+export const raiseTo = (amount: number): number => Math.round(Math.max(amount * 2, amount + 1) * 100) / 100
 
 /** The line to show when the month is getting expensive. Nothing when it is not. */
 export function warning(allowance: Allowance): string | undefined {

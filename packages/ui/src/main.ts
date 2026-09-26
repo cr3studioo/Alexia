@@ -1566,6 +1566,8 @@ interface Limits {
   steps: number
   askAbove: number
   monthly?: number
+  /** *No limit today* is on until this moment (D206), from a limit pause. */
+  liftedUntil?: number
 }
 
 /**
@@ -1579,15 +1581,18 @@ function showLimits(limits: State['ceilings']): void {
   const monthly = document.querySelector<HTMLInputElement>('#monthly-setting')
   const said = document.querySelector<HTMLElement>('#limits-said')
   if (!steps || !above || !monthly || !said || limits === undefined) return
+  const lifted = document.querySelector<HTMLElement>('#lifted-said')
   const fill = (now: Limits): void => {
     steps.value = String(now.steps)
     above.value = String(now.askAbove)
     monthly.value = now.monthly === undefined ? '' : String(now.monthly)
+    // *Budget lifted for today*, while it is (D206) — with *Undo*, since it was one press away.
+    if (lifted) lifted.hidden = now.liftedUntil === undefined || now.liftedUntil <= Date.now()
   }
   fill(limits)
   if (steps.dataset.wired === 'true') return
   steps.dataset.wired = 'true'
-  const save = (body: { steps?: number; askAbove?: number; monthly?: number | null }): void => {
+  const save = (body: { steps?: number; askAbove?: number; monthly?: number | null; lift?: false }): void => {
     void fetch('/api/ceilings', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-alexia-token': token },
@@ -1600,6 +1605,7 @@ function showLimits(limits: State['ceilings']): void {
       })
       .catch(() => (said.textContent = 'That did not save. Alexia may not be running — try again in a moment.'))
   }
+  document.querySelector('#lifted-undo')?.addEventListener('click', () => save({ lift: false }))
   steps.addEventListener('change', () => {
     const n = Math.floor(Number(steps.value))
     if (!Number.isFinite(n) || n < 1) {
@@ -2127,10 +2133,8 @@ async function ask(question: string, files: File[] = []): Promise<void> {
  * Nothing new appears on the user's side, because nothing new was said — core asks the
  * question already in the conversation, from wherever the task stopped.
  */
-function again(automatic: boolean, allow?: { daily?: number }): Promise<void> {
-  return respond('choosing', undefined, () =>
-    Promise.resolve({ again: true, ...(automatic && { automatic }), ...(allow !== undefined && { allow }) }),
-  )
+function again(automatic: boolean, more: { allow?: { daily?: number }; free?: true } = {}): Promise<void> {
+  return respond('choosing', undefined, () => Promise.resolve({ again: true, ...(automatic && { automatic }), ...more }))
 }
 
 /**
@@ -2165,9 +2169,76 @@ function offerPaid(paused: HTMLElement, daily: number): void {
       return
     }
     buttons.remove()
-    running(() => again(false, typed === undefined ? {} : { daily: typed }))
+    running(() => again(false, { allow: typed === undefined ? {} : { daily: typed } }))
   })
   buttons.append(allow)
+  paused.append(buttons)
+  follow()
+}
+
+/** A spending limit reached (D206), as core offers it: which one, its amount, and where *Raise* starts. */
+interface Limit {
+  kind: 'monthly' | 'daily'
+  amount: number
+  raise: number
+}
+
+/**
+ * **A spending limit, reached** (D206): she stopped before spending more, and core's one sentence
+ * says which limit. Three ways on, each carrying on from where it stopped: *Raise the limit* to
+ * the amount in the box, saved as Settings saves it; *No limit today*, which lifts both limits
+ * until midnight and changes neither; and *Use free models*, for this chat only.
+ */
+function offerLimit(paused: HTMLElement, limit: Limit): void {
+  const buttons = document.createElement('div')
+  buttons.className = 'stop-offer'
+  const box = document.createElement('label')
+  box.className = 'pause-amount'
+  // A text box, as on Settings > Safety: WebKit drew number inputs in the Mac's locale.
+  const amount = document.createElement('input')
+  amount.type = 'text'
+  amount.inputMode = 'decimal'
+  amount.value = limit.raise.toFixed(2)
+  box.append('$', amount, limit.kind === 'monthly' ? ' a month' : ' a day')
+  const choice = (label: string): HTMLButtonElement => {
+    const one = document.createElement('button')
+    one.type = 'button'
+    one.textContent = label
+    return one
+  }
+  const raise = choice('Raise the limit')
+  const lift = choice('No limit today')
+  const free = choice('Use free models')
+  /** Saved first, then carried on — a limit that did not save would only pause again. */
+  const saveThen = (body: Record<string, unknown>): void => {
+    if (!idle()) return
+    void fetch('/api/ceilings', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-alexia-token': token },
+      body: JSON.stringify(body),
+    })
+      .then((answer) => {
+        if (!answer.ok) throw new Error(String(answer.status))
+        buttons.remove()
+        running(() => again(false, { allow: {} }))
+      })
+      .catch(() => say('That did not save. Alexia may not be running — try again in a moment.'))
+  }
+  raise.addEventListener('click', () => {
+    const n = dollarsOf(amount.value)
+    if (n === undefined || !(n > limit.amount)) {
+      say(`Type an amount above $${limit.amount.toFixed(2)}.`)
+      return
+    }
+    saveThen(limit.kind === 'monthly' ? { monthly: n } : { daily: n })
+  })
+  lift.addEventListener('click', () => saveThen({ lift: true }))
+  free.addEventListener('click', () => {
+    if (!idle()) return
+    buttons.remove()
+    running(() => again(false, { free: true }))
+  })
+  buttons.append(box, raise, lift, free)
   paused.append(buttons)
   follow()
 }
@@ -2314,7 +2385,10 @@ async function respond(
         status.stop()
         live.end('paused', event.paused)
         answer.remove()
-        offerPaid(bubble('refusal', event.paused), typeof event.daily === 'number' ? event.daily : 0)
+        const stopped = bubble('refusal', event.paused)
+        // A spending limit reached has its own three choices in place of *Allow* (D206).
+        if (typeof event.limit === 'object' && event.limit !== null) offerLimit(stopped, event.limit as Limit)
+        else offerPaid(stopped, typeof event.daily === 'number' ? event.daily : 0)
       }
       const done = event.done as
         | {

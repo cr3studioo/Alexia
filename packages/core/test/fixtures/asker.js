@@ -159,6 +159,16 @@ server.registerTool(
   },
 )
 
+// A limit pause's third button, pressed on the phone (D206).
+server.registerTool(
+  'answer_free',
+  { description: 'Answer the next question with Use free models.', annotations: { readOnlyHint: true } },
+  () => {
+    press = 'Use free models'
+    return text('will choose free models')
+  },
+)
+
 server.registerTool(
   'answer_no',
   { description: 'Answer the next question with No.', annotations: { readOnlyHint: true } },

@@ -75,6 +75,7 @@ import {
   type Choice,
   type Personality,
   type Phase,
+  type Pins,
   type Size,
   type Tier,
 } from './router.js'
@@ -94,7 +95,7 @@ import { PluginTooling } from './tooling.js'
 import { toolWords, Trace } from './trace.js'
 import { trial } from './trial.js'
 import { Uptime, watched } from './uptime.js'
-import { allowance, caps, costOf, setCaps, setMonthly, today, warning } from './usage.js'
+import { allowance, caps, costOf, liftToday, limitSays, raiseTo, setCaps, setMonthly, today, unlift, warning, type Limit } from './usage.js'
 
 /**
  * The chat shell's other half: a loopback bridge between a webview and core.
@@ -753,11 +754,13 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
    * caps, which is what {@link allowance} enforces — never from the ceilings, where an old
    * build saved it and nothing ever read it back.
    */
-  const limitsNow = (): Ceilings => {
+  const limitsNow = (): Ceilings & { liftedUntil?: number } => {
     const now: Ceilings = { ...ceilings(store) }
     delete now.monthly
-    const monthly = caps(store).monthly
-    return monthly === undefined ? now : { ...now, monthly }
+    const { monthly, liftedUntil } = caps(store)
+    // *No limit today*, while it lasts, so Settings > Safety can say so and offer *Undo* (D206).
+    const lifted = liftedUntil !== undefined && liftedUntil > Date.now() ? { liftedUntil } : {}
+    return monthly === undefined ? { ...now, ...lifted } : { ...now, monthly, ...lifted }
   }
 
   /** Every enabled plugin's manifest, which is where its commands come from (M1-12). */
@@ -783,6 +786,8 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
       // Asked fresh with the rest of it, and for the same reason: an allowance can run out
       // mid-sentence exactly the way a free tier can.
       today: today(store),
+      // And the month, for the same reason: a budget reached mid-task stops the next step (D206).
+      month: allowance(store),
       // What failed here in the last day, so a model that just timed out is not first again (D159).
       strikes: store.strikes(),
       // What Alexia thinks of each model, from 30 days of tries (D161). Judged on every ask, so a
@@ -1072,6 +1077,20 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
    * **The world a task in this conversation sees** (§4 H): everything `world()` gathers, and
    * whether paid may be crossed into by itself — the paid switch on, or *Allow* pressed here.
    */
+  /**
+   * **The conversations in which somebody pressed *Use free models* on a limit pause** (D206): the
+   * slider's *free only*, for that conversation alone, and no setting written. *Allow*, or raising
+   * or lifting a limit there, takes it back.
+   */
+  const freeIn = new Set<number>()
+
+  /** A limit as the screen offers it (D206): which, how much, and the amount *Raise the limit* starts at. */
+  const raising = (limit: Limit): Limit & { raise: number } => ({ ...limit, raise: raiseTo(limit.amount) })
+
+  /** The pins a task in this conversation routes by: the Mac's own, at *free only* where it was chosen here (D206). */
+  const pinsFor = (conversation: number): Pins =>
+    freeIn.has(conversation) ? { ...pins(store), spend: 'free', model: undefined } : pins(store)
+
   const worldFor = (conversation: number) => async () => ({
     ...(await world()),
     cross: caps(store).cross === true || paidIn.has(conversation),
@@ -1434,7 +1453,8 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
       const once = (asked: Message[]): ReturnType<typeof run> => run({
         messages: asked,
         tools: tooling,
-        pins: pins(store),
+        // *Use free models*, pressed on the phone, holds for this conversation (D206).
+        pins: pinsFor(its),
         // Whether paid may be crossed into for this conversation: the switch, or a yes on the phone (§4 H).
         world: worldFor(its),
         store,
@@ -1500,7 +1520,40 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
        * answer, ends the task with the sentence sent back there. With no daily amount there is
        * nothing a yes could buy, so the sentence says where to set one instead of asking.
        */
-      if (result.ended === 'paused') {
+      /**
+       * **A spending limit, asked on the phone** (D206): the same three choices as the window, as
+       * Telegram buttons — *Raise to* a sensible amount, since a button has no box to type one in.
+       * Nothing chosen in ten minutes, or nobody to ask, ends it with the sentence and where to go.
+       */
+      if (result.ended === 'paused' && result.limit !== undefined) {
+        const limit = raising(result.limit)
+        const why = limitSays(limit)
+        const raise = `Raise to $${limit.raise.toFixed(2)}`
+        const chose = await Promise.race([
+          plugins
+            .capability(CORE_CAPABILITIES.ask, { question: why, options: [raise, 'No limit today', 'Use free models'] })
+            .then((asked) => (asked.content ?? []).map((block) => (block.type === 'text' ? block.text : '')).join('').trim())
+            .catch(() => undefined),
+          new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), options.allowWaitMs ?? 10 * 60_000).unref()),
+        ])
+        if (chose === raise || chose === 'No limit today' || chose === 'Use free models') {
+          if (chose === raise && limit.kind === 'monthly') setMonthly(store, limit.raise)
+          else if (chose === raise) setCaps(store, { ...caps(store), daily: limit.raise })
+          else if (chose === 'No limit today') liftToday(store)
+          // Money said yes to covers this conversation as *Allow* does; *free* takes it back.
+          if (chose === 'Use free models') {
+            freeIn.add(its)
+            paidIn.delete(its)
+          } else {
+            paidIn.add(its)
+            freeIn.delete(its)
+          }
+          result = await once([...messages, ...result.messages])
+        } else {
+          result = { ...result, why: `${why} Open Alexia to raise the limit, lift it for today, or use free models.` }
+        }
+      }
+      if (result.ended === 'paused' && result.limit === undefined) {
         const daily = caps(store).daily ?? 0
         const why = result.why ?? 'The free models are used up.'
         if (daily <= 0) {
@@ -2026,6 +2079,13 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
       const monthly = (sent as { monthly?: unknown }).monthly
       if (typeof monthly === 'number' && Number.isFinite(monthly) && monthly > 0) setMonthly(store, monthly)
       else if (monthly === null || monthly === 0) setMonthly(store, undefined)
+      /**
+       * ***No limit today*** from a limit pause (`lift: true`), and Settings > Safety's *Undo*
+       * (`lift: false`) (D206). An expiry at local midnight, never a changed budget.
+       */
+      const lift = (sent as { lift?: unknown }).lift
+      if (lift === true) liftToday(store)
+      else if (lift === false) unlift(store)
       response.writeHead(200, { 'content-type': 'application/json' })
       response.end(JSON.stringify({ ...limitsNow(), ...today(store) }))
       return
@@ -2964,7 +3024,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
   const shown = (turn: Message): boolean => turn.bad !== true && turn.stopped !== true
 
   async function reply(sent: Body, response: ServerResponse): Promise<void> {
-    const { text: typed, files, again, automatic, allow, bad } = sent as {
+    const { text: typed, files, again, automatic, allow, bad, free } = sent as {
       text?: string
       files?: Upload[]
       again?: boolean
@@ -2981,6 +3041,11 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
        * that model — on Automatic, and above its tier when the paid switch is on. Sent with `again`.
        */
       bad?: Record<string, never>
+      /**
+       * ***Use free models***, pressed on a limit pause (D206): this conversation carries on at *free
+       * only*, and nothing is written to the slider. Sent with `again`.
+       */
+      free?: boolean
     }
     /** The answer just marked bad, when this is a *Bad answer* press. */
     const marked = again === true && bad !== undefined ? store.markLastAnswerBad(session) : undefined
@@ -2995,8 +3060,13 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
       // One press, recorded like any other try: two in 30 days tag the model (D161, D162).
       store.recordTry({ provider: marked.provider, model: markedRow, outcome: 'bad-answer', status: 0, source: 'person' })
     }
+    if (again === true && free === true) {
+      freeIn.add(session)
+      paidIn.delete(session)
+    }
     if (again === true && allow !== undefined) {
       paidIn.add(session)
+      freeIn.delete(session)
       const daily = allow.daily
       if (typeof daily === 'number' && Number.isFinite(daily) && daily > 0) setCaps(store, { ...caps(store), daily: Math.round(daily * 100) / 100 })
     }
@@ -3130,7 +3200,9 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
         // *Use Automatic for this answer* is this answer, not a setting (D155): the pin and the
         // list are still there for the next message, and nothing here writes to them.
         pins:
-          again === true && (automatic === true || marked !== undefined) ? { ...pins(store), model: undefined, order: undefined } : pins(store),
+          again === true && (automatic === true || marked !== undefined) ?
+            { ...pinsFor(session), model: undefined, order: undefined }
+          : pinsFor(session),
         // Without the model somebody just marked, and — with the paid switch on — above its tier (§4 I).
         ...(markedRow !== undefined &&
           marked?.provider !== undefined && { avoid: [`${marked.provider}\n${markedRow}`] }),
@@ -3229,9 +3301,11 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
        * **A pause** (§4 H): the free models are done, a paid one would answer, and the switch is off.
        * Nothing was billed. The screen shows the reason and *Allow switching to a paid model* — with
        * a box for the daily amount when there is none, since at $0 the press alone would buy nothing.
+       * A spending limit reached is the same pause with `limit` on it, and three choices in place
+       * of *Allow* (D206).
        */
       if (result.ended === 'paused') {
-        say({ paused: result.why, daily: caps(store).daily ?? 0 })
+        say({ paused: result.why, daily: caps(store).daily ?? 0, ...(result.limit !== undefined && { limit: raising(result.limit) }) })
         response.end()
         return
       }

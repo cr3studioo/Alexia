@@ -30,7 +30,7 @@ import {
 import type { SecretStore } from './secrets.js'
 import { carries, textOf, type Message, type Store } from './store.js'
 import { budgetFor, trim, type TrimOptions } from './trim.js'
-import { affordable, type Today } from './usage.js'
+import { affordable, limitSays, type Limit, type Today } from './usage.js'
 
 /**
  * Plan → act → observe → repeat.
@@ -312,6 +312,12 @@ export interface RunResult {
    * to a paid model* carries on from where it stopped.
    */
   ended: 'answered' | 'stopped' | 'ceiling' | 'refused' | 'paused'
+  /**
+   * **Set on a pause when a spending limit is what stopped it** (D206): the monthly budget, or the
+   * day's amount with paid allowed. The screen offers *Raise the limit*, *No limit today* and
+   * *Use free models* in place of *Allow*.
+   */
+  limit?: Limit
   /** Set when `ended` is `refused` — the router's sentence, or the provider's. */
   why?: string
   /**
@@ -512,6 +518,17 @@ export async function run(options: RunOptions): Promise<RunResult> {
     const named = available.map((t) => ({ name: t.name }))
     const now = await options.world()
     opening ??= now.today
+    /**
+     * **The monthly budget, asked every step** (D206): reached mid-task, the next step sends nothing
+     * paid, rather than the next task. The caller's `paidAllowed` was the budget as the task began.
+     */
+    const paidOk = options.paidAllowed !== false && now.month?.stop !== true
+    /** A pause for a spending limit: the one sentence, and which limit, for the three choices (D206). */
+    const limited = (limit: Limit, mode: Mode): RunResult => ({ ...finish('paused', limitSays(limit), mode), limit })
+    /** The monthly budget as a limit, for a pause it stopped. */
+    const budget = (): Limit => ({ kind: 'monthly', amount: now.month?.cap ?? 0 })
+    /** The day's amount as a limit, for a pause it stopped. */
+    const day = (): Limit => ({ kind: 'daily', amount: now.today?.allowance ?? 0 })
 
     /**
      * **How badly is this going?** — asked of the trace, once a step (§10.3).
@@ -612,8 +629,15 @@ export async function run(options: RunOptions): Promise<RunResult> {
     // Mid-task it is also the honest place to stop: half a task is better than a task
     // finished somewhere the user said not to go.
     // Free done, paid able, the switch off: a pause the person can lift, not a stop (§4 H). The
-    // monthly hard stop is not something *Allow* can lift, so it stays a refusal.
-    if (!verdict.ok && verdict.paused !== undefined && options.paidAllowed !== false) return finish('paused', verdict.paused, verdict.mode)
+    // monthly budget is not something *Allow* can lift, so that one is the budget's own pause.
+    if (!verdict.ok && verdict.paused !== undefined && paidOk) return finish('paused', verdict.paused, verdict.mode)
+    // The same pause with the monthly budget reached is the budget's to lift, not *Allow*'s (D206).
+    if (!verdict.ok && verdict.paused !== undefined) return limited(budget(), verdict.mode)
+    // The switch is on and the day's amount is spent: a limit reached, with its choices (D206).
+    if (!verdict.ok && now.cross === true && !affordable(now.today) && (now.today?.allowance ?? 0) > 0 && paidOk) {
+      const opened = route(ask, pins, { ...now, today: { spent: 0, allowance: Number.MAX_SAFE_INTEGER } })
+      if (opened.ok && opened.choices.some((c) => paid(c.model.tier))) return limited(day(), verdict.mode)
+    }
     if (!verdict.ok) return finish('refused', ranOutOfHands(ask, now) ? NO_HANDS : asSentence(verdict.why), verdict.mode)
 
     /**
@@ -696,6 +720,13 @@ export async function run(options: RunOptions): Promise<RunResult> {
      * restart for the same reason the screen empties its bubble (D155).
      */
     let written = ''
+    /**
+     * **What a paid rung's worst case is held to** (D186, D206): the day's allowance where it let
+     * paid in, and the monthly budget's room wherever one stops — a paid pin and *paid only*
+     * included, since a budget is somebody saying the words too.
+     */
+    const room = now.month?.room
+    const held = room === undefined ? verdict.left : verdict.left === undefined ? room : Math.min(verdict.left, room)
     let answer
     try {
       answer = await send(
@@ -715,8 +746,9 @@ export async function run(options: RunOptions): Promise<RunResult> {
           session,
           ...(options.run !== undefined && { run: options.run }),
           ...(options.plugin !== undefined && { plugin: options.plugin }),
-          ...(options.paidAllowed !== undefined && { paidAllowed: options.paidAllowed }),
-          ...(verdict.left !== undefined && { left: verdict.left }),
+          paidAllowed: paidOk,
+          // What the day has left and what the month has left, whichever is less: both are limits (D186, D206).
+          ...(held !== undefined && { left: held }),
           onDelta: (text: string) => {
             written += text
             on?.delta?.(text)
@@ -775,11 +807,27 @@ export async function run(options: RunOptions): Promise<RunResult> {
       // Every rung in the plan failed. That is a stop with a sentence — which models, and why
       // — rather than a crash, and whose plan it was decides what the screen offers next.
       /**
+       * **A spending limit is what stopped paid** (D206): the monthly budget reached, or a paid rung
+       * passed over because its worst case was more than the day or the month had left. Nothing was
+       * billed past it; the task pauses with the limit's three choices rather than ending.
+       */
+      if (error instanceof ProviderError && error.offline !== true) {
+        const refused = new Set(error.refused ?? [])
+        // Everything opened — the switch, the day — so a plan the switch had kept free still counts.
+        const opened = paidOk ? verdict : route(ask, pins, { ...now, cross: true, today: { spent: 0, allowance: Number.MAX_SAFE_INTEGER } })
+        const payable = opened.ok && opened.choices.some((c) => paid(c.model.tier) && !refused.has(c.provider.id))
+        if (!paidOk && payable) return limited(budget(), verdict.mode)
+        if (error.priced === true) {
+          const monthly = room !== undefined && (verdict.left === undefined || room < verdict.left)
+          return limited(monthly ? budget() : day(), verdict.mode)
+        }
+      }
+      /**
        * **The free rungs were all asked and none answered** (§4 H). With the switch off, the plan
        * had no paid rung in it; if one would answer with the price line open, this is the same
        * pause the router gives when the ledger already knew — and nothing has been billed.
        */
-      if (error instanceof ProviderError && error.offline !== true && now.cross === false && options.paidAllowed !== false && verdict.mode !== 'pinned') {
+      if (error instanceof ProviderError && error.offline !== true && now.cross === false && paidOk && verdict.mode !== 'pinned') {
         const opened = route(ask, pins, { ...now, cross: true, today: { spent: 0, allowance: Number.MAX_SAFE_INTEGER } })
         // Not behind a key that was just refused: *Allow* would only collect the same refusal.
         const refused = new Set(error.refused ?? [])
@@ -791,18 +839,13 @@ export async function run(options: RunOptions): Promise<RunResult> {
       }
       /**
        * **The switch is on and the day's amount is what stopped paid** (§4 H): the free rungs failed
-       * and a paid one would have answered but for the allowance. It stops as the allowance always
-       * did — and says so, rather than naming only the free model that was busy.
+       * and a paid one would have answered but for the allowance. It pauses on the limit (D206),
+       * rather than naming only the free model that was busy.
        */
-      if (error instanceof ProviderError && now.cross === true && !affordable(now.today) && options.paidAllowed !== false && verdict.mode !== 'pinned') {
+      if (error instanceof ProviderError && now.cross === true && !affordable(now.today) && paidOk && verdict.mode !== 'pinned') {
         const opened = route(ask, pins, { ...now, today: { spent: 0, allowance: Number.MAX_SAFE_INTEGER } })
-        if (opened.ok && opened.choices.some((c) => paid(c.model.tier))) {
-          return finish(
-            'refused',
-            `${error.message} And today's $${(now.today?.allowance ?? 0).toFixed(2)} for paid models is spent — raise it under the paid switch on the Models tab, or wait for tomorrow.`,
-            verdict.mode,
-          )
-        }
+        // A limit reached, with its three choices, rather than a stop (D206).
+        if (opened.ok && opened.choices.some((c) => paid(c.model.tier))) return limited(day(), verdict.mode)
       }
       if (error instanceof ProviderError) return finish('refused', error.message, verdict.mode)
       throw error

@@ -1,7 +1,23 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { expect, test } from 'vitest'
 import type { Model } from '../src/catalog.js'
-import { affordable, allowance, caps, costOf, dayStart, monthStart, setCaps, today, warning } from '../src/usage.js'
+import {
+  affordable,
+  allowance,
+  caps,
+  costOf,
+  dayStart,
+  liftToday,
+  lifted,
+  limitSays,
+  monthStart,
+  nextDay,
+  raiseTo,
+  setCaps,
+  today,
+  unlift,
+  warning,
+} from '../src/usage.js'
 import { Store } from '../src/store.js'
 
 // M1-9. Money, and the three questions asked of it: what did this conversation cost, what
@@ -144,4 +160,43 @@ test("the day and the month are this Mac's own, not UTC's", () => {
     expect(allowance(store, april).spent).toBe(0)
     store.close()
   })
+})
+
+test('No limit today lifts both limits until local midnight, and midnight ends it by itself (D206)', () => {
+  const store = new Store(':memory:')
+  // Five in the morning, this Mac's time, with a $5 budget and a $1 day both spent.
+  const morning = new Date(2026, 2, 14, 5).getTime()
+  store.recordUsage({ at: morning, model: 'm', provider: 'p', tokensIn: 1, tokensOut: 1, cost: 6 })
+  setCaps(store, { monthly: 5, hardStop: true, daily: 1 })
+  expect(allowance(store, morning)).toMatchObject({ stop: true, room: 0 })
+  expect(affordable(today(store, morning))).toBe(false)
+
+  liftToday(store, morning)
+  // An expiry, never a changed limit.
+  expect(caps(store)).toMatchObject({ monthly: 5, daily: 1, liftedUntil: new Date(2026, 2, 15).getTime() })
+  const late = new Date(2026, 2, 14, 23, 59).getTime()
+  expect(lifted(store, late)).toBe(true)
+  expect(allowance(store, late)).toMatchObject({ stop: false, warn: true })
+  expect(allowance(store, late).room).toBeUndefined()
+  expect(affordable(today(store, late))).toBe(true)
+
+  // Local midnight, not UTC's: from then both limits hold again, with nothing to restore.
+  const midnight = nextDay(morning)
+  expect(midnight).toBe(new Date(2026, 2, 15).getTime())
+  expect(lifted(store, midnight)).toBe(false)
+  expect(allowance(store, midnight).stop).toBe(true)
+
+  // Undo, from Settings > Safety: back now rather than at midnight.
+  liftToday(store, morning)
+  unlift(store)
+  expect(lifted(store, morning)).toBe(false)
+  expect(caps(store).liftedUntil).toBeUndefined()
+  store.close()
+})
+
+test('a limit reached is said in one sentence, and Raise offers a step up (D206)', () => {
+  expect(limitSays({ kind: 'monthly', amount: 5 })).toBe("You've reached your $5.00 monthly budget, so Alexia stopped before spending more.")
+  expect(limitSays({ kind: 'daily', amount: 1 })).toBe("You've reached today's $1.00 for paid models, so Alexia stopped before spending more.")
+  expect(raiseTo(5)).toBe(10)
+  expect(raiseTo(0.5)).toBe(1.5)
 })

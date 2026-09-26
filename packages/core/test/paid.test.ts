@@ -9,7 +9,7 @@ import { noPolling } from './staged.js'
 import { keyOf, type Provider } from '../src/provider.js'
 import { CORE, memorySecrets } from '../src/secrets.js'
 import { serve, type Serving } from '../src/serve.js'
-import { caps, setCaps } from '../src/usage.js'
+import { allowance, caps, nextDay, setCaps, setMonthly } from '../src/usage.js'
 
 /**
  * `model_plan.md` §4 H's acceptance: **crossing into paid**, over `/api/chat` (D160, D161).
@@ -85,6 +85,7 @@ writeFileSync(
       { type: 'action', key: 'asked', label: 'What was asked', tool: 'asked' },
       { type: 'action', key: 'answer_yes', label: 'Say yes next time', tool: 'answer_yes' },
       { type: 'action', key: 'answer_never', label: 'Never answer', tool: 'answer_never' },
+      { type: 'action', key: 'answer_free', label: 'Choose free models', tool: 'answer_free' },
     ],
   }),
 )
@@ -173,11 +174,15 @@ test('switch on: paid answers once the free ones are done, and stops when the da
   const done = answered.find((event) => 'done' in event)?.done as Record<string, unknown>
   expect(done).toMatchObject({ spent: expect.any(Number), today: { spent: expect.any(Number), allowance: 1 } })
 
-  // The day's dollar spent: it stops as the allowance always did, and does not pause.
+  // The day's dollar spent: a limit reached pauses with its three choices, and asks nothing paid (D206).
   alexia.store.recordUsage({ model: 'paid/one', provider: 'stub', tokensIn: 0, tokensOut: 0, cost: 1.5 })
+  asked.length = 0
   const spent = await chat({ text: 'once more' })
-  expect(spent.some((event) => 'paused' in event)).toBe(false)
-  expect(String(spent.find((event) => 'error' in event)?.error)).toContain("today's $1.00 for paid models is spent")
+  expect(spent.find((event) => 'paused' in event)).toMatchObject({
+    paused: "You've reached today's $1.00 for paid models, so Alexia stopped before spending more.",
+    limit: { kind: 'daily', amount: 1, raise: 2 },
+  })
+  expect(asked).not.toContain('paid/one')
 
   expect((await post('/api/action', { key: 'set_cross', row: 'off' })).ok).toBe(true)
   expect(caps(alexia.store)).toMatchObject({ cross: false, daily: 1 })
@@ -201,4 +206,94 @@ test('a task from a phone asks on the phone: yes answers from paid, and no answe
   await post('/api/action', { plugin: 'asker', key: 'answer_never' })
   const unanswered = await post('/api/action', { plugin: 'asker', key: 'go', approved: true })
   expect(String(unanswered.said)).toContain('Nobody allowed a paid model within ten minutes, so this stopped.')
+}, 30_000)
+
+/** This month's spending brought up to exactly `total`, whatever the tests above spent. */
+const spendTo = (total: number): void => {
+  const more = total - allowance(alexia.store).spent
+  if (more > 0) alexia.store.recordUsage({ model: 'paid/one', provider: 'stub', tokensIn: 0, tokensOut: 0, cost: more })
+}
+
+test('the monthly budget reached: no paid request, a pause, and each of its three choices carries on as it says (D206)', async () => {
+  await post('/api/action', { key: 'new_chat' })
+  busy = new Set(['free/one'])
+  // The switch on with plenty left in the day, and a $5 budget already spent.
+  setCaps(alexia.store, { ...caps(alexia.store), cross: true, daily: 100 })
+  setMonthly(alexia.store, 5)
+  spendTo(5)
+  asked.length = 0
+  const paused = await chat({ text: 'plan my week' })
+  expect(paused.find((event) => 'paused' in event)).toMatchObject({
+    paused: "You've reached your $5.00 monthly budget, so Alexia stopped before spending more.",
+    limit: { kind: 'monthly', amount: 5, raise: 10 },
+  })
+  expect(asked).not.toContain('paid/one')
+
+  // *Use free models*: this chat carries on free, and no setting is written.
+  busy = new Set()
+  const free = await chat({ again: true, free: true })
+  expect(said(free)).toBe('from free/one')
+  expect(caps(alexia.store)).toMatchObject({ monthly: 5, cross: true })
+  // Still free only in this chat: the free one busy again, and nothing paid is asked or offered.
+  busy = new Set(['free/one'])
+  asked.length = 0
+  const still = await chat({ text: 'and again' })
+  expect(asked).not.toContain('paid/one')
+  expect(still.some((event) => 'paused' in event)).toBe(false)
+
+  // *No limit today*: an expiry at local midnight, the budget itself untouched — then carries on.
+  const lifted = await post('/api/ceilings', { lift: true })
+  expect(lifted).toMatchObject({ monthly: 5, liftedUntil: nextDay(Date.now()) })
+  const on = await chat({ again: true, allow: {} })
+  expect(said(on)).toBe('from paid/one')
+  // *Undo* on Settings > Safety puts the budget back now.
+  expect((await post('/api/ceilings', { lift: false })).liftedUntil).toBeUndefined()
+  expect(allowance(alexia.store).stop).toBe(true)
+
+  // *Raise the limit*: saved through the same endpoint Settings uses, then carries on.
+  const again = await chat({ text: 'one more' })
+  expect(again.find((event) => 'paused' in event)).toMatchObject({ limit: { kind: 'monthly' } })
+  expect((await post('/api/ceilings', { monthly: 100 })).monthly).toBe(100)
+  const raised = await chat({ again: true, allow: {} })
+  expect(said(raised)).toBe('from paid/one')
+}, 30_000)
+
+test('a paid reply that could go past what the month has left is not sent (D186, D206)', async () => {
+  await post('/api/action', { key: 'new_chat' })
+  busy = new Set(['free/one'])
+  setCaps(alexia.store, { ...caps(alexia.store), cross: true, daily: 1000 })
+  setMonthly(alexia.store, 200)
+  // A tenth of a cent left: less than the paid model's worst case for any reply.
+  spendTo(199.999)
+  expect(allowance(alexia.store).stop).toBe(false)
+  asked.length = 0
+  const paused = await chat({ text: 'write me a poem' })
+  expect(paused.find((event) => 'paused' in event)).toMatchObject({ limit: { kind: 'monthly', amount: 200 } })
+  expect(asked).not.toContain('paid/one')
+}, 30_000)
+
+test('a limit reached from the phone asks there with the three choices as buttons (D206)', async () => {
+  alexia.store.kvDelete(CORE, 'chat:asker')
+  busy = new Set(['free/one'])
+  setCaps(alexia.store, { ...caps(alexia.store), cross: true, daily: 1000 })
+  setMonthly(alexia.store, 250)
+  spendTo(250)
+  await post('/api/action', { plugin: 'asker', key: 'answer_free' })
+  asked.length = 0
+  // Free chosen on the phone: the task is asked again on free models only. The free one is still
+  // busy, so it ends on that — and nothing paid was asked, before the question or after it.
+  const chose = await post('/api/action', { plugin: 'asker', key: 'go', approved: true })
+  expect(String(chose.said)).toBe('Free One is rate-limited right now.')
+  expect(asked).toEqual(['free/one', 'free/one'])
+  expect(String((await post('/api/action', { plugin: 'asker', key: 'asked' })).said)).toBe(
+    "You've reached your $250.00 monthly budget, so Alexia stopped before spending more.",
+  )
+
+  // Nobody answers: the sentence goes back with where to choose.
+  alexia.store.kvDelete(CORE, 'chat:asker')
+  busy = new Set(['free/one'])
+  await post('/api/action', { plugin: 'asker', key: 'answer_never' })
+  const unanswered = await post('/api/action', { plugin: 'asker', key: 'go', approved: true })
+  expect(String(unanswered.said)).toContain('Open Alexia to raise the limit, lift it for today, or use free models.')
+  setMonthly(alexia.store, undefined)
 }, 30_000)

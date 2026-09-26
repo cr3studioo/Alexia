@@ -9,7 +9,7 @@ import { redact, summarise } from './redact.js'
 import { CORE, type SecretStore } from './secrets.js'
 import { textOf, type Message, type Outcome, type Source, type Store } from './store.js'
 import { floor, PER_TOKEN, size, summary } from './trim.js'
-import { affordable, costOf, dollars as money, type Today } from './usage.js'
+import { affordable, costOf, dollars as money, type Allowance, type Today } from './usage.js'
 
 /**
  * Which model, and why that one.
@@ -458,6 +458,11 @@ export interface World {
    */
   today?: Today
   /**
+   * **Where the month stands** (D206), gathered fresh with `today` so a budget reached mid-task
+   * stops the next step, not the next task. Absent is no budget, as in a world built by hand.
+   */
+  month?: Allowance
+  /**
    * **Whether Automatic may cross into paid by itself** (§4 H): the paid switch is on, or somebody
    * pressed *Allow* in this conversation. `false` is the switch off, which pauses rather than
    * refusing when a paid model would answer. Absent is the old rule, where the daily allowance
@@ -765,7 +770,10 @@ export function route(ask: Ask, pins: Pins, world: World): Verdict {
    * than a limit. Scoped exactly as `capped` is: where the allowance decides whether paid is in
    * the plan, it also decides which paid rung can afford this request.
    */
-  const left = asked === 'mixed' && where === 'cloud' && !capped && world.today !== undefined ? world.today.allowance - world.today.spent : undefined
+  const left =
+    asked === 'mixed' && where === 'cloud' && !capped && world.today !== undefined && world.today.lifted !== true ?
+      world.today.allowance - world.today.spent
+    : undefined
 
   /**
    * **Why free failed**, which is the question that decides where money comes in the order —
@@ -2632,9 +2640,14 @@ export async function send(
   // In the plan's order, whatever order they failed in: two can be out at once.
   const all = [...failures].sort((a, b) => (place.get(a) ?? 0) - (place.get(b) ?? 0))
   const last = all.at(-1)
-  if (last === undefined) throw new ProviderError(blocked === undefined ? 503 : 402, blocked ?? 'nothing was available to ask')
+  if (last === undefined) {
+    const none = new ProviderError(blocked === undefined ? 503 : 402, blocked ?? 'nothing was available to ask')
+    if (blocked !== undefined) none.priced = true
+    throw none
+  }
   const stop = new ProviderError(last.status, stopped(all, blocked))
   if (refused.size > 0) stop.refused = [...refused]
+  if (blocked !== undefined) stop.priced = true
   if (failures.every((one) => one.outcome === 'unreachable')) stop.offline = true
   throw stop
 }
