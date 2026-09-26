@@ -147,6 +147,7 @@ export const SETTINGS: readonly Searchable[] = [
   { tab: 'general', kind: 'setting', label: 'Theme', detail: 'Settings › General', words: ['dark', 'light', 'appearance', 'colour', 'color', 'mode'] },
   { tab: 'general', kind: 'setting', label: 'Her name', detail: 'Settings › General', words: ['name', 'rename', 'call', 'alexia'] },
   { tab: 'general', kind: 'setting', label: 'Panel glass', detail: 'Settings › General', words: ['transparency', 'blur', 'see through'] },
+  { tab: 'general', kind: 'setting', label: 'Glass look', detail: 'Settings › General', words: ['liquid glass', 'apple glass', 'switches'] },
   { tab: 'general', kind: 'setting', label: 'Start at login', detail: 'Settings › General', words: ['sign in', 'startup', 'autostart', 'launch', 'boot'] },
   { tab: 'general', kind: 'setting', label: 'Keyboard shortcut', detail: 'Settings › General', words: ['hotkey', 'shortcut', 'keys'] },
   { tab: 'models', kind: 'setting', label: 'Keys and providers', detail: 'Settings › Models & money', words: ['api key', 'provider', 'connect', 'openrouter', 'token'] },

@@ -718,6 +718,9 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     // the border). Stored here with the theme because it is the same kind of fact and a tab
     // and the window should not disagree about it. 60 is the sheet's own default.
     glass: (store.kvGet(CORE, 'glass') as number | undefined) ?? 60,
+    // Whose glass the rail's switches are made of: `auto` (Apple's where the Mac has it),
+    // `apple` or `alexia`. The same kind of fact as the two above.
+    glassLook: (store.kvGet(CORE, 'glass_look') as string | undefined) ?? 'auto',
     /**
      * Whether Alexia looks for a newer version of itself when it starts (D121).
      *
@@ -1823,6 +1826,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
         mode?: keyof typeof MODES
         theme?: string
         glass?: number
+        glassLook?: string
         updates?: boolean
         /** Where the pages sit (D204), or `null` to forget it and go back to the default board. */
         layout?: unknown
@@ -1851,6 +1855,10 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
       // outside 40–100 is either an unreadable pane or a solid one that nothing said to make.
       if (typeof chosen.glass === 'number' && Number.isFinite(chosen.glass)) {
         store.kvSet(CORE, 'glass', Math.min(100, Math.max(0, Math.round(chosen.glass))))
+      }
+      // One of three words, checked like the theme: a fourth would reach the page as nothing.
+      if (chosen.glassLook === 'auto' || chosen.glassLook === 'apple' || chosen.glassLook === 'alexia') {
+        store.kvSet(CORE, 'glass_look', chosen.glassLook)
       }
       // Whether to look for a newer Alexia at startup (D121). Stored beside the theme because
       // it is the same kind of fact: an answer about this install that outlives the window it

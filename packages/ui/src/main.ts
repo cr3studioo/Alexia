@@ -16,7 +16,7 @@ import { copyText, grow, moveIn, nearBottom, shownTurn, slashMatches, type Store
 import type { Layout } from './layout.js'
 import { drawPrice } from './pages.js'
 import { genieIn, genieOut, stopGenie } from './genie.js'
-import { autostart, dismiss, HOTKEY, inApp, installUpdate, setAutostart, tray, updateAvailable } from './desktop.js'
+import { autostart, dismiss, glassSupported, HOTKEY, inApp, installUpdate, setAutostart, tray, updateAvailable } from './desktop.js'
 import { mountControl } from './control.js'
 import { mountPalette } from './palette.js'
 import { isSettingsPage, mountSettings } from './settings.js'
@@ -24,6 +24,7 @@ import { mountGlass, mountTheme, type Theme } from './theme.js'
 import { mountLive, type Stage } from './live.js'
 import { answerPrompt, modal } from './modal.js'
 import { mountRail } from './rail.js'
+import { keepPlaced, mountLevelSlider, mountModeSwitch, mountGlassLook, type Around, type Switcher } from './switchers.js'
 import { isPhase, mountStatus } from './status.js'
 import { dollarsOf, el, MODELS_CHANGED } from './widgets.js'
 
@@ -95,7 +96,7 @@ interface Permissions {
 }
 
 interface State {
-  setup: { done: boolean; name: string; mode: string; theme: Theme; glass: number; updates?: boolean }
+  setup: { done: boolean; name: string; mode: string; theme: Theme; glass: number; glassLook?: string; updates?: boolean }
   /** What this build is, for the About page — sent with every state read (D121). */
   app?: string
   permissions: Permissions
@@ -195,8 +196,16 @@ const text = document.querySelector<HTMLTextAreaElement>('#text')!
 const button = form.querySelector('button')!
 const prompt = document.querySelector<HTMLElement>('#prompt')!
 const promptWhy = document.querySelector<HTMLElement>('#prompt-why')!
-/** The permission control, twice: on the rail and on Settings > Safety (D205). One writer. */
+/**
+ * What covers the rail: a sheet, or the palette. Apple's glass on the rail's switches is not
+ * part of the page, so it would float over either; it hides while one is open.
+ */
+const around: Around = {
+  covered: () => sheetOpen() || document.querySelector<HTMLElement>('#palette')?.hidden === false,
+}
+/** The permission control, twice: on Settings > Safety (D205) and the rail's slider. One writer. */
 const permissions = document.querySelectorAll<HTMLSelectElement>('select.permission')
+const railPermission = mountLevelSlider(document.querySelector<HTMLElement>('#permission-switch')!, around)
 const stop = document.querySelector<HTMLButtonElement>('#stop')!
 
 const money = (n: number): string => `$${n.toFixed(2)}`
@@ -1244,6 +1253,12 @@ function setupSettings(state: State): void {
     void post('/api/setup', { glass })
   })
 
+  // Whose glass the rail's switches are made of: Apple's, where this Mac has it, or Alexia's
+  // own. Same endpoint, same reason — and asked of the shell once, at boot.
+  mountGlassLook(state.setup.glassLook, [railMode, railPermission], glassSupported(), (glassLook) => {
+    void post('/api/setup', { glassLook })
+  })
+
   for (const option of state.providers) {
     provider.add(new Option(option.free ? `${option.name} — free tier` : option.name, option.id))
   }
@@ -1520,37 +1535,51 @@ const MODE_MEANS: Record<string, string> = {
  * can show a mode the other has changed. Full trust says *not recommended* on the option
  * itself, where the choice is made (Alexia.md).
  */
+/** The chosen permission on every control that shows it. */
+function showPermission(mode: string): void {
+  for (const picker of permissions) picker.value = mode
+  railPermission.value = mode
+}
+let railPermissionFilled = false
+
 function showPermissions(state: Permissions): void {
   const said = document.querySelector<HTMLElement>('#permission-said')
   const explain = (mode: string): void => {
     if (said) said.textContent = MODE_MEANS[mode] ?? ''
+  }
+  const choose = (chosen: string): void => {
+    showPermission(chosen)
+    explain(chosen)
+    void fetch('/api/permissions', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-alexia-token': token },
+      body: JSON.stringify({ mode: chosen }),
+    })
+      .then(async (answer) => {
+        if (!answer.ok) throw new Error(String(answer.status))
+        const now = (await answer.json()) as { mode: string }
+        showPermission(now.mode)
+        explain(now.mode)
+      })
+      .catch(() => {
+        if (said) said.textContent = 'That did not save. Alexia may not be running — try again in a moment.'
+      })
   }
   for (const picker of permissions) {
     if (picker.options.length > 0) continue
     for (const [value, label] of Object.entries(state.modes)) {
       picker.add(new Option(value === 'full-trust' ? `${label} (not recommended)` : label, value))
     }
-    picker.addEventListener('change', () => {
-      const chosen = picker.value
-      for (const other of permissions) other.value = chosen
-      explain(chosen)
-      void fetch('/api/permissions', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', 'x-alexia-token': token },
-        body: JSON.stringify({ mode: chosen }),
-      })
-        .then(async (answer) => {
-          if (!answer.ok) throw new Error(String(answer.status))
-          const now = (await answer.json()) as { mode: string }
-          for (const other of permissions) other.value = now.mode
-          explain(now.mode)
-        })
-        .catch(() => {
-          if (said) said.textContent = 'That did not save. Alexia may not be running — try again in a moment.'
-        })
-    })
+    picker.addEventListener('change', () => choose(picker.value))
   }
-  for (const picker of permissions) picker.value = state.mode
+  // The rail's slider, filled from the same labels once. Its Full trust has already asked by
+  // the time `change` fires (switchers.ts); the select says *not recommended* instead.
+  if (!railPermissionFilled) {
+    railPermissionFilled = true
+    railPermission.levels(Object.entries(state.modes).map(([value, name]) => ({ value, name, means: MODE_MEANS[value] ?? '' })))
+    railPermission.addEventListener('change', () => choose(railPermission.value))
+  }
+  showPermission(state.mode)
   explain(state.mode)
 
   // A standing boundary is the user's own sentence holding things back. It stays on screen
@@ -2502,13 +2531,15 @@ function offerInstead(stopped: HTMLElement, chosen: 'pinned' | 'sequence'): void
 
 const menu = document.querySelector<HTMLElement>('#menu')!
 /**
- * Every mode picker on the page — the header's and the settings screen's.
+ * Every mode picker on the page — the rail's glass switch (switchers.ts) and the settings
+ * screen's select.
  *
  * A list rather than two constants, because they are one setting shown twice and the day
  * somebody adds a third is the day two of them start disagreeing. Every one of them writes
  * through `/local`, `/combined`, `/cloud`, and core's answer sets all of them.
  */
-const modes = document.querySelectorAll<HTMLSelectElement>('select.mode')
+const railMode: Switcher = mountModeSwitch(document.querySelector<HTMLElement>('#mode-switch')!, around)
+const modes: (EventTarget & { value: string })[] = [...document.querySelectorAll<HTMLSelectElement>('select.mode'), railMode]
 let known: Command[] = []
 
 /**
@@ -2868,7 +2899,11 @@ window.addEventListener('focus', () => {
   void read()
     .then((state) => {
       for (const picker of modes) picker.value = state.setup.mode
-      for (const picker of permissions) picker.value = state.permissions.mode
+      showPermission(state.permissions.mode)
     })
     .catch(() => undefined)
 })
+
+// Apple's glass, when it is the one in use, kept over the rail's two switches as the page moves
+// under them — and hidden while a sheet or the palette is over the rail.
+keepPlaced([railMode, railPermission], document.querySelector<HTMLElement>('#rail')!)

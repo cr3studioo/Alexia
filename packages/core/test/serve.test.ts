@@ -214,6 +214,7 @@ test('first run asks three things and then never asks again', async () => {
     mode: 'combined',
     theme: 'system',
     glass: 60,
+    glassLook: 'auto',
     updates: true,
   })
   /**
@@ -248,7 +249,7 @@ test('first run asks three things and then never asks again', async () => {
   })
 
   const after = await read()
-  expect(after.setup).toEqual({ done: true, name: 'Ada', mode: 'local', theme: 'system', glass: 60, updates: true })
+  expect(after.setup).toEqual({ done: true, name: 'Ada', mode: 'local', theme: 'system', glass: 60, glassLook: 'auto', updates: true })
   // The key went to the keychain and nowhere near the database.
   expect(await secrets.get(CORE, keyOf(PROVIDERS[0]!))).toBe('sk-users-own')
   // And the screen can say so without being able to read it back — which is what stops the
@@ -279,7 +280,7 @@ test('first run asks three things and then never asks again', async () => {
   })
 
   const edited = await read()
-  expect(edited.setup).toEqual({ done: true, name: 'Grace', mode: 'local', theme: 'system', glass: 60, updates: true })
+  expect(edited.setup).toEqual({ done: true, name: 'Grace', mode: 'local', theme: 'system', glass: 60, glassLook: 'auto', updates: true })
   expect(await secrets.get(CORE, keyOf(PROVIDERS[0]!))).toBe('sk-the-second-one')
 
   // A sentence in the key box is refused here rather than at the provider. This exact string

@@ -95,21 +95,20 @@
 
               <!-- The UI equivalent of /local, /cloud and /combined. Every command has one: the
                    commands are a shortcut for people who like them, never the only route. -->
-              <label class="rail-group">
-                <span class="rail-label">How she runs</span>
-                <select class="mode rail-select" title="Where the work happens" aria-label="Where the work happens">
-                  <option value="local">Local</option>
-                  <option value="combined">Combined</option>
-                  <option value="cloud">Cloud</option>
-                </select>
-              </label>
+              <!-- A glass pill over three icons (switchers.ts): a radio group, each icon named
+                   by its word, with the word and its sentence underneath. -->
+              <div class="rail-group">
+                <span class="rail-label" id="mode-label">How she runs</span>
+                <div id="mode-switch" aria-labelledby="mode-label"></div>
+              </div>
 
               <!-- What Alexia may do unasked. The number one thing a person changes after being
-                   surprised once, so it is a control on the rail and not a settings page. -->
-              <label class="rail-group">
-                <span class="rail-label">What she may do</span>
-                <select class="permission rail-select" title="What Alexia may do without asking"></select>
-              </label>
+                   surprised once, so it is a control on the rail and not a settings page. Four
+                   stops from careful to free (switchers.ts); Full trust asks once, in place. -->
+              <div class="rail-group">
+                <span class="rail-label" id="permission-label">What she may do</span>
+                <div id="permission-switch" aria-labelledby="permission-label"></div>
+              </div>
             </div>
 
             <!-- Every installed plugin, and the switch that turns it off. Delete the folder and
@@ -338,6 +337,17 @@
                 <span class="range-ends" aria-hidden="true">
                   <span>clear</span><span>solid</span>
                 </span>
+              </div>
+              <!-- Whose glass the rail's two switches are made of (switchers.ts). Apple's is the
+                   real material and needs macOS 26; Alexia's own is drawn by the page. -->
+              <div class="field group">
+                <label class="label" for="glass-look">Glass look</label>
+                <select id="glass-look">
+                  <option value="auto">Automatic</option>
+                  <option value="apple">Apple glass</option>
+                  <option value="alexia">Alexia glass</option>
+                </select>
+                <p class="hint" id="glass-look-said"></p>
               </div>
               <!-- The obvious way to turn autostart off, which is the half of "starts on login"
                    that people actually need. Hidden in a browser, where it is not a setting. -->
