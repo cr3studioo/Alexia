@@ -6,6 +6,7 @@ import { spent, underHalf, type Speed } from './pool.js'
 // interface — a third file to hold it would be the abstraction, not the sharing.
 import type { Progress } from './settings.js'
 import {
+  asSentence,
   bubble,
   paid,
   route,
@@ -284,6 +285,12 @@ export interface RunOptions {
    * model was not given is a sentence it can only fail to obey.
    */
   remembers?: boolean
+  /**
+   * **What she is called here** — the name chosen in Settings (`display_name`). Absent is
+   * *Alexia*. It was saved, drawn in the window's header, and never told to the model, which
+   * went on introducing itself as Alexia to somebody who had renamed her.
+   */
+  name?: string
   signal?: AbortSignal
   /**
    * May this call run? (M15-3.) The loop does not know what a permission is — it asks, and
@@ -454,7 +461,7 @@ export async function run(options: RunOptions): Promise<RunResult> {
   // The profile is one length for every model, so it is said once, here, rather than per rung.
   const profile = options.profile?.trim() ?? ''
   if (profile !== '') on?.profile?.(profile.length)
-  const about = { profile, remembers: options.remembers === true }
+  const about = { profile, remembers: options.remembers === true, ...(options.name !== undefined && { name: options.name }) }
   const added: Message[] = []
   const steps: Step[] = []
 
@@ -607,7 +614,7 @@ export async function run(options: RunOptions): Promise<RunResult> {
     // Free done, paid able, the switch off: a pause the person can lift, not a stop (§4 H). The
     // monthly hard stop is not something *Allow* can lift, so it stays a refusal.
     if (!verdict.ok && verdict.paused !== undefined && options.paidAllowed !== false) return finish('paused', verdict.paused, verdict.mode)
-    if (!verdict.ok) return finish('refused', ranOutOfHands(ask, now) ? NO_HANDS : verdict.why, verdict.mode)
+    if (!verdict.ok) return finish('refused', ranOutOfHands(ask, now) ? NO_HANDS : asSentence(verdict.why), verdict.mode)
 
     /**
      * **This Mac or paid, when both are next** (§4 H). The keyed free rungs are done, the model on
@@ -679,6 +686,16 @@ export async function run(options: RunOptions): Promise<RunResult> {
 
     /** What this turn's switches said, kept on the answer they belong to (§4 G). */
     const noted: string[] = []
+    /**
+     * **The words this turn has written so far**, kept in case somebody presses Stop.
+     *
+     * An answer stopped halfway used to be on screen and nowhere else: the stream was cut, the
+     * loop returned *stopped*, and nothing was appended — so the half an answer the person had
+     * just read was gone the moment they opened the conversation again. Kept here, beside the
+     * stream the screen draws from, so what is saved is exactly what was shown; emptied on a
+     * restart for the same reason the screen empties its bubble (D155).
+     */
+    let written = ''
     let answer
     try {
       answer = await send(
@@ -700,7 +717,10 @@ export async function run(options: RunOptions): Promise<RunResult> {
           ...(options.plugin !== undefined && { plugin: options.plugin }),
           ...(options.paidAllowed !== undefined && { paidAllowed: options.paidAllowed }),
           ...(verdict.left !== undefined && { left: verdict.left }),
-          ...(on?.delta && { onDelta: on.delta }),
+          onDelta: (text: string) => {
+            written += text
+            on?.delta?.(text)
+          },
           ...(on?.note && { onNote: on.note }),
           onSwitch: (event: Switch) => {
             noted.push(event.says)
@@ -709,7 +729,10 @@ export async function run(options: RunOptions): Promise<RunResult> {
             else on?.note?.(event.says)
           },
           ...(on?.paid && { onPaid: on.paid }),
-          ...(on?.restart && { onRestart: on.restart }),
+          onRestart: () => {
+            written = ''
+            on?.restart?.()
+          },
           ...(on?.phase && { onPhase: on.phase }),
           messagesFor: dressed,
           onAsk: asking,
@@ -737,8 +760,18 @@ export async function run(options: RunOptions): Promise<RunResult> {
         },
       )
     } catch (error) {
-      // The user pressing stop arrives here as an abort, and it is not a failure.
-      if (options.signal?.aborted) return finish('stopped')
+      // The user pressing stop arrives here as an abort, and it is not a failure. What had
+      // been written by then is kept, marked as stopped, so it is still there when the
+      // conversation is opened again (see {@link Message.stopped}).
+      if (options.signal?.aborted) {
+        if (written.trim() !== '') {
+          const half: Message = { role: 'assistant', content: written, stopped: true }
+          messages.push(half)
+          added.push(half)
+          store.append(session, half)
+        }
+        return finish('stopped')
+      }
       // Every rung in the plan failed. That is a stop with a sentence — which models, and why
       // — rather than a crash, and whose plan it was decides what the screen offers next.
       /**
@@ -850,7 +883,7 @@ export async function run(options: RunOptions): Promise<RunResult> {
       if (said !== true) {
         return {
           ok: false,
-          text: `Not allowed: ${ruling.why} The user did not approve it, so it did not run.`,
+          text: `The user did not approve it, so it did not run. They were asked: ${ruling.why}`,
         }
       }
     }
@@ -929,10 +962,12 @@ function system(
   available: ToolSpec[],
   personality?: string,
   caller: string[] = [],
-  about: { profile?: string; remembers?: boolean } = {},
+  about: { profile?: string; remembers?: boolean; name?: string } = {},
 ): Message {
+  // The name the user chose, when they chose one; the floor is where a model learns who it is.
+  const called = about.name?.trim() || 'Alexia'
   const lines = [
-    'You are Alexia, an assistant running on the user’s own machine.',
+    `You are ${called}, an assistant running on the user’s own machine.`,
     available.length > 0 ?
       'You have tools. Call them when they would help, one step at a time, and use what comes back.'
     : 'You have no tools available right now, so answer from what you know.',
@@ -979,7 +1014,7 @@ function system(
  * router's own sentence is the better one there because it names the fix rather than the loss.
  */
 const NO_HANDS =
-  'I ran out of helpers with hands — everything still available can only talk, and swapping to one now would strand this half-done. Wait for a free tier to reset, or connect a provider whose models can use tools.'
+  'I ran out of models that can take actions. The ones still available can only talk, and switching to one now would leave this half-done. Wait for the free models to reset, or add a key for an AI service whose models can take actions.'
 
 /** A provider error the loop could not route around, in the words the user gets. */
 export const said = (error: unknown): string =>

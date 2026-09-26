@@ -67,6 +67,27 @@ export const DAILY_DEFAULT = 0
 export const caps = (store: Store): Caps => (store.kvGet(CORE, 'caps') as Caps | undefined) ?? {}
 export const setCaps = (store: Store, caps: Caps): void => store.kvSet(CORE, 'caps', caps)
 
+/**
+ * **The monthly budget, as Settings > Safety sets it.** The one place it is written.
+ *
+ * It used to be saved with the step limit (`preview.ts`'s ceilings) while {@link allowance}
+ * read it from here, so a budget somebody typed in was shown back to them and then never
+ * enforced. A budget set on purpose is a stop and not only a warning — that is what the word
+ * means to the person typing it — so setting one turns the hard stop on, and clearing it
+ * (`undefined`) takes both away.
+ */
+export function setMonthly(store: Store, monthly: number | undefined): void {
+  const next: Caps = { ...caps(store) }
+  if (monthly === undefined) {
+    delete next.monthly
+    delete next.hardStop
+  } else {
+    next.monthly = Math.round(monthly * 100) / 100
+    next.hardStop = true
+  }
+  setCaps(store, next)
+}
+
 export interface Allowance {
   /** Spent this calendar month, in dollars. */
   spent: number
@@ -78,13 +99,31 @@ export interface Allowance {
 }
 
 /**
- * Where the month stands. The month is a UTC calendar month, which is off by hours for
- * somebody in Auckland on the first — and being off by hours on a monthly ceiling is not
- * something anybody will ever notice.
+ * **When this Mac's own day began**, as epoch milliseconds.
+ *
+ * Local rather than UTC, and one pair of functions for everything that counts money. They
+ * used to be UTC calendar days, which in Prague meant *today* started at two in the morning:
+ * the Price page said *today* over a number that still held last night, and the daily
+ * allowance came back at an hour nobody would guess. The router's check and the number on
+ * screen both read {@link today}, so the day they mean is the same day by construction.
+ *
+ * A provider's own free-tier day (`store.ts`, `router.ts`) stays UTC on purpose: that is a
+ * clock somebody else keeps, and this one is the person's.
  */
-export function allowance(store: Store, at: number = Date.now()): Allowance {
+export const dayStart = (at: number): number => {
   const now = new Date(at)
-  const spent = store.spend(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1))
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
+}
+
+/** The first moment of this Mac's calendar month. See {@link dayStart}. */
+export const monthStart = (at: number): number => {
+  const now = new Date(at)
+  return new Date(now.getFullYear(), now.getMonth(), 1).getTime()
+}
+
+/** Where the month stands: this Mac's calendar month, on the same clock as the day. */
+export function allowance(store: Store, at: number = Date.now()): Allowance {
+  const spent = store.spend(monthStart(at))
   const { monthly, warnAt, hardStop } = caps(store)
   if (monthly === undefined) return { spent, warn: false, stop: false }
   return {
@@ -102,14 +141,12 @@ export interface Today {
 }
 
 /**
- * Where the day stands. A UTC calendar day, for the same reason the month is one: being off
- * by hours on a spending boundary is not something anybody will notice, and two different
- * definitions of *today* in one file would be.
+ * Where the day stands: this Mac's calendar day ({@link dayStart}). It is what the router asks
+ * before it may spend and what the Price page shows, so the two cannot mean different days.
  */
 export function today(store: Store, at: number = Date.now()): Today {
-  const now = new Date(at)
   return {
-    spent: store.spend(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())),
+    spent: store.spend(dayStart(at)),
     allowance: caps(store).daily ?? DAILY_DEFAULT,
   }
 }

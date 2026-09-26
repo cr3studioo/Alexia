@@ -42,6 +42,21 @@
 
   --ring: 2px;
 
+  /* Motion. One curve for arriving and one for leaving, and three lengths. The arriving curve
+     is the grade slider's — fast off the mark and settling slowly, the way something with
+     weight comes to rest — and it is the only curve anything here arrives on. Leaving is
+     quicker than arriving on purpose: what you asked for comes in with some care, and what
+     you dismissed gets out of the way. Every rule that moves is also switched off under
+     `prefers-reduced-motion`, next to where it moves. */
+  --ease-out: cubic-bezier(0.32, 0.72, 0, 1);
+  --ease-in: cubic-bezier(0.4, 0, 1, 1);
+  /* Only for what loops — a bar that sweeps, a dot that breathes — where there is no arriving
+     or leaving, just the same motion both ways. */
+  --ease-loop: cubic-bezier(0.65, 0, 0.35, 1);
+  --t-fast: 120ms;
+  --t-mid: 200ms;
+  --t-slow: 320ms;
+
   /* Three faces, and no download. The serif is the voice — identity, a conversation's name,
      the figure that matters; the sans does the work; the mono is reserved for what a machine
      said, so a command never looks like prose. All three are already on the machine: a chat
@@ -347,7 +362,7 @@ body[data-view='first-run'] #corner {
    look like a figure. */
 
 #rail {
-  gap: var(--space-3);
+  gap: var(--space-2);
   overflow-y: auto;
   overflow-x: hidden;
 }
@@ -545,8 +560,28 @@ body:not([data-view='settings']):not([data-view='control']) #sheet {
   margin-bottom: var(--space-5);
 }
 
+/* Settings and Activity are named in the serif the conversation's title uses, so the three
+   titles on this screen are one voice rather than two. */
 .view-top .step-heading {
   margin: 0;
+  font-family: var(--serif);
+  font-size: var(--text-xl);
+  font-weight: 400;
+  letter-spacing: -0.015em;
+}
+
+/* Back is the way out, not an action on the page: no box until the pointer is on it. */
+.view-top .quiet-button {
+  padding: var(--space-2) var(--space-3);
+  background-color: transparent;
+  border-color: transparent;
+  color: var(--ink-quiet);
+  font-size: var(--text-sm);
+}
+
+.view-top .quiet-button:hover {
+  background-color: var(--wash);
+  color: var(--ink);
 }
 
 /* Where a plugin's page turns from what it is set to into what it is doing (D118).
@@ -694,14 +729,37 @@ body:not([data-view='settings']):not([data-view='control']) #sheet {
    heading is the gap between groups, and a `.group` is what usually carries it. Empty is not
    a group, so it gets no gap either. */
 #skills:not(:empty),
-#skills-library:not(:empty) {
+#skills-library:not(:empty),
+#plugins-adding:not(:empty),
+#tools-core:not(:empty) {
   display: block;
   margin-top: var(--space-6);
 }
 
-/* Two tabs, so the narrow rule the control strip needs does not apply here. Nine names
-   wrapped into three lines is what that rule exists for; General over Plugins in a column is
-   a list of two, which is worse than the row it replaced. */
+/* A closed fold for what most people never need (D205): Plugins > Advanced, and the full model
+   table under the Models & money controls. The summary reads like a quiet button, so it looks
+   pressable without competing with the page's own controls. */
+details.advanced {
+  margin-top: var(--space-6);
+}
+
+details.advanced > summary {
+  cursor: pointer;
+  color: var(--ink-quiet);
+  font-size: var(--text-sm);
+}
+
+details.advanced > summary:hover,
+details.advanced > summary:focus-visible {
+  color: var(--ink);
+}
+
+details.advanced[open] > summary {
+  margin-bottom: var(--space-4);
+}
+
+/* The narrow rule the Activity strip uses (a column) does not apply here: six short names
+   wrap onto two rows, which reads better than a column of six above the page. */
 @media (max-width: 559px) {
   #settings-tabs {
     flex-direction: row;
@@ -723,7 +781,7 @@ body:not([data-view='settings']):not([data-view='control']) #sheet {
    any. */
 .bar.working > span {
   width: 35%;
-  animation: sweep 1.2s ease-in-out infinite;
+  animation: sweep 1.2s var(--ease-loop) infinite;
 }
 
 @keyframes sweep {
@@ -826,14 +884,63 @@ body:not([data-view='settings']):not([data-view='control']) #sheet {
    Over the page, near the top rather than centred: a list that grows downwards from where
    you are already looking beats one that pushes itself off both edges of the viewport. */
 
+/* Above the sheet (30) and the dock (20): it is opened over Settings and Activity as often as
+   over the chat, and under the sheet it was there and could not be seen. */
 #palette {
   position: fixed;
   inset: 0;
-  z-index: 10;
+  z-index: 45;
   display: flex;
   justify-content: center;
   padding-top: 12vh;
   background: rgb(0 0 0 / 35%);
+  transition:
+    opacity var(--t-mid) var(--ease-out),
+    display var(--t-mid) allow-discrete;
+}
+
+/* Out faster than in. `palette.ts` still sets `hidden` at once, so nothing about what is open
+   changes; the box is only kept drawn while it fades. */
+#palette[hidden] {
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity var(--t-fast) var(--ease-in),
+    display var(--t-fast) allow-discrete;
+}
+
+#palette .palette-box {
+  transition: transform var(--t-mid) var(--ease-out);
+}
+
+#palette[hidden] .palette-box {
+  transform: translateY(-6px) scale(0.98);
+  transition: transform var(--t-fast) var(--ease-in);
+}
+
+@starting-style {
+  #palette:not([hidden]) {
+    opacity: 0;
+  }
+
+  #palette:not([hidden]) .palette-box {
+    transform: translateY(-6px) scale(0.98);
+  }
+}
+
+/* The row under the arrow keys or the mouse moves smoothly rather than blinking. */
+.hit {
+  transition: background-color var(--t-fast) var(--ease-out);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #palette,
+  #palette[hidden],
+  #palette .palette-box,
+  #palette[hidden] .palette-box,
+  .hit {
+    transition: none;
+  }
 }
 
 .palette-box {
@@ -1113,6 +1220,29 @@ body:not([data-view='settings']):not([data-view='control']) #sheet {
   color: var(--danger);
 }
 
+/* The long version under the short one — a run's whole log, a step's raw arguments. Closed
+   until asked for, and scrolled in its own box so a long log does not push the table away. */
+.detail-more {
+  margin-top: var(--space-2);
+  font-size: var(--text-sm);
+}
+
+.detail-more summary {
+  cursor: pointer;
+  color: var(--ink-quiet);
+}
+
+.detail-more pre {
+  margin: var(--space-2) 0 0;
+  max-height: 22rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--mono);
+  font-size: var(--text-xs);
+  color: var(--ink-quiet);
+}
+
 /* **What a button said, with its newlines still in it.**
 
    A tool's answer is prose most of the time and a one-line `.hint` drew it correctly, so
@@ -1370,7 +1500,10 @@ body:not([data-view='settings']):not([data-view='control']) #sheet {
 
 /* Armed: the second press. It is not red — a colour on this screen means something
    happened, and being about to happen is not that — it is the changed word that carries it. */
-.row-actions .armed {
+.row-actions .armed,
+.field > .armed,
+.lifecycle .armed,
+.trust-it.armed {
   font-weight: 600;
   border-color: var(--ink);
 }
@@ -1549,6 +1682,15 @@ body:not([data-view='settings']):not([data-view='control']) #sheet {
   width: calc(var(--space-4) - 4px);
   border-radius: var(--radius-full);
   background: var(--ink-faint);
+  transition:
+    transform var(--t-mid) var(--ease-out),
+    background-color var(--t-mid) var(--ease-out);
+}
+
+.switch .track {
+  transition:
+    background-color var(--t-mid) var(--ease-out),
+    border-color var(--t-mid) var(--ease-out);
 }
 
 .switch input:checked + .track {
@@ -1556,10 +1698,18 @@ body:not([data-view='settings']):not([data-view='control']) #sheet {
   border-color: var(--accent);
 }
 
+/* Slid rather than re-anchored, so it can move: across the track, less its two borders, its
+   two 1px insets and its own width — which is the track's width less its height. */
 .switch input:checked + .track::after {
-  left: auto;
-  right: 1px;
+  transform: translateX(calc(var(--space-6) - var(--space-4)));
   background: var(--on-accent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .switch .track,
+  .switch .track::after {
+    transition: none;
+  }
 }
 
 .switch input:focus-visible + .track {
@@ -1761,7 +1911,7 @@ body:not([data-view='settings']):not([data-view='control']) #sheet {
   border-radius: var(--radius-full);
   background: var(--accent);
   transform: translateX(calc(var(--at, 0) * 100%));
-  transition: transform 320ms cubic-bezier(0.32, 0.72, 0, 1);
+  transition: transform var(--t-slow) var(--ease-out);
 }
 
 .grade-stop {
@@ -1784,7 +1934,7 @@ body:not([data-view='settings']):not([data-view='control']) #sheet {
   line-height: var(--leading-tight);
   text-align: center;
   color: var(--ink-quiet);
-  transition: color 200ms ease;
+  transition: color var(--t-mid) var(--ease-out);
 }
 
 .grade-stop input:checked + span {
@@ -1821,7 +1971,7 @@ body:not([data-view='settings']):not([data-view='control']) #sheet {
   background: var(--surface-raised);
   border: 1px solid var(--line);
   border-radius: var(--radius-lg);
-  transition: opacity 200ms ease;
+  transition: opacity var(--t-mid) var(--ease-out);
 }
 
 /* The side the slider has closed. Dimmed rather than removed: what you ordered is still what
@@ -2198,6 +2348,28 @@ body:not([data-view='settings']):not([data-view='control']) #sheet {
   margin: var(--space-2) 0 0;
 }
 
+/* A hint inside a field's label is a `span`, and inline it sat beside a short input and wrapped
+   in the space left over — the Safety page's three limits read as ragged columns. Under the
+   control, like every other hint. */
+.field > .hint {
+  display: block;
+  max-width: var(--measure);
+}
+
+/* Links, in the accent rather than the browser's blue, and underlined when the pointer is on
+   one — so a link reads as part of the sentence until somebody reaches for it. */
+a {
+  color: var(--accent);
+  text-decoration: none;
+  text-underline-offset: 0.2em;
+  transition: color var(--t-fast) var(--ease-out);
+}
+
+a:hover,
+a:focus-visible {
+  text-decoration: underline;
+}
+
 .error {
   font-size: var(--text-sm);
   color: var(--danger);
@@ -2219,6 +2391,28 @@ input:hover,
 select:hover,
 textarea:hover {
   border-color: var(--line-strong);
+}
+
+/* One dropdown, everywhere. The system's own popup button is drawn in the Mac's colours and
+   shape and sat next to our own Model row looking like a different app; this keeps the native
+   list (keyboard, screen reader, and the menu itself) and draws only the closed control. The
+   arrow is two half-filled gradients in `currentColor`, so it follows the theme with no
+   picture to keep in two colours. */
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: calc(var(--space-3) + 1.25rem);
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--ink-faint) 50%),
+    linear-gradient(135deg, var(--ink-faint) 50%, transparent 50%);
+  background-size:
+    5px 5px,
+    5px 5px;
+  background-position:
+    right calc(var(--space-3) + 5px) center,
+    right var(--space-3) center;
+  background-repeat: no-repeat;
+  cursor: pointer;
 }
 
 ::placeholder {
@@ -2550,6 +2744,14 @@ button {
   cursor: pointer;
 }
 
+/* The loud button answers the pointer too: the accent eased a little towards its own ink, so
+   it lifts in light and in dark alike. Only the plain ones — every classed button has its own
+   hover further down, and this would outrank it. */
+button:not([class]):not([disabled]):hover,
+button.begin:not([disabled]):hover {
+  background-color: color-mix(in oklab, var(--accent) 86%, var(--on-accent));
+}
+
 /* The refusing button is not the loud one, and it is not hidden either. */
 .quiet-button {
   background: var(--surface-raised);
@@ -2690,6 +2892,29 @@ button[disabled] {
   overflow-wrap: anywhere;
 }
 
+/* A new turn rises into place. An animation plays once, when the element arrives, so words
+   streaming into her answer afterwards never replay it. */
+.turn,
+.tools,
+.tools-used {
+  animation: turn-in 220ms var(--ease-out);
+}
+
+@keyframes turn-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .turn,
+  .tools,
+  .tools-used {
+    animation: none;
+  }
+}
+
 .turn.user {
   align-self: flex-end;
   max-width: 34rem;
@@ -2724,6 +2949,43 @@ button[disabled] {
   border: 1px dashed var(--line-strong);
   color: var(--ink-quiet);
   font-size: var(--text-sm);
+}
+
+/* A command that worked: said plainly, with none of the dashed box that means *this did not
+   happen*. Quiet, because it is a note about a setting rather than part of the conversation. */
+.turn.reply {
+  align-self: flex-start;
+  color: var(--ink-quiet);
+  font-size: var(--text-sm);
+}
+
+/* Her turns that only ran tools, folded into one line when an old conversation is drawn again. */
+.tools-used {
+  margin: 0;
+  align-self: flex-start;
+  font-size: var(--text-xs);
+  color: var(--ink-faint);
+}
+
+/* After an answer Stop cut short. */
+.stopped-mark {
+  margin-inline-start: var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--ink-faint);
+}
+
+/* The way back down to an answer still arriving, over the bottom of the log. It shares the
+   log's grid cell rather than taking a row of its own. */
+#new-words {
+  grid-area: log;
+  align-self: end;
+  justify-self: center;
+  z-index: 2;
+  margin-bottom: var(--space-3);
+  padding: var(--space-1) var(--space-4);
+  font-size: var(--text-sm);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 2px 8px rgb(0 0 0 / 0.15);
 }
 
 /* A stop in somebody's own choice (D155): the reason above, and this one answer's way on. */
@@ -2841,19 +3103,35 @@ button[disabled] {
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-md);
   box-shadow: 0 6px 24px color-mix(in oklab, var(--ink) 18%, transparent);
-  animation: popup-in 160ms ease-out;
+  transition:
+    opacity var(--t-mid) var(--ease-out),
+    transform var(--t-mid) var(--ease-out),
+    display var(--t-mid) allow-discrete;
 }
 
-@keyframes popup-in {
-  from {
+/* Out, faster than it came in. `hidden` still flips at once — `allow-discrete` only keeps it
+   drawn for the fade, and `[hidden]`'s `!important` loses to a running transition. */
+#popup[hidden] {
+  opacity: 0;
+  transform: translate(-50%, 6px);
+  pointer-events: none;
+  transition:
+    opacity var(--t-fast) var(--ease-in),
+    transform var(--t-fast) var(--ease-in),
+    display var(--t-fast) allow-discrete;
+}
+
+@starting-style {
+  #popup:not([hidden]) {
     opacity: 0;
     transform: translate(-50%, 6px);
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  #popup {
-    animation: none;
+  #popup,
+  #popup[hidden] {
+    transition: none;
   }
 }
 
@@ -2949,7 +3227,7 @@ button[disabled] {
 .status-glyph {
   display: inline-block;
   color: var(--chosen);
-  animation: pulse 2s ease-in-out infinite;
+  animation: pulse 2s var(--ease-loop) infinite;
 }
 
 /* The word shimmers, left to right, in the palette's own two inks. The detail beside it holds
@@ -2961,7 +3239,7 @@ button[disabled] {
   -webkit-background-clip: text;
   background-clip: text;
   -webkit-text-fill-color: transparent;
-  animation: shimmer 2.4s linear infinite;
+  animation: shimmer 2.4s var(--ease-loop) infinite;
 }
 
 /* Tabular figures, so 9s becoming 10s does not nudge anything sideways. */
@@ -3036,7 +3314,8 @@ button[disabled] {
   cursor: pointer;
 }
 
-#menu li:hover {
+#menu li:hover,
+#menu li.on {
   background: var(--surface-sunken);
 }
 
@@ -3081,20 +3360,9 @@ button[disabled] {
   flex: none;
 }
 
-/* The attach control is a `label`, so it needs the button's own alignment rather than the
-   baseline a label would otherwise take. */
+/* Attach is a real button now (so Tab reaches it), and takes the quiet button's own look. */
 #ask #attach {
   flex: none;
-  cursor: pointer;
-  /* And the button's own box: a label gets none of the `button` rule, so it sat on the
-     composer as a bare word on a white patch, lower than the button beside it. */
-  display: inline-flex;
-  align-items: center;
-  padding: var(--space-3) var(--space-5);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-md);
-  font-weight: 500;
-  line-height: var(--leading-tight);
 }
 
 /* ---- what is coming with the next message ------------------------------------------------
@@ -3251,6 +3519,8 @@ button[disabled] {
   border-radius: var(--radius-full);
   border: 1px solid var(--line);
   color: var(--ink-quiet);
+  /* A pill is one word or two. Wrapped, it was a lozenge two lines tall. */
+  white-space: nowrap;
 }
 
 .pill.caution {
@@ -3372,6 +3642,33 @@ button[disabled] {
 #control {
   overflow-y: auto;
   padding: var(--space-6) var(--space-5);
+  /* One cell for both, so going from Settings to Activity is a crossfade: the one leaving is
+     kept drawn over the other for the fade (`allow-discrete`) rather than blinking out. */
+  grid-area: 1 / 1;
+  min-height: 0;
+  transition:
+    opacity 160ms var(--ease-out),
+    display 160ms allow-discrete;
+}
+
+body:not([data-view='settings']) #settings,
+body:not([data-view='control']) #control {
+  opacity: 0;
+  pointer-events: none;
+}
+
+@starting-style {
+  body[data-view='settings'] #settings,
+  body[data-view='control'] #control {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #settings,
+  #control {
+    transition: none;
+  }
 }
 
 /* Thin, and only where something scrolls. A gutter reserved on every panel is a gutter of
@@ -3427,7 +3724,53 @@ button[disabled] {
   font-size: var(--text-xs);
   letter-spacing: 0.12em;
   text-transform: uppercase;
-  color: var(--ink-faint);
+  /* The strong ink, not the faint one: these sit on glass, and at a low glass setting the
+     painting is most of what is behind them. Small and spaced out is what makes them labels;
+     grey was what made them unreadable. */
+  color: var(--ink);
+  font-weight: 600;
+}
+
+/* Small text straight on the glass of a board page or the rail — headings, empty states and
+   Local stats' captions. The halo is the panel's own colour, a few pixels round each letter:
+   invisible over a flat panel, and the difference between readable and not over a brushstroke
+   at a third of the glass. */
+.page .rail-label,
+#rail .rail-label,
+.page .nothing,
+.page .block-label,
+.machine-what,
+.machine-up,
+.machine-memory {
+  text-shadow:
+    0 0 0.35em color-mix(in oklab, var(--surface-raised) 85%, transparent),
+    0 0 0.8em color-mix(in oklab, var(--surface-raised) 60%, transparent);
+}
+
+/* Setup's rows, one group each. The label of a group sat right under the control above it —
+   *Where it runs* read as the Model row's caption — so the gap between groups is the larger
+   one, and the gap inside a group stays the rail's own. */
+#rail-setup {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+#rail-setup > .rail-group {
+  margin-top: var(--space-3);
+}
+
+/* Setup's rows, one group each. The label of a group sat right under the control above it —
+   *Where it runs* read as the Model row's caption — so the gap between groups is the larger
+   one, and the gap inside a group stays the rail's own. */
+#rail-setup {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+#rail-setup > .rail-group {
+  margin-top: var(--space-3);
 }
 
 .rail-label .count {
@@ -3458,8 +3801,13 @@ button[disabled] {
   color: var(--ink);
 }
 
+/* The conversation you are in. A colour change alone was too faint to find at a glance, so
+   it gets the accent's wash and a mark on its left edge, the way a selected row does
+   everywhere else on a Mac. */
 .rail-row.on {
   color: var(--ink);
+  background: var(--accent-wash);
+  box-shadow: inset 2px 0 0 var(--accent);
 }
 
 .rail-row .what {
@@ -3477,9 +3825,16 @@ button[disabled] {
   font-variant-numeric: tabular-nums;
 }
 
-.rail-row .value {
+/* The label keeps its whole word and the value gives way. The other way round, a long model
+   name squeezed "Model" down to "M…", which left a value with nothing saying what it was. */
+#model-row .what {
   flex: none;
-  max-width: 9rem;
+}
+
+.rail-row .value {
+  flex: 0 1 auto;
+  min-width: 0;
+  margin-left: auto;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -3489,6 +3844,46 @@ button[disabled] {
 .rail-row .chev {
   flex: none;
   color: var(--ink-faint);
+  transition: transform var(--t-mid) var(--ease-out);
+}
+
+/* The arrow turns over when the list is open, so it points the way the list closes. */
+.rail-row[aria-expanded='true'] .chev {
+  transform: rotate(180deg);
+}
+
+/* The model list comes down out of its row and goes back quicker than it came. `rail.ts` sets
+   `hidden` at once; the list is only kept drawn while it fades. */
+#model-drop {
+  transition:
+    opacity var(--t-mid) var(--ease-out),
+    transform var(--t-mid) var(--ease-out),
+    display var(--t-mid) allow-discrete;
+}
+
+#model-drop[hidden] {
+  opacity: 0;
+  transform: translateY(-4px);
+  pointer-events: none;
+  transition:
+    opacity var(--t-fast) var(--ease-in),
+    transform var(--t-fast) var(--ease-in),
+    display var(--t-fast) allow-discrete;
+}
+
+@starting-style {
+  #model-drop:not([hidden]) {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rail-row .chev,
+  #model-drop,
+  #model-drop[hidden] {
+    transition: none;
+  }
 }
 
 /* A select is still the right control for a list of four, and the native one comes with
@@ -3498,15 +3893,21 @@ button[disabled] {
   width: 100%;
   font: inherit;
   font-size: var(--text-sm);
+  line-height: var(--leading-tight);
   color: var(--ink);
-  background: var(--surface-raised);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-md);
-  padding: var(--space-2) var(--space-3);
+  /* The Model row's look: no box until the pointer is on it, the same padding, the same arrow
+     on the right. `background-color` only, so the arrow drawn by `select` below stays. */
+  background-color: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) calc(var(--space-2) + 1.25rem) var(--space-2) var(--space-2);
+  background-position:
+    right calc(var(--space-2) + 6px) center,
+    right calc(var(--space-2) + 1px) center;
 }
 
 .rail-select:hover {
-  border-color: var(--line-strong);
+  background-color: var(--wash);
 }
 
 .more {
@@ -3522,6 +3923,24 @@ button[disabled] {
 
 .more:hover {
   color: var(--ink);
+}
+
+.recent-more {
+  display: flex;
+  gap: var(--space-3);
+}
+
+/* What core said about the last model pick, or a plugin switch that did not take, said
+   where it happened rather than somewhere else or not at all. */
+.rail-said {
+  margin: 0;
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--ink-quiet);
+}
+
+.rail-said.refused {
+  color: var(--caution);
 }
 
 .drop {
@@ -3641,7 +4060,7 @@ button[disabled] {
   height: 0.375rem;
   border-radius: var(--radius-full);
   background: currentColor;
-  animation: pulse 2s ease-in-out infinite;
+  animation: pulse 2s var(--ease-loop) infinite;
 }
 
 @keyframes pulse {
@@ -3867,7 +4286,8 @@ kbd {
 .nothing {
   margin: 0;
   font-size: var(--text-sm);
-  color: var(--ink-faint);
+  /* Quiet ink, not faint: on a page at a third of the glass, faint was the painting's colour. */
+  color: var(--ink-quiet);
 }
 
 /* ---- a newer Alexia (D117) ----------------------------------------------------------------
@@ -4066,7 +4486,7 @@ kbd {
   border-radius: var(--radius-md);
   background: var(--surface-raised);
   /* It sharpens over the steps, so a hard swap reads as flicker. */
-  transition: opacity 120ms ease;
+  transition: opacity var(--t-fast) var(--ease-out);
 }
 
 /* ---- the same grid, one level down (D141) -----------------------------------------------
@@ -4323,7 +4743,7 @@ kbd {
   align-items: center;
   gap: var(--space-2);
   font-size: var(--text-xs);
-  color: var(--ink-faint);
+  color: var(--ink-quiet);
   font-variant-numeric: tabular-nums;
 }
 
@@ -4349,6 +4769,61 @@ kbd {
 
 #board.editing .board-dots {
   display: block;
+  opacity: 1;
+}
+
+/* The dots come up rather than appearing, and go when edit view ends. */
+.board-dots {
+  opacity: 0;
+  transition:
+    opacity var(--t-mid) var(--ease-out),
+    display var(--t-mid) allow-discrete;
+}
+
+@starting-style {
+  #board.editing .board-dots {
+    opacity: 0;
+  }
+}
+
+/* The page in the hand grows a little and its shadow deepens over a moment; it follows the
+   pointer from dot to dot on a short glide rather than a jump. `scale` is its own property, so
+   it never fights the `translate` board.ts writes while dragging. The glide is on the lifted
+   page only: when a drop lands, board.ts moves the page and clears the translate in one go,
+   and a transition then would slide it back from the old place. */
+#board.editing .page {
+  transition:
+    scale var(--t-fast) var(--ease-out),
+    box-shadow var(--t-mid) var(--ease-out);
+}
+
+#board.editing .page.lifted {
+  scale: 1.02;
+  transition:
+    transform 90ms var(--ease-out),
+    scale var(--t-fast) var(--ease-out),
+    box-shadow var(--t-mid) var(--ease-out);
+}
+
+/* A refused drop goes home at the pace of something set down, not in one frame. */
+#board.editing .page.returning {
+  transition:
+    transform var(--t-slow) var(--ease-out),
+    scale var(--t-fast) var(--ease-out),
+    box-shadow var(--t-mid) var(--ease-out);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .board-dots,
+  #board.editing .page,
+  #board.editing .page.lifted,
+  #board.editing .page.returning {
+    transition: none;
+  }
+
+  #board.editing .page.lifted {
+    scale: none;
+  }
 }
 
 .page-grab,
@@ -4445,9 +4920,8 @@ kbd {
 }
 
 .page-tier {
-  width: 2rem;
   height: 2rem;
-  padding: 0;
+  padding: 0 var(--space-3);
   background: transparent;
   color: var(--ink);
 }
@@ -4462,7 +4936,6 @@ kbd {
 }
 
 .page-note {
-  font-family: var(--mono);
   font-size: var(--text-xs);
   color: var(--ink-quiet);
   white-space: normal;
@@ -4495,11 +4968,13 @@ kbd {
    the margin beside the board (layout.ts keeps at least 20 px there) so they cover no page.
    Resting on the dock, or Tab to a tab, slides them all out with their names. */
 
+/* Above the Settings and Activity sheet (30): two of these tabs open and close it, and their
+   names slid out underneath it, where nobody could read them. */
 #corner {
   position: fixed;
   left: 0;
   bottom: var(--space-5);
-  z-index: 20;
+  z-index: 31;
 }
 
 .dock {
@@ -4525,8 +5000,8 @@ kbd {
   color: var(--ink);
   font-size: var(--text-sm);
   transition:
-    max-width 180ms ease-out,
-    padding 180ms ease-out;
+    max-width var(--t-mid) var(--ease-out),
+    padding var(--t-mid) var(--ease-out);
 }
 
 .dock-tab svg {
@@ -4535,7 +5010,7 @@ kbd {
 
 .dock-label {
   opacity: 0;
-  transition: opacity 180ms ease-out;
+  transition: opacity var(--t-mid) var(--ease-out);
 }
 
 #corner.out .dock-tab,
@@ -4574,11 +5049,36 @@ kbd {
   z-index: 21;
   transform: translateX(-50%);
   display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
   align-items: center;
   gap: 2px;
+  box-sizing: border-box;
+  width: max-content;
+  max-width: calc(100vw - 2 * var(--space-4));
   padding: 3px;
   border-radius: var(--radius-full);
   white-space: nowrap;
+}
+
+/* How edit view works, in one line, at the start of the pill. Where the window is too narrow
+   for it beside the buttons the pill wraps, and on the narrowest it goes: the buttons are what
+   cannot. */
+.edit-hint {
+  padding: 0 var(--space-3) 0 var(--space-4);
+  font-size: var(--text-xs);
+  color: var(--ink-quiet);
+}
+
+.edit-hint.ask {
+  font-size: var(--text-sm);
+  color: var(--ink);
+}
+
+@media (max-width: 559px) {
+  .edit-hint:not(.ask) {
+    display: none;
+  }
 }
 
 .pill-button {
@@ -4592,6 +5092,12 @@ kbd {
 
 .pill-button:hover {
   background: var(--wash);
+}
+
+.pill-button:disabled {
+  color: var(--ink-faint);
+  background: transparent;
+  cursor: default;
 }
 
 .pill-button.quiet {
@@ -4664,4 +5170,110 @@ button.add-row:hover {
   padding: var(--space-2) var(--space-4);
   border-radius: var(--radius-full);
   font-size: var(--text-sm);
+  transition:
+    opacity var(--t-mid) var(--ease-out),
+    transform var(--t-mid) var(--ease-out),
+    display var(--t-mid) allow-discrete;
+}
+
+/* It fades rather than blinking out, the same way the chat's pop-up does. */
+.board-note[hidden] {
+  opacity: 0;
+  transform: translate(-50%, 6px);
+  pointer-events: none;
+  transition:
+    opacity var(--t-fast) var(--ease-in),
+    transform var(--t-fast) var(--ease-in),
+    display var(--t-fast) allow-discrete;
+}
+
+@starting-style {
+  .board-note:not([hidden]) {
+    opacity: 0;
+    transform: translate(-50%, 6px);
+  }
+}
+
+/* ---- hover and press --------------------------------------------------------------------
+
+   Every control that changes on hover changes over a moment rather than in a frame, and every
+   one that can be pressed gives a little under the press. Colour, background and border only:
+   nothing here moves layout. The press is `scale`, a property of its own, so it never fights a
+   `transform` a control already has. */
+
+button,
+select,
+input,
+textarea,
+.rail-row,
+.opt,
+.chip,
+.tab,
+.tools,
+.card,
+.pick,
+.bento-card,
+.table-chip,
+.tree-row,
+.ladder-hit,
+#menu li,
+.grid tbody td {
+  transition:
+    background-color var(--t-fast) var(--ease-out),
+    color var(--t-fast) var(--ease-out),
+    border-color var(--t-fast) var(--ease-out),
+    box-shadow var(--t-fast) var(--ease-out),
+    scale 100ms var(--ease-out);
+}
+
+button:not([disabled]):active {
+  scale: 0.98;
+}
+
+.card:active,
+.pick:not(.off):active,
+.bento-card:active {
+  scale: 0.99;
+}
+
+/* With Reduce motion the colours still change — that is information — only instantly, and
+   nothing gives under a press. */
+@media (prefers-reduced-motion: reduce) {
+  button,
+  select,
+  input,
+  textarea,
+  .rail-row,
+  .opt,
+  .chip,
+  .tab,
+  .tools,
+  .card,
+  .pick,
+  .bento-card,
+  .table-chip,
+  .tree-row,
+  .ladder-hit,
+  #menu li,
+  .grid tbody td {
+    transition: none;
+  }
+
+  button:not([disabled]):active,
+  .card:active,
+  .pick:not(.off):active,
+  .bento-card:active {
+    scale: none;
+  }
+}
+
+/* Read by a screen reader and not drawn: a line that says an answer has finished, and a
+   table's header over a column of buttons, which a sighted person needs no word for. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }

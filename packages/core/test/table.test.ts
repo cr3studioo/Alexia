@@ -217,7 +217,7 @@ test('a row action is an action: same gate, same two steps, and it carries the r
   // the ruling a button on the settings screen goes through. No second gate (D83).
   const asked = await post('/api/action', { plugin: 'shelf', key: 'remove', row: 'c' })
   expect(asked.ok).toBe(false)
-  expect(asked.ask).toContain('remove_thing')
+  expect(asked.ask).toContain('take one off the shelf')
 
   const done = await post('/api/action', { plugin: 'shelf', key: 'remove', row: 'c', approved: true })
   expect(done.ok).toBe(true)
@@ -264,7 +264,7 @@ test('a tree answers with nodes, and core hands them to the shell the way it han
   const detail = await post('/api/detail', { plugin: 'shelf', key: 'shelves', row: 'b' })
   expect(detail.text).toBe('Bellows has been used 11 times.')
   const asked = await post('/api/action', { plugin: 'shelf', key: 'remove_loose', row: 'a' })
-  expect(asked.ask).toContain('remove_thing')
+  expect(asked.ask).toContain('take one off the shelf')
 
   // A tree whose tool answers with `rows` is told which word it was supposed to use.
   const misfiled = await post('/api/rows', { plugin: 'shelf', key: 'misfiled' })

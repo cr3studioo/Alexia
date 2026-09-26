@@ -3,7 +3,7 @@
   "manifest_version": 1,
   "id": "voice",
   "name": "Voice",
-  "summary": "Hears you with Whisper and answers out loud — in Piper on this machine, in Qwen3-TTS if you have the Python for it, or in a voice cloned from a clip of your own.",
+  "summary": "Hears what you say and answers out loud, on this computer or with a cloud voice, even one cloned from a recording.",
   "version": "0.4.0",
   "license": "AGPL-3.0-only",
   "entry": {
@@ -60,7 +60,7 @@
         {
           "value": "piper",
           "label": "Piper",
-          "hint": "Fast, and entirely on this machine. Three published voices and any .onnx you bring. It cannot clone a voice and has no expression at all."
+          "hint": "Fast, and entirely on this machine. Three ready voices, and any Piper voice you download. It cannot copy a voice and sounds flat."
         },
         {
           "value": "qwen",
@@ -79,7 +79,7 @@
         {
           "value": "fish_expressive",
           "label": "fish.audio, with expression",
-          "hint": "The same, with each reply marked up for emotion first. One extra model call per reply, and it is the only engine here that can be told how to say something.",
+          "hint": "The same, with each reply marked up for emotion first. One extra AI request per reply, and it is the only engine here that can be told how to say something.",
           "needs": "fish_key",
           "reason": "Add a fish.audio key at the bottom of this page."
         }
@@ -159,7 +159,7 @@
           "warm",
           "deep"
         ],
-        "hint": "The vendor's own words for its voices. Several together narrow it.",
+        "hint": "fish.audio's own words for its voices. Several together narrow it.",
         "when": {
           "key": "engine",
           "is": [
@@ -326,14 +326,14 @@
       {
         "type": "choice",
         "key": "model_size",
-        "label": "Hearing — speech model",
+        "label": "Hearing — speech-to-text model",
         "options": [
           "tiny",
           "base",
           "small"
         ],
         "default": "base",
-        "hint": "What Whisper turns your speech into text with, whichever engine answers. Bigger is more accurate and slower: tiny is 75 MB, base 148 MB, small 488 MB."
+        "hint": "The Whisper model that turns what you say into text. Bigger is more accurate and slower: tiny is 75 MB, base 148 MB, small 488 MB."
       },
       {
         "type": "number",
@@ -360,7 +360,7 @@
         "key": "install",
         "label": "Download now",
         "tool": "install",
-        "hint": "Fetches Whisper, Piper, the speech model and the voice. It happens on first use anyway; this is for getting it over with while you are looking."
+        "hint": "Downloads what hearing and speaking need. It happens on first use anyway; this gets it done now."
       },
       {
         "type": "path",
@@ -381,7 +381,7 @@
         "key": "qwen_path",
         "label": "Qwen program",
         "kind": "file",
-        "hint": "A Python that already has qwen-tts installed. Nothing here downloads PyTorch: a plugin that quietly pulls six gigabytes because somebody asked for a voice has decided something for you."
+        "hint": "A Python that already has qwen-tts installed. Alexia does not install it for you, because it is a download of about six gigabytes (PyTorch)."
       },
       {
         "type": "password",

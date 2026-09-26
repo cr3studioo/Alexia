@@ -304,6 +304,20 @@ export function plugin(options: PluginOptions = {}): AlexiaPlugin {
       ...(about.description !== undefined && { description: about.description }),
     }),
     call,
-    start: () => server.connect(new StdioServerTransport()),
+    start: async () => {
+      await server.connect(new StdioServerTransport())
+      // **Core gone is this plugin gone.** stdin is the pipe core writes to, so its end is the
+      // one sign that arrives however core left: a tidy stop, a crash, or a kill it never
+      // heard. MCP's transport listens for data and errors and not for the end, so without
+      // this a plugin with a timer or an open poll carried on alone — a Telegram bot still
+      // collecting messages for an Alexia that had quit, and fighting the next one for them.
+      process.stdin.once('end', leave)
+      process.stdin.once('close', leave)
+    },
   }
+}
+
+/** Nothing is listening any more, so there is nothing to finish: every answer went to core. */
+function leave(): never {
+  process.exit(0)
 }

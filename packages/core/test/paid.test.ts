@@ -166,7 +166,12 @@ test('switch on: paid answers once the free ones are done, and stops when the da
 
   await post('/api/action', { key: 'new_chat' })
   busy = new Set(['free/one'])
-  expect(said(await chat({ text: 'what is on today' }))).toBe('from paid/one')
+  const answered = await chat({ text: 'what is on today' })
+  expect(said(answered)).toBe('from paid/one')
+  // The end of the answer carries the day beside the month, each under its own name, so the
+  // Price page is not left to put the month's total over the word *today*.
+  const done = answered.find((event) => 'done' in event)?.done as Record<string, unknown>
+  expect(done).toMatchObject({ spent: expect.any(Number), today: { spent: expect.any(Number), allowance: 1 } })
 
   // The day's dollar spent: it stops as the allowance always did, and does not pause.
   alexia.store.recordUsage({ model: 'paid/one', provider: 'stub', tokensIn: 0, tokensOut: 0, cost: 1.5 })

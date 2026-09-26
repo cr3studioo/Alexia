@@ -12,22 +12,23 @@
  */
 
 import { escapeTakes, mountBoard } from './board.js'
+import { copyText, grow, moveIn, nearBottom, shownTurn, slashMatches, type StoredTurn, usedTools, wordsOf } from './chat.js'
 import type { Layout } from './layout.js'
 import { drawPrice } from './pages.js'
 import { genieIn, genieOut, stopGenie } from './genie.js'
 import { autostart, dismiss, HOTKEY, inApp, installUpdate, setAutostart, tray, updateAvailable } from './desktop.js'
 import { mountControl } from './control.js'
 import { mountPalette } from './palette.js'
-import { mountSettings } from './settings.js'
+import { isSettingsPage, mountSettings } from './settings.js'
 import { mountGlass, mountTheme, type Theme } from './theme.js'
 import { mountLive, type Stage } from './live.js'
+import { answerPrompt, modal } from './modal.js'
 import { mountRail } from './rail.js'
 import { isPhase, mountStatus } from './status.js'
-import { el, MODELS_CHANGED } from './widgets.js'
+import { dollarsOf, el, MODELS_CHANGED } from './widgets.js'
 
-interface Turn {
+interface Turn extends StoredTurn {
   role: 'system' | 'user' | 'assistant' | 'tool'
-  content: string
   model?: string
   /** What Alexia said about this answer — a switch to another model — kept with it (§4 G). */
   notes?: string[]
@@ -53,8 +54,14 @@ interface Provider {
   terms?: string
   trainsOnYourData: 'yes' | 'no' | 'unknown'
   free: boolean
-  /** Whether a key is already stored for it. Never the key — that went to the keychain. */
+  /** Whether Alexia can ask it now: a key is stored, or it answers with none and the floor is on. */
   connected: boolean
+  /**
+   * Whether a key is really stored for it. Never the key — that went to the keychain. Not the
+   * same as `connected`: a provider that answers with no key is connected with nothing stored,
+   * and a *key stored* badge or a *Remove key* button on it would be about a key nobody gave.
+   */
+  keyStored: boolean
   /** The published free tier, in whichever unit this one rations. Absent means not published. */
   rpm?: number
   rpd?: number
@@ -92,6 +99,11 @@ interface State {
   /** What this build is, for the About page — sent with every state read (D121). */
   app?: string
   permissions: Permissions
+  /**
+   * The two limits on one task (M15-7): most steps, and the estimate above which she asks first
+   * — and the monthly budget, absent when there is none.
+   */
+  ceilings?: Limits
   messages: Turn[]
   spent: number
   cap?: number
@@ -119,11 +131,19 @@ const token = document.querySelector<HTMLElement>('[data-token]')?.dataset.token
  * left is read synchronously here, so the first frame is somebody's own arrangement rather
  * than the default with a jump to follow. Core's copy arrives with the first state read.
  */
-const board = mountBoard(document.querySelector<HTMLElement>('#board')!, token)
+const board = mountBoard(document.querySelector<HTMLElement>('#board')!, token, {
+  // Edit view opens on the board, so a Settings or Activity sheet over it goes first — from the
+  // dock's tab as from the palette. Under the sheet it was edit view nobody could see.
+  opening: () => {
+    if (sheetOpen()) show('chat')
+  },
+})
 
 /** One of the board's pages, by the name the layout knows it by. */
 const page = (id: string): HTMLElement => document.querySelector<HTMLElement>(`[data-page="${id}"]`)!
 const log = document.querySelector<HTMLElement>('#log')!
+/** A line only a screen reader hears, saying an answer has finished (respond). */
+const answered = document.querySelector<HTMLElement>('#answered')!
 const note = document.querySelector<HTMLElement>('#note')!
 const modelBadge = document.querySelector<HTMLElement>('#model')!
 const rungBadge = document.querySelector<HTMLElement>('#rung')!
@@ -170,29 +190,75 @@ function wearing(bubble?: Bubble): void {
   rungBadge.textContent = bubble.says
   rungBadge.dataset.state = bubble.state
 }
-const spendBadge = document.querySelector<HTMLElement>('#spend')!
 const form = document.querySelector<HTMLFormElement>('#ask')!
 const text = document.querySelector<HTMLTextAreaElement>('#text')!
 const button = form.querySelector('button')!
 const prompt = document.querySelector<HTMLElement>('#prompt')!
 const promptWhy = document.querySelector<HTMLElement>('#prompt-why')!
-const permission = document.querySelector<HTMLSelectElement>('#permission')!
+/** The permission control, twice: on the rail and on Settings > Safety (D205). One writer. */
+const permissions = document.querySelectorAll<HTMLSelectElement>('select.permission')
 const stop = document.querySelector<HTMLButtonElement>('#stop')!
 
 const money = (n: number): string => `$${n.toFixed(2)}`
 
-function bubble(kind: 'user' | 'assistant' | 'refusal', content = ''): HTMLElement {
+/**
+ * **Whether the log follows new words.** True while somebody is reading the bottom of it, and
+ * false the moment they scroll up to reread something — an answer streaming in used to pull
+ * them back down on every word, so nothing above the newest line could be read until it was
+ * over. Kept from the log's own scroll events, because by the time new words have landed the
+ * distance to the bottom has already grown by them.
+ */
+let pinned = true
+const newWords = document.querySelector<HTMLButtonElement>('#new-words')!
+
+/** New things in the log: kept in view for somebody at the bottom, offered to anybody who is not. */
+function follow(): void {
+  if (pinned) log.scrollTop = log.scrollHeight
+  else newWords.hidden = false
+}
+
+/** To the bottom, whatever the reader was doing: a conversation just drawn, or a message they just sent. */
+function toBottom(): void {
+  log.scrollTop = log.scrollHeight
+  pinned = true
+  newWords.hidden = true
+}
+
+log.addEventListener('scroll', () => {
+  pinned = nearBottom(log)
+  if (pinned) newWords.hidden = true
+})
+newWords.addEventListener('click', () => {
+  toBottom()
+  text.focus()
+})
+
+/**
+ * One turn in the log. `reply` is a command's answer that worked — said plainly, where a
+ * `refusal` is drawn as the dashed box that means *this did not happen*.
+ */
+function bubble(kind: 'user' | 'assistant' | 'refusal' | 'reply', content = ''): HTMLElement {
   const element = document.createElement('div')
   element.className = `turn ${kind}`
   element.textContent = content
   log.append(element)
-  log.scrollTop = log.scrollHeight
+  // What somebody just sent is theirs, and they want to see it land wherever they were.
+  if (kind === 'user') toBottom()
+  else follow()
   return element
 }
 
+/**
+ * **What the note line says when nothing newer has been said**: a standing boundary, which
+ * stays on screen while it applies (see `showPermissions`). A new message clears whatever
+ * else was there and puts this back.
+ */
+let standingNote = ''
+
 function say(line?: string): void {
-  note.textContent = line ?? ''
-  note.hidden = !line
+  const shown = line ?? standingNote
+  note.textContent = shown
+  note.hidden = shown === ''
 }
 
 const paidNote = document.querySelector<HTMLElement>('#paid-note')!
@@ -220,9 +286,10 @@ function pop(line: string): void {
   window.clearTimeout(popupTimer)
   popup.textContent = line
   popup.hidden = false
+  // The words stay while it fades out (app.css); the next switch writes over them. A hidden
+  // element is out of the accessibility tree, so nothing reads them again.
   popupTimer = window.setTimeout(() => {
     popup.hidden = true
-    popup.textContent = ''
   }, POPUP_MS)
 }
 
@@ -240,23 +307,50 @@ function pop(line: string): void {
  * honest version of *there is nothing here this would tell*.
  */
 function answerActions(answer: HTMLElement, canSay = false): void {
-  for (const old of log.querySelectorAll('.message-actions')) old.remove()
-  const row = document.createElement('div')
-  row.className = 'message-actions'
+  for (const old of log.querySelectorAll('.latest-only')) old.remove()
+  const row = actionsRow(answer)
   const bad = document.createElement('button')
   bad.type = 'button'
-  bad.className = 'quiet-button'
+  bad.className = 'quiet-button latest-only'
   bad.textContent = 'Bad answer'
   bad.title = 'Ask again with a different model. Two of these in a month move a model down.'
   bad.addEventListener('click', () => {
     if (!idle()) return
-    row.remove()
+    for (const old of row.querySelectorAll('.latest-only')) old.remove()
     markBad(answer)
     running(() => respond('choosing', undefined, () => Promise.resolve({ again: true, bad: {} })))
   })
   row.append(bad)
   if (canSay) row.append(notHerButton(row, answer))
+}
+
+/**
+ * **The row under an answer**, with *Copy* in it — made once per answer, and found again when
+ * the latest answer's buttons are added to it. Every answer has *Copy*, not only the latest:
+ * copying is not a verdict on the answer, so nothing about asking it twice goes wrong.
+ */
+function actionsRow(answer: HTMLElement): HTMLElement {
+  const had = answer.querySelector<HTMLElement>(':scope > .message-actions')
+  if (had !== null) return had
+  const row = document.createElement('div')
+  row.className = 'message-actions'
+  const copy = document.createElement('button')
+  copy.type = 'button'
+  copy.className = 'quiet-button'
+  copy.textContent = 'Copy'
+  copy.title = 'Copy this answer'
+  let back: number | undefined
+  copy.addEventListener('click', () => {
+    void copyText(wordsOf(answer)).then((copied) => {
+      // Said on the button itself for a moment, which is where the eye already is.
+      copy.textContent = copied ? 'Copied' : 'Could not copy'
+      window.clearTimeout(back)
+      back = window.setTimeout(() => (copy.textContent = 'Copy'), 1500)
+    })
+  })
+  row.append(copy)
   answer.append(row)
+  return row
 }
 
 /**
@@ -317,6 +411,7 @@ function notHerButton(row: HTMLElement, answer: HTMLElement): HTMLElement {
       // Enter and the button are the same press, and a second one is not a second line.
       if (sent) return
       sent = true
+      closeNotHer = undefined
       const typed = field.value.trim()
       // The line is about the answer the press was about; core pairs the two, and the plugin
       // files it on the same moment rather than as a second one.
@@ -333,7 +428,7 @@ function notHerButton(row: HTMLElement, answer: HTMLElement): HTMLElement {
         box.replaceChildren(
           noted(
             !added ? 'Marked, but the line did not reach anything that keeps it.'
-            : typed === '' ? 'Noted. Refine will use this.'
+            : typed === '' ? 'Noted. Refine, in Personality, will use this.'
             : 'Noted, with what she should have said.',
           ),
         )
@@ -343,6 +438,14 @@ function notHerButton(row: HTMLElement, answer: HTMLElement): HTMLElement {
     field.addEventListener('keydown', (event) => {
       if (event.key === 'Enter') done()
     })
+    // Escape puts the box away as though nothing more was typed: the press itself was already
+    // sent, so this is *no line to add*, not an undo. The window's own Escape asks for this
+    // before it would put the window away.
+    closeNotHer = () => {
+      closeNotHer = undefined
+      field.value = ''
+      done()
+    }
     box.append(field, send)
     row.after(box)
     field.focus()
@@ -351,12 +454,31 @@ function notHerButton(row: HTMLElement, answer: HTMLElement): HTMLElement {
   return said
 }
 
+/** How to put the open *That wasn't her* box away, while one is waiting for a line. */
+let closeNotHer: (() => void) | undefined
+
 /** The line that replaces the box once something has been said, so a press is never silent. */
 function noted(text: string): HTMLElement {
   const line = document.createElement('p')
   line.className = 'bad-line'
   line.textContent = text
   return line
+}
+
+/** The names of what came with a question, under it: *📎 lease.pdf, picture*. */
+function carriedLine(names: string[]): HTMLElement {
+  const carried = document.createElement('small')
+  carried.className = 'carried'
+  carried.textContent = `📎 ${names.join(', ')}`
+  return carried
+}
+
+/** *(stopped)*, after an answer that Stop cut short — so a half answer does not pass for a whole one. */
+function stoppedMark(): HTMLElement {
+  const mark = document.createElement('span')
+  mark.className = 'stopped-mark'
+  mark.textContent = '(stopped)'
+  return mark
 }
 
 /** An answer somebody marked bad: dimmed, and saying so, rather than taken off the page. */
@@ -693,6 +815,8 @@ async function base64(file: Blob): Promise<string> {
   return btoa(binary)
 }
 
+// Attach is a button, so a keyboard reaches it, and it opens the hidden file input.
+document.querySelector<HTMLButtonElement>('#attach')!.addEventListener('click', () => filePicker.click())
 filePicker.addEventListener('change', () => {
   carry(filePicker.files ?? [])
   // Cleared, or picking the same file twice in a row fires no event the second time.
@@ -747,6 +871,7 @@ for (const kind of ['dragover', 'drop'] as const) {
 function called(name: string): void {
   document.querySelector<HTMLElement>('.name')!.textContent = name
   text.placeholder = `Ask ${name}`
+  text.setAttribute('aria-label', `Message ${name}`)
   // And the label over every one of her messages, which the sheet draws rather than the
   // shell. A custom property because `content` can read one and cannot read an ancestor's
   // attribute — and a hardcoded "Alexia" there is exactly the sort of place a rename
@@ -761,6 +886,13 @@ function called(name: string): void {
  */
 let showing = 0
 
+/**
+ * The sheet as a dialog (modal.ts). Only the board goes inert under it: the dock is drawn above
+ * the sheet on purpose, because its tabs switch between Settings and Activity and take the sheet
+ * away for Edit layout, and an inert dock would take that away from a mouse as well.
+ */
+const sheetDialog = modal(document.querySelector<HTMLElement>('#sheet')!, () => [document.querySelector<HTMLElement>('#board')!])
+
 function show(view: 'first-run' | 'chat' | 'settings' | 'control'): void {
   // A genie still playing is finished first, and a close still waiting to change the view is
   // overtaken: the last thing asked for is what is on screen.
@@ -771,6 +903,13 @@ function show(view: 'first-run' | 'chat' | 'settings' | 'control'): void {
   const tab = (of: string | undefined): HTMLElement | null =>
     document.querySelector<HTMLElement>(of === 'control' ? '#open-control' : '#open-settings')
   const inSheet = (one: string | undefined): boolean => one === 'settings' || one === 'control'
+  // The sheet is a dialog: the board goes inert under it, focus moves in, and it goes back
+  // to whatever opened it when it closes. In once the sheet is laid out, since a heading
+  // that is not on screen yet cannot take focus.
+  const landed = (): void => {
+    if (inSheet(view)) sheetDialog.open(document.querySelector<HTMLElement>(view === 'control' ? '#control-heading' : '#settings-heading')!)
+  }
+  if (inSheet(was) && !inSheet(view)) sheetDialog.close(text)
   // Settings and Activity come out of their tab in the dock and go back into it (genie.ts).
   // Closing keeps the sheet laid out until the picture of it has gone in: the view is what lays
   // it out, and it is the view that takes it away afterwards.
@@ -790,15 +929,17 @@ function show(view: 'first-run' | 'chat' | 'settings' | 'control'): void {
       genieOut(view, sheet, from, () => {
         if (showing !== mine) return false
         document.body.dataset.view = view
+        landed()
         return true
       })
       return
     }
   }
   document.body.dataset.view = view
+  landed()
 }
 
-/** Whether Settings or Control is the sheet over the board right now. */
+/** Whether Settings or Activity is the sheet over the board right now. */
 const sheetOpen = (): boolean => document.body.dataset.view === 'settings' || document.body.dataset.view === 'control'
 
 function firstRun(state: State): void {
@@ -822,13 +963,15 @@ function firstRun(state: State): void {
    */
   const begin = document.querySelector<HTMLButtonElement>('#begin')!
   const skipLine = document.querySelector<HTMLElement>('#skip-line')!
-  let keys = state.providers.filter((p) => p.connected).length
+  // Keys somebody pasted, not providers that can be asked: the keyless floor is always the
+  // second, and counting it here meant *start with no keys* could never be said.
+  let keys = state.providers.filter((p) => p.keyStored).length
   const standing = (): void => {
     const none = keys === 0 && chosen() !== 'local'
     begin.textContent = none ? 'Skip — start with no keys' : 'Start'
     skipLine.textContent =
       none ?
-        'Alexia answers with no key at all: some of the providers above ask for nothing, and a model on this machine does too. Keys make it faster, and Settings takes one whenever you want.'
+        'Alexia answers with no key at all: some of the AI services above ask for nothing, and a model on this computer does too. Keys make her faster, and you can add one in Settings any time.'
       : ''
   }
 
@@ -841,8 +984,11 @@ function firstRun(state: State): void {
   for (const radio of document.querySelectorAll('input[name="mode"]')) {
     radio.addEventListener('change', showWall)
   }
-  keyWall(state, () => {
-    keys += 1
+  // Counted once per provider: a second key pasted over the first is still one provider keyed.
+  const keyedHere = new Set(state.providers.filter((p) => p.keyStored).map((p) => p.id))
+  keyWall(state, (id) => {
+    keyedHere.add(id)
+    keys = keyedHere.size
     standing()
   })
   showWall()
@@ -859,7 +1005,7 @@ function firstRun(state: State): void {
   if (inApp()) {
     desktop.hidden = false
     document.querySelector<HTMLElement>('#hotkey-line')!.textContent =
-      `Alexia lives in the tray from now on. Press ${HOTKEY} anywhere to talk to it, and Escape to put it away — a task that is running keeps running.`
+      `Alexia lives in the tray from now on. Press ${HOTKEY} anywhere to talk to her, and Escape to put her away. A task that is running keeps running.`
     // Checked by default and honoured on Start. A daemon that does not come back after a
     // restart is a daemon somebody has to remember to launch, which is the thing it exists
     // not to be.
@@ -927,7 +1073,7 @@ function keyWall(state: State, saved: (id: string) => void): void {
   const unchecked = state.providers.filter((p) => p.trainsOnYourData === 'unknown').length
   document.querySelector<HTMLElement>('#training')!.textContent =
     unchecked > 0 ?
-      `Whether ${String(unchecked)} of these ${String(state.providers.length)} providers train on what you send them is not yet checked. Alexia says so rather than guessing.`
+      `Whether ${String(unchecked)} of these ${String(state.providers.length)} AI services train on what you send them is not yet checked. Alexia says so rather than guessing.`
     : ''
 
   for (const provider of state.providers) wall.append(tile(provider, saved))
@@ -936,9 +1082,9 @@ function keyWall(state: State, saved: (id: string) => void): void {
 /** The published free tier, in the unit the provider actually rations. */
 function allowance(provider: Provider): string {
   const said = [
-    provider.rpm === undefined ? '' : `${String(provider.rpm)}/min`,
-    provider.rpd === undefined ? '' : `${String(provider.rpd)}/day`,
-    provider.callsPerMonth === undefined ? '' : `${String(provider.callsPerMonth)} calls/month`,
+    provider.rpm === undefined ? '' : `${String(provider.rpm)} requests a minute`,
+    provider.rpd === undefined ? '' : `${String(provider.rpd)} requests a day`,
+    provider.callsPerMonth === undefined ? '' : `${String(provider.callsPerMonth)} requests a month`,
   ].filter(Boolean)
   return said.length > 0 ? said.join(' · ') : 'limits not published'
 }
@@ -958,7 +1104,10 @@ function tile(provider: Provider, saved: (id: string) => void): HTMLElement {
   const head = el('div', 'tile-head')
   head.append(el('b', 'tile-name', provider.name))
   if (provider.keyless) head.append(el('span', 'flag good', 'works with no key'))
-  if (provider.connected) head.append(el('span', 'flag good', 'key stored'))
+  // One badge, made once and shown when a key is stored, so a second save cannot add a second.
+  const stored = el('span', 'flag good', 'key stored')
+  stored.hidden = !provider.keyStored
+  head.append(stored)
   card.append(head)
 
   card.append(el('span', 'tile-free', allowance(provider)))
@@ -966,14 +1115,14 @@ function tile(provider: Provider, saved: (id: string) => void): HTMLElement {
   // The two costs that are not money, on the face. Friction first, because it is the one
   // that decides whether somebody starts at all.
   if (provider.friction) card.append(el('span', 'flag warn', provider.friction))
-  if (provider.account) card.append(el('span', 'flag warn', 'Needs your Account ID as well as a token'))
+  if (provider.account) card.append(el('span', 'flag warn', 'Needs your account ID as well as a key'))
   if (provider.trainsOnYourData === 'yes') card.append(el('span', 'flag warn', 'Trains on what you send it'))
 
   const paste = el('input', 'tile-key') as HTMLInputElement
   paste.type = 'password'
   paste.autocomplete = 'off'
-  paste.placeholder = provider.account ? 'account_id:api_token' : 'Paste a key'
-  paste.setAttribute('aria-label', `API key for ${provider.name}`)
+  paste.placeholder = provider.account ? 'account ID:key' : 'Paste your key'
+  paste.setAttribute('aria-label', `Key for ${provider.name}`)
   card.append(paste)
 
   const said = el('span', 'tile-said')
@@ -993,7 +1142,7 @@ function tile(provider: Provider, saved: (id: string) => void): HTMLElement {
   const lines = [
     `Free tier: ${allowance(provider)}.`,
     provider.friction ?? '',
-    provider.account ? 'Cloudflare puts your account id in the URL, so paste it and the token together, separated by a colon.' : '',
+    provider.account ? 'It also needs your account ID. Paste the ID, a colon, then the key, like abc123:your-key.' : '',
     provider.trainsOnYourData === 'yes' ? 'Its free tier logs prompts and answers for training.'
     : provider.trainsOnYourData === 'no' ? 'It does not train on what you send it.'
     : 'Whether it trains on what you send it is not checked yet.',
@@ -1009,9 +1158,16 @@ function tile(provider: Provider, saved: (id: string) => void): HTMLElement {
   }
   card.append(how)
 
+  /**
+   * **Saved once per paste.** Enter and `change` both land here — Enter commits the box, which
+   * fires `change` as well — so the key being saved is remembered, and the same key a second
+   * time while it is on its way is the same save, not another one.
+   */
+  let sending: string | undefined
   const store = (): void => {
     const typed = paste.value.trim()
-    if (!typed) return
+    if (!typed || typed === sending) return
+    sending = typed
     paste.disabled = true
     void post('/api/setup', { provider: { id: provider.id, key: typed } })
       .then((answer) => {
@@ -1019,17 +1175,22 @@ function tile(provider: Provider, saved: (id: string) => void): HTMLElement {
         said.className = 'tile-said good'
         // What the key unlocked, now that core waits for the list (§1 step 3).
         said.textContent = typeof answer.said === 'string' ? answer.said : 'Saved to the keychain.'
-        head.append(el('span', 'flag good', 'key stored'))
+        stored.hidden = false
         saved(provider.id)
         redrawModels()
       })
       // A key is the one thing nobody can check by looking, so a silent failure here is a
-      // person pasting the same key again forever.
+      // person pasting the same key again forever. A key the provider refused comes back as a
+      // whole sentence of its own, in red where it was pasted; the key it replaced, if any, is
+      // still stored, so the badge stays as it was.
       .catch((error: unknown) => {
         said.className = 'tile-said error'
         said.textContent = `Not saved: ${error instanceof Error ? error.message : String(error)}`
       })
-      .finally(() => (paste.disabled = false))
+      .finally(() => {
+        sending = undefined
+        paste.disabled = false
+      })
   }
   paste.addEventListener('change', store)
   paste.addEventListener('keydown', (event) => {
@@ -1092,14 +1253,26 @@ function setupSettings(state: State): void {
    * cannot be: it went to the keychain, and a box that looked the same either way would have
    * a person pasting a key they had already pasted to find out.
    */
-  const connected = new Set(state.providers.filter((p) => p.connected).map((p) => p.id))
+  // A key really stored, not merely reachable: *A key is stored for AI Horde* and a Remove
+  // button beside it were said about a provider that answers with no key at all.
+  const connected = new Set(state.providers.filter((p) => p.keyStored).map((p) => p.id))
   const describe = (): void => {
     const picked = state.providers.find((p) => p.id === provider.value)
     said.className = 'hint'
     said.textContent =
-      (connected.has(provider.value) ?
-        `A key is stored for ${picked?.name ?? provider.value}. Pasting one replaces it. `
-      : `No key yet for ${picked?.name ?? provider.value}. `) + (picked?.terms ? `Terms: ${picked.terms}` : '')
+      connected.has(provider.value) ? `A key is stored for ${picked?.name ?? provider.value}. Pasting one replaces it. `
+      : picked?.keyless === true ? `${picked.name} works with no key, so one is optional. `
+      : `No key yet for ${picked?.name ?? provider.value}. `
+    if (picked?.account === true) said.append('Paste your account ID, a colon, then the key. ')
+    // The terms as a link that opens them, the way the first-run tile does, not an address
+    // somebody has to copy out of a grey line.
+    if (picked?.terms) {
+      const link = el('a', '', 'Terms')
+      link.href = picked.terms
+      link.target = '_blank'
+      link.rel = 'noreferrer'
+      said.append(link)
+    }
     // The way out sits beside the way in, and only where there is something to take out.
     remove.hidden = !connected.has(provider.value)
     disarm()
@@ -1174,12 +1347,12 @@ function setupSettings(state: State): void {
 
 /**
  * **A key changed, so the lists that follow the keychain are drawn again** (§1 steps 3–4): the
- * rail's models, and the Models tab when it is the screen being looked at. A tab that is not
- * on screen reads its rows when it is next opened, so there is nothing to redraw there.
+ * rail's models, and the Models & money page when it is the screen being looked at. A page
+ * that is not on screen reads its rows when it is next opened, so there is nothing to redraw.
  */
 function redrawModels(): void {
   void rail.refresh()
-  if (document.body.dataset.view === 'control') control.open()
+  if (document.body.dataset.view === 'settings') settings.redrawModels()
 }
 
 // The keyless floor's switch (D154) changes which providers can be reached, which is what a key
@@ -1205,50 +1378,110 @@ function paint(state: State): void {
   // an hour ago, so the state badge goes rather than lying about the present.
   wearing()
   let latest: HTMLElement | undefined
+  /**
+   * **Her turns that only ran tools**, folded into one quiet line before whatever comes next.
+   * Each used to be drawn as her name over nothing — dozens of empty answers in a conversation
+   * where she did a lot of work.
+   */
+  let tools = 0
+  const toolsSoFar = (): void => {
+    if (tools === 0) return
+    const line = document.createElement('p')
+    line.className = 'tools-used'
+    line.textContent = usedTools(tools)
+    log.append(line)
+    tools = 0
+  }
   for (const turn of state.messages) {
     if (turn.role !== 'user' && turn.role !== 'assistant') continue
-    const drawn = bubble(turn.role, turn.content)
+    const shown = shownTurn(turn)
+    if (turn.role === 'assistant' && shown.text.trim() === '' && !shown.stopped) {
+      tools += shown.tools
+      continue
+    }
+    toolsSoFar()
+    const drawn = bubble(turn.role, shown.text)
+    // What came with the question, as the live turn showed it: the names, not the contents.
+    if (shown.attached.length > 0) drawn.append(carriedLine(shown.attached.map((one) => one.name)))
+    if (shown.stopped) drawn.append(stoppedMark())
     // The switch lines that were said when this answer was written, above its words (§4 G).
     if (turn.notes !== undefined && turn.notes.length > 0) drawn.prepend(...turn.notes.map(switchLine))
     if (turn.bad === true) markBad(drawn)
     if (turn.model) modelBadge.textContent = turn.model
-    latest = turn.role === 'assistant' && turn.bad !== true && turn.content !== '' ? drawn : undefined
+    if (turn.role === 'assistant' && shown.text.trim() !== '') actionsRow(drawn)
+    latest = turn.role === 'assistant' && turn.bad !== true && shown.text.trim() !== '' ? drawn : undefined
+    // Her words came before the tools this same turn asked for.
+    tools += shown.tools
   }
+  toolsSoFar()
   // The latest answer, when the conversation ends on one, carries the row of actions (§4 I).
   if (latest !== undefined) answerActions(latest, state.notHer === true)
+  toBottom()
   /**
    * **Who is answering** (improvement 8). Hidden when nothing is chosen, because Alexia's own
    * voice is not a personality and a chip saying *none* would be a control that is always on
    * screen saying nothing.
    */
   characterFrom(state)
-  /**
-   * **The day, when there is an allowance; otherwise the month.**
-   *
-   * The daily figure is the one that answers *may this spend money right now* — the monthly
-   * cap is a bound on a total somebody is already choosing to run up. Somebody who has set no
-   * allowance is not spending automatically at all, so the month is the only number they
-   * have, and it stays.
-   */
+  // The figure, the word over it and the lines under it: the day when there is an allowance,
+  // otherwise the month. `priceText` says why, once for here and for the end of an answer.
   const day = state.today
-  spendBadge.textContent =
-    day && day.allowance > 0 ? `${money(day.spent)} of ${money(day.allowance)} today`
-    : state.cap === undefined ? money(state.spent)
-    : `${money(state.spent)} of ${money(state.cap)}`
   standingPaid =
     state.cross === true && day !== undefined && day.allowance > 0 ?
       `Paid models will be used once the free ones are done, up to ${money(day.allowance)} today.`
     : ''
   warnPaid()
-  spendBadge.title =
-    day && day.allowance > 0 ?
-      `Spent ${money(day.spent)} of ${money(day.allowance)} today.`
-    : 'No daily allowance, so nothing is spent without you asking for it.'
   drawPrice(page('price'), state)
 }
 
+/**
+ * **Core did not answer at all** — not an answer that went wrong, a request that never landed or
+ * a stream that broke off. Said in one plain sentence rather than as *TypeError: Failed to
+ * fetch*. `unsent` is a request core never took, so the message is still the person's to send.
+ */
+class Unreachable extends Error {
+  constructor(readonly unsent: boolean) {
+    super('Alexia isn’t answering right now — try again in a moment.')
+  }
+}
+
+/**
+ * **Core took the request and said no, because another answer is still being written** in this
+ * conversation — from another window, or from a phone. Nothing was said to anybody, so like an
+ * unsent request the message goes back into the box. `said` is core's own sentence.
+ */
+class Busy extends Error {
+  readonly unsent = true
+}
+
+/**
+ * The first read, tried until it lands. A window that opens a moment before core can answer, or
+ * while the shell is starting it again, used to stop here for good: the page looked ready and
+ * nothing on it worked. Said above the message box, with a way to try at once.
+ */
+async function reach(): Promise<State> {
+  for (let tries = 0; ; tries++) {
+    try {
+      return await read()
+    } catch {
+      const now = document.createElement('button')
+      now.type = 'button'
+      now.textContent = 'Try again'
+      note.replaceChildren(tries < 3 ? 'Alexia is starting… ' : 'Can’t reach Alexia yet — still trying. ', now)
+      note.hidden = false
+      await new Promise<void>((done) => {
+        const timer = setTimeout(done, Math.min(1000 * 2 ** tries, 10_000))
+        now.addEventListener('click', () => {
+          clearTimeout(timer)
+          done()
+        })
+      })
+    }
+  }
+}
+
 async function load(): Promise<void> {
-  const state = await read()
+  const state = await reach()
   board.adopt(state.layout)
   board.reach(state.channels)
   called(state.setup.name)
@@ -1262,6 +1495,7 @@ async function load(): Promise<void> {
   if (!state.setup.done) firstRun(state)
   paint(state)
   showPermissions(state.permissions)
+  showLimits(state.ceilings)
   say(state.warning)
   // Last, and never awaited: an update offer must not be able to hold up a window. `load`
   // runs once, at boot, which is the only moment restarting to take an update costs nothing.
@@ -1269,26 +1503,135 @@ async function load(): Promise<void> {
 }
 
 /**
+ * What each permission mode means, in a sentence (Alexia.md, *What Alexia may do*). The labels
+ * come from core; these only explain them, and a mode core adds later is shown without one.
+ */
+const MODE_MEANS: Record<string, string> = {
+  'every-time': 'Every action waits for your yes.',
+  risky: 'Reading and searching run freely. Anything that changes, sends or spends waits for your yes.',
+  watch: 'Actions run, each one is checked, and only the ones that look wrong stop and ask.',
+  'full-trust': 'Nothing asks first. Not recommended — the never-touch list still applies, but nothing else stops a mistake.',
+}
+
+/**
  * The permission control, filled from core's own labels rather than a copy of them here —
- * two lists of four modes that have to agree is one list too many.
+ * two lists of four modes that have to agree is one list too many. It is on the rail and on
+ * Settings > Safety; both write `/api/permissions` and both are set from its answer, so neither
+ * can show a mode the other has changed. Full trust says *not recommended* on the option
+ * itself, where the choice is made (Alexia.md).
  */
 function showPermissions(state: Permissions): void {
-  if (permission.options.length === 0) {
-    for (const [value, label] of Object.entries(state.modes)) permission.add(new Option(label, value))
-    permission.addEventListener('change', () => {
+  const said = document.querySelector<HTMLElement>('#permission-said')
+  const explain = (mode: string): void => {
+    if (said) said.textContent = MODE_MEANS[mode] ?? ''
+  }
+  for (const picker of permissions) {
+    if (picker.options.length > 0) continue
+    for (const [value, label] of Object.entries(state.modes)) {
+      picker.add(new Option(value === 'full-trust' ? `${label} (not recommended)` : label, value))
+    }
+    picker.addEventListener('change', () => {
+      const chosen = picker.value
+      for (const other of permissions) other.value = chosen
+      explain(chosen)
       void fetch('/api/permissions', {
         method: 'POST',
         headers: { 'content-type': 'application/json', 'x-alexia-token': token },
-        body: JSON.stringify({ mode: permission.value }),
+        body: JSON.stringify({ mode: chosen }),
       })
+        .then(async (answer) => {
+          if (!answer.ok) throw new Error(String(answer.status))
+          const now = (await answer.json()) as { mode: string }
+          for (const other of permissions) other.value = now.mode
+          explain(now.mode)
+        })
+        .catch(() => {
+          if (said) said.textContent = 'That did not save. Alexia may not be running — try again in a moment.'
+        })
     })
   }
-  permission.value = state.mode
+  for (const picker of permissions) picker.value = state.mode
+  explain(state.mode)
 
   // A standing boundary is the user's own sentence holding things back. It stays on screen
   // while it applies, because a rule you cannot see is a rule you cannot find the end of.
+  // Kept as the note line's standing sentence, so clearing the line for a new message puts it back.
   const boundary = state.boundaries[0]
-  if (boundary) say(`Holding: “${boundary.said}”. Say so and I will lift it.`)
+  standingNote = boundary ? `Holding: “${boundary.said}”. Say so and I will lift it.` : ''
+  if (boundary) say()
+}
+
+/** What `/api/ceilings` answers with: the two limits on a task, and the monthly budget if one is set. */
+interface Limits {
+  steps: number
+  askAbove: number
+  monthly?: number
+}
+
+/**
+ * The two limits on one task, and the monthly budget, on Settings > Safety (D205): the most steps, and the estimated
+ * cost above which she asks first. Both were settable through `/api/ceilings` with no screen.
+ * Saved on `change`, and the box shows what core kept — a refused value goes back.
+ */
+function showLimits(limits: State['ceilings']): void {
+  const steps = document.querySelector<HTMLInputElement>('#steps-setting')
+  const above = document.querySelector<HTMLInputElement>('#ask-above-setting')
+  const monthly = document.querySelector<HTMLInputElement>('#monthly-setting')
+  const said = document.querySelector<HTMLElement>('#limits-said')
+  if (!steps || !above || !monthly || !said || limits === undefined) return
+  const fill = (now: Limits): void => {
+    steps.value = String(now.steps)
+    above.value = String(now.askAbove)
+    monthly.value = now.monthly === undefined ? '' : String(now.monthly)
+  }
+  fill(limits)
+  if (steps.dataset.wired === 'true') return
+  steps.dataset.wired = 'true'
+  const save = (body: { steps?: number; askAbove?: number; monthly?: number | null }): void => {
+    void fetch('/api/ceilings', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-alexia-token': token },
+      body: JSON.stringify(body),
+    })
+      .then(async (answer) => {
+        if (!answer.ok) throw new Error(String(answer.status))
+        fill((await answer.json()) as Limits)
+        said.textContent = 'Saved.'
+      })
+      .catch(() => (said.textContent = 'That did not save. Alexia may not be running — try again in a moment.'))
+  }
+  steps.addEventListener('change', () => {
+    const n = Math.floor(Number(steps.value))
+    if (!Number.isFinite(n) || n < 1) {
+      said.textContent = 'The most steps has to be 1 or more.'
+      return
+    }
+    save({ steps: n })
+  })
+  // Text boxes, not number inputs: WebKit drew those in the Mac's locale, so in Czech the
+  // limit read *0,02* beside a *$*. A comma typed out of habit is still read as the point.
+  above.addEventListener('change', () => {
+    const n = dollarsOf(above.value, true)
+    if (n === undefined) {
+      said.textContent = 'Type an amount in dollars, 0 or more, like 0.50.'
+      return
+    }
+    save({ askAbove: n })
+  })
+  // Empty is *no budget*, which core is told as `null`: a box somebody cleared means the
+  // budget is gone, not that nothing was said.
+  monthly.addEventListener('change', () => {
+    if (monthly.value.trim() === '') {
+      save({ monthly: null })
+      return
+    }
+    const n = dollarsOf(monthly.value, true)
+    if (n === undefined) {
+      said.textContent = 'Type an amount in dollars, like 20, or leave it empty for no budget.'
+      return
+    }
+    save({ monthly: n === 0 ? null : n })
+  })
 }
 
 /** The loop's own question, answered down the channel it is blocked on. */
@@ -1313,14 +1656,7 @@ function askPermission(why: string, settled: (allowed: boolean) => void = settle
   // A task that stops to ask while the window is closed is the case the tray exists for:
   // *needs you* is the one state somebody has to notice without looking for it.
   tray('attention')
-  const answer = (allowed: boolean) => () => {
-    prompt.hidden = true
-    tray('working')
-    settled(allowed)
-  }
-  // `once` on both, because the pair is replaced wholesale for the next question.
-  document.querySelector('#allow')!.addEventListener('click', answer(true), { once: true })
-  document.querySelector('#deny')!.addEventListener('click', answer(false), { once: true })
+  answerPrompt(prompt, settled, () => tray('working'))
 }
 
 /**
@@ -1333,7 +1669,10 @@ async function* frames(body: ReadableStream<Uint8Array>): AsyncGenerator<Record<
   const decoder = new TextDecoder()
   let buffer = ''
   for (;;) {
-    const { done, value } = await reader.read()
+    // A stream that breaks off is core gone mid-answer, and the words so far stay on screen.
+    const { done, value } = await reader.read().catch(() => {
+      throw new Unreachable(false)
+    })
     if (done) return
     buffer += decoder.decode(value, { stream: true })
     let cut = buffer.indexOf('\n')
@@ -1384,21 +1723,28 @@ function toolLine(): { saw(name: string): void } {
       if (!seen.includes(short)) seen.push(short)
       names.textContent = seen.join(', ')
       if (!chip.isConnected) log.append(chip)
-      log.scrollTop = log.scrollHeight
+      follow()
     },
   }
 }
 
 // ---- first run: what it can do (D118) -------------------------------------------------------
 
-/** One plugin on the shelf, as first run needs it. `/api/library` says more; this is the part. */
+/**
+ * One plugin on the shelf, as first run needs it. `/api/library` says more; this is the part.
+ *
+ * A *Coming soon* row (D204) is only an id, a name and a sentence, so the version and the
+ * `requires` are optional: reading `.length` off one that was not there threw, and the catch
+ * below then told everybody the shelf could not be reached.
+ */
 interface Shelved {
   id: string
   name: string
   summary: string
-  version: string
+  version?: string
   installed: boolean
-  requires: { cap: string; why: string }[]
+  requires?: { cap: string; why: string }[]
+  coming_soon?: boolean
 }
 
 /**
@@ -1432,9 +1778,14 @@ function shelfStep(): { install: () => Promise<void> } {
 
   void fetch('/api/library', { headers: { 'x-alexia-token': token } })
     .then(async (answer) => answer.json() as Promise<{ ok?: boolean; why?: string; plugins?: Shelved[] }>)
+    // Only a request that failed is *could not be reached*. The catch at the end is for a list
+    // that arrived and could not be drawn, and it must not blame the network for that.
+    .catch(() => ({ ok: false, why: 'The plugin list could not be reached.' }) as { ok?: boolean; why?: string; plugins?: Shelved[] })
     .then((read) => {
       group.hidden = false
-      const shown = (read.plugins ?? []).filter((entry) => !entry.installed)
+      // Nothing here may be ticked and then refuse to install, so a *Coming soon* row is left
+      // out. Settings still lists it, greyed, for anybody who goes looking.
+      const shown = (read.plugins ?? []).filter((entry) => !entry.installed && entry.coming_soon !== true)
       if (read.ok !== true || shown.length === 0) {
         hint.textContent =
           read.ok !== true ?
@@ -1443,7 +1794,7 @@ function shelfStep(): { install: () => Promise<void> } {
         return
       }
       hint.textContent =
-        'Alexia can hold a conversation on its own. Everything else is a plugin, and these download when you tick them. You can add or remove any of them later.'
+        'Alexia can hold a conversation on her own. Everything else is a plugin, and these download when you tick them. You can add or remove any of them later.'
       for (const entry of shown) {
         const row = el('label', 'card')
         const head = el('span', 'card-head')
@@ -1451,12 +1802,14 @@ function shelfStep(): { install: () => Promise<void> } {
         box.type = 'checkbox'
         box.value = entry.id
         boxes.push(box)
-        head.append(box, el('b', undefined, entry.name), el('em', undefined, entry.version))
+        head.append(box, el('b', undefined, entry.name))
+        if (entry.version) head.append(el('em', undefined, entry.version))
         row.append(head, el('span', undefined, entry.summary))
         // What it will ask for, in its author's words, beside the tick that agrees to it.
-        if (entry.requires.length > 0) {
+        const requires = entry.requires ?? []
+        if (requires.length > 0) {
           const asks = el('ul', 'asks')
-          for (const need of entry.requires) asks.append(el('li', undefined, need.why))
+          for (const need of requires) asks.append(el('li', undefined, need.why))
           row.append(asks)
         }
         list.append(row)
@@ -1464,7 +1817,7 @@ function shelfStep(): { install: () => Promise<void> } {
     })
     .catch(() => {
       group.hidden = false
-      hint.textContent = 'The plugin list could not be reached. You can install plugins later from Settings.'
+      hint.textContent = 'The plugin list could not be shown here. You can install plugins later from Settings.'
     })
 
   return {
@@ -1616,7 +1969,7 @@ function attribute(name: string): void {
 
   row.append(edit, drop)
   log.append(row)
-  log.scrollTop = log.scrollHeight
+  follow()
 }
 
 /** The skill's own text, editable in place. It is one Markdown file and it reads like one. */
@@ -1647,7 +2000,7 @@ async function editSkill(name: string, row: HTMLElement): Promise<void> {
   buttons.append(save, cancel)
   box.append(area, buttons)
   row.append(box)
-  log.scrollTop = log.scrollHeight
+  follow()
 }
 
 /**
@@ -1688,7 +2041,7 @@ function offerToLearn(offer: { about?: string; outline?: string }): void {
   buttons.append(yes, no)
   box.append(line, buttons, said)
   log.append(box)
-  log.scrollTop = log.scrollHeight
+  follow()
 }
 
 async function ask(question: string, files: File[] = []): Promise<void> {
@@ -1699,9 +2052,7 @@ async function ask(question: string, files: File[] = []): Promise<void> {
   // What the message carried, in the turn that carried it: the names now, and what was read
   // out of them the moment core says — folded away under this same turn.
   if (files.length > 0) {
-    carried = document.createElement('small')
-    carried.className = 'carried'
-    carried.textContent = `📎 ${files.map((file) => file.name).join(', ')}`
+    carried = carriedLine(files.map((file) => file.name))
     said.append(carried)
     /**
      * **A picture, shown in the turn that sent it.**
@@ -1752,6 +2103,21 @@ async function ask(question: string, files: File[] = []): Promise<void> {
         .join(', ')}`
     }
     return { text: question, ...(uploads.length > 0 && { files: uploads }) }
+  }).catch((error: unknown) => {
+    // Core never took it, so it was never said: the bubble goes, and the words and files go back
+    // in the box to be sent again — unless something new has been typed there since.
+    if ((error instanceof Unreachable || error instanceof Busy) && error.unsent) {
+      said.remove()
+      if (text.value === '') {
+        text.value = question
+        grow(text)
+      }
+      if (carrying.length === 0) {
+        carrying = files
+        drawAttached()
+      }
+    }
+    throw error
   })
 }
 
@@ -1803,7 +2169,7 @@ function offerPaid(paused: HTMLElement, daily: number): void {
   })
   buttons.append(allow)
   paused.append(buttons)
-  log.scrollTop = log.scrollHeight
+  follow()
 }
 
 /**
@@ -1843,15 +2209,28 @@ async function respond(
   let turnFrom = 0
   // A new question: a charge line from the last answer is not about this one (§4 G).
   warnPaid()
+  // Busy while it streams, so a screen reader is not read every word as it lands; the
+  // `#answered` line says once that she has finished instead.
+  log.setAttribute('aria-busy', 'true')
+  answered.textContent = ''
+  let finished = false
 
   // `finally`, because the line has a clock: an answer that ends any way at all — finished,
   // stopped, refused, or a request that threw — must not leave a timer counting under nothing.
   try {
+    const sent = JSON.stringify(await body())
     const response = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-alexia-token': token },
-      body: JSON.stringify(await body()),
+      body: sent,
+    }).catch(() => {
+      throw new Unreachable(true)
     })
+    if (response.status === 423) {
+      const back = (await response.json().catch(() => ({}))) as { said?: unknown }
+      answer.remove()
+      throw new Busy(typeof back.said === 'string' ? back.said : 'Alexia is still answering — wait for her or press Stop.')
+    }
     if (response.status === 409) {
       // Asked again after the question had its answer: there is nothing left to answer.
       answer.remove()
@@ -1867,7 +2246,7 @@ async function respond(
       if (isPhase(event.phase)) status.set(event.phase)
       if (typeof event.delta === 'string') {
         prose.data += event.delta
-        log.scrollTop = log.scrollHeight
+        follow()
       }
       // The model writing this turn stopped partway and another is starting it again (D155).
       // Its half-sentence goes, so two models' words are never run together in one bubble. The
@@ -1925,6 +2304,7 @@ async function respond(
       }
       if (typeof event.error === 'string') {
         status.stop()
+        live.end('failed', event.error)
         answer.remove()
         const stopped = bubble('refusal', event.error)
         if (event.chosen === 'pinned' || event.chosen === 'sequence') offerInstead(stopped, event.chosen)
@@ -1932,27 +2312,40 @@ async function respond(
       // Paused rather than stopped: nothing was billed, and a press lets paid answer (§4 H).
       if (typeof event.paused === 'string') {
         status.stop()
+        live.end('paused', event.paused)
         answer.remove()
         offerPaid(bubble('refusal', event.paused), typeof event.daily === 'number' ? event.daily : 0)
       }
       const done = event.done as
-        | { model?: string; bubble?: Bubble; spent?: number; warning?: string; ended?: string; steps?: number }
+        | {
+            model?: string
+            bubble?: Bubble
+            spent?: number
+            cap?: number
+            today?: { spent: number; allowance: number }
+            warning?: string
+            ended?: string
+            steps?: number
+          }
         | undefined
       if (done) {
         // Over, however it ended: the line goes before the buttons under the answer arrive.
         status.stop()
         if (done.model) modelBadge.textContent = done.model
         wearing(done.bubble)
-        if (typeof done.spent === 'number') {
-          const shown = spendBadge.textContent ?? ''
-          const cap = shown.includes(' of ') ? shown.slice(shown.indexOf(' of ')) : ''
-          spendBadge.textContent = money(done.spent) + cap
+        // The whole Price page again, from the month and the day core just sent, the way the
+        // first read draws it. It used to patch the month's total into *$… of $1.00 today*,
+        // which said the month was today. A core that sends no day is asked for the state.
+        if (typeof done.spent === 'number' && done.today !== undefined) {
+          drawPrice(page('price'), { spent: done.spent, cap: done.cap, today: done.today })
+        } else if (typeof done.spent === 'number') {
+          void read().then((now) => drawPrice(page('price'), now))
         }
         if (done.warning) say(done.warning)
         prompt.hidden = true
         // A task that hit a limit says which one. Silence after a stop looks like a crash.
         tray(done.ended === 'answered' || done.ended === undefined ? 'idle' : 'error')
-        live.end()
+        live.end(done.ended ?? 'answered')
         // A conversation is named by the first thing you said in it, so the rail's list and
         // the title above the log are both a turn out of date until this.
         void rail.refresh()
@@ -1964,6 +2357,7 @@ async function respond(
          * somebody does.
          */
         if (done.ended === 'answered') {
+          finished = true
           const was = inCharacter.notHer
           answerActions(answer, was)
           void read().then((now) => {
@@ -1973,12 +2367,29 @@ async function respond(
             if ((now.notHer === true) !== was) answerActions(answer, now.notHer === true)
           })
         }
+        // Cut short by Stop: what she had written so far stays, marked as not the whole answer,
+        // and it can still be copied — it just cannot be judged, since it was never finished.
+        if (done.ended === 'stopped' && prose.data !== '') answer.append(stoppedMark())
+        if (done.ended !== 'answered' && prose.data.trim() !== '') actionsRow(answer)
         if (done.ended === 'stopped') say('Stopped.')
-        if (done.ended === 'ceiling') say(`Stopped after ${String(done.steps ?? 0)} steps — that is the ceiling, not the end of the task.`)
+        if (done.ended === 'ceiling') {
+          say(
+            `Stopped after ${String(done.steps ?? 0)} steps, the most one task may take. ` +
+              'It is not finished. You can raise the limit in Settings > Safety.',
+          )
+        }
       }
     }
+  } catch (error) {
+    // An answer that ended by throwing never sent `done`, so Running now would say it still was.
+    live.end()
+    throw error
   } finally {
     status.stop()
+    log.removeAttribute('aria-busy')
+    if (finished) answered.textContent = `${document.querySelector('.name')?.textContent ?? 'Alexia'} answered.`
+    // Whatever ended it — including a stream that closed without saying how — Running now clears.
+    live.end()
     // Nothing was ever written into it: stopped before the first word, or a request that threw
     // and is said in a bubble of its own. The `…` used to stay behind in this case; an empty
     // turn under her name would read as a blank answer rather than one that never came.
@@ -2010,7 +2421,7 @@ function offerInstead(stopped: HTMLElement, chosen: 'pinned' | 'sequence'): void
   buttons.append(offer('Use Automatic for this answer', true))
   if (chosen === 'pinned') buttons.append(offer('Try again', false))
   stopped.append(buttons)
-  log.scrollTop = log.scrollHeight
+  follow()
 }
 
 // ---- commands: the shortcut half -----------------------------------------------------
@@ -2048,7 +2459,8 @@ async function command(input: string, approved?: boolean): Promise<void> {
     await read().then(paint)
     void rail.refresh()
   }
-  bubble('refusal', ran.note)
+  // A command that worked says so plainly; only one that did not wears the refusal's dashed box.
+  bubble(ran.ok ? 'reply' : 'refusal', ran.note)
   for (const picker of modes) picker.value = ran.setup.mode
   if (ran.ask !== undefined) {
     askPermission(ran.ask, (allowed) => {
@@ -2057,18 +2469,42 @@ async function command(input: string, approved?: boolean): Promise<void> {
   }
 }
 
+/** The rows the `/` menu is showing, and which one ↑ and ↓ have reached. */
+let listed: Command[] = []
+let menuAt = 0
+
+/** Run a command picked from the menu — by a click, or by Enter on its row. */
+function pick(chosen: Command): void {
+  text.value = `/${chosen.name}`
+  closeMenu()
+  form.requestSubmit()
+}
+
+function closeMenu(): void {
+  menu.hidden = true
+  text.removeAttribute('aria-activedescendant')
+}
+
 function showMenu(): void {
-  const typed = text.value
-  if (!typed.startsWith('/')) {
-    menu.hidden = true
+  // Every command that fits what is typed, not the first eight: the list scrolls, and a
+  // command that is never shown is a command nobody finds.
+  const matches = slashMatches(known, text.value)
+  if (matches.length === 0) {
+    closeMenu()
     return
   }
-  const prefix = typed.slice(1).split(/\s/)[0] ?? ''
-  const matches = known.filter((c) => c.name.startsWith(prefix)).slice(0, 8)
+  // The highlight stays on the same command while it is still listed, and starts at the top otherwise.
+  const was = listed[menuAt]
+  listed = matches
+  menuAt = Math.max(0, was === undefined ? 0 : matches.indexOf(was))
   menu.replaceChildren(
-    ...matches.map((c) => {
+    ...matches.map((c, at) => {
       const item = document.createElement('li')
-      if (c.shadowed) item.className = 'shadowed'
+      item.id = `menu-${String(at)}`
+      item.setAttribute('role', 'option')
+      item.setAttribute('aria-selected', String(at === menuAt))
+      if (c.shadowed) item.classList.add('shadowed')
+      if (at === menuAt) item.classList.add('on')
       const name = document.createElement('b')
       // A shadowed command still works; it is just longer than its author hoped, and the
       // list says so rather than leaving somebody typing a word that does nothing.
@@ -2078,14 +2514,38 @@ function showMenu(): void {
       item.append(name, summary)
       item.addEventListener('mousedown', (event) => {
         event.preventDefault()
-        text.value = `/${c.name}`
-        menu.hidden = true
-        form.requestSubmit()
+        pick(c)
       })
       return item
     }),
   )
-  menu.hidden = matches.length === 0
+  menu.hidden = false
+  text.setAttribute('aria-activedescendant', `menu-${String(menuAt)}`)
+  menu.children[menuAt]?.scrollIntoView({ block: 'nearest' })
+}
+
+/**
+ * **The menu by keyboard**: ↑ and ↓ move, Enter or Tab runs the highlighted command, Escape
+ * closes it (the window's Escape does that, see `escapeTakes`). Enter runs the highlighted
+ * row only while the command word is still being typed — once there is a space, what was
+ * typed is the command, arguments and all, and Enter sends that.
+ */
+function menuKey(event: KeyboardEvent): boolean {
+  if (menu.hidden || listed.length === 0) return false
+  if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+    event.preventDefault()
+    menuAt = moveIn(listed.length, menuAt, event.key === 'ArrowDown')
+    showMenu()
+    return true
+  }
+  const choosing = !/\s/.test(text.value.trim())
+  if ((event.key === 'Tab' && !event.shiftKey) || (event.key === 'Enter' && !event.shiftKey && choosing)) {
+    event.preventDefault()
+    const chosen = listed[menuAt]
+    if (chosen !== undefined) pick(chosen)
+    return true
+  }
+  return false
 }
 
 // Mid-step, always — including while a tool call is in flight. The button does not wait
@@ -2116,14 +2576,14 @@ if (inApp()) {
 /**
  * Put the sheet away and go back to the board. Settings can install, enable, disable and
  * remove plugins, and each of those can add or take away a page, so the board re-reads; the
- * Chats tab under Control can change which conversation is open, so that re-reads too.
+ * Chats tab under Activity can change which conversation is open, so that re-reads too.
  */
 function closeSheet(): void {
   const was = document.body.dataset.view
+  // Focus goes back to whatever opened the sheet, or the composer (show, modal.ts).
   show('chat')
-  text.focus()
   void board.refresh()
-  // The Chats tab is behind Control (M8-2), so which conversation is open may have changed
+  // The Chats tab is behind Activity (M8-2), so which conversation is open may have changed
   // while it was on screen. Re-read rather than remember: the shell does not track the open
   // conversation, and core is one localhost call away.
   if (was === 'control') void read().then(paint)
@@ -2137,7 +2597,10 @@ const control = mountControl(token)
 
 document.querySelector('#close-control')!.addEventListener('click', closeSheet)
 
-text.addEventListener('input', showMenu)
+text.addEventListener('input', () => {
+  showMenu()
+  grow(text)
+})
 for (const picker of modes) picker.addEventListener('change', () => void command(`/${picker.value}`))
 
 form.addEventListener('submit', (event) => {
@@ -2146,11 +2609,14 @@ form.addEventListener('submit', (event) => {
   // A file with nothing typed beside it is a whole message — *here, read this* — so the line
   // is required only when it is the only thing there is.
   if (!question && carrying.length === 0) return
+  // A new message: whatever the note line said about the last one is not about this one.
+  say()
   if (question.startsWith('/')) {
     // A command is not a question for a model and never carries a document. Attachments stay
     // where they are, so `/new` typed with a file waiting does not quietly throw it away.
     text.value = ''
-    menu.hidden = true
+    grow(text)
+    closeMenu()
     void command(question)
     return
   }
@@ -2160,7 +2626,8 @@ form.addEventListener('submit', (event) => {
   carrying = []
   drawAttached()
   text.value = ''
-  menu.hidden = true
+  grow(text)
+  closeMenu()
   running(() => ask(question, files))
 })
 
@@ -2188,8 +2655,9 @@ function running(task: () => Promise<void>): void {
   tray('working')
   void task()
     .catch((error: unknown) => {
-      bubble('refusal', String(error))
-      tray('error')
+      bubble('refusal', error instanceof Unreachable || error instanceof Busy ? error.message : String(error))
+      // Busy is somebody else's answer still running, which is not something going wrong.
+      if (!(error instanceof Busy)) tray('error')
     })
     .finally(() => {
       working = false
@@ -2200,9 +2668,16 @@ function running(task: () => Promise<void>): void {
     })
 }
 
+// What is in the box outlives a reload, which the shell does to every window once it has had
+// to start core again — the moment a message that could not be sent is waiting there to be.
+addEventListener('pagehide', () => sessionStorage.setItem('draft', text.value))
+text.value ||= sessionStorage.getItem('draft') ?? ''
+grow(text)
+
 // Enter sends, Shift+Enter is a newline — the shape every chat window has, so nobody has
 // to be told.
 text.addEventListener('keydown', (event) => {
+  if (menuKey(event)) return
   if (event.key === 'Enter' && !event.shiftKey) {
     event.preventDefault()
     form.requestSubmit()
@@ -2213,20 +2688,34 @@ text.addEventListener('keydown', (event) => {
  * The command palette (M6-10). Ctrl+K from anywhere, including the chat window — a palette
  * that only worked once you were already on the screen it navigates would be half a palette.
  *
- * It hands back a tab and the word that was typed, and opening the control view with both is
- * the whole of what it does. It never runs anything.
+ * It hands back what was picked: a place and the thing's own name to filter that place's list
+ * by, or one chat to open. Going there is the whole of what it does. It never runs anything.
  */
-const palette = mountPalette(token, (tab, filter) => {
-  // Plugins live on the settings screen rather than the control surface (M8-3), so the one
-  // hit that is not a control tab opens the page it is actually on. Since D118 that page is
-  // the whole plugin, so there is one answer to *where does this live* rather than two.
-  if (tab === 'plugins') {
+const palette = mountPalette(token, (hit) => {
+  // One conversation: opened the way the rail opens one, and the chat is what is on screen.
+  if (hit.tab === 'chat' && hit.id !== undefined) {
+    void post('/api/action', { key: 'open_chat', row: hit.id })
+      .then(async () => {
+        show('chat')
+        await read().then(paint)
+        await rail.refresh()
+      })
+      .catch(() => undefined)
+    return
+  }
+  // The row's own name, or nothing for a page: what was typed into the palette is not what
+  // the list calls it, and seeding it there left the list saying *Nothing here yet*.
+  const filter = hit.filter ?? ''
+  // Settings is what you choose and Activity is what happened (D205), so a hit on a plugin,
+  // a skill, a model, a tool or a setting opens the Settings page it lives on, and only runs
+  // and chats open Activity.
+  if (isSettingsPage(hit.tab)) {
     show('settings')
-    settings.open('plugins', filter)
+    settings.open(hit.tab, filter)
     return
   }
   show('control')
-  control.open(tab, filter)
+  control.open(hit.tab, filter)
 }, [
   // The shell's own entry (D204): the same edit view the bottom-left corner opens.
   {
@@ -2252,12 +2741,27 @@ document.addEventListener('keydown', (event) => {
   // Escape takes one step back, and only the last one is putting the window away: out of
   // edit view first, then off the sheet, then the overlay.
   if (event.key === 'Escape') {
-    const step = escapeTakes(board.editing(), sheetOpen())
-    if (step === 'edit') board.edit(false)
+    const small = smallOpen()
+    const step = escapeTakes(small !== undefined, board.editing(), sheetOpen())
+    if (step === 'open') small?.()
+    else if (step === 'edit') board.edit(false)
     else if (step === 'sheet') closeSheet()
     else dismiss()
   }
 })
+
+/**
+ * **The small thing Escape closes before anything bigger**, and how to close it: the model list
+ * in the rail, then — while the chat is what is on screen — the `/` menu and the open *That
+ * wasn't her* box. Escape used to go straight past all three and put the whole window away.
+ */
+function smallOpen(): (() => void) | undefined {
+  if (rail.modelsOpen()) return () => rail.closeModels()
+  if (sheetOpen()) return undefined
+  if (!menu.hidden) return closeMenu
+  if (closeNotHer !== undefined && log.querySelector('.not-her-line') !== null) return closeNotHer
+  return undefined
+}
 
 /**
  * The rail (M8-2 and after). Mounted last, because it hands work to the two screens and the
@@ -2273,12 +2777,24 @@ const rail = mountRail(document.querySelector<HTMLElement>('#rail')!, token, {
     show('control')
     control.open(tab, filter)
   },
-  openSettings: (page) => {
+  openSettings: (page, filter) => {
     show('settings')
-    settings.open(page)
+    settings.open(page, filter)
   },
   reload: () => read().then(paint),
 })
 
 await load()
 await rail.refresh()
+
+// Where it runs and what she may do can be changed from another window, the overlay, a slash
+// command or Telegram, and this one read them once, at boot. Coming back to the window is the
+// moment somebody looks at them, so that is when they are read again.
+window.addEventListener('focus', () => {
+  void read()
+    .then((state) => {
+      for (const picker of modes) picker.value = state.setup.mode
+      for (const picker of permissions) picker.value = state.permissions.mode
+    })
+    .catch(() => undefined)
+})

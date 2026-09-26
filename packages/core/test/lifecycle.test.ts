@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, expect, test } from 'vitest'
 import { Plugins } from '../src/plugins.js'
@@ -49,6 +49,16 @@ test('a folder that is not a plugin never lands in the folder core watches', () 
   // The point of validating where it stands: a broken entry never appears in the list at all.
   expect(existsSync(join(dir, 'notaplugin'))).toBe(false)
   expect(plugins.ids).toEqual([])
+})
+
+test('a folder that is not there is said to be not there, and ~ is the home folder', () => {
+  const nowhere = join(tmpdir(), 'alexia-no-such-folder-9321', 'exist')
+  const said = plugins.install(nowhere)
+  expect('reason' in said && said.reason).toBe(`There is no folder at ${nowhere}.`)
+
+  const tilde = plugins.install('~/alexia-no-such-folder-9321')
+  expect('reason' in tilde && tilde.reason).toBe(`There is no folder at ${join(homedir(), 'alexia-no-such-folder-9321')}.`)
+  expect(plugins.install('')).toMatchObject({ reason: 'Type or paste the path of a plugin folder first.' })
 })
 
 test('install puts files on disk and nothing else — no process, no namespace, no consent', () => {

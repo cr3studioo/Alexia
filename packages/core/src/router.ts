@@ -910,13 +910,13 @@ export function route(ask: Ask, pins: Pins, world: World): Verdict {
    * wall below, not this one.
    */
   if (pool.length > 0 && !pool.some(meetsFloor)) {
-    return { ok: false, mode, why: `what asked for this needs ${FLOOR_SAYS[floor]}, and nothing you have connected is one — connect a provider that offers one` }
+    return { ok: false, mode, why: `what asked for this needs ${FLOOR_SAYS[floor]}, and nothing you have connected is one — add a key for an AI service that offers one` }
   }
   if (capable && fitting(spend, false, pool, true).length > 0) {
     return {
       ok: false,
       mode,
-      why: 'every model that fits this hands the request on to a different model each time, and this needs one model — pin one on the Models tab, or connect a provider that offers one of its own',
+      why: 'every model that fits this passes the question to a different model each time, and this needs one model — choose one in Settings under Models & money, or add a key for another AI service',
     }
   }
   /**
@@ -1328,11 +1328,15 @@ export function ranking(
       says: (a, b) => {
         if (figure(a) < 0) return 'Nobody publishes how much it is used, so it comes after the models that have a figure.'
         const lender = a.model.weeklyFrom
+        // Said as how much it is used, not in tokens: the figure is the same one the table's
+        // *Used worldwide* column shows, so the number is there for anybody who wants it.
+        const source = lender === undefined ? '' : ` (figure from ${PROVIDERS.find((one) => one.id === lender)?.name ?? lender})`
         const its =
           a.model.weekly === undefined ?
-            `New here and has answered, so until a usage figure arrives it stands at the middle of models its size, ${tokens(figure(a))} tokens a week`
-          : `The world sent it ${tokens(figure(a))} tokens last week${lender === undefined ? '' : ` (figure from ${PROVIDERS.find((one) => one.id === lender)?.name ?? lender})`}`
-        return `${its}, fewer than ${b.model.name}’s ${tokens(figure(b))}${b.model.weekly === undefined ? ', the middle of models its size' : ''}.`
+            `New here, so until a usage figure arrives it counts as a typical model its size (${tokens(figure(a))} a week)`
+          : `Used less around the world last week${source}: ${tokens(figure(a))}`
+        const theirs = b.model.weekly === undefined ? ', a typical model its size' : ''
+        return `${its}, against ${tokens(figure(b))} for ${b.model.name}${theirs}.`
       },
     },
   ]
@@ -1417,23 +1421,23 @@ function outOfOrder(
   carried: string[],
 ): string {
   if (pool.length === 0) {
-    return 'none of the models in your order can be reached right now — their provider is not connected, or they have left the catalog'
+    return 'none of the models in your list can be reached right now — their AI service is not connected, or they are no longer offered. Add a key in Settings, or choose Automatic'
   }
   const unseen = carried.filter((kind) => !pool.some((c) => c.model.modality.includes(kind)))
   if (unseen.length > 0) {
-    return `none of the models in your order can be given ${unseen.map((kind) => (kind === 'image' ? 'a picture' : kind === 'audio' ? 'sound' : kind)).join(' or ')}`
+    return `none of the models in your list can be given ${unseen.map((kind) => (kind === 'image' ? 'a picture' : kind === 'audio' ? 'sound' : kind)).join(' or ')}`
   }
-  if (!pool.some((c) => fits(c.model, messages))) return 'this conversation is longer than any model in your order can read'
-  if (capped) return 'the models in your order that fit this cost money, and Alexia does not spend money on its own until you give it a daily allowance — set one in settings'
-  if (sidegrade) return 'the paid models in your order are no better than a free model you already have, so none of them is bought'
-  if (pins.uncensored) return 'none of the models in your order is known to be uncensored'
+  if (!pool.some((c) => fits(c.model, messages))) return 'this chat is longer than any model in your list can read — start a new chat'
+  if (capped) return 'the models in your list that fit this cost money, and Alexia does not spend money until you give her a daily allowance — set one in Settings'
+  if (sidegrade) return 'the paid models in your list are no better than a free model you already have, so none of them is used — choose Automatic, or add a stronger model to your list'
+  if (pins.uncensored) return 'none of the models in your list is known to be uncensored — add one, or choose Automatic'
   if (spend !== 'mixed' && !pool.some((c) => paid(c.model.tier) === (spend === 'paid'))) {
     return spend === 'free' ?
         'the models screen is set to free only, and every model in your order costs money'
       : 'the models screen is set to paid only, and every model in your order is free'
   }
-  if (needsTools && !pool.some((c) => c.model.supportsTools)) return 'none of the models in your order can use tools, and this needs them'
-  return 'none of the models in your order fits this request'
+  if (needsTools && !pool.some((c) => c.model.supportsTools)) return 'this needs a model that can take actions, and none in your list can — add one, or choose Automatic'
+  return 'none of the models in your list fits this request — choose Automatic, or add another model'
 }
 
 /**
@@ -1465,8 +1469,8 @@ function refusal(
   if (unseen.length > 0 && pool.length > 0) {
     const said = unseen.map((kind) => (kind === 'image' ? 'a picture' : kind === 'audio' ? 'sound' : kind)).join(' or ')
     return where === 'local' ?
-        `no model installed on this machine can be given ${said} — install one that can, or type /cloud`
-      : `none of the models available to you can be given ${said} — connect a provider that offers one, or install a local model that can`
+        `no model on this Mac can be given ${said} — install one that can, or type /cloud`
+      : `none of the models available to you can be given ${said} — add a key for an AI service that offers one, or install a model on this Mac that can`
   }
   /**
    * The wall whose fix is neither a key nor a slider nor an install of the usual kind: the
@@ -1477,18 +1481,18 @@ function refusal(
    */
   const tooLong = pool.length > 0 && !pool.some((c) => fits(c.model, messages))
   if (where === 'local') {
-    if (pool.length === 0) return 'no local model is installed — install one, or type /cloud'
+    if (pool.length === 0) return 'no model is installed on this Mac — install one, or type /cloud'
     if (tooLong) {
-      return 'this conversation is longer than any model installed here can read — install one with a bigger context window, or type /cloud'
+      return 'this chat is longer than any model on this Mac can read — start a new chat, or type /cloud'
     }
-    if (pins.uncensored) return 'no local uncensored model is installed — install one, or type /cloud'
-    if (needsTools) return 'no local model here can use tools — install one that can, or type /cloud'
+    if (pins.uncensored) return 'no uncensored model is installed on this Mac — install one, or type /cloud'
+    if (needsTools) return 'no model on this Mac can take actions — install one that can, or type /cloud'
     // The one refusal G5 added: the models are here, they can use tools, and they are too
     // small to be trusted with planning. Say which wall it is, because the fix differs.
     if (shape === 'hard') {
-      return `this needs planning, and every local model installed is smaller than ${String(PLANNER)}B — install a larger one, or type /cloud`
+      return `this needs planning, and every model on this Mac is too small for it — install a larger one, or type /cloud`
     }
-    return 'no local model fits this request — install a larger one, or type /cloud'
+    return 'no model on this Mac fits this request — install a larger one, or type /cloud'
   }
   if (pool.length === 0) {
     // Two different walls, and they used to share one sentence — which meant the one thing
@@ -1497,12 +1501,12 @@ function refusal(
     if (world.rungs.length === 0) {
       // No *and type /local* on the end of it any more: a model on this machine is a rung of
       // this cascade now, so installing one is the whole of that fix ({@link MODES}).
-      return 'no provider is connected — add a key in settings, or install a local model'
+      return 'no AI service is connected — add a key in Settings, or install a model on this Mac'
     }
-    return 'no model list has arrived yet for the provider you connected — open the Models tab to fetch one, or check your connection'
+    return 'the list of models has not arrived yet — check your internet connection, or open Settings > Models & money to fetch it again'
   }
   if (tooLong) {
-    return 'this conversation is longer than any model available to you can read — start a new chat, or connect a provider with a bigger context window'
+    return 'this chat is longer than any model available to you can read — start a new chat'
   }
   // The allowance's own wall, said before every wall below it because it is the one that was
   // proved rather than guessed: something paid *would* have answered. *The models screen is
@@ -1514,14 +1518,14 @@ function refusal(
     return `the free models are used up, and today's $${(world.today?.allowance ?? 0).toFixed(2)} for paid models is spent — raise it under the paid switch on the Models tab, or wait for tomorrow`
   }
   if (capped) {
-    return 'the free models are used up, and Alexia does not spend money on its own until you give it a daily allowance — set one in settings, or wait for the free tiers to reset'
+    return 'the free models are used up, and Alexia does not spend money until you give her a daily allowance — set one in Settings, or wait for the free ones to reset'
   }
   // The sidegrade wall, and it is a refusal on purpose. Waiting for a free tier to reset
   // costs nothing; buying the same thing again costs money and buys nothing.
   if (sidegrade) {
-    return 'the free models are used up, and every paid model here is no better than the one that ran out — wait for the free tiers to reset, or connect a provider with something stronger'
+    return 'the free models are used up, and every paid model here is no better than the one that ran out — wait for the free ones to reset, or add a key for an AI service with something stronger'
   }
-  if (pins.uncensored) return 'no uncensored model is available from the providers you have connected'
+  if (pins.uncensored) return 'no uncensored model is available from the AI services you have connected — add a key for one that offers one'
   /**
    * The slider's own wall, and it names the slider — asked before the tool wall because it is
    * the one that can empty the pool outright, and *none of them can use tools* said about a
@@ -1530,12 +1534,12 @@ function refusal(
   const side = pool.filter((c) => paid(c.model.tier) === (spend === 'paid'))
   if (spend !== 'mixed' && side.length === 0) {
     return spend === 'free' ?
-        'the models screen is set to free only, and none of the providers you have connected offers a free model — move the slider, or connect one that does'
-      : 'the models screen is set to paid only, and nothing you have connected charges for a model — move the slider back'
+        'Models is set to free only, and none of the AI services you have connected offers a free model — move the slider, or add a key for one that does'
+      : 'Models is set to paid only, and nothing you have connected charges for a model — move the slider back'
   }
-  if (needsTools) return 'none of the models available to you can use tools'
+  if (needsTools) return 'this needs a model that can take actions, and none available to you can — add a key for an AI service that offers one'
   if (spend !== 'mixed') {
-    return `the models screen is set to ${spend === 'free' ? 'free' : 'paid'} only, and none of those fits this request — move the slider to let the other side answer`
+    return `Models is set to ${spend === 'free' ? 'free' : 'paid'} only, and none of those fits this request — move the slider to let the other side answer`
   }
   return 'no model fits this request right now — try again shortly'
 }
@@ -1688,6 +1692,18 @@ export function failed(error: unknown, choice: Choice): Failure | undefined {
 const capital = (line: string): string =>
   /^(your|there|nobody|this|the)\b/.test(line) ? line.charAt(0).toUpperCase() + line.slice(1) : line
 
+/**
+ * **A refusal as a whole sentence** — a capital letter and a full stop. The router writes its
+ * reasons as clauses so they can be joined; the screen shows them alone. A first word that is
+ * a model's own name (`gpt-oss-120b`) keeps its spelling.
+ */
+export const asSentence = (why: string): string => {
+  const line = why.trim()
+  if (line === '') return line
+  const capped = /^[a-z]+\b(?![-\d])/.test(line) ? line.charAt(0).toUpperCase() + line.slice(1) : line
+  return /[.!?]$/.test(capped) ? capped : `${capped}.`
+}
+
 /** Three reasons and a count, joined the way a sentence joins them. */
 const reasons = (failures: readonly Failure[], rest: string): string => {
   const told = failures.slice(0, 3).map((one) => one.says)
@@ -1702,6 +1718,11 @@ const reasons = (failures: readonly Failure[], rest: string): string => {
  */
 export function stopped(failures: readonly Failure[], blocked?: string): string {
   const last = failures.at(-1)
+  // Every one of them failed to connect: the likeliest reason is this Mac, not the services,
+  // and naming each service that "could not be reached" sends somebody to check the wrong thing.
+  if (failures.length > 0 && failures.every((one) => one.outcome === 'unreachable')) {
+    return 'It looks like you’re offline — none of the AI services could be reached. Check your internet connection, then try again.'
+  }
   const lines = [`${reasons(failures, 'could not answer either')}.`]
   if (last?.reach === 'request') lines.push('Nothing left to try reads more than that — start a new chat.')
   if (blocked !== undefined) lines.push(`${capital(blocked)}.`)

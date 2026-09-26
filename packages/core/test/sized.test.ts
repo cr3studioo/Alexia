@@ -130,8 +130,8 @@ const plan = (...ids: string[]): void => alexia.store.kvSet(CORE, 'pins', { orde
 /** The trace's own account of what was sent, which is the other half of the same fact. */
 const traced = async (): Promise<string> => {
   const listed = (await post('/api/rows', { key: 'activity' })) as { rows?: { id: string }[] }
-  const opened = (await post('/api/detail', { key: 'activity', row: listed.rows?.[0]?.id })) as { text?: string }
-  return opened.text ?? ''
+  const opened = (await post('/api/detail', { key: 'activity', row: listed.rows?.[0]?.id })) as { more?: string }
+  return opened.more ?? ''
 }
 
 beforeEach(() => {

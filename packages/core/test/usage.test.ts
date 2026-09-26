@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { expect, test } from 'vitest'
 import type { Model } from '../src/catalog.js'
-import { affordable, allowance, caps, costOf, setCaps, today, warning } from '../src/usage.js'
+import { affordable, allowance, caps, costOf, dayStart, monthStart, setCaps, today, warning } from '../src/usage.js'
 import { Store } from '../src/store.js'
 
 // M1-9. Money, and the three questions asked of it: what did this conversation cost, what
@@ -102,4 +102,46 @@ test('the day starts with nothing allowed, and the allowance is what changes tha
   // clock too.
   expect(affordable(today(store, noon + 24 * 3_600_000))).toBe(true)
   store.close()
+})
+
+/**
+ * Run `body` with this process on another clock, and put the old one back whatever happens.
+ * Node re-reads `TZ` when it is assigned, so the `Date` arithmetic inside moves with it.
+ */
+function inZone(zone: string, body: () => void): void {
+  const was = process.env.TZ
+  process.env.TZ = zone
+  try {
+    body()
+  } finally {
+    if (was === undefined) delete process.env.TZ
+    else process.env.TZ = was
+  }
+}
+
+test("the day and the month are this Mac's own, not UTC's", () => {
+  inZone('Europe/Prague', () => {
+    // The clock really moved, or this test would be checking nothing.
+    expect(new Date(Date.UTC(2026, 2, 14, 12)).getHours()).toBe(13)
+
+    const store = new Store(':memory:')
+    setCaps(store, { daily: 1 })
+    // Half past eleven at night in Prague on the 13th, and half past midnight on the 14th —
+    // which is still the 13th in UTC.
+    store.recordUsage({ at: Date.UTC(2026, 2, 13, 22, 30), model: 'm', provider: 'p', tokensIn: 1, tokensOut: 1, cost: 0.9 })
+    store.recordUsage({ at: Date.UTC(2026, 2, 13, 23, 30), model: 'm', provider: 'p', tokensIn: 1, tokensOut: 1, cost: 0.2 })
+
+    // At one in the morning, today is the twenty cents since midnight. A UTC day would have
+    // counted last night too until two, and said the allowance was already gone.
+    const one = Date.UTC(2026, 2, 14, 0)
+    expect(dayStart(one)).toBe(Date.UTC(2026, 2, 13, 23))
+    expect(today(store, one).spent).toBeCloseTo(0.2)
+    expect(affordable(today(store, one))).toBe(true)
+
+    // The month turns at local midnight as well: 1 April 00:30 in Prague is 31 March in UTC.
+    const april = Date.UTC(2026, 2, 31, 22, 30)
+    expect(monthStart(april)).toBe(Date.UTC(2026, 2, 31, 22))
+    expect(allowance(store, april).spent).toBe(0)
+    store.close()
+  })
 })

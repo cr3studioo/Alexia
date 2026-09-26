@@ -83,8 +83,10 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..')
  *
  * `crasher` and `vanisher` exist to die on purpose — they are how the supervisor's restart
  * and the loader's disappearance paths get tested — and a shelf is not where they belong.
+ * `hello` is the smallest plugin that works, kept for the tests and for authors reading how
+ * one is put together. It does nothing a person would install it for.
  */
-const NEVER = new Set(['crasher', 'vanisher'])
+const NEVER = new Set(['crasher', 'vanisher', 'hello'])
 
 const args = process.argv.slice(2)
 const flag = (name, fallback) => {

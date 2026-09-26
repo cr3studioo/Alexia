@@ -4,7 +4,7 @@
   "id": "telegram",
   "name": "Telegram",
   "summary": "Talk to Alexia from Telegram. Every message crosses Telegram's servers.",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "license": "AGPL-3.0-only",
   "entry": {
     "run": "node",
@@ -34,14 +34,14 @@
       "type": "password",
       "key": "bot_token",
       "label": "Bot token",
-      "hint": "From @BotFather on Telegram. Send it /newbot and it hands you one. It goes to this machine's credential store, never to the database."
+      "hint": "From @BotFather on Telegram. Send it /newbot and it hands you one. It is kept in this computer's keychain."
     },
     {
       "type": "choice",
       "key": "voice_replies",
       "label": "Answer with a voice note",
       "default": "mirror",
-      "hint": "Any of these needs a cloned voice chosen in Voice — that is the one that makes the format a voice bubble takes. Without it, replies are text whatever is set here.",
+      "hint": "Voice replies need a cloned voice, chosen in the Voice plugin. Without one, every reply is text.",
       "options": [
         { "value": "never", "label": "Never", "hint": "Every reply is text, even to a voice note." },
         { "value": "mirror", "label": "When you send a voice note", "hint": "The reply comes back in the form the question went out in: speak and she speaks, type and she types." },
@@ -58,16 +58,16 @@
     {
       "type": "text",
       "key": "panel_url",
-      "label": "Control panel page",
+      "label": "Panel page address",
       "default": "https://cr3studioo.github.io/Alexia/telegram/",
-      "hint": "The page behind the ⚙ Panel button. It is one static file with no server behind it: the state it shows travels in the part of the link a browser never sends to the host, and the page itself calls nothing. The default address only exists once GitHub Pages has been switched on for the repository, which is a one-time step somebody has to do by hand."
+      "hint": "The page the ⚙ Panel button opens in Telegram. Leave it as it is unless you host your own copy."
     },
     {
       "type": "text",
       "key": "ntfy_topic",
-      "label": "ntfy topic, if Telegram is down",
+      "label": "Backup alerts if Telegram is down (ntfy topic)",
       "placeholder": "something-nobody-would-guess",
-      "hint": "A fallback and never a replacement: no buttons, no threading, and anyone who knows the topic can read it. Leave it empty and nothing is sent anywhere else."
+      "hint": "Alerts go to this ntfy topic while Telegram is down. Anyone who knows the topic can read them. Leave it empty to send nothing."
     },
     {
       "type": "status",
@@ -86,6 +86,13 @@
       "label": "Forget who is allowed",
       "tool": "unpair",
       "hint": "Clears the allowed accounts and makes a new pairing code. Do this if the old one got out."
+    },
+    {
+      "type": "action",
+      "key": "retry",
+      "label": "Try again",
+      "tool": "retry",
+      "hint": "Connects to Telegram again now. Use it after you quit another copy of Alexia that was using this bot."
     }
   ],
   "storage": {

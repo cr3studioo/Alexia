@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+import { folded } from './widgets.js'
 
 /**
  * Running now, Steps and Current step: what she is doing, and exactly how.
@@ -47,13 +48,20 @@ export interface Live {
   step(n: number, name: string, args?: Record<string, unknown>): void
   moving(n: number, update: Moving): void
   done(n: number, ok: boolean, text: string): void
-  /** The task ended, however it ended. */
-  end(): void
+  /**
+   * The task ended, however it ended — and *how*, when the caller knows: core's ending
+   * (`answered`, `stopped`, `ceiling`, `paused`, `refused`) or `failed` for an error, with the
+   * sentence that explains it. Said once: a second call for the same task changes nothing, so a
+   * `finally` can call it as a backstop behind the branch that already did.
+   */
+  end(ended?: string, why?: string): void
 }
 
 interface Held {
   /** What the plugin is called, for a person. */
   plugin: string
+  /** What the tool does, in its author's words (core's `toolWords`). */
+  words?: string
   /** What it asked for, and the sentence its author had to write for each. */
   requires: { cap: string; why: string }[]
 }
@@ -142,6 +150,53 @@ export interface LiveRoots {
   current: HTMLElement
 }
 
+/**
+ * **What each permission lets a plugin do**, in words — the closed list from the protocol
+ * (`PERMISSIONS`), so there is nothing here a plugin could add to. `screen.capture` is how a
+ * manifest spells it; *see your screen* is what it means to the person watching. A name this
+ * list does not know is shown as it is, rather than guessed at.
+ */
+export const CAN: Readonly<Record<string, string>> = {
+  'fs.own_dir': 'keep files in its own folder',
+  'fs.read_scoped': 'read files in folders you chose',
+  'fs.write_scoped': 'change files in folders you chose',
+  'net.download': 'download files',
+  'net.request': 'reach the internet',
+  'audio.input': 'hear your microphone',
+  'audio.output': 'play sound',
+  'screen.capture': 'see your screen',
+  'input.control': 'move the mouse and type',
+  'proc.spawn': 'run programs on this Mac',
+  notify: 'show notifications',
+}
+
+/**
+ * **How a task ended, as the last line of Steps.** Core's own endings, and `failed` for an
+ * answer that ended in an error. The reason goes after a colon when there is one, because
+ * *Couldn't finish* alone is the sentence that sends somebody looking for the reason.
+ */
+export function endingLine(ended: string, why?: string): string {
+  const reason = why !== undefined && why.trim() !== '' ? `: ${why.trim()}` : ''
+  switch (ended) {
+    case 'answered':
+      return 'Finished'
+    case 'stopped':
+      return 'Stopped'
+    case 'ceiling':
+      return 'Stopped at the step limit'
+    case 'paused':
+      return `Paused${reason === '' ? ', waiting for your yes to a paid model' : reason}`
+    default:
+      return `Couldn't finish${reason}`
+  }
+}
+
+/** `14:03`, the local time a task started. */
+const clock = (at: number): string => new Date(at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+
+/** Is this text a program's data rather than a sentence? Then it belongs in the fold. */
+const looksRaw = (text: string): boolean => /^\s*[[{]/.test(text)
+
 export function mountLive(token: string, roots: LiveRoots): Live {
   const runningBox = roots.running.querySelector<HTMLElement>('#running')!
   const runningCount = roots.running.querySelector<HTMLElement>('#running-count')!
@@ -152,6 +207,10 @@ export function mountLive(token: string, roots: LiveRoots): Live {
 
   const rows = new Map<number, Row>()
   let open = 0
+  /** Whether a task is on screen as running — what makes a second `end()` a no-op. */
+  let running = false
+  /** Whether anything has been drawn since the page loaded, so the saved run never paints over it. */
+  let touched = false
 
   const ask = async (path: string, sent: unknown): Promise<Record<string, unknown>> => {
     const answer = await fetch(path, {
@@ -163,7 +222,7 @@ export function mountLive(token: string, roots: LiveRoots): Live {
   }
 
   /**
-   * Which plugin offers which tool, and what that plugin holds.
+   * Which plugin offers which tool, what that plugin holds, and what the tool does in words.
    *
    * Read once and kept, because it changes when a plugin is installed or disabled and not
    * between two steps of one task. Nothing in here is a list of plugin names typed out: it is
@@ -182,11 +241,12 @@ export function mountLive(token: string, roots: LiveRoots): Live {
         ])
         const panes = (plugins.panes ?? []) as { id: string; name: string; requires?: { cap: string; why: string }[] }[]
         const byId = new Map(panes.map((pane) => [pane.id, pane]))
-        for (const tool of (tools.rows ?? []) as { id: string; plugin?: string }[]) {
+        for (const tool of (tools.rows ?? []) as { id: string; plugin?: string; words?: string }[]) {
           const pane = tool.plugin === undefined ? undefined : byId.get(tool.plugin)
           map.set(tool.id, {
             plugin: pane?.name ?? tool.plugin ?? 'Alexia',
             requires: pane?.requires ?? [],
+            ...(typeof tool.words === 'string' && tool.words !== '' && { words: tool.words }),
           })
         }
       } catch {
@@ -196,6 +256,9 @@ export function mountLive(token: string, roots: LiveRoots): Live {
       return map
     })())
 
+  /** A step's name in words once they are known, and the tool's short name until then. */
+  const wordsFor = async (name: string): Promise<string> => (await facts()).get(name)?.words ?? bare(name)
+
   const nothing = (where: HTMLElement, line: string): void => {
     const said = document.createElement('p')
     said.className = 'nothing'
@@ -203,7 +266,14 @@ export function mountLive(token: string, roots: LiveRoots): Live {
     where.replaceChildren(said)
   }
 
-  /** The open step, in full. Re-rendered rather than patched: it is one card, not a log. */
+  /**
+   * The open step, in full. Re-rendered rather than patched: it is one card, not a log.
+   *
+   * **Words first, data behind a fold.** It used to open on a capability id and a block of JSON,
+   * which is exactly what the person watching cannot read. Now it says what the step does, who
+   * offers it, what that is allowed to do and how it went — and what was sent and what came
+   * back, as they were, are one press away under *Details*.
+   */
   const paint = async (n: number): Promise<void> => {
     const row = rows.get(n)
     if (!row) return
@@ -211,8 +281,12 @@ export function mountLive(token: string, roots: LiveRoots): Live {
 
     for (const [at, other] of rows) other.element.classList.toggle('on', at === n)
 
+    const held = (await facts()).get(row.name)
+    // Another step may have opened while the facts were read. The newest one wins.
+    if (open !== n) return
+
     const state =
-      row.ok === undefined ? { text: 'running', cls: 'badge' }
+      row.ok === undefined ? { text: 'working', cls: 'badge' }
       : row.ok ? { text: 'done', cls: 'badge flat' }
       : { text: 'failed', cls: 'badge warn' }
 
@@ -221,13 +295,12 @@ export function mountLive(token: string, roots: LiveRoots): Live {
     number.textContent = String(row.n)
     const tool = document.createElement('span')
     tool.className = 'tool'
-    tool.textContent = bare(row.name)
+    tool.textContent = held?.words ?? bare(row.name)
     const badge = document.createElement('span')
     badge.className = state.cls
     badge.textContent = state.text
     head.replaceChildren(number, tool, badge)
 
-    const held = (await facts()).get(row.name)
     const list = document.createElement('dl')
     list.className = 'facts'
 
@@ -239,23 +312,23 @@ export function mountLive(token: string, roots: LiveRoots): Live {
       list.append(dt, dd)
     }
 
-    fact('from', (dd) => {
+    fact('From', (dd) => {
       const who = document.createElement('b')
       who.textContent = held?.plugin ?? 'Alexia'
       dd.append(who)
     })
 
-    // What the plugin holds — not what this one call used, because core does not say which
-    // and a panel that guessed would be wrong on exactly the calls somebody is checking.
-    fact('holds', (dd) => {
+    // What the plugin is allowed to do — not what this one call used, because core does not
+    // say which and a panel that guessed would be wrong on exactly the calls somebody checks.
+    fact('It may', (dd) => {
       if (!held || held.requires.length === 0) {
-        dd.textContent = 'nothing — it reaches nothing outside Alexia'
+        dd.textContent = 'nothing outside Alexia'
         return
       }
       for (const need of held.requires) {
         const cap = document.createElement('span')
         cap.className = 'cap'
-        cap.textContent = need.cap
+        cap.textContent = CAN[need.cap] ?? need.cap
         const why = document.createElement('span')
         why.className = 'why'
         why.textContent = need.why
@@ -263,39 +336,28 @@ export function mountLive(token: string, roots: LiveRoots): Live {
       }
     })
 
-    const call = document.createElement('div')
-    call.className = 'code'
-    call.textContent = row.args === undefined ? 'nothing was sent' : JSON.stringify(row.args, undefined, 2)
+    const said = (row.text ?? '').trim()
+    fact('How it went', (dd) => {
+      dd.textContent =
+        row.ok === undefined ? 'Still working…'
+        : row.ok === false ? `It failed${said === '' || looksRaw(said) ? '.' : `: ${said.split('\n')[0]!.slice(0, 200)}`}`
+        : said === '' ? 'Done. It said nothing back.'
+        : looksRaw(said) ? 'Done. What it sent back is under Details.'
+        : `Done: ${said.split('\n')[0]!.slice(0, 200)}`
+    })
 
-    const result = document.createElement('div')
-    result.className = 'code'
-    result.textContent =
-      row.ok === undefined ? 'still running…'
-      : (row.text ?? '').trim() === '' ? 'it said nothing'
-      : row.text!
+    const sent = row.args === undefined || Object.keys(row.args).length === 0 ? 'Nothing was sent.' : JSON.stringify(row.args, undefined, 2)
+    const back = row.ok === undefined ? 'Still working…' : said === '' ? 'It said nothing.' : row.text!
+    body.replaceChildren(list, folded('Details', `What was sent\n${sent}\n\nWhat came back\n${back}`))
+  }
 
-    const label = (word: string, right = ''): HTMLElement => {
-      const p = document.createElement('p')
-      p.className = 'block-label'
-      const what = document.createElement('span')
-      what.textContent = word
-      p.append(what)
-      if (right !== '') {
-        const r = document.createElement('span')
-        r.className = 'r'
-        r.textContent = right
-        p.append(r)
-      }
-      return p
-    }
-
-    body.replaceChildren(
-      list,
-      label('What was sent'),
-      call,
-      label('What came back', row.ok === false ? 'it failed' : ''),
-      result,
-    )
+  /** The line under the last step that says how the task ended. */
+  const ended = (line: string): void => {
+    if (rows.size === 0) traceBox.replaceChildren()
+    const last = document.createElement('p')
+    last.className = 'nothing ending'
+    last.textContent = line
+    traceBox.append(last)
   }
 
   const empty = (): void => {
@@ -304,13 +366,77 @@ export function mountLive(token: string, roots: LiveRoots): Live {
     nothing(traceBox, 'No steps yet.')
     stepCount.textContent = ''
     head.replaceChildren()
-    nothing(body, 'Ask her something, and every step she takes shows up here — the tool, what was sent to it, and what it said back.')
+    nothing(body, 'Ask her something, and every step she takes shows up here — what she did, who helped, and how it went.')
+  }
+
+  /** One step's row in Steps. Its words arrive when the facts do; its short name stands in until then. */
+  const addRow = (n: number, name: string, args?: Record<string, unknown>): Row => {
+    if (rows.size === 0) traceBox.replaceChildren()
+    const element = document.createElement('button')
+    element.type = 'button'
+    element.className = 'rail-row'
+    const number = document.createElement('span')
+    number.className = 'when'
+    number.textContent = String(n)
+    const tool = document.createElement('span')
+    tool.className = 'what'
+    tool.textContent = bare(name)
+    void wordsFor(name).then((words) => (tool.textContent = words))
+    const said = document.createElement('span')
+    said.className = 'when'
+    element.append(number, tool, said)
+    element.addEventListener('click', () => void paint(n))
+    traceBox.append(element)
+
+    const row: Row = { n, name, element, said }
+    if (args !== undefined) row.args = args
+    rows.set(n, row)
+    stepCount.textContent = String(rows.size)
+    return row
+  }
+
+  const finished = (n: number, ok: boolean, text: string): void => {
+    const row = rows.get(n)
+    if (!row) return
+    row.ok = ok
+    row.text = text
+    row.element.classList.toggle('failed', !ok)
+    // The glance version, on one line. The whole of it is in the card, which is the point
+    // of there being a card.
+    row.said.textContent = text.replace(/\s+/g, ' ').slice(0, 40)
+  }
+
+  /**
+   * **The last run, after a reload**, from the saved history (`last_run`), so the pages open on
+   * what just happened rather than on *No steps yet* while the Activity screen lists it. Only
+   * when nothing has been drawn since the page loaded: a task that started meanwhile wins.
+   */
+  const restore = async (): Promise<void> => {
+    let last: Record<string, unknown> | undefined
+    try {
+      last = ((await ask('/api/rows', { key: 'last_run' })).rows as Record<string, unknown>[] | undefined)?.[0]
+    } catch {
+      return
+    }
+    if (last === undefined || touched) return
+    const steps = (last.steps ?? []) as { n: number; name: string; args?: Record<string, unknown>; ok?: boolean; text?: string }[]
+    for (const step of steps) {
+      addRow(step.n, step.name, step.args)
+      if (step.ok !== undefined) finished(step.n, step.ok, step.text ?? '')
+    }
+    if (last.over === true) ended(String(last.ended ?? 'Finished') + (typeof last.why === 'string' && last.why !== '' ? `: ${last.why}` : ''))
+    const shown = steps.at(-1)
+    if (shown !== undefined) void paint(shown.n)
+    else nothing(body, `Last time: “${String(last.task ?? '')}”. She used no tools for it.`)
   }
 
   empty()
+  void restore()
 
   return {
     begin(title) {
+      touched = true
+      running = true
       rows.clear()
       open = 0
       traceBox.replaceChildren()
@@ -325,35 +451,18 @@ export function mountLive(token: string, roots: LiveRoots): Live {
       const what = document.createElement('span')
       what.className = 'what'
       what.textContent = title
+      // When it started, which is the one thing about a running task worth a column.
       const when = document.createElement('span')
       when.className = 'when'
-      when.textContent = 'this one'
+      when.textContent = `since ${clock(Date.now())}`
       run.append(dot, what, when)
       runningBox.replaceChildren(run)
       runningCount.textContent = '1'
     },
 
     step(n, name, args) {
-      if (rows.size === 0) traceBox.replaceChildren()
-      const element = document.createElement('button')
-      element.type = 'button'
-      element.className = 'rail-row'
-      const number = document.createElement('span')
-      number.className = 'when'
-      number.textContent = String(n)
-      const tool = document.createElement('span')
-      tool.className = 'what'
-      tool.textContent = bare(name)
-      const said = document.createElement('span')
-      said.className = 'when'
-      element.append(number, tool, said)
-      element.addEventListener('click', () => void paint(n))
-      traceBox.append(element)
-
-      const row: Row = { n, name, element, said }
-      if (args !== undefined) row.args = args
-      rows.set(n, row)
-      stepCount.textContent = String(rows.size)
+      touched = true
+      addRow(n, name, args)
       // The newest step is the one somebody is watching, so it opens itself.
       void paint(n)
     },
@@ -397,20 +506,23 @@ export function mountLive(token: string, roots: LiveRoots): Live {
     },
 
     done(n, ok, text) {
-      const row = rows.get(n)
-      if (!row) return
-      row.ok = ok
-      row.text = text
-      row.element.classList.toggle('failed', !ok)
-      // The glance version, on one line. The whole of it is in the card, which is the point
-      // of there being a card.
-      row.said.textContent = text.replace(/\s+/g, ' ').slice(0, 40)
+      finished(n, ok, text)
       if (open === n) void paint(n)
     },
 
-    end() {
+    /**
+     * **Every ending clears Running now**, and says how it ended under the steps. It used to be
+     * called only for an answer that finished, so an error, a pause or a refusal left the task
+     * *running* on screen until the next one started.
+     */
+    end(how, why) {
+      if (!running) return
+      running = false
       nothing(runningBox, 'Nothing is running.')
       runningCount.textContent = ''
+      if (how !== undefined) ended(endingLine(how, why))
+      // A task that ended before its first step leaves the card saying *waiting* for nothing.
+      if (rows.size === 0) nothing(body, how === 'answered' ? 'She answered without using any tools.' : 'No steps were taken.')
     },
   }
 }

@@ -326,9 +326,11 @@ test('the core the shell hands the vault to cannot be steered from outside', () 
   expect(source).toContain('.args(["--disable-sigusr1", "boot.mjs"])')
   // And the token goes down stdin, the one channel nothing else shares — the vault opened before
   // core is started, and the child held before the write, so no failure leaves a core running loose.
-  expect(source.indexOf('let handover = vault::open()?;')).toBeGreaterThan(-1)
-  expect(source.indexOf('let handover = vault::open()?;')).toBeLessThan(source.indexOf('sidecar.spawn()?'))
-  expect(source).toContain('held.insert(child).write(handover.as_bytes())?;')
+  // `start` is the one place core is spawned, and it is handed the vault already open.
+  expect(source).toContain('start(&handle, port, Arc::new(vault::open()?), 0)?;')
+  expect(source.match(/\.spawn\(\)\?/g)?.length).toBe(1)
+  expect(source).toMatch(/fn start\(app: &AppHandle, port: u16, handover: Arc<String>/)
+  expect(source).toContain('held.insert(child).write(handover.as_bytes())')
 })
 
 test('boot waits for the handover under the app, and only there', () => {

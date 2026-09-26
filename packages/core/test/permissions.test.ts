@@ -34,7 +34,18 @@ test('read-only runs in the default mode; anything else waits', () => {
 
   const asked = rule(writing, scope())
   expect(asked.verdict).toBe('ask')
-  expect(asked.verdict === 'ask' && asked.why).toContain('changes or deletes')
+  expect(asked.verdict === 'ask' && asked.why).toContain('change or delete')
+})
+
+test('the question starts with what Alexia wants to do, in plain words, never a tool id', () => {
+  const click: Ask = { tool: 'computer__click', words: 'click on your screen' }
+  expect(rule(click, scope())).toEqual({
+    verdict: 'ask',
+    why: 'Alexia wants to click on your screen. This may change something. Allow it?',
+  })
+  // Without the caller's words, the id with its seams taken out — still no `__` on screen.
+  const asked = rule({ tool: 'computer__click' }, scope({ mode: 'every-time' }))
+  expect(asked).toEqual({ verdict: 'ask', why: 'Alexia wants to click. Allow it?' })
 })
 
 test('each mode does what its own sentence says', () => {

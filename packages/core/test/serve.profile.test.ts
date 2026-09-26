@@ -108,8 +108,8 @@ async function say(text: string): Promise<string> {
 /** The trace panel's own detail view of the latest run. */
 async function traced(): Promise<string> {
   const listed = (await post('/api/rows', { key: 'activity' })) as { rows?: { id: string }[] }
-  const opened = (await post('/api/detail', { key: 'activity', row: listed.rows?.[0]?.id })) as { text?: string }
-  return opened.text ?? ''
+  const opened = (await post('/api/detail', { key: 'activity', row: listed.rows?.[0]?.id })) as { more?: string }
+  return opened.more ?? ''
 }
 
 const BLOCK = 'What you know about the user:\nName: Václav.\nLives in Prague.\nSpeaks Czech and English.'

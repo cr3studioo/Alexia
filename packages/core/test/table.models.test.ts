@@ -163,7 +163,7 @@ test('one model on two providers is two rows, with two details, and a model set 
   const aside = after.filter((one) => one.group === MODEL_GROUPS.aside)
   expect(aside.map((one) => one.id)).toEqual(['openrouter\nnvidia/nemotron-3-super-120b-a12b:free'])
   expect(aside[0]).toMatchObject({
-    note: 'Set aside: too busy every time for a whole day. Alexia sends it a test message on its own, and one good reply brings it back.',
+    note: 'Set aside: too busy every time for a whole day. Alexia sends it a test message on her own, and one good reply brings it back.',
     state: '■ set aside · always busy for you',
   })
   expect(aside[0]?.tags).toEqual([{ says: 'always busy for you', tone: 'danger' }])
@@ -245,7 +245,7 @@ test('a model turned down with a 400 three times in a row is set aside, and its 
   const row = (await rows()).find((one) => one.id === 'openrouter\nliquid/lfm-2.5-2.6b:free')
   expect(row).toMatchObject({
     group: MODEL_GROUPS.aside,
-    note: 'Set aside: OpenRouter turned down the request to it three times in a row. Alexia sends it a test message on its own, and one good reply brings it back.',
+    note: 'Set aside: OpenRouter turned down the request to it three times in a row. Alexia sends it a test message on her own, and one good reply brings it back.',
     state: '■ set aside · turns every request down',
   })
 })

@@ -62,12 +62,14 @@ test('a tool without a plugin keeps its whole name', () => {
 
 // ---- the word -----------------------------------------------------------------------------
 
-test('every stage has words, and none of them is blank or doubled', () => {
+test('every stage has words, and none of them is blank, doubled or hard', () => {
   const all = Object.values(WORDS).flat()
   for (const [kind, pool] of Object.entries(WORDS)) {
-    expect(pool.length, kind).toBeGreaterThanOrEqual(6)
+    expect(pool.length, kind).toBeGreaterThanOrEqual(1)
     for (const word of pool) expect(word, kind).toMatch(/^[A-Z][a-z]+$/)
   }
+  // The words people could not read, which is why the pools are plain now. None comes back.
+  for (const hard of ['Wheedling', 'Cogitating', 'Badgering', 'Percolating', 'Wordsmithing']) expect(all).not.toContain(hard)
   expect(new Set(all).size, 'a word in two pools would make two stages look like one').toBe(all.length)
 })
 

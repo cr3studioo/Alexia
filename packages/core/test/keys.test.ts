@@ -61,6 +61,8 @@ const stub: Provider = {
 }
 /** A keyless provider, cached already, so a fresh install has something to list. */
 const floor: Provider = { id: 'floor', name: 'Floor', baseUrl: 'http://127.0.0.1:9/v1', auth: 'optional', rpm: 1000, rpd: 1000 }
+/** A provider that cannot be reached at all: nothing listens on port 9. */
+const away: Provider = { id: 'away', name: 'Away', baseUrl: 'http://127.0.0.1:9/v1', models: '/models', rpm: 1000, rpd: 1000 }
 
 noPolling(root, [
   {
@@ -84,7 +86,7 @@ const alexia: Serving = await serve({
   uiDir: join(import.meta.dirname, '..', '..', 'ui'),
   pluginsDir: join(root, 'extensions'),
   secrets,
-  providers: [stub, floor],
+  providers: [stub, floor, away],
   local: false,
 })
 
@@ -116,13 +118,32 @@ const table = async (): Promise<string[]> =>
 test('saving a key waits for its list and says what it unlocked, and the Models tab has it at once', async () => {
   expect(await table()).toEqual(['Automatic, free: floor/one@floor'])
 
-  // A key its provider will not list for: saved, and said plainly that the list did not come.
-  const wrong = await post('/api/setup', { provider: { id: 'stub', key: 'sk-wrong' } })
-  expect(String(wrong.said)).toContain('did not arrive')
-  expect(String(wrong.said)).toContain('401')
+  // A key its provider refuses (401) is not kept, and is said as a refusal the screen can
+  // show in red — not a grey *401* under a key that looks connected.
+  const wrong = await fetch(new URL('/api/setup', alexia.url), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-alexia-token': alexia.token },
+    body: JSON.stringify({ provider: { id: 'stub', key: 'sk-wrong' } }),
+  })
+  expect(wrong.status).toBe(400)
+  expect(await wrong.json()).toEqual({ ok: false, refused: true, said: "Stub didn't accept that key. Check you copied all of it." })
+  expect(await secrets.get(CORE, keyOf(stub))).toBeUndefined()
+  const state = async () =>
+    ((await (await fetch(new URL('/api/state', alexia.url), { headers: { 'x-alexia-token': alexia.token } })).json()) as {
+      providers: { id: string; connected: boolean; keyStored: boolean }[]
+    }).providers
+  expect((await state()).find((p) => p.id === 'stub')).toMatchObject({ connected: false, keyStored: false })
 
   const right = await post('/api/setup', { provider: { id: 'stub', key: 'sk-stub' } })
   expect(right.said).toBe('Stub connected — 2 free models and 1 paid.')
+  expect((await state()).find((p) => p.id === 'stub')).toMatchObject({ connected: true, keyStored: true })
+  // The floor answers with no key, so it is connected with nothing stored — no *key stored*
+  // badge, no *Remove key*.
+  expect((await state()).find((p) => p.id === 'floor')).toMatchObject({ connected: true, keyStored: false })
+
+  // A refused key does not throw away the good one it would have replaced.
+  expect((await post('/api/setup', { provider: { id: 'stub', key: 'sk-wrong' } })).refused).toBe(true)
+  expect(await secrets.get(CORE, keyOf(stub))).toBe('sk-stub')
   // No reopen, no wait: the answer came after the list, so the next read has it.
   expect((await table()).sort()).toEqual([
     'Automatic, free: floor/one@floor',
@@ -176,6 +197,17 @@ test('removing a key takes it out of the keychain and the list, and a pin or a l
   // A key back, and everything is available again with nothing to restore.
   await post('/api/setup', { provider: { id: 'stub', key: 'sk-stub' } })
   expect((await rows('routing')).find((row) => row.id === 'stub/free-a')?.off).toBe('')
+}, 30_000)
+
+test('a key for a provider that cannot be reached is kept, and removing it does not count models it never had', async () => {
+  // The network being down is not the provider refusing the key, so the key stays.
+  const saved = await post('/api/setup', { provider: { id: 'away', key: 'sk-away' } })
+  expect(saved.refused).toBeUndefined()
+  expect(String(saved.said)).toContain("Away's key is saved, but Away could not be reached to check it just now")
+  expect(await secrets.get(CORE, keyOf(away))).toBe('sk-away')
+
+  // Its list never arrived, so there is nothing to stop listing — not *its 0 models*.
+  expect((await post('/api/setup', { provider: { id: 'away', remove: true } })).said).toBe('The Away key is removed.')
 }, 30_000)
 
 test('removing the key of a provider that answers without one leaves it on the shared floor', async () => {
