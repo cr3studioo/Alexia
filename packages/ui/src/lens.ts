@@ -233,8 +233,15 @@ export function mountLens(host: HTMLElement, shape: () => DOMRect | undefined, l
 
   const draw = (): void => {
     const box = shape()
-    if (!image || !box || document.hidden) return
-    const dpr = devicePixelRatio || 1
+    if (!image || !box || document.hidden) {
+      // Nothing to draw (Apple's glass in use, the painting not in yet): nothing is moving
+      // either. Left as it was, a speed from the last move kept the frames going for ever.
+      motion = 0
+      lastX = undefined
+      return
+    }
+    // Two is all a Retina screen has; a bigger ratio (a zoomed page) only multiplies the work.
+    const dpr = Math.min(devicePixelRatio || 1, 2)
     const own = canvas.getBoundingClientRect()
     const width = Math.round(own.width * dpr)
     const height = Math.round(own.height * dpr)

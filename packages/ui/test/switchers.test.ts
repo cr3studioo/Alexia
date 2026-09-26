@@ -13,7 +13,9 @@ import {
   mountGlassLook,
   mountLevelSlider,
   mountModeSwitch,
+  HOLD_MS,
   nearness,
+  SAID_MS,
   springCurve,
   SPRING_MS,
   SPRING_RATIO,
@@ -134,12 +136,69 @@ test('switchers: every level core names today has an icon and an SF Symbol', () 
   expect(MODES.map((mode) => mode.symbol)).toEqual(['laptopcomputer', 'laptopcomputer.and.arrow.down', 'cloud.fill'])
 })
 
+test('switchers: the glass glides on transform alone, and a hover draws no box', () => {
+  const section = css
+    .slice(css.indexOf("/* ---- the rail's switches"), css.indexOf('.more {'))
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+  // Nothing in the switches animates a property that lays the rail out again every frame.
+  for (const rule of section.matchAll(/transition:([^;]*);/g)) {
+    expect(rule[1]).not.toMatch(/\b(left|width|top)\b/)
+  }
+  expect(section).not.toMatch(/:hover[^{]*\{[^}]*(background|border|box-shadow|outline)/)
+  // The pill's cells are classed, so the plain button's hover fill cannot reach them.
+  mountModeSwitch(host(), around)
+  for (const cell of host().querySelectorAll('[role="radio"]')) expect(cell.getAttribute('class')).toBeTruthy()
+})
+
+test('switchers: Settings says what the chosen mode and level mean', () => {
+  expect(html).toContain('id="mode-said"')
+  expect(html).toContain('id="permission-said"')
+})
+
+test('switchers: Apple glass is sent once a frame, with its symbol, and the icon steps aside only once it is there', async () => {
+  vi.useFakeTimers()
+  type Call = { id: string; look?: { symbol: string | null; visible: boolean } }
+  const calls: Call[] = []
+  const tauri = globalThis as unknown as { __TAURI__?: unknown }
+  tauri.__TAURI__ = {
+    core: {
+      invoke: (command: string, args: Call) => {
+        // The trackpad's clicks go the same way; only the glass is counted here.
+        if (command === 'glass') calls.push(args)
+        return Promise.resolve(true)
+      },
+    },
+  }
+  try {
+    const mode = mountModeSwitch(host(), around)
+    const group = host().querySelector<HTMLElement>('.pill-switch')!
+    group.querySelectorAll('[role="radio"]').forEach((cell, i) => sized(cell, i * 100, 100))
+    sized(group, 0, 300)
+    mode.native(true)
+    // Before the shell answers, the page's own icon stays.
+    expect(group.classList.contains('placed')).toBe(false)
+    press(group, 50, 'pointerdown')
+    for (const x of [90, 120, 150, 180, 210]) press(group, x, 'pointermove')
+    await vi.advanceTimersByTimeAsync(40)
+    // Many moves in one frame are one call, to the latest place, and it carries that place's
+    // symbol — from the very first call, not only once the choice changes.
+    expect(calls).toHaveLength(1)
+    expect(calls[0]!.look!.symbol).toBe('cloud.fill')
+    expect(calls[0]!.look!.visible).toBe(true)
+    expect(group.classList.contains('placed')).toBe(true)
+    mode.native(false)
+    expect(group.classList.contains('placed')).toBe(false)
+  } finally {
+    delete tauri.__TAURI__
+  }
+})
+
 test('switchers: the rail has no dropdowns left, and Settings keeps both of its own', () => {
   const aside = /<aside id="rail"[\s\S]*?<\/aside>/.exec(html)![0]
   expect(aside).not.toContain('<select')
   expect(aside).toContain('id="mode-switch"')
   expect(aside).toContain('id="permission-switch"')
-  expect(html).toContain('<select class="mode" aria-label="How should I run?">')
+  expect(html).toContain('<select class="mode" aria-label="How should I run?" aria-describedby="mode-said">')
   expect(html).toContain('<select class="permission" aria-label="What she may do">')
 })
 
@@ -172,8 +231,11 @@ test('switchers: How she runs is a radio group of three, named, with one checked
   expect(radios.map((one) => one.getAttribute('aria-checked'))).toEqual(['false', 'false', 'true'])
   // The one the keyboard lands on is the checked one.
   expect(radios.map((one) => one.tabIndex)).toEqual([-1, -1, 0])
-  expect(host().querySelector('.pill-word')!.textContent).toBe('Cloud')
-  expect(host().querySelector('.pill-means')!.textContent).toContain('online')
+  // No lines of text under it: each word is inside the pill, under its own icon.
+  expect(host().querySelector('.pill-word, .pill-means')).toBeNull()
+  expect([...group.querySelectorAll('.pill-title')].map((one) => one.textContent)).toEqual(['Local', 'Combined', 'Cloud'])
+  // Core setting it is not a choice, so no name pops up for it.
+  expect(group.querySelector('[data-said]')).toBeNull()
   // No WebGL here, so the pill is CSS glass.
   expect(group.classList.contains('no-gl')).toBe(true)
   // A screen reader presses a radio with a click and nothing else.
@@ -194,6 +256,9 @@ test('switchers: setting the value from core is not a choice; keys and clicks ar
   key(group, 'End')
   key(group, 'End')
   expect(picked).toEqual(['combined', 'cloud'])
+  // The name of the one just chosen shows, on that one alone.
+  const said = [...group.querySelectorAll<HTMLElement>('[role="radio"]')].map((one) => one.hasAttribute('data-said'))
+  expect(said).toEqual([false, false, true])
   // A click on the first cell of a row three hundred wide.
   sized(group, 0, 300)
   press(group, 40, 'pointerdown')
@@ -219,39 +284,96 @@ test('switchers: a drag follows the finger and lands on the nearest stop', () =>
   expect(group.style.getPropertyValue('--at')).toBe('1')
 })
 
-test('switchers: Full trust asks in place, and Keep asking changes nothing', () => {
-  vi.useFakeTimers()
+const keyUp = (el: Element, name: string): void => {
+  el.dispatchEvent(new KeyboardEvent('keyup', { key: name, bubbles: true }))
+}
+
+const mountLevels = (): { perm: ReturnType<typeof mountLevelSlider>; slider: HTMLElement; picked: string[] } => {
   const perm = mountLevelSlider(host(), around)
   perm.levels(LEVELS)
   perm.value = 'risky'
   const picked: string[] = []
   perm.addEventListener('change', () => picked.push(perm.value))
-  const slider = host().querySelector<HTMLElement>('[role="slider"]')!
+  return { perm, slider: host().querySelector<HTMLElement>('[role="slider"]')!, picked }
+}
+
+test('switchers: What she may do moves freely below Full trust, with no text under it', () => {
+  vi.useFakeTimers()
+  const { perm, slider, picked } = mountLevels()
   expect(slider.getAttribute('aria-valuetext')).toBe('Ask before anything risky')
   expect(slider.getAttribute('aria-valuemax')).toBe('3')
   expect(host().querySelectorAll('.level-stops svg')).toHaveLength(4)
-
+  expect(host().querySelector('.level-name, .level-means')).toBeNull()
   key(slider, 'ArrowRight')
   expect(picked).toEqual(['watch'])
+  expect(perm.value).toBe('watch')
   expect(slider.dataset.tone).toBe('caution')
+  // Its name shows under its stop, and goes again after a few seconds.
+  const said = host().querySelector<HTMLElement>('.stop-name[data-said]')!
+  expect(said.textContent).toBe('Watch and warn me')
+  vi.advanceTimersByTime(SAID_MS)
+  expect(host().querySelector('.stop-name[data-said]')).toBeNull()
+})
+
+test('switchers: Full trust is held to; let go early and nothing changes', () => {
+  vi.useFakeTimers()
+  const { perm, slider, picked } = mountLevels()
+  key(slider, 'ArrowRight')
+  keyUp(slider, 'ArrowRight')
+  const hint = slider.getAttribute('aria-describedby')!
+  expect(document.getElementById(hint)!.textContent).toContain('Hold to turn on full trust')
 
   key(slider, 'End')
-  const ask = host().querySelector('.level-ask')!
-  expect(ask.textContent).toContain('Turn on full trust?')
+  // Armed: the knob waits on the triangle, red, and nothing is chosen yet.
+  expect(slider.classList.contains('arming')).toBe(true)
+  expect(slider.style.getPropertyValue('--at')).toBe('3')
+  expect(slider.dataset.tone).toBe('danger')
+  expect(perm.value).toBe('watch')
+  vi.advanceTimersByTime(HOLD_MS / 2)
+  keyUp(slider, 'End')
+  // Let go too soon: back where it was, and nothing left behind to answer.
+  expect(slider.classList.contains('arming')).toBe(false)
+  expect(slider.style.getPropertyValue('--at')).toBe('2')
+  vi.advanceTimersByTime(HOLD_MS)
   expect(perm.value).toBe('watch')
   expect(picked).toEqual(['watch'])
-  ask.querySelector<HTMLButtonElement>('.no')!.click()
-  expect(host().querySelector('.level-ask')).toBeNull()
-  expect(perm.value).toBe('watch')
+})
 
+test('switchers: holding the key until the ring closes turns Full trust on', () => {
+  vi.useFakeTimers()
+  const { perm, slider, picked } = mountLevels()
+  key(slider, 'ArrowRight')
+  keyUp(slider, 'ArrowRight')
   key(slider, 'End')
-  host().querySelector<HTMLButtonElement>('.level-ask .yes')!.click()
+  // The key repeats while it is held; that is the same hold, not a new one.
+  vi.advanceTimersByTime(300)
+  key(slider, 'End')
+  vi.advanceTimersByTime(HOLD_MS - 300)
   expect(perm.value).toBe('full-trust')
   expect(picked).toEqual(['watch', 'full-trust'])
-  expect(slider.dataset.tone).toBe('danger')
-  // The name fades out and back in with the new one.
-  vi.advanceTimersByTime(200)
-  expect(host().querySelector('.level-name')!.textContent).toBe('Full trust')
+  expect(slider.classList.contains('arming')).toBe(false)
+  keyUp(slider, 'End')
+  expect(perm.value).toBe('full-trust')
+})
+
+test('switchers: a press held on the triangle turns Full trust on; a click does not', () => {
+  vi.useFakeTimers()
+  const { perm, slider, picked } = mountLevels()
+  // A line three hundred wide: the triangle's stop is at its right end.
+  sized(host().querySelector('.level-track')!, 0, 300)
+  press(slider, 290, 'pointerdown')
+  expect(slider.classList.contains('arming')).toBe(true)
+  press(slider, 290, 'pointerup')
+  expect(slider.classList.contains('arming')).toBe(false)
+  expect(slider.style.getPropertyValue('--at')).toBe('1')
+  expect(perm.value).toBe('risky')
+  vi.advanceTimersByTime(1000)
+  press(slider, 290, 'pointerdown')
+  vi.advanceTimersByTime(HOLD_MS)
+  expect(perm.value).toBe('full-trust')
+  press(slider, 290, 'pointerup')
+  expect(perm.value).toBe('full-trust')
+  expect(picked).toEqual(['full-trust'])
 })
 
 test('switchers: a value that arrives before the levels is shown once they do', () => {

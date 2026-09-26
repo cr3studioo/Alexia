@@ -16,6 +16,11 @@
  * springs to the nearest stop. Each time the choice lands somewhere new the trackpad clicks
  * (`haptic`, a no-op away from a Mac).
  *
+ * **Smooth means one moving thing per glass.** The pill and the knob move on `transform` only,
+ * on one spring transition; nothing that moves animates `left` or `width` (layout, every
+ * frame). JavaScript sets `--at` per frame only while a finger drags, Alexia's lens draws only
+ * while Apple's glass is not in use, and Apple's glass is sent at most one move a frame.
+ *
  * **Two kinds of glass.** Alexia's own (`lens.ts`, WebGL bending the painting, and CSS frost if
  * that fails), or Apple's own on macOS 26 — the shell lays a real Liquid Glass exactly over the
  * pill and the knob (`desktop.ts`, `glass`) and the web copy steps aside. Which one is
@@ -192,11 +197,20 @@ interface Driven {
   show: (x: number, dragging: boolean) => void
   /** The choice is `index` now — by a person (`moved`), or because core said so. */
   land: (index: number, moved: boolean) => void
-  /** Hold a move back until it is answered (Full trust asks first). False while held. */
-  guard?: (index: number, answer: (ok: boolean) => void) => boolean
+  /**
+   * Hold a move back (Full trust is held to, not clicked). False while held; the guard then
+   * draws the glass itself, and moves it later with `Driving.commit` or back with `show`.
+   * `via` is what asked: a key, or a pointer being let go.
+   */
+  guard?: (index: number, via: 'key' | 'pointer') => boolean
+  /** The stop under a pressed pointer, as it changes, and `undefined` once it is let go. */
+  arm?: (index: number | undefined) => void
   /** A person chose `index`. */
   pick: (index: number) => void
 }
+
+/** What the trackpad does when a choice lands: a click, the firmer *level* click, or nothing. */
+type Feel = 'alignment' | 'level' | 'none'
 
 interface Driving {
   /** Show `index` without it counting as a choice: core's answer, or a focus-refresh. */
@@ -206,6 +220,8 @@ interface Driving {
    * A pointer's own click follows its release, which has already chosen, so it is let pass.
    */
   clicked: (index: number) => void
+  /** Make `index` the choice now, past any guard — the guard's own yes. */
+  commit: (index: number, feel: Feel) => void
   at: () => number
 }
 
@@ -223,45 +239,42 @@ function drive(d: Driven): Driving {
   /** When a pointer was last let go, so the click that follows it is not a second choice. */
   let released = -Infinity
 
-  // The stretch along the way and the squash on arrival (app.css, `.moving`), restarted for
-  // every move so two quick presses are two stretches.
+  // The stretch as it sets off (app.css, `.moving`): a short-lived class on `scale`, a property
+  // of its own, so it never restarts the glide on `transform`. It used to be a keyframe
+  // animation restarted by forcing a layout (`offsetWidth`) on every move, and it fought the
+  // press's own `scale` for the same property.
+  let stretching: ReturnType<typeof setTimeout> | undefined
   const stretch = (): void => {
     if (reduced()) return
-    root.classList.remove('moving')
-    void root.offsetWidth
     root.classList.add('moving')
+    clearTimeout(stretching)
+    stretching = setTimeout(() => root.classList.remove('moving'), 180)
   }
-  const commit = (index: number, felt: boolean): void => {
+  const commit = (index: number, feel: Feel): void => {
     at = index
     d.show(at, false)
     d.land(at, true)
     stretch()
-    // A drag already clicked when it crossed onto this stop; a second click on release is one
-    // too many under a finger.
-    if (!felt) haptic('alignment')
+    if (feel !== 'none') haptic(feel)
     d.pick(at)
   }
-  const choose = (wanted: number, felt = false): void => {
+  const choose = (wanted: number, via: 'key' | 'pointer', felt = false): void => {
     const index = clamp(wanted, d.count())
     if (index === at) {
       d.show(at, false)
       return
     }
-    const answer = (ok: boolean): void => {
-      if (ok) commit(index, false)
-      else d.show(at, false)
-    }
-    if (d.guard && !d.guard(index, answer)) {
-      d.show(at, false)
-      return
-    }
-    commit(index, felt)
+    if (d.guard && !d.guard(index, via)) return
+    // A drag already clicked when it crossed onto this stop; a second click on release is one
+    // too many under a finger.
+    commit(index, felt ? 'none' : 'alignment')
   }
   const end = (): void => {
     press = undefined
     dragging = false
     near = undefined
     root.classList.remove('pressing', 'dragging')
+    d.arm?.(undefined)
   }
   const x = (event: PointerEvent): number => stopAt(event.clientX, d.row(), d.count(), d.inset)
 
@@ -276,6 +289,7 @@ function drive(d: Driven): Driving {
     }
     root.classList.add('pressing')
     d.show(at, false)
+    d.arm?.(Math.round(x(event)))
   })
   root.addEventListener('pointermove', (event) => {
     if (press?.id !== event.pointerId) return
@@ -288,6 +302,7 @@ function drive(d: Driven): Driving {
     if (stop !== near) {
       near = stop
       haptic('alignment')
+      d.arm?.(stop)
     }
   })
   root.addEventListener('pointerup', (event) => {
@@ -296,7 +311,7 @@ function drive(d: Driven): Driving {
     const felt = dragging && near === stop
     released = performance.now()
     end()
-    choose(stop, felt)
+    choose(stop, 'pointer', felt)
   })
   root.addEventListener('pointercancel', () => {
     end()
@@ -306,7 +321,7 @@ function drive(d: Driven): Driving {
     const to = keyStep(event.key, at, d.count(), d.slider)
     if (to === undefined) return
     event.preventDefault()
-    choose(to)
+    choose(to, 'key')
   })
 
   return {
@@ -316,8 +331,9 @@ function drive(d: Driven): Driving {
       d.land(at, false)
     },
     clicked: (index) => {
-      if (performance.now() - released > 400) choose(index)
+      if (performance.now() - released > 400) choose(index, 'key')
     },
+    commit,
     at: () => at,
   }
 }
@@ -347,26 +363,59 @@ export const inside = (box: Box, clip: Box): boolean =>
  * changed, at once while a finger drags. It hides whenever it could not be where it belongs.
  * A shell that answers *no* while it should be showing means this Mac cannot after all, and
  * `failed` hands the switch back to Alexia's own glass.
+ *
+ * **At most once a frame.** A finger dragging on a trackpad sends far more moves than the
+ * screen draws, and each call crosses to the shell and moves an AppKit view on the main thread
+ * — the thread the page is drawn on too. So `lay` only notes where the glass should go, and one
+ * call a frame sends the latest. Measuring waits for that frame as well.
+ *
+ * `root` carries `.placed` while the glass is really there — the shell said yes and it is
+ * showing — and only then does the page's own icon under it step aside (app.css).
  */
 function appleGlass(id: string, root: HTMLElement, around: Around, style: Glass['style'], failed: () => void) {
   let on = false
-  const lay = (box: Box, symbol: string, how: 'spring' | 'now', tint?: Glass['tint']): void => {
-    if (!on) return
+  let wanted: { box: () => Box; symbol: string; how: 'spring' | 'now'; tint?: Glass['tint'] } | undefined
+  let frame: number | undefined
+  /** Which call is the latest, so an answer that arrives late does not undo a newer one. */
+  let sent = 0
+  const placed = (yes: boolean): void => {
+    root.classList.toggle('placed', yes)
+  }
+  const send = (): void => {
+    frame = undefined
+    const next = wanted
+    wanted = undefined
+    if (!on || !next) return
+    const box = next.box()
     const clip = root.closest<HTMLElement>('.panel')?.getBoundingClientRect() ?? box
     const visible = !around.covered() && inside(box, clip)
-    const spring = how === 'spring' && !reduced()
+    const spring = next.how === 'spring' && !reduced()
+    const call = (sent += 1)
     void glass(id, {
       box,
       radius: box.height / 2,
       style,
       visible,
-      durationMs: how === 'now' ? 0 : spring ? SPRING_MS : 160,
+      durationMs: next.how === 'now' ? 0 : spring ? SPRING_MS : 160,
       spring,
-      symbol,
-      ...(tint && { tint }),
+      // A glass with no size yet (the rail before its first layout) is sent no symbol: the
+      // shell draws a symbol once, at the size of the glass it is given, and keeps it until the
+      // name changes — one drawn at nothing would stay at nothing. Sent with every call after.
+      ...(box.width > 0 && box.height > 0 && { symbol: next.symbol }),
+      ...(next.tint && { tint: next.tint }),
     }).then((ok) => {
-      if (!ok && visible && on) failed()
+      if (call !== sent || !on) return
+      placed(ok && visible)
+      if (!ok && visible) failed()
     })
+  }
+  const lay = (box: () => Box, symbol: string, how: 'spring' | 'now', tint?: Glass['tint']): void => {
+    if (!on) return
+    // A spring stays a spring when a re-placing (`place`, which is at once) lands in the same
+    // frame after it; otherwise the jump would cut the spring short.
+    const kind = wanted?.how === 'spring' ? 'spring' : how
+    wanted = { box, symbol, how: kind, ...(tint && { tint }) }
+    frame ??= requestAnimationFrame(send)
   }
   const box0 = { left: 0, top: 0, width: 0, height: 0 }
   return {
@@ -375,7 +424,14 @@ function appleGlass(id: string, root: HTMLElement, around: Around, style: Glass[
       return on
     },
     set on(yes: boolean) {
-      if (on && !yes) void glass(id, { box: box0, radius: 0, style, visible: false, durationMs: 0 })
+      if (on && !yes) {
+        if (frame !== undefined) cancelAnimationFrame(frame)
+        frame = undefined
+        wanted = undefined
+        sent += 1
+        void glass(id, { box: box0, radius: 0, style, visible: false, durationMs: 0 })
+        placed(false)
+      }
       on = yes
     },
   }
@@ -416,26 +472,31 @@ class Switch extends EventTarget implements Switcher {
   }
 }
 
-/** Swap a line of text with a short fade, so a new word does not simply blink in. */
-function swapText(el: HTMLElement, text: string, animate: boolean): void {
-  if (el.textContent === text) return
-  if (!animate || reduced()) {
-    el.textContent = text
-    return
+/** How long a new choice's name stays up before it fades: long enough to read, then gone. */
+export const SAID_MS = 5000
+
+/**
+ * The name of a choice just made, shown on its own stop (`data-said`, app.css pops it in) and
+ * taken away again after `SAID_MS`. The names are otherwise hidden; a hover, a drag or keyboard
+ * focus shows them too, in CSS.
+ */
+function sayer(): (items: HTMLElement[], index: number) => void {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  return (items, index) => {
+    clearTimeout(timer)
+    items.forEach((item, i) => item.toggleAttribute('data-said', i === index))
+    timer = setTimeout(() => items[index]?.removeAttribute('data-said'), SAID_MS)
   }
-  el.classList.add('swap')
-  setTimeout(() => {
-    el.textContent = text
-    el.classList.remove('swap')
-  }, 140)
 }
 
 // ---- How she runs -----------------------------------------------------------------------
 
 /**
- * *How she runs*: three icons in a track and a glass pill over the chosen one, the chosen
- * word small underneath and its sentence under that. A radio group to the keyboard and to a
- * screen reader — each icon is a radio named by its word.
+ * *How she runs*: three icons in a track and a glass pill over the chosen one. Each icon's
+ * word sits inside the track under it, hidden until a hover, a drag or the keyboard is on it,
+ * or for a few seconds after it is chosen (`sayer`). What each mode means is said on Settings ›
+ * Models & money, not here. A radio group to the keyboard and to a screen reader — each icon is
+ * a radio named by its word.
  */
 export function mountModeSwitch(host: HTMLElement, around: Around): Switcher {
   const labelled = host.getAttribute('aria-labelledby') ?? ''
@@ -445,15 +506,16 @@ export function mountModeSwitch(host: HTMLElement, around: Around): Switcher {
     '<span class="thumb" aria-hidden="true"></span>' +
     MODES.map(
       (mode) =>
-        `<button type="button" role="radio" aria-checked="false" tabindex="-1" aria-label="${mode.name}" data-value="${mode.value}">` +
-        `${svg(mode.off, 'off')}${svg(mode.on, 'on')}</button>`,
+        // Classed, so the plain button's hover fill never reaches it (app.css, *buttons*).
+        `<button class="pill-cell" type="button" role="radio" aria-checked="false" tabindex="-1" aria-label="${mode.name}" data-value="${mode.value}">` +
+        `<span class="pill-icon">${svg(mode.off, 'off')}${svg(mode.on, 'on')}</span>` +
+        `<span class="pill-title" aria-hidden="true">${mode.name}</span></button>`,
     ).join('') +
-    '</div><p class="pill-word" aria-hidden="true"></p><p class="pill-means"></p>'
+    '</div>'
   const seg = host.querySelector<HTMLElement>('.pill-switch')!
   const thumb = seg.querySelector<HTMLElement>('.thumb')!
-  const word = host.querySelector<HTMLElement>('.pill-word')!
-  const means = host.querySelector<HTMLElement>('.pill-means')!
   const buttons = [...seg.querySelectorAll<HTMLButtonElement>('button')]
+  const say = sayer()
 
   const lens = mountLens(seg, () => (seg.classList.contains('native') ? undefined : thumb.getBoundingClientRect()), {
     blur: 5,
@@ -473,6 +535,10 @@ export function mountModeSwitch(host: HTMLElement, around: Around): Switcher {
   const self: { switcher?: Switch } = {}
   const apple = appleGlass('mode-pill', seg, around, 'clear', () => self.switcher?.native(false))
 
+  /** Apple's glass over stop `x`, measured when its frame comes round, with the symbol under it. */
+  const layApple = (x: number, how: 'spring' | 'now'): void =>
+    apple.lay(() => boxAt(x), MODES[Math.round(x)]!.symbol, how)
+
   const show = (x: number, dragging: boolean): void => {
     shown = x
     seg.style.setProperty('--at', String(x))
@@ -481,19 +547,19 @@ export function mountModeSwitch(host: HTMLElement, around: Around): Switcher {
       button.style.setProperty('--near', String(nearness(i, x)))
       button.toggleAttribute('data-under', i === under)
     })
-    if (lens) {
+    // One glass moves at a time: Alexia's own draws only while Apple's is not in use.
+    if (lens && !apple.on) {
       lens.hold(dragging)
       if (!dragging) lens.run(SPRING_MS + 120)
     }
-    apple.lay(boxAt(x), MODES[under]!.symbol, dragging ? 'now' : 'spring')
+    layApple(x, dragging ? 'now' : 'spring')
   }
   const land = (index: number, moved: boolean): void => {
     buttons.forEach((button, i) => {
       button.setAttribute('aria-checked', String(i === index))
       button.tabIndex = i === index ? 0 : -1
     })
-    swapText(word, MODES[index]!.name, moved)
-    swapText(means, MODES[index]!.means, moved)
+    if (moved) say(buttons, index)
   }
   const driving = drive({
     root: seg,
@@ -524,12 +590,12 @@ export function mountModeSwitch(host: HTMLElement, around: Around): Switcher {
     native: (on) => {
       apple.on = on
       seg.classList.toggle('native', on)
-      if (on) apple.lay(boxAt(shown), MODES[Math.round(shown)]!.symbol, 'now')
+      if (on) layApple(shown, 'now')
       else lens?.draw()
     },
     place: () => {
-      apple.lay(boxAt(shown), MODES[Math.round(shown)]!.symbol, 'now')
-      lens?.draw()
+      if (apple.on) layApple(shown, 'now')
+      else lens?.draw()
     },
   }))
   driving.set(1)
@@ -557,36 +623,48 @@ export const toneOf = (value: string | undefined): string =>
 /** The knob's size, and how far in the first and last stop sit (the knob's half). */
 const KNOB = 28
 
+/** How long Full trust is held before it is on: the ring round the knob takes this to close. */
+export const HOLD_MS = 900
+
 /**
  * *What she may do*: four stops on a line from careful to free, an icon over each, a glass
- * knob on the chosen one, and the line filling towards it — warmer the freer it gets. The
- * level's full name and sentence sit underneath. A slider to the keyboard and to a screen
- * reader, whose value is read out by name.
+ * knob on the chosen one, and the line filling towards it — warmer the freer it gets. A stop's
+ * name shows small under it on a hover, a drag or keyboard focus, and for a few seconds after
+ * it is chosen; what each level means is said on Settings › Safety, not here. A slider to the
+ * keyboard and to a screen reader, whose value is read out by name.
  *
- * **Full trust asks first**, in place — *Turn on full trust? [Turn it on] [Keep asking]* —
- * and nothing changes until it is answered. Not `confirm()`, which stops the whole window.
+ * **Full trust is held to, not clicked.** Bringing the knob to the warning triangle — a press
+ * on it, a drag onto it, or End or → from the stop before — *arms* it there: the knob turns red
+ * and a thin ring closes round it over `HOLD_MS` while the pointer or the key stays down. A
+ * closed ring turns it on, with the trackpad's firmer click; letting go sooner springs the knob
+ * back to where it was, and nothing changed. No question, no buttons, and nothing to answer
+ * later. Not `confirm()` either, which stops the whole window.
  */
 export function mountLevelSlider(host: HTMLElement, around: Around): LevelSwitcher {
   const labelled = host.getAttribute('aria-labelledby') ?? ''
   host.removeAttribute('aria-labelledby')
+  const hint = `${host.id || 'level'}-hold`
   host.innerHTML =
-    `<div class="level-slider" role="slider" tabindex="0" aria-labelledby="${labelled}" aria-valuemin="0">` +
+    `<div class="level-slider" role="slider" tabindex="0" aria-labelledby="${labelled}" aria-describedby="${hint}" aria-valuemin="0">` +
     '<div class="level-stops" aria-hidden="true"></div>' +
-    '<div class="level-track" aria-hidden="true"><span class="bar"></span><span class="fill"></span>' +
-    '<span class="dots"></span><span class="knob"></span></div></div>' +
-    '<p class="level-name" aria-hidden="true"></p><p class="level-means"></p>'
+    '<div class="level-track" aria-hidden="true"><span class="bar"><span class="fill"></span></span>' +
+    '<span class="dots"></span><span class="knob"></span>' +
+    '<svg class="hold" viewBox="0 0 36 36"><circle cx="18" cy="18" r="16.5" pathLength="100"/></svg></div>' +
+    '<div class="level-names" aria-hidden="true"></div></div>' +
+    `<span class="visually-hidden" id="${hint}">Hold to turn on full trust.</span>`
   const slider = host.querySelector<HTMLElement>('.level-slider')!
   const stops = slider.querySelector<HTMLElement>('.level-stops')!
   const track = slider.querySelector<HTMLElement>('.level-track')!
   const dots = track.querySelector<HTMLElement>('.dots')!
   const knob = track.querySelector<HTMLElement>('.knob')!
-  const name = host.querySelector<HTMLElement>('.level-name')!
-  const means = host.querySelector<HTMLElement>('.level-means')!
+  const namesRow = slider.querySelector<HTMLElement>('.level-names')!
 
   let list: Level[] = []
   let icons: HTMLElement[] = []
+  let names: HTMLElement[] = []
   let shown = 0
   let wanted: string | undefined
+  const say = sayer()
   // Built last, once everything it reads exists; the glass and the drive reach it through here.
   const self: { switcher?: Switch } = {}
 
@@ -612,16 +690,27 @@ export function mountLevelSlider(host: HTMLElement, around: Around): LevelSwitch
   const apple = appleGlass('perm-knob', slider, around, 'regular', () => self.switcher?.native(false))
   const layApple = (x: number, how: 'spring' | 'now'): void => {
     const value = list[Math.round(x)]?.value
-    if (list.length > 0) apple.lay(boxAt(x), iconOf(value).symbol, how, tint(value))
+    if (list.length > 0) apple.lay(() => boxAt(x), iconOf(value).symbol, how, tint(value))
   }
 
+  /** Full trust being held to: at which stop, by what, and the ring's end. */
+  let arming: { index: number; via: 'key' | 'pointer'; timer: ReturnType<typeof setTimeout> } | undefined
+  const isTrust = (index: number): boolean => list[index]?.value === 'full-trust'
+
   const show = (x: number, dragging: boolean): void => {
+    if (arming) {
+      // The knob waits on the triangle while it is held; a finger still moving on it does not
+      // pull it about, and the glass is not sent the same place again every frame.
+      if (dragging) return
+      x = arming.index
+    }
     shown = x
     slider.style.setProperty('--at', String(x))
     const under = Math.round(x)
     slider.dataset.tone = toneOf(list[under]?.value)
     icons.forEach((icon, i) => icon.style.setProperty('--near', String(nearness(i, x))))
-    if (lens) {
+    names.forEach((one, i) => one.toggleAttribute('data-under', i === under))
+    if (lens && !apple.on) {
       lens.hold(dragging)
       if (!dragging) lens.run(SPRING_MS + 120)
     }
@@ -633,36 +722,84 @@ export function mountLevelSlider(host: HTMLElement, around: Around): LevelSwitch
     slider.setAttribute('aria-valuenow', String(index))
     slider.setAttribute('aria-valuetext', level.name)
     icons.forEach((icon, i) => icon.toggleAttribute('data-on', i === index))
+    names.forEach((one, i) => one.toggleAttribute('data-on', i === index))
     slider.dataset.level = level.value
-    swapText(name, level.name, moved)
-    swapText(means, level.means, moved)
+    if (moved) say(names, index)
   }
 
-  /** The question before Full trust, under the slider. One at a time. */
-  const askFirst = (index: number, answer: (ok: boolean) => void): boolean => {
-    if (list[index]?.value !== 'full-trust') return true
-    host.querySelector('.level-ask')?.remove()
-    const box = document.createElement('div')
-    box.className = 'level-ask'
-    box.setAttribute('role', 'group')
-    box.setAttribute('aria-label', 'Turn on full trust?')
-    box.innerHTML =
-      '<p>Turn on full trust? Nothing will ask you first.</p>' +
-      '<div class="row"><button class="yes" type="button">Turn it on</button><button class="no" type="button">Keep asking</button></div>'
-    const settle = (ok: boolean): void => {
-      box.remove()
-      slider.focus()
-      answer(ok)
+  /** Stop holding. `back` springs the knob home to the level that is still the choice. */
+  const disarm = (back: boolean): void => {
+    if (!arming) return
+    clearTimeout(arming.timer)
+    arming = undefined
+    slider.classList.remove('arming')
+    if (back) show(driving.at(), false)
+  }
+  const startArming = (index: number, via: 'key' | 'pointer'): void => {
+    if (arming?.index === index) return
+    disarm(false)
+    const timer = setTimeout(() => {
+      arming = undefined
+      slider.classList.remove('arming')
+      driving.commit(index, 'level')
+    }, HOLD_MS)
+    arming = { index, via, timer }
+    slider.classList.add('arming')
+    show(index, false)
+  }
+  /** Every move is let through except onto Full trust, which is armed instead. */
+  const guard = (index: number, via: 'key' | 'pointer'): boolean => {
+    if (!isTrust(index)) {
+      disarm(false)
+      return true
     }
-    box.querySelector('.yes')!.addEventListener('click', () => settle(true))
-    box.querySelector('.no')!.addEventListener('click', () => settle(false))
-    box.addEventListener('keydown', (event) => {
-      if (event.key === 'Escape') settle(false)
-    })
-    host.append(box)
-    box.querySelector<HTMLButtonElement>('.no')!.focus()
+    if (via === 'key') startArming(index, 'key')
+    // A pointer let go on the triangle before the ring closed (a closed ring has already chosen).
+    else show(driving.at(), false)
     return false
   }
+  /** A pointer pressed on the triangle, or dragged onto it, arms it; off it or let go, it does not. */
+  const arm = (index: number | undefined): void => {
+    if (index !== undefined && isTrust(index) && driving.at() !== index) startArming(index, 'pointer')
+    else if (arming?.via === 'pointer') disarm(index === undefined)
+  }
+
+  // Keys held, for a hold made with the keyboard: End or → brought it there, and it stays armed
+  // while that key — or Space or Enter — is down. Registered before the drive's own, so a key
+  // that moves somewhere else lets go first.
+  const held = new Set<string>()
+  slider.addEventListener('keydown', (event) => {
+    held.add(event.key)
+    if (!arming) return
+    if (event.key === ' ' || event.key === 'Enter') {
+      event.preventDefault()
+      return
+    }
+    const to = keyStep(event.key, driving.at(), list.length, true)
+    if (to !== undefined && to !== arming.index) disarm(true)
+  })
+  slider.addEventListener('keyup', (event) => {
+    held.delete(event.key)
+    if (arming?.via === 'key' && held.size === 0) disarm(true)
+  })
+  slider.addEventListener('blur', () => {
+    held.clear()
+    if (arming?.via === 'key') disarm(true)
+  })
+
+  // A hover shows the name of the stop under the pointer, and brightens its icon.
+  let hovered: number | undefined
+  const hover = (index: number | undefined): void => {
+    if (index === hovered) return
+    hovered = index
+    icons.forEach((icon, i) => icon.toggleAttribute('data-hover', i === index))
+    names.forEach((one, i) => one.toggleAttribute('data-hover', i === index))
+  }
+  slider.addEventListener('pointermove', (event) => {
+    if (list.length === 0 || slider.classList.contains('pressing')) return
+    hover(Math.round(stopAt(event.clientX, track.getBoundingClientRect(), list.length, KNOB / 2)))
+  })
+  slider.addEventListener('pointerleave', () => hover(undefined))
 
   const driving = drive({
     root: slider,
@@ -672,7 +809,8 @@ export function mountLevelSlider(host: HTMLElement, around: Around): LevelSwitch
     inset: KNOB / 2,
     show,
     land,
-    guard: askFirst,
+    guard,
+    arm,
     pick: () => self.switcher?.dispatchEvent(new Event('change')),
   })
 
@@ -680,8 +818,8 @@ export function mountLevelSlider(host: HTMLElement, around: Around): LevelSwitch
     wanted = value
     const index = list.findIndex((level) => level.value === value)
     if (index < 0) return
-    // Core's answer settles any question still open: it is no longer the one on the table.
-    host.querySelector('.level-ask')?.remove()
+    // Core's answer settles any hold still going: it is no longer the one on the table.
+    disarm(false)
     driving.set(index)
   }
 
@@ -695,8 +833,8 @@ export function mountLevelSlider(host: HTMLElement, around: Around): LevelSwitch
       else lens?.draw()
     },
     place: () => {
-      layApple(shown, 'now')
-      lens?.draw()
+      if (apple.on) layApple(shown, 'now')
+      else lens?.draw()
     },
   }))
 
@@ -705,10 +843,24 @@ export function mountLevelSlider(host: HTMLElement, around: Around): LevelSwitch
     slider.style.setProperty('--n', String(Math.max(2, list.length)))
     slider.setAttribute('aria-valuemax', String(list.length - 1))
     stops.innerHTML = list
-      .map((level, i) => `<span style="--i:${String(i)}" data-value="${level.value}" title="${level.name}">${svg(iconOf(level.value).icon, 'icon')}</span>`)
+      .map((level, i) => {
+        const title = level.value === 'full-trust' ? ' title="Hold to turn on full trust"' : ''
+        return `<span style="--i:${String(i)}" data-value="${level.value}"${title}>${svg(iconOf(level.value).icon, 'icon')}</span>`
+      })
       .join('')
     dots.innerHTML = list.map((_, i) => `<span class="dot" style="--i:${String(i)}"></span>`).join('')
+    // Each name under its own stop; the two at the ends keep inside the line rather than
+    // hanging off the rail.
+    namesRow.innerHTML = list
+      .map((level, i) => {
+        const edge = i === 0 ? ' data-edge="start"' : i === list.length - 1 ? ' data-edge="end"' : ''
+        return `<span class="stop-name" style="--i:${String(i)}" data-value="${level.value}"${edge}></span>`
+      })
+      .join('')
+    names = [...namesRow.querySelectorAll<HTMLElement>('.stop-name')]
+    names.forEach((one, i) => (one.textContent = list[i]!.name))
     icons = [...stops.querySelectorAll<HTMLElement>('span')]
+    hovered = undefined
     if (wanted !== undefined) put(wanted)
   }
 

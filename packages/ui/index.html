@@ -96,7 +96,8 @@
               <!-- The UI equivalent of /local, /cloud and /combined. Every command has one: the
                    commands are a shortcut for people who like them, never the only route. -->
               <!-- A glass pill over three icons (switchers.ts): a radio group, each icon named
-                   by its word, with the word and its sentence underneath. -->
+                   by its word. The word shows small in the pill on a hover or a change; what
+                   each mode means is said on Settings › Models & money. -->
               <div class="rail-group">
                 <span class="rail-label" id="mode-label">How she runs</span>
                 <div id="mode-switch" aria-labelledby="mode-label"></div>
@@ -104,7 +105,8 @@
 
               <!-- What Alexia may do unasked. The number one thing a person changes after being
                    surprised once, so it is a control on the rail and not a settings page. Four
-                   stops from careful to free (switchers.ts); Full trust asks once, in place. -->
+                   stops from careful to free (switchers.ts); Full trust is pressed and held. What
+                   each level means is said on Settings › Safety. -->
               <div class="rail-group">
                 <span class="rail-label" id="permission-label">What she may do</span>
                 <div id="permission-switch" aria-labelledby="permission-label"></div>
@@ -373,12 +375,15 @@
                   <!-- The rail's picker and this one are the same control twice, and both go
                        through `/local`, `/combined`, `/cloud` — so there is one writer and
                        neither can show a mode the other has changed. -->
-                  <select class="mode" aria-label="How should I run?">
-                    <option value="local">Local — everything on this computer</option>
-                    <option value="combined">Combined — the cloud thinks, this computer makes pictures and speech</option>
-                    <option value="cloud">Cloud — everything through online AI services</option>
+                  <select class="mode" aria-label="How should I run?" aria-describedby="mode-said">
+                    <option value="local">Local</option>
+                    <option value="combined">Combined</option>
+                    <option value="cloud">Cloud</option>
                   </select>
                 </label>
+                <!-- What the chosen mode means, in the same words as ever (switchers.ts, MODES).
+                     The rail's pill shows only icons, so the sentence lives here. -->
+                <p class="hint" id="mode-said"></p>
                 <div class="field">
                   <span class="label">Connect an AI service</span>
                   <div class="pair">

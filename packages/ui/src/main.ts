@@ -24,7 +24,7 @@ import { mountGlass, mountTheme, type Theme } from './theme.js'
 import { mountLive, type Stage } from './live.js'
 import { answerPrompt, modal } from './modal.js'
 import { mountRail } from './rail.js'
-import { keepPlaced, mountLevelSlider, mountModeSwitch, mountGlassLook, type Around, type Switcher } from './switchers.js'
+import { keepPlaced, MODES, mountLevelSlider, mountModeSwitch, mountGlassLook, type Around, type Switcher } from './switchers.js'
 import { isPhase, mountStatus } from './status.js'
 import { dollarsOf, el, MODELS_CHANGED } from './widgets.js'
 
@@ -1572,8 +1572,8 @@ function showPermissions(state: Permissions): void {
     }
     picker.addEventListener('change', () => choose(picker.value))
   }
-  // The rail's slider, filled from the same labels once. Its Full trust has already asked by
-  // the time `change` fires (switchers.ts); the select says *not recommended* instead.
+  // The rail's slider, filled from the same labels once. Its Full trust has been pressed and
+  // held by the time `change` fires (switchers.ts); the select says *not recommended* instead.
   if (!railPermissionFilled) {
     railPermissionFilled = true
     railPermission.levels(Object.entries(state.modes).map(([value, name]) => ({ value, name, means: MODE_MEANS[value] ?? '' })))
@@ -2539,7 +2539,26 @@ const menu = document.querySelector<HTMLElement>('#menu')!
  * through `/local`, `/combined`, `/cloud`, and core's answer sets all of them.
  */
 const railMode: Switcher = mountModeSwitch(document.querySelector<HTMLElement>('#mode-switch')!, around)
-const modes: (EventTarget & { value: string })[] = [...document.querySelectorAll<HTMLSelectElement>('select.mode'), railMode]
+/**
+ * The sentence under Settings › *How should I run?*: what the chosen mode means. It is in the
+ * list with the pickers, so every place that sets them sets it too; it never fires `change`.
+ */
+class ModeSaid extends EventTarget {
+  #value = ''
+  get value(): string {
+    return this.#value
+  }
+  set value(value: string) {
+    this.#value = value
+    const said = document.querySelector<HTMLElement>('#mode-said')
+    if (said) said.textContent = MODES.find((mode) => mode.value === value)?.means ?? ''
+  }
+}
+const modes: (EventTarget & { value: string })[] = [
+  ...document.querySelectorAll<HTMLSelectElement>('select.mode'),
+  railMode,
+  new ModeSaid(),
+]
 let known: Command[] = []
 
 /**
