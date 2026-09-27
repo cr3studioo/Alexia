@@ -79,8 +79,17 @@ export async function probe(spec: ServerSpec, timeoutMs = 20_000): Promise<Probe
       versionNegotiation: { mode: 'auto' },
     },
   )
+  // On Windows a program that is not there still "starts" (cross-spawn runs it through
+  // cmd.exe), and its ENOENT arrives only as a side error when the process exits, while the
+  // handshake itself fails as *Connection closed*. Keep it, so the reason is the real one.
+  let missing: unknown
+  transport.onerror = (error) => {
+    if ((error as { code?: unknown }).code === 'ENOENT') missing = error
+  }
   try {
-    await client.connect(transport, { timeout: timeoutMs })
+    await client.connect(transport, { timeout: timeoutMs }).catch((error: unknown) => {
+      throw missing ?? error
+    })
     const offered = client.getDiscoverResult()?.supportedVersions ?? [
       client.getNegotiatedProtocolVersion() ?? '',
     ]
