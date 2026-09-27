@@ -114,11 +114,13 @@ export interface Motion {
 }
 
 /** The edge in front: quick, and a little past the mark. */
-export const LEAD: Motion = { ms: 300, ratio: 0.72 }
+export const LEAD: Motion = { ms: 220, ratio: 0.6 }
 /** The edge behind: Expo's glass tabs. */
-export const TRAIL: Motion = { ms: SPRING_MS, ratio: SPRING_RATIO }
+export const TRAIL: Motion = { ms: SPRING_MS + 100, ratio: SPRING_RATIO }
 /** Reduced motion: a short slide, both edges together, nothing past the mark. */
 export const PLAIN: Motion = { ms: 160, ratio: 1 }
+/** How much of its cell the mode pill covers: less than all of it, so the move reads. */
+const PILL = 0.58
 /** The swell under a press. */
 const SWELL: Motion = { ms: 200, ratio: 1 }
 
@@ -152,7 +154,7 @@ export class Spring {
 }
 
 /** How far a stretched glass narrows the other way, so it reads as a drop rather than a bar. */
-export const squash = (sx: number): number => Math.min(1.06, Math.max(0.86, 1 / sx))
+export const squash = (sx: number): number => Math.min(1.1, Math.max(0.7, 1 / sx))
 
 /** The glass this frame: its two edges and its swell, from the host's left, and its speed. */
 export interface Frame {
@@ -678,7 +680,11 @@ export function mountModeSwitch(host: HTMLElement, around: Around): Switcher {
     const box = seg.getBoundingClientRect()
     const first = buttons[0]!.getBoundingClientRect()
     const step = buttons.length > 1 ? buttons[1]!.getBoundingClientRect().left - first.left : 0
-    geo = { host: { left: box.left, top: box.top }, left: first.left - box.left, top: first.top - box.top, width: first.width, height: first.height, step }
+    // The pill is narrower than its cell, so it has room to travel and stretch across the gap.
+    const width = Math.round(first.width * PILL)
+    geo = { host: { left: box.left, top: box.top }, left: first.left - box.left + (first.width - width) / 2, top: first.top - box.top, width, height: first.height, step }
+    thumb.style.left = `${n3(geo.left)}px`
+    thumb.style.width = `${String(width)}px`
     lens?.measure()
   }
   let shown = 0

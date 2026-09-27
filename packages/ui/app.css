@@ -3945,6 +3945,11 @@ body:not([data-view='control']) #control {
   gap: var(--space-1);
 }
 
+/* Room above the pill for the names, which sit over it rather than under the glass. */
+#mode-switch {
+  padding-top: 14px;
+}
+
 .pill-switch {
   --at: 0;
   --n: 3;
@@ -3977,7 +3982,7 @@ body:not([data-view='control']) #control {
   all: unset;
   position: relative;
   z-index: 2;
-  height: 44px;
+  height: 34px;
   cursor: pointer;
   color: color-mix(in oklab, var(--ink) calc(min(1, var(--near) + var(--lift)) * 100%), var(--ink-faint));
   transition: color 150ms var(--ease-out);
@@ -4017,7 +4022,7 @@ body:not([data-view='control']) #control {
 
 .pill-switch .pill-title {
   position: absolute;
-  inset: auto 0 3px;
+  inset: -20px 0 auto;
   text-align: center;
   font-size: 10px;
   font-weight: 600;
@@ -4025,23 +4030,21 @@ body:not([data-view='control']) #control {
   letter-spacing: 0.02em;
   white-space: nowrap;
   opacity: 0;
-  transition: opacity 150ms var(--ease-out);
+  filter: blur(4px);
+  transition:
+    opacity 480ms var(--ease-out),
+    filter 480ms var(--ease-out);
   pointer-events: none;
 }
 
-/* When the name shows, the icon steps up out of its way. */
+/* A name shows quickly and leaves slowly, blurring away rather than switching off. */
 .pill-switch .pill-cell:hover .pill-title,
 .pill-switch .pill-cell:focus-visible .pill-title,
 .pill-switch .pill-cell[data-said] .pill-title,
 .pill-switch.dragging .pill-cell[data-under] .pill-title {
   opacity: 1;
-}
-
-.pill-switch .pill-cell:hover .pill-icon,
-.pill-switch .pill-cell:focus-visible .pill-icon,
-.pill-switch .pill-cell[data-said] .pill-icon,
-.pill-switch.dragging .pill-cell[data-under] .pill-icon {
-  translate: 0 -5px;
+  filter: none;
+  transition-duration: 150ms;
 }
 
 .pill-switch .pill-cell[data-said] .pill-title {
@@ -4312,7 +4315,10 @@ body:not([data-view='control']) #control {
   white-space: nowrap;
   color: var(--ink-quiet);
   opacity: 0;
-  transition: opacity 150ms var(--ease-out);
+  filter: blur(4px);
+  transition:
+    opacity 480ms var(--ease-out),
+    filter 480ms var(--ease-out);
   pointer-events: none;
 }
 
@@ -4335,6 +4341,8 @@ body:not([data-view='control']) #control {
 .level-slider:focus-visible .stop-name[data-on],
 .stop-name[data-hint] {
   opacity: 1;
+  filter: none;
+  transition-duration: 150ms;
 }
 
 .stop-name[data-said] {

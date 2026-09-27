@@ -470,7 +470,7 @@ test('switchers: a spring settles on its mark in its time; the lead goes a hair 
   }
   for (const motion of [LEAD, TRAIL, PLAIN]) expect(run(motion).end).toBeCloseTo(100, 0)
   expect(run(LEAD).peak).toBeGreaterThan(101)
-  expect(run(LEAD).peak).toBeLessThan(106)
+  expect(run(LEAD).peak).toBeLessThan(110)
   expect(run(TRAIL).peak).toBeLessThan(102)
   expect(run(PLAIN).peak).toBeLessThanOrEqual(100)
   // The lead is the quicker of the two, which is what stretches the glass.
@@ -485,8 +485,8 @@ test('switchers: a spring settles on its mark in its time; the lead goes a hair 
 test('switchers: a stretched glass narrows the other way, but only so far', () => {
   expect(squash(1)).toBe(1)
   expect(squash(1.1)).toBeCloseTo(1 / 1.1)
-  expect(squash(3)).toBe(0.86)
-  expect(squash(0.9)).toBeLessThanOrEqual(1.06)
+  expect(squash(3)).toBe(0.7)
+  expect(squash(0.9)).toBeLessThanOrEqual(1.1)
 })
 
 test('switchers: the pill stretches across both choices, narrows, and gathers into the new one', async () => {
@@ -550,10 +550,11 @@ test('switchers: Apple glass is stepped with the glide, stretched, one move a fr
     expect(calls.length).toBeGreaterThan(10)
     expect(calls.length).toBeLessThanOrEqual(800 / 16 + 1)
     expect(calls.every((one) => one.look.durationMs === 0 && !one.look.spring)).toBe(true)
-    // Stretched on the way, a cell wide once there, and on the third cell.
+    // Stretched on the way, pill-sized once there, and centred on the third cell.
     expect(Math.max(...widths)).toBeGreaterThan(130)
-    expect(widths.at(-1)).toBeCloseTo(100, 0)
-    expect(calls.at(-1)!.look.rect[0]).toBeCloseTo(200, 0)
+    // The pill is 58% of its 100 px cell, centred in it.
+    expect(widths.at(-1)).toBeCloseTo(58, 0)
+    expect(calls.at(-1)!.look.rect[0]).toBeCloseTo(221, 0)
     // Never squashed: the shell sizes its symbol by the first height it is sent.
     expect(new Set(calls.map((one) => one.look.rect[3]))).toEqual(new Set([40]))
   } finally {
