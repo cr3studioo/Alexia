@@ -27,7 +27,7 @@
       "type": "text",
       "key": "custom_voice",
       "label": "Describe her in your own words",
-      "placeholder": "blunt, chief of staff, calls me Vacen, no emojis, chases the dates I set myself",
+      "placeholder": "blunt, chief of staff, calls me by my first name, no emojis, chases the dates I set myself",
       "hint": "Rough notes are the point. Adapt turns them into a proper personality — you do not have to write one."
     },
     {
@@ -73,7 +73,7 @@
       "default": "chat",
       "options": [
         { "value": "chat", "label": "What your chat gives her", "hint": "The length the model your chat asks first is given, on that model. The sample says which one that is." },
-        { "value": "small", "label": "Short", "hint": "About 100 words, on a model your chat would give the short one to: a small model or a router." },
+        { "value": "small", "label": "Short", "hint": "About 100 words, on a model your chat would give the short one to: a small model." },
         { "value": "medium", "label": "Medium", "hint": "About 300 words, on a model your chat would give the medium one to: a free model of 7B or more." },
         { "value": "high", "label": "Full", "hint": "About 600 words, on a model your chat would give the full one to. Those are paid models, so with paid models on under Models this costs money, and the sample says how much. With them off, it is heard on the strongest free model instead." }
       ]
@@ -83,7 +83,7 @@
       "key": "adapt",
       "label": "Adapt",
       "tool": "adapt",
-      "hint": "One model call to write it, and two short ones to hear her. Nothing switches until you press Use."
+      "hint": "One AI request to write her, and two short ones to hear her. Nothing switches until you press Use."
     },
     {
       "type": "progress",

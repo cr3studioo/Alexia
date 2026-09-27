@@ -194,6 +194,6 @@ test('min_tier off the manifest is the floor, and it is what refuses when nothin
   // stops with a sentence rather than quietly dropping to a free model it said it cannot use.
   asked.length = 0
   setCaps(alexia.store, { ...caps(alexia.store), cross: false, daily: undefined })
-  expect(await press('plainly', 'demanding')).toContain('does not spend money on its own')
+  expect(await press('plainly', 'demanding')).toContain('does not spend money until you give her a daily allowance')
   expect(asked).toEqual([])
 }, 30_000)

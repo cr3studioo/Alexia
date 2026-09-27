@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   applies,
+  dollarsOf,
   MODELS_CHANGED,
   treeMatches,
   treeNodes,
@@ -372,6 +373,123 @@ test('flipping the speed switch presses its action with on or off, and a refusal
   expect(refused.classList.contains('error')).toBe(true)
 })
 
+// ---- the ladder and the Models table under it ----------------------------------------------
+
+/** The Models tab as it is drawn: the ladder, then a table, both in the host's root. */
+async function modelsTab(answers: Record<string, unknown> = {}): Promise<{
+  host: ReturnType<typeof fakeHost>
+  ladder: HTMLElement
+  tableReads: () => number
+}> {
+  const host = fakeHost({ '/api/rows': { ok: true, rows: [] }, '/api/action': { ok: true, said: 'Done.' }, ...answers })
+  const ladder = widget(host, {
+    ...speedy({ value: 'mixed', crossing: 'set_cross', ordered: 'set_order', chose: 'set_spend', daily: 1, cross: true }),
+    stops: [
+      { value: 'free', label: 'Free only', hint: 'Nothing is billed.' },
+      { value: 'mixed', label: 'Free, then paid', hint: 'Free first.' },
+      { value: 'paid', label: 'Paid only', hint: 'Billed.' },
+    ],
+  })
+  const table = widget(host, {
+    type: 'table',
+    key: 'models',
+    label: 'Models',
+    rows: 'models',
+    columns: [{ key: 'name', label: 'Model' }],
+    rowActions: [{ key: 'use_model', label: 'Use this' }],
+  })
+  host.root().append(ladder, table)
+  await settled()
+  const tableReads = (): number => host.sent.filter((one) => one.path === '/api/rows' && one.body.key === 'models').length
+  return { host, ladder, tableReads }
+}
+
+test('a row button is named for its row, and the column of buttons has a header a screen reader can read', async () => {
+  const { host } = await modelsTab({ '/api/rows': { ok: true, rows: [{ id: 'a', name: '◆ Model A' }] } })
+  const button = [...host.root().querySelectorAll<HTMLButtonElement>('td.row-actions button')].find((one) => one.textContent === 'Use this')!
+  expect(button.getAttribute('aria-label')).toBe('Use this Model A')
+  expect(host.root().querySelector('th .visually-hidden')!.textContent).toBe('Actions')
+})
+
+test('moving the slider asks the Models table for its rows again', async () => {
+  const { host, ladder, tableReads } = await modelsTab()
+  const before = tableReads()
+  const paid = [...ladder.querySelectorAll<HTMLInputElement>('.grade-stop input')].find((one) => one.value === 'paid')!
+  paid.checked = true
+  paid.dispatchEvent(new Event('change'))
+  await settled()
+  expect(host.sent.some((one) => one.body.key === 'set_spend' && one.body.row === 'paid')).toBe(true)
+  expect(tableReads()).toBe(before + 1)
+})
+
+test('changing the order asks the Models table for its rows again, and a refusal does not', async () => {
+  const { ladder, tableReads } = await modelsTab({
+    '/api/rows': { ok: true, rows: [{ id: 'a', name: 'A', provider: 'p', price: 'free', side: 'free', rank: '1', off: '' }] },
+  })
+  const before = tableReads()
+  ladder.querySelector<HTMLButtonElement>('.chip-drop')!.click()
+  await settled()
+  expect(tableReads()).toBe(before + 1)
+
+  const refused = await modelsTab({ '/api/action': { ok: false, said: 'No.' } })
+  const still = refused.tableReads()
+  const free = [...refused.ladder.querySelectorAll<HTMLInputElement>('.grade-stop input')].find((one) => one.value === 'free')!
+  free.checked = true
+  free.dispatchEvent(new Event('change'))
+  await settled()
+  expect(refused.tableReads()).toBe(still)
+})
+
+test('Use this asks the Models table for its rows again', async () => {
+  const { host, tableReads } = await modelsTab({
+    '/api/rows': { ok: true, rows: [{ id: 'm', name: 'M' }] },
+  })
+  const before = tableReads()
+  const use = [...host.root().querySelectorAll<HTMLButtonElement>('.table-box button')].find((one) => one.textContent === 'Use this')!
+  use.click()
+  await settled()
+  await settled()
+  expect(host.sent.some((one) => one.body.key === 'use_model' && one.body.row === 'm')).toBe(true)
+  expect(tableReads()).toBe(before + 1)
+})
+
+test('the daily amount is written with a point, and a comma typed out of habit is read as one', async () => {
+  const { host, ladder } = await modelsTab()
+  const amount = ladder.querySelector<HTMLInputElement>('.cross-daily')!
+  // Not a number input: WebKit draws those in the Mac's locale, which said "1,00" beside "$".
+  expect(amount.type).toBe('text')
+  expect(amount.value).toBe('1.00')
+
+  amount.value = '2,5'
+  amount.dispatchEvent(new Event('change'))
+  await settled()
+  expect(amount.value).toBe('2.50')
+  expect(host.sent.at(-2)?.body).toMatchObject({ key: 'set_cross', row: 'on:2.50' })
+
+  // Nonsense is put back and said, and nothing is sent.
+  const sent = host.sent.length
+  amount.value = 'lots'
+  amount.dispatchEvent(new Event('change'))
+  await settled()
+  expect(amount.value).toBe('2.50')
+  expect(host.sent.length).toBe(sent)
+  expect(ladder.querySelector('.cross-said')?.classList.contains('error')).toBe(true)
+})
+
+test('a typed dollar amount, read the way a person means it', () => {
+  expect(dollarsOf('1.5')).toBe(1.5)
+  expect(dollarsOf('1,50')).toBe(1.5)
+  expect(dollarsOf(' $2 ')).toBe(2)
+  expect(dollarsOf('.75')).toBe(0.75)
+  expect(dollarsOf('0.004')).toBeUndefined()
+  expect(dollarsOf('0')).toBeUndefined()
+  expect(dollarsOf('0', true)).toBe(0)
+  expect(dollarsOf('0,02', true)).toBe(0.02)
+  expect(dollarsOf('-1')).toBeUndefined()
+  expect(dollarsOf('')).toBeUndefined()
+  expect(dollarsOf('1.2.3')).toBeUndefined()
+})
+
 test('a ladder that declares no speed switch draws none', async () => {
   const field = widget(fakeHost({ '/api/rows': { ok: true, rows: [] } }), speedy({ speed: undefined }))
   await settled()
@@ -656,7 +774,7 @@ test('the filter keeps the notes that match and every branch they are filed unde
   filter.value = 'nothing like this'
   filter.dispatchEvent(new Event('input'))
   expect(visibleLabels(field)).toEqual([])
-  expect(field.querySelector('.hint:not([hidden])')?.textContent).toBe('Nothing matches that.')
+  expect(field.querySelector('.hint:not([hidden])')?.textContent).toBe('Nothing matches “nothing like this”.')
 
   // Clearing it puts the tree back as it was left, rather than as the filter opened it.
   filter.value = ''

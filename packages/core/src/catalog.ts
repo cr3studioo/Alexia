@@ -216,6 +216,12 @@ export interface Change {
   listKnown: boolean
   /** The fetch did not happen: offline, or the provider is having a bad day. Not an error. */
   failed?: string
+  /**
+   * **The provider's HTTP status, when it answered with a refusal** rather than not answering at
+   * all. Absent when it could not be reached. A 401 or 403 to a key that was just pasted is the
+   * provider saying *no* to that key, which is a different sentence from *the network is down*.
+   */
+  status?: number
 }
 
 /**
@@ -452,6 +458,7 @@ export class Catalog {
     if (Date.now() - this.fetchedFrom(provider.id) < maxAge) return { added: [], removed: [], listKnown }
 
     let models: Model[]
+    let status: number | undefined
     try {
       /**
        * The key when there is one, and no key when there is not.
@@ -474,10 +481,19 @@ export class Catalog {
           ...provider.headers,
         },
       })
-      if (!response.ok) throw new Error(`${response.status}`)
+      if (!response.ok) {
+        status = response.status
+        throw new Error(`${response.status}`)
+      }
       models = parse(await response.json(), provider, await popularity(provider))
     } catch (error) {
-      return { added: [], removed: [], listKnown, failed: `could not reach ${provider.name}: ${String(error)}` }
+      return {
+        added: [],
+        removed: [],
+        listKnown,
+        failed: `could not reach ${provider.name}: ${String(error)}`,
+        ...(status !== undefined && { status }),
+      }
     }
     // An empty list is a shape change, not a world where no models exist. Keep the cache.
     if (models.length === 0) {

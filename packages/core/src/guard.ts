@@ -102,6 +102,8 @@ const REVERSIBLE_CORE = new Set([
   // is deliberately **not** here — it deletes a conversation and everything said in it.
   'new_chat',
   'open_chat',
+  // The chat a run happened in, from the Activity screen: the same move as `open_chat`.
+  'open_run_chat',
 ])
 
 /**
@@ -212,6 +214,12 @@ export const ROUTES: Readonly<Record<string, Route>> = {
   '/api/library': {
     otherwise: read(
       'What the registry lists, what is already here, and what has been withdrawn. It reaches the network and writes nothing; when the registry is unreachable it says so rather than answering an empty list.',
+    ),
+  },
+
+  '/api/library/progress': {
+    otherwise: read(
+      'How many bytes of a download from the shelf have arrived. A number kept in memory while the install is under way; reading it changes nothing.',
     ),
   },
 

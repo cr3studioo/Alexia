@@ -38,7 +38,7 @@
         "key": "ledger_list",
         "type": "table",
         "label": "What you said you would do",
-        "hint": "Read-only, on purpose. A commitment is recorded in the conversation where you said it, and closed the same way — a second way in from a table would be a parallel mechanism into a record whose whole value is that it only ever grows.",
+        "hint": "Read-only, on purpose. A commitment is recorded in the conversation where you said it, and closed the same way: tell Alexia when it is done.",
         "rows": "ledger",
         "columns": [
           { "key": "text", "label": "What" },

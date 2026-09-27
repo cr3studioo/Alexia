@@ -122,8 +122,8 @@ const post = async (path: string, body: unknown): Promise<Record<string, unknown
 /** The newest run on the activity panel, as its export reads. */
 async function newestRun(): Promise<string> {
   const listed = (await post('/api/rows', { key: 'activity' })) as { rows?: { id: string }[] }
-  const opened = (await post('/api/detail', { key: 'activity', row: listed.rows?.[0]?.id })) as { text?: string }
-  return opened.text ?? ''
+  const opened = (await post('/api/detail', { key: 'activity', row: listed.rows?.[0]?.id })) as { more?: string }
+  return opened.more ?? ''
 }
 
 const kindOf = (event: Record<string, unknown>): string | undefined => (event.phase as Phase | undefined)?.kind

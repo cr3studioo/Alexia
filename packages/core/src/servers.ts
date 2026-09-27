@@ -3,6 +3,7 @@ import { MCP_REVISIONS } from '@alexia/protocol'
 import { Client, type Tool } from '@modelcontextprotocol/client'
 import { getDefaultEnvironment, StdioClientTransport } from '@modelcontextprotocol/client/stdio'
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { CORE } from './secrets.js'
 import type { Store } from './store.js'
@@ -29,6 +30,15 @@ import type { Store } from './store.js'
 
 /** The kv key holding every id that arrived this way. Membership is what `reviewed` reads. */
 const KEY = 'mcp_servers'
+
+/**
+ * The kv key holding what each one said it offers when it was probed, by id.
+ *
+ * Kept because *I have read what it does — trust it* needs something to have been read. The
+ * probe is the only time core asks a server that has not been enabled, and throwing its
+ * answer away left the trust button on a page with nothing on it but a warning.
+ */
+const OFFERS = 'mcp_offers'
 
 const ID = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/
 
@@ -69,8 +79,17 @@ export async function probe(spec: ServerSpec, timeoutMs = 20_000): Promise<Probe
       versionNegotiation: { mode: 'auto' },
     },
   )
+  // On Windows a program that is not there still "starts" (cross-spawn runs it through
+  // cmd.exe), and its ENOENT arrives only as a side error when the process exits, while the
+  // handshake itself fails as *Connection closed*. Keep it, so the reason is the real one.
+  let missing: unknown
+  transport.onerror = (error) => {
+    if ((error as { code?: unknown }).code === 'ENOENT') missing = error
+  }
   try {
-    await client.connect(transport, { timeout: timeoutMs })
+    await client.connect(transport, { timeout: timeoutMs }).catch((error: unknown) => {
+      throw missing ?? error
+    })
     const offered = client.getDiscoverResult()?.supportedVersions ?? [
       client.getNegotiatedProtocolVersion() ?? '',
     ]
@@ -126,23 +145,70 @@ export async function addServer(
   options: { store: Store; pluginsDir: string },
 ): Promise<Added | { why: string }> {
   const id = spec.id.trim()
+  if (id === '') return { why: 'Give it a name first — lowercase letters, digits and hyphens.' }
   if (!ID.test(id)) return { why: `“${id}” is not a usable name — lowercase letters, digits and hyphens.` }
   const dir = join(options.pluginsDir, id)
   if (existsSync(dir)) return { why: `Something called “${id}” is already installed.` }
   if (!spec.run.trim()) return { why: 'There is no command to run.' }
+  // What a person pastes from a README starts with a tilde, and there is no shell here to
+  // expand it.
+  const run = home(spec.run.trim())
+  const args = spec.args?.map(home)
+  const expanded: ServerSpec = { ...spec, run, ...(args && { args }) }
 
   let found: Probed
   try {
-    found = await probe(spec)
+    found = await probe(expanded)
   } catch (error) {
-    return { why: `${id} did not start: ${error instanceof Error ? error.message : String(error)}` }
+    return { why: `${id} did not start. ${startFailure(run, error)}` }
   }
 
   mkdirSync(dir, { recursive: true })
-  writeFileSync(join(dir, 'plugin.json'), `${JSON.stringify(synthesise(spec, found.speaks), null, 2)}\n`)
+  writeFileSync(join(dir, 'plugin.json'), `${JSON.stringify(synthesise(expanded, found.speaks), null, 2)}\n`)
   remember(options.store, id)
+  const offers = offered(options.store)
+  offers[id] = found.tools
+  options.store.kvSet(CORE, OFFERS, offers)
   // Installed, not enabled. The screen has still to show what this is before it runs.
   return { id, speaks: found.speaks, tools: found.tools.length }
+}
+
+/**
+ * A leading tilde as a shell would read it: the home folder, alone or followed by a path.
+ * Anything else is left exactly as typed. Matched rather than spelled as a string, so the
+ * rule against home-folder literals in shipped source (invariant 7) still reads as meant.
+ */
+export const home = (typed: string): string => {
+  const found = /^~(?:[\\/](.*))?$/.exec(typed)
+  return found === null ? typed : join(homedir(), found[1] ?? '')
+}
+
+/**
+ * Why a server did not start, in words somebody can act on.
+ *
+ * The operating system's own words were the first version, and they are the right words for
+ * the person who wrote the server and the wrong ones for everybody else: *spawn uvx ENOENT*
+ * means *that program is not on this Mac*, and *Connection closed* means it ran and then said
+ * nothing an MCP client understands — usually a command that needs another argument.
+ */
+export function startFailure(run: string, error: unknown): string {
+  const said = error instanceof Error ? error.message : String(error)
+  const code = (error as { code?: unknown } | null)?.code
+  if (code === 'ENOENT' || /\bENOENT\b/.test(said)) {
+    return `“${run}” isn't installed on this Mac, or Alexia can't find it. Check the spelling, or type its full path.`
+  }
+  if (code === 'EACCES' || /\bEACCES\b/.test(said)) return `“${run}” is there, but this Mac won't let Alexia run it.`
+  if (/connection closed/i.test(said)) {
+    return "It started but didn't answer like an MCP server. Check the command — it may need other arguments."
+  }
+  if (/timed? ?out/i.test(said)) return "It started but didn't answer in time, so Alexia stopped it."
+  return `It said: ${said}`
+}
+
+/** What each server said it offers when it was added, by id. Empty for one added before this. */
+export function offered(store: Store): Record<string, Probed['tools']> {
+  const said = store.kvGet(CORE, OFFERS)
+  return said !== null && typeof said === 'object' && !Array.isArray(said) ? { ...(said as Record<string, Probed['tools']>) } : {}
 }
 
 /** Every id that arrived through compatibility mode. The gate reads this and nothing else. */

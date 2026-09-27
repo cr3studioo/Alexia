@@ -121,6 +121,9 @@ afterAll(async () => {
   for (const path of [root, from]) rmSync(path, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
 })
 
+/** The plugin's own chat: its name, then the first thing said in it once something has been. */
+const asker = (title: string): boolean => title === 'Asker' || title.startsWith('Asker · ')
+
 const post = async (path: string, body: unknown): Promise<Record<string, unknown>> =>
   (await (
     await fetch(new URL(path, alexia.url), {
@@ -175,8 +178,10 @@ test('a task started by a plugin asks that plugin, and the yes lets the step run
   // The question went to the plugin, in core's own words — the same sentence the window
   // would have shown, because it is the same `rule()` and the same gate.
   const asked = await press('asked')
-  expect(String(asked.said)).toContain('asker__wipe')
-  expect(String(asked.said)).toContain('changes or deletes something')
+  // In plain words: what she wants to do, from the tool's own description, never its id.
+  expect(String(asked.said)).toContain('Alexia wants to delete something')
+  expect(String(asked.said)).not.toContain('asker__wipe')
+  expect(String(asked.said)).toContain('may change or delete something')
 }, 30_000)
 
 test('and a no is a no, which is what nothing providing the asking already meant', async () => {
@@ -207,8 +212,10 @@ test('and the whole exchange is a conversation on the Chats screen, in the plugi
     rows?: { id: string; title: string; turns: string }[]
   }
   const rows = listed.rows ?? []
-  const its = rows.find((row) => row.title === 'Asker')
+  const its = rows.find((row) => asker(row.title))
   expect(its, JSON.stringify(rows)).toBeDefined()
+  // Named for where it came from and then what was said, so two of them can be told apart.
+  expect(its!.title).toMatch(/^Asker · \S/)
 
   const said = String((await post('/api/detail', { key: 'chats', row: its!.id })).text)
   // What was said to it, and what it said back — in that order, in one conversation.
@@ -217,7 +224,7 @@ test('and the whole exchange is a conversation on the Chats screen, in the plugi
 
   // And the conversation the window is open on is still empty, which is the bug: none of
   // this belonged there.
-  expect(rows.filter((row) => row.title !== 'Asker').every((row) => row.turns === '0')).toBe(true)
+  expect(rows.filter((row) => !asker(row.title)).every((row) => row.turns === '0')).toBe(true)
 }, 30_000)
 
 test('a file a task makes comes back to the channel that asked (D122)', async () => {
@@ -249,7 +256,7 @@ test('a slash command works where it was typed, and /new is the only way out of 
    * anybody ever sent from one landing in the same chat carrying every message before it.
    */
   const before = (await post('/api/rows', { key: 'chats' })).rows as { id: string; title: string }[]
-  const mine = before.filter((row) => row.title === 'Asker')
+  const mine = before.filter((row) => asker(row.title))
   expect(mine).toHaveLength(1)
 
   // A core command, typed from a plugin, changes the same setting the window would.
@@ -263,18 +270,18 @@ test('a slash command works where it was typed, and /new is the only way out of 
   expect(String((await press('slash_new')).said)).toContain('Started a new chat')
 
   const after = (await post('/api/rows', { key: 'chats' })).rows as { id: string; title: string }[]
-  expect(after.filter((row) => row.title === 'Asker')).toHaveLength(2)
+  expect(after.filter((row) => asker(row.title))).toHaveLength(2)
 
   // Twice in a row is once: the second press means what the first did, exactly as the
   // window's New chat button does.
   expect(String((await press('slash_new')).said)).toContain('already a new chat')
   const again = (await post('/api/rows', { key: 'chats' })).rows as { id: string; title: string }[]
-  expect(again.filter((row) => row.title === 'Asker')).toHaveLength(2)
+  expect(again.filter((row) => asker(row.title))).toHaveLength(2)
 
   // The next thing said lands in the new one, with none of the old one's turns in it.
   script = [{ say: 'fresh' }]
   await press('go')
-  const detail = String((await post('/api/detail', { key: 'chats', row: after.find((row) => !mine.some((old) => old.id === row.id) && row.title === 'Asker')!.id })).text)
+  const detail = String((await post('/api/detail', { key: 'chats', row: after.find((row) => !mine.some((old) => old.id === row.id) && asker(row.title))!.id })).text)
   expect(detail).toContain('fresh')
   expect(detail).not.toContain('tidied')
 }, 30_000)

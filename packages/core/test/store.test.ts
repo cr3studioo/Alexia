@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { dirname, isAbsolute, join, relative } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { expect, test } from 'vitest'
-import { dataDir, Store, STRUCK, type Outcome } from '../src/store.js'
+import { dataDir, RUNS_KEPT, Store, STRUCK, type Outcome } from '../src/store.js'
 
 // What storage gained at M1-1 over the M0 minimum: a real file in the platform's own place,
 // forward-only migrations, and the transaction helper `node:sqlite` does not ship. The rest
@@ -14,7 +14,7 @@ import { dataDir, Store, STRUCK, type Outcome } from '../src/store.js'
 const tmp = (): string => join(mkdtempSync(join(tmpdir(), 'alexia-store-')), 'data', 'alexia.db')
 
 /** How many migrations this build knows. Every fresh database should be at this version. */
-const MIGRATIONS = 9
+const MIGRATIONS = 10
 
 /** The schema version as SQLite holds it, read without going through `Store`. */
 function version(path: string): number {
@@ -161,6 +161,7 @@ test('migration 7 runs over a database that never had 6, and leaves the tables i
   db.exec('DROP TABLE tries')
   db.exec('DROP TABLE seen')
   db.exec('ALTER TABLE usage DROP COLUMN writing') // 9's, which a database at 5 never had either
+  db.exec('DROP TABLE runs') // and 10's
   db.exec('CREATE TABLE p_persona_personalities (name TEXT, doc TEXT, at INTEGER, active INTEGER)')
   db.exec(`INSERT INTO p_persona_personalities VALUES ('Alexia', 'kind', 1, 1)`)
   db.exec('PRAGMA user_version = 5')
@@ -181,6 +182,7 @@ test('migration 9 gives usage a writing time, keeps the rows before it, and a sp
   new Store(path).close()
   const db = new DatabaseSync(path)
   db.exec('ALTER TABLE usage DROP COLUMN writing')
+  db.exec('DROP TABLE runs')
   db.exec(
     `INSERT INTO usage (at, model, provider, tokens_in, tokens_out, cost) VALUES (1, 'qwen3:8b', 'ollama', 10, 200, 0)`,
   )
@@ -199,6 +201,29 @@ test('migration 9 gives usage a writing time, keeps the rows before it, and a sp
   // and a cloud answer is not this machine's speed.
   expect(store.lastWriting('ollama')).toEqual({ model: 'qwen3:8b', tokensOut: 120, writing: 4000 })
   store.close()
+})
+
+test('the run history keeps the newest 200 and nothing older than 30 days, and survives a reopen', () => {
+  const path = tmp()
+  const store = new Store(path)
+  const day = 24 * 60 * 60 * 1000
+  const now = Date.UTC(2026, 8, 25, 12)
+  // One from before the window, then more than the ceiling inside it.
+  store.saveRun('ancient', now - 31 * day, { id: 'ancient' }, now)
+  for (let n = 0; n < RUNS_KEPT.count + 5; n++) store.saveRun(`run-${String(n)}`, now - day + n, { id: `run-${String(n)}` }, now)
+  // Written again whole as it moves: the same id is one row, not two.
+  store.saveRun('run-10', now - day + 10, { id: 'run-10', again: true }, now)
+  store.close()
+
+  const reopened = new Store(path)
+  const kept = reopened.savedRuns(now) as { id: string; again?: boolean }[]
+  expect(kept).toHaveLength(RUNS_KEPT.count)
+  expect(kept.map((one) => one.id)).not.toContain('ancient')
+  // The oldest five went to make room; the newest is last, which is the order they are read in.
+  expect(kept[0]?.id).toBe('run-5')
+  expect(kept.at(-1)?.id).toBe(`run-${String(RUNS_KEPT.count + 4)}`)
+  expect(kept.find((one) => one.id === 'run-10')?.again).toBe(true)
+  reopened.close()
 })
 
 test('a conversation comes back in order, and switching models does not lose it', () => {
@@ -271,5 +296,62 @@ test('a hyphenated plugin id has a table name, and purge still finds it', () => 
 
   store.purge('claude-code')
   expect(store.tables()).not.toContain('p_claude_code_runs')
+  store.close()
+})
+
+test('a chat is named by what was typed in it, whatever else came with the first message', () => {
+  const store = new Store(':memory:')
+  const titleOf = (id: number): string | undefined => store.conversations().find((one) => one.id === id)?.title
+
+  // Words and a picture: the words. This was `[object Object],[object Object]`.
+  const mixed = store.createSession()
+  store.append(mixed, {
+    role: 'user',
+    content: [
+      { type: 'text', text: 'what is this?\n\n[attached: cat.png — a picture, in this message]' },
+      { type: 'image', url: 'data:image/png;base64,AAAA' },
+    ],
+    typed: 'what is this?',
+  })
+  expect(titleOf(mixed)).toBe('what is this?')
+
+  // A picture and nothing typed: the picture, by name.
+  const picture = store.createSession()
+  store.append(picture, {
+    role: 'user',
+    content: [
+      { type: 'text', text: '[attached: cat.png — a picture, in this message]' },
+      { type: 'image', url: 'data:image/png;base64,AAAA' },
+    ],
+    typed: '',
+  })
+  expect(titleOf(picture)).toBe('Picture: cat.png')
+
+  // A picture with no name at all, as a phone might send one.
+  const bare = store.createSession()
+  store.append(bare, { role: 'user', content: [{ type: 'image', url: 'data:image/png;base64,AAAA' }] })
+  expect(titleOf(bare)).toBe('Picture')
+
+  // A document from before `typed` existed: the line above it, not the document.
+  const old = store.createSession()
+  store.append(old, { role: 'user', content: 'sum this up\n\n[attached: report.pdf — 2 pages]\nsecret figures\n[end of report.pdf]' })
+  expect(titleOf(old)).toBe('sum this up')
+
+  // A document alone.
+  const file = store.createSession()
+  store.append(file, { role: 'user', content: '[attached: report.pdf — 2 pages]\nsecret figures\n[end of report.pdf]', typed: '' })
+  expect(titleOf(file)).toBe('File: report.pdf')
+
+  // Nothing said yet.
+  expect(titleOf(store.createSession())).toBe('New chat')
+  store.close()
+})
+
+test('a chat a plugin carries is named after the plugin and then what was said in it', () => {
+  const store = new Store(':memory:')
+  const phone = store.createSession('Telegram')
+  expect(store.conversations().find((one) => one.id === phone)?.title).toBe('Telegram')
+  store.append(phone, { role: 'user', content: 'remind me   to buy milk' })
+  expect(store.conversations().find((one) => one.id === phone)?.title).toBe('Telegram · remind me to buy milk')
   store.close()
 })

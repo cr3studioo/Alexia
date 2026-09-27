@@ -34,6 +34,12 @@ export interface Tab {
   /** The declared widgets, filled in. */
   widgets?: Rendered[]
   /**
+   * Which sheet draws it (D205). Absent is Activity, which holds what happened; `settings` is
+   * a core section drawn inside a Settings page, which holds what you choose. The shell reads
+   * this and nothing else to decide, so moving a section is one word here.
+   */
+  screen?: 'settings'
+  /**
    * A tab whose panel is not built yet: what it will hold, and which task builds it.
    *
    * Deliberately a sentence rather than an empty pane. A blank tab is indistinguishable from
@@ -60,11 +66,12 @@ const ACTIVITY: Rendered = table({
   type: 'table',
   key: 'activity',
   label: 'Runs',
-  hint: 'The last five, in memory. They go when Alexia restarts — this was never meant to be a permanent log, and export is how one outlives it.',
+  hint: 'What Alexia did for each thing you asked, newest first. She keeps the last 200 for up to 30 days. Export saves one as a file you can send.',
   rows: 'activity',
   columns: [
     { key: 'task', label: 'What was asked' },
-    { key: 'steps', label: 'Steps', align: 'right', hideNarrow: true },
+    // Tool calls, which is what a step is here — *Steps* read as the steps of the task.
+    { key: 'steps', label: 'Tools used', align: 'right', hideNarrow: true },
     // What *that* cost, on the row that says what it was (M7-2). The ledger could answer
     // per session and per model before this and could not answer per run, which is the
     // question anybody actually has when a number surprises them.
@@ -72,8 +79,12 @@ const ACTIVITY: Rendered = table({
     { key: 'ended', label: 'How it ended' },
     { key: 'when', label: 'When', align: 'right', hideNarrow: true },
   ],
-  // The second thing anybody does with a bad run is send it to somebody.
-  rowActions: [{ key: 'export_run', label: 'Export', tool: 'export_run' }],
+  // The second thing anybody does with a bad run is send it to somebody. The first is going
+  // back to the conversation it happened in.
+  rowActions: [
+    { key: 'open_run_chat', label: 'Open chat', tool: 'open_run_chat' },
+    { key: 'export_run', label: 'Export', tool: 'export_run' },
+  ],
   detail: 'run',
   filter: true,
 })
@@ -94,13 +105,13 @@ const CHATS: Rendered[] = [
     key: 'new_chat',
     label: 'New chat',
     tool: 'new_chat',
-    hint: 'Starts an empty conversation and opens it. Pressing it twice does nothing the second time — an empty chat is reused rather than stacked.',
+    hint: 'Starts an empty conversation and opens it.',
   },
   table({
     type: 'table',
     key: 'chats',
     label: 'Conversations',
-    hint: 'Named by the first thing you said in each — Alexia does not write a title for them, because your own words are already on disk and a second name is a second thing that can be wrong. Open one and press Back to be in it. Forget takes everything said in it, and refuses on the one you are in.',
+    hint: 'Each chat is named by the first thing you said in it. Open takes you back into one; Forget deletes it for good.',
     rows: 'chats',
     columns: [
       { key: 'title', label: 'Chat' },
@@ -117,47 +128,38 @@ const CHATS: Rendered[] = [
   }),
 ]
 
+/**
+ * What a skill that nobody has said yes to says in its State column (M6-9). One constant, because
+ * the *Allow* button is shown only on rows that say exactly this, and a second spelling in
+ * `surface.ts` would quietly hide the button everywhere.
+ */
+export const WAITING = '▲ waiting for your yes'
+
+/**
+ * Every skill, in one list (D205).
+ *
+ * Installed skills and the ones Alexia wrote herself used to be two tables on an Activity tab,
+ * and a third list on the General page that disagreed with both. They are one thing to the
+ * person looking — instructions Alexia can read — so they are one table on the Skills page,
+ * and *Where from* says which kind each is.
+ */
 const SKILLS: Rendered = table({
   type: 'table',
   key: 'skills',
-  label: 'Installed',
+  label: 'Your skills',
+  hint: 'A skill is written instructions Alexia can read. One that says “waiting for your yes” is not used until you press Allow. Forget deletes it.',
   rows: 'skills',
   columns: [
     { key: 'name', label: 'Name' },
     { key: 'where', label: 'Where from' },
     { key: 'state', label: 'State', hideNarrow: true },
   ],
-  // One action, and it refuses on a bundled skill with a sentence rather than being absent:
-  // *it came with something, and it goes when that does* is the answer to the question the
-  // person is asking, and a missing button answers nothing.
+  // Forget refuses on a bundled skill with a sentence rather than being absent: *it came with
+  // something, and it goes when that does* is the answer to the question the person is asking.
   rowActions: [
-    // The other end of the consent ladder (M6-9). A skill nobody has said yes to is not in
-    // the model's index, and this is where the yes is given.
-    { key: 'allow_skill', label: 'Allow', tool: 'allow_skill', confirm: 'Let Alexia use {name}?' },
+    // The other end of the consent ladder (M6-9), and only where there is a yes to give.
+    { key: 'allow_skill', label: 'Allow', tool: 'allow_skill', confirm: 'Let Alexia use {name}?', when: { field: 'state', is: WAITING } },
     { key: 'forget_skill', label: 'Forget', tool: 'forget_skill', confirm: 'Forget {name}?' },
-  ],
-  detail: 'skill',
-  filter: true,
-})
-
-const LEARNED: Rendered = table({
-  type: 'table',
-  key: 'learned',
-  label: 'Written by Alexia',
-  hint: 'Distilled from a task you watched happen. A learned skill can be wrong, which is why it says what it came from.',
-  rows: 'learned',
-  columns: [
-    { key: 'name', label: 'Name' },
-    { key: 'from', label: 'Learned from' },
-    { key: 'state', label: 'State' },
-    { key: 'when', label: 'When', align: 'right', hideNarrow: true },
-  ],
-  // The same two keys as the list above. A row action is looked up by key, so declaring
-  // them twice on one screen would be a press with two meanings — hence `allow_here` and
-  // `forget_here`, which reach the same two operations.
-  rowActions: [
-    { key: 'allow_here', label: 'Allow', tool: 'allow_skill', confirm: 'Let Alexia use {name}?' },
-    { key: 'forget_here', label: 'Forget', tool: 'forget_skill', confirm: 'Forget {name}?' },
   ],
   detail: 'skill',
   filter: true,
@@ -167,7 +169,7 @@ const TOOLS: Rendered = table({
   type: 'table',
   key: 'tools',
   label: 'Tools',
-  hint: 'Everything every enabled plugin puts in front of the model. Read-only: the plugins are the write path, and a second one here would be a parallel mechanism.',
+  hint: 'Every tool your plugins give Alexia. To change one, open that plugin.',
   rows: 'tools',
   columns: [
     { key: 'name', label: 'Tool' },
@@ -208,11 +210,7 @@ const LADDER: Rendered = {
   type: 'ladder',
   key: 'routing',
   label: 'What may answer, and in what order',
-  hint:
-    'The slider is the money question, and it is a wall rather than a preference: on the left nothing that costs money is ever asked, even when every free model is rate-limited — Alexia says so instead. ' +
-    'The middle is what Automatic always did, and it is the default: free first, paid only when the free rungs are gone, with one plain line before the first charge. ' +
-    'The lists under it are your own running order within each side, and when they have anything in them, only those models answer: if one fails the next in the list does, and if the last one fails Alexia stops, says why, and offers Automatic for that one answer. ' +
-    'Leave them empty for Automatic, which tries every model the slider allows, best first, and moves to the next whenever one fails.',
+  hint: 'The slider decides whether Alexia may spend money. Put models in the lists to choose which answer, in order; leave them empty and she picks the best one the slider allows.',
   rows: 'routing',
   stops: [
     {
@@ -223,12 +221,12 @@ const LADDER: Rendered = {
     {
       value: 'mixed',
       label: 'Free, then paid',
-      hint: 'The free models answer until they are rate-limited or cannot do the job, then the cheapest paid one does — and says one line before it charges you.',
+      hint: 'The free models answer until they are busy or cannot do the job. Then the cheapest paid one does, and she tells you before you are charged.',
     },
     {
       value: 'paid',
       label: 'Paid only',
-      hint: 'Every request is billed to a provider you connected. The free tiers are left alone, which is what you want when they are the thing making answers slow.',
+      hint: 'Every answer is paid for, through an AI service you connected. Good when the free models are what makes answers slow.',
     },
   ],
   chose: 'set_spend',
@@ -255,12 +253,7 @@ const MODELS: Rendered = table({
   type: 'table',
   key: 'models',
   label: 'Models',
-  hint:
-    'Every model you can reach, in the order Alexia would ask them, and what she thinks of each. The sentence under a row says why it sits below the one above — it is taken from the ranking itself, so it cannot describe an order Alexia is not following. ' +
-    'Automatic orders the free models by what failed on this machine lately, then not a router, your keys before this Mac before the providers that need no key, then size, then how much the whole world used each model last week — lent across providers serving the same model. ' +
-    'What each group is, is said under its own heading. The chips above the table are the three questions people arrive asking: what needs attention, what is new, and what Alexia has set aside. ' +
-    'The ★ is what would be asked first right now for a request that needs tools. Use this sends every request to one model until you press Automatic. ' +
-    'Answered here counts the last 30 days on this machine. Only models you can send a request to right now are listed: add a key in settings and that provider’s models appear.',
+  hint: 'Every model you can reach, in the order Alexia would ask them. Use this sends every request to one model until you press Automatic.',
   rows: 'models',
   columns: [
     // The place in its group, and the ★ or ◆ when the row is one.
@@ -268,11 +261,11 @@ const MODELS: Rendered = table({
     { key: 'name', label: 'Model, and why it is here' },
     { key: 'via', label: 'Where', hideNarrow: true },
     { key: 'size', label: 'Size', align: 'right', hideNarrow: true },
-    { key: 'can', label: 'Can', hideNarrow: true },
+    { key: 'can', label: 'What it can do', hideNarrow: true },
     // How much the world put through it last week, and whose figure it is when it was lent.
-    { key: 'week', label: 'World, last week', align: 'right', hideNarrow: true },
+    { key: 'week', label: 'Used worldwide, last week', align: 'right', hideNarrow: true },
     { key: 'answered', label: 'Answered here', align: 'right' },
-    { key: 'price', label: 'Per 1M in', align: 'right', hideNarrow: true },
+    { key: 'price', label: 'Price per 750k words sent', align: 'right', hideNarrow: true },
     { key: 'tags', label: 'Tags' },
   ],
   rowActions: [
@@ -291,7 +284,7 @@ const MODELS: Rendered = table({
     [MODEL_GROUPS.chosen]: 'Every request goes to this one until you press Automatic. It never falls back: if it cannot answer, Alexia stops and says why.',
     [MODEL_GROUPS.listed]: 'Your own running order. While anything is listed here, only these models answer, each one tried when the one above it fails.',
     [MODEL_GROUPS.automatic]: 'What Automatic walks for an ordinary free request, best first. The sentence under a row says why it sits below the one above.',
-    [MODEL_GROUPS.aside]: 'What Alexia has stopped asking on her own, after a day of refusals, three empty answers, three turned-down requests in a row, a retirement or a provider that now wants a key. Nothing is deleted, and one good reply brings a model back.',
+    [MODEL_GROUPS.aside]: 'Models Alexia stopped asking on her own: after repeated refusals or empty answers, or when one was retired or now needs a key. One good reply brings a model back.',
     [MODEL_GROUPS.paid]: 'The order Automatic would pay in, once the free models are done and the slider allows it: tools first, then cheapest.',
   },
   /**
@@ -307,26 +300,27 @@ const MODELS: Rendered = table({
 })
 
 /**
- * The tabs whose data core owns, in the order they are read rather than built.
+ * The sections whose data core owns, and which sheet draws each (D205).
  *
- * *Activity* first because *what has this been doing* is the question that brings somebody
- * to this screen. The rest follow it: what it knows, and what it can do.
+ * **Settings = things you choose. Activity = things that happened.** Activity is *Runs* and
+ * *Chats* and nothing else — the two records of what Alexia has done. The money ladder and the
+ * model table, the skills and the list of every tool are choices or configuration, so they
+ * are drawn inside Settings pages (`screen: 'settings'`), by the same renderer, from this same
+ * list. Until D205 they were Activity tabs, and a person looking for *how much may she spend*
+ * had to know it sat behind a button called Activity.
  *
- * **There is no Library tab here any more (M8-3), and no plugin tabs either (D118).** The
- * first was a read-only copy of a list the settings screen owns the write path for; the
- * second was a plugin's second home, one screen away from the settings that drive it. One
- * thing in two places is one of them being out of date, and both moved the same way — onto
- * the page that already owned the write path. `library` is still a source in `surface.ts`,
+ * **There is no Library tab here any more (M8-3), and no plugin tabs either (D118).** One thing
+ * in two places is one of them being out of date. `library` is still a source in `surface.ts`,
  * because the palette indexes it: what moved is the screen it opens, not the read.
  */
-export const CORE_TABS: readonly { id: string; label: string; soon?: string; widgets?: Rendered[] }[] = [
-  // First, and ahead of *Activity*, because it is the only tab somebody opens mid-sentence:
-  // the others are read after the fact, and this one is a way back into what you were saying.
+export const CORE_TABS: readonly { id: string; label: string; soon?: string; widgets?: Rendered[]; screen?: 'settings' }[] = [
+  // First, because *what has she been doing* is the question that brings somebody to Activity.
+  { id: 'runs', label: 'Runs', widgets: [ACTIVITY] },
   { id: 'chats', label: 'Chats', widgets: CHATS },
-  { id: 'activity', label: 'Activity', widgets: [ACTIVITY] },
-  { id: 'skills', label: 'Skills', widgets: [SKILLS, LEARNED] },
-  { id: 'tools', label: 'Tools', widgets: [TOOLS] },
-  { id: 'models', label: 'Models', widgets: [LADDER, MODELS] },
+  // Drawn on Settings pages. The ids are the page names the palette and the rail open.
+  { id: 'models', label: 'Models & money', widgets: [LADDER, MODELS], screen: 'settings' },
+  { id: 'skills', label: 'Skills', widgets: [SKILLS], screen: 'settings' },
+  { id: 'tools', label: 'Every tool', widgets: [TOOLS], screen: 'settings' },
 ]
 
 /** Which core table a `rows` or `detail` name belongs to. Used to reject an unknown one. */

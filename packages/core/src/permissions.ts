@@ -53,6 +53,13 @@ export interface Boundary {
 
 export interface Ask {
   tool: string
+  /**
+   * What the call does, in words a person reads — *take a picture of the screen*, not
+   * `computer__screenshot`. The caller works it out (core's `toolWords`), because the questions
+   * this file writes are read by the user, and a tool id in one is a question nobody can answer.
+   * Without it, the id with its seams taken out.
+   */
+  words?: string
   annotations?: Annotations
   /** Absolute paths this call names, if core could work out any. */
   paths?: readonly string[]
@@ -99,11 +106,12 @@ export type Ruling =
  * Full trust still does what it says. It removes prompts, not the floor.
  */
 export function rule(ask: Ask, scope: Scope): Ruling {
+  const doing = asVerb(ask.words ?? plainly(ask.tool))
   const forbidden = (ask.paths ?? []).find((path) => neverTouch(path, scope.dataDir))
   if (forbidden !== undefined) {
     return {
       verdict: 'blocked',
-      why: `${forbidden} is on the never-touch list, which no permission mode turns off.`,
+      why: `Alexia can’t use ${forbidden}. It is on her never-touch list, and no permission setting turns that off.`,
     }
   }
 
@@ -113,7 +121,7 @@ export function rule(ask: Ask, scope: Scope): Ruling {
   if (outside !== undefined) {
     return {
       verdict: 'ask',
-      why: `${ask.tool} wants ${outside}, which is outside the folders you chose.`,
+      why: `Alexia wants to ${doing} in ${outside}. That is outside the folders you chose. Allow it?`,
     }
   }
 
@@ -123,7 +131,7 @@ export function rule(ask: Ask, scope: Scope): Ruling {
       return {
         verdict: 'blocked',
         // Their sentence, not a paraphrase of it, so the thing to lift is unmistakable.
-        why: `You said “${boundary.said}”, so ${ask.tool} is not running. Say so and I will lift it.`,
+        why: `You said “${boundary.said}”, so Alexia did not ${doing}. Tell her to lift it and she will.`,
       }
     }
   }
@@ -132,12 +140,12 @@ export function rule(ask: Ask, scope: Scope): Ruling {
     case 'full-trust':
       return { verdict: 'run' }
     case 'every-time':
-      return { verdict: 'ask', why: `${ask.tool} wants to run.` }
+      return { verdict: 'ask', why: `Alexia wants to ${doing}. Allow it?` }
     case 'watch':
       // Runs, and the checker reviews it (M15-4). Flagged ones stop there, not here.
       return { verdict: 'run' }
     case 'risky':
-      return readOnly(ask) ? { verdict: 'run' } : { verdict: 'ask', why: `${ask.tool} ${changes(ask)}.` }
+      return readOnly(ask) ? { verdict: 'run' } : { verdict: 'ask', why: `Alexia wants to ${doing}. ${changes(ask)} Allow it?` }
   }
 }
 
@@ -157,7 +165,32 @@ function isDestructive(ask: Ask): boolean {
 }
 
 const changes = (ask: Ask): string =>
-  isDestructive(ask) ? 'changes or deletes something' : 'is not marked as read-only'
+  isDestructive(ask) ? 'This may change or delete something.' : 'This may change something.'
+
+/**
+ * *Deletes something* read as *delete something*, so it fits after *Alexia wants to*. Most
+ * authors write a tool's description as an order (*List every…*), and that already fits; the
+ * ones who wrote *Lists every…* lose the one letter that would break the sentence.
+ */
+const asVerb = (words: string): string => {
+  const [first = '', ...rest] = words.split(' ')
+  if (!/^[a-z]{3,}s$/.test(first) || /(ss|us|is)$/.test(first)) return words
+  const base =
+    first.endsWith('ies') ? `${first.slice(0, -3)}y`
+    : /(sh|ch|x|z|ss)es$/.test(first) ? first.slice(0, -2)
+    : first.slice(0, -1)
+  return [base, ...rest].join(' ')
+}
+
+/**
+ * A tool id with its seams taken out — `computer__click` reads *click*. The same fallback
+ * `toolWords` uses, repeated rather than imported so this file stays free of core's other
+ * modules; the caller's `words` is the better answer whenever it has one.
+ */
+const plainly = (tool: string): string => {
+  const cut = tool.indexOf('__')
+  return (cut === -1 ? tool : tool.slice(cut + 2)).replace(/[_.]+/g, ' ').trim()
+}
 
 /**
  * The fixed list, built from where this machine actually keeps these things rather than

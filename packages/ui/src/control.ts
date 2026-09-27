@@ -2,8 +2,11 @@
 import { el, widget, type Rendered, type WidgetHost } from './widgets.js'
 
 /**
- * The control surface (M6-2): what has this been doing, what did I say yes to, what does it
- * know, which conversation was I in.
+ * The Activity sheet (M6-2, D205): what has she been doing, and which conversation was I in.
+ *
+ * **Settings is what you choose; Activity is what happened.** `/api/panels` sends every one of
+ * core's sections, and the ones marked `screen: 'settings'` — the money ladder, the model
+ * table, the skills, the tools — are drawn on Settings pages instead of here.
  *
  * **Nothing in this file names a tab.** The strip is whatever `/api/panels` sends back, which
  * since D118 is core's own tabs and only those — a plugin's panel is the second half of its
@@ -20,6 +23,8 @@ interface Tab {
   widgets?: Rendered[]
   /** A tab whose panel is not built yet: what it will hold, and which task builds it. */
   soon?: string
+  /** Drawn on a Settings page rather than here (D205). */
+  screen?: 'settings'
 }
 
 /** Below this, the strip is one button showing the active tab's name. */
@@ -45,13 +50,24 @@ export function mountControl(token: string): { open: (tab?: string, filter?: str
     ).json()) as Record<string, unknown>
 
   const read = async (): Promise<Tab[]> =>
-    ((await (await fetch('/api/panels', { headers: { 'x-alexia-token': token } })).json()) as { tabs: Tab[] }).tabs
+    ((await (await fetch('/api/panels', { headers: { 'x-alexia-token': token } })).json()) as { tabs: Tab[] }).tabs.filter(
+      (tab) => tab.screen !== 'settings',
+    )
 
   /** What the palette asked to be typed into the first filter on the panel it opened. */
   let seeded: string | undefined
 
+  /**
+   * Which read is the latest. Two quick tab presses start two reads, and the slower one must
+   * not land last and draw the first tab over the second.
+   */
+  let reading = 0
+
   async function load(): Promise<void> {
-    tabs = await read()
+    const mine = ++reading
+    const fresh = await read()
+    if (mine !== reading) return
+    tabs = fresh
     // A tab that has gone takes the selection with it. Cheap, and it holds for a core tab
     // that is retired the same way it held for a plugin's before D118 moved those.
     if (chosen !== undefined && !tabs.some((tab) => tab.id === chosen)) chosen = undefined
@@ -74,7 +90,12 @@ export function mountControl(token: string): { open: (tab?: string, filter?: str
     fresh: async () => (await read()).find((tab) => tab.id === chosen)?.widgets ?? [],
   })
 
-  function draw(): void {
+  /**
+   * The strip, and the narrow tab name standing in for it. Drawn on its own when only its
+   * shape changed, because redrawing the panel means drawing widgets from the list last read,
+   * and that list may be stale by now (see the click below).
+   */
+  function drawStrip(): void {
     const open = tabs.find((tab) => tab.id === chosen)
 
     strip.replaceChildren(
@@ -85,7 +106,13 @@ export function mountControl(token: string): { open: (tab?: string, filter?: str
         button.addEventListener('click', () => {
           chosen = tab.id
           strip.dataset.open = 'false'
-          draw()
+          // **Read again, never redraw from what was read when the sheet opened.** A list
+          // cached at open() is stale by the time somebody switches tabs — when the Models
+          // slider lived here, drawing from it put the slider back where it had been and made
+          // the next press send nothing. The strip moves at once, so the press is seen before
+          // the read comes back.
+          drawStrip()
+          void load()
         })
         return button
       }),
@@ -94,11 +121,20 @@ export function mountControl(token: string): { open: (tab?: string, filter?: str
     // Narrow (D67's viewport, and the old dashboard's own lesson): the strip is replaced by
     // the active tab's name, and tapping that name is what opens the list.
     const narrow = window.innerWidth < NARROW
+    drawnNarrow = narrow
     current.hidden = !narrow
     current.textContent = open ? `${open.label} ▾` : ''
     current.setAttribute('aria-expanded', strip.dataset.open === 'true' ? 'true' : 'false')
     strip.hidden = narrow && strip.dataset.open !== 'true'
+  }
 
+  /** Whether the strip was last drawn narrow, so a resize that crosses the line is noticed. */
+  let drawnNarrow = window.innerWidth < NARROW
+
+  /** The strip and the open tab's panel, from the list just read. Only `load` calls it. */
+  function draw(): void {
+    drawStrip()
+    const open = tabs.find((tab) => tab.id === chosen)
     body.replaceChildren(...(open ? panel(open) : [el('p', 'hint', 'There is nothing here yet.')]))
 
     // The palette found a thing and opened the tab it lives on; typing its name into the
@@ -131,13 +167,18 @@ export function mountControl(token: string): { open: (tab?: string, filter?: str
 
   current.addEventListener('click', () => {
     strip.dataset.open = strip.dataset.open === 'true' ? 'false' : 'true'
-    draw()
+    drawStrip()
   })
 
   // The strip has to be able to change shape without a reload: the overlay and the window
-  // are two different widths of the same page (M5-2).
+  // are two different widths of the same page (M5-2). The panel is drawn again only when the
+  // width crosses the narrow line, where tables drop columns — and then from a fresh read,
+  // for the same reason a tab press reads again.
   window.addEventListener('resize', () => {
-    if (view.checkVisibility()) draw()
+    if (!view.checkVisibility()) return
+    const crossed = window.innerWidth < NARROW !== drawnNarrow
+    drawStrip()
+    if (crossed) void load()
   })
 
   return {

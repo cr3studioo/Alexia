@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { expect, test, vi } from 'vitest'
 import type { Step } from '../src/agent.js'
-import { asText, KEPT, spentOn, Trace } from '../src/trace.js'
+import { Store } from '../src/store.js'
+import { asText, ending, KEPT, spentOn, summary, took, toolWords, Trace } from '../src/trace.js'
 
 /**
  * The trace, with a memory (M6-5).
@@ -74,7 +75,7 @@ test('a run that used the model it asked for does not say so twice', () => {
   expect(asText(trace.runs[0]!)).not.toContain('fell back')
 })
 
-test('five runs, newest first, and the sixth pushes the first out', () => {
+test('the kept number, newest first, and one more pushes the oldest out', () => {
   const trace = new Trace()
   for (let n = 1; n <= KEPT + 2; n++) {
     trace.start(`run-${String(n)}`, `task ${String(n)}`)
@@ -341,4 +342,104 @@ test('a stage told after the run ended is dropped rather than misfiled', () => {
   trace.end('stopped')
   trace.phase({ kind: 'writing', model: 'free/one' })
   expect(trace.runs[0]?.phases).toBeUndefined()
+})
+
+/**
+ * **Kept across a restart** (the Activity history). Five runs in memory went with every update;
+ * the store keeps them now, bounded, with credentials stripped, and a run the restart cut short
+ * is read back as stopped rather than as still going for the rest of its days.
+ */
+test('the history survives a restart, and a run the restart cut short reads as stopped', () => {
+  const store = new Store(':memory:')
+  const before = new Trace(store)
+  before.start('kept', 'sort my downloads', 7)
+  before.step(step(1, 'list_files'))
+  before.done(done(1, 'list_files', true))
+  before.end('answered')
+  // Open when the app went away: the step began and never came back.
+  before.start('cut', 'take a screenshot', 7)
+  before.step(step(1, 'screenshot'))
+
+  const after = new Trace(store)
+  expect(after.runs.map((run) => run.id)).toEqual(['cut', 'kept'])
+  expect(after.one('kept')?.steps[0]?.text).toBe('list_files said something')
+  expect(after.one('kept')?.chat).toBe(7)
+  const cut = after.one('cut')!
+  expect(cut.ended).toBe('stopped')
+  expect(ending(cut)).toBe('Stopped')
+  expect(asText(cut)).toContain('did not finish')
+  expect(summary(cut)).toContain('1 step never finished.')
+  // Written back that way, so the next start reads the same.
+  expect(new Trace(store).one('cut')?.ended).toBe('stopped')
+})
+
+test('a new run closes one nothing ended as stopped, rather than leaving it going', () => {
+  const trace = new Trace()
+  trace.start('first', 'one')
+  trace.start('second', 'two')
+  expect(trace.one('first')?.ended).toBe('stopped')
+  expect(trace.one('second')?.ended).toBeUndefined()
+})
+
+test('a credential is never recorded, in the task, the arguments or what came back', () => {
+  const store = new Store(':memory:')
+  const trace = new Trace(store)
+  const key = 'sk-or-v1-abcdefghijklmnopqrstuvwxyz0123'
+  trace.start('secret', `use ${key} to check`)
+  trace.step({ n: 1, name: 'fetch', args: { headers: { authorization: key }, city: 'Prague' } })
+  trace.done({ n: 1, name: 'fetch', args: {}, outcome: { ok: true, text: `echo ${key}` } })
+  trace.end('answered')
+
+  expect(JSON.stringify(store.savedRuns())).not.toContain(key)
+  expect(JSON.stringify(trace.one('secret'))).not.toContain(key)
+  // Only credentials: a place is fine to write down, and the arguments keep their shape.
+  expect(trace.one('secret')?.steps[0]?.args).toEqual({ headers: { authorization: '[redacted]' }, city: 'Prague' })
+})
+
+test('how a run ended is said in words, and a provider failing is not a refusal', () => {
+  const trace = new Trace()
+  trace.start('none', 'anything')
+  trace.phase({ kind: 'choosing' })
+  trace.end('refused', { why: 'No model fits.' })
+  expect(ending(trace.one('none')!)).toBe('No model could take it')
+
+  trace.start('broke', 'anything')
+  trace.phase({ kind: 'asking', model: 'free/one' })
+  trace.end('refused', { why: 'The provider said 500.' })
+  expect(ending(trace.one('broke')!)).toBe('The AI service failed')
+  expect(asText(trace.one('broke')!)).toContain('the ai service failed')
+  expect(asText(trace.one('broke')!)).not.toMatch(/· refused/)
+})
+
+test('the summary is who answered, how long it took and what she did, in plain words', () => {
+  clocked((at) => {
+    const trace = new Trace()
+    at(0)
+    trace.start('plain', 'what is open')
+    trace.turn({ asked: 'free/one', answered: 'free/one' })
+    trace.step(step(1, 'computer__windows'))
+    trace.done(done(1, 'computer__windows', true))
+    at(3_200)
+    trace.end('answered', { calls: [{ asked: 'free/one', model: 'free/one', provider: 'alpha', cost: 0 }] })
+
+    const said = summary(
+      trace.one('plain')!,
+      (id) => (id === 'free/one' ? 'Free One' : id),
+      (name) => (name === 'computer__windows' ? 'list the open windows' : name),
+    )
+    expect(said).toContain('Answered by Free One in 3 s.')
+    expect(said).toContain('Used 1 tool: list the open windows.')
+    // Free when models answered and none charged — not $0.0000.
+    expect(said).toContain('It cost nothing.')
+    expect(said).not.toContain('{')
+  })
+})
+
+test('a tool reads as its own first clause, and as its name when it has no description', () => {
+  expect(
+    toolWords('computer__windows', 'List the open windows that have a title, with the process id of each. Use to find them.'),
+  ).toBe('list the open windows that have a title')
+  expect(toolWords('media__image_generate')).toBe('image generate')
+  expect(took(400)).toBe('under a second')
+  expect(took(125_000)).toBe('2 min 5 s')
 })

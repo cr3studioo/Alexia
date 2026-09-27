@@ -149,10 +149,10 @@ test('a floor nothing reaches says which floor, rather than *try again shortly*'
   // work for somebody with no paid key — this is what that person reads.
   const free = world([writer, tiny])
   expect(ids(route({ messages: asked('anything'), minTier: 'T3' }, pins(), free))).toEqual([
-    'what asked for this needs a frontier model, and nothing you have connected is one — connect a provider that offers one',
+    'what asked for this needs a frontier model, and nothing you have connected is one — add a key for an AI service that offers one',
   ])
   expect(ids(route({ messages: asked('anything'), minTier: 'T1' }, pins(), world([here])))).toEqual([
-    'what asked for this needs a hosted model rather than one on this machine, and nothing you have connected is one — connect a provider that offers one',
+    'what asked for this needs a hosted model rather than one on this machine, and nothing you have connected is one — add a key for an AI service that offers one',
   ])
   // And it is not said when the floor is reachable and something else is the wall: a paid
   // floor with a paid model behind a closed price line is the money wall, not this one.
@@ -189,7 +189,7 @@ test('in Local mode a capable ask takes the model on this machine, rather than r
   const local = pins({ placement: MODES.local })
   expect(ids(route({ messages: asked('write me a personality'), capable: true }, local, onlyHere))).toEqual(['qwen3:8b'])
   expect(ids(route({ messages: asked('write me a personality'), capable: true, minTier: 'T1' }, local, onlyHere))).toEqual([
-    'what asked for this needs a hosted model rather than one on this machine, and nothing you have connected is one — connect a provider that offers one',
+    'what asked for this needs a hosted model rather than one on this machine, and nothing you have connected is one — add a key for an AI service that offers one',
   ])
 })
 
@@ -252,7 +252,7 @@ test('a list somebody made still loses its routers for the writer, and keeps its
 test('when every model that fits is a router, the writer says so rather than writing badly', () => {
   const pool = world([lottery])
   expect(ids(route({ messages: asked('write me a personality'), capable: true }, pins(), pool))).toEqual([
-    'every model that fits this hands the request on to a different model each time, and this needs one model — pin one on the Models tab, or connect a provider that offers one of its own',
+    'every model that fits this passes the question to a different model each time, and this needs one model — choose one in Settings under Models & money, or add a key for another AI service',
   ])
 })
 

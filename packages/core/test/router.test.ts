@@ -170,32 +170,32 @@ test('a pin is never violated quietly, and the refusal says what to do', () => {
   // The sentence the spec asks for, word for word in intent: what is missing, and what to type.
   const uncensored = pins({ placement: MODES.local, uncensored: true })
   expect(ids(route({ messages: asked('hello') }, uncensored, machine))).toEqual([
-    'no local uncensored model is installed — install one, or type /cloud',
+    'no uncensored model is installed on this Mac — install one, or type /cloud',
   ])
 
   // Nothing installed at all is its own sentence.
   const nothing = world({ local: [] })
   expect(ids(route({ messages: asked('hello') }, pins({ placement: MODES.local }), nothing))).toEqual([
-    'no local model is installed — install one, or type /cloud',
+    'no model is installed on this Mac — install one, or type /cloud',
   ])
 
   // And an unknown content policy is not a yes: this is a hosted model nobody has verified.
   expect(ids(route({ messages: asked('hello') }, pins({ uncensored: true }), world()))).toEqual([
-    'no uncensored model is available from the providers you have connected',
+    'no uncensored model is available from the AI services you have connected — add a key for one that offers one',
   ])
 })
 
 test('a provider with no key is not a rung, and the sentence says only that', () => {
   const none = world({ rungs: [] })
   expect(ids(route({ messages: asked('hello') }, pins(), none))).toEqual([
-    'no provider is connected — add a key in settings, or install a local model',
+    'no AI service is connected — add a key in Settings, or install a model on this Mac',
   ])
 
   // Connected, and the catalog has not arrived. Not the same wall, and not the same fix:
   // telling somebody to add the key they already added is the bug this splits.
   const empty = world({ models: [] })
   expect(ids(route({ messages: asked('hello') }, pins(), empty))).toEqual([
-    'no model list has arrived yet for the provider you connected — open the Models tab to fetch one, or check your connection',
+    'the list of models has not arrived yet — check your internet connection, or open Settings > Models & money to fetch it again',
   ])
 
   // Only beta is connected, so only beta's models are on the list.
@@ -757,7 +757,7 @@ test('local placement is still every hosted rung gone, not merely last', () => {
   const chatOnly = world({ local: [model({ id: 'qwen3:8b', tier: 'T0', provider: 'ollama' })] })
   expect(
     ids(route({ messages: asked('sort my downloads'), tools: [{ name: 'fs.list' }] }, private_, chatOnly)),
-  ).toEqual(['no local model here can use tools — install one that can, or type /cloud'])
+  ).toEqual(['no model on this Mac can take actions — install one that can, or type /cloud'])
 
   // And the image class is untouched by any of this: `combined` places it local already, so
   // there was never a cloud cascade for it to be the bottom of.
@@ -803,7 +803,7 @@ test('a model that has left the catalog is skipped in the list, and a list of on
   // whole plan now, so it says the list is empty rather than quietly answering from outside it.
   const stranded = route(work, pins({ order: ['gone/yesterday', 'also/gone'] }), world())
   expect(stranded).toMatchObject({ ok: false, mode: 'sequence' })
-  expect(ids(stranded)[0]).toContain('none of the models in your order can be reached')
+  expect(ids(stranded)[0]).toContain('none of the models in your list can be reached')
 })
 
 /**
@@ -823,7 +823,7 @@ test('a list never reaches past its last entry, even when a model outside it wou
   const work = { messages: asked('sort my downloads'), tools: [{ name: 'fs.list' }] }
   const verdict = route(work, pins({ order: ['free/text'] }), world())
   expect(verdict).toMatchObject({ ok: false, mode: 'sequence' })
-  expect(ids(verdict)).toEqual(['none of the models in your order can use tools, and this needs them'])
+  expect(ids(verdict)).toEqual(['this needs a model that can take actions, and none in your list can — add one, or choose Automatic'])
 })
 
 test('the ledger does not refuse somebody’s own choice before it has been tried', () => {
@@ -915,7 +915,7 @@ test('nothing that can see is its own refusal, and it names the fix', () => {
   const blind = world({ models: [freeText, freeTools], local: [localSmall], today: { spent: 0, allowance: 0 } })
   const asking = { messages: asked('what is in this'), modality: ['image'] }
   expect(ids(route(asking, pins(), blind))[0]).toMatch(/can be given a picture/)
-  expect(ids(route(asking, pins({ placement: MODES.local }), blind))[0]).toMatch(/installed on this machine/)
+  expect(ids(route(asking, pins({ placement: MODES.local }), blind))[0]).toMatch(/on this Mac.*install one that can/)
   // A model on this machine that *can* be given one is the same answer as a hosted one:
   // this is a property of the row, not of where the row lives.
   const seeingHere = model({ id: 'qwen2.5vl:7b', tier: 'T0', provider: 'ollama', modality: ['text', 'image'] })
@@ -993,7 +993,7 @@ test('a model that does not publish a window is not judged on one', () => {
 
 test('when nothing can read the conversation, it says so rather than letting upstream 400', () => {
   expect(ids(route({ messages: long(40_000) }, pins(), world({ models: [narrow], local: [] })))).toEqual([
-    'this conversation is longer than any model available to you can read — start a new chat, or connect a provider with a bigger context window',
+    'this chat is longer than any model available to you can read — start a new chat',
   ])
 
   // And the local wall names the local fix, ahead of the planning sentence — which fires on
@@ -1003,7 +1003,7 @@ test('when nothing can read the conversation, it says so rather than letting ups
   expect(
     ids(route({ messages: long(40_000) }, pins({ placement: MODES.local }), world({ models: [], local: [here] }))),
   ).toEqual([
-    'this conversation is longer than any model installed here can read — install one with a bigger context window, or type /cloud',
+    'this chat is longer than any model on this Mac can read — start a new chat, or type /cloud',
   ])
 })
 
@@ -1023,7 +1023,7 @@ test('a spent free tier no longer leads straight into billing', () => {
   const drained = skint({ rungs: [remaining(ledger, alpha, at), remaining(ledger, beta, at)] })
 
   expect(ids(route({ messages: asked('hello') }, pins(), drained))).toEqual([
-    'the free models are used up, and Alexia does not spend money on its own until you give it a daily allowance — set one in settings, or wait for the free tiers to reset',
+    'the free models are used up, and Alexia does not spend money until you give her a daily allowance — set one in Settings, or wait for the free ones to reset',
   ])
   ledger.close()
 })
@@ -1039,7 +1039,7 @@ test('with nothing allowed for today, Automatic is free only', () => {
   // every free model out in this fixture.
   const work = { messages: asked('sort my downloads'), tools: [{ name: 'fs.list' }] }
   expect(ids(route(work, pins(), skint({ models: [freeText, cheapPaid, frontier] })))).toEqual([
-    'the free models are used up, and Alexia does not spend money on its own until you give it a daily allowance — set one in settings, or wait for the free tiers to reset',
+    'the free models are used up, and Alexia does not spend money until you give her a daily allowance — set one in Settings, or wait for the free ones to reset',
   ])
 })
 
@@ -1055,7 +1055,7 @@ test('an allowance with room in it unlocks paid, and one that is spent closes it
   // Spent to the line is spent. Daily rather than monthly because an agent loop can burn a
   // month in an hour, and because the free tiers this bridges reset on the same clock.
   expect(ids(route(work, pins(), world({ ...only, today: { spent: 1, allowance: 1 } })))).toEqual([
-    'the free models are used up, and Alexia does not spend money on its own until you give it a daily allowance — set one in settings, or wait for the free tiers to reset',
+    'the free models are used up, and Alexia does not spend money until you give her a daily allowance — set one in Settings, or wait for the free ones to reset',
   ])
 })
 
@@ -1076,7 +1076,7 @@ test('a world that never gathered the allowance is read as having none', () => {
     rungs: [remaining(store, alpha), remaining(store, beta)],
   }
   const work = { messages: asked('sort my downloads'), tools: [{ name: 'fs.list' }] }
-  expect(ids(route(work, pins(), ungathered))[0]).toMatch(/does not spend money on its own/)
+  expect(ids(route(work, pins(), ungathered))[0]).toMatch(/does not spend money until you give her a daily allowance/)
 })
 
 test('nothing is billed without a ceiling on the reply, and free is untouched', async () => {
@@ -1170,7 +1170,7 @@ test('a paid model no better than the free one that ran out is not bought', () =
   })
 
   expect(ids(route({ messages: asked('hello'), tools: [{ name: 'fs.list' }] }, pins(), drained))).toEqual([
-    'the free models are used up, and every paid model here is no better than the one that ran out — wait for the free tiers to reset, or connect a provider with something stronger',
+    'the free models are used up, and every paid model here is no better than the one that ran out — wait for the free ones to reset, or add a key for an AI service with something stronger',
   ])
 
   // Frontier is above free by definition, which is what the tier ladder is for — so the same

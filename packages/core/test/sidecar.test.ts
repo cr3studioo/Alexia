@@ -34,12 +34,13 @@ const packager = () => files(['scripts/package.mjs'])[0]?.text ?? ''
 
 test('one Alexia at a time: the shell keeps the sidecar handle and kills it on exit', () => {
   const source = shell()
-  // Kept rather than dropped. `sidecar.spawn()?;` on its own is the bug this replaced.
+  // Kept rather than dropped. `sidecar.spawn()?;` on its own is the bug this replaced — and its
+  // events kept too, because they are the only way to hear that core stopped.
   expect(source, 'the sidecar handle must be kept — dropping it does not stop the process').toMatch(
-    /let \(_events, child\) = sidecar\.spawn\(\)\?;/,
+    /let \(mut events, child\) = sidecar\(app, port\)\?\.spawn\(\)\?;/,
   )
   // Held before the handover is written, so a failed write still leaves it where Exit stops it.
-  expect(source).toContain('held.insert(child).write(handover.as_bytes())?;')
+  expect(source).toContain('held.insert(child).write(handover.as_bytes())')
   expect(source).toContain('Mutex::<Option<CommandChild>>::new(None)')
 
   // And killed when the app actually ends. `.run(generate_context!())` cannot do this —
@@ -51,6 +52,43 @@ test('one Alexia at a time: the shell keeps the sidecar handle and kills it on e
   )
 })
 
+test('a core that stops on its own is started again, and one stopped by quitting is not', () => {
+  const source = shell()
+  // Every event drained until the one that says it ended.
+  expect(source).toMatch(/while let Some\(event\) = events\.blocking_recv\(\)/)
+  expect(source).toContain('CommandEvent::Terminated')
+  // Quitting says so before it kills, and the watch asks before and after its wait.
+  const exit = source.slice(source.indexOf('RunEvent::Exit =>'))
+  expect(exit.indexOf('QUITTING.store(true')).toBeGreaterThan(-1)
+  expect(exit.indexOf('QUITTING.store(true')).toBeLessThan(exit.indexOf('core.kill()'))
+  expect(source.match(/if QUITTING\.load\(Ordering::SeqCst\) \{\s*return;/g)?.length).toBe(2)
+  // Growing waits with a ceiling, never a tight loop.
+  expect(source).toContain('thread::sleep(Duration::from_secs(1 << lapse.min(6)));')
+  // The same port and the same vault line, handed down the same stdin.
+  expect(source).toContain('start(&app, port, handover, lapse)')
+})
+
+test('the windows wait for core: the starting page first, core only once it is listening', () => {
+  const source = shell()
+  expect(source).toContain('WebviewUrl::App("index.html".into())')
+  expect(source, 'a window pointed at core before it listens stays white').not.toContain('WebviewUrl::External')
+  expect(source).toMatch(/TcpStream::connect_timeout\(/)
+  expect(source).toMatch(/window\.navigate\(url\.clone\(\)\)/)
+  // The page's *Try again* is an event this process listens for, by the same name.
+  const page = files(['src-tauri/placeholder/index.html'])[0]?.text ?? ''
+  expect(page).toContain("emit('start-core-again')")
+  expect(source).toContain('listen_any("start-core-again"')
+})
+
+test('the overlay is shown on the main thread, whichever thread asked', () => {
+  const source = shell()
+  // `--overlay` arrives on single-instance's own thread; the panel is AppKit, and WebKit crashes
+  // a process that touches it from any thread but the main one.
+  const reveal = source.slice(source.indexOf('fn reveal('), source.indexOf('fn open_main('))
+  expect(reveal).toContain('run_on_main_thread')
+  expect(reveal.indexOf('run_on_main_thread')).toBeLessThan(reveal.indexOf('show_and_make_key'))
+})
+
 test('one Alexia at a time: the core watches its owner, for the exits Rust cannot reach', () => {
   const source = packager()
   expect(source).toContain('const owner = process.ppid')
@@ -60,6 +98,22 @@ test('one Alexia at a time: the core watches its owner, for the exits Rust canno
   // Only under the shell. A folder somebody unzipped has no owner to watch, and a watcher
   // there would be a process that quits when whatever launched it does.
   expect(source).toContain("if (!process.env.ALEXIA_TAURI)")
+})
+
+test('one Alexia at a time: the core hears its pipe close at once, and takes its plugins with it', () => {
+  const source = packager()
+  // The shell's end of stdin closes the moment the shell goes, however it went. The poll above
+  // is the fallback; this is the prompt half.
+  expect(source).toContain("process.stdin.once('end', leave)")
+  expect(source).toContain('process.stdin.resume()')
+  // A polite stop is honoured too, rather than dying with the plugins still running.
+  expect(source).toContain("process.once('SIGTERM', leave)")
+  // Leaving stops the plugins first (`close` is `plugins.stop()` and the rest), with a limit,
+  // so a stop that hangs cannot keep a quit Alexia alive.
+  expect(source).toContain('const { url, close } = await serve(')
+  expect(source).toMatch(/Promise\.race\(\[close\(\), new Promise\(\(resolve\) => setTimeout\(resolve, \d+\)\)\]\)/)
+  // The watcher goes through the same door.
+  expect(source).toMatch(/process\.kill\(owner, 0\)\s*\} catch \{\s*leave\(\)/)
 })
 
 test('one Alexia at a time: and closing a window still only puts it away', () => {

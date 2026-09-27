@@ -2,7 +2,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { expect, test } from 'vitest'
-import { hotkeyFor, installUpdate } from '../src/desktop.js'
+import { hotkeyFor, installUpdate, rgba } from '../src/desktop.js'
 
 /**
  * The hotkey is said in two places — registered in `main.rs`, named on screen here — and the
@@ -101,4 +101,17 @@ test('every command the page calls is one the shell registers, and one the capab
   // For both windows, and for the origin the page is actually served from.
   expect(capability.windows).toEqual(expect.arrayContaining(['main', 'overlay']))
   expect(capability.remote?.urls).toContain('http://127.0.0.1:*')
+})
+
+/**
+ * The shell parses nothing, so the glass's tint crosses as four numbers. The switchers write
+ * their colours the CSS way, and anything the page cannot read is no tint rather than black.
+ */
+test('a glass tint crosses to the shell as sRGB numbers from 0 to 1', () => {
+  expect(rgba('rgba(232,214,182,0.25)')).toEqual([232 / 255, 214 / 255, 182 / 255, 0.25])
+  expect(rgba('rgb(255 0 0 / 50%)')).toEqual([1, 0, 0, 0.5])
+  expect(rgba('#fff')).toEqual([1, 1, 1, 1])
+  expect(rgba('#00000080')).toEqual([0, 0, 0, 128 / 255])
+  expect(rgba('var(--accent)')).toBeUndefined()
+  expect(rgba('rgb(1, 2)')).toBeUndefined()
 })

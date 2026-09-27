@@ -1030,6 +1030,12 @@ export class ProviderError extends Error {
    * network, so it is no reason to pause and offer *Allow* either.
    */
   offline?: true
+  /**
+   * **A paid rung was passed over for money** (D206): its worst case was more than the day or the
+   * month had left. With nothing else answering, that is a spending limit reached — a pause with
+   * its three choices, not a stop.
+   */
+  priced?: true
 
   constructor(
     readonly status: number,

@@ -8,6 +8,7 @@ import { noPolling } from './staged.js'
 import { keyOf, PROVIDERS } from '../src/provider.js'
 import { CORE, memorySecrets } from '../src/secrets.js'
 import { serve, type Serving } from '../src/serve.js'
+import { allowance, caps } from '../src/usage.js'
 import type { SystemStats } from '../src/system.js'
 
 // The bridge between a webview and core: the shell it serves, the token that guards it, and
@@ -197,7 +198,7 @@ test('first run asks three things and then never asks again', async () => {
   const read = async () =>
     (await (await call('/api/state')).json()) as {
       setup: { done: boolean; name: string; theme: string; glass: number }
-      providers: { id: string; trainsOnYourData: string; terms?: string; connected: boolean }[]
+      providers: { id: string; trainsOnYourData: string; terms?: string; connected: boolean; keyStored: boolean }[]
     }
 
   const before = await read()
@@ -213,6 +214,7 @@ test('first run asks three things and then never asks again', async () => {
     mode: 'combined',
     theme: 'system',
     glass: 60,
+    glassLook: 'auto',
     updates: true,
   })
   /**
@@ -236,6 +238,9 @@ test('first run asks three things and then never asks again', async () => {
     'kilo-gateway',
     'llm7',
   ])
+  // Connected is not *a key is stored*: nobody has pasted anything, so no tile may say so,
+  // and the first run's *start with no keys* is still the honest label for its button.
+  expect(before.providers.filter((p) => p.keyStored)).toEqual([])
 
   await call('/api/setup', {
     method: 'POST',
@@ -244,7 +249,7 @@ test('first run asks three things and then never asks again', async () => {
   })
 
   const after = await read()
-  expect(after.setup).toEqual({ done: true, name: 'Ada', mode: 'local', theme: 'system', glass: 60, updates: true })
+  expect(after.setup).toEqual({ done: true, name: 'Ada', mode: 'local', theme: 'system', glass: 60, glassLook: 'auto', updates: true })
   // The key went to the keychain and nowhere near the database.
   expect(await secrets.get(CORE, keyOf(PROVIDERS[0]!))).toBe('sk-users-own')
   // And the screen can say so without being able to read it back — which is what stops the
@@ -259,6 +264,7 @@ test('first run asks three things and then never asks again', async () => {
     'kilo-gateway',
     'llm7',
   ])
+  expect(after.providers.filter((p) => p.keyStored).map((p) => p.id)).toEqual(['openrouter'])
 
   // The settings screen writes the same route with one field at a time: a rename does not
   // un-choose the mode, and a second key replaces the first rather than adding to it.
@@ -274,7 +280,7 @@ test('first run asks three things and then never asks again', async () => {
   })
 
   const edited = await read()
-  expect(edited.setup).toEqual({ done: true, name: 'Grace', mode: 'local', theme: 'system', glass: 60, updates: true })
+  expect(edited.setup).toEqual({ done: true, name: 'Grace', mode: 'local', theme: 'system', glass: 60, glassLook: 'auto', updates: true })
   expect(await secrets.get(CORE, keyOf(PROVIDERS[0]!))).toBe('sk-the-second-one')
 
   // A sentence in the key box is refused here rather than at the provider. This exact string
@@ -355,6 +361,34 @@ test('the daily allowance is settable, and the number it produces reaches the sc
     body: JSON.stringify({ daily: 0 }),
   })
   expect(((await (await get('/api/state')).json()) as { today: { allowance: number } }).today.allowance).toBe(0)
+})
+
+test('a monthly budget set on Safety is the one the month is held to', async () => {
+  // The bug this is written against: `/api/ceilings` kept `monthly` with the step limit, the
+  // screen read it back from there, and the cap that is enforced — `allowance()`, from the
+  // spend ledger's caps — never saw it. A budget typed in did nothing at all.
+  const setting = async (body: unknown): Promise<Record<string, unknown>> =>
+    (await (
+      await get('/api/ceilings', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
+    ).json()) as Record<string, unknown>
+
+  expect(await setting({ monthly: 12.5 })).toMatchObject({ monthly: 12.5 })
+  // Where it is enforced, and as a stop rather than only a warning.
+  expect(caps(alexia.store)).toMatchObject({ monthly: 12.5, hardStop: true })
+  expect(allowance(alexia.store).cap).toBe(12.5)
+  // And what the screen reads back is the same number.
+  const state = (await (await get('/api/state')).json()) as { ceilings: { monthly?: number } }
+  expect(state.ceilings.monthly).toBe(12.5)
+
+  // Setting the step limit leaves the budget alone.
+  expect(await setting({ steps: 30 })).toMatchObject({ steps: 30, monthly: 12.5 })
+
+  // An empty box is *no budget*, and takes the stop away with it.
+  const cleared = await setting({ monthly: null })
+  expect(cleared.monthly).toBeUndefined()
+  expect(allowance(alexia.store).cap).toBeUndefined()
+  expect(caps(alexia.store).hardStop).toBeUndefined()
+  await setting({ steps: 24 })
 })
 
 test('an attachment with nothing to read it says so, and the message still goes', async () => {
@@ -441,6 +475,7 @@ test('the board is kept where the theme is, checked whole, and forgotten on null
     { ...kept, pages: [{ id: 'chat', w: 1.5, h: 4 }] },
     { ...kept, pages: 'chat' },
     { ...kept, guides: [1, Number.NaN] },
+    { ...kept, rows: 0 },
     'a layout',
     [kept],
   ]) {
@@ -449,6 +484,10 @@ test('the board is kept where the theme is, checked whole, and forgotten on null
     expect(((await refused.json()) as { said: string }).said).toMatch(/^That layout cannot be kept: /)
   }
   expect(await state()).toEqual(kept)
+
+  // How tall the board was is kept when the shell says it, so heights can scale with the window.
+  expect((await post({ layout: { ...kept, rows: 34 } })).status).toBe(200)
+  expect(await state()).toEqual({ ...kept, rows: 34 })
 
   expect((await post({ layout: null })).status).toBe(200)
   expect(await state()).toBeNull()

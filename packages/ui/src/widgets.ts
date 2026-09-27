@@ -137,6 +137,8 @@ export interface Rendered {
   /** `action`: whether the tool is there, and why not. */
   available?: boolean
   reason?: string
+  /** `action`: the label of the second press, for a button that takes something away. */
+  confirm?: string
   /** `progress`: what the plugin last reported. Absent means nothing is in flight. */
   live?: { progress: number; total?: number; message?: string }
   /** `table`: everything about its shape. The rows themselves are fetched when it is drawn. */
@@ -225,6 +227,17 @@ export const el = <K extends keyof HTMLElementTagNameMap>(
   return made
 }
 
+/**
+ * **The long version, closed until somebody opens it** — a run's whole log under its summary,
+ * the raw arguments under a step. The plain words are what anybody came for; this is for the
+ * one who wants to check them, and it keeps its line breaks.
+ */
+export const folded = (label: string, text: string): HTMLDetailsElement => {
+  const box = el('details', 'detail-more')
+  box.append(el('summary', undefined, label), el('pre', undefined, text))
+  return box
+}
+
 /** Four or more options is a dropdown; two or three is a segmented control. Core's call. */
 const SEGMENTED_UP_TO = 3
 
@@ -267,21 +280,27 @@ export function widget(host: WidgetHost, declared: Rendered): HTMLElement {
    * would mean choosing an engine and watching nothing happen. That one redraws the screen
    * rather than itself, because a field cannot draw a page it is only a part of.
    */
-  const save = async (value: unknown): Promise<void> => {
-    const answer = await host.send('/api/settings', { plugin: host.plugin, key: declared.key, value })
+  const save = async (value: unknown): Promise<boolean> => {
+    let answer: Record<string, unknown>
+    try {
+      answer = await host.send('/api/settings', { plugin: host.plugin, key: declared.key, value })
+    } catch {
+      answer = { ok: false, why: 'Alexia did not answer, so this was not saved. Try again in a moment.' }
+    }
     if (answer.ok !== true) {
-      problem.textContent = String(answer.why ?? 'That did not save.')
+      problem.textContent = String(answer.why ?? answer.said ?? 'That did not save.')
       problem.hidden = false
-      return
+      return false
     }
     problem.hidden = true
     if (declared.gates === true) {
       host.redraw?.()
-      return
+      return true
     }
-    if (declared.type !== 'password') return
+    if (declared.type !== 'password') return true
     const now = (await host.fresh()).find((s) => s.key === declared.key)
     if (now) field.replaceWith(widget(host, now))
+    return true
   }
 
   const labelled = (control: HTMLElement, forId?: string): HTMLElement => {
@@ -399,6 +418,11 @@ export function widget(host: WidgetHost, declared: Rendered): HTMLElement {
         row.append(forget)
       }
       labelled(row, id)
+      // The author's sentence first — it says where to get the thing, *From @BotFather on
+      // Telegram*, which is the one line somebody holding an empty box needs. It used to be
+      // dropped here along with every other widget's, because the loop at the bottom skips a
+      // password so the keychain line can come last.
+      if (declared.hint) field.append(el('p', 'hint', declared.hint))
       // Core writes this line, not the author: a plugin promising the wrong store would be
       // lying on core's screen, in core's voice.
       if (declared.stored) field.append(el('p', 'hint', declared.stored))
@@ -413,7 +437,16 @@ export function widget(host: WidgetHost, declared: Rendered): HTMLElement {
       if (declared.min !== undefined) input.min = String(declared.min)
       if (declared.max !== undefined) input.max = String(declared.max)
       if (declared.step !== undefined) input.step = String(declared.step)
-      input.addEventListener('change', () => void save(input.valueAsNumber))
+      // What is really stored. A refused number used to stay in the box, so the screen said
+      // 900 while the plugin went on using 60 — the error under it said so once, and the next
+      // look at the page did not.
+      let kept = input.value
+      input.addEventListener('change', () => {
+        void save(input.valueAsNumber).then((saved) => {
+          if (saved) kept = input.value
+          else input.value = kept
+        })
+      })
       const row = el('div', 'pair')
       row.append(input)
       if (declared.min !== undefined && declared.max !== undefined) {
@@ -634,11 +667,18 @@ export function widget(host: WidgetHost, declared: Rendered): HTMLElement {
         // be looked at while the call is in flight rather than after it.
         const watching = window.setInterval(() => void refreshDriven(host), 400)
         try {
-          const answer = await host.send('/api/action', {
-            plugin: host.plugin,
-            key: declared.key,
-            ...(approved === true && { approved: true }),
-          })
+          let answer: Record<string, unknown>
+          try {
+            answer = await host.send('/api/action', {
+              plugin: host.plugin,
+              key: declared.key,
+              // The second press *is* the confirm, so it is what carries it (M6-1).
+              ...(declared.confirm !== undefined && { confirm: true }),
+              ...(approved === true && { approved: true }),
+            })
+          } catch {
+            answer = { ok: false, said: 'Alexia did not answer. Try again in a moment.' }
+          }
           if (typeof answer.ask === 'string') {
             field.append(confirm(answer.ask, press))
             return
@@ -663,7 +703,11 @@ export function widget(host: WidgetHost, declared: Rendered): HTMLElement {
           button.disabled = declared.available === false
         }
       }
-      button.addEventListener('click', () => void press())
+      // A button that takes something away is two presses, the second of which has already
+      // said what goes — *Forget everything* was one press on an empty page from gone.
+      if (declared.confirm !== undefined) {
+        arm(button, declared.confirm, () => void press())
+      } else button.addEventListener('click', () => void press())
       field.append(button, said)
       break
     }
@@ -830,7 +874,8 @@ function table(host: WidgetHost, declared: Rendered): HTMLElement {
     said.hidden = announced === '' && !announcedNews && rows.length > 0 && visible.length > 0
     if (rows.length > 0 && visible.length === 0) {
       said.hidden = false
-      said.textContent = 'Nothing matches that.'
+      // What was typed, said back: a list that only says *nothing* reads like an empty one.
+      said.textContent = query.trim() === '' ? 'Nothing matches that.' : `Nothing matches “${query.trim()}”.`
     }
 
     const grid = el('table', 'grid')
@@ -847,7 +892,12 @@ function table(host: WidgetHost, declared: Rendered): HTMLElement {
       (declared.rowActions ?? []).length > 0 ||
       declared.detail !== undefined ||
       visible.some((row) => typeof row.preview === 'string')
-    if (extra) headRow.append(el('th'))
+    // Named for a screen reader all the same, which reads an empty header as nothing at all.
+    if (extra) {
+      const actions = el('th')
+      actions.append(el('span', 'visually-hidden', 'Actions'))
+      headRow.append(actions)
+    }
     head.append(headRow)
     grid.append(head)
 
@@ -1394,7 +1444,7 @@ function graph(host: WidgetHost, declared: Rendered): HTMLElement {
     said.hidden = nodes.length > 0
     said.textContent =
       rows.length === 0 ? 'Nothing here yet.'
-      : nodes.length === 0 ? 'Nothing matches that.'
+      : nodes.length === 0 ? `Nothing matches “${query}”.`
       : ''
     // Not once somebody has moved the camera themselves: a filter is *fewer things*, and
     // reframing the view under a person typing into a box is the picture jumping at them.
@@ -2011,7 +2061,7 @@ function tree(host: WidgetHost, declared: Rendered): HTMLElement {
       said.className = 'hint'
       said.textContent =
         nodes.length === 0 ? 'Nothing here yet.'
-        : kept !== undefined && kept.size === 0 ? 'Nothing matches that.'
+        : kept !== undefined && kept.size === 0 ? `Nothing matches “${query.trim()}”.`
         : ''
     }
 
@@ -2285,6 +2335,16 @@ function rowOf(
 
   const cell = el('td', 'row-actions')
   if (heard !== undefined) cell.append(player(heard))
+  /**
+   * What the row is called, for the buttons on it: twenty *Forget*s in a row are twenty of the
+   * same word to a screen reader, so each is named for its row — *Forget Trip to Rome*. The
+   * name is the cell a row's note goes under, without the state mark in front of it.
+   */
+  const text = String(row[columns[noteAt]?.key ?? ''] ?? '')
+  const named = (MARKS[text.slice(0, 1)] === undefined ? text : text.slice(1)).trim()
+  const forRow = (button: HTMLElement, label: string): void => {
+    if (named !== '') button.setAttribute('aria-label', `${label} ${named}`)
+  }
   const said = el('p', 'hint')
   said.hidden = true
 
@@ -2309,6 +2369,7 @@ function rowOf(
     const more = el('button', 'quiet-button', 'Details')
     more.type = 'button'
     more.setAttribute('aria-expanded', 'false')
+    forRow(more, 'Details for')
     let open = false
     const toggle = (): void => {
       open = !open
@@ -2323,6 +2384,9 @@ function rowOf(
         .then((answer) => {
           body.className = answer.ok === true ? 'detail-text' : 'detail-text error'
           body.textContent = String((answer.ok === true ? answer.text : answer.said) ?? '')
+          // The long version, when core sent one (a run's full log), folded under the short one.
+          into.querySelector('details.detail-more')?.remove()
+          if (answer.ok === true && typeof answer.more === 'string') into.append(folded('Technical details', answer.more))
         })
     }
     more.addEventListener('click', toggle)
@@ -2348,7 +2412,9 @@ function rowOf(
   for (const action of declared.rowActions ?? []) {
     // Only where it applies (`alexia_protocol` 11). Without `when` or `unless`, everywhere.
     if (!applies(action, row)) continue
-    cell.append(rowButton(host, action, row, { place: cell, said, surface: table }))
+    const button = rowButton(host, action, row, { place: cell, said, surface: table })
+    forRow(button, action.label)
+    cell.append(button)
   }
 
   cell.append(said)
@@ -2452,6 +2518,8 @@ function rowButton(
     // first press costs nothing and the second one has already said what goes.
     if (!armed) {
       armed = true
+      // The question says what goes in its own words, so the row's name is not added twice.
+      button.removeAttribute('aria-label')
       button.textContent = fill(action.confirm ?? '', row)
       button.classList.add('armed')
       return
@@ -2466,6 +2534,53 @@ export const fill = (template: string, row: Row): string =>
   template.replace(/\{([a-z][a-z0-9_]*)\}/gi, (whole, field: string) =>
     row[field] === undefined ? whole : String(row[field]),
   )
+
+/**
+ * A button that asks twice: the first press turns it into `armed`, and only the second acts.
+ *
+ * **Two guards on the second press, and each is from something that happened.** A press in
+ * the first second after arming is ignored, because a double-click is one decision and not
+ * two — it used to delete a plugin. And an armed button goes back to what it was after a few
+ * seconds, because *Delete for good* left sitting on a page is a trap for whoever comes back
+ * to it. `onArm` and `onDisarm` are for the sentence beside it that says what goes.
+ */
+export function arm(
+  button: HTMLButtonElement,
+  armed: string,
+  act: () => void,
+  options: { settle?: number; expire?: number; onArm?: () => void; onDisarm?: () => void } = {},
+): { disarm: () => void } {
+  const resting = button.textContent ?? ''
+  const settle = options.settle ?? 1000
+  const expire = options.expire ?? 5000
+  let since: number | undefined
+  let timer: number | undefined
+  const disarm = (): void => {
+    window.clearTimeout(timer)
+    since = undefined
+    button.textContent = resting
+    button.classList.remove('armed')
+    options.onDisarm?.()
+  }
+  button.addEventListener('click', (event) => {
+    event.stopPropagation()
+    if (since === undefined) {
+      since = Date.now()
+      button.textContent = armed
+      button.classList.add('armed')
+      options.onArm?.()
+      timer = window.setTimeout(disarm, expire)
+      return
+    }
+    if (Date.now() - since < settle) return
+    window.clearTimeout(timer)
+    since = undefined
+    button.textContent = resting
+    button.classList.remove('armed')
+    act()
+  })
+  return { disarm }
+}
 
 /**
  * The permission question for an `action`, asked beside the button rather than over the
@@ -2506,12 +2621,29 @@ export function confirm(why: string, again: (approved: boolean) => Promise<void>
  * paid row dragged to the top of its own column is still behind every free one unless the
  * slider says otherwise.
  */
+/**
+ * A dollar amount as somebody types it: `1.5`, `1,50`, `$2`. A comma is read as the decimal
+ * point, because on a Czech or German Mac that is what the keyboard puts there. Rounded to the
+ * cent, as core stores it; nothing, zero or anything else is `undefined`. With `zero`, a
+ * zero is a real answer too — the Safety limits take one, where the daily allowance does not.
+ */
+export function dollarsOf(typed: string, zero = false): number | undefined {
+  const plain = typed.trim().replace(/^\$\s*/, '').replace(',', '.')
+  if (!/^\d+(\.\d*)?$|^\.\d+$/.test(plain)) return undefined
+  const cents = Math.round(Number(plain) * 100) / 100
+  return cents > 0 || (zero && cents === 0) ? cents : undefined
+}
+
 function ladder(host: WidgetHost, declared: Rendered): HTMLElement {
   const box = el('div', 'ladder')
   const stops = declared.stops ?? []
   const sides = [
-    { id: 'free', label: 'Free', empty: 'Nothing listed. The free models answer cheapest first.' },
-    { id: 'paid', label: 'Paid', empty: 'Nothing listed. The paid models answer cheapest first when it gets to them.' },
+    { id: 'free', label: 'Free', empty: 'Nothing listed yet, so every free model may answer, best first.' },
+    {
+      id: 'paid',
+      label: 'Paid',
+      empty: 'Nothing listed yet, so every paid model may answer, best first, when she gets to them.',
+    },
   ]
 
   let spend = typeof declared.value === 'string' ? declared.value : (stops[0]?.value ?? '')
@@ -2531,6 +2663,10 @@ function ladder(host: WidgetHost, declared: Rendered): HTMLElement {
     if (key === undefined) return
     const answer = await host.send('/api/action', { plugin: host.plugin, key, row: value })
     say(String(answer.said ?? ''), answer.ok === true)
+    // The slider and the order both move rows in the Models table under this widget — which
+    // group a model is in, where the ★ is — so it is asked for its rows again. Only on a yes:
+    // a refusal changed nothing, and the table is still right.
+    if (answer.ok === true) reloadTables(host)
   }
 
   const columns = new Map<string, HTMLElement>()
@@ -2601,29 +2737,50 @@ function ladder(host: WidgetHost, declared: Rendered): HTMLElement {
   const toggleLabel = el('label', 'cross-label', 'Switch to a paid model when the free ones are done')
   toggleLabel.htmlFor = toggle.id
   const amountBox = el('span', 'cross-amount')
+  /**
+   * A text box that takes a decimal, not a `number` input. WebKit draws a number input in the
+   * Mac's own locale, so in Czech it said *1,00* beside a *$* — a dollar amount written the
+   * way no dollar amount is. The value is always shown with a point, and a comma typed out of
+   * habit is read as one.
+   */
   const amount = el('input', 'cross-daily')
-  amount.type = 'number'
-  amount.min = '0.5'
-  amount.step = '0.5'
-  amount.value = ((declared.daily ?? 0) > 0 ? (declared.daily ?? 1) : 1).toFixed(2)
+  amount.type = 'text'
+  amount.inputMode = 'decimal'
+  amount.autocomplete = 'off'
+  /** The last amount that was a real one, put back when what was typed is not. */
+  let standingAmount = (declared.daily ?? 0) > 0 ? (declared.daily ?? 1) : 1
+  amount.value = standingAmount.toFixed(2)
   amount.setAttribute('aria-label', 'Daily amount for paid models, in dollars')
   amountBox.append('up to $', amount, ' a day')
   amountBox.hidden = !toggle.checked
   const crossSaid = el('p', 'cross-said')
   crossSaid.hidden = true
+  const crossSay = (text: string, ok: boolean): void => {
+    crossSaid.textContent = text
+    crossSaid.className = ok ? 'cross-said' : 'cross-said error'
+    crossSaid.hidden = text === ''
+  }
   const cross = async (value: string): Promise<void> => {
     if (declared.crossing === undefined) return
     const answer = await host.send('/api/action', { plugin: host.plugin, key: declared.crossing, row: value })
-    crossSaid.textContent = String(answer.said ?? '')
-    crossSaid.className = answer.ok === true ? 'cross-said' : 'cross-said error'
-    crossSaid.hidden = crossSaid.textContent === ''
+    crossSay(String(answer.said ?? ''), answer.ok === true)
+    // Whether paid models are reached for at all is part of what the Models table shows.
+    if (answer.ok === true) reloadTables(host)
   }
   toggle.addEventListener('change', () => {
     amountBox.hidden = !toggle.checked
-    void cross(toggle.checked ? `on:${amount.value}` : 'off')
+    void cross(toggle.checked ? `on:${standingAmount.toFixed(2)}` : 'off')
   })
   amount.addEventListener('change', () => {
-    if (toggle.checked) void cross(`on:${amount.value}`)
+    const typed = dollarsOf(amount.value)
+    if (typed === undefined) {
+      amount.value = standingAmount.toFixed(2)
+      crossSay('Type an amount in dollars above $0, like 1.50.', false)
+      return
+    }
+    standingAmount = typed
+    amount.value = typed.toFixed(2)
+    if (toggle.checked) void cross(`on:${typed.toFixed(2)}`)
   })
   crossing.append(toggle, toggleLabel, amountBox, crossSaid)
 

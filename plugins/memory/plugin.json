@@ -30,14 +30,14 @@
       "max": 20,
       "step": 1,
       "default": 6,
-      "hint": "How many remembered things a search returns at most. More is more context and more cost."
+      "hint": "How many remembered things a search returns at most. More helps her answer, and costs more."
     },
     {
       "type": "toggle",
       "key": "capture",
       "label": "Write things down by itself",
       "default": false,
-      "hint": "Off, Alexia only remembers what it is told to. On, every finished exchange is kept briefly and turned into notes on a timer — nothing leaves this machine that would not have anyway, and credentials are stripped before it ever sees them."
+      "hint": "Off, she only remembers what you tell her to. On, she turns finished conversations into notes on her own. Passwords and keys are removed first."
     },
     {
       "type": "number",
@@ -47,7 +47,7 @@
       "max": 240,
       "step": 1,
       "default": 12,
-      "hint": "Minutes between passes. An empty buffer costs nothing — no model is called when there is nothing to sort."
+      "hint": "Minutes between passes. When nothing is waiting, a pass costs nothing."
     },
     {
       "type": "number",
@@ -63,8 +63,8 @@
       "type": "text",
       "key": "skip",
       "label": "Also not worth writing down",
-      "placeholder": "e.g. lol, brb, jo jasně",
-      "hint": "Comma-separated. Anything you say that is exactly one of these is never kept for sorting — on top of the built-in list (ok, continue, why, test, díky, pokračuj…) and anything under three words."
+      "placeholder": "e.g. lol, brb, sure thing",
+      "hint": "Comma-separated. Anything you say that is exactly one of these is never kept for sorting — on top of the built-in list (ok, continue, why, test, thanks…) and anything under three words."
     },
     {
       "type": "status",
@@ -83,6 +83,7 @@
       "key": "forget_all",
       "label": "Forget everything",
       "tool": "forget_all",
+      "confirm": "Press again to forget everything",
       "hint": "Empties long-term memory. The conversation you are having now is not touched — that belongs to Alexia, not to this plugin."
     }
   ],
@@ -170,7 +171,7 @@
         "key": "remembered_list",
         "type": "table",
         "label": "Remembered",
-        "hint": "Everything Alexia has written down about you, whether you said it or it worked it out, and whether it is still true. What stopped being true is kept at the bottom as history; forgetting one takes every version of it.",
+        "hint": "Everything Alexia has written down about you, whether you said it or she worked it out, and whether it is still true. What stopped being true is kept at the bottom as history; forgetting one takes every version of it.",
         "rows": "memories",
         "columns": [
           {

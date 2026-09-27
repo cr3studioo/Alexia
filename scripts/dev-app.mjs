@@ -21,6 +21,16 @@
  * which is the switch that keeps a second install from deleting the first one's old entries
  * (`Kept.moved` in `secrets.ts`).
  *
+ * **Telegram is switched off in the copy.** The keychain entry holds the bot token, and a
+ * Telegram bot hands its messages to one poller at a time: with both apps running, both would
+ * poll the one bot, answer some of the messages each, and send every reminder and morning
+ * summary twice. So the copied database has `telegram` taken out of the list of switched-on
+ * plugins (`enabled` in core's `kv`, `plugins.ts`). Only the copy is changed — the real
+ * database is read through the backup and never written. The token stays, so switching
+ * Telegram on in Alexia Dev is one click when that is the thing being tried; the two then take
+ * turns with the bot every few minutes rather than fighting over it (`clash.js`), and the
+ * other copy's Telegram screen says it is paused.
+ *
  *   pnpm app:dev                     build, install, open
  *   pnpm app:dev --fresh-data        …and replace the dev data with a new copy of the real one
  *   pnpm app:dev --data-only         just the new copy, no build
@@ -87,8 +97,25 @@ function copyData() {
   }
   if (existsSync(join(real, 'alexia.db'))) {
     run('sqlite3', [join(real, 'alexia.db'), `.backup '${join(dev, 'alexia.db').replaceAll("'", "''")}'`])
+    offTelegram()
   }
   copyKeychain()
+}
+
+/**
+ * Switch Telegram off in the dev copy's database — the copy only, after the backup has
+ * finished with the real one. See the header for why.
+ */
+function offTelegram() {
+  const off = `UPDATE kv SET value = (
+      SELECT json_group_array(value) FROM json_each(kv.value) WHERE value <> 'telegram'
+    ) WHERE ns = '_core' AND key = 'enabled' AND json_valid(value) AND json_type(value) = 'array';`
+  const done = spawnSync('sqlite3', [join(dev, 'alexia.db'), off], { stdio: ['ignore', 'ignore', 'inherit'] })
+  if (done.status === 0) {
+    console.log(`Telegram is switched off in ${NAME}, so the two apps do not share the bot. Switch it on in ${NAME} to try it.`)
+  } else {
+    console.error(`Could not switch Telegram off in ${NAME}. If both apps run, switch it off there by hand.`)
+  }
 }
 
 function copyKeychain() {

@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { afterAll, expect, test } from 'vitest'
 import { noPolling } from './staged.js'
 import { ALEXIA_PROTOCOL_MAX, Manifest } from '@alexia/protocol'
+import { friendly } from '../src/palette.js'
 import { CORE_TABS } from '../src/panels.js'
 import { SPENDS } from '../src/surface.js'
 import { keyOf, PROVIDERS } from '../src/provider.js'
@@ -209,12 +210,14 @@ test('every core panel is a declaration and a function, with no shape of its own
   }
 })
 
-test('the skills panel separates what somebody installed from what Alexia wrote', async () => {
+test('the skills list holds what somebody installed and what Alexia wrote, and says which', async () => {
   const installed = await rows('skills')
   expect(installed.map((row) => row.name)).toContain('folding-laundry')
-  // A learned one belongs to the other table, and appearing in both would be the same skill
-  // twice with two different sets of actions on it.
-  expect(installed.map((row) => row.name)).not.toContain('sorting-downloads')
+  // One list since D205: a learned one is in it once, and *Where from* is what tells it apart.
+  const learned = installed.filter((row) => row.name === 'sorting-downloads')
+  expect(learned).toHaveLength(1)
+  expect(String(learned[0]?.where)).toContain('written by Alexia')
+  expect(String(learned[0]?.where)).toContain('sort my downloads by year')
 
   // A folder that is not a skill is a row with a reason, not an absence.
   const broken = installed.find((row) => String(row.state).startsWith('▲'))
@@ -322,12 +325,28 @@ test('a run is on the activity panel after the task that made it has ended', asy
   const runs = await rows('activity')
   expect(runs).toHaveLength(1)
   expect(runs[0]?.task).toBe('sort my downloads')
-  expect(runs[0]?.ended).toBe('refused')
+  // The key here is made up, so the provider was asked and failed. That is the service
+  // failing, which the loop calls `refused` and the screen used to say as *refused*.
+  expect(runs[0]?.ended).toBe('The AI service failed')
+  // Nothing was charged and nothing was recorded, which is a dash rather than *free*.
+  expect(runs[0]?.cost).toBe('—')
 
-  // The detail is the whole run, and it is the same text `export` writes — one renderer, so
-  // what somebody reads on screen is exactly what they send on.
+  // The detail is a plain summary first, and the whole run folded under it — the same text
+  // `export` writes, so what somebody reads on screen is exactly what they send on.
   const detail = await post('/api/detail', { key: 'activity', row: String(runs[0]?.id) })
-  expect(String(detail.text)).toContain('# sort my downloads')
+  expect(String(detail.text)).toContain('The AI service failed')
+  expect(String(detail.text)).not.toContain('# sort my downloads')
+  expect(String(detail.more)).toContain('# sort my downloads')
+
+  // The chat it happened in, one press away, and the same move as opening it from Chats.
+  const opened = await post('/api/action', { key: 'open_run_chat', row: String(runs[0]?.id) })
+  expect(opened.ok).toBe(true)
+  expect(String(opened.said)).toContain('sort my downloads')
+
+  // The live pages read the same run after a reload, rather than opening empty.
+  const [last] = await rows('last_run')
+  expect(last?.id).toBe(runs[0]?.id)
+  expect(last?.over).toBe(true)
 
   // Exporting takes nothing away, so it is the one core row action that is not guarded.
   const exported = await post('/api/action', { key: 'export_run', row: String(runs[0]?.id) })
@@ -357,22 +376,46 @@ test('a skill nobody said yes to waits on the screen, and says so', async () => 
 })
 
 test('the palette searches the same reads the panels use, and answers with a tab', async () => {
-  const found = async (query: string): Promise<{ tab: string; kind: string; label: string }[]> =>
+  interface Found {
+    tab: string
+    kind: string
+    label: string
+    filter?: string
+    id?: string
+  }
+  const found = async (query: string): Promise<Found[]> =>
     ((await (
       await fetch(new URL(`/api/search?q=${encodeURIComponent(query)}`, alexia.url), {
         headers: { 'x-alexia-token': alexia.token },
       })
-    ).json()) as { hits: { tab: string; kind: string; label: string }[] }).hits
+    ).json()) as { hits: Found[] }).hits
 
   // A tab, by its own name.
-  expect((await found('Tools'))[0]).toMatchObject({ tab: 'tools', kind: 'panel' })
+  expect((await found('Every tool'))[0]).toMatchObject({ tab: 'tools', kind: 'panel' })
 
   // A skill, from the same rows the skills table shows — no second index, so this is true
   // by construction rather than by being kept in step.
-  expect((await found('sorting-downloads')).map((hit) => hit.kind)).toContain('learned skill')
+  const skill = (await found('sorting-downloads')).filter((hit) => hit.label === 'sorting-downloads')
+  expect(skill).toEqual([expect.objectContaining({ tab: 'skills', kind: 'skill' })])
 
-  // A run, which only exists because a task happened earlier in this file.
-  expect((await found('sort my downloads')).some((hit) => hit.tab === 'activity')).toBe(true)
+  // A run, which only exists because a task happened earlier in this file — carrying its own
+  // words as the filter for the list it opens, never what happened to be typed.
+  const run = (await found('sort my')).find((hit) => hit.tab === 'runs')
+  expect(run).toMatchObject({ label: 'sort my downloads', filter: 'sort my downloads' })
+
+  // The chat that task was said in, by its title, carrying which chat it is so Enter opens it.
+  const chat = (await found('downloads')).find((hit) => hit.kind === 'chat')
+  expect(chat).toMatchObject({ tab: 'chat', label: 'sort my downloads' })
+  expect(alexia.store.conversations().some((one) => String(one.id) === chat?.id)).toBe(true)
+
+  // A setting, on the Settings page it is on — found by what it does, not only its name.
+  expect((await found('dark'))[0]).toMatchObject({ tab: 'general', kind: 'setting', label: 'Theme' })
+  expect((await found('budget')).some((hit) => hit.tab === 'safety')).toBe(true)
+
+  // A tool by a name a person reads, with its id as the filter its own table matches.
+  const tool = (await rows('tools'))[0]!
+  const named = (await found(String(tool.name))).find((hit) => hit.kind === 'tool')
+  expect(named).toMatchObject({ label: friendly(String(tool.name)), filter: String(tool.name) })
 
   // And a thing that has just been forgotten is gone from the palette by the act that
   // removed it, because there was nothing else holding a copy.

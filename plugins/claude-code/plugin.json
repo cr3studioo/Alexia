@@ -3,7 +3,7 @@
   "manifest_version": 1,
   "id": "claude-code",
   "name": "Claude Code",
-  "summary": "Hands a coding job to the Claude Code CLI you already have installed, using your own login.",
+  "summary": "Hands a coding job to Claude Code, the coding assistant you already have installed, using your own sign-in.",
   "version": "0.1.0",
   "license": "AGPL-3.0-only",
   "entry": {
@@ -44,7 +44,7 @@
       "key": "claude_path",
       "label": "The claude program",
       "kind": "file",
-      "hint": "Leave empty and it looks on your PATH. Point at it if you installed it somewhere unusual."
+      "hint": "Leave it empty and Alexia finds it herself. Fill it in only if you installed Claude Code somewhere unusual."
     },
     {
       "type": "number",

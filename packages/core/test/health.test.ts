@@ -425,10 +425,10 @@ test('each row’s why-line names the key that put it below the row above', () =
   const plain = ranking({})
 
   expect(plain.explain(choice(smaller), choice(gemma))).toBe(
-    'The world sent it 317B tokens last week, fewer than Google: Gemma 4 31B’s 392B.',
+    'Used less around the world last week: 317B, against 392B for Google: Gemma 4 31B.',
   )
   expect(plain.explain(choice(lent, floor, true), choice(smaller))).toBe(
-    'The world sent it 10B tokens last week (figure from OpenRouter), fewer than Google: Gemma 4 26B A4B’s 317B.',
+    'Used less around the world last week (figure from OpenRouter): 10B, against 317B for Google: Gemma 4 26B A4B.',
   )
   expect(plain.explain(choice(lent, floor), choice(gemma, openrouter, true))).toBe(
     'No key needed, so shared and rationed for everyone. After models on your key.',
