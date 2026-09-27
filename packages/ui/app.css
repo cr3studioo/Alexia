@@ -3927,11 +3927,13 @@ body:not([data-view='control']) #control {
    frosts it in CSS instead. Apple's own (`.native`) is laid over the page by the shell, so the
    page's copy of the pill and knob steps aside and only the track and the icons stay.
 
-   **Smooth.** What moves, moves on `transform` alone, on one spring transition: nothing here
-   animates `left`, `width` or a background as it goes, which would lay the rail out again every
-   frame. A dragging finger moves it one to one (`.dragging` takes the glide off). The swell
-   under a press and the stretch as it sets off (`.moving`) are on `scale`, a property of its
-   own, so neither restarts the glide. Under reduced motion it slides, briefly, and does neither.
+   **Smooth.** What moves, moves on `transform` alone, and switchers.ts moves it (`glide`): one
+   frame loop puts the glass, the icons, the fill and the lens in the same place each frame, the
+   glass stretching from one choice to the next like a drop. So nothing here transitions the
+   pill, the knob, the ring or the fill, and while it glides (`.gliding`) or a finger drags it
+   (`.dragging`) the icons it lights take no transition of their own either — the frame already
+   moved them. Nothing animates `left`, `width` or a background, which would lay the rail out
+   again every frame. Under reduced motion it slides, briefly, with no stretch and no swell.
 
    **No lines of text under them.** Each stop's name is hidden until a hover, a drag or the
    keyboard is on it, or for a few seconds after it is chosen (`data-said`). Its space is kept
@@ -4060,15 +4062,16 @@ body:not([data-view='control']) #control {
 
 .pill-switch.dragging .pill-cell,
 .pill-switch.dragging .pill-icon,
-.pill-switch.dragging .pill-icon svg {
+.pill-switch.dragging .pill-icon svg,
+.pill-switch.gliding .pill-cell,
+.pill-switch.gliding .pill-icon,
+.pill-switch.gliding .pill-icon svg {
   transition: none;
 }
 
-/* The pill. One cell wide, slid along by whole cells: `--at` is the chosen index, or a
-   fraction while a finger drags it. */
+/* The pill. One cell wide, over the first cell; switchers.ts slides and stretches it with
+   `transform` each frame it moves. */
 .pill-switch .thumb {
-  --sx: 1;
-  --sy: 1;
   position: absolute;
   top: 4px;
   bottom: 4px;
@@ -4078,27 +4081,8 @@ body:not([data-view='control']) #control {
   border-radius: var(--radius-full);
   border: 1px solid var(--glass-edge);
   box-shadow: var(--glass-shadow);
-  transform: translateX(calc(var(--at) * 100%));
-  scale: var(--sx) var(--sy);
-  transition:
-    transform var(--t-spring) var(--spring),
-    scale var(--t-mid) var(--ease-out);
   will-change: transform;
   pointer-events: none;
-}
-
-.pill-switch.pressing .thumb {
-  --sx: 1.04;
-  --sy: 1.04;
-}
-
-.pill-switch.moving .thumb {
-  --sx: 1.08;
-  --sy: 0.94;
-}
-
-.pill-switch.dragging .thumb {
-  transition: scale var(--t-mid) var(--ease-out);
 }
 
 /* The lens canvas: the glass, drawn under the icons and over the track. */
@@ -4181,7 +4165,8 @@ body:not([data-view='control']) #control {
   --lift: 0.45;
 }
 
-.level-slider.dragging .level-stops span {
+.level-slider.dragging .level-stops span,
+.level-slider.gliding .level-stops span {
   transition: none;
 }
 
@@ -4194,12 +4179,10 @@ body:not([data-view='control']) #control {
   color: var(--caution);
 }
 
-/* A container, so the knob can be slid by a share of the line's width (`cqw`) with a
-   transform, where a percentage would be of the knob's own. */
+/* The line. switchers.ts measures it and slides the knob, the ring and the fill along it. */
 .level-track {
   position: relative;
   height: 30px;
-  container-type: inline-size;
 }
 
 /* The line, and inside it the fill: the whole line's length, slid in from the left to end at
@@ -4220,10 +4203,8 @@ body:not([data-view='control']) #control {
   inset: 0;
   border-radius: 4px;
   background: var(--accent);
-  transform: translateX(calc((var(--at) / (var(--n) - 1) - 1) * 100%));
-  transition:
-    transform var(--t-spring) var(--spring),
-    background-color var(--t-mid) var(--ease-out);
+  transform: translateX(-100%);
+  transition: background-color var(--t-mid) var(--ease-out);
 }
 
 .level-slider[data-tone='caution'] .fill {
@@ -4250,12 +4231,9 @@ body:not([data-view='control']) #control {
 .level-track .hold {
   position: absolute;
   left: 0;
-  transform: translateX(calc((100cqw - 28px) * var(--at) / (var(--n) - 1)));
-  transition: transform var(--t-spring) var(--spring);
 }
 
 .level-track .knob {
-  --k: 1;
   top: 1px;
   z-index: 1;
   width: 28px;
@@ -4263,10 +4241,6 @@ body:not([data-view='control']) #control {
   border-radius: 50%;
   border: 1px solid var(--glass-edge);
   box-shadow: var(--glass-shadow);
-  scale: var(--k);
-  transition:
-    transform var(--t-spring) var(--spring),
-    scale var(--t-mid) var(--ease-out);
   will-change: transform;
 }
 
@@ -4274,42 +4248,26 @@ body:not([data-view='control']) #control {
   z-index: 2;
 }
 
-.level-slider.pressing .knob {
-  --k: 1.14;
-}
-
-.level-slider.moving .knob {
-  --k: 1.08;
-}
-
-.level-slider.dragging .knob,
-.level-slider.dragging .fill,
-.level-slider.dragging .hold {
-  transition: scale var(--t-mid) var(--ease-out);
-}
-
 /* Full trust, held to: the knob waits on the triangle, red, and a thin ring closes round it
-   over the hold (`HOLD_MS`, switchers.ts). The glide comes back while it is armed, even under
-   a finger, so the knob springs onto the stop rather than following the finger past it. It is
-   over the lens and beside Apple's glass, so it shows with either. */
+   over the hold (`HOLD_MS`, switchers.ts). It is over the lens and wider than the knob, so it
+   shows round Apple's glass too, which is laid over the page. Let go early and it winds back
+   from as far as it got (switchers.ts, `teach`). */
 .level-track .hold {
-  top: -3px;
-  margin-left: -4px;
+  top: -5px;
+  margin-left: -6px;
   z-index: 3;
-  width: 36px;
-  height: 36px;
+  width: 40px;
+  height: 40px;
   overflow: visible;
   pointer-events: none;
   opacity: 0;
-  transition:
-    transform var(--t-spring) var(--spring),
-    opacity 120ms var(--ease-out);
+  transition: opacity 120ms var(--ease-out);
 }
 
 .level-track .hold circle {
   fill: color-mix(in oklab, var(--danger) 26%, transparent);
   stroke: var(--danger);
-  stroke-width: 2;
+  stroke-width: 2.5;
   stroke-linecap: round;
   stroke-dasharray: 100;
   stroke-dashoffset: 100;
@@ -4327,12 +4285,6 @@ body:not([data-view='control']) #control {
 
 .level-slider.arming .knob {
   border-color: var(--danger);
-}
-
-.level-slider.dragging.arming .knob,
-.level-slider.dragging.arming .fill,
-.level-slider.dragging.arming .hold {
-  transition: transform var(--t-spring) var(--spring);
 }
 
 @keyframes hold-fill {
@@ -4380,7 +4332,8 @@ body:not([data-view='control']) #control {
 .stop-name[data-said],
 .level-slider.dragging .stop-name[data-under],
 .level-slider.arming .stop-name[data-under],
-.level-slider:focus-visible .stop-name[data-on] {
+.level-slider:focus-visible .stop-name[data-on],
+.stop-name[data-hint] {
   opacity: 1;
 }
 
@@ -4392,17 +4345,6 @@ body:not([data-view='control']) #control {
   :root {
     --spring: var(--ease-out);
     --t-spring: 160ms;
-  }
-
-  .pill-switch.moving .thumb,
-  .pill-switch.pressing .thumb {
-    --sx: 1;
-    --sy: 1;
-  }
-
-  .level-slider.moving .knob,
-  .level-slider.pressing .knob {
-    --k: 1;
   }
 
   .pill-switch .pill-cell[data-said] .pill-title,

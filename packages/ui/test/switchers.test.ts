@@ -14,6 +14,13 @@ import {
   mountLevelSlider,
   mountModeSwitch,
   HOLD_MS,
+  HINT_MS,
+  HOLD_SLACK,
+  LEAD,
+  PLAIN,
+  Spring,
+  squash,
+  TRAIL,
   nearness,
   SAID_MS,
   springCurve,
@@ -418,4 +425,244 @@ test('switchers: Automatic is Apple glass where the Mac has it', async () => {
   expect(natives.at(-1)).toBe(true)
   expect(document.querySelector<HTMLOptionElement>('option[value="apple"]')!.disabled).toBe(false)
   expect(document.querySelector('#glass-look-said')!.textContent).toContain('Apple’s own glass')
+})
+
+// ---- the glide: the glass melts from one choice into the next --------------------------
+
+/** Where the page's glass is: its slide, and its stretch and squash. */
+const drawn = (el: HTMLElement): { dx: number; sx: number; sy: number } => {
+  const [, dx = '0', sx = '1', sy = '1'] = /translate\(([-\d.]+)px, 0\) scale\(([-\d.]+), ([-\d.]+)\)/.exec(el.style.transform) ?? []
+  return { dx: Number(dx), sx: Number(sx), sy: Number(sy) }
+}
+
+/** A mode switch three cells of a hundred wide, on `local`, with the frames it draws recorded. */
+const gliding = async () => {
+  vi.useFakeTimers()
+  const mode = mountModeSwitch(host(), around)
+  const group = host().querySelector<HTMLElement>('.pill-switch')!
+  group.querySelectorAll('[role="radio"]').forEach((cell, i) => sized(cell, i * 100, 100))
+  sized(group, 0, 300)
+  mode.value = 'local'
+  await vi.advanceTimersByTimeAsync(100)
+  const thumb = group.querySelector<HTMLElement>('.thumb')!
+  const record = async (ms: number) => {
+    const seen: { dx: number; sx: number; sy: number }[] = []
+    for (let t = 0; t < ms; t += 16) {
+      await vi.advanceTimersByTimeAsync(16)
+      seen.push(drawn(thumb))
+    }
+    return seen
+  }
+  return { mode, group, thumb, record }
+}
+
+test('switchers: a spring settles on its mark in its time; the lead goes a hair past, the plain slide never', () => {
+  const run = (motion: typeof LEAD) => {
+    const spring = new Spring(0)
+    spring.motion = motion
+    spring.target = 100
+    let peak = 0
+    for (let t = 0; t < motion.ms * 1.2; t += 16) {
+      spring.step(0.016)
+      peak = Math.max(peak, spring.value)
+    }
+    return { peak, end: spring.value }
+  }
+  for (const motion of [LEAD, TRAIL, PLAIN]) expect(run(motion).end).toBeCloseTo(100, 0)
+  expect(run(LEAD).peak).toBeGreaterThan(101)
+  expect(run(LEAD).peak).toBeLessThan(106)
+  expect(run(TRAIL).peak).toBeLessThan(102)
+  expect(run(PLAIN).peak).toBeLessThanOrEqual(100)
+  // The lead is the quicker of the two, which is what stretches the glass.
+  expect(LEAD.ms).toBeLessThan(TRAIL.ms)
+  // A long frame is the same curve in more steps, not a leap.
+  const slow = new Spring(0)
+  slow.target = 100
+  slow.step(0.05)
+  expect(slow.value).toBeLessThan(100)
+})
+
+test('switchers: a stretched glass narrows the other way, but only so far', () => {
+  expect(squash(1)).toBe(1)
+  expect(squash(1.1)).toBeCloseTo(1 / 1.1)
+  expect(squash(3)).toBe(0.86)
+  expect(squash(0.9)).toBeLessThanOrEqual(1.06)
+})
+
+test('switchers: the pill stretches across both choices, narrows, and gathers into the new one', async () => {
+  const { mode, group, thumb, record } = await gliding()
+  expect(drawn(thumb)).toEqual({ dx: 0, sx: 1, sy: 1 })
+  key(group, 'End')
+  expect(mode.value).toBe('cloud')
+  expect(group.classList.contains('gliding')).toBe(true)
+  const seen = await record(800)
+  const widest = seen.reduce((a, b) => (b.sx > a.sx ? b : a))
+  // Over a third wider at its widest: the front edge left before the back one did.
+  expect(widest.sx).toBeGreaterThan(1.3)
+  expect(widest.sy).toBeLessThan(1)
+  // Moving the whole way, not appearing there.
+  expect(seen.filter((one) => one.dx > 5 && one.dx < 195).length).toBeGreaterThan(4)
+  // And still, exactly on the new cell, the same size it started.
+  expect(drawn(thumb)).toEqual({ dx: 200, sx: 1, sy: 1 })
+  expect(group.classList.contains('gliding')).toBe(false)
+})
+
+test('switchers: under reduced motion the pill slides, briefly, with no stretch', async () => {
+  vi.stubGlobal('matchMedia', (query: string) => ({
+    matches: query.includes('reduce'),
+    media: query,
+    addEventListener: () => undefined,
+    removeEventListener: () => undefined,
+  }))
+  try {
+    const { group, thumb, record } = await gliding()
+    key(group, 'End')
+    const seen = await record(400)
+    expect(Math.max(...seen.map((one) => one.sx))).toBeCloseTo(1, 2)
+    expect(seen.some((one) => one.dx > 5 && one.dx < 195)).toBe(true)
+    expect(drawn(thumb).dx).toBe(200)
+  } finally {
+    vi.unstubAllGlobals()
+  }
+})
+
+test('switchers: Apple glass is stepped with the glide, stretched, one move a frame and none animated by the shell', async () => {
+  type Call = { id: string; look: { rect: number[]; durationMs: number; spring: boolean } }
+  const calls: Call[] = []
+  const tauri = globalThis as unknown as { __TAURI__?: unknown }
+  tauri.__TAURI__ = {
+    core: {
+      invoke: (command: string, args: Call) => {
+        if (command === 'glass' && args.id) calls.push(args)
+        return Promise.resolve(true)
+      },
+    },
+  }
+  try {
+    const { mode, group } = await gliding()
+    mode.native(true)
+    await vi.advanceTimersByTimeAsync(50)
+    calls.length = 0
+    key(group, 'End')
+    await vi.advanceTimersByTimeAsync(800)
+    const widths = calls.map((one) => one.look.rect[2]!)
+    // Many frames, each its own call: the shell moves it where the page says, at once.
+    expect(calls.length).toBeGreaterThan(10)
+    expect(calls.length).toBeLessThanOrEqual(800 / 16 + 1)
+    expect(calls.every((one) => one.look.durationMs === 0 && !one.look.spring)).toBe(true)
+    // Stretched on the way, a cell wide once there, and on the third cell.
+    expect(Math.max(...widths)).toBeGreaterThan(130)
+    expect(widths.at(-1)).toBeCloseTo(100, 0)
+    expect(calls.at(-1)!.look.rect[0]).toBeCloseTo(200, 0)
+    // Never squashed: the shell sizes its symbol by the first height it is sent.
+    expect(new Set(calls.map((one) => one.look.rect[3]))).toEqual(new Set([40]))
+  } finally {
+    delete tauri.__TAURI__
+  }
+})
+
+test('switchers: the knob melts along the line, and the fill and the ring go with it', async () => {
+  vi.useFakeTimers()
+  const { perm, slider } = mountLevels()
+  const track = host().querySelector<HTMLElement>('.level-track')!
+  // 300 of line between the first stop and the last: a hundred a stop.
+  sized(track, 0, 328)
+  key(slider, 'ArrowRight')
+  const knob = track.querySelector<HTMLElement>('.knob')!
+  let widest = 1
+  for (let t = 0; t < 800; t += 16) {
+    await vi.advanceTimersByTimeAsync(16)
+    widest = Math.max(widest, drawn(knob).sx)
+  }
+  expect(perm.value).toBe('watch')
+  expect(widest).toBeGreaterThan(1.5)
+  expect(drawn(knob)).toEqual({ dx: 200, sx: 1, sy: 1 })
+  expect(track.querySelector<HTMLElement>('.hold')!.style.transform).toBe('translate(200px, 0)')
+  expect(track.querySelector<HTMLElement>('.fill')!.style.transform).toBe('translateX(-33.333%)')
+})
+
+test('switchers: the switches glide on no CSS transition of their own', () => {
+  const section = css
+    .slice(css.indexOf("/* ---- the rail's switches"), css.indexOf('.more {'))
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+  // The glide moves the pill, the knob, the ring and the fill every frame; a transition on
+  // their transform would chase it a frame behind.
+  expect(section).not.toMatch(/transition:[^;]*\btransform\b/)
+  expect(section).not.toMatch(/\.moving\b|cqw/)
+})
+
+// ---- Full trust, held --------------------------------------------------------------------
+
+test('switchers: core saying again what is chosen does not end a hold being made', () => {
+  vi.useFakeTimers()
+  const { perm, slider, picked } = mountLevels()
+  sized(host().querySelector('.level-track')!, 0, 300)
+  press(slider, 290, 'pointerdown')
+  vi.advanceTimersByTime(HOLD_MS / 3)
+  // The window came to the front with this press, and read the level again.
+  perm.value = 'risky'
+  expect(slider.classList.contains('arming')).toBe(true)
+  vi.advanceTimersByTime(HOLD_MS)
+  expect(perm.value).toBe('full-trust')
+  expect(picked).toEqual(['full-trust'])
+  // Anything else from core does end it.
+  perm.value = 'risky'
+  press(slider, 290, 'pointerup')
+  vi.advanceTimersByTime(1000)
+  press(slider, 290, 'pointerdown')
+  expect(slider.classList.contains('arming')).toBe(true)
+  perm.value = 'watch'
+  expect(slider.classList.contains('arming')).toBe(false)
+})
+
+test('switchers: a finger wobbling between Watch and the triangle keeps the hold going', () => {
+  vi.useFakeTimers()
+  const { perm, slider, picked } = mountLevels()
+  // A hundred a stop, from 14 to 314.
+  sized(host().querySelector('.level-track')!, 0, 328)
+  press(slider, 214, 'pointerdown')
+  press(slider, 290, 'pointermove')
+  expect(slider.classList.contains('arming')).toBe(true)
+  // Back and forth across the halfway line, where it used to start the ring again each time.
+  for (let i = 0; i < 6; i += 1) {
+    vi.advanceTimersByTime(HOLD_MS / 8)
+    press(slider, i % 2 ? 270 : 250, 'pointermove')
+    expect(slider.classList.contains('arming')).toBe(true)
+  }
+  vi.advanceTimersByTime(HOLD_MS / 4)
+  expect(perm.value).toBe('full-trust')
+  expect(picked).toEqual(['full-trust'])
+})
+
+test('switchers: dragged clearly off the triangle, the hold ends and the knob follows the finger again', () => {
+  vi.useFakeTimers()
+  const { perm, slider } = mountLevels()
+  sized(host().querySelector('.level-track')!, 0, 328)
+  press(slider, 214, 'pointerdown')
+  press(slider, 310, 'pointermove')
+  expect(slider.classList.contains('arming')).toBe(true)
+  press(slider, 314 - (HOLD_SLACK + 0.1) * 100, 'pointermove')
+  expect(slider.classList.contains('arming')).toBe(false)
+  press(slider, 150, 'pointermove')
+  expect(Number(slider.style.getPropertyValue('--at'))).toBeCloseTo(1.36)
+  vi.advanceTimersByTime(HOLD_MS * 2)
+  expect(perm.value).toBe('risky')
+})
+
+test('switchers: a click on the triangle teaches the hold, and changes nothing', () => {
+  vi.useFakeTimers()
+  const { perm, slider, picked } = mountLevels()
+  sized(host().querySelector('.level-track')!, 0, 300)
+  press(slider, 290, 'pointerdown')
+  vi.advanceTimersByTime(80)
+  press(slider, 290, 'pointerup')
+  const name = host().querySelector<HTMLElement>('.stop-name[data-value="full-trust"]')!
+  expect(name.textContent).toBe('Hold to turn on')
+  expect(name.hasAttribute('data-hint')).toBe(true)
+  expect(css).toMatch(/\.stop-name\[data-hint\]\s*\{\s*opacity: 1;/)
+  vi.advanceTimersByTime(HINT_MS)
+  expect(name.textContent).toBe('Full trust')
+  expect(name.hasAttribute('data-hint')).toBe(false)
+  expect(perm.value).toBe('risky')
+  expect(picked).toEqual([])
 })

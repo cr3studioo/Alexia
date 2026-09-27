@@ -11,32 +11,45 @@
  * is painted with, `--ground`) inside a rounded shape, frosted and tinted like the rail it sits
  * in, with a lit rim and a highlight from the top left.
  *
- * **It only draws when something moves.** No loop runs at rest: a change of choice, a drag, a
- * resize, a scroll of the rail, the theme or the panel glass changing — each asks for frames,
- * and the frames stop when the shape stops.
+ * **Cheap per frame, because it draws every frame the glass moves.** The frost is done once,
+ * not per pixel per frame: the painting is shrunk to a quarter and softened when it loads
+ * (`frosted`), and the shader reads that small copy three times a pixel — once per colour, for
+ * the rainbow. It used to blur the full painting in the shader, sixty-three reads a pixel every
+ * frame, and the glass stuttered. Nothing is measured per frame either: where the canvas and
+ * the page sit is read when they move (`measure`), and the shape comes from the switch, which
+ * already knows it, rather than from the layout.
+ *
+ * **It only draws when asked.** The switch asks once a frame while its glass moves (the same
+ * frame it moves the rest, so the two never drift apart), and a resize, a scroll of the rail,
+ * the theme or the panel glass changing ask once each. No loop runs at rest.
  *
  * When WebGL is not there, `mountLens` answers `undefined` and the caller keeps CSS frosted
- * glass instead (`.no-gl` in app.css). On a Mac with macOS 26 the switchers do not use this
- * at all: Apple draws the glass itself (`desktop.ts`, `glass`).
+ * glass instead (`.no-gl` in app.css). On a Mac with macOS 26 the switchers can use Apple's
+ * glass instead (`desktop.ts`, `glass`).
  *
  * No Node in here, ever (invariant 6).
  */
 
-/** How the glass looks. `blur` is the frost in CSS pixels; `mix` how much panel colour tints it. */
+/** How the glass looks. `mix` is how much panel colour tints it. */
 export interface LensLook {
-  blur: number
   mix: number
   /** Pressed glass magnifies a little more — the swell under a finger. */
   pressed: () => boolean
 }
 
+/** A box in CSS pixels, from the top left of the lens's host. */
+export interface Box {
+  left: number
+  top: number
+  width: number
+  height: number
+}
+
 export interface Lens {
-  /** One frame, now. */
-  draw: () => void
-  /** Keep drawing for this long — the length of a spring. */
-  run: (ms: number) => void
-  /** Keep drawing until released: a drag, whose end nobody knows in advance. */
-  hold: (on: boolean) => void
+  /** One frame, now, of the shape where the switch says it is. `motion` 0–1 widens the rainbow. */
+  draw: (motion?: number) => void
+  /** Read again where the host sits on the page: it moved, or was laid out for the first time. */
+  measure: () => void
   /** Take the canvas out and stop listening. */
   remove: () => void
 }
@@ -45,7 +58,8 @@ const VERT = 'attribute vec2 p; void main(){ gl_Position = vec4(p, 0., 1.); }'
 
 /**
  * The glass itself. `S` is the shape in canvas pixels, `O` where the canvas sits on the
- * painting, `C` where the painting sits (its `cover` placement), `Pn` the panel's colour.
+ * painting, `C` where the painting sits (its `cover` placement), `Pn` the panel's colour. `T`
+ * is the painting already frosted (`frosted`), so one read is one frosted sample.
  *
  * A bevel only at the rim, shaped like a squircle: flat in the middle, steep at the edge. The
  * sample point is pulled outward along the rim's normal by the bevel, which is the bend. The
@@ -55,17 +69,10 @@ const VERT = 'attribute vec2 p; void main(){ gl_Position = vec4(p, 0., 1.); }'
 const FRAG = `
 precision mediump float;
 uniform sampler2D T; uniform vec2 R; uniform vec4 S; uniform float Rad; uniform vec2 O;
-uniform vec4 C; uniform vec4 Pn; uniform float B; uniform float Mag; uniform float Dk;
+uniform vec4 C; uniform vec4 Pn; uniform float Mag; uniform float Dk;
 uniform float Mix; uniform float Mv;
 float sdf(vec2 p, vec2 b, float r){ vec2 q = abs(p) - b + r; return length(max(q, 0.)) + min(max(q.x, q.y), 0.) - r; }
-vec3 frost(vec2 sp){
-  vec3 acc = texture2D(T, (sp - C.xy) / C.zw).rgb; float n = 1.;
-  for (int i = 0; i < 10; i++) { float a = float(i) * 0.6283;
-    vec2 o = vec2(cos(a), sin(a));
-    acc += texture2D(T, (sp + o * B - C.xy) / C.zw).rgb;
-    acc += texture2D(T, (sp + o * B * 0.45 - C.xy) / C.zw).rgb; n += 2.; }
-  return acc / n;
-}
+vec3 frost(vec2 sp){ return texture2D(T, (sp - C.xy) / C.zw).rgb; }
 void main(){
   vec2 px = vec2(gl_FragCoord.x, R.y - gl_FragCoord.y);
   vec2 hb = S.zw * 0.5; vec2 c = S.xy + hb; vec2 l = px - c;
@@ -117,6 +124,66 @@ const painting = (src: string): Promise<HTMLImageElement> => {
 }
 
 /**
+ * Softens RGBA pixels in place: each one averaged with its neighbours, three across and then
+ * three down, the edges repeating. On the quarter-size painting that is about the frost the
+ * shader used to work out per pixel — a glass that lets the colours of the painting through
+ * as a soft wave, without its detail.
+ */
+export function soften(data: Uint8ClampedArray, width: number, height: number): void {
+  const copy = new Float32Array(data.length)
+  const pass = (from: ArrayLike<number>, to: { [i: number]: number }, across: boolean): void => {
+    for (let y = 0; y < height; y += 1) {
+      for (let x = 0; x < width; x += 1) {
+        const at = (y * width + x) * 4
+        const before = across ? (y * width + Math.max(0, x - 1)) * 4 : (Math.max(0, y - 1) * width + x) * 4
+        const after = across ? (y * width + Math.min(width - 1, x + 1)) * 4 : (Math.min(height - 1, y + 1) * width + x) * 4
+        for (let c = 0; c < 4; c += 1) to[at + c] = (from[before + c]! + from[at + c]! + from[after + c]!) / 3
+      }
+    }
+  }
+  pass(data, copy, true)
+  pass(copy, data, false)
+}
+
+/** The painting frosted once, at a quarter of its size, for every lens on the page. */
+const frosts = new Map<string, Promise<HTMLCanvasElement | undefined>>()
+
+const frosted = (src: string): Promise<HTMLCanvasElement | undefined> => {
+  let known = frosts.get(src)
+  if (!known) {
+    known = painting(src).then((img) => {
+      let from: CanvasImageSource = img
+      let width = img.naturalWidth || img.width
+      let height = img.naturalHeight || img.height
+      let small: HTMLCanvasElement | undefined
+      // Halved twice rather than quartered at once: each halving averages every pixel it
+      // drops, where one big step would skip three in four and shimmer as the glass moves.
+      for (let i = 0; i < 2; i += 1) {
+        width = Math.max(1, Math.round(width / 2))
+        height = Math.max(1, Math.round(height / 2))
+        small = document.createElement('canvas')
+        small.width = width
+        small.height = height
+        const pen = small.getContext('2d')
+        if (!pen) return undefined
+        pen.imageSmoothingEnabled = true
+        pen.imageSmoothingQuality = 'high'
+        pen.drawImage(from, 0, 0, width, height)
+        from = small
+      }
+      const pen = small?.getContext('2d')
+      if (!small || !pen) return undefined
+      const pixels = pen.getImageData(0, 0, width, height)
+      soften(pixels.data, width, height)
+      pen.putImageData(pixels, 0, 0)
+      return small
+    })
+    frosts.set(src, known)
+  }
+  return known
+}
+
+/**
  * Which file the body is painted with, read off `--ground` rather than written down again:
  * `url('/theme-dark.webp')` in the sheet, and the browser may hand it back quoted or not.
  */
@@ -159,11 +226,11 @@ const dark = (): boolean => {
 }
 
 /**
- * A lens over `host`: a canvas filling it, drawing the glass wherever `shape` says (a box in
- * viewport pixels, re-read every frame so a CSS transition or a drag is followed exactly).
- * `undefined` when WebGL is not there or the program will not build.
+ * A lens over `host`: a canvas filling it, drawing the glass wherever `shape` says — a box from
+ * the host's top left, which the switch keeps as it moves its glass, so nothing is read off the
+ * layout per frame. `undefined` when WebGL is not there or the program will not build.
  */
-export function mountLens(host: HTMLElement, shape: () => DOMRect | undefined, look: LensLook): Lens | undefined {
+export function mountLens(host: HTMLElement, shape: () => Box | undefined, look: LensLook): Lens | undefined {
   const canvas = document.createElement('canvas')
   canvas.className = 'lens'
   canvas.setAttribute('aria-hidden', 'true')
@@ -193,129 +260,110 @@ export function mountLens(host: HTMLElement, shape: () => DOMRect | undefined, l
   const at = (name: string): WebGLUniformLocation | null => gl.getUniformLocation(program, name)
   const U = {
     T: at('T'), R: at('R'), S: at('S'), Rad: at('Rad'), O: at('O'), C: at('C'), Pn: at('Pn'),
-    B: at('B'), Mag: at('Mag'), Dk: at('Dk'), Mix: at('Mix'), Mv: at('Mv'),
+    Mag: at('Mag'), Dk: at('Dk'), Mix: at('Mix'), Mv: at('Mv'),
   }
   gl.bindTexture(gl.TEXTURE_2D, gl.createTexture())
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
+  gl.uniform1i(U.T, 0)
   host.prepend(canvas)
 
-  let image: HTMLImageElement | undefined
+  /** The painting's own size, for its `cover` placement; the texture is the frosted copy. */
+  let image: { width: number; height: number } | undefined
   let loaded = ''
   let panel: [number, number, number, number] = [0, 0, 0, 0]
+  let isDark = false
+  // Where things sit, read by `measure` when they move and not per frame.
+  let own = { left: 0, top: 0, width: 0, height: 0 }
+  let cover = { left: 0, top: 0, width: 0, height: 0 }
+  let dpr = 1
+
+  const measure = (): void => {
+    const box = canvas.getBoundingClientRect()
+    const ground = document.documentElement.getBoundingClientRect()
+    // Two is all a Retina screen has; a bigger ratio (a zoomed page) only multiplies the work.
+    dpr = Math.min(devicePixelRatio || 1, 2)
+    own = { left: box.left - ground.left, top: box.top - ground.top, width: box.width, height: box.height }
+    // The painting covers the whole window, the way the body is painted (`center / cover`),
+    // so the glass shows the very part of it that is behind the rail at this spot.
+    if (image) cover = coverBox({ width: ground.width, height: innerHeight }, image)
+    const width = Math.round(own.width * dpr)
+    const height = Math.round(own.height * dpr)
+    if (width > 0 && height > 0 && (canvas.width !== width || canvas.height !== height)) {
+      canvas.width = width
+      canvas.height = height
+    }
+  }
+
   /** Reads the theme's painting and the rail's colour again: a theme or a glass change. */
   const refresh = (): void => {
     const root = getComputedStyle(document.documentElement)
     const surface = host.closest<HTMLElement>('.panel') ?? document.body
     panel = rgba(getComputedStyle(surface).backgroundColor)
+    isDark = dark()
     const src = groundUrl(root.getPropertyValue('--ground'))
     if (!src || src === loaded) {
+      measure()
       draw()
       return
     }
     loaded = src
-    void painting(src).then(
-      (one) => {
-        if (loaded !== src) return
-        image = one
-        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, one)
+    void Promise.all([painting(src), frosted(src)]).then(
+      ([one, frost]) => {
+        if (loaded !== src || !frost) return
+        image = { width: one.naturalWidth || one.width, height: one.naturalHeight || one.height }
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, frost)
+        measure()
         draw()
       },
       () => undefined,
     )
   }
 
-  /** How fast the shape is going, smoothed, 0–1: the rainbow at the rim follows it. */
-  let motion = 0
-  let lastX: number | undefined
-
-  const draw = (): void => {
+  const draw = (motion = 0): void => {
     const box = shape()
-    if (!image || !box || document.hidden) {
-      // Nothing to draw (Apple's glass in use, the painting not in yet): nothing is moving
-      // either. Left as it was, a speed from the last move kept the frames going for ever.
-      motion = 0
-      lastX = undefined
-      return
-    }
-    // Two is all a Retina screen has; a bigger ratio (a zoomed page) only multiplies the work.
-    const dpr = Math.min(devicePixelRatio || 1, 2)
-    const own = canvas.getBoundingClientRect()
-    const width = Math.round(own.width * dpr)
-    const height = Math.round(own.height * dpr)
-    if (width === 0 || height === 0) return
-    if (canvas.width !== width || canvas.height !== height) {
-      canvas.width = width
-      canvas.height = height
-    }
+    if (!image || !box || document.hidden || canvas.width === 0 || canvas.height === 0) return
+    const { width, height } = canvas
     gl.viewport(0, 0, width, height)
-    // The painting covers the whole window, the way the body is painted (`center / cover`),
-    // so the glass shows the very part of it that is behind the rail at this spot.
-    const ground = document.documentElement.getBoundingClientRect()
-    const cover = coverBox({ width: ground.width, height: innerHeight }, image)
-    const speed = lastX === undefined ? 0 : Math.abs(box.left - lastX)
-    lastX = box.left
-    motion = Math.min(1, motion * 0.8 + speed * 0.06)
-    gl.uniform1i(U.T, 0)
     gl.uniform2f(U.R, width, height)
-    gl.uniform4f(U.S, (box.left - own.left) * dpr, (box.top - own.top) * dpr, box.width * dpr, box.height * dpr)
+    gl.uniform4f(U.S, box.left * dpr, box.top * dpr, box.width * dpr, box.height * dpr)
     gl.uniform1f(U.Rad, (Math.min(box.width, box.height) / 2) * dpr)
-    gl.uniform2f(U.O, (own.left - ground.left) * dpr, (own.top - ground.top) * dpr)
+    gl.uniform2f(U.O, own.left * dpr, own.top * dpr)
     gl.uniform4f(U.C, cover.left * dpr, cover.top * dpr, cover.width * dpr, cover.height * dpr)
     gl.uniform4f(U.Pn, ...panel)
-    gl.uniform1f(U.B, look.blur * dpr)
     gl.uniform1f(U.Mix, look.mix)
     gl.uniform1f(U.Mag, look.pressed() ? 0.84 : 0.9)
-    gl.uniform1f(U.Dk, dark() ? 1 : 0)
-    gl.uniform1f(U.Mv, motion)
+    gl.uniform1f(U.Dk, isDark ? 1 : 0)
+    gl.uniform1f(U.Mv, Math.max(0, Math.min(1, motion)))
     gl.clearColor(0, 0, 0, 0)
     gl.clear(gl.COLOR_BUFFER_BIT)
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4)
   }
 
-  // Frames while something moves, and none at rest.
-  let until = 0
-  let held = false
-  let frame: number | undefined
-  const tick = (): void => {
-    frame = undefined
+  const moved = (): void => {
+    measure()
     draw()
-    if (held || performance.now() < until || motion > 0.02) frame = requestAnimationFrame(tick)
-    else lastX = undefined
   }
-  const wake = (): void => {
-    frame ??= requestAnimationFrame(tick)
-  }
-
-  const redraw = (): void => draw()
   const scheme = matchMedia('(prefers-color-scheme: dark)')
   // The theme lives on the root's `data-theme`; the panel glass on its `style` (theme.ts).
   const watch = new MutationObserver(refresh)
   watch.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'style'] })
   scheme.addEventListener('change', refresh)
-  addEventListener('resize', redraw)
+  addEventListener('resize', moved)
   // The rail scrolls, and the canvas with it, over a painting that stays put.
-  document.addEventListener('scroll', redraw, { capture: true, passive: true })
+  document.addEventListener('scroll', moved, { capture: true, passive: true })
   refresh()
 
   return {
     draw,
-    run: (ms) => {
-      until = Math.max(until, performance.now() + ms)
-      wake()
-    },
-    hold: (on) => {
-      held = on
-      if (on) wake()
-    },
+    measure,
     remove: () => {
-      if (frame !== undefined) cancelAnimationFrame(frame)
       watch.disconnect()
       scheme.removeEventListener('change', refresh)
-      removeEventListener('resize', redraw)
-      document.removeEventListener('scroll', redraw, { capture: true })
+      removeEventListener('resize', moved)
+      document.removeEventListener('scroll', moved, { capture: true })
       canvas.remove()
     },
   }

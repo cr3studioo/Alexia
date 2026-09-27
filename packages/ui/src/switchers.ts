@@ -16,10 +16,17 @@
  * springs to the nearest stop. Each time the choice lands somewhere new the trackpad clicks
  * (`haptic`, a no-op away from a Mac).
  *
- * **Smooth means one moving thing per glass.** The pill and the knob move on `transform` only,
- * on one spring transition; nothing that moves animates `left` or `width` (layout, every
- * frame). JavaScript sets `--at` per frame only while a finger drags, Alexia's lens draws only
- * while Apple's glass is not in use, and Apple's glass is sent at most one move a frame.
+ * **The glass melts from one choice to the next** (`glide`). Its two edges are on two springs:
+ * the one in front leaves quickly and goes a hair past the mark, the one behind follows on
+ * Expo's slower spring. So the glass stretches to span both choices, squashed a little the
+ * other way like a drop, and gathers itself into the new one. Under reduced motion both edges
+ * move together, briefly, with no stretch.
+ *
+ * **One clock for everything that moves.** The glide steps once a frame and in that frame puts
+ * the page's glass (`transform` only — nothing here animates `left` or `width`), the icons'
+ * nearness, the line's fill, Alexia's lens and Apple's glass all in the same place. They used
+ * to move on their own: a CSS transition on the compositor, a lens reading the layout behind
+ * it a frame late, and Apple's glass animating itself, cut short whenever the page moved.
  *
  * **Two kinds of glass.** Alexia's own (`lens.ts`, WebGL bending the painting, and CSS frost if
  * that fails), or Apple's own on macOS 26 — the shell lays a real Liquid Glass exactly over the
@@ -97,6 +104,153 @@ export const isGlassLook = (value: unknown): value is GlassLook => GLASS_LOOKS.i
 
 /** Apple's glass when it is asked for (or automatic) and this Mac can draw it; ours otherwise. */
 export const useApple = (look: GlassLook, supported: boolean): boolean => supported && look !== 'alexia'
+
+// ---- the glide ------------------------------------------------------------------------
+
+/** How a spring moves: `ms` until it is still, at damping `ratio` (below 1 goes past a little). */
+export interface Motion {
+  ms: number
+  ratio: number
+}
+
+/** The edge in front: quick, and a little past the mark. */
+export const LEAD: Motion = { ms: 300, ratio: 0.72 }
+/** The edge behind: Expo's glass tabs. */
+export const TRAIL: Motion = { ms: SPRING_MS, ratio: SPRING_RATIO }
+/** Reduced motion: a short slide, both edges together, nothing past the mark. */
+export const PLAIN: Motion = { ms: 160, ratio: 1 }
+/** The swell under a press. */
+const SWELL: Motion = { ms: 200, ratio: 1 }
+
+/** One damped spring, stepped by the frame. The same sum as `springCurve`, one step at a time. */
+export class Spring {
+  value: number
+  target: number
+  velocity = 0
+  motion: Motion = TRAIL
+  constructor(value = 0) {
+    this.value = value
+    this.target = value
+  }
+  step(seconds: number): void {
+    const { ms, ratio } = this.motion
+    const omega = Math.log(1000) / (ratio * (ms / 1000))
+    // Small fixed steps, so a slow frame is the same curve and never a spring that flies off.
+    for (let left = seconds; left > 1e-9; left -= 1 / 240) {
+      const h = Math.min(left, 1 / 240)
+      this.velocity += (-omega * omega * (this.value - this.target) - 2 * ratio * omega * this.velocity) * h
+      this.value += this.velocity * h
+    }
+  }
+  get still(): boolean {
+    return Math.abs(this.value - this.target) < 0.05 && Math.abs(this.velocity) < 3
+  }
+  settle(): void {
+    this.value = this.target
+    this.velocity = 0
+  }
+}
+
+/** How far a stretched glass narrows the other way, so it reads as a drop rather than a bar. */
+export const squash = (sx: number): number => Math.min(1.06, Math.max(0.86, 1 / sx))
+
+/** The glass this frame: its two edges and its swell, from the host's left, and its speed. */
+export interface Frame {
+  left: number
+  right: number
+  swell: number
+  /** CSS pixels a second, for the rainbow at the rim. */
+  speed: number
+}
+
+interface Glide {
+  /** Edges to `left` and `right`: on the springs, or at once (a finger dragging, a first place). */
+  to: (left: number, right: number, how: 'spring' | 'now') => void
+  swell: (scale: number) => void
+  /** Draw where it is, now: the page moved under it, or the glass changed. */
+  redraw: () => void
+}
+
+/**
+ * The glass's motion, and the one frame loop that draws it. Which edge leads is worked out per
+ * move, from which way it goes. `root` carries `.gliding` while it springs, which takes the
+ * CSS transitions off everything the frame already moves.
+ */
+function glide(root: HTMLElement, paint: (frame: Frame) => void): Glide {
+  const lo = new Spring()
+  const hi = new Spring()
+  const size = new Spring(1)
+  size.motion = SWELL
+  let frame: number | undefined
+  let clock = 0
+  let jumped = false
+  let placed = false
+  let drawn = { at: 0, center: Number.NaN }
+  const draw = (time: number, speed: number): void => {
+    drawn = { at: time, center: (lo.value + hi.value) / 2 }
+    paint({ left: lo.value, right: hi.value, swell: size.value, speed })
+  }
+  const tick = (time: number): void => {
+    frame = undefined
+    const seconds = Math.min(0.05, Math.max(0, (time - clock) / 1000))
+    clock = time
+    for (const one of [lo, hi, size]) one.step(seconds)
+    const still = lo.still && hi.still && size.still
+    if (still) for (const one of [lo, hi, size]) one.settle()
+    const since = Math.max(1 / 240, Math.min(0.05, (time - drawn.at) / 1000))
+    const moved = Math.abs((lo.value + hi.value) / 2 - drawn.center)
+    // A frame where nothing moved is drawn with no speed, so the rainbow never stays on at rest.
+    draw(time, Number.isNaN(moved) ? 0 : moved / since)
+    const again = !still || jumped
+    jumped = false
+    if (again) frame = requestAnimationFrame(tick)
+    else root.classList.remove('gliding')
+  }
+  const wake = (): void => {
+    if (frame !== undefined) return
+    clock = performance.now()
+    frame = requestAnimationFrame(tick)
+  }
+  return {
+    to: (left, right, how) => {
+      lo.target = left
+      hi.target = right
+      if (how === 'now' || !placed) {
+        // Nothing to glide from before the switch has a size: it appears where it belongs.
+        placed = right > left
+        lo.settle()
+        hi.settle()
+        jumped = true
+        wake()
+        return
+      }
+      const quiet = reduced()
+      const ahead = (left + right) / 2 >= (lo.value + hi.value) / 2 ? hi : lo
+      ahead.motion = quiet ? PLAIN : LEAD
+      ;(ahead === hi ? lo : hi).motion = quiet ? PLAIN : TRAIL
+      if (!lo.still || !hi.still || lo.value !== left || hi.value !== right) root.classList.add('gliding')
+      wake()
+    },
+    swell: (scale) => {
+      const to = reduced() ? 1 : scale
+      if (size.target === to) return
+      size.target = to
+      wake()
+    },
+    redraw: () => draw(performance.now(), 0),
+  }
+}
+
+/**
+ * Apple's glass for one frame of the glide: stretched with it, but neither squashed nor
+ * swollen. The shell draws the symbol once, at the height it is first sent with (`glass.rs`),
+ * so a symbol first sent mid-squash would stay small. In the window's pixels.
+ */
+const appleBox = (host: { left: number; top: number }, left: number, right: number, top: number, height: number) =>
+  (): Box => ({ left: host.left + left, top: host.top + top, width: right - left, height })
+
+/** A number for a style, short: `transform` is written every frame. */
+const n3 = (value: number): string => String(Math.round(value * 1000) / 1000)
 
 // ---- the icons ------------------------------------------------------------------------
 
@@ -203,8 +357,8 @@ interface Driven {
    * `via` is what asked: a key, or a pointer being let go.
    */
   guard?: (index: number, via: 'key' | 'pointer') => boolean
-  /** The stop under a pressed pointer, as it changes, and `undefined` once it is let go. */
-  arm?: (index: number | undefined) => void
+  /** Where a pressed pointer is, as a fraction of stops, on every move; `undefined` once let go. */
+  arm?: (x: number | undefined) => void
   /** A person chose `index`. */
   pick: (index: number) => void
 }
@@ -239,22 +393,10 @@ function drive(d: Driven): Driving {
   /** When a pointer was last let go, so the click that follows it is not a second choice. */
   let released = -Infinity
 
-  // The stretch as it sets off (app.css, `.moving`): a short-lived class on `scale`, a property
-  // of its own, so it never restarts the glide on `transform`. It used to be a keyframe
-  // animation restarted by forcing a layout (`offsetWidth`) on every move, and it fought the
-  // press's own `scale` for the same property.
-  let stretching: ReturnType<typeof setTimeout> | undefined
-  const stretch = (): void => {
-    if (reduced()) return
-    root.classList.add('moving')
-    clearTimeout(stretching)
-    stretching = setTimeout(() => root.classList.remove('moving'), 180)
-  }
   const commit = (index: number, feel: Feel): void => {
     at = index
     d.show(at, false)
     d.land(at, true)
-    stretch()
     if (feel !== 'none') haptic(feel)
     d.pick(at)
   }
@@ -289,7 +431,7 @@ function drive(d: Driven): Driving {
     }
     root.classList.add('pressing')
     d.show(at, false)
-    d.arm?.(Math.round(x(event)))
+    d.arm?.(x(event))
   })
   root.addEventListener('pointermove', (event) => {
     if (press?.id !== event.pointerId) return
@@ -302,8 +444,8 @@ function drive(d: Driven): Driving {
     if (stop !== near) {
       near = stop
       haptic('alignment')
-      d.arm?.(stop)
     }
+    d.arm?.(here)
   })
   root.addEventListener('pointerup', (event) => {
     if (press?.id !== event.pointerId) return
@@ -359,8 +501,10 @@ export const inside = (box: Box, clip: Box): boolean =>
   box.top + box.height <= clip.top + clip.height + 1
 
 /**
- * One of Apple's glasses, for one switch. `lay` puts it over `box`; a spring when the choice
- * changed, at once while a finger drags. It hides whenever it could not be where it belongs.
+ * One of Apple's glasses, for one switch. `lay` puts it over `box`. The switches lay it at once,
+ * every frame their glide moves (`glide`), so Apple's glass melts along the same curve as the
+ * page's rather than on an animation of the shell's own — which the next move of the page cut
+ * short, and which could not stretch. It hides whenever it could not be where it belongs.
  * A shell that answers *no* while it should be showing means this Mac cannot after all, and
  * `failed` hands the switch back to Alexia's own glass.
  *
@@ -517,43 +661,66 @@ export function mountModeSwitch(host: HTMLElement, around: Around): Switcher {
   const buttons = [...seg.querySelectorAll<HTMLButtonElement>('button')]
   const say = sayer()
 
-  const lens = mountLens(seg, () => (seg.classList.contains('native') ? undefined : thumb.getBoundingClientRect()), {
-    blur: 5,
+  /** The pill as drawn this frame, from the track's top left: what the lens bends. */
+  let shape: Box | undefined
+  const lens = mountLens(seg, () => (seg.classList.contains('native') ? undefined : shape), {
     mix: 0.18,
     pressed: () => seg.classList.contains('pressing'),
   })
   if (!lens) seg.classList.add('no-gl')
 
-  /** Where the pill is at stop `x`: one cell, slid along by whole cells. */
-  const boxAt = (x: number): Box => {
+  /**
+   * Where the cells are, read when a move starts or the page moves — never per frame. The pill
+   * is one cell wide and slides by whole cells; `host` is where the track is in the window.
+   */
+  let geo = { host: { left: 0, top: 0 }, left: 0, top: 0, width: 0, height: 0, step: 0 }
+  const measure = (): void => {
+    const box = seg.getBoundingClientRect()
     const first = buttons[0]!.getBoundingClientRect()
     const step = buttons.length > 1 ? buttons[1]!.getBoundingClientRect().left - first.left : 0
-    return { left: first.left + x * step, top: first.top, width: first.width, height: first.height }
+    geo = { host: { left: box.left, top: box.top }, left: first.left - box.left, top: first.top - box.top, width: first.width, height: first.height, step }
+    lens?.measure()
   }
   let shown = 0
   // Built last, once everything it reads exists; the glass and the drive reach it through here.
   const self: { switcher?: Switch } = {}
   const apple = appleGlass('mode-pill', seg, around, 'clear', () => self.switcher?.native(false))
 
-  /** Apple's glass over stop `x`, measured when its frame comes round, with the symbol under it. */
-  const layApple = (x: number, how: 'spring' | 'now'): void =>
-    apple.lay(() => boxAt(x), MODES[Math.round(x)]!.symbol, how)
+  let under = -1
+  const paint = (frame: Frame): void => {
+    if (geo.width <= 0) return
+    const home = geo.left + geo.width / 2
+    const center = (frame.left + frame.right) / 2
+    const sx = (frame.right - frame.left) / geo.width
+    const sy = squash(sx)
+    thumb.style.transform = `translate(${n3(center - home)}px, 0) scale(${n3(sx * frame.swell)}, ${n3(sy * frame.swell)})`
+    const width = (frame.right - frame.left) * frame.swell
+    const height = geo.height * sy * frame.swell
+    shape = { left: center - width / 2, top: geo.top + (geo.height - height) / 2, width, height }
+    // The icons light by how near the glass is, frame by frame, as Expo's tabs do.
+    const x = geo.step > 0 ? (center - home) / geo.step : 0
+    buttons.forEach((button, i) => button.style.setProperty('--near', n3(nearness(i, x))))
+    const now = clamp(Math.round(x), buttons.length)
+    if (now !== under) {
+      under = now
+      buttons.forEach((button, i) => button.toggleAttribute('data-under', i === now))
+    }
+    // One glass at a time: Apple's, stepped with this frame, or Alexia's own lens.
+    if (apple.on) apple.lay(appleBox(geo.host, frame.left, frame.right, geo.top, geo.height), MODES[now]!.symbol, 'now')
+    else lens?.draw(frame.speed / 1500 + (sx - 1))
+  }
+  const glass = glide(seg, paint)
 
   const show = (x: number, dragging: boolean): void => {
+    measure()
     shown = x
     seg.style.setProperty('--at', String(x))
-    const under = Math.round(x)
-    buttons.forEach((button, i) => {
-      button.style.setProperty('--near', String(nearness(i, x)))
-      button.toggleAttribute('data-under', i === under)
-    })
-    // One glass moves at a time: Alexia's own draws only while Apple's is not in use.
-    if (lens && !apple.on) {
-      lens.hold(dragging)
-      if (!dragging) lens.run(SPRING_MS + 120)
-    }
-    layApple(x, dragging ? 'now' : 'spring')
+    const left = geo.left + x * geo.step
+    glass.swell(seg.classList.contains('pressing') ? 1.04 : 1)
+    glass.to(left, left + geo.width, dragging ? 'now' : 'spring')
   }
+  // The rail laid out anew — shown for the first time, or resized: the pill goes where it now belongs.
+  if (typeof ResizeObserver === 'function') new ResizeObserver(() => show(shown, true)).observe(seg)
   const land = (index: number, moved: boolean): void => {
     buttons.forEach((button, i) => {
       button.setAttribute('aria-checked', String(i === index))
@@ -590,12 +757,12 @@ export function mountModeSwitch(host: HTMLElement, around: Around): Switcher {
     native: (on) => {
       apple.on = on
       seg.classList.toggle('native', on)
-      if (on) layApple(shown, 'now')
-      else lens?.draw()
+      measure()
+      glass.redraw()
     },
     place: () => {
-      if (apple.on) layApple(shown, 'now')
-      else lens?.draw()
+      measure()
+      glass.redraw()
     },
   }))
   driving.set(1)
@@ -626,6 +793,12 @@ const KNOB = 28
 /** How long Full trust is held before it is on: the ring round the knob takes this to close. */
 export const HOLD_MS = 900
 
+/** How long *Hold to turn on* stays under the triangle after a press let go too soon. */
+export const HINT_MS = 2500
+
+/** Once armed, how far a finger drifts back off the triangle, in stops, before the hold ends. */
+export const HOLD_SLACK = 0.75
+
 /**
  * *What she may do*: four stops on a line from careful to free, an icon over each, a glass
  * knob on the chosen one, and the line filling towards it — warmer the freer it gets. A stop's
@@ -639,6 +812,14 @@ export const HOLD_MS = 900
  * closed ring turns it on, with the trackpad's firmer click; letting go sooner springs the knob
  * back to where it was, and nothing changed. No question, no buttons, and nothing to answer
  * later. Not `confirm()` either, which stops the whole window.
+ *
+ * **A click has to teach the hold.** Let go early and the ring shows how far it got as it winds
+ * back, and the name under the triangle says *Hold to turn on* for a moment (`HINT_MS`). A hold
+ * once started is forgiving: a finger drifting towards Watch does not end it until it is
+ * clearly on another stop, and core repeating the level that is still chosen (the window
+ * coming to the front reads it again) does not end it either. It used to do both — a hold was
+ * cancelled by the very click that brought the window forward, and restarted from nothing by
+ * a finger wobbling on the line halfway between two stops.
  */
 export function mountLevelSlider(host: HTMLElement, around: Around): LevelSwitcher {
   const labelled = host.getAttribute('aria-labelledby') ?? ''
@@ -649,7 +830,7 @@ export function mountLevelSlider(host: HTMLElement, around: Around): LevelSwitch
     '<div class="level-stops" aria-hidden="true"></div>' +
     '<div class="level-track" aria-hidden="true"><span class="bar"><span class="fill"></span></span>' +
     '<span class="dots"></span><span class="knob"></span>' +
-    '<svg class="hold" viewBox="0 0 36 36"><circle cx="18" cy="18" r="16.5" pathLength="100"/></svg></div>' +
+    '<svg class="hold" viewBox="0 0 40 40"><circle cx="20" cy="20" r="18.5" pathLength="100"/></svg></div>' +
     '<div class="level-names" aria-hidden="true"></div></div>' +
     `<span class="visually-hidden" id="${hint}">Hold to turn on full trust.</span>`
   const slider = host.querySelector<HTMLElement>('.level-slider')!
@@ -668,54 +849,83 @@ export function mountLevelSlider(host: HTMLElement, around: Around): LevelSwitch
   // Built last, once everything it reads exists; the glass and the drive reach it through here.
   const self: { switcher?: Switch } = {}
 
-  const lens = mountLens(track, () => (slider.classList.contains('native') ? undefined : knob.getBoundingClientRect()), {
-    blur: 4,
+  const fill = track.querySelector<HTMLElement>('.fill')!
+  const ring = track.querySelector<SVGSVGElement>('.hold')!
+
+  /** The knob as drawn this frame, from the line's top left: what the lens bends. */
+  let shape: Box | undefined
+  const lens = mountLens(track, () => (slider.classList.contains('native') ? undefined : shape), {
     mix: 0.15,
     pressed: () => slider.classList.contains('pressing'),
   })
   if (!lens) slider.classList.add('no-gl')
 
-  const boxAt = (x: number): Box => {
+  /** Where the line is, read when a move starts or the page moves — never per frame. */
+  let geo = { host: { left: 0, top: 0 }, span: 0 }
+  const measure = (): void => {
     const row = track.getBoundingClientRect()
-    const span = list.length > 1 ? (row.width - KNOB) / (list.length - 1) : 0
-    return { left: row.left + x * span, top: row.top + (row.height - KNOB) / 2, width: KNOB, height: KNOB }
+    geo = { host: { left: row.left, top: row.top }, span: list.length > 1 ? (row.width - KNOB) / (list.length - 1) : 0 }
+    lens?.measure()
   }
   const iconOf = (value: string | undefined): { icon: string; symbol: string } =>
     (value !== undefined && LEVEL_ICONS[value]) || UNKNOWN_LEVEL
+  /** Apple's glass leans red on the triangle. The colour is read once, not every frame. */
+  let danger: Glass['tint']
   const tint = (value: string | undefined): Glass['tint'] => {
     if (value !== 'full-trust') return undefined
+    if (danger) return danger
     const [r, g, b] = rgba(getComputedStyle(slider).getPropertyValue('--danger').trim() || 'red').map((n) => Math.round(n * 255))
-    return `rgba(${String(r)}, ${String(g)}, ${String(b)}, 0.45)`
+    return (danger = `rgba(${String(r)}, ${String(g)}, ${String(b)}, 0.45)`)
   }
   const apple = appleGlass('perm-knob', slider, around, 'regular', () => self.switcher?.native(false))
-  const layApple = (x: number, how: 'spring' | 'now'): void => {
-    const value = list[Math.round(x)]?.value
-    if (list.length > 0) apple.lay(() => boxAt(x), iconOf(value).symbol, how, tint(value))
-  }
 
-  /** Full trust being held to: at which stop, by what, and the ring's end. */
-  let arming: { index: number; via: 'key' | 'pointer'; timer: ReturnType<typeof setTimeout> } | undefined
+  /** Full trust being held to: at which stop, by what, since when, and the ring's end. */
+  let arming: { index: number; via: 'key' | 'pointer'; since: number; timer: ReturnType<typeof setTimeout> } | undefined
   const isTrust = (index: number): boolean => list[index]?.value === 'full-trust'
+
+  let under = -1
+  const paint = (frame: Frame): void => {
+    if (list.length === 0) return
+    const center = (frame.left + frame.right) / 2
+    const sx = (frame.right - frame.left) / KNOB
+    const sy = squash(sx)
+    const dx = center - KNOB / 2
+    knob.style.transform = `translate(${n3(dx)}px, 0) scale(${n3(sx * frame.swell)}, ${n3(sy * frame.swell)})`
+    ring.style.transform = `translate(${n3(dx)}px, 0)`
+    const x = geo.span > 0 ? dx / geo.span : 0
+    fill.style.transform = `translateX(${n3((x / Math.max(1, list.length - 1) - 1) * 100)}%)`
+    const width = (frame.right - frame.left) * frame.swell
+    const height = KNOB * sy * frame.swell
+    // The knob sits a pixel down the line (app.css), its middle on the line's.
+    shape = { left: center - width / 2, top: 1 + (KNOB - height) / 2, width, height }
+    icons.forEach((icon, i) => icon.style.setProperty('--near', n3(nearness(i, x))))
+    const now = clamp(Math.round(x), list.length)
+    if (now !== under) {
+      under = now
+      names.forEach((one, i) => one.toggleAttribute('data-under', i === now))
+    }
+    const value = list[now]?.value
+    if (apple.on) apple.lay(appleBox(geo.host, frame.left, frame.right, 1, KNOB), iconOf(value).symbol, 'now', tint(value))
+    else lens?.draw(frame.speed / 1500 + (sx - 1))
+  }
+  const glass = glide(slider, paint)
 
   const show = (x: number, dragging: boolean): void => {
     if (arming) {
       // The knob waits on the triangle while it is held; a finger still moving on it does not
-      // pull it about, and the glass is not sent the same place again every frame.
+      // pull it about.
       if (dragging) return
       x = arming.index
     }
+    measure()
     shown = x
     slider.style.setProperty('--at', String(x))
-    const under = Math.round(x)
-    slider.dataset.tone = toneOf(list[under]?.value)
-    icons.forEach((icon, i) => icon.style.setProperty('--near', String(nearness(i, x))))
-    names.forEach((one, i) => one.toggleAttribute('data-under', i === under))
-    if (lens && !apple.on) {
-      lens.hold(dragging)
-      if (!dragging) lens.run(SPRING_MS + 120)
-    }
-    layApple(x, dragging ? 'now' : 'spring')
+    slider.dataset.tone = toneOf(list[Math.round(x)]?.value)
+    glass.swell(slider.classList.contains('pressing') ? 1.14 : 1)
+    const left = x * geo.span
+    glass.to(left, left + KNOB, dragging ? 'now' : 'spring')
   }
+  if (typeof ResizeObserver === 'function') new ResizeObserver(() => show(shown, true)).observe(track)
   const land = (index: number, moved: boolean): void => {
     const level = list[index]
     if (!level) return
@@ -727,13 +937,36 @@ export function mountLevelSlider(host: HTMLElement, around: Around): LevelSwitch
     if (moved) say(names, index)
   }
 
+  /**
+   * A hold let go too soon, taught: the ring winds back from as far as it got — a quarter at
+   * least, so a click shows it too — and the triangle's name says what it wants for a moment.
+   */
+  let hinting: ReturnType<typeof setTimeout> | undefined
+  const teach = (index: number, reached: number): void => {
+    const from = 100 - Math.max(0.25, Math.min(1, reached)) * 100
+    const back = { duration: 620, easing: 'cubic-bezier(0.55, 0, 0.45, 1)' }
+    ring.querySelector('circle')?.animate?.([{ strokeDashoffset: String(from) }, { strokeDashoffset: '100' }], back)
+    ring.animate?.([{ opacity: 1 }, { opacity: 1, offset: 0.7 }, { opacity: 0 }], back)
+    const name = names[index]
+    if (!name) return
+    clearTimeout(hinting)
+    name.textContent = 'Hold to turn on'
+    name.setAttribute('data-hint', '')
+    hinting = setTimeout(() => {
+      name.textContent = list[index]?.name ?? ''
+      name.removeAttribute('data-hint')
+    }, HINT_MS)
+  }
   /** Stop holding. `back` springs the knob home to the level that is still the choice. */
   const disarm = (back: boolean): void => {
     if (!arming) return
     clearTimeout(arming.timer)
+    const { index, since } = arming
     arming = undefined
     slider.classList.remove('arming')
-    if (back) show(driving.at(), false)
+    if (!back) return
+    show(driving.at(), false)
+    teach(index, (performance.now() - since) / HOLD_MS)
   }
   const startArming = (index: number, via: 'key' | 'pointer'): void => {
     if (arming?.index === index) return
@@ -743,7 +976,7 @@ export function mountLevelSlider(host: HTMLElement, around: Around): LevelSwitch
       slider.classList.remove('arming')
       driving.commit(index, 'level')
     }, HOLD_MS)
-    arming = { index, via, timer }
+    arming = { index, via, since: performance.now(), timer }
     slider.classList.add('arming')
     show(index, false)
   }
@@ -758,10 +991,20 @@ export function mountLevelSlider(host: HTMLElement, around: Around): LevelSwitch
     else show(driving.at(), false)
     return false
   }
-  /** A pointer pressed on the triangle, or dragged onto it, arms it; off it or let go, it does not. */
-  const arm = (index: number | undefined): void => {
-    if (index !== undefined && isTrust(index) && driving.at() !== index) startArming(index, 'pointer')
-    else if (arming?.via === 'pointer') disarm(index === undefined)
+  /**
+   * A pointer pressed on the triangle, or dragged onto it, arms it. Armed, it stays armed until
+   * the pointer is let go or is clearly on another stop (`HOLD_SLACK`), so a finger wobbling on
+   * the line between Watch and the triangle does not start the ring again and again.
+   */
+  const arm = (x: number | undefined): void => {
+    if (arming?.via === 'pointer') {
+      if (x === undefined) disarm(true)
+      else if (x < arming.index - HOLD_SLACK) disarm(false)
+      return
+    }
+    if (x === undefined) return
+    const index = Math.round(x)
+    if (isTrust(index) && driving.at() !== index) startArming(index, 'pointer')
   }
 
   // Keys held, for a hold made with the keyboard: End or → brought it there, and it stays armed
@@ -818,7 +1061,11 @@ export function mountLevelSlider(host: HTMLElement, around: Around): LevelSwitch
     wanted = value
     const index = list.findIndex((level) => level.value === value)
     if (index < 0) return
-    // Core's answer settles any hold still going: it is no longer the one on the table.
+    // Core repeating the level that is still chosen changes nothing, and must not end a hold
+    // being made: the window reads it again whenever it comes to the front, which is exactly
+    // what a press on a window in the back does.
+    if (arming && index === driving.at()) return
+    // Any other answer settles the hold: it is no longer the one on the table.
     disarm(false)
     driving.set(index)
   }
@@ -829,12 +1076,14 @@ export function mountLevelSlider(host: HTMLElement, around: Around): LevelSwitch
     native: (on) => {
       apple.on = on
       slider.classList.toggle('native', on)
-      if (on) layApple(shown, 'now')
-      else lens?.draw()
+      danger = undefined
+      measure()
+      glass.redraw()
     },
     place: () => {
-      if (apple.on) layApple(shown, 'now')
-      else lens?.draw()
+      danger = undefined
+      measure()
+      glass.redraw()
     },
   }))
 
@@ -861,6 +1110,7 @@ export function mountLevelSlider(host: HTMLElement, around: Around): LevelSwitch
     names.forEach((one, i) => (one.textContent = list[i]!.name))
     icons = [...stops.querySelectorAll<HTMLElement>('span')]
     hovered = undefined
+    under = -1
     if (wanted !== undefined) put(wanted)
   }
 
