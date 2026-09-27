@@ -5,7 +5,7 @@ import { routes, sizeOf, type Catalog, type Model } from './catalog.js'
 import { pins, setPin } from './commands.js'
 import type { Aside } from './health.js'
 import { OLLAMA } from './ollama.js'
-import { MODEL_GROUPS } from './panels.js'
+import { MODEL_GROUPS, WAITING } from './panels.js'
 import { setKeylessOn, setSpeed } from './pool.js'
 import { available, paid, ranking, route, type Choice, type Spend, type World } from './router.js'
 import { allow, forgetConsent } from './consent.js'
@@ -14,10 +14,10 @@ import type { Row } from './plugins.js'
 import { anonymous, FASTEST_STAR_WAIT, MOST_AT_ONCE, type Provider } from './provider.js'
 import { Plugins } from './plugins.js'
 import type { Skills } from './skills.js'
-import type { Searchable } from './palette.js'
+import { friendly, SETTINGS, type Searchable } from './palette.js'
 import type { Outcome, Store, Try } from './store.js'
 import type { PluginTooling } from './tooling.js'
-import { asText, spentOn, type Trace } from './trace.js'
+import { asText, ending, spentOn, summary, toolWords, type Run, type Trace } from './trace.js'
 import { caps, setCaps } from './usage.js'
 
 /**
@@ -41,8 +41,11 @@ export interface Source {
   rows(): Promise<Row[]>
   /** One line above the rows, when there is something to say — the Models tab's news (§4 D). */
   note?(): string | undefined
-  /** What expands under one row. Text, and it is read rather than computed. */
-  detail?(id: string): Promise<string>
+  /**
+   * What expands under one row. Text, and it is read rather than computed — or text and `more`,
+   * a longer version folded under it for whoever wants the whole thing (a run's full log).
+   */
+  detail?(id: string): Promise<string | { text: string; more?: string }>
 }
 
 export interface SurfaceOptions {
@@ -53,7 +56,7 @@ export interface SurfaceOptions {
   plugins: Plugins
   /** Where the user's own skills live. A learned skill is a folder in it. */
   skillsDir: string
-  /** The last five runs (M6-5). In memory, so this is the only place they exist. */
+  /** The kept runs (M6-5), read back from the store when core starts. */
   trace: Trace
   /** Alexia's own data directory. An exported run is written into it. */
   dataDir: string
@@ -236,6 +239,22 @@ export const SPENDS: readonly Spend[] = ['free', 'mixed', 'paid']
 export function sources(options: SurfaceOptions): Record<string, Source> {
   const { skills, tooling, plugins, trace, catalog, store } = options
 
+  /** Every tool's words, by id, from the descriptions its plugin wrote (see `toolWords`). */
+  const toolNames = async (): Promise<Map<string, string>> => {
+    try {
+      return new Map((await tooling.list()).map((tool) => [tool.name, toolWords(tool.name, tool.description)]))
+    } catch {
+      return new Map()
+    }
+  }
+
+  /** A run's plain summary, with each model and tool by the name a person knows it by. */
+  const told = async (run: Run): Promise<string> => {
+    const words = await toolNames()
+    const named = (id: string): string => catalog.models.find((model) => model.id === id)?.name ?? id
+    return summary(run, named, (name) => words.get(name) ?? toolWords(name))
+  }
+
   /**
    * A skill's own text, which is the only thing there is to show about one.
    *
@@ -291,7 +310,7 @@ export function sources(options: SurfaceOptions): Record<string, Source> {
    */
   const back = (tested: boolean): string =>
     tested ?
-      ' Alexia sends it a test message on its own, and one good reply brings it back.'
+      ' Alexia sends it a test message on her own, and one good reply brings it back.'
     : ' One good reply brings it back.'
 
   /** Why a model is set aside, and what brings it back. */
@@ -325,6 +344,13 @@ export function sources(options: SurfaceOptions): Record<string, Source> {
             title: chat.title,
             turns: String(chat.messages),
             when: when(chat.updatedAt),
+            /**
+             * The same moment as a number, milliseconds since 1970. `when` is written here, in
+             * core, whose locale is not the person's — so on a Mac set to day-first dates it read
+             * `9/25/26`. A screen formats `at` in its own locale; `when` stays for a table that
+             * only shows the words.
+             */
+            at: chat.updatedAt,
             state: chat.id === open ? '● open' : '',
           })),
         )
@@ -656,18 +682,58 @@ export function sources(options: SurfaceOptions): Record<string, Source> {
             // asked for is the one thing that makes a run hard to find again.
             task: run.task.length > 90 ? `${run.task.slice(0, 90)}…` : run.task,
             steps: run.steps.length,
-            // Four places, because a free run is $0.0000 and a cheap one is $0.0003, and
-            // rounding the second to the first is how a ledger stops being believed.
-            cost: run.ended === undefined ? '—' : `$${spentOn(run).toFixed(4)}`,
-            ended: run.ended ?? 'still going',
+            // Four places, because a cheap run is $0.0003 and rounding it to nothing is how a
+            // ledger stops being believed. *Free* when models answered and none charged, and a
+            // dash when no call was recorded at all, which is not the same claim.
+            cost:
+              run.ended === undefined || (run.calls ?? []).length === 0 ? '—'
+              : spentOn(run) === 0 ? 'free'
+              : `$${spentOn(run).toFixed(4)}`,
+            ended: ending(run),
             when: when(run.at),
           })),
         ),
-      // The whole run, untrimmed, and the same text `export` writes. One renderer, so what
-      // somebody reads on screen is exactly what they send on.
-      detail: (id) => {
+      /**
+       * **A few plain sentences first, and the log folded under them.** The log is the same text
+       * `export` writes — one renderer, so what somebody sends on is exactly what they could
+       * read here — and it used to be all there was: UTC, raw arguments, tool ids. The summary
+       * is what the person who asked wanted to know; the log is still one press away.
+       */
+      detail: async (id) => {
         const run = trace.one(id)
-        return Promise.resolve(run === undefined ? 'That run has gone. They are kept in memory only.' : asText(run))
+        if (run === undefined) return 'That run is no longer kept. Alexia keeps the last 200, for up to 30 days.'
+        return { text: await told(run), more: asText(run) }
+      },
+    },
+
+    /**
+     * **The newest run, whole, for the live pages** (Steps and Current step). After a reload they
+     * used to open empty while the run that had just happened sat on the Activity screen; they
+     * read this instead, and show it as it ended. One row, or none before the first run.
+     */
+    last_run: {
+      rows: async () => {
+        const run = trace.runs[0]
+        if (run === undefined) return []
+        const words = await toolNames()
+        return [
+          {
+            id: run.id,
+            task: run.task,
+            at: run.at,
+            over: run.ended !== undefined,
+            ended: ending(run),
+            ...(run.why !== undefined && { why: run.why }),
+            steps: run.steps.map((step) => ({
+              n: step.n,
+              name: step.name,
+              words: words.get(step.name) ?? toolWords(step.name),
+              args: step.args,
+              ...(step.ok !== undefined && { ok: step.ok }),
+              ...(step.text !== undefined && { text: step.text }),
+            })),
+          },
+        ]
       },
     },
 
@@ -696,7 +762,18 @@ export function sources(options: SurfaceOptions): Record<string, Source> {
                 : skill.provenance === 'installed' ? 'from the marketplace'
                 : skill.provenance === 'unknown' ? 'unknown'
                 : 'installed here',
-              state: skill.live === false ? '▲ waiting for you' : OK,
+              state: skill.live === false ? WAITING : OK,
+            })),
+          // The ones Alexia wrote herself, in the same list (D205): to the person reading it a
+          // skill is a skill, and *Where from* is what tells the two kinds apart. `learned`
+          // below still reads them alone, for anything that wants only those.
+          ...skills.all
+            .filter((skill) => skill.learned === true)
+            .map((skill) => ({
+              id: skill.name,
+              name: skill.name,
+              where: skill.learnedFrom === undefined ? 'written by Alexia' : `written by Alexia, from “${skill.learnedFrom}”`,
+              state: skill.live === false ? WAITING : OK,
             })),
         ]),
       detail: skillText,
@@ -716,7 +793,7 @@ export function sources(options: SurfaceOptions): Record<string, Source> {
               when: skill.learnedAt ?? '—',
               // A model wrote it, after a task, about what it thinks it just learned. Until
               // somebody says yes it is not in the index and cannot be read (M6-9, D84).
-              state: skill.live === false ? '▲ waiting for you' : OK,
+              state: skill.live === false ? WAITING : OK,
             })),
         ),
       detail: skillText,
@@ -734,6 +811,8 @@ export function sources(options: SurfaceOptions): Record<string, Source> {
             return {
               id: tool.name,
               name: bare === '' ? tool.name : bare,
+              // What it does, in its author's words — what the live pages call a step.
+              words: toolWords(tool.name, tool.description),
               plugin: bare === '' ? 'Alexia' : owner!,
               // **What the permission gate will do with it**, which is the only thing on this
               // screen worth a column. Read from the same annotations `rule()` reads, and
@@ -812,26 +891,44 @@ export async function searchable(
   tabs: readonly { id: string; label: string }[],
 ): Promise<Searchable[]> {
   const ours = sources(options)
-  const found: Searchable[] = tabs.map((tab) => ({ tab: tab.id, kind: 'panel', label: tab.label }))
+  const found: Searchable[] = [
+    ...tabs.map((tab) => ({ tab: tab.id, kind: 'panel', label: tab.label })),
+    // The places on the Settings screen people look for by name: the theme, the keys, the
+    // money. Pages with no table to read, so they come from a list rather than a source.
+    ...SETTINGS,
+  ]
 
-  /** Which table each row comes from, and what to call one of its rows on screen. */
-  const lists: [string, string, string, (row: Row) => string][] = [
-    ['activity', 'activity', 'run', (row) => String(row.task)],
-    ['skills', 'skills', 'skill', (row) => String(row.name)],
-    ['skills', 'learned', 'learned skill', (row) => String(row.name)],
-    ['tools', 'tools', 'tool', (row) => String(row.name)],
+  /**
+   * Which table each row comes from, what to call one of its rows on screen, and what to type
+   * into that table's filter so the row is the one left. The two differ only for a tool: it is
+   * `accept_suggestion` in its table and *Accept suggestion* to somebody reading a palette.
+   */
+  const lists: [string, string, string, (row: Row) => string, (row: Row) => string][] = [
+    ['runs', 'activity', 'run', (row) => String(row.task), (row) => String(row.task)],
+    // One list since D205, so a skill Alexia wrote is found once, as a skill, and its detail
+    // (*Where from*) says she wrote it.
+    ['skills', 'skills', 'skill', (row) => String(row.name), (row) => String(row.name)],
+    ['tools', 'tools', 'tool', (row) => friendly(String(row.name)), (row) => String(row.name)],
     // Not a control tab: plugins live on the settings screen (M8-3), and the shell routes
     // this one word there. Since D118 that page holds a plugin's panel too, so this row is
     // the only one a plugin needs — there is no second place to send anybody.
-    ['plugins', 'library', 'plugin', (row) => String(row.name)],
+    ['plugins', 'library', 'plugin', (row) => String(row.name), (row) => String(row.name)],
   ]
-  for (const [tab, key, kind, label] of lists) {
+  for (const [tab, key, kind, label, filter] of lists) {
     const source = ours[key]
     if (!source) continue
     for (const row of await source.rows()) {
-      const detail = [row.from, row.plugin, row.where, row.state].filter((one) => typeof one === 'string').join(' · ')
-      found.push({ tab, kind, label: label(row), ...(detail !== '' && { detail }) })
+      const detail = [row.from, row.words, row.plugin, row.where, row.state].filter((one) => typeof one === 'string' && one !== '').join(' · ')
+      found.push({ tab, kind, label: label(row), filter: filter(row), ...(detail !== '' && { detail }) })
     }
+  }
+
+  // Every conversation, by its title — the first thing said in it. Enter opens that chat
+  // rather than a list of them, so it carries which one. One that nothing has been said in
+  // yet has no name to find it by, and is left out.
+  for (const chat of options.store.conversations()) {
+    if (chat.title.trim() === '') continue
+    found.push({ tab: 'chat', kind: 'chat', label: chat.title, id: String(chat.id), detail: when(chat.updatedAt) })
   }
   return found
 }
@@ -1145,7 +1242,7 @@ export function actions(
      */
     export_run: (id) => {
       const run = options.trace.one(id)
-      if (!run) return Promise.resolve({ ok: false, said: 'That run has gone. They are kept in memory only.' })
+      if (!run) return Promise.resolve({ ok: false, said: 'That run is no longer kept. Alexia keeps the last 200, for up to 30 days.' })
       const dir = join(options.dataDir, 'exports')
       const path = join(dir, `run-${new Date(run.at).toISOString().replace(/[:.]/g, '-')}.md`)
       try {
@@ -1155,6 +1252,19 @@ export function actions(
       } catch (error) {
         return Promise.resolve({ ok: false, said: `Could not write it: ${error instanceof Error ? error.message : String(error)}` })
       }
+    },
+
+    /**
+     * **The conversation a run happened in**, opened the way the Chats list opens one. A run
+     * from before chats were recorded on it, or whose chat was forgotten since, says so.
+     */
+    open_run_chat: (id) => {
+      const chat = options.trace.one(id)?.chat
+      if (chat === undefined) return Promise.resolve({ ok: false, said: 'Alexia did not note which chat this run was in.' })
+      if (!options.store.conversations().some((one) => one.id === chat)) {
+        return Promise.resolve({ ok: false, said: 'That chat has been forgotten since.' })
+      }
+      return openChat(String(chat))
     },
 
     allow_skill: allowSkill,

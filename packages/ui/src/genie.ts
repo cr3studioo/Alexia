@@ -34,8 +34,12 @@ export interface Box {
   height: number
 }
 
-/** How long one genie takes, open or close. The Dock's own is about this. */
+/** How long the sheet takes to pour out of its tab. The Dock's own is about this. */
 export const GENIE_MS = 520
+/** And back in: quicker, because what you put away should get out of the way. */
+export const GENIE_CLOSE_MS = 420
+/** The first opening's glass giving way to the sheet itself, what is on it fading in. */
+const SETTLE_MS = 160
 /** The height of one drawn row, in CSS pixels. */
 const ROW = 2
 
@@ -178,7 +182,8 @@ export function genieOut(key: string, sheet: HTMLElement, tab: HTMLElement, open
       later()
       return
     }
-    void play(glass(ground, box), boxOf(sheet), boxOf(tab), sheet, false).then(() => remember(key, sheet))
+    // Empty glass, so the sheet's words would pop in at the end: the picture fades off it instead.
+    void play(glass(ground, box), boxOf(sheet), boxOf(tab), sheet, false, true).then(() => remember(key, sheet))
   })
 }
 
@@ -238,7 +243,15 @@ function glass(ground: ImageBitmap, box: Box): HTMLCanvasElement {
   return out
 }
 
-function play(picture: CanvasImageSource & { width: number; height: number }, box: Box, tab: Box, sheet: HTMLElement, into: boolean): Promise<void> {
+function play(
+  picture: CanvasImageSource & { width: number; height: number },
+  box: Box,
+  tab: Box,
+  sheet: HTMLElement,
+  into: boolean,
+  settle = false,
+): Promise<void> {
+  const length = into ? GENIE_CLOSE_MS : GENIE_MS
   const canvas = document.createElement('canvas')
   canvas.className = 'genie'
   canvas.setAttribute('aria-hidden', 'true')
@@ -274,7 +287,11 @@ function play(picture: CanvasImageSource & { width: number; height: number }, bo
   return new Promise((resolve) => {
     const start = performance.now()
     let frame = 0
+    let done = false
     const finish = (): void => {
+      // Once only: a fade's timer may land after a newer genie has hidden the sheet again.
+      if (done) return
+      done = true
       cancelAnimationFrame(frame)
       canvas.remove()
       if (running === handle) running = undefined
@@ -283,10 +300,20 @@ function play(picture: CanvasImageSource & { width: number; height: number }, bo
     }
     const handle = { stop: finish }
     running = handle
+    // The sheet shown under the last frame, and the frame faded off it: the words on the sheet
+    // come in through the glass rather than all at once. Resolved only when the canvas is gone,
+    // since what runs next photographs the sheet and must not photograph this too.
+    const fade = (): void => {
+      sheet.style.visibility = ''
+      canvas.style.transition = `opacity ${String(SETTLE_MS)}ms cubic-bezier(0.4, 0, 1, 1)`
+      canvas.style.opacity = '0'
+      window.setTimeout(finish, SETTLE_MS)
+    }
     const tick = (now: number): void => {
-      const t = Math.min(1, (now - start) / GENIE_MS)
+      const t = Math.min(1, (now - start) / length)
       draw(into ? t : 1 - t)
       if (t < 1) frame = requestAnimationFrame(tick)
+      else if (settle) fade()
       else finish()
     }
     frame = requestAnimationFrame(tick)

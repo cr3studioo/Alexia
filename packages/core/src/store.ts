@@ -147,7 +147,27 @@ const MIGRATIONS: string[] = [
   // numbers. On `usage` rather than `tries` because the tokens are here, and a speed is the two
   // divided. Null for an answer that showed no sign, and for every answer before this column.
   `ALTER TABLE usage ADD COLUMN writing INTEGER;`,
+
+  // 10 — the run history on the Activity screen, kept across a restart. It was five runs in
+  // memory (D88), and *what was she doing an hour ago* went with every update. One row per run,
+  // the run itself as JSON, because it is only ever read whole and written whole; `at` is a
+  // column so the oldest can be dropped without reading any. Credentials are stripped before a
+  // run is written here (`trace.ts`), and anything past {@link RUNS_KEPT} goes as new ones arrive.
+  `CREATE TABLE runs (
+     id TEXT PRIMARY KEY,
+     at INTEGER NOT NULL,
+     body TEXT NOT NULL
+   );
+   CREATE INDEX runs_at ON runs (at);`,
 ]
+
+/**
+ * **How much run history is kept**: the newest two hundred, and none older than thirty days —
+ * whichever is fewer. Enough to find yesterday's odd answer and last week's, and a ceiling that
+ * keeps a busy month from growing the file without end: a run is a few kilobytes, a big one a
+ * few dozen.
+ */
+export const RUNS_KEPT = { count: 200, ms: 30 * 24 * 60 * 60 * 1000 }
 
 /**
  * **How one try of one model went** (D161), in the words the record keeps.
@@ -448,6 +468,54 @@ export interface Message {
    * somebody had typed it. Saved in the JSON body and never sent to a model.
    */
   typed?: string
+  /**
+   * **Somebody pressed Stop while this was being written.** An assistant turn holding only the
+   * words that had arrived by then — what was on screen — so a reload shows the half answer
+   * rather than losing it, and the screen can say it was stopped. Like a {@link bad} answer it
+   * stays on the page and is never shown to a model again: a half sentence at the end of the
+   * history reads to a model as something to carry on from, not as a question still open.
+   */
+  stopped?: true
+}
+
+/** A stored user turn's JSON body, as far as a title reads it. */
+interface Opening {
+  content?: unknown
+  typed?: unknown
+}
+
+/**
+ * **The first thing said in a conversation, as its title** (M8-2) — the words the person
+ * typed, whatever else came with them.
+ *
+ * It read `String(content)`, which was right while every turn was a string: a message with a
+ * picture in it is a list of parts, and a conversation opened with one was called
+ * `[object Object],[object Object]`. Worked out when the list is read, never stored, so the
+ * chats already named that way are named properly the next time the list is drawn.
+ *
+ * In order: `typed`, which is what was typed when attachments were merged into `content`;
+ * then the words in `content` with any attached document cut off (the same cut `typedOf` in
+ * `attach.ts` makes, for turns saved before `typed` existed); then, when nothing was typed at
+ * all, what was sent — *Picture: cat.png*, *File: report.pdf*, or *Picture* when a picture came
+ * without a name.
+ */
+export function openingLine(body: Opening): string {
+  const tidy = (text: string): string => text.trim().replace(/\s+/g, ' ')
+  if (typeof body.typed === 'string' && tidy(body.typed) !== '') return tidy(body.typed)
+  const parts: unknown[] = Array.isArray(body.content) ? body.content : []
+  const words =
+    typeof body.content === 'string' ? body.content
+    : parts
+        .filter((part): part is Part => typeof part === 'object' && part !== null && (part as Part).type === 'text')
+        .map((part) => part.text ?? '')
+        .join('\n\n')
+  const typed = tidy(words.replace(/(?:^|\n\n)\[attached: [\s\S]*$/, ''))
+  if (typed !== '') return typed
+  const attached = /\[attached: (.+?)(?: — ([^\]\n]*))?\]/.exec(words)
+  if (attached?.[1] !== undefined) {
+    return `${attached[2]?.startsWith('a picture') === true ? 'Picture' : 'File'}: ${attached[1].trim()}`
+  }
+  return parts.some((part) => typeof part === 'object' && part !== null && (part as Part).type === 'image') ? 'Picture' : ''
 }
 
 export interface Session {
@@ -742,11 +810,21 @@ export class Store {
       )
       .all() as { id: number; title: string | null; updatedAt: number; messages: number; opening: string | null }[]
     return rows.map((row) => {
-      const said = row.opening === null ? '' : String((JSON.parse(row.opening) as { content?: unknown }).content ?? '')
+      const said = row.opening === null ? '' : openingLine(JSON.parse(row.opening) as Opening)
+      /**
+       * **A stored title is where the conversation came from, not its name** — `Telegram`, for
+       * the one a plugin's messages land in (D109). Every such chat used to be called exactly
+       * that, so a rail of them could not be told apart; the first thing said now follows it.
+       * Read here rather than written, so the ones already on disk are named the same way.
+       */
+      const title =
+        row.title === null ? said
+        : said === '' ? row.title
+        : `${row.title} · ${said}`
       return {
         id: Number(row.id),
         // A conversation nobody has said anything in yet is the one you are about to have.
-        title: row.title ?? (said.trim() === '' ? 'New chat' : said.trim().replace(/\s+/g, ' ').slice(0, 80)),
+        title: title === '' ? 'New chat' : title.slice(0, 80),
         messages: Number(row.messages),
         updatedAt: Number(row.updatedAt),
       }
@@ -1074,6 +1152,35 @@ export class Store {
         'SELECT asked, model, provider, cost FROM usage WHERE run_id = ? ORDER BY id',
       )
       .all(run) as unknown as { asked: string | null; model: string; provider: string; cost: number }[]
+  }
+
+  /**
+   * **One run, written again whole** (the Activity history). Called as a run moves, so a run
+   * cut short by a crash is still on disk to be read back as stopped. The oldest go in the same
+   * breath, by age and then by count, so the table never holds more than {@link RUNS_KEPT}.
+   */
+  saveRun(id: string, at: number, body: unknown, now: number = Date.now()): void {
+    this.transaction(() => {
+      this.#db.prepare('INSERT OR REPLACE INTO runs (id, at, body) VALUES (?, ?, ?)').run(id, at, JSON.stringify(body))
+      this.#db.prepare('DELETE FROM runs WHERE at < ?').run(now - RUNS_KEPT.ms)
+      this.#db
+        .prepare('DELETE FROM runs WHERE id NOT IN (SELECT id FROM runs ORDER BY at DESC, rowid DESC LIMIT ?)')
+        .run(RUNS_KEPT.count)
+    })
+  }
+
+  /** The kept runs, oldest first, each as it was written. A row that does not parse is skipped. */
+  savedRuns(now: number = Date.now()): unknown[] {
+    const rows = this.#db
+      .prepare('SELECT body FROM runs WHERE at >= ? ORDER BY at, rowid')
+      .all(now - RUNS_KEPT.ms) as { body: string }[]
+    return rows.flatMap((row) => {
+      try {
+        return [JSON.parse(row.body) as unknown]
+      } catch {
+        return []
+      }
+    })
   }
 
   /** What has been spent since `since`, narrowed to one session, plugin or model. */

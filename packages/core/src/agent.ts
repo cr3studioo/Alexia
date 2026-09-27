@@ -6,6 +6,7 @@ import { spent, underHalf, type Speed } from './pool.js'
 // interface — a third file to hold it would be the abstraction, not the sharing.
 import type { Progress } from './settings.js'
 import {
+  asSentence,
   bubble,
   paid,
   route,
@@ -29,7 +30,7 @@ import {
 import type { SecretStore } from './secrets.js'
 import { carries, textOf, type Message, type Store } from './store.js'
 import { budgetFor, trim, type TrimOptions } from './trim.js'
-import { affordable, type Today } from './usage.js'
+import { affordable, limitSays, type Limit, type Today } from './usage.js'
 
 /**
  * Plan → act → observe → repeat.
@@ -284,6 +285,12 @@ export interface RunOptions {
    * model was not given is a sentence it can only fail to obey.
    */
   remembers?: boolean
+  /**
+   * **What she is called here** — the name chosen in Settings (`display_name`). Absent is
+   * *Alexia*. It was saved, drawn in the window's header, and never told to the model, which
+   * went on introducing itself as Alexia to somebody who had renamed her.
+   */
+  name?: string
   signal?: AbortSignal
   /**
    * May this call run? (M15-3.) The loop does not know what a permission is — it asks, and
@@ -305,6 +312,12 @@ export interface RunResult {
    * to a paid model* carries on from where it stopped.
    */
   ended: 'answered' | 'stopped' | 'ceiling' | 'refused' | 'paused'
+  /**
+   * **Set on a pause when a spending limit is what stopped it** (D206): the monthly budget, or the
+   * day's amount with paid allowed. The screen offers *Raise the limit*, *No limit today* and
+   * *Use free models* in place of *Allow*.
+   */
+  limit?: Limit
   /** Set when `ended` is `refused` — the router's sentence, or the provider's. */
   why?: string
   /**
@@ -454,7 +467,7 @@ export async function run(options: RunOptions): Promise<RunResult> {
   // The profile is one length for every model, so it is said once, here, rather than per rung.
   const profile = options.profile?.trim() ?? ''
   if (profile !== '') on?.profile?.(profile.length)
-  const about = { profile, remembers: options.remembers === true }
+  const about = { profile, remembers: options.remembers === true, ...(options.name !== undefined && { name: options.name }) }
   const added: Message[] = []
   const steps: Step[] = []
 
@@ -505,6 +518,17 @@ export async function run(options: RunOptions): Promise<RunResult> {
     const named = available.map((t) => ({ name: t.name }))
     const now = await options.world()
     opening ??= now.today
+    /**
+     * **The monthly budget, asked every step** (D206): reached mid-task, the next step sends nothing
+     * paid, rather than the next task. The caller's `paidAllowed` was the budget as the task began.
+     */
+    const paidOk = options.paidAllowed !== false && now.month?.stop !== true
+    /** A pause for a spending limit: the one sentence, and which limit, for the three choices (D206). */
+    const limited = (limit: Limit, mode: Mode): RunResult => ({ ...finish('paused', limitSays(limit), mode), limit })
+    /** The monthly budget as a limit, for a pause it stopped. */
+    const budget = (): Limit => ({ kind: 'monthly', amount: now.month?.cap ?? 0 })
+    /** The day's amount as a limit, for a pause it stopped. */
+    const day = (): Limit => ({ kind: 'daily', amount: now.today?.allowance ?? 0 })
 
     /**
      * **How badly is this going?** — asked of the trace, once a step (§10.3).
@@ -605,9 +629,16 @@ export async function run(options: RunOptions): Promise<RunResult> {
     // Mid-task it is also the honest place to stop: half a task is better than a task
     // finished somewhere the user said not to go.
     // Free done, paid able, the switch off: a pause the person can lift, not a stop (§4 H). The
-    // monthly hard stop is not something *Allow* can lift, so it stays a refusal.
-    if (!verdict.ok && verdict.paused !== undefined && options.paidAllowed !== false) return finish('paused', verdict.paused, verdict.mode)
-    if (!verdict.ok) return finish('refused', ranOutOfHands(ask, now) ? NO_HANDS : verdict.why, verdict.mode)
+    // monthly budget is not something *Allow* can lift, so that one is the budget's own pause.
+    if (!verdict.ok && verdict.paused !== undefined && paidOk) return finish('paused', verdict.paused, verdict.mode)
+    // The same pause with the monthly budget reached is the budget's to lift, not *Allow*'s (D206).
+    if (!verdict.ok && verdict.paused !== undefined) return limited(budget(), verdict.mode)
+    // The switch is on and the day's amount is spent: a limit reached, with its choices (D206).
+    if (!verdict.ok && now.cross === true && !affordable(now.today) && (now.today?.allowance ?? 0) > 0 && paidOk) {
+      const opened = route(ask, pins, { ...now, today: { spent: 0, allowance: Number.MAX_SAFE_INTEGER } })
+      if (opened.ok && opened.choices.some((c) => paid(c.model.tier))) return limited(day(), verdict.mode)
+    }
+    if (!verdict.ok) return finish('refused', ranOutOfHands(ask, now) ? NO_HANDS : asSentence(verdict.why), verdict.mode)
 
     /**
      * **This Mac or paid, when both are next** (§4 H). The keyed free rungs are done, the model on
@@ -679,6 +710,23 @@ export async function run(options: RunOptions): Promise<RunResult> {
 
     /** What this turn's switches said, kept on the answer they belong to (§4 G). */
     const noted: string[] = []
+    /**
+     * **The words this turn has written so far**, kept in case somebody presses Stop.
+     *
+     * An answer stopped halfway used to be on screen and nowhere else: the stream was cut, the
+     * loop returned *stopped*, and nothing was appended — so the half an answer the person had
+     * just read was gone the moment they opened the conversation again. Kept here, beside the
+     * stream the screen draws from, so what is saved is exactly what was shown; emptied on a
+     * restart for the same reason the screen empties its bubble (D155).
+     */
+    let written = ''
+    /**
+     * **What a paid rung's worst case is held to** (D186, D206): the day's allowance where it let
+     * paid in, and the monthly budget's room wherever one stops — a paid pin and *paid only*
+     * included, since a budget is somebody saying the words too.
+     */
+    const room = now.month?.room
+    const held = room === undefined ? verdict.left : verdict.left === undefined ? room : Math.min(verdict.left, room)
     let answer
     try {
       answer = await send(
@@ -698,9 +746,13 @@ export async function run(options: RunOptions): Promise<RunResult> {
           session,
           ...(options.run !== undefined && { run: options.run }),
           ...(options.plugin !== undefined && { plugin: options.plugin }),
-          ...(options.paidAllowed !== undefined && { paidAllowed: options.paidAllowed }),
-          ...(verdict.left !== undefined && { left: verdict.left }),
-          ...(on?.delta && { onDelta: on.delta }),
+          paidAllowed: paidOk,
+          // What the day has left and what the month has left, whichever is less: both are limits (D186, D206).
+          ...(held !== undefined && { left: held }),
+          onDelta: (text: string) => {
+            written += text
+            on?.delta?.(text)
+          },
           ...(on?.note && { onNote: on.note }),
           onSwitch: (event: Switch) => {
             noted.push(event.says)
@@ -709,7 +761,10 @@ export async function run(options: RunOptions): Promise<RunResult> {
             else on?.note?.(event.says)
           },
           ...(on?.paid && { onPaid: on.paid }),
-          ...(on?.restart && { onRestart: on.restart }),
+          onRestart: () => {
+            written = ''
+            on?.restart?.()
+          },
           ...(on?.phase && { onPhase: on.phase }),
           messagesFor: dressed,
           onAsk: asking,
@@ -737,16 +792,42 @@ export async function run(options: RunOptions): Promise<RunResult> {
         },
       )
     } catch (error) {
-      // The user pressing stop arrives here as an abort, and it is not a failure.
-      if (options.signal?.aborted) return finish('stopped')
+      // The user pressing stop arrives here as an abort, and it is not a failure. What had
+      // been written by then is kept, marked as stopped, so it is still there when the
+      // conversation is opened again (see {@link Message.stopped}).
+      if (options.signal?.aborted) {
+        if (written.trim() !== '') {
+          const half: Message = { role: 'assistant', content: written, stopped: true }
+          messages.push(half)
+          added.push(half)
+          store.append(session, half)
+        }
+        return finish('stopped')
+      }
       // Every rung in the plan failed. That is a stop with a sentence — which models, and why
       // — rather than a crash, and whose plan it was decides what the screen offers next.
+      /**
+       * **A spending limit is what stopped paid** (D206): the monthly budget reached, or a paid rung
+       * passed over because its worst case was more than the day or the month had left. Nothing was
+       * billed past it; the task pauses with the limit's three choices rather than ending.
+       */
+      if (error instanceof ProviderError && error.offline !== true) {
+        const refused = new Set(error.refused ?? [])
+        // Everything opened — the switch, the day — so a plan the switch had kept free still counts.
+        const opened = paidOk ? verdict : route(ask, pins, { ...now, cross: true, today: { spent: 0, allowance: Number.MAX_SAFE_INTEGER } })
+        const payable = opened.ok && opened.choices.some((c) => paid(c.model.tier) && !refused.has(c.provider.id))
+        if (!paidOk && payable) return limited(budget(), verdict.mode)
+        if (error.priced === true) {
+          const monthly = room !== undefined && (verdict.left === undefined || room < verdict.left)
+          return limited(monthly ? budget() : day(), verdict.mode)
+        }
+      }
       /**
        * **The free rungs were all asked and none answered** (§4 H). With the switch off, the plan
        * had no paid rung in it; if one would answer with the price line open, this is the same
        * pause the router gives when the ledger already knew — and nothing has been billed.
        */
-      if (error instanceof ProviderError && error.offline !== true && now.cross === false && options.paidAllowed !== false && verdict.mode !== 'pinned') {
+      if (error instanceof ProviderError && error.offline !== true && now.cross === false && paidOk && verdict.mode !== 'pinned') {
         const opened = route(ask, pins, { ...now, cross: true, today: { spent: 0, allowance: Number.MAX_SAFE_INTEGER } })
         // Not behind a key that was just refused: *Allow* would only collect the same refusal.
         const refused = new Set(error.refused ?? [])
@@ -758,18 +839,13 @@ export async function run(options: RunOptions): Promise<RunResult> {
       }
       /**
        * **The switch is on and the day's amount is what stopped paid** (§4 H): the free rungs failed
-       * and a paid one would have answered but for the allowance. It stops as the allowance always
-       * did — and says so, rather than naming only the free model that was busy.
+       * and a paid one would have answered but for the allowance. It pauses on the limit (D206),
+       * rather than naming only the free model that was busy.
        */
-      if (error instanceof ProviderError && now.cross === true && !affordable(now.today) && options.paidAllowed !== false && verdict.mode !== 'pinned') {
+      if (error instanceof ProviderError && now.cross === true && !affordable(now.today) && paidOk && verdict.mode !== 'pinned') {
         const opened = route(ask, pins, { ...now, today: { spent: 0, allowance: Number.MAX_SAFE_INTEGER } })
-        if (opened.ok && opened.choices.some((c) => paid(c.model.tier))) {
-          return finish(
-            'refused',
-            `${error.message} And today's $${(now.today?.allowance ?? 0).toFixed(2)} for paid models is spent — raise it under the paid switch on the Models tab, or wait for tomorrow.`,
-            verdict.mode,
-          )
-        }
+        // A limit reached, with its three choices, rather than a stop (D206).
+        if (opened.ok && opened.choices.some((c) => paid(c.model.tier))) return limited(day(), verdict.mode)
       }
       if (error instanceof ProviderError) return finish('refused', error.message, verdict.mode)
       throw error
@@ -850,7 +926,7 @@ export async function run(options: RunOptions): Promise<RunResult> {
       if (said !== true) {
         return {
           ok: false,
-          text: `Not allowed: ${ruling.why} The user did not approve it, so it did not run.`,
+          text: `The user did not approve it, so it did not run. They were asked: ${ruling.why}`,
         }
       }
     }
@@ -929,10 +1005,12 @@ function system(
   available: ToolSpec[],
   personality?: string,
   caller: string[] = [],
-  about: { profile?: string; remembers?: boolean } = {},
+  about: { profile?: string; remembers?: boolean; name?: string } = {},
 ): Message {
+  // The name the user chose, when they chose one; the floor is where a model learns who it is.
+  const called = about.name?.trim() || 'Alexia'
   const lines = [
-    'You are Alexia, an assistant running on the user’s own machine.',
+    `You are ${called}, an assistant running on the user’s own machine.`,
     available.length > 0 ?
       'You have tools. Call them when they would help, one step at a time, and use what comes back.'
     : 'You have no tools available right now, so answer from what you know.',
@@ -979,7 +1057,7 @@ function system(
  * router's own sentence is the better one there because it names the fix rather than the loss.
  */
 const NO_HANDS =
-  'I ran out of helpers with hands — everything still available can only talk, and swapping to one now would strand this half-done. Wait for a free tier to reset, or connect a provider whose models can use tools.'
+  'I ran out of models that can take actions. The ones still available can only talk, and switching to one now would leave this half-done. Wait for the free models to reset, or add a key for an AI service whose models can take actions.'
 
 /** A provider error the loop could not route around, in the words the user gets. */
 export const said = (error: unknown): string =>

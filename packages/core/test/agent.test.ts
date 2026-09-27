@@ -641,7 +641,7 @@ test('a task that runs out of hands stops, and says that is what happened', asyn
   expect(served).toEqual(['has/hands'])
   expect(result.steps).toHaveLength(1)
   expect(result.ended).toBe('refused')
-  expect(result.why).toContain('ran out of helpers with hands')
+  expect(result.why).toContain('ran out of models that can take actions')
   store.close()
 })
 
@@ -666,7 +666,9 @@ test('on the first message the wall is named by its fix, not by the loss', async
 
   expect(served).toEqual([])
   expect(result.ended).toBe('refused')
-  expect(result.why).toBe('none of the models available to you can use tools')
+  expect(result.why).toBe(
+    'This needs a model that can take actions, and none available to you can — add a key for an AI service that offers one.',
+  )
   store.close()
 })
 

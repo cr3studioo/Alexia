@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, expect, test } from 'vitest'
 import { rule, type Scope } from '../src/permissions.js'
 import { CORE } from '../src/secrets.js'
-import { addServer, markReviewed, unreviewed } from '../src/servers.js'
+import { addServer, home, markReviewed, offered, startFailure, unreviewed } from '../src/servers.js'
 import { Store } from '../src/store.js'
 
 // M3-6. The payoff from choosing MCP as the wire: any MCP server is a tool source. The
@@ -76,3 +76,41 @@ test('trusting one is a decision with a name on it, and it sticks', () => {
   // Read back from the store rather than from memory: the answer outlives a restart.
   expect(unreviewed(new Store(':memory:')).size).toBe(0)
 })
+
+test('a program that is not on this Mac is said in words, not as the operating system’s code', async () => {
+  const store = new Store(':memory:')
+  const pluginsDir = mkdtempSync(join(root, 'ext-'))
+  const done = await addServer({ id: 'missing', run: 'no-such-program-anywhere-4821' }, { store, pluginsDir })
+  expect(done).toHaveProperty('why')
+  const why = (done as { why: string }).why
+  expect(why).toContain("isn't installed on this Mac")
+  expect(why).not.toContain('ENOENT')
+}, 40_000)
+
+test('why a server did not start: missing, closed on us, or its own words', () => {
+  const missing = Object.assign(new Error('spawn uvx ENOENT'), { code: 'ENOENT' })
+  expect(startFailure('uvx', missing)).toContain('“uvx” isn\'t installed on this Mac')
+  expect(startFailure('node', new Error('MCP error -32000: Connection closed'))).toBe(
+    "It started but didn't answer like an MCP server. Check the command — it may need other arguments.",
+  )
+  expect(startFailure('node', new Error('something else'))).toBe('It said: something else')
+})
+
+test('a name left empty is asked for, and ~ is the home folder', async () => {
+  const store = new Store(':memory:')
+  const pluginsDir = mkdtempSync(join(root, 'ext-'))
+  expect(await addServer({ id: ' ', run: 'x' }, { store, pluginsDir })).toEqual({
+    why: 'Give it a name first — lowercase letters, digits and hyphens.',
+  })
+  expect(home('~/bin/server')).toBe(join(homedir(), 'bin', 'server'))
+  expect(home('~')).toBe(homedir())
+  expect(home('/usr/bin/env')).toBe('/usr/bin/env')
+})
+
+test('what a server offered when it was added is kept for its page', async () => {
+  const store = new Store(':memory:')
+  const pluginsDir = mkdtempSync(join(root, 'ext-'))
+  await addServer({ id: 'kept', run: process.execPath, args: [plain] }, { store, pluginsDir })
+  expect(offered(store).kept?.length).toBe(1)
+  expect(offered(store).kept?.[0]?.name).toBeTruthy()
+}, 40_000)

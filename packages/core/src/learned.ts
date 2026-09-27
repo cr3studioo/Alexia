@@ -2,7 +2,7 @@
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Step } from './agent.js'
-import { route, send, type Pins, type World } from './router.js'
+import { asSentence, route, send, type Pins, type World } from './router.js'
 import type { SecretStore } from './secrets.js'
 import { textOf, type Message, type Store } from './store.js'
 
@@ -156,7 +156,8 @@ export async function distil(
     { role: 'user', content: transcript(episode) },
   ]
   const verdict = route({ messages, shape: 'hard' }, context.pins, await context.world())
-  if (!verdict.ok) return { why: verdict.why }
+  // Shown on its own under the *Learn this?* box, so a whole sentence rather than the router's clause.
+  if (!verdict.ok) return { why: asSentence(verdict.why) }
 
   let said: string
   try {

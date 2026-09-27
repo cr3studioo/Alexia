@@ -182,7 +182,7 @@ the notes below the table:
 | `file` | `accept` | a file the person **picks**. Core writes the bytes and stores the path — see [Files](#files). *(7)* |
 | `status` | — | read-only text you drive at runtime |
 | `progress` | — | a bar you drive at runtime |
-| `action` | `tool` ✅ | a button that calls one of your tools with no arguments |
+| `action` | `tool` ✅, `confirm` | a button that calls one of your tools with no arguments. `confirm` makes it two presses: the first turns the button into that label, the second calls the tool — for a button that takes something away |
 | `table` | `rows` ✅, `columns` ✅, `rowActions`, `detail`, `filter`, `groupBy`, `groupOrder`, `groupNotes`, `chips` | a list of things, with actions on each one — see [Tables](#tables) |
 | `graph` | `rows` ✅, `detail`, `filter` | things that point at each other, drawn as a map — see [Graphs](#graphs). *(4)* |
 | `tree` | `rows` ✅, `rowActions`, `detail`, `filter` | things filed inside each other — see [Trees](#trees). *(11)* |

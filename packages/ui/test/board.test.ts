@@ -3,7 +3,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { expect, test, vi } from 'vitest'
-import { escapeTakes, mountBoard } from '../src/board.js'
+import { type BoardOptions, escapeTakes, mountBoard } from '../src/board.js'
 import { arrange, dragGuide, fits, grid, type Layout, limits, MARGIN, SP } from '../src/layout.js'
 import { mountPalette } from '../src/palette.js'
 import {
@@ -73,6 +73,24 @@ test('the default board is the three old columns, and nothing in it touches or b
   }
 })
 
+test('other pages on the default board go at the bottom of the right-hand column, as wide as it, not under General and Chat', () => {
+  const g = grid(1440, 900)
+  const plain = defaultLayout(g.cols, g.rows)
+  const layout = defaultLayout(g.cols, g.rows, [{ id: 'local-stats', w: 14, h: 10 }])
+  const at = Object.fromEntries(layout.pages.map((p) => [p.id, p]))
+  expect(at['local-stats']!.anchor!.x).toBe(at.price!.anchor!.x)
+  expect(at['local-stats']!.w).toBe(at.price!.w)
+  expect(at['local-stats']!.anchor!.y).toBe(at.price!.anchor!.y + at.price!.h + 1)
+  // Current step and Steps made the room, and drawn, the column ends on the board's last row.
+  expect(at['current-step']!.h).toBeLessThan(plain.pages.find((p) => p.id === 'current-step')!.h)
+  expect(at.steps!.h).toBeLessThanOrEqual(plain.pages.find((p) => p.id === 'steps')!.h)
+  const drawn = arrange(layout, shapes, g)
+  for (const p of drawn) {
+    expect(p.y + p.h, p.id).toBeLessThanOrEqual(g.rows)
+    expect(fits(drawn.filter((q) => q.id !== p.id), p.x, p.y, p.w, p.h, g.cols), p.id).toBe(true)
+  }
+})
+
 test('the guides sit at about a fifth and three quarters across', () => {
   const layout = defaultLayout(100, 40)
   expect(layout.guides).toEqual([22, 72])
@@ -80,7 +98,7 @@ test('the guides sit at about a fifth and three quarters across', () => {
 
 test('general is the one page that cannot be removed', () => {
   expect(CORE_PAGES.filter((page) => !page.removable).map((page) => page.id)).toEqual(['general'])
-  expect(limits(shapes.general!)).toMatchObject({ minW: 10, minH: 16 })
+  expect(limits(shapes.general!)).toMatchObject({ minW: 10, minH: 18 })
 })
 
 test('a plugin page exists while its plugin is installed and enabled, and not otherwise', () => {
@@ -209,6 +227,11 @@ test('the board mounts on the real markup, places the default pages, and saves w
   expect(root.querySelector('[data-page="local-stats"]')).toBeNull()
   // Both grips are on their guides.
   expect([...root.querySelectorAll<HTMLElement>('.grip')].every((grip) => !grip.hidden)).toBe(true)
+  // And each says where it stands, as a separator a screen reader can read a value from.
+  for (const grip of root.querySelectorAll<HTMLElement>('.grip')) {
+    expect(Number(grip.getAttribute('aria-valuenow'))).toBeGreaterThan(0)
+    expect(grip.getAttribute('aria-valuemax')).toBe(String(grid(1440, 900).cols))
+  }
 
   await board.refresh()
   // No saved layout, so the default takes the enabled plugin's page as well, drawn from its manifest.
@@ -219,7 +242,7 @@ test('the board mounts on the real markup, places the default pages, and saves w
   board.edit(true)
   expect(board.editing()).toBe(true)
   const pill = document.querySelector<HTMLElement>('.edit-pill')!
-  expect([...pill.querySelectorAll('button')].map((b) => b.textContent)).toEqual(['Add page', 'Reset', 'Done'])
+  expect([...pill.querySelectorAll('button')].map((b) => b.textContent)).toEqual(['Add page', 'Undo', 'Reset', 'Cancel', 'Done'])
 
   // Chat asks before it goes, and goes when told.
   root.querySelector<HTMLButtonElement>('[data-page="chat"] > .page-grab')!.click()
@@ -238,11 +261,23 @@ test('the board mounts on the real markup, places the default pages, and saves w
   root.querySelector<HTMLButtonElement>('[data-page="general"] > .page-grab')!.click()
   expect([...bar.querySelectorAll('button')].some((b) => b.textContent === 'Remove')).toBe(false)
 
-  // Reset forgets it, in both places.
+  // Reset asks first, and Keep leaves everything as it is.
+  const setups = (): number => sent.filter((one) => one.path === '/api/setup').length
+  const beforeReset = setups()
   ;[...pill.querySelectorAll('button')].find((b) => b.textContent === 'Reset')!.click()
-  expect(sent.at(-1)).toEqual({ path: '/api/setup', body: { layout: null } })
-  expect(localStorage.getItem('alexia.layout')).toBeNull()
+  expect(pill.textContent).toContain('Put every page back where it started?')
+  ;[...pill.querySelectorAll('button')].find((b) => b.textContent === 'Keep')!.click()
+  expect(setups()).toBe(beforeReset)
+  expect(root.querySelector<HTMLElement>('[data-page="chat"]')!.hidden).toBe(true)
+  // Put back: the starting board, saved in both places — Chat back, and the plugin page that
+  // is on the board kept on it, in the right-hand column.
+  ;[...pill.querySelectorAll('button')].find((b) => b.textContent === 'Reset')!.click()
+  ;[...pill.querySelectorAll('button')].find((b) => b.textContent === 'Put back')!.click()
+  const reset = (sent.at(-1)!.body as { layout: Layout }).layout
+  expect(reset.pages.map((p) => p.id)).toEqual(['general', 'chat', 'running', 'steps', 'current-step', 'price', pageIdOf('voice')])
+  expect(localStorage.getItem('alexia.layout')).toBe(JSON.stringify(reset))
   expect(root.querySelector<HTMLElement>('[data-page="chat"]')!.hidden).toBe(false)
+  expect(reset.pages.at(-1)!.anchor!.x).toBe(reset.pages.find((p) => p.id === 'price')!.anchor!.x)
 
   // With another channel connected there is nothing to warn about, so Chat just comes off.
   board.reach(1)
@@ -299,6 +334,7 @@ test('launch paints the kept layout first: the head script hands it over and the
   const kept: Layout = {
     v: 1,
     cols: g.cols,
+    rows: g.rows,
     guides: defaultLayout(g.cols, g.rows).guides,
     pages: [{ id: 'general', ...general, anchor: { x: 7, y: 3 } }],
   }
@@ -368,7 +404,7 @@ test('the ways into edit view: the dock after 150 ms, Tab, a long press on the e
     expect(board.editing()).toBe(true)
     expect(tab.getAttribute('aria-pressed')).toBe('true')
     expect(pill.hidden).toBe(false)
-    expect([...pill.querySelectorAll('button')].map((b) => b.textContent)).toEqual(['Add page', 'Reset', 'Done'])
+    expect([...pill.querySelectorAll('button')].map((b) => b.textContent)).toEqual(['Add page', 'Undo', 'Reset', 'Cancel', 'Done'])
     // The same tab again is Done.
     tab.click()
     expect(board.editing()).toBe(false)
@@ -471,6 +507,7 @@ test('edit view: a dragged page snaps to dots, is blue where it lands and red wh
   board.adopt({
     v: 1,
     cols: g.cols,
+    rows: g.rows,
     guides: defaultLayout(g.cols, g.rows).guides,
     pages: [
       { id: 'general', w: size('general').w, h: size('general').h, anchor: { x: 0, y: 0 } },
@@ -567,7 +604,8 @@ test("the selected page's bar is in the window and over no other page: above, be
   // bottom of the window, and below Running now was on top of Steps.
   for (const id of ['general', 'chat', 'running', 'steps', 'current-step', 'price']) check(id)
   const general = boxOf(root.querySelector<HTMLElement>('[data-page="general"]')!)
-  expect(check('general').top).toBe(general.top + 8)
+  // Inside General, under its heading rather than over it: the heading is where it is picked up.
+  expect(check('general').top).toBe(general.top + 2 * SP + 8)
 
   // With room above, it goes above; at the right edge it is kept in from the side.
   const g = grid(1440, 900)
@@ -575,6 +613,7 @@ test("the selected page's bar is in the window and over no other page: above, be
   board.adopt({
     v: 1,
     cols: g.cols,
+    rows: g.rows,
     guides: defaultLayout(g.cols, g.rows).guides,
     pages: [
       { id: 'general', w: 11, h: 20, anchor: { x: 0, y: 0 } },
@@ -656,6 +695,7 @@ function mountAt(
   width: number,
   height: number,
   layout?: Layout,
+  more: { pages?: string; options?: BoardOptions } = {},
 ): {
   board: ReturnType<typeof mountBoard>
   root: HTMLElement
@@ -673,6 +713,7 @@ function mountAt(
   })
   const kept = new Map<string, string>()
   if (layout) kept.set('alexia.layout', JSON.stringify(layout))
+  if (more.pages !== undefined) kept.set('alexia.pages', more.pages)
   vi.stubGlobal('localStorage', {
     getItem: (key: string) => kept.get(key) ?? null,
     setItem: (key: string, value: string) => kept.set(key, value),
@@ -697,7 +738,7 @@ function mountAt(
   let wide = width
   Object.defineProperty(root, 'offsetWidth', { configurable: true, get: () => wide })
   Object.defineProperty(root, 'clientHeight', { configurable: true, get: () => height })
-  const board = mountBoard(root, 'token')
+  const board = mountBoard(root, 'token', more.options)
   return {
     board,
     root,
@@ -911,7 +952,7 @@ test('on the one-column stack a change touches only what was changed, never the 
 
   // A size from the bar: that page's size is written, and every anchor and the width are the saved ones.
   grab.click()
-  ;[...bar.querySelectorAll('button')].find((b) => b.textContent === 'S')!.click()
+  ;[...bar.querySelectorAll('button')].find((b) => b.textContent === 'Small')!.click()
   const sized = saves(sent).at(-1)!
   expect(sized.cols).toBe(layout.cols)
   expect(sized.guides).toEqual(layout.guides)
@@ -933,15 +974,22 @@ test('on the one-column stack a change touches only what was changed, never the 
   vi.unstubAllGlobals()
 })
 
-test('Escape takes one step back: edit view, then the Settings or Activity sheet, then the window', () => {
-  expect(escapeTakes(true, true)).toBe('edit')
-  expect(escapeTakes(true, false)).toBe('edit')
-  expect(escapeTakes(false, true)).toBe('sheet')
-  expect(escapeTakes(false, false)).toBe('window')
+test('Escape takes one step back: something small, edit view, then the Settings or Activity sheet, then the window', () => {
+  // A list, a menu or a box that is open goes first, whatever else is open behind it.
+  expect(escapeTakes(true, true, true)).toBe('open')
+  expect(escapeTakes(true, false, false)).toBe('open')
+  expect(escapeTakes(false, true, true)).toBe('edit')
+  expect(escapeTakes(false, true, false)).toBe('edit')
+  expect(escapeTakes(false, false, true)).toBe('sheet')
+  expect(escapeTakes(false, false, false)).toBe('window')
   // And the shell does what it says: the sheet step is the one that closes the sheet.
   const main = readFileSync(join(ui, 'src', 'main.ts'), 'utf8')
   const handler = /if \(event\.key === 'Escape'\) \{([\s\S]*?)\n {2}\}/.exec(main)?.[1] ?? ''
-  expect(handler).toContain('escapeTakes(board.editing(), sheetOpen())')
+  expect(handler).toContain('escapeTakes(small !== undefined, board.editing(), sheetOpen())')
+  expect(handler).toMatch(/step === 'open'\) small\?\.\(\)/)
+  // The small things are the slash menu, the rail's model list and the *That wasn't her* box.
+  const small = /function smallOpen\(\)[\s\S]*?\n\}/.exec(main)?.[0] ?? ''
+  for (const one of ['rail.modelsOpen()', '!menu.hidden', 'closeNotHer']) expect(small).toContain(one)
   expect(handler).toMatch(/step === 'sheet'\) closeSheet\(\)/)
   expect(main).toMatch(/const sheetOpen = \(\): boolean => document\.body\.dataset\.view === 'settings' \|\| document\.body\.dataset\.view === 'control'/)
 })
@@ -980,7 +1028,7 @@ test('local stats at M: a tile per temperature there is a number for, a bar per 
   expect(section.querySelector('.machine-memory')?.textContent).toContain('11.4 GB / 16 GB')
   // The sparklines, the models and the uptime are L's.
   expect(section.querySelector('.spark')).toBeNull()
-  expect(section.textContent).not.toContain('Up for')
+  expect(section.textContent).not.toContain('Computer on for')
   expect(section.textContent).not.toContain('qwen3:8b')
 
   // Pressure the system calls critical is the danger badge; warning is caution.
@@ -1015,8 +1063,8 @@ test('local stats at L add the last few minutes, the models in memory, and how l
   expect(sparks[0]!.getAttribute('points')).toBe('0,90 1,70 3,76.6')
   expect(sparks[0]!.getAttribute('stroke')).toBe('currentColor')
   expect(section.textContent).toContain('qwen3:8b')
-  expect(section.textContent).toContain('≈ 30 tok/s · qwen3:8b')
-  expect(section.querySelector('.machine-up')?.textContent).toBe('Up for 1h 11min')
+  expect(section.textContent).toContain('about 22 words a second · qwen3:8b')
+  expect(section.querySelector('.machine-up')?.textContent).toBe('Computer on for 1h 11min')
 
   // One reading is no line.
   drawLocalStats(section, { ...ollama, system: { ...machine, history: { cpu: [5], gpu: [], memory: [null, 50] } } }, 'L')
@@ -1038,9 +1086,9 @@ test('local stats say the last speed with its model, and draw no speed row befor
 })
 
 test('uptime and memory read the way the operating system says them', () => {
-  expect(upFor(59)).toBe('Up for 0min')
-  expect(upFor(71 * 60)).toBe('Up for 1h 11min')
-  expect(upFor(3 * 86400 + 4 * 3600 + 120)).toBe('Up for 3d 4h')
+  expect(upFor(59)).toBe('Computer on for 0min')
+  expect(upFor(71 * 60)).toBe('Computer on for 1h 11min')
+  expect(upFor(3 * 86400 + 4 * 3600 + 120)).toBe('Computer on for 3d 4h')
   expect(memoryGB(16 * 2 ** 30)).toBe('16 GB')
   expect(memoryGB(11.44 * 2 ** 30)).toBe('11.4 GB')
 })
@@ -1139,3 +1187,145 @@ for (const arranged of [false, true]) {
     vi.unstubAllGlobals()
   })
 }
+
+/** Price at the top of the right-hand column with Steps under it, and room around both. */
+function roomy(): Layout {
+  const g = grid(1440, 900)
+  return {
+    v: 1,
+    cols: g.cols,
+    rows: g.rows,
+    guides: defaultLayout(g.cols, g.rows).guides,
+    pages: [
+      { id: 'general', w: 12, h: 30, anchor: { x: 0, y: 0 } },
+      { id: 'price', w: 10, h: 6, anchor: { x: 40, y: 0 } },
+      { id: 'steps', w: 10, h: 6, anchor: { x: 40, y: 8 } },
+    ],
+  }
+}
+const press = (within: Element, label: string): void =>
+  [...within.querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent === label)!.click()
+
+test('a size that has no room where the page is is refused with a line saying so, and nothing moves', () => {
+  const g = grid(1440, 900)
+  const { board, root, sent } = mountAt(1440, 900, defaultLayout(g.cols, g.rows))
+  const before = drawnAt(root)
+  board.edit(true)
+  pageEl(root, 'chat').querySelector<HTMLButtonElement>(':scope > .page-grab')!.click()
+  const bar = root.querySelector<HTMLElement>('.page-bar')!
+  // Plain words, and no dot counts.
+  expect([...bar.querySelectorAll('.page-tier')].map((b) => b.textContent)).toEqual(['Small', 'Medium', 'Large'])
+  expect(bar.textContent).not.toMatch(/\d+×\d+|fitted/)
+  press(bar, 'Large')
+  expect(document.querySelector('#board-note')!.textContent).toMatch(/^No room here for Large/)
+  expect(saves(sent)).toEqual([])
+  expect(drawnAt(root)).toEqual(before)
+  board.edit(false)
+  vi.unstubAllGlobals()
+})
+
+test('a size that fits grows the page where it is, pushes what is under it down, and is the size lit', () => {
+  const { board, root, sent } = mountAt(1440, 900, roomy())
+  board.edit(true)
+  pageEl(root, 'price').querySelector<HTMLButtonElement>(':scope > .page-grab')!.click()
+  const bar = root.querySelector<HTMLElement>('.page-bar')!
+  expect(bar.querySelector('[aria-pressed="true"]')!.textContent).toBe('Medium')
+  press(bar, 'Large')
+  const saved = saves(sent).at(-1)!
+  const at = Object.fromEntries(saved.pages.map((p) => [p.id, p]))
+  expect(at.price).toMatchObject({ w: 16, h: 8, anchor: { x: 40, y: 0 } })
+  expect(at.steps!.anchor).toEqual({ x: 40, y: 9 })
+  expect(at.general!.anchor).toEqual({ x: 0, y: 0 })
+  expect(bar.querySelector('[aria-pressed="true"]')!.textContent).toBe('Large')
+  board.edit(false)
+  vi.unstubAllGlobals()
+})
+
+test('edit view can be taken back: Undo steps back one change, Cancel puts back what was there when it opened', () => {
+  const layout = roomy()
+  const { board, root, sent } = mountAt(1440, 900, layout)
+  const pill = document.querySelector<HTMLElement>('.edit-pill')!
+  const undo = (): HTMLButtonElement => [...pill.querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent === 'Undo')!
+  const nudge = (id: string, key: string): void => {
+    pageEl(root, id).querySelector<HTMLElement>(':scope > .page-grab')!.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }))
+  }
+  const priceAt = (): { x: number; y: number } => saves(sent).at(-1)!.pages.find((p) => p.id === 'price')!.anchor!
+
+  // Cancel with nothing changed writes nothing.
+  board.edit(true)
+  expect(undo().disabled).toBe(true)
+  press(pill, 'Cancel')
+  expect(board.editing()).toBe(false)
+  expect(saves(sent)).toEqual([])
+
+  board.edit(true)
+  nudge('price', 'ArrowLeft')
+  nudge('price', 'ArrowLeft')
+  expect(priceAt()).toEqual({ x: 38, y: 0 })
+  expect(undo().disabled).toBe(false)
+  undo().click()
+  expect(priceAt()).toEqual({ x: 39, y: 0 })
+  undo().click()
+  expect(saves(sent).at(-1)).toEqual(layout)
+  expect(undo().disabled).toBe(true)
+
+  nudge('price', 'ArrowDown')
+  nudge('steps', 'ArrowDown')
+  press(pill, 'Cancel')
+  expect(board.editing()).toBe(false)
+  expect(saves(sent).at(-1)).toEqual(layout)
+  expect(localStorage.getItem('alexia.layout')).toBe(JSON.stringify(layout))
+  vi.unstubAllGlobals()
+})
+
+test('in edit view a page is one Tab stop, its Move handle, which says what the arrow keys do', () => {
+  const { board, root } = mountAt(1440, 900)
+  const general = pageEl(root, 'general')
+  board.edit(true)
+  const grab = general.firstElementChild as HTMLElement
+  expect(grab.classList.contains('page-grab')).toBe(true)
+  expect(document.getElementById(grab.getAttribute('aria-describedby')!)!.textContent).toBe('Arrow keys move, Shift+arrows resize.')
+  const content = [...general.children].filter((one) => !one.matches('.page-grab, .page-size'))
+  expect(content.length).toBeGreaterThan(0)
+  expect(content.every((one) => one.hasAttribute('inert'))).toBe(true)
+  // The pill says how it works.
+  expect(document.querySelector('.edit-pill')!.textContent).toContain('Drag a page to move it.')
+  board.edit(false)
+  expect(content.some((one) => one.hasAttribute('inert'))).toBe(false)
+  vi.unstubAllGlobals()
+})
+
+test('opening edit view from the dock asks the shell to put an open sheet away first', () => {
+  const opening = vi.fn()
+  const { board } = mountAt(1440, 900, undefined, { options: { opening } })
+  document.querySelector<HTMLButtonElement>('#edit-tab')!.click()
+  expect(board.editing()).toBe(true)
+  expect(opening).toHaveBeenCalledTimes(1)
+  // Once per opening, not per redraw.
+  board.edit(true)
+  expect(opening).toHaveBeenCalledTimes(1)
+  const main = readFileSync(join(ui, 'src', 'main.ts'), 'utf8')
+  expect(main).toMatch(/opening: \(\) => \{\s*if \(sheetOpen\(\)\) show\('chat'\)/)
+  // And the dock's names slide out over the sheet, not under it.
+  const css = readFileSync(join(ui, 'app.css'), 'utf8')
+  const z = (selector: string): number => Number(new RegExp(`\\n${selector} \\{[^}]*z-index: (\\d+)`).exec(css)![1])
+  expect(z('#corner')).toBeGreaterThan(z('#sheet'))
+  board.edit(false)
+  vi.unstubAllGlobals()
+})
+
+test('a plugin page is drawn at its spot on the first paint, from what the last run remembered (no jump on launch)', async () => {
+  const g = grid(1440, 900)
+  const start = defaultLayout(g.cols, g.rows, [{ id: pageIdOf('voice'), w: 12, h: 8 }])
+  const layout: Layout = { ...start, rows: g.rows }
+  const { board, root } = mountAt(1440, 900, layout, { pages: JSON.stringify(pluginPages([voice])) })
+  const page = pageEl(root, pageIdOf('voice'))
+  expect(page.hidden).toBe(false)
+  const first = drawnAt(root)
+  const spot = [page.style.left, page.style.top, page.style.width, page.style.height]
+  await board.refresh()
+  expect([page.style.left, page.style.top, page.style.width, page.style.height]).toEqual(spot)
+  expect(drawnAt(root)).toEqual(first)
+  expect(page.textContent).toContain('Voice in/out')
+  vi.unstubAllGlobals()
+})

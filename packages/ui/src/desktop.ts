@@ -19,6 +19,9 @@
  * - the temperature sensors, for Local stats, because on a Mac and on Windows they are behind
  *   IOKit and WMI, which core could reach only through a native addon — and the shell is
  *   already the native program on the machine (`temps.rs`). Read-only, three numbers;
+ * - Liquid Glass, because the real one is an AppKit view the page can only imitate (`glass.rs`).
+ *   With it, the SF Symbol inside it and the trackpad's click as it lands. It draws and decides
+ *   nothing: the page says where and what;
  * - and nothing else. If a sixth appears, it probably belongs on the other side of the port.
  */
 
@@ -117,6 +120,89 @@ export async function snapshot(box: { left: number; top: number; width: number; 
   } catch {
     return undefined
   }
+}
+
+/** Where one glass goes, in CSS pixels, and how it looks (`glass.rs`). */
+export interface Glass {
+  box: { left: number; top: number; width: number; height: number }
+  radius: number
+  style: 'regular' | 'clear'
+  visible: boolean
+  /** How long a move takes. 0 is at once. */
+  durationMs: number
+  /** An SF Symbol's name, drawn in the middle of the glass by the Mac itself: `'laptopcomputer'`. */
+  symbol?: string
+  /** A CSS colour the glass leans towards: `rgb()`, `rgba()` or `#hex`. Anything else is no tint. */
+  tint?: string
+  /** Move with a little overshoot, like a spring, instead of easing. */
+  spring?: boolean
+}
+
+/**
+ * A CSS colour as sRGB `[r, g, b, a]` from 0 to 1, for the shell, which parses nothing. Only the
+ * forms the switchers use: `rgb()`, `rgba()` and `#rgb`, `#rgba`, `#rrggbb`, `#rrggbbaa`.
+ */
+export function rgba(colour: string): [number, number, number, number] | undefined {
+  const hex = /^#([0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i.exec(colour.trim())?.[1]
+  if (hex) {
+    const pairs = hex.length <= 4 ? [...hex].map((c) => c + c) : hex.match(/../g)!
+    const [r, g, b, a = 255] = pairs.map((p) => parseInt(p, 16))
+    return [r! / 255, g! / 255, b! / 255, a / 255]
+  }
+  const parts = /^rgba?\(([^)]*)\)$/i.exec(colour.trim())?.[1]?.split(/[\s,/]+/).filter(Boolean)
+  if (!parts || parts.length < 3 || parts.length > 4) return undefined
+  const [r, g, b, a = 1] = parts.map((p) => (p.endsWith('%') ? parseFloat(p) / 100 : parseFloat(p)))
+  const out: [number, number, number, number] = [r! / 255, g! / 255, b! / 255, a]
+  return out.every((n) => Number.isFinite(n)) ? out.map((n) => Math.min(1, Math.max(0, n))) as typeof out : undefined
+}
+
+/**
+ * Apple's own Liquid Glass over a rectangle of this page, from the shell (`glass`). Clicks go
+ * through it to the page. `false` in a browser, on an older shell, away from a Mac and before
+ * macOS 26 — all of which mean *keep the web look*. The same `id` moves the same glass.
+ */
+export async function glass(id: string, look: Glass): Promise<boolean> {
+  const invoke = bridge()?.invoke
+  if (!invoke || !id) return false
+  const { left, top, width, height } = look.box
+  try {
+    return (
+      (await invoke('glass', {
+        id,
+        look: {
+          // The visible page's height too: the web view can reach up under the title bar, and
+          // measuring from the page's bottom edge is right either way.
+          rect: [left, top, width, height, window.innerHeight],
+          radius: look.radius,
+          style: look.style,
+          visible: look.visible,
+          durationMs: look.durationMs,
+          spring: look.spring === true,
+          symbol: look.symbol || null,
+          tint: look.tint ? (rgba(look.tint) ?? null) : null,
+        },
+      })) === true
+    )
+  } catch {
+    return false
+  }
+}
+
+/** Whether `glass` can show anything here: only in the app, on macOS 26 and later. */
+export async function glassSupported(): Promise<boolean> {
+  const invoke = bridge()?.invoke
+  if (!invoke) return false
+  try {
+    // An empty id asks the question and places nothing.
+    return (await invoke('glass', { id: '' })) === true
+  } catch {
+    return false
+  }
+}
+
+/** The trackpad's small click as a pill or a knob settles. Nothing away from a Mac. */
+export function haptic(kind: 'alignment' | 'level' | 'generic'): void {
+  call('haptic', { kind })
 }
 
 export function setAutostart(on: boolean): void {

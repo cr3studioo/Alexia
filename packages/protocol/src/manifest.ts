@@ -357,6 +357,14 @@ const setting = z.discriminatedUnion('type', [
     label: z.string().min(1),
     hint: z.string().optional(),
     tool: z.string().min(1),
+    /**
+     * The second press, for a button that takes something away — the label the button turns
+     * into, like a row action's `confirm`. The first press only arms it; the second, which
+     * has already said what goes, calls the tool. Absent means one press, which is right for
+     * almost every button: the permission gate still asks about a destructive tool, but not
+     * in Full trust, and *Forget everything* should never be one misclick away in any mode.
+     */
+    confirm: z.string().min(1).max(160).optional(),
   }),
   z.object({
     /**

@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 /**
- * **The line under an answer while it is being made**: a word for fun, what is really
+ * **The line under an answer while it is being made**: a plain word, what is really
  * happening, and how long it has been.
  *
  * ```
- * ✻ Pestering… · Qwen 3.8 is busy, trying again (2)  5s
+ * ✻ Waiting… · Qwen 3.8 is busy, trying again (2)  5s
  * ```
  *
  * Alexia.md: *silence is what kills, not time.* The wait before the first word used to be a
@@ -13,11 +13,11 @@
  * three busy ones were asked in turn. Somebody looking at `…` cannot tell a slow answer from a
  * crash. Somebody looking at *Qwen 3.8 is busy, trying again (3)* can.
  *
- * **Two halves, and only one of them may play.** The word is flavour, picked from a small pool
- * for the stage: *Pestering…* while a busy model is asked again, *Scouting…* while a second one
+ * **Two halves, and only one of them may play.** The word is a plain one, picked from a small pool
+ * for the stage: *Waiting…* while a busy model is asked again, *Checking…* while a second one
  * is asked as backup. The detail beside it is built from nothing but the fields core sent, so it
  * is always literally true. The model named is the one being asked, and the attempt is the
- * attempt. A joke is fine. A joke that claims something is not.
+ * attempt. The word may be loose. The detail may not.
  *
  * A file of its own, rather than forty lines inside `respond()`, so the words, the clock and the
  * sentences can be tested without the page around them.
@@ -45,20 +45,21 @@ export type Phase =
 export type Kind = Phase['kind']
 
 /**
- * **The words, a pool per stage.** Gentle, a little silly, and never a claim: each one is how
- * the stage *feels*, and the detail beside it says what the stage *is*. Seven or so each, which
- * is enough that the same question asked twice rarely reads the same, and few enough that every
- * one of them has been read by a person.
+ * **The words, a pool per stage.** Plain words anybody who learned English at school knows,
+ * because this line is read by people for whom English is a second language, and *Wheedling…*
+ * or *Cogitating…* made them stop and wonder what was wrong. Each is how the stage looks from
+ * outside; the detail beside it says what the stage *is*. A pool has two when there are two
+ * plain words that fit, so the same question asked twice does not always read the same.
  */
 export const WORDS: Readonly<Record<Kind, readonly string[]>> = {
-  choosing: ['Rummaging', 'Weighing', 'Mulling', 'Sifting', 'Browsing', 'Deliberating', 'Shortlisting'],
-  reading: ['Skimming', 'Poring', 'Perusing', 'Leafing', 'Studying', 'Digesting', 'Absorbing'],
-  asking: ['Knocking', 'Dialing', 'Summoning', 'Hailing', 'Beckoning', 'Ringing', 'Paging'],
-  retrying: ['Pestering', 'Nudging', 'Badgering', 'Coaxing', 'Persisting', 'Wheedling', 'Insisting'],
-  backup: ['Scouting', 'Recruiting', 'Enlisting', 'Rallying', 'Mustering', 'Reinforcing'],
-  thinking: ['Pondering', 'Percolating', 'Noodling', 'Musing', 'Ruminating', 'Cogitating', 'Brewing', 'Simmering'],
-  writing: ['Scribbling', 'Composing', 'Penning', 'Jotting', 'Wordsmithing', 'Inking', 'Drafting'],
-  tool: ['Tinkering', 'Wrangling', 'Fiddling', 'Rigging', 'Tweaking', 'Puttering', 'Cranking'],
+  choosing: ['Choosing', 'Picking'],
+  reading: ['Reading', 'Opening'],
+  asking: ['Asking', 'Calling'],
+  retrying: ['Waiting', 'Retrying'],
+  backup: ['Checking', 'Looking'],
+  thinking: ['Thinking'],
+  writing: ['Writing', 'Typing'],
+  tool: ['Working'],
 }
 
 /** The mark in front of the word. Claude Code's, which is where the person who asked for this saw it. */

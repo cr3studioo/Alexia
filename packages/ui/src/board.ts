@@ -15,9 +15,10 @@
  *   corner to drag; a tapped page gets a small bar with its sizes and a way off the board.
  *   The way in is the Edit layout tab in the dock in the bottom-left corner — hover the dock
  *   and its tabs slide out with their names — or Tab, or the palette's *Edit layout*, or on
- *   touch a long press on the empty board. In edit view a pill at the bottom holds Add page,
- *   Reset and Done. A button that only
- *   appears on hover is a button nobody finds, so it is never only that.
+ *   touch a long press on the empty board. In edit view a pill at the bottom says in one line
+ *   how it works and holds Add page, Undo, Reset (which asks first), Cancel (the board as it
+ *   was when edit view opened) and Done. A button that only appears on hover is a button
+ *   nobody finds, so it is never only that.
  *
  * **The arithmetic is `layout.ts` and the pages are `pages.ts`.** This file turns dots into
  * pixels and pointer movement back into dots, and saves what somebody did.
@@ -36,6 +37,7 @@ import {
   dragGuide,
   fits,
   grid,
+  grow,
   type Grid,
   type Layout,
   limits,
@@ -65,12 +67,26 @@ import {
   pluginOf,
   pluginPages,
   reconcile,
+  rememberedPages,
 } from './pages.js'
 import { temps } from './desktop.js'
 import { el, refreshDriven, type WidgetHost } from './widgets.js'
 
 /** Where the head script leaves the saved layout. Written down twice; `index.html` is the other. */
 export const REMEMBERED_LAYOUT = 'alexia.layout'
+
+/**
+ * The plugin pages the last read of `/api/plugins` found — their names and shapes, not their
+ * content. The first paint draws them from this, empty, at their sizes: without it they
+ * arrived a moment after launch and every page around them moved to make room, every time.
+ */
+export const REMEMBERED_PAGES = 'alexia.pages'
+
+/** What the plain words for a size are. The bar says these, never the letters. */
+const TIER_NAMES: Record<Tier, string> = { S: 'Small', M: 'Medium', L: 'Large' }
+
+/** How far down a page its heading runs: the page bar never sits over it, since it is where a page is picked up. */
+const HEAD_PX = 2 * SP
 
 /** How long the pointer rests on the dock before its tabs slide out. Long enough to mean it. */
 const HOVER_MS = 150
@@ -81,10 +97,12 @@ const PRESS_MS = 500
 const PRESS_SLOP = 10
 
 /**
- * What one press of Escape puts away: edit view first, then the Settings or Activity sheet,
- * and only then the window. One step back per press, never two.
+ * What one press of Escape puts away: something small that is open — a list, a menu, a box
+ * waiting for a line — first, then edit view, then the Settings or Activity sheet, and only
+ * then the window. One step back per press, never two.
  */
-export function escapeTakes(editing: boolean, sheetOpen: boolean): 'edit' | 'sheet' | 'window' {
+export function escapeTakes(open: boolean, editing: boolean, sheetOpen: boolean): 'open' | 'edit' | 'sheet' | 'window' {
+  if (open) return 'open'
   if (editing) return 'edit'
   return sheetOpen ? 'sheet' : 'window'
 }
@@ -112,7 +130,15 @@ function stashed(): Layout | null {
   }
 }
 
-export function mountBoard(root: HTMLElement, token: string): Board {
+export interface BoardOptions {
+  /**
+   * Called as edit view opens. The shell puts the Settings or Activity sheet away here: edit
+   * view under a sheet is edit view nobody can see, with Escape spent on it.
+   */
+  opening?: () => void
+}
+
+export function mountBoard(root: HTMLElement, token: string, options: BoardOptions = {}): Board {
   const field = root.querySelector<HTMLElement>('.board-field')!
   const dots = el('div', 'board-dots')
   dots.setAttribute('aria-hidden', 'true')
@@ -146,7 +172,13 @@ export function mountBoard(root: HTMLElement, token: string): Board {
   let panes: PagePane[] = []
   /** Other ways in, as core last counted them. Unknown asks, which is the safe way to be wrong. */
   let channels: number | undefined
-  let fromPlugins: PageInfo[] = []
+  let fromPlugins: PageInfo[] = (() => {
+    try {
+      return rememberedPages(JSON.parse(localStorage.getItem(REMEMBERED_PAGES) ?? '[]'))
+    } catch {
+      return []
+    }
+  })()
   /** Which plugin pages were here at the last read. Undefined until the first one. */
   let before: Set<string> | undefined
   let known = false
@@ -162,7 +194,7 @@ export function mountBoard(root: HTMLElement, token: string): Board {
 
   /** The layout in force: what was saved, or the default for this window. */
   const current = (): Layout =>
-    saved ?? defaultLayout(g.cols, g.rows, fromPlugins.map((page) => page.id))
+    saved ?? defaultLayout(g.cols, g.rows, fromPlugins.map((page) => ({ id: page.id, ...arrival(page.shape) })))
 
   /** What is saved, written both places. `null` forgets it, which is Reset. */
   function keep(layout: Layout | null): void {
@@ -190,12 +222,31 @@ export function mountBoard(root: HTMLElement, token: string): Board {
   }
 
   /**
+   * What edit view can take back. The layout as it was when edit view opened, which Cancel
+   * puts back, and the one before each change made in it, which Undo steps back through.
+   * Only somebody's own changes are here: a plugin arriving while edit view is open is not a
+   * change of theirs to undo.
+   */
+  let opened: Layout | null = null
+  const history: (Layout | null)[] = []
+
+  /** One change somebody made, saved, and remembered so it can be undone. */
+  function change(layout: Layout | null): void {
+    if (editing) history.push(saved)
+    keep(layout)
+    // The pill's Undo has something to take back now. Only that button: redrawing the pill
+    // would take the focus from wherever it is.
+    const undo = document.querySelector<HTMLButtonElement>('.edit-pill .undo')
+    if (undo) undo.disabled = history.length === 0
+  }
+
+  /**
    * The layout a change starts from: every drawn page pinned where it is now, so moving one
    * page never reshuffles the rest. Not on the one-column stack — its spots and widths are the
    * stack's, not anybody's arrangement, and pinning them would wreck the board the moment the
    * window is wide again. There the layout is taken as saved.
    */
-  const base = (now: readonly Placed[]): Layout => (g.compact ? current() : pin(rescale(current(), g.cols), now))
+  const base = (now: readonly Placed[]): Layout => (g.compact ? current() : pin(rescale(current(), g.cols, g.rows), now))
 
   /**
    * One change, settled: the pages named given the sizes they were just given. On the stack,
@@ -209,7 +260,7 @@ export function mountBoard(root: HTMLElement, token: string): Board {
     // just put under it — which `pack` then moves, and the drop looks like it never happened.
     const changed = g.compact ? now.filter((p) => was.get(p.id)?.w !== p.w || was.get(p.id)?.h !== p.h) : now
     const by = new Map(changed.map((p) => [p.id, p]))
-    keep({
+    change({
       ...pinned,
       ...(guides && { guides }),
       pages: pinned.pages.map((p) => {
@@ -376,6 +427,11 @@ export function mountBoard(root: HTMLElement, token: string): Board {
   /** A grip in its gutter, as tall as the pages it would move. Hidden when it moves none. */
   function placeGrip(grip: HTMLElement, at: number, among: readonly Placed[]): void {
     const attached = among.filter((p) => p.x + p.w === at || p.x === at + 1)
+    // Where it stands, in dots across the board, so a screen reader can say how far an arrow
+    // key moved it rather than only that something is here.
+    grip.setAttribute('aria-valuemin', '0')
+    grip.setAttribute('aria-valuemax', String(g.cols))
+    grip.setAttribute('aria-valuenow', String(at))
     grip.hidden = g.compact || attached.length === 0
     if (grip.hidden) return
     const top = Math.min(...attached.map((p) => p.y))
@@ -392,7 +448,20 @@ export function mountBoard(root: HTMLElement, token: string): Board {
 
   // ---- edit view: picking a page up ------------------------------------------------------------
 
-  /** The two handles every page carries, shown only in edit view. Made once per page. */
+  /** What the arrows do to a page's Move handle, said once and pointed at by every handle. */
+  const keys = el('p', undefined, 'Arrow keys move, Shift+arrows resize.')
+  keys.id = 'page-keys'
+  keys.hidden = true
+  field.append(keys)
+
+  /**
+   * The two handles every page carries, shown only in edit view. Made once per page.
+   *
+   * In edit view the page's own content is `inert`: out of the Tab order and out of reach of a
+   * click, because a page being moved is not a page being used — Tab used to walk through every
+   * button on General before reaching the first Move. The Move handle is the page's first child,
+   * so it is the one stop Tab makes on each page.
+   */
   function chrome(section: HTMLElement, id: string): void {
     const info = infoOf(id)
     if (!info) return
@@ -400,6 +469,7 @@ export function mountBoard(root: HTMLElement, token: string): Board {
       const grab = el('button', 'page-grab')
       grab.type = 'button'
       grab.setAttribute('aria-label', `Move ${info.title}`)
+      grab.setAttribute('aria-describedby', keys.id)
       grab.addEventListener('pointerdown', (event) => lift(id, 'move', event))
       grab.addEventListener('click', () => select(id))
       grab.addEventListener('keydown', (event) => nudge(id, event))
@@ -414,9 +484,14 @@ export function mountBoard(root: HTMLElement, token: string): Board {
     }
     const size = section.querySelector<HTMLElement>(':scope > .page-size')!
     size.hidden = info.shape.scale === undefined || info.shape.fixed === true
-    // Content a plugin page draws replaces its children, so the handles go back on top.
+    // Content a plugin page draws replaces its children, so the handles go back: Move first,
+    // for the Tab order, and the corner last. Both are drawn above the content by z-index.
     const grab = section.querySelector<HTMLElement>(':scope > .page-grab')!
-    if (section.lastElementChild !== size) section.append(grab, size)
+    if (section.firstElementChild !== grab) section.prepend(grab)
+    if (section.lastElementChild !== size) section.append(size)
+    for (const child of section.children) {
+      if (child !== grab && child !== size) child.toggleAttribute('inert', editing)
+    }
   }
 
   function lift(id: string, mode: 'move' | 'size', event: PointerEvent): void {
@@ -480,8 +555,11 @@ export function mountBoard(root: HTMLElement, token: string): Board {
       now = at(ev)
       selected = id
       if (!moved || !now.ok || ev.type === 'pointercancel') {
-        // Red is a refusal, and a refused drop goes back where it came from.
+        // Red is a refusal, and a refused drop goes back where it came from — gliding, while
+        // `returning` is on (app.css). Only this path: a drop that lands must not glide.
+        section.classList.add('returning')
         render()
+        window.setTimeout(() => section.classList.remove('returning'), 360)
         return
       }
       settle(placed.map((p) => (p.id === id ? { ...p, x: now.x, y: now.y, w: now.w, h: now.h } : p)))
@@ -548,30 +626,38 @@ export function mountBoard(root: HTMLElement, token: string): Board {
       group.setAttribute('aria-label', 'Size')
       for (const tier of tiers) {
         const size = info.shape.tiers![tier]!
-        const button = el('button', 'page-tier', tier)
+        const button = el('button', 'page-tier', TIER_NAMES[tier])
         button.type = 'button'
         button.setAttribute('aria-pressed', String(at.tier === tier))
         button.disabled = size[0] > g.cols
+        if (button.disabled) button.title = 'Too wide for this window'
         button.addEventListener('click', () => {
-          const r = { ...at, w: size[0], h: size[1] }
-          // A size that does not fit where the page is goes to the first place it does.
-          const others = placed.filter((p) => p.id !== at.id)
-          if (g.compact || fits(others, r.x, r.y, r.w, r.h, g.cols)) settle(placed.map((p) => (p.id === at.id ? r : p)))
-          else {
-            const from = base(others)
-            keep({ ...from, pages: from.pages.map((p) => (p.id === at.id ? { id: p.id, w: r.w, h: r.h } : p)) })
-            render()
+          // On the stack a page's place is its order, so a size always fits there.
+          if (g.compact) {
+            settle(placed.map((p) => (p.id === at.id ? { ...at, w: size[0], h: size[1] } : p)))
+            return
           }
+          // Where it is, pushing what is under it down — or not at all, and saying why. A size
+          // that did not fit used to throw the page into the first free gap, and the board
+          // was rearranged around it by a button that looked like it only made a page bigger.
+          const grown = grow(placed, shapes(), at.id, size[0], size[1], g.cols, g.rows)
+          if (grown) settle(grown)
+          else say(`No room here for ${TIER_NAMES[tier]}. Make some space around ${info.title} first.`)
         })
         group.append(button)
       }
       parts.push(group)
     }
-    const note =
-      info.shape.fixed ? 'fixed size'
-      : info.shape.scale ? `${String(at.w)}×${String(at.h)}`
-      : ''
-    parts.push(el('span', 'page-note', note + (at.fitted ? ' · fitted' : '')))
+    // Plain words, not dot counts: what can be done to this page that the bar does not show.
+    const note = [
+      info.shape.fixed ? 'One size only.'
+      : info.shape.scale && tiers.length === 0 ? 'Drag its corner to resize.'
+      : '',
+      at.fitted ? 'Smaller here, to fit the window.' : '',
+    ]
+      .filter((line) => line !== '')
+      .join(' ')
+    if (note !== '') parts.push(el('span', 'page-note', note))
     if (info.removable) {
       const remove = el('button', 'quiet-button', 'Remove')
       remove.type = 'button'
@@ -588,7 +674,8 @@ export function mountBoard(root: HTMLElement, token: string): Board {
   /**
    * The bar goes where it can be seen and covers nobody else: above its page, else below it,
    * else — a page as tall as the window, or one with neighbours pressed against both edges —
-   * just inside the page's own top edge, over nothing but the page it is about. "Seen" is the
+   * inside the page, just under its heading, over nothing but the page it is about. Not over
+   * the heading: that is where a page is picked up, and the bar sat on exactly that. "Seen" is the
    * part of the board in the window now, since the board scrolls; and it never runs off either
    * side. Below a full-height page it was drawn past the bottom of the window, and below a
    * short one on top of the next page down.
@@ -613,7 +700,7 @@ export function mountBoard(root: HTMLElement, token: string): Board {
       others.every((o) => o.left >= left + wide || o.left + o.width <= left || o.top >= top + high || o.top + o.height <= top)
     const above = box.top - gap - high
     const below = box.top + box.height + gap
-    const inside = Math.max(viewTop, Math.min(Math.max(box.top, viewTop - gap) + gap, viewBottom - high))
+    const inside = Math.max(viewTop, Math.min(Math.max(box.top + HEAD_PX, viewTop - gap) + gap, viewBottom - high))
     const top =
       free(above) ? above
       : free(below) ? below
@@ -651,7 +738,7 @@ export function mountBoard(root: HTMLElement, token: string): Board {
     if (!info.removable) return
     selected = undefined
     const from = base(placed)
-    keep({ ...from, pages: from.pages.filter((p) => p.id !== info.id) })
+    change({ ...from, pages: from.pages.filter((p) => p.id !== info.id) })
     render()
   }
 
@@ -721,27 +808,92 @@ export function mountBoard(root: HTMLElement, token: string): Board {
     return button
   }
 
-  function drawPill(): void {
+  /**
+   * The pill: one line saying what can be done, then Add page, Undo, Reset, Cancel and Done.
+   * Reset asks first, in the pill itself — it undoes every arrangement somebody ever made, and
+   * it used to do that on one press with nothing said.
+   */
+  function drawPill(asking = false): void {
     pill.hidden = !editing
     editTab.setAttribute('aria-pressed', String(editing))
     if (!editing) {
       pill.replaceChildren()
       return
     }
+    if (asking) {
+      const keepIt = pillButton('Keep', 'pill-button', () => {
+        drawPill()
+        pill.querySelector<HTMLElement>('button')?.focus()
+      })
+      pill.replaceChildren(
+        el('span', 'edit-hint ask', 'Put every page back where it started?'),
+        pillButton('Put back', 'pill-button done', () => {
+          reset()
+          pill.querySelector<HTMLElement>('button')?.focus()
+        }),
+        keepIt,
+      )
+      keepIt.focus()
+      return
+    }
+    const hint = el(
+      'span',
+      'edit-hint',
+      g.compact ? 'Click a page for its sizes.' : 'Drag a page to move it. Drag its corner to resize. Click it for sizes.',
+    )
     const add = pillButton('Add page', 'pill-button', () => void toggleAdd())
     add.setAttribute('aria-expanded', String(!addMenu.hidden))
     add.setAttribute('aria-controls', 'add-menu')
+    const undo = pillButton('Undo', 'pill-button quiet undo', () => {
+      if (history.length === 0) return
+      keep(history.pop() as Layout | null)
+      addMenu.hidden = true
+      render()
+      drawPill()
+      pill.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus()
+    })
+    undo.disabled = history.length === 0
     pill.replaceChildren(
+      hint,
       add,
+      undo,
       pillButton('Reset', 'pill-button quiet', () => {
-        selected = undefined
         addMenu.hidden = true
-        keep(null)
-        render()
-        drawPill()
+        drawPill(true)
+      }),
+      pillButton('Cancel', 'pill-button quiet', () => {
+        // Back to how it was when edit view opened, saved as that — or nothing saved at all
+        // when nothing was changed, so Cancel on an untouched board writes nothing.
+        if (history.length > 0) keep(opened)
+        edit(false)
       }),
       pillButton('Done', 'pill-button done', () => edit(false)),
     )
+  }
+
+  /**
+   * Reset: the board somebody started with, for this window — General, Chat and the right-hand
+   * column — plus the other pages that are on the board now, at the bottom of that column.
+   * Pages somebody took off stay off, and a plugin page that was never on the board is not put
+   * on by it; Local stats, if it is there, stays. A disabled plugin's page keeps its entry, with
+   * no spot, so enabling it brings it back. Saved as a layout rather than forgotten: forgotten
+   * is the first-run board, which takes every plugin's page.
+   */
+  function reset(): void {
+    selected = undefined
+    addMenu.hidden = true
+    const start = defaultLayout(g.cols, g.rows)
+    const core = new Set(start.pages.map((p) => p.id))
+    const here = new Set(available().map((page) => page.id))
+    const others = current().pages.filter((p) => !core.has(p.id))
+    const back = defaultLayout(
+      g.cols,
+      g.rows,
+      others.filter((p) => here.has(p.id)).map((p) => ({ id: p.id, ...arrival(infoOf(p.id)!.shape) })),
+    )
+    change({ ...back, pages: [...back.pages, ...others.filter((p) => !here.has(p.id)).map(({ id, w, h }) => ({ id, w, h }))] })
+    render()
+    drawPill()
   }
 
   interface Soon {
@@ -787,7 +939,7 @@ export function mountBoard(root: HTMLElement, token: string): Board {
   /** Put a page on the board at the first free spot, and say where if that is out of view. */
   function place(page: PageInfo): void {
     const from = base(placed)
-    keep({ ...from, pages: [...from.pages.filter((p) => p.id !== page.id), { id: page.id, ...arrival(page.shape) }] })
+    change({ ...from, pages: [...from.pages.filter((p) => p.id !== page.id), { id: page.id, ...arrival(page.shape) }] })
     selected = page.id
     render()
     announce(page.id)
@@ -811,6 +963,12 @@ export function mountBoard(root: HTMLElement, token: string): Board {
   }
 
   function edit(on: boolean): void {
+    // What Undo and Cancel can take back belongs to one visit to edit view, and starts with it.
+    if (on !== editing) history.length = 0
+    if (on && !editing) {
+      options.opening?.()
+      opened = saved
+    }
     editing = on
     root.classList.toggle('editing', on)
     corner.classList.toggle('editing', on)
@@ -854,6 +1012,11 @@ export function mountBoard(root: HTMLElement, token: string): Board {
     if (got === undefined) return
     panes = got
     fromPlugins = pluginPages(panes)
+    try {
+      localStorage.setItem(REMEMBERED_PAGES, JSON.stringify(fromPlugins))
+    } catch {
+      // Only saves the next launch a jump.
+    }
     const installed = new Set(panes.map((pane) => pane.id))
     // Pages whose plugin has gone lose their element too, so nothing of theirs lingers.
     for (const [id, section] of elements) {

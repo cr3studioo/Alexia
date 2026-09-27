@@ -73,7 +73,9 @@ export const pluginOf = (page: string): string | undefined =>
  * three exact widths would pin a grip in place.
  */
 export const CORE_PAGES: readonly PageInfo[] = [
-  { id: 'general', title: 'General', removable: false, shape: { scale: { min: [10, 16] } } },
+  // Eighteen dots is the least height that shows every control on General and a conversation
+  // under them. Sixteen hid Model, Where it runs and What she may do below the page edge.
+  { id: 'general', title: 'General', removable: false, shape: { scale: { min: [10, 18] } } },
   {
     id: 'chat',
     title: 'Chat',
@@ -146,9 +148,18 @@ export const GUIDES = [0.22, 0.72] as const
  * conversation in the middle, and what she is doing on the right — the three columns the
  * shell had before it was a board, so an update does not move anything on anybody.
  *
- * Plugin pages go after, unanchored, into whatever room is left.
+ * Any other page — a plugin's, or Local stats when Reset keeps it — goes at the bottom of the
+ * right-hand column, as wide as the column, and Current step and then Steps give up the room
+ * for it, down to their own smallest heights. Past that the column runs long and the board's squeeze shares out
+ * the shortfall. (They used to go unanchored into "whatever room is left", and on this board
+ * there is none: they landed under General and Chat and squeezed both.) A bare id arrives at
+ * twelve by eight; `{ id, w, h }` says its size, of which the height is used.
  */
-export function defaultLayout(cols: number, rows: number, extra: readonly string[] = []): Layout {
+export function defaultLayout(
+  cols: number,
+  rows: number,
+  extra: readonly (string | { id: string; w: number; h: number })[] = [],
+): Layout {
   const wide = Math.max(cols, COMPACT_BELOW)
   const tall = Math.max(rows, 24)
   // General keeps its smallest width and the right column keeps ten dots, whatever the
@@ -157,9 +168,14 @@ export function defaultLayout(cols: number, rows: number, extra: readonly string
   const b = Math.max(a + 15, Math.min(wide - 11, Math.round(wide * GUIDES[1])))
   const right = { x: b + 1, w: wide - b - 1 }
   const running = 4
-  const steps = 9
   const price = 3
-  const current = Math.max(8, tall - running - steps - price - 3)
+  const more = extra.map((one) => (typeof one === 'string' ? { id: one, w: 12, h: 8 } : one))
+  const room = more.reduce((sum, one) => sum + one.h + 1, 0)
+  // Current step gives up room first, to its eight; then Steps, to its M of six.
+  const spare = tall - running - price - 3 - room
+  const steps = Math.min(9, Math.max(6, spare - 8))
+  const current = Math.max(8, spare - steps)
+  let below = running + steps + current + price + 4
   const pages: Wanted[] = [
     { id: 'general', w: a, h: tall, anchor: { x: 0, y: 0 } },
     { id: 'chat', w: b - a - 1, h: tall, anchor: { x: a + 1, y: 0 } },
@@ -167,9 +183,31 @@ export function defaultLayout(cols: number, rows: number, extra: readonly string
     { id: 'steps', w: right.w, h: steps, anchor: { x: right.x, y: running + 1 } },
     { id: 'current-step', w: right.w, h: current, anchor: { x: right.x, y: running + steps + 2 } },
     { id: 'price', w: right.w, h: price, anchor: { x: right.x, y: running + steps + current + 3 } },
-    ...extra.map((id) => ({ id, w: 12, h: 8 })),
+    ...more.map((one) => {
+      const page = { id: one.id, w: right.w, h: one.h, anchor: { x: right.x, y: below } }
+      below += one.h + 1
+      return page
+    }),
   ]
   return { v: 1, cols: wide, guides: [a, b], pages }
+}
+
+/**
+ * The plugin pages remembered from the last run, if what was kept is a list of them — read
+ * before the first paint so plugin pages are drawn at their sizes from the start. Anything
+ * that is not a plugin's page with a name and a shape is left out; the real read corrects the
+ * rest a moment later.
+ */
+export function rememberedPages(value: unknown): PageInfo[] {
+  if (!Array.isArray(value)) return []
+  return value.flatMap((one: unknown) => {
+    if (typeof one !== 'object' || one === null) return []
+    const p = one as Partial<PageInfo>
+    const plugin = typeof p.id === 'string' ? pluginOf(p.id) : undefined
+    if (plugin === undefined || p.plugin !== plugin || typeof p.title !== 'string') return []
+    if (typeof p.shape !== 'object' || p.shape === null) return []
+    return [{ id: p.id!, title: p.title, removable: true, shape: p.shape, plugin }]
+  })
 }
 
 /** The size a page arrives at: its M, else its first tier, else its smallest. */
@@ -188,6 +226,7 @@ export function isLayout(value: unknown): value is Layout {
     Array.isArray(v.guides) &&
     v.guides.length === 2 &&
     v.guides.every((g) => typeof g === 'number') &&
+    (v.rows === undefined || typeof v.rows === 'number') &&
     Array.isArray(v.pages) &&
     v.pages.every((p) => typeof p === 'object' && p !== null && typeof p.id === 'string' && typeof p.w === 'number' && typeof p.h === 'number')
   )
@@ -364,9 +403,9 @@ export const memoryGB = (n: number): string => {
 export const upFor = (seconds: number): string => {
   const minutes = Math.floor(seconds / 60)
   const [d, h, m] = [Math.floor(minutes / 1440), Math.floor(minutes / 60) % 24, minutes % 60]
-  if (d > 0) return `Up for ${String(d)}d ${String(h)}h`
-  if (h > 0) return `Up for ${String(h)}h ${String(m)}min`
-  return `Up for ${String(m)}min`
+  if (d > 0) return `Computer on for ${String(d)}d ${String(h)}h`
+  if (h > 0) return `Computer on for ${String(h)}h ${String(m)}min`
+  return `Computer on for ${String(m)}min`
 }
 
 /**
@@ -496,14 +535,19 @@ export function drawLocalStats(
   if (tier !== 'L') return
 
   body.append(heading('Ollama', stats.running ? 'running' : ''))
-  if (!stats.running) body.append(el('p', 'nothing', 'Ollama is not running, so nothing local is loaded.'))
+  if (!stats.running) body.append(el('p', 'nothing', 'Ollama is not running or not installed, so no model on this computer can answer. Get it at ollama.com.'))
   else {
     if (stats.loaded.length === 0) body.append(rowOf('Nothing loaded', ''))
     for (const one of stats.loaded) body.append(rowOf(one.name, bytes(one.vram || one.size)))
   }
   // Only when core has measured one. A row saying *—* is a row saying nothing.
   // Rounded and marked as roughly: one answer's speed, not a benchmark, and a decimal would claim otherwise.
-  if (stats.speed) body.append(rowOf('Last speed', `≈ ${String(Math.round(stats.speed.tokensPerSecond))} tok/s · ${stats.speed.model}`))
+  // In words, not tokens: about three words for every four tokens, which is the rule of thumb
+  // for English and near enough for a figure that is already marked as roughly.
+  if (stats.speed) {
+    const words = Math.max(1, Math.round(stats.speed.tokensPerSecond * 0.75))
+    body.append(rowOf('Last speed', `about ${String(words)} words a second · ${stats.speed.model}`))
+  }
   if (system) body.append(el('p', 'machine-up', upFor(system.uptime)))
 }
 
@@ -520,27 +564,81 @@ const rowOf = (what: string, right: string): HTMLElement => {
   return row
 }
 
+/** What the Price page is drawn from: the month, its cap, and the day with its allowance. */
+export interface Spending {
+  /** Spent this month, in dollars. */
+  spent: number
+  cap?: number
+  today?: { spent: number; allowance: number }
+}
+
+/** Everything the Price page says, worked out without a page to say it on. */
+export interface PriceText {
+  /** The small word over the figure: *today* or *this month*, whichever the figure is. */
+  label: string
+  figure: string
+  /** The figure's tooltip. */
+  title: string
+  /** How full the bar is, 0 to 100. */
+  bar: number
+  against: string
+  both: string
+}
+
 /**
- * Price's second line. The figure itself is `#spend`, which the conversation's code writes
- * as it always has; this adds what the figure is measured against — a bar and a sentence at
- * M, and at L the day and the month side by side.
+ * **The day, when there is an allowance; otherwise the month** — and the label says which.
+ *
+ * The daily figure is the one that answers *may this spend money right now*; the monthly cap
+ * is a bound on a total somebody is already choosing to run up. Somebody who has set no
+ * allowance is not spending automatically at all, so the month is the only number they have.
+ *
+ * One function for the figure, its label and the lines under it, because they used to be
+ * written in three places: the label was fixed at *this month* in the markup while the figure
+ * under it was today's, and after an answer the month's total was glued onto *of $1.00 today*.
  */
-export function drawPrice(
-  root: HTMLElement,
-  state: { spent: number; cap?: number; today?: { spent: number; allowance: number } },
-): void {
+export function priceText(state: Spending): PriceText {
   const money = (n: number): string => `$${n.toFixed(2)}`
-  const fill = root.querySelector<HTMLElement>('#spend-bar')!
-  const against = root.querySelector<HTMLElement>('#spend-against')!
-  const both = root.querySelector<HTMLElement>('#spend-both')!
   const day = state.today && state.today.allowance > 0 ? state.today : undefined
   const of = day ? { spent: day.spent, cap: day.allowance } : state.cap === undefined ? undefined : { spent: state.spent, cap: state.cap }
-  fill.style.width = of && of.cap > 0 ? `${String(Math.min(100, Math.round((of.spent / of.cap) * 100)))}%` : '0%'
-  against.textContent =
-    day ? `of ${money(day.allowance)} allowed today`
-    : state.cap === undefined ? 'No monthly cap set.'
-    : `of ${money(state.cap)} this month`
-  both.textContent =
-    `This month ${money(state.spent)}${state.cap === undefined ? '' : ` of ${money(state.cap)}`}` +
-    (day ? ` · today ${money(day.spent)} of ${money(day.allowance)}` : '')
+  return {
+    label: day ? 'today' : 'this month',
+    figure:
+      day ? `${money(day.spent)} of ${money(day.allowance)}`
+      : state.cap === undefined ? money(state.spent)
+      : `${money(state.spent)} of ${money(state.cap)}`,
+    title:
+      day ?
+        `Spent ${money(day.spent)} of ${money(day.allowance)} today.`
+      : 'No daily allowance, so nothing is spent without you asking for it.',
+    bar: of && of.cap > 0 ? Math.min(100, Math.round((of.spent / of.cap) * 100)) : 0,
+    against:
+      day ? `of ${money(day.allowance)} allowed today`
+      : state.cap === undefined ? 'No monthly cap set.'
+      : `of ${money(state.cap)} this month`,
+    both:
+      `This month ${money(state.spent)}${state.cap === undefined ? '' : ` of ${money(state.cap)}`}` +
+      (day ? ` · today ${money(day.spent)} of ${money(day.allowance)}` : ''),
+  }
+}
+
+/**
+ * The whole Price page: the figure, the word over it, the bar and both lines under it. Called
+ * with the state read at start-up and again with the figures an answer ends with, so the page
+ * is drawn the same way both times rather than patched the second.
+ */
+export function drawPrice(root: HTMLElement, state: Spending): void {
+  const said = priceText(state)
+  const label = root.querySelector<HTMLElement>('.money-label')
+  const figure = root.querySelector<HTMLElement>('#spend')
+  const fill = root.querySelector<HTMLElement>('#spend-bar')
+  const against = root.querySelector<HTMLElement>('#spend-against')
+  const both = root.querySelector<HTMLElement>('#spend-both')
+  if (label) label.textContent = said.label
+  if (figure) {
+    figure.textContent = said.figure
+    figure.title = said.title
+  }
+  if (fill) fill.style.width = `${String(said.bar)}%`
+  if (against) against.textContent = said.against
+  if (both) both.textContent = said.both
 }

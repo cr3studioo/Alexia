@@ -64,28 +64,20 @@
           <button id="new-chat" type="button" title="Start an empty conversation">New chat</button>
 
           <!-- The command palette's own entry, for people who do not know the shortcut yet. A
-               shortcut nobody can discover is a feature for whoever wrote it. -->
+               shortcut nobody can discover is a feature for whoever wrote it. The key is written
+               the way this keyboard writes it (palette.ts): ⌘K on a Mac, Ctrl K elsewhere. -->
           <button id="find" class="rail-row" type="button">
-            <span class="what">Find a run, a skill, a tool</span>
-            <kbd>Ctrl K</kbd>
+            <span class="what">Find a chat, a setting, a skill</span>
+            <kbd data-shortcut="palette">⌘K</kbd>
           </button>
-
-          <!-- The three most recent, and a way to the rest. Named by the first thing you said
-               in each — Alexia writes no title for them, because your own words are already on
-               disk and a second name is a second thing that can be wrong. -->
-          <div class="rail-group">
-            <p class="rail-label"><span>Recent</span><span class="count" id="recent-count"></span></p>
-            <div id="recent"></div>
-            <button id="recent-more" class="more" type="button" hidden></button>
-          </div>
 
           <div class="rail-group">
             <div class="rail-tabs" role="tablist">
-              <button id="tab-setup" class="on" type="button" role="tab" aria-selected="true">Setup</button>
-              <button id="tab-plugins" type="button" role="tab" aria-selected="false">Plugins</button>
+              <button id="tab-setup" class="on" type="button" role="tab" aria-selected="true" aria-controls="rail-setup">Setup</button>
+              <button id="tab-plugins" type="button" role="tab" aria-selected="false" aria-controls="rail-plugins" tabindex="-1">Plugins</button>
             </div>
 
-            <div id="rail-setup">
+            <div id="rail-setup" role="tabpanel" aria-labelledby="tab-setup">
               <!-- Which model, chosen by hand rather than by the router. The list opens in
                    place: a popover anchored to a row in a column that scrolls is a popover
                    that gets left behind. -->
@@ -97,29 +89,51 @@
                 </svg>
               </button>
               <div id="model-drop" class="drop" hidden></div>
+              <!-- Core's own sentence about the last pick: that she no longer falls back to
+                   other models, or why the pick was refused. The list closes, this stays. -->
+              <p id="model-said" class="rail-said" role="status" hidden></p>
 
               <!-- The UI equivalent of /local, /cloud and /combined. Every command has one: the
                    commands are a shortcut for people who like them, never the only route. -->
-              <label class="rail-group">
-                <span class="rail-label">Where it runs</span>
-                <select class="mode rail-select" title="Where the work happens" aria-label="Where the work happens">
-                  <option value="local">Local</option>
-                  <option value="combined">Combined</option>
-                  <option value="cloud">Cloud</option>
-                </select>
-              </label>
+              <!-- A glass pill over three icons (switchers.ts): a radio group, each icon named
+                   by its word. The word shows small in the pill on a hover or a change; what
+                   each mode means is said on Settings › Models & money. -->
+              <div class="rail-group">
+                <span class="rail-label" id="mode-label">How she runs</span>
+                <div id="mode-switch" aria-labelledby="mode-label"></div>
+              </div>
 
               <!-- What Alexia may do unasked. The number one thing a person changes after being
-                   surprised once, so it is a control on the rail and not a settings page. -->
-              <label class="rail-group">
-                <span class="rail-label">What she may do</span>
-                <select id="permission" class="rail-select" title="What Alexia may do without asking"></select>
-              </label>
+                   surprised once, so it is a control on the rail and not a settings page. Four
+                   stops from careful to free (switchers.ts); Full trust is pressed and held. What
+                   each level means is said on Settings › Safety. -->
+              <div class="rail-group">
+                <span class="rail-label" id="permission-label">What she may do</span>
+                <div id="permission-switch" aria-labelledby="permission-label"></div>
+              </div>
             </div>
 
             <!-- Every installed plugin, and the switch that turns it off. Delete the folder and
                  the row goes with it — nothing here names one. -->
-            <div id="rail-plugins" hidden></div>
+            <div id="rail-plugins" role="tabpanel" aria-labelledby="tab-plugins" hidden></div>
+          </div>
+
+          <!-- The three most recent, and a way to the rest. Named by the first thing you said
+               in each — Alexia writes no title for them, because your own words are already on
+               disk and a second name is a second thing that can be wrong.
+
+               Below Setup rather than above it: at the page's smallest size there is room for
+               one of the two, and a model or a permission you cannot reach is worse than a
+               conversation list that shows one row instead of three. rail.ts takes rows away
+               until the page fits. -->
+          <div class="rail-group recent-group">
+            <p class="rail-label"><span>Recent</span><span class="count" id="recent-count"></span></p>
+            <div id="recent"></div>
+            <div class="recent-more">
+              <button id="recent-more" class="more" type="button" hidden></button>
+              <!-- The whole list lives in Activity, which has room for it and a filter. -->
+              <button id="recent-all" class="more" type="button" hidden>See all chats</button>
+            </div>
           </div>
 
         </aside>
@@ -144,11 +158,17 @@
               <span id="character" class="status character" hidden></span>
             </div>
 
-            <main id="log" aria-live="polite"></main>
+            <div id="log"></div>
+            <!-- Says once that an answer has finished, rather than the log reading out every word
+                 of it as it streams in. Visually hidden; a screen reader hears it. -->
+            <p id="answered" class="visually-hidden" role="status" aria-live="polite"></p>
+            <!-- Shown while an answer is arriving and somebody has scrolled up to read something
+                 older: the log no longer pulls them down, so this is the way back. -->
+            <button id="new-words" type="button" hidden>↓ New words</button>
 
             <!-- The permission prompt. It sits above the composer rather than over the page: a
                  modal here would cover what is being decided about. -->
-            <div id="prompt" hidden>
+            <div id="prompt" role="alertdialog" aria-labelledby="prompt-why" hidden>
               <p id="prompt-why"></p>
               <div class="row">
                 <button id="allow" type="button">Allow once</button>
@@ -168,7 +188,7 @@
 
             <!-- Typing `/` lists what there is, with a line each. Nobody is going to read
                  documentation to find a command. -->
-            <ul id="menu" hidden></ul>
+            <ul id="menu" role="listbox" aria-label="Commands" hidden></ul>
 
             <!-- What is coming with the next message. Above the composer rather than inside
                  it, because a file being carried is a thing to see and remove, not a thing to
@@ -176,13 +196,12 @@
             <ul id="attached" hidden></ul>
 
             <form id="ask">
-              <!-- A label, not a button: the input it opens has to be a real file input, and a
-                   real file input is the only control that can hand a webview bytes. -->
-              <label id="attach" class="quiet-button" title="Attach a document">
-                Attach
-                <input id="file" type="file" multiple hidden />
-              </label>
-              <textarea id="text" rows="1" placeholder="Ask Alexia" autofocus></textarea>
+              <!-- A real button, so it can be reached with Tab and pressed with Enter or Space. It
+                   opens the hidden file input beside it, which is the only control that can hand
+                   a webview bytes. -->
+              <button id="attach" type="button" class="quiet-button" title="Attach a file or picture">Attach</button>
+              <input id="file" type="file" multiple hidden />
+              <textarea id="text" rows="1" placeholder="Ask Alexia" aria-label="Message Alexia" autofocus></textarea>
               <button type="submit">Send</button>
               <!-- Not a cancel that takes effect at the end of the step. It works while a tool
                    call is in flight, which is the only kind worth having. -->
@@ -213,7 +232,8 @@
 
         <!-- The number that matters, and never a bare figure: the label is what stops "$0.00"
              reading as decoration. Nobody is ever surprised by a bill. M adds what the figure
-             is measured against, L the day and the month side by side. -->
+             is measured against, L the day and the month side by side. The label is written
+             by drawPrice with the figure, so it says "today" when the figure is the day's. -->
         <section class="page panel" data-page="price" aria-label="Price">
           <p class="money">
             <span class="money-label">this month</span>
@@ -232,63 +252,38 @@
          middle: the board is somebody's arrangement, and opening a settings screen should not
          rearrange it. Escape or Back closes it. Neither screen draws its own frame. -->
     <div id="sheet" class="panel">
-        <!-- The settings screen (M2-1), in two pages (M8-3). General is what first run asked
-             and the know-how that is installed; Plugins is every plugin as a card, and one
-             card each behind it. The tab strip is the control surface's, reused rather than
-             copied — a second tab control would be a second set of states to keep in step. -->
+        <!-- The settings screen (M2-1, M8-3, D205). **Settings is what you choose; Activity is
+             what happened.** Every page here holds a choice: how she looks, what may answer and
+             what it may cost, what she may do, what she knows, what she can do, and which
+             version this is. The tab strip is the Activity sheet's, reused rather than copied —
+             a second tab control would be a second set of states to keep in step. -->
         <section id="settings" class="view">
           <div class="centred">
             <div class="view-top">
-              <h2 class="step-heading">Settings</h2>
+              <h2 id="settings-heading" class="step-heading">Settings</h2>
               <button id="close-settings" class="quiet-button" type="button">Back</button>
             </div>
 
             <nav id="settings-tabs" class="tabs" aria-label="Settings">
-              <button id="settings-tab-general" class="tab on" type="button" aria-current="page">General</button>
-              <button id="settings-tab-plugins" class="tab" type="button" aria-current="false">Plugins</button>
-              <button id="settings-tab-about" class="tab" type="button" aria-current="false">About</button>
+              <button class="tab on" type="button" data-settings="general" aria-current="page">General</button>
+              <button class="tab" type="button" data-settings="models" aria-current="false">Models &amp; money</button>
+              <button class="tab" type="button" data-settings="safety" aria-current="false">Safety</button>
+              <button class="tab" type="button" data-settings="skills" aria-current="false">Skills</button>
+              <button class="tab" type="button" data-settings="plugins" aria-current="false">Plugins</button>
+              <button class="tab" type="button" data-settings="about" aria-current="false">About</button>
             </nav>
 
             <div id="general">
-              <!-- The three questions first run asked, in the same order and the same words,
-                   with their answers in them. Written by the same `/api/setup` the Start button
-                   writes. -->
+              <!-- Her name, first. It is the name she answers to and the one on the window, so
+                   the label says whose name it is: first run asks *What should I call you?* in
+                   her voice, and out of that voice the same words read as a question about
+                   yours. Written by the same `/api/setup` the Start button writes. -->
               <div class="group">
                 <label class="field">
-                  <span class="label">What should I call you?</span>
+                  <span class="label">Her name</span>
                   <input id="name-setting" class="short" />
+                  <span class="hint">What Alexia is called, on the window and in the chat.</span>
                 </label>
-                <label class="field">
-                  <span class="label">How should I run?</span>
-                  <!-- The rail's picker and this one are the same control twice, and both go
-                       through `/local`, `/combined`, `/cloud` — so there is one writer and
-                       neither can show a mode the other has changed. -->
-                  <select class="mode" aria-label="How should I run?">
-                    <option value="local">Local — everything on this machine</option>
-                    <option value="combined">Combined — cloud thinks, this machine makes</option>
-                    <option value="cloud">Cloud — everything through APIs</option>
-                  </select>
-                </label>
-                <div class="field">
-                  <span class="label">Connect a provider</span>
-                  <div class="pair">
-                    <select id="provider-setting" aria-label="Provider"></select>
-                    <input
-                      id="key-setting"
-                      type="password"
-                      placeholder="Paste a key"
-                      autocomplete="off"
-                      aria-label="API key"
-                    />
-                    <button id="save-key" class="quiet-button" type="button">Save</button>
-                    <!-- Shown only when a key is stored for the chosen provider. Two presses,
-                         because the key is gone from the keychain and cannot be read back. -->
-                    <button id="remove-key" class="quiet-button" type="button" hidden>Remove key</button>
-                  </div>
-                  <!-- Whether there is a key for the chosen provider, never the key itself: it
-                       went to the keychain and nothing here can read it back. -->
-                  <p class="hint" id="key-said"></p>
-                </div>
               </div>
               <!-- Which painting is on the wall. `docs/design.md` held for a while that there
                    was no toggle and that the switch was the operating system; the operating
@@ -345,6 +340,17 @@
                   <span>clear</span><span>solid</span>
                 </span>
               </div>
+              <!-- Whose glass the rail's two switches are made of (switchers.ts). Apple's is the
+                   real material and needs macOS 26; Alexia's own is drawn by the page. -->
+              <div class="field group">
+                <label class="label" for="glass-look">Glass look</label>
+                <select id="glass-look">
+                  <option value="auto">Automatic</option>
+                  <option value="apple">Apple glass</option>
+                  <option value="alexia">Alexia glass</option>
+                </select>
+                <p class="hint" id="glass-look-said"></p>
+              </div>
               <!-- The obvious way to turn autostart off, which is the half of "starts on login"
                    that people actually need. Hidden in a browser, where it is not a setting. -->
               <div class="field group" id="desktop-settings" hidden>
@@ -355,10 +361,90 @@
                 </label>
                 <p class="hint" id="hotkey-setting"></p>
               </div>
-              <!-- Know-how, as opposed to capability (M2-2). A skill is a folder with a
-                   Markdown file in it, so there is nothing to configure — only what is there,
-                   what is broken, and what else there is to have. Both halves are here rather
-                   than one being filed under Plugins: a skill is not a plugin. -->
+            </div>
+
+            <!-- Models & money (D205): where the work happens, the keys that open providers, and
+                 which models may answer and what they may cost. Everything that decides a bill
+                 is on this one page. The ladder and the table under it are core's own section
+                 (`panels.ts`, id `models`), drawn into #models-core by the same renderer the
+                 Activity sheet uses. -->
+            <div id="models-page" hidden>
+              <div class="group">
+                <label class="field">
+                  <span class="label">How should I run?</span>
+                  <!-- The rail's picker and this one are the same control twice, and both go
+                       through `/local`, `/combined`, `/cloud` — so there is one writer and
+                       neither can show a mode the other has changed. -->
+                  <select class="mode" aria-label="How should I run?" aria-describedby="mode-said">
+                    <option value="local">Local</option>
+                    <option value="combined">Combined</option>
+                    <option value="cloud">Cloud</option>
+                  </select>
+                </label>
+                <!-- What the chosen mode means, in the same words as ever (switchers.ts, MODES).
+                     The rail's pill shows only icons, so the sentence lives here. -->
+                <p class="hint" id="mode-said"></p>
+                <div class="field">
+                  <span class="label">Connect an AI service</span>
+                  <div class="pair">
+                    <select id="provider-setting" aria-label="AI service"></select>
+                    <input
+                      id="key-setting"
+                      type="password"
+                      placeholder="Paste your key"
+                      autocomplete="off"
+                      aria-label="Key"
+                    />
+                    <button id="save-key" class="quiet-button" type="button">Save</button>
+                    <!-- Shown only when a key is stored for the chosen provider. Two presses,
+                         because the key is gone from the keychain and cannot be read back. -->
+                    <button id="remove-key" class="quiet-button" type="button" hidden>Remove key</button>
+                  </div>
+                  <!-- Whether there is a key for the chosen provider, never the key itself: it
+                       went to the keychain and nothing here can read it back. -->
+                  <p class="hint" id="key-said"></p>
+                </div>
+              </div>
+              <div id="models-core"></div>
+            </div>
+
+            <!-- Safety (D205): what she may do without asking, and the two limits on a task.
+                 The permission control is the rail's, twice, on the same `/api/permissions`;
+                 the limits are `/api/ceilings`, which had no screen until now. -->
+            <div id="safety-page" hidden>
+              <div class="group">
+                <label class="field">
+                  <span class="label">What she may do</span>
+                  <select class="permission" aria-label="What she may do"></select>
+                </label>
+                <p class="hint" id="permission-said" role="status"></p>
+              </div>
+              <div class="group">
+                <label class="field">
+                  <span class="label">Most steps in one task</span>
+                  <input id="steps-setting" class="short" type="number" min="1" step="1" inputmode="numeric" />
+                  <span class="hint">She stops after this many steps and tells you, so a task that goes in circles ends quickly.</span>
+                </label>
+                <label class="field">
+                  <span class="label">Ask me first when a task may cost more than ($)</span>
+                  <input id="ask-above-setting" class="short" type="text" inputmode="decimal" autocomplete="off" />
+                  <span class="hint">Before a task that could cost more than this, she asks. Free tasks never ask.</span>
+                </label>
+                <label class="field">
+                  <span class="label">Monthly budget ($)</span>
+                  <input id="monthly-setting" class="short" type="text" inputmode="decimal" autocomplete="off" placeholder="No budget" />
+                  <span class="hint">When this month's spending reaches this, she stops before spending more and asks what to do. Leave it empty for no budget.</span>
+                </label>
+                <p class="hint" id="lifted-said" hidden>Budget lifted for today. <button type="button" class="quiet-button" id="lifted-undo">Undo</button></p>
+                <p class="hint" id="limits-said" role="status"></p>
+              </div>
+            </div>
+
+            <!-- Skills (D205): one list of every skill — installed, and written by Alexia — with
+                 Allow and Forget, then the folders that did not load, then what else there is
+                 to have. The list is core's section (`panels.ts`, id `skills`). -->
+            <div id="skills-page" hidden>
+              <div id="skills-core"></div>
               <div id="skills"></div>
               <div id="skills-library"></div>
             </div>
@@ -384,6 +470,14 @@
                 <div id="bento" class="bento"></div>
                 <div id="problems"></div>
                 <div id="library"></div>
+                <!-- For people who build things: a plugin from a folder, an MCP server, and the
+                     list of every tool (core's section `tools`). Closed, because nobody needs
+                     them to use Alexia. -->
+                <details id="plugins-advanced" class="advanced">
+                  <summary>Advanced</summary>
+                  <div id="plugins-adding"></div>
+                  <div id="tools-core"></div>
+                </details>
               </div>
               <div id="plugin-detail" hidden></div>
             </div>
@@ -426,14 +520,13 @@
           </div>
         </section>
 
-        <!-- The control surface (M6-2). Nothing in this markup names a tab: the strip is
-             built from what core sends, which since D118 is core's own tabs and only those.
-             A plugin's panel is the second half of its page under Plugins, so there is one
-             place to look for a plugin rather than two. -->
+        <!-- Activity (M6-2, D205): what happened — the runs and the chats. Nothing in this
+             markup names a tab: the strip is built from what core sends, and only its
+             Activity tabs; the rest of core's sections are drawn on Settings pages. -->
         <section id="control" class="view">
           <div class="centred">
             <div class="view-top">
-              <h2 class="step-heading">Control</h2>
+              <h2 id="control-heading" class="step-heading">Activity</h2>
               <button id="close-control" class="quiet-button" type="button">Back</button>
             </div>
 
@@ -441,7 +534,7 @@
                  opens the list. Nine tabs in a scrollable row is technically fine and awkward
                  in practice, and the overlay is narrower than any phone this was tested on. -->
             <button id="tab-current" class="tab-current" type="button" aria-expanded="false" hidden></button>
-            <nav id="tabs" class="tabs" aria-label="Control panels"></nav>
+            <nav id="tabs" class="tabs" aria-label="Activity"></nav>
 
             <div id="panel"></div>
           </div>
@@ -456,11 +549,11 @@
          Lucide's (lucide.dev, ISC): activity, settings and layout-dashboard. -->
     <div id="corner">
       <nav class="dock" aria-label="Alexia">
-        <button id="open-control" class="dock-tab panel" type="button" title="What Alexia has been doing, and what it knows">
+        <button id="open-control" class="dock-tab panel" type="button" title="What Alexia has done">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2"></path></svg>
           <span class="dock-label">Activity</span>
         </button>
-        <button id="open-settings" class="dock-tab panel" type="button" title="What was asked at first run, plugins, and the skills installed">
+        <button id="open-settings" class="dock-tab panel" type="button" title="Change how Alexia works">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"></path><circle cx="12" cy="12" r="3"></circle></svg>
           <span class="dock-label">Settings</span>
         </button>
@@ -529,7 +622,7 @@
                 <input type="radio" name="mode" value="cloud" />
                 <b>Cloud</b>
               </span>
-              <span>Everything through APIs. For a machine that would rather not do the work.</span>
+              <span>Everything through online AI services. Good for a computer that should not do the heavy work.</span>
             </label>
           </div>
         </div>
@@ -540,7 +633,7 @@
              they have said hello. Each face carries the published free-tier numbers, what it
              costs to get in, and what it costs in privacy where that is known. -->
         <div class="group" id="connect">
-          <h2 class="step-heading">Add a key, or don't</h2>
+          <h2 class="step-heading">Add a key if you have one</h2>
           <p class="hint" id="wall-hint"></p>
           <div id="wall" class="wall"></div>
           <p class="hint" id="training"></p>
@@ -553,7 +646,7 @@
              here is the yes: what it will ask for is on screen at the moment of asking, which
              is the only place that question means anything. -->
         <div class="group" id="choose" hidden>
-          <h2 class="step-heading">What should it be able to do?</h2>
+          <h2 class="step-heading">What should she be able to do?</h2>
           <p class="hint" id="choose-hint"></p>
           <div id="shelf" class="cards"></div>
           <p class="hint" id="choose-said"></p>
@@ -582,14 +675,25 @@
       </div>
     </section>
 
-    <!-- The command palette (M6-10). Ctrl+K from anywhere. It finds a thing and opens the tab
-         it lives on with the word already typed into that panel's filter — it never runs
+    <!-- The command palette (M6-10). ⌘K from anywhere. It finds a thing and opens the place
+         it lives with its name already typed into that list's filter — it never runs
          anything, because slash commands already do that and two command systems with two
          permission stories is one too many. -->
     <div id="palette" hidden>
       <div class="palette-box" role="dialog" aria-modal="true" aria-label="Find">
-        <input id="palette-input" type="search" placeholder="Find a run, a skill, a tool, a panel…" autocomplete="off" />
-        <ul id="palette-hits"></ul>
+        <!-- A combobox over a listbox; palette.ts sets the roles and which row is active. -->
+        <input
+          id="palette-input"
+          type="search"
+          role="combobox"
+          aria-label="Find"
+          aria-controls="palette-hits"
+          aria-expanded="false"
+          aria-autocomplete="list"
+          placeholder="Find a chat, a setting, a skill, a plugin…"
+          autocomplete="off"
+        />
+        <ul id="palette-hits" role="listbox" aria-label="What was found"></ul>
       </div>
     </div>
 

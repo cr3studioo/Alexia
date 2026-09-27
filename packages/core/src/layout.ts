@@ -18,6 +18,11 @@ export interface Layout {
   v: 1
   /** How many dot columns the board had when this was saved, so a wider window can rescale. */
   cols: number
+  /**
+   * How many dot rows it had, so a taller or shorter window can scale the heights. Optional:
+   * a layout saved before the shell sent it is still a layout.
+   */
+  rows?: number
   /** The two column boundaries, in dots — what the grips between the columns drag. */
   guides: [number, number]
   pages: { id: string; w: number; h: number; anchor?: { x: number; y: number } }[]
@@ -44,6 +49,7 @@ export function readLayout(sent: unknown): { ok: true; layout: Layout } | { ok: 
   const l = sent as Record<string, unknown>
   if (l.v !== 1) return no('it is not version 1')
   if (!finite(l.cols) || l.cols <= 0) return no('cols must be a number above 0')
+  if (l.rows !== undefined && (!finite(l.rows) || l.rows <= 0)) return no('rows must be a number above 0')
   const guides = l.guides
   if (!Array.isArray(guides) || guides.length !== 2 || !guides.every(finite)) {
     return no('guides must be two numbers')
@@ -72,7 +78,8 @@ export function readLayout(sent: unknown): { ok: true; layout: Layout } | { ok: 
     }
     pages.push({ id: p.id, w: p.w, h: p.h, ...(anchor && { anchor }) })
   }
-  return { ok: true, layout: { v: 1, cols: l.cols, guides: [guides[0] as number, guides[1] as number], pages } }
+  const rows = l.rows as number | undefined
+  return { ok: true, layout: { v: 1, cols: l.cols, ...(rows !== undefined && { rows }), guides: [guides[0] as number, guides[1] as number], pages } }
 }
 
 /**

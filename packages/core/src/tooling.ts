@@ -112,7 +112,9 @@ export class PluginTooling implements Tooling {
    * core has never heard of it, which the gate reads the same way it reads a tool declaring
    * nothing: not safe until something says so.
    */
-  async about(name: string): Promise<{ pluginId?: string; annotations?: Annotations } | undefined> {
+  async about(
+    name: string,
+  ): Promise<{ pluginId?: string; annotations?: Annotations; description?: string } | undefined> {
     // Reading a skill is reading text core already has on disk. Saying so is what keeps the
     // default mode from asking permission every time the model opens its own instructions.
     // `tool` is undefined when nothing is installed, so it is also the answer to whether
@@ -120,7 +122,15 @@ export class PluginTooling implements Tooling {
     // answering for something that cannot happen.
     if (name === SKILL_TOOL && this.skills?.tool) return { annotations: this.skills.annotations }
     const found = (await this.#aggregate()).find((k) => k.spec.name === name)
-    return found && { pluginId: found.pluginId, ...(found.annotations && { annotations: found.annotations }) }
+    // The description rides along for the permission question, which names the call in the
+    // author's words (`toolWords`) rather than by its id.
+    return (
+      found && {
+        pluginId: found.pluginId,
+        ...(found.annotations && { annotations: found.annotations }),
+        ...(found.spec.description !== undefined && { description: found.spec.description }),
+      }
+    )
   }
 
   /**

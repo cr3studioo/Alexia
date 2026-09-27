@@ -785,6 +785,11 @@
               "tool": {
                 "type": "string",
                 "minLength": 1
+              },
+              "confirm": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 160
               }
             },
             "required": [
@@ -2266,6 +2271,11 @@
                   "tool": {
                     "type": "string",
                     "minLength": 1
+                  },
+                  "confirm": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 160
                   }
                 },
                 "required": [

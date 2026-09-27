@@ -12,7 +12,8 @@
 //!
 //! The shape:
 //!
-//! * Pick a free port, spawn the core sidecar on it, point two windows at it.
+//! * Pick a free port, spawn the core sidecar on it, point two windows at it once it answers —
+//!   and start it again if it stops on its own.
 //! * `main` is the window with a taskbar entry. `overlay` is the frameless one the hotkey
 //!   summons: always on top, never in the taskbar, gone when it loses focus.
 //! * The tray icon is the only answer to *is it running?* the target user has, so its four
@@ -25,22 +26,26 @@
 //! parsing of anything the core says. If something needs deciding, it is decided on the
 //! other side of the port.
 
+mod glass;
 mod snapshot;
 mod temps;
 mod vault;
 
-use std::net::TcpListener;
-use std::sync::Mutex;
+use std::net::{TcpListener, TcpStream};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::thread;
 use std::time::{Duration, Instant};
 
 use tauri::image::Image;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{TrayIcon, TrayIconBuilder};
-use tauri::{AppHandle, Manager, RunEvent, State, WebviewUrl, WebviewWindowBuilder, WindowEvent};
+use tauri::{AppHandle, Listener, Manager, RunEvent, Url, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 use tauri_plugin_autostart::MacosLauncher;
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
-use tauri_plugin_shell::process::CommandChild;
+use tauri_plugin_shell::process::{Command, CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
+use glass::{glass, haptic};
 use snapshot::sheet_snapshot;
 use temps::system_temps;
 
@@ -72,19 +77,22 @@ tauri_nspanel::tauri_panel! {
 /// is the only answer to *is it running, and does it need me?* that anyone gets at a glance.
 /// The tooltip carries the words because an icon alone cannot say "needs you".
 #[tauri::command]
-fn tray_state(app: AppHandle, tray: State<'_, Mutex<Option<TrayIcon>>>, state: String) {
+fn tray_state(app: AppHandle, state: String) {
     let said = match state.as_str() {
         "working" => "Alexia — working",
         "attention" => "Alexia — needs you",
         "error" => "Alexia — something went wrong",
         _ => "Alexia — idle",
     };
-    if let Ok(held) = tray.lock() {
-        if let Some(icon) = held.as_ref() {
-            let _ = icon.set_tooltip(Some(said));
-        }
+    tooltip(&app, said);
+}
+
+/// The tray's words, from the page or from here — the one thing this process says there itself
+/// is that core stopped and is being started again.
+fn tooltip(app: &AppHandle, said: &str) {
+    if let Some(icon) = app.state::<Mutex<Option<TrayIcon>>>().lock().ok().and_then(|held| held.clone()) {
+        let _ = icon.set_tooltip(Some(said));
     }
-    let _ = app;
 }
 
 /// Dismiss the overlay from the page, which is where Escape is pressed.
@@ -182,17 +190,23 @@ fn reveal(app: &AppHandle) {
     if let Ok(mut at) = SUMMONED.lock() {
         *at = Some(Instant::now());
     }
-    // Shown and made key *without* activating Alexia, on a Mac — activating is what kept the
-    // overlay off a full-screen Space.
-    #[cfg(target_os = "macos")]
-    if let Ok(panel) = tauri_nspanel::ManagerExt::get_webview_panel(app, "overlay") {
-        panel.show_and_make_key();
-        return;
-    }
-    if let Some(overlay) = app.get_webview_window("overlay") {
-        let _ = overlay.show();
-        let _ = overlay.set_focus();
-    }
+    // On the main thread, whoever asked. The panel is AppKit called directly, and WebKit ends a
+    // process that touches it from anywhere else — which `--overlay` did, because single-instance
+    // hears a second launch on a thread of its own (the crash of 2026-09-25).
+    let app = app.clone();
+    let _ = app.clone().run_on_main_thread(move || {
+        // Shown and made key *without* activating Alexia, on a Mac — activating is what kept the
+        // overlay off a full-screen Space.
+        #[cfg(target_os = "macos")]
+        if let Ok(panel) = tauri_nspanel::ManagerExt::get_webview_panel(&app, "overlay") {
+            panel.show_and_make_key();
+            return;
+        }
+        if let Some(overlay) = app.get_webview_window("overlay") {
+            let _ = overlay.show();
+            let _ = overlay.set_focus();
+        }
+    });
 }
 
 fn open_main(app: &AppHandle) {
@@ -204,10 +218,112 @@ fn open_main(app: &AppHandle) {
     }
 }
 
+/// Core, as a sidecar. Its stdout is not parsed: the port was decided here, so there is nothing
+/// to learn from it that this process does not already know.
+fn sidecar(app: &AppHandle, port: u16) -> Result<Command, Box<dyn std::error::Error>> {
+    Ok(app
+        .shell()
+        .sidecar("alexia-core")?
+        .env_clear()
+        .envs(std::env::vars_os().filter(|(name, _)| passes(name)))
+        // The sidecar *is* the Node runtime, so it needs something to run. Passing
+        // Node nothing opens a REPL and waits forever, which looks exactly like a
+        // core that started and never answered.
+        //
+        // `--disable-sigusr1` because on macOS and Linux that signal opens Node's
+        // inspector, and any process running as this user may send it — which would
+        // be a debugger attached to the one process holding the vault's token.
+        .args(["--disable-sigusr1", "boot.mjs"])
+        .env("ALEXIA_PORT", port.to_string())
+        .env("ALEXIA_TAURI", "1")
+        .env("ALEXIA_DATA_NAME", DEV.unwrap_or("Alexia"))
+        // Tauri preserves a resource's path relative to this crate, so the folder
+        // `scripts/sidecar.mjs` fills lands one level in. Naming it here is cheaper
+        // than a build step that flattens it, and it is one place rather than four
+        // path joins inside the core it starts.
+        .current_dir(app.path().resource_dir()?.join("resources")))
+}
+
+/// Set on the way out, so a core stopped by quitting is not started again behind it.
+static QUITTING: AtomicBool = AtomicBool::new(false);
+
+/// The running core, taken out of where quitting finds it — only if it is `pid`, when one is named.
+fn take_core(app: &AppHandle, pid: Option<u32>) -> Option<CommandChild> {
+    let state = app.state::<Mutex<Option<CommandChild>>>();
+    let mut held = state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    held.take_if(|core| pid.is_none_or(|pid| core.pid() == pid))
+}
+
+/// Start core on `port`, hand it the vault, point the windows at it once it answers, and watch it.
+///
+/// **The windows go to core only once it is listening.** Until then they show the starting page
+/// in `placeholder/`. Pointed at a port with nothing behind it yet — a cold start, a login, the
+/// first launch after an update — the page failed once and the window stayed white for good.
+///
+/// **A core that stops on its own is started again**, on the same port and with the same vault
+/// line, after a wait that doubles each time it stops within a minute of starting, up to about a
+/// minute: the shape a plugin gets (`supervisor.ts`), so a core that cannot start is not a fast
+/// loop. The same vault rather than a new one, because a second would leave the first's token
+/// valid behind it.
+fn start(app: &AppHandle, port: u16, handover: Arc<String>, lapse: u32) -> Result<(), Box<dyn std::error::Error>> {
+    let (mut events, child) = sidecar(app, port)?.spawn()?;
+    let (pid, began) = (child.pid(), Instant::now());
+    // Said once the watch below is running, so a core that never got its line is still watched.
+    let wrote = {
+        // Held first, so a failed write below still leaves it where quitting stops it.
+        let state = app.state::<Mutex<Option<CommandChild>>>();
+        let mut held = state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        // Where the vault is and the token that opens it, down the one channel only this
+        // process and that child share. Written before core has booted; the pipe holds
+        // it until `boot.mjs` reads it.
+        held.insert(child).write(handover.as_bytes())
+    };
+    let waiting = app.clone();
+    thread::spawn(move || {
+        let Ok(url) = Url::parse(&format!("http://127.0.0.1:{port}/")) else { return };
+        let state = waiting.state::<Mutex<Option<CommandChild>>>();
+        while state.lock().is_ok_and(|held| held.as_ref().is_some_and(|core| core.pid() == pid)) {
+            if TcpStream::connect_timeout(&([127, 0, 0, 1], port).into(), Duration::from_secs(1)).is_ok() {
+                // Both windows, the hidden overlay too — and after a restart, this is their reload.
+                for window in waiting.webview_windows().into_values() {
+                    let _ = window.navigate(url.clone());
+                }
+                return tooltip(&waiting, "Alexia — idle");
+            }
+            thread::sleep(Duration::from_millis(200));
+        }
+    });
+    let app = app.clone();
+    thread::spawn(move || {
+        // Every event read, not only the last: the shell plugin hands them over one at a time,
+        // and one nobody collected would leave core stuck writing its next line of output.
+        while let Some(event) = events.blocking_recv() {
+            if let CommandEvent::Terminated(_) = event {
+                break;
+            }
+        }
+        // Out of its slot, so a quit during the wait below does not signal a pid that may by
+        // then belong to some other program.
+        drop(take_core(&app, Some(pid)));
+        if QUITTING.load(Ordering::SeqCst) {
+            return;
+        }
+        tooltip(&app, "Alexia — stopped, starting again");
+        let lapse = if began.elapsed() > Duration::from_secs(60) { 0 } else { lapse + 1 };
+        thread::sleep(Duration::from_secs(1 << lapse.min(6)));
+        if QUITTING.load(Ordering::SeqCst) {
+            return;
+        }
+        if let Err(error) = start(&app, port, handover, lapse) {
+            eprintln!("Core could not be started again: {error}");
+            tooltip(&app, "Alexia — something went wrong");
+        }
+    });
+    Ok(wrote?)
+}
+
 fn main() {
     let port = free_port();
-    // Decided here, so the windows can be built without waiting for the sidecar to boot.
-    let url = format!("http://127.0.0.1:{port}/");
 
     let builder = tauri::Builder::default();
     // The panel crate's plugin, which the overlay's conversion below needs registered first.
@@ -223,7 +339,9 @@ fn main() {
             if argv.iter().any(|arg| arg == "--overlay") {
                 reveal(app)
             } else {
-                open_main(app)
+                // On the main thread as well, like `reveal`: a second launch is heard on another.
+                let handle = app.clone();
+                let _ = app.run_on_main_thread(move || open_main(&handle));
             }
         }))
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, None))
@@ -234,54 +352,20 @@ fn main() {
         // does *not* stop the process — which is how quitting used to leave a core running
         // with the database open, and the next launch made a second one beside it.
         .manage(Mutex::<Option<CommandChild>>::new(None))
-        .invoke_handler(tauri::generate_handler![tray_state, hide_overlay, relaunch, system_temps, sheet_snapshot])
+        .invoke_handler(tauri::generate_handler![tray_state, hide_overlay, relaunch, system_temps, sheet_snapshot, glass, haptic])
         .setup(move |app| {
             let handle = app.handle().clone();
 
-            // Core, as a sidecar. Its stdout is not read and not parsed: the port was
-            // decided here, so there is nothing to learn from it that this process does not
-            // already know.
-            let sidecar = app
-                .shell()
-                .sidecar("alexia-core")?
-                .env_clear()
-                .envs(std::env::vars_os().filter(|(name, _)| passes(name)))
-                // The sidecar *is* the Node runtime, so it needs something to run. Passing
-                // Node nothing opens a REPL and waits forever, which looks exactly like a
-                // core that started and never answered.
-                //
-                // `--disable-sigusr1` because on macOS and Linux that signal opens Node's
-                // inspector, and any process running as this user may send it — which would
-                // be a debugger attached to the one process holding the vault's token.
-                .args(["--disable-sigusr1", "boot.mjs"])
-                .env("ALEXIA_PORT", port.to_string())
-                .env("ALEXIA_TAURI", "1")
-                .env("ALEXIA_DATA_NAME", DEV.unwrap_or("Alexia"))
-                // Tauri preserves a resource's path relative to this crate, so the folder
-                // `scripts/sidecar.mjs` fills lands one level in. Naming it here is cheaper
-                // than a build step that flattens it, and it is one place rather than four
-                // path joins inside the core it starts.
-                .current_dir(app.path().resource_dir()?.join("resources"));
-            // The vault is opened **before** core is started: failing here leaves nothing running,
-            // where failing after the spawn left a core that nothing held and nothing would stop.
-            let handover = vault::open()?;
-            let (_events, child) = sidecar.spawn()?;
-            {
-                // Held first, so a failed write below still leaves it where quitting stops it.
-                let state = handle.state::<Mutex<Option<CommandChild>>>();
-                let mut held = state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-                // Where the vault is and the token that opens it, down the one channel only this
-                // process and that child share. Written before core has booted; the pipe holds
-                // it until `boot.mjs` reads it.
-                held.insert(child).write(handover.as_bytes())?;
-            }
-
-            let target: WebviewUrl = WebviewUrl::External(url.parse()?);
+            // The starting page, until `start` sees core listening and sends both windows there.
+            let target = WebviewUrl::App("index.html".into());
 
             WebviewWindowBuilder::new(app, "main", target.clone())
                 .title(DEV.unwrap_or("Alexia"))
                 .inner_size(880.0, 720.0)
                 .min_inner_size(420.0, 420.0)
+                // ⌘+ and ⌘- make the text bigger and smaller, as in any browser. Tauri's own
+                // polyfill, allowed by `core:webview:allow-set-webview-zoom` in the capability.
+                .zoom_hotkeys_enabled(true)
                 .build()?;
 
             // The overlay, exactly as the spike proved it survives: frameless, on top, out
@@ -352,6 +436,18 @@ fn main() {
                 *held = Some(icon);
             }
 
+            // Core, after the windows and the tray it reports to. The vault is opened **before**
+            // core is started: failing here leaves nothing running, where failing after the spawn
+            // left a core that nothing held and nothing would stop.
+            start(&handle, port, Arc::new(vault::open()?), 0)?;
+            // The starting page's *Try again*: the core that has not answered is stopped, and the
+            // watch in `start` brings up another.
+            app.listen_any("start-core-again", move |_| {
+                if let Some(core) = take_core(&handle, None) {
+                    let _ = core.kill();
+                }
+            });
+
             let combo = Shortcut::new(Some(HOTKEY.0), HOTKEY.1);
             app.handle().plugin(
                 tauri_plugin_global_shortcut::Builder::new()
@@ -380,10 +476,10 @@ fn main() {
         // and orderly, that one survives this process being shot.
         .run(|app, event| match event {
             RunEvent::Exit => {
-                if let Ok(mut held) = app.state::<Mutex<Option<CommandChild>>>().lock() {
-                    if let Some(core) = held.take() {
-                        let _ = core.kill();
-                    }
+                // First, so the watch in `start` knows this stop was asked for.
+                QUITTING.store(true, Ordering::SeqCst);
+                if let Some(core) = take_core(app, None) {
+                    let _ = core.kill();
                 }
             }
             // Double-clicking an Alexia that is already running, or its Dock icon (D145). The

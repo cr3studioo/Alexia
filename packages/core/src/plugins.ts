@@ -16,11 +16,12 @@ import {
   type Root,
   type Tool,
 } from '@modelcontextprotocol/client'
-import { cpSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, watch, type FSWatcher } from 'node:fs'
+import { cpSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, watch, type FSWatcher } from 'node:fs'
 import { basename, join } from 'node:path'
 import { receive, type Upload } from './attach.js'
 import { Host } from './host.js'
 import { readLayout, withoutGone } from './layout.js'
+import { home } from './servers.js'
 import { CORE, keychain, type SecretStore } from './secrets.js'
 import {
   declaredAction,
@@ -230,7 +231,21 @@ export class Plugins {
    * for as long as it takes somebody to notice. **Installed, not enabled:** what it asked for
    * has not been read by anybody yet.
    */
-  install(from: string): { id: string } | Problem {
+  install(typed: string): { id: string } | Problem {
+    // What a person pastes, read the way a shell would have: a leading tilde is their home
+    // folder, and a trailing slash is the same folder. A web page cannot expand either for them.
+    const from = home(typed.trim()).replace(/(.)[\\/]+$/, '$1')
+    if (from === '') return { dir: from, reason: 'Type or paste the path of a plugin folder first.' }
+    // Asked first, because the manifest check below would otherwise answer *there is no
+    // folder* with *this folder has no plugin.json*, naming the last word of the path as if
+    // it were a folder that exists.
+    let folder: boolean
+    try {
+      folder = statSync(from).isDirectory()
+    } catch {
+      return { dir: from, reason: `There is no folder at ${from}.` }
+    }
+    if (!folder) return { dir: from, reason: `${from} is a file. Point at the folder that holds plugin.json.` }
     const found = this.#one(from, basename(from))
     if ('reason' in found) return found
     const id = found.manifest.id

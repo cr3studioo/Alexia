@@ -117,7 +117,7 @@ test('answers-with-no-keys: take the keyless rows away and the promise is gone',
 
   const verdict = route({ messages: [{ role: 'user', content: 'say ok' }] }, { placement: MODES.cloud }, without)
   expect(verdict.ok).toBe(false)
-  if (!verdict.ok) expect(verdict.why).toContain('add a key in settings')
+  if (!verdict.ok) expect(verdict.why).toContain('add a key in Settings')
 })
 
 /**

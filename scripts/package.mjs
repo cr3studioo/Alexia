@@ -209,7 +209,7 @@ const secrets = process.env.ALEXIA_TAURI ? await fromShell(process.stdin) : unde
 // The port is Alexia's own choice when nothing says otherwise, and the shell's choice when
 // something does: the desktop app (M5-1) picks a free port before it builds its windows, so
 // that they can be pointed somewhere without waiting for Node to boot.
-const { url } = await serve({ port: Number(process.env.ALEXIA_PORT) || 0, secrets })
+const { url, close } = await serve({ port: Number(process.env.ALEXIA_PORT) || 0, secrets })
 console.log('Alexia is running.')
 console.log('')
 console.log('   ' + url)
@@ -259,14 +259,39 @@ if (!process.env.ALEXIA_TAURI) {
    * ponytail: polling, and a pid Windows may eventually hand to something else. A Job
    * Object would be exact and is a page of Rust in a file whose line count is an invariant.
    * The cost of being wrong here is one surviving core, which is today's behaviour.
+   *
+   * **The pipe is the prompt half.** stdin is the one channel the shell holds open to this
+   * process, and it ends the moment the shell does, however it went — so that is heard at
+   * once, and the poll every five seconds is the fallback for whatever it misses.
+   *
+   * **And leaving takes the plugins along.** Every way out goes through \`leave\`, which stops
+   * the plugins before exiting: a plugin left behind is a Telegram bot still collecting
+   * messages for an Alexia that has quit, and fighting the next launch for them. Given three
+   * seconds, because a way out that can hang is not one. A plugin also leaves on its own when
+   * this process's pipe to it closes (the SDK's \`start\`), which covers the kill this code
+   * never hears.
    */
+  let leaving
+  const leave = () => {
+    leaving ??= Promise.race([close(), new Promise((resolve) => setTimeout(resolve, 3000))])
+      .catch(() => {})
+      .finally(() => process.exit(0))
+  }
+  process.stdin.once('end', leave)
+  process.stdin.once('close', leave)
+  // Read again so its end can be heard (the handover paused it), and not held open for it:
+  // the server is this process's reason to stay, never the pipe.
+  process.stdin.resume()
+  process.stdin.unref?.()
+  process.once('SIGTERM', leave)
+  process.once('SIGINT', leave)
   const owner = process.ppid
   setInterval(() => {
     try {
       // Signal 0 asks *is it there* and sends nothing.
       process.kill(owner, 0)
     } catch {
-      process.exit(0)
+      leave()
     }
   }, 5000).unref()
 }

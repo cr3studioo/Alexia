@@ -89,6 +89,17 @@ test('core contributes the tabs whose data core owns, and every one of them hold
   }
 })
 
+test('Activity is what happened and Settings is what you choose (D205)', async () => {
+  const list = await tabs()
+  // Activity holds the two records of what Alexia has done, and nothing else.
+  expect(list.filter((tab) => tab.screen !== 'settings').map((tab) => tab.id)).toEqual(['runs', 'chats'])
+  // The money ladder, the models, the skills and the tools are choices, drawn on Settings.
+  expect(list.filter((tab) => tab.screen === 'settings').map((tab) => tab.id)).toEqual(['models', 'skills', 'tools'])
+  // Skills are one list: the ones Alexia wrote are rows in it, not a second table.
+  const skills = list.find((tab) => tab.id === 'skills')
+  expect(skills?.widgets?.map((widget) => widget.key)).toEqual(['skills'])
+})
+
 test('a plugin that is installed and not enabled is a walkthrough, not a panel', async () => {
   // A folder appearing is not consent (D73). Core hands over what the manifest declared —
   // it has nothing else to hand over — and the page draws neither half until the yes is

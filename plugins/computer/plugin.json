@@ -40,9 +40,9 @@
     {
       "type": "toggle",
       "key": "allow_input",
-      "label": "Allow it to press things, move the mouse and type",
+      "label": "Allow her to press things, move the mouse and type",
       "default": false,
-      "hint": "Off means it can look but not touch — no pressing, no pointer, no keyboard. Looking still works, and it is the useful half most of the time. Turn this on only while you are watching."
+      "hint": "Off means she can look but not touch: no clicking, no mouse, no typing. Turn this on only while you are watching."
     },
     {
       "type": "number",
@@ -52,7 +52,7 @@
       "max": 200,
       "step": 1,
       "default": 20,
-      "hint": "Older ones are deleted. Zero keeps none after the call that made them."
+      "hint": "Older ones are deleted. Zero keeps none once she is done with them."
     },
     {
       "type": "status",
@@ -74,7 +74,7 @@
         "key": "saved_plans",
         "type": "table",
         "label": "Saved sequences",
-        "hint": "The same five clicks, without paying a model to work them out again. A plan with no decision in it has no model in its path at all.",
+        "hint": "Steps she has done before, repeated without paying an AI model to work them out again.",
         "rows": "plans",
         "columns": [
           {

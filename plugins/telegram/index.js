@@ -24,6 +24,7 @@ import {
   updates,
 } from './api.js'
 import { Asking } from './asking.js'
+import { CLASH_WAIT, clashed, Pause, PAUSED } from './clash.js'
 import { Clock } from './clock.js'
 import { Draft } from './draft.js'
 import { forRich, RICH_LIMIT } from './format.js'
@@ -162,6 +163,13 @@ const quoting = (messageId) =>
 const asking = new Asking()
 let asked
 
+/**
+ * Standing aside for another copy of Alexia that is polling the same bot — see `clash.js`.
+ * While it waits, this copy collects nothing, answers nothing new, and sends no reminders or
+ * morning summaries: those belong to whichever copy has the bot, or they arrive twice.
+ */
+const pause = new Pause()
+
 const settings = () => alexia.settings()
 
 /** The allowlist. Telegram user ids, as strings, so JSON and comparisons agree. */
@@ -192,6 +200,7 @@ async function report() {
   const who = await allowed()
   const state =
     !bot ? '■ No bot token yet'
+    : pause.waiting ? PAUSED
     : running === undefined ? '▲ Not connected'
     : who.size === 0 ? `▲ Waiting to be paired — send ${await code()} to the bot`
     : `● Listening — ${who.size} account${who.size === 1 ? '' : 's'} allowed`
@@ -1131,10 +1140,18 @@ async function poll(token, signal) {
   // reads as *give me everything you still have*.
   let offset = await restart()
   let backoff = 1000
+  let aside = false
   while (!signal.aborted) {
     try {
       const batch = await updates(token, offset, POLL_SECONDS, signal)
       backoff = 1000
+      if (aside) {
+        // The bot is this copy's again: the other one quit, or this ask took it back.
+        aside = false
+        log.info('have the bot again, listening')
+        await report().catch(() => {})
+        await bind().catch(() => {})
+      }
       for (const update of batch) {
         const id = update.update_id
         // `last + 1` is the acknowledgement. Advance it even for a message that throws
@@ -1290,6 +1307,18 @@ async function poll(token, signal) {
         await alexia.status('state', '▲ Telegram refused that bot token').catch(() => {})
         return
       }
+      if (clashed(error)) {
+        // Another copy of Alexia is polling this bot. Retrying in a second is how the two
+        // used to fight over it forever; standing aside for minutes is how they stop.
+        log.warn(`another copy of Alexia is using this bot, standing aside for ${CLASH_WAIT / 60_000} minutes`)
+        aside = true
+        const waited = pause.wait(CLASH_WAIT, signal)
+        await report().catch(() => {})
+        await bind().catch(() => {})
+        await waited
+        backoff = 1000
+        continue
+      }
       log.warn('poll failed, retrying', error)
       await new Promise((resolve) => setTimeout(resolve, backoff))
       backoff = Math.min(backoff * 2, 60_000)
@@ -1351,7 +1380,9 @@ async function connect() {
  */
 async function bind() {
   const paired = (await allowed()).size > 0
-  const live = running !== undefined && paired
+  // Not while standing aside: a question's answer is a press, and presses arrive through the
+  // poll this copy has stopped making.
+  const live = running !== undefined && paired && !pause.waiting
   pushed.update({ _meta: live ? { 'alexia/provides': ['telegram.send'] } : {} })
   // The same condition, and for the same reason: a question sent to a chat nobody is paired
   // with is a question nobody will ever answer, and core reads *no answer* as no.
@@ -1487,6 +1518,30 @@ alexia.tool(
     await bind()
     await report()
     return { content: [{ type: 'text', text: `Forgotten. The new pairing code is ${await code()}.` }] }
+  },
+)
+
+/**
+ * *Try again*, for the Telegram screen.
+ *
+ * Paused because another copy of Alexia had the bot, it ends the wait now instead of in a few
+ * minutes — for when the other copy has just been quit. Not connected, it connects. Already
+ * listening, it does nothing: reconnecting a working connection would drop the answer in hand.
+ */
+alexia.tool(
+  'retry',
+  {
+    description: 'Try the Telegram connection again now, instead of waiting for the next automatic try.',
+    // It reaches Telegram, and it takes the bot back from another copy that is still using it.
+    annotations: { openWorldHint: true },
+  },
+  async () => {
+    const said = (text) => ({ content: [{ type: 'text', text }] })
+    if (pause.wake()) return said('Trying again now. If the other copy of Alexia is still running, quit it first.')
+    if (running !== undefined) return said('Telegram is already connected.')
+    if (!(await settings()).bot_token) return said('There is no bot token yet.')
+    await connect()
+    return said(running === undefined ? 'Telegram still cannot be reached.' : 'Connected.')
   },
 )
 
@@ -1655,6 +1710,8 @@ async function reminded(row, now) {
 async function ring() {
   const { bot_token: token } = await settings()
   if (!token) return
+  // The copy that has the bot sends them. Two copies of one reminder is the thing to avoid.
+  if (pause.waiting) return
   await clock.tick(Date.now())
 }
 

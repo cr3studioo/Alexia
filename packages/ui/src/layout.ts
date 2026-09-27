@@ -89,6 +89,12 @@ export interface Layout {
   v: 1
   /** How many dot spaces wide the window was when this was arranged. */
   cols: number
+  /**
+   * How many dot spaces tall it was. Absent in a layout saved before heights scaled with the
+   * window; {@link rescale} then takes the pages' own bottom edge as the height they were
+   * arranged for, which is what they filled.
+   */
+  rows?: number
   /** The two column boundaries, as dot positions. Each sits in the gutter between columns. */
   guides: [number, number]
   pages: Wanted[]
@@ -198,26 +204,101 @@ function firstFree(placed: readonly Placed[], w: number, h: number, cols: number
 }
 
 /**
- * Lay every page down: the ones somebody placed first, at their spot (pulled in from the right
- * edge when the window is narrower than when they were placed — never up from the bottom: a
- * page pulled up runs into the one above it and is thrown into another column, and a window
- * that is too short is {@link squeeze}'s to fix, by shrinking and keeping every column), then
- * the rest into the first gap that fits. Order is kept within each group.
+ * Lay every page down: the ones somebody placed first, at or near their spot (pulled in from
+ * the right edge when the window is narrower than when they were placed — never up from the
+ * bottom: a page pulled up runs into the one above it, and a window that is too short is
+ * {@link squeeze}'s to fix, by shrinking and keeping every column), then the rest into the
+ * first gap that fits. Order is kept within each group.
+ *
+ * A placed page that something is in the way of is not thrown into the first free gap. On a
+ * window narrower than the one it was arranged in, every column still wants at least its
+ * smallest width, and the first-free-gap answer scrambled the board — Running now under
+ * General, Steps under Chat. Instead the arrangement is kept:
+ *
+ * - **Across**, a page that was to the right of another on the same line stays to its right,
+ *   pushed over when the one before it had to be wider than it was asked to be. When that runs
+ *   off the right edge, the page on that line with the most room to give narrows a dot at a
+ *   time — one that scales, never below its smallest width.
+ * - **Down**, a page that was under another stays under it, pushed down when the one above
+ *   had to be taller.
+ *
+ * Only a page that cannot keep its line even with every page on it at its smallest goes to the
+ * first free gap: a window too narrow for the columns it was arranged in.
  */
 export function pack(pages: readonly Wanted[], shapes: Readonly<Record<string, Shape>>, cols: number, rows: number): Placed[] {
-  const placed: Placed[] = []
-  const order = [...pages.filter((p) => p.anchor), ...pages.filter((p) => !p.anchor)]
-  for (const want of order) {
+  interface Item extends Placed {
+    /** Where and how big it was asked to be: what "to the right of" and "under" are read from. */
+    want: { x: number; y: number; w: number; h: number }
+    /** Its anchor pulled in from the right edge: the least `x` it has. */
+    from: number
+    /** The narrowest it may be made to keep its line. Its width, for a page that does not scale. */
+    least: number
+  }
+  const items: Item[] = []
+  for (const want of pages) {
+    if (!want.anchor) continue
     const shape = shapes[want.id] ?? {}
     const { w, h, fitted } = fit(shape, want, cols, rows)
-    let at: { x: number; y: number } | undefined
-    if (want.anchor) {
-      const x = Math.min(Math.max(0, want.anchor.x), Math.max(0, cols - w))
-      const y = Math.max(0, want.anchor.y)
-      if (fits(placed, x, y, w, h, cols)) at = { x, y }
+    const from = Math.min(Math.max(0, want.anchor.x), Math.max(0, cols - w))
+    const y = Math.max(0, want.anchor.y)
+    items.push({
+      id: want.id,
+      x: from,
+      y,
+      w,
+      h,
+      fitted,
+      want: { x: want.anchor.x, y, w: want.w, h: want.h },
+      from,
+      least: shape.scale && !shape.fixed ? Math.min(w, limits(shape).minW) : w,
+    })
+  }
+
+  // Across. Side by side is what was asked, not what is drawn: two pages whose asked rows meet.
+  const byX = [...items].sort((a, b) => a.want.x - b.want.x || a.want.y - b.want.y)
+  const sameLine = (a: Item, b: Item): boolean => a.want.y < b.want.y + b.want.h + 1 && b.want.y < a.want.y + a.want.h + 1
+  const leftOf = new Map(byX.map((p) => [p, byX.filter((q) => q.want.x < p.want.x && sameLine(q, p))]))
+  const sweep = (): void => {
+    for (const p of byX) p.x = Math.max(p.from, ...leftOf.get(p)!.map((q) => q.x + q.w + 1))
+  }
+  sweep()
+  const homeless = new Set<Item>()
+  for (let guard = 0; guard < 10_000; guard++) {
+    const over = byX.filter((p) => !homeless.has(p) && p.x + p.w > cols).sort((a, b) => b.x + b.w - (a.x + a.w))[0]
+    if (!over) break
+    // The pages that decide where this one starts: those right up against it, and theirs.
+    const chain = [over]
+    for (let i = 0; i < chain.length; i++) {
+      const p = chain[i]!
+      for (const q of leftOf.get(p)!) if (!chain.includes(q) && q.x + q.w + 1 === p.x) chain.push(q)
     }
-    at ??= firstFree(placed, w, h, cols, rows)
-    placed.push({ id: want.id, x: at.x, y: at.y, w, h, tier: tierFor(shape, w, h), fitted })
+    const give = chain.filter((p) => p.w > p.least).sort((a, b) => b.w - b.least - (a.w - a.least))[0]
+    if (give) {
+      give.w -= 1
+      give.fitted = true
+    } else {
+      // Nothing on its line can give any more, so it cannot stay on that line in this window.
+      homeless.add(over)
+      for (const [p, list] of leftOf) leftOf.set(p, list.filter((q) => q !== over))
+    }
+    sweep()
+  }
+
+  // Down. A page drawn near another across, after all that, was under it when it was asked.
+  const kept = items.filter((p) => !homeless.has(p)).sort((a, b) => a.want.y - b.want.y || a.want.x - b.want.x)
+  for (const [i, p] of kept.entries()) {
+    const above = kept.slice(0, i).filter((q) => q.x < p.x + p.w + 1 && p.x < q.x + q.w + 1)
+    p.y = Math.max(p.y, ...above.map((q) => q.y + q.h + 1))
+  }
+
+  const placed: Placed[] = kept.map(({ id, x, y, w, h, fitted }) => ({ id, x, y, w, h, tier: tierFor(shapes[id] ?? {}, w, h), fitted }))
+  const rest = [
+    ...items.filter((p) => homeless.has(p)).map(({ id, w, h, fitted }) => ({ id, w, h, fitted })),
+    ...pages.filter((p) => !p.anchor).map((want) => ({ id: want.id, ...fit(shapes[want.id] ?? {}, want, cols, rows) })),
+  ]
+  for (const one of rest) {
+    const at = firstFree(placed, one.w, one.h, cols, rows)
+    placed.push({ ...one, ...at, tier: tierFor(shapes[one.id] ?? {}, one.w, one.h) })
   }
   // Back in the order they were given, which is the order they are drawn and tabbed through.
   const index = new Map(pages.map((p, i) => [p.id, i]))
@@ -329,34 +410,108 @@ export function fill(placed: readonly Placed[], shapes: Readonly<Record<string, 
 }
 
 /**
- * Draw the layout in a window of this size: packed, or stacked when the window is narrow, and
- * fitted to the window's height either way — squeezed when it is too tall, filled when it is a
- * few dots short.
+ * Draw the layout in a window of this size: scaled to it and packed, or stacked when the window
+ * is narrow, and fitted to the window's height either way — squeezed when it is still too tall,
+ * filled when it is a few dots short.
  */
 export function arrange(layout: Layout, shapes: Readonly<Record<string, Shape>>, g: Grid): Placed[] {
-  const placed = g.compact ? stack(layout.pages, shapes, g.cols) : pack(rescale(layout, g.cols).pages, shapes, g.cols, g.rows)
+  const placed = g.compact ? stack(layout.pages, shapes, g.cols) : pack(rescale(layout, g.cols, g.rows).pages, shapes, g.cols, g.rows)
   return fill(squeeze(placed, shapes, g.rows), shapes, g.rows)
 }
 
 /**
- * The same arrangement for a board of a different width: positions, widths and the guides
- * scale in proportion and round to whole dots. Heights do not change here — the window's height
- * is {@link squeeze}'s, at draw time, and never saved.
+ * The same arrangement for a board of a different size: positions, sizes and the guides scale
+ * in proportion and round to whole dots. Nothing here is saved; it is how the saved layout is
+ * drawn in this window, and the window growing back draws what it drew before.
+ *
+ * **Edges are what is scaled** — each page's, with the gutter after it — not positions and
+ * sizes each rounded their own way. Two pages one dot apart stay one dot apart, and pages that
+ * ended on the same line, a column, still do.
+ *
+ * **Heights scale too**, when `rows` is given. A layout arranged on a laptop and drawn on a big
+ * monitor used to keep its heights and leave a third of the screen empty under it, and a
+ * shorter window closed every gap somebody had left, because {@link squeeze} lifts. The layout
+ * says how tall a board it was arranged on ({@link Layout.rows}). One saved before it said so is
+ * taken to have been arranged down to its lowest page, and is only scaled up: a window shorter
+ * than that is still squeeze's, as it was when it was saved.
  */
-export function rescale(layout: Layout, cols: number): Layout {
-  if (layout.cols === cols || layout.cols <= 0) return { ...layout, cols }
-  const k = cols / layout.cols
-  const at = (n: number): number => Math.round(n * k)
-  return {
-    v: 1,
-    cols,
-    guides: [at(layout.guides[0]), at(layout.guides[1])],
-    pages: layout.pages.map((p) => ({
-      ...p,
-      w: Math.max(1, at(p.w)),
-      ...(p.anchor ? { anchor: { x: at(p.anchor.x), y: p.anchor.y } } : {}),
-    })),
+export function rescale(layout: Layout, cols: number, rows?: number): Layout {
+  const low = Math.max(0, ...layout.pages.map((p) => (p.anchor ? p.anchor.y + p.h : 0)))
+  const tall = layout.rows ?? (rows !== undefined && low > 0 && low < rows ? low : rows)
+  // One more than the board on each side: a page's far edge is scaled with the gutter after it,
+  // and a page against the right edge has its gutter just past the board — which has to land
+  // just past the new board, not a dot beyond it.
+  const kx = layout.cols > 0 && cols !== layout.cols ? (cols + 1) / (layout.cols + 1) : 1
+  const ky = rows !== undefined && tall !== undefined && tall > 0 && rows !== tall ? (rows + 1) / (tall + 1) : 1
+  const sized = { v: 1 as const, cols, ...(rows !== undefined ? { rows } : layout.rows !== undefined && { rows: layout.rows }) }
+  if (kx === 1 && ky === 1) return { ...layout, ...sized }
+  /** One page along one axis, by its two edges: where it starts, and how far to the gutter after it. */
+  const span = (at: number, size: number, k: number): [number, number] => {
+    if (k === 1) return [at, size]
+    const start = Math.round(at * k)
+    return [start, Math.max(1, Math.round((at + size + 1) * k) - start - 1)]
   }
+  // A guide is the last dot of the pages to its left, so it goes where their right edge goes.
+  const guide = (g: number): number => (kx === 1 ? g : Math.round((g + 1) * kx) - 1)
+  return {
+    ...sized,
+    guides: [guide(layout.guides[0]), guide(layout.guides[1])],
+    pages: layout.pages.map((p) => {
+      if (!p.anchor) return { ...p, w: kx === 1 ? p.w : Math.max(1, Math.round(p.w * kx)) }
+      const [x, w] = span(p.anchor.x, p.w, kx)
+      const [y, h] = span(p.anchor.y, p.h, ky)
+      return { ...p, w, h, anchor: { x, y } }
+    }),
+  }
+}
+
+/**
+ * One page given a new size where it is — the size buttons in edit view.
+ *
+ * It keeps its top-left corner, or, when that does not work, its top-right one (a page in the
+ * right-hand column grows to the left). Pages in the way below it are pushed down, and pages
+ * under those, keeping their order; a page beside it or above it is never moved, and nothing
+ * is pushed past the bottom of the window. When none of that makes room the answer is
+ * `undefined`, and the board says so rather than moving the page somewhere else: a size button
+ * that threw the page into the first free gap and reshuffled everything was the complaint.
+ */
+export function grow(
+  placed: readonly Placed[],
+  shapes: Readonly<Record<string, Shape>>,
+  id: string,
+  w: number,
+  h: number,
+  cols: number,
+  rows: number,
+): Placed[] | undefined {
+  const page = placed.find((p) => p.id === id)
+  if (!page || w > cols) return undefined
+  const close = (a: Placed, b: Placed): boolean => a.x < b.x + b.w + 1 && b.x < a.x + a.w + 1 && a.y < b.y + b.h + 1 && b.y < a.y + a.h + 1
+  const starts = [...new Set([page.x, page.x + page.w - w].map((x) => Math.min(Math.max(0, x), cols - w)))]
+  for (const x of starts) {
+    const r: Placed = { ...page, x, w, h, tier: tierFor(shapes[id] ?? {}, w, h), fitted: false }
+    const done: Placed[] = [r]
+    let ok = r.y + r.h <= rows
+    for (const q of [...placed].filter((p) => p.id !== id).sort((a, b) => a.y - b.y || a.x - b.x)) {
+      if (!ok) break
+      const moved = { ...q }
+      for (let hit = done.filter((d) => close(d, moved)); hit.length > 0; hit = done.filter((d) => close(d, moved))) {
+        // Only what starts at or below the page's own top is pushed; the rest is in the way.
+        if (q.y < page.y) {
+          ok = false
+          break
+        }
+        moved.y = Math.max(...hit.map((d) => d.y + d.h + 1))
+      }
+      // A page already past the bottom of a board too short for it is not this change's doing.
+      if (moved.y !== q.y && moved.y + moved.h > rows) ok = false
+      done.push(moved)
+    }
+    if (!ok) continue
+    const index = new Map(placed.map((p, i) => [p.id, i]))
+    return done.sort((a, b) => index.get(a.id)! - index.get(b.id)!)
+  }
+  return undefined
 }
 
 /** Every placed page's current spot, written back as its anchor, so one change moves nothing else. */

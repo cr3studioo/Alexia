@@ -9,6 +9,7 @@ import {
   fit,
   fits,
   grid,
+  grow,
   type Layout,
   limits,
   MARGIN,
@@ -160,12 +161,109 @@ test('the one clear dot holds after any pack, however crowded and whatever was a
   }
 })
 
-test('rescale keeps the arrangement in proportion and leaves heights alone', () => {
+test('rescale keeps the arrangement in proportion, and with no height given leaves heights alone', () => {
   const layout: Layout = { v: 1, cols: 64, guides: [16, 48], pages: [{ id: 'chat', w: 32, h: 20, anchor: { x: 17, y: 2 } }] }
   const half = rescale(layout, 32)
   expect(half.guides).toEqual([8, 24])
-  expect(half.pages[0]).toEqual({ id: 'chat', w: 16, h: 20, anchor: { x: 9, y: 2 } })
+  // Edges are scaled, not the width by itself: chat ended on 48 (the guide) and still ends on
+  // the guide, 24. Rounding its width on its own made it 16 and ran it a dot past.
+  expect(half.pages[0]).toEqual({ id: 'chat', w: 15, h: 20, anchor: { x: 9, y: 2 } })
+  expect(half.pages[0]!.anchor!.x + half.pages[0]!.w).toBe(half.guides[1])
   expect(rescale(layout, 64)).toEqual(layout)
+})
+
+test('rescale keeps one clear dot between neighbours and keeps columns lined up, at any width', () => {
+  // The right column of the board somebody had: four pages one above the other, one of them a
+  // dot narrower. Every width keeps each gutter exactly one dot and the full-width ones level.
+  const layout: Layout = {
+    v: 1,
+    cols: 57,
+    guides: [12, 42],
+    pages: [
+      { id: 'general', w: 12, h: 33, anchor: { x: 0, y: 0 } },
+      { id: 'chat', w: 29, h: 33, anchor: { x: 13, y: 0 } },
+      { id: 'running', w: 14, h: 7, anchor: { x: 43, y: 0 } },
+      { id: 'steps', w: 14, h: 6, anchor: { x: 43, y: 8 } },
+    ],
+  }
+  for (const cols of [33, 45, 61, 80, 99]) {
+    const r = rescale(layout, cols)
+    const at = Object.fromEntries(r.pages.map((p) => [p.id, p]))
+    expect(at.chat!.anchor!.x, String(cols)).toBe(at.general!.w + 1)
+    expect(at.running!.anchor!.x, String(cols)).toBe(at.chat!.anchor!.x + at.chat!.w + 1)
+    expect(at.running!.anchor!.x + at.running!.w, String(cols)).toBe(cols)
+    expect(at.steps!.w, String(cols)).toBe(at.running!.w)
+    expect(r.guides, String(cols)).toEqual([at.general!.w, at.chat!.anchor!.x + at.chat!.w])
+  }
+})
+
+test('heights scale with the window: a taller one fills, a shorter one keeps the gaps somebody left', () => {
+  const tall: Shape = { scale: { min: [4, 4] } }
+  const all = { a: tall, b: tall, c: tall }
+  // Arranged on a board 30 dots tall, with a deliberate gap of four under `b`.
+  const layout: Layout = {
+    v: 1,
+    cols: 30,
+    rows: 30,
+    guides: [10, 20],
+    pages: [
+      { id: 'a', w: 10, h: 30, anchor: { x: 0, y: 0 } },
+      { id: 'b', w: 19, h: 10, anchor: { x: 11, y: 0 } },
+      { id: 'c', w: 19, h: 15, anchor: { x: 11, y: 15 } },
+    ],
+  }
+  const at = (rows: number): Record<string, Placed> =>
+    Object.fromEntries(arrange(layout, all, grid(30 * SP + 2 * MARGIN, rows * SP + 2 * MARGIN)).map((p) => [p.id, p]))
+  // Twice as tall: everything is, the gap included, and the board reaches the bottom.
+  const big = at(60)
+  expect(big.a).toMatchObject({ y: 0, h: 60 })
+  expect(big.c!.y + big.c!.h).toBe(60)
+  expect(big.c!.y - (big.b!.y + big.b!.h)).toBeGreaterThan(5)
+  // Two thirds as tall: the gap is still there rather than lifted shut.
+  const small = at(20)
+  expect(small.a!.h).toBe(20)
+  expect(small.c!.y - (small.b!.y + small.b!.h)).toBeGreaterThan(1)
+  expect(small.c!.y + small.c!.h).toBe(20)
+  // A layout saved before it said how tall it was is taken to fill the board it was saved on.
+  const old: Layout = { ...layout }
+  delete old.rows
+  const scaled = arrange(old, all, grid(30 * SP + 2 * MARGIN, 45 * SP + 2 * MARGIN))
+  expect(Math.max(...scaled.map((p) => p.y + p.h))).toBe(45)
+})
+
+test('a window too narrow for the columns as they were keeps them: pages narrow before anything moves', () => {
+  // General, Chat and a right column of three, arranged 57 wide, drawn at 880 × 720 (33 wide).
+  const general: Shape = { scale: { min: [10, 18] } }
+  const talk: Shape = { tiers: { S: [14, 8], M: [18, 14] }, scale: { min: [14, 8] } }
+  const side: Shape = { scale: { min: [6, 3] } }
+  const all = { general, chat: talk, running: side, steps: side, current: side }
+  const layout: Layout = {
+    v: 1,
+    cols: 57,
+    rows: 33,
+    guides: [12, 42],
+    pages: [
+      { id: 'general', w: 12, h: 33, anchor: { x: 0, y: 0 } },
+      { id: 'chat', w: 29, h: 33, anchor: { x: 13, y: 0 } },
+      { id: 'running', w: 14, h: 7, anchor: { x: 43, y: 0 } },
+      { id: 'steps', w: 14, h: 6, anchor: { x: 43, y: 8 } },
+      { id: 'current', w: 14, h: 18, anchor: { x: 43, y: 15 } },
+    ],
+  }
+  const g = grid(880, 720)
+  const placed = arrange(layout, all, g)
+  const by = Object.fromEntries(placed.map((p) => [p.id, p]))
+  // Nobody below the window and nobody touching.
+  for (const p of placed) {
+    expect(p.y + p.h, p.id).toBeLessThanOrEqual(g.rows)
+    expect(fits(placed.filter((q) => q.id !== p.id), p.x, p.y, p.w, p.h, g.cols), p.id).toBe(true)
+    expect(p.w, p.id).toBeGreaterThanOrEqual(limits(all[p.id as keyof typeof all]).minW)
+  }
+  // Still three columns, left to right, the right one top to bottom in its order.
+  expect(by.general!.x).toBe(0)
+  expect(by.chat!.x).toBe(by.general!.x + by.general!.w + 1)
+  for (const id of ['running', 'steps', 'current']) expect(by[id]!.x, id).toBe(by.chat!.x + by.chat!.w + 1)
+  expect(by.running!.y < by.steps!.y && by.steps!.y < by.current!.y).toBe(true)
 })
 
 test('a window made smaller and then bigger again draws exactly what it drew before', () => {
@@ -381,4 +479,33 @@ test('a board a few dots shorter than the window fills it; a bigger gap is left 
   // The pages on the lowest line reach the bottom; one higher up and one with set sizes do not.
   expect(out.map((p) => p.h)).toEqual([34, 10, 23, 8])
   expect(fill(pages, all, 33 + FILL_ROWS + 1)).toEqual(pages)
+})
+
+test('grow: a page takes a new size where it is, pushing what is under it down, or not at all', () => {
+  const tall: Shape = { scale: { min: [4, 3] } }
+  const all = { a: tall, b: tall, c: tall, d: tall }
+  const placed: Placed[] = [
+    { id: 'a', x: 0, y: 0, w: 10, h: 20, fitted: false },
+    { id: 'b', x: 11, y: 0, w: 8, h: 4, fitted: false },
+    { id: 'c', x: 11, y: 5, w: 8, h: 4, fitted: false },
+    { id: 'd', x: 11, y: 10, w: 8, h: 4, fitted: false },
+  ]
+  // Taller: the two under it go down, keeping their order and their gutters; nothing beside it moves.
+  const taller = grow(placed, all, 'b', 8, 6, 19, 20)!
+  expect(taller.map((p) => [p.id, p.x, p.y, p.h])).toEqual([
+    ['a', 0, 0, 20],
+    ['b', 11, 0, 6],
+    ['c', 11, 7, 4],
+    ['d', 11, 12, 4],
+  ])
+  // Wider at the right edge: it keeps its right edge and grows to the left — and here that
+  // runs into `a` beside it, which is never moved, so there is no room.
+  expect(grow(placed, all, 'c', 12, 4, 19, 20)).toBeUndefined()
+  // Pushing past the bottom of the window is no room either.
+  expect(grow(placed, all, 'b', 8, 12, 19, 20)).toBeUndefined()
+  // With room to the left, it grows leftwards and keeps its column's right edge.
+  const wide = grow(placed.filter((p) => p.id !== 'a'), all, 'd', 12, 4, 19, 20)!
+  expect(wide.find((p) => p.id === 'd')).toMatchObject({ x: 7, w: 12 })
+  // Every answer keeps the gutter.
+  for (const out of [taller, wide]) for (const a of out) for (const b of out) if (a !== b) expect(overlaps(a, b)).toBe(false)
 })

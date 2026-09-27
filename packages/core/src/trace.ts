@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import type { Step } from './agent.js'
+import { redactSecrets } from './redact.js'
 import type { Phase, Size } from './router.js'
+import { RUNS_KEPT, type Store } from './store.js'
 
 /**
  * The trace, with a memory (M6-5).
@@ -15,14 +17,23 @@ import type { Phase, Size } from './router.js'
  * a person looking at what happened wants the version that happened. Trimming this because
  * the context was trimmed would be one decision serving two jobs badly.
  *
- * **Five runs, in memory, gone on restart.** Kept from the predecessor along with its
- * reason: *restarting and finding an empty history is the honest behaviour for something
- * that was never meant to be a permanent log.* A person who wants one exports it, which is
- * the row action beside every run.
+ * **Kept on disk now, and still not a permanent log.** D88 kept five runs in memory, gone on
+ * restart, on the grounds that an empty history is honest for something never meant to be a
+ * log. What that cost in practice was every *what was she doing an hour ago* after an update,
+ * which restarts her — so a run is written to the store as it moves, and the Activity screen
+ * reads the same list after a restart as before one. It is still bounded, which was the part
+ * of D88 worth keeping: the newest {@link KEPT}, none older than thirty days (`RUNS_KEPT`),
+ * the oldest dropped as new ones arrive. Export is still how one outlives that.
+ *
+ * **What is written is what the screen shows, less the credentials.** The same rule the store
+ * already draws (`redact.ts`, M7-3): a key pasted into a task or printed by a tool is stripped
+ * before it is recorded, in memory and on disk alike, and a location is not — it is fine to
+ * write down and only dangerous when it leaves. A run left open by a crash is read back as
+ * *stopped*, because that is what happened to it.
  */
 
-/** How many runs are kept. Five was enough in practice and is a number, not a policy. */
-export const KEPT = 5
+/** How many runs are kept, in memory and on disk. */
+export const KEPT = RUNS_KEPT.count
 
 /** How much of a tool's answer is worth keeping for a person to read. */
 const OUTPUT_MAX = 4000
@@ -73,6 +84,10 @@ export interface Run {
   /** The user's own line. It is what the run was for, so it is never paraphrased. */
   task: string
   at: number
+  /** When it ended. Absent while it is going. */
+  until?: number
+  /** The conversation it happened in, so the Activity screen can open it. */
+  chat?: number
   ended?: 'answered' | 'stopped' | 'ceiling' | 'refused' | 'paused'
   /** Set when it ended in a refusal — the router's sentence, or the provider's. */
   why?: string
@@ -146,9 +161,67 @@ export interface Charge {
 /** What a run cost. Summed from its charges, so there is one number and one source for it. */
 export const spentOn = (run: Run): number => (run.calls ?? []).reduce((total, call) => total + call.cost, 0)
 
+/** Credentials out of a string, and nothing else (`redact.ts`, the storing door). */
+const scrub = (text: string): string => redactSecrets(text).text
+
+/** The same, through every string in a tool's arguments, so the shape of them survives. */
+function scrubbed(value: unknown): unknown {
+  if (typeof value === 'string') return scrub(value)
+  if (Array.isArray(value)) return value.map(scrubbed)
+  if (typeof value === 'object' && value !== null) {
+    return Object.fromEntries(Object.entries(value).map(([key, inner]) => [key, scrubbed(inner)]))
+  }
+  return value
+}
+
+/** Enough of a run to draw one, from a row that may have been written by an older build. */
+const isRun = (value: unknown): value is Run =>
+  typeof value === 'object' &&
+  value !== null &&
+  typeof (value as Run).id === 'string' &&
+  typeof (value as Run).task === 'string' &&
+  typeof (value as Run).at === 'number' &&
+  Array.isArray((value as Run).steps)
+
 export class Trace {
   readonly #runs: Run[] = []
   #open?: Run
+  readonly #store?: Store
+
+  /**
+   * With a store, the kept runs are read back and every new one is written as it moves. Without
+   * one — the tests, a trial — it is the in-memory list it always was.
+   */
+  constructor(store?: Store) {
+    this.#store = store
+    if (!store) return
+    let saved: unknown[] = []
+    try {
+      saved = store.savedRuns()
+    } catch {
+      // A history that cannot be read is an empty screen, never a core that will not start.
+    }
+    for (const run of saved.filter(isRun).slice(-KEPT)) {
+      // **Open on disk means it was cut short**: nothing ends a run across a restart, so one
+      // with no ending is one the app quit, crashed or was updated under. It reads as stopped,
+      // and is written back that way, rather than as *still going* for the rest of its days.
+      if (run.ended === undefined) {
+        run.ended = 'stopped'
+        run.until ??= run.steps.at(-1)?.at ?? run.at
+        this.#save(run)
+      }
+      this.#runs.push(run)
+    }
+  }
+
+  /** Written whole, and never allowed to break the task it is recording. */
+  #save(run: Run): void {
+    try {
+      this.#store?.saveRun(run.id, run.at, run)
+    } catch {
+      // The record is a convenience for later; the task in front of somebody is not.
+    }
+  }
 
   /** Newest first, which is the order somebody reads them in. */
   get runs(): readonly Run[] {
@@ -159,13 +232,18 @@ export class Trace {
     return this.#runs.find((run) => run.id === id)
   }
 
-  /** A task begins. The previous one is closed off if something ended it without saying so. */
-  start(id: string, task: string): void {
-    this.#open = { id, task, at: Date.now(), steps: [] }
+  /**
+   * A task begins. The previous one is closed off as stopped if something ended it without
+   * saying so — left open, it would read as *still going* for as long as it was kept.
+   */
+  start(id: string, task: string, chat?: number): void {
+    if (this.#open) this.end('stopped')
+    this.#open = { id, task: scrub(task), at: Date.now(), ...(chat !== undefined && { chat }), steps: [] }
     this.#runs.push(this.#open)
     // Oldest out. A list that grows without bound in a process that never restarts is a leak
-    // with a nicer name.
+    // with a nicer name. The store drops its own oldest in the same breath as it writes.
     while (this.#runs.length > KEPT) this.#runs.shift()
+    this.#save(this.#open)
   }
 
   /** Which model was asked and which answered, per turn. The last turn's is the run's. */
@@ -204,18 +282,20 @@ export class Trace {
     this.#open.steps.push({
       n: step.n,
       name: step.name,
-      args: step.args,
+      args: scrubbed(step.args) as Record<string, unknown>,
       at: Date.now(),
       ...(before?.ok === false && { backtrack: true }),
     })
+    this.#save(this.#open)
   }
 
   done(step: Step): void {
     const found = this.#open?.steps.find((one) => one.n === step.n)
-    if (!found || !step.outcome) return
+    if (!this.#open || !found || !step.outcome) return
     found.ok = step.outcome.ok
-    found.text = step.outcome.text.slice(0, OUTPUT_MAX)
+    found.text = scrub(step.outcome.text.slice(0, OUTPUT_MAX))
     found.ms = Date.now() - found.at
+    this.#save(this.#open)
   }
 
   /**
@@ -252,10 +332,155 @@ export class Trace {
     const last = this.#open.phases?.at(-1)
     if (last !== undefined) last.ms ??= Date.now() - last.at
     this.#open.ended = ended
-    if (extra.why !== undefined) this.#open.why = extra.why
+    this.#open.until = Date.now()
+    if (extra.why !== undefined) this.#open.why = scrub(extra.why)
     if (extra.calls !== undefined) this.#open.calls = extra.calls
+    this.#save(this.#open)
     this.#open = undefined
   }
+}
+
+/**
+ * **Whether a model was ever asked** in this run: a stage that waited on one, a charge, or a
+ * step, which only a model can have asked for.
+ *
+ * The loop ends two different things as `refused`: the router finding nothing to ask, and a
+ * provider failing once it was asked. The second is not a refusal — nobody refused anything,
+ * the service broke — and this is how the two are told apart without a second ending.
+ */
+const asked = (run: Run): boolean =>
+  (run.calls ?? []).length > 0 ||
+  run.steps.length > 0 ||
+  (run.phases ?? []).some((phase) => phase.kind !== 'choosing' && phase.kind !== 'reading')
+
+/**
+ * **How a run ended, in words** — the Activity column and the export's first line. `refused`
+ * was the loop's word for a provider failing too, and the screen said *refused* for a service
+ * that had simply broken; this says what happened.
+ */
+export function ending(run: Run): string {
+  switch (run.ended) {
+    case undefined:
+      return 'Still going'
+    case 'answered':
+      return 'Finished'
+    case 'stopped':
+      return 'Stopped'
+    case 'ceiling':
+      return 'Stopped at the step limit'
+    case 'paused':
+      return 'Paused for a paid model'
+    case 'refused':
+      return asked(run) ? 'The AI service failed' : 'No model could take it'
+  }
+}
+
+/** `3 s`, `2 min 5 s` — how long, the way a person says it. */
+export function took(ms: number): string {
+  if (ms < 1000) return 'under a second'
+  const seconds = Math.round(ms / 1000)
+  if (seconds < 60) return `${String(seconds)} s`
+  const minutes = Math.floor(seconds / 60)
+  const rest = seconds % 60
+  return rest === 0 ? `${String(minutes)} min` : `${String(minutes)} min ${String(rest)} s`
+}
+
+/**
+ * **A tool's name as a person reads it** — *take a picture of the whole screen and save it*,
+ * not `computer__screenshot`.
+ *
+ * Taken from the tool's own description when there is one: its first clause, which is the
+ * author's sentence for what the tool does — written for the model, and plain because of it.
+ * Core writes no word about any plugin's tool here, so a plugin nobody has heard of reads as
+ * well as a bundled one. Without a description, the name with its seams taken out.
+ */
+export function toolWords(name: string, description?: string): string {
+  const first = (description ?? '').trim().split(/(?<=[.!?])\s|\n/)[0] ?? ''
+  const clause = first.split(/[,;:(]| — /)[0]?.replace(/[.!?]+$/, '').trim() ?? ''
+  if (clause !== '' && clause.length <= 70) {
+    // Lower-case the first letter so it sits inside a sentence — unless it starts an acronym.
+    return /^[A-Z][a-z]/.test(clause) ? clause.charAt(0).toLowerCase() + clause.slice(1) : clause
+  }
+  const cut = name.indexOf('__')
+  return (cut === -1 ? name : name.slice(cut + 2)).replace(/[_.]+/g, ' ').trim()
+}
+
+/** `a`, `a and b`, `a, b and c`. */
+const listed = (items: readonly string[]): string =>
+  items.length <= 1 ? (items[0] ?? '') : `${items.slice(0, -1).join(', ')} and ${items.at(-1) ?? ''}`
+
+/**
+ * **The run in a few sentences** — what the Activity screen shows first, with the whole log
+ * ({@link asText}) folded under it.
+ *
+ * *Answered by GPT-4o mini in 3 s. Used 1 tool: list the open windows.* The log answers every
+ * question a developer has and few of the person who asked; this answers theirs — who answered,
+ * how long it took, what she did and what it cost — in local time and plain words. `named`
+ * turns a model id into its name and `tool` a tool's id into its words, from whatever the
+ * caller knows; without them the ids stand.
+ */
+export function summary(
+  run: Run,
+  named: (model: string) => string = (model) => model,
+  tool: (name: string) => string = (name) => toolWords(name),
+): string {
+  const lines: string[] = [
+    new Date(run.at).toLocaleString(undefined, {
+      weekday: 'long',
+      day: 'numeric',
+      month: 'long',
+      hour: '2-digit',
+      minute: '2-digit',
+    }),
+  ]
+  const long = run.until === undefined ? '' : took(run.until - run.at)
+  const after = long === '' ? '' : ` after ${long}`
+  switch (run.ended) {
+    case undefined:
+      lines.push('Still going.')
+      break
+    case 'answered':
+      lines.push(`${run.answered === undefined ? 'Answered' : `Answered by ${named(run.answered)}`}${long === '' ? '' : ` in ${long}`}.`)
+      break
+    case 'stopped':
+      lines.push(`Stopped${after}, before she had finished.`)
+      break
+    case 'ceiling':
+      lines.push(`Stopped after ${String(run.steps.length)} steps, which is the most one task may take.`)
+      break
+    case 'paused':
+      lines.push(`Paused${after}: the free models were used up, and a paid one needs your yes.`)
+      break
+    case 'refused':
+      lines.push(asked(run) ? `The AI service failed${after}.` : 'No model could take this one.')
+      break
+  }
+  if (run.why !== undefined && run.why.trim() !== '') lines.push(run.why.trim())
+  // A fallback, said once and in names: the badge in the chat showed only who answered.
+  if (run.asked !== undefined && run.answered !== undefined && run.asked !== run.answered) {
+    lines.push(`${named(run.asked)} was asked first and could not answer, so ${named(run.answered)} did.`)
+  }
+
+  if (run.steps.length > 0) {
+    // Each tool once, in the order it was first used, with how often when it was more than once.
+    const uses = new Map<string, number>()
+    for (const step of run.steps) uses.set(step.name, (uses.get(step.name) ?? 0) + 1)
+    const said = [...uses].map(([name, n]) => (n > 1 ? `${tool(name)} (${String(n)} times)` : tool(name)))
+    lines.push(`Used ${String(uses.size)} tool${uses.size === 1 ? '' : 's'}: ${listed(said)}.`)
+    const failed = run.steps.filter((step) => step.ok === false).length
+    const unfinished = run.steps.filter((step) => step.ok === undefined).length
+    if (failed > 0) lines.push(`${String(failed)} ${failed === 1 ? 'step' : 'steps'} failed.`)
+    if (unfinished > 0 && run.ended !== undefined) {
+      lines.push(`${String(unfinished)} ${unfinished === 1 ? 'step' : 'steps'} never finished.`)
+    }
+  }
+
+  const calls = run.calls ?? []
+  if (run.ended !== undefined && calls.length > 0) {
+    const spent = spentOn(run)
+    lines.push(spent === 0 ? 'It cost nothing.' : `It cost $${spent.toFixed(4)}.`)
+  }
+  return lines.join('\n')
 }
 
 /**
@@ -266,11 +491,14 @@ export class Trace {
  * parse. Nothing is summarised: the arguments and the answers are as they were.
  */
 export function asText(run: Run): string {
-  const when = new Date(run.at).toISOString()
+  // Local time with its zone named, so a log sent to somebody elsewhere is still unambiguous.
+  const when = new Date(run.at).toLocaleString(undefined, {
+    year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', timeZoneName: 'short',
+  })
   const lines = [
     `# ${run.task}`,
     '',
-    `${when} · ${String(run.steps.length)} step${run.steps.length === 1 ? '' : 's'} · ${run.ended ?? 'unfinished'}`,
+    `${when} · ${String(run.steps.length)} step${run.steps.length === 1 ? '' : 's'} · ${run.ended === undefined ? 'unfinished' : ending(run).toLowerCase()}`,
     ...(run.ended === undefined ? [] : [spendLine(run)]),
     // Both, and only when they differ — a line saying the same model twice is a line that
     // trains people to skip the line.
@@ -300,7 +528,7 @@ export function asText(run: Run): string {
   // The wait, before the steps it was spent around: *why did that take a minute* is usually
   // the question an export is sent to answer, and the steps cannot answer it on their own.
   if (run.phases !== undefined && run.phases.length > 0) {
-    lines.push('', '## Where the time went', ...run.phases.map(phaseLine))
+    lines.push('', '## Where the time went', ...run.phases.map((phase) => phaseLine(phase, run.ended !== undefined)))
   }
 
   for (const step of run.steps) {
@@ -343,9 +571,10 @@ function detailOf(phase: Phase): string | undefined {
  * noise that looked like precision, and a whole-second one would round a quick *choosing* to
  * nothing and hide it. Time first, like the charges above it, so the eye runs down one column.
  */
-function phaseLine(phase: TracePhase): string {
-  const took = phase.ms === undefined ? 'still going' : `${(phase.ms / 1000).toFixed(1)}s`
-  return `  ${took}  ${phase.kind}${phase.detail === undefined ? '' : ` ${phase.detail}`}`
+function phaseLine(phase: TracePhase, over: boolean): string {
+  // A stage with no length on a run that has ended was cut short with it, not still going.
+  const lasted = phase.ms !== undefined ? `${(phase.ms / 1000).toFixed(1)}s` : over ? 'did not finish' : 'still going'
+  return `  ${lasted}  ${phase.kind}${phase.detail === undefined ? '' : ` ${phase.detail}`}`
 }
 
 /**
