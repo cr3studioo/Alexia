@@ -129,6 +129,10 @@ export interface Progress {
    * sends nothing here and gets the bar, which is every plugin before this existed.
    */
   stages?: Stage[]
+  /** The stages are a plan: named points joined in order, rather than a bar. */
+  plan?: boolean
+  /** Buttons the person may press while it runs: the plugin's own declared actions (`alexia/controls`). */
+  controls?: { key: string; label: string }[]
 }
 
 export interface Pane {

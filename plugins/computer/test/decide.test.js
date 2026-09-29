@@ -1,7 +1,26 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { describe, expect, it } from 'vitest'
-import { askJev, gate, pressReaches, readAnswer, readText, request, risky, SURE_RISKY, table, valid } from '../decide.js'
-import { runTask } from '../task.js'
+import {
+  byRole,
+  commits,
+  askJev,
+  clearly,
+  askLaya,
+  enough,
+  exact,
+  forLaya,
+  groundRequest,
+  jevCost,
+  onJevScale,
+  pressReaches,
+  readChoice,
+  readSteps,
+  risky,
+  shortlist,
+  SURE_RISKY,
+  table,
+  valid,
+} from '../decide.js'
 
 const rows = [
   { name: 'Untitled - Notepad', type: 'Window', id: '', x: 400, y: 300, off: false },
@@ -36,123 +55,210 @@ describe('pressReaches', () => {
   })
 })
 
-describe('request', () => {
-  it('asks the operation and a target per operation in one request, and never sends typed text', () => {
-    const body = request({ goal: 'Save it', window: 'Notepad', rows: table(rows), history: [{ operation: 'TYPE', name: 'File name', text: 'secret words' }] })
-    expect(Object.keys(body.questions)).toEqual(['operation', 'press_target', 'type_target'])
-    expect(Object.keys(body.questions.type_target.criteria)).toEqual(['3'])
-    expect(JSON.stringify(body)).not.toContain('secret words')
+describe('shortlist and exact', () => {
+  const many = table([
+    ...Array.from({ length: 40 }, (_, n) => ({ name: `Toolbar ${String(n)}`, type: 'Button', x: n, y: 1 })),
+    { name: 'Export as PDF…', type: 'MenuItem', x: 5, y: 5 },
+    { name: 'Search', type: 'TextField', x: 9, y: 9 },
+  ])
+
+  it('puts the control a step names first, however deep in the tree it was', () => {
+    expect(shortlist(many, { do: 'press', target: 'Export as PDF' })[0].name).toBe('Export as PDF…')
+    expect(shortlist(many, { do: 'type', target: 'the search box' })[0].name).toBe('Search')
+  })
+
+  it('keeps every row’s own number, so pressing by name still means that row', () => {
+    const first = shortlist(many, { do: 'press', target: 'Export as PDF' })[0]
+    expect(first.index).toBe('41')
+  })
+
+  it('answers without a model only when exactly one control is called that', () => {
+    const list = table(rows)
+    expect(exact(list, { do: 'press', target: 'save' })?.name).toBe('Save')
+    expect(exact(list, { do: 'type', target: 'Save' })).toBeUndefined()
+    expect(exact(table([...rows, { name: 'Save', type: 'Button', x: 1, y: 1 }]), { do: 'press', target: 'Save' })).toBeUndefined()
   })
 })
 
-describe('valid and readAnswer', () => {
+describe('readSteps', () => {
+  it('takes steps in the contract and drops everything else', () => {
+    const plan = readSteps(
+      '```json\n{"steps": [{"do": "press", "target": "Save"}, {"do": "rm", "target": "/"}, {"do": "type", "target": "File name", "text": "a.txt", "expect": "Saved"}, {"do": "type", "target": "x"}]}\n```',
+    )
+    expect(plan).toEqual([
+      { do: 'press', target: 'Save' },
+      { do: 'type', target: 'File name', text: 'a.txt', expect: 'Saved' },
+    ])
+  })
+
+  it('takes an array as it is, keeps read and answer, and nothing for prose', () => {
+    expect(readSteps([{ do: 'read', target: 'the first video', as: 'title' }, { do: 'answer', text: 'It is {title}.' }, { do: 'read' }])).toEqual([
+      { do: 'read', target: 'the first video', as: 'title' },
+      { do: 'answer', text: 'It is {title}.' },
+    ])
+    expect(readSteps('sure, I will press Save')).toBeUndefined()
+    expect(readSteps([])).toBeUndefined()
+  })
+})
+
+describe('grounding answers', () => {
   it('refuses a choice that was never offered', () => {
     expect(valid({ choice: '9', probabilities: { 1: 1 }, confidence: 1 }, ['1'])).toBe(false)
   })
 
-  it('reads only the target of the operation that won', () => {
+  it('reads the chosen row and how sure', () => {
     const list = table(rows)
-    const body = request({ goal: 'Save it', window: 'Notepad', rows: list, history: [] })
-    const ops = Object.keys(body.questions.operation.criteria)
-    const decision = readAnswer(
-      {
-        model: 'jev-1.13.0',
-        answers: {
-          operation: answer(ops, 'PRESS', 0.9),
-          press_target: answer(Object.keys(body.questions.press_target.criteria), '2', 0.9),
-          type_target: { garbage: true },
-        },
-      },
-      body,
-      list,
-    )
-    expect(decision.operation).toBe('PRESS')
-    expect(decision.row.name).toBe('Save')
+    const body = groundRequest({ goal: 'Save it', window: 'Notepad', step: { do: 'press', target: 'Save' }, rows: list })
+    const choice = readChoice({ answers: { target: answer(Object.keys(body.questions.target.criteria), '2', 0.9) } }, body, list, 'Laya')
+    expect(choice.row.name).toBe('Save')
+    expect(enough(choice)).toBe(true)
   })
-})
 
-describe('gate', () => {
-  const row = (name) => ({ name, type: 'Button' })
-  it('acts when sure, and hands back when not', () => {
-    expect(gate({ operation: 'PRESS', confidence: 0.9, row: row('Next'), targetConfidence: 0.7 })).toBeUndefined()
-    expect(gate({ operation: 'PRESS', confidence: 0.3, row: row('Next'), targetConfidence: 0.9 })).toMatch(/not sure/)
-  })
   it('asks for more certainty before anything that sends, deletes or pays', () => {
     expect(risky('Odeslat')).toBe(true)
     expect(risky('Sender settings')).toBe(false)
-    expect(gate({ operation: 'PRESS', confidence: 0.9, row: row('Send'), targetConfidence: 0.7 })).toMatch(/commits something/)
-    expect(gate({ operation: 'PRESS', confidence: 0.9, row: row('Send'), targetConfidence: SURE_RISKY })).toBeUndefined()
+    expect(enough({ row: { name: 'Send' }, sure: 0.7 })).toBe(false)
+    expect(enough({ row: { name: 'Send' }, sure: SURE_RISKY })).toBe(true)
+    expect(enough({ row: { name: 'Next' }, sure: 0.7 })).toBe(true)
   })
 })
 
-describe('readText', () => {
-  it('takes exactly one text value, and nothing else', () => {
-    expect(readText('{"text": "report.txt"}')).toBe('report.txt')
-    expect(readText('```json\n{"text": "a"}\n```')).toBe('a')
-    expect(readText('{"text": null}')).toBeUndefined()
-    expect(readText('sure, here you go')).toBeUndefined()
+describe('spending', () => {
+  it('prices Jev by its own usage', () => {
+    expect(jevCost({ usage: { input_tokens: 1_000_000 } }, {})).toBeCloseTo(0.042)
   })
 })
 
-describe('askJev', () => {
-  it('says the key was refused rather than a status number', async () => {
+describe('Laya on the wire', () => {
+  const body = () => groundRequest({ goal: 'Save it', window: 'Notepad', step: { do: 'press', target: 'Save' }, rows: table(rows) })
+
+  it('sends instructions as text, options without their numbers, and the checkpoint asked for', () => {
+    const sent = forLaya(body(), 'typed-decisions')
+    expect(sent.model).toBe('typed-decisions')
+    expect(typeof sent.questions.target.instructions).toBe('string')
+    expect(sent.questions.target.instructions).toMatch(/goal: Save it/)
+    expect(sent.questions.target.criteria['2']).toBe('MenuItem “Save”')
+    expect(forLaya(body(), 'auto').model).toBeUndefined()
+  })
+
+  it('puts Laya’s confidence on Jev’s scale, so the same thresholds mean the same thing', () => {
+    expect(onJevScale({ choice: 'a', probabilities: { a: 0.9, b: 0.05, c: 0.05 }, confidence: 0.6 }).confidence).toBeCloseTo(0.85)
+    expect(onJevScale({ choice: 'a', probabilities: { a: 1 }, confidence: 0 }).confidence).toBe(1)
+  })
+
+  it('asks laya-serve on this machine and names the checkpoint that answered', async () => {
+    const sentTo = []
+    const fetch = async (url, init) => {
+      sentTo.push(url)
+      const asked = JSON.parse(init.body)
+      return { ok: true, status: 200, json: async () => ({ model: 'typed-decisions', answers: { target: answer(Object.keys(asked.questions.target.criteria), '2', 0.9) } }) }
+    }
+    const result = await askLaya({ address: 'http://127.0.0.1:8000/', body: body(), fetch })
+    expect(sentTo).toEqual(['http://127.0.0.1:8000/v1/systemone'])
+    expect(result.model).toBe('laya typed-decisions')
+  })
+
+  it('says Laya is not running rather than failing quietly', async () => {
+    const fetch = async () => {
+      throw new Error('ECONNREFUSED')
+    }
+    await expect(askLaya({ body: body(), fetch })).rejects.toThrow(/not answering.*laya-serve/)
+  })
+
+  it('says a refused TypeSafe key rather than a status number', async () => {
     const fetch = async () => ({ ok: false, status: 401 })
     await expect(askJev({ key: 'k', body: {}, fetch })).rejects.toThrow(/refused the key/)
   })
 })
 
-describe('runTask', () => {
-  /** A screen that changes when Save is pressed, and a Jev that presses Save then says done. */
-  function world({ sure = 0.9 } = {}) {
-    let saved = false
-    const did = []
-    return {
-      did,
-      io: {
-        look: async () => (saved ? [...rows, { name: 'Saved', type: 'Button', id: '', x: 5, y: 5, off: false }] : rows),
-        decide: async (body) => {
-          const ops = Object.keys(body.questions.operation.criteria)
-          if (saved) return { answers: { operation: answer(ops, 'DONE', 0.95) } }
-          const press = Object.keys(body.questions.press_target.criteria)
-          return { answers: { operation: answer(ops, 'PRESS', 0.95), press_target: answer(press, '2', sure) } }
-        },
-        press: async (row) => {
-          did.push(`press ${row.name}`)
-          saved = true
-          return { found: true, how: 'invoke' }
-        },
-        click: async (row) => {
-          did.push(`click ${row.name}`)
-          saved = true
-        },
-        type: async () => {},
-        write: async () => undefined,
-        note: async (step) => did.push(`note ${step.how}`),
-      },
-    }
-  }
+describe('words alone, when they are plain enough', () => {
+  const rows = table([
+    { name: 'like this video along with 3,655,423 other people', type: 'Button', x: 1, y: 1 },
+    { name: 'Dislike this video', type: 'Button', x: 2, y: 2 },
+    { name: 'Share', type: 'Button', x: 3, y: 3 },
+  ])
 
-  it('clicks the chosen row when pressing by name would reach a different one, then stops at done', async () => {
-    const { io, did } = world()
-    const done = await runTask('Save it', io)
-    expect(done.outcome).toBe('done')
-    expect(did).toEqual(['click Save', 'note click'])
+  it('takes a whole word over the same letters inside a longer one', () => {
+    expect(clearly(rows, { do: 'press', target: 'Like' })?.name).toMatch(/^like this video/)
+    expect(shortlist(rows, { do: 'press', target: 'Like' })[0].name).toMatch(/^like this video/)
   })
 
-  it('hands back without touching anything when Jev is unsure', async () => {
-    const { io, did } = world({ sure: 0.55 })
-    const done = await runTask('Save it', io)
-    expect(done.outcome).toBe('handback')
-    expect(did).toEqual([])
-    expect(done.rows.length).toBeGreaterThan(0)
+  it('leaves it to a model when two controls answer as well as each other', () => {
+    expect(clearly(rows, { do: 'press', target: 'this video' })).toBeUndefined()
   })
 
-  it('stops when actions stop changing the screen', async () => {
-    const { io } = world()
-    io.click = async () => {}
-    const done = await runTask('Save it', io)
-    expect(done.outcome).toBe('handback')
-    expect(done.said).toMatch(/changed nothing/)
-    expect(done.steps.length).toBe(3)
+  it('never acts on words alone for something that commits', () => {
+    const sending = table([
+      { name: 'Send now', type: 'Button', x: 1, y: 1 },
+      { name: 'Cancel', type: 'Button', x: 2, y: 2 },
+    ])
+    expect(clearly(sending, { do: 'press', target: 'Send' })).toBeUndefined()
+  })
+})
+
+describe('whole plans', () => {
+  it('keeps pages and apps to open, and the words for a person', () => {
+    const plan = readSteps([
+      { do: 'open_url', url: 'https://example.com/results?q=a', say: 'Search', expect: 'Filters' },
+      { do: 'open_app', name: 'Calculator' },
+      { do: 'open_url', url: 'javascript:alert(1)' },
+    ])
+    expect(plan).toEqual([
+      { do: 'open_url', url: 'https://example.com/results?q=a', say: 'Search', expect: 'Filters' },
+      { do: 'open_app', name: 'Calculator' },
+    ])
+  })
+
+  it('knows a plan that commits something from one that only looks', () => {
+    expect(commits([{ do: 'press', target: 'Send' }])).toBe(true)
+    expect(commits([{ do: 'type', target: 'the message box', text: 'hi' }, { do: 'key', keys: 'enter' }])).toBe(true)
+    expect(commits([{ do: 'type', target: 'the search box', text: 'hi' }, { do: 'key', keys: 'enter' }])).toBe(false)
+    expect(commits([{ do: 'open_url', url: 'https://youtube.com' }, { do: 'read', target: 'the first video' }])).toBe(false)
+  })
+})
+
+describe('byRole: a control found by what it is', () => {
+  // Recorded from a YouTube channel page in Comet, session 96.
+  const page = table(
+    [
+      ['Search', 'ComboBox', 555, 187, true],
+      ['Search', 'Button', 863, 187, true],
+      ['Address and search bar', 'TextField', 400, 97, false],
+      ['YouTube Home', 'Link', 118, 187, true],
+      ['Latest', 'Tab', 347, 687, true],
+      ['Popular', 'Tab', 423, 687, true],
+      ['34:23', 'Link', 482, 831, true],
+      ['Last Cheater Standing Wins $10,000! 34 minutes', 'Link', 417, 947, true],
+      ['25:20', 'Link', 848, 831, true],
+      ['I Outsmarted Pro Car Thieves 25 minutes', 'Link', 791, 947, true],
+      ['Mark Rober', 'Link', 111, 400, true],
+    ].map(([name, type, x, y, web]) => ({ name, type, x, y, web, id: '', off: false })),
+  )
+
+  it('finds the page’s own search box, not the browser’s', () => {
+    expect(byRole(page, { do: 'type', target: 'the search box' })).toMatchObject({ name: 'Search', type: 'ComboBox' })
+    expect(byRole(page, { do: 'type', target: 'the browser address bar' })?.name).toBe('Address and search bar')
+  })
+
+  it('reads the first, newest and second item in reading order, skipping durations', () => {
+    expect(byRole(page, { do: 'read', target: 'the first video' })?.name).toBe('Last Cheater Standing Wins $10,000! 34 minutes')
+    expect(byRole(page, { do: 'press', target: 'the newest video' })?.name).toBe('Last Cheater Standing Wins $10,000! 34 minutes')
+    expect(byRole(page, { do: 'press', target: 'the second video' })?.name).toBe('I Outsmarted Pro Car Thieves 25 minutes')
+  })
+
+  it('skips the channel’s own card on a search page, which is titled but is not a video', () => {
+    const results = table(
+      [
+        ['MrBeast @MrBeast • 480M subscribers Subscribe', 'Link', 400, 300, true],
+        ['I Survived 100 Days In A Circle 24 minutes', 'Link', 400, 520, true],
+        ['$1 vs $1,000,000 Hotel Room 18 minutes', 'Link', 400, 700, true],
+      ].map(([name, type, x, y, web]) => ({ name, type, x, y, web, id: '', off: false })),
+    )
+    expect(byRole(results, { do: 'press', target: 'the first video' })?.name).toBe('I Survived 100 Days In A Circle 24 minutes')
+  })
+
+  it('finds a tab by its name and kind, and nothing for words it cannot read as a role', () => {
+    expect(byRole(page, { do: 'press', target: 'the Latest tab' })?.type).toBe('Tab')
+    expect(byRole(page, { do: 'press', target: 'something nice' })).toBeUndefined()
   })
 })

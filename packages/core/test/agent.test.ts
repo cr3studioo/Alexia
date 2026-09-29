@@ -174,6 +174,23 @@ test('plan, act, observe, answer — and the trace is the conversation', async (
   store.close()
 })
 
+test('a tool that already has the answer gives it, and no model turn repeats it', async () => {
+  script = [{ call: 'notes.read', args: '{}' }, { say: 'This must not be asked for.' }]
+  served = []
+  const { store, session, world } = bench()
+  const tools = tooling({ call: () => Promise.resolve({ text: 'read it', ok: true, final: 'The note says hi.' }) })
+  const heard: string[] = []
+
+  const result = await run({ messages: start('read my note'), tools, pins, world, store, secrets, session, on: { delta: (text) => heard.push(text) } })
+
+  expect(result.ended).toBe('answered')
+  expect(served).toHaveLength(1)
+  expect(result.messages.map((m) => m.role)).toEqual(['assistant', 'tool', 'assistant'])
+  expect(result.messages.at(-1)?.content).toBe('The note says hi.')
+  expect(heard.join('')).toContain('The note says hi.')
+  store.close()
+})
+
 test('the plan pays for a model that can plan; turning the crank does not', async () => {
   // Two different notes: the same call with the same arguments twice is the looping signal,
   // and this test is about which model turns the crank, not about struggling.

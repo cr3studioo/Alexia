@@ -31,13 +31,16 @@
  * turns with the bot every few minutes rather than fighting over it (`clash.js`), and the
  * other copy's Telegram screen says it is paused.
  *
+ * **This checkout's plugins go in too**: every plugin Alexia Dev has installed is rebuilt from
+ * `plugins/` and replaces its copy in the dev data's `extensions`, so a preview runs the plugin
+ * code you are looking at (`installPlugins` below). The real Alexia's plugins are never touched.
  *   pnpm app:dev                     build, install, open
  *   pnpm app:dev --fresh-data        …and replace the dev data with a new copy of the real one
  *   pnpm app:dev --data-only         just the new copy, no build
  */
 import { spawnSync } from 'node:child_process'
-import { cpSync, existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs'
-import { homedir } from 'node:os'
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from 'node:fs'
+import { homedir, tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -80,6 +83,15 @@ function quitDev() {
   spawnSync('osascript', ['-e', `if application "${NAME}" is running then tell application "${NAME}" to quit`], { stdio: 'ignore' })
   // Its core is a child that goes with it; give both a moment to let go of the database.
   spawnSync('sleep', ['2'])
+  // **A quit it ignored is a preview that never happened.** Alexia can decline the Apple Event
+  // (it stayed up through one on 2026-09-27), and then opening the new bundle only raised the
+  // old process — every "preview" after it ran the build from before. So: the shell by its
+  // path, ended the way the tray's Quit ends it, which takes its core along.
+  const shell = `/Applications/${NAME}.app/Contents/MacOS/alexia$`
+  if (spawnSync('pgrep', ['-f', shell]).status === 0) {
+    spawnSync('pkill', ['-TERM', '-f', shell])
+    spawnSync('sleep', ['3'])
+  }
 }
 
 function copyData() {
@@ -139,6 +151,37 @@ function copyKeychain() {
   console.log(`Keychain: ${Object.keys(kept.secrets ?? {}).length} secret(s) copied.`)
 }
 
+/**
+ * **This checkout's plugins, in Alexia Dev** — every one Alexia Dev already has installed.
+ *
+ * The app bundle carries no plugins (D118): each is a download into the data folder's
+ * `extensions`. So a build alone left Alexia Dev running whatever plugin copy it had last, and a
+ * change to a plugin in this workspace never reached it. Each installed one is rebuilt from
+ * `plugins/<id>` the way publishing builds it (`bundle-plugin.mjs`) and put in its place. A
+ * plugin's own data (`plugins/<id>` in the data folder) is not touched, and nothing that is not
+ * installed there is added.
+ */
+async function installPlugins() {
+  const { bundlePlugin } = await import('./bundle-plugin.mjs')
+  const extensions = join(dev, 'extensions')
+  if (!existsSync(extensions)) return
+  const replaced = []
+  for (const id of readdirSync(extensions)) {
+    if (!existsSync(join(root, 'plugins', id, 'plugin.json'))) continue
+    const tree = join(mkdtempSync(join(tmpdir(), 'alexia-dev-plugin-')), id)
+    try {
+      await bundlePlugin(root, id, tree)
+    } catch (error) {
+      console.error(`Could not build the ${id} plugin, so ${NAME} keeps its old copy: ${error.message}`)
+      continue
+    }
+    rmSync(join(extensions, id), { recursive: true, force: true })
+    cpSync(tree, join(extensions, id), { recursive: true })
+    replaced.push(id)
+  }
+  if (replaced.length > 0) console.log(`Plugins from this checkout: ${replaced.join(', ')}.`)
+}
+
 quitDev()
 if (!dataOnly) {
   run('pnpm', ['sidecar'])
@@ -151,5 +194,6 @@ if (!dataOnly) {
   console.log(`Installed ${installed}`)
 }
 if (fresh) copyData()
+if (!dataOnly) await installPlugins()
 run('open', [installed])
 console.log(`\n${NAME} is open. The real Alexia and its data were not touched.`)

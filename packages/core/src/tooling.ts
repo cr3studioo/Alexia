@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { PREVIEW_META, type Stage, STAGES_META } from '@alexia/protocol'
+import { CARD_META, CONTROLS_META, FINAL_META, PLAN_META, PREVIEW_META, type Stage, STAGES_META, TIMING_META } from '@alexia/protocol'
 import type { CallToolResult } from '@modelcontextprotocol/client'
 import { statSync } from 'node:fs'
 import { basename } from 'node:path'
@@ -40,6 +40,54 @@ const STAGES_MAX = 64
 const LABEL_MAX = 80
 
 /**
+ * The buttons a plugin offers on a running step, or nothing. Each key must look like a widget
+ * key — the route that presses them checks it against the plugin's declared actions anyway —
+ * and a label is a word or two, never a paragraph.
+ */
+function controlsOf(value: unknown): { key: string; label: string }[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const kept = value
+    .filter((one): one is { key: string; label: string } => typeof one?.key === 'string' && /^[a-z][a-z0-9_]{0,63}$/.test(one.key) && typeof one?.label === 'string' && one.label.trim() !== '')
+    .slice(0, 3)
+    .map((one) => ({ key: one.key, label: one.label.trim().slice(0, 24) }))
+  return kept.length > 0 ? kept : undefined
+}
+
+/** How a tool's work went, for the line under it: numbers only, or nothing. */
+function timingOf(value: unknown): ToolOutcome['timing'] {
+  const one = value as { ms?: unknown; steps?: unknown; models?: unknown } | undefined
+  if (typeof one?.ms !== 'number' || !Number.isFinite(one.ms) || one.ms < 0) return undefined
+  const count = (n: unknown): number | undefined => (typeof n === 'number' && Number.isInteger(n) && n >= 0 ? n : undefined)
+  const steps = count(one.steps)
+  const models = count(one.models)
+  return { ms: Math.round(one.ms), ...(steps !== undefined && { steps }), ...(models !== undefined && { models }) }
+}
+
+/**
+ * An answer card, or nothing: text fields only, a handful of them, and a link only to a web page
+ * — this is drawn as a link the person may press, so it does not get to name a file or a scheme.
+ */
+function cardOf(value: unknown): ToolOutcome['card'] {
+  const one = value as { title?: unknown; fields?: unknown; url?: unknown } | undefined
+  if (typeof one?.title !== 'string' || typeof one.fields !== 'object' || one.fields === null) return undefined
+  const fields = Object.fromEntries(
+    Object.entries(one.fields as Record<string, unknown>)
+      .filter(([, text]) => typeof text === 'string' || typeof text === 'number')
+      .slice(0, 8)
+      .map(([name, text]) => [name.slice(0, 40), String(text).slice(0, 400)]),
+  )
+  if (Object.keys(fields).length === 0) return undefined
+  const url = typeof one.url === 'string' && /^https?:\/\/\S+$/i.test(one.url) ? one.url.slice(0, 2000) : undefined
+  return { title: one.title.slice(0, 200), fields, ...(url !== undefined && { url }) }
+}
+
+/** The longest reply a tool may give the person itself. A reply longer than this is the model's to write. */
+const FINAL_MAX = 4000
+
+/** The longest a tool that keeps reporting progress may run: ten minutes, however often it reports. */
+export const PROGRESS_CEILING_MS = 10 * 60_000
+
+/**
  * The stages a plugin sent, or nothing at all.
  *
  * Everything here becomes elements in the shell, so each field is checked rather than
@@ -53,11 +101,12 @@ export function stagesOf(said: unknown): Stage[] | undefined {
   const out: Stage[] = []
   for (const one of said.slice(0, STAGES_MAX)) {
     if (typeof one !== 'object' || one === null) return undefined
-    const { label, state, progress, total } = one as Record<string, unknown>
+    const { label, detail, state, progress, total } = one as Record<string, unknown>
     if (state !== 'waiting' && state !== 'running' && state !== 'done' && state !== 'failed') return undefined
     out.push({
       state,
       ...(typeof label === 'string' && { label: label.slice(0, LABEL_MAX) }),
+      ...(typeof detail === 'string' && { detail: detail.slice(0, LABEL_MAX) }),
       ...(typeof progress === 'number' && Number.isFinite(progress) && { progress }),
       ...(typeof total === 'number' && Number.isFinite(total) && { total }),
     })
@@ -181,6 +230,11 @@ export class PluginTooling implements Tooling {
         await process.callTool(found.tool, args, {
           ...(signal && { signal }),
           ...(onProgress && {
+            // A tool that keeps saying how far it is — a task pressing its way through a page —
+            // is not stuck, so each report starts the clock again. One that goes quiet is still
+            // cut off, and nothing runs past the ceiling.
+            resetTimeoutOnProgress: true,
+            maxTotalTimeout: PROGRESS_CEILING_MS,
             onprogress: (update) => {
               // Extension keys an older core ignores, the same shape `alexia/tools` and
               // `alexia/files` already use. A plugin that sends nothing here is unaffected.
@@ -197,6 +251,8 @@ export class PluginTooling implements Tooling {
                 ...(update.message !== undefined && { message: update.message }),
                 ...(preview !== undefined && { preview }),
                 ...(stages !== undefined && { stages }),
+                ...(stages !== undefined && meta?.[PLAN_META] === true && { plan: true }),
+                ...(controlsOf(meta?.[CONTROLS_META]) !== undefined && { controls: controlsOf(meta?.[CONTROLS_META]) }),
               })
             },
           }),
@@ -308,8 +364,18 @@ export function outcomeOf(result: CallToolResult): ToolOutcome {
     return `[${block.type}]`
   })
   const text = parts.join('\n').trim()
+  // The reply to the person, when the tool has it (`alexia/final`): text only, and only from a
+  // call that worked — a failure is always the model's to explain.
+  const said = (result._meta as Record<string, unknown> | undefined)?.[FINAL_META]
+  const final = result.isError !== true && typeof said === 'string' && said.trim() !== '' ? said.trim().slice(0, FINAL_MAX) : undefined
+  const meta = result._meta as Record<string, unknown> | undefined
+  const timing = timingOf(meta?.[TIMING_META])
+  const card = cardOf(meta?.[CARD_META])
   return {
     ok: result.isError !== true,
+    ...(final !== undefined && { final }),
+    ...(timing !== undefined && { timing }),
+    ...(card !== undefined && { card }),
     // A tool that succeeded and said nothing did happen, and the model needs to be told
     // that rather than handed a blank it will read as a failure.
     text: text || (result.isError === true ? 'The tool failed and said nothing.' : 'Done.'),

@@ -108,6 +108,12 @@ export interface ToolOutcome {
   ok: boolean
   /** Files the tool handed back, if it handed any back. Absent is the ordinary case. */
   files?: Produced[]
+  /** The reply to the person, word for word, when the tool already has it (`alexia/final`). */
+  final?: string
+  /** How the work went, for the line under it (`alexia/timing`). */
+  timing?: { ms: number; steps?: number; models?: number }
+  /** An answer as a card: a heading, the values by name, and where they came from (`alexia/card`). */
+  card?: { title: string; fields: Record<string, string>; url?: string }
 }
 
 /** One call the model made, and what came of it. The trace M15-5 draws is a list of these. */
@@ -467,7 +473,7 @@ export async function run(options: RunOptions): Promise<RunResult> {
   // The profile is one length for every model, so it is said once, here, rather than per rung.
   const profile = options.profile?.trim() ?? ''
   if (profile !== '') on?.profile?.(profile.length)
-  const about = { profile, remembers: options.remembers === true, ...(options.name !== undefined && { name: options.name }) }
+  const about = { profile, remembers: options.remembers === true, today: dayOf(new Date()), ...(options.name !== undefined && { name: options.name }) }
   const added: Message[] = []
   const steps: Step[] = []
 
@@ -503,6 +509,23 @@ export async function run(options: RunOptions): Promise<RunResult> {
    * quietly move the 40% line under a task already measuring itself against it.
    */
   let opening: Today | undefined
+  /**
+   * **Saying so when the free models are failing** (B9). Each switch already says why the last
+   * model was passed over; three that answered with nothing, stopped short or were busy, in one
+   * task, is not bad luck — and a person watching retries go by has no way to know that. Said
+   * once a task, as a note, with the one thing that changes it.
+   */
+  let failures = 0
+  let toldStruggling = false
+  const freeFailing = (event: Switch): void => {
+    failures += event.reasons.filter((why) => /answered with nothing|ran out of room|rate-limited|busy|had not started answering/i.test(why)).length
+    if (toldStruggling || failures < STRUGGLING) return
+    toldStruggling = true
+    on?.note?.(
+      `The free models are struggling right now — ${String(failures)} empty, cut-off or busy answers in this task. ` +
+        'Letting paid models answer (Settings → Models) makes tasks like this quicker and surer, for about a cent each.',
+    )
+  }
 
   for (;;) {
     if (options.signal?.aborted) return finish('stopped')
@@ -759,6 +782,7 @@ export async function run(options: RunOptions): Promise<RunResult> {
             // A screen that has no place for a switch still hears it, as the line it always was.
             if (on?.switch) on.switch(event)
             else on?.note?.(event.says)
+            freeFailing(event)
           },
           ...(on?.paid && { onPaid: on.paid }),
           onRestart: () => {
@@ -902,6 +926,23 @@ export async function run(options: RunOptions): Promise<RunResult> {
       store.append(session, result)
     }
 
+    /**
+     * **A tool that already has the answer gives it** (`alexia/final`). One call this turn, and
+     * it worked and said what to reply: the task ends with those words, rather than a model
+     * turn that would only repeat them — seconds on a free model, and a chance to misquote a
+     * title it had just been handed. With other calls beside it the model still sums up.
+     */
+    const only = calls.length === 1 ? steps.at(-1)?.outcome : undefined
+    if (only?.ok === true && only.final !== undefined) {
+      const reply: Message = { role: 'assistant', content: only.final }
+      // Through the same stream a model's words take, so every screen shows it the same way.
+      on?.delta?.(only.final)
+      messages.push(reply)
+      added.push(reply)
+      store.append(session, reply)
+      return finish('answered')
+    }
+
     // Turning the crank is cheap work and gets a cheap model. Recovering is not: a tool
     // that failed — including one whose plugin was deleted out from under the task, which
     // is invariant 4 — means the plan was wrong, and re-planning is the expensive step the
@@ -1001,16 +1042,26 @@ function parse(raw: string): Record<string, unknown> {
  * *I don't know you* without looking, and the sentence telling them to look is cheaper than
  * every fact they would otherwise have to be handed up front.
  */
+/** A day the way a person writes it, in the machine's own zone: *Sunday 27 September 2026*. */
+const dayOf = (at: Date): string =>
+  at.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).replace(',', '')
+
+/** How many failed free answers in one task before the person is told the free models are struggling. */
+const STRUGGLING = 3
+
 function system(
   available: ToolSpec[],
   personality?: string,
   caller: string[] = [],
-  about: { profile?: string; remembers?: boolean; name?: string } = {},
+  about: { profile?: string; remembers?: boolean; name?: string; today?: string } = {},
 ): Message {
   // The name the user chose, when they chose one; the floor is where a model learns who it is.
   const called = about.name?.trim() || 'Alexia'
   const lines = [
     `You are ${called}, an assistant running on the user’s own machine.`,
+    // The day, never the time: a model left to guess *next Monday* guesses the wrong week, and a
+    // line that changes once a day leaves the cached prompt alone the rest of it.
+    ...(about.today === undefined ? [] : [`Today is ${about.today}.`]),
     available.length > 0 ?
       'You have tools. Call them when they would help, one step at a time, and use what comes back.'
     : 'You have no tools available right now, so answer from what you know.',

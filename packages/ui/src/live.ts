@@ -26,6 +26,7 @@ import { folded } from './widgets.js'
  */
 export interface Stage {
   label?: string
+  detail?: string
   state: 'waiting' | 'running' | 'done' | 'failed'
   progress?: number
   total?: number
@@ -39,7 +40,24 @@ export interface Moving {
   preview?: string
   /** The job's own steps. The plugin's order, drawn left to right and never re-sorted. */
   stages?: Stage[]
+  /** The stages are a plan: named points joined in order, rather than a bar. */
+  plan?: boolean
+  /** Buttons for the person while it runs: the plugin's own declared actions, by key. */
+  controls?: { key: string; label: string }[]
 }
+
+/** How a finished step went, when its tool said: how long, how many steps, how many model calls. */
+export interface Timing {
+  ms: number
+  steps?: number
+  models?: number
+}
+
+/**
+ * The event a step's button sends up the page: which tool's step it sits on, and which of that
+ * plugin's actions to press. The page presses it; this file never talks to core.
+ */
+export const CONTROL_EVENT = 'step-control'
 
 export interface Live {
   /** A task started, in the conversation named. */
@@ -47,7 +65,7 @@ export interface Live {
   /** A call is about to run. Fired before the work, because that is the point of a trace. */
   step(n: number, name: string, args?: Record<string, unknown>): void
   moving(n: number, update: Moving): void
-  done(n: number, ok: boolean, text: string): void
+  done(n: number, ok: boolean, text: string, timing?: Timing): void
   /**
    * The task ended, however it ended — and *how*, when the caller knows: core's ending
    * (`answered`, `stopped`, `ceiling`, `paused`, `refused`) or `failed` for an error, with the
@@ -81,7 +99,7 @@ interface Row {
    * order on screen is the order decided here rather than whichever message ComfyUI happened
    * to send first.
    */
-  work?: { strip: HTMLOListElement; shot: HTMLImageElement }
+  work?: { strip: HTMLOListElement; plan: HTMLOListElement; shot: HTMLImageElement; controls: HTMLDivElement }
 }
 
 /**
@@ -101,21 +119,27 @@ const bare = (name: string): string => {
  * appended to the row, after the words, because a rail row is a line of text and a picture
  * set beside the name shrinks the name to nothing.
  */
-const working = (row: Row): { strip: HTMLOListElement; shot: HTMLImageElement } =>
+const working = (row: Row): { strip: HTMLOListElement; plan: HTMLOListElement; shot: HTMLImageElement; controls: HTMLDivElement } =>
   (row.work ??= (() => {
     const box = document.createElement('div')
     box.className = 'step-work'
     const strip = document.createElement('ol')
     strip.className = 'step-stages'
     strip.hidden = true
+    const plan = document.createElement('ol')
+    plan.className = 'step-plan'
+    plan.hidden = true
     const shot = document.createElement('img')
     shot.className = 'step-preview'
     shot.alt = 'What this step has made so far'
     shot.decoding = 'async'
     shot.hidden = true
-    box.append(strip, shot)
+    const controls = document.createElement('div')
+    controls.className = 'step-controls'
+    controls.hidden = true
+    box.append(strip, plan, controls, shot)
     row.element.append(box)
-    return { strip, shot }
+    return { strip, plan, shot, controls }
   })())
 
 /**
@@ -135,6 +159,44 @@ const segment = (stage: Stage): HTMLLIElement => {
     const far = Math.max(0, Math.min(100, Math.round(((stage.progress ?? 0) / total) * 100)))
     li.style.setProperty('--fill', `${String(far)}%`)
   }
+  return li
+}
+
+/** A finished step's line: how long, how many steps, and whether any model was asked. */
+export const timingLine = (timing: Timing): string =>
+  [
+    timing.ms < 1000 ? `${String(timing.ms)} ms` : `${(timing.ms / 1000).toFixed(1)} s`,
+    ...(timing.steps !== undefined ? [`${String(timing.steps)} step${timing.steps === 1 ? '' : 's'}`] : []),
+    ...(timing.models !== undefined ? [timing.models === 0 ? 'no model' : `${String(timing.models)} model call${timing.models === 1 ? '' : 's'}`] : []),
+  ].join(' · ')
+
+/**
+ * One point of a plan: a circle, the step's words beside it, and a line on to the next.
+ *
+ * Unlike a pipeline's segment the words are shown, because a plan has a handful of steps and
+ * their names are what a person is watching for — *open the results*, *press Like*. The line
+ * between two points is the circle's own `::after`, so the last one simply has none.
+ */
+const point = (stage: Stage, at: number): HTMLLIElement => {
+  const li = document.createElement('li')
+  li.className = `plan-point ${stage.state}`
+  const dot = document.createElement('span')
+  dot.className = 'plan-dot'
+  dot.textContent = stage.state === 'done' ? '✓' : stage.state === 'failed' ? '!' : String(at + 1)
+  const words = document.createElement('span')
+  words.className = 'plan-words'
+  const label = document.createElement('span')
+  label.className = 'plan-label'
+  label.textContent = stage.label ?? `Step ${String(at + 1)}`
+  words.append(label)
+  if (stage.detail !== undefined && stage.detail !== '') {
+    const detail = document.createElement('span')
+    detail.className = 'plan-detail'
+    detail.textContent = stage.detail
+    words.append(detail)
+  }
+  li.append(dot, words)
+  if (stage.state === 'running') li.setAttribute('aria-current', 'step')
   return li
 }
 
@@ -486,7 +548,32 @@ export function mountLive(token: string, roots: LiveRoots): Live {
       // **The shape of the job**, in the plugin's own order. Rebuilt rather than patched: it
       // is a handful of elements once a second, and a strip that is rebuilt cannot hold a
       // stale state from a stage that has gone away.
-      if (update.stages !== undefined && update.stages.length > 0) {
+      if (update.plan === true && update.stages !== undefined && update.stages.length > 0) {
+        const { plan } = working(row)
+        plan.replaceChildren(...update.stages.map(point))
+        const done = update.stages.filter((stage) => stage.state === 'done').length
+        plan.setAttribute('aria-label', `Plan: ${String(update.stages.length)} steps, ${String(done)} done.`)
+        plan.hidden = false
+      }
+      // The buttons a plugin offers while this runs — *Take over*, *Continue*. Rebuilt with the
+      // plan, so the one on screen is always the one that applies now.
+      if (update.controls !== undefined) {
+        const { controls } = working(row)
+        controls.replaceChildren(
+          ...update.controls.map((one) => {
+            const button = document.createElement('button')
+            button.type = 'button'
+            button.className = 'quiet-button'
+            button.textContent = one.label
+            button.addEventListener('click', () => {
+              button.disabled = true
+              row.element.dispatchEvent(new CustomEvent(CONTROL_EVENT, { bubbles: true, detail: { tool: row.name, key: one.key } }))
+            })
+            return button
+          }),
+        )
+        controls.hidden = update.controls.length === 0
+      } else if (update.stages !== undefined && update.stages.length > 0) {
         const { strip } = working(row)
         strip.replaceChildren(...update.stages.map(segment))
         const done = update.stages.filter((stage) => stage.state === 'done').length
@@ -505,8 +592,18 @@ export function mountLive(token: string, roots: LiveRoots): Live {
       row.said.textContent = update.message ? `${update.message} · ${String(done)}%` : `${String(done)}%`
     },
 
-    done(n, ok, text) {
+    done(n, ok, text, timing) {
       finished(n, ok, text)
+      const row = rows.get(n)
+      // Nothing to press once it is over.
+      if (row?.work) row.work.controls.hidden = true
+      // How it went, under it (B4): *6.2 s · 2 steps · no model*.
+      if (row && timing !== undefined) {
+        const line = document.createElement('p')
+        line.className = 'step-timing'
+        line.textContent = timingLine(timing)
+        row.element.append(line)
+      }
       if (open === n) void paint(n)
     },
 
