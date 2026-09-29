@@ -226,3 +226,88 @@ test('a card switch that is refused goes back and says why', async () => {
   expect(box.disabled).toBe(false)
   expect(card('Voice').querySelector('.card-error')?.textContent).toContain('There is no plugin called')
 })
+
+test('every plugin page has the same shape: readings on top, keys together, buttons apart', async () => {
+  core([
+    pane({
+      settings: [
+        { type: 'toggle', key: 'loud', label: 'Speak up', value: false },
+        { type: 'status', key: 'state', label: 'State', value: '● ready' },
+        { type: 'action', key: 'forget', label: 'Forget everything' },
+        { type: 'password', key: 'api_key', label: 'API key' },
+      ],
+      panel: {
+        label: 'Voices',
+        widgets: [
+          { type: 'text', key: 'find', label: 'Find a voice' },
+          { type: 'password', key: 'fish_key', label: 'fish.audio key' },
+        ],
+      },
+    }),
+  ])
+  await open()
+  card('Voice').querySelector<HTMLButtonElement>('.bento-open')!.click()
+  const labels = (selector: string): string[] =>
+    [...page().querySelectorAll(`${selector} .label`)].map((one) => one.textContent ?? '')
+
+  expect(labels('.plugin-readings')).toEqual(['State'])
+  // A key declared in the panel still lands beside the one declared in the settings.
+  expect(labels('.plugin-block.keys')).toEqual(['API key', 'fish.audio key'])
+  expect(page().querySelector('.plugin-block.values .switch')?.textContent).toBe('Speak up')
+  expect(button(page().querySelector('.plugin-actions')!, 'Forget everything')).toBeDefined()
+  expect(labels('.plugin-block.plugin-panel')).toEqual(['Find a voice'])
+  expect(page().querySelector('.plugin-block.plugin-panel .plugin-eyebrow')?.textContent).toBe('Voices')
+  // On and off is the switch at the top, the same one the card has; Delete is folded away.
+  expect(page().querySelector('.plugin-hero .switch input')).not.toBeNull()
+  expect(button(page(), 'Delete').closest('details')).not.toBeNull()
+})
+
+test('a plugin that is off shows what it asks for and one way on, and none of its settings', async () => {
+  const state = core([
+    pane({
+      enabled: false,
+      requires: [{ cap: 'net', why: 'To reach fish.audio' }],
+      settings: [{ type: 'password', key: 'api_key', label: 'API key' }],
+    }),
+  ])
+  await open()
+  card('Voice').querySelector<HTMLButtonElement>('.bento-open')!.click()
+  expect(page().querySelector('.pane-head .pill')?.textContent).toBe('Off')
+  expect(page().querySelector('.plugin-block.consent')?.textContent).toContain('To reach fish.audio')
+  expect(page().querySelector('.plugin-block.keys')).toBeNull()
+  button(page(), 'Turn on Voice').click()
+  await flush()
+  expect(state.sent).toContainEqual({ path: '/api/plugin', body: { id: 'voice', action: 'enable' } })
+})
+
+test('the section strip names only what the page has, and a press goes there', async () => {
+  core([
+    pane({
+      settings: [
+        { type: 'status', key: 'state', label: 'State', value: '● ready' },
+        { type: 'toggle', key: 'loud', label: 'Speak up', value: false },
+      ],
+    }),
+  ])
+  await open()
+  card('Voice').querySelector<HTMLButtonElement>('.bento-open')!.click()
+  const tabs = [...page().querySelectorAll<HTMLButtonElement>('.plugin-jump .jump')]
+  // No keys and nothing in use, so no tabs for them.
+  expect(tabs.map((tab) => tab.textContent)).toEqual(['Now', 'Settings', 'About'])
+  expect(tabs.every((tab) => tab.querySelector('svg') !== null)).toBe(true)
+  expect(tabs[0]!.classList.contains('on')).toBe(true)
+
+  const fold = page().querySelector<HTMLDetailsElement>('.plugin-about')!
+  fold.scrollIntoView = vi.fn()
+  tabs[2]!.click()
+  expect(fold.open).toBe(true)
+  expect(fold.scrollIntoView).toHaveBeenCalled()
+  expect(tabs[2]!.getAttribute('aria-current')).toBe('location')
+})
+
+test('a page with little on it has no strip', async () => {
+  core([pane({ settings: [{ type: 'toggle', key: 'loud', label: 'Speak up', value: false }] })])
+  await open()
+  card('Voice').querySelector<HTMLButtonElement>('.bento-open')!.click()
+  expect(page().querySelector('.plugin-jump')).toBeNull()
+})
