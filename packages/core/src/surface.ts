@@ -822,6 +822,10 @@ export function sources(options: SurfaceOptions): Record<string, Source> {
                 declared?.destructiveHint === true ? 'changes things'
                 : declared?.readOnlyHint === true ? 'reads only'
                 : 'not declared',
+              // Whether it declared that it reaches outside Alexia — the screen, a page, the
+              // network. The live panel reads it, with what its plugin holds, to tell a step
+              // that moves the pointer from one that only looks.
+              reaches: declared?.openWorldHint === true,
             }
           }),
         ),

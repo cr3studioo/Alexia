@@ -2980,8 +2980,47 @@ window.addEventListener('focus', () => {
 // under them — and hidden while a sheet or the palette is over the rail.
 keepPlaced([railMode, railPermission], document.querySelector<HTMLElement>('#rail')!)
 
-/** Computer tools that only look. Everything else from that plugin moves the pointer or types. */
-const LOOKING = new Set(['elements', 'read', 'check', 'windows', 'screenshot', 'list_plans', 'save_plan', 'forget_plan'])
+/**
+ * **The tools that act on the screen**: offered by a plugin that holds `input.control` and
+ * declared as reaching outside Alexia. One that only looks, or only keeps a plan, is not.
+ *
+ * Read once a task and forgotten when it ends, so a plugin installed between two tasks counts.
+ * A tool nobody could say anything about does not light the edge.
+ */
+let acting: Promise<Set<string>> | undefined
+const acts = async (name: string): Promise<boolean> =>
+  (
+    await (acting ??= (async () => {
+      const found = new Set<string>()
+      try {
+        const headers = { 'x-alexia-token': token }
+        const [tools, plugins] = await Promise.all([
+          fetch('/api/rows', {
+            method: 'POST',
+            headers: { ...headers, 'content-type': 'application/json' },
+            body: JSON.stringify({ key: 'tools' }),
+          }).then((answer) => answer.json() as Promise<{ rows?: { id: string; plugin?: string; reaches?: boolean }[] }>),
+          fetch('/api/plugins', { headers }).then(
+            (answer) => answer.json() as Promise<{ panes?: { id: string; requires?: { cap: string }[] }[] }>,
+          ),
+        ])
+        const controls = new Set(
+          (plugins.panes ?? [])
+            .filter((pane) => (pane.requires ?? []).some((need) => need.cap === 'input.control'))
+            .map((pane) => pane.id),
+        )
+        for (const tool of tools.rows ?? []) {
+          if (tool.reaches === true && tool.plugin !== undefined && controls.has(tool.plugin)) found.add(tool.id)
+        }
+      } catch {
+        // No edge is better than an edge for the wrong step.
+      }
+      return found
+    })())
+  ).has(name)
+
+/** Which task a step belongs to, so a lookup that lands after the task ended does not light the edge. */
+let task = 0
 
 /**
  * The live panel, with the edge of the screen tied to it: shown at a task's first computer step
@@ -3003,11 +3042,17 @@ function withEdge<
       inner.moving(n, update as Parameters<T['moving']>[1])
     },
     step(n: number, name: string, args?: Record<string, unknown>) {
-      const cut = name.indexOf('__')
-      if (cut > 0 && name.slice(0, cut) === 'computer' && !LOOKING.has(name.slice(cut + 2))) controlling(true)
+      // By what the plugin holds and what the tool declared, never by whose it is: a tool from a
+      // plugin that may move the mouse and type, and that reaches outside Alexia, is acting.
+      const of = task
+      void acts(name).then((yes) => {
+        if (yes && of === task) controlling(true)
+      })
       inner.step(n, name, args)
     },
     end(how?: string, why?: string) {
+      task += 1
+      acting = undefined
       controlling(false)
       // The next task's edge starts empty rather than showing this one's plan.
       planOnEdge([])
