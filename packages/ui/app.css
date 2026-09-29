@@ -572,9 +572,9 @@ body:not([data-view='settings']):not([data-view='control']) #sheet {
 /* ---- the settings screen (M2-1, M8-3) --------------------------------------------------
 
    Two pages, General and Plugins, and one page per plugin behind the second. **The tabs are
-   between screens, never inside one**: a plugin's own widgets are still one column in
-   manifest order, because a plugin with enough settings to need tabs has a design problem a
-   tab control would hide. Finding the plugin you meant is a different problem from reading
+   between screens, never inside one**: a plugin's own widgets are one column, sorted by kind
+   into the same blocks on every page, because a plugin with enough settings to need tabs has
+   a design problem a tab control would hide. Finding the plugin you meant is a different problem from reading
    its settings once you have. */
 
 #settings {
@@ -614,15 +614,348 @@ body:not([data-view='settings']):not([data-view='control']) #sheet {
   color: var(--ink);
 }
 
-/* Where a plugin's page turns from what it is set to into what it is doing (D118).
+/* ---- one plugin's page (D118) ---------------------------------------------------------
 
-   A rule and a gap, not a box: the widgets below it are the same widgets as the ones above
-   and drawing them inside a panel of their own would say they were a different kind of
-   thing. `.step-heading` carries no top margin by design, so the space belongs here. */
-.plugin-panel {
-  margin-top: var(--space-6);
+   The same shape for every plugin, whoever wrote it: the name with its switch, a row of
+   readings, then blocks — Keys, Settings, what it is doing — each a small name over a raised
+   surface in a quieter tray, and the version and Delete folded at the foot. The tray is the
+   surface and the border doing what a shadow would elsewhere (docs/design.md: no shadows): a
+   wash one step down, a hairline, and the raised core set into it with concentric corners. */
+
+.plugin-page {
+  display: grid;
+  gap: var(--space-4);
+  max-width: 46rem;
+}
+
+.plugin-back {
+  justify-self: start;
+  padding: var(--space-1) var(--space-3);
+  margin-left: calc(-1 * var(--space-3));
+  background-color: transparent;
+  border-color: transparent;
+  color: var(--ink-quiet);
+  font-size: var(--text-sm);
+}
+
+.plugin-back:hover {
+  background-color: var(--wash);
+  color: var(--ink);
+}
+
+/* The name in the serif the screen's own title uses, and the switch level with it. */
+.plugin-hero {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding-bottom: var(--space-2);
+}
+
+.plugin-hero-words {
+  flex: 1;
+  min-width: 0;
+}
+
+.plugin-hero .pane-head {
+  align-items: center;
+}
+
+.plugin-hero .step-heading {
+  margin: 0;
+  font-family: var(--serif);
+  font-size: var(--text-xl);
+  font-weight: 400;
+  letter-spacing: -0.015em;
+}
+
+.plugin-summary {
+  margin: var(--space-2) 0 0;
+  max-width: var(--measure);
+  color: var(--ink-quiet);
+  line-height: var(--leading-prose);
+}
+
+/* The switch sits on the heading's line rather than floating at the top of the block. */
+.plugin-hero > .switch {
+  flex: none;
+  margin-top: var(--space-2);
+}
+
+.plugin-hero > .card-error {
+  flex-basis: 100%;
+}
+
+/* Readings as tiles: a small name over the value. A reading is looked at, not filled in, so it
+   is not a field with a label above a box. Empty — every bar at rest — is no row at all. */
+.plugin-readings {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(11rem, 100%), 1fr));
+  gap: var(--space-2);
+}
+
+.plugin-readings:not(:has(> .field:not([hidden]))) {
+  display: none;
+}
+
+.plugin-readings > .field {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--wash);
+  min-width: 0;
+}
+
+.plugin-readings .reading {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-1);
+}
+
+.plugin-readings .label,
+.plugin-readings > .field > .label {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--ink-faint);
+}
+
+.plugin-readings .said {
+  overflow-wrap: anywhere;
+  line-height: var(--leading-tight);
+}
+
+.plugin-readings .reading .bar {
+  align-self: stretch;
+}
+
+/* The section strip: a floating pill of tabs that stays under the top edge while the page
+   scrolls. The one frosted thing on the page, because it is the one thing that sits over
+   content that moves under it. The lit tab is a raised chip, like the core of a block. */
+.plugin-jump {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  justify-self: start;
+  display: flex;
+  gap: var(--space-1);
+  max-width: 100%;
+  padding: var(--space-1);
+  overflow-x: auto;
+  scrollbar-width: none;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-full);
+  background: color-mix(in oklab, var(--surface-raised) 78%, transparent);
+  backdrop-filter: var(--glass-filter, blur(30px));
+  -webkit-backdrop-filter: var(--glass-filter, blur(30px));
+}
+
+.plugin-jump::-webkit-scrollbar {
+  display: none;
+}
+
+.plugin-jump .jump {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid transparent;
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--ink-quiet);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  white-space: nowrap;
+  transition:
+    background-color var(--t-mid) var(--ease-out),
+    border-color var(--t-mid) var(--ease-out),
+    color var(--t-mid) var(--ease-out),
+    transform var(--t-fast) var(--ease-out);
+}
+
+.plugin-jump .jump svg {
+  flex: none;
+  transition: transform var(--t-slow) var(--spring);
+}
+
+.plugin-jump .jump:hover {
+  color: var(--ink);
+  background: var(--wash);
+}
+
+.plugin-jump .jump:hover svg {
+  transform: translateY(-1px) scale(1.08);
+}
+
+.plugin-jump .jump:active {
+  transform: scale(0.97);
+}
+
+.plugin-jump .jump.on {
+  color: var(--ink);
+  background: var(--surface-raised);
+  border-color: var(--line);
+}
+
+.plugin-jump .jump:focus-visible {
+  outline: var(--ring) solid var(--focus);
+  outline-offset: calc(-1 * var(--ring));
+}
+
+/* A section jumped to lands below the strip, not under it. */
+.plugin-page > [data-jump] {
+  scroll-margin-top: calc(var(--space-8) + var(--space-3));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .plugin-jump .jump,
+  .plugin-jump .jump svg {
+    transition: none;
+  }
+}
+
+/* Narrow: icons only, each still named for a screen reader and on hover. */
+@media (max-width: 559px) {
+  .plugin-jump .jump-name {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+}
+
+.plugin-block {
+  padding: var(--space-1);
+  border: 1px solid var(--line);
+  border-radius: calc(var(--radius-lg) + var(--space-1));
+  background: var(--wash);
+}
+
+.plugin-eyebrow {
+  margin: var(--space-2) var(--space-3) var(--space-2);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+.plugin-block-core {
+  padding: var(--space-5);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface-raised);
+  min-width: 0;
+}
+
+.plugin-block-core > :first-child,
+.plugin-block-core > .field:first-child > :first-child {
+  margin-top: 0;
+}
+
+/* Something is wrong or unusual: the tray takes the colour, the core stays readable. */
+.plugin-block.notice {
+  border-color: var(--caution);
+}
+
+.plugin-block.notice .plugin-eyebrow {
+  color: var(--caution);
+}
+
+.plugin-block.notice.danger {
+  border-color: var(--danger);
+}
+
+.plugin-block.notice.danger .plugin-eyebrow {
+  color: var(--danger);
+}
+
+.plugin-block.notice button:not(.quiet-button) {
+  margin-top: var(--space-4);
+}
+
+.plugin-lead {
+  margin: 0;
+  max-width: var(--measure);
+  line-height: var(--leading-prose);
+}
+
+.plugin-block.consent .asks {
+  margin-top: var(--space-4);
+}
+
+.plugin-block.consent .begin {
+  margin-top: var(--space-5);
+}
+
+/* The buttons, under a rule and apart from the fields, so a press never reads as one more
+   thing to fill in. Stacked, because each carries its own hint and its own answer. */
+.plugin-actions {
+  margin-top: var(--space-5);
   padding-top: var(--space-5);
   border-top: 1px solid var(--line);
+}
+
+.plugin-block-core > .plugin-actions:first-child {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+
+/* The foot: quiet until opened, and Delete in the danger colour once it is. */
+details.plugin-about {
+  margin-top: var(--space-2);
+  padding: 0 var(--space-3);
+}
+
+.plugin-about .pane-meta {
+  margin: 0;
+}
+
+.plugin-about .lifecycle {
+  margin-top: var(--space-4);
+}
+
+.danger-button {
+  color: var(--danger);
+}
+
+.danger-button:hover {
+  border-color: var(--danger);
+}
+
+/* Arriving: each block settles into place in turn, on the curve everything here arrives on.
+   Only when the page is opened — a redraw after a gated choice changes nothing that moved. */
+.plugin-page.arriving > * {
+  animation: plugin-arrive var(--t-slow) var(--ease-out) both;
+}
+
+.plugin-page.arriving > :nth-child(2) { animation-delay: 30ms; }
+.plugin-page.arriving > :nth-child(3) { animation-delay: 60ms; }
+.plugin-page.arriving > :nth-child(4) { animation-delay: 90ms; }
+.plugin-page.arriving > :nth-child(5) { animation-delay: 120ms; }
+.plugin-page.arriving > :nth-child(n + 6) { animation-delay: 150ms; }
+
+@keyframes plugin-arrive {
+  from {
+    opacity: 0;
+    transform: translateY(var(--space-2));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .plugin-page.arriving > * {
+    animation: none;
+  }
+}
+
+@media (max-width: 559px) {
+  .plugin-block-core {
+    padding: var(--space-4);
+  }
 }
 
 /* ---- the plugin grid (M8-3) ---------------------------------------------------------
