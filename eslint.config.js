@@ -55,6 +55,10 @@ export default tseslint.config(
         WebSocket: 'readonly',
         // Counting the bytes of a seven-gigabyte download as they go past, without buffering it.
         TransformStream: 'readonly',
+        // Computer control times every step it takes, and gives a local server a second and a half
+        // to answer before calling it down. Both Node globals since 16/17.
+        performance: 'readonly',
+        AbortSignal: 'readonly',
       },
     },
   },

@@ -58,6 +58,42 @@ const call = (command: string, args?: Record<string, unknown>): void => {
 
 let showing: TrayState = 'idle'
 
+let edge = false
+
+/**
+ * **The edge of the screen while Alexia is using the computer** (`control_overlay`): a glow
+ * round the whole display that nothing can press, and ⌥Esc to stop while it shows. On from a
+ * task's first step that moves the pointer or types, off when the task ends.
+ */
+export function controlling(on: boolean): void {
+  if (on === edge) return
+  edge = on
+  call('control_overlay', { show: on })
+}
+
+/**
+ * **The plan on the edge of the screen** (B0): the checklist the live panel draws, sent to the
+ * edge's own window so it shows under *Alexia is using your computer*. An event rather than a
+ * command, so nothing is added to `main.rs`; the edge's window may only listen (`control.json`).
+ */
+export function planOnEdge(stages: { label?: string; detail?: string; state: string }[]): void {
+  const events = (globalThis as unknown as { __TAURI__?: { event?: { emitTo?: (target: string, name: string, payload: unknown) => Promise<void> } } }).__TAURI__?.event
+  // The running step keeps its detail — *waiting for the page to load* — which is what a person
+  // needs when a step takes long (B1). The others are their names alone.
+  const shown = stages.slice(0, 30).map((one) => ({
+    label: String(one.label ?? '').slice(0, 80),
+    state: one.state,
+    ...(one.state === 'running' && one.detail !== undefined && { detail: String(one.detail).slice(0, 60) }),
+  }))
+  void events?.emitTo?.('control', 'plan', shown)?.catch(() => undefined)
+}
+
+/** ⌥Esc, pressed anywhere while the edge shows. The shell says so; the page stops the task. */
+export function onStopKey(stop: () => void): void {
+  const events = (globalThis as unknown as { __TAURI__?: { event?: { listen?: (name: string, run: () => void) => Promise<unknown> } } }).__TAURI__?.event
+  void events?.listen?.('stop-task', stop)?.catch(() => undefined)
+}
+
 /**
  * Tell the tray what is happening.
  *

@@ -165,6 +165,55 @@ export const move = (x, y, signal) =>
     signal,
   )
 
+/** Turn the wheel over a point: `down` lines down (negative is up), `right` lines right. */
+export function scroll(x, y, down = 3, right = 0, signal) {
+  const lines = (n) => Math.max(-50, Math.min(50, Math.round(n)))
+  // One notch is 120 (WHEEL_DELTA), three lines by default; positive wheel is up, so negated.
+  const wheel = (flag, n) => (n === 0 ? '' : `[Mouse]::mouse_event(${flag}, 0, 0, ${String(-lines(n) * 40)}, 0);`)
+  return run(
+    'Add-Type -AssemblyName System.Windows.Forms;' +
+      "Add-Type -Namespace Mouse -Name Mouse -MemberDefinition '[DllImport(\"user32.dll\")] public static extern void mouse_event(uint f, uint dx, uint dy, int d, int e);' -UsingNamespace System;" +
+      `[System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point(${Math.round(x)}, ${Math.round(y)});` +
+      'Start-Sleep -Milliseconds 30;' +
+      wheel(0x0800, down) +
+      wheel(0x01000, -right),
+    signal,
+  )
+}
+
+/** What Start-Process is handed to reach an app by name, and nothing a name could smuggle. */
+const APP_NAME = /^[\p{L}\p{N} ._&'()+-]{1,80}$/u
+
+/** Open an app by name — what the Start menu would find — and answer with its window. */
+export async function openApp(name, signal) {
+  const wanted = String(name ?? '').trim().replace(/\.exe$/i, '')
+  if (!APP_NAME.test(wanted)) throw new Error(`“${wanted}” is not an app name this can open.`)
+  await run(`Start-Process ${quoted(wanted)}`, signal)
+  for (let tries = 0; tries < 10; tries += 1) {
+    const found = (await windows(signal)).find((one) => String(one.ProcessName).toLowerCase() === wanted.toLowerCase())
+    if (found) return { pid: found.Id, name: found.ProcessName, title: found.MainWindowTitle }
+    await new Promise((resolve) => setTimeout(resolve, 150))
+  }
+  return { name: wanted }
+}
+
+/** The web addresses `openUrl` takes. Not `file:`, not a script, not an app's own scheme. */
+const WEB = /^(https?:\/\/|mailto:)/i
+
+/** Open a web address in the default browser. */
+export async function openUrl(url, signal, browser) {
+  const address = String(url ?? '').trim()
+  if (!WEB.test(address) || /\s/.test(address)) throw new Error(`“${address}” is not a web address. Give one that starts with https://.`)
+  // The executables Windows knows these browsers by, for `Start-Process <browser> <address>`.
+  const exe = { 'Google Chrome': 'chrome', 'Microsoft Edge': 'msedge', 'Brave Browser': 'brave', Firefox: 'firefox', Comet: 'comet', Arc: 'arc' }[String(browser)]
+  await run(exe ? `Start-Process ${quoted(exe)} ${quoted(address)}` : `Start-Process ${quoted(address)}`, signal)
+}
+
+/** AppleScript and Shortcuts are the Mac's; Windows says so rather than pretending. */
+export const runScript = () => Promise.reject(new Error('Scripts for apps are AppleScript, which is macOS only.'))
+export const runShortcut = () => Promise.reject(new Error('Shortcuts are macOS only.'))
+export const shortcuts = () => Promise.resolve([])
+
 /**
  * Type, as the keyboard would.
  *
@@ -593,3 +642,9 @@ export function invoke({ pid, title, match } = {}, signal) {
     signal,
   ).then((out) => JSON.parse(out || '{"found":false}'))
 }
+
+/** Nothing stays running on Windows between calls, so there is nothing to let go. */
+export const close = () => {}
+
+/** The app in front. Windows has no cheap way to ask without P/Invoke, so it says it does not know. */
+export const front = () => Promise.resolve(null)

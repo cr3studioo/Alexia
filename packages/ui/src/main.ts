@@ -16,12 +16,12 @@ import { copyText, grow, moveIn, nearBottom, shownTurn, slashMatches, type Store
 import type { Layout } from './layout.js'
 import { drawPrice } from './pages.js'
 import { genieIn, genieOut, stopGenie } from './genie.js'
-import { autostart, dismiss, glassSupported, HOTKEY, inApp, installUpdate, setAutostart, tray, updateAvailable } from './desktop.js'
+import { autostart, controlling, dismiss, planOnEdge, glassSupported, HOTKEY, inApp, installUpdate, onStopKey, setAutostart, tray, updateAvailable } from './desktop.js'
 import { mountControl } from './control.js'
 import { mountPalette } from './palette.js'
 import { isSettingsPage, mountSettings } from './settings.js'
 import { mountGlass, mountTheme, type Theme } from './theme.js'
-import { mountLive, type Stage } from './live.js'
+import { CONTROL_EVENT, mountLive, type Stage, type Timing } from './live.js'
 import { answerPrompt, modal } from './modal.js'
 import { mountRail } from './rail.js'
 import { keepPlaced, MODES, mountLevelSlider, mountModeSwitch, mountGlassLook, type Around, type Switcher } from './switchers.js'
@@ -606,6 +606,50 @@ function showRead(turn: HTMLElement, attached: { name: string; text?: string; re
     turn.append(box)
   }
 }
+
+/**
+ * **An answer as a card** (B5): what a task read off the screen, by name, with the page it came
+ * from. Every value was copied from the screen by the plugin, so the card says only what was
+ * there; the link is a web page or nothing (core checks it before it gets here).
+ */
+function showCard(turn: HTMLElement, card: { title: string; fields: Record<string, string>; url?: string }): void {
+  const box = document.createElement('div')
+  box.className = 'answer-card'
+  const title = document.createElement('p')
+  title.className = 'answer-card-title'
+  title.textContent = card.title
+  const list = document.createElement('dl')
+  for (const [name, value] of Object.entries(card.fields)) {
+    const term = document.createElement('dt')
+    term.textContent = name
+    const said = document.createElement('dd')
+    said.textContent = value
+    list.append(term, said)
+  }
+  box.append(title, list)
+  if (card.url !== undefined && /^https?:\/\//i.test(card.url)) {
+    const link = document.createElement('a')
+    link.className = 'tile-link'
+    link.href = card.url
+    link.target = '_blank'
+    link.rel = 'noreferrer'
+    link.textContent = 'Open the page'
+    box.append(link)
+  }
+  turn.append(box)
+}
+
+/**
+ * A button on a running step (*Take over*, *Continue*), pressed through the same route as the
+ * panel's own buttons: the plugin is the one whose tool the step is, and the key must be one of
+ * its declared actions, which core checks. The shell names no plugin.
+ */
+document.addEventListener(CONTROL_EVENT, (event) => {
+  const { tool, key } = (event as CustomEvent<{ tool: string; key: string }>).detail
+  const cut = tool.indexOf('__')
+  if (cut <= 0) return
+  void post('/api/action', { plugin: tool.slice(0, cut), key }).catch(() => undefined)
+})
 
 /**
  * **A file a tool made, under the answer that made it, with something to press.**
@@ -1731,7 +1775,7 @@ async function* frames(body: ReadableStream<Uint8Array>): AsyncGenerator<Record<
  * So the conversation keeps one line — the names, and a way through — and `live.ts` has the
  * rest: the arguments, the plugin, what it holds and why, and what came back.
  */
-const live = mountLive(token, { running: page('running'), steps: page('steps'), current: page('current-step') })
+const live = withEdge(mountLive(token, { running: page('running'), steps: page('steps'), current: page('current-step') }))
 
 /**
  * The one line the conversation keeps about a run of tool calls.
@@ -2377,8 +2421,10 @@ async function respond(
             ok?: boolean
             text?: string
             args?: Record<string, unknown>
-            progress?: { progress: number; total?: number; message?: string; preview?: string; stages?: Stage[] }
+            progress?: { progress: number; total?: number; message?: string; preview?: string; stages?: Stage[]; plan?: boolean; controls?: { key: string; label: string }[] }
             files?: { id: string; name: string; bytes: number; mime: string; path: string; openable: boolean }[]
+            timing?: Timing
+            card?: { title: string; fields: Record<string, string>; url?: string }
           }
         | undefined
       if (step) {
@@ -2395,7 +2441,9 @@ async function respond(
           // happened rather than the order the elements were created.
           log.append(answer)
         } else {
-          live.done(step.n, step.ok, step.text ?? '')
+          live.done(step.n, step.ok, step.text ?? '', step.timing)
+          // An answer read off the screen, as a card under the reply (B5).
+          if (step.card) showCard(answer, step.card)
           // A file the step made goes in the conversation rather than in the live panel: the
           // panel is a trace of what happened and closes, and this is a thing the person now
           // has. It lands under the answer the way an attachment lands under the question.
@@ -2672,6 +2720,11 @@ function menuKey(event: KeyboardEvent): boolean {
   return false
 }
 
+// ⌥Esc while Alexia is using the computer is this button, pressed from anywhere.
+onStopKey(() => {
+  if (!stop.disabled) stop.click()
+})
+
 // Mid-step, always — including while a tool call is in flight. The button does not wait
 // for the step to finish and then pretend it stopped it.
 stop.addEventListener('click', () => {
@@ -2926,3 +2979,84 @@ window.addEventListener('focus', () => {
 // Apple's glass, when it is the one in use, kept over the rail's two switches as the page moves
 // under them — and hidden while a sheet or the palette is over the rail.
 keepPlaced([railMode, railPermission], document.querySelector<HTMLElement>('#rail')!)
+
+/**
+ * **The tools that act on the screen**: offered by a plugin that holds `input.control` and
+ * declared as reaching outside Alexia. One that only looks, or only keeps a plan, is not.
+ *
+ * Read once a task and forgotten when it ends, so a plugin installed between two tasks counts.
+ * A tool nobody could say anything about does not light the edge.
+ */
+let acting: Promise<Set<string>> | undefined
+const acts = async (name: string): Promise<boolean> =>
+  (
+    await (acting ??= (async () => {
+      const found = new Set<string>()
+      try {
+        const headers = { 'x-alexia-token': token }
+        const [tools, plugins] = await Promise.all([
+          fetch('/api/rows', {
+            method: 'POST',
+            headers: { ...headers, 'content-type': 'application/json' },
+            body: JSON.stringify({ key: 'tools' }),
+          }).then((answer) => answer.json() as Promise<{ rows?: { id: string; plugin?: string; reaches?: boolean }[] }>),
+          fetch('/api/plugins', { headers }).then(
+            (answer) => answer.json() as Promise<{ panes?: { id: string; requires?: { cap: string }[] }[] }>,
+          ),
+        ])
+        const controls = new Set(
+          (plugins.panes ?? [])
+            .filter((pane) => (pane.requires ?? []).some((need) => need.cap === 'input.control'))
+            .map((pane) => pane.id),
+        )
+        for (const tool of tools.rows ?? []) {
+          if (tool.reaches === true && tool.plugin !== undefined && controls.has(tool.plugin)) found.add(tool.id)
+        }
+      } catch {
+        // No edge is better than an edge for the wrong step.
+      }
+      return found
+    })())
+  ).has(name)
+
+/** Which task a step belongs to, so a lookup that lands after the task ended does not light the edge. */
+let task = 0
+
+/**
+ * The live panel, with the edge of the screen tied to it: shown at a task's first computer step
+ * that acts (not one that only looks), gone when the task ends, however it ends.
+ */
+function withEdge<
+  T extends {
+    step(n: number, name: string, args?: Record<string, unknown>): void
+    moving(n: number, update: { stages?: Stage[]; plan?: boolean }): void
+    end(how?: string, why?: string): void
+  },
+>(inner: T): T {
+  return {
+    ...inner,
+    moving(n: number, update: { stages?: Stage[]; plan?: boolean }) {
+      // The plan goes to the edge of the screen too, where the person is looking while the
+      // pointer moves (B0). A pipeline's stages stay in the panel.
+      if (update.plan === true && update.stages !== undefined) planOnEdge(update.stages)
+      inner.moving(n, update as Parameters<T['moving']>[1])
+    },
+    step(n: number, name: string, args?: Record<string, unknown>) {
+      // By what the plugin holds and what the tool declared, never by whose it is: a tool from a
+      // plugin that may move the mouse and type, and that reaches outside Alexia, is acting.
+      const of = task
+      void acts(name).then((yes) => {
+        if (yes && of === task) controlling(true)
+      })
+      inner.step(n, name, args)
+    },
+    end(how?: string, why?: string) {
+      task += 1
+      acting = undefined
+      controlling(false)
+      // The next task's edge starts empty rather than showing this one's plan.
+      planOnEdge([])
+      inner.end(how, why)
+    },
+  }
+}

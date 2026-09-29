@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "control",
+  "description": "The edge of the screen while Alexia uses the computer may hear one thing: the plan she is working through, sent by the main window, so it can show the checklist under its pill. It can press nothing and call no command.",
+  "windows": ["control"],
+  "permissions": ["core:event:allow-listen", "core:event:allow-unlisten"]
+}

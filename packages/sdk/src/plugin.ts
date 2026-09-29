@@ -15,7 +15,9 @@ import {
   type Manifest,
   type Stage,
   type Where,
+  CONTROLS_META,
   PREVIEW_META,
+  PLAN_META,
   STAGES_META,
 } from '@alexia/protocol'
 import { McpServer, type ServerContext, type StandardSchemaV1 } from '@modelcontextprotocol/server'
@@ -76,6 +78,17 @@ export interface Work {
    * and is never re-sorted — see {@link Stage}.
    */
   stages?: Stage[]
+  /**
+   * **The stages are a plan**, not a pipeline: drawn as named points joined in order, each
+   * with its `label` and `detail` shown, rather than a bar of unnamed segments. For a handful
+   * of steps a person reads — a pipeline of twenty-five is still better as the bar.
+   */
+  plan?: boolean
+  /**
+   * **Buttons for the person while it runs** — `{ key, label }`, each `key` one of your own
+   * declared `action` widgets (*Take over*, *Continue*). Drawn on the running step.
+   */
+  controls?: { key: string; label: string }[]
 }
 
 /** One block of an MCP tool result. Shaped by MCP, not by this package. */
@@ -279,6 +292,8 @@ export function plugin(options: PluginOptions = {}): AlexiaPlugin {
       const meta = {
         ...(work?.preview !== undefined && { [PREVIEW_META]: work.preview }),
         ...(work?.stages !== undefined && { [STAGES_META]: work.stages }),
+        ...(work?.plan === true && { [PLAN_META]: true }),
+        ...(work?.controls !== undefined && { [CONTROLS_META]: work.controls }),
       }
       void ctx.mcpReq
         .notify({

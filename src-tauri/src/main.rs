@@ -40,7 +40,7 @@ use std::time::{Duration, Instant};
 use tauri::image::Image;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{TrayIcon, TrayIconBuilder};
-use tauri::{AppHandle, Listener, Manager, RunEvent, Url, WebviewUrl, WebviewWindowBuilder, WindowEvent};
+use tauri::{AppHandle, Emitter, Listener, Manager, RunEvent, Url, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 use tauri_plugin_autostart::MacosLauncher;
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 use tauri_plugin_shell::process::{Command, CommandChild, CommandEvent};
@@ -61,6 +61,9 @@ const HOTKEY: (Modifiers, Code) = (Modifiers::ALT, Code::Space);
 
 // The overlay's AppKit class on a Mac (D145): a panel that can take the keyboard without
 // activating Alexia, which is what lets it appear over another app's full-screen Space.
+//
+// And the edge of the screen while Alexia is driving it: a panel that can never take the
+// keyboard, so nothing typed on the person's behalf lands in it instead of the app meant.
 #[cfg(target_os = "macos")]
 tauri_nspanel::tauri_panel! {
     panel!(OverlayPanel {
@@ -69,6 +72,57 @@ tauri_nspanel::tauri_panel! {
             is_floating_panel: true
         }
     })
+
+    panel!(ControlPanel {
+        config: {
+            can_become_key_window: false,
+            can_become_main_window: false,
+            is_floating_panel: true
+        }
+    })
+}
+
+/// ⌥Esc (Alt+Esc elsewhere): stop what Alexia is doing on the screen. Registered only while the
+/// edge is showing, so it never takes the combination from anything else the rest of the time.
+const STOP_KEY: (Modifiers, Code) = (Modifiers::ALT, Code::Escape);
+
+/// Show or hide the edge of the screen that says Alexia is using the computer (the page decides
+/// when: from the first computer step of a task until the task ends).
+///
+/// Nothing on it can be pressed and it never takes the keyboard, so it cannot get in the way of
+/// the clicks and keys it is announcing. While it shows, ⌥Esc stops the task: the page is told,
+/// and it presses its own Stop, which is the one road a task is stopped by.
+#[tauri::command]
+fn control_overlay(app: AppHandle, show: bool) {
+    let stop = Shortcut::new(Some(STOP_KEY.0), STOP_KEY.1);
+    if show {
+        let _ = app.global_shortcut().register(stop);
+    } else {
+        let _ = app.global_shortcut().unregister(stop);
+    }
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        let Some(edge) = handle.get_webview_window("control") else { return };
+        if show {
+            cover(&edge);
+            #[cfg(target_os = "macos")]
+            if let Ok(panel) = tauri_nspanel::ManagerExt::get_webview_panel(&handle, "control") {
+                panel.order_front_regardless();
+                return;
+            }
+            let _ = edge.show();
+        } else {
+            let _ = edge.hide();
+        }
+    });
+}
+
+/// The edge over the whole of the main display, wherever the display is and however it is scaled.
+fn cover(edge: &tauri::WebviewWindow) {
+    if let Ok(Some(screen)) = edge.primary_monitor() {
+        let _ = edge.set_position(*screen.position());
+        let _ = edge.set_size(*screen.size());
+    }
 }
 
 /// The tray's four states, as the page reports them.
@@ -285,8 +339,12 @@ fn start(app: &AppHandle, port: u16, handover: Arc<String>, lapse: u32) -> Resul
         while state.lock().is_ok_and(|held| held.as_ref().is_some_and(|core| core.pid() == pid)) {
             if TcpStream::connect_timeout(&([127, 0, 0, 1], port).into(), Duration::from_secs(1)).is_ok() {
                 // Both windows, the hidden overlay too — and after a restart, this is their reload.
-                for window in waiting.webview_windows().into_values() {
-                    let _ = window.navigate(url.clone());
+                // **Never the edge.** It is its own page from the app; sent here, it became the
+                // whole of Alexia's main screen, over everything, on top, for a whole task.
+                for (label, window) in waiting.webview_windows() {
+                    if label != "control" {
+                        let _ = window.navigate(url.clone());
+                    }
                 }
                 return tooltip(&waiting, "Alexia — idle");
             }
@@ -352,7 +410,7 @@ fn main() {
         // does *not* stop the process — which is how quitting used to leave a core running
         // with the database open, and the next launch made a second one beside it.
         .manage(Mutex::<Option<CommandChild>>::new(None))
-        .invoke_handler(tauri::generate_handler![tray_state, hide_overlay, relaunch, system_temps, sheet_snapshot, glass, haptic])
+        .invoke_handler(tauri::generate_handler![tray_state, hide_overlay, control_overlay, relaunch, system_temps, sheet_snapshot, glass, haptic])
         .setup(move |app| {
             let handle = app.handle().clone();
 
@@ -391,6 +449,43 @@ fn main() {
                 panel.set_level(PanelLevel::Floating.value());
                 panel.set_style_mask(StyleMask::empty().nonactivating_panel().into());
                 panel.set_collection_behavior(CollectionBehavior::new().full_screen_auxiliary().can_join_all_spaces().into());
+            }
+
+            // The edge of the screen while Alexia drives it (`control_overlay`). Its own page from
+            // the app, not core's: it has nothing to ask anyone, and must work before core does.
+            let edge = WebviewWindowBuilder::new(app, "control", WebviewUrl::App("control.html".into()))
+                .title("Alexia is using your computer")
+                .decorations(false)
+                .transparent(true)
+                .shadow(false)
+                .always_on_top(true)
+                .skip_taskbar(true)
+                .focused(false)
+                .resizable(false)
+                .visible(false)
+                // Left out of screenshots and recordings — Alexia's own included, which would
+                // otherwise see a purple frame around everything she looks at.
+                .content_protected(true)
+                // Its own page and nothing else, whatever asks: anything else would be a real page
+                // over the whole screen that cannot be clicked, which is what happened once.
+                .on_navigation(|url| url.path().ends_with("/control.html"))
+                .build()?;
+            let _ = edge.set_ignore_cursor_events(true);
+            cover(&edge);
+            // On a Mac, a panel above everything that never activates Alexia or takes the keyboard,
+            // on every Space and over full-screen apps — the same reasons as the overlay's, plus one
+            // more: a key window here would swallow the keystrokes Alexia is typing somewhere else.
+            #[cfg(target_os = "macos")]
+            {
+                use tauri_nspanel::{CollectionBehavior, PanelLevel, StyleMask, WebviewWindowExt};
+                let panel = edge.to_panel::<ControlPanel>()?;
+                panel.set_level(PanelLevel::Status.value());
+                panel.set_style_mask(StyleMask::empty().nonactivating_panel().into());
+                panel.set_collection_behavior(CollectionBehavior::new().full_screen_auxiliary().can_join_all_spaces().stationary().ignores_cycle().into());
+                panel.set_ignores_mouse_events(true);
+                panel.set_has_shadow(false);
+                panel.set_opaque(false);
+                panel.set_hides_on_deactivate(false);
             }
 
             let hiding = overlay.clone();
@@ -449,11 +544,18 @@ fn main() {
             });
 
             let combo = Shortcut::new(Some(HOTKEY.0), HOTKEY.1);
+            let stop = Shortcut::new(Some(STOP_KEY.0), STOP_KEY.1);
             app.handle().plugin(
                 tauri_plugin_global_shortcut::Builder::new()
                     .with_handler(move |app, shortcut, event| {
                         if shortcut == &combo && event.state() == ShortcutState::Pressed {
                             reveal(app);
+                        }
+                        if shortcut == &stop && event.state() == ShortcutState::Pressed {
+                            // The edge goes first, here, whatever the page does next: the way out
+                            // must not depend on the page that put it up still answering.
+                            control_overlay(app.clone(), false);
+                            let _ = app.emit_to("main", "stop-task", ());
                         }
                     })
                     .build(),

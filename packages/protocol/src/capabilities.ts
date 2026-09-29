@@ -373,6 +373,47 @@ export const PREVIEW_META = 'alexia/preview'
 export const STAGES_META = 'alexia/stages'
 
 /**
+ * The `_meta` key that says the stages are **a plan** rather than a pipeline: a few steps a
+ * person reads one by one, drawn as named points joined in order, instead of a bar of
+ * unnamed segments. `true` or absent.
+ *
+ * A pipeline has twenty-five stages nobody needs the names of; a plan has five whose names
+ * are the whole of what a person watching wants to know — *open the results*, *press Like*.
+ */
+export const PLAN_META = 'alexia/plan'
+
+/**
+ * The `_meta` key on a tool's **result** that carries **the reply to the person**, word for word.
+ *
+ * For a tool that finishes the task and already has the answer in hand — a lookup that read a
+ * title off the screen — asking the model for one more turn only to repeat it costs seconds and
+ * lets it misquote. With this set, and the tool the only call of its turn, the task ends with
+ * this text as the answer. Under `_meta` so an Alexia that has never heard of it hands the result
+ * to the model as before, and nothing about it is a version number.
+ */
+export const FINAL_META = 'alexia/final'
+
+/**
+ * The `_meta` key on a progress notification naming **buttons the person may press while the
+ * work runs**: `[{ key, label }]`, at most three, each `key` one of the plugin's own declared
+ * `action` widgets. The window draws them on the running step and presses them through the same
+ * route the panel's buttons take, so a plugin cannot offer anything it did not declare.
+ */
+export const CONTROLS_META = 'alexia/controls'
+
+/**
+ * The `_meta` key on a tool's **result** saying how the work went, for the line under it:
+ * `{ ms, steps, models }` — how long, how many steps, how many model calls it needed.
+ */
+export const TIMING_META = 'alexia/timing'
+
+/**
+ * The `_meta` key on a tool's **result** carrying **an answer as a card**: `{ title, fields, url }`
+ * — a heading, the values it found by name, and the page they came from (`http(s)` only).
+ */
+export const CARD_META = 'alexia/card'
+
+/**
  * One step of a long job, as the plugin running it describes its own shape.
  *
  * **Ordered by the plugin, and never sorted anywhere else.** Core cannot know that *decode*
@@ -386,6 +427,8 @@ export const STAGES_META = 'alexia/stages'
  */
 export interface Stage {
   label?: string
+  /** One short line under the label in a plan: how it went, or what it is waiting on. */
+  detail?: string
   state: 'waiting' | 'running' | 'done' | 'failed'
   /** How far this one step has got. A `total` of zero or absent means it cannot say. */
   progress?: number

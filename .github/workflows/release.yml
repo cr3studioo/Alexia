@@ -48,10 +48,17 @@ on:
         description: Submit the Windows installer to SignPath for Authenticode signing. Off until the certificate exists.
         type: boolean
         default: false
+      # Three answers rather than on/off (D207): what a Mac release is signed with decides whether
+      # somebody's Accessibility grant survives the update, and ad hoc is the one answer where it
+      # never does. So the default is the certificate that keeps it, and `ad-hoc` has to be chosen.
       sign_macos:
-        description: Sign the Mac app with a Developer ID and notarise it. Off until the Apple account exists.
-        type: boolean
-        default: false
+        description: >-
+          How to sign the Mac app. self-signed keeps Accessibility across updates (run
+          scripts/macos-signing-cert.mjs once first); developer-id also notarises and needs the
+          Apple account; ad-hoc makes every Mac re-grant Accessibility after this update.
+        type: choice
+        options: [self-signed, developer-id, ad-hoc]
+        default: self-signed
       publish:
         description: Draft a GitHub Release. This is what existing installs update from.
         type: boolean
@@ -164,17 +171,35 @@ jobs:
   # Silicon runner builds both halves: Tauri merges the shell, and `sidecar.mjs --universal`
   # merges Node and the keychain library. About twice the download, and one question fewer.
   #
-  # **`sign_macos` is signing *and* notarising**, and without it Gatekeeper does not warn so
-  # much as refuse: a downloaded app with no Developer ID opens only after System Settings →
-  # Privacy & Security → *Open Anyway*. That is a cold-install test failing on its first screen,
-  # so an unsigned Mac release says so in its notes rather than in a support email.
+  # **`sign_macos` answers two questions, and only `developer-id` answers both** (D207).
   #
-  # Secrets it reads when `sign_macos` is on: `APPLE_CERTIFICATE` (the Developer ID Application
-  # certificate as base64 .p12) and `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY` (its
-  # name, "Developer ID Application: …"), and `APPLE_ID`, `APPLE_PASSWORD` (an app-specific
-  # password) and `APPLE_TEAM_ID` for notarisation. Tauri notarises and staples when the last
-  # three are present, and signs ad hoc when none are — which is what `tauri.macos.conf.json`
-  # falls back to, so an unsigned build still runs under the hardened runtime it would ship with.
+  # * *Does macOS open it?* Only with a Developer ID and notarisation. Anything else is not
+  #   warned about so much as refused: a downloaded app opens only after System Settings →
+  #   Privacy & Security → *Open Anyway*. That is a cold-install test failing on its first
+  #   screen, so such a release says so in its notes rather than in a support email.
+  # * *Does an update keep what the person granted?* Accessibility (and the keychain's *always
+  #   allow*) is kept against the app's designated requirement. Signed ad hoc, that requirement
+  #   is the binary's own hash, so every release is a stranger and computer control stops until
+  #   Alexia is switched off and on again in Accessibility. Signed with a certificate it is
+  #   `identifier "dev.alexia.app" and certificate leaf = H"…"`, which the next release meets too.
+  #
+  # So `self-signed` — a certificate made once by `scripts/macos-signing-cert.mjs`, free — answers
+  # the second and not the first, and cannot be notarised. It is the default because the one
+  # thing worse than a re-grant is a re-grant on every release. **The certificate is part of
+  # every installed Alexia's grant**: regenerated or lost, every Mac re-grants once. Moving to
+  # `developer-id` later changes the requirement too, so that costs everybody one re-grant more.
+  #
+  # `developer-id` reads `APPLE_CERTIFICATE` (the Developer ID Application certificate as base64
+  # .p12) and `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY` (its name, "Developer ID
+  # Application: …"), and `APPLE_ID`, `APPLE_PASSWORD` (an app-specific password) and
+  # `APPLE_TEAM_ID` for notarisation. `self-signed` reads `MACOS_SELF_SIGNED_CERTIFICATE` and
+  # `MACOS_SELF_SIGNED_CERTIFICATE_PASSWORD`, and the variable `MACOS_SELF_SIGNED_IDENTITY` — the
+  # certificate's SHA-1, which is what it signs with, so a different certificate in the secret
+  # fails here rather than shipping. Separate secrets on purpose: the Developer ID arriving must
+  # not overwrite the one certificate nobody may lose. Tauri notarises and staples only when the
+  # notary three are present, and signs ad hoc when no identity is — which is what
+  # `tauri.macos.conf.json` falls back to, so an unsigned build still runs under the hardened
+  # runtime it would ship with.
   macos:
     runs-on: macos-latest
     steps:
@@ -199,29 +224,95 @@ jobs:
             exit 1
           fi
 
+      # Before anything is built, because the import below fails on an empty secret with a
+      # message about a file, and a build signed with nothing would be the ad-hoc release nobody
+      # chose.
+      - name: The certificate for this signature is here
+        if: inputs.sign_macos != 'ad-hoc'
+        env:
+          MODE: ${{ inputs.sign_macos }}
+          DEVELOPER_ID: ${{ secrets.APPLE_CERTIFICATE != '' && secrets.APPLE_CERTIFICATE_PASSWORD != '' && secrets.APPLE_SIGNING_IDENTITY != '' }}
+          SELF_SIGNED: ${{ secrets.MACOS_SELF_SIGNED_CERTIFICATE != '' && secrets.MACOS_SELF_SIGNED_CERTIFICATE_PASSWORD != '' && vars.MACOS_SELF_SIGNED_IDENTITY != '' }}
+        run: |
+          if [ "$MODE" = "developer-id" ] && [ "$DEVELOPER_ID" != "true" ]; then
+            echo "sign_macos is developer-id, and APPLE_CERTIFICATE, APPLE_CERTIFICATE_PASSWORD or"
+            echo "APPLE_SIGNING_IDENTITY is not set. They arrive with the Apple Developer account."
+            exit 1
+          fi
+          if [ "$MODE" = "self-signed" ] && [ "$SELF_SIGNED" != "true" ]; then
+            echo "sign_macos is self-signed, and MACOS_SELF_SIGNED_CERTIFICATE,"
+            echo "MACOS_SELF_SIGNED_CERTIFICATE_PASSWORD or the variable MACOS_SELF_SIGNED_IDENTITY"
+            echo "is not set. On the owner's Mac, once:"
+            echo ""
+            echo "  node scripts/macos-signing-cert.mjs"
+            echo ""
+            echo "prints the three commands. Choosing ad-hoc instead releases, and every Mac that"
+            echo "updates to it has to grant Accessibility again."
+            exit 1
+          fi
+
       # Into a keychain of the runner's own, before anything signs: `sidecar.mjs` signs the
       # keychain library in `resources/` with this identity, and `tauri build` signs the rest.
-      - name: Import the Developer ID certificate
-        if: inputs.sign_macos
+      # The action also sets the key's partition list, without which `codesign` would stop at a
+      # keychain dialog nobody on a runner can answer. A self-signed certificate is not trusted
+      # by the runner, and does not need to be: `codesign` signs with it all the same, and what
+      # macOS keeps a grant against is its hash, not its trust.
+      - name: Import the signing certificate
+        if: inputs.sign_macos != 'ad-hoc'
         uses: apple-actions/import-codesign-certs@v3
         with:
-          p12-file-base64: ${{ secrets.APPLE_CERTIFICATE }}
-          p12-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          p12-file-base64: ${{ inputs.sign_macos == 'developer-id' && secrets.APPLE_CERTIFICATE || secrets.MACOS_SELF_SIGNED_CERTIFICATE }}
+          p12-password: ${{ inputs.sign_macos == 'developer-id' && secrets.APPLE_CERTIFICATE_PASSWORD || secrets.MACOS_SELF_SIGNED_CERTIFICATE_PASSWORD }}
 
       # The variables are set only when signing, never set empty: Tauri reads an empty
       # `APPLE_SIGNING_IDENTITY` as an identity called "", which is not ad hoc — it is a failure.
+      # Self-signed sets the identity and nothing else, so Tauri skips notarisation, which Apple
+      # would refuse for a certificate it did not issue.
       - name: Build, sign and notarise
         env:
+          MODE: ${{ inputs.sign_macos }}
           IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           NOTARY_ID: ${{ secrets.APPLE_ID }}
           NOTARY_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           NOTARY_TEAM: ${{ secrets.APPLE_TEAM_ID }}
+          SELF_SIGNED_IDENTITY: ${{ vars.MACOS_SELF_SIGNED_IDENTITY }}
         run: |
-          if [ "${{ inputs.sign_macos }}" = "true" ]; then
-            export APPLE_SIGNING_IDENTITY="$IDENTITY" APPLE_ID="$NOTARY_ID" APPLE_PASSWORD="$NOTARY_PASSWORD" APPLE_TEAM_ID="$NOTARY_TEAM"
-          fi
+          case "$MODE" in
+            developer-id)
+              export APPLE_SIGNING_IDENTITY="$IDENTITY" APPLE_ID="$NOTARY_ID" APPLE_PASSWORD="$NOTARY_PASSWORD" APPLE_TEAM_ID="$NOTARY_TEAM" ;;
+            self-signed)
+              export APPLE_SIGNING_IDENTITY="$SELF_SIGNED_IDENTITY" ;;
+          esac
           node scripts/sidecar.mjs --universal
           pnpm tauri build --target universal-apple-darwin
+
+      # What a grant is kept against, checked on the code that will ship rather than assumed from
+      # the flags: the whole bundle verifies, and the shell, the core and the keychain library
+      # each carry a requirement that names a certificate, not a hash of themselves. A nested
+      # piece signed differently from the rest is how an app launches fine and is then refused
+      # by the one permission it needed. Printed, so two releases' logs can be compared.
+      - name: The signature survives an update
+        if: inputs.sign_macos != 'ad-hoc'
+        env:
+          MODE: ${{ inputs.sign_macos }}
+          SELF_SIGNED_IDENTITY: ${{ vars.MACOS_SELF_SIGNED_IDENTITY }}
+        run: |
+          app=src-tauri/target/universal-apple-darwin/release/bundle/macos/Alexia.app
+          codesign --verify --deep --strict --verbose=2 "$app"
+          leaf=$(printf '%s' "$SELF_SIGNED_IDENTITY" | tr 'A-F' 'a-f')
+          for code in "$app" "$app"/Contents/MacOS/* "$app"/Contents/Resources/resources/keyring.darwin-universal.node; do
+            requirement=$(codesign -d -r- "$code" 2>/dev/null)
+            echo "$(basename "$code"): $requirement"
+            case "$requirement" in
+              *cdhash*|"") echo "$code is signed ad hoc, so macOS would forget its grants on the next update."; exit 1 ;;
+            esac
+            if [ "$MODE" = "self-signed" ]; then
+              case "$requirement" in
+                *"certificate leaf = H\"$leaf\""*) ;;
+                *) echo "$code is not signed with the certificate MACOS_SELF_SIGNED_IDENTITY names."; exit 1 ;;
+              esac
+            fi
+          done
 
       # Both halves really are in there. A universal build that quietly came out single-processor
       # would install fine on the machine that built it and refuse to open on the other kind.
@@ -383,7 +474,7 @@ jobs:
 
             **Windows:** ${{ inputs.sign_windows && 'the publisher on the installer reads "SignPath Foundation". That is the certificate programme that signs open-source releases for free, and it is not a sign that something is wrong. Windows may still show a SmartScreen warning until this build accumulates reputation.' || 'the installer is not code-signed yet, so SmartScreen will warn: More info, then Run anyway.' }}
 
-            **macOS:** one disk image for every Mac, Apple Silicon and Intel alike. ${{ inputs.sign_macos && 'The app is signed with a Developer ID and notarised by Apple.' || 'It is not code-signed yet, so macOS refuses to open it the first time: press Done, open System Settings, then Privacy & Security, and press Open Anyway beside Alexia.' }}
+            **macOS:** one disk image for every Mac, Apple Silicon and Intel alike. ${{ inputs.sign_macos == 'developer-id' && 'The app is signed with a Developer ID and notarised by Apple.' || inputs.sign_macos == 'self-signed' && 'The app is signed with Alexia''s own certificate rather than one from Apple, so macOS still refuses to open it the first time: press Done, open System Settings, then Privacy & Security, and press Open Anyway beside Alexia. The certificate is what lets permissions you give Alexia, such as Accessibility, carry over to future updates.' || 'It is not code-signed yet, so macOS refuses to open it the first time: press Done, open System Settings, then Privacy & Security, and press Open Anyway beside Alexia. Each update asks for Accessibility again.' }}
 
             Either way the downloads are checked: Alexia verifies its own signature over an update before installing it.
 

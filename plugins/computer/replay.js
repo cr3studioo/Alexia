@@ -50,9 +50,19 @@ import { desktop } from './desktop.js'
  * that reached for a model would break that, and the invariant is worth more than the fallback.
  */
 async function postcondition(step, signal) {
-  const wrong = expectation(step, await desktop.readElement(targeted(step), signal))
-  if (wrong) throw new Error(wrong)
+  // Looked for again until it holds, for a little while: the step before it may have started a
+  // page loading, and a replay that checks once, at once, fails on a page that is on its way.
+  const until = Date.now() + SETTLE_MS
+  for (;;) {
+    const wrong = expectation(step, await desktop.readElement(targeted(step), signal))
+    if (!wrong) return
+    if (Date.now() >= until || signal?.aborted) throw new Error(wrong)
+    await new Promise((resolve) => setTimeout(resolve, 200))
+  }
 }
+
+/** How long a check waits for the screen to come round before it fails the replay. */
+export const SETTLE_MS = 4000
 
 /** Which window and which control, from the three fields every screen-reading step carries. */
 const targeted = (step) => ({
@@ -117,6 +127,10 @@ export const STEPS = {
    * those pixels — while `press Save` is still pressing Save.
    */
   press: (step, signal) => pressing(step, signal),
+  /** Open an app by name: the first step of most plans, and the one that does not go stale. */
+  open_app: (step, signal) => desktop.openApp(String(step.name ?? ''), signal),
+  open_url: (step, signal) => desktop.openUrl(String(step.url ?? ''), signal),
+  scroll: (step, signal) => desktop.scroll(Number(step.x) || 0, Number(step.y) || 0, Number(step.down ?? 5), Number(step.right ?? 0), signal),
 }
 
 async function pressing(step, signal) {

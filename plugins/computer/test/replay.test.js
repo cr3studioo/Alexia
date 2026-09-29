@@ -175,7 +175,7 @@ test('the registry holds nothing this plugin could not already do', () => {
   expect(actions.length).toBeGreaterThan(0)
 
   /**
-   * Four extras, and every one of them is a tool of its own with its own annotation.
+   * Seven extras, and every one of them is a tool of its own with its own annotation.
    *
    * `focus` and `wait` were the original two — one is a tool by name, the other touches
    * nothing at all. `press` and `expect` are the two the accessibility tree bought: `press`
@@ -186,11 +186,15 @@ test('the registry holds nothing this plugin could not already do', () => {
    * another plugin uses to ask for computer control, and its enum is *do one thing on the
    * screen* — a check is not doing, and a control pressed by name is not a coordinate.
    */
+  // `open_app`, `open_url` and `scroll` (v2) are tools of their own too, annotated like `focus`.
   expect(Object.keys(STEPS).filter((one) => !actions.includes(one)).sort()).toEqual([
     'expect',
     'focus',
+    'open_app',
+    'open_url',
     'press',
+    'scroll',
     'wait',
   ])
-  for (const named of ["'focus',", "'press',", "'check',"]) expect(index).toContain(named)
+  for (const named of ["'focus',", "'press',", "'check',", "'open_app',", "'open_url',", "'scroll',"]) expect(index).toContain(named)
 })

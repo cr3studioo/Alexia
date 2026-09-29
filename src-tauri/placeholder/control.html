@@ -1,0 +1,243 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!--
+  The edge of the screen while Alexia is driving it.
+
+  One window over the whole display that nothing can press: clicks and keys go straight through
+  it to whatever is underneath, it never takes the keyboard, and it is left out of screen
+  capture. All it does is say, at the edge of everything, that the pointer and the keyboard are
+  not only the person's right now, and how to take them back.
+
+  Static and self-contained on purpose: it is loaded from the app itself, before core is
+  listening, and has nothing to ask anyone.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Alexia is using your computer</title>
+    <style>
+      :root {
+        --glow: 124 92 255;
+        --glow-2: 64 156 255;
+        --edge: 3px;
+      }
+
+      html,
+      body {
+        margin: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: transparent;
+        font: 500 13px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+        -webkit-user-select: none;
+        user-select: none;
+        cursor: default;
+      }
+
+      /* The edge: a thin line of colour, and a soft glow falling inward from it. */
+      .edge {
+        position: fixed;
+        inset: 0;
+        border-radius: 10px;
+        box-shadow:
+          inset 0 0 0 var(--edge) rgb(var(--glow) / 0.85),
+          inset 0 0 28px 6px rgb(var(--glow) / 0.45),
+          inset 0 0 90px 18px rgb(var(--glow-2) / 0.18);
+        animation: breathe 2.8s cubic-bezier(0.65, 0, 0.35, 1) infinite;
+      }
+
+      /* What is happening and how to stop it, where eyes go first. */
+      .said {
+        position: fixed;
+        top: 42px;
+        left: 50%;
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        padding: 9px 14px 9px 12px;
+        border: 1px solid rgb(255 255 255 / 0.14);
+        border-radius: 999px;
+        background: rgb(22 20 30 / 0.78);
+        color: rgb(255 255 255 / 0.94);
+        box-shadow: 0 8px 30px rgb(0 0 0 / 0.28), 0 0 0 1px rgb(var(--glow) / 0.35);
+        transform: translateX(-50%);
+        -webkit-backdrop-filter: blur(18px) saturate(1.6);
+        backdrop-filter: blur(18px) saturate(1.6);
+        white-space: nowrap;
+      }
+
+      .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: rgb(var(--glow));
+        box-shadow: 0 0 0 4px rgb(var(--glow) / 0.25);
+        animation: pulse 1.4s cubic-bezier(0.65, 0, 0.35, 1) infinite;
+      }
+
+      kbd {
+        padding: 3px 6px;
+        border-radius: 5px;
+        background: rgb(255 255 255 / 0.12);
+        color: rgb(255 255 255 / 0.8);
+        font: inherit;
+        font-size: 12px;
+      }
+
+      .quiet {
+        color: rgb(255 255 255 / 0.6);
+      }
+
+      /* The plan she is working through, under the pill: ticked, running, still to come. */
+      .plan {
+        position: fixed;
+        top: 86px;
+        left: 50%;
+        min-width: 240px;
+        max-width: 420px;
+        margin: 0;
+        padding: 10px 14px;
+        list-style: none;
+        border: 1px solid rgb(255 255 255 / 0.12);
+        border-radius: 14px;
+        background: rgb(22 20 30 / 0.72);
+        color: rgb(255 255 255 / 0.9);
+        box-shadow: 0 8px 30px rgb(0 0 0 / 0.24);
+        transform: translateX(-50%);
+        -webkit-backdrop-filter: blur(18px) saturate(1.6);
+        backdrop-filter: blur(18px) saturate(1.6);
+        font-weight: 450;
+        line-height: 1.35;
+      }
+
+      .plan[hidden] {
+        display: none;
+      }
+
+      .plan li {
+        display: flex;
+        gap: 8px;
+        padding: 3px 0;
+        overflow: hidden;
+        white-space: nowrap;
+        text-overflow: ellipsis;
+      }
+
+      .plan .mark {
+        flex: none;
+        width: 14px;
+        text-align: center;
+      }
+
+      .plan .done {
+        color: rgb(255 255 255 / 0.55);
+      }
+
+      .plan .done .mark {
+        color: rgb(120 220 150);
+      }
+
+      .plan .running {
+        color: rgb(255 255 255);
+      }
+
+      .plan .running .mark {
+        color: rgb(var(--glow));
+      }
+
+      .plan .failed .mark {
+        color: rgb(255 120 110);
+      }
+
+      .plan .detail {
+        color: rgb(255 255 255 / 0.55);
+      }
+
+      .plan .more {
+        color: rgb(255 255 255 / 0.5);
+      }
+
+      @keyframes breathe {
+        0%,
+        100% {
+          opacity: 1;
+        }
+
+        50% {
+          opacity: 0.55;
+        }
+      }
+
+      @keyframes pulse {
+        0%,
+        100% {
+          box-shadow: 0 0 0 4px rgb(var(--glow) / 0.25);
+        }
+
+        50% {
+          box-shadow: 0 0 0 1px rgb(var(--glow) / 0.1);
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .edge,
+        .dot {
+          animation: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="edge" aria-hidden="true"></div>
+    <div class="said" role="status">
+      <span class="dot" aria-hidden="true"></span>
+      <span>Alexia is using your computer</span>
+      <span class="quiet">·</span>
+      <span class="quiet"><kbd id="alt">⌥</kbd> <kbd>Esc</kbd> to stop</span>
+    </div>
+    <ol class="plan" hidden aria-label="The plan"></ol>
+    <script>
+      // The same key on both: Option on a Mac, Alt everywhere else.
+      if (!/Mac/.test(navigator.platform)) document.getElementById('alt').textContent = 'Alt'
+
+      // The plan, sent by the main window as it moves (`planOnEdge`). Eight lines at most, kept
+      // around the one running, the rest folded into a count: this is a glance, not a list.
+      const list = document.querySelector('.plan')
+      const MARKS = { done: '✓', running: '▸', waiting: '○', failed: '✗' }
+      const MOST = 8
+      window.__TAURI__?.event?.listen?.('plan', ({ payload }) => {
+        const stages = Array.isArray(payload) ? payload : []
+        const now = Math.max(0, stages.findIndex((one) => one.state === 'running'))
+        const from = Math.max(0, Math.min(now - 2, stages.length - MOST))
+        const shown = stages.slice(from, from + MOST)
+        list.replaceChildren(
+          ...shown.map((one) => {
+            const item = document.createElement('li')
+            item.className = String(one.state)
+            const mark = document.createElement('span')
+            mark.className = 'mark'
+            mark.textContent = MARKS[one.state] ?? '○'
+            item.append(mark, document.createTextNode(String(one.label ?? '')))
+            if (one.detail) {
+              const detail = document.createElement('span')
+              detail.className = 'detail'
+              detail.textContent = `— ${String(one.detail)}`
+              item.append(detail)
+            }
+            return item
+          }),
+        )
+        const left = stages.length - (from + shown.length)
+        if (left > 0) {
+          const more = document.createElement('li')
+          more.className = 'more'
+          more.textContent = `+${String(left)} more`
+          list.append(more)
+        }
+        list.hidden = stages.length === 0
+      })
+    </script>
+  </body>
+</html>

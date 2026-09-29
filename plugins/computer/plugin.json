@@ -4,7 +4,7 @@
   "id": "computer",
   "name": "Computer control",
   "summary": "Lets Alexia see what is on screen, press things, move the mouse and type. Anything a person at this keyboard could do.",
-  "version": "0.3.0",
+  "version": "1.0.0",
   "license": "AGPL-3.0-only",
   "entry": {
     "run": "node",
@@ -12,7 +12,7 @@
       "index.js"
     ]
   },
-  "alexia_protocol": 3,
+  "alexia_protocol": 7,
   "mcp_protocol": "2025-11-25",
   "requires": [
     {
@@ -30,6 +30,10 @@
     {
       "cap": "fs.own_dir",
       "why": "To put the screenshots somewhere. They are deleted when you delete this plugin."
+    },
+    {
+      "cap": "net.request",
+      "why": "To ask Laya on this computer, and TypeSafe when you add a key, which control on screen a step means."
     }
   ],
   "provides": [
@@ -45,6 +49,80 @@
       "hint": "Off means she can look but not touch: no clicking, no mouse, no typing. Turn this on only while you are watching."
     },
     {
+      "type": "choice",
+      "key": "speed",
+      "label": "How she finds buttons",
+      "default": "auto",
+      "hint": "Alexia writes the whole plan first, then carries it out. Each button is found by its name or what it is (the search box, the first video); this chooses who breaks a tie when two could fit.",
+      "options": [
+        { "value": "auto", "label": "Fast (recommended)", "hint": "Laya on this computer breaks ties, then Jev if you have a key. If neither is sure she stops and says so." },
+        { "value": "model", "label": "Names only", "hint": "No Laya and no Jev: only a button whose name or role plainly fits is pressed." }
+      ]
+    },
+    {
+      "type": "toggle",
+      "key": "use_laya",
+      "label": "Use Laya",
+      "default": true,
+      "hint": "A small free model that runs on this computer and finds the right button in tens of milliseconds. Set it up once by asking Alexia to set up Laya (about 2 GB).",
+      "when": { "key": "speed", "is": "auto" }
+    },
+    {
+      "type": "choice",
+      "key": "laya_model",
+      "label": "Which Laya",
+      "default": "typed-decisions",
+      "hint": "Which of Laya's versions answers.",
+      "when": { "key": "speed", "is": "auto" },
+      "options": [
+        { "value": "typed-decisions", "label": "Typed decisions", "hint": "The newest, trained on exactly this kind of choice. Best for most windows." },
+        { "value": "multilingual", "label": "Multilingual", "hint": "Reads buttons in Czech and 100 other languages better, and is faster." },
+        { "value": "english", "label": "English", "hint": "The original. English only." },
+        { "value": "auto", "label": "Let Laya pick", "hint": "Chooses English or multilingual by the language on screen." }
+      ]
+    },
+    {
+      "type": "toggle",
+      "key": "laya_auto_start",
+      "label": "Start Laya with Alexia",
+      "default": true,
+      "hint": "Keeps Laya loaded so the first task does not wait for it. Off means it only runs when you start it.",
+      "when": { "key": "speed", "is": "auto" }
+    },
+    {
+      "type": "text",
+      "key": "laya_address",
+      "label": "Where Laya runs",
+      "default": "http://127.0.0.1:8000",
+      "hint": "Leave it as it is unless you run Laya's server yourself on another port.",
+      "when": { "key": "speed", "is": "auto" }
+    },
+    {
+      "type": "password",
+      "key": "laya_key",
+      "label": "Laya key",
+      "hint": "Only if you run Laya's server yourself with a key (LAYA_API_KEY). Otherwise leave it empty.",
+      "when": { "key": "speed", "is": "auto" }
+    },
+    {
+      "type": "password",
+      "key": "typesafe_key",
+      "label": "TypeSafe key (optional)",
+      "hint": "Adds Jev as a backup for when Laya is not sure, and to check Laya in apps it is new to. From console.typesafe.ai. It goes to this machine's credential store, never to the database.",
+      "when": { "key": "speed", "is": "auto" }
+    },
+    {
+      "type": "number",
+      "key": "jev_daily_limit",
+      "label": "Most to spend on Jev a day (USD)",
+      "min": 0,
+      "max": 10,
+      "step": 0.01,
+      "default": 0.1,
+      "hint": "A step costs a small fraction of a cent. Past this, Jev rests until tomorrow and Alexia's model takes its place.",
+      "when": { "key": "speed", "is": "auto" }
+    },
+    {
       "type": "number",
       "key": "keep_screenshots",
       "label": "Screenshots to keep",
@@ -55,21 +133,77 @@
       "hint": "Older ones are deleted. Zero keeps none once she is done with them."
     },
     {
+      "type": "choice",
+      "key": "browser",
+      "label": "Open web pages in",
+      "default": "default",
+      "hint": "Every page she opens goes to this browser, so she always finds it where she left it.",
+      "options": [
+        { "value": "default", "label": "The default browser" },
+        { "value": "Comet", "label": "Comet" },
+        { "value": "Google Chrome", "label": "Chrome" },
+        { "value": "Safari", "label": "Safari" },
+        { "value": "Arc", "label": "Arc" },
+        { "value": "Brave Browser", "label": "Brave" },
+        { "value": "Microsoft Edge", "label": "Edge" },
+        { "value": "Firefox", "label": "Firefox" }
+      ]
+    },
+    {
       "type": "status",
       "key": "state",
       "label": "State"
     }
   ],
+  "skills": [
+    "skills/computer-use"
+  ],
   "storage": {
     "namespace": "computer",
     "tables": [
-      "actions"
+      "actions",
+      "steps",
+      "grounding"
     ],
     "dir": true
   },
   "panel": {
     "label": "Plans",
     "widgets": [
+      {
+        "key": "plan_now",
+        "type": "status",
+        "label": "Now",
+        "hint": "The plan for the task she is doing, ticked off step by step. The last one stays here when she is done."
+      },
+      {
+        "key": "pause_task",
+        "type": "action",
+        "label": "Take over",
+        "hint": "She stops before her next step so you can use the computer.",
+        "tool": "pause_task"
+      },
+      {
+        "key": "resume_task",
+        "type": "action",
+        "label": "Continue",
+        "hint": "She looks at the screen again and carries on from where she was.",
+        "tool": "resume_task"
+      },
+      {
+        "key": "rerun_last",
+        "type": "action",
+        "label": "Do it again",
+        "hint": "Runs the last plan again, with no AI model asked.",
+        "tool": "rerun_last"
+      },
+      {
+        "key": "save_last",
+        "type": "action",
+        "label": "Save as plan",
+        "hint": "Keeps the last plan under its goal.",
+        "tool": "save_last"
+      },
       {
         "key": "saved_plans",
         "type": "table",

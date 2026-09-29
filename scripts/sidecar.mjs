@@ -173,11 +173,16 @@ async function keyringFor(arch) {
  * it, and Apple refuses a bundle with one foreign library inside. Signed here, with the same
  * identity `tauri build` will use: `APPLE_SIGNING_IDENTITY` in a release, and ad hoc (`-`)
  * otherwise, which is what `tauri.macos.conf.json` falls back to as well.
+ *
+ * `--timestamp` goes first. It used to be spliced in at index 2, between `--options` and its
+ * value, so `codesign` read `--timestamp` as the options and refused — which no ad-hoc build
+ * ever reaches, so every signed release would have stopped here (found by D207's first signed
+ * build).
  */
 function sign(path) {
   const identity = process.env.APPLE_SIGNING_IDENTITY || '-'
   const args = ['--force', '--options', 'runtime', '--sign', identity, path]
-  if (identity !== '-') args.splice(2, 0, '--timestamp')
+  if (identity !== '-') args.unshift('--timestamp')
   const signed = spawnSync('codesign', args, { stdio: 'inherit' })
   if (signed.status !== 0) throw new Error(`codesign refused ${path}`)
 }
