@@ -1045,6 +1045,6 @@ alexia.onSettingsChanged((changed) => {
   // The engine joined the list, and it is the one that changes the most: which family speaks
   // decides which files matter, whether there is a key to reach anything with, and every
   // sentence the status line is able to say.
-  if (['engine', 'model_size', 'whisper_path', 'piper_path', 'qwen_path'].some((key) => key in changed)) void bind()
+  if (['engine', 'model_size', 'whisper_path', 'piper_path', 'qwen_path', 'fish_key'].some((key) => key in changed)) void bind()
 })
 log.info(`${alexia.manifest.name} is ready`)
