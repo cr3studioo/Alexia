@@ -716,13 +716,27 @@ async function spoken(token, chatId, said, cameAsVoice, quote = () => undefined)
     // *Recording voice…* while it is made and *sending voice…* while it goes (D192).
     presence.as(chatId, 'record_voice')
     const made = await alexia.capability('voice.render', { text: said })
+    const detail = (made.content ?? [])
+      .filter((block) => block.type === 'text')
+      .map((block) => block.text)
+      .join(' ')
+      .trim()
+    // A tool error is an MCP result, rather than a rejected capability call. Treating it as
+    // an ordinary result with no audio was what made a failed voice render look exactly like
+    // a deliberate text reply.
+    if (made.isError === true) throw new Error(detail || 'The voice renderer declined the reply.')
     const audio = (made.content ?? []).find((block) => block.type === 'audio' && block.mimeType === 'audio/ogg')
-    if (!audio) return false
+    if (!audio) throw new Error('The voice renderer returned no Ogg/Opus audio.')
     presence.as(chatId, 'upload_voice')
     await sendVoice(token, chatId, Buffer.from(audio.data, 'base64'), undefined, quote())
+    await alexia.storage.remove('last_voice_reply_error').catch(() => {})
     return true
-  } catch {
-    // Nothing renders, or it failed. Either way the answer still has to arrive.
+  } catch (error) {
+    // The text fallback still makes sure the answer arrives, but losing the cause here makes
+    // a misconfigured or unavailable voice reply indistinguishable from a working text mode.
+    const why = error instanceof Error ? error.message : String(error)
+    await alexia.storage.set('last_voice_reply_error', why).catch(() => {})
+    log.warn(`could not send a Telegram voice reply: ${why}`)
     return false
   }
 }

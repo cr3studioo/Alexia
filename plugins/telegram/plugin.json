@@ -22,6 +22,10 @@
     {
       "cap": "fs.own_dir",
       "why": "To hold a voice note or a file you sent for a moment while it is turned into words, then drop it."
+    },
+    {
+      "cap": "voice.render",
+      "why": "To turn a reply into an Ogg/Opus voice note when you chose voice replies."
     }
   ],
   "provides": [
