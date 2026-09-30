@@ -191,7 +191,12 @@ test('first run asks three things and then never asks again', async () => {
   mkdirSync(join(fresh, 'cache'), { recursive: true })
   noPolling(fresh)
   const secrets = memorySecrets()
-  const first = await serve({ dataDir: fresh, uiDir: ui, secrets })
+  // The real providers, but at an address that refuses at once. Saving a key waits up to
+  // fifteen seconds for that provider's list, and this test saves two: on a runner where
+  // openrouter.ai was slow, the two waits were the whole thirty-second budget and the release
+  // went red. A refused list is *could not be reached*, which keeps the key, as a slow one did.
+  const offline = PROVIDERS.map((p) => ({ ...p, baseUrl: 'http://127.0.0.1:9/v1' }))
+  const first = await serve({ dataDir: fresh, uiDir: ui, secrets, providers: offline })
   const call = (path: string, init: RequestInit = {}) =>
     fetch(new URL(path, first.url), { ...init, headers: { 'x-alexia-token': first.token, ...init.headers } })
 
