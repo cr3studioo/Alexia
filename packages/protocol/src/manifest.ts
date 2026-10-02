@@ -79,9 +79,14 @@ import { APP_VERSION, newer } from './version.js'
  * that each name which of its widgets to show. Additive: nothing is drawn that a plugin did not
  * already declare, a plugin with a `panel` and no `page` gets one built from the panel, and a
  * manifest that says nothing about pages means what it meant yesterday. The floor stays at 2.
+ *
+ * **13 on 2026-10-02.** `compute` — a plugin saying which of its capabilities are heavy work
+ * that may run on a computer the person paired, and an eighth method, `alexia/compute/run`,
+ * for asking core to run one wherever they chose (`docs/spec/remote-compute.md` §4). Additive:
+ * a manifest without `compute` means what it meant at 12, and the floor stays at 2.
  */
 export const ALEXIA_PROTOCOL_MIN = 2
-export const ALEXIA_PROTOCOL_MAX = 12
+export const ALEXIA_PROTOCOL_MAX = 13
 
 /**
  * The two MCP revisions core speaks, in preference order (D55, corrected by D57).
@@ -863,6 +868,57 @@ export const ManifestShape = z
       })
       .strict()
       .optional(),
+
+    /**
+     * **The heavy half of this plugin's work, declared so core can send it where the person
+     * chose** (`alexia_protocol` 13, `docs/spec/remote-compute.md` §4).
+     *
+     * A person may pair a second computer of their own and have models, image workflows and
+     * local voice run there. Core has to find the plugins that can do that work without ever
+     * typing one's name, and the answer is the one `panel` and `page` already gave: the plugin
+     * declares it, and core reads the declaration. An entry here is found by capability and is
+     * gone when the folder is — deleting a compute plugin takes its operations out of the
+     * host's inventory and nothing else.
+     *
+     * **An operation is a capability, and a narrower one than the plugin's own.** The
+     * convention is two names: the person-facing one (`image.generate` — plan the prompt, ask
+     * permission, read the person's files) stays on the computer they are sitting at, and a
+     * second one for the work itself (`image.render`) is the only thing listed here. Files in,
+     * files out: a compute worker cannot ask for a model, start a task or read a root.
+     *
+     * The tools that do the work are not named here, for the reason tools are never in the
+     * manifest. They are bound at runtime by `COMPUTE_META` on the tool, the way `provides`
+     * is bound by `PROVIDES_META`.
+     */
+    compute: z
+      .object({
+        operations: z
+          .array(
+            z
+              .object({
+                /** One of this plugin's own `provides`. Core calls the operation by it. */
+                cap: z.string().regex(CAPABILITY),
+                summary: z.string().min(1).max(120),
+                /**
+                 * `heavy` waits its turn — one at a time on a host, with every other loaded
+                 * worker stopped first. `light` starts at once. Absent means heavy, because
+                 * the mistake that costs something is the other one.
+                 */
+                weight: z.enum(['heavy', 'light']).optional(),
+              })
+              .strict(),
+          )
+          .min(1),
+        /**
+         * The lifecycle calls this plugin answers, each bound to a tool the way an operation
+         * is: `setup` says what is missing, `install` fetches one of those, `prepare` gets
+         * ready for an operation about to run, `release` lets go of memory and processes.
+         * Every one is optional, and core calls only the ones listed.
+         */
+        hooks: z.array(z.enum(['setup', 'install', 'prepare', 'release'])).optional(),
+      })
+      .strict()
+      .optional(),
   })
   // Strict on purpose. A typo'd `provide` that is silently ignored is a plugin that asks
   // for nothing and fails at runtime, which is a far worse morning than a load error.
@@ -1019,6 +1075,23 @@ export const Manifest = ManifestShape.superRefine((m, ctx) => {
     }
   }
 
+  if (m.compute !== undefined) {
+    if (m.alexia_protocol < 13) {
+      fail(['compute'], 'compute arrived in alexia_protocol 13 — declare "alexia_protocol": 13 to use it')
+    }
+    const caps = m.compute.operations.map((o) => o.cap)
+    caps.forEach((cap, i) => {
+      // Core finds an operation by capability, and `provides` is where a capability is
+      // promised. One listed only here would be work nothing can be asked for by name.
+      if (!m.provides?.includes(cap)) {
+        fail(['compute', 'operations', i, 'cap'], `compute operation "${cap}" must also be in provides`)
+      }
+    })
+    // One tool answers one operation, so a second entry is a job with two possible weights.
+    for (const d of new Set(dupes(caps))) fail(['compute', 'operations'], `operation "${d}" is declared twice`)
+    for (const d of new Set(dupes(m.compute.hooks ?? []))) fail(['compute', 'hooks'], `hook "${d}" is declared twice`)
+  }
+
   m.skills?.forEach((p, i) => {
     if (/^([A-Za-z]:|[\\/])/.test(p) || p.split(/[\\/]/).includes('..')) {
       fail(['skills', i], 'a skill path must stay inside the plugin folder')
@@ -1053,6 +1126,11 @@ export const Manifest = ManifestShape.superRefine((m, ctx) => {
 })
 
 export type Manifest = z.infer<typeof Manifest>
+
+/** One entry of `compute.operations`: a capability this plugin can run as a job (`alexia_protocol` 13). */
+export type ComputeOperation = NonNullable<Manifest['compute']>['operations'][number]
+/** One of `compute.hooks`: a lifecycle call core may make on a compute worker (`alexia_protocol` 13). */
+export type ComputeHook = NonNullable<NonNullable<Manifest['compute']>['hooks']>[number]
 
 /**
  * A plugin's page as the board reads it (`alexia_protocol` 12): the declared one, or the one

@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import type { Manifest, Standing } from '@alexia/protocol'
+import { rememberTarget } from './compute/target.js'
+import { isRemoteId, parseCatalogId } from './compute/types.js'
 import { report, verify, type Provider } from './provider.js'
 import { MODES, type Pins } from './router.js'
 import { CORE } from './secrets.js'
@@ -100,7 +102,13 @@ const chosen = (store: Store): Omit<Pins, 'placement'> =>
  * a slash command below, and a row action on the panel.
  */
 export function setPin(store: Store, change: Omit<Pins, 'placement'>): void {
+  if (change.model && (/^(llama|mlx)\//.test(change.model) || isRemoteId(change.model))) rememberLocalChoice(store, change.model)
   store.kvSet(CORE, 'pins', { ...chosen(store), ...change })
+}
+
+/** Separate from the active pin: Automatic must never forget a local choice. */
+export function rememberLocalChoice(store: Store, model: string): void {
+  rememberTarget(store, parseCatalogId(model))
 }
 
 /** Where the work runs, as the person last said it. Combined until they have said anything. */
@@ -187,6 +195,8 @@ export async function run(
      * and the line says nothing either way rather than guessing *no*.
      */
     running?(): boolean
+    /** The host owns runner lifecycle; parsing a command only starts its transition. */
+    changeMode?(mode: keyof typeof MODES): Promise<Ran>
     /** The table to check, defaulting to all of it. A seam, so the test does not need a network. */
     providers?: readonly Provider[]
   },
@@ -196,7 +206,8 @@ export async function run(
   const rest = typed.slice(word.length).trim()
   const { store } = context
 
-  const mode = (name: keyof typeof MODES, note: string): Ran => {
+  const mode = async (name: keyof typeof MODES, note: string): Promise<Ran> => {
+    if (context.changeMode) return context.changeMode(name)
     store.kvSet(CORE, 'mode', name)
     return { ok: true, note }
   }

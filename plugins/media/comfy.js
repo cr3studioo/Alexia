@@ -469,3 +469,31 @@ export async function interrupt(server, signal) {
   const response = await fetch(`${server}/interrupt`, { method: 'POST', signal })
   return response.ok
 }
+
+/**
+ * Stop one job, and only that one.
+ *
+ * **`/interrupt` on its own stops whatever is rendering, whoever queued it** — and a ComfyUI
+ * somebody has open in a browser tab is rendering *their* picture as often as it is rendering
+ * Alexia's. Giving up on a job that was still waiting its turn used to end the one in front of
+ * it, which belonged to the person and not to this plugin.
+ *
+ * So the job is taken out of the queue by its own id, and the renderer is only interrupted when
+ * that id is the one it is working on. The id is sent with the interrupt as well: a ComfyUI new
+ * enough to read it checks again on its own side, and an older one ignores the body and is
+ * covered by the check made here.
+ */
+export async function cancel(server, id, signal) {
+  const post = (path, body) =>
+    fetch(`${server}${path}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+      signal,
+    })
+  // Still waiting: gone from the queue, and nothing that was running is touched.
+  await post('/queue', { delete: [id] }).catch(() => {})
+  const { queue_running: running = [] } = await json(await fetch(`${server}/queue`, { signal })).catch(() => ({}))
+  if (!running.some((item) => item[1] === id)) return false
+  return (await post('/interrupt', { prompt_id: id })).ok
+}

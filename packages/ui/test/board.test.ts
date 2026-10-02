@@ -1079,10 +1079,29 @@ test('local stats say the last speed with its model, and draw no speed row befor
   drawLocalStats(section, { ...ollama, system: machine, speed: { model: 'qwen3:8b', tokensPerSecond: 29.6 } }, 'L')
   expect(section.textContent).toContain('Last speed')
 
-  // No Ollama is said at L, and the machine is still there above it.
+  // No installed local model is said at L, and the machine is still there above it.
   drawLocalStats(section, { running: false, installed: [], loaded: [], speed: null, system: machine }, 'L')
-  expect(section.textContent).toContain('Ollama is not running')
+  expect(section.textContent).toContain('Install one in Settings')
   expect(rowsOf(section)).toEqual(['CPU', 'GPU', 'RAM'])
+})
+
+test('local stats include Alexia managed models without Ollama and distinguish idle models from no install', () => {
+  const section = document.createElement('section')
+  drawLocalStats(section, {
+    running: false, runners: { ollama: false, llama: false }, installed: [{ name: 'Qwen Q4_K_M', size: 5e9 }], loaded: [], speed: null,
+  }, 'L')
+  expect(section.textContent).toContain('Local models')
+  expect(section.textContent).toContain('loads on request')
+  expect(section.textContent).not.toContain('Install one')
+
+  drawLocalStats(section, {
+    running: true, runners: { ollama: false, llama: true }, installed: [{ name: 'Qwen Q4_K_M', size: 5e9 }],
+    loaded: [{ name: 'Qwen Q4_K_M', size: 5e9, vram: 0, until: null }], speed: null,
+  }, 'L')
+  expect(section.textContent).toContain('Qwen Q4_K_M')
+  expect(section.textContent).toContain('5.0 GB')
+  expect(section.textContent).not.toContain('Ollama is not running')
+  expect(section.textContent).not.toContain('loads on request')
 })
 
 test('uptime and memory read the way the operating system says them', () => {

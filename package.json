@@ -8,7 +8,7 @@
     "node": ">=24"
   },
   "scripts": {
-    "start": "tsc -b && node packages/core/dist/src/serve.js",
+    "start": "tsc -b && node packages/core/dist/src/entry.js",
     "package": "tsc -b && node scripts/package.mjs",
     "lint": "eslint . && depcruise packages",
     "typecheck": "tsc -b",

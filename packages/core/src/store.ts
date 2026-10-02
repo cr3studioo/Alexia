@@ -1125,13 +1125,15 @@ export class Store {
    * something about. `undefined` when no answer from it has both numbers, which is every
    * database before migration 9 and every machine that has never run a local model.
    */
-  lastWriting(provider: string): { model: string; tokensOut: number; writing: number } | undefined {
+  lastWriting(provider: string | readonly string[]): { model: string; tokensOut: number; writing: number } | undefined {
+    const providers = typeof provider === 'string' ? [provider] : provider
+    if (providers.length === 0) return undefined
     const row = this.#db
       .prepare(
         'SELECT model, tokens_out AS tokensOut, writing FROM usage' +
-          ' WHERE provider = ? AND tokens_out > 0 AND writing > 0 ORDER BY at DESC, id DESC LIMIT 1',
+          ` WHERE provider IN (${providers.map(() => '?').join(',')}) AND tokens_out > 0 AND writing > 0 ORDER BY at DESC, id DESC LIMIT 1`,
       )
-      .get(provider) as { model: string; tokensOut: number; writing: number } | undefined
+      .get(...providers) as { model: string; tokensOut: number; writing: number } | undefined
     return row === undefined ? undefined : { ...row }
   }
 

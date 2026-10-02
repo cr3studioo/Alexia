@@ -372,6 +372,7 @@ export interface MachineStats {
 /** What `/api/local-stats` answers. */
 export interface LocalStats {
   running: boolean
+  runners?: { ollama: boolean; llama: boolean }
   installed: { name: string; size: number }[]
   loaded: { name: string; size: number; vram: number; until: string | null }[]
   speed: { model: string; tokensPerSecond: number } | null
@@ -534,8 +535,10 @@ export function drawLocalStats(
   }
   if (tier !== 'L') return
 
-  body.append(heading('Ollama', stats.running ? 'running' : ''))
-  if (!stats.running) body.append(el('p', 'nothing', 'Ollama is not running or not installed, so no model on this computer can answer. Get it at ollama.com.'))
+  body.append(heading('Local models', stats.running ? 'running' : ''))
+  if (!stats.running) body.append(el('p', 'nothing', stats.installed.length > 0
+    ? 'No model is loaded right now. An installed local model loads on request.'
+    : 'No local model is installed. Install one in Settings → Models & money, or connect an existing model in Ollama.'))
   else {
     if (stats.loaded.length === 0) body.append(rowOf('Nothing loaded', ''))
     for (const one of stats.loaded) body.append(rowOf(one.name, bytes(one.vram || one.size)))

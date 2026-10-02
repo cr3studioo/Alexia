@@ -177,6 +177,20 @@ export interface Provider {
    * described wrongly by anything else, so it is a third number rather than a fudge.
    */
   callsPerMonth?: number
+  /**
+   * **A runner on this machine that has to be started before it can answer** — Alexia's own
+   * `llama-server` (`llama.ts`), which holds one model at a time and is not running until asked.
+   *
+   * Called by {@link chat} with the model named in the request, before anything is sent; it
+   * resolves to the `baseUrl` to send to once that model is loaded. A hook rather than a branch
+   * on the provider's id, for the reason the rest of this table exists: `chat()` never learns
+   * which runner is which. Runner preparation has its own bounded startup deadline.
+   *
+   * `model`, when it is given, is the id the engine behind that address knows the model by, and
+   * is what the request names instead of the catalog's id (a paired computer's model is listed
+   * under a host-qualified id that its engine has never heard of).
+   */
+  prepare?: (model: string, signal?: AbortSignal) => Promise<string | { baseUrl: string; key?: string; model?: string; release?: () => void }>
 }
 
 /**
@@ -1167,7 +1181,17 @@ export async function chat(
 
   // The address and the credential, which for one shape of row are two halves of the same
   // stored string.
-  const reach = reaching(provider, key)
+  //
+  // A runner that loads on demand says where it is only once the model is in memory — and one
+  // that could not start is unreachable, the same as a host that did not answer.
+  const prepared = provider.prepare === undefined ? provider.baseUrl : await provider.prepare(request.model, request.signal).catch((error: unknown) => {
+    if (request.signal?.aborted === true) throw error
+    const why = error instanceof Error ? error.message : String(error)
+    throw new ProviderError(0, `${provider.name} could not start ${request.model}: ${why}`, 'unreachable')
+  })
+  const at = typeof prepared === 'string' ? prepared : prepared.baseUrl
+  const release = typeof prepared === 'string' ? undefined : prepared.release
+  const reach = reaching({ ...provider, baseUrl: at }, typeof prepared === 'string' ? key : prepared.key ?? key)
 
   /** When the request went out, which is what a sign of life is measured from. */
   const began = Date.now()
@@ -1192,7 +1216,7 @@ export async function chat(
         ...provider.headers,
       },
       body: JSON.stringify({
-        model: request.model,
+        model: (typeof prepared === 'string' ? undefined : prepared.model) ?? request.model,
         messages: request.messages.map(toWire),
         // A provider-wide `tools: false` outranks anything the caller asked for. The per-model
         // `supportsTools` flag cannot cover this on its own: a roster discovered live has
@@ -1344,6 +1368,7 @@ export async function chat(
     }
   } finally {
     clearTimeout(timer)
+    release?.()
   }
 }
 

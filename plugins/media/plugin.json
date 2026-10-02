@@ -4,7 +4,7 @@
   "id": "media",
   "name": "Local media generation",
   "summary": "Makes pictures, sound and video on this computer, so in Combined mode they are made here and not in the cloud.",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "license": "AGPL-3.0-only",
   "entry": {
     "run": "node",
@@ -12,7 +12,7 @@
       "index.js"
     ]
   },
-  "alexia_protocol": 12,
+  "alexia_protocol": 13,
   "mcp_protocol": "2025-11-25",
   "requires": [
     {
@@ -37,8 +37,24 @@
     }
   ],
   "provides": [
-    "image.generate"
+    "image.generate",
+    "image.render"
   ],
+  "compute": {
+    "operations": [
+      {
+        "cap": "image.render",
+        "summary": "Render pictures, sound or video from a prepared ComfyUI workflow",
+        "weight": "heavy"
+      }
+    ],
+    "hooks": [
+      "setup",
+      "install",
+      "prepare",
+      "release"
+    ]
+  },
   "settings": [
     {
       "type": "text",

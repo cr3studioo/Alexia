@@ -4,7 +4,7 @@
   "id": "voice",
   "name": "Voice",
   "summary": "Hears what you say and answers out loud, on this computer or with a cloud voice, even one cloned from a recording.",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "license": "AGPL-3.0-only",
   "entry": {
     "run": "node",
@@ -12,7 +12,7 @@
       "index.js"
     ]
   },
-  "alexia_protocol": 12,
+  "alexia_protocol": 13,
   "mcp_protocol": "2025-11-25",
   "requires": [
     {
@@ -47,8 +47,35 @@
   "provides": [
     "voice.transcribe",
     "voice.speak",
-    "voice.render"
+    "voice.render",
+    "voice.recognize",
+    "voice.synthesize",
+    "voice.imitate"
   ],
+  "compute": {
+    "operations": [
+      {
+        "cap": "voice.recognize",
+        "summary": "Turn a recording into text with Whisper",
+        "weight": "light"
+      },
+      {
+        "cap": "voice.synthesize",
+        "summary": "Speak text into a recording with a Piper voice",
+        "weight": "light"
+      },
+      {
+        "cap": "voice.imitate",
+        "summary": "Speak text into a recording in a voice cloned from a clip",
+        "weight": "heavy"
+      }
+    ],
+    "hooks": [
+      "setup",
+      "install",
+      "release"
+    ]
+  },
   "settings": [
     {
       "type": "choice",

@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { expect, test } from 'vitest'
-import { files } from './invariants/_repo.js'
+import { createHash } from 'node:crypto'
+import { dirname, join, resolve } from 'node:path'
+import { fileURLToPath, pathToFileURL } from 'node:url'
+import { runInNewContext } from 'node:vm'
+import { files, repoRoot } from './invariants/_repo.js'
 
 /**
  * **One Alexia at a time.**
@@ -110,7 +114,7 @@ test('one Alexia at a time: the core hears its pipe close at once, and takes its
   expect(source).toContain("process.once('SIGTERM', leave)")
   // Leaving stops the plugins first (`close` is `plugins.stop()` and the rest), with a limit,
   // so a stop that hangs cannot keep a quit Alexia alive.
-  expect(source).toContain('const { url, close } = await serve(')
+  expect(source).toContain('const { url, close } = await start(')
   expect(source).toMatch(/Promise\.race\(\[close\(\), new Promise\(\(resolve\) => setTimeout\(resolve, \d+\)\)\]\)/)
   // The watcher goes through the same door.
   expect(source).toMatch(/process\.kill\(owner, 0\)\s*\} catch \{\s*leave\(\)/)
@@ -131,4 +135,91 @@ test('one Alexia at a time: the scanner is actually reading both files', () => {
   // A glob that matches nothing passes silently, forever, and looks exactly like a fix.
   expect(shell().length).toBeGreaterThan(1000)
   expect(packager().length).toBeGreaterThan(1000)
+})
+
+/** Execute the staging script with fake builds and files: no package, installer or signing. */
+async function staged(options: { host: string; arch?: string; universal?: boolean; targetDir?: string; cargoStatus?: number; missing?: boolean }) {
+  const source = files(['scripts/sidecar.mjs'])[0]?.text ?? ''
+  const commands: { command: string; args: string[] }[] = []
+  const copies: [string, string][] = []
+  const archive = Buffer.from('fake archive')
+  const sha256 = createHash('sha256').update(archive).digest('hex')
+  const integrity = createHash('sha512').update(archive).digest('base64')
+  const platform = options.host.includes('windows') ? 'win32' : options.host.includes('darwin') ? 'darwin' : 'linux'
+  const program = source.replace(/^import .+\r?\n/gm, '').replaceAll('import.meta.url', 'scriptUrl')
+  await runInNewContext(`(async () => {\n${program}\n})()`, {
+    scriptUrl: pathToFileURL(join(repoRoot, 'scripts', 'sidecar.mjs')).href,
+    dirname, join, resolve, fileURLToPath, createHash, Buffer,
+    process: {
+      platform, arch: options.arch ?? 'x64', version: 'v26.8.2', execPath: 'fake-node',
+      argv: options.universal ? ['--universal'] : [],
+      env: options.targetDir ? { CARGO_TARGET_DIR: options.targetDir } : {},
+      exit: (status: number) => { throw new Error(`exit ${status}`) },
+    },
+    console: { log: () => {}, error: () => {} },
+    spawnSync: (command: string, args: string[]) => {
+      commands.push({ command, args })
+      return { status: command === 'cargo' ? options.cargoStatus ?? 0 : 0, stdout: `host: ${options.host}\n` }
+    },
+    cpSync: (from: string, to: string) => { copies.push([from, to]) },
+    existsSync: (path: string) => !(options.missing && path.includes('alexia-connect')),
+    mkdirSync: () => {}, rmSync: () => {}, writeFileSync: () => {},
+    mkdtempSync: (prefix: string) => `${prefix}fixture`, tmpdir: () => join(repoRoot, 'fake-tmp'),
+    readdirSync: () => [],
+    readFileSync: () => `'@napi-rs/keyring-darwin-arm64@1.0.0':\n  resolution: {integrity: sha512-${integrity}}\n'@napi-rs/keyring-darwin-x64@1.0.0':\n  resolution: {integrity: sha512-${integrity}}`,
+    fetch: async () => ({ ok: true, text: async () => `${sha256}  node-v26.8.2-darwin-arm64.tar.gz\n${sha256}  node-v26.8.2-darwin-x64.tar.gz`, arrayBuffer: async () => archive }),
+  })
+  return { commands, copies }
+}
+
+test.each(['x86_64-pc-windows-msvc', 'aarch64-apple-darwin', 'x86_64-apple-darwin'])('packaging: %s stages the Cargo release binary beside core', async (host) => {
+  const { commands, copies } = await staged({ host })
+  const targetDir = join(repoRoot, 'connect', 'target')
+  expect(commands.filter(({ command }) => command === 'cargo')).toEqual([{
+    command: 'cargo', args: ['build', '--release', '--locked', '--manifest-path', join(repoRoot, 'connect', 'Cargo.toml'), '--target-dir', targetDir],
+  }])
+  const suffix = host.includes('windows') ? '.exe' : ''
+  expect(copies).toContainEqual([join(targetDir, 'release', `alexia-connect${suffix}`), join(repoRoot, 'src-tauri', 'binaries', `alexia-connect-${host}${suffix}`)])
+})
+
+test.each(['arm64', 'x64'])('packaging: a universal Mac from %s builds both transport halves and merges them', async (arch) => {
+  const { commands, copies } = await staged({ host: `${arch === 'arm64' ? 'aarch64' : 'x86_64'}-apple-darwin`, arch, universal: true })
+  const targets = ['aarch64-apple-darwin', 'x86_64-apple-darwin']
+  const cargo = commands.filter(({ command }) => command === 'cargo')
+  expect(cargo).toHaveLength(2)
+  const halves = targets.map((target, index) => {
+    expect(cargo[index]?.args.slice(-2)).toEqual(['--target', target])
+    const from = join(repoRoot, 'connect', 'target', target, 'release', 'alexia-connect')
+    expect(copies).toContainEqual([from, join(repoRoot, 'src-tauri', 'binaries', `alexia-connect-${target}`)])
+    return from
+  })
+  expect(commands).toContainEqual({ command: 'lipo', args: ['-create', '-output', join(repoRoot, 'src-tauri', 'binaries', 'alexia-connect-universal-apple-darwin'), ...halves] })
+})
+
+test('packaging: an isolated Cargo directory is both built into and copied from', async () => {
+  const targetDir = join(repoRoot, 'connect', 'target', 'dev')
+  const { commands, copies } = await staged({ host: 'aarch64-apple-darwin', targetDir })
+  expect(commands.find(({ command }) => command === 'cargo')?.args.slice(-2)).toEqual(['--target-dir', targetDir])
+  expect(copies).toContainEqual([join(targetDir, 'release', 'alexia-connect'), join(repoRoot, 'src-tauri', 'binaries', 'alexia-connect-aarch64-apple-darwin')])
+  const dev = files(['scripts/dev-app.mjs'])[0]?.text ?? ''
+  expect(dev).toMatch(/run\('pnpm', \['sidecar'\], \{\s*env: \{ \.\.\.process.env, ALEXIA_KEYCHAIN: KEYCHAIN, CARGO_TARGET_DIR: join\(root, 'connect', 'target', 'dev'\)/)
+})
+
+test('packaging: a failed Cargo build or missing output stops staging', async () => {
+  await expect(staged({ host: 'aarch64-apple-darwin', cargoStatus: 1 })).rejects.toThrow('cargo could not build alexia-connect')
+  await expect(staged({ host: 'aarch64-apple-darwin', missing: true })).rejects.toThrow('cargo produced no')
+})
+
+test('packaging: NSIS and DMG inherit both external binaries without dev configuration', () => {
+  const base = files(['src-tauri/tauri.conf.json'])[0]?.text ?? ''
+  const mac = files(['src-tauri/tauri.macos.conf.json'])[0]?.text ?? ''
+  const config = JSON.parse(base) as { bundle: { targets: string[]; externalBin: string[] } }
+  const overlay = JSON.parse(mac) as { bundle: { targets: string[]; externalBin?: string[] } }
+  expect(config.bundle.targets).toContain('nsis')
+  expect(overlay.bundle.targets).toContain('dmg')
+  expect(config.bundle.externalBin).toEqual(['binaries/alexia-core', 'binaries/alexia-connect'])
+  expect(overlay.bundle.externalBin ?? config.bundle.externalBin).toEqual(config.bundle.externalBin)
+  for (const { text } of files(['src-tauri/tauri.conf.json', 'src-tauri/tauri.macos.conf.json', '.github/workflows/*'])) {
+    expect(text).not.toMatch(/ALEXIA_DEV_NAME|ALEXIA_KEYCHAIN|tauri\.dev\.conf|dev-app/)
+  }
 })

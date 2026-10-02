@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+import type { ComputeHook } from './manifest.js'
 
 /**
  * Capabilities: dotted names that stand for *a thing that can be done*, with no plugin
@@ -218,6 +219,24 @@ export const TOOLS_META = 'alexia/tools'
  * claim to until it can.
  */
 export const PROVIDES_META = 'alexia/provides'
+
+/**
+ * The `_meta` key a tool uses to say it is **compute work** (`alexia_protocol` 13): one of the
+ * plugin's declared `compute.operations` (`{ op: '<cap>' }`), or one of its `compute.hooks`
+ * (`{ hook: '<name>' }`). See {@link ComputeBinding}.
+ *
+ * The same split {@link PROVIDES_META} makes. The manifest's `compute` is the declaration —
+ * what core reads to find a worker without starting it — and this is the binding, on the tool,
+ * because only a running plugin knows which of its tools does the work.
+ *
+ * **A tool carrying it is never offered to a model.** It is work core schedules, on the
+ * computer the person chose, and not a thing to be picked from a list mid-answer: core leaves
+ * it out of the tool list it shows and calls it by capability, never by its name.
+ */
+export const COMPUTE_META = 'alexia/compute'
+
+/** What {@link COMPUTE_META} carries: the operation this tool performs, or the hook it answers. */
+export type ComputeBinding = { op: string } | { hook: ComputeHook }
 
 /**
  * The `_meta` key core puts on a `sampling/createMessage` **result** to hand a channel

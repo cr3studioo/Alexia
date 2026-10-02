@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { spawn } from 'node:child_process'
+import { createServer } from 'node:net'
 import { mkdirSync, openSync, writeFileSync } from 'node:fs'
 import { readFile, readdir, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
@@ -223,7 +224,7 @@ export function paths(own) {
   return file
 }
 
-export async function start(dir, { at, log, own, env = {} } = {}) {
+export async function start(dir, { at, log, own, env = {}, args = [] } = {}) {
   const exe = await python(dir)
   const out = openSync(log, 'w')
   // Alexia's own models folder, offered to ComfyUI without writing anything into its install.
@@ -237,7 +238,9 @@ export async function start(dir, { at, log, own, env = {} } = {}) {
   const previews = ['--preview-method', 'latent2rgb']
   // `--disable-auto-launch` because a browser window opening by itself is the desktop
   // equivalent of shouting: somebody asked for a picture, not for ComfyUI's editor.
-  const child = spawn(exe, ['main.py', '--port', String(at), '--disable-auto-launch', ...previews, ...extra], {
+  // `args` is for the caller with something of its own to say — the compute worker keeps what
+  // it renders in Alexia's folder rather than in the person's, and says so here.
+  const child = spawn(exe, ['main.py', '--port', String(at), '--disable-auto-launch', ...previews, ...extra, ...args], {
     cwd: dir,
     detached: true,
     stdio: ['ignore', out, out],
@@ -248,6 +251,21 @@ export async function start(dir, { at, log, own, env = {} } = {}) {
   })
   child.unref()
   return { pid: child.pid, exe }
+}
+
+/**
+ * Is this port free to start something on?
+ *
+ * Asked by trying to take it, on the loopback address ComfyUI itself binds. A port something
+ * else already holds is refused here in a millisecond, rather than ninety seconds later as a
+ * ComfyUI that never came up and a log line about an address in use.
+ */
+export function vacant(at) {
+  return new Promise((resolve) => {
+    const probe = createServer()
+    probe.once('error', () => resolve(false))
+    probe.listen(at, '127.0.0.1', () => probe.close(() => resolve(true)))
+  })
 }
 
 /** Answering? One request, and no opinion about what it says. */

@@ -61,6 +61,9 @@ export const MODELS = {
   small: { file: 'ggml-small.bin', mb: 488 },
 }
 
+/** Roughly what the two programs weigh as a download, for a list that states sizes before it fetches. */
+export const PROGRAM_MB = 8
+
 const MODEL_HOST = 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main'
 
 export const build = () => BUILDS[`${process.platform}-${process.arch}`]
@@ -94,6 +97,20 @@ export async function programs(ownDir, size, override) {
 export async function ready(ownDir, size, override) {
   const found = await programs(ownDir, size, override)
   return found !== undefined && (await there(found.cli)) && (await there(found.model))
+}
+
+/**
+ * What `install` would have to fetch, and what it weighs.
+ *
+ * The question a setup list asks before anybody has agreed to anything: which of the two
+ * halves is absent, and how many megabytes that is. `program` is false when somebody pointed
+ * at a build of their own, and when there is no prebuilt one to fetch at all — the second is
+ * `build()`'s to report, and is not a download.
+ */
+export async function lacking(ownDir, size, override) {
+  const program = !override && build() !== undefined && !(await programs(ownDir, size, undefined))
+  const model = !(await there(where(ownDir, size).model))
+  return { program, model, mb: (program ? PROGRAM_MB : 0) + (model ? (MODELS[size] ?? MODELS.base).mb : 0) }
 }
 
 /**

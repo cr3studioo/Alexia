@@ -614,6 +614,301 @@ body:not([data-view='settings']):not([data-view='control']) #sheet {
   color: var(--ink);
 }
 
+/* ---- local models: the same native controls and surfaces as Settings ----------------- */
+
+.local-models {
+  margin-block: var(--space-6);
+}
+
+.local-model-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.local-model-head .step-heading {
+  margin: 0;
+}
+
+.local-model-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(16rem, 100%), 1fr));
+  gap: var(--space-3);
+  margin-block: var(--space-4);
+}
+
+.local-model-card,
+.local-job,
+.local-mode-choice {
+  min-width: 0;
+  margin: 0;
+  padding: var(--space-4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface-raised);
+  overflow-wrap: anywhere;
+}
+
+.local-model-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+
+.local-model-card h3,
+.local-model-card p,
+.local-installed h3,
+.local-repo h3 {
+  margin: 0;
+}
+
+.local-model-card h3,
+.local-installed h3,
+.local-repo h3 {
+  font-size: var(--text-md);
+  line-height: var(--leading-tight);
+}
+
+.local-quant {
+  width: 100%;
+  margin-top: auto;
+  padding-top: var(--space-3);
+}
+
+.local-quant .field {
+  margin: 0;
+}
+
+.local-quant select {
+  width: 100%;
+  min-width: 0;
+}
+
+.local-quant .hint {
+  margin-block: var(--space-2) var(--space-3);
+}
+
+.local-installed,
+.local-repo {
+  margin-block: var(--space-4);
+  overflow-wrap: anywhere;
+}
+
+.local-installed-row {
+  padding-block: var(--space-3);
+  border-bottom: 1px solid var(--line);
+}
+
+.local-installed-row .quiet-button,
+.local-mode-choice .quiet-button {
+  margin: var(--space-1) var(--space-2) var(--space-1) 0;
+}
+
+.local-search {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-block: var(--space-3);
+}
+
+.local-search input {
+  flex: 1 1 14rem;
+  min-width: 0;
+}
+
+.local-search-results {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin-block: var(--space-3);
+}
+
+.local-search-results .quiet-button {
+  max-width: 100%;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+.local-jobs,
+.local-mode {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.local-jobs:not(:empty),
+.local-mode:not(:empty) {
+  margin-block: var(--space-4);
+}
+
+.local-mode-choice legend {
+  font-weight: 600;
+  padding-inline: var(--space-1);
+}
+
+.local-progress {
+  width: 100%;
+  height: var(--space-2);
+  accent-color: var(--chosen);
+}
+
+/* ---- paired computers: the same rows, surfaces and pills as the local models above ------
+
+   A host is a row, not a card: its name is the control, the pill beside it is how it is
+   reached, and its reason — when it cannot serve — is a line of its own under both. The
+   chosen one is marked the way a chosen model is, by the border and never by colour alone. */
+
+.host-picker,
+.host-detail,
+.compute-role {
+  margin-block: var(--space-6);
+}
+
+.host-list {
+  display: grid;
+  gap: var(--space-2);
+  margin-block: var(--space-3);
+}
+
+.host-row {
+  min-width: 0;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface-raised);
+  overflow-wrap: anywhere;
+}
+
+.host-row.on {
+  border-color: var(--chosen);
+}
+
+.host-row p,
+.host-detail h3,
+.host-queue h3,
+.pairing h3 {
+  margin: 0;
+}
+
+.host-row .hint,
+.host-row .error {
+  margin-top: var(--space-2);
+}
+
+.host-row .danger-button {
+  margin-top: var(--space-3);
+}
+
+.host-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+}
+
+.host-head .step-heading {
+  margin: 0;
+}
+
+.host-pick[aria-pressed='true'],
+.compute-role-choice [aria-pressed='true'] {
+  border-color: var(--chosen);
+  background: var(--chosen-wash);
+  font-weight: 600;
+}
+
+.host-row .armed {
+  font-weight: 600;
+  border-color: var(--ink);
+}
+
+.compute-role-choice {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: var(--space-3) 0 0;
+  padding: 0;
+  border: 0;
+}
+
+.compute-role-choice legend {
+  padding: 0;
+  margin-bottom: var(--space-2);
+}
+
+.host-pairing:not(:empty) {
+  margin-top: var(--space-4);
+  padding: var(--space-4);
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius-lg);
+}
+
+.host-pairing > .quiet-button {
+  margin-top: var(--space-3);
+}
+
+/* The code is read aloud from one computer to another, so it is the largest thing in its box
+   and never wraps in the middle of a word. */
+.pair-code {
+  display: block;
+  margin-block: var(--space-3);
+  font-family: var(--mono);
+  font-size: var(--text-lg);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
+.pair-countdown {
+  font-variant-numeric: tabular-nums;
+}
+
+.host-detail .local-installed h3,
+.host-queue h3 {
+  font-size: var(--text-md);
+  line-height: var(--leading-tight);
+}
+
+.host-queue {
+  margin-block: var(--space-4);
+}
+
+.host-waiting {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding-left: var(--space-5);
+}
+
+.host-waiting li {
+  padding-block: var(--space-2);
+  border-bottom: 1px solid var(--line);
+}
+
+.host-waiting li > * + * {
+  margin-left: var(--space-3);
+}
+
+.host-waiting .hint,
+.host-capability {
+  margin: 0;
+}
+
+.host-capability + .host-capability {
+  margin-top: var(--space-2);
+}
+
+/* The compute role's only page: one column of the blocks above, with nothing around it. */
+.compute-page {
+  max-width: 46rem;
+  margin-inline: auto;
+  padding: var(--space-6) var(--space-5);
+}
+
 /* ---- one plugin's page (D118) ---------------------------------------------------------
 
    The same shape for every plugin, whoever wrote it: the name with its switch, a row of

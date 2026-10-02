@@ -15,6 +15,7 @@
  * already changed. And nothing here names a plugin: it renders whatever is installed.
  */
 
+import { connectionLabel, parseCatalogId, THIS_HOST, type HostView } from './compute.js'
 import type { SettingsPage } from './settings.js'
 
 interface ChatRow {
@@ -66,6 +67,19 @@ export interface RailOptions {
   alsoInto?: HTMLElement
   /** Called after every full re-read, because a plugin switched here changes the board. */
   refreshed?(): void
+  /** The paired computers, as `/api/state` last listed them, for a model that runs on one. */
+  hosts?(): readonly HostView[]
+}
+
+/**
+ * Which paired computer a model row runs on and how it is reached — `Studio · Direct` — or
+ * nothing for a model on this computer or at a provider. The host is in the row's id.
+ */
+export function railHost(id: string, hosts: readonly HostView[]): string {
+  const target = parseCatalogId(id.split('\n').pop() ?? id)
+  if (target.hostId === THIS_HOST) return ''
+  const view = hosts.find((one) => one.host.id === target.hostId)
+  return view ? `${view.host.name} · ${connectionLabel(view.connection)}` : 'Paired computer'
 }
 
 /** How many conversations the rail shows before you ask for the rest. */
@@ -292,7 +306,9 @@ export function mountRail(root: HTMLElement, token: string, options: RailOptions
 
   const drawModels = (): void => {
     const pinned = models.find((model) => model.state.startsWith('◆'))
-    modelValue.textContent = pinned?.name ?? 'Automatic'
+    const hosts = options.hosts?.() ?? []
+    // A model on a paired computer says where it runs and how that computer is reached.
+    modelValue.textContent = pinned ? [pinned.name, railHost(pinned.id, hosts)].filter(Boolean).join(' · ') : 'Automatic'
     modelRow.title = `Model: ${modelValue.textContent}`
 
     const chosen = document.createElement('button')
@@ -335,7 +351,7 @@ export function mountRail(root: HTMLElement, token: string, options: RailOptions
       name.textContent = model.name
       const price = document.createElement('span')
       price.className = 'meta'
-      price.textContent = model.price
+      price.textContent = railHost(model.id, hosts) || model.price
       option.append(mark, name, price)
       option.addEventListener('click', () => choose({ key: 'use_model', row: model.id }))
       return option
@@ -351,7 +367,19 @@ export function mountRail(root: HTMLElement, token: string, options: RailOptions
       options.openSettings('models')
     })
 
-    modelDrop.replaceChildren(note, chosen, ...rows, rest)
+    // A model that runs here is one press away in Settings, where its size and licence are
+    // on the card before anything is downloaded — so this only opens that page, it never
+    // starts a download from a dropdown.
+    const local = document.createElement('button')
+    local.type = 'button'
+    local.className = 'more'
+    local.textContent = 'Install a local model…'
+    local.addEventListener('click', () => {
+      setDrop(false)
+      options.openSettings('models')
+    })
+
+    modelDrop.replaceChildren(note, chosen, ...rows, rest, local)
     // A provider with no key publishes nothing here, so an empty list is a real answer — and
     // the way out of it is a key, which lives in Settings, so that is where the button goes.
     if (models.length === 0) {
@@ -366,7 +394,7 @@ export function mountRail(root: HTMLElement, token: string, options: RailOptions
         setDrop(false)
         options.openSettings('models')
       })
-      modelDrop.replaceChildren(none, keys)
+      modelDrop.replaceChildren(none, keys, local)
     }
   }
 

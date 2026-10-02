@@ -23,7 +23,7 @@
 //!   quit is what leaves a second Alexia on the same database next time — see `main`.
 //!
 //! What is **not** here, on purpose: no business logic, no model calls, no file handling, no
-//! parsing of anything the core says. If something needs deciding, it is decided on the
+//! policy in the shell lines core sends. If something needs deciding, it is decided on the
 //! other side of the port.
 
 mod glass;
@@ -149,6 +149,44 @@ fn tooltip(app: &AppHandle, said: &str) {
     }
 }
 
+// Core owns the status and the paused flag; these are only the two menu items they describe.
+type ComputeMenu = (MenuItem<tauri::Wry>, MenuItem<tauri::Wry>, bool);
+
+fn compute_status(app: &AppHandle, status: &str, paused: bool) {
+    tooltip(app, status);
+    if let Ok(mut held) = app.state::<Mutex<Option<ComputeMenu>>>().lock() {
+        if let Some((line, pause, flag)) = held.as_mut() {
+            let _ = line.set_text(status);
+            let _ = pause.set_text(if paused { "Resume" } else { "Pause" });
+            *flag = paused;
+        }
+    }
+}
+
+/// Only core says setup is done. Destroying bypasses the main window's close-to-tray handler.
+fn compute_mode(app: &AppHandle, status: &str) -> tauri::Result<()> {
+    let items = [
+        ("status", status, false), ("pause", "Pause", true), ("unpair", "Unpair", true),
+        ("role", "Switch role", true), ("window", "Open window", true), ("quit", "Quit", true),
+    ].map(|(id, text, enabled)| MenuItem::with_id(app, id, text, enabled, None::<&str>))
+        .into_iter().collect::<tauri::Result<Vec<_>>>()?;
+    let menu = Menu::new(app)?;
+    for item in &items { menu.append(item)?; }
+    if let Some(icon) = app.state::<Mutex<Option<TrayIcon>>>().lock().ok().and_then(|held| held.clone()) {
+        icon.set_menu(Some(menu))?;
+    }
+    if let Ok(mut held) = app.state::<Mutex<Option<ComputeMenu>>>().lock() {
+        *held = Some((items[0].clone(), items[1].clone(), false));
+    }
+    let _ = app.global_shortcut().unregister_all();
+    for label in ["main", "overlay", "control"] {
+        if let Some(window) = app.get_webview_window(label) { let _ = window.destroy(); }
+    }
+    in_dock(app, false);
+    compute_status(app, status, false);
+    Ok(())
+}
+
 /// Dismiss the overlay from the page, which is where Escape is pressed.
 ///
 /// Dismissing never cancels a running task: this hides a window and touches nothing else.
@@ -264,16 +302,15 @@ fn reveal(app: &AppHandle) {
 }
 
 fn open_main(app: &AppHandle) {
-    in_dock(app, true);
     if let Some(window) = app.get_webview_window("main") {
+        in_dock(app, true);
         let _ = window.show();
         let _ = window.unminimize();
         let _ = window.set_focus();
     }
 }
 
-/// Core, as a sidecar. Its stdout is not parsed: the port was decided here, so there is nothing
-/// to learn from it that this process does not already know.
+/// Core, as a sidecar. Only its shell lines are read; the port is still decided here.
 fn sidecar(app: &AppHandle, port: u16) -> Result<Command, Box<dyn std::error::Error>> {
     Ok(app
         .shell()
@@ -346,7 +383,13 @@ fn start(app: &AppHandle, port: u16, handover: Arc<String>, lapse: u32) -> Resul
                         let _ = window.navigate(url.clone());
                     }
                 }
-                return tooltip(&waiting, "Alexia — idle");
+                let handle = waiting.clone();
+                let _ = waiting.run_on_main_thread(move || {
+                    if handle.state::<Mutex<Option<ComputeMenu>>>().lock().is_ok_and(|held| held.is_none()) {
+                        tooltip(&handle, "Alexia — idle");
+                    }
+                });
+                return;
             }
             thread::sleep(Duration::from_millis(200));
         }
@@ -356,6 +399,21 @@ fn start(app: &AppHandle, port: u16, handover: Arc<String>, lapse: u32) -> Resul
         // Every event read, not only the last: the shell plugin hands them over one at a time,
         // and one nobody collected would leave core stuck writing its next line of output.
         while let Some(event) = events.blocking_recv() {
+            if let CommandEvent::Stdout(bytes) = &event {
+                let line = String::from_utf8_lossy(bytes).trim_end_matches(['\r', '\n']).to_owned();
+                if line.starts_with("@shell ") {
+                    let handle = app.clone();
+                    let _ = app.run_on_main_thread(move || {
+                        if let Some(status) = line.strip_prefix("@shell compute ") {
+                            let _ = compute_mode(&handle, status);
+                        } else if let Some(status) = line.strip_prefix("@shell status 0 ") {
+                            compute_status(&handle, status, false);
+                        } else if let Some(status) = line.strip_prefix("@shell status 1 ") {
+                            compute_status(&handle, status, true);
+                        } else if line == "@shell relaunch" { relaunch(handle); }
+                    });
+                }
+            }
             if let CommandEvent::Terminated(_) = event {
                 break;
             }
@@ -406,6 +464,7 @@ fn main() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(Mutex::<Option<TrayIcon>>::new(None))
+        .manage(Mutex::<Option<ComputeMenu>>::new(None))
         // The core, held rather than dropped. `spawn` hands back a handle and dropping it
         // does *not* stop the process — which is how quitting used to leave a core running
         // with the database open, and the next launch made a second one beside it.
@@ -524,6 +583,14 @@ fn main() {
                 .on_menu_event(|app, event| match event.id().as_ref() {
                     "open" => open_main(app),
                     "quit" => app.exit(0),
+                    id @ ("pause" | "unpair" | "role" | "window") => {
+                        let paused = app.state::<Mutex<Option<ComputeMenu>>>().lock().ok()
+                            .and_then(|held| held.as_ref().map(|(_, _, paused)| *paused)).unwrap_or(false);
+                        let action = if id == "pause" && paused { "resume" } else { id };
+                        if let Ok(mut held) = app.state::<Mutex<Option<CommandChild>>>().lock() {
+                            if let Some(core) = held.as_mut() { let _ = core.write(format!("tray {action}\n").as_bytes()); }
+                        }
+                    }
                     _ => {}
                 })
                 .build(app)?;

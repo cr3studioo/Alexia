@@ -203,7 +203,7 @@ export function linuxPressure(meminfo: string): Pressure | null {
   return share < 0.05 ? 'critical' : share < 0.15 ? 'warning' : 'normal'
 }
 
-async function memoryPressure(): Promise<Pressure | null> {
+export async function memoryPressure(): Promise<Pressure | null> {
   if (process.platform === 'darwin') {
     const level = await run('sysctl', ['-n', 'kern.memorystatus_vm_pressure_level'])
     return level ? pressureOf(level) : null

@@ -1,0 +1,68 @@
+name: ${COMPOSE_PROJECT_NAME:-alexia-connect}
+
+services:
+  mailbox:
+    build:
+      context: .
+      dockerfile: Dockerfile.mailbox
+    restart: unless-stopped
+    init: true
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    environment:
+      MAILBOX_MAX_CONNECTIONS: ${MAILBOX_MAX_CONNECTIONS:-128}
+      MAILBOX_MAX_FRAME_BYTES: ${MAILBOX_MAX_FRAME_BYTES:-65536}
+      MAILBOX_MAX_MESSAGE_BYTES: ${MAILBOX_MAX_MESSAGE_BYTES:-65536}
+      MAILBOX_HANDSHAKE_SECONDS: ${MAILBOX_HANDSHAKE_SECONDS:-5}
+      MAILBOX_PING_SECONDS: ${MAILBOX_PING_SECONDS:-30}
+      MAILBOX_PING_TIMEOUT_SECONDS: ${MAILBOX_PING_TIMEOUT_SECONDS:-10}
+      MAILBOX_BLUR_SECONDS: ${MAILBOX_BLUR_SECONDS:-3600}
+    ports:
+      - "${CONNECT_BIND_ADDRESS:-127.0.0.1}:${MAILBOX_HTTP_PORT:-4000}:4000"
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+      - /state:rw,noexec,nosuid,size=64m,uid=10001,gid=10001,mode=0700
+    mem_limit: ${MAILBOX_MEMORY_LIMIT:-256m}
+    cpus: ${MAILBOX_CPU_LIMIT:-1.0}
+    pids_limit: 64
+    ulimits:
+      nofile: {soft: 4096, hard: 4096}
+    logging: {driver: none}
+    healthcheck:
+      test: [CMD, python, /app/healthcheck.py, mailbox]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+
+  relay:
+    build:
+      context: .
+      dockerfile: Dockerfile.relay
+    restart: unless-stopped
+    init: true
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    environment:
+      RELAY_RX_BYTES_PER_SECOND: ${RELAY_RX_BYTES_PER_SECOND:-10485760}
+      RELAY_RX_BURST_BYTES: ${RELAY_RX_BURST_BYTES:-20971520}
+      RELAY_ALLOWED_ENDPOINT_IDS: ${RELAY_ALLOWED_ENDPOINT_IDS:-}
+    ports:
+      - "${CONNECT_BIND_ADDRESS:-127.0.0.1}:${RELAY_HTTP_PORT:-3340}:3340"
+      - "127.0.0.1:${RELAY_METRICS_PORT:-9090}:9090"
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    mem_limit: ${RELAY_MEMORY_LIMIT:-512m}
+    cpus: ${RELAY_CPU_LIMIT:-2.0}
+    pids_limit: 128
+    ulimits:
+      nofile: {soft: 4096, hard: 4096}
+    logging: {driver: none}
+    healthcheck:
+      test: [CMD, python, /app/healthcheck.py, relay]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3

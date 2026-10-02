@@ -26,7 +26,9 @@
  * No Node in here, ever (invariant 6).
  */
 
+import { mountHost, mountHostPicker, mountRole, mountServices, stateSentence, type ComputeState, type HostChoice } from './compute.js'
 import { inApp, installUpdate, updateAvailable, type Update } from './desktop.js'
+import { mountLocalModels, type LocalHost, type LocalRequest } from './local-models.js'
 import { arm, el, widget, type Rendered, type WidgetHost } from './widgets.js'
 
 export type { Rendered } from './widgets.js'
@@ -123,12 +125,16 @@ interface Section {
   screen?: 'settings'
 }
 
-export function mountSettings(token: string): {
+export function mountSettings(token: string, modelsChanged?: () => void, modelMode?: () => string): {
   open: (page?: SettingsPage, filter?: string) => void
+  close: () => void
+  localMessage: (message: string) => void
   /** A key or the keyless switch changed which models exist: draw Models & money again if it is open. */
   redrawModels: () => void
   /** Fed from `/api/state`, because the version and the update preference are core's answer. */
   about: (state: { app?: string; updates?: boolean }) => void
+  /** Fed from `/api/state` too: this computer's role and the computers it is paired with. */
+  compute: (state: ComputeState | undefined) => void
 } {
   const view = document.querySelector<HTMLElement>('#settings')!
   /** Each page's element, by the name its tab carries in `data-page`. */
@@ -184,18 +190,80 @@ export function mountSettings(token: string): {
    * request is an ordinary refusal here, with a sentence, and the one `ok` check every caller
    * already makes is the whole of the handling.
    */
-  const send = async (path: string, body: unknown): Promise<Record<string, unknown>> => {
+  const send = async (path: string, body: unknown, options?: Parameters<LocalRequest>[2]): Promise<Record<string, unknown>> => {
     try {
       const response = await fetch(path, {
-        method: 'POST',
+        method: options?.method ?? 'POST',
         headers: { 'content-type': 'application/json', 'x-alexia-token': token },
-        body: JSON.stringify(body),
+        ...(options?.method !== 'GET' && body !== undefined && { body: JSON.stringify(body) }),
+        ...(options?.signal && { signal: options.signal }),
       })
+      if (!response.ok) {
+        const text = await response.text()
+        try { return { ...JSON.parse(text) as Record<string, unknown>, ok: false } }
+        catch { return { ok: false, said: text || 'That did not go through. Try again.' } }
+      }
       return (await response.json()) as Record<string, unknown>
     } catch {
       const said = 'Alexia did not answer. She may not be running — try again in a moment.'
       return { ok: false, said, why: said }
     }
+  }
+
+  /**
+   * Where local models run, then that computer's models (remote-compute.md §2).
+   *
+   * **One picker above one list, and the list is always the picked computer's.** Choosing a
+   * paired computer opens the same local-models view against it, so the machine, the fit
+   * verdicts and the downloads on screen are that computer's own. A computer that cannot be
+   * used keeps its place and shows its reason; the list under it is never quietly another's.
+   */
+  const hostRoot = el('section')
+  const hostDetailRoot = el('section')
+  const localRoot = el('section')
+  places.models!.before(hostRoot, hostDetailRoot, localRoot)
+  /** The paired computer whose models are on screen. Undefined is this computer. */
+  let shownHost: HostChoice | undefined
+  const localHost = (): LocalHost | undefined => {
+    const host = shownHost
+    return host && { ...host, explain: (code) => stateSentence(code, host.name) }
+  }
+  const localModels = mountLocalModels(localRoot, { request: send, changed: modelsChanged, mode: modelMode, host: localHost })
+  /** A sentence for the models view that arrived before the view had anywhere to put it. */
+  let explaining: string | undefined
+  const openLocal = (): void => {
+    localModels.open()
+    if (explaining !== undefined) localModels.explain(explaining)
+    explaining = undefined
+  }
+  const hostDetail = mountHost(hostDetailRoot, send, { changed: () => void localModels.refresh() })
+  const onModels = (): boolean => showing === 'models' && document.body.dataset.view === 'settings'
+  const hostPicker = mountHostPicker(hostRoot, send, {
+    chosen: (host) => {
+      shownHost = host
+      if (!onModels()) return
+      if (host) hostDetail.open(host)
+      else {
+        hostDetail.close()
+        hostDetailRoot.replaceChildren()
+      }
+      openLocal()
+    },
+    changed: () => { if (onModels()) void localModels.refresh() },
+  })
+
+  // The role is not a plugin setting and not a widget: it has its own route and its own block.
+  const roleRoot = el('div')
+  pages.general.append(roleRoot)
+  const role = mountRole(roleRoot, send)
+  const servicesRoot = el('div')
+  pages.general.append(servicesRoot)
+  const services = mountServices(servicesRoot, send)
+  const closeCompute = (): void => {
+    hostPicker.close()
+    hostDetail.close()
+    role.close()
+    services.close()
   }
 
   /**
@@ -266,7 +334,22 @@ export function mountSettings(token: string): {
     // A page holding core's sections reads them again every time it is shown, never from an
     // earlier read: the Models slider and its switches are money, and a stale screen there
     // puts the slider back where it was and makes the next press send nothing (FINDINGS A).
-    if (page === 'models') void drawSection('models')
+    if (page === 'models') {
+      hostPicker.open()
+      // Whose models to list is core's answer. Until it has given one, none are drawn: the
+      // picker's first read opens the view, so this computer's are never shown for another's.
+      if (hostPicker.known()) {
+        if (shownHost) hostDetail.open(shownHost)
+        openLocal()
+      }
+      void drawSection('models')
+    } else {
+      localModels.close()
+      hostPicker.close()
+      hostDetail.close()
+    }
+    if (page === 'general') { role.open(); services.open() }
+    else { role.close(); services.close() }
     if (page === 'skills') void drawSection('skills')
     if (page === 'plugins' && advanced.open) void drawSection('tools')
   }
@@ -1504,8 +1587,23 @@ export function mountSettings(token: string): {
 
   return {
     about: about.show,
+    compute: (state) => {
+      hostPicker.update(state)
+      role.show(state)
+    },
+    close: () => {
+      localModels.close()
+      closeCompute()
+    },
+    localMessage: (message) => {
+      if (localRoot.querySelector('.local-model-head') === null) explaining = message
+      else localModels.explain(message)
+    },
     redrawModels: () => {
-      if (showing === 'models' && !view.hidden) void drawSection('models')
+      if (showing === 'models' && document.body.dataset.view === 'settings') {
+        void drawSection('models')
+        void localModels.refresh()
+      }
     },
     open: (page?: SettingsPage, filter?: string) => {
       view.scrollTop = 0

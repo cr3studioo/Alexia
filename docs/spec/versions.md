@@ -5,9 +5,9 @@ handshake, handled by the SDK. **`alexia_protocol` is ours**: an integer, bumped
 `alexia/*` layer or the manifest changes, and checked *before your process is spawned*.
 
 ```
-you say alexia_protocol 3    Alexia speaks 2..12  ->  loads
-you say alexia_protocol 1    Alexia speaks 2..12  ->  "X was written for an older version"
-you say alexia_protocol 13   Alexia speaks 2..12  ->  "X needs a newer Alexia"
+you say alexia_protocol 3    Alexia speaks 2..13  ->  loads
+you say alexia_protocol 1    Alexia speaks 2..13  ->  "X was written for an older version"
+you say alexia_protocol 14   Alexia speaks 2..13  ->  "X needs a newer Alexia"
 ```
 
 ## The other version: `min_app` *(2026-08-31, D118)*
@@ -37,6 +37,64 @@ contract was still moving.
 **It was kept at 3, on 2026-08-29.** Plugins declaring 1 stopped loading and said so in a
 sentence rather than crashing, exactly as written here while it was still hypothetical. The
 migration for a revision-1 plugin that uses nothing from 2 is one character.
+
+## 12 → 13 *(2026-10-02)*
+
+**One manifest field, one `_meta` key and an eighth `alexia/*` method**, and they are one
+change: a plugin's heavy work, run on the computer the person chose.
+
+Alexia can now be two computers — the one somebody talks to, and one of their own that does
+the heavy work for it ([`remote-compute.md`](./remote-compute.md)). The conversation, the
+permissions and the tools stay where the person is. What moves is the work itself, and a
+plugin that has some says so:
+
+```jsonc
+{
+  "alexia_protocol": 13,
+  "provides": ["image.generate", "image.render"],
+  "compute": {
+    "operations": [{ "cap": "image.render", "summary": "Render an image from a prepared workflow" }],
+    "hooks": ["setup", "install", "release"]
+  }
+}
+```
+
+| | |
+|---|---|
+| `compute` | The manifest field. Operations, each one of your own `provides`, and the lifecycle hooks you answer. [`manifest.md`](./manifest.md#compute) |
+| `alexia/compute` | The `_meta` key on a tool: `{ "op": "<cap>" }` for the tool that performs an operation, `{ "hook": "<name>" }` for one that answers a hook. [`capabilities.md`](./capabilities.md#how-a-compute-operation-reaches-a-tool) |
+| `alexia/compute/run` | `{ "cap": "image.render", "arguments": {…}, "inputs": [...] }` → `{ "text": "…", "files": [...] }`. Run one of your operations wherever the person chose, with the files it needs sent there and what it made brought home. [`wire-protocol.md`](./wire-protocol.md#alexiacomputerun) |
+
+**Why the declaration is in the manifest.** A computer doing compute work has to know what it
+can do without starting every plugin to ask, and core has to find the workers without typing
+one's name. Both are the argument that put `provides` and `panel` there: the manifest is what
+core reads while you are not running. Delete a compute plugin's folder and its operations
+leave that computer's list; nothing else notices.
+
+**Why an eighth name rather than `alexia/capability/call`.** That call answers from *this*
+computer and carries no files. This one says *wherever they chose*, moves the inputs and
+brings the outputs back — and MCP has no notion of where a tool runs, so there was nothing
+upstream to argue against, which is the bar `alexia/answers` met.
+
+**What it does not add.** There is no way to name a computer, a plugin or a tool: an operation
+is asked for by capability, the person chose the place, and the manifest on that computer
+chose the tool. A place that cannot do the work is an error with a name, and never quietly
+another place. The floor stays at 2.
+
+### If you are updating a plugin
+
+Nothing to do unless some of your work is heavy enough to be worth running elsewhere. Then:
+
+1. Split it. Keep your person-facing capability, and add a second one for the work alone.
+2. Set `"alexia_protocol": 13`, add the second capability to `provides`, and declare it in
+   `compute.operations`. Declaring `compute` while saying `12` is a load error — `compute
+   arrived in alexia_protocol 13`.
+3. Register the tool that does it with `computeOperation(cap, handler)`, any hooks with
+   `computeHooks({ … })`, and start the work with `compute.run(cap, args, { inputs })` instead
+   of doing it inline. With nothing paired, that runs your own handler on this computer, so
+   there is one code path.
+
+The cost is the usual one: an Alexia older than 13 will not load you at all.
 
 ## 11 → 12 *(2026-09-24, D204)*
 

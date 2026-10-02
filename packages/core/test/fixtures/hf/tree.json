@@ -1,0 +1,74 @@
+[
+  {
+    "type": "file",
+    "oid": "998937cae264e580085ca10bede5c8007fc6b356",
+    "size": 3053,
+    "path": ".gitattributes"
+  },
+  {
+    "type": "file",
+    "oid": "929eb3b9493e7c14097f09a962e73a98525df6f9",
+    "size": 3051914784,
+    "lfs": {
+      "oid": "38833d850e00f75bac26c0c848f2fde9100a5a21c18aae89cfd8611efca6194b",
+      "size": 3051914784,
+      "pointerSize": 135
+    },
+    "xetHash": "6b0cdab04583a80ca576c44e7b5fd45f8b77a8a41cf2c8994c441b12af1b93fa",
+    "path": "Qwen_Qwen3-8B-IQ2_M.gguf"
+  },
+  {
+    "type": "file",
+    "oid": "3ed7b3f0c5367f485369de354755cf7d9d254e88",
+    "size": 5027784224,
+    "lfs": {
+      "oid": "54fffa050078e984116639c83dfb64b5aa6d4cd474e018b076777c632bbccccd",
+      "size": 5027784224,
+      "pointerSize": 135
+    },
+    "xetHash": "d8393c50930d3143569d849ad9a7703526e5a810b0eba9d808ed978ef191470f",
+    "path": "Qwen_Qwen3-8B-Q4_K_M.gguf"
+  },
+  {
+    "type": "file",
+    "oid": "e198b45c8d9e946a0b30ee88ade1723e0b05f84b",
+    "size": 8709518880,
+    "lfs": {
+      "oid": "edbd7ae01df991a2d4061e61451ad3d6829d8ca19f7cc846f7177499ac280c33",
+      "size": 8709518880,
+      "pointerSize": 135
+    },
+    "xetHash": "0aebe2b18256770019c7e63d38bdb48124744e23970dff9a88a3d276b87ba074",
+    "path": "Qwen_Qwen3-8B-Q8_0.gguf"
+  },
+  {
+    "type": "file",
+    "oid": "b730d0478b0bdfce2b5c8de466f9e651515a8774",
+    "size": 16388044064,
+    "lfs": {
+      "oid": "3eaf8da180bdfef9b16b22c4a9460872e8dcaaf315ee7e29413c9f8baa5fe6b8",
+      "size": 16388044064,
+      "pointerSize": 136
+    },
+    "xetHash": "d860c228fad0160ec6b66d2434b7953812aa9cd591f6921fde0e761a14b0b4c9",
+    "path": "Qwen_Qwen3-8B-bf16.gguf"
+  },
+  {
+    "type": "file",
+    "oid": "a90eb49ec1059bd9091ae38b172c9d8a9f745bc5",
+    "size": 5316782,
+    "lfs": {
+      "oid": "3cd37e7ed514b9ddc1eab833ca1ec21c841efc30ba788310389b4464c75653c5",
+      "size": 5316782,
+      "pointerSize": 132
+    },
+    "xetHash": "ce39e9f5f787c1573c2cb660fb4cece7b528af50c5d9f5ef401023f261a7dd1e",
+    "path": "Qwen_Qwen3-8B.imatrix"
+  },
+  {
+    "type": "file",
+    "oid": "dfeadce71607e0a469c9253e5c462e0164b6545c",
+    "size": 12847,
+    "path": "README.md"
+  }
+]

@@ -2,7 +2,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { routes, sizeOf, type Catalog, type Model } from './catalog.js'
-import { pins, setPin } from './commands.js'
+import { pins, rememberLocalChoice, setPin } from './commands.js'
 import type { Aside } from './health.js'
 import { OLLAMA } from './ollama.js'
 import { MODEL_GROUPS, WAITING } from './panels.js'
@@ -81,6 +81,7 @@ export interface SurfaceOptions {
    * choose would be two routers, and the one nobody can see would win every time.
    */
   world(): Promise<World>
+  useLocal?(id: string): Promise<{ ok: boolean; said: string; data?: unknown }>
   /**
    * Ask every provider for its list again, if what is cached has aged out.
    *
@@ -444,7 +445,7 @@ export function sources(options: SurfaceOptions): Record<string, Source> {
             provider: provider.id,
             via: `${model.tier === 'T0' ? 'this Mac' : nameOf(provider.id)} · ${access(choice)}`,
             note,
-            size: sized(model),
+            size: [sized(model), model.quant, model.diskBytes === undefined ? undefined : `${(model.diskBytes / 1024 ** 3).toFixed(1)} GB on disk`].filter(Boolean).join(' · '),
             can: [
               model.supportsTools ? 'tools' : 'talk only',
               model.modality.includes('image') ? 'pictures' : '',
@@ -598,6 +599,9 @@ export function sources(options: SurfaceOptions): Record<string, Source> {
             `${model.tier} · ${price(model.priceIn)} in, ${price(model.priceOut)} out, per million tokens`,
             `Context: ${window(model.context)} · takes ${model.modality.join(', ')}`,
             `Tools: ${model.supportsTools ? 'yes' : 'not according to its provider'}`,
+            ...(model.quant ? [`Quantization: ${model.quant}`] : []),
+            ...(model.diskBytes === undefined ? [] : [`Disk: ${(model.diskBytes / 1024 ** 3).toFixed(1)} GB`]),
+            ...(model.abliterated ? ['Abliterated build: refusals were modified; quality and tool use may differ from the base model.'] : []),
             ...(routes(model) ?
               [`A router: ${ROUTER(model)}, chosen by ${model.provider}. Automatic asks it after every single model.`]
             : []),
@@ -1062,6 +1066,7 @@ export function actions(
       here.find((one) => one.id === id && (provider === undefined || one.provider === provider)) ??
       options.catalog.models.find((one) => one.id === id)
     if (!model) return { ok: false, said: 'That model is not in the catalog any more.' }
+    if (options.useLocal && pins(options.store).placement.text === 'local' && /^(llama|mlx)\//.test(id)) return options.useLocal(id)
     if (model.tier !== 'T0' && !(await options.connected()).has(model.provider)) {
       return {
         ok: false,
@@ -1069,6 +1074,7 @@ export function actions(
       }
     }
     setPin(options.store, { model: id })
+    if (model.tier === 'T0') rememberLocalChoice(options.store, id)
     return {
       ok: true,
       // One model never falls back (D155), and the moment somebody chooses one is the moment
@@ -1222,17 +1228,12 @@ export function actions(
      * — and *stop pinning* means the same thing pressed anywhere.
      */
     automatic: () => {
-      const { model: had, order = [] } = pins(options.store)
-      setPin(options.store, { model: undefined })
-      // The list above the table is a choice of its own, and this button does not clear it —
-      // so while it has anything in it, *automatic* would be the wrong word (D155).
-      const listed = order.length > 0
+      const { model: had, order } = pins(options.store)
+      setPin(options.store, { model: undefined, order: undefined })
       return Promise.resolve({
         ok: true,
         said:
-          listed ?
-            `No model is pinned. Your own order of ${String(order.length)} still decides which models answer — clear it above for Automatic.`
-          : had === undefined ? 'Already automatic — no model is pinned, so each request goes to the cheapest one that fits it.'
+          had === undefined && !order?.length ? 'Already automatic — each request goes to the cheapest model that fits it.'
           : 'Back to automatic. Each request goes to the cheapest model that fits it, and no model is pinned.',
       })
     },

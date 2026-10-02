@@ -246,6 +246,39 @@ export const ALEXIA_METHODS = {
       here: z.boolean(),
     }),
   },
+
+  /**
+   * **Run one of my compute operations wherever the person chose** (`alexia_protocol` 13,
+   * `docs/spec/remote-compute.md` §4): this computer, or the one they paired with it.
+   *
+   * **Why this is an eighth name rather than `alexia/capability/call`.** That call answers
+   * from *this* computer and carries no files. This one says *wherever they chose*, sends the
+   * inputs there and brings what was made home — and MCP has no notion of where a tool runs,
+   * so there is nothing upstream to argue against, which is the bar `alexia/answers` met.
+   *
+   * **It names a capability, and only the caller's own work or work it asked for.** Core
+   * refuses a `cap` that is neither one of the caller's `compute.operations` nor in its
+   * `requires[]`. There is no way to say which computer, and no way to name a tool: the
+   * person chose the place, and the manifest on that computer chose the tool.
+   *
+   * Progress travels on the request's progress token, the way `alexia/stream` does, and
+   * stopping is MCP's own `notifications/cancelled`.
+   */
+  'alexia/compute/run': {
+    params: z.object({
+      cap: z.string().min(1),
+      arguments: z.record(z.string(), z.json()).optional(),
+      /** Files to send with the job. Each `path` must be one the plugin may already read. */
+      inputs: z
+        .array(z.object({ name: z.string().min(1), path: z.string().min(1), mime: z.string().min(1) }))
+        .optional(),
+    }),
+    result: z.object({
+      text: z.string().optional(),
+      /** Absolute paths in the caller's own directory, already verified. */
+      files: z.array(z.string()),
+    }),
+  },
 } as const
 
 export type AlexiaMethod = keyof typeof ALEXIA_METHODS

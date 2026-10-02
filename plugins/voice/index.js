@@ -1,12 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { copyFile, readFile, rm, writeFile } from 'node:fs/promises'
-import { basename } from 'node:path'
+import { basename, extname } from 'node:path'
 import { fromJsonSchema, log, plugin } from '@alexia/sdk'
+import { holding, split } from './compute.js'
 import * as expression from './expression.js'
+import { there } from './fetching.js'
 import * as fish from './fish.js'
 import * as piper from './piper.js'
 import * as qwen from './qwen.js'
 import * as whisper from './whisper.js'
+import { IMITATE, RECOGNIZE, SYNTHESIZE, installing, operations, requirements, wanting } from './worker.js'
 
 /**
  * Voice — the plugin the contract was designed against (M2-3, M2-4).
@@ -23,9 +26,16 @@ import * as whisper from './whisper.js'
  */
 
 const alexia = plugin()
+/** Where planning ends and inference begins — see `compute.js`. */
+const compute = split(alexia)
+/** The inference this process has running, so `release` can end it. */
+const held = holding()
 
 /** Set once at startup, so nothing has to spawn anything to answer a settings screen. */
 let own
+
+/** A call's own progress, as the three-argument reporter everything downstream is handed. */
+const progressOf = (ctx) => (done, total, message) => alexia.progress(ctx, done, total, message)
 
 /**
  * The four engines, and the three families behind them.
@@ -233,7 +243,7 @@ function state({ hears, speaks, size, engine, family, voice, hearing, speaking, 
   if (speaks) return `▲ Speaking only — the ${size} model is ${whisper.MODELS[size].mb} MB`
   return mb === undefined ?
       `■ Not downloaded — the ${size} model is ${whisper.MODELS[size].mb} MB`
-    : `■ Not downloaded — ${whisper.MODELS[size].mb + mb + 30} MB`
+    : `■ Not downloaded — ${whisper.MODELS[size].mb + mb + whisper.PROGRAM_MB + piper.PROGRAM_MB} MB`
 }
 
 /**
@@ -242,11 +252,17 @@ function state({ hears, speaks, size, engine, family, voice, hearing, speaking, 
  * `half` is which of the two is actually needed: transcribing does not download a voice, and
  * saying one sentence out loud does not download a speech model. Only the button fetches
  * both, because that is the one place somebody asked for all of it.
+ *
+ * `want` names the size or the voice when the asker knows better than the settings do — an
+ * operation is told which voice to speak in, and that is the one worth fetching.
  */
-async function fetching(ctx, half) {
-  const { size, family, voice, hearing, speaking } = await chosen()
+async function fetching(report, half, want = {}) {
+  const picked = await chosen()
+  const { hearing, speaking } = picked
+  const size = want.size ?? picked.size
+  const voice = want.voice ?? picked.voice
+  const family = want.voice === undefined ? picked.family : familyOf(want.voice)
   if (!own) throw new Error('Alexia has not given this plugin a folder to work in.')
-  const report = (done, total, message) => alexia.progress(ctx, done, total, message)
   await alexia.status('ready', '▲ Downloading').catch(() => {})
   try {
     if (half !== 'speaking') {
@@ -279,7 +295,7 @@ async function fetching(ctx, half) {
  * `ctx` is only for expression, and it is the only reason this takes one — a preview has
  * nothing to mark up an emotion against, so it passes none and gets the plain words.
  */
-async function utter(settings, { id, text, signal, ctx, format = 'wav' }) {
+async function utter(settings, { id, text, signal, ctx, format = 'wav', fetch = false }) {
   const family = familyOf(id)
   if (family === 'fish') {
     if (!settings.key) throw new Error(`${id} lives on fish.audio and there is no key to reach it with.`)
@@ -287,15 +303,52 @@ async function utter(settings, { id, text, signal, ctx, format = 'wav' }) {
     const bytes = await fish.say(settings.key, { text: marked, id: fish.idOf(id), format, signal })
     return { bytes, wav: format === 'wav' }
   }
+  // **The two engines that run a model are operations**, so the model runs where the person
+  // chose. What is decided here is only what belongs to them: which voice, and its files where
+  // the voice is one they made — those are on this computer and travel with the request.
+  const report = ctx ? progressOf(ctx) : undefined
   if (family === 'qwen') {
-    if (!settings.qwen) throw new Error(`${id} is a Qwen3-TTS voice and no Python has been pointed at.`)
-    return { bytes: await readFile(await qwen.say(own, { python: settings.qwen, voice: id, text, signal })), wav: true }
+    const { clip, transcript } = await qwen.reference(own, id)
+    const made = await compute.run(
+      IMITATE,
+      { voice: id, text, clip, transcript },
+      { signal, report, inputs: [{ name: basename(clip), path: clip, mime: 'audio/wav' }] },
+    )
+    return { bytes: await collect(made), wav: true }
   }
-  if (!(await piper.ready(own, id, settings.speaking))) {
-    throw new Error(`${id} is not downloaded yet. Choose it and it arrives the first time it speaks.`)
-  }
-  const there = await piper.programs(own, id, settings.speaking)
-  return { bytes: await readFile(await piper.say({ ...there, text, signal })), wav: true }
+  const { model, config } = piper.where(own, id)
+  const mine = piper.VOICES[id] === undefined && (await there(model)) && (await there(config))
+  const made = await compute.run(
+    SYNTHESIZE,
+    { voice: id, text, fetch, ...(mine && { model, config }) },
+    {
+      signal,
+      report,
+      ...(mine && {
+        inputs: [
+          { name: basename(model), path: model, mime: 'application/octet-stream' },
+          { name: basename(config), path: config, mime: 'application/json' },
+        ],
+      }),
+    },
+  )
+  return { bytes: await collect(made), wav: true }
+}
+
+/**
+ * The recording an operation made, as bytes.
+ *
+ * Made on this computer it is the one scratch file each engine overwrites, and it stays where
+ * it is. Brought back from another it is a file of its own in this plugin's folder, and it is
+ * removed once read — a sentence said aloud is not something to keep a copy of.
+ */
+async function collect(made) {
+  const [file] = made.files
+  if (!file) throw new Error('Nothing came back to say.')
+  const bytes = await readFile(file)
+  const scratch = own ? [piper.where(own, 'lessac').wav, qwen.where(own, 'lessac').out] : []
+  if (!scratch.includes(file)) await rm(file, { force: true }).catch(() => {})
+  return bytes
 }
 
 /**
@@ -320,6 +373,9 @@ const remember = (id, bytes, type) => {
 const missing = (what, setting) =>
   `There is no prebuilt ${what} for ${process.platform}/${process.arch}. Install one and set “${setting}” to it.`
 
+/** What a recording is, by the four kinds Whisper reads. */
+const AUDIO = { '.wav': 'audio/wav', '.mp3': 'audio/mpeg', '.flac': 'audio/flac', '.ogg': 'audio/ogg' }
+
 const heard = alexia.tool(
   'transcribe',
   {
@@ -333,10 +389,19 @@ const heard = alexia.tool(
     annotations: { readOnlyHint: true, openWorldHint: false },
   },
   async ({ file }, ctx) => {
-    const { size, threads, hearing } = await chosen()
-    if (!(await whisper.ready(own, size, hearing))) await fetching(ctx, 'hearing')
-    const found = await whisper.programs(own, size, hearing)
-    const text = whisper.spoken(await whisper.transcribe({ ...found, file, threads, signal: ctx.mcpReq.signal }))
+    const { size } = await chosen()
+    // The file is read here, where the person pointed at it, and goes with the request. Which
+    // size of model is their choice; where Whisper is and how it runs is the other end's.
+    const made = await compute.run(
+      RECOGNIZE,
+      { file, size },
+      {
+        signal: ctx.mcpReq.signal,
+        report: progressOf(ctx),
+        inputs: [{ name: basename(file), path: file, mime: AUDIO[extname(file).toLowerCase()] ?? 'application/octet-stream' }],
+      },
+    )
+    const text = made.text ?? ''
     await keep(text, 'file')
     return { content: [{ type: 'text', text: text || 'There was nothing to hear in that file.' }] }
   },
@@ -369,7 +434,7 @@ alexia.tool(
   },
   async ({ seconds = 15 }, ctx) => {
     const { size, threads, hearing } = await chosen()
-    if (!(await whisper.ready(own, size, hearing))) await fetching(ctx, 'hearing')
+    if (!(await whisper.ready(own, size, hearing))) await fetching(progressOf(ctx), 'hearing')
     const found = await whisper.programs(own, size, hearing)
     if (!found?.stream) {
       return {
@@ -419,7 +484,7 @@ const said = alexia.tool(
     const words = String(text ?? '').trim()
     if (!words) return { isError: true, content: [{ type: 'text', text: 'There was nothing to say.' }] }
     const picked = await chosen()
-    const { engine, family, voice, speaking } = picked
+    const { engine, voice } = picked
     if (voice === undefined) {
       return {
         isError: true,
@@ -427,9 +492,6 @@ const said = alexia.tool(
       }
     }
 
-    // Only Piper has anything to download, and only the chosen voice is worth downloading:
-    // this is the moment somebody actually asked to hear it.
-    if (family === 'piper' && !(await piper.ready(own, voice, speaking))) await fetching(ctx, 'speaking')
     await alexia.status('ready', '▲ Speaking').catch(() => {})
     try {
       // Written where Piper writes its own, so one file is overwritten rather than
@@ -437,7 +499,9 @@ const said = alexia.tool(
       const { wav } = piper.where(own, 'lessac')
       // Markers are not stripped from a local engine's input for a reason: nothing puts them
       // there. `annotate` is only ever reached on the path that can read them.
-      const { bytes } = await utter(picked, { id: voice, text: words, signal: ctx.mcpReq.signal, ctx })
+      // Only Piper has anything to download, and only the chosen voice is worth downloading:
+      // this is the moment somebody actually asked to hear it, so `fetch` says it may.
+      const { bytes } = await utter(picked, { id: voice, text: words, signal: ctx.mcpReq.signal, ctx, fetch: true })
       await writeFile(wav, bytes)
       await piper.play(wav, ctx.mcpReq.signal)
       return { content: [{ type: 'text', text: `Said it, in ${voice}’s voice.` }] }
@@ -528,7 +592,7 @@ alexia.tool(
   },
   async (ctx) => {
     const { size, voice } = await chosen()
-    await fetching(ctx, 'both')
+    await fetching(progressOf(ctx), 'both')
     return { content: [{ type: 'text', text: `The ${size} speech model and the ${voice} voice are ready.` }] }
   },
 )
@@ -1035,6 +1099,33 @@ alexia.tool(
  */
 const keep = (text, source) =>
   text ? alexia.storage.insert('transcripts', { text, source, at: Date.now() }).catch(() => {}) : undefined
+
+/**
+ * The inference, as operations core can run on whichever computer the person chose
+ * (`worker.js`). On this computer they are the same code the tools above always ran.
+ */
+const wanted = wanting(alexia.storage)
+const performs = operations({ own: () => own, settings: chosen, fetching, wanted, hold: held.hold })
+for (const cap of [RECOGNIZE, SYNTHESIZE, IMITATE]) compute.operation(cap, performs[cap])
+
+/**
+ * The worker's lifecycle, as core runs it on a computer somebody paired.
+ *
+ * `setup` reads the disk and fetches nothing; `install` is the only one that downloads, and
+ * only what its requirement named; `release` ends whatever inference is still running, which
+ * is all there is to let go of — no model outlives the program that loaded it.
+ */
+alexia.computeHooks({
+  setup: async () => requirements({ own, chosen: await chosen(), wanted: await wanted.read() }),
+  install: async (requirementId, ctx) => {
+    try {
+      await installing(requirementId, { own, chosen: await chosen(), report: progressOf(ctx) })
+    } finally {
+      await bind()
+    }
+  },
+  release: async () => void held.release(),
+})
 
 await alexia.start()
 own = (await alexia.host()).paths.ownDir

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { ErrorCode, type AlexiaMethod, type AlexiaParams, type HostInfo, type Manifest, type StreamFrame } from '@alexia/protocol'
+import { ErrorCode, type AlexiaMethod, type AlexiaParams, type AlexiaResult, type HostInfo, type Manifest, type StreamFrame } from '@alexia/protocol'
 import { ProtocolError, type CallToolResult, type CreateMessageRequestParams, type CreateMessageResult, type Root } from '@modelcontextprotocol/client'
 import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
@@ -7,6 +7,7 @@ import { keychain, type SecretStore } from './secrets.js'
 import { declaredWidgets } from './settings.js'
 import { ALEXIA_VERSION, type HostServices } from './supervisor.js'
 import type { Store } from './store.js'
+import type { JobProgress } from './compute/types.js'
 
 /**
  * The other side of the `alexia/*` layer: what core answers when a plugin asks.
@@ -41,6 +42,13 @@ export interface HostOptions {
   roots?(pluginId: string): Root[]
   /** Route a capability to whichever plugin provides it. The resolver lands at M0-7. */
   capability?(cap: string, args?: Record<string, unknown>): Promise<CallToolResult>
+  /** The interaction-side Operations seam. Absent means compute is unavailable. */
+  compute?(
+    pluginId: string,
+    params: AlexiaParams<'alexia/compute/run'>,
+    signal?: AbortSignal,
+    onProgress?: (progress: JobProgress) => void,
+  ): Promise<AlexiaResult<'alexia/compute/run'>>
   /**
    * **Would anything answer this capability, and is something that would switched off?**
    *
@@ -111,7 +119,13 @@ export class Host implements HostServices {
   }
 
   /** Every `alexia/*` request, already validated against the wire schema by the supervisor. */
-  async alexia<M extends AlexiaMethod>(pluginId: string, method: M, params: AlexiaParams<M>): Promise<unknown> {
+  async alexia<M extends AlexiaMethod>(
+    pluginId: string,
+    method: M,
+    params: AlexiaParams<M>,
+    signal?: AbortSignal,
+    onProgress?: (progress: JobProgress) => void,
+  ): Promise<unknown> {
     const manifest = this.options.manifest(pluginId)
     if (!manifest) return fail(ErrorCode.INTERNAL_ERROR, `${pluginId} is not an enabled plugin`)
     const { store } = this.options
@@ -170,6 +184,18 @@ export class Host implements HostServices {
           return fail(ErrorCode.CAPABILITY_NOT_AVAILABLE, `nothing enabled provides ${p.cap}`)
         }
         return this.options.capability(p.cap, p.arguments)
+      }
+
+      case 'alexia/compute/run': {
+        const p = params as AlexiaParams<'alexia/compute/run'>
+        if (!manifest.compute?.operations.some((op) => op.cap === p.cap) &&
+          !manifest.requires?.some((r) => r.cap === p.cap)) {
+          return fail(ErrorCode.CAPABILITY_NOT_PERMITTED, `${pluginId} did not declare compute operation ${p.cap} or ask for it in requires[]`)
+        }
+        if (!this.options.compute) {
+          return fail(ErrorCode.CAPABILITY_NOT_AVAILABLE, `compute is not available for ${p.cap}`)
+        }
+        return this.options.compute(pluginId, p, signal, onProgress)
       }
 
       case 'alexia/storage/insert': {

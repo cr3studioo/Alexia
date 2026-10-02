@@ -3164,6 +3164,57 @@
         "sizes"
       ],
       "additionalProperties": false
+    },
+    "compute": {
+      "type": "object",
+      "properties": {
+        "operations": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "cap": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9]*(?:\\.[a-z][a-z0-9_]*)+$"
+              },
+              "summary": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 120
+              },
+              "weight": {
+                "type": "string",
+                "enum": [
+                  "heavy",
+                  "light"
+                ]
+              }
+            },
+            "required": [
+              "cap",
+              "summary"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "hooks": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "setup",
+              "install",
+              "prepare",
+              "release"
+            ]
+          }
+        }
+      },
+      "required": [
+        "operations"
+      ],
+      "additionalProperties": false
     }
   },
   "required": [

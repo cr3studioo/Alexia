@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { createHash, randomBytes } from 'node:crypto'
 import { PLANNER, routes, stature, type Model } from './catalog.js'
+import { THIS_HOST, type TargetStatus } from './compute/types.js'
 import { OLLAMA } from './ollama.js'
 import { sent, spent, underHalf, type Rung } from './pool.js'
 import { BUSY_HALF_LIFE, type Judgement, type Health } from './health.js'
@@ -447,6 +448,16 @@ export interface World {
   models: readonly Model[]
   /** What is installed locally and reachable. Empty when Ollama is not running. */
   local: readonly Model[]
+  /**
+   * **Which runner serves each local model**, by the provider id on the model's row: Ollama, or
+   * Alexia's own `llama-server` (`llama.ts`). Absent means Ollama alone, which is all there was.
+   */
+  runners?: readonly Provider[]
+  /**
+   * **Where the selected paired computer stands** (`compute/bridge.ts`): connecting, loading,
+   * ready, or the named reason it cannot serve. Absent means none has been selected since launch.
+   */
+  target?: TargetStatus
   /** Hosted providers with a key and requests left, in the pool's order. */
   rungs: readonly Rung[]
   /**
@@ -628,7 +639,15 @@ export function route(ask: Ask, pins: Pins, world: World): Verdict {
   // rung of the cascade rather than a mode they have to remember to switch into. See
   // {@link MODES} for why that is not the privacy pin being escalated past — and for why it
   // is text alone, images and speech being placed local by `combined` already.
-  const here = world.local.map((model) => ({ model, provider: OLLAMA }))
+  //
+  // A paired computer's model (`Model.host`) is neither of those. It is reached only where the
+  // placement is local, and only on the host somebody selected: never as the last rung of
+  // Cloud or Combined, and never on a host that merely happens to be listed.
+  const here = world.local.flatMap((model) => {
+    if (model.host !== undefined && (where !== 'local' || (world.target !== undefined && world.target.target.hostId !== model.host))) return []
+    const provider = world.runners?.find((one) => one.id === model.provider) ?? (model.provider === OLLAMA.id ? OLLAMA : undefined)
+    return provider === undefined ? [] : [{ model, provider }]
+  })
   const hosted = where === 'local' ? [] : reachable(world, connected)
   const avoided = new Set(ask.avoid ?? [])
   const everything: Choice[] = [...hosted.map((row) => row.choice), ...(where === 'local' || kind === 'text' ? here : [])].filter(
@@ -1489,11 +1508,14 @@ function refusal(
    */
   const tooLong = pool.length > 0 && !pool.some((c) => fits(c.model, messages))
   if (where === 'local') {
+    // A paired computer was chosen, so the reason is that computer's own state: sending somebody
+    // to install a model on this Mac would be an answer about the wrong machine.
+    if (pool.length === 0 && world.target !== undefined && world.target.target.hostId !== THIS_HOST) return world.target.message
     if (pool.length === 0) return 'no model is installed on this Mac — install one, or type /cloud'
     if (tooLong) {
       return 'this chat is longer than any model on this Mac can read — start a new chat, or type /cloud'
     }
-    if (pins.uncensored) return 'no uncensored model is installed on this Mac — install one, or type /cloud'
+    if (pins.uncensored) return 'no uncensored model is installed on this Mac — open Settings › Models › Uncensored to install one, or type /cloud'
     if (needsTools) return 'no model on this Mac can take actions — install one that can, or type /cloud'
     // The one refusal G5 added: the models are here, they can use tools, and they are too
     // small to be trusted with planning. Say which wall it is, because the fix differs.
@@ -1663,6 +1685,7 @@ export function failed(error: unknown, choice: Choice): Failure | undefined {
     return of('model', `${model.name} cannot write a reply as long as this asks for`, 'reply-too-long')
   }
   if (status === 413 || (status === 400 && TOO_LONG.test(error.message))) {
+    if (model.tier === 'T0') return of('request', `the prompt, including tool definitions, exceeds ${model.name}'s configured ${model.context.toLocaleString('en-US')}-token context`, 'too-long')
     return of('request', `this conversation is too long for ${model.name}`, 'too-long')
   }
   // The outcome is named here, beside the sentence, so the record and the stop cannot disagree
@@ -1729,10 +1752,16 @@ export function stopped(failures: readonly Failure[], blocked?: string): string 
   // Every one of them failed to connect: the likeliest reason is this Mac, not the services,
   // and naming each service that "could not be reached" sends somebody to check the wrong thing.
   if (failures.length > 0 && failures.every((one) => one.outcome === 'unreachable')) {
+    // A paired computer that does not answer is that computer, not this Mac's internet.
+    if (failures.every((one) => one.choice.model.host !== undefined)) {
+      return 'The paired computer could not be reached. Check that it is switched on and connected, then try again.'
+    }
     return 'It looks like you’re offline — none of the AI services could be reached. Check your internet connection, then try again.'
   }
   const lines = [`${reasons(failures, 'could not answer either')}.`]
-  if (last?.reach === 'request') lines.push('Nothing left to try reads more than that — start a new chat.')
+  if (last?.reach === 'request') lines.push(last.choice.model.tier === 'T0'
+    ? 'Increase the local context in Settings → Models if memory allows, or enable fewer plugins. A new chat may still carry the same tool definitions.'
+    : 'Nothing left to try reads more than that — start a new chat.')
   if (blocked !== undefined) lines.push(`${capital(blocked)}.`)
   return lines.join(' ')
 }
@@ -1846,6 +1875,19 @@ interface Asking {
   /** Its last busy reply while it is asked again: what is recorded, once, if the wait runs out. */
   busy?: Failure
 }
+
+/**
+ * **Whose hardware a payload is going to**, which is the whole of what decides whether {@link send}
+ * strips credentials and location from it.
+ *
+ * `T0` is a model on this computer — and a model on a paired computer, whose rows are `T0` too
+ * (`compute/target.ts`): hardware the person owns, chosen by them, over an end-to-end encrypted
+ * transport. **That second half is a decision the owner has still to confirm**
+ * (`docs/spec/remote-compute.md` §11, item 1), and this is the one place it is made. The
+ * stricter reading — a paired computer is somewhere else, so strip — is this line reading
+ * `model.tier === 'T0' && model.host === undefined`.
+ */
+const owned = (model: Model): boolean => model.tier === 'T0'
 
 /**
  * Walk the plan until one of them answers.
@@ -2447,7 +2489,7 @@ export async function send(
     // `T0` means the model is on this machine (only `ollama.ts` ever writes it), so the
     // payload is not going anywhere and stripping it would cost accuracy to protect against
     // nothing. Everything else is a third party, free tiers most of all.
-    const outbound = choice.model.tier === 'T0' ? { messages, kinds: [] } : redact(messages)
+    const outbound = owned(choice.model) ? { messages, kinds: [] } : redact(messages)
     if (outbound.kinds.length > 0) {
       // Enforcement that says so. Silently editing what somebody wrote is the same
       // surprise as a bill nobody announced.

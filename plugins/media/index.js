@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { fromJsonSchema, log, plugin } from '@alexia/sdk'
-import { Buffer } from 'node:buffer'
-import { readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
+import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { basename, join } from 'node:path'
-import { checkpoints, classes, download, interrupt, named, order, pick, queue, stats, template, templates, wait } from './comfy.js'
+import { checkpoints, classes, named, pick, stats, template, templates } from './comfy.js'
+import { facts, split } from './compute.js'
 import { alive, awake, install, loopback, port, ready, start, stop, tail } from './launch.js'
+import { named_of, renderer } from './render.js'
+import { RENDER, dedicated, fetchRequirement, onDisk, requirements } from './worker.js'
 import { API_SUFFIX, FOLDER, apply, isApi, knobs, missing, fromWeb, read, remove, reseed, saved, wired, write } from './workflows.js'
 import { api as starterGraph, editor as starterDoc, STARTER } from './starter.js'
-import { measure, tight } from './sizing.js'
+import { measure } from './sizing.js'
 import { fetchModel, have } from './models.js'
 import { reading, vram } from './tier.js'
 import { describe as line, flatten, pickEntry, runnable, search, shelf } from './catalog.js'
@@ -32,6 +34,8 @@ import { convert } from './convert.js'
  */
 
 const alexia = plugin()
+/** Where planning ends and rendering begins — see `compute.js`. */
+const compute = split(alexia)
 
 let own
 /** What ComfyUI said it has, refreshed when it is reachable. Empty means not reached yet. */
@@ -139,7 +143,7 @@ async function canStart() {
  * error — the process is detached and still loading, *ask me again in a minute* is true,
  * and the next call finds it up.
  */
-async function wake(signal, ctx) {
+async function wake(signal, ctx, report) {
   const can = await canStart()
   if (!can.ok) return { ok: false, said: can.said }
   booting ??= (async () => {
@@ -162,8 +166,12 @@ async function wake(signal, ctx) {
     await alexia.status('state', '▲ Starting ComfyUI…').catch(() => {})
     const up = await ready(server, {
       signal,
-      onProgress: (tick) =>
-        ctx && alexia.progress(ctx, tick, 90, tick < 20 ? 'Starting ComfyUI' : 'Starting ComfyUI — loading its nodes and models'),
+      onProgress: (tick) => {
+        const said = tick < 20 ? 'Starting ComfyUI' : 'Starting ComfyUI — loading its nodes and models'
+        // An operation has a reporter rather than a call of its own to report on.
+        if (report) report(said, tick, 90)
+        else if (ctx) alexia.progress(ctx, tick, 90, said)
+      },
     })
     if (!up) {
       const said =
@@ -178,20 +186,6 @@ async function wake(signal, ctx) {
   })
   const done = await booting
   return done.ok ? await bind(signal) : done
-}
-
-/**
- * Which checkpoint to use: the one asked for, the one chosen, or whatever is there.
- *
- * The order matters and the first entry is new. *Whatever is there* means the first
- * checkpoint in the folder, and on a machine with six of them that is a coin toss — a
- * request for an anime picture answered by a photographic model is the plugin working
- * perfectly and getting it wrong. A name in the call is how the asker says which.
- */
-async function chosen(wanted) {
-  const { steps, vae_fp32: fp32 } = await settings()
-  const picked = pick(available, wanted) ?? pick(available, await preferred()) ?? available[0]
-  return { checkpoint: picked, steps: Number(steps) || 25, fp32: fp32 !== false }
 }
 
 const made = alexia.tool(
@@ -238,61 +232,43 @@ const made = alexia.tool(
   },
   async ({ prompt, negative, width, height, seed, model, again }, ctx) => {
     const signal = ctx?.mcpReq?.signal
-    // Not running is a thing to fix rather than a thing to report. If it cannot be fixed —
-    // no install, another machine, switched off — `reachable` says which, in one sentence. It
-    // also plants the starter workflow the first time it succeeds, which is here rather than at
-    // boot because this is the first moment ComfyUI is known to be up.
-    const state = await reachable(ctx)
-    if (!state.ok) return { isError: true, content: [{ type: 'text', text: state.said }] }
     if (!own) return { isError: true, content: [{ type: 'text', text: 'Alexia has not given this plugin a folder to work in.' }] }
 
-    const server = await where()
-    if (model && !pick(available, model)) {
-      // Named and not found is a question, not a picture. Answering it with a different
-      // model would be the plugin deciding something the asker was explicit about.
-      return {
-        isError: true,
-        content: [{ type: 'text', text: `There is no model here called ${model}. What there is: ${available.join(', ')}` }],
-      }
-    }
-    const { checkpoint, steps, fp32 } = await chosen(model)
+    // **The plan, which is everything that belongs to the person**: their words, their settings,
+    // and the seed of the last picture they made. Which model is installed, whether ComfyUI is
+    // running and how much memory is free are the rendering computer's to answer, and that may
+    // not be this one — so none of it is asked here.
+    const { steps, vae_fp32: fp32 } = await settings()
     const size = measure({ width, height, seed, again }, await alexia.storage.get('last').catch(() => undefined))
-    const room = await free(server, signal)
-    const warning = room === undefined ? undefined : tight(size, room)
-    // **The same workflow the person can open**, rather than a second pipeline built in code.
-    // `starter.js` renders it, `install` writes it into ComfyUI's own folder, and the two are
-    // generated from one definition so the graph that runs and the graph they edit cannot drift.
-    const built = starterGraph({
-      prompt: String(prompt),
-      negative: String(negative ?? 'blurry, low quality, watermark, text'),
-      checkpoint,
-      steps,
-      // Rounded to 64 because SDXL's latent space is in units of 8 and its training is in
-      // units of 64. A model handed 1000x1000 makes something subtly wrong rather than
-      // refusing, which is the worst of both.
-      width: size.width,
-      height: size.height,
-      seed: size.seed,
-      fp32,
-      display: named_of(await nodes(signal).catch(() => ({}))),
-    })
+    let made
+    try {
+      made = await compute.run(
+        RENDER,
+        {
+          kind: 'picture',
+          prompt: String(prompt),
+          negative: String(negative ?? 'blurry, low quality, watermark, text'),
+          // Rounded to 64 because SDXL's latent space is in units of 8 and its training is in
+          // units of 64. A model handed 1000x1000 makes something subtly wrong rather than
+          // refusing, which is the worst of both.
+          width: size.width,
+          height: size.height,
+          seed: size.seed,
+          steps: Number(steps) || 25,
+          fp32: fp32 !== false,
+          ...(model && { model: String(model) }),
+          preferred: await preferred(),
+        },
+        { signal, report: (message, done, total, work) => alexia.progress(ctx, done, total, message, work) },
+      )
+    } catch (error) {
+      // Not running and not startable, a model nobody has, a computer that is not ready: each
+      // is one sentence, said by whichever computer was asked.
+      return { isError: true, content: [{ type: 'text', text: String(error?.message ?? error) }] }
+    }
+    const { checkpoint = 'the model that was there', warning, here } = facts(made.text)
 
-    const id = await queue(server, built, signal)
-    const found = await awaiting(server, id, {
-      signal,
-      label: naming(built),
-      // The pipeline, worked out from the graph rather than waited for: ComfyUI only names a
-      // node once it has started, and a strip that grew as it went would draw the reporting.
-      stages: order(built),
-      onProgress: (message, done, total, work) => alexia.progress(ctx, done, total, message, work),
-    })
-
-    const saved = []
-    for (const one of found.files) {
-      const bytes = await download(server, one, signal)
-      const to = join(own, `${Date.now()}-${one.filename}`)
-      writeFileSync(to, Buffer.from(bytes))
-      saved.push(to)
+    for (const to of made.files) {
       await alexia.storage
         .insert('images', { path: to, prompt: String(prompt), checkpoint, at: Date.now() })
         .catch(() => {})
@@ -309,7 +285,9 @@ const made = alexia.tool(
         {
           type: 'text',
           text:
-            `Made here, with ${checkpoint}.` +
+            // *Here* is only said when it was. The operation knows whether the tool that planned
+            // it is in its own process, and that is all it says — not which computer it was.
+            `Made ${here === false ? 'on the computer you chose' : 'here'}, with ${checkpoint}.` +
             (size.reused ? ` Same seed as the last one (${size.seed}), so it is that picture again.` : '') +
             (warning ? ` ▲ ${warning}` : ''),
         },
@@ -317,31 +295,11 @@ const made = alexia.tool(
         // with the filename — correct, nothing a person could press, and read straight back
         // to them by a model that could not see the difference. It is a row under the answer
         // now, on the window or as a photo over a channel, and the model is told only that.
-        ...saved.map((to) => alexia.file(to, { description: String(prompt) })),
+        ...made.files.map((to) => alexia.file(to, { description: String(prompt) })),
       ],
     }
   },
 )
-
-/**
- * How much of the graphics card is free this second, or nothing if the question cannot be asked.
- *
- * `/system_stats` gives it away for free. A machine with no card, a ComfyUI that will not answer,
- * or a shape this does not recognise all come back the same way: undefined, and nothing is said.
- */
-async function free(server, signal) {
-  try {
-    const machine = await stats(server, signal)
-    const card = (machine?.devices ?? []).find((one) => one?.type === 'cuda' || one?.type === 'mps')
-    return Number.isFinite(Number(card?.vram_free)) ? Number(card.vram_free) : undefined
-  } catch {
-    return undefined
-  }
-}
-
-/** Class name → display name, which is what an export writes into `_meta.title` for an untitled node. */
-const named_of = (spec) => Object.fromEntries(Object.entries(spec).map(([one, what]) => [one, what?.display_name ?? one]))
-
 
 alexia.tool(
   'models',
@@ -413,23 +371,6 @@ function describe(knob) {
 }
 
 /**
- * Wait for a job, and stop it if the waiting stops.
- *
- * `signal` used to reach only the fetch: the poll ended and **the job carried on rendering**, on
- * a graphics card nobody was waiting for and with the next request queued behind it. `/interrupt`
- * is a call this plugin never made. It is made without the signal, because the signal is the
- * thing that just aborted.
- */
-async function awaiting(server, id, options) {
-  try {
-    return await wait(server, id, options)
-  } catch (error) {
-    if (options?.signal?.aborted) await interrupt(server).catch(() => {})
-    throw error
-  }
-}
-
-/**
  * Put the starter workflow where the person can find it, once.
  *
  * **Once, and remembered — because deleting it is a thing somebody is allowed to do.** A plugin
@@ -476,21 +417,13 @@ async function which(server, wanted, signal) {
 }
 
 /** ComfyUI up, by whatever means are allowed. The two workflow tools open the same way. */
-async function reachable(ctx) {
-  const signal = ctx?.mcpReq?.signal
+async function reachable(ctx, { signal = ctx?.mcpReq?.signal, report } = {}) {
   const state = await bind(signal)
-  const up = state.ok ? state : await wake(signal, ctx)
+  const up = state.ok ? state : await wake(signal, ctx, report)
   if (up.ok) await plant(signal)
   return up
 }
 
-/**
- * What to call the node that is working, in the words its author used.
- *
- * The socket says `node: "12"`, which is true and says nothing. The graph being run is right
- * here, so the title wins over the class name and the class name over the id — *Load Model —
- * step 12 of 28* is a sentence about somebody’s own pipeline rather than about a graph.
- */
 /**
  * What a workflow offers to be set, and whether anybody named it.
  *
@@ -505,11 +438,6 @@ const fields = (graph, spec) => {
   if (named.length > 0) return { found: named, derived: false }
   const found = wired(graph, spec)
   return { found, derived: found.length > 0 }
-}
-
-const naming = (built) => (node) => {
-  const one = built?.[node]
-  return String(one?._meta?.title ?? one?.class_type ?? '').trim() || undefined
 }
 
 const refuse = (text) => ({ isError: true, content: [{ type: 'text', text }] })
@@ -676,33 +604,35 @@ alexia.tool(
     }
 
     const rolled = Number.isFinite(Number(seed)) ? Number(seed) : Math.floor(Math.random() * 2 ** 31)
+    // **Prepared here, rendered where the person chose.** The workflow is theirs and is read
+    // off the ComfyUI on this computer, with their fields applied and the seed rolled; what is
+    // handed over is the finished graph, and the rendering computer checks it against its own
+    // nodes before it queues anything.
     const built = reseed(apply(graph, found, given), rolled)
-    const id = await queue(server, built, signal)
-    const made = await awaiting(server, id, {
-      signal,
-      expect: 'output',
-      label: naming(built),
-      stages: order(built),
-      onProgress: (message, done, total, work) => alexia.progress(ctx, done, total, message, work),
-    })
+    let made
+    try {
+      made = await compute.run(
+        RENDER,
+        { kind: 'workflow', name: row.name, graph: built },
+        { signal, report: (message, done, total, work) => alexia.progress(ctx, done, total, message, work) },
+      )
+    } catch (error) {
+      return refuse(String(error?.message ?? error))
+    }
+    const { text: reported = [] } = facts(made.text)
 
-    const kept = []
-    for (const one of made.files) {
-      const bytes = await download(server, one, signal)
-      const to = join(own, `${Date.now()}-${one.filename}`)
-      writeFileSync(to, Buffer.from(bytes))
-      kept.push(to)
+    for (const to of made.files) {
       await alexia.storage.insert('runs', { workflow: row.name, path: to, seed: rolled, at: Date.now() }).catch(() => {})
     }
     await bind(signal)
     return {
       content: [
-        { type: 'text', text: `Ran ${row.name}${kept.length === 0 ? ', which produced no file' : ''}. Seed ${rolled}.` },
+        { type: 'text', text: `Ran ${row.name}${made.files.length === 0 ? ', which produced no file' : ''}. Seed ${rolled}.` },
         // What the graph made of what it was given. On these workflows that is the prompt an
         // Ollama node wrote out of the plain English, and it is the only way to see why a
         // picture came out the way it did — the alternative is guessing at somebody else's graph.
-        ...(made.text.length > 0 ? [{ type: 'text', text: `The workflow reported: ${made.text.join(' / ')}` }] : []),
-        ...kept.map((to) => alexia.file(to, { description: row.name })),
+        ...(reported.length > 0 ? [{ type: 'text', text: `The workflow reported: ${reported.join(' / ')}` }] : []),
+        ...made.files.map((to) => alexia.file(to, { description: row.name })),
       ],
     }
   },
@@ -1416,6 +1346,116 @@ alexia.tool(
   },
 )
 
+/**
+ * The ComfyUI this plugin runs as a compute worker — its own, and never the person's.
+ *
+ * `avoid` is the port in this plugin's settings: that address is where the person's ComfyUI
+ * lives or will, so the worker neither starts there nor speaks to whatever answers there.
+ */
+const worker = dedicated({
+  storage: alexia.storage,
+  own: () => own,
+  dir: () => found(),
+  avoid: async () => [port(await where())],
+  log: (line) => log.info(line),
+})
+
+/**
+ * Which ComfyUI renders this job.
+ *
+ * **Planned in this process, it is the one this plugin has always used**: whatever answers at
+ * the address in the settings — the person's own if they have it open, on this machine or on
+ * another — and otherwise one Alexia starts there. That is the behaviour of a computer with
+ * nothing paired, kept exactly.
+ *
+ * **Sent by another computer, it is the worker's own and nothing else.** See `worker.js`.
+ */
+async function connect({ here, signal, report }) {
+  if (here) {
+    // Not running is a thing to fix rather than a thing to report. If it cannot be fixed —
+    // no install, another machine, switched off — `reachable` says which, in one sentence. It
+    // also plants the starter workflow the first time it succeeds, which is here rather than at
+    // boot because this is the first moment ComfyUI is known to be up.
+    const state = await reachable(undefined, { signal, report })
+    if (!state.ok) throw new Error(state.said)
+    return { server: await where(), classes: (signal) => nodes(signal) }
+  }
+  const up = await worker.ensure({
+    signal,
+    onProgress: (tick) => report(tick < 20 ? 'Starting ComfyUI' : 'Starting ComfyUI — loading its nodes and models', tick, 0),
+  })
+  return { server: up.server, classes: (signal) => workerNodes(up.server, signal), tidy: worker.tidy }
+}
+
+/** The worker's own node classes, kept for as long as it is the same ComfyUI answering. */
+let workerKnown
+async function workerNodes(server, signal) {
+  if (workerKnown?.server === server && Date.now() - workerKnown.at < 5 * 60_000) return workerKnown.classes
+  workerKnown = { server, classes: await classes(server, signal), at: Date.now() }
+  return workerKnown.classes
+}
+
+compute.operation(RENDER, renderer({ own: () => own, connect }))
+
+/**
+ * Give back a ComfyUI that Alexia started for this computer's own pictures.
+ *
+ * **Only a ComfyUI Alexia started is stopped** — the same two conditions `stop_comfyui` uses,
+ * because one somebody opened themselves is not Alexia's to close.
+ */
+async function letGo() {
+  const mine = await alexia.storage.get('started').catch(() => undefined)
+  if (!mine?.pid || !alive(mine.pid)) return false
+  if (!(await awake(await where()))) {
+    await alexia.storage.remove('started').catch(() => {})
+    return false
+  }
+  if (!(await stop(mine.pid))) return false
+  await alexia.storage.remove('started').catch(() => {})
+  await bind()
+  return true
+}
+
+/**
+ * The worker's lifecycle, as core runs it on a computer somebody paired (`worker.js`).
+ *
+ * `setup` reads and starts nothing; `install` is the only one that downloads, and only what
+ * its requirement named; `prepare` starts the worker's ComfyUI; `release` stops it, which is
+ * what returns the model memory. None of them reaches a ComfyUI the person started.
+ */
+alexia.computeHooks({
+  setup: async () => {
+    const dir = await found()
+    if (!dir) return requirements({ dir })
+    const up = await worker.running().catch(() => undefined)
+    // ComfyUI is the authority on what it has when it is running. When it is not, the disk
+    // is read instead: drawing a list is not a reason to start a program.
+    if (!up) return requirements({ dir, installed: await onDisk([dir, own]) })
+    return requirements({
+      dir,
+      installed: await checkpoints(up.server),
+      card: vram(await stats(up.server).catch(() => undefined)) ?? null,
+    })
+  },
+  install: async (requirementId, ctx) => {
+    await fetchRequirement(requirementId, {
+      own,
+      signal: ctx?.mcpReq?.signal,
+      onProgress: (done, total, text) => alexia.progress(ctx, done, total, text),
+    })
+    // ComfyUI reads its model folders when it starts, so one that was already running is let
+    // go of here and the next job starts one that can see what just arrived.
+    await worker.release().catch(() => {})
+  },
+  prepare: async () => {
+    await worker.ensure()
+  },
+  release: async () => {
+    await worker.release().catch(() => {})
+    await letGo().catch(() => {})
+  },
+})
+
 await alexia.start()
 own = (await alexia.host()).paths.ownDir
 await bind()
@@ -1437,17 +1477,7 @@ await bind()
 alexia.onConversationEnded(() => {
   void (async () => {
     try {
-      const mine = await alexia.storage.get('started').catch(() => undefined)
-      if (!mine?.pid || !alive(mine.pid)) return
-      if (!(await awake(await where()))) {
-        await alexia.storage.remove('started').catch(() => {})
-        return
-      }
-      if (await stop(mine.pid)) {
-        await alexia.storage.remove('started').catch(() => {})
-        log.info('a new conversation started, so the ComfyUI Alexia started was stopped')
-        await bind()
-      }
+      if (await letGo()) log.info('a new conversation started, so the ComfyUI Alexia started was stopped')
     } catch {
       // Letting go of a graphics card is never worth failing over.
     }

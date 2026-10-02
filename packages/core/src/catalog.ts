@@ -61,6 +61,16 @@ export interface Model {
   created?: number
   /** **When the provider stops serving it**, from OpenRouter's `expiration_date` (§4 D reads it). */
   expires?: number
+  /** Details of a locally installed weight file. */
+  quant?: string
+  diskBytes?: number
+  abliterated?: boolean
+  /**
+   * **Where it runs**: the id of the paired computer that holds it. Absent means this computer,
+   * or a hosted provider. This is the only statement of location there is — a paired computer's
+   * model is reached through an address on this one, so nothing may read locality from a URL.
+   */
+  host?: string
 }
 
 /**

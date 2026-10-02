@@ -24,6 +24,9 @@ import { mountGlass, mountTheme, type Theme } from './theme.js'
 import { CONTROL_EVENT, mountLive, type Stage, type Timing } from './live.js'
 import { answerPrompt, modal } from './modal.js'
 import { mountRail } from './rail.js'
+import { mountLocalModels, type LocalModelsView, type LocalRequest } from './local-models.js'
+import { mountModeTransition, type ModeTransition } from './mode-transition.js'
+import type { ComputeState } from './compute.js'
 import { keepPlaced, MODES, mountLevelSlider, mountModeSwitch, mountGlassLook, type Around, type Switcher } from './switchers.js'
 import { isPhase, mountStatus } from './status.js'
 import { dollarsOf, el, MODELS_CHANGED } from './widgets.js'
@@ -96,6 +99,10 @@ interface Permissions {
 }
 
 interface State {
+  modeTransition?: ModeTransition
+  /** This computer's role and the computers it is paired with. Absent from a core that predates them. */
+  compute?: ComputeState
+
   setup: { done: boolean; name: string; mode: string; theme: Theme; glass: number; glassLook?: string; updates?: boolean }
   /** What this build is, for the About page — sent with every state read (D121). */
   app?: string
@@ -938,6 +945,8 @@ function called(name: string): void {
  * composer and first run at once, inviting a question it cannot answer yet.
  */
 let showing = 0
+let firstLocal: LocalModelsView | undefined
+let closeSettingsLocal: (() => void) | undefined = undefined
 
 /**
  * The sheet as a dialog (modal.ts). Only the board goes inert under it: the dock is drawn above
@@ -947,6 +956,8 @@ let showing = 0
 const sheetDialog = modal(document.querySelector<HTMLElement>('#sheet')!, () => [document.querySelector<HTMLElement>('#board')!])
 
 function show(view: 'first-run' | 'chat' | 'settings' | 'control'): void {
+  if (view !== 'settings') closeSettingsLocal?.()
+  if (view !== 'first-run') firstLocal?.close()
   // A genie still playing is finished first, and a close still waiting to change the view is
   // overtaken: the last thing asked for is what is on screen.
   const mine = ++showing
@@ -1019,19 +1030,36 @@ function firstRun(state: State): void {
   // Keys somebody pasted, not providers that can be asked: the keyless floor is always the
   // second, and counting it here meant *start with no keys* could never be said.
   let keys = state.providers.filter((p) => p.keyStored).length
+  let localReady = false
+  let starting = false
   const standing = (): void => {
     const none = keys === 0 && chosen() !== 'local'
     begin.textContent = none ? 'Skip — start with no keys' : 'Start'
+    begin.disabled = starting || (chosen() === 'local' && !localReady)
     skipLine.textContent =
       none ?
         'Alexia answers with no key at all: some of the AI services above ask for nothing, and a model on this computer does too. Keys make her faster, and you can add one in Settings any time.'
-      : ''
+      : chosen() === 'local' && !localReady ? 'Install a model below, or use one already installed in Ollama, before starting in Local mode.' : ''
   }
+
+  const localRoot = el('section')
+  connect.after(localRoot)
+  firstLocal = mountLocalModels(localRoot, {
+    request: post,
+    mode: chosen,
+    firstRun: true,
+    changed: () => { void read().then((state) => modeFeedback.sync(state)).catch(() => undefined) },
+    ready: (ready) => { localReady = ready; standing() },
+  })
 
   const showWall = (): void => {
     // Local mode asks nobody for a key, so the whole step goes away rather than sitting there
     // greyed out looking like something you got wrong.
     connect.hidden = chosen() === 'local'
+    const wasHidden = localRoot.hidden
+    localRoot.hidden = chosen() !== 'local'
+    if (localRoot.hidden) firstLocal?.close()
+    else if (wasHidden || localRoot.childElementCount === 0) firstLocal?.open()
     standing()
   }
   for (const radio of document.querySelectorAll('input[name="mode"]')) {
@@ -1071,19 +1099,32 @@ function firstRun(state: State): void {
   begin.addEventListener('click', () => {
     // No key travels with this any more: a tile saves its own the moment it is pasted, so by
     // the time anybody reaches this button the keychain already has whatever it is getting.
-    begin.disabled = true
+    if (chosen() === 'local' && !localReady) return
+    starting = true
+    standing()
     void post('/api/setup', { name: name.value.trim() || 'Alexia', mode: chosen() })
       // The plugins picked above, installed **before the screen changes**. Handing somebody
       // the conversation and then filling their assistant in behind it would make the first
       // thing they typed land on an Alexia that could not yet do what they had just asked for.
-      .then(() => shelf.install())
+      .then(async () => {
+        let state = await read()
+        await modeFeedback.sync(state)
+        while (state.modeTransition && !['ready', 'failed'].includes(state.modeTransition.phase)) {
+          await new Promise<void>((resolve) => setTimeout(resolve, 1000))
+          state = await read()
+        }
+        await modeFeedback.sync(state)
+        if (state.modeTransition?.phase === 'failed') throw new Error(state.modeTransition.message)
+        await shelf.install()
+      })
       .then(() => {
         if (inApp()) setAutostart(startsUp.checked)
         show('chat')
         called(name.value.trim() || 'Alexia')
         text.focus()
       })
-      .finally(() => (begin.disabled = false))
+      .catch((error: unknown) => { skipLine.textContent = `Could not start: ${error instanceof Error ? error.message : String(error)}. Try again.` })
+      .finally(() => { starting = false; begin.disabled = chosen() === 'local' && !localReady })
   })
 }
 
@@ -1420,8 +1461,14 @@ window.addEventListener(MODELS_CHANGED, () => {
   redrawModels()
 })
 
-const read = async (): Promise<State> =>
-  (await (await fetch('/api/state', { headers: { 'x-alexia-token': token } })).json()) as State
+/** The last `compute` any state read carried, for the rail, the mode line and Settings. */
+let compute: ComputeState | undefined
+
+const read = async (): Promise<State> => {
+  const state = (await (await fetch('/api/state', { headers: { 'x-alexia-token': token } })).json()) as State
+  compute = state.compute
+  return state
+}
 
 /**
  * The conversation on screen, painted from nothing.
@@ -1545,12 +1592,13 @@ async function load(): Promise<void> {
   board.reach(state.channels)
   called(state.setup.name)
   known = state.commands
-  for (const picker of modes) picker.value = state.setup.mode
+  await modeFeedback.sync(state)
   setupSettings(state)
   // The About page's two facts, from the same read: the version and whether to look for a
   // newer one. Both are core's answer rather than the page's, so the window and a tab pointed
   // at the same core cannot disagree about them.
   settings.about({ app: state.app, updates: state.setup.updates })
+  settings.compute(state.compute)
   if (!state.setup.done) firstRun(state)
   paint(state)
   showPermissions(state.permissions)
@@ -1981,11 +2029,12 @@ async function offerUpdate(automatic: boolean): Promise<void> {
 }
 
 /** POST to core with the token, and give back whatever it said. */
-const post = async (path: string, body: unknown): Promise<Record<string, unknown>> => {
+const post = async (path: string, body: unknown, options?: Parameters<LocalRequest>[2]): Promise<Record<string, unknown>> => {
   const answer = await fetch(path, {
-    method: 'POST',
+    method: options?.method ?? 'POST',
     headers: { 'content-type': 'application/json', 'x-alexia-token': token },
-    body: JSON.stringify(body),
+    ...(options?.method !== 'GET' && body !== undefined && { body: JSON.stringify(body) }),
+    ...(options?.signal && { signal: options.signal }),
   })
   // A 500 comes back as `text/plain`, so this used to reject inside `.json()` with a parse
   // error nobody was catching — a save that failed looked exactly like a save that did
@@ -2608,6 +2657,17 @@ const modes: (EventTarget & { value: string })[] = [
   new ModeSaid(),
 ]
 let known: Command[] = []
+let modeChanging = false
+const modeFeedback = mountModeTransition({
+  hosts: [document.querySelector<HTMLElement>('#mode-switch')!, document.querySelector<HTMLElement>('#mode-said')!],
+  read,
+  mode: (value) => { for (const picker of modes) picker.value = value },
+  blocked: (pending) => { modeChanging = pending; button.disabled = working || pending },
+  refresh: async () => { await rail.refresh(); if (document.body.dataset.view === 'settings') settings.redrawModels() },
+  picker: (message) => { show('settings'); settings.open('models'); settings.localMessage(message) },
+  failed: (message) => bubble('refusal', message),
+  hostName: (id) => compute?.hosts.find((view) => view.host.id === id)?.host.name,
+})
 
 /**
  * Run one, from the input or from a control. Both go the same way in.
@@ -2617,27 +2677,35 @@ let known: Command[] = []
  * to the same prompt the loop uses, and a yes sends the identical command back carrying it.
  */
 async function command(input: string, approved?: boolean): Promise<void> {
-  const ran = (await (
-    await fetch('/api/command', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-alexia-token': token },
-      body: JSON.stringify({ input, ...(approved === true && { approved: true }) }),
-    })
-  ).json()) as { ok: boolean; note: string; ask?: string; moved?: boolean; setup: { mode: string } }
-  // `/new` moved the conversation out from under this window, so what is on screen is the
-  // last one's log. Repaint before saying anything, or the sentence lands under the turns
-  // it just left behind.
-  if (ran.moved === true) {
-    await read().then(paint)
-    void rail.refresh()
-  }
-  // A command that worked says so plainly; only one that did not wears the refusal's dashed box.
-  bubble(ran.ok ? 'reply' : 'refusal', ran.note)
-  for (const picker of modes) picker.value = ran.setup.mode
-  if (ran.ask !== undefined) {
-    askPermission(ran.ask, (allowed) => {
-      if (allowed) void command(input, true)
-    })
+  const ticket = /^\/(local|cloud|combined)(?:\s|$)/.test(input) ? modeFeedback.begin() : undefined
+  try {
+    const ran = (await (
+      await fetch('/api/command', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-alexia-token': token },
+        body: JSON.stringify({ input, ...(approved === true && { approved: true }) }),
+      })
+    ).json()) as { ok: boolean; note: string; ask?: string; moved?: boolean; setup: { mode: string }; modeTransition?: ModeTransition }
+    // `/new` moved the conversation out from under this window, so what is on screen is the
+    // last one's log. Repaint before saying anything, or the sentence lands under the turns
+    // it just left behind.
+    if (ran.moved === true) {
+      await read().then(paint)
+      void rail.refresh()
+    }
+    // A command that worked says so plainly; only one that did not wears the refusal's dashed box.
+    bubble(ran.ok ? 'reply' : 'refusal', ran.note)
+    if (ticket !== undefined) await modeFeedback.observe(ran, ticket)
+    else await modeFeedback.sync(ran)
+    if (ran.ask !== undefined) {
+      askPermission(ran.ask, (allowed) => {
+        if (allowed) void command(input, true)
+      })
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    if (ticket !== undefined) modeFeedback.fail(message, ticket)
+    else bubble('refusal', message)
   }
 }
 
@@ -2736,7 +2804,10 @@ stop.addEventListener('click', () => {
 
 // ---- the settings screen ---------------------------------------------------------------
 
-const settings = mountSettings(token)
+const settings = mountSettings(token, () => {
+  void read().then((state) => modeFeedback.sync(state)).catch(() => undefined)
+}, () => railMode.value)
+closeSettingsLocal = settings.close
 
 // The obvious way to turn it off, which is the half of "starts on login" that matters. It
 // reads the real answer rather than remembering what was chosen at first run: somebody may
@@ -2816,6 +2887,7 @@ form.addEventListener('submit', (event) => {
  */
 let working = false
 function idle(): boolean {
+  if (modeChanging) { say('Wait for the mode switch to finish before sending a message.'); return false }
   if (!working) return true
   say('One answer at a time — wait for this one, or press Stop.')
   return false
@@ -2838,7 +2910,7 @@ function running(task: () => Promise<void>): void {
     })
     .finally(() => {
       working = false
-      button.disabled = false
+      button.disabled = modeChanging
       stop.hidden = true
       prompt.hidden = true
       text.focus()
@@ -2847,6 +2919,7 @@ function running(task: () => Promise<void>): void {
 
 // What is in the box outlives a reload, which the shell does to every window once it has had
 // to start core again — the moment a message that could not be sent is waiting there to be.
+addEventListener('pagehide', () => modeFeedback.close())
 addEventListener('pagehide', () => sessionStorage.setItem('draft', text.value))
 text.value ||= sessionStorage.getItem('draft') ?? ''
 grow(text)
@@ -2959,6 +3032,7 @@ const rail = mountRail(document.querySelector<HTMLElement>('#rail')!, token, {
     settings.open(page, filter)
   },
   reload: () => read().then(paint),
+  hosts: () => compute?.hosts ?? [],
 })
 
 await load()
@@ -2970,7 +3044,7 @@ await rail.refresh()
 window.addEventListener('focus', () => {
   void read()
     .then((state) => {
-      for (const picker of modes) picker.value = state.setup.mode
+      void modeFeedback.sync(state)
       showPermission(state.permissions.mode)
     })
     .catch(() => undefined)

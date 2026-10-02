@@ -59,6 +59,49 @@ function core(): { panelReads: number } {
 
 afterEach(() => {
   vi.unstubAllGlobals()
+  vi.useRealTimers()
+})
+
+test('the local model block uses Settings auth and stops polling on tab change and view close', async () => {
+  vi.useFakeTimers()
+  document.body.innerHTML = body
+  document.body.dataset.view = 'settings'
+  const request = vi.fn(async (path: string, init?: RequestInit) => {
+    if (path === '/api/local-models') return {
+      ok: true,
+      json: async () => ({
+        machine: { summary: '16 GB RAM', freeDiskBytes: 50 * 1024 ** 3 }, runtime: { installed: true, version: '1', supported: true },
+        mode: 'combined', picks: {}, all: [], uncensored: [], installed: [],
+        jobs: [{ id: 'active', target: 'qwen:Q4_K_M', name: 'Qwen', step: 'download', message: 'Downloading', done: 1, total: 100, startedAt: Date.now() }],
+      }),
+    }
+    if (path.includes('/progress?')) return { ok: true, json: async () => ({ id: 'active', target: 'qwen:Q4_K_M', name: 'Qwen', step: 'download', message: 'Downloading', done: 5, total: 100, startedAt: Date.now() }) }
+    if (path === '/api/panels') return { ok: true, json: async () => ({ tabs: [] }) }
+    if (path === '/api/plugins') return { ok: true, json: async () => ({ panes: [], problems: [] }) }
+    void init
+    return { ok: true, json: async () => ({ ok: true, registry: 'https://registry.example', plugins: [], skills: [] }) }
+  })
+  vi.stubGlobal('fetch', request)
+  const settings = mountSettings('same-origin-token')
+  settings.open('models')
+  await flush()
+  expect(document.querySelector('#models-page .local-models')?.textContent).toContain('Local models')
+  expect(request).toHaveBeenCalledWith('/api/local-models', expect.objectContaining({
+    method: 'GET', headers: { 'content-type': 'application/json', 'x-alexia-token': 'same-origin-token' }, signal: expect.any(AbortSignal),
+  }))
+  const read = request.mock.calls.find(([path]) => path === '/api/local-models')![1]!
+  expect(read.body).toBeUndefined()
+  await vi.advanceTimersByTimeAsync(1000)
+  expect(request.mock.calls.some(([path]) => path === '/api/local-models/progress?job=active')).toBe(true)
+  document.querySelector<HTMLButtonElement>('[data-settings="general"]')!.click()
+  const before = request.mock.calls.filter(([path]) => path.includes('/progress?')).length
+  await vi.advanceTimersByTimeAsync(5000)
+  expect(request.mock.calls.filter(([path]) => path.includes('/progress?'))).toHaveLength(before)
+  settings.open('models')
+  await flush()
+  settings.close()
+  await vi.advanceTimersByTimeAsync(5000)
+  expect(request.mock.calls.filter(([path]) => path.includes('/progress?'))).toHaveLength(before)
 })
 
 test('the palette and the rail can name every Settings page, and no Activity tab', () => {

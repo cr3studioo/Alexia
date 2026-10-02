@@ -5,6 +5,7 @@ import { describe, expect, test } from 'vitest'
 import {
   ALEXIA_METHODS,
   COMMAND_META,
+  COMPUTE_META,
   ErrorCode,
   LENGTHS_META,
   PERMISSIONS,
@@ -40,7 +41,8 @@ describe('the specs and the code say the same thing', () => {
     // Some are not methods: one notification core sends down, and the `_meta` keys — the two
     // extension flags on a request (and a personality's lengths, D189), the two a plugin puts on
     // a progress notification, the one core puts on the progress it sends back while a plugin's
-    // answer is written, and a command's data on a result.
+    // answer is written, a command's data on a result, and the one on a tool that marks it as
+    // compute work.
     const known = [
       SETTINGS_CHANGED,
       PROVIDES_META,
@@ -50,6 +52,7 @@ describe('the specs and the code say the same thing', () => {
       STAGES_META,
       STREAM_META,
       COMMAND_META,
+      COMPUTE_META,
     ] as string[]
     const unknown = [...new Set(named)].filter((n) => !isAlexiaMethod(n) && !known.includes(n))
     expect(unknown, 'documented but not implemented').toEqual([])
