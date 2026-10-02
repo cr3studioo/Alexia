@@ -14,8 +14,12 @@
 
 name: test-installers
 
+# A push to this one branch builds them too: GitHub offers *Run workflow* only for workflows
+# already on the default branch, and this one is not there until the branch is merged.
 on:
   workflow_dispatch:
+  push:
+    branches: [cr3studioo/local-model-picker]
 
 permissions:
   contents: read
