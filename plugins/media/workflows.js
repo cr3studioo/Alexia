@@ -281,6 +281,9 @@ function shape(spec, input) {
  * A titled node with nothing but links under it — a display, a preview — has no knob and is
  * skipped, which is what keeps *"Final prompt (fixed tags + generated)"* out of the schema.
  */
+/** The nodes whose `image` input is a picture to upload. ComfyUI's own loader, and only it. */
+export const PICTURE_LOADERS = new Set(['LoadImage'])
+
 export function knobs(graph, classes) {
   const found = []
   for (const [node, one] of Object.entries(graph ?? {})) {
@@ -288,7 +291,12 @@ export function knobs(graph, classes) {
     if (!titled(one, spec)) continue
     for (const [input, value] of Object.entries(one?.inputs ?? {})) {
       if (linked(value)) continue
-      found.push({ node, input, title: String(one._meta.title).trim(), value, ...shape(spec, input) })
+      // **A titled picture loader takes a picture, not a filename.** Its combo lists what is in
+      // the input folder of whichever ComfyUI answered, which is the wrong computer half the
+      // time and never the file somebody attached. So it is a field of its own kind, filled
+      // with a path here and uploaded by the computer that renders (`render.js`).
+      const picture = PICTURE_LOADERS.has(String(one.class_type)) && input === 'image'
+      found.push({ node, input, title: String(one._meta.title).trim(), value, ...(picture ? { type: 'image' } : shape(spec, input)) })
     }
   }
   return named(found)
@@ -419,6 +427,9 @@ export function apply(graph, found, values) {
   const built = structuredClone(graph)
   for (const knob of found) {
     if (!Object.hasOwn(values ?? {}, knob.field)) continue
+    // A picture is a path on the planning computer and means nothing to a graph until it has
+    // been uploaded where the graph runs. `pictures` carries it there instead.
+    if (knob.type === 'image') continue
     built[knob.node].inputs[knob.input] = coerce(values[knob.field], knob.type)
   }
   return built
@@ -442,3 +453,94 @@ export function reseed(graph, seed) {
   }
   return built
 }
+
+/**
+ * Which field does what a plain request asks for.
+ *
+ * `generate` speaks in a fixed vocabulary — a description, what to avoid, a size, a model, a
+ * number of steps, a picture to start from — and a saved workflow speaks in its author's. The
+ * join is made on what the graph *is* rather than on what anybody called it: the description is
+ * whatever box {@link wired} finds feeding the sampler's positive side, and the rest are the
+ * inputs ComfyUI itself names `width`, `ckpt_name`, `steps`, `denoise`. A titled field is used
+ * where one sits on that input; where none does, the input is set directly, because the
+ * description has to land somewhere for the workflow to be worth running at all.
+ *
+ * A role with more than one candidate is left out, for the reason `wired` gives: two boxes
+ * called `width` and no way to say which one is the picture's.
+ */
+export function roles(graph, classes, found = knobs(graph, classes)) {
+  const derived = wired(graph, classes)
+  const titledOn = (knob) => found.find((one) => one.node === knob.node && one.input === knob.input) ?? knob
+  const only = (inputs) => {
+    const hits = found.filter((one) => inputs.includes(one.input) && one.type !== 'image')
+    return hits.length === 1 ? hits[0] : undefined
+  }
+  const take = (field) => derived.find((one) => one.field === field)
+  const prompt = take('prompt')
+  const avoid = take('avoid')
+  const model = only(['ckpt_name']) ?? found.find((one) => one.field === 'model') ?? take('model')
+  const change = found.find((one) => one.field === 'how_much_to_change') ?? only(['denoise'])
+  return Object.fromEntries(
+    Object.entries({
+      prompt: prompt && titledOn(prompt),
+      negative: avoid && titledOn(avoid),
+      width: only(['width']),
+      height: only(['height']),
+      model: model && titledOn(model),
+      steps: only(['steps']),
+      change,
+    }).filter(([, knob]) => knob !== undefined),
+  )
+}
+
+/**
+ * Which picture goes on which loader.
+ *
+ * A picture named in `values` goes where it was named. The rest of `images` fill the loaders
+ * nothing named, in the order the workflow lists them — so *use this photo* on a workflow with
+ * one loader needs no field name at all. A picture with nowhere to go is handed back rather
+ * than dropped, so the answer can say it was not used.
+ */
+export function pictures(found, values = {}, images = []) {
+  const loaders = found.filter((one) => one.type === 'image')
+  const bound = []
+  for (const knob of loaders) {
+    if (Object.hasOwn(values ?? {}, knob.field) && String(values[knob.field] ?? '').trim() !== '') {
+      bound.push({ node: knob.node, input: knob.input, field: knob.field, path: String(values[knob.field]) })
+    }
+  }
+  const left = [...images].map(String).filter((one) => one.trim() !== '')
+  for (const knob of loaders) {
+    if (bound.some((one) => one.node === knob.node) || left.length === 0) continue
+    bound.push({ node: knob.node, input: knob.input, field: knob.field, path: left.shift() })
+  }
+  return { bound, unused: left }
+}
+
+/** One value as it reads in a sentence: long text is cut, since the whole of it is in the graph. */
+const shown = (value) => {
+  const text = typeof value === 'string' ? JSON.stringify(value.length > 300 ? `${value.slice(0, 300)}…` : value) : String(value)
+  return text
+}
+
+/**
+ * The fields of a graph as it is about to run, read back off the graph itself.
+ *
+ * **Read back, not remembered.** What was asked for, what was kept from last time and what the
+ * export carried all end up in one place, the built graph, and that is the only list that is
+ * true about the picture. A picture field is shown as the file it came from, because the name
+ * ComfyUI gives an upload means nothing to anybody.
+ */
+export function used(found, built, { pictures: placed = [] } = {}) {
+  return found.map((knob) => {
+    const picture = knob.type === 'image' ? placed.find((one) => one.node === knob.node) : undefined
+    return { field: knob.field, value: picture ? picture.path : built?.[knob.node]?.inputs?.[knob.input] }
+  })
+}
+
+/** `field = value; …`, the way a tool result says what it ran with. */
+export const told = (values) =>
+  values
+    .filter((one) => one.value !== undefined)
+    .map((one) => `${one.field} = ${shown(one.value)}${one.kept ? ' (kept from before)' : ''}`)
+    .join('; ')

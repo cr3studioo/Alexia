@@ -4,6 +4,7 @@ import { writeFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import * as comfyui from './comfy.js'
 import { note } from './compute.js'
+import { bytesOf } from './inputs.js'
 import { tight } from './sizing.js'
 import { api as starterGraph } from './starter.js'
 import { isApi, missing } from './workflows.js'
@@ -69,6 +70,27 @@ export function renderer({ own, connect, comfy = comfyui, now = Date.now }) {
     const at = await connect({ here, signal, report })
     const { server } = at
 
+    /**
+     * Every picture this job was given, uploaded to the ComfyUI about to render it.
+     *
+     * The path is one this computer can read: the person's own file when the planner is here,
+     * and core's staged copy when the job came from another computer. Either way the bytes go to
+     * ComfyUI over its own upload, so a ComfyUI on another port, or one that is not this
+     * process's at all, never has to be able to see the folder they came from.
+     */
+    const uploaded = []
+    const place = async (path) => {
+      let picture
+      try {
+        picture = bytesOf(path)
+      } catch (error) {
+        throw new Error(`The picture to start from could not be read on this computer: ${String(error?.message ?? error)}`, { cause: error })
+      }
+      const up = await comfy.upload(server, picture, signal)
+      uploaded.push(up)
+      return up.name
+    }
+
     let built
     let said = { here }
     let expect = 'image'
@@ -76,6 +98,9 @@ export function renderer({ own, connect, comfy = comfyui, now = Date.now }) {
       built = plan.graph
       const called = String(plan.name ?? 'That workflow')
       if (!isApi(built)) throw new Error(`${called} is not a graph ComfyUI can queue.`)
+      for (const one of Array.isArray(plan.images) ? plan.images : []) {
+        if (!built[one?.node]?.inputs) throw new Error(`${called} has no node ${String(one?.node)} to put a picture on.`)
+      }
       // Asked again here, whatever the planner found: the nodes that matter are the ones on
       // the machine that is about to run it, and a graph naming one it lacks is a 400 whose
       // body nobody reads.
@@ -87,6 +112,11 @@ export function renderer({ own, connect, comfy = comfyui, now = Date.now }) {
         )
       }
       expect = 'output'
+      // Checked first and placed second, so a workflow that cannot run never costs an upload.
+      if (Array.isArray(plan.images) && plan.images.length > 0) {
+        built = structuredClone(built)
+        for (const one of plan.images) built[one.node].inputs[one.input ?? 'image'] = await place(one.path)
+      }
     } else {
       const available = await comfy.checkpoints(server, signal)
       if (available.length === 0) throw new Error('ComfyUI is running but has no checkpoint installed.')
@@ -100,9 +130,17 @@ export function renderer({ own, connect, comfy = comfyui, now = Date.now }) {
       // of them that is a coin toss: a request for an anime picture answered by a photographic
       // model is the plugin working perfectly and getting it wrong. A name in the call is how
       // the asker says which.
-      const checkpoint = comfy.pick(available, plan?.model) ?? comfy.pick(available, plan?.preferred) ?? available[0]
+      //
+      // **The one used last time sits between the two, and is only ever a preference.** It was
+      // true of whichever computer rendered last, which need not be this one — so a remembered
+      // name that is not here is said and stepped past, never refused like a name in the call.
+      const remembered = comfy.pick(available, plan?.remembered)
+      const checkpoint = comfy.pick(available, plan?.model) ?? remembered ?? comfy.pick(available, plan?.preferred) ?? available[0]
+      const forgotten = plan?.remembered && !plan?.model && !remembered ? String(plan.remembered) : undefined
       const room = await free(server, signal, comfy)
       const warning = room === undefined ? undefined : tight({ width: plan.width, height: plan.height }, room)
+      const spec = await at.classes(signal).catch(() => ({}))
+      const start = Array.isArray(plan?.images) ? plan.images.find(Boolean) : undefined
       // **The same workflow the person can open**, rather than a second pipeline built in code.
       built = starterGraph({
         prompt: String(plan.prompt ?? ''),
@@ -113,39 +151,52 @@ export function renderer({ own, connect, comfy = comfyui, now = Date.now }) {
         height: plan.height,
         seed: plan.seed,
         fp32: plan.fp32 !== false,
-        display: named_of(await at.classes(signal).catch(() => ({}))),
+        display: named_of(spec),
+        ...(start && {
+          image: await place(start),
+          ...(Number.isFinite(Number(plan.change)) && { change: Number(plan.change) }),
+          aspect: plan.aspect === true,
+          primitive: 'PrimitiveFloat' in spec,
+        }),
       })
-      said = { ...said, checkpoint, ...(warning && { warning }) }
+      said = { ...said, checkpoint, ...(warning && { warning }), ...(forgotten && { forgotten }) }
     }
 
-    const id = await comfy.queue(server, built, signal)
     let found
-    try {
-      found = await comfy.wait(server, id, {
-        signal,
-        expect,
-        label: naming(built),
-        // The pipeline, worked out from the graph rather than waited for: ComfyUI only names a
-        // node once it has started, and a strip that grew as it went would draw the reporting.
-        stages: comfy.order(built),
-        onProgress: report,
-      })
-    } catch (error) {
-      // The signal reaches the fetch and ends the poll; the job would carry on rendering, on a
-      // graphics card nobody is waiting for. Made without the signal, because the signal is the
-      // thing that just aborted — and for this job only, because the queue may hold somebody
-      // else's.
-      if (signal?.aborted) await comfy.cancel(server, id).catch(() => {})
-      throw error
-    }
-
     const files = []
-    for (const one of found.files) {
-      const bytes = await comfy.download(server, one, signal)
-      const to = join(dir, `${now()}-${basename(one.filename)}`)
-      writeFileSync(to, Buffer.from(bytes))
-      files.push(to)
-      await at.tidy?.(one)
+    try {
+      const id = await comfy.queue(server, built, signal)
+      try {
+        found = await comfy.wait(server, id, {
+          signal,
+          expect,
+          label: naming(built),
+          // The pipeline, worked out from the graph rather than waited for: ComfyUI only names a
+          // node once it has started, and a strip that grew as it went would draw the reporting.
+          stages: comfy.order(built),
+          onProgress: report,
+        })
+      } catch (error) {
+        // The signal reaches the fetch and ends the poll; the job would carry on rendering, on a
+        // graphics card nobody is waiting for. Made without the signal, because the signal is the
+        // thing that just aborted — and for this job only, because the queue may hold somebody
+        // else's.
+        if (signal?.aborted) await comfy.cancel(server, id).catch(() => {})
+        throw error
+      }
+
+      for (const one of found.files) {
+        const bytes = await comfy.download(server, one, signal)
+        const to = join(dir, `${now()}-${basename(one.filename)}`)
+        writeFileSync(to, Buffer.from(bytes))
+        files.push(to)
+        await at.tidy?.(one)
+      }
+    } finally {
+      // A worker keeps nothing it was lent, whether or not the job finished. On the person's own
+      // ComfyUI `tidy` is not offered, and an upload there stays among their inputs like any
+      // picture they loaded themselves.
+      for (const one of uploaded) await at.tidy?.(one)
     }
     return { text: note({ ...said, ...(found.text.length > 0 && { text: found.text }) }), files }
   }

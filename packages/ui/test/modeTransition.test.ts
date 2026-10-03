@@ -105,3 +105,17 @@ test('a model on a paired computer is said with its host, how it is reached and 
   expect(f.failed).not.toHaveBeenCalled()
   expect(f.mode).toHaveBeenLastCalledWith('cloud')
 })
+
+test('an offline transition hands its named alternative to the picker without requesting a switch', async () => {
+  const f = fixture()
+  const target = { hostId: 'studio0001', modelId: 'llama/remote' }
+  const alternative = { id: 'llama/local', name: 'Local Qwen' }
+  const offline = state('failed', { picker: true, target, alternative,
+    targetStatus: { target, phase: 'offline', connection: 'offline', message: 'Unreachable.' } })
+  await f.controller.observe(offline)
+  expect(f.picker).toHaveBeenCalledExactlyOnceWith(targetLine(offline.modeTransition!, () => 'Studio'), alternative)
+  expect(f.mode).toHaveBeenLastCalledWith('cloud')
+  expect(f.read).not.toHaveBeenCalled()
+  await f.controller.observe(offline)
+  expect(f.picker).toHaveBeenCalledOnce()
+})

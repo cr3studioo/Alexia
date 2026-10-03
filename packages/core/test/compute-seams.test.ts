@@ -218,8 +218,8 @@ test('choosing a paired computerâ€™s model remembers the target; this computerâ€
 const GB = 1024 ** 3
 const machine = (): Machine => ({ platform: 'darwin', arch: 'arm64', appleSilicon: true, chip: 'Test', ramBytes: 32 * GB, freeDiskBytes: 20 * GB, budgetBytes: 16 * GB })
 const cleanups: (() => Promise<void>)[] = []
-afterEach(async () => { for (const cleanup of cleanups.splice(0)) await cleanup() })
-function fixture(options: { remote?: false; hostName?: boolean } = {}) {
+afterEach(async () => { for (const cleanup of cleanups.splice(0)) await cleanup(); vi.useRealTimers() })
+function fixture(options: { remote?: false; hostName?: boolean; reachabilityMs?: number } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'alexia-seams-'))
   const store = new Store(join(root, 'alexia.db'))
   store.kvSet(CORE, 'mode', 'cloud')
@@ -238,11 +238,14 @@ function fixture(options: { remote?: false; hostName?: boolean } = {}) {
     return { id: target.modelId, name: 'Model X' }
   })
   const deselect = vi.fn(async () => { order.push('deselect') })
+  const ensure = vi.fn(async (_hostId: string, signal: AbortSignal) => { signal.throwIfAborted() })
   const probe = vi.fn(async () => machine())
+  const available = vi.fn(() => true)
   const external = vi.fn(async () => undefined)
   const controller = new ModeTransitions({
-    store, dataDir: root, runners, busy: () => false, machine: probe, available: () => true, external,
-    ...(options.remote !== false && { remote: { select, deselect, ...(options.hostName && { hostName: () => 'Workstation' }) } }),
+    store, dataDir: root, runners, busy: () => false, machine: probe, available, external,
+    reachabilityMs: options.reachabilityMs,
+    ...(options.remote !== false && { remote: { select, deselect, ensure, ...(options.hostName && { hostName: () => 'Workstation' }) } }),
   })
   cleanups.push(async () => { await controller.close(); store.close(); rmSync(root, { recursive: true, force: true }) })
   const install = (name: string): Installed => {
@@ -252,7 +255,7 @@ function fixture(options: { remote?: false; hostName?: boolean } = {}) {
     remember(root, one)
     return one
   }
-  return { store, runners, select, deselect, probe, external, controller, install, order, load: (model: string) => { loaded = { model, baseUrl: 'http://127.0.0.1:1/v1', since: Date.now() } } }
+  return { root, store, runners, select, deselect, ensure, probe, available, external, controller, install, order, load: (model: string) => { loaded = { model, baseUrl: 'http://127.0.0.1:1/v1', since: Date.now() } } }
 }
 const settle = async (controller: ModeTransitions) => {
   await vi.waitFor(() => expect(controller.pending()).toBe(false))
@@ -322,8 +325,9 @@ test.each([
   expect(f.controller.status()?.selectedModel).toBeUndefined()
   expect(f.runners.ensure).not.toHaveBeenCalled()
   expect(f.runners.loaded()).toBeUndefined()
-  // The search for a model on this computer never began.
-  expect(f.probe).not.toHaveBeenCalled()
+  // Only offline gets an offer; every other reason preserves the existing picker behaviour.
+  expect(f.probe).toHaveBeenCalledTimes(code === 'offline' ? 1 : 0)
+  expect(f.controller.status()?.alternative).toEqual(code === 'offline' ? { id: 'llama/other', name: 'other' } : undefined)
   expect(f.external).not.toHaveBeenCalled()
   expect(f.select).toHaveBeenCalledOnce()
   expect(f.store.kvGet(CORE, 'mode')).toBe('cloud')
@@ -384,6 +388,130 @@ test('choosing a model on this computer leaves the paired one', async () => {
   expect(f.order).toEqual(['stop', 'deselect', 'ensure'])
   expect(pins(f.store).model).toBe('llama/x')
   expect(selectedTarget(f.store)).toEqual({ hostId: 'this', modelId: 'llama/x' })
+})
+
+test('a saved paired target that does not answer the connection check fails at the injected deadline with a local offer', async () => {
+  const f = fixture({ reachabilityMs: 25 })
+  const local = f.install('remembered')
+  f.install('newer')
+  setPin(f.store, { model: local.id })
+  f.store.kvSet(CORE, TARGET_KEY, TARGET)
+  const before = pins(f.store)
+  let signal!: AbortSignal
+  f.ensure.mockImplementationOnce(async (_host, s) => { signal = s; await new Promise<void>(() => {}) })
+  vi.useFakeTimers()
+  f.controller.request('local')
+  await vi.advanceTimersByTimeAsync(24)
+  expect(f.ensure).toHaveBeenCalledExactlyOnceWith(TARGET.hostId, expect.any(AbortSignal))
+  expect(f.controller.status()?.phase).toBe('loading')
+  expect(f.select).not.toHaveBeenCalled()
+  await vi.advanceTimersByTimeAsync(1)
+  expect(f.controller.status()).toMatchObject({ phase: 'failed', picker: true, target: TARGET,
+    targetStatus: { phase: 'offline', connection: 'offline' }, alternative: { id: local.id, name: local.name } })
+  expect(signal.aborted).toBe(true)
+  expect(f.runners.ensure).not.toHaveBeenCalled()
+  expect(pins(f.store)).toEqual(before)
+  expect(selectedTarget(f.store)).toEqual(TARGET)
+  expect(f.store.kvGet(CORE, 'mode')).toBe('cloud')
+})
+
+test('a reachable computer may prepare its remembered model longer than the connection deadline', async () => {
+  const f = fixture({ reachabilityMs: 25 })
+  f.store.kvSet(CORE, TARGET_KEY, TARGET)
+  let finish!: () => void
+  f.select.mockImplementationOnce(async (target, signal) => {
+    await new Promise<void>((resolve) => { finish = resolve })
+    signal.throwIfAborted()
+    return { id: target.modelId, name: 'Last Remote' }
+  })
+  vi.useFakeTimers()
+  f.controller.request('local')
+  await vi.advanceTimersByTimeAsync(1000)
+  expect(f.controller.status()?.phase).toBe('loading')
+  expect(f.controller.status()?.alternative).toBeUndefined()
+  finish()
+  await vi.advanceTimersByTimeAsync(0)
+  expect(f.controller.status()).toMatchObject({ phase: 'ready', target: TARGET, selectedModel: { name: 'Last Remote' } })
+})
+
+test('an offline offer never restores a pairing that was removed before the press', async () => {
+  const f = fixture()
+  const local = f.install('local')
+  f.store.kvSet(CORE, TARGET_KEY, TARGET)
+  f.ensure.mockRejectedValueOnce(new ComputeError('offline', 'That computer is offline.'))
+  f.controller.request('local')
+  expect(await settle(f.controller)).toMatchObject({ alternative: { id: local.id } })
+  f.store.kvSet(CORE, TARGET_KEY, null)
+  f.controller.request('local', local.id)
+  expect((await settle(f.controller)).phase).toBe('ready')
+  expect(selectedTarget(f.store)).toEqual({ hostId: 'this', modelId: local.id })
+})
+
+test.each(['missing', 'unchecked', 'unsupported', 'too-big', 'free-memory'] as const)('an offline host has no offer when the only model here is %s', async (reason) => {
+  const f = fixture()
+  const local = f.install('local')
+  if (reason === 'missing') rmSync(local.files[0]!)
+  if (reason === 'unchecked') remember(f.root, { ...local, ready: false })
+  if (reason === 'unsupported') f.available.mockReturnValue(false)
+  if (reason === 'too-big') remember(f.root, { ...local, bytes: 100 * GB })
+  if (reason === 'free-memory') f.probe.mockResolvedValue({ ...machine(), budgetBytes: 0 })
+  f.ensure.mockRejectedValueOnce(new ComputeError('offline', 'That computer is offline.'))
+  f.controller.request('local', qualify(TARGET))
+  expect(await settle(f.controller)).toMatchObject({ phase: 'failed', picker: true, targetStatus: { phase: 'offline' } })
+  expect(f.controller.status()?.alternative).toBeUndefined()
+  expect(f.select).not.toHaveBeenCalled()
+  expect(f.runners.ensure).not.toHaveBeenCalled()
+})
+
+test.each(['setup-required', 'unpaired'] as const)('a %s connection failure has no alternative even with a usable local model', async (code) => {
+  const f = fixture()
+  f.install('local')
+  f.ensure.mockRejectedValueOnce(new ComputeError(code, `Cannot connect: ${code}.`))
+  f.controller.request('local', qualify(TARGET))
+  expect(await settle(f.controller)).toMatchObject({ phase: 'failed', picker: true,
+    targetStatus: { phase: code === 'setup-required' ? 'setup-required' : 'offline', message: `Cannot connect: ${code}.` } })
+  expect(f.controller.status()?.alternative).toBeUndefined()
+  expect(f.probe).not.toHaveBeenCalled()
+  expect(f.select).not.toHaveBeenCalled()
+})
+
+test('pressing an offline offer uses that explicit local model without replacing the remembered paired target', async () => {
+  const f = fixture()
+  const local = f.install('last-local')
+  f.install('other')
+  setPin(f.store, { model: local.id })
+  f.store.kvSet(CORE, TARGET_KEY, TARGET)
+  f.ensure.mockRejectedValueOnce(new ComputeError('offline', 'That computer is offline.'))
+  f.controller.request('local')
+  expect(await settle(f.controller)).toMatchObject({ phase: 'failed', alternative: { id: local.id } })
+  expect(f.runners.ensure).not.toHaveBeenCalled()
+  f.controller.request('local', local.id)
+  expect(await settle(f.controller)).toMatchObject({ phase: 'ready', target: { hostId: 'this', modelId: local.id }, selectedModel: { id: local.id } })
+  expect(f.runners.ensure).toHaveBeenCalledExactlyOnceWith(local.id, expect.any(AbortSignal), { download: false })
+  expect(pins(f.store).model).toBe(local.id)
+  expect(selectedTarget(f.store)).toEqual(TARGET)
+  // Being reachable again does nothing to a model already chosen here.
+  expect(f.select).not.toHaveBeenCalled()
+  f.controller.request('combined')
+  await settle(f.controller)
+  f.controller.request('local')
+  expect(await settle(f.controller)).toMatchObject({ phase: 'ready', target: TARGET, selectedModel: { id: qualify(TARGET) } })
+  expect(f.select).toHaveBeenCalledExactlyOnceWith(TARGET, expect.any(AbortSignal), expect.any(Function))
+})
+
+test('starting in saved Local mode reconnects to the last paired computer and its model', async () => {
+  const f = fixture()
+  f.install('local')
+  f.store.kvSet(CORE, TARGET_KEY, TARGET)
+  f.store.kvSet(CORE, 'mode', 'local')
+  const restarted = new ModeTransitions({ store: f.store, dataDir: f.root, runners: f.runners, busy: () => false,
+    machine: f.probe, available: () => true, remote: { ensure: f.ensure, select: f.select, deselect: f.deselect } })
+  try {
+    expect(await settle(restarted)).toMatchObject({ phase: 'ready', target: TARGET, selectedModel: { id: qualify(TARGET) } })
+    expect(f.ensure).toHaveBeenCalledExactlyOnceWith(TARGET.hostId, expect.any(AbortSignal))
+    expect(f.select).toHaveBeenCalledExactlyOnceWith(TARGET, expect.any(AbortSignal), expect.any(Function))
+    expect(f.runners.ensure).not.toHaveBeenCalled()
+  } finally { await restarted.close() }
 })
 
 test('an unpaired target opens the picker, and does not pick another model', async () => {

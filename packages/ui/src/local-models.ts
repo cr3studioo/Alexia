@@ -85,11 +85,12 @@ interface Repo { repo: string; revision: string; licence?: string; gated: boolea
 
 /** Supplied by the screen's existing same-origin, token-authenticated helper. */
 export type LocalRequest = (path: string, body: unknown, options?: { method?: 'GET' | 'POST' | 'DELETE'; signal?: AbortSignal }) => Promise<unknown>
+export interface LocalAlternative { id: string; name: string }
 export interface LocalModelsView {
   open(): void
   close(): void
   refresh(): Promise<void>
-  explain(message: string): void
+  explain(message: string, alternative?: LocalAlternative): void
 }
 /**
  * A paired computer whose models this view shows instead of this one's. Every request then
@@ -942,10 +943,22 @@ export function mountLocalModels(root: HTMLElement, options: Options): LocalMode
   return {
     close,
     refresh,
-    explain: (message) => {
+    explain: (message, alternative) => {
       root.querySelector('.local-explanation')?.remove()
       const line = el('p', 'hint local-explanation', message)
       line.setAttribute('role', 'status')
+      if (alternative && options.selection !== false) {
+        const choose = button(`Use this computer's ${alternative.name} instead`, () => void action(choose, async () => {
+          const mine = generation
+          // An explicit local id goes to this computer; the paired host stays remembered by core.
+          await requestAt(`${BASE}/use`, { id: alternative.id, mode: 'local' }, 'POST')
+          if (!active || mine !== generation) return
+          line.remove()
+          options.changed?.()
+        }))
+        choose.dataset.mutate = 'true'
+        line.append(document.createElement('br'), choose)
+      }
       root.querySelector('.local-model-head')?.after(line)
     },
     open: () => {

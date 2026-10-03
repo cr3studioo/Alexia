@@ -2664,7 +2664,7 @@ const modeFeedback = mountModeTransition({
   mode: (value) => { for (const picker of modes) picker.value = value },
   blocked: (pending) => { modeChanging = pending; button.disabled = working || pending },
   refresh: async () => { await rail.refresh(); if (document.body.dataset.view === 'settings') settings.redrawModels() },
-  picker: (message) => { show('settings'); settings.open('models'); settings.localMessage(message) },
+  picker: (message, alternative) => { show('settings'); settings.open('models'); settings.localMessage(message, alternative) },
   failed: (message) => bubble('refusal', message),
   hostName: (id) => compute?.hosts.find((view) => view.host.id === id)?.host.name,
 })

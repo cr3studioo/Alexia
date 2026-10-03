@@ -6,6 +6,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, expect, test, vi } from 'vitest'
 import { pins, setPin } from '../src/commands.js'
+import { HOSTS_KEY } from '../src/compute/hosts.js'
+import { selectedTarget, TARGET_KEY } from '../src/compute/target.js'
+import type { PairedHost } from '../src/compute/types.js'
 import { remember, type Installed } from '../src/installed.js'
 import { LLAMA } from '../src/llama.js'
 import { LocalRunners, type ManagedRunner } from '../src/localRunners.js'
@@ -109,4 +112,30 @@ test('API load errors preserve mode and pins; no usable model asks for the picke
   remember(root, { ...one, ready: false })
   await request('/api/command', { input: '/local' })
   expect(await settled()).toMatchObject({ setup: { mode: 'combined' }, pins: { model: 'previous' }, modeTransition: { phase: 'failed', picker: true } })
+})
+
+test('the explicit offline offer route activates this computer and preserves the paired target for the next Local entry', async () => {
+  remember(root, one)
+  const host: PairedHost = { id: 'studio0000aa', name: 'Studio', endpointId: 'a'.repeat(64), peerRole: 'compute', pairedAt: 1 }
+  const target = { hostId: host.id, modelId: 'llama/last-remote' }
+  alexia.store.kvSet(CORE, HOSTS_KEY, [host])
+  alexia.store.kvSet(CORE, TARGET_KEY, target)
+  alexia.store.kvSet(CORE, 'last_local_model', one.id)
+  await request('/api/command', { input: '/local' })
+  expect(await settled()).toMatchObject({ setup: { mode: 'combined' }, modeTransition: { phase: 'failed', picker: true, target,
+    targetStatus: { phase: 'offline', connection: 'offline' }, alternative: { id: one.id, name: one.name } } })
+  expect(selectedTarget(alexia.store)).toEqual(target)
+  const use = await request('/api/local-models/use', { id: one.id, mode: 'local' })
+  expect(use.status).toBe(200)
+  expect(await settled()).toMatchObject({ setup: { mode: 'local' }, pins: { model: one.id },
+    modeTransition: { phase: 'ready', target: { hostId: 'this', modelId: one.id } } })
+  expect(selectedTarget(alexia.store)).toEqual(target)
+  expect(alexia.store.kvGet(CORE, 'last_local_model')).toBe(one.id)
+  await request('/api/command', { input: '/cloud' })
+  await settled()
+  await request('/api/command', { input: '/local' })
+  expect(await settled()).toMatchObject({ setup: { mode: 'cloud' }, modeTransition: { phase: 'failed', target,
+    targetStatus: { phase: 'offline' }, alternative: { id: one.id } } })
+  expect(selectedTarget(alexia.store)).toEqual(target)
+  expect(runners.loaded()).toBeUndefined()
 })

@@ -27,13 +27,16 @@ export const round64 = (n) => Math.max(256, Math.min(2048, Math.round(Number(n) 
  * the only way that sentence can mean what it says — and anything named in the new call still
  * wins over it, because naming a thing is how you say you meant it.
  */
-export function measure({ width, height, seed, again } = {}, last = {}) {
+export function measure({ width, height, seed, again } = {}, last = {}, kept = {}) {
   const before = again === true ? (last ?? {}) : {}
   const asked = Number.isFinite(Number(seed))
   const carried = Number.isFinite(Number(before.seed))
+  // `kept` is what the person set on an earlier picture and has not taken back — *make it
+  // wider* said once. It sits under *again*, which is the last picture exactly, and over the
+  // default. The seed is never kept: that would be every picture the same.
   return {
-    width: round64(width ?? before.width ?? 768),
-    height: round64(height ?? before.height ?? 768),
+    width: round64(width ?? before.width ?? kept?.width ?? 768),
+    height: round64(height ?? before.height ?? kept?.height ?? 768),
     seed:
       asked ? Number(seed)
       : carried ? Number(before.seed)

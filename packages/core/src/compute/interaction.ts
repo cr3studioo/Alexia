@@ -55,7 +55,7 @@ export interface InteractionCompute {
   api: ComputeApi
   provider: Provider                     // remoteProvider(bridge)
   models(): Model[]                      // remoteModels(controller.views(), selectedHost(store))
-  remote: Pick<Bridge, 'select' | 'deselect' | 'status'> & { hostName(hostId: string): string | undefined }
+  remote: Pick<Bridge, 'select' | 'deselect' | 'status'> & Pick<Controller, 'ensure' | 'views'> & { hostName(hostId: string): string | undefined }
   operations: Operations
   /** `PluginsOptions.compute`: one of the calling plugin's operations, run where the person chose. */
   run: NonNullable<PluginsOptions['compute']>
@@ -228,6 +228,11 @@ export async function interactionCompute(options: InteractionOptions): Promise<I
     provider: { ...REMOTE, prepare: async (model, signal) => { await settled; return live.bridge.prepare(parseCatalogId(model), signal) } },
     models: () => remoteModels(live.controller.views(), selectedHost(store)),
     remote: {
+      ensure: async (hostId, signal) => {
+        await settled
+        try { await live.controller.ensure(hostId, signal) } catch (error) { throw clean(error) }
+      },
+      views: () => live.controller.views(),
       select: async (target: ExecutionTarget, signal: AbortSignal, onStatus?: (status: TargetStatus) => void) => {
         await settled
         try { return await live.bridge.select(target, signal, onStatus && ((status) => { onStatus(said(status)) })) }

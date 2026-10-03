@@ -853,6 +853,41 @@ test('a chosen host that is offline shows that sentence where its models would b
   expect(local().textContent).toContain('RTX 4090 · 64 GB RAM')
 })
 
+test('the offline picker draws one named local offer, and pressing it requests Local here without selecting a host', async () => {
+  const state = core({ hosts: [view(STUDIO, 'Studio', { connection: 'offline', failure: failed('offline') })], selected: STUDIO,
+    refused: { [STUDIO]: 'offline' }, inventories: { [STUDIO]: { connection: 'offline', failure: failed('offline') } } })
+  const { mounted, local } = settings()
+  const sentence = stateSentence('offline', 'Studio')!
+  const alternative = { id: 'llama/last-local', name: 'Last Local Qwen' }
+  mounted.localMessage(sentence, alternative)
+  await flush()
+  mounted.localMessage(sentence, alternative)
+  await flush()
+  const offers = [...local().querySelectorAll<HTMLButtonElement>('button')].filter((one) => one.textContent?.startsWith('Use this computer'))
+  expect(offers).toHaveLength(1)
+  expect(offers[0]!.textContent).toBe("Use this computer's Last Local Qwen instead")
+  expect(local().textContent).toContain(sentence)
+  mounted.redrawModels()
+  await flush()
+  expect(button(local(), "Use this computer's Last Local Qwen instead")).toBe(offers[0])
+  expect(sent(state, 'POST', '/api/local-models/use')).toHaveLength(0)
+  offers[0]!.click()
+  offers[0]!.click()
+  await flush()
+  expect(sent(state, 'POST', '/api/local-models/use').map((call) => call.body)).toEqual([{ id: alternative.id, mode: 'local' }])
+  expect(sent(state, 'POST', '/api/compute/select')).toHaveLength(0)
+  expect(state.selected).toBe(STUDIO)
+  expect(local().querySelector('.local-explanation')).toBeNull()
+  // A returning host only updates its inventory; the model remains the person's explicit choice.
+  state.refused = {}
+  state.hosts = [view(STUDIO, 'Studio')]
+  state.overviews[STUDIO] = overview('RTX 4090 · 64 GB RAM')
+  state.inventories[STUDIO] = { connection: 'direct', inventory: inventory() }
+  await vi.advanceTimersByTimeAsync(5000)
+  expect(sent(state, 'POST', '/api/local-models/use')).toHaveLength(1)
+  expect(sent(state, 'POST', '/api/compute/select')).toHaveLength(0)
+})
+
 test('each refusal code from a host’s models is drawn as that state’s sentence', async () => {
   for (const code of ['busy', 'incompatible-version', 'setup-required', 'worker-failure', 'unpaired'] as const) {
     const state = core({ hosts: [view(STUDIO, 'Studio')], selected: STUDIO, refused: { [STUDIO]: code }, inventories: { [STUDIO]: { connection: 'direct', failure: failed(code) } } })

@@ -109,15 +109,19 @@ export function dedicated({ storage, own, dir, avoid = async () => [], log = () 
         const at = await port()
         const output = folder('output')
         const temp = folder('temp')
+        const input = folder('input')
         await mkdir(output, { recursive: true })
         await mkdir(temp, { recursive: true })
+        await mkdir(input, { recursive: true })
         const fresh = await launch.start(from, {
           at,
           log: join(own(), 'comfyui-worker.log'),
           own: own(),
           // What it makes stays in Alexia's folder, so nothing a remote job rendered turns up
-          // among the person's own pictures.
-          args: ['--output-directory', output, '--temp-directory', temp],
+          // among the person's own pictures — and so does what it is lent: a picture another
+          // computer sent to start from is uploaded into the worker's own input folder rather
+          // than into the install's, where the person keeps theirs.
+          args: ['--output-directory', output, '--temp-directory', temp, '--input-directory', input],
         })
         mine = { pid: fresh.pid, port: at, dir: from, at: Date.now() }
         // Written down before the wait, so a plugin stopped mid-start still knows what it left
@@ -165,14 +169,16 @@ export function dedicated({ storage, own, dir, avoid = async () => [], log = () 
   }
 
   /**
-   * Remove one rendered file from the worker's own output folder, once its bytes are safe.
+   * Remove one rendered file from the worker's own output folder, once its bytes are safe — or
+   * one picture a job was lent, once the job is over.
    *
-   * ComfyUI has no call that deletes an output, and a worker that kept every picture it ever
-   * rendered for somebody else would be a disk filling up on a machine nobody is looking at.
-   * Only ever inside the worker's folder: a name that resolves outside it is left alone.
+   * ComfyUI has no call that deletes an output or an upload, and a worker that kept every
+   * picture it ever rendered or was sent by somebody else would be a disk filling up on a
+   * machine nobody is looking at. Only ever inside the worker's folder: a name that resolves
+   * outside it is left alone.
    */
   async function tidy({ filename, subfolder = '', type = 'output' } = {}) {
-    if (type !== 'output' && type !== 'temp') return
+    if (type !== 'output' && type !== 'temp' && type !== 'input') return
     const root = resolve(folder(type))
     const path = resolve(root, String(subfolder), String(filename))
     if (!path.startsWith(root + sep)) return

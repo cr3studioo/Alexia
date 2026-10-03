@@ -114,7 +114,63 @@ const PIPELINE = {
     inputs: [['images', 'IMAGE', [6, 0]]],
     outputs: [],
   },
+  // **The picture-to-picture path, present only when a picture is given.** Without one these
+  // four are not in the graph at all and the text-to-image pipeline above is exactly what it
+  // was: a loader with no picture in it is a 400, so they cannot simply sit there unused. With
+  // one, the picture replaces the empty canvas — scaled first, because a phone photo is twelve
+  // megapixels and SDXL wants one — and the sampler is told how far from it to wander.
+  8: {
+    type: 'LoadImage',
+    title: 'Picture to start from',
+    img2img: true,
+    pos: [40, 500],
+    size: [320, 320],
+    widgets: ['image'],
+    outputs: [
+      ['IMAGE', 'IMAGE'],
+      ['MASK', 'MASK'],
+    ],
+  },
+  9: {
+    type: 'ImageScale',
+    img2img: true,
+    pos: [400, 660],
+    size: [320, 130],
+    widgets: ['upscale_method', 'width', 'height', 'crop'],
+    inputs: [['image', 'IMAGE', [8, 0]]],
+    outputs: [['IMAGE', 'IMAGE']],
+  },
+  10: {
+    type: 'VAEEncode',
+    img2img: true,
+    pos: [760, 660],
+    size: [220, 60],
+    widgets: [],
+    inputs: [
+      ['pixels', 'IMAGE', [9, 0]],
+      ['vae', 'VAE', [1, 2]],
+    ],
+    outputs: [['LATENT', 'LATENT']],
+  },
+  // A node of its own so that it is a field of its own: titling the sampler instead would make
+  // every one of its six numbers a field, and the one that matters would be lost among them.
+  11: {
+    type: 'PrimitiveFloat',
+    title: 'How much to change',
+    img2img: true,
+    pos: [760, 760],
+    size: [260, 60],
+    widgets: ['value'],
+    outputs: [['FLOAT', 'FLOAT']],
+  },
 }
+
+/**
+ * How far a picture-to-picture render may wander from the picture it was given, from 0 (not at
+ * all) to 1 (as if there were no picture). 0.6 keeps the composition and redraws the rest,
+ * which is what *make this one look like a painting* means.
+ */
+export const CHANGE = 0.6
 
 /** What each widget holds, before anybody changes anything. */
 export const DEFAULTS = {
@@ -130,6 +186,10 @@ export const DEFAULTS = {
   scheduler: 'karras',
   denoise: 1,
   filename_prefix: 'alexia',
+  image: '',
+  upscale_method: 'lanczos',
+  crop: 'disabled',
+  value: CHANGE,
   tile_size: 512,
   overlap: 64,
   temporal_size: 64,
@@ -147,9 +207,14 @@ const linked = (value) => Array.isArray(value) && value.length === 2
  * Two nodes are declared for slot 6 and exactly one is ever in the graph — chosen here so that
  * the runnable rendering and the editable one can never disagree about which is wired in.
  */
-const shaped = (fp32) => {
+const shaped = (fp32, img2img = false) => {
   const { '6-tiled': tiled, ...rest } = PIPELINE
-  return fp32 ? { ...rest, 6: tiled } : rest
+  return Object.fromEntries(
+    Object.entries(fp32 ? { ...rest, 6: tiled } : rest).filter(([id, node]) =>
+      // The empty canvas and the picture are the two ways in, and exactly one is ever wired.
+      img2img ? id !== '4' : node.img2img !== true,
+    ),
+  )
 }
 
 /**
@@ -159,10 +224,26 @@ const shaped = (fp32) => {
  * is one and the class's display name where there is not — so the binding in `workflows.js` sees
  * exactly what it would see for a workflow a person exported by hand.
  */
-export function api({ checkpoint, prompt, negative, width, height, steps, seed, cfg, fp32 = true, display = {} } = {}) {
-  const chosen = { ckpt_name: checkpoint, width, height, steps, seed, cfg }
+export function api({
+  checkpoint,
+  prompt,
+  negative,
+  width,
+  height,
+  steps,
+  seed,
+  cfg,
+  fp32 = true,
+  display = {},
+  image,
+  change = CHANGE,
+  aspect = false,
+  primitive = true,
+} = {}) {
+  const img2img = typeof image === 'string' && image !== ''
+  const chosen = { ckpt_name: checkpoint, width, height, steps, seed, cfg, image, value: change }
   const built = {}
-  for (const [id, node] of Object.entries(shaped(fp32))) {
+  for (const [id, node] of Object.entries(shaped(fp32, img2img))) {
     const inputs = {}
     for (const name of node.widgets ?? []) {
       if (name === null) continue
@@ -172,6 +253,19 @@ export function api({ checkpoint, prompt, negative, width, height, steps, seed, 
     if (node.type === 'CLIPTextEncode') inputs.text = id === '2' ? (prompt ?? '') : (negative ?? '')
     for (const [name, , from] of node.inputs ?? []) inputs[name] = [String(from[0]), from[1]]
     built[id] = { class_type: node.type, inputs, _meta: { title: node.title ?? display[node.type] ?? node.type } }
+  }
+  if (img2img) {
+    built[5].inputs.latent_image = ['10', 0]
+    // `ImageScale` keeps the picture's own shape when one side is 0, which is what a picture
+    // somebody attached wants unless they asked for a size of their own.
+    if (aspect) built[9].inputs.width = 0
+    // `PrimitiveFloat` is a few releases old. Where the rendering ComfyUI lacks it, the number
+    // goes straight onto the sampler — the same picture, without the field.
+    if (primitive) built[5].inputs.denoise = ['11', 0]
+    else {
+      built[5].inputs.denoise = change
+      delete built[11]
+    }
   }
   return built
 }

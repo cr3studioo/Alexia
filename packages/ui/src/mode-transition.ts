@@ -5,6 +5,7 @@ export interface ModeTransition {
   id: string
   targetMode: string
   selectedModel?: { id: string; name: string }
+  alternative?: { id: string; name: string }
   phase: 'waiting' | 'loading' | 'unloading' | 'ready' | 'failed'
   message: string
   picker?: boolean
@@ -40,7 +41,7 @@ export function mountModeTransition(options: {
   mode(value: string): void
   blocked(value: boolean): void
   refresh(): Promise<void>
-  picker(message: string): void
+  picker(message: string, alternative?: ModeTransition['alternative']): void
   failed(message: string): void
   /** A paired host's name by its id, for the line about a model that runs there. */
   hostName?(id: string): string | undefined
@@ -100,7 +101,10 @@ export function mountModeTransition(options: {
       completed = transition.id
       // A paired computer that cannot serve is answered by the picker, where it is still listed
       // with its reason. Nothing else is switched to.
-      if (transition.picker || line !== transition.message) options.picker(line)
+      if (transition.picker || line !== transition.message) {
+        if (transition.alternative) options.picker(line, transition.alternative)
+        else options.picker(line)
+      }
       else options.failed(line)
     }
   }

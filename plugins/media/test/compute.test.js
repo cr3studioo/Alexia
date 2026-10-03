@@ -396,7 +396,14 @@ test('a ComfyUI the person is running is never queued into, interrupted or stopp
   expect(mine.at).not.toBe(USUAL_PORT)
   expect(mine.at).not.toBe(personal.port)
   // What it renders is kept in Alexia's folder rather than among the person's pictures.
-  expect(mine.args).toEqual(['--output-directory', join(own, 'worker', 'output'), '--temp-directory', join(own, 'worker', 'temp')])
+  expect(mine.args).toEqual([
+    '--output-directory',
+    join(own, 'worker', 'output'),
+    '--temp-directory',
+    join(own, 'worker', 'temp'),
+    '--input-directory',
+    join(own, 'worker', 'input'),
+  ])
   expect(mine.fake.queued).toHaveLength(1)
 
   // A job given up on halfway: it is the worker's own job that is stopped, on the worker's own ComfyUI.

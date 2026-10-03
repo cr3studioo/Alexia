@@ -380,6 +380,25 @@ export async function download(server, { filename, subfolder = '', type = 'outpu
   return Buffer.from(await response.arrayBuffer())
 }
 
+/**
+ * Put one picture into ComfyUI's input folder, through its own `POST /upload/image`.
+ *
+ * **Uploaded, never assumed to be there.** The ComfyUI that renders may be on another computer,
+ * and even on this one its input folder is not where the person's attachment lives — so the
+ * bytes go over the same HTTP everything else does. The name is the content's hash rather than
+ * the file's: it says nothing about the person's folders to a computer they lent, and the same
+ * picture twice is the same upload. Answers what a `LoadImage` node takes: `subfolder/name`.
+ */
+export async function upload(server, { bytes, name, type = 'image/png' }, signal) {
+  const form = new FormData()
+  form.append('image', new Blob([bytes], { type }), name)
+  form.append('type', 'input')
+  form.append('overwrite', 'true')
+  const said = await json(await fetch(`${server}/upload/image`, { method: 'POST', body: form, signal }))
+  if (typeof said?.name !== 'string' || said.name === '') throw new Error('ComfyUI took the picture but did not say what it called it.')
+  return { name: said.subfolder ? `${said.subfolder}/${said.name}` : said.name, filename: said.name, subfolder: String(said.subfolder ?? ''), type: 'input' }
+}
+
 /** The output keys ComfyUI writes a list of files under. */
 export const KINDS = ['images', 'gifs', 'audio', 'video', 'files']
 

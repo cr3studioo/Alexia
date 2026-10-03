@@ -4,7 +4,7 @@ import { statSync } from 'node:fs'
 import { setTimeout as delay } from 'node:timers/promises'
 import { pins, rememberLocalChoice, setPin, type Ran } from './commands.js'
 import { rememberTarget, selectedTarget, TARGET_KEY } from './compute/target.js'
-import { parseCatalogId, qualify, THIS_HOST, type ExecutionTarget, type TargetStatus } from './compute/types.js'
+import { ComputeError, parseCatalogId, qualify, sameTarget, THIS_HOST, type ExecutionTarget, type HostView, type TargetStatus } from './compute/types.js'
 import { readInstalled, remember, type Installed } from './installed.js'
 import { runtimeReady, runtimeSupported } from './llama.js'
 import type { LocalRunners } from './localRunners.js'
@@ -19,6 +19,8 @@ export interface ModeTransition {
   id: string
   targetMode: ModelMode
   selectedModel?: { id: string; name: string }
+  /** An installed model here, offered only when the selected paired computer is offline. */
+  alternative?: { id: string; name: string }
   phase: 'waiting' | 'loading' | 'unloading' | 'ready' | 'failed'
   message: string
   picker?: boolean
@@ -37,6 +39,8 @@ export interface ModeTransitionOptions {
   available?: (one: Installed, here: Machine) => boolean
   /** Existing Ollama selections retain their external lifecycle, including onboarding. */
   external?: (id: string) => Promise<{ id: string; name: string } | undefined>
+  /** Bound only the connection check, not a reachable computer's model preparation. */
+  reachabilityMs?: number
   /**
    * A model on a paired computer (`compute/bridge.ts`). `select` resolves once that computer
    * has the model ready and rejects with the named reason it cannot; nothing else is tried.
@@ -44,6 +48,8 @@ export interface ModeTransitionOptions {
   remote?: {
     select(target: ExecutionTarget, signal: AbortSignal, onStatus?: (status: TargetStatus) => void): Promise<{ id: string; name: string }>
     deselect(): Promise<void>
+    ensure?(hostId: string, signal: AbortSignal): Promise<void>
+    views?(): HostView[]
     /** What the paired computer calls itself, for the line that says where the model runs. */
     hostName?(hostId: string): string | undefined
   }
@@ -63,16 +69,23 @@ export class ModeTransitions {
     }
     // A selection saved before there were paired computers becomes one on this computer.
     selectedTarget(options.store)
+    if (options.store.kvGet(CORE, 'mode') === 'local') this.request('local')
   }
 
   status(): ModeTransition | undefined {
-    return this.current && { ...this.current, ...(this.current.selectedModel && { selectedModel: { ...this.current.selectedModel } }) }
+    return this.current && { ...this.current,
+      ...(this.current.selectedModel && { selectedModel: { ...this.current.selectedModel } }),
+      ...(this.current.alternative && { alternative: { ...this.current.alternative } }),
+    }
   }
   pending(): boolean { return !!this.current && !['ready', 'failed'].includes(this.current.phase) }
 
   request(targetMode: ModelMode, model?: string): Ran {
     if (this.closed) return { ok: false, note: 'Alexia is closing.' }
     const waiting = this.options.busy() || this.pending()
+    const previous = this.current
+    const keepTarget = targetMode === 'local' && model && previous?.phase === 'failed' && previous.alternative?.id === model
+      && previous.target?.hostId !== THIS_HOST && sameTarget(selectedTarget(this.options.store), previous.target) ? previous.target : undefined
     this.controller?.abort(new Error('Another mode was selected.'))
     const controller = new AbortController()
     this.controller = controller
@@ -81,7 +94,7 @@ export class ModeTransitions {
       message: waiting ? 'Switching after the current operation finishes.' : targetMode === 'local' ? 'Choosing an installed local model…' : 'Unloading local models…',
     }
     this.current = transition
-    this.queue = this.queue.then(() => this.perform(transition, controller.signal, model))
+    this.queue = this.queue.then(() => this.perform(transition, controller.signal, model, keepTarget))
     return { ok: true, note: transition.message, data: { transitionId: transition.id } }
   }
 
@@ -96,7 +109,34 @@ export class ModeTransitions {
     try { return contextPreview(here, one, all).verdict !== 'too-big' } catch { return false }
   }
 
-  private async perform(transition: ModeTransition, signal: AbortSignal, explicit?: string): Promise<void> {
+  private candidates(here: Machine, wanted?: string, explicit?: string): { all: Installed[]; possible: Installed[] } {
+    const all = readInstalled(this.options.dataDir)
+    const candidates = all.filter((one) => this.available(one, here)).sort((a, b) =>
+      Number(b.id === wanted) - Number(a.id === wanted) || Number(b.tools) - Number(a.tools) ||
+      (b.lastUsedAt ?? 0) - (a.lastUsedAt ?? 0) || a.id.localeCompare(b.id))
+    const capacity = { ...here, budgetBytes: memoryBudget(here.ramBytes) }
+    return { all, possible: candidates.filter((one) => (!explicit || one.id === explicit) && this.fits(one, capacity, all)) }
+  }
+
+  private async reachable(target: ExecutionTarget, signal: AbortSignal): Promise<void> {
+    const remote = this.options.remote
+    if (!remote?.ensure) return
+    const probe = new AbortController()
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      await Promise.race([
+        remote.ensure(target.hostId, AbortSignal.any([signal, probe.signal])),
+        new Promise<never>((_resolve, reject) => {
+          timer = setTimeout(() => {
+            reject(new ComputeError('offline', 'That computer cannot be reached right now.'))
+            probe.abort()
+          }, this.options.reachabilityMs ?? 3000)
+        }),
+      ])
+    } finally { clearTimeout(timer) }
+  }
+
+  private async perform(transition: ModeTransition, signal: AbortSignal, explicit?: string, keepTarget?: ExecutionTarget): Promise<void> {
     let loading = false
     const { runners, store, dataDir } = this.options
     try {
@@ -141,6 +181,9 @@ export class ModeTransitions {
           signal.throwIfAborted()
           transition.phase = 'loading'
           transition.message = 'Connecting to the paired computer…'
+          transition.targetStatus = { target, phase: 'connecting', connection: remote.views?.().find((view) => view.host.id === target.hostId)?.connection ?? 'offline', message: transition.message }
+          await this.reachable(target, signal)
+          signal.throwIfAborted()
           const selected = await remote.select(target, signal, (status) => {
             transition.targetStatus = status
             transition.message = status.message
@@ -154,6 +197,22 @@ export class ModeTransitions {
           transition.message = `Local · ${selected.name} · ${remote.hostName?.(target.hostId) ?? 'Paired computer'}`
         } catch (error) {
           transition.picker = true
+          if (!signal.aborted && error instanceof ComputeError && transition.targetStatus?.phase === 'connecting') {
+            // A refusal during the connection check has the same state as one during preparation.
+            const phase = error.code === 'busy' || error.code === 'setup-required' || error.code === 'worker-failure' || error.code === 'incompatible-version' ? error.code : 'offline'
+            transition.targetStatus = { target, phase, connection: this.options.remote?.views?.().find((view) => view.host.id === target.hostId)?.connection ?? 'offline', message: error.message }
+          } else if (!(error instanceof ComputeError) && transition.targetStatus?.phase === 'connecting') transition.targetStatus = undefined
+          if (!signal.aborted && error instanceof ComputeError && error.code === 'offline') {
+            transition.targetStatus = { target, phase: 'offline', connection: 'offline', message: error.message }
+            // Offer the same choice this computer would make, without loading or remembering it.
+            try {
+              const here = await (this.options.machine ?? (() => machine(dataDir)))()
+              signal.throwIfAborted()
+              const { all, possible } = this.candidates(here, store.kvGet(CORE, 'last_local_model') as string | undefined)
+              const alternative = possible.find((one) => this.fits(one, here, all))
+              if (alternative) transition.alternative = { id: alternative.id, name: alternative.name }
+            } catch { /* The paired computer's failure remains the reason for the picker. */ }
+          }
           throw error
         }
         return
@@ -178,14 +237,9 @@ export class ModeTransitions {
       }
       let here = await (this.options.machine ?? (() => machine(dataDir)))()
       signal.throwIfAborted()
-      const all = readInstalled(dataDir)
-      const candidates = all.filter((one) => this.available(one, here)).sort((a, b) =>
-        Number(b.id === wanted) - Number(a.id === wanted) || Number(b.tools) - Number(a.tools) ||
-        (b.lastUsedAt ?? 0) - (a.lastUsedAt ?? 0) || a.id.localeCompare(b.id))
       // Check total capacity first. An already loaded model must not be counted twice
       // against free RAM, but a changed context/draft still has to fit the machine.
-      const capacity = { ...here, budgetBytes: memoryBudget(here.ramBytes) }
-      const possible = candidates.filter((one) => (!explicit || one.id === explicit) && this.fits(one, capacity, all))
+      const { all, possible } = this.candidates(here, wanted, explicit)
       let chosen = possible[0]
       if (!chosen) {
         transition.picker = true
@@ -218,6 +272,8 @@ export class ModeTransitions {
       if (!checked || !this.available(checked, here)) throw new Error('The selected local model changed while it was loading. Choose it again.')
       remember(dataDir, { ...checked, lastUsedAt: Date.now() })
       setPin(store, { model: chosen.id, order: undefined })
+      // This explicit offline offer is temporary; the next Local entry tries the paired target.
+      if (keepTarget) rememberTarget(store, keepTarget)
       store.kvSet(CORE, 'mode', 'local')
       transition.phase = 'ready'
       transition.message = `Local · ${chosen.name}`

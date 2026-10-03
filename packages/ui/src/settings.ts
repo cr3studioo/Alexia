@@ -28,7 +28,7 @@
 
 import { mountHost, mountHostPicker, mountRole, mountServices, stateSentence, type ComputeState, type HostChoice } from './compute.js'
 import { inApp, installUpdate, updateAvailable, type Update } from './desktop.js'
-import { mountLocalModels, type LocalHost, type LocalRequest } from './local-models.js'
+import { mountLocalModels, type LocalAlternative, type LocalHost, type LocalRequest } from './local-models.js'
 import { arm, el, widget, type Rendered, type WidgetHost } from './widgets.js'
 
 export type { Rendered } from './widgets.js'
@@ -128,7 +128,7 @@ interface Section {
 export function mountSettings(token: string, modelsChanged?: () => void, modelMode?: () => string): {
   open: (page?: SettingsPage, filter?: string) => void
   close: () => void
-  localMessage: (message: string) => void
+  localMessage: (message: string, alternative?: LocalAlternative) => void
   /** A key or the keyless switch changed which models exist: draw Models & money again if it is open. */
   redrawModels: () => void
   /** Fed from `/api/state`, because the version and the update preference are core's answer. */
@@ -230,10 +230,10 @@ export function mountSettings(token: string, modelsChanged?: () => void, modelMo
   }
   const localModels = mountLocalModels(localRoot, { request: send, changed: modelsChanged, mode: modelMode, host: localHost })
   /** A sentence for the models view that arrived before the view had anywhere to put it. */
-  let explaining: string | undefined
+  let explaining: { message: string; alternative?: LocalAlternative } | undefined
   const openLocal = (): void => {
     localModels.open()
-    if (explaining !== undefined) localModels.explain(explaining)
+    if (explaining !== undefined) localModels.explain(explaining.message, explaining.alternative)
     explaining = undefined
   }
   const hostDetail = mountHost(hostDetailRoot, send, { changed: () => void localModels.refresh() })
@@ -1595,9 +1595,9 @@ export function mountSettings(token: string, modelsChanged?: () => void, modelMo
       localModels.close()
       closeCompute()
     },
-    localMessage: (message) => {
-      if (localRoot.querySelector('.local-model-head') === null) explaining = message
-      else localModels.explain(message)
+    localMessage: (message, alternative) => {
+      if (localRoot.querySelector('.local-model-head') === null) explaining = { message, alternative }
+      else localModels.explain(message, alternative)
     },
     redrawModels: () => {
       if (showing === 'models' && document.body.dataset.view === 'settings') {
