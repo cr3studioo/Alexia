@@ -339,8 +339,12 @@ async fn a_reader_that_stops_stops_the_compute_service() {
     let stalled = produced();
     println!("production stalled at {stalled} of {BIG} bytes, with {read} read");
     assert!(stalled < BIG / 2, "{stalled} bytes were produced for a reader that took {read}");
-    sleep(Duration::from_secs(1)).await;
-    assert_eq!(produced(), stalled, "nothing more is produced while nothing is read");
+    // Some socket stacks (Windows' loopback, measured) open their windows a few 64 KiB pieces further
+    // a moment after they first fill, once. What has to hold is that production stays bounded while
+    // nothing is read, not that it is to-the-byte still.
+    sleep(Duration::from_secs(2)).await;
+    assert!(produced() - stalled <= MIB, "{} more bytes were produced while nothing was read", produced() - stalled);
+    assert!(produced() < BIG / 2, "{} bytes were produced for a reader that took {read}", produced());
 
     // Start reading again and it starts producing again.
     while read < stalled + 8 * MIB {

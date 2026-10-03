@@ -9,6 +9,7 @@
 
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddrV4, SocketAddrV6};
 use std::sync::Arc;
+use std::time::Duration;
 
 use futures_util::StreamExt;
 use iroh::address_lookup::{MemoryLookup, PkarrPublisher, PkarrResolver};
@@ -103,19 +104,18 @@ pub async fn bind(
     peers: &Peers,
     pairings: &Pairings,
 ) -> Result<Endpoint, String> {
-    // The stable port first, and a port of the system's choosing only if that one is taken.
+    // The stable port first. A previous launch of this app may still be letting go of it, so it is
+    // tried a few times over about two seconds; a port of the system's choosing only after that.
     let mut taken = String::new();
-    for port in [Some(stable_port(key)), None] {
-        match bind_on(key, network, hints, peers, pairings, port).await {
+    for wait in [0, 250, 500, 1000] {
+        tokio::time::sleep(Duration::from_millis(wait)).await;
+        match bind_on(key, network, hints, peers, pairings, Some(stable_port(key))).await {
             Ok(endpoint) => return Ok(endpoint),
-            Err(error) if port.is_some() => {
-                tracing::warn!(port, %error, "the usual port is in use; taking another");
-                taken = error;
-            }
-            Err(error) => return Err(if taken.is_empty() { error } else { format!("{error} (and {taken})") }),
+            Err(error) => taken = error,
         }
     }
-    unreachable!("the loop returns on its last turn")
+    tracing::warn!(port = stable_port(key), error = %taken, "the usual port is in use; taking another");
+    bind_on(key, network, hints, peers, pairings, None).await.map_err(|error| format!("{error} (and {taken})"))
 }
 
 async fn bind_on(
