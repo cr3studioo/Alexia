@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
+import { nvidiaSmi } from './nvidia.js'
 
 export type RunnerBackend = 'cpu' | 'metal' | 'cuda' | 'vulkan'
 export type BackendPreference = RunnerBackend | 'auto'
@@ -79,7 +80,13 @@ export async function runnerBackendProfile(options: BackendOptions = {}): Promis
   if (requested === 'cpu') return cpu('CPU selected explicitly.')
   if (os === 'darwin' && arch === 'arm64' && ['auto', 'metal'].includes(requested)) return { ...base, backend: 'metal', accelerated: true, reason: 'Pinned Metal runtime on Apple Silicon; uses the system unified-memory budget.' }
   if (!['linux', 'win32'].includes(os) || arch !== 'x64') return cpu('No established accelerated runtime policy for this platform; using CPU.')
-  const probe = options.probe ?? (async (command, args) => (await execute(command, args, { timeout: 4000, maxBuffer: 1024 * 1024, windowsHide: true, signal: options.signal, env: { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, WINDIR: process.env.WINDIR } })).stdout)
+  const probe = options.probe ?? (async (command, args) => {
+    // `nvidia-smi` goes through the shared probe, which gives Windows what the driver needs (`nvidia.ts`).
+    if (command !== 'nvidia-smi') return (await execute(command, args, { timeout: 4000, maxBuffer: 1024 * 1024, windowsHide: true, signal: options.signal, env: { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, WINDIR: process.env.WINDIR } })).stdout
+    const got = await nvidiaSmi(args, { platform: os, ...(options.signal && { signal: options.signal }) })
+    if ('error' in got) throw new Error(got.error)
+    return got.stdout
+  })
   if (requested === 'vulkan') {
     let gpu: BackendGpu | undefined
     try { gpu = vulkanBackendGpu(await probe('vulkaninfo', ['--summary'])) } catch { /* A missing loader / probe is not established compatibility. */ }
@@ -88,10 +95,14 @@ export async function runnerBackendProfile(options: BackendOptions = {}): Promis
   }
   if (requested === 'metal') return cpu('Metal is supported only on Apple Silicon by this policy; using CPU.')
   let gpus: BackendGpu[] = []
-  try { gpus = nvidiaBackendGpus(await probe('nvidia-smi', ['--query-gpu=index,uuid,name,driver_version,compute_cap,memory.total,memory.free,compute_mode', '--format=csv,noheader,nounits'])) } catch { /* Unknown driver/hardware => CPU. */ }
+  let probeError: string | undefined
+  try { gpus = nvidiaBackendGpus(await probe('nvidia-smi', ['--query-gpu=index,uuid,name,driver_version,compute_cap,memory.total,memory.free,compute_mode', '--format=csv,noheader,nounits'])) } catch (error) {
+    // Unknown driver/hardware => CPU, and the reason says what the probe answered.
+    probeError = error instanceof Error ? error.message : String(error)
+  }
   options.signal?.throwIfAborted()
   const gpu = gpus.filter((g) => cudaCompatible(g, os)).sort((a, b) => (b.freeVramBytes ?? 0) - (a.freeVramBytes ?? 0))[0]
   return gpu ? { ...base, backend: 'cuda', accelerated: true, gpu,
     memoryBudgetBytes: Math.max(0, Math.floor(Math.min(gpu.vramBytes! * 0.8, gpu.freeVramBytes! - 512 * MiB))),
-    reason: `Compatible NVIDIA GPU and driver detected for pinned CUDA ${os === 'linux' ? '12.8' : '12.4'}; system RAM and dedicated VRAM are separate constraints.` } : cpu('No compatible NVIDIA GPU/driver established; using CPU. Vulkan requires an explicit selection.')
+    reason: `Compatible NVIDIA GPU and driver detected for pinned CUDA ${os === 'linux' ? '12.8' : '12.4'}; system RAM and dedicated VRAM are separate constraints.` } : cpu(`No compatible NVIDIA GPU/driver established; using CPU. Vulkan requires an explicit selection.${probeError ? ` nvidia-smi: ${probeError}` : ''}`)
 }

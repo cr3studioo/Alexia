@@ -47,3 +47,9 @@ describe('runner backend policy', () => {
     await expect(runnerBackendProfile({ signal: AbortSignal.abort() })).rejects.toMatchObject({ name: 'AbortError' })
   })
 })
+
+test('a failed nvidia-smi says why in the CPU reason', async () => {
+  const profile = await runnerBackendProfile({ platform: 'win32', arch: 'x64', probe: async () => { throw new Error('spawn nvidia-smi ENOENT') } })
+  expect(profile.backend).toBe('cpu')
+  expect(profile.reason).toContain('nvidia-smi: spawn nvidia-smi ENOENT')
+})

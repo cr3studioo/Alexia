@@ -269,10 +269,12 @@ const SETTLING: Duration = Duration::from_millis(400);
 /// Unicode, and with `panic = "abort"` that is an app that will not open on that machine.
 fn passes(name: &std::ffi::OsStr) -> bool {
     let name = name.to_string_lossy().to_ascii_uppercase();
-    const NEEDED: [&str; 24] = [
+    // The Program Files folders too: NVIDIA's `nvidia-smi` did not answer core without them.
+    const NEEDED: [&str; 28] = [
         "PATH", "HOME", "USER", "LOGNAME", "LANG", "LANGUAGE", "TZ", "TMPDIR", "TMP", "TEMP", "SYSTEMROOT", "WINDIR",
         "SYSTEMDRIVE", "COMSPEC", "PATHEXT", "USERPROFILE", "USERNAME", "USERDOMAIN", "APPDATA", "LOCALAPPDATA",
-        "PROGRAMDATA", "HOMEDRIVE", "HOMEPATH", "NUMBER_OF_PROCESSORS",
+        "PROGRAMDATA", "HOMEDRIVE", "HOMEPATH", "NUMBER_OF_PROCESSORS", "PROGRAMFILES", "PROGRAMW6432",
+        "COMMONPROGRAMFILES", "COMMONPROGRAMW6432",
     ];
     let trusts = cfg!(windows) && ["NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE", "SSL_CERT_DIR"].contains(&name.as_str());
     NEEDED.contains(&name.as_str()) || name.starts_with("LC_") || name.starts_with("XDG_") || trusts

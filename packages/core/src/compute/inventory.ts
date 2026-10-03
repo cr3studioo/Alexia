@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto'
 import { machine, type Machine } from '../machine.js'
 import type { HostCapability, HostInventory, HostMachine, SetupRequirement } from './types.js'
 import type { ComputeWorker, Workers } from './workers.js'
+import { scrub } from './scrub.js'
 
 export type RefreshReason = 'setup' | 'prepare' | 'admission' | 'workers' | 'models'
 /** The only three reasons hardware is looked at. Nothing here samples on a timer. */
@@ -16,6 +17,7 @@ const hostMachine = (m: Machine): HostMachine => ({
   budgetBytes: m.budgetBytes,
   ...(m.cpuCores !== undefined && { cpuCores: m.cpuCores }),
   ...(m.gpus && { gpus: m.gpus.map((gpu) => ({ ...gpu })) }),
+  ...(m.gpuProbeError !== undefined && { gpuProbeError: scrub(m.gpuProbeError) }),
 })
 
 /** A requirement's id as the controller sees it: stable, and saying nothing about which worker asked. */

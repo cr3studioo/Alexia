@@ -298,6 +298,8 @@ export interface HostMachine {
   budgetBytes: number
   cpuCores?: number
   gpus?: { name: string; vramBytes?: number; freeVramBytes?: number }[]
+  /** Why an NVIDIA card's memory could not be read on the host, scrubbed of paths. */
+  gpuProbeError?: string
 }
 
 /** One model installed on a host, as much of it as a catalog row needs. `id` is the host's own, unqualified. */

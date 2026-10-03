@@ -2,6 +2,7 @@
 import { execFile } from 'node:child_process'
 import { readFile, statfs } from 'node:fs/promises'
 import { arch, availableParallelism, cpus, freemem, platform, totalmem } from 'node:os'
+import { nvidiaSmi } from './nvidia.js'
 import { dirname, resolve } from 'node:path'
 import { promisify } from 'node:util'
 
@@ -27,6 +28,8 @@ export interface Machine {
   diskKnown?: boolean
   /** System-memory budget, with OS and active applications left room. Never RAM + VRAM. */
   budgetBytes: number
+  /** Why `nvidia-smi` could not be read, when an NVIDIA card is listed anyway. */
+  gpuProbeError?: string
   cpuCores?: number
   gpus?: Gpu[]
 }
@@ -91,6 +94,16 @@ export async function machine(dataDir: string, options: MachineOptions = {}): Pr
   const read = options.read ?? ((path) => readFile(path, 'utf8'))
   const optionalRun = (command: string, args: string[]): Promise<string> => run(command, args).catch(() => '')
   const optionalRead = (path: string): Promise<string> => read(path).catch(() => '')
+  let gpuProbeError: string | undefined
+  const NVIDIA = ['--query-gpu=name,memory.total,memory.free', '--format=csv,noheader,nounits']
+  // A test's `run` answers for every command; without one, the shared probe does (`nvidia.ts`).
+  const nvidia = async (): Promise<string> => {
+    if (options.run) return optionalRun('nvidia-smi', NVIDIA)
+    const got = await nvidiaSmi(NVIDIA, { platform: os })
+    if ('stdout' in got) return got.stdout
+    gpuProbeError = got.error
+    return ''
+  }
   let ram = bytes(options.ramBytes ?? totalmem())
   let available = bytes(options.freeRamBytes ?? freemem())
   let chip = options.chip ?? cpus()[0]?.model.trim() ?? 'Unknown processor'
@@ -115,7 +128,7 @@ export async function machine(dataDir: string, options: MachineOptions = {}): Pr
     const [mem, max, current, v1Max, v1Current, gpu] = await Promise.all([
       optionalRead('/proc/meminfo'), optionalRead('/sys/fs/cgroup/memory.max'), optionalRead('/sys/fs/cgroup/memory.current'),
       optionalRead('/sys/fs/cgroup/memory/memory.limit_in_bytes'), optionalRead('/sys/fs/cgroup/memory/memory.usage_in_bytes'),
-      optionalRun('nvidia-smi', ['--query-gpu=name,memory.total,memory.free', '--format=csv,noheader,nounits']),
+      nvidia(),
     ])
     const usable = Number(/^MemAvailable:\s+(\d+)\s+kB/m.exec(mem)?.[1])
     if (Number.isFinite(usable)) available = bytes(usable * 1024)
@@ -131,7 +144,7 @@ export async function machine(dataDir: string, options: MachineOptions = {}): Pr
     gpus = nvidiaGpus(gpu)
   } else if (os === 'win32') {
     const [gpu, details] = await Promise.all([
-      optionalRun('nvidia-smi', ['--query-gpu=name,memory.total,memory.free', '--format=csv,noheader,nounits']),
+      nvidia(),
       optionalRun('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
         '[pscustomobject]@{cpu=(Get-CimInstance Win32_Processor | Select-Object -First 1 -ExpandProperty Name);gpus=@(Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name)} | ConvertTo-Json -Compress']),
     ])
@@ -148,9 +161,24 @@ export async function machine(dataDir: string, options: MachineOptions = {}): Pr
   const disk = await freeDisk
   return { platform: os, arch: architecture, chip, appleSilicon, ramBytes: ram, freeRamBytes: available,
     budgetBytes: memoryBudget(ram, available), freeDiskBytes: disk ?? 0, diskKnown: disk !== undefined,
-    cpuCores: options.cpuCores ?? availableParallelism(), gpus }
+    cpuCores: options.cpuCores ?? availableParallelism(), gpus,
+    ...(gpuProbeError !== undefined && gpus.some((g) => /nvidia/i.test(g.name) && g.vramBytes === undefined) && { gpuProbeError }) }
+}
+
+/**
+ * **What a model may use**: the system-memory budget, or a measured NVIDIA card's, whichever is
+ * larger — never the two added. The runner offloads every layer it can (`--n-gpu-layers auto`)
+ * and keeps the rest in RAM, so a model a little past the card is slower rather than refused.
+ * A card whose memory could not be read counts for nothing.
+ */
+export function modelBudget(m: Pick<Machine, 'budgetBytes' | 'gpus' | 'platform' | 'arch'>): number {
+  const system = Number.isFinite(m.budgetBytes) ? Math.max(0, m.budgetBytes) : 0
+  if (!['win32', 'linux'].includes(m.platform) || m.arch !== 'x64') return system
+  const card = Math.max(0, ...(m.gpus ?? []).filter((g) => /nvidia/i.test(g.name)).map((g) => Math.floor((g.vramBytes ?? 0) * 0.9)))
+  return Math.max(system, card)
 }
 
 export function summary(m: Machine): string {
-  return `${m.chip} · ${(m.ramBytes / GB).toFixed(0)} GiB RAM${m.appleSilicon ? ' (unified memory)' : ''} · ${(m.budgetBytes / GB).toFixed(1)} GiB model budget`
+  const card = (m.gpus ?? []).find((g) => g.vramBytes !== undefined)
+  return `${m.chip}${card ? ` · ${card.name} ${(card.vramBytes! / GB).toFixed(0)} GiB` : ''} · ${(m.ramBytes / GB).toFixed(0)} GiB RAM${m.appleSilicon ? ' (unified memory)' : ''} · ${(modelBudget(m) / GB).toFixed(1)} GiB model budget`
 }

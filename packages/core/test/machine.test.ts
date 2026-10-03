@@ -97,3 +97,17 @@ test('NVIDIA telemetry parses multiple devices and preserves unknown capacities'
   ])
   expect(nvidiaGpus('')).toEqual([])
 })
+
+test('a measured NVIDIA card sets the model budget when it is larger than spare RAM, and an unmeasured one does not', async () => {
+  const { modelBudget, summary } = await import('../src/machine.js')
+  const GiB = 1024 ** 3
+  const pc = { platform: 'win32', arch: 'x64', chip: 'Ryzen', appleSilicon: false, ramBytes: 16 * GiB, freeRamBytes: 2 * GiB, freeDiskBytes: 200 * GiB, budgetBytes: GiB }
+  const measured = { ...pc, gpus: [{ name: 'NVIDIA GeForce RTX 4060 Ti', vramBytes: 8 * GiB, freeVramBytes: 7 * GiB }] }
+  expect(modelBudget(measured)).toBe(Math.floor(8 * GiB * 0.9))
+  expect(summary(measured)).toContain('RTX 4060 Ti 8 GiB')
+  // A card known only by name (nvidia-smi did not answer) adds nothing; neither does a Mac.
+  expect(modelBudget({ ...pc, gpus: [{ name: 'NVIDIA GeForce RTX 4060 Ti' }] })).toBe(GiB)
+  expect(modelBudget({ ...measured, platform: 'darwin', arch: 'arm64' })).toBe(GiB)
+  // Never the two added.
+  expect(modelBudget({ ...measured, budgetBytes: 10 * GiB })).toBe(10 * GiB)
+})

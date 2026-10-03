@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import type { LocalEntry, Quantized } from './localCatalog.js'
-import type { Machine } from './machine.js'
+import { modelBudget, type Machine } from './machine.js'
 import { PLANNER } from './catalog.js'
 
 const GB = 1024 ** 3
@@ -40,7 +40,7 @@ export function fit(m: Machine, e: LocalEntry, quant: Quantized, context = DEFAU
   const validWeights = Number.isSafeInteger(quant.bytes) && quant.bytes > 0
   const overheadBytes = validWeights ? Math.ceil(Math.max(GB, quant.bytes * 0.15)) : GB
   const needBytes = validWeights ? quant.bytes + kvBytes + overheadBytes : Infinity
-  const budget = Number.isFinite(m.budgetBytes) ? Math.max(0, m.budgetBytes) : 0
+  const budget = modelBudget(m)
   // A reserve remains on the download volume for runtime, partial-file metadata and other work.
   const diskNeed = validWeights ? quant.bytes + GB : Infinity
   const knownKv = Number.isFinite(e.kvBytesPerToken) && (e.kvBytesPerToken ?? 0) > 0

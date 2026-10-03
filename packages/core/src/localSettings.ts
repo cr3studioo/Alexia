@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs'
 import { fit, type Verdict } from './fit.js'
 import type { Installed } from './installed.js'
 import type { LocalEntry } from './localCatalog.js'
-import type { Machine } from './machine.js'
+import { modelBudget, type Machine } from './machine.js'
 
 export type Cache = 'f16' | 'q8_0' | 'q4_0'
 const caches: readonly Cache[] = ['f16', 'q8_0', 'q4_0']
@@ -52,7 +52,8 @@ export function contextPreview(m: Machine, one: Installed, all: readonly Install
     extra = fit({ ...m, freeDiskBytes: Number.MAX_SAFE_INTEGER, diskKnown: true }, draftEntry, draftEntry.quants[0]!, context).needBytes
   }
   const needBytes = judged.needBytes + extra
-  const verdict = needBytes > m.budgetBytes ? 'too-big' : extra > 0 && needBytes > m.budgetBytes * 0.9 ? 'tight' : judged.verdict
+  const budget = modelBudget(m)
+  const verdict = needBytes > budget ? 'too-big' : extra > 0 && needBytes > budget * 0.9 ? 'tight' : judged.verdict
   return { context, contextMax: max, needBytes, verdict, ...(judged.note && { note: judged.note }),
     drafts: drafts.map(({ id, name }) => ({ id, name })), kvOptions: one.kvBytesPerToken ? caches : ['f16'] }
 }
