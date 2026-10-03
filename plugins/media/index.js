@@ -85,7 +85,9 @@ const logFile = () => join(own ?? '.', 'comfyui.log')
 async function look(signal) {
   try {
     available = await checkpoints(await where(), signal)
-    if (available.length === 0) return { ok: false, said: '▲ ComfyUI is running but has no checkpoint installed' }
+    // Running, and that is the point: `bind` must not turn this into *not running — Alexia will start it*,
+    // which sent a model round in circles starting a ComfyUI that was already up and had nothing to paint with.
+    if (available.length === 0) return { ok: false, running: true, said: '▲ ComfyUI is running but has no checkpoint installed on this computer, so nothing can be painted here' }
     const many = `${available.length} model${available.length === 1 ? '' : 's'}`
     // A model named in the settings that is not installed is the one thing this screen can
     // catch and nothing else will: pictures still come out, painted by a different model,

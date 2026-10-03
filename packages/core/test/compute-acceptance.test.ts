@@ -789,3 +789,28 @@ describe.runIf(built)('two Alexias and two real sidecars', () => {
     expect(await here(`/api/compute/queue?host=${hostId}`)).toMatchObject({ body: { ok: false } })
   }, 120_000)
 })
+
+describe.runIf(built)('a render over two real sidecars', () => {
+  test('the picture the host made reaches the controller, and the host’s copy is acknowledged away', async () => {
+    const { launch } = await sidecars()
+    const [a, b] = [await launch('interaction'), await launch('compute')]
+    const [laptopId, studioId] = [await a.identity(), await b.identity()]
+    await a.allow([studioId])
+    await b.allow([laptopId])
+    await setPeerHints(a, studioId, await readConnectHints(b))
+    await setPeerHints(b, laptopId, await readConnectHints(a))
+    const host = await studio(temp('studio-real-render'), b, laptopId, { plugin: true })
+    const desk = laptop(a, [{ name: host.name, endpointId: studioId }])
+    cleanups.push(async () => { await desk.close(); await host.close() })
+    desk.choose(desk.records[0]!.id)
+    const here = temp('render-real-here')
+    const progress: JobProgress[] = []
+    const made = await desk.operations.run(
+      { cap: 'image.render', args: { prompt: 'a lighthouse at dusk', seed: 7, steps: 20 }, inputs: [], toDir: here },
+      { onProgress: (step) => { progress.push(step) } })
+    expect(progress.length).toBeGreaterThan(0)
+    expect(made.files).toEqual([join(here, 'render-7.png')])
+    expect(readFileSync(made.files[0]!).equals(host.plugin!.png('a lighthouse at dusk'))).toBe(true)
+    await vi.waitFor(() => { expect(existsSync(join(host.root, 'data', 'compute', 'jobs')) ? readdirSync(join(host.root, 'data', 'compute', 'jobs')) : []).toEqual([]) })
+  }, 90_000)
+})

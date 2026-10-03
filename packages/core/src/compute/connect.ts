@@ -172,9 +172,14 @@ class HttpStream extends Duplex {
     input.on('data', (chunk: Buffer) => { if (!this.push(chunk)) input.pause() })
     input.once('end', () => { this.push(null) })
     input.once('error', () => { this.destroy(interrupted()) })
-    input.once('close', () => { if (!input.readableEnded) this.destroy(interrupted()) })
+    // **A response that has arrived whole is not a reset**, whether or not it has all been read. The host ends a job's
+    // stream after its last frame, and Node then closes the request too — which this side has not ended, because it
+    // keeps it open for a *cancel*. Treating that close as a failure destroyed the stream with the final `done` frame
+    // still unread, and a render that had finished came back as *the compute stream was reset*.
+    const whole = (): boolean => (input as Partial<IncomingMessage>).complete === true
+    input.once('close', () => { if (!input.readableEnded && !whole()) this.destroy(interrupted()) })
     output.once('error', () => { this.destroy(interrupted()) })
-    output.once('close', () => { if (!output.writableFinished) this.destroy(interrupted()) })
+    output.once('close', () => { if (!output.writableFinished && !whole()) this.destroy(interrupted()) })
   }
 
   override _read(): void { this.input.resume() }

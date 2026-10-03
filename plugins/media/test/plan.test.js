@@ -380,6 +380,16 @@ test('a picture given to a plain request takes the starter’s picture-to-pictur
   expect(plain[5].inputs.denoise).toBe(1)
 })
 
+test('a ComfyUI that is running with no checkpoint says so, and is not reported as not running', async () => {
+  comfy.checkpoints.length = 0
+  for (const name of ['run_workflow', 'start_comfyui']) {
+    const ran = await call(name, name === 'run_workflow' ? { workflow: 'Anime' } : {})
+    expect(ran.text, name).toContain('has no checkpoint installed')
+    expect(ran.text, name).not.toContain('not running')
+  }
+  expect(comfy.queued).toHaveLength(0)
+})
+
 test('a ComfyUI that answers but cannot list its models is named as stuck, not reported as not running', async () => {
   comfy.flags.broken = true
   const ran = await call('run_workflow', { workflow: 'Anime' })
