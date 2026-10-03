@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+import { dirname, resolve } from 'node:path'
 import { expect, test, vi } from 'vitest'
 import { machine, memoryBudget, nvidiaGpus, summary, type MachineOptions } from '../src/machine.js'
 
@@ -73,12 +74,14 @@ test('Windows inventory leaves unreliable adapter memory unknown', async () => {
 })
 
 test('a missing data directory uses its ancestor without creating it', async () => {
+  // Platform paths: on Windows `/tmp` resolves under a drive letter, and the walk ends at the drive root.
+  const data = resolve('/tmp/new/data'), ancestor = resolve('/tmp')
   const disk = vi.fn(async (path: string) => {
-    if (path !== '/tmp') throw Object.assign(new Error('missing'), { code: 'ENOENT' })
+    if (path !== ancestor) throw Object.assign(new Error('missing'), { code: 'ENOENT' })
     return { bavail: 2048, bsize: 4096 }
   })
-  const m = await machine('/tmp/new/data', { ...base, disk })
-  expect(disk.mock.calls.map(([path]) => path)).toEqual(['/tmp/new/data', '/tmp/new', '/tmp'])
+  const m = await machine(data, { ...base, disk })
+  expect(disk.mock.calls.map(([path]) => path)).toEqual([data, dirname(data), ancestor])
   expect(m.freeDiskBytes).toBe(2048 * 4096)
   expect(m.diskKnown).toBe(true)
 })

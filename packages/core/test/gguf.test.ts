@@ -8,7 +8,7 @@ import { readGguf } from '../src/gguf.js'
 import { gguf, metadata, splitFiles, str, u32, u64, type FixtureOptions } from './fixtures/gguf.js'
 
 const dirs: string[] = []
-const temp = (): string => { const dir = realpathSync(mkdtempSync(join(tmpdir(), 'gguf-test-'))); dirs.push(dir); return dir }
+const temp = (): string => { const dir = realpathSync.native(mkdtempSync(join(tmpdir(), 'gguf-test-'))); dirs.push(dir); return dir }
 const file = (bytes = gguf()): string => { const path = join(temp(), 'model.gguf'); writeFileSync(path, bytes); return path }
 const sha = (bytes: Buffer): string => createHash('sha256').update(bytes).digest('hex')
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }) })

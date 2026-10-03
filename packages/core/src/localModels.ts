@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { randomUUID } from 'node:crypto'
 import { existsSync, realpathSync, rmSync } from 'node:fs'
-import { isAbsolute, join, relative, resolve } from 'node:path'
+import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { rememberLocalChoice, setPin, type Ran } from './commands.js'
 import { downloadAll, DownloadError, partial } from './download.js'
 import { bestQuant, DEFAULT_CONTEXT, fit, recommend, type Fit, type Verdict } from './fit.js'
@@ -769,8 +769,9 @@ export class LocalModels {
       if (!one) return { ok: false, said: 'That model is not installed.' }
       const root = modelsDir(this.options.dataDir)
       for (const file of one.owned === false ? [] : one.files) {
-        within(root, relative(root, file))
-        if (existsSync(file)) within(realpathSync(root), relative(realpathSync(root), realpathSync(file)))
+        // `relative` spells a nested path with backslashes on Windows, which `within` refuses in a name.
+        within(root, relative(root, file).split(sep).join('/'))
+        if (existsSync(file)) within(realpathSync(root), relative(realpathSync(root), realpathSync(file)).split(sep).join('/'))
       }
       if (this.runner().loaded()?.model === id || readInstalled(this.options.dataDir).some((parent) => parent.draftModelId === id && this.runner().loaded()?.model === parent.id)) await this.runner().stop()
       const shared = new Set(readInstalled(this.options.dataDir).filter((model) => model.id !== id).flatMap((model) => model.files))

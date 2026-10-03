@@ -2,7 +2,7 @@
 import { createHash, randomBytes } from 'node:crypto'
 import { execFile, spawn, type ChildProcess } from 'node:child_process'
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs'
-import { dirname, join, relative, resolve } from 'node:path'
+import { basename, dirname, join, relative, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { download, sha256Of, type DownloadProgress } from './download.js'
 import { extractRuntimeArchive } from './llama.js'
@@ -169,7 +169,7 @@ export class MlxServer {
     const runtime = await (this.options.runtime ?? ensureMlxRuntime)(this.options.dataDir, { signal: deadline, ...(download !== undefined && { download }) })
     const model = readInstalled(this.options.dataDir).find((one) => one.id === id && one.format === 'mlx')
     if (!model) throw new Error('This MLX model is not installed.')
-    const configPath = model.files.find((file) => file.endsWith('/config.json'))
+    const configPath = model.files.find((file) => basename(file) === 'config.json')
     if (!configPath) throw new Error('The installed MLX model has no configuration.')
     const folder = dirname(configPath)
     for (const file of model.files) if (dirname(file) !== folder || !lstatSync(file).isFile() || lstatSync(file).isSymbolicLink()) throw new Error('MLX model files changed. Reinstall this model.')

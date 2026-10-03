@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { Buffer } from 'node:buffer'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -20,7 +20,8 @@ import { STARTER } from '../starter.js'
  * paired does.
  */
 
-const root = mkdtempSync(join(tmpdir(), 'alexia-media-plan-'))
+// The canonical spelling, as the code under test reads paths back: Windows' temp folder comes in a short 8.3 form.
+const root = realpathSync.native(mkdtempSync(join(tmpdir(), 'alexia-media-plan-')))
 afterAll(() => rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }))
 const closing = []
 afterEach(async () => {

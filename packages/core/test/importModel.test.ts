@@ -8,7 +8,7 @@ import { readGguf } from '../src/gguf.js'
 import { gguf, splitFiles } from './fixtures/gguf.js'
 
 const dirs: string[] = []
-const temp = (): string => { const dir = realpathSync(mkdtempSync(join(tmpdir(), 'import-gguf-test-'))); dirs.push(dir); return dir }
+const temp = (): string => { const dir = realpathSync.native(mkdtempSync(join(tmpdir(), 'import-gguf-test-'))); dirs.push(dir); return dir }
 const source = (): string => { const path = join(temp(), 'source.gguf'); writeFileSync(path, gguf()); return path }
 const storage = (dir: string): string => join(dir, 'models', 'text', 'import')
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }) })
