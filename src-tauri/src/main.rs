@@ -646,6 +646,11 @@ fn main() {
         // well. Two halves, because neither covers the other's case: this one is immediate
         // and orderly, that one survives this process being shot.
         .run(|app, event| match event {
+            // The last window going is not a request to quit. Compute mode destroys every window
+            // and lives in the tray; without this Tauri ends the process with code 0 a second
+            // after launch (a Windows PC in the compute role "opened" and vanished). A real quit
+            // or restart carries its own exit code, so it is not caught here.
+            RunEvent::ExitRequested { api, code: None, .. } => api.prevent_exit(),
             RunEvent::Exit => {
                 // First, so the watch in `start` knows this stop was asked for.
                 QUITTING.store(true, Ordering::SeqCst);
