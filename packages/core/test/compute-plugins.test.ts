@@ -150,7 +150,8 @@ test('removing a worker folder removes only its capabilities and notifies the lo
   plugins.watch()
   changed.mockClear()
   rmSync(worker.dir, { recursive: true, force: true })
-  await vi.waitFor(() => expect(plugins.computeWorkers().map((worker) => worker.handle)).toEqual([other.manifest.id]))
+  // A folder watcher on a loaded runner can take longer than vitest's one second to say a folder is gone.
+  await vi.waitFor(() => expect(plugins.computeWorkers().map((worker) => worker.handle)).toEqual([other.manifest.id]), { timeout: 15_000 })
   expect(changed).toHaveBeenCalledWith(worker.manifest.id)
   expect(plugins.ids).toEqual([ordinary.manifest.id, other.manifest.id].sort())
   expect(plugins.answers('demo.render')).toBe(true)

@@ -33,10 +33,13 @@ import { Store } from '../src/store.js'
 
 const sdk = pathToFileURL(join(import.meta.dirname, '..', '..', 'sdk', 'dist', 'src', 'index.js')).href
 const cleanups: (() => Promise<void> | void)[] = []
+// A plugin worker is a real process, and starting or stopping one takes more than vitest's one second
+// on a loaded Windows runner. Every wait here is for that, so every wait gets room.
+const waitFor: typeof vi.waitFor = (callback, options) => vi.waitFor(callback, { timeout: 15_000, ...(typeof options === 'number' ? { timeout: options } : options) })
 afterEach(async () => {
   vi.restoreAllMocks()
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup()
-})
+}, 30_000)
 
 const GB = 1024 ** 3
 const hardware: Machine = {
@@ -211,7 +214,7 @@ async function rig(saved: unknown[] = []) {
   /** The controller's next reconnection attempt, taken now rather than after its backoff. */
   const retry = (): void => { controllerClock.timers.filter((one) => one.live && one.ms < RECONNECT_GRACE_MS).at(-1)!.fn() }
   const stopCancelled = async (): Promise<void> => {
-    await vi.waitFor(() => { expect(workerClock.timers.filter((one) => one.live)).toHaveLength(1) })
+    await waitFor(() => { expect(workerClock.timers.filter((one) => one.live)).toHaveLength(1) })
     const deadline = workerClock.timers.find((one) => one.live)!
     expect(deadline.ms).toBe(CANCEL_STOP_MS)
     deadline.fn()
@@ -229,7 +232,7 @@ test('a text inference: prepare a lease, ask over an infer stream, and get the r
 
   const lease = await r.controller.call(r.host.id, 'prepare', { leaseId: 'lease-1', modelId: 'llama/test' })
   expect(lease).toMatchObject({ leaseId: 'lease-1', modelId: 'llama/test', phase: 'loading' })
-  await vi.waitFor(() => { expect(leases.at(-1)).toMatchObject({ leaseId: 'lease-1', phase: 'ready' }) })
+  await waitFor(() => { expect(leases.at(-1)).toMatchObject({ leaseId: 'lease-1', phase: 'ready' }) })
   // The controller's view is the host's own inventory, with the host's model id unqualified.
   expect(r.controller.view(r.host.id)).toMatchObject({ connection: 'direct', inventory: { name: 'Studio', models: [{ id: 'llama/test' }] } })
   expect(r.controller.view(r.host.id)!.inventory!.capabilities.map((one) => one.cap)).toEqual(['demo.render', 'demo.gate', 'demo.wait'])
@@ -246,7 +249,7 @@ test('a text inference: prepare a lease, ask over an infer stream, and get the r
   expect(r.runner.calls).toHaveLength(1)
   expect(r.runner.calls[0]!.equals(body)).toBe(true)
 
-  await vi.waitFor(async () => { expect(await r.controller.call(r.host.id, 'job.status', { jobId: 'chat-1' })).toMatchObject({ kind: 'chat', state: 'succeeded' }) })
+  await waitFor(async () => { expect(await r.controller.call(r.host.id, 'job.status', { jobId: 'chat-1' })).toMatchObject({ kind: 'chat', state: 'succeeded' }) })
   expect(await r.controller.call(r.host.id, 'release', { leaseId: 'lease-1' })).toEqual({})
   expect(r.plugin.ran()).toEqual([])
 })
@@ -293,7 +296,7 @@ test('a plugin operation: a staged input goes up, the job runs once, and its out
   expect(readdirSync(home)).toEqual(['picture.txt'])
 
   // Acknowledged: the host's copy is deleted now, not at its expiry.
-  await vi.waitFor(() => { expect(() => r.artifacts.open(artifact.id)).toThrow(expect.objectContaining({ code: 'not-found' })) })
+  await waitFor(() => { expect(() => r.artifacts.open(artifact.id)).toThrow(expect.objectContaining({ code: 'not-found' })) })
   expect(existsSync(join(r.studioRoot, 'data', 'compute', 'jobs', 'job-1'))).toBe(false)
   await expect(fetchArtifact(r.controller, r.host.id, artifact, join(r.laptopRoot, 'again'))).rejects.toMatchObject({ code: 'not-found' })
 })
@@ -303,12 +306,12 @@ test('a queued job is cancelled at once and never reaches the worker; a running 
   const active = new AbortController()
   const activeEvents: JobEvent[] = []
   const running = r.jobs.run(r.host.id, { jobId: 'job-active', cap: 'demo.wait' }, { onEvent: (event) => { activeEvents.push(event) } }, active.signal)
-  await vi.waitFor(() => { expect(r.plugin.ran()).toEqual(['demo.wait']) })
+  await waitFor(() => { expect(r.plugin.ran()).toEqual(['demo.wait']) })
 
   const queued = new AbortController()
   const queuedEvents: JobEvent[] = []
   const waiting = r.jobs.run(r.host.id, { jobId: 'job-queued', cap: 'demo.gate' }, { onEvent: (event) => { queuedEvents.push(event) } }, queued.signal)
-  await vi.waitFor(() => { expect(states(queuedEvents)).toEqual(['queued']) })
+  await waitFor(() => { expect(states(queuedEvents)).toEqual(['queued']) })
   expect(r.jobs.queue(r.host.id)).toMatchObject({ running: { id: 'job-active' }, waiting: [{ id: 'job-queued' }] })
 
   queued.abort()
@@ -319,12 +322,12 @@ test('a queued job is cancelled at once and never reaches the worker; a running 
 
   const pid = Number(readFileSync(r.plugin.at('pid'), 'utf8'))
   active.abort()
-  await vi.waitFor(() => { expect(existsSync(r.plugin.at('cancelled'))).toBe(true) })
+  await waitFor(() => { expect(existsSync(r.plugin.at('cancelled'))).toBe(true) })
   expect(r.scheduler.status('job-active')).toMatchObject({ state: 'cancelling' })
   expect(() => process.kill(pid, 0)).not.toThrow()
   await r.stopCancelled()
   expect(await running).toMatchObject({ id: 'job-active', state: 'cancelled' })
-  await vi.waitFor(() => { expect(() => process.kill(pid, 0)).toThrow() })
+  await waitFor(() => { expect(() => process.kill(pid, 0)).toThrow() })
   expect(states(activeEvents)).toEqual(['queued', 'preparing', 'running', 'cancelling', 'cancelled'])
   expect(rising(activeEvents)).toBe(true)
   expect(r.jobs.outstanding(r.host.id)).toEqual([])
@@ -341,17 +344,17 @@ test('a connection lost and found within the grace resumes the same job by id, a
   const events: JobEvent[] = []
   const submit = vi.spyOn(r.scheduler, 'submit')
   const running = r.jobs.run(r.host.id, { jobId: 'job-1', cap: 'demo.gate' }, { onEvent: (event) => { events.push(event) } })
-  await vi.waitFor(() => { expect(r.plugin.ran()).toEqual(['demo.gate']) })
-  await vi.waitFor(() => { expect(states(events)).toContain('running') })
+  await waitFor(() => { expect(r.plugin.ran()).toEqual(['demo.gate']) })
+  await waitFor(() => { expect(states(events)).toContain('running') })
 
   const up = await r.down()
-  await vi.waitFor(() => { expect(r.grace().filter((one) => one.live)).toHaveLength(1) })
-  await vi.waitFor(() => { expect(r.controller.view(r.host.id)?.failure?.code).toBe('offline') })
+  await waitFor(() => { expect(r.grace().filter((one) => one.live)).toHaveLength(1) })
+  await waitFor(() => { expect(r.controller.view(r.host.id)?.failure?.code).toBe('offline') })
   expect(r.scheduler.status('job-1')).toMatchObject({ state: 'running' })
 
   up()
   r.retry()
-  await vi.waitFor(() => { expect(r.controller.view(r.host.id)?.failure).toBeUndefined() })
+  await waitFor(() => { expect(r.controller.view(r.host.id)?.failure).toBeUndefined() })
   // The reconnect is what clears the one timer; no second one was ever armed.
   expect(r.grace()).toHaveLength(1)
   expect(r.grace()[0]!.live).toBe(false)
@@ -370,14 +373,13 @@ test('a grace that runs out interrupts the job once, and the controller is told 
   const submit = vi.spyOn(r.scheduler, 'submit')
   const cancelAll = vi.spyOn(r.scheduler, 'cancelAll')
   const running = r.jobs.run(r.host.id, { jobId: 'job-1', cap: 'demo.wait' })
-  // A plugin process takes its time to start on a loaded Windows runner.
-  await vi.waitFor(() => { expect(r.plugin.ran()).toEqual(['demo.wait']) }, { timeout: 10_000 })
+  await waitFor(() => { expect(r.plugin.ran()).toEqual(['demo.wait']) })
 
   const up = await r.down()
-  await vi.waitFor(() => { expect(r.grace().filter((one) => one.live)).toHaveLength(1) })
+  await waitFor(() => { expect(r.grace().filter((one) => one.live)).toHaveLength(1) })
   r.grace()[0]!.fn()
   await r.stopCancelled()
-  await vi.waitFor(() => { expect(r.scheduler.status('job-1')).toMatchObject({ state: 'interrupted', failure: { code: 'interrupted' } }) })
+  await waitFor(() => { expect(r.scheduler.status('job-1')).toMatchObject({ state: 'interrupted', failure: { code: 'interrupted' } }) })
 
   up()
   r.retry()
@@ -407,7 +409,7 @@ test('revoking from the host cancels the job, closes every stream and leaves the
   const r = await rig()
   const running = r.jobs.run(r.host.id, { jobId: 'job-1', cap: 'demo.wait' })
   void running.catch(() => {})
-  await vi.waitFor(() => { expect(r.plugin.ran()).toEqual(['demo.wait']) })
+  await waitFor(() => { expect(r.plugin.ran()).toEqual(['demo.wait']) })
 
   const revoking = r.protocol.revoke()
   await r.stopCancelled()
@@ -425,9 +427,9 @@ test('revoking from the host cancels the job, closes every stream and leaves the
 test('unpair from the controller revokes its host record, cancels jobs and closes streams', async () => {
   const r = await rig()
   const running = r.jobs.run(r.host.id, { jobId: 'job-1', cap: 'demo.wait' }).catch((error: unknown) => error)
-  await vi.waitFor(() => { expect(r.plugin.ran()).toEqual(['demo.wait']) })
+  await waitFor(() => { expect(r.plugin.ran()).toEqual(['demo.wait']) })
   const queued = r.jobs.run(r.host.id, { jobId: 'job-2', cap: 'demo.render' }).catch((error: unknown) => error)
-  await vi.waitFor(() => { expect(r.scheduler.queue().waiting.map((job) => job.id)).toEqual(['job-2']) })
+  await waitFor(() => { expect(r.scheduler.queue().waiting.map((job) => job.id)).toEqual(['job-2']) })
   const input = await r.controller.stream(r.host.id, { stream: 'artifact', put: {
     jobId: 'job-3', name: 'input.txt', mime: 'text/plain', bytes: 10, sha256: 'a'.repeat(64),
   } })
@@ -435,7 +437,7 @@ test('unpair from the controller revokes its host record, cancels jobs and close
 
   await r.controller.unpair(r.host.id)
   await r.stopCancelled()
-  await vi.waitFor(() => {
+  await waitFor(() => {
     expect(r.paired.list()).toEqual([])
     expect(r.scheduler.status('job-1')).toMatchObject({ state: 'cancelled', failure: { code: 'unpaired' } })
     expect(r.scheduler.status('job-2')).toMatchObject({ state: 'cancelled', failure: { code: 'unpaired' } })
