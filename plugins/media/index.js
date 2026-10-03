@@ -100,9 +100,18 @@ async function look(signal) {
     return asked && !pick(available, asked) ?
         { ok: true, said: `▲ Ready — ${many}, and none of them is “${asked}”. Pictures use ${available[0]}.` }
       : { ok: true, said: `● Ready — ${many}` }
-  } catch {
+  } catch (error) {
     available = []
-    return { ok: false, said: `■ ComfyUI is not answering at ${await where()}` }
+    const at = await where()
+    // Something answers there but would not list its models: a ComfyUI that has got itself stuck, or another
+    // program on its port. Starting a second one cannot help — it dies on the busy port and the call comes back
+    // as *not running*, which is what sent a model round in circles — so say what is actually wrong.
+    const answering = await stats(at, signal).then(() => true, () => false)
+    if (answering) {
+      const why = error instanceof Error ? error.message : String(error)
+      return { ok: false, running: true, said: `■ Something is answering at ${at} but would not list its models (${why}). It is probably a stuck ComfyUI: close it, and Alexia will start a fresh one.` }
+    }
+    return { ok: false, said: `■ ComfyUI is not answering at ${at}` }
   }
 }
 
@@ -135,14 +144,14 @@ async function found() {
  */
 async function bind(signal) {
   const state = await look(signal)
-  const startable = state.ok ? undefined : await canStart()
+  const startable = state.ok || state.running ? undefined : await canStart()
   const said =
-    state.ok ? state.said
+    state.ok || state.running ? state.said
     : startable?.ok ? '■ ComfyUI is not running — Alexia will start it when a picture is asked for'
     : `${state.said}. ${startable?.said ?? ''}`.trim()
   await alexia.status('state', said).catch(() => {})
   made.update({ _meta: state.ok || startable?.ok ? { 'alexia/provides': ['image.generate'] } : {} })
-  return { ok: state.ok, said, startable: startable?.ok === true }
+  return { ok: state.ok, said, startable: startable?.ok === true, running: state.running === true }
 }
 
 /** Everything that has to be true before Alexia may start ComfyUI itself. */
@@ -567,7 +576,8 @@ async function which(server, wanted, signal) {
 /** ComfyUI up, by whatever means are allowed. The two workflow tools open the same way. */
 async function reachable(ctx, { signal = ctx?.mcpReq?.signal, report } = {}) {
   const state = await bind(signal)
-  const up = state.ok ? state : await wake(signal, ctx, report)
+  // Something already answers there and is not working: starting another cannot help.
+  const up = state.ok || state.running ? state : await wake(signal, ctx, report)
   if (up.ok) await plant(signal)
   return up
 }

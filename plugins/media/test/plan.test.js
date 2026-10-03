@@ -69,7 +69,7 @@ async function comfyui({ checkpoints = ['anime_v3.safetensors', 'photo_v1.safete
     files.set(`${name}.json`, { text: '{}', modified: 1 })
     files.set(`${name}.api.json`, { text: JSON.stringify(graph), modified: 2 })
   }
-  const state = { checkpoints, files, queued: [], uploads: [] }
+  const state = { checkpoints, files, queued: [], uploads: [], flags: { broken: false } }
   const server = createServer((request, response) => {
     const url = new URL(request.url, 'http://127.0.0.1')
     const chunks = []
@@ -82,6 +82,10 @@ async function comfyui({ checkpoints = ['anime_v3.safetensors', 'photo_v1.safete
       }
       const path = decodeURIComponent(url.pathname)
       if (path === '/system_stats') return send({ devices: [{ type: 'cuda', name: 'cuda:0', vram_total: 12e9, vram_free: 11e9 }] })
+      if (path === '/object_info/CheckpointLoaderSimple' && state.flags.broken) {
+        response.writeHead(500, { 'content-type': 'text/plain' })
+        return response.end('500 Internal Server Error\n\nServer got itself in trouble')
+      }
       if (path === '/object_info/CheckpointLoaderSimple') return send({ CheckpointLoaderSimple: { input: { required: { ckpt_name: [state.checkpoints] } } } })
       if (path === '/object_info') {
         const info = structuredClone(CLASSES)
@@ -374,4 +378,15 @@ test('a picture given to a plain request takes the starter’s picture-to-pictur
     ['CheckpointLoaderSimple', 'CLIPTextEncode', 'CLIPTextEncode', 'EmptyLatentImage', 'KSampler', 'SaveImage', 'VAEDecodeTiled'].sort(),
   )
   expect(plain[5].inputs.denoise).toBe(1)
+})
+
+test('a ComfyUI that answers but cannot list its models is named as stuck, not reported as not running', async () => {
+  comfy.flags.broken = true
+  const ran = await call('run_workflow', { workflow: 'Anime' })
+  expect(ran.isError).toBe(true)
+  // It used to say *not running — Alexia will start it*, tried to, died on the busy port, and said it again.
+  expect(ran.text).toContain('Something is answering')
+  expect(ran.text).toContain('would not list its models')
+  expect(ran.text).not.toContain('not running')
+  expect(comfy.queued).toHaveLength(0)
 })
