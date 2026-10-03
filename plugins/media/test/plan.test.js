@@ -328,7 +328,8 @@ test('a picture given to a workflow is uploaded and set on its titled LoadImage 
   // Named by its content, not by the person's file, and with the format its bytes say.
   expect(upload.name).toMatch(/^alexia-[0-9a-f]{20}\.png$/)
   expect(comfy.last()[8].inputs.image).toBe(upload.name)
-  expect(ran.text).toMatch(new RegExp(`reference = "${picture.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&')}"`))
+  // The path as the text prints it: JSON-quoted, so a Windows path's backslashes are doubled.
+  expect(ran.text).toContain(`reference = ${JSON.stringify(picture)}`)
 
   // By field name works too, and a picture is never kept for the next run.
   await call('run_workflow', { workflow: 'Anime', values: { reference: picture } })

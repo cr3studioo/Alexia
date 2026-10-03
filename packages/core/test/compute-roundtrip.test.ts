@@ -370,7 +370,8 @@ test('a grace that runs out interrupts the job once, and the controller is told 
   const submit = vi.spyOn(r.scheduler, 'submit')
   const cancelAll = vi.spyOn(r.scheduler, 'cancelAll')
   const running = r.jobs.run(r.host.id, { jobId: 'job-1', cap: 'demo.wait' })
-  await vi.waitFor(() => { expect(r.plugin.ran()).toEqual(['demo.wait']) })
+  // A plugin process takes its time to start on a loaded Windows runner.
+  await vi.waitFor(() => { expect(r.plugin.ran()).toEqual(['demo.wait']) }, { timeout: 10_000 })
 
   const up = await r.down()
   await vi.waitFor(() => { expect(r.grace().filter((one) => one.live)).toHaveLength(1) })
