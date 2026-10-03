@@ -269,7 +269,10 @@ export function library({ alexia, compute, place, classes, comfy = async () => u
     }
   }
 
-  const isInstalled = (seen, id) => Boolean(seen.records[id]) || seen.saved.includes(savedAs(id))
+  // Installed through the library (a record), saved as the library would save it, or already in ComfyUI under
+  // exactly this name — a workflow the person saved by hand, whose name may hold `+` or brackets that
+  // `savedAs` rewrites, so looking only for the rewritten name never finds it.
+  const isInstalled = (seen, id) => Boolean(seen.records[id]) || seen.saved.includes(id) || seen.saved.includes(savedAs(id))
 
   /** The sentence about one workflow's fit, for the card that renders or, unread, an 8 GB one. */
   function fitLine(one, card) {

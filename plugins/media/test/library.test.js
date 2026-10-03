@@ -351,6 +351,25 @@ test('an official template installs only on the install action: saved with its e
   expect(rows.find((one) => one.id === 'utility_birefnet_remove_background').state).toBe('installed')
 })
 
+test('a workflow of the person’s own is installed in the list and in its detail, whatever characters its name has', async () => {
+  const comfy = await comfyui()
+  // Saved by hand in ComfyUI, never through the library: no record, and a name with `+` and brackets in it.
+  const names = ['Simple SDXL + LoRA', 'Photo Reference (Pose + Style)', 'plain']
+  for (const name of names) comfy.files.set(`workflows/${name}.json`, '{}')
+  const { dir } = install()
+  const { alexia } = computer({ comfy, dir })
+
+  const rows = (await call(alexia, 'library')).structuredContent.rows
+  for (const name of names) expect(rows.find((one) => one.id === name)).toMatchObject({ state: 'installed', group: 'Your own' })
+  // The detail says what the list says. It used to look the file up under a name with every
+  // `+` and bracket rewritten to `_`, which no file has, and answer *Not installed.*
+  for (const name of names) {
+    const about = text(await call(alexia, 'about_workflow', { id: name }))
+    expect(about, name).toContain('Installed.')
+    expect(about, name).not.toContain('Not installed.')
+  }
+})
+
 test('a workflow that needs a node pack gets it, with ComfyUI’s own Python, and it is recorded', async () => {
   const comfy = await comfyui()
   const { dir, python } = install()
