@@ -223,8 +223,10 @@ await alexia.start()
   expect(JSON.stringify(enabled)).not.toContain(id)
 
   plugins.watch()
+  // The folder watcher comes up asynchronously (FSEvents on a Mac): a folder removed before it is up is never heard of.
+  await new Promise((resolve) => setTimeout(resolve, 500))
   rmSync(dir, { recursive: true, force: true })
-  await vi.waitFor(() => expect(heard.at(-1)).toMatchObject({ capabilities: [], setup: [] }))
+  await vi.waitFor(() => expect(heard.at(-1)).toMatchObject({ capabilities: [], setup: [] }), { timeout: 15_000 })
   const gone = await host.current()
   expect(gone.revision).toBeGreaterThan(enabled.revision)
   expect(gone.models.map((model) => model.id)).toEqual(['llama/test'])

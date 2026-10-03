@@ -148,9 +148,10 @@ test('removing a worker folder removes only its capabilities and notifies the lo
   for (const id of plugins.ids) plugins.enable(id)
   expect(plugins.computeWorkers()).toHaveLength(2)
   plugins.watch()
+  // The folder watcher comes up asynchronously (FSEvents on a Mac): a folder removed before it is up is never heard of.
+  await new Promise((resolve) => setTimeout(resolve, 500))
   changed.mockClear()
   rmSync(worker.dir, { recursive: true, force: true })
-  // A folder watcher on a loaded runner can take longer than vitest's one second to say a folder is gone.
   await vi.waitFor(() => expect(plugins.computeWorkers().map((worker) => worker.handle)).toEqual([other.manifest.id]), { timeout: 15_000 })
   expect(changed).toHaveBeenCalledWith(worker.manifest.id)
   expect(plugins.ids).toEqual([ordinary.manifest.id, other.manifest.id].sort())

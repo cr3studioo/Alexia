@@ -9,6 +9,7 @@ import { anonymous, chat, HEDGE_AFTER, MOST_AT_ONCE, PATIENCE, ProviderError, PR
 import { redact, summarise } from './redact.js'
 import { CORE, type SecretStore } from './secrets.js'
 import { textOf, type Message, type Outcome, type Source, type Store } from './store.js'
+import { fitTools } from './toolFit.js'
 import { floor, PER_TOKEN, size, summary } from './trim.js'
 import { affordable, costOf, dollars as money, type Allowance, type Today } from './usage.js'
 
@@ -2405,9 +2406,11 @@ export async function send(
       }
       wake()
     }
+    // A model on this machine is sent the tools that fit its window, not every plugin's (`toolFit.ts`).
+    const tools = request.tools !== undefined && owned(choice.model) ? fitTools(request.tools, run.messages, choice.model.context) : request.tools
     void chat(
       choice.provider,
-      { ...request, messages: run.messages, model: choice.model.id, signal, ...(session !== undefined && { session }) },
+      { ...request, ...(tools !== undefined && { tools }), messages: run.messages, model: choice.model.id, signal, ...(session !== undefined && { session }) },
       (text) => {
         if (!current()) return
         if (run.chosen) deliver(run, text)
