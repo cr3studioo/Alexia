@@ -137,7 +137,9 @@ test('the manifest declares the heavy half as a compute operation, and nothing e
   // adds: an operation must be one of `provides`, and no capability is declared twice.
   const manifest = readManifest(join(import.meta.dirname, '..'))
   expect(manifest.alexia_protocol).toBe(13)
-  expect(manifest.compute.operations).toEqual([expect.objectContaining({ cap: RENDER, weight: 'heavy' })])
+  expect(manifest.compute.operations).toContainEqual(expect.objectContaining({ cap: RENDER, weight: 'heavy' }))
+  // The library's own operation is a list and a note, never a render, so it never evicts a model.
+  expect(manifest.compute.operations.filter((one) => one.weight === 'heavy').map((one) => one.cap)).toEqual([RENDER])
   expect(manifest.provides).toEqual(expect.arrayContaining(['image.generate', RENDER]))
   // Planning the picture is not an operation: it stays with the person, whatever they paired.
   expect(manifest.compute.operations.map((one) => one.cap)).not.toContain('image.generate')

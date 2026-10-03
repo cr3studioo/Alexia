@@ -210,11 +210,17 @@ export async function onDisk(folders) {
 
 const ABSENT = 'ComfyUI could not be found on this computer.'
 
-/** What a person is told to do when there is no ComfyUI. Alexia does not install it for them. */
+/**
+ * What a person is told when there is no ComfyUI and Alexia cannot install its own here.
+ *
+ * On a Windows PC with an NVIDIA card Alexia installs one itself (`install.js`), and the setup
+ * list offers that with its size instead of this sentence.
+ */
 export const INSTALL_COMFYUI =
   'Install ComfyUI from comfy.org — its own installer handles the graphics-card half, which is the ' +
-  'part that goes wrong. Alexia finds it afterwards in the usual places; if it is installed somewhere ' +
-  'unusual, put the folder in this plugin’s settings.'
+  'part that goes wrong. On a Windows PC with an NVIDIA card Alexia can install its own copy instead, ' +
+  'from this computer’s setup list. Alexia finds an install of yours in the usual places; if it is ' +
+  'somewhere unusual, put the folder in this plugin’s settings.'
 
 const requirementOf = (rung) => `model:${rung.file}`
 
@@ -224,9 +230,9 @@ export const rungOf = (requirementId) => TIERS.find((rung) => requirementOf(rung
 /**
  * What is missing before a picture can be rendered on this computer, with its size.
  *
- * Two things only, and in the order somebody has to deal with them: the program, which Alexia
- * will not install and says how to; then one model, which it will, and whose size is on the
- * list before anything is pressed. `card` is ComfyUI's own reading when it is running,
+ * Two things only, and in the order somebody has to deal with them: the program, which this
+ * says how to install where Alexia cannot install its own (`install.js` offers that where it
+ * can); then one model, which it will, and whose size is on the list before anything is pressed. `card` is ComfyUI's own reading when it is running,
  * `null` when it looked and found none, and absent when nobody has asked yet.
  */
 export function requirements({ dir, installed = [], card } = {}) {

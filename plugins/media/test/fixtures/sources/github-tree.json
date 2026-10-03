@@ -1,0 +1,376 @@
+{
+  "sha": "91779af19b6c2675b5e39d5d091d4c2bbdc619e5",
+  "url": "https://api.github.com/repos/diffustar/comfyui-workflow-collection/git/trees/91779af19b6c2675b5e39d5d091d4c2bbdc619e5",
+  "tree": [
+    {
+      "path": ".gitignore",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "0990a241b6eb9abf768f644469786cfb763907d8",
+      "size": 31,
+      "url": "https://api.github.com/repos/diffustar/comfyui-workflow-collection/git/blobs/0990a241b6eb9abf768f644469786cfb763907d8"
+    },
+    {
+      "path": "LICENSE",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "1e125426792f99923e33e08ca8928c22d4d1a875",
+      "size": 1062,
+      "url": "https://api.github.com/repos/diffustar/comfyui-workflow-collection/git/blobs/1e125426792f99923e33e08ca8928c22d4d1a875"
+    },
+    {
+      "path": "README.md",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "0c2464a064090eeec648f1bdc296bb7bc12a92d8",
+      "size": 1772,
+      "url": "https://api.github.com/repos/diffustar/comfyui-workflow-collection/git/blobs/0c2464a064090eeec648f1bdc296bb7bc12a92d8"
+    },
+    {
+      "path": "assets",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "ce232309a8f3881aa30156675a6424842f987b49",
+      "url": "https://api.github.com/repos/diffustar/comfyui-workflow-collection/git/trees/ce232309a8f3881aa30156675a6424842f987b49"
+    },
+    {
+      "path": "assets/preview-ella.png",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "f9d15f3635f862bc30d5a3306accaa976486be3a",
+      "size": 66050,
+      "url": "https://api.github.com/repos/diffustar/comfyui-workflow-collection/git/blobs/f9d15f3635f862bc30d5a3306accaa976486be3a"
+    },
+    {
+      "path": "assets/preview-sal-vton-clothing-swap.png",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "e28aad08c7920cfc2d5cb001461184cdaef3a291",
+      "size": 126886,
+      "url": "https://api.github.com/repos/diffustar/comfyui-workflow-collection/git/blobs/e28aad08c7920cfc2d5cb001461184cdaef3a291"
+    },
+    {
+      "path": "assets/preview-xyz-plot.png",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "8d5dde8d47822cd31b7405935c4a69904bc46c03",
+      "size": 268088,
+      "url": "https://api.github.com/repos/diffustar/comfyui-workflow-collection/git/blobs/8d5dde8d47822cd31b7405935c4a69904bc46c03"
+    },
+    {
+      "path": "workflows",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "a655b853b7e356112a5e77a7ead2b00c57c3e6de",
+      "url": "https://api.github.com/repos/diffustar/comfyui-workflow-collection/git/trees/a655b853b7e356112a5e77a7ead2b00c57c3e6de"
+    },
+    {
+      "path": "workflows/ella",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "87d06c6d6ebbbfd876ac442979152bceda9266d1",
+      "url": "https://api.github.com/repos/diffustar/comfyui-workflow-collection/git/trees/87d06c6d6ebbbfd876ac442979152bceda9266d1"
+    },
+    {
+      "path": "workflows/ella/README.md",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "8202d2325ea99847d1eb7aa582984d5e015f0bd3",
+      "size": 3777,
+      "url": "https://api.github.com/repos/diffustar/comfyui-workflow-collection/git/blobs/8202d2325ea99847d1eb7aa582984d5e015f0bd3"
+    },
+    {
+      "path": "workflows/ella/comparison",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "ba17f74324dfe7b9533baf59372d580c536d0bc9",
+      "url": "https://api.github.com/repos/diffustar/comfyui-workflow-collection/git/trees/ba17f74324dfe7b9533baf59372d580c536d0bc9"
+    },
+    {
+      "path": "workflows/ella/comparison/grey-cat",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "a2cc6f2578742949e3305e71d7539db240950da7",
+      "url": "https://api.github.com/repos/diffustar/comfyui-workflow-collection/git/trees/a2cc6f2578742949e3305e71d7539db240950da7"
+    },
+    {
+      "path": "workflows/ella/comparison/grey-cat/combined.png",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "c946034ea498f6a943eb2a5495d16fc4353cf58c",
+      "size": 4127671,
+      "url": "https://api.github.com/repos/diffustar/comfyui-workflow-collection/git/blobs/c946034ea498f6a943eb2a5495d16fc4353cf58c"
+    },
+    {
+      "path": "workflows/ella/comparison/grey-cat/combined2.png",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "b8d441e1a2eabb3696493c8d8bd03bd17a1b5814",
+      "size": 3660068,
+      "url": "https://api.github.com/repos/diffustar/comfyui-workflow-collection/git/blobs/b8d441e1a2eabb3696493c8d8bd03bd17a1b5814"
+    },
+    {
+      "path": "workflows/ella/comparison/grey-cat/combined2_thumb.png",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "5d2889aca2758016e99c0f3cc95633ae42466103",
+      "size": 404061,
+      "url": "https://api.github.com/repos/diffustar/comfyui-workflow-collection/git/blobs/5d2889aca2758016e99c0f3cc95633ae42466103"
+    },
+    {
+      "path": "workflows/ella/comparison/grey-cat/combined_thumb.png",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "6498f1662a2cc763ffb6a71c902fc333aafaa295",
+      "size": 464494,
+      "url": "https://api.github.com/repos/diffustar/comfyui-workflow-collection/git/blobs/6498f1662a2cc763ffb6a71c902fc333aafaa295"
+    },
+    {
+      "path": "workflows/ella/comparison/grey-cat/dalle.webp",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "a45ccb7def3839840b6a58f5789222530db8fe57",
+      "size": 302900,
+      "url": "https://api.github.com/repos/diffustar/comfyui-workflow-collection/git/blobs/a45ccb7def3839840b6a58f5789222530db8fe57"
+    },
+    {
+      "path": "workflows/ella/comparison/grey-cat/dalle_thumb.webp",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "cce0a439bdae5aa5c55b5c8730be5ec430d7d506",
+      "size": 29678,
+      "url": "https://api.github.com/repos/diffustar/comfyui-workflow-collection/git/blobs/cce0a439bdae5aa5c55b5c8730be5ec430d7d506"
+    },
+    {
+      "path": "workflows/ella/comparison/grey-cat/ella.png",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "e703cdb8c4a005fe9b0ff1ba2fa505fca8bdcc3b",
+      "size": 4173763,
+      "url": "https://api.github.com/repos/diffustar/comfyui-workflow-collection/git/blobs/e703cdb8c4a005fe9b0ff1ba2fa505fca8bdcc3b"
+    },
+    {
+      "path": "workflows/ella/comparison/grey-cat/ella2.png",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "c6276ad56d2b5dad70fcfe624bef5160ce9e5ad9",
+      "size": 3866247,
+      "url": "https://api.github.com/repos/diffustar/comfyui-workflow-collection/git/blobs/c6276ad56d2b5dad70fcfe624bef5160ce9e5ad9"
+    },
+    {
+      "path": "workflows/ella/comparison/grey-cat/ella2_thumb.png",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "3f2a3a12c103152afe2250464f4f3958282c7007",
+      "size": 430269,
+      "url": "https://api.github.com/repos/diffustar/comfyui-workflow-collection/git/blobs/3f2a3a12c103152afe2250464f4f3958282c7007"
+    },
+    {
+      "path": "workflows/ella/comparison/grey-cat/ella_thumb.png",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "9ebeaabec347a0e17532aaf156da60f7d124ddf9",
+      "size": 480673,
+      "url": "https://api.github.com/repos/diffustar/comfyui-workflow-collection/git/blobs/9ebeaabec347a0e17532aaf156da60f7d124ddf9"
+    },
+    {
+      "path": "workflows/ella/comparison/grey-cat/midjourney5.png",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "e07bc7403a8b10916f87638ada3118dc09e9013c",
+      "size": 449128,
+      "url": "https://api.github.com/repos/diffustar/comfyui-workflow-collection/git/blobs/e07bc7403a8b10916f87638ada3118dc09e9013c"
+    },
+    {
+      "path": "workflows/ella/comparison/grey-cat/midjourney6.png",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "64c14b739e74035bea13b7943deb3ad6d17a3183",
+      "size": 548278,
+      "url": "https://api.github.com/repos/diffustar/comfyui-workflow-collection/git/blobs/64c14b739e74035bea13b7943deb3ad6d17a3183"
+    },
+    {
+      "path": "workflows/ella/comparison/grey-cat/sd15.png",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "4b1c087000860a37409e076fc5be38df49dcbd78",
+      "size": 4026370,
+      "url": "https://api.github.com/repos/diffustar/comfyui-workflow-collection/git/blobs/4b1c087000860a37409e076fc5be38df49dcbd78"
+    },
+    {
+      "path": "workflows/ella/comparison/grey-cat/sd152.png",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "e9d86f07fa22f04e67590d56021dc8b71d27ee5b",
+      "size": 3501427,
+      "url": "https://api.github.com/repos/diffustar/comfyui-workflow-collection/git/blobs/e9d86f07fa22f04e67590d56021dc8b71d27ee5b"
+    },
+    {
+      "path": "workflows/ella/comparison/grey-cat/sd152_thumb.png",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "f932d3a10f85d89e4f835d322635b82491b5df79",
+      "size": 401995,
+      "url": "https://api.github.com/repos/diffustar/comfyui-workflow-collection/git/blobs/f932d3a10f85d89e4f835d322635b82491b5df79"
+    },
+    {
+      "path": "workflows/ella/comparison/grey-cat/sd15_thumb.png",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "86805d969074eb239b8e31021ff5b4726523565f",
+      "size": 465157,
+      "url": "https://api.github.com/repos/diffustar/comfyui-workflow-collection/git/blobs/86805d969074eb239b8e31021ff5b4726523565f"
+    },
+    {
+      "path": "workflows/ella/comparison/grey-cat/sd3.webp",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "d629bb728a354772d916c1252c35a02de551b2c1",
+      "size": 89442,
+      "url": "https://api.github.com/repos/diffustar/comfyui-workflow-collection/git/blobs/d629bb728a354772d916c1252c35a02de551b2c1"
+    },
+    {
+      "path": "workflows/ella/comparison/grey-cat/sd3_thumb.webp",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "e58cea547a284ae75603678b2a5a3fcb1f1ee8aa",
+      "size": 20284,
+      "url": "https://api.github.com/repos/diffustar/comfyui-workflow-collection/git/blobs/e58cea547a284ae75603678b2a5a3fcb1f1ee8aa"
+    },
+    {
+      "path": "workflows/ella/comparison/grey-cat/sdxl.png",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "81963eb84ad6c149574a6ce85051553b8007157d",
+      "size": 13572880,
+      "url": "https://api.github.com/repos/diffustar/comfyui-workflow-collection/git/blobs/81963eb84ad6c149574a6ce85051553b8007157d"
+    },
+    {
+      "path": "workflows/ella/comparison/grey-cat/sdxl2.png",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "00dcf3ad5726e466781622dbe6662770d3f760fd",
+      "size": 12639424,
+      "url": "https://api.github.com/repos/diffustar/comfyui-workflow-collection/git/blobs/00dcf3ad5726e466781622dbe6662770d3f760fd"
+    },
+    {
+      "path": "workflows/ella/comparison/grey-cat/sdxl2_thumb.png",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "7ddbcdde722176acff327a9f351608babb833047",
+      "size": 455019,
+      "url": "https://api.github.com/repos/diffustar/comfyui-workflow-collection/git/blobs/7ddbcdde722176acff327a9f351608babb833047"
+    },
+    {
+      "path": "workflows/ella/comparison/grey-cat/sdxl_thumb.png",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "bed61c52104542bfa973088c70b563c79bfb6e72",
+      "size": 464537,
+      "url": "https://api.github.com/repos/diffustar/comfyui-workflow-collection/git/blobs/bed61c52104542bfa973088c70b563c79bfb6e72"
+    },
+    {
+      "path": "workflows/ella/workflow.json",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "385988188346082fe4c6ce660a0275d3d5f99653",
+      "size": 212237,
+      "url": "https://api.github.com/repos/diffustar/comfyui-workflow-collection/git/blobs/385988188346082fe4c6ce660a0275d3d5f99653"
+    },
+    {
+      "path": "workflows/ella/workflow.png",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "a64b69917ca960b22d0a944a634fb30a5ef56ad0",
+      "size": 3577017,
+      "url": "https://api.github.com/repos/diffustar/comfyui-workflow-collection/git/blobs/a64b69917ca960b22d0a944a634fb30a5ef56ad0"
+    },
+    {
+      "path": "workflows/sal-vton-clothing-swap",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "f5928e8f0ccf07bbdf0376ed63aa2de9dda62b4b",
+      "url": "https://api.github.com/repos/diffustar/comfyui-workflow-collection/git/trees/f5928e8f0ccf07bbdf0376ed63aa2de9dda62b4b"
+    },
+    {
+      "path": "workflows/sal-vton-clothing-swap/README.md",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "5e59d71343937f7c179b8d742078864ddda891a0",
+      "size": 1518,
+      "url": "https://api.github.com/repos/diffustar/comfyui-workflow-collection/git/blobs/5e59d71343937f7c179b8d742078864ddda891a0"
+    },
+    {
+      "path": "workflows/sal-vton-clothing-swap/example-input.png",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "bd490615239c82a1b27f0e996f510a9d9d94d366",
+      "size": 1903120,
+      "url": "https://api.github.com/repos/diffustar/comfyui-workflow-collection/git/blobs/bd490615239c82a1b27f0e996f510a9d9d94d366"
+    },
+    {
+      "path": "workflows/sal-vton-clothing-swap/example-output-a.png",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "ab972eca9cfc36aeec132871ec7f0d94ae89d326",
+      "size": 605127,
+      "url": "https://api.github.com/repos/diffustar/comfyui-workflow-collection/git/blobs/ab972eca9cfc36aeec132871ec7f0d94ae89d326"
+    },
+    {
+      "path": "workflows/sal-vton-clothing-swap/example-output-b.png",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "3c0c3fb08614620a09f3d432a5a7df0810b63f76",
+      "size": 2117935,
+      "url": "https://api.github.com/repos/diffustar/comfyui-workflow-collection/git/blobs/3c0c3fb08614620a09f3d432a5a7df0810b63f76"
+    },
+    {
+      "path": "workflows/sal-vton-clothing-swap/workflow.json",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "1e4c27b24d3d852c17a18f5821b941a182f42ebc",
+      "size": 28215,
+      "url": "https://api.github.com/repos/diffustar/comfyui-workflow-collection/git/blobs/1e4c27b24d3d852c17a18f5821b941a182f42ebc"
+    },
+    {
+      "path": "workflows/sal-vton-clothing-swap/workflow.png",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "27d4e307ff19a26745a81d03e333663d58d8acba",
+      "size": 2770758,
+      "url": "https://api.github.com/repos/diffustar/comfyui-workflow-collection/git/blobs/27d4e307ff19a26745a81d03e333663d58d8acba"
+    },
+    {
+      "path": "workflows/xyz-plot",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "e38f19774c8f932ecb71a4c9712fb5a67c1afa26",
+      "url": "https://api.github.com/repos/diffustar/comfyui-workflow-collection/git/trees/e38f19774c8f932ecb71a4c9712fb5a67c1afa26"
+    },
+    {
+      "path": "workflows/xyz-plot/README.md",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "0f22db775b486e9175bcce42044b1d1df78d0150",
+      "size": 424,
+      "url": "https://api.github.com/repos/diffustar/comfyui-workflow-collection/git/blobs/0f22db775b486e9175bcce42044b1d1df78d0150"
+    },
+    {
+      "path": "workflows/xyz-plot/workflow.json",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "c52feeed7919e32ef7a40ce7eda1a5d038e7589d",
+      "size": 29881,
+      "url": "https://api.github.com/repos/diffustar/comfyui-workflow-collection/git/blobs/c52feeed7919e32ef7a40ce7eda1a5d038e7589d"
+    },
+    {
+      "path": "workflows/xyz-plot/workflow.png",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "fa937d3e9587f24cd96af23fb1e06bb68cbd1d03",
+      "size": 10308963,
+      "url": "https://api.github.com/repos/diffustar/comfyui-workflow-collection/git/blobs/fa937d3e9587f24cd96af23fb1e06bb68cbd1d03"
+    }
+  ],
+  "truncated": false
+}

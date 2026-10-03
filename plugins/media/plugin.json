@@ -4,7 +4,7 @@
   "id": "media",
   "name": "Local media generation",
   "summary": "Makes pictures, sound and video on this computer, so in Combined mode they are made here and not in the cloud.",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "license": "AGPL-3.0-only",
   "entry": {
     "run": "node",
@@ -17,7 +17,7 @@
   "requires": [
     {
       "cap": "net.request",
-      "why": "To talk to ComfyUI, which is running on this machine and listening on a local port."
+      "why": "To talk to ComfyUI on a local port, and to search community workflow sources when you ask it to."
     },
     {
       "cap": "fs.own_dir",
@@ -25,11 +25,11 @@
     },
     {
       "cap": "proc.spawn",
-      "why": "To start ComfyUI for you, if it is installed on this machine and not already running."
+      "why": "To start ComfyUI, and to install a workflow’s node packs into Alexia’s own ComfyUI with its own Python."
     },
     {
       "cap": "net.download",
-      "why": "To download one image model, if this machine has none. It is kept in this plugin’s folder."
+      "why": "To download ComfyUI, models and node packs from GitHub, Hugging Face and the Comfy registry, after you press Install."
     },
     {
       "cap": "fs.read_scoped",
@@ -38,7 +38,8 @@
   ],
   "provides": [
     "image.generate",
-    "image.render"
+    "image.render",
+    "image.workflows"
   ],
   "compute": {
     "operations": [
@@ -46,6 +47,11 @@
         "cap": "image.render",
         "summary": "Render pictures, sound or video from a prepared ComfyUI workflow",
         "weight": "heavy"
+      },
+      {
+        "cap": "image.workflows",
+        "summary": "Read the workflow library on this computer, and write down a workflow somebody asked for",
+        "weight": "light"
       }
     ],
     "hooks": [
@@ -108,6 +114,19 @@
       "tool": "setup"
     },
     {
+      "type": "text",
+      "key": "community_search",
+      "label": "Search community workflows",
+      "placeholder": "face swap, sketch to photo, …",
+      "hint": "What to look for in community workflow sources. What is found appears in Workflows below, where it can be installed."
+    },
+    {
+      "type": "action",
+      "key": "search_community",
+      "label": "Search",
+      "tool": "search_community"
+    },
+    {
       "type": "status",
       "key": "state",
       "label": "State"
@@ -139,7 +158,7 @@
         "key": "library",
         "type": "cards",
         "label": "Workflows",
-        "hint": "Ways of making pictures: yours first, then the ones this graphics card can run that you can add.",
+        "hint": "By task — background removal, upscaling, image edit, inpaint, face restore, style transfer, speech, voice cloning, image to video. Each card says what it needs, its size and whether it fits the graphics card of the computer that renders. Install sets everything up there: the workflow, its models and its node packs. A ComfyUI you installed yourself is never changed — you are told what to add instead.",
         "rows": "library",
         "detail": "about_workflow",
         "filter": true,
@@ -189,6 +208,8 @@
           "state",
           "made",
           "library",
+          "community_search",
+          "search_community",
           "disk"
         ]
       }

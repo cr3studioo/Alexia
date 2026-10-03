@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { fromJsonSchema, log, plugin } from '@alexia/sdk'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
-import { basename, join } from 'node:path'
-import { checkpoints, classes, named, pick, stats, template, templates } from './comfy.js'
+import { basename, join, resolve } from 'node:path'
+import { checkpoints, classes, named, pick, stats, templates } from './comfy.js'
 import { facts, split } from './compute.js'
 import { alive, awake, install, loopback, port, ready, start, stop, tail } from './launch.js'
 import { named_of, renderer } from './render.js'
+import { COMFYUI, comfyStatus, installComfy, installed, nvidia, requirement as comfyRequirement } from './install.js'
 import { RENDER, dedicated, fetchRequirement, onDisk, requirements } from './worker.js'
 import {
   API_SUFFIX,
@@ -32,8 +33,9 @@ import { picture } from './inputs.js'
 import { measure } from './sizing.js'
 import { fetchModel, have } from './models.js'
 import { reading, vram } from './tier.js'
-import { describe as line, flatten, pickEntry, runnable, search, shelf } from './catalog.js'
+import { describe as line, flatten, runnable, search, shelf } from './catalog.js'
 import { convert } from './convert.js'
+import { LIBRARY, library } from './library/tools.js'
 
 /**
  * Local image generation (M4-6).
@@ -119,7 +121,7 @@ async function found() {
   const said = String(path ?? '').trim()
   if (said) return (await install(said)) ?? null
   if (where_it_is !== undefined) return where_it_is
-  where_it_is = (await install()) ?? null
+  where_it_is = (await install(undefined, undefined, async () => (await installed(own))?.dir)) ?? null
   return where_it_is
 }
 
@@ -1243,255 +1245,6 @@ alexia.tool(
   },
 )
 
-/**
- * The library, as a page somebody can read (§8.1, §8.4).
- *
- * **The tiers §8.4 ranks do not all exist yet.** *Verified* needs workflows the owner has run
- * and tagged, and *Curated* needs an Alexia set published the way plugins are; neither has been
- * built, and inventing a badge for them would be the rot that section warns about — a tick that
- * means nothing is worse than no tick. So this is the third tier, ComfyUI’s own, and it says so.
- *
- * **Filtered on the machine before it is ranked on the words** (D133). Showing somebody 468
- * workflows when 45 of them will run on their card is accurate and misleading at once, so what
- * is listed is what this card can actually run, and the hint carries the honest arithmetic.
- */
-alexia.tool(
-  'library',
-  {
-    description:
-      'List the workflows this machine could install and run, from the catalogue ComfyUI ships. ' +
-      'Takes no arguments. Use to show somebody what is available, or before install_workflow. ' +
-      'Only lists what this graphics card can run and what does not need a paid service.',
-    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
-  },
-  async (ctx) => {
-    const signal = ctx?.mcpReq?.signal
-    const state = await reachable(ctx)
-    if (!state.ok) {
-      return { content: [{ type: 'text', text: state.said }], structuredContent: { rows: [] } }
-    }
-    const server = await where()
-    const all = flatten(await templates(server, signal).catch(() => []))
-    const card = vram(await stats(server, signal).catch(() => undefined))
-    const mine = runnable(all, { vram: card?.total })
-    const known = new Map(all.map((one) => [one.name, one]))
-    const here = await saved(server, signal).catch(() => [])
-    const spec = await nodes(signal).catch(() => ({}))
-
-    /** What a workflow already here can be told, which is the useful thing to know about it. */
-    const settings = async (row) => {
-      if (!row.export) return 'not exported'
-      try {
-        const graph = await read(server, row.export, signal)
-        if (!isApi(graph)) return 'not an API export'
-        const { found, derived } = fields(graph, spec)
-        if (found.length === 0) return 'no settings'
-        return `${found.map((one) => one.field).join(', ')}${derived ? ' (from its wiring)' : ''}`
-      } catch {
-        return 'unreadable'
-      }
-    }
-
-    const rows = []
-    // **Installed first, then your own, then the rest** — the order somebody opening this page
-    // is looking in. Grouping is not sorting, so the sections are built in the order they read.
-    for (const row of here.filter((one) => known.has(one.name))) {
-      const one = known.get(row.name)
-      rows.push({
-        id: one.name,
-        name: one.title,
-        summary: one.description || 'Its author left no description.',
-        meta: await settings(row),
-        state: 'installed',
-        group: 'Installed',
-      })
-    }
-    for (const row of here.filter((one) => !known.has(one.name))) {
-      rows.push({
-        id: row.name,
-        name: row.name,
-        // A workflow somebody built or was given has no catalogue entry to describe it, and
-        // inventing one would be worse than saying where it came from.
-        summary: 'Yours — added from a file or a link rather than the catalogue.',
-        meta: await settings(row),
-        state: 'installed',
-        group: 'Your own',
-      })
-    }
-    const rest = mine.filter((one) => !here.some((row) => row.name === one.name))
-    for (const one of rest) {
-      rows.push({
-        id: one.name,
-        name: one.title,
-        summary: one.description || 'Its author left no description.',
-        meta:
-          [one.vram ? `${(one.vram / 1e9).toFixed(1)} GB` : undefined, one.models.length > 0 ? one.models.join(', ') : undefined]
-            .filter(Boolean)
-            .join(' · ') || 'nothing extra',
-        state: 'available',
-        group: `Not installed — ${rest.length} this card can run`,
-      })
-    }
-    return { content: [{ type: 'text', text: shelf(all, card?.total).said }], structuredContent: { rows } }
-  },
-)
-
-
-alexia.tool(
-  'about_workflow',
-  {
-    description: 'What one catalogue workflow is for, by its catalogue name. Used by the library page.',
-    inputSchema: fromJsonSchema({
-      type: 'object',
-      properties: { id: { type: 'string', description: 'The workflow’s catalogue name.' } },
-      required: ['id'],
-    }),
-    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
-  },
-  async ({ id }, ctx) => {
-    const signal = ctx?.mcpReq?.signal
-    const state = await reachable(ctx)
-    if (!state.ok) return refuse(state.said)
-    const server = await where()
-    const all = flatten(await templates(server, signal).catch(() => []))
-    const one = all.find((entry) => entry.name === String(id ?? '').trim())
-    if (!one) return refuse(`Nothing in the catalogue is called ${String(id)}.`)
-    const here = (await saved(server, signal).catch(() => [])).some((row) => row.name === one.name)
-    return {
-      content: [
-        {
-          type: 'text',
-          text: [
-            one.description || 'Its author left no description.',
-            one.models.length > 0 ? `Models: ${one.models.join(', ')}.` : undefined,
-            one.vram ? `Wants ${(one.vram / 1e9).toFixed(1)} GB of video memory.` : undefined,
-            one.paid ? 'Calls a paid service and needs an API key.' : undefined,
-            here ? 'Installed here already.' : 'Not installed — press Install to set it up.',
-          ]
-            .filter(Boolean)
-            .join(' '),
-        },
-      ],
-    }
-  },
-)
-
-alexia.tool(
-  'install_workflow',
-  {
-    description:
-      'Install one of the workflows ComfyUI ships, by the title find_workflow showed, so ' +
-      'run_workflow can use it. Use straight after find_workflow when the user picks one. It only ' +
-      'ever saves a JSON file — it never downloads or installs node packs, so a workflow needing a ' +
-      'node this machine does not have is refused by name instead.',
-    inputSchema: fromJsonSchema({
-      type: 'object',
-      properties: {
-        workflow: {
-          type: 'string',
-          description: 'The title of the workflow, as find_workflow or the library showed it.',
-        },
-        id: { type: 'string', description: 'Its catalogue name, which the library page passes.' },
-      },
-    }),
-    // Nothing is overwritten that was not already this same workflow, and installing the same
-    // one twice is the same file written twice.
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  },
-  async ({ workflow, id }, ctx) => {
-    const signal = ctx?.mcpReq?.signal
-    // `workflow` is what the model passes; `id` is what a row action on the library page passes.
-    const asked = String(workflow ?? id ?? '').trim()
-    if (asked === '') return refuse('Which one? Use the title find_workflow showed.')
-    const state = await reachable(ctx)
-    if (!state.ok) return refuse(state.said)
-    const server = await where()
-
-    const all = flatten(await templates(server, signal).catch(() => []))
-    if (all.length === 0) return refuse('This ComfyUI does not offer a workflow catalogue.')
-    const { entry, many } = pickEntry(all, asked)
-    if (many) return refuse(`More than one workflow matches “${asked}”: ${many.join(', ')}. Which one?`)
-    if (!entry) return refuse(`Nothing in ComfyUI’s workflows is called “${asked}”. find_workflow lists what is there.`)
-
-    let doc
-    try {
-      doc = await template(server, entry.name, signal)
-    } catch (error) {
-      return refuse(`${entry.title} is in the catalogue but its file could not be read: ${String(error?.message ?? error)}`)
-    }
-
-    /**
-     * **This is where the sharpest edge in the plan turns out not to be one.**
-     *
-     * §8.6 was written around installing node packs — arbitrary Python, no sandbox, no undo —
-     * and chose one consent then trust the catalogue. But the converter refuses any node class
-     * this machine does not already have, so a workflow that installs cleanly is one whose
-     * nodes are **already here**. Nothing is downloaded, nothing is executed, and the file
-     * written is JSON. The consent ladder that decision was buying is not needed for what this
-     * can actually do, and claiming it would be theatre.
-     */
-    const spec = await nodes(signal).catch(() => ({}))
-    const got = convert(doc, spec)
-    if (!got.ok) {
-      return refuse(
-        `${entry.title} cannot be converted here: ${got.why[0]}. Alexia will not guess at a graph it ` +
-          'cannot prove — the way round is to open it in ComfyUI (Workflow → Browse Templates), then ' +
-          'Workflow → Export (API), and hand the file to add_workflow.',
-      )
-    }
-
-    // Both halves, from the one source, so they cannot disagree. `workflows` pairs them by name
-    // and D126 refuses an export that has fallen behind its workflow — which is a real check
-    // only when the editor copy is actually there.
-    await write(server, `${FOLDER}/${entry.name}.json`, JSON.stringify(doc), signal)
-    await write(server, `${FOLDER}/${entry.name}${API_SUFFIX}`, JSON.stringify(got.graph), signal)
-
-    const absent = missing(got.graph, spec)
-    const { found, derived } = fields(got.graph, spec)
-    const wants = found.find((one) => one.field === 'model')
-    return {
-      content: [
-        {
-          type: 'text',
-          text: [
-            `Installed ${entry.title} as ${entry.name}. run_workflow can use it now.`,
-            entry.models.length > 0 ?
-              `It wants ${entry.models.join(', ')} — if a model is missing the run will say so rather than guess.`
-            : undefined,
-            entry.vram ? `Its author says it wants ${(entry.vram / 1e9).toFixed(1)} GB of video memory.` : undefined,
-            absent.length > 0 ? `Nodes this ComfyUI does not have: ${absent.join(', ')}.` : undefined,
-            // **The model it names is usually one this machine does not have, and swapping it is
-            // not free.** Measured: SDXL Turbo installed cleanly, took the prompt it was given,
-            // ran against another SDXL checkpoint and produced grey mush — because a Turbo
-            // workflow is one step at guidance 1, which is tuned to its own distilled model. So
-            // the substitution is offered and the cost is stated: a tool that quietly returns a
-            // ruined picture is worse than one that says this may not work.
-            wants && !wants.options?.includes(wants.value) ?
-              `It was built around ${String(wants.value)}, which is not on this machine. You can point it at one of ` +
-                `yours instead — but a workflow is tuned to its model, steps and guidance included, so the ` +
-                'result may be poor. Downloading the one it names is the reliable way.'
-            : undefined,
-            // **The normal case for a catalogue entry is the derived one.** D128 offers only the
-            // fields whose nodes an author renamed, and ComfyUI’s own templates rename nothing — so
-            // without the wiring every one of them would install and then ignore what was asked
-            // for. Where it came from is said, because a name read off a wire deserves less
-            // trust than one somebody chose.
-            found.length === 0 ?
-              'It exposes no settings and its wiring did not say — it runs with whatever its author put in ' +
-              'it. To steer it, open it in ComfyUI, rename the boxes you want to control, and export it ' +
-              'again with add_workflow.'
-            : derived ?
-              `Nothing in it is titled, so its fields were read off its wiring: ${found.map((one) => one.field).join(', ')}.`
-            : `What you can set: ${found.map((one) => one.field).join(', ')}.`,
-          ]
-            .filter(Boolean)
-            .join('\n'),
-        },
-      ],
-    }
-  },
-)
-
 alexia.tool(
   'remove_workflow',
   {
@@ -1540,34 +1293,43 @@ alexia.tool(
   'setup',
   {
     description:
-      'Set local media generation up on this machine: find ComfyUI, read what the graphics card ' +
-      'can hold, and download one image model if there are none. Takes no arguments. Safe to ' +
-      'call again — it downloads nothing that is already there, and resumes a download that was ' +
-      'interrupted rather than starting it over. The first run can take half an hour.',
+      'Set local media generation up on this machine: find ComfyUI — or, on a Windows PC with an ' +
+      'NVIDIA card and none installed, install Alexia’s own copy of it (about 2 GB) — read what the ' +
+      'graphics card can hold, and download one image model if there are none. Takes no arguments. ' +
+      'Safe to call again — it downloads nothing that is already there, and resumes a download that ' +
+      'was interrupted rather than starting it over. The first run can take half an hour.',
     // Something large arrives on the person's disk that was not there before, and it is theirs
     // to approve. Not destructive — nothing is overwritten — and asking twice is harmless.
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
   async (ctx) => {
     const signal = ctx?.mcpReq?.signal
-    const dir = await found()
+    let dir = await found()
     if (!dir) {
-      // **Hand off rather than build.** Getting PyTorch right for a specific card and driver is
-      // the commonest way this breaks for people, and ComfyUI's own installer already owns that
-      // problem. Alexia's job is to find the result and carry on.
-      return {
-        content: [
-          {
-            type: 'text',
-            text:
-              'ComfyUI is not on this machine, and it is what makes the pictures. Install it from ' +
-              'comfy.org — their own installer handles the graphics-card half, which is the part that ' +
-              'goes wrong. Alexia will find it afterwards; run this again once it is there, or just ' +
-              'ask for a picture. If it is installed somewhere unusual, put the folder in this ' +
-              'plugin’s settings instead.',
-          },
-        ],
+      // **Alexia's own copy, where there is one to install** (`install.js`): the pinned portable
+      // build, into this plugin's folder, on a Windows PC with an NVIDIA card. Everywhere else
+      // ComfyUI's own installer is still the right hand-off, and `comfyStatus` says which.
+      const status = await comfyStatus({ own })
+      if (status.state !== 'missing') {
+        return {
+          content: [
+            {
+              type: 'text',
+              text:
+                `ComfyUI is not on this machine, and it is what makes the pictures. ${status.said ?? ''} ` +
+                'If it is installed somewhere unusual, put the folder in this plugin’s settings instead.',
+            },
+          ],
+        }
       }
+      try {
+        await installComfy({ own, signal, onProgress: (done, total, text) => alexia.progress(ctx, done, total, text) })
+      } catch (error) {
+        return refuse(String(error?.message ?? error))
+      }
+      where_it_is = undefined
+      dir = await found()
+      if (!dir) return refuse('ComfyUI was installed, but Alexia could not find it afterwards.')
     }
 
     const state = await reachable(ctx)
@@ -1723,6 +1485,59 @@ async function workerNodes(server, signal) {
 compute.operation(RENDER, renderer({ own: () => own, connect }))
 
 /**
+ * Which ComfyUI a workflow is installed into, as `library/tools.js` asks it.
+ *
+ * **The same two answers as `connect`**, for the same reasons: planned here, it is the install
+ * this plugin has always used — the one at the address in the settings, if that address is this
+ * machine — and sent by another computer, it is the install the worker starts its own ComfyUI
+ * from. Either way **`own` is true only for the copy `install.js` put in this plugin's folder**,
+ * and that is the only one the library ever installs a node pack or a model into.
+ */
+async function place({ here, signal, report } = {}) {
+  const server = await where()
+  const dir = here && !loopback(server) ? undefined : ((await found()) ?? undefined)
+  const mine = await installed(own).catch(() => undefined)
+  const forget = () => {
+    // New packs are new node classes, and a cached list would refuse the workflow that needs them.
+    known = undefined
+    workerKnown = undefined
+  }
+  return {
+    dir,
+    own: Boolean(dir && mine?.dir && resolve(dir) === resolve(mine.dir)),
+    server:
+      here ?
+        async (asked = signal) => {
+          const up = await reachable(undefined, { signal: asked, report })
+          if (!up.ok) throw new Error(up.said)
+          return server
+        }
+      : async (asked = signal) => (await worker.ensure({ signal: asked })).server,
+    running: here ? async (asked = signal) => ((await awake(server, asked)) ? server : undefined) : async (asked = signal) => (await worker.running(asked))?.server,
+    // A restart, as this plugin does one: stopped now, and started by the next thing that needs it.
+    release: async () => {
+      forget()
+      await worker.release().catch(() => {})
+      await letGo().catch(() => {})
+    },
+    card: async () => {
+      const card = await nvidia().catch(() => undefined)
+      return card ? { total: card.vram, name: card.name } : undefined
+    },
+  }
+}
+
+/** The workflow library — by task, installed with what it needs, picked by what was asked. */
+const librarian = library({
+  alexia,
+  compute,
+  place,
+  classes,
+  fromWeb,
+  comfy: async () => comfyRequirement(await comfyStatus({ own })),
+})
+
+/**
  * Give back a ComfyUI that Alexia started for this computer's own pictures.
  *
  * **Only a ComfyUI Alexia started is stopped** — the same two conditions `stop_comfyui` uses,
@@ -1748,21 +1563,34 @@ async function letGo() {
  * its requirement named; `prepare` starts the worker's ComfyUI; `release` stops it, which is
  * what returns the model memory. None of them reaches a ComfyUI the person started.
  */
+/** The setup list as it was before the library: ComfyUI, then one model. */
+async function basics() {
+  const dir = await found()
+    // No ComfyUI anywhere: Alexia's own copy, with its size, where one can be installed here.
+  if (!dir) return [comfyRequirement(await comfyStatus({ own }))].filter(Boolean)
+  const up = await worker.running().catch(() => undefined)
+  // ComfyUI is the authority on what it has when it is running. When it is not, the disk
+  // is read instead: drawing a list is not a reason to start a program.
+  if (!up) return requirements({ dir, installed: await onDisk([dir, own]) })
+  return requirements({
+    dir,
+    installed: await checkpoints(up.server),
+    card: vram(await stats(up.server).catch(() => undefined)) ?? null,
+  })
+}
+
 alexia.computeHooks({
-  setup: async () => {
-    const dir = await found()
-    if (!dir) return requirements({ dir })
-    const up = await worker.running().catch(() => undefined)
-    // ComfyUI is the authority on what it has when it is running. When it is not, the disk
-    // is read instead: drawing a list is not a reason to start a program.
-    if (!up) return requirements({ dir, installed: await onDisk([dir, own]) })
-    return requirements({
-      dir,
-      installed: await checkpoints(up.server),
-      card: vram(await stats(up.server).catch(() => undefined)) ?? null,
-    })
-  },
+  // Then every workflow somebody asked for from another computer, each with its size.
+  setup: async () => [...(await basics()), ...(await librarian.requirements().catch(() => []))],
   install: async (requirementId, ctx) => {
+    if (await librarian.install(requirementId, ctx)) return
+    if (requirementId === COMFYUI) {
+      const onProgress = (done, total, text) => alexia.progress(ctx, done, total, text)
+      await installComfy({ own, signal: ctx?.mcpReq?.signal, onProgress })
+      // A search that found nothing was remembered; there is something to find now.
+      where_it_is = undefined
+      return
+    }
     await fetchRequirement(requirementId, {
       own,
       signal: ctx?.mcpReq?.signal,
@@ -1772,7 +1600,9 @@ alexia.computeHooks({
     // go of here and the next job starts one that can see what just arrived.
     await worker.release().catch(() => {})
   },
-  prepare: async () => {
+  prepare: async (cap) => {
+    // Reading the library is a list, and a list is not a reason to start a program.
+    if (cap === LIBRARY) return
     await worker.ensure()
   },
   release: async () => {

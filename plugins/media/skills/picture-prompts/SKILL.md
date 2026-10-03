@@ -2,7 +2,7 @@
 name: picture-prompts
 description: How to ask for a picture on this machine — which installed model suits the
   request, how to write for it, and when to reuse the last one. Use before calling anything
-  that provides image.generate, or before run_workflow.
+  that provides image.generate, or before run_workflow or pick_workflow.
 license: AGPL-3.0-only
 ---
 
@@ -87,3 +87,16 @@ matches the new words. The last result names its seed, so `seed` works too. Anyt
 character, a LoRA, an upscale, video or speech wants `run_workflow` instead — call
 `workflows` to see what this machine has and what fields each one takes. The fields are named
 by whoever built the workflow, so read them rather than guessing.
+
+## A task rather than a picture
+
+*Remove the background*, *upscale this*, *fix her face*, *make it look like this painting*,
+*read this aloud*, *say it in my voice*, *make this photo move* — call `pick_workflow` with the
+person's own words first. It answers the installed workflow to run with `run_workflow`, or, when
+none is installed, which one would do it, its download size and whether it fits the graphics card.
+Say that size to the person and ask before calling `install_workflow` with `confirmed: true`;
+never install without a yes. On a paired computer, installing puts it on that computer's setup
+list, where the person presses Install. If no task matches, `find_workflow` searches everything
+ComfyUI ships and `search_community` searches community sources.
+
+Only clone a voice with its owner's agreement.

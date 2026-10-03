@@ -18,7 +18,9 @@ import { dirname, join, parse, sep } from 'node:path'
  * machine, works out which Python that install was set up with, and spawns `main.py` the
  * same way the user's own shortcut does. If there is no install, that is said plainly and
  * nothing is downloaded — a plugin that quietly pulls six gigabytes of PyTorch because
- * somebody asked for a picture is a plugin that has decided something for you.
+ * somebody asked for a picture is a plugin that has decided something for you. Alexia's own
+ * copy is installed by `install.js`, only when somebody presses Install, and started from here
+ * only when the person has none.
  */
 
 /** A file that is there and is not an empty stub. */
@@ -115,8 +117,14 @@ export const search = (at, depth = 2, budget = 400) => walk(at, depth, { left: b
  * A `hint` is the user's setting and it wins outright — including when they point at the
  * folder *above* the install, which is what the portable build looks like from the outside
  * and is the mistake anybody would make once.
+ *
+ * `own` finds the copy Alexia installed itself (`install.js`), and it is asked **last**: a
+ * ComfyUI the person set up is theirs to have used, so Alexia's copy is what starts only when
+ * the setting names nothing and the search finds nothing. A setting that names a folder with
+ * no ComfyUI in it stays an answer of *nothing* — the person said where, and quietly starting
+ * something else would be ignoring them.
  */
-export async function install(hint, budget = 400) {
+export async function install(hint, budget = 400, own = async () => undefined) {
   const said = String(hint ?? '').trim()
   if (said) {
     for (const at of [said, join(said, 'ComfyUI')]) if (await isInstall(at)) return at
@@ -126,7 +134,7 @@ export async function install(hint, budget = 400) {
     const found = await search(root, 2, budget)
     if (found) return found
   }
-  return undefined
+  return (await own()) ?? undefined
 }
 
 /**
@@ -240,7 +248,10 @@ export async function start(dir, { at, log, own, env = {}, args = [] } = {}) {
   // equivalent of shouting: somebody asked for a picture, not for ComfyUI's editor.
   // `args` is for the caller with something of its own to say — the compute worker keeps what
   // it renders in Alexia's folder rather than in the person's, and says so here.
-  const child = spawn(exe, ['main.py', '--port', String(at), '--disable-auto-launch', ...previews, ...extra, ...args], {
+  // `-s` for the portable build's own Python, as its launcher passes it: a PyTorch somebody
+  // installed for their user account must not be imported ahead of the one the build ships.
+  const isolated = /python_embed+ed/.test(exe) ? ['-s'] : []
+  const child = spawn(exe, [...isolated, 'main.py', '--port', String(at), '--disable-auto-launch', ...previews, ...extra, ...args], {
     cwd: dir,
     detached: true,
     stdio: ['ignore', out, out],

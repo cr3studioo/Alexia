@@ -142,7 +142,7 @@ Reference: https://magic-wormhole.readthedocs.io/en/latest/welcome.html
 - [x] Detect and configure an existing ComfyUI installation.
 - [x] Provide appropriate installation instructions when ComfyUI is absent.
 - [x] Keep existing remote model and workflow setup available.
-- [x] Do not present a full cross-platform ComfyUI installer as part of this integration.
+- [x] ~~Do not present a full cross-platform ComfyUI installer as part of this integration.~~ Reversed 2026-10-03 by the owner: Alexia installs its own ComfyUI on the computer that renders (`plugins/media/install.js`; Windows + NVIDIA portable build, pinned; elsewhere an instructions link), into the plugin's folder, and never touches a ComfyUI the person installed.
 
 ## 10. Files and artifacts
 

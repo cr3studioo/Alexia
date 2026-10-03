@@ -600,8 +600,10 @@ export class Setup {
   `install`), and no model installed (`model`, `instructions`: "Choose a model for this
   computer"). Its installs call the existing `ensureRuntime` / `ensureMlxRuntime`.
 - A plugin worker reports whatever its `setup` hook returns (§4). An image worker that finds
-  no ComfyUI returns an `instructions` requirement with how to install it; Alexia does not
-  ship an installer for it, and never stops or reconfigures a ComfyUI it did not start.
+  no ComfyUI offers Alexia's own copy as a requirement with its size (the official portable
+  build for NVIDIA on Windows, `plugins/media/install.js`; owner decision 2026-10-03) and gives
+  instructions where there is no such build; Alexia never stops or reconfigures a ComfyUI it did
+  not start, and installs node packs only into its own copy.
 - **Nothing installs without `setup.install` or `models install` being called**, and both
   are reached only from a button whose label shows the size.
 - The controller-side half is `Controller.call(hostId, 'setup.install', …)` and
