@@ -7,11 +7,12 @@
 //! a relay; a relay sees who is talking to whom and how much, never what. iroh tries a direct
 //! path first and keeps the relay as the way through when there is none.
 
+use std::net::{Ipv4Addr, Ipv6Addr, SocketAddrV4, SocketAddrV6};
 use std::sync::Arc;
 
 use futures_util::StreamExt;
 use iroh::address_lookup::{MemoryLookup, PkarrPublisher, PkarrResolver};
-use iroh::endpoint::{presets, AfterHandshakeOutcome, Connection, EndpointHooks, QuicTransportConfig};
+use iroh::endpoint::{presets, AfterHandshakeOutcome, BindOpts, Connection, EndpointHooks, QuicTransportConfig};
 use iroh::{Endpoint, EndpointAddr, EndpointId, RelayMode, RelayUrl, SecretKey};
 use tokio::time::timeout;
 use url::Url;
@@ -82,12 +83,48 @@ impl EndpointHooks for Gate {
     }
 }
 
+/// The UDP port this computer listens on, the same at every launch.
+///
+/// A hint says *where to try*, and an address is `ip:port`: with a port chosen fresh each launch,
+/// every saved hint went stale the moment either app restarted, however steady the network. This
+/// one is derived from the endpoint's own identity, in the dynamic range, so it needs no
+/// storage and no coordination. It is a preference, not a promise: [`bind`] takes another port
+/// if something else already holds this one.
+pub fn stable_port(key: &SecretKey) -> u16 {
+    let id = key.public();
+    let bytes = id.as_bytes();
+    49152 + u16::from_be_bytes([bytes[0], bytes[1]]) % 16384
+}
+
 pub async fn bind(
     key: &SecretKey,
     network: &Network,
     hints: &MemoryLookup,
     peers: &Peers,
     pairings: &Pairings,
+) -> Result<Endpoint, String> {
+    // The stable port first, and a port of the system's choosing only if that one is taken.
+    let mut taken = String::new();
+    for port in [Some(stable_port(key)), None] {
+        match bind_on(key, network, hints, peers, pairings, port).await {
+            Ok(endpoint) => return Ok(endpoint),
+            Err(error) if port.is_some() => {
+                tracing::warn!(port, %error, "the usual port is in use; taking another");
+                taken = error;
+            }
+            Err(error) => return Err(if taken.is_empty() { error } else { format!("{error} (and {taken})") }),
+        }
+    }
+    unreachable!("the loop returns on its last turn")
+}
+
+async fn bind_on(
+    key: &SecretKey,
+    network: &Network,
+    hints: &MemoryLookup,
+    peers: &Peers,
+    pairings: &Pairings,
+    port: Option<u16>,
 ) -> Result<Endpoint, String> {
     let limits = QuicTransportConfig::builder()
         .max_concurrent_bidi_streams(STREAMS_MAX.into())
@@ -111,6 +148,16 @@ pub async fn bind(
         // Where core's hints for each paired endpoint are kept. A hint says where to try; the
         // handshake says who answered.
         .address_lookup(hints.clone());
+    if let Some(port) = port {
+        // Both families, as the default does; IPv6 may fail (no stack, or the port is taken there)
+        // without costing the endpoint its IPv4 socket.
+        builder = builder
+            .clear_ip_transports()
+            .bind_addr(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, port))
+            .map_err(|error| error.to_string())?
+            .bind_addr_with_opts(SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, port, 0, 0), BindOpts::default().set_is_required(false))
+            .map_err(|error| error.to_string())?;
+    }
     if let Some(url) = &network.lookup_url {
         // The publisher sends the relay URL only — never this computer's LAN addresses.
         builder = builder.address_lookup(PkarrPublisher::builder(url.clone())).address_lookup(PkarrResolver::builder(url.clone()));

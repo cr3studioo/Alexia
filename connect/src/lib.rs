@@ -39,7 +39,7 @@ use crate::error::{ApiError, NETWORK_FAILED};
 use crate::host::Host;
 use crate::pairing::Pairings;
 use crate::peers::Peers;
-pub use crate::transport::Network;
+pub use crate::transport::{stable_port, Network};
 
 /// What is logged: this crate's own lines and no others. iroh's are left out whole rather than
 /// trusted, line by line, never to say more than a log should — and so are the wormhole

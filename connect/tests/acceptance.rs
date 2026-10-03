@@ -8,7 +8,7 @@
 use std::convert::Infallible;
 use std::net::Ipv4Addr;
 
-use alexia_connect::{start, Network, Options, Running};
+use alexia_connect::{stable_port, start, Network, Options, Running};
 use bytes::Bytes;
 use http_body_util::{BodyExt, Empty, Full};
 use hyper::body::Incoming;
@@ -152,6 +152,35 @@ async fn a_restart_with_the_same_key_is_the_same_computer_and_core_restores_the_
         studio.running.close().await;
     }
     assert_eq!(seen[0], seen[1], "the same two computers both times");
+}
+
+/// A saved hint is `ip:port`, so the port has to be the same after a restart or every hint a
+/// computer holds for another is stale the moment either app is relaunched.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_computer_listens_on_the_same_port_after_a_restart() {
+    let key = SecretKey::generate();
+    let mut ports = Vec::new();
+    for _ in 0..2 {
+        let side = launch("laptop", &key).await;
+        ports.push(side.loopback().await);
+        side.running.close().await;
+    }
+    assert_eq!(ports[0], vec![format!("127.0.0.1:{}", stable_port(&key))], "the port its identity gives it");
+    assert_eq!(ports[0], ports[1], "the same one again");
+}
+
+/// The usual port is a preference: something else holding it is not a reason not to start.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_port_that_is_taken_is_not_a_reason_not_to_start() {
+    let key = SecretKey::generate();
+    let usual = stable_port(&key);
+    let squatter = std::net::UdpSocket::bind((Ipv4Addr::UNSPECIFIED, usual)).expect("the port is free for the test to take");
+    let side = launch("laptop", &key).await;
+    let ports = side.loopback().await;
+    assert_eq!(ports.len(), 1, "it listens somewhere");
+    assert_ne!(ports[0], format!("127.0.0.1:{usual}"), "and not where somebody else already is");
+    side.running.close().await;
+    drop(squatter);
 }
 
 /// Plan §13, *revocation closes connections*, from the other side to `transport.rs`'s: the
