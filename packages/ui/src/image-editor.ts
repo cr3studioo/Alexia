@@ -179,6 +179,9 @@ function workspace(sheet: HTMLElement, api: EditorApi, first: Draft, close: () =
   let draft = first
   let tool: Tool = draft.operation === 'remove_fill' ? 'remove' : draft.operation === 'inpaint' ? 'point' : ['crop', 'resize', 'erase_alpha'].includes(draft.operation) ? 'crop' : 'whole'
   let profiles: Profile[] = []
+  /** The models on this computer that can plan an edit, and the one chosen; undefined until read. */
+  let planners: { id: string; name: string; provider: string; host?: string }[] | undefined
+  let planner: string | null = null
   let versions: Version[] = []
   let pictures: Picture[] = []
   let batch: Batch | undefined
@@ -694,6 +697,8 @@ function workspace(sheet: HTMLElement, api: EditorApi, first: Draft, close: () =
   function blocked(): string | undefined {
     const profile = chosen()
     if (!draft.profile) return 'Choose a model first.'
+    if (planners !== undefined && planners.length === 0) return 'Planning needs a model that can see pictures, on this Mac or the picture computer. Install Qwen2.5-VL in Settings › Local models, then open the editor again.'
+    if (planners !== undefined && planner === null) return 'Choose a planning model.'
     if (!profile) return 'The chosen model is not available any more. Choose another — your draft is kept.'
     if (profile.availability !== 'available') return profile.reason ?? 'This model cannot be used right now.'
     if (!profile.operations.includes(draft.operation)) return `${profile.name} does not support ${tool === 'remove' ? 'removing' : tool === 'point' ? 'selected-area edits' : 'this edit'}.`
@@ -829,6 +834,7 @@ function workspace(sheet: HTMLElement, api: EditorApi, first: Draft, close: () =
       output.append(advanced)
       genPanel.append(output)
     }
+    model.append(plannerPicker())
 
     // The footer stays at the bottom of the panel: what will happen, why not yet, and the button.
     const why = blocked()
@@ -856,6 +862,36 @@ function workspace(sheet: HTMLElement, api: EditorApi, first: Draft, close: () =
       footer.append(button('Make more like these', () => void api.command({ type: 'make_more', batchId: batch!.id, variantCount: draft.variantCount, invocationId: id() })
         .then((r) => start(r)).catch((e: unknown) => say(e instanceof Error ? e.message : String(e)))))
     }
+  }
+
+  /**
+   * Which model on this computer reads the request and the pictures first, to plan the edit and
+   * to check it. Separate from the chat's model, which may be on another computer: private
+   * pictures are planned only here. Chosen by the person, never swapped for them.
+   */
+  function plannerPicker(): HTMLElement {
+    const choose = el('select')
+    choose.dataset.focus = 'planner'
+    const list = planners ?? []
+    choose.append(Object.assign(el('option', undefined, planners === undefined ? 'Loading…' : list.length === 0 ? 'None here or on the picture computer that can see pictures' : 'Choose a planning model…'), { value: '' }))
+    for (const one of list) {
+      const option = el('option', undefined, `${one.name}${one.host !== undefined ? ` (on ${one.host})` : one.provider === 'ollama' ? ' (Ollama, this Mac)' : ' (this Mac)'}`)
+      option.value = one.id
+      option.selected = one.id === planner
+      choose.append(option)
+    }
+    choose.disabled = list.length === 0
+    choose.addEventListener('change', () => {
+      const wanted = choose.value === '' ? null : choose.value
+      void api.call<{ selected: string | null }>('select_planner', { model: wanted }).then((r) => {
+        planner = r.selected
+        refresh()
+      }).catch((error: unknown) => say(error instanceof Error ? error.message : String(error)))
+    })
+    const field = labelled('Planning model', choose)
+    const box = el('div', 'image-editor-field')
+    box.append(field, el('p', 'image-editor-hint', 'Reads your words and pictures to plan the edit and check it — on this Mac, or on the computer that makes the pictures. Never online.'))
+    return box
   }
 
   function versionCount(): HTMLElement {
@@ -957,7 +993,8 @@ function workspace(sheet: HTMLElement, api: EditorApi, first: Draft, close: () =
     showLive(undefined)
     if (batch) {
       const done = batch.candidates.filter((c) => c.state === 'completed').length
-      say(done === batch.variantCount ? 'Done.' : `${String(done)} of ${String(batch.variantCount)} made. ${reasonText(batch.candidates.find((c) => c.state !== 'completed')?.reason)}`)
+      const missed = batch.candidates.find((c) => c.state !== 'completed')
+      say(done === batch.variantCount ? 'Done.' : `${String(done)} of ${String(batch.variantCount)} made. ${[reasonText(missed?.reason), missed?.detail].filter(Boolean).join(' — ')}`)
     }
     await loadVersions()
     refresh()
@@ -1150,6 +1187,12 @@ function workspace(sheet: HTMLElement, api: EditorApi, first: Draft, close: () =
     api.call<{ profiles: Profile[] }>('profiles').then((r) => (profiles = r.profiles)).finally(() => { loading = false; refresh() }),
     loadVersions().then(refresh),
     api.call<{ pictures: Picture[] }>('pictures').then((r) => { pictures = r.pictures; refresh() }),
+    api.call<{ planners: { id: string; name: string; provider: string; host?: string }[]; selected: string | null }>('planners').then((r) => {
+      planners = Array.isArray(r.planners) ? r.planners : []
+      // A choice whose model has gone is not a choice: it is asked for again.
+      planner = typeof r.selected === 'string' && planners.some((one) => one.id === r.selected) ? r.selected : null
+      refresh()
+    }),
     api.call<{ pending: { question: string } | null }>('pending', { draftId: draft.id }).then((r) => { question = r.pending?.question; refresh() }),
   ]).catch((error: unknown) => say(error instanceof Error ? error.message : String(error))).finally(() => {
     sizeStage()
@@ -1163,7 +1206,7 @@ function candidateWords(c: Candidate): string {
     case 'queued': return 'Waiting its turn'
     case 'rendering': return 'Being made'
     case 'checking_output': return 'Being checked'
-    case 'failed': return reasonText(c.reason) || 'It could not be made.'
+    case 'failed': return [reasonText(c.reason) || 'It could not be made.', c.detail].filter(Boolean).join(' — ')
     case 'blocked': return reasonText(c.reason) || 'Not shown.'
     case 'cancelled': return 'Cancelled'
     default: return c.state.replaceAll('_', ' ')

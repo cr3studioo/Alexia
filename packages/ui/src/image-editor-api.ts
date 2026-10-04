@@ -71,6 +71,8 @@ export interface Profile {
 export type RunState = 'received' | 'planning' | 'validating' | 'checking_inputs' | 'queued' | 'rendering' | 'checking_output' | 'completed'
   | 'needs_clarification' | 'unsupported' | 'blocked' | 'failed' | 'cancelled'
 export interface Candidate {
+  /** The failure's own words, when there are any. */
+  detail?: string
   id: string
   batchId: string
   runId: string

@@ -102,6 +102,15 @@ test('the editor checks the render computer and reports missing installation', a
   expect(profiles[0]!.reason).toMatch(/Install.*ComfyUI/)
 }, 60_000)
 
+test('the planning model: only one on this computer that can see pictures may be chosen', async () => {
+  // Nothing here can see pictures, so there is nothing to choose, and nothing else is taken.
+  const listed = await call('/api/editor', { conversationId, call: 'planners' })
+  expect(listed.json).toMatchObject({ ok: true, planners: [], selected: null })
+  const refused = await call('/api/editor', { conversationId, call: 'select_planner', model: 'ollama/somewhere-else' })
+  expect(refused.json).toMatchObject({ ok: false, code: 'planner_unavailable' })
+  expect((await call('/api/editor', { conversationId, call: 'select_planner', model: null })).json).toMatchObject({ ok: true, selected: null })
+})
+
 test('opening, saving and generating: no model chosen, then an unverified one, and nothing renders', async () => {
   const opened = await call('/api/editor', { conversationId, call: 'open', attachmentId: pictureId })
   expect(opened.status).toBe(200)

@@ -76,7 +76,6 @@ import {
   asSentence,
   hearingPlan,
   MODES,
-  onDevice,
   paid,
   personalityFrom,
   route,
@@ -92,7 +91,13 @@ import {
   type Pins,
   type Size,
   type Tier,
+  holdsFormat,
+  privatelyAllowed,
 } from './router.js'
+import { HOSTS_KEY } from './compute/hosts.js'
+import { selectedHost } from './compute/target.js'
+import { THIS_HOST } from './compute/types.js'
+import { rollingLog } from './rollingLog.js'
 import { CORE, keychain, type SecretStore } from './secrets.js'
 // For `boot.mjs`, which imports the bundle this file is the entry of and nothing else (D153).
 export { fromShell } from './secrets.js'
@@ -111,6 +116,9 @@ import { toolWords, Trace } from './trace.js'
 import { trial } from './trial.js'
 import { Uptime, watched } from './uptime.js'
 import { allowance, caps, costOf, liftToday, limitSays, raiseTo, setCaps, setMonthly, today, unlift, warning, type Limit } from './usage.js'
+
+/** The model the image editor plans and checks with, chosen there (`planners`). */
+const PLANNER_KEY = 'editor_planner'
 
 /**
  * The chat shell's other half: a loopback bridge between a webview and core.
@@ -296,6 +304,8 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
   const store = new Store(join(root, 'alexia.db'))
   const catalog = new Catalog(join(root, 'cache', 'models.json'))
   const token = randomUUID()
+  /** Plugins' own lines, kept where somebody can read them: the shell does not keep stderr. */
+  const pluginLog = rollingLog(join(root, 'logs', 'plugins.log'))
   const llama = new LlamaServer({ dataDir: root })
   const llamaRunner = llamaProvider(llama)
   const mlx = new MlxServer({ dataDir: root })
@@ -513,7 +523,10 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
         return `/api/editor/file?token=${token}`
       },
     },
-    log: (id, line) => console.error(`[${id}] ${line}`),
+    log: (id, line) => {
+      console.error(`[${id}] ${line}`)
+      pluginLog(`${new Date().toISOString()} [${id}] ${line}`)
+    },
     onToolsChanged: () => {
       tooling.invalidate()
       // A plugin arriving or going away takes its bundled skills with it, and the index the
@@ -888,6 +901,8 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
       local: [...local, ...compute.models()],
       runners: [OLLAMA, ...localRunners.providers(), compute.provider],
       target: compute.remote.status(),
+      // The paired computer chosen for pictures, if one is: its models may take a private request.
+      ...(selectedHost(store) !== THIS_HOST && { pictureHost: selectedHost(store) }),
       rungs,
       // Asked fresh with the rest of it, and for the same reason: an allowance can run out
       // mid-sentence exactly the way a free tier can.
@@ -1560,6 +1575,10 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     signal: AbortSignal | undefined,
   ): Promise<CreateMessageResult> {
     const seeing = carries(asked)
+    // The person's planning model, chosen in the image editor, stands in for the chat's pin
+    // here: a private request is answered on this computer, and the chat may be pinned elsewhere.
+    const planner = store.kvGet(CORE, PLANNER_KEY)
+    const where = await world()
     const verdict = route(
       {
         messages: asked,
@@ -1568,8 +1587,8 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
         ...(format !== undefined && { structured: true }),
         ...(seeing.length > 0 && { modality: seeing }),
       },
-      pins(store),
-      await world(),
+      typeof planner === 'string' ? { ...pins(store), model: planner } : pins(store),
+      where,
     )
     if (!verdict.ok) throw new Error(asSentence(verdict.why))
     if (modeTransitions.pending()) throw new Error('Wait for the mode switch to finish before requesting an answer.')
@@ -1589,7 +1608,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     ).finally(() => {
       sampling -= 1
     })
-    if (!onDevice(answer.model)) throw new Error('A private request was answered somewhere other than this computer, so its answer was discarded.')
+    if (!privatelyAllowed(answer.model, where)) throw new Error('A private request was answered somewhere other than this computer or the one chosen for pictures, so its answer was discarded.')
     return {
       role: 'assistant',
       content: { type: 'text', text: textOf(answer.message) },
@@ -2078,10 +2097,20 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
         if (url.pathname === '/api/editor' && request.method === 'POST') {
           const conversationId = conversation(sent.conversationId)
           const call = String(sent.call ?? '')
-          if (!['open', 'loadDraft', 'profiles', 'versions', 'batch', 'command', 'pending', 'events', 'pictures', 'select_profile', 'install_profile', 'preview'].includes(call)) {
+          if (!['open', 'loadDraft', 'profiles', 'versions', 'batch', 'command', 'pending', 'events', 'pictures', 'select_profile', 'install_profile', 'preview', 'planners', 'select_planner'].includes(call)) {
             throw Object.assign(new Error('That is not something the editor does.'), { code: 'schema_unsupported' })
           }
           if (call === 'pictures') return answer({ ok: true, pictures: album.list(conversationId) })
+          // Which model plans an edit and checks its pictures: core's to know and to keep.
+          if (call === 'planners') return answer({ ok: true, planners: await planners(), selected: store.kvGet(CORE, PLANNER_KEY) ?? null })
+          if (call === 'select_planner') {
+            const wanted = sent.model === null ? null : String(sent.model ?? '')
+            if (wanted !== null && !(await planners()).some((one) => one.id === wanted)) {
+              throw Object.assign(new Error('That model is not one on this computer that can see pictures.'), { code: 'planner_unavailable' })
+            }
+            store.kvSet(CORE, PLANNER_KEY, wanted)
+            return answer({ ok: true, selected: wanted })
+          }
           // Opening the editor on a picture makes the conversation private from here on.
           if (call === 'open' || call === 'command') markPrivate(Number(conversationId))
           // The conversation and the call are core's to set; whatever the body said about them is replaced.
@@ -3427,6 +3456,26 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     const said = store.kvGet(CORE, 'private_sessions')
     return Array.isArray(said) ? said.filter((n): n is number => typeof n === 'number') : []
   }
+  /**
+   * **The models that may plan a picture edit**: on this computer, able to see pictures, and
+   * on a runner that holds an answer to a format — exactly what `privateRoute` will accept.
+   */
+  /** What the person calls a paired computer, from the pairing record; its id when it has no name. */
+  function pairedName(hostId: string): string {
+    const all = store.kvGet(CORE, HOSTS_KEY)
+    return (Array.isArray(all) ? (all as { id?: string; name?: string }[]).find((one) => one.id === hostId)?.name : undefined) ?? hostId
+  }
+
+  async function planners(): Promise<{ id: string; name: string; provider: string; host?: string }[]> {
+    const where = await world()
+    return where.local
+      .filter((model) => privatelyAllowed(model, where) && model.modality.includes('image') && holdsFormat(model))
+      .map((model) => ({
+        id: model.id, name: model.name, provider: model.provider,
+        ...(model.host !== undefined && { host: pairedName(model.host) }),
+      }))
+  }
+
   function markPrivate(id: number): void {
     const now = privateSessions()
     if (!now.includes(id)) store.kvSet(CORE, 'private_sessions', [...now, id])

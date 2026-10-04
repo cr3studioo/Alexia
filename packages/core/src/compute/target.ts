@@ -41,6 +41,7 @@ export function remoteModel(hostId: string, model: HostModel): Model {
     nsfwOk: model.abliterated ? 'yes' : 'unknown',
     trainsOnYourData: 'no',
     host: hostId,
+    engine: model.engine,
     ...(model.params !== undefined && { params: model.params }),
     ...(model.quant !== undefined && { quant: model.quant }),
     ...(model.diskBytes !== undefined && { diskBytes: model.diskBytes }),

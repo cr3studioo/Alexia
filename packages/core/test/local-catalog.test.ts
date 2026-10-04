@@ -48,7 +48,15 @@ test('abliterated builds are separate opted-in entries; text plans never adverti
     expect(e.nsfwOk).toBe('yes')
     expect(e.tools).toBe(false)
   }
-  expect(LOCAL_CATALOG.every((e) => !e.vision)).toBe(true)
+  // Vision is exactly the entries that bring a pinned projector; the rest are text only.
+  for (const e of LOCAL_CATALOG) {
+    expect(e.vision).toBe(e.projector !== undefined)
+    if (e.projector) {
+      expect(e.projector.name).toMatch(/mmproj.*\.gguf$/)
+      expect(e.projector.sha256).toMatch(/^[a-f0-9]{64}$/)
+      expect(e.projector.bytes).toBeGreaterThan(0)
+    }
+  }
   expect(LOCAL_CATALOG.filter((e) => !e.abliterated).every((e) => e.nsfwOk === 'no')).toBe(true)
   expect(QUANT_NOTES).not.toHaveProperty('tokensPerSecond')
 })

@@ -8,7 +8,7 @@ import { bestQuant, DEFAULT_CONTEXT, fit, recommend, type Fit, type Verdict } fr
 import { repo as hfRepo, resolveUrl, search as hfSearch, type HfHit } from './hf.js'
 import { asModel, forget, modelsDir, readInstalled, remember, type Installed } from './installed.js'
 import { ensureRuntime, llamaProvider, runtimeReady, runtimeSupported, type LlamaServer } from './llama.js'
-import { entry as vetted, LOCAL_CATALOG, QUANT_NOTES, type LocalEntry, type Quantized } from './localCatalog.js'
+import { entry as vetted, LOCAL_CATALOG, QUANT_NOTES, type LocalEntry, type ModelFile, type Quantized } from './localCatalog.js'
 import { machine, summary, type Machine } from './machine.js'
 import type { ChatRequest } from './provider.js'
 import { send } from './router.js'
@@ -510,15 +510,19 @@ export class LocalModels {
         onProgress: (p) => set({ done: p.done, total: p.total, ...(p.bytesPerSecond !== undefined && { bytesPerSecond: p.bytesPerSecond }) }),
       })
 
-      set({ step: 'download', message: `Downloading ${plan.name}`, done: 0, total: plan.quant.bytes })
+      set({ step: 'download', message: `Downloading ${plan.name}`, done: 0, total: plan.quant.bytes + (plan.projector?.bytes ?? 0) })
       const token = plan.vetted ? undefined : await this.options.hfToken?.()
-      const parts = plan.quant.files.map((file) => ({
+      const part = (file: ModelFile) => ({
         url: resolveUrl(plan.repo, plan.revision, file.name),
         to: within(folder, file.name),
         bytes: file.bytes,
         ...(file.sha256 !== '' && { sha256: file.sha256 }),
-      }))
-      await downloadAll(parts, {
+      })
+      const parts = plan.quant.files.map(part)
+      // The projector comes from the same pinned revision and is checked the same way.
+      const projector = plan.projector && part(plan.projector)
+      if (plan.projector && !/^[a-f0-9]{64}$/i.test(plan.projector.sha256)) throw new Error('This model\'s projector has no verifiable SHA-256 checksum.')
+      await downloadAll(projector ? [...parts, projector] : parts, {
         signal,
         // A gigabyte of room left over after the model, so the download is not what fills the disk.
         minFreeBytes: GB,
@@ -549,6 +553,7 @@ export class LocalModels {
         revision: plan.revision,
         quant: plan.quant.quant,
         files: parts.map((p) => p.to),
+        ...(projector && { projector: projector.to }),
         bytes: plan.quant.bytes,
         ...(plan.params > 0 && { params: plan.params }),
         context: plan.context,
@@ -557,9 +562,9 @@ export class LocalModels {
         ...(plan.architecture && { architecture: plan.architecture }),
         ...(plan.tokenizerFingerprint && { tokenizerFingerprint: plan.tokenizerFingerprint }),
         tools: false,
-        // Images need the projector file beside the model, which is not fetched yet; until it
-        // is, saying *vision* would route a picture to a model that cannot see it.
-        vision: false,
+        // Pictures need the projector beside the model: only an entry that brought one, now on
+        // disk and checked, says *vision* — otherwise a picture would go to a model that cannot see it.
+        vision: projector !== undefined,
         abliterated: plan.abliterated,
         nsfwOk: plan.entry?.nsfwOk ?? 'unknown',
         ...(plan.licence !== undefined && { licence: plan.licence }),
@@ -641,6 +646,8 @@ export class LocalModels {
     abliterated: boolean
     licence?: string
     vetted: boolean
+    /** A vision entry's projector, fetched and checked with the model. */
+    projector?: ModelFile
   }> {
     if ('entry' in target) {
       const e = this.curated(target.entry)
@@ -662,6 +669,7 @@ export class LocalModels {
         abliterated: e.abliterated,
         licence: e.licence.name,
         vetted: true,
+        ...(e.projector !== undefined && { projector: e.projector }),
       }
     }
     const token = await this.options.hfToken?.()

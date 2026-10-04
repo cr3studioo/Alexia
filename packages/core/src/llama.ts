@@ -680,6 +680,8 @@ export class LlamaServer {
           '--model', model.files[0]!, '--alias', id, '--ctx-size', String(model.context),
           '--host', '127.0.0.1', '--port', String(port), '--parallel', '1', '--jinja',
           '--api-key-file', keyFile, '--no-webui', '--no-slots', ...backendArgs, ...optimization,
+          // The projector is what makes the pictures in a request readable to the model.
+          ...(model.projector !== undefined && existsSync(model.projector) ? ['--mmproj', model.projector] : []),
         ]
         const child = (this.options.spawn ?? spawn)(process.execPath, ['-e', GUARDIAN], {
           env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true,

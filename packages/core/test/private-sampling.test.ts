@@ -8,7 +8,7 @@ import { relayed } from '../src/ollama.js'
 import { remaining } from '../src/pool.js'
 import { keyOf, type Provider } from '../src/provider.js'
 import { run, type Tooling } from '../src/agent.js'
-import { MODES, onDevice, route, send, type Pins, type World } from '../src/router.js'
+import { MODES, onDevice, privatelyAllowed, route, send, type Pins, type World } from '../src/router.js'
 import { CORE, memorySecrets } from '../src/secrets.js'
 import { Store } from '../src/store.js'
 
@@ -62,7 +62,10 @@ const seeingHere = model({ id: 'qwen2.5vl:7b', provider: 'llama', modality: ['te
 const blindHere = model({ id: 'qwen3:8b', provider: 'llama' })
 const seeingMlx = model({ id: 'mlx-vl', provider: 'mlx', modality: ['text', 'image'] })
 const relayedCloud = model({ id: 'gpt-oss:120b-cloud', provider: 'ollama', modality: ['text', 'image'], remote: true })
-const paired = model({ id: 'llava:34b', provider: 'llama', modality: ['text', 'image'], host: 'studio-pc' })
+// As a paired computer's model really arrives (`remoteModel`): reached through the bridge, run by its engine there.
+const paired = model({ id: '@studio-pc/llama/llava:34b', provider: 'remote', engine: 'llama', modality: ['text', 'image'], host: 'studio-pc' })
+const pairedMlx = model({ id: '@studio-pc/mlx/vl', provider: 'remote', engine: 'mlx', modality: ['text', 'image'], host: 'studio-pc' })
+const bridge: Provider = { id: 'remote', name: 'Paired computer', baseUrl: 'http://127.0.0.1:1/v1', auth: 'none' }
 const hostedVision = model({ id: 'cloud/vision', provider: 'cloudy', tier: 'T1', modality: ['text', 'image'] })
 
 const world = (over: Partial<World> = {}): World => ({
@@ -103,6 +106,21 @@ describe('routing', () => {
     const v = route(ask, pins(), world({ local: [blindHere, relayedCloud, paired] }))
     expect(v.ok).toBe(false)
     expect(ids(v)[0]).toMatch(/needs a model on this computer that can see pictures/)
+  })
+
+  test('the computer chosen for pictures may answer too — only that one, and only behind a schema runner', () => {
+    const paired_ = world({ local: [blindHere, paired, pairedMlx], runners: [runner, bridge] })
+    // Not chosen for pictures: refused as before.
+    expect(route(ask, pins(), paired_).ok).toBe(false)
+    // Chosen: its model that can see, on llama.cpp, is the answer; the MLX one cannot hold a format.
+    expect(ids(route(ask, pins(), { ...paired_, pictureHost: 'studio-pc' }))).toEqual(['@studio-pc/llama/llava:34b'])
+    expect(ids(route(ask, pins({ model: '@studio-pc/mlx/vl' }), { ...paired_, pictureHost: 'studio-pc' }))[0]).toMatch(/cannot hold an answer to a fixed format/)
+    // Another paired computer is not this one, whatever it can do.
+    expect(route(ask, pins(), { ...paired_, pictureHost: 'other-pc' }).ok).toBe(false)
+    expect(privatelyAllowed(paired, { pictureHost: 'studio-pc' })).toBe(true)
+    expect(privatelyAllowed(paired, {})).toBe(false)
+    expect(privatelyAllowed(relayedCloud, { pictureHost: 'studio-pc' })).toBe(false)
+    expect(privatelyAllowed(hostedVision, { pictureHost: 'studio-pc' })).toBe(false)
   })
 
   test('on-device means where it executes, not how it is reached', () => {

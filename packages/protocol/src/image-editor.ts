@@ -156,6 +156,8 @@ export const CandidateRecord = z.strictObject({
   id: OpaqueId, batchId: OpaqueId, runId: OpaqueId, attemptId: OpaqueId,
   slot: z.int().min(1).max(4), seed: z.int().nonnegative(), passSeeds: z.array(z.int().nonnegative()).max(PRIVATE_LIMITS.regions),
   state: RunState, reason: EditorReason.nullable(), outputVersionId: OpaqueId.nullable(),
+  /** What went wrong, in the words the failure gave, without paths. Absent when nothing did. */
+  detail: z.string().max(300).optional(),
 }).refine((c) => c.state === 'completed' ? c.outputVersionId !== null : c.outputVersionId === null,
   'only completed candidates have published versions')
 export type CandidateRecord = z.infer<typeof CandidateRecord>

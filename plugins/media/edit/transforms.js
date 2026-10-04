@@ -251,3 +251,22 @@ export class TransformError extends Error {
     this.code = code
   }
 }
+
+/**
+ * **A picture as a model is shown it**: no longer than `most` pixels on its long side.
+ *
+ * The planner and the policy check look at the selection through sampling, and a phone photo
+ * as a PNG is tens of megabytes of base64 — past the 10 MB a single message to core may be,
+ * which closed the plugin's connection rather than failing the one request. Vision models
+ * read around a thousand pixels anyway. The full picture still goes to the renderer.
+ *
+ * Takes and answers base64 PNG; anything already small enough comes back as it was.
+ */
+export function forModel(base64, most = 1024) {
+  const png = Buffer.from(base64, 'base64')
+  const { width, height } = header(png)
+  if (Math.max(width, height) <= most) return base64
+  const image = decode(png)
+  const plan = resizePlan(image, { width: most, height: most }, 'fit')
+  return encode(resize(image, plan.drawn, { ...plan, offset: { x: 0, y: 0 } }, Buffer.from([0, 0, 0, 0]))).toString('base64')
+}

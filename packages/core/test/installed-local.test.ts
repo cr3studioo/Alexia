@@ -49,3 +49,13 @@ test('invalid format and runtime settings are not admitted as runnable registry 
   writeFileSync(join(modelsDir(root), 'installed.json'), JSON.stringify([...invalid, record]))
   expect(readInstalled(root)).toEqual([record])
 })
+
+test('a model sees only while its projector is on disk', () => {
+  const projector = join(modelsDir(root), 'mmproj.gguf')
+  writeFileSync(projector, 'x')
+  remember(root, { ...record, id: 'llama/seeing:q4_k_m', projector })
+  expect(readInstalled(root).find((one) => one.id === 'llama/seeing:q4_k_m')?.vision).toBe(true)
+  rmSync(projector)
+  expect(readInstalled(root).find((one) => one.id === 'llama/seeing:q4_k_m')?.vision).toBe(false)
+  forget(root, 'llama/seeing:q4_k_m')
+})

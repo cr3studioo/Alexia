@@ -11,7 +11,7 @@
  * tools denotes documented template capability, not a measured tool-use success rate.
  * Modified abliterated tool use is unverified and stays false. nsfwOk is a catalog routing
  * opt-in for those explicitly modified entries, not a guarantee of what they will answer.
- * vision is false: no mmproj is part of any download plan here.
+ * vision is true only for an entry with a pinned projector (mmproj), downloaded beside the model.
  * KV is full-attention FP16 K+V for one sequence; no YaRN, cache compression, or
  * sliding-window savings. Context limits use the pinned GGUF, not expanded upstream limits.
  * These metadata pins do not claim compatibility with every runner release.
@@ -45,6 +45,8 @@ export interface LocalEntry {
   nsfwOk: 'yes' | 'no' | 'unknown'
   blurb: string
   quants: Quantized[]
+  /** The vision projector (mmproj) every quant of a vision entry is installed with. */
+  projector?: ModelFile
   /** FP16 K+V per token, derived from source.configUrl. Optional for search results. */
   kvBytesPerToken?: number
   source?: { repo: string; revision: string; configUrl: string }
@@ -772,6 +774,77 @@ export const LOCAL_CATALOG: LocalEntry[] = [
             "name": "mlabonne_Qwen3-14B-abliterated-Q8_0.gguf",
             "bytes": 15698534496,
             "sha256": "98244eaddf92baf49c9c820d0b1108d8c7906e5abd1575c7f8942873c578f9d8"
+          }
+        ]
+      }
+    ]
+  },
+  // Quantizer: https://huggingface.co/bartowski/Qwen_Qwen2.5-VL-7B-Instruct-GGUF/tree/956c2bbb32ce10ac80761c127daa18f77063fab1
+  // Model/config: https://huggingface.co/Qwen/Qwen2.5-VL-7B-Instruct/raw/cc594898137f460bfe9f0759e9844b3ce807cfb5/config.json
+  // Licence (apache-2.0): https://huggingface.co/Qwen/Qwen2.5-VL-7B-Instruct/blob/cc594898137f460bfe9f0759e9844b3ce807cfb5/README.md
+  // FP16 KV: 2 * 2 * 28 layers * 4 KV heads * 128 dim = 57344 bytes/token.
+  // Projector: the f16 mmproj from the same pinned revision; without it the model reads text only.
+  {
+    "id": "qwen2.5-vl-7b-instruct",
+    "name": "Qwen2.5-VL 7B-Instruct",
+    "publisher": "Qwen",
+    "repo": "bartowski/Qwen_Qwen2.5-VL-7B-Instruct-GGUF",
+    "revision": "956c2bbb32ce10ac80761c127daa18f77063fab1",
+    "params": 7.615616512,
+    "contextMax": 128000,
+    "tools": false,
+    "vision": true,
+    "licence": {
+      "name": "apache-2.0",
+      "url": "https://huggingface.co/Qwen/Qwen2.5-VL-7B-Instruct/blob/cc594898137f460bfe9f0759e9844b3ce807cfb5/README.md",
+      "restrictive": false
+    },
+    "gated": false,
+    "abliterated": false,
+    "nsfwOk": "no",
+    "blurb": "Sees pictures as well as reading text: what the image editor plans and checks with. Memory estimates include its conversation cache, not the 1.4 GB projector.",
+    "kvBytesPerToken": 57344,
+    "source": {
+      "repo": "Qwen/Qwen2.5-VL-7B-Instruct",
+      "revision": "cc594898137f460bfe9f0759e9844b3ce807cfb5",
+      "configUrl": "https://huggingface.co/Qwen/Qwen2.5-VL-7B-Instruct/raw/cc594898137f460bfe9f0759e9844b3ce807cfb5/config.json"
+    },
+    "projector": {
+      "name": "mmproj-Qwen_Qwen2.5-VL-7B-Instruct-f16.gguf",
+      "bytes": 1354162912,
+      "sha256": "c24a7f5fcfc68286f0a217023b6738e73bea4f11787a43e8238d4bb1b8604cde"
+    },
+    "quants": [
+      {
+        "quant": "Q4_K_M",
+        "bytes": 4683072320,
+        "files": [
+          {
+            "name": "Qwen_Qwen2.5-VL-7B-Instruct-Q4_K_M.gguf",
+            "bytes": 4683072320,
+            "sha256": "3f4513330aa7f109922bd701d773575484ae2b4a4090d6511260a2a4f8e3d069"
+          }
+        ]
+      },
+      {
+        "quant": "Q5_K_M",
+        "bytes": 5444830016,
+        "files": [
+          {
+            "name": "Qwen_Qwen2.5-VL-7B-Instruct-Q5_K_M.gguf",
+            "bytes": 5444830016,
+            "sha256": "325935d89110f25765b1627de643fcb7dbb4a9a52ce3da1820fce170cb0ed4fb"
+          }
+        ]
+      },
+      {
+        "quant": "Q6_K",
+        "bytes": 6254197568,
+        "files": [
+          {
+            "name": "Qwen_Qwen2.5-VL-7B-Instruct-Q6_K.gguf",
+            "bytes": 6254197568,
+            "sha256": "9cbdf6e5b899f5a5a65d904ea7891284768caeacfb1e5e2a6deb7406ecb71dac"
           }
         ]
       }

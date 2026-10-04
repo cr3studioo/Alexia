@@ -50,6 +50,11 @@ export interface Installed {
   quant: string
   /** Absolute paths. More than one for a split GGUF; the first is what `llama-server -m` is given. */
   files: string[]
+  /**
+   * The vision projector (`mmproj`) beside the model, when it has one: what lets it see a
+   * picture. `vision` is true only while this file is on disk (`readInstalled`).
+   */
+  projector?: string
   bytes: number
   params?: number
   /** The context the server is started with, not the most the model could take. */
@@ -74,13 +79,19 @@ export function readInstalled(dataDir: string): Installed[] {
   if (!existsSync(file)) return []
   try {
     const parsed = JSON.parse(readFileSync(file, 'utf8')) as unknown
-    return Array.isArray(parsed) ? parsed.filter(isInstalled).map(withCatalogLimits) : []
+    return Array.isArray(parsed) ? parsed.filter(isInstalled).map(withCatalogLimits).map(seeing) : []
   } catch {
     return []
   }
 }
 
 /** Phase-one records stored the configured window, but not the model's actual limit. */
+/** A model sees only while its projector is there: a deleted one leaves a text model, not a broken one. */
+function seeing(one: Installed): Installed {
+  if (one.projector === undefined) return one
+  return existsSync(one.projector) ? { ...one, vision: true } : { ...one, vision: false }
+}
+
 function withCatalogLimits(one: Installed): Installed {
   if (!one.vetted || one.imported || one.format === 'mlx') return one
   const entry = LOCAL_CATALOG.find((entry) => entry.id === one.entry && entry.repo === one.repo && entry.revision === one.revision &&
@@ -151,6 +162,7 @@ const isInstalled = (x: unknown): x is Installed => {
     (o.lastUsedAt === undefined || typeof o.lastUsedAt === 'number' && Number.isFinite(o.lastUsedAt) && o.lastUsedAt >= 0) &&
     (o.draftModelId === undefined || typeof o.draftModelId === 'string' && o.draftModelId.length > 0) &&
     Array.isArray(o.files) && o.files.length > 0 && o.files.every((file) => typeof file === 'string' && isAbsolute(file)) &&
+    (o.projector === undefined || typeof o.projector === 'string' && isAbsolute(o.projector)) &&
     typeof o.context === 'number' && Number.isSafeInteger(o.context) && o.context > 0 &&
     typeof o.bytes === 'number' && Number.isSafeInteger(o.bytes) && o.bytes > 0 &&
     ['tools', 'vision', 'abliterated', 'vetted'].every((key) => typeof o[key] === 'boolean') &&

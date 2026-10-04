@@ -39,6 +39,18 @@ import { batchState, isTerminal, passSeed, progressLabel, seeds as rollSeeds } f
  * them in tests and never in a shipped path.
  */
 
+/**
+ * A failure's own words, fit to keep and show: no file paths (they name the person's folders),
+ * one line, and short. Empty when there is nothing more to say than the reason code.
+ */
+export function said(message) {
+  const text = String(message ?? '')
+    .replace(/(?:[A-Za-z]:)?[\\/](?:[^\s'"\\/:]+[\\/])+[^\s'"\\/:]*/g, '…')
+    .replace(/\s+/g, ' ')
+    .trim()
+  return text.length > 300 ? `${text.slice(0, 299)}…` : text
+}
+
 export class EditorFailure extends Error {
   constructor(code, message, extra = {}) {
     super(message)
@@ -253,8 +265,9 @@ export function editor({
       rmSync(join(base(), 'quarantine', c.runId), { recursive: true, force: true })
       const state = code === 'cancelled' || code === 'revoked' ? 'cancelled'
         : ['policy_unavailable', 'age_uncertain', 'consent_missing', 'consent_revoked', 'input_blocked', 'output_blocked'].includes(code) ? 'blocked' : 'failed'
-      await log.transition(c.runId, conversation, state, { reason: code }).catch(() => {})
-      await updateCandidate(conversation, batchId, candidateId, { state, reason: code })
+      const detail = said(message)
+      await log.transition(c.runId, conversation, state, { reason: code, ...(detail && { detail }) }).catch(() => {})
+      await updateCandidate(conversation, batchId, candidateId, { state, reason: code, ...(detail && { detail }) })
       return message
     }
     try {

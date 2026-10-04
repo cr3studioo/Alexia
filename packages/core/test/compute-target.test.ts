@@ -103,7 +103,7 @@ test('remote rows qualify the native model id and retain the model name and capa
   expect(row).toEqual({
     id: `@${HOST}/llama/x`, name: 'Model X', provider: 'remote', tier: 'T0', host: HOST,
     priceIn: 0, priceOut: 0, context: 8192, supportsTools: true, modality: ['text', 'image'],
-    nsfwOk: 'yes', trainsOnYourData: 'no', params: 8, quant: 'Q4_K_M', diskBytes: 4000, abliterated: true,
+    nsfwOk: 'yes', trainsOnYourData: 'no', params: 8, quant: 'Q4_K_M', diskBytes: 4000, abliterated: true, engine: model.engine,
   })
   expect(remoteModel('another0host', model).id).not.toBe(row.id)
   row.modality.push('audio')

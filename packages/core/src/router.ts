@@ -390,8 +390,19 @@ export interface Ask {
 export const ON_DEVICE = new Set(['ollama', 'llama', 'mlx'])
 export const SCHEMA_RUNNERS = new Set(['ollama', 'llama'])
 
-/** Whether a local model may take a private request: on this computer, executing here. */
+/** Whether a local model executes on this computer. */
 export const onDevice = (model: Model): boolean => model.host === undefined && model.remote !== true && ON_DEVICE.has(model.provider)
+
+/**
+ * **Whether a model may take a private request**: on this computer, or on the paired computer
+ * chosen for pictures (`World.pictureHost`) — the one the pictures are already sent to be made.
+ * Never a hosted model, never a model relayed elsewhere, and never another paired computer.
+ */
+export const privatelyAllowed = (model: Model, world: Pick<World, 'pictureHost'>): boolean =>
+  onDevice(model) || (model.host !== undefined && model.host === world.pictureHost && model.remote !== true && ON_DEVICE.has(model.engine ?? ''))
+
+/** Whether the runner behind a model holds its answer to a JSON Schema — on a paired computer, by its engine. */
+export const holdsFormat = (model: Model): boolean => SCHEMA_RUNNERS.has(model.host !== undefined ? model.engine ?? '' : model.provider)
 
 /**
  * **The whole plan for a request that only a model running on this computer may answer.** Separate from the main route
@@ -400,8 +411,8 @@ export const onDevice = (model: Model): boolean => model.host === undefined && m
 function privateRoute(ask: Ask, pins: Pins, world: World): Verdict {
   const carried = (ask.modality ?? []).filter((kind) => kind !== 'text')
   const eligible = (model: Model): string | undefined => {
-    if (!onDevice(model)) return 'it does not run on this computer'
-    if (ask.structured === true && !SCHEMA_RUNNERS.has(model.provider)) return 'its runner cannot hold an answer to a fixed format'
+    if (!privatelyAllowed(model, world)) return 'it does not run on this computer or the one chosen for pictures'
+    if (ask.structured === true && !holdsFormat(model)) return 'its runner cannot hold an answer to a fixed format'
     const unseen = carried.filter((kind) => !model.modality.includes(kind))
     if (unseen.length > 0) return `it cannot be given ${unseen.map((k) => (k === 'image' ? 'a picture' : k)).join(' or ')}`
     if (!fits(model, ask.messages)) return 'this request is longer than it can read'
@@ -521,6 +532,11 @@ export interface World {
    * ready, or the named reason it cannot serve. Absent means none has been selected since launch.
    */
   target?: TargetStatus
+  /**
+   * **The paired computer chosen for pictures**, whose models may take a private request
+   * (`privatelyAllowed`): the pictures go there to be made anyway. Absent when it is this one.
+   */
+  pictureHost?: string
   /** Hosted providers with a key and requests left, in the pool's order. */
   rungs: readonly Rung[]
   /**

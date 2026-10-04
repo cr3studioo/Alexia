@@ -129,3 +129,24 @@ test('the pace says how fast and how long is left, for bytes and for steps, and 
   t = 60_000
   expect(pace.see(job(2, 20, 'j2'))).toBe('step 2 of 20 · nothing has moved for 32 s')
 })
+
+test('the planning model is chosen from the models on this computer that can see pictures', async () => {
+  const f = setup()
+  const asked: Record<string, unknown>[] = []
+  const fetcher = (async (url: string, options?: RequestInit) => {
+    const body = JSON.parse(String(options?.body ?? '{}')) as { call?: string; model?: string | null }
+    if (body.call === 'planners') return Response.json({ planners: [{ id: 'qwen2.5vl:7b', name: 'qwen2.5vl:7b', provider: 'ollama' }], selected: null })
+    if (body.call === 'select_planner') { asked.push(body); return Response.json({ selected: body.model }) }
+    return f.fetcher(url, options)
+  }) as unknown as typeof fetch
+  await openImageEditor({ token: 'test', conversationId: 'c1', attachmentId: 'a1', behind: () => [], fetcher })
+  const choose = await vi.waitFor(() => {
+    const one = document.querySelector<HTMLSelectElement>('[data-focus="planner"]')
+    expect(one?.options).toHaveLength(2)
+    return one!
+  })
+  choose.value = 'qwen2.5vl:7b'
+  choose.dispatchEvent(new Event('change'))
+  await vi.waitFor(() => expect(asked).toEqual([{ call: 'select_planner', conversationId: 'c1', model: 'qwen2.5vl:7b' }]))
+  document.querySelector<HTMLButtonElement>('[aria-label="Close"]')!.click()
+})

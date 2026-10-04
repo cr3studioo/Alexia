@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { deflateSync, crc32 } from 'node:zlib'
 import { describe, expect, test } from 'vitest'
-import { apply, cropRect, geometry, prepareExport, resizePlan, TransformError } from '../edit/transforms.js'
+import { apply, cropRect, forModel, geometry, prepareExport, resizePlan, TransformError } from '../edit/transforms.js'
 import { chunks, decode, encode, header } from '../edit/transforms/png.js'
 
 /**
@@ -169,4 +169,12 @@ describe('erase to transparency', () => {
   test('an opaque picture exports to JPEG without asking', () => {
     expect(prepareExport(encode(gradient), { format: 'jpeg', background: null }).flattened).toBe(false)
   })
+})
+
+test('a picture shown to a model is at most 1024 on its long side, shape kept; a small one is untouched', () => {
+  const big = encode({ width: 3000, height: 4000, data: Buffer.alloc(3000 * 4000 * 4, 200) }).toString('base64')
+  const shown = header(Buffer.from(forModel(big), 'base64'))
+  expect([shown.width, shown.height]).toEqual([768, 1024])
+  const small = encode({ width: 300, height: 200, data: Buffer.alloc(300 * 200 * 4, 9) }).toString('base64')
+  expect(forModel(small)).toBe(small)
 })

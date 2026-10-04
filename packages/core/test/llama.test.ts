@@ -295,6 +295,15 @@ describe.skipIf(process.platform === 'win32')('owned guardian lifecycle', () => 
     await expect(server.ensure(model.id)).rejects.toThrow(/GGUF/)
     expect(starts(dir)).toHaveLength(0)
   })
+  test('a model with its projector on disk is started able to see; without it, as text only', async () => {
+    const { dir, server } = setup(), projector = join(temp(), 'mmproj.gguf')
+    writeFileSync(projector, gguf())
+    const model = { ...record(dir, 'llama/seeing'), projector }
+    remember(dir, model)
+    await server.ensure(model.id)
+    expect(starts(dir)[0]?.args).toEqual(expect.arrayContaining(['--mmproj', projector]))
+    await server.stop()
+  })
   test('verifies imported draft bytes before launching the target', async () => {
     const { dir, server } = setup(), path = join(temp(), 'draft.gguf')
     writeFileSync(path, gguf())

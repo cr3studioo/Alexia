@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { ADULT_META, ATTACHMENT_CONTEXT_META, ATTACHMENT_INPUTS_META, AttachmentCallContext, EDITOR_META, fromJsonSchema, negotiatePrivateContext, PRIVATE_CONTEXT_CAPABILITY } from '@alexia/sdk'
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import { facts, note } from '../compute.js'
 import { plan as planEdit } from './planner.js'
@@ -10,6 +11,7 @@ import { editor, EditorFailure } from './run.js'
 import { installProfile } from './install.js'
 import { EDIT, EDIT_PLAN_VERSION, editRenderer, sweep } from './runtime.js'
 import { safety } from './safety.js'
+import { forModel } from './transforms.js'
 
 /**
  * The image editor, connected to the running plugin (A00 integration).
@@ -38,16 +40,55 @@ const EDIT_IMAGE_SCHEMA = fromJsonSchema({
   additionalProperties: false,
 })
 
+/** How long a model on this computer may take over one look, when the caller set no deadline. */
+const SAMPLE_MS = 5 * 60_000
+/** The longest side a whole-picture edit's inputs are sent at. */
+const RENDER_MOST = 2048
+
 export function mountEditor({ alexia, compute, own, connectManaged, installManaged, releaseManaged = async () => {}, log = () => {} }) {
+  /** A picture's copy for the renderer, made once per picture; the picture itself is never changed. */
+  const forRender = (path, conversation) => {
+    try {
+      const bytes = readFileSync(path)
+      // With the conversation's other edit files, in this plugin's own folder: a place it may
+      // write and send from, and forgotten with the conversation's pictures.
+      const dir = join(own(), 'edits', String(conversation), 'render-inputs')
+      const copy = join(dir, `${createHash('sha256').update(bytes).digest('hex').slice(0, 32)}.png`)
+      if (!existsSync(copy)) {
+        mkdirSync(dir, { recursive: true })
+        writeFileSync(copy, Buffer.from(forModel(bytes.toString('base64'), RENDER_MOST), 'base64'))
+      }
+      return copy
+    } catch {
+      return path
+    }
+  }
+  /** Pictures shrunk for a model, by their bytes, so the planner and the policy check share the work. */
+  const shrunk = new Map()
+  const small = (content) => {
+    if (content?.type !== 'image' || content.mimeType !== 'image/png' || typeof content.data !== 'string') return content
+    const key = createHash('sha256').update(content.data).digest('hex')
+    if (!shrunk.has(key)) {
+      shrunk.set(key, forModel(content.data))
+      if (shrunk.size > 8) shrunk.delete(shrunk.keys().next().value)
+    }
+    return { ...content, data: shrunk.get(key) }
+  }
   const sample = (request) => alexia.server.server.createMessage(
     {
-      messages: request.messages,
+      // A message to core is at most 10 MB; a phone photo is more. See `forModel`.
+      messages: request.messages.map((m) => ({ ...m, content: Array.isArray(m.content) ? m.content.map(small) : small(m.content) })),
       ...(request.systemPrompt !== undefined && { systemPrompt: request.systemPrompt }),
       includeContext: 'none',
       maxTokens: request.maxTokens ?? 2048,
       _meta: request._meta,
     },
-    request.signal ? { signal: request.signal } : undefined,
+    {
+      ...(request.signal && { signal: request.signal }),
+      // A model on this computer reading two photos takes a minute or two on a laptop, far past
+      // MCP's sixty-second default: the planner's own deadline, or five minutes, is the limit.
+      timeout: Math.max(1_000, (request.deadlineAt ?? Date.now() + SAMPLE_MS) - Date.now()),
+    },
   )
   const kv = { get: (k) => alexia.storage.get(k), set: (k, v) => alexia.storage.set(k, v) }
   const policy = safety({ provider: visionProvider({ sample, evaluation: EVALUATION }), store: kv })
@@ -139,6 +180,10 @@ export function mountEditor({ alexia, compute, own, connectManaged, installManag
     emit,
     render: async (envelope, files, { signal, label, conversation, candidateId }) => {
       try {
+        // A whole-picture edit sends each picture at most 2048 on its long side: Qwen Image Edit
+        // works at about a megapixel, and a phone photo is twelve, sent over the network. A
+        // masked edit keeps its pictures as they are, because the mask matches them pixel for pixel.
+        if (files.masks.length === 0) files = { ...files, inputs: files.inputs.map((input) => ({ ...input, path: forRender(input.path, conversation) })) }
         const out = await compute.run(EDIT, { kind: 'edit', version: EDIT_PLAN_VERSION, envelope, inputs: files.inputs, masks: files.masks }, {
           signal,
           report: (message, done, total, work) => {
