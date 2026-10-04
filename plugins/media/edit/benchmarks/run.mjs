@@ -24,7 +24,7 @@ import * as comfy from '../../comfy.js'
 import { bytesOf } from '../../inputs.js'
 import { buildGraph } from '../graph.js'
 import { CANDIDATES } from '../profiles/candidates.js'
-import { graphSha256, manifestSha256 } from '../profiles.js'
+import { graphSha256, manifestSha256, sha256File } from '../profiles.js'
 
 const arg = (name, fallback) => {
   const at = process.argv.indexOf(`--${name}`)
@@ -41,15 +41,20 @@ if (!models || !images) {
   process.exit(2)
 }
 
+// Small files (the fixtures) are read whole; model files are many gigabytes and are streamed.
 const hash = (path) => createHash('sha256').update(readFileSync(path)).digest('hex')
-const artifacts = profile.artifacts.map((a) => {
+const artifacts = []
+for (const a of profile.artifacts) {
   const path = join(models, a.folder, a.filename)
+  let bytes
   try {
-    return { ...a, bytes: statSync(path).size, sha256: hash(path) }
+    bytes = statSync(path).size
   } catch {
-    return { ...a, missing: true }
+    artifacts.push({ ...a, missing: true })
+    continue
   }
-})
+  artifacts.push({ ...a, bytes, sha256: await sha256File(path) })
+}
 if (artifacts.some((a) => a.missing)) {
   console.error(`Missing: ${artifacts.filter((a) => a.missing).map((a) => a.filename).join(', ')}`)
   process.exit(3)
