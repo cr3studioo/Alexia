@@ -6543,3 +6543,120 @@ button:not([disabled]):active {
   clip-path: inset(50%);
   white-space: nowrap;
 }
+
+/* ---- The image editor (A07) ------------------------------------------------------------
+   The picture is the largest thing on the sheet: a quiet surround, the tools in a narrow rail,
+   one side panel, the versions in a strip underneath. On a narrow window the side panel becomes
+   a sheet under the picture, keeping the picture where it was. Tokens only, so both themes and
+   the contrast table hold. */
+
+.image-editor {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  grid-template-columns: auto 1fr minmax(18rem, 22rem);
+  grid-template-rows: auto 1fr auto auto;
+  grid-template-areas:
+    'bar bar bar'
+    'rail stage side'
+    'strip strip side'
+    'line line line';
+  background: var(--surface-sunken);
+  color: var(--ink);
+}
+.image-editor-bar {
+  grid-area: bar;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface-raised);
+  border-bottom: 1px solid var(--line);
+}
+.image-editor-heading { font-size: var(--text-md); margin: 0 var(--space-3) 0 0; }
+.image-editor-version { color: var(--ink-quiet); font-size: var(--text-sm); margin-right: auto; }
+.image-editor-rail {
+  grid-area: rail;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-2);
+  background: var(--surface-raised);
+  border-right: 1px solid var(--line);
+}
+.image-editor-rail button[aria-pressed='true'],
+.image-editor-tools button[aria-pressed='true'],
+.image-editor-segmented button[aria-checked='true'] {
+  background: var(--chosen-wash);
+  color: var(--chosen);
+  border-color: var(--chosen);
+}
+.image-editor-stage { grid-area: stage; position: relative; overflow: hidden; min-height: 12rem; touch-action: none; }
+.image-editor-stage canvas { display: block; outline-offset: -3px; }
+.image-editor-side {
+  grid-area: side;
+  overflow-y: auto;
+  padding: var(--space-3);
+  background: var(--surface-raised);
+  border-left: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.image-editor-panel, .image-editor-generate, .image-editor-export { display: flex; flex-direction: column; gap: var(--space-2); }
+.image-editor-field { display: flex; flex-direction: column; gap: var(--space-1); font-size: var(--text-sm); }
+.image-editor-field > span { color: var(--ink-quiet); }
+.image-editor-check { font-size: var(--text-sm); display: flex; align-items: center; gap: var(--space-1); }
+.image-editor-prompt, .image-editor-note textarea { width: 100%; resize: vertical; font: inherit; }
+.image-editor-tools, .image-editor-segmented { display: flex; flex-wrap: wrap; gap: var(--space-1); }
+.image-editor-hint { color: var(--ink-quiet); font-size: var(--text-sm); margin: 0; }
+.image-editor-why { color: var(--caution); font-size: var(--text-sm); margin: 0; }
+.image-editor-error { color: var(--danger); }
+.image-editor-summary { font-size: var(--text-sm); margin: 0; padding: var(--space-2); background: var(--wash); border-radius: var(--radius-sm); }
+.image-editor-question { padding: var(--space-2); border: 1px solid var(--chosen); border-radius: var(--radius-md); display: flex; flex-direction: column; gap: var(--space-2); }
+.image-editor .primary-button {
+  background: var(--accent);
+  color: var(--on-accent);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-4);
+  font: inherit;
+  cursor: pointer;
+}
+.image-editor .primary-button:disabled { opacity: 0.55; cursor: not-allowed; }
+.image-editor-notes { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-2); }
+.image-editor-note { border: 1px solid var(--line); border-radius: var(--radius-md); padding: var(--space-2); display: flex; flex-direction: column; gap: var(--space-1); }
+.image-editor-note.active { border-color: var(--chosen); }
+.image-editor-note-title { text-align: left; font-weight: 600; background: none; border: 0; padding: 0; color: inherit; cursor: pointer; }
+.image-editor-rect input { width: 4.5rem; margin-right: var(--space-1); }
+.image-editor-strip {
+  grid-area: strip;
+  display: flex;
+  gap: var(--space-2);
+  overflow-x: auto;
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface-raised);
+  border-top: 1px solid var(--line);
+}
+.image-editor-card { display: flex; flex-direction: column; gap: var(--space-1); min-width: 7.5rem; font-size: var(--text-xs); }
+.image-editor-card.selected .image-editor-thumb { outline: 2px solid var(--chosen); }
+.image-editor-card.candidate { justify-content: center; padding: var(--space-2); border: 1px dashed var(--line-strong); border-radius: var(--radius-md); }
+.image-editor-card.candidate.failed, .image-editor-card.candidate.blocked { border-color: var(--danger); }
+.image-editor-thumb { display: flex; flex-direction: column; gap: var(--space-1); background: none; border: 0; padding: 0; color: inherit; cursor: pointer; font-size: var(--text-xs); }
+.image-editor-thumb img { width: 7.5rem; height: 5rem; object-fit: contain; background: var(--surface-sunken); border-radius: var(--radius-sm); }
+.image-editor-choose { display: flex; flex-wrap: wrap; gap: var(--space-3); padding: var(--space-4); align-content: flex-start; grid-column: 1 / -1; }
+.image-editor-line { grid-area: line; margin: 0; padding: var(--space-1) var(--space-3); font-size: var(--text-sm); color: var(--ink-quiet); background: var(--surface-raised); min-height: 1.6em; }
+.image-editor-refs { border: 1px solid var(--line); border-radius: var(--radius-md); }
+
+@media (max-width: 559px) {
+  .image-editor {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto auto minmax(40vh, 1fr) auto auto auto;
+    grid-template-areas: 'bar' 'rail' 'stage' 'strip' 'side' 'line';
+    overflow-y: auto;
+  }
+  .image-editor-rail { flex-direction: row; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--line); }
+  .image-editor-side { border-left: 0; border-top: 1px solid var(--line); border-radius: var(--radius-lg) var(--radius-lg) 0 0; max-height: none; }
+}

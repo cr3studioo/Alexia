@@ -516,3 +516,20 @@ export async function cancel(server, id, signal) {
   if (!running.some((item) => item[1] === id)) return false
   return (await post('/interrupt', { prompt_id: id })).ok
 }
+
+/**
+ * Forget one finished job's history entry.
+ *
+ * `/history` keeps every queued graph — the prompt text included — until ComfyUI restarts. For a
+ * private edit that is a copy of the request sitting in another program's memory, so it is
+ * deleted by id as soon as the output has been collected.
+ */
+export async function forgetHistory(server, id, signal) {
+  const response = await fetch(`${server}/history`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ delete: [id] }),
+    signal,
+  })
+  return response.ok
+}

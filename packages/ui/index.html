@@ -200,6 +200,8 @@
                    opens the hidden file input beside it, which is the only control that can hand
                    a webview bytes. -->
               <button id="attach" type="button" class="quiet-button" title="Attach a file or picture">Attach</button>
+              <!-- The image editor, for this conversation's pictures. Shown only when one is installed. -->
+              <button id="edit-pictures" type="button" class="quiet-button" title="Edit this conversation's pictures" hidden>Edit pictures</button>
               <input id="file" type="file" multiple hidden />
               <textarea id="text" rows="1" placeholder="Ask Alexia" aria-label="Message Alexia" autofocus></textarea>
               <button type="submit">Send</button>
@@ -438,6 +440,16 @@
                 <p class="hint" id="lifted-said" hidden>Budget lifted for today. <button type="button" class="quiet-button" id="lifted-undo">Undo</button></p>
                 <p class="hint" id="limits-said" role="status"></p>
               </div>
+              <!-- Adult content: closed by default, at the bottom, and on only after the person says
+                   they are 18 or older. /nsfw switches adult mode on in a chat once this is on. -->
+              <details class="group">
+                <summary>Adult content</summary>
+                <p class="hint">Off unless you turn it on. When it is on, typing /nsfw switches to uncensored models and lets the picture editor make adult edits; /sfw switches back. Nothing sexual is ever made of anyone who may be under 18.</p>
+                <label class="field"><span><input type="checkbox" id="adult-age" /> I am 18 or older</span></label>
+                <button type="button" class="quiet-button" id="adult-on">Turn adult content on</button>
+                <button type="button" class="quiet-button" id="adult-off" hidden>Turn adult content off</button>
+                <p class="hint" id="adult-said" role="status"></p>
+              </details>
             </div>
 
             <!-- Skills (D205): one list of every skill — installed, and written by Alexia — with

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { createWriteStream } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { createReadStream, createWriteStream } from 'node:fs'
 import { rename, stat, unlink } from 'node:fs/promises'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
@@ -46,9 +47,15 @@ export async function have(to) {
  * ComfyUI**. When the catalogue does not know the size, the server's own `content-length` is used
  * and the check still happens.
  */
-export async function fetchModel(url, to, { expect, signal, onProgress } = {}) {
+export async function fetchModel(url, to, { expect, sha256, signal, onProgress } = {}) {
   const there = await have(to)
-  if (there.done > 0) return { path: to, bytes: there.done, already: true }
+  if (there.done > 0) {
+    // **A file with the right name is not the right file.** Where the catalogue knows the hash,
+    // the file on disk is checked before it is called finished; a different one is set aside —
+    // never deleted, never used — and the real one is fetched.
+    if (!sha256 || (await hashOf(to, signal)) === sha256) return { path: to, bytes: there.done, already: true }
+    await rename(to, `${to}.mismatch`)
+  }
 
   const from = there.part
   const response = await fetch(url, {
@@ -90,8 +97,21 @@ export async function fetchModel(url, to, { expect, signal, onProgress } = {}) {
     // Deliberately not renamed. The `.part` stays so the next attempt can resume it.
     throw new Error(`the download ended early — ${gb(got)} of ${gb(total)}. Ask again and it will carry on from there.`)
   }
+  // The whole file, resumed part included: a range that joined two different versions of a
+  // model is the right length and the wrong bytes, and is not a checkpoint to resume from.
+  if (sha256 && (await hashOf(`${to}.part`, signal)) !== sha256) {
+    await unlink(`${to}.part`).catch(() => {})
+    throw new Error('the downloaded model is not the expected file — its checksum does not match. Nothing was installed.')
+  }
   await rename(`${to}.part`, to)
   return { path: to, bytes: got, already: false }
+}
+
+/** SHA-256 of a file on disk, streamed. */
+export async function hashOf(path, signal) {
+  const hash = createHash('sha256')
+  for await (const chunk of createReadStream(path, { signal })) hash.update(chunk)
+  return hash.digest('hex')
 }
 
 /** Give up on a half-finished download. Only ever called because somebody asked. */

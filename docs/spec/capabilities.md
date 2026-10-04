@@ -56,6 +56,7 @@ name that is not here does not install.
 | `input.control` | move the pointer and press keys | "control your mouse and keyboard" |
 | `proc.spawn` | run a child process — one it ships, or one on this machine it names in `why` | "run the programs it came with", or "start *…*" |
 | `notify` | a desktop notification | "notify you" |
+| `attachments.scoped` | lease, register and share the pictures of one conversation at a time (`alexia_protocol` 14) | "edit the pictures you attach" |
 
 `net.download` and `net.request` are separate on purpose. Almost every plugin that touches
 the network is fetching one model file, once, from one host — and *"download the speech

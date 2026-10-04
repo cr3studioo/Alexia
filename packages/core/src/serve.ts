@@ -6,6 +6,11 @@ import {
   FILES_META,
   LENGTHS_META,
   TOOLS_META,
+  LOCAL_META,
+  FORMAT_META,
+  SamplingFormat,
+  ADULT_META,
+  type CleanupReceipt,
   type StreamFrame,
 } from '@alexia/protocol'
 import { randomUUID } from 'node:crypto'
@@ -30,7 +35,7 @@ import {
 } from './attach.js'
 import { Catalog, news, POLL_EVERY, type Change } from './catalog.js'
 import { asRuling, counted, freshTally, ModelChecker, type Tally } from './checker.js'
-import { commands, pins, type Ran, run as runCommand } from './commands.js'
+import { ADULT, adultConfirmed, commands, pins, setPin, type Ran, run as runCommand } from './commands.js'
 import { preauthorise, record } from './consent.js'
 import { refuse, type Body } from './guard.js'
 import { judge } from './health.js'
@@ -71,6 +76,7 @@ import {
   asSentence,
   hearingPlan,
   MODES,
+  onDevice,
   paid,
   personalityFrom,
   route,
@@ -97,7 +103,8 @@ import { tabs as coreTabs } from './panels.js'
 import { actions as coreActions, sources as coreSources, searchable } from './surface.js'
 import { Skills, SKILL_TOOL } from './skills.js'
 import { systemStats } from './system.js'
-import { dataDir, Store, textOf, type Message, type Part } from './store.js'
+import { carries, dataDir, Store, textOf, type Message, type Part } from './store.js'
+import { Attachments, AttachmentError } from './attachments/index.js'
 import { streamer } from './streaming.js'
 import { PluginTooling } from './tooling.js'
 import { toolWords, Trace } from './trace.js'
@@ -475,11 +482,37 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
    * deleted mid-task is noticed on the next step rather than at the end of the run — which
    * is invariant 4 meeting the agent loop, and what M15-8 tests.
    */
+  /**
+   * **The person's pictures, kept with their conversation** (A02). Created before the plugins,
+   * because the editor reaches them through `alexia/attachments/*`. Anything a crash or a failed
+   * write left behind is collected first.
+   */
+  const album = new Attachments(store, root)
+  try {
+    album.collect()
+  } catch (error) {
+    console.error(`[core] picture cleanup could not run: ${String(error)}`)
+  }
+  /** Files the editor shared with its screen, by token, scoped to one conversation. */
+  const shared = new Map<string, { path: string; mime: string; conversationId: string }>()
+
   const plugins = new Plugins({
     dir: extensions,
     store,
     dataDir: root,
     secrets,
+    attachments: {
+      lease: (conversationId, ids) => album.lease(conversationId, ids),
+      release: (leaseId) => album.release(leaseId),
+      live: (leaseId) => album.isLive(leaseId),
+      register: (conversationId, path, origin, name) => album.register(conversationId, path, origin, name),
+      share: (_pluginId, conversationId, path, mime) => {
+        if (!store.conversations().some((one) => String(one.id) === conversationId)) throw new Error('That conversation does not exist.')
+        const token = randomUUID()
+        shared.set(token, { path, mime, conversationId })
+        return `/api/editor/file?token=${token}`
+      },
+    },
     log: (id, line) => console.error(`[${id}] ${line}`),
     onToolsChanged: () => {
       tooling.invalidate()
@@ -554,6 +587,25 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
        * — and a wrapped prompt that happened to begin with a slash being answered *there is
        * no /home* instead of being read would be a bug nobody would find for weeks.
        */
+      /**
+       * **A private request** (`alexia/local`, `alexia/format`): this computer only, one
+       * completion, an answer held to a schema. Checked before anything else can act on the
+       * words — a private request is never read as a slash command, never given tools, and never
+       * routed anywhere a hosted or paired model could take it. Unsupported metadata is refused
+       * here, before a single byte of the request reaches a model.
+       */
+      const local = params._meta?.[LOCAL_META] === true
+      const formatAsked = params._meta?.[FORMAT_META]
+      let format: SamplingFormat | undefined
+      if (formatAsked !== undefined) {
+        const parsed = SamplingFormat.safeParse(formatAsked)
+        if (!parsed.success) throw new Error('The answer format asked for is not one Alexia supports.')
+        if (!local) throw new Error('An answer format is only supported on a request kept on this computer.')
+        format = parsed.data
+      }
+      if (local && params._meta?.[TOOLS_META] === true) throw new Error('A request kept on this computer cannot use tools.')
+      if (local) return privately(pluginId, asked, format, params.maxTokens, signal)
+
       const lastAsked = [...asked].reverse().find((turn) => turn.role === 'user')
       const typed = lastAsked === undefined ? '' : textOf(lastAsked).trim()
       if (!typed.includes('\n') && /^\/[a-z][a-z0-9.-]*(?:\s|$)/i.test(typed)) return asCommand(pluginId, typed)
@@ -599,10 +651,13 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
       // conversation to have said *Allow* in — a press is not a chat — so it is the switch
       // alone. Left unasked without a run, where paid was never reachable anyway.
       const seen = asRun === undefined ? await world() : { ...(await world()), cross: caps(store).cross === true }
+      // What the request carries: a plugin's picture reaches a model that can see it.
+      const seeing = carries(asked)
       const verdict = route(
         {
           messages: asked,
           shape: shapeOf({ messages: asked }),
+          ...(seeing.length > 0 && { modality: seeing }),
           ...(behind && { background: true }),
           ...declared,
         },
@@ -715,7 +770,15 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
         return (plugins.manifest(id)?.skills ?? []).map((path) => ({ dir: join(folder, path), pluginId: id }))
       }),
   })
-  const tooling = new PluginTooling(plugins, (line) => console.error(`[tools] ${line}`), skills)
+  const tooling = new PluginTooling(plugins, (line) => console.error(`[tools] ${line}`), skills, {
+    resolve: (conversationId, labels) => album.resolve(conversationId, labels),
+    release: (leaseId) => album.release(leaseId),
+    adult: () => adultMode(),
+  })
+  /** Adult mode: confirmed 18+ in Settings, and `/nsfw` on. */
+  function adultMode(): boolean {
+    return adultConfirmed(store) && pins(store).uncensored === true
+  }
   /**
    * The folder exists before anything watches it. A fresh install has installed nothing, so
    * there is no `extensions` yet — and `watch()` on a folder that is not there fails once and
@@ -1159,6 +1222,12 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     news: () => (headlines.size === 0 ? undefined : [...headlines.values()].join(' ')),
     refresh: pollAll,
     session: () => session,
+    // The conversation itself is about to go, so its private mark goes too: a session id can be reused.
+    forgetPictures: async (id: number) => {
+      const receipt = await forgetPictures(id)
+      store.kvSet(CORE, 'private_sessions', privateSessions().filter((one) => one !== id))
+      return receipt
+    },
     openSession: (id: number) => (session = id),
     // Broadcast, to whoever is running and cares. Nothing is spawned to hear it and nothing
     // waits for it — a new conversation must not be held up by a plugin letting go of a
@@ -1474,6 +1543,61 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     }
   }
 
+  /**
+   * **One private completion** (`alexia/local`): the image editor's planner and checks.
+   *
+   * The plan comes from {@link route} with `placement: 'interaction'`, which holds only models
+   * executing on this computer — so every rung `send` may walk, every retry and every hedge, is
+   * one of them, and a person's pin on anything else is refused by name. No tools, no
+   * conversation history beyond what the plugin sent, no paid rungs (nothing here is billed),
+   * and a truncated answer is reported as `maxTokens` so the caller never parses half of one.
+   */
+  async function privately(
+    pluginId: string,
+    asked: Message[],
+    format: SamplingFormat | undefined,
+    maxTokens: number | undefined,
+    signal: AbortSignal | undefined,
+  ): Promise<CreateMessageResult> {
+    const seeing = carries(asked)
+    const verdict = route(
+      {
+        messages: asked,
+        shape: 'simple',
+        placement: 'interaction',
+        ...(format !== undefined && { structured: true }),
+        ...(seeing.length > 0 && { modality: seeing }),
+      },
+      pins(store),
+      await world(),
+    )
+    if (!verdict.ok) throw new Error(asSentence(verdict.why))
+    if (modeTransitions.pending()) throw new Error('Wait for the mode switch to finish before requesting an answer.')
+    if (localModels.busy()) throw new Error('Wait for the local-model operation to finish before requesting an answer.')
+    sampling += 1
+    const answer = await send(
+      verdict.choices,
+      {
+        messages: asked,
+        ...(maxTokens !== undefined && { maxTokens }),
+        ...(format !== undefined && { format }),
+        ...(signal !== undefined && { signal }),
+      },
+      store,
+      secrets,
+      { plugin: pluginId, paidAllowed: false },
+    ).finally(() => {
+      sampling -= 1
+    })
+    if (!onDevice(answer.model)) throw new Error('A private request was answered somewhere other than this computer, so its answer was discarded.')
+    return {
+      role: 'assistant',
+      content: { type: 'text', text: textOf(answer.message) },
+      model: answer.model.id,
+      stopReason: answer.cut ? 'maxTokens' : 'endTurn',
+    }
+  }
+
   async function asTask(
     pluginId: string,
     messages: Message[],
@@ -1775,6 +1899,10 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
           setup: setup(),
           modeTransition: modeTransitions.status(),
           compute: compute.api.state(),
+          /** Whether the image editor can be opened, and the conversation it would open in. */
+          editor: { installed: plugins.editorInstalled(), conversationId: String(session), private: isPrivate(session) },
+          /** Adult content: whether the person confirmed 18+ in Settings, and whether `/nsfw` is on. */
+          adult: { confirmed: adultConfirmed(store), on: adultMode() },
           /**
            * Where the pages sit on the board (D204), or `null` when nobody has arranged it —
            * which the shell reads as *the default board*, rather than core inventing a default
@@ -1881,6 +2009,90 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
 
     // Remote compute's routes, and a local-model route that names a paired computer.
     if (await compute.api.handle(request, response, url, sent)) return
+
+    /**
+     * **The image editor's screen** (A00 integration). One POST carries every editor call to the
+     * plugin's own tool, with the conversation checked here; two GETs serve pictures the
+     * conversation owns and files the editor shared for it. Nothing in a request names a path.
+     */
+    /**
+     * **Adult content, in Settings › Safety.** Turning it on records that the person said they are
+     * 18 or older; turning it off removes that and switches `/nsfw` off with it.
+     */
+    if (url.pathname === '/api/adult' && request.method === 'POST') {
+      response.writeHead(200, { 'content-type': 'application/json' })
+      if (sent.enabled === true) {
+        if (sent.adult !== true) {
+          response.end(JSON.stringify({ ok: false, said: 'Confirm that you are 18 or older to turn adult content on.' }))
+          return
+        }
+        store.kvSet(CORE, ADULT, { confirmedAt: Date.now() })
+        response.end(JSON.stringify({ ok: true, said: 'Adult content is available. Type /nsfw in a chat to turn adult mode on, and /sfw to turn it off.' }))
+      } else {
+        store.kvDelete(CORE, ADULT)
+        setPin(store, { uncensored: false })
+        response.end(JSON.stringify({ ok: true, said: 'Adult content is off.' }))
+      }
+      return
+    }
+
+    if (url.pathname === '/api/editor' || url.pathname === '/api/editor/file' || url.pathname === '/api/editor/picture' || url.pathname === '/api/editor/forget' || url.pathname === '/api/editor/upload') {
+      const answer = (value: unknown, status = 200): void => {
+        response.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' })
+        response.end(JSON.stringify(value))
+      }
+      const conversation = (raw: unknown): string => {
+        const id = String(raw ?? '')
+        if (!store.conversations().some((one) => String(one.id) === id)) throw Object.assign(new Error('There is no conversation with that id.'), { code: 'context_required' })
+        return id
+      }
+      try {
+        if (url.pathname === '/api/editor/file' && request.method === 'GET') {
+          const one = shared.get(url.searchParams.get('token') ?? '')
+          if (!one) return answer({ ok: false, said: 'That file is not available any more.' }, 404)
+          response.writeHead(200, { 'content-type': one.mime, 'cache-control': 'no-store' })
+          response.end(readFileSync(one.path))
+          return
+        }
+        if (url.pathname === '/api/editor/picture' && request.method === 'GET') {
+          const { mime, bytes } = album.bytes(conversation(url.searchParams.get('conversation')), url.searchParams.get('id') ?? '')
+          response.writeHead(200, { 'content-type': mime, 'cache-control': 'no-store' })
+          response.end(bytes)
+          return
+        }
+        if (url.pathname === '/api/editor/upload' && request.method === 'POST') {
+          // A picture the editor turned upright and made lossless in the window. It is checked
+          // here like any upload, and it makes the conversation private like any picture does.
+          const id = conversation(sent.conversationId)
+          const bytes = Buffer.from(String(sent.data ?? ''), 'base64')
+          if (bytes.length === 0 || bytes.length > MOST_PER_FILE) throw Object.assign(new Error('That picture is empty or too large.'), { code: 'input_limit' })
+          markPrivate(Number(id))
+          const picture = album.ingest(id, { name: String(sent.name ?? 'picture.png'), bytes }, sent.normalizedFrom === undefined ? 'upload' : 'normalized')
+          return answer({ ok: true, picture })
+        }
+        if (url.pathname === '/api/editor/forget' && request.method === 'POST') {
+          const id = conversation(sent.conversationId)
+          const receipt = await forgetPictures(Number(id))
+          return answer({ ok: true, receipt })
+        }
+        if (url.pathname === '/api/editor' && request.method === 'POST') {
+          const conversationId = conversation(sent.conversationId)
+          const call = String(sent.call ?? '')
+          if (!['open', 'loadDraft', 'profiles', 'versions', 'batch', 'command', 'pending', 'events', 'pictures', 'select_profile'].includes(call)) {
+            throw Object.assign(new Error('That is not something the editor does.'), { code: 'schema_unsupported' })
+          }
+          if (call === 'pictures') return answer({ ok: true, pictures: album.list(conversationId) })
+          // Opening the editor on a picture makes the conversation private from here on.
+          if (call === 'open' || call === 'command') markPrivate(Number(conversationId))
+          // The conversation and the call are core's to set; whatever the body said about them is replaced.
+          return answer({ ok: true, ...(await editorCall({ ...sent, call, conversationId })) })
+        }
+        return answer({ ok: false, said: 'Not here.' }, 404)
+      } catch (error) {
+        const code = (error as { code?: unknown }).code
+        return answer({ ok: false, code: typeof code === 'string' ? code : 'render_failed', said: error instanceof Error ? error.message : String(error) }, 409)
+      }
+    }
 
     // Local-model routes use the same shell token and route guard as every other setting.
     if (url.pathname === '/api/local-models' || url.pathname.startsWith('/api/local-models/')) {
@@ -3077,8 +3289,24 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
         // no longer matches it. The name is the fallback, which is every other case.
         const mime = one.type ?? mimeOf(one.name)
         if (mime.startsWith('image/')) {
-          pictures.push({ type: 'image', url: `data:${mime};base64,${readFileSync(one.path).toString('base64')}` })
-          seen.push(one.name)
+          const bytes = readFileSync(one.path)
+          pictures.push({ type: 'image', url: `data:${mime};base64,${bytes.toString('base64')}` })
+          /**
+           * **Kept, with a label, when the image editor is here** (A02): the picture stays with
+           * this conversation so it can be edited after a reload or a question, and the label in
+           * the line below is the one the person, the model and the editor all use. A picture
+           * the keeper refuses — sideways, animated, too large — still goes to the model as
+           * before, and the note says why it cannot be edited.
+           */
+          let label: string | undefined
+          if (plugins.editorInstalled()) {
+            try {
+              label = album.ingest(String(session), { name: one.name, bytes }).label
+            } catch (error) {
+              refused.push(error instanceof AttachmentError ? error.message : `${one.name} could not be kept for editing.`)
+            }
+          }
+          seen.push(label === undefined ? one.name : `${one.name}, ${label}`)
           continue
         }
         readings.push(await extracted(one))
@@ -3194,8 +3422,75 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
   /** A turn a model may be shown again: not marked a bad answer, and not stopped halfway. */
   const shown = (turn: Message): boolean => turn.bad !== true && turn.stopped !== true
 
+  /** Conversations holding private pictures: every model call for them runs on this computer. */
+  function privateSessions(): number[] {
+    const said = store.kvGet(CORE, 'private_sessions')
+    return Array.isArray(said) ? said.filter((n): n is number => typeof n === 'number') : []
+  }
+  function markPrivate(id: number): void {
+    const now = privateSessions()
+    if (!now.includes(id)) store.kvSet(CORE, 'private_sessions', [...now, id])
+  }
+  function isPrivate(id: number): boolean {
+    return privateSessions().includes(id)
+  }
+
+  /**
+   * **One call to the image editor's own tool**, for the person at the screen. The conversation
+   * is core's to name — checked to exist — and never taken from the plugin.
+   */
+  async function editorCall(args: Record<string, unknown>): Promise<Record<string, unknown>> {
+    const result = await plugins.editorCall(args, { timeout: 10 * 60_000 }, adultMode() ? { [ADULT_META]: true } : {})
+    const text = result.content.find((c): c is { type: 'text'; text: string } => c.type === 'text')?.text ?? '{}'
+    let said: Record<string, unknown>
+    try {
+      said = JSON.parse(text) as Record<string, unknown>
+    } catch {
+      said = { code: 'render_failed', message: text }
+    }
+    if (result.isError === true) throw Object.assign(new Error(String(said.message ?? 'The editor could not do that.')), { code: said.code })
+    return said
+  }
+
+  /**
+   * **Forget this conversation's pictures, everywhere** — the editor's records, the files and
+   * every inline copy in its messages. Revocation first and everywhere (core's leases, then the
+   * editor's jobs), cleanup after; a part that could not finish is recorded and retried rather
+   * than reported done.
+   */
+  async function forgetPictures(sessionId: number): Promise<CleanupReceipt> {
+    const conversationId = String(sessionId)
+    const revocationId = `rev_${randomUUID().replaceAll('-', '')}`
+    album.revoke(conversationId)
+    for (const [token, one] of shared) if (one.conversationId === conversationId) shared.delete(token)
+    let local: CleanupReceipt['local'] = 'complete'
+    let remote: CleanupReceipt['remote'] = []
+    if (plugins.editorInstalled()) {
+      try {
+        await editorCall({ call: 'revoke', conversationId, revocationId })
+        const done = await editorCall({ call: 'cleanup', conversationId, revocationId })
+        remote = (done.remote as CleanupReceipt['remote'] | undefined) ?? []
+        if (done.local !== 'complete') local = 'pending'
+      } catch (error) {
+        console.error(`[core] the editor could not finish forgetting conversation ${conversationId}: ${error instanceof Error ? error.message : String(error)}`)
+        local = 'pending'
+      }
+    }
+    const mine = album.cleanup(conversationId, revocationId)
+    if (mine.local !== 'complete') local = 'failed'
+    const pending = store.kvGet(CORE, 'pending_picture_cleanup')
+    const before = Array.isArray(pending) ? pending.filter((n): n is number => typeof n === 'number' && n !== sessionId) : []
+    store.kvSet(CORE, 'pending_picture_cleanup', local === 'complete' && remote.every((r) => r.state === 'complete') ? before : [...before, sessionId])
+    return { revocationId, local, remote }
+  }
+  /** Cleanups a crash or an offline host left unfinished, tried again once the plugins are up. */
+  setTimeout(() => {
+    const pending = store.kvGet(CORE, 'pending_picture_cleanup')
+    for (const id of Array.isArray(pending) ? pending : []) if (typeof id === 'number') void forgetPictures(id).catch(() => {})
+  }, 15_000).unref()
+
   async function reply(sent: Body, response: ServerResponse): Promise<void> {
-    const { text: typed, files, again, automatic, allow, bad, free } = sent as {
+    const { text: typed, files, again, automatic, allow, bad, free, cloudVision } = sent as {
       text?: string
       files?: Upload[]
       again?: boolean
@@ -3217,6 +3512,12 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
        * only*, and nothing is written to the slider. Sent with `again`.
        */
       free?: boolean
+      /**
+       * **Send this picture to a cloud model, knowingly** — the explicit choice the private
+       * editing flow needs before an image may leave this computer. Absent, a picture sent while
+       * the editor is installed keeps the conversation on this computer.
+       */
+      cloudVision?: boolean
     }
     /** The answer just marked bad, when this is a *Bad answer* press. */
     const marked = again === true && bad !== undefined ? store.markLastAnswerBad(session) : undefined
@@ -3242,6 +3543,15 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
       if (typeof daily === 'number' && Number.isFinite(daily) && daily > 0) setCaps(store, { ...caps(store), daily: Math.round(daily * 100) / 100 })
     }
     const uploads = Array.isArray(files) ? files.slice(0, MOST_FILES) : []
+    /**
+     * **Pictures are answered by models on this computer unless the person says otherwise** (private editing,
+     * §6). Decided here, before any model sees the turn: with the image editor installed, a
+     * picture marks the conversation private, and every later turn of it — follow-ups, retries,
+     * the outer chat choosing a tool — is routed to models on this computer only. Choosing cloud
+     * vision for a message is an explicit act, and never applies to a conversation already private.
+     */
+    const carriesPicture = uploads.some((one) => String(one.type ?? mimeOf(String(one.name ?? ''))).startsWith('image/'))
+    if (carriesPicture && plugins.editorInstalled() && cloudVision !== true) markPrivate(session)
     /**
      * **The question that stopped, asked again** (D155) — *Try again*, or *Use Automatic for
      * this answer* with `automatic` beside it.
@@ -3363,6 +3673,8 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     try {
       const result = await run({
         messages: store.history(session).filter(shown),
+        // A conversation holding private pictures is answered on this computer, every step.
+        ...(isPrivate(session) && { placement: 'interaction' as const }),
         ...(chosen !== undefined && { personality: chosen }),
         ...(known.profile !== undefined && known.profile !== '' && { profile: known.profile }),
         ...(known.remembers && { remembers: true }),
@@ -3506,7 +3818,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
        * task would be a feature that quietly spent money on every task.
        */
       const episode = { task: text, steps: result.steps, answer: last === undefined ? '' : textOf(last) }
-      if (result.ended === 'answered' && learnable(episode)) {
+      if (result.ended === 'answered' && learnable(episode) && !isPrivate(session)) {
         lesson = episode
         say({ learn: { about: text.slice(0, 120), outline: outline(episode) } })
       }
@@ -3527,7 +3839,9 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
        * remembering, and it is only dangerous when it leaves.
        */
       const answered = last === undefined ? '' : textOf(last)
-      if (result.ended === 'answered' && answered.trim() !== '') {
+      // Not for a conversation holding private pictures: what is remembered may be sampled later
+      // by a plugin that does not keep it on this computer.
+      if (result.ended === 'answered' && answered.trim() !== '' && !isPrivate(session)) {
         void plugins.capability(CORE_CAPABILITIES.capture, exchange(text, answered)).catch(() => {
           // Nothing provides it, or whatever does is having a bad day. Either way this is
           // not the user's problem and never becomes one.

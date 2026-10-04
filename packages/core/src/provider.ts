@@ -829,6 +829,14 @@ export interface ChatRequest {
    * `send()` in `router.ts` makes it: a salted hash of the chat's own number.
    */
   session?: string
+  /**
+   * **The answer must be JSON that follows this schema** (`alexia/format`). Sent in the
+   * OpenAI-compatible shape, `response_format: { type: 'json_schema', json_schema }`, which is
+   * the one Ollama's `/v1/chat/completions` and llama.cpp's server both read. Never the native
+   * Ollama `format` field: that belongs to `/api/chat`, which this does not call. Only the
+   * router decides which rows may receive it (`SCHEMA_RUNNERS`).
+   */
+  format?: { name: string; schema: Record<string, unknown>; strict: true }
 }
 
 /** Tokens in and out. What M1-9 turns into money, and the only usage core keeps. */
@@ -1224,6 +1232,9 @@ export async function chat(
         // `tools` field politely — they 500 on it.
         ...(provider.tools !== false && request.tools && { tools: request.tools.map(asFunction) }),
         ...(request.maxTokens !== undefined && { max_tokens: request.maxTokens }),
+        ...(request.format !== undefined && {
+          response_format: { type: 'json_schema', json_schema: { name: request.format.name, schema: request.format.schema, strict: true } },
+        }),
         // Only where the row says the provider reads it (`stickySessions`), and nowhere else.
         ...(provider.stickySessions === true && request.session !== undefined && { session_id: request.session }),
         stream: true,

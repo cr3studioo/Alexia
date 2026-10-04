@@ -173,7 +173,18 @@ function describe(model: ModelResponse, shown?: ShowResponse): Model {
     nsfwOk: 'unknown',
     trainsOnYourData: 'no',
     ...(size !== undefined && { params: size }),
+    ...(relayed(model) && { remote: true }),
   }
+}
+
+/**
+ * **A cloud model Ollama lists as if it were installed.** Its tags entry names the remote host,
+ * and its name ends in `cloud`; either is enough, because a private request sent to one leaves
+ * this computer however local the address it went to.
+ */
+export function relayed(model: ModelResponse): boolean {
+  const extra = model as ModelResponse & { remote_host?: unknown; remote_model?: unknown }
+  return Boolean(extra.remote_host) || Boolean(extra.remote_model) || /[-:]cloud$/i.test(model.model ?? model.name ?? '')
 }
 
 /**

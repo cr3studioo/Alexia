@@ -180,7 +180,9 @@ function host(server, own) {
   }
 }
 
-vi.mock('@alexia/sdk', () => ({
+vi.mock('@alexia/sdk', async (importOriginal) => ({
+  // The protocol's contracts stay real; only the plugin host is a fake.
+  ...(await importOriginal()),
   fromJsonSchema: (schema) => schema,
   log: { info: () => {}, warn: () => {}, error: () => {} },
   plugin: () => globalThis.__alexiaMediaHost,

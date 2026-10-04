@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { CARD_META, CONTROLS_META, FINAL_META, PLAN_META, PREVIEW_META, type Stage, STAGES_META, TIMING_META } from '@alexia/protocol'
+import { ADULT_META, ALEXIA_PROTOCOL_MAX, PRIVATE_CONTEXT_CAPABILITY, PRIVATE_CONTEXT_PROMISE, ATTACHMENT_CONTEXT_META, ATTACHMENT_INPUTS_META, AttachmentInputs, type AttachmentCallContext, CARD_META, CONTROLS_META, FINAL_META, PLAN_META, PREVIEW_META, type Stage, STAGES_META, TIMING_META } from '@alexia/protocol'
 import type { CallToolResult } from '@modelcontextprotocol/client'
 import { statSync } from 'node:fs'
 import { basename } from 'node:path'
@@ -121,6 +121,8 @@ interface Known {
   spec: ToolSpec
   /** MCP's own hints, carried through untouched for the permission gate to read. */
   annotations?: Annotations
+  /** Top-level arguments the tool declared as attachment labels (`alexia/attachmentInputs`, protocol 14). */
+  attachmentInputs?: AttachmentInputs
 }
 
 export class PluginTooling implements Tooling {
@@ -136,6 +138,16 @@ export class PluginTooling implements Tooling {
      * one permission gate — a second `Tooling` would mean a second place to remember.
      */
     private readonly skills?: Skills,
+    /**
+     * **Pictures by label, for one conversation** — core's attachment lifecycle. Absent means a
+     * tool that declares attachment inputs cannot be called, and says so.
+     */
+    private readonly pictures?: {
+      resolve(conversationId: string, labels: readonly string[]): AttachmentCallContext
+      release(leaseId: string): void
+      /** Adult mode is on: the person said they are 18 or older in Settings, and `/nsfw` is on. */
+      adult?(): boolean
+    },
   ) {}
 
   /**
@@ -195,6 +207,7 @@ export class PluginTooling implements Tooling {
     args: Record<string, unknown>,
     signal?: AbortSignal,
     onProgress?: (update: Progress) => void,
+    context?: { conversationId?: string },
   ): Promise<ToolOutcome> {
     // Reading a skill is reading a file. There is nothing to report and nothing to wait for.
     if (name === SKILL_TOOL && this.skills?.tool) return this.skills.read(args)
@@ -221,6 +234,40 @@ export class PluginTooling implements Tooling {
     if (!process) {
       this.invalidate()
       return { ok: false, text: `${name} is gone — the plugin providing it is no longer installed.` }
+    }
+
+    /**
+     * **Declared attachment inputs, resolved by core** (protocol 14). Only the top-level fields
+     * the tool named are read, as labels in this conversation; nothing else in the arguments is
+     * ever treated as a picture. The plugin receives the resolved, pinned files in `_meta`, which
+     * only core sets, and the lease ends when the call does.
+     */
+    let attached: AttachmentCallContext | undefined
+    if (found.attachmentInputs) {
+      if (!this.pictures || context?.conversationId === undefined) {
+        return { ok: false, text: `${name} works on pictures in a conversation, and this call has none.` }
+      }
+      const labels: string[] = []
+      for (const field of found.attachmentInputs.fields) {
+        const given = args[field.name]
+        const list = given === undefined ? [] : Array.isArray(given) ? given : [given]
+        if (!list.every((one) => typeof one === 'string')) return { ok: false, text: `${field.name} lists pictures by their labels, like image_1.` }
+        if (list.length > field.maxCount) {
+          return { ok: false, text: `${name} takes at most ${String(field.maxCount)} pictures in ${field.name}. Ask which ones to use.` }
+        }
+        labels.push(...(list as string[]))
+      }
+      try {
+        attached = this.pictures.resolve(context.conversationId, labels)
+      } catch (error) {
+        return { ok: false, text: error instanceof Error ? error.message : String(error) }
+      }
+      const allowed = new Set(found.attachmentInputs.fields.flatMap((f) => f.mimeTypes))
+      const wrong = attached.attachments.find((a) => !allowed.has(a.mime))
+      if (wrong) {
+        this.pictures.release(attached.leaseId)
+        return { ok: false, text: `${wrong.label} is not a kind of picture ${name} can use.` }
+      }
     }
 
     try {
@@ -256,6 +303,10 @@ export class PluginTooling implements Tooling {
               })
             },
           }),
+        }, attached === undefined ? undefined : {
+          [ATTACHMENT_CONTEXT_META]: attached,
+          ...(this.pictures?.adult?.() === true && { [ADULT_META]: true }),
+          [PRIVATE_CONTEXT_CAPABILITY]: { protocol: ALEXIA_PROTOCOL_MAX, capabilities: PRIVATE_CONTEXT_PROMISE },
         }),
       )
     } catch (error) {
@@ -263,6 +314,8 @@ export class PluginTooling implements Tooling {
       // something else. A stack trace would be worse prompt text than a sentence.
       this.invalidate()
       return { ok: false, text: `${name} failed: ${error instanceof Error ? error.message : String(error)}` }
+    } finally {
+      if (attached !== undefined) this.pictures?.release(attached.leaseId)
     }
   }
 
@@ -291,6 +344,7 @@ export class PluginTooling implements Tooling {
         pluginId,
         tool: tool.name,
         ...(tool.annotations && { annotations: tool.annotations as Annotations }),
+        ...(attachmentInputsOf(tool._meta?.[ATTACHMENT_INPUTS_META]) !== undefined && { attachmentInputs: attachmentInputsOf(tool._meta?.[ATTACHMENT_INPUTS_META]) }),
         spec: {
           name,
           ...(tool.description !== undefined && { description: tool.description }),
@@ -381,4 +435,10 @@ export function outcomeOf(result: CallToolResult): ToolOutcome {
     text: text || (result.isError === true ? 'The tool failed and said nothing.' : 'Done.'),
     ...(files.length > 0 && { files }),
   }
+}
+
+/** A tool's declared attachment inputs, if well-formed; a malformed declaration declares nothing. */
+function attachmentInputsOf(value: unknown): AttachmentInputs | undefined {
+  const parsed = AttachmentInputs.safeParse(value)
+  return parsed.success ? parsed.data : undefined
 }

@@ -542,7 +542,7 @@ test('a paired computer with the person’s own ComfyUI is listed, never install
 test('the operation is the library’s, light, and declared', async () => {
   const { readManifest } = await import('@alexia/sdk')
   const manifest = readManifest(join(import.meta.dirname, '..'))
-  expect(manifest.version).toBe('0.8.0')
+  expect(manifest.version).toBe('0.9.0')
   expect(manifest.compute.operations).toContainEqual(expect.objectContaining({ cap: LIBRARY, weight: 'light' }))
   expect(manifest.provides).toContain(LIBRARY)
   expect(JSON.parse(readFileSync(join(import.meta.dirname, '..', 'plugin.json'), 'utf8')).page.sizes.L.show).toEqual(

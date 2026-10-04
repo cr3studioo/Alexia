@@ -132,3 +132,22 @@ test('ComfyUI is pointed at Alexia’s own model folder without anything being w
   // And the folders exist, because ComfyUI logs a warning for a search path that does not.
   expect(existsSync(join(own, 'models', 'checkpoints'))).toBe(true)
 })
+
+test('a file with the right name and the wrong bytes is set aside, not trusted', async () => {
+  const { createHash } = await import('node:crypto')
+  const sha256 = createHash('sha256').update(BODY).digest('hex')
+  const to = join(scratch(), 'model.safetensors')
+  writeFileSync(to, Buffer.from('y'.repeat(2000)))
+  const got = await fetchModel(`${at}/model`, to, { expect: BODY.length, sha256 })
+  expect(got.already).toBe(false)
+  expect(readFileSync(to).equals(BODY)).toBe(true)
+  expect(existsSync(`${to}.mismatch`)).toBe(true)
+  expect((await fetchModel(`${at}/model`, to, { sha256 })).already).toBe(true)
+})
+
+test('a download whose bytes do not hash to the catalogue is not installed', async () => {
+  const to = join(scratch(), 'model.safetensors')
+  await expect(fetchModel(`${at}/model`, to, { expect: BODY.length, sha256: '0'.repeat(64) })).rejects.toThrow(/checksum/)
+  expect(existsSync(to)).toBe(false)
+  expect(existsSync(`${to}.part`)).toBe(false)
+})

@@ -4,7 +4,7 @@
   "id": "media",
   "name": "Local media generation",
   "summary": "Makes pictures, sound and video on this computer, so in Combined mode they are made here and not in the cloud.",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "license": "AGPL-3.0-only",
   "entry": {
     "run": "node",
@@ -12,7 +12,7 @@
       "index.js"
     ]
   },
-  "alexia_protocol": 13,
+  "alexia_protocol": 14,
   "mcp_protocol": "2025-11-25",
   "requires": [
     {
@@ -34,12 +34,17 @@
     {
       "cap": "fs.read_scoped",
       "why": "To read the workflow file you exported from ComfyUI, so it can be saved where ComfyUI keeps them. It only ever reads."
+    },
+    {
+      "cap": "attachments.scoped",
+      "why": "To edit the pictures you attach — kept with their conversation, read only while an edit runs, and deleted with it."
     }
   ],
   "provides": [
     "image.generate",
     "image.render",
-    "image.workflows"
+    "image.workflows",
+    "image.edit"
   ],
   "compute": {
     "operations": [
@@ -52,6 +57,11 @@
         "cap": "image.workflows",
         "summary": "Read the workflow library on this computer, and write down a workflow somebody asked for",
         "weight": "light"
+      },
+      {
+        "cap": "image.edit",
+        "summary": "Edit a picture with a verified editing model, checked before anything is shown",
+        "weight": "heavy"
       }
     ],
     "hooks": [
@@ -136,7 +146,8 @@
     "namespace": "media",
     "tables": [
       "images",
-      "runs"
+      "runs",
+      "edits"
     ],
     "dir": true
   },

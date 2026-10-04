@@ -189,10 +189,12 @@ export class PluginProcess {
     name: string,
     args?: Record<string, unknown>,
     options?: CallToolRequestOptions,
+    /** Request `_meta` only core sets — the trusted attachment context (protocol 14). */
+    meta?: Record<string, unknown>,
   ): Promise<CallToolResult> {
     const { client } = await this.#ready()
     return this.#track(() =>
-      client.callTool({ name, arguments: args }, { timeout: this.t.callMs, ...options }),
+      client.callTool({ name, arguments: args, ...(meta !== undefined && { _meta: meta }) }, { timeout: this.t.callMs, ...options }),
     )
   }
 

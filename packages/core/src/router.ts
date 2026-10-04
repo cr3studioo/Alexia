@@ -367,6 +367,68 @@ export interface Ask {
    * written and was answered by whichever free model a JSON feed happened to list first.
    */
   capable?: boolean
+  /**
+   * **This request may only run on this computer** (`alexia/local`, the private image editor).
+   *
+   * A hard constraint, not a preference, and it is applied before anything else so that no
+   * retry, hedge, upgrade or fallback can reach past it: the plan holds only models that run on
+   * the interaction computer itself — not a hosted row, not a paired computer's model, and not a
+   * model an on-device runner merely relays to a cloud service ({@link Model.remote}). A runner
+   * being on loopback is not the test; the row saying where the model executes is.
+   *
+   * A pin that does not meet it is refused by name rather than overridden.
+   */
+  placement?: 'interaction'
+  /** **The answer must follow a JSON Schema** (`alexia/format`): only runners that enforce one may take it. */
+  structured?: boolean
+}
+
+/**
+ * Runners that run models on this computer, and the ones that enforce a JSON Schema on the answer
+ * through `response_format` — Ollama and llama.cpp's server both do; MLX's server is not relied on.
+ */
+export const ON_DEVICE = new Set(['ollama', 'llama', 'mlx'])
+export const SCHEMA_RUNNERS = new Set(['ollama', 'llama'])
+
+/** Whether a local model may take a private request: on this computer, executing here. */
+export const onDevice = (model: Model): boolean => model.host === undefined && model.remote !== true && ON_DEVICE.has(model.provider)
+
+/**
+ * **The whole plan for a request that only a model running on this computer may answer.** Separate from the main route
+ * on purpose: nothing below it — the cloud pool, the spend axis, the paid pause — can widen it.
+ */
+function privateRoute(ask: Ask, pins: Pins, world: World): Verdict {
+  const carried = (ask.modality ?? []).filter((kind) => kind !== 'text')
+  const eligible = (model: Model): string | undefined => {
+    if (!onDevice(model)) return 'it does not run on this computer'
+    if (ask.structured === true && !SCHEMA_RUNNERS.has(model.provider)) return 'its runner cannot hold an answer to a fixed format'
+    const unseen = carried.filter((kind) => !model.modality.includes(kind))
+    if (unseen.length > 0) return `it cannot be given ${unseen.map((k) => (k === 'image' ? 'a picture' : k)).join(' or ')}`
+    if (!fits(model, ask.messages)) return 'this request is longer than it can read'
+    return undefined
+  }
+  const choices: Choice[] = world.local.flatMap((model) => {
+    const provider = world.runners?.find((one) => one.id === model.provider) ?? (model.provider === OLLAMA.id ? OLLAMA : undefined)
+    return provider === undefined ? [] : [{ model, provider }]
+  })
+  if (pins.model) {
+    const named = choices.find((c) => c.model.id === pins.model)
+    const why = named === undefined ? 'it is not a model on this computer' : eligible(named.model)
+    if (why !== undefined) {
+      return { ok: false, mode: 'pinned', why: `the model you chose, ${pins.model}, cannot do this because ${why} — this is answered only by a model running on this computer, so choose one here that can see pictures` }
+    }
+    return { ok: true, mode: 'pinned', choices: [named as Choice] }
+  }
+  const fitting = choices.filter((c) => eligible(c.model) === undefined && !(ask.avoid ?? []).includes(`${c.provider.id}\n${c.model.id}`))
+  if (fitting.length === 0) {
+    const what = carried.includes('image') ? 'a model on this computer that can see pictures' : 'a model on this computer'
+    return { ok: false, mode: 'automatic', why: `this is answered only by a model running on this computer and needs ${what}${ask.structured === true ? ' running in Ollama or Alexia\'s own runner' : ''}, and there is none — install one in Settings under Local models` }
+  }
+  // Adult mode (`/nsfw`): a model known to be uncensored is asked first, where there is one here.
+  const order = ranking(world).compare
+  const uncensoredFirst = (a: Choice, b: Choice): number =>
+    pins.uncensored === true ? Number(b.model.nsfwOk === 'yes') - Number(a.model.nsfwOk === 'yes') || order(a, b) : order(a, b)
+  return { ok: true, mode: 'automatic', choices: fitting.sort(uncensoredFirst) }
 }
 
 /**
@@ -630,6 +692,7 @@ export function shapeOf(ask: Ask): Shape {
  * the rung below might be rate-limited in the half-second between choosing and sending.
  */
 export function route(ask: Ask, pins: Pins, world: World): Verdict {
+  if (ask.placement === 'interaction') return privateRoute(ask, pins, world)
   const kind = ask.class ?? 'text'
   const where = pins.placement[kind]
   const connected = new Map(world.rungs.map((rung) => [rung.provider.id, rung]))

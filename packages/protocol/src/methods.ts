@@ -2,6 +2,7 @@
 import { Buffer } from 'node:buffer'
 import { z } from 'zod'
 import { IDENT } from './manifest.js'
+import { AttachmentCallContext, AttachmentDescriptor, OpaqueId } from './private-context.js'
 
 /**
  * The `alexia/*` layer — five method families, and nothing else. Everything MCP covers is
@@ -278,6 +279,33 @@ export const ALEXIA_METHODS = {
       /** Absolute paths in the caller's own directory, already verified. */
       files: z.array(z.string()),
     }),
+  },
+
+  /**
+   * **The image editor's pictures, one conversation at a time** (`alexia_protocol` 14). Needs
+   * `attachments.scoped`. A lease is an authorized, immutable selection with readable paths; it
+   * ends on release, and every lease of a conversation ends when its pictures are deleted.
+   */
+  'alexia/attachments/lease': {
+    params: z.object({ conversationId: OpaqueId, attachmentIds: z.array(OpaqueId).min(1).max(8) }),
+    result: AttachmentCallContext,
+  },
+  'alexia/attachments/release': { params: z.object({ leaseId: OpaqueId }), result: z.object({}) },
+  'alexia/attachments/live': { params: z.object({ leaseId: OpaqueId }), result: z.object({ live: z.boolean() }) },
+  /** Keep a picture the plugin made — an approved edit — as the conversation's next attachment. */
+  'alexia/attachments/register': {
+    params: z.object({
+      conversationId: OpaqueId,
+      path: z.string().min(1),
+      origin: z.enum(['approved_result', 'deterministic_transform', 'normalized']),
+      name: z.string().min(1).max(200).optional(),
+    }),
+    result: AttachmentDescriptor,
+  },
+  /** A URL the editor screen can fetch one of the plugin's own files from, for this conversation. */
+  'alexia/attachments/share': {
+    params: z.object({ conversationId: OpaqueId, path: z.string().min(1), mime: z.string().min(1) }),
+    result: z.object({ url: z.string() }),
   },
 } as const
 

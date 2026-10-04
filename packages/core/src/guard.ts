@@ -359,6 +359,51 @@ export const ROUTES: Readonly<Record<string, Route>> = {
     ),
   },
 
+  '/api/adult': {
+    act: (body) => (body.enabled === true || body.action === 'on' ? 'on' : 'off'),
+    acts: {
+      on: confirm(
+        'Turning adult content on records that you are 18 or older and lets /nsfw switch on uncensored models and adult picture edits. It is off again with one press.',
+      ),
+    },
+    otherwise: safe('Turning adult content off. Nothing is deleted, and /nsfw stops working until it is turned on again.'),
+  },
+
+  '/api/editor': {
+    act: (body) =>
+      body.call === 'command' && typeof body.command === 'object' && body.command !== null ? String((body.command as Body).type)
+      : typeof body.action === 'string' ? body.action
+      : undefined,
+    acts: {
+      remove_version: confirm(
+        'Removing a version takes it out of the editor’s history. The original and the other versions stay, but this one is not offered again.',
+      ),
+    },
+    otherwise: safe(
+      'The image editor’s own screen: opening a picture, saving a draft, asking for versions, comparing and exporting. Every generation goes through the same checks a request in chat does, and the original picture is never changed.',
+    ),
+  },
+
+  '/api/editor/upload': {
+    otherwise: safe(
+      'Adding a picture to this conversation for the editor — kept with the conversation and deleted with it. Nothing already there is changed.',
+    ),
+  },
+
+  '/api/editor/forget': {
+    otherwise: confirm(
+      'Forgetting the pictures in this conversation deletes them, every version made from them and every copy in its messages, and stops anything still being made from them. It cannot be undone.',
+    ),
+  },
+
+  '/api/editor/file': {
+    otherwise: read('A file the image editor made for this conversation, by the token it was shared under. No path is in the request.'),
+  },
+
+  '/api/editor/picture': {
+    otherwise: read('One of this conversation’s own pictures, by its id. Another conversation’s pictures are not found here.'),
+  },
+
   '/api/chat': {
     otherwise: safe(
       'Sending a sentence is the product. Everything it can then do goes through the permission gate, the never-touch list and the ceilings, and the preview asks before an expensive task starts — a confirm on the message box would be a confirm on typing.',

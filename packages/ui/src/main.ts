@@ -25,6 +25,7 @@ import { CONTROL_EVENT, mountLive, type Stage, type Timing } from './live.js'
 import { answerPrompt, modal } from './modal.js'
 import { mountRail } from './rail.js'
 import { mountLocalModels, type LocalModelsView, type LocalRequest } from './local-models.js'
+import { openImageEditor } from './image-editor.js'
 import { mountModeTransition, type ModeTransition } from './mode-transition.js'
 import type { ComputeState } from './compute.js'
 import { keepPlaced, MODES, mountLevelSlider, mountModeSwitch, mountGlassLook, type Around, type Switcher } from './switchers.js'
@@ -99,6 +100,10 @@ interface Permissions {
 }
 
 interface State {
+  /** Whether the image editor is installed, and the conversation it opens in. Absent before protocol 14. */
+  editor?: { installed: boolean; conversationId: string; private: boolean }
+  /** Whether adult content was turned on in Settings (18+ confirmed), and whether /nsfw is on. */
+  adult?: { confirmed: boolean; on: boolean }
   modeTransition?: ModeTransition
   /** This computer's role and the computers it is paired with. Absent from a core that predates them. */
   compute?: ComputeState
@@ -1467,8 +1472,57 @@ let compute: ComputeState | undefined
 const read = async (): Promise<State> => {
   const state = (await (await fetch('/api/state', { headers: { 'x-alexia-token': token } })).json()) as State
   compute = state.compute
+  const editing = document.querySelector<HTMLButtonElement>('#edit-pictures')
+  if (editing) editing.hidden = state.editor?.installed !== true
+  showAdult(state.adult)
   return state
 }
+
+/**
+ * **Edit pictures** (the image editor, A07). Opens over everything for the conversation on
+ * screen — asked for at the press, because which conversation is open can change while the
+ * button sits there.
+ */
+/** Settings › Safety › Adult content: which button is offered, and the 18+ box only while it is off. */
+function showAdult(adult: State['adult']): void {
+  const on = document.querySelector<HTMLButtonElement>('#adult-on')
+  const off = document.querySelector<HTMLButtonElement>('#adult-off')
+  const age = document.querySelector<HTMLInputElement>('#adult-age')
+  if (!on || !off || !age) return
+  const confirmed = adult?.confirmed === true
+  on.hidden = confirmed
+  off.hidden = !confirmed
+  age.closest('label')!.hidden = confirmed
+}
+const adultSaid = (text: string): void => {
+  const said = document.querySelector<HTMLElement>('#adult-said')
+  if (said) said.textContent = text
+}
+const setAdult = async (enabled: boolean): Promise<void> => {
+  const answered = await fetch('/api/adult', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-alexia-token': token },
+    body: JSON.stringify({ enabled, adult: document.querySelector<HTMLInputElement>('#adult-age')?.checked === true, confirm: true }),
+  })
+  const said = (await answered.json().catch(() => ({}))) as { said?: string }
+  adultSaid(said.said ?? '')
+  showAdult((await read()).adult)
+}
+document.querySelector<HTMLButtonElement>('#adult-on')?.addEventListener('click', () => {
+  if (document.querySelector<HTMLInputElement>('#adult-age')?.checked !== true) {
+    adultSaid('Tick “I am 18 or older” first.')
+    return
+  }
+  void setAdult(true)
+})
+document.querySelector<HTMLButtonElement>('#adult-off')?.addEventListener('click', () => void setAdult(false))
+
+document.querySelector<HTMLButtonElement>('#edit-pictures')?.addEventListener('click', () => {
+  void read().then((state) => {
+    if (state.editor?.installed !== true) return
+    return openImageEditor({ token, conversationId: state.editor.conversationId, behind: () => [document.querySelector<HTMLElement>('#board')!] })
+  }).catch(() => undefined)
+})
 
 /**
  * The conversation on screen, painted from nothing.

@@ -49,6 +49,11 @@ export interface Source {
 }
 
 export interface SurfaceOptions {
+  /**
+   * **A conversation's pictures, revoked and removed everywhere** before its messages go (A02).
+   * Absent means nothing keeps pictures, and deleting a conversation is the cascade alone.
+   */
+  forgetPictures?: (sessionId: number) => Promise<{ local: string; remote: { hostId: string; state: string }[] }>
   skills: Skills
   /** Where the consent ladder is kept (M6-9). */
   store: Store
@@ -1000,17 +1005,26 @@ export function actions(
    * you are in.** The messages go by `ON DELETE CASCADE`, so deleting the open one would
    * leave every later append pointing at a session row that is not there.
    */
-  const forgetChat = (id: string): Promise<{ ok: boolean; said: string }> => {
+  const forgetChat = async (id: string): Promise<{ ok: boolean; said: string }> => {
     const chat = options.store.conversations().find((one) => String(one.id) === id)
-    if (!chat) return Promise.resolve({ ok: false, said: 'There is no conversation with that id.' })
+    if (!chat) return { ok: false, said: 'There is no conversation with that id.' }
     if (chat.id === options.session()) {
-      return Promise.resolve({
+      return {
         ok: false,
         said: 'That is the conversation you are in. Open another one first, or press New chat.',
-      })
+      }
     }
+    // Pictures first: every job using them is stopped and every copy removed before the
+    // messages that mention them go. What could not be finished yet is said, not hidden.
+    const receipt = await options.forgetPictures?.(chat.id).catch(() => ({ local: 'pending', remote: [] }))
     options.store.deleteSession(chat.id)
-    return Promise.resolve({ ok: true, said: `“${chat.title}” is gone, and everything said in it.` })
+    const waiting = receipt !== undefined && (receipt.local !== 'complete' || receipt.remote.some((r) => r.state !== 'complete'))
+    return {
+      ok: true,
+      said: waiting ?
+          `“${chat.title}” is gone. Some of its pictures are still being removed${receipt.remote.some((r) => r.state !== 'complete') ? ' from another computer' : ''}, and will be the next time that is possible.`
+        : `“${chat.title}” is gone, and everything said in it.`,
+    }
   }
 
   const allowSkill = (name: string): Promise<{ ok: boolean; said: string }> => {

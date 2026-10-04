@@ -36,6 +36,8 @@ import { reading, vram } from './tier.js'
 import { describe as line, flatten, runnable, search, shelf } from './catalog.js'
 import { convert } from './convert.js'
 import { LIBRARY, library } from './library/tools.js'
+import { mountEditor } from './edit/mount.js'
+import { sweep } from './edit/runtime.js'
 
 /**
  * Local image generation (M4-6).
@@ -1497,6 +1499,34 @@ async function workerNodes(server, signal) {
 compute.operation(RENDER, renderer({ own: () => own, connect }))
 
 /**
+ * **The ComfyUI an edit may run on: Alexia's own install, and only that.** Editing promises
+ * checked model files and a cleaned-up input folder, which only a copy this plugin installed can
+ * keep — so a ComfyUI somebody installed or started themselves is reported as unsupported for
+ * editing rather than used with weaker promises. Always the dedicated worker process, here or on
+ * the paired computer, never whatever answers at the address in the settings.
+ */
+async function managedComfy() {
+  const mine = await installed(own).catch(() => undefined)
+  const dir = await found()
+  const managed = Boolean(dir && mine?.dir && resolve(dir) === resolve(mine.dir))
+  // The worker runs ComfyUI with its input, output and temp folders inside this plugin's own
+  // folder (`worker.js`), so that is where anything an edit lent it is swept from.
+  return { managed, dir: managed ? dir : undefined, models: managed ? join(dir, 'models') : undefined, work: own ? join(own, 'worker') : undefined }
+}
+async function connectManaged({ signal, report = () => {}, probe = false } = {}) {
+  const facts_ = await managedComfy()
+  if (probe || !facts_.managed) return facts_
+  const up = await worker.ensure({
+    signal,
+    onProgress: (tick) => report(tick < 20 ? 'Starting ComfyUI' : 'Starting ComfyUI — loading its nodes and models', tick, 0),
+  })
+  return { ...facts_, server: up.server, classes: (asked) => workerNodes(up.server, asked), tidy: worker.tidy }
+}
+
+/** The image editor: its screen's tool, the chat's `edit_image`, and the `image.edit` operation. */
+const editing = mountEditor({ alexia, compute, own: () => own, connectManaged, log: (line) => log.info(line) })
+
+/**
  * Which ComfyUI a workflow is installed into, as `library/tools.js` asks it.
  *
  * **The same two answers as `connect`**, for the same reasons: planned here, it is the install
@@ -1615,17 +1645,24 @@ alexia.computeHooks({
   prepare: async (cap) => {
     // Reading the library is a list, and a list is not a reason to start a program.
     if (cap === LIBRARY) return
+    // Whatever an earlier edit lent Alexia's own ComfyUI and could not take back goes first.
+    const managed = await managedComfy()
+    if (managed.work) sweep(managed.work)
     await worker.ensure()
   },
   release: async () => {
     await worker.release().catch(() => {})
     await letGo().catch(() => {})
+    const managed = await managedComfy().catch(() => ({}))
+    if (managed.work) sweep(managed.work)
   },
 })
 
 await alexia.start()
 own = (await alexia.host()).paths.ownDir
 await bind()
+// Edits that were mid-flight when this process stopped wait for the person; nothing re-renders.
+void managedComfy().then((m) => editing.recover(m.work)).catch(() => {})
 /**
  * The conversation is over, so give the graphics card back.
  *

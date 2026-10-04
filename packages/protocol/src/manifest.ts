@@ -86,7 +86,12 @@ import { APP_VERSION, newer } from './version.js'
  * a manifest without `compute` means what it meant at 12, and the floor stays at 2.
  */
 export const ALEXIA_PROTOCOL_MIN = 2
-export const ALEXIA_PROTOCOL_MAX = 13
+/**
+ * **14 on 2026-10-04.** Private image editing: the `attachments.scoped` permission and the
+ * `alexia/attachments/*` methods, `alexia/local` and `alexia/format` on sampling, attachment
+ * inputs on tools, and the editor tool binding. Additive: a manifest at 13 means what it meant.
+ */
+export const ALEXIA_PROTOCOL_MAX = 14
 
 /**
  * The two MCP revisions core speaks, in preference order (D55, corrected by D57).
@@ -1075,6 +1080,9 @@ export const Manifest = ManifestShape.superRefine((m, ctx) => {
     }
   }
 
+  if ((m.requires ?? []).some((r) => r.cap === 'attachments.scoped') && m.alexia_protocol < 14) {
+    fail(['requires'], 'attachments.scoped arrived in alexia_protocol 14 — declare "alexia_protocol": 14 to use it')
+  }
   if (m.compute !== undefined) {
     if (m.alexia_protocol < 13) {
       fail(['compute'], 'compute arrived in alexia_protocol 13 — declare "alexia_protocol": 13 to use it')

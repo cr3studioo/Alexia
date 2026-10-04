@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import {
   COMPUTE_META,
+  EDITOR_META,
+  PRIVATE_CONTEXT_CAPABILITY,
+  ALEXIA_PROTOCOL_MAX,
+  PRIVATE_CONTEXT_PROMISE,
   CONVERSATION_ENDED,
   ErrorCode,
   isPermission,
@@ -71,6 +75,8 @@ export interface PluginsOptions {
   roots?(pluginId: string): Root[]
   /** Runs a declared operation on the selected host, when Operations is wired in. */
   compute?: HostOptions['compute']
+  /** The person's pictures, one conversation at a time (`attachments.scoped`, protocol 14). */
+  attachments?: HostOptions['attachments']
   log?(pluginId: string, line: string): void
   /** A plugin's tools changed, or the plugin itself went away. The loop re-plans. */
   onToolsChanged?(pluginId: string): void
@@ -164,6 +170,7 @@ export class Plugins {
       answers: (cap) => ({ answers: this.answers(cap), here: this.couldAnswer(cap).length > 0 }),
       sample: options.sample,
       compute: options.compute,
+      ...(options.attachments !== undefined && { attachments: options.attachments }),
       roots: options.roots,
       log: options.log,
       // A plugin saying its own tools changed lands in exactly the same place as core
@@ -400,7 +407,7 @@ export class Plugins {
         // has a tool behind it without asking — and asking is what would spawn the plugin.
         this.#toolNames.set(entry.manifest.id, tools.map((tool) => tool.name))
         return tools
-          .filter((tool) => tool._meta?.[COMPUTE_META] === undefined)
+          .filter((tool) => tool._meta?.[COMPUTE_META] === undefined && tool._meta?.[EDITOR_META] === undefined)
           .map((tool) => ({ pluginId: entry.manifest.id, tool }))
       }),
     )
@@ -453,6 +460,30 @@ export class Plugins {
       throw new ProtocolError(ErrorCode.CAPABILITY_NOT_AVAILABLE, `that worker has no tool bound to ${role}`)
     }
     return entry.process.callTool(tool.name, arguments_, options)
+  }
+
+  /**
+   * **The image editor's own tool** (`alexia/editor`, protocol 14): the one enabled plugin that
+   * binds it and holds `attachments.scoped`. Never offered to a model — this is how the editor
+   * screen reaches the plugin, with a conversation core has already authenticated.
+   */
+  async editorCall(args: Record<string, unknown>, options?: CallToolRequestOptions, meta: Record<string, unknown> = {}): Promise<CallToolResult> {
+    for (const entry of this.#entries.values()) {
+      if (!this.#enabled.has(entry.manifest.id) || !entry.manifest.requires?.some((r) => r.cap === 'attachments.scoped')) continue
+      const tool = (await entry.process.listTools().catch(() => [])).find((t) => t._meta?.[EDITOR_META] !== undefined)
+      if (tool) {
+        return entry.process.callTool(tool.name, args, options, {
+          ...meta,
+          [PRIVATE_CONTEXT_CAPABILITY]: { protocol: ALEXIA_PROTOCOL_MAX, capabilities: PRIVATE_CONTEXT_PROMISE },
+        })
+      }
+    }
+    throw new ProtocolError(ErrorCode.CAPABILITY_NOT_AVAILABLE, 'No image editor is installed and switched on.')
+  }
+
+  /** Whether any enabled plugin could serve the editor — read from manifests, starting nothing. */
+  editorInstalled(): boolean {
+    return [...this.#entries.values()].some((e) => this.#enabled.has(e.manifest.id) && e.manifest.requires?.some((r) => r.cap === 'attachments.scoped'))
   }
 
   /** Release the process without disabling the worker; its next job can start it again. */

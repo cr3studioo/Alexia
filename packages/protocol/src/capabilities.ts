@@ -30,6 +30,13 @@ export const PERMISSIONS = [
   'input.control',
   'proc.spawn',
   'notify',
+  /**
+   * Lease, register and share the person's pictures **within one conversation**
+   * (`alexia_protocol` 14, the private image editor). Core resolves only what the conversation
+   * holds, hands out paths for the length of a lease, and ends every lease when the pictures
+   * are deleted.
+   */
+  'attachments.scoped',
 ] as const
 
 export type Permission = (typeof PERMISSIONS)[number]
@@ -234,6 +241,13 @@ export const PROVIDES_META = 'alexia/provides'
  * it out of the tool list it shows and calls it by capability, never by its name.
  */
 export const COMPUTE_META = 'alexia/compute'
+
+/**
+ * The `_meta` key on the one tool that serves the image editor's screen (`alexia_protocol` 14):
+ * `{ editor: '1' }`. Like {@link COMPUTE_META}, **a tool carrying it is never offered to a
+ * model**: core calls it with an authenticated conversation, for the person at the screen.
+ */
+export const EDITOR_META = 'alexia/editor'
 
 /** What {@link COMPUTE_META} carries: the operation this tool performs, or the hook it answers. */
 export type ComputeBinding = { op: string } | { hook: ComputeHook }

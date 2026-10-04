@@ -18,6 +18,16 @@ import { allowance, dollars, today } from './usage.js'
  * and nothing left pointing at something that is gone.
  */
 
+/**
+ * **Whether the person said, in Settings, that they are 18 or older** and turned adult content
+ * on. Kept as the moment they said it; turning adult content off in Settings removes it.
+ */
+export const ADULT = 'adult'
+export const adultConfirmed = (store: Pick<Store, 'kvGet'>): boolean => {
+  const said = store.kvGet(CORE, ADULT) as { confirmedAt?: unknown } | undefined
+  return typeof said?.confirmedAt === 'number'
+}
+
 export interface Command {
   /** What you type, without the slash. */
   name: string
@@ -52,7 +62,7 @@ const BUILT_IN: Command[] = [
   { name: 'local', summary: 'Run everything on this machine.' },
   { name: 'combined', summary: 'The cloud thinks; this machine makes images and speech.' },
   { name: 'cloud', summary: 'Run everything through APIs.' },
-  { name: 'nsfw', summary: 'Allow uncensored models.' },
+  { name: 'nsfw', summary: 'Adult mode: uncensored models and adult picture edits. Turn on Adult content in Settings first.' },
   { name: 'sfw', summary: 'Back to the standard content policy.' },
   { name: 'cheap', summary: 'Prefer the cheapest model that can do the job.' },
   { name: 'best', summary: 'Prefer the strongest model available.' },
@@ -239,7 +249,12 @@ export async function run(
     case 'cloud':
       return mode('cloud', 'Cloud: everything goes through the providers you have connected.')
     case 'nsfw':
-      return pin({ uncensored: true }, 'Uncensored models allowed. A model nobody has verified does not count.')
+      // Adult content is a setting somebody turns on once, saying they are 18 or older, in
+      // Settings › Safety. Until then the command says where that is rather than doing it.
+      if (!adultConfirmed(store)) {
+        return { ok: false, note: 'Adult content is off. Turn it on in Settings › Safety › Adult content, which asks you to confirm you are 18 or older.' }
+      }
+      return pin({ uncensored: true }, 'Adult mode on: uncensored models, and the picture editor allows adult content. A model nobody has verified does not count. /sfw turns it off.')
     case 'sfw':
       return pin({ uncensored: false }, 'Back to the standard content policy.')
     case 'cheap':
