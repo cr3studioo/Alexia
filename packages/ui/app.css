@@ -6660,3 +6660,7 @@ button:not([disabled]):active {
   .image-editor-rail { flex-direction: row; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--line); }
   .image-editor-side { border-left: 0; border-top: 1px solid var(--line); border-radius: var(--radius-lg) var(--radius-lg) 0 0; max-height: none; }
 }
+
+/* Pairing without a mailbox: the computers found waiting, one to choose. */
+.pair-found { display: flex; flex-direction: column; gap: var(--space-1); margin: var(--space-2) 0; }
+.pair-found-row { display: flex; align-items: center; gap: var(--space-1); font-size: var(--text-sm); }

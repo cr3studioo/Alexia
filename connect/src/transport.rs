@@ -79,6 +79,12 @@ impl EndpointHooks for Gate {
         if connection.alpn() == pairing::ALPN && self.1.expects(&peer) {
             return AfterHandshakeOutcome::Accept;
         }
+        // A pairing without a mailbox: the host does not know the joiner's id yet, so its gate
+        // opens to anybody — for that one ALPN, while one such pairing waits, and for one try.
+        // A joiner's own dial is checked too: it is let out to the one host it was told of.
+        if connection.alpn() == pairing::DIRECT_ALPN && (self.1.direct_open() || self.1.expects(&peer)) {
+            return AfterHandshakeOutcome::Accept;
+        }
         tracing::warn!(peer = %connection.remote_id().fmt_short(), "refused an endpoint that is not paired");
         AfterHandshakeOutcome::Reject { error_code: CLOSE_NOT_PAIRED.into(), reason: b"not paired".to_vec() }
     }
@@ -138,7 +144,7 @@ async fn bind_on(
     // was not asked for, so choosing a self-hosted service never leaves a public one beside it.
     let mut builder = Endpoint::builder(presets::Minimal)
         .secret_key(key.clone())
-        .alpns(vec![ALPN.to_vec(), pairing::ALPN.to_vec()])
+        .alpns(vec![ALPN.to_vec(), pairing::ALPN.to_vec(), pairing::DIRECT_ALPN.to_vec()])
         .transport_config(limits)
         .hooks(Gate(peers.clone(), pairings.clone()))
         .relay_mode(match network.relay_urls.is_empty() {
@@ -177,6 +183,9 @@ pub fn listen(node: Arc<Node>, endpoint: Endpoint) {
                 // an endpoint that is not trusted yet, and must not be attached as one that is.
                 if connection.alpn() == pairing::ALPN {
                     return node.pairing.incoming(connection);
+                }
+                if connection.alpn() == pairing::DIRECT_ALPN {
+                    return node.pairing.incoming_direct(connection);
                 }
                 if node.peers.attach(&connection) {
                     carry(node, connection).await;

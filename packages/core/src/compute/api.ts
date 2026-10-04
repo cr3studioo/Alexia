@@ -6,7 +6,8 @@ import { Refused, type LocalModels, type Mode, type Target } from '../localModel
 import { CORE } from '../secrets.js'
 import type { Store } from '../store.js'
 import type { Bridge } from './bridge.js'
-import { readConnectHints, type Connect, type ConnectHints, type PairedPeer } from './connect.js'
+import { readConnectHints, type Connect, type ConnectHints, type DirectTarget, type PairedPeer } from './connect.js'
+import type { Link } from './link.js'
 import type { Controller } from './controller.js'
 import type { HostModels, HostProtocol } from './hostProtocol.js'
 import type { Hosts } from './hosts.js'
@@ -372,6 +373,8 @@ export interface ComputeApiDeps {
   active?(): number
   /** Where a paired host's address hints are kept. Default: {@link hintStore} over `store`. */
   hints?: ReturnType<typeof hintStore>
+  /** Tailscale and finding each other without a server (`link.ts`). Absent, neither is offered. */
+  link?: Link
   /** Interaction role: choose a paired computer's model. `ModeTransitions.request`. */
   activate?(mode: 'local', id: string): Ran
   /** Compute role: this computer's own inventory and installs, for its setup page. */
@@ -387,6 +390,14 @@ export interface ComputeApiDeps {
 }
 
 export interface ComputeState { role: Role; switching?: RoleSwitch; available: boolean; target?: TargetStatus; pairing?: PairingStatus; hosts: HostView[] }
+
+/** A direct pairing's host, as the page sends back what `/api/compute/discover` found. */
+function directTarget(value: unknown): DirectTarget | undefined {
+  const one = record(value)
+  if (typeof one.endpointId !== 'string' || !/^[a-f0-9]{64}$/.test(one.endpointId)) return undefined
+  const addresses = Array.isArray(one.addresses) ? one.addresses.filter((a): a is string => typeof a === 'string' && a.length <= 64 && /^[0-9a-f.:[\]]+$/i.test(a)).slice(0, 16) : []
+  return addresses.length === 0 ? undefined : { endpointId: one.endpointId, addresses }
+}
 
 /** A name the sidecar will carry: one line, no control characters, never empty. */
 const pairingName = (name: string): string =>
@@ -502,6 +513,30 @@ export class ComputeApi {
       // A host-list read is one of the things a session is opened for. Not waited on: the list says what is known now.
       for (const host of deps.controller ? deps.hosts.list() : []) void deps.controller!.ensure(host.id).catch(() => {})
       json({ hosts: this.views(), selected: this.shown(), available: this.available() })
+      return
+    }
+
+    if (url.pathname === '/api/compute/tailscale' && request.method === 'GET') {
+      const link = this.link()
+      json({ tailscale: await link.deps().tailscale.status() })
+      return
+    }
+    if (url.pathname === '/api/compute/tailscale' && request.method === 'POST') {
+      const { tailscale } = this.link().deps()
+      const action = sent.action
+      const state = action === 'install' ? await tailscale.install()
+        : action === 'start' ? await tailscale.start()
+        : action === 'login' ? await tailscale.login()
+        : undefined
+      if (!state) throw new Refusal(400, 'Choose install, start or login.')
+      void this.link().tick()
+      json({ tailscale: state })
+      return
+    }
+    if (url.pathname === '/api/compute/discover' && request.method === 'GET') {
+      only('interaction')
+      const found = await this.link().discover()
+      json({ found: found.map((one) => ({ name: one.name, platform: one.platform, endpointId: one.endpointId, addresses: one.addresses, tailnet: one.tailnet })) })
       return
     }
 
@@ -708,6 +743,12 @@ export class ComputeApi {
 
   // ── pairing ────────────────────────────────────────────────────────────────────────────
 
+  private link(): Link {
+    const link = this.deps.link
+    if (!link) throw new Refusal(409, 'Connecting over Tailscale is not available here.', 'setup-required')
+    return link
+  }
+
   /**
    * Open a pairing (compute) or join one by its code (interaction). Answers at once; the
    * outcome is read from `GET /api/compute/pair`. The code is held only in the status the
@@ -721,6 +762,16 @@ export class ComputeApi {
     if (code !== undefined && (code === '' || code.length > 200)) throw new Refusal(400, 'Type the code the other computer is showing.')
     const connect = deps.connect ?? await deps.start?.()
     if (!connect) throw new ComputeError('setup-required', 'Pairing is not available: the part of Alexia that connects two computers is not installed.')
+    /**
+     * **No mailbox server: pair directly.** The computing side opens with a four-word code and
+     * announces itself on Tailscale and the local network; this side picked it from the list it
+     * found (`target`) and the code is exchanged straight between the two.
+     */
+    // A mailbox somebody set up — in Settings, or by the launch environment — keeps the mailbox kind.
+    const mailbox = savedServices(deps.store).mailbox ?? (process.env.ALEXIA_CONNECT_MAILBOX_URL?.trim() || undefined)
+    const direct = deps.link !== undefined && mailbox === undefined && connect.pairOpenDirect !== undefined && connect.pairJoinDirect !== undefined
+    const target = direct && !hosting ? directTarget(sent.target) : undefined
+    if (direct && !hosting && !target) throw new Refusal(400, 'Choose the computer to pair with from the list, then type its code.')
 
     // One pairing at a time. Asking again gives up the one that was open, and its code with it.
     this.pairing?.abort.abort()
@@ -729,6 +780,7 @@ export class ComputeApi {
     this.pairing = pairing
     const me = { name: pairingName(deps.name()), role: deps.role, platform: deps.platform ?? process.platform, appVersion: deps.appVersion }
     const settle = (done: Promise<PairedPeer>): void => {
+      void done.finally(() => { if (direct && hosting) void deps.link?.pairingOpen(false) }).catch(() => {})
       void done.then((peer) => this.trust(connect, peer, pairing)).catch((error: unknown) => {
         // A status somebody already settled (a cancel, a newer pairing) is not overwritten by its own echo.
         if (!['waiting', 'connecting', 'verifying'].includes(pairing.status.phase)) return
@@ -739,11 +791,17 @@ export class ComputeApi {
       })
     }
     try {
-      if (code === undefined) {
+      if (code === undefined && direct) {
+        const opened = await connect.pairOpenDirect!(me, abort.signal)
+        pairing.status = { phase: 'waiting', code: opened.code, expiresAt: opened.expiresAt }
+        await deps.link?.pairingOpen(true)
+        settle(opened.done)
+      } else if (code === undefined) {
         const opened = await connect.pairOpen(me, abort.signal)
         pairing.status = { phase: 'waiting', code: opened.code, expiresAt: opened.expiresAt }
         settle(opened.done)
-      } else settle(connect.pairJoin(code, me, abort.signal))
+      } else if (target) settle(connect.pairJoinDirect!(code, target, me, abort.signal))
+      else settle(connect.pairJoin(code, me, abort.signal))
     } catch (error) {
       if (this.pairing === pairing) this.pairing = undefined
       throw error

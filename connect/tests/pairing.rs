@@ -843,3 +843,100 @@ async fn no_mailbox_no_pairing_and_one_controller_at_a_time() {
     host.running.close().await;
     joiner.running.close().await;
 }
+
+// ---- pairing without a mailbox ----------------------------------------------------------------
+
+impl Side {
+    /// Open a direct pairing: its id, its code and the endpoint id a joiner dials.
+    async fn host_direct(&self) -> (String, String) {
+        let mut ask = self.me();
+        ask["direct"] = json!(true);
+        let opened = self.ok("POST", "/v1/pairing/host", Some(ask)).await;
+        assert_eq!(opened["endpointId"], self.id.as_str());
+        (opened["pairingId"].as_str().unwrap().to_owned(), opened["code"].as_str().unwrap().to_owned())
+    }
+
+    async fn join_direct(&self, code: &str, host: &Side) -> String {
+        let mut ask = self.me();
+        ask["code"] = json!(code);
+        ask["direct"] = json!({ "endpointId": host.id, "addresses": [host.loopback().await.to_string()] });
+        self.ok("POST", "/v1/pairing/join", Some(ask)).await["pairingId"].as_str().unwrap().to_owned()
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn two_computers_pair_directly_without_a_mailbox() {
+    let (host, joiner) = (side_with("studio", None, quick()).await, side_with("laptop", None, quick()).await);
+    let (pairing, code) = host.host_direct().await;
+    // Four words, and no mailbox number: there is no mailbox.
+    let words: Vec<&str> = code.split('-').collect();
+    assert_eq!(words.len(), 4);
+    assert!(words.iter().all(|word| !word.is_empty() && word.bytes().all(|byte| byte.is_ascii_lowercase())));
+
+    let joined = joiner.join_direct(&code, &host).await;
+    let (told_host, told_joiner) = (host.settled(&pairing).await, joiner.settled(&joined).await);
+    assert_eq!(told_host["state"], "paired", "{told_host}");
+    assert_eq!(told_joiner["state"], "paired", "{told_joiner}");
+    assert_eq!(told_host["peer"]["endpointId"], joiner.id.as_str());
+    assert_eq!(told_joiner["peer"]["endpointId"], host.id.as_str());
+    assert_eq!(told_joiner["peer"]["name"], "studio");
+    assert!(!told_host.to_string().contains(&code) && !told_joiner.to_string().contains(&code));
+
+    // Proven, not trusted: core still decides, and then the two can talk.
+    assert!(host.allowlist().await.is_empty() && joiner.allowlist().await.is_empty());
+    for (this, told) in [(&host, &told_host), (&joiner, &told_joiner)] {
+        let peer = told["peer"]["endpointId"].as_str().unwrap();
+        this.ok("PUT", "/v1/allowlist", Some(json!({ "endpointIds": [peer] }))).await;
+        this.ok("PUT", &format!("/v1/peers/{peer}/hints"), Some(told["peer"]["hints"].clone())).await;
+    }
+    assert_eq!(joiner.ok("POST", &format!("/v1/peers/{}/connect", host.id), None).await["status"], "direct");
+
+    // The gate shut behind the one joiner: a second connection under the direct ALPN is turned away.
+    let late = side_with("latecomer", None, quick()).await;
+    let again = late.join_direct(&code, &host).await;
+    assert_eq!(late.failed(&again).await, "pairing_code_unknown");
+
+    unlogged(&code);
+    for side in [host, joiner, late] {
+        side.running.close().await;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_wrong_direct_code_fails_on_both_sides_and_spends_the_code() {
+    let (host, guesser, owner) =
+        (side_with("studio", None, quick()).await, side_with("guesser", None, quick()).await, side_with("laptop", None, quick()).await);
+    let (pairing, code) = host.host_direct().await;
+    let wrong = "wrong-words-entirely-typed";
+    assert_ne!(wrong, code);
+    let guess = guesser.join_direct(wrong, &host).await;
+    assert_eq!(guesser.failed(&guess).await, "pairing_wrong_code");
+    assert_eq!(host.failed(&pairing).await, "pairing_wrong_code");
+    // The right code after a wrong one finds nobody waiting.
+    let late = owner.join_direct(&code, &host).await;
+    assert_eq!(owner.failed(&late).await, "pairing_code_unknown");
+    for side in [&host, &guesser, &owner] {
+        assert!(side.allowlist().await.is_empty());
+    }
+    unlogged(&code);
+    for side in [host, guesser, owner] {
+        side.running.close().await;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn addresses_core_adds_are_said_in_the_hints_with_the_endpoints_port() {
+    let (host, joiner) = (side_with("studio", None, quick()).await, side_with("laptop", None, quick()).await);
+    host.ok("PUT", "/v1/self/addresses", Some(json!({ "addresses": ["100.101.102.103"] }))).await;
+    assert_eq!(host.refused("PUT", "/v1/self/addresses", Some(json!({ "addresses": ["not an ip"] }))).await.0, 400);
+    let (pairing, code) = host.host_direct().await;
+    let joined = joiner.join_direct(&code, &host).await;
+    let told = joiner.settled(&joined).await;
+    let port = host.loopback().await.port();
+    let hinted: Vec<&str> = told["peer"]["hints"]["directAddresses"].as_array().unwrap().iter().filter_map(Value::as_str).collect();
+    assert!(hinted.contains(&format!("100.101.102.103:{port}").as_str()), "{hinted:?}");
+    host.settled(&pairing).await;
+    for side in [host, joiner] {
+        side.running.close().await;
+    }
+}

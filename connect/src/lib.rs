@@ -78,6 +78,9 @@ pub(crate) struct Node {
     /// One change of network at a time.
     changing: tokio::sync::Mutex<()>,
     stop: Notify,
+    /// Addresses core says this computer can also be reached at — a VPN's, say — that the
+    /// endpoint does not report on its own. Said in pairing hints with the endpoint's own port.
+    extra: Mutex<Vec<std::net::IpAddr>>,
 }
 
 impl Node {
@@ -87,6 +90,14 @@ impl Node {
 
     fn network(&self) -> Network {
         self.network.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).clone()
+    }
+
+    fn extra(&self) -> Vec<std::net::IpAddr> {
+        self.extra.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).clone()
+    }
+
+    fn set_extra(&self, addresses: Vec<std::net::IpAddr>) {
+        *self.extra.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = addresses;
     }
 
     fn host(&self) -> Option<Arc<Host>> {
@@ -141,6 +152,7 @@ pub async fn start(options: Options) -> Result<Running, StartError> {
         host: RwLock::new(None),
         changing: tokio::sync::Mutex::new(()),
         stop: Notify::new(),
+        extra: Mutex::new(Vec::new()),
     });
     transport::listen(node.clone(), endpoint);
     let control = tokio::spawn(control::serve(node.clone(), listener));

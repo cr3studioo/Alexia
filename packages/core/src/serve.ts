@@ -151,7 +151,7 @@ export interface ServeOptions {
   localRunners?: LocalRunners
   modeTransitions?: Pick<ModeTransitionOptions, 'machine' | 'available'>
   /** Remote compute's seams (`compute/interaction.ts`): a transport for tests, the shell, and how to restart. */
-  compute?: Pick<InteractionOptions, 'connect' | 'binary' | 'shell' | 'restart' | 'name'>
+  compute?: Pick<InteractionOptions, 'connect' | 'binary' | 'shell' | 'restart' | 'name' | 'link'>
   /** Where `index.html` lives. Found beside this package unless something says otherwise. */
   uiDir?: string
   /**

@@ -27,8 +27,24 @@ export interface Connect {
   onState(listener: (endpointId: string, state: ConnectionState) => void): () => void
   pairOpen(me: Omit<PairedPeer, 'endpointId'>, signal: AbortSignal): Promise<{ code: string; expiresAt: number; done: Promise<PairedPeer> }>
   pairJoin(code: string, me: Omit<PairedPeer, 'endpointId'>, signal: AbortSignal): Promise<PairedPeer>
+  /**
+   * **Pairing without a mailbox server.** The host opens with a four-word code and says its own
+   * endpoint id; core announces where it is (Tailscale, the local network), and the joiner dials
+   * it there and exchanges the code directly. Absent on a transport that cannot.
+   */
+  pairOpenDirect?(me: Omit<PairedPeer, 'endpointId'>, signal: AbortSignal): Promise<{ code: string; expiresAt: number; endpointId: string; done: Promise<PairedPeer> }>
+  pairJoinDirect?(code: string, target: DirectTarget, me: Omit<PairedPeer, 'endpointId'>, signal: AbortSignal): Promise<PairedPeer>
+  /** Addresses this computer can also be reached at that the transport does not see itself — a VPN's. */
+  ownAddresses?(ips: readonly string[]): Promise<void>
+  /** This computer's own address hints, as a peer would be told them. */
+  ownHints?(id?: string): Promise<ConnectHints>
+  /** Replace what this side knows about where a paired peer is. */
+  hints?(id: string, hints: ConnectHints): Promise<void>
   close(): Promise<void>
 }
+
+/** Where a direct pairing's host is: its endpoint id and the `ip:port`s it can be dialled at. */
+export interface DirectTarget { endpointId: string; addresses: readonly string[] }
 
 export interface ConnectHints { relayUrl?: string | null; directAddresses?: readonly string[] }
 
@@ -53,6 +69,9 @@ function wireError(code: string): ComputeError {
   if (code === 'pairing_expired') return new ComputeError('expired', 'The pairing code expired.')
   if (code === 'pairing_cancelled') return cancelled()
   if (code === 'mailbox_not_configured') return new ComputeError('setup-required', 'The pairing mailbox is not configured.')
+  if (code === 'pairing_wrong_code') return new ComputeError('refused', 'The code did not match. Check it on the other computer and pair again with a fresh one.')
+  if (code === 'pairing_code_unknown') return new ComputeError('refused', 'That computer is no longer waiting with that code. Start pairing again there.')
+  if (code === 'pairing_timeout') return new ComputeError('refused', 'The other computer did not answer in time.')
   return refused()
 }
 
@@ -423,9 +442,12 @@ class NativeConnection extends Connection {
     this.secret = ''
   }
 
-  private async pairingStart(path: 'host' | 'join', me: PairingMe, signal: AbortSignal, code?: string): Promise<PairingTicket> {
+  private async pairingStart(path: 'host' | 'join', me: PairingMe, signal: AbortSignal, code?: string, direct?: true | DirectTarget): Promise<PairingTicket> {
     if (signal.aborted) throw cancelled()
-    const ticket = await this.call<PairingTicket>('POST', `/v1/pairing/${path}`, { ...pairingBody(me), exclusive: this.options.role === 'compute', ...(code !== undefined && { code }) })
+    const ticket = await this.call<PairingTicket>('POST', `/v1/pairing/${path}`, {
+      ...pairingBody(me), exclusive: this.options.role === 'compute', ...(code !== undefined && { code }),
+      ...(direct !== undefined && { direct: direct === true ? true : { endpointId: direct.endpointId, addresses: [...direct.addresses] } }),
+    })
     if (!/^[a-f0-9]{16}$/.test(ticket.pairingId) || !Number.isFinite(ticket.expiresAt)) throw refused()
     if (signal.aborted) {
       await this.call('DELETE', `/v1/pairing/${ticket.pairingId}`)
@@ -463,6 +485,24 @@ class NativeConnection extends Connection {
 
   async pairJoin(code: string, me: PairingMe, signal: AbortSignal): Promise<PairedPeer> {
     return this.pairingWait(await this.pairingStart('join', me, signal, code), signal)
+  }
+
+  async pairOpenDirect(me: PairingMe, signal: AbortSignal): Promise<{ code: string; expiresAt: number; endpointId: string; done: Promise<PairedPeer> }> {
+    const ticket = await this.pairingStart('host', me, signal, undefined, true) as PairingTicket & { endpointId?: unknown }
+    if (typeof ticket.code !== 'string' || !endpointId(ticket.endpointId)) throw refused()
+    const done = this.pairingWait(ticket, signal)
+    void done.catch(() => {})
+    return { code: ticket.code, expiresAt: ticket.expiresAt, endpointId: ticket.endpointId, done }
+  }
+
+  async pairJoinDirect(code: string, target: DirectTarget, me: PairingMe, signal: AbortSignal): Promise<PairedPeer> {
+    if (!endpointId(target.endpointId) || target.addresses.length > 16) throw refused()
+    return this.pairingWait(await this.pairingStart('join', me, signal, code, target), signal)
+  }
+
+  async ownAddresses(ips: readonly string[]): Promise<void> {
+    if (ips.length > 8) throw refused()
+    await this.call('PUT', '/v1/self/addresses', { addresses: [...ips] })
   }
 }
 
@@ -606,8 +646,22 @@ class MemoryConnection extends Connection {
   }
 }
 
+/** The in-memory pair, with direct pairing done the same way as the mailbox kind. */
+class MemoryDirect extends MemoryConnection {
+  async pairOpenDirect(me: PairingMe, signal: AbortSignal): Promise<{ code: string; expiresAt: number; endpointId: string; done: Promise<PairedPeer> }> {
+    const opened = await this.pairOpen(me, signal)
+    return { ...opened, endpointId: await this.identity() }
+  }
+  async pairJoinDirect(code: string, target: DirectTarget, me: PairingMe, signal: AbortSignal): Promise<PairedPeer> {
+    if (target.endpointId !== await this.peer.identity()) throw new ComputeError('refused', 'The other computer did not answer in time.')
+    return this.pairJoin(code, me, signal)
+  }
+  addresses: string[] = []
+  async ownAddresses(ips: readonly string[]): Promise<void> { this.addresses = [...ips] }
+}
+
 export function memoryConnect(): { a: Connect; b: Connect } {
-  const a = new MemoryConnection(), b = new MemoryConnection()
+  const a = new MemoryDirect(), b = new MemoryDirect()
   a.peer = b; b.peer = a
   return { a, b }
 }

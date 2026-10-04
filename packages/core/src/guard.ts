@@ -138,6 +138,14 @@ export const ROUTES: Readonly<Record<string, Route>> = {
   '/api/compute/role': { otherwise: confirm('This switches this computer’s role between the one you talk to and one that only computes. Running work is finished or cancelled first, Alexia’s services and workers are stopped, and Alexia restarts in the new role. Existing chats are kept.') },
   '/api/compute/role/cancel': { otherwise: safe('It stops a role switch that is still waiting for running work. Nothing has been stopped at that point, so the computer simply keeps the role it has, and the switch can be asked for again.') },
   '/api/compute/hosts': { otherwise: read('The paired computers, how each is reached and what each last said about itself. It reads the pairing records and opens a session to ask; it changes nothing on either computer.') },
+  '/api/compute/tailscale': {
+    act: (body) => (typeof body.action === 'string' ? body.action : undefined),
+    acts: {
+      install: confirm('This downloads Tailscale from Tailscale’s own website and opens its installer, which asks for your permission. Tailscale is a separate program that lets your computers reach each other when they are not on the same network; it can be uninstalled like any other app.'),
+    },
+    otherwise: safe('It switches Tailscale on or opens its sign-in page in your browser. You sign in there yourself; Alexia never sees your password.'),
+  },
+  '/api/compute/discover': { otherwise: read('Looks for your other computer waiting to pair, on Tailscale and on this network. It only asks; nothing is paired or changed.') },
   '/api/compute/pair/start': { otherwise: safe('Pairing only records another computer’s public identity after both sides proved it, and Unpair undoes it. The code is single-use, expires in five minutes and is never logged.') },
   '/api/compute/pair': { otherwise: read('Where the open pairing stands, and the code for the page that is showing it. Reading it neither extends the code nor starts a pairing.') },
   '/api/compute/pair/cancel': { otherwise: safe('Cancelling a pairing that has not finished kills its code and records nothing. A fresh code starts again, so nothing is lost by stopping.') },

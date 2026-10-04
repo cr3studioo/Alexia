@@ -339,6 +339,102 @@ export function mountRole(root: HTMLElement, request: LocalRequest): RoleView {
   }
 }
 
+// ---- Tailscale ------------------------------------------------------------------------------
+
+export type TailscalePhase = 'not-installed' | 'installing' | 'stopped' | 'needs-login' | 'starting' | 'running' | 'unavailable'
+export interface TailscaleState {
+  phase: TailscalePhase
+  said: string
+  self?: { name: string; ips: string[] }
+  peers: { name: string; os: string; ips: string[]; online: boolean }[]
+  loginUrl?: string
+  instructions?: string
+}
+
+/**
+ * **Reaching the other computer from anywhere** (`/api/compute/tailscale`). One button at a time
+ * — install, turn on, sign in — and what Tailscale says about the computers on it. At home the
+ * two still connect directly; Tailscale is what carries the connection when they are apart.
+ */
+export function mountTailscale(root: HTMLElement, request: LocalRequest): { open(): void; close(): void } {
+  root.classList.add('compute-tailscale', 'group')
+  const life = new Life(request)
+  let said: HTMLElement = status()
+  let peers: HTMLElement = el('p', 'hint')
+  let action: HTMLButtonElement = quiet('')
+  let help: HTMLElement = el('p', 'hint')
+  let state: TailscaleState | undefined
+  const verbs: Record<TailscalePhase, [label: string, act: 'install' | 'start' | 'login' | 'read'] | undefined> = {
+    'not-installed': ['Install Tailscale', 'install'],
+    installing: ['Check again', 'read'],
+    stopped: ['Turn on Tailscale', 'start'],
+    'needs-login': ['Sign in to Tailscale', 'login'],
+    starting: ['Check again', 'read'],
+    running: ['Refresh', 'read'],
+    unavailable: ['Turn on Tailscale', 'start'],
+  }
+  const draw = (): void => {
+    if (!state) return
+    said.textContent = state.said
+    said.className = state.phase === 'unavailable' ? 'error' : 'hint'
+    const others = state.peers.map((peer) => `${peer.name}${peer.online ? '' : ' (offline)'}`)
+    peers.textContent = state.phase === 'running'
+      ? (others.length > 0 ? `Your computers on Tailscale: ${others.join(', ')}.` : 'No other computer is on your Tailscale yet. Sign in on the other computer with the same account.')
+      : ''
+    peers.hidden = peers.textContent === ''
+    const verb = state.instructions ? undefined : verbs[state.phase]
+    action.hidden = verb === undefined
+    if (verb) action.textContent = verb[0]
+    help.textContent = state.instructions ?? (state.phase === 'needs-login'
+      ? 'A page opens in your browser. Sign in with the same account on both computers — that is what puts them on one private network.'
+      : state.phase === 'installing' ? 'Finish the installer that opened, then press Check again.' : '')
+    help.hidden = help.textContent === ''
+  }
+  async function read(act: 'install' | 'start' | 'login' | 'read' = 'read'): Promise<void> {
+    const live = life.mark()
+    action.disabled = true
+    const got = act === 'read'
+      ? await life.ask<{ tailscale: TailscaleState }>('/api/compute/tailscale')
+      : await life.ask<{ tailscale: TailscaleState }>('/api/compute/tailscale', { action: act, ...(act === 'install' && { confirm: true }) }, 'POST')
+    if (!live()) return
+    action.disabled = false
+    if (!got.ok) {
+      said.textContent = got.code === 'setup-required' ? 'Connecting over Tailscale is not available in this version.' : got.said
+      said.className = 'error'
+      return
+    }
+    // An older core, or one that does not offer it: nothing to show.
+    if (!got.value?.tailscale) { root.hidden = true; return }
+    root.hidden = false
+    state = got.value.tailscale
+    draw()
+    // Until it is running, look again every few seconds: an installer or a sign-in finishes elsewhere.
+    if (state.phase !== 'running') life.after(4000, () => void read())
+  }
+  return {
+    close: () => life.close(),
+    open: () => {
+      life.open()
+      said = status()
+      peers = el('p', 'hint')
+      help = el('p', 'hint')
+      action = quiet('', () => {
+        const verb = state && verbs[state.phase]
+        if (!verb) return
+        if (verb[1] === 'install' && !window.confirm('Download Tailscale from tailscale.com and open its installer? It is a separate free app; your computer will ask for permission to install it.')) return
+        void read(verb[1])
+      })
+      action.hidden = true
+      root.replaceChildren(
+        el('h2', 'step-heading', 'Reach your other computer from anywhere'),
+        el('p', 'hint', 'At home your two computers connect directly. When they are not on the same network, Alexia connects them through Tailscale, a free app. Set it up once on both computers, signed in with the same account.'),
+        said, peers, action, help,
+      )
+      void read()
+    },
+  }
+}
+
 // ---- the connection services ---------------------------------------------------------------
 
 export interface ServicesView { open(): void; close(): void }
@@ -387,8 +483,9 @@ export function mountServices(root: HTMLElement, request: LocalRequest): Service
     adopt(got.value)
     say('Saved. Quit and open Alexia again on this computer to use them.')
   }
+  let reach = mountTailscale(el('div'), request)
   return {
-    close: () => life.close(),
+    close: () => { reach.close(); life.close() },
     open: () => {
       life.open()
       mailbox = field('Pairing mailbox address', 'ws://192.168.1.20:4000/v1')
@@ -403,11 +500,17 @@ export function mountServices(root: HTMLElement, request: LocalRequest): Service
         save,
       )
       form.addEventListener('submit', (event) => { event.preventDefault(); if (!save.disabled) void store() })
-      root.replaceChildren(
-        el('h2', 'step-heading', 'Connection services'),
-        el('p', 'hint', 'Pairing two computers needs a pairing mailbox that both of them can reach. Enter the same mailbox address on both computers. A relay is only needed when the two computers cannot reach each other directly; leave it empty on one network.'),
+      const tailscale = el('div')
+      reach.close()
+      reach = mountTailscale(tailscale, request)
+      const advanced = el('details', 'group')
+      advanced.append(
+        el('summary', undefined, 'Your own servers (advanced)'),
+        el('p', 'hint', 'Only if you run your own pairing mailbox or relay. Without them, the two computers find each other on this network or over Tailscale. Enter the same mailbox address on both computers.'),
         form, said,
       )
+      root.replaceChildren(tailscale, advanced)
+      reach.open()
       void read()
     },
   }
@@ -424,7 +527,9 @@ interface PairingOptions {
   blocked?(): string | undefined
 }
 
-const CODE_SHAPE = /^\d+(?:-[a-z]+){4}$/
+/** A mailbox code (a number and four words) or a direct one (four words). */
+const CODE_SHAPE = /^(?:\d+-)?[a-z]+(?:-[a-z]+){3}$/
+interface FoundComputer { name: string; platform: string; endpointId: string; addresses: string[]; tailnet: boolean }
 const clock = (ms: number): string => {
   const seconds = Math.max(0, Math.ceil(ms / 1000))
   return `${String(Math.floor(seconds / 60))}:${String(seconds % 60).padStart(2, '0')}`
@@ -448,6 +553,9 @@ export function mountPairing(root: HTMLElement, request: LocalRequest, options: 
   let begin: HTMLButtonElement = quiet('')
   let cancel: HTMLButtonElement = quiet('')
   let input: HTMLInputElement | undefined
+  /** The computer chosen from those found waiting (pairing without a mailbox). */
+  let chosen: FoundComputer | undefined
+  let finding: HTMLElement = el('div')
 
   const phaseOf = (now: PairingStatus): PairingPhase =>
     now.phase === 'waiting' && now.expiresAt !== undefined && Date.now() >= now.expiresAt ? 'expired' : now.phase
@@ -517,7 +625,8 @@ export function mountPairing(root: HTMLElement, request: LocalRequest, options: 
     reported = ''
     said.textContent = hosting ? 'Getting a code…' : 'Sending the code…'
     said.className = 'hint'
-    void life.ask<{ pairing?: PairingStatus }>('/api/compute/pair/start', typed === undefined ? {} : { code: typed }, 'POST').then((got) => {
+    const body = typed === undefined ? {} : { code: typed, ...(chosen && { target: { endpointId: chosen.endpointId, addresses: chosen.addresses } }) }
+    void life.ask<{ pairing?: PairingStatus }>('/api/compute/pair/start', body, 'POST').then((got) => {
       if (!live()) return
       if (!got.ok) {
         pairing = undefined
@@ -532,11 +641,42 @@ export function mountPairing(root: HTMLElement, request: LocalRequest, options: 
     })
   }
 
+  /** The computers waiting to pair that this one can see, to choose one. */
+  async function look(): Promise<void> {
+    const live = life.mark()
+    finding.replaceChildren(el('p', 'hint', 'Looking for your other computer…'))
+    const got = await life.ask<{ found: FoundComputer[] }>('/api/compute/discover')
+    if (!live()) return
+    if (!got.ok) {
+      // A mailbox is set up, or this version cannot look: the code alone is how to pair.
+      finding.replaceChildren()
+      return
+    }
+    const found = got.value.found
+    if (found.length === 0) {
+      chosen = undefined
+      finding.replaceChildren(el('p', 'hint', 'No computer is waiting yet. Show a pairing code on the other computer, then press Look again. If it is not on this network, set up Tailscale on both computers first.'))
+      return
+    }
+    if (!chosen || !found.some((one) => one.endpointId === chosen!.endpointId)) chosen = found[0]
+    finding.replaceChildren(...found.map((one) => {
+      const row = el('label', 'pair-found-row')
+      const pick = el('input')
+      pick.type = 'radio'
+      pick.name = 'pair-target'
+      pick.checked = one.endpointId === chosen?.endpointId
+      pick.addEventListener('change', () => { if (pick.checked) chosen = one })
+      row.append(pick, document.createTextNode(` ${one.name} — ${one.tailnet ? 'over Tailscale' : 'on this network'}`))
+      return row
+    }))
+  }
+
   return {
     close: () => life.close(),
     open: () => {
       life.open()
       pairing = undefined
+      chosen = undefined
       reported = ''
       code = el('output', 'pair-code')
       code.hidden = true
@@ -560,14 +700,14 @@ export function mountPairing(root: HTMLElement, request: LocalRequest, options: 
       if (hosting) {
         input = undefined
         begin = quiet('Show a pairing code', () => start())
-        parts.push(el('p', 'hint', 'Show a code here, then type it into Alexia on the computer you talk to. A code is a number and four words, works for one attempt, and expires after five minutes.'), begin)
+        parts.push(el('p', 'hint', 'Show a code here, then type it into Alexia on the computer you talk to. The code works for one attempt and expires after five minutes.'), begin)
       } else {
         const form = el('form', 'local-search pair-form')
         const typed = el('input')
         typed.type = 'text'
         typed.autocomplete = 'off'
         typed.spellcheck = false
-        typed.placeholder = '7-word-word-word-word'
+        typed.placeholder = 'word-word-word-word'
         typed.setAttribute('aria-label', 'Pairing code')
         input = typed
         begin = quiet('Pair')
@@ -578,7 +718,12 @@ export function mountPairing(root: HTMLElement, request: LocalRequest, options: 
           if (begin.disabled) return
           const value = typed.value.trim().toLowerCase().replace(/\s+/g, '-')
           if (!CODE_SHAPE.test(value)) {
-            said.textContent = 'A code is a number and four words, like 7-word-word-word-word. Read it from the other computer.'
+            said.textContent = 'A code is four words, like word-word-word-word (with a number first if you use your own mailbox). Read it from the other computer.'
+            said.className = 'error'
+            return
+          }
+          if (!chosen && !/^\d/.test(value)) {
+            said.textContent = 'Choose the computer to pair with from the list first.'
             said.className = 'error'
             return
           }
@@ -586,12 +731,16 @@ export function mountPairing(root: HTMLElement, request: LocalRequest, options: 
           typed.value = ''
           start(value)
         })
-        parts.push(el('p', 'hint', 'On the other computer, switch Alexia to the Compute role and show a pairing code, then type it here. A code is a number and four words, works for one attempt, and expires after five minutes.'), form)
+        finding = el('div', 'pair-found')
+        finding.setAttribute('role', 'group')
+        finding.setAttribute('aria-label', 'Computers waiting to pair')
+        parts.push(
+          el('p', 'hint', 'On the other computer, switch Alexia to the Compute role and press Show a pairing code. It appears below — on this network, or over Tailscale when it is somewhere else. Choose it, then type its code.'),
+          finding, quiet('Look again', () => void look()), form,
+        )
+        void look()
       }
-      parts.push(
-        code, countdown, said, cancel,
-        el('p', 'hint', 'Pairing two computers for the first time with a code goes through Alexia’s pairing mailbox service on the internet, so both computers have to be able to reach it.'),
-      )
+      parts.push(code, countdown, said, cancel)
       root.replaceChildren(...parts)
       draw()
       // A pairing opened before this page was (another window, or a reload) is picked up.

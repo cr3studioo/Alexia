@@ -16,6 +16,21 @@ dependency on the registry backend.
 domains, certificates, monitoring and abuse response. Self-hosting does not transfer those
 costs to Alexia or to the upstream projects.
 
+## Without any server: Tailscale
+
+None of these services is needed to pair two computers or to reach one from somewhere else.
+With no mailbox configured, Alexia pairs directly: the computer that computes shows four words
+and announces itself; the one you talk to finds it — on the same network, or over Tailscale —
+and the code is exchanged between the two. Settings has a *Reach your other computer from
+anywhere* card that installs Tailscale (from Tailscale's own download), starts it and opens its
+sign-in; both computers signed in to one Tailscale account are on one private network.
+
+Each computer tells its transport its Tailscale address, so a pairing's hints include it, and
+the computer you talk to adds a paired computer's Tailscale address to its saved hints when it
+finds it there. iroh tries every address it knows and keeps the best that answers: direct at
+home, Tailscale's when apart. Nothing is switched by hand, and traffic stays end-to-end
+encrypted by iroh either way.
+
 ## What the operator can see
 
 | Service | Visible information | Information it cannot decrypt or authorize |

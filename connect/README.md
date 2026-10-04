@@ -151,6 +151,7 @@ its path: the secret is checked before the path is looked at.
 | `DELETE /v1/host` | Stop forwarding. |
 | `PUT /v1/network` | Change relay and lookup services. |
 | `GET /v1/pairing`, `PUT /v1/pairing/mailbox`, `POST /v1/pairing/host`, `POST /v1/pairing/join`, `GET`/`DELETE /v1/pairing/{pairingId}` | Pairing. See [Pairing](#pairing). |
+| `PUT /v1/self/addresses` | Addresses this computer can also be reached at, as plain IPs (`{ "addresses": ["100.101.1.2"] }`, at most 8) — a VPN's, which the endpoint does not report itself. Said in pairing hints and in `/v1/status` with the endpoint's own port. |
 | `POST /v1/shutdown` | Close everything and exit. |
 | `ANY /bridge/{endpointId}/…` | A request to a paired computer. See [The bridge](#the-bridge). |
 
@@ -308,6 +309,19 @@ Replaces any earlier registration whole. Returns the [status](#get-v1status) obj
 Forgets the host service. Requests from paired computers are answered `host_unavailable` until
 it is registered again. Streams already being forwarded run to their end. Returns the status
 object.
+
+### Pairing without a mailbox
+
+`POST /v1/pairing/host` with `"direct": true` needs no mailbox: it answers a four-word code (no
+mailbox number) and this endpoint's id, and opens the gate under `alexia/pairing-direct/1` for
+the first connection from anybody, once. Core announces where the endpoint is (on Tailscale, and
+on the local network while the pairing waits). The joiner sends `POST /v1/pairing/join` with the
+code and `"direct": { "endpointId", "addresses" }`, and dials exactly that id there. Over that
+connection — whose two ids iroh has already authenticated — both run SPAKE2 under the code, bound
+to both ids, exchange their hellos and nonces, and prove the key with the same MACs as the
+mailbox pairing. A wrong code fails on both sides (`pairing_wrong_code`) and closes the gate: the
+code had one try. A joiner that finds nobody waiting gets `pairing_code_unknown`. As with the
+mailbox kind, a proven peer is reported, not trusted: core decides.
 
 ### `PUT /v1/network`
 

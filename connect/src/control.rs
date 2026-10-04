@@ -32,7 +32,7 @@ use tokio::time::timeout;
 use url::Url;
 
 use crate::constants::{
-    ALLOWLIST_MAX, CONTROL_BODY_MAX, CONTROL_CONNECTIONS_MAX, EVENTS_KEEPALIVE, HEADER_TIMEOUT, HINT_ADDRESSES_MAX,
+    ALLOWLIST_MAX, CONTROL_BODY_MAX, EXTRA_ADDRESSES_MAX, CONTROL_CONNECTIONS_MAX, EVENTS_KEEPALIVE, HEADER_TIMEOUT, HINT_ADDRESSES_MAX,
     PATH_MAX, PROTOCOL,
 };
 use crate::error::{ApiError, BAD_REQUEST, NOT_FOUND, PAYLOAD_TOO_LARGE, PEER_NOT_ALLOWED, UNAUTHORIZED};
@@ -120,6 +120,21 @@ async fn route(node: &Arc<Node>, request: Request<Incoming>) -> Answer {
             node.rebind(network).await?;
             Ok(status(node))
         }
+        (&Method::PUT, ["v1", "self", "addresses"]) => {
+            // Where else this computer can be reached — core knows a VPN address, the endpoint
+            // does not always. Plain IPs; the endpoint's own port is added when they are said.
+            let Extra { addresses } = body(request).await?;
+            if addresses.len() > EXTRA_ADDRESSES_MAX {
+                return Err(ApiError::new(BAD_REQUEST, "too many addresses"));
+            }
+            let parsed = addresses.iter().map(|text| text.parse::<std::net::IpAddr>()).collect::<Result<Vec<_>, _>>();
+            let parsed = parsed.map_err(|_| ApiError::new(BAD_REQUEST, "not an IP address"))?;
+            if parsed.iter().any(|ip| ip.is_unspecified() || ip.is_multicast()) {
+                return Err(ApiError::new(BAD_REQUEST, "not an address to be reached at"));
+            }
+            node.set_extra(parsed);
+            Ok(http::json(StatusCode::OK, &json!({ "addresses": addresses })))
+        }
         (&Method::GET, ["v1", "pairing"]) => Ok(mailbox(node, json!({ "pairings": node.pairing.list() }))),
         (&Method::PUT, ["v1", "pairing", "mailbox"]) => {
             // `url` has to be there, and be a URL or `null`: leaving it out is not a way to
@@ -178,6 +193,12 @@ fn endpoint_id(text: &str) -> Result<EndpointId, ApiError> {
     text.parse().ok().filter(|_| hex).ok_or_else(|| ApiError::new(BAD_REQUEST, "not an endpoint id"))
 }
 
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Extra {
+    addresses: Vec<String>,
+}
+
 async fn body<T: DeserializeOwned>(request: Request<Incoming>) -> Result<T, ApiError> {
     let bytes = Limited::new(request.into_body(), CONTROL_BODY_MAX)
         .collect()
@@ -203,7 +224,7 @@ fn status(node: &Node) -> Response<Body> {
             "version": env!("CARGO_PKG_VERSION"),
             "endpointId": endpoint.id().to_string(),
             "relayUrl": address.relay_urls().next().map(|url| url.to_string()),
-            "directAddresses": address.ip_addrs().map(|address| address.to_string()).collect::<Vec<_>>(),
+            "directAddresses": crate::pairing::own_addresses(node).iter().map(|address| address.to_string()).collect::<Vec<_>>(),
             "boundAddresses": endpoint.bound_sockets().iter().map(SocketAddr::to_string).collect::<Vec<_>>(),
             "network": {
                 "relayUrls": network.relay_urls.iter().map(|url| url.to_string()).collect::<Vec<_>>(),

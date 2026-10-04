@@ -133,6 +133,20 @@ pub(crate) struct Hosting {
     payload: Value,
     #[serde(default)]
     exclusive: Option<bool>,
+    /// Without a mailbox: the joiner finds this endpoint by other means (core's announcement on
+    /// the local network or a VPN) and the code is exchanged directly over iroh.
+    #[serde(default)]
+    direct: bool,
+}
+
+/// Where a direct pairing's host is, as the joiner learned it. Unauthenticated until the code
+/// has been proven over a connection to exactly this id.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct Target {
+    endpoint_id: String,
+    #[serde(default)]
+    addresses: Vec<String>,
 }
 
 /// `POST /v1/pairing/join`.
@@ -145,6 +159,9 @@ pub(crate) struct Joining {
     payload: Value,
     #[serde(default)]
     exclusive: Option<bool>,
+    /// A host found without a mailbox: dial it here and exchange the code directly.
+    #[serde(default)]
+    direct: Option<Target>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -226,6 +243,9 @@ struct Table {
     /// The endpoints a pairing in progress has been told, which is who the gate lets speak
     /// [`ALPN`]. A host waits here for the joiner's connection; a joiner only dials.
     expected: HashMap<EndpointId, Option<oneshot::Sender<Connection>>>,
+    /// The one direct pairing that is waiting for a joiner, if any. The first connection under
+    /// [`DIRECT_ALPN`] takes it; there is no second try.
+    direct: Option<oneshot::Sender<Connection>>,
 }
 
 struct Entry {
@@ -294,6 +314,19 @@ impl Pairings {
     pub fn incoming(&self, connection: Connection) {
         let waiting = self.table().expected.get_mut(&connection.remote_id()).and_then(Option::take);
         match waiting {
+            Some(waiting) => drop(waiting.send(connection)),
+            None => connection.close(CLOSE_NOT_PAIRED.into(), b"not pairing"),
+        }
+    }
+
+    /// Whether a direct pairing is waiting: the gate's question for [`DIRECT_ALPN`].
+    pub fn direct_open(&self) -> bool {
+        self.table().direct.as_ref().is_some_and(|waiting| !waiting.is_closed())
+    }
+
+    /// A connection under [`DIRECT_ALPN`]: to the direct pairing waiting for it, or closed.
+    pub fn incoming_direct(&self, connection: Connection) {
+        match self.table().direct.take() {
             Some(waiting) => drop(waiting.send(connection)),
             None => connection.close(CLOSE_NOT_PAIRED.into(), b"not pairing"),
         }
@@ -416,7 +449,10 @@ impl Drop for Expected {
 /// Open a pairing and return its code. The mailbox has been reached, and has allocated a
 /// number, before this returns — so a code that is shown is one that can be joined.
 pub(crate) async fn host(node: &Arc<Node>, ask: Hosting) -> Result<Value, ApiError> {
-    let Hosting { name, payload, exclusive } = ask;
+    let Hosting { name, payload, exclusive, direct } = ask;
+    if direct {
+        return host_direct(node, name, payload, exclusive);
+    }
     let pairings = &node.pairing;
     let exclusive = allowed(node, exclusive.unwrap_or(true))?;
     let hello = hello(node, &name, payload)?;
@@ -460,7 +496,10 @@ pub(crate) async fn host(node: &Arc<Node>, ask: Hosting) -> Result<Value, ApiErr
 /// Join a pairing by its code. Answers at once; everything that can go wrong from here is the
 /// pairing's outcome.
 pub(crate) fn join(node: &Arc<Node>, ask: Joining) -> Result<Value, ApiError> {
-    let Joining { code, name, payload, exclusive } = ask;
+    let Joining { code, name, payload, exclusive, direct } = ask;
+    if let Some(target) = direct {
+        return join_direct(node, code, name, payload, exclusive, target);
+    }
     let pairings = &node.pairing;
     let code = code_of(&code)?;
     let exclusive = allowed(node, exclusive.unwrap_or(false))?;
@@ -601,7 +640,7 @@ fn hello(node: &Node, name: &str, payload: Value) -> Result<String, ApiError> {
     }
     let endpoint = node.endpoint();
     let address = endpoint.addr();
-    let mut addresses: Vec<SocketAddr> = address.ip_addrs().copied().collect();
+    let mut addresses = own_addresses(node);
     if node.pairing.0.loopback_hints {
         addresses.extend(endpoint.bound_sockets().iter().map(|bound| match bound {
             SocketAddr::V4(bound) => SocketAddr::from((Ipv4Addr::LOCALHOST, bound.port())),
@@ -623,6 +662,23 @@ fn hello(node: &Node, name: &str, payload: Value) -> Result<String, ApiError> {
         true => Ok(hello),
         false => Err(bad("the pairing message is too large")),
     }
+}
+
+/// Where this computer can be dialled: what the endpoint reports, and the addresses core added
+/// that it does not — a VPN's — on the endpoint's own port, for each address family it is bound in.
+pub(crate) fn own_addresses(node: &Node) -> Vec<SocketAddr> {
+    let endpoint = node.endpoint();
+    let mut addresses: Vec<SocketAddr> = endpoint.addr().ip_addrs().copied().collect();
+    for ip in node.extra() {
+        for bound in endpoint.bound_sockets() {
+            let said = SocketAddr::new(ip, bound.port());
+            if bound.is_ipv4() == ip.is_ipv4() && !addresses.contains(&said) {
+                addresses.push(said);
+            }
+        }
+    }
+    addresses.truncate(HINT_ADDRESSES_MAX);
+    addresses
 }
 
 /// Read what the other side said, with every limit this side holds it to. A message that is
@@ -688,6 +744,219 @@ fn failure(error: WormholeError) -> Failure {
         WormholeError::ServerError(_) => MAILBOX_FAILED,
         _ => PEER_INVALID,
     }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Pairing without a mailbox
+// ---------------------------------------------------------------------------------------------
+
+/// What a direct pairing is spoken under. The host's gate lets it through from anybody, but only
+/// while one direct pairing waits, and only once.
+pub const DIRECT_ALPN: &[u8] = b"alexia/pairing-direct/1";
+
+/// What the direct exchange's key is derived for.
+const DIRECT_PURPOSE: &[u8] = b"alexia/pairing-direct/1/proof";
+
+/// Open a direct pairing: no mailbox, a fresh four-word code, and a gate opened for the first
+/// joiner. The joiner learns where this endpoint is from core, not from here.
+fn host_direct(node: &Arc<Node>, name: String, payload: Value, exclusive: Option<bool>) -> Result<Value, ApiError> {
+    let pairings = &node.pairing;
+    let exclusive = allowed(node, exclusive.unwrap_or(true))?;
+    let hello = hello(node, &name, payload)?;
+    pairings.room()?;
+    let code: String = magic_wormhole::Wordlist::default_wordlist(PAIRING_WORDS).choose_words().into();
+    let (arrived, arrival) = oneshot::channel();
+    {
+        let mut table = pairings.table();
+        if table.direct.as_ref().is_some_and(|waiting| !waiting.is_closed()) {
+            return Err(ApiError::new(PAIRING_LIMIT, "a direct pairing is already waiting"));
+        }
+        table.direct = Some(arrived);
+    }
+    let timing = pairings.0.timing;
+    let work = {
+        let node = node.clone();
+        let secret = Zeroizing::new(code.clone());
+        async move {
+            let meeting = async {
+                let connection = arrival.await.map_err(|_| EXPIRED)?;
+                let peer = exchange(&node, &connection, Side::Host, &secret, &hello).await;
+                if peer.is_err() {
+                    connection.close(CLOSE_NOT_PAIRED.into(), b"not proven");
+                }
+                peer
+            };
+            let outcome = timeout(timing.code_ttl, meeting).await.map_err(|_| EXPIRED)?;
+            // One try: whatever happened, the gate is shut behind it.
+            node.pairing.table().direct = None;
+            outcome
+        }
+    };
+    let meta = match pairings.begin(Role::Host, timing.code_ttl, exclusive, work) {
+        Ok(meta) => meta,
+        Err(error) => {
+            pairings.table().direct = None;
+            return Err(error);
+        }
+    };
+    Ok(json!({ "pairingId": meta.id, "code": code, "expiresAt": meta.expires_at, "endpointId": node.endpoint().id().to_string() }))
+}
+
+/// Join a direct pairing at the endpoint core found. Answers at once, like [`join`].
+fn join_direct(
+    node: &Arc<Node>,
+    code: String,
+    name: String,
+    payload: Value,
+    exclusive: Option<bool>,
+    target: Target,
+) -> Result<Value, ApiError> {
+    let bad = |what: &str| ApiError::new(BAD_REQUEST, what.to_owned());
+    let pairings = &node.pairing;
+    let code = direct_code(&code)?;
+    let exclusive = allowed(node, exclusive.unwrap_or(false))?;
+    let hello = hello(node, &name, payload)?;
+    let spelled = target.endpoint_id.len() == 64 && target.endpoint_id.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte));
+    let id: EndpointId = target.endpoint_id.parse().ok().filter(|_| spelled).ok_or_else(|| bad("not an endpoint id"))?;
+    if id == node.endpoint().id() {
+        return Err(bad("that is this computer"));
+    }
+    if target.addresses.len() > HINT_ADDRESSES_MAX {
+        return Err(bad("too many addresses"));
+    }
+    let addresses: Vec<SocketAddr> =
+        target.addresses.iter().map(|text| text.parse()).collect::<Result<_, _>>().map_err(|_| bad("not an address"))?;
+    let address = EndpointAddr::from_parts(id, addresses.into_iter().map(TransportAddr::Ip));
+    let timing = pairings.0.timing;
+    let work = {
+        let node = node.clone();
+        async move {
+            let meeting = async {
+                // This side's gate lets the dial out to this one host, for as long as it takes.
+                let _expected = node.pairing.expect(id, None)?;
+                // The host may still be getting ready; a dial that is turned away is tried again.
+                let connection = loop {
+                    if let Ok(connection) = node.endpoint().connect(address.clone(), DIRECT_ALPN).await {
+                        break connection;
+                    }
+                    sleep(PAIRING_REDIAL).await;
+                };
+                if connection.remote_id() != id {
+                    return Err(PROOF_FAILED);
+                }
+                let peer = exchange(&node, &connection, Side::Join, &code, &hello).await;
+                if peer.is_err() {
+                    connection.close(CLOSE_NOT_PAIRED.into(), b"not proven");
+                }
+                peer
+            };
+            timeout(timing.join_timeout, meeting).await.map_err(|_| TIMED_OUT)?
+        }
+    };
+    let meta = pairings.begin(Role::Join, timing.join_timeout, exclusive, work)?;
+    Ok(json!({ "pairingId": meta.id, "expiresAt": meta.expires_at }))
+}
+
+/// A direct code as somebody typed it: four lowercase words, nothing else.
+fn direct_code(typed: &str) -> Result<Zeroizing<String>, ApiError> {
+    let typed = typed.trim().to_ascii_lowercase();
+    let words: Vec<&str> = typed.split('-').collect();
+    let worded = words.len() == PAIRING_WORDS
+        && words.iter().all(|word| !word.is_empty() && word.len() <= 32 && word.bytes().all(|byte| byte.is_ascii_lowercase()));
+    match worded {
+        true => Ok(Zeroizing::new(typed)),
+        false => Err(ApiError::new(BAD_REQUEST, "not a pairing code")),
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Side {
+    Host,
+    Join,
+}
+
+/// One length-prefixed message on a pairing stream.
+async fn send_framed(send: &mut iroh::endpoint::SendStream, bytes: &[u8]) -> Result<(), Failure> {
+    let length = u32::try_from(bytes.len()).map_err(|_| PEER_INVALID)?;
+    send.write_all(&length.to_be_bytes()).await.map_err(|_| PEER_INVALID)?;
+    send.write_all(bytes).await.map_err(|_| PEER_INVALID)
+}
+
+async fn read_framed(recv: &mut iroh::endpoint::RecvStream, most: usize) -> Result<Vec<u8>, Failure> {
+    let mut length = [0; 4];
+    recv.read_exact(&mut length).await.map_err(|_| PEER_INVALID)?;
+    let length = usize::try_from(u32::from_be_bytes(length)).map_err(|_| PEER_INVALID)?;
+    if length > most {
+        return Err(PEER_INVALID);
+    }
+    let mut bytes = vec![0; length];
+    recv.read_exact(&mut bytes).await.map_err(|_| PEER_INVALID)?;
+    Ok(bytes)
+}
+
+/// The whole direct exchange, on one stream of a connection whose two endpoint ids iroh has
+/// already authenticated. SPAKE2 under the code, bound to both ids; each side's hello and a
+/// fresh nonce; then the same MACs the mailbox pairing proves with. A wrong code shows up as a
+/// MAC that does not check — and that ends the pairing, so the code had one try.
+async fn exchange(node: &Node, connection: &Connection, side: Side, code: &Zeroizing<String>, hello: &str) -> Result<Value, Failure> {
+    use spake2::{Ed25519Group, Identity, Password, Spake2};
+    let (own, peer) = (node.endpoint().id(), connection.remote_id());
+    let (joiner, host) = match side {
+        Side::Join => (own, peer),
+        Side::Host => (peer, own),
+    };
+    let (id_a, id_b) = (Identity::new(joiner.as_bytes()), Identity::new(host.as_bytes()));
+    let password = Password::new(code.as_bytes());
+    let (state, outbound) = match side {
+        Side::Join => Spake2::<Ed25519Group>::start_a(&password, &id_a, &id_b),
+        Side::Host => Spake2::<Ed25519Group>::start_b(&password, &id_a, &id_b),
+    };
+    let nonce = random::<PAIRING_NONCE>()?;
+    // A joiner whose host hangs up before saying anything found nobody waiting under that code:
+    // the gate had already shut, after somebody else's one try.
+    let nobody = |failure: Failure| if side == Side::Join { CODE_UNKNOWN } else { failure };
+    let (mut send, mut recv) = match side {
+        Side::Join => connection.open_bi().await.map_err(|_| CODE_UNKNOWN)?,
+        Side::Host => connection.accept_bi().await.map_err(|_| PEER_INVALID)?,
+    };
+    send_framed(&mut send, &outbound).await.map_err(nobody)?;
+    send_framed(&mut send, &nonce).await.map_err(nobody)?;
+    send_framed(&mut send, hello.as_bytes()).await.map_err(nobody)?;
+    let inbound = read_framed(&mut recv, 128).await.map_err(nobody)?;
+    let theirs: [u8; PAIRING_NONCE] = read_framed(&mut recv, PAIRING_NONCE).await?.try_into().map_err(|_| PEER_INVALID)?;
+    let said = String::from_utf8(read_framed(&mut recv, PAIRING_MESSAGE_MAX).await?).map_err(|_| PEER_INVALID)?;
+    let shared = Zeroizing::new(state.finish(&inbound).map_err(|_| WRONG_CODE)?);
+
+    // What the peer said must name the id iroh authenticated, or it is not a peer.
+    let named = read(&json!({ "alexia": PAIRING_VERSION, "hello": said }), own)?;
+    if named.id != peer {
+        return Err(PROOF_FAILED);
+    }
+    let mut derive = <Hmac<Sha256> as KeyInit>::new_from_slice(shared.as_slice()).map_err(|_| PROOF_FAILED)?;
+    derive.update(DIRECT_PURPOSE);
+    let mut key: Secret = Zeroizing::new([0; 32]);
+    key.copy_from_slice(&derive.finalize().into_bytes());
+    let (host_hello, joiner_hello, nonces) = match side {
+        Side::Join => (said.as_str(), hello, [&nonce, &theirs]),
+        Side::Host => (hello, said.as_str(), [&theirs, &nonce]),
+    };
+    let transcript = transcript(host_hello, joiner_hello);
+    let proof = Proof { key: &key, transcript: &transcript, nonces };
+    let (mine, other) = match side {
+        Side::Join => (JOIN, HOST),
+        Side::Host => (HOST, JOIN),
+    };
+    // Each side hangs up on a tag that does not check, so whichever is slower finds the line cut
+    // here: after the exchange, that is the other side refusing the code, not a broken peer.
+    let refused = |_: Failure| WRONG_CODE;
+    send_framed(&mut send, &proof.tag(mine, &own, &peer)?).await.map_err(refused)?;
+    let tag = read_framed(&mut recv, PAIRING_TAG).await.map_err(refused)?;
+    // A tag that does not check is, here, a code that was not the same on both sides.
+    proof.check(other, &peer, &own, &tag).map_err(|_| WRONG_CODE)?;
+    let _ = send.finish();
+    let _ = timeout(PAIRING_LINGER, recv.read_to_end(0)).await;
+    connection.close(CLOSE_NORMAL.into(), b"paired");
+    Ok(named.said())
 }
 
 // ---------------------------------------------------------------------------------------------

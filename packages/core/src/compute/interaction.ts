@@ -18,6 +18,8 @@ import { RemoteJobs } from './jobs.js'
 import { Operations } from './operations.js'
 import { remoteModels, selectedHost } from './target.js'
 import { ComputeError, parseCatalogId, THIS_HOST, type ExecutionTarget, type JobProgress, type TargetStatus } from './types.js'
+import { Link, type LinkDeps } from './link.js'
+import { Tailscale } from './tailscale.js'
 
 export type { Connect } from './connect.js'
 
@@ -27,6 +29,8 @@ const BOOT_MS = 3000
 export interface InteractionOptions {
   store: Store
   dataDir: string
+  /** Tailscale, and finding the other computer through it. `false` for none; an object to stand in for parts. */
+  link?: false | { tailscale?: LinkDeps['tailscale']; port?: number }
   plugins: Plugins
   /** A task, a reply or a model operation on this computer. */
   busy(): boolean
@@ -189,8 +193,17 @@ export async function interactionCompute(options: InteractionOptions): Promise<I
     restart: options.restart ?? (() => { if (options.shell) options.shell.relaunch(); else process.exit(0) }),
   })
 
+  // A transport handed in is a test's or a harness's: it gets no real Tailscale unless one is handed in too.
+  const link = options.link === false || (options.link === undefined && options.connect !== undefined) ? undefined : new Link({
+    ...(options.link?.port !== undefined && { port: options.link.port }),
+    role: 'interaction', tailscale: options.link?.tailscale ?? new Tailscale({ downloads: join(options.dataDir, 'downloads') }), connect: () => live.transport,
+    hosts, hints, name,
+  })
+  link?.start()
+
   const api = new ComputeApi({
     // `serve()` is the interaction service: in the compute role it is never called.
+    ...(link && { link }),
     role: 'interaction', hosts, roles, store, hints, name, appVersion: APP_VERSION,
     get connect() { return live.transport },
     get controller() { return live.controller },
@@ -217,6 +230,7 @@ export async function interactionCompute(options: InteractionOptions): Promise<I
   let shutting: Promise<void> | undefined
   const shut = (): Promise<void> => shutting ??= (async () => {
     closed = true
+    link?.close()
     api.close()
     await settled
     await retire(live)

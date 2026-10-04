@@ -40,6 +40,9 @@ zeroize = "1"
 # part of it — no transit, no file transfer. Pinned exactly, like iroh: two computers must agree
 # on this wire too. `tls` is what makes a `wss://` mailbox reachable.
 magic-wormhole = { version = "=0.8.1", default-features = false, features = ["native-tls"] }
+# Pairing without a mailbox: the same SPAKE2 the wormhole runs, spoken directly between the two
+# endpoints over iroh. Already in the tree under magic-wormhole, at this version.
+spake2 = "=0.4.0"
 # The possession proof's MAC and its transcript hash. The versions the two above already use.
 hmac = "0.13"
 sha2 = "0.11"

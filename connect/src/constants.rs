@@ -56,6 +56,8 @@ pub const PAIRING_PAYLOAD_MAX: usize = 1024;
 pub const PAIRING_MESSAGE_MAX: usize = 4 * 1024;
 pub const PAIRING_NONCE: usize = 32;
 pub const PAIRING_TAG: usize = 32;
+/// Addresses core may add to this computer's hints (`PUT /v1/self/addresses`).
+pub const EXTRA_ADDRESSES_MAX: usize = 8;
 
 /// The per-launch secret. Read once and removed from the environment before anything else runs.
 pub const ENV_SECRET: &str = "ALEXIA_CONNECT_SECRET";

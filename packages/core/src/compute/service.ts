@@ -15,7 +15,7 @@ import { MlxServer, mlxProvider } from '../mlx.js'
 import { Plugins } from '../plugins.js'
 import { CORE, keychain, type SecretStore } from '../secrets.js'
 import { dataDir, Store } from '../store.js'
-import { ComputeApi, hostModels, localPicker, RoleSwitching, savedServices } from './api.js'
+import { ComputeApi, hintStore, hostModels, localPicker, RoleSwitching, savedServices } from './api.js'
 import { Artifacts } from './artifacts.js'
 import { binaryPath, connect as launch, type Connect } from './connect.js'
 import { HostProtocol } from './hostProtocol.js'
@@ -26,12 +26,16 @@ import { Setup } from './setup.js'
 import { noShell, shellPipe, type Shell, type TrayAction } from './shell.js'
 import { ComputeError } from './types.js'
 import { pluginWorkers, textWorker, Workers } from './workers.js'
+import { Link, type LinkDeps } from './link.js'
+import { Tailscale } from './tailscale.js'
 
 /** `true` while the compute role should keep its window for one launch: set by *Open window*, spent by the next start. */
 export const WINDOW_KEY = 'compute_window'
 
 export interface ComputeServeOptions {
   dataDir?: string
+  /** Tailscale and the announcement that lets the other computer find this one. `false` for none; an object to stand in for parts. */
+  link?: false | { tailscale?: LinkDeps['tailscale']; port?: number }
   uiDir?: string
   port?: number
   secrets?: SecretStore
@@ -137,6 +141,13 @@ export async function computeServe(options: ComputeServeOptions = {}): Promise<C
   }
   const connect = transport ?? absent()
   await connect.allow(hosts.allowlist())
+  // A transport handed in is a test's or a harness's: it gets no real Tailscale unless one is handed in too.
+  const link = options.link === false || (options.link === undefined && options.connect !== undefined) ? undefined : new Link({
+    ...(options.link?.port !== undefined && { port: options.link.port }),
+    role: 'compute', tailscale: options.link?.tailscale ?? new Tailscale({ downloads: join(root, 'downloads') }), connect: () => transport,
+    hosts, hints: hintStore(store), name,
+  })
+  link?.start()
 
   const scheduler = new Scheduler()
   const text = textWorker({ dataDir: root, runners })
@@ -163,6 +174,7 @@ export async function computeServe(options: ComputeServeOptions = {}): Promise<C
   let stopping: Promise<void> | undefined
   const stopServices = (reason: 'quitting' | 'role-switch'): Promise<void> => stopping ??= (async () => {
     for (const off of unsubscribe.splice(0)) off()
+    link?.close()
     api.close()
     await protocol.close(reason).catch(() => {})
     await scheduler.close().catch(() => {})
@@ -185,6 +197,7 @@ export async function computeServe(options: ComputeServeOptions = {}): Promise<C
   const api = new ComputeApi({
     role: 'compute', hosts, scheduler, protocol, roles, store, name, appVersion: APP_VERSION,
     ...(transport && { connect: transport }),
+    ...(link && { link }),
     available: () => transport !== undefined,
     inventory, setup, models: localPicker(localModels),
     token: async (secret) => { if (secret === '') await secrets.delete(CORE, 'huggingface_token'); else await secrets.set(CORE, 'huggingface_token', secret) },

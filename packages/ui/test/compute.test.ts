@@ -83,6 +83,9 @@ function core(partial: Partial<Core> = {}): Core {
         state.pairing = call.body?.code === undefined ? { phase: 'waiting', code: CODE, expiresAt: Date.now() + 5 * 60_000 } : { phase: 'connecting' }
         return { body: { ok: true, pairing: state.pairing } }
       case 'POST /api/compute/pair/cancel': state.pairing = { phase: 'cancelled' }; return { body: { ok: true } }
+      // Looking for a computer waiting to pair: not offered unless a test says so, as with a mailbox set up.
+      case 'GET /api/compute/discover': return { status: 409, body: { ok: false, code: 'setup-required', said: 'Not here.' } }
+      case 'GET /api/compute/tailscale': return { body: { tailscale: { phase: 'running', said: 'Connected to Tailscale.', peers: [] } } }
       case 'POST /api/compute/unpair':
         state.hosts = state.hosts.filter((one) => one.host.id !== host)
         if (state.selected === host) state.selected = 'this'
@@ -225,13 +228,12 @@ function pairing(role: 'interaction' | 'compute', state: Core, blocked?: () => s
   return { element, paired, state }
 }
 
-test('pairing start: the compute host shows the code with its expiry, and says it works once and needs the mailbox', async () => {
+test('pairing start: the compute host shows the code with its expiry, and says it works once', async () => {
   const state = core()
   const { element } = pairing('compute', state)
   await flush()
   expect(element.querySelector<HTMLElement>('.pair-code')!.hidden).toBe(true)
-  expect(element.textContent).toContain('pairing mailbox service')
-  expect(element.textContent).toContain('a number and four words')
+  expect(element.textContent).toContain('works for one attempt and expires after five minutes')
   button(element, 'Show a pairing code').click()
   await flush()
   expect(sent(state, 'POST', '/api/compute/pair/start')[0]!.body).toEqual({})
@@ -246,6 +248,38 @@ test('pairing start: the compute host shows the code with its expiry, and says i
   expect(button(element, 'Show a pairing code').disabled).toBe(true)
 })
 
+test('pairing without a mailbox: the waiting computer is found, chosen, and its four words are sent with it', async () => {
+  const state = core()
+  const studio = { name: 'Studio', platform: 'win32', endpointId: 'b'.repeat(64), addresses: ['100.101.1.9:50123'], tailnet: true }
+  state.routes['GET /api/compute/discover'] = () => ({ body: { found: [studio] } })
+  const { element } = pairing('interaction', state)
+  await flush()
+  const choice = element.querySelector<HTMLLabelElement>('.pair-found-row')!
+  expect(choice.textContent).toContain('Studio — over Tailscale')
+  expect(choice.querySelector<HTMLInputElement>('input')!.checked).toBe(true)
+  const input = element.querySelector<HTMLInputElement>('form input')!
+  input.value = 'ribcage-alpha-cobra-zulu'
+  element.querySelector<HTMLFormElement>('form')!.dispatchEvent(new Event('submit', { cancelable: true }))
+  await flush()
+  expect(sent(state, 'POST', '/api/compute/pair/start').map((call) => call.body)).toEqual([
+    { code: 'ribcage-alpha-cobra-zulu', target: { endpointId: studio.endpointId, addresses: studio.addresses } },
+  ])
+})
+
+test('pairing without a mailbox: with nobody found, four words alone are not sent', async () => {
+  const state = core()
+  state.routes['GET /api/compute/discover'] = () => ({ body: { found: [] } })
+  const { element } = pairing('interaction', state)
+  await flush()
+  expect(element.textContent).toContain('No computer is waiting yet')
+  const input = element.querySelector<HTMLInputElement>('form input')!
+  input.value = 'ribcage-alpha-cobra-zulu'
+  element.querySelector<HTMLFormElement>('form')!.dispatchEvent(new Event('submit', { cancelable: true }))
+  await flush()
+  expect(sent(state, 'POST', '/api/compute/pair/start')).toHaveLength(0)
+  expect(element.querySelector('.error')!.textContent).toContain('Choose the computer')
+})
+
 test('pairing enter: the typed code is sent once, cleared from the field, and followed to paired', async () => {
   const state = core()
   const { element, paired } = pairing('interaction', state)
@@ -256,7 +290,7 @@ test('pairing enter: the typed code is sent once, cleared from the field, and fo
   form.dispatchEvent(new Event('submit', { cancelable: true }))
   await flush()
   expect(sent(state, 'POST', '/api/compute/pair/start')).toHaveLength(0)
-  expect(element.querySelector('.error')!.textContent).toContain('a number and four words')
+  expect(element.querySelector('.error')!.textContent).toContain('A code is four words')
   input.value = `  ${CODE.toUpperCase()} `
   form.dispatchEvent(new Event('submit', { cancelable: true }))
   expect(input.value).toBe('')
@@ -365,7 +399,7 @@ test('the list is This computer, every paired computer with Direct, Relayed or O
   expect(rowOf(element, STUDIO).querySelector('.host-state')).toBeNull()
   button(element, 'Pair another computer').click()
   await flush()
-  expect(element.querySelector('.host-pairing')!.textContent).toContain('pairing mailbox service')
+  expect(element.querySelector('.host-pairing')!.textContent).toContain('switch Alexia to the Compute role')
   expect(element.querySelector('.host-pairing input')).not.toBeNull()
 })
 
