@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { Beacon, localAddresses, neighbours, probe, type Announcement, type Found } from './beacon.js'
+import { Beacon, localAddresses, localNetworks, neighbours, probe, type Announcement, type Found } from './beacon.js'
 import type { Connect, ConnectHints } from './connect.js'
 import type { Hosts } from './hosts.js'
 import { isTailnet, type Tailscale, type TailscaleState } from './tailscale.js'
@@ -144,7 +144,7 @@ export class Link {
     const port = this.options.port !== undefined ? { port: this.options.port } : {}
     const [onTail, onLan] = await Promise.all([
       probe(tail, { tailnet: isTailnet, ...port }),
-      probe(neighbours(localAddresses()), { timeoutMs: 800, ...port }),
+      probe(neighbours(localNetworks()), { timeoutMs: 800, ...port }),
     ])
     const seen = new Set<string>()
     return [...onLan, ...onTail].filter((one) => one.pairing && one.role === 'compute' && !seen.has(one.endpointId) && seen.add(one.endpointId))

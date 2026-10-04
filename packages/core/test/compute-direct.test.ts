@@ -106,10 +106,16 @@ describe('the announcement', () => {
     expect(await probe(['127.0.0.1'], { port, timeoutMs: 500 })).toEqual([])
   })
 
-  test('the local network to look on is the /24 this computer is on', () => {
+  test('the local network to look on is as large as its netmask, nearest first, and bounded', () => {
     const near = neighbours(['192.168.1.20'])
     expect(near).toHaveLength(253)
     expect(near).not.toContain('192.168.1.20')
+    expect(near.slice(0, 2)).toEqual(['192.168.1.19', '192.168.1.21'])
+    // An office /20: the computer at the other end of it is looked at too, within the bound.
+    const office = neighbours([{ address: '172.16.189.201', netmask: '255.255.240.0' }])
+    expect(office).toHaveLength(1022)
+    expect(office).toContain('172.16.188.10')
+    expect(office).not.toContain('172.16.189.201')
   })
 })
 

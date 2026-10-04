@@ -114,25 +114,44 @@ export async function probe(ips: readonly string[], options: { timeoutMs?: numbe
 
 /** This computer's own local-network IPv4 addresses: private ranges, not loopback, not Tailscale's. */
 export function localAddresses(interfaces = networkInterfaces()): string[] {
-  const out: string[] = []
+  return localNetworks(interfaces).map((one) => one.address)
+}
+
+/** The same, with each one's netmask: how large the network it is on is. */
+export function localNetworks(interfaces = networkInterfaces()): { address: string; netmask: string }[] {
+  const out = new Map<string, string>()
   for (const list of Object.values(interfaces)) {
     for (const one of list ?? []) {
       if (one.family !== 'IPv4' || one.internal) continue
-      if (/^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(one.address)) out.push(one.address)
+      if (/^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(one.address)) out.set(one.address, one.netmask)
     }
   }
-  return [...new Set(out)]
+  return [...out].map(([address, netmask]) => ({ address, netmask }))
 }
 
-/** Every other address of each local /24 this computer is on: where a computer at home would be. */
-export function neighbours(own: readonly string[]): string[] {
+/** Most addresses looked at on one network: a /22. A larger network is looked at around this computer. */
+export const MOST_NEIGHBOURS = 1022
+
+const toInt = (ip: string): number => ip.split('.').reduce((n, part) => n * 256 + Number(part), 0)
+const toIp = (n: number): string => [24, 16, 8, 0].map((shift) => String(Math.floor(n / 2 ** shift) % 256)).join('.')
+
+/**
+ * Every other address of each local network this computer is on: where a computer at home would
+ * be. As large as the network's own netmask says — a home router's /24, an office's /20 — but no
+ * more than {@link MOST_NEIGHBOURS} addresses, nearest this computer's own first.
+ */
+export function neighbours(own: readonly (string | { address: string; netmask: string })[]): string[] {
   const out: string[] = []
-  for (const ip of own) {
-    const prefix = ip.split('.').slice(0, 3).join('.')
-    for (let last = 1; last < 255; last++) {
-      const one = `${prefix}.${String(last)}`
-      if (one !== ip) out.push(one)
-    }
+  for (const entry of own) {
+    const { address, netmask } = typeof entry === 'string' ? { address: entry, netmask: '255.255.255.0' } : entry
+    const ip = toInt(address)
+    const mask = toInt(netmask)
+    const size = 2 ** 32 - mask
+    const base = ip - (ip % size)
+    const hosts: number[] = []
+    for (let n = base + 1; n < base + size - 1; n++) if (n !== ip) hosts.push(n)
+    hosts.sort((a, b) => Math.abs(a - ip) - Math.abs(b - ip))
+    out.push(...hosts.slice(0, MOST_NEIGHBOURS).map(toIp))
   }
   return [...new Set(out)]
 }
