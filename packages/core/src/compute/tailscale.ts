@@ -38,7 +38,10 @@ export interface TailscaleState {
 export type Run = (file: string, args: readonly string[], timeoutMs: number) => Promise<{ code: number; stdout: string; stderr: string }>
 
 export const run: Run = (file, args, timeoutMs) => new Promise((resolve) => {
-  execFile(file, [...args], { timeout: timeoutMs, windowsHide: true, maxBuffer: 4 * 1024 * 1024 }, (error, stdout, stderr) => {
+  // The Mac app's binary is the command line only when it is told so — from a terminal it
+  // guesses right, but launched by another app (Alexia) it tries to open its own window instead.
+  const env = { ...process.env, TAILSCALE_BE_CLI: '1' }
+  execFile(file, [...args], { env, timeout: timeoutMs, windowsHide: true, maxBuffer: 4 * 1024 * 1024 }, (error, stdout, stderr) => {
     const code = error ? (typeof (error as { code?: unknown }).code === 'number' ? (error as { code: number }).code : 1) : 0
     resolve({ code, stdout: String(stdout), stderr: String(stderr) })
   })
