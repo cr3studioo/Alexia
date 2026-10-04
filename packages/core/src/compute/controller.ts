@@ -119,6 +119,11 @@ export interface ControllerOptions {
   /** Jobs to name in `Hello.resume`: what `RemoteJobs` still wants the outcome of. */
   resume?(hostId: string): string[]
   /**
+   * A host worth a session whenever the transport finds it, with no job outstanding: the one whose
+   * model is chosen, so its models and its state are current before somebody asks it anything.
+   */
+  keep?(hostId: string): boolean
+  /**
    * Where a paired host's address hints live between launches. They only help find an
    * identity that is already allowed, so a stale or missing one costs a slower connection.
    */
@@ -462,8 +467,9 @@ export class Controller {
     const session = this.sessions.get(host.id)
     if (reachable && session?.failure?.code === 'offline') session.failure = undefined
     this.changed(host.id)
-    if (!reachable || !session || session.stream || session.opening || final(session.failure) || !this.wanted(host.id)) return
-    session.attempt = 0
+    if (!reachable || session?.stream || session?.opening || final(session?.failure)) return
+    if (!this.wanted(host.id) && this.options.keep?.(host.id) !== true) return
+    if (session) session.attempt = 0
     this.ensure(host.id).catch(() => {})
   }
 

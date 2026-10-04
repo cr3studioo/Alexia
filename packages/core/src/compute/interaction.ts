@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { APP_VERSION } from '@alexia/protocol'
+import { APP_VERSION, PREVIEW_META } from '@alexia/protocol'
 import { mkdirSync, realpathSync } from 'node:fs'
 import { hostname } from 'node:os'
 import { isAbsolute, join, relative, sep } from 'node:path'
@@ -16,8 +16,9 @@ import { Controller } from './controller.js'
 import { Hosts } from './hosts.js'
 import { RemoteJobs } from './jobs.js'
 import { Operations } from './operations.js'
-import { remoteModels, selectedHost } from './target.js'
-import { ComputeError, parseCatalogId, THIS_HOST, type ExecutionTarget, type JobProgress, type TargetStatus } from './types.js'
+import { PREVIEW_MAX_CHARS } from './protocol.js'
+import { rememberModels, remoteModels, seenModels, selectedHost } from './target.js'
+import { ComputeError, parseCatalogId, previewOf, THIS_HOST, type ExecutionTarget, type RunProgress, type TargetStatus } from './types.js'
 import { Link, type LinkDeps } from './link.js'
 import { Tailscale } from './tailscale.js'
 
@@ -58,7 +59,7 @@ export interface InteractionOptions {
 export interface InteractionCompute {
   api: ComputeApi
   provider: Provider                     // remoteProvider(bridge)
-  models(): Model[]                      // remoteModels(controller.views(), selectedHost(store))
+  models(): Model[]                      // remoteModels(controller.views(), selectedHost(store), seenModels)
   remote: Pick<Bridge, 'select' | 'deselect' | 'status'> & Pick<Controller, 'ensure' | 'views'> & { hostName(hostId: string): string | undefined }
   operations: Operations
   /** `PluginsOptions.compute`: one of the calling plugin's operations, run where the person chose. */
@@ -119,7 +120,7 @@ export async function interactionCompute(options: InteractionOptions): Promise<I
   let closed = false
   let running = 0
   /** Who is listening to a run on this computer, by the signal the run was started with. */
-  const hearing = new WeakMap<AbortSignal, (progress: JobProgress) => void>()
+  const hearing = new WeakMap<AbortSignal, (progress: RunProgress) => void>()
   /** The sidecar is here and would not start. Pairing is not offered until a start works. */
   let broken = false
 
@@ -131,7 +132,14 @@ export async function interactionCompute(options: InteractionOptions): Promise<I
     const heard = signal && hearing.get(signal)
     return plugins.computeCall(worker.handle, 'run', { cap, arguments: args }, {
       timeout: 24 * 60 * 60 * 1000, ...(signal && { signal }),
-      ...(heard && { onprogress: ({ progress, total, message }) => { heard({ progress, ...(total !== undefined && { total }), ...(message !== undefined && { message }) }) } }),
+      ...(heard && {
+        onprogress: (update) => {
+          const { progress, total, message } = update
+          // On this computer the picture so far goes straight to whoever asked, never through a queue.
+          const shown = previewOf((update as { _meta?: Record<string, unknown> })._meta?.[PREVIEW_META], PREVIEW_MAX_CHARS)
+          heard({ progress, ...(total !== undefined && { total }), ...(message !== undefined && { message }), ...(shown && { preview: `data:${shown.mime};base64,${shown.data}` }) })
+        },
+      }),
     })
   }
 
@@ -140,7 +148,10 @@ export async function interactionCompute(options: InteractionOptions): Promise<I
     const controller = new Controller({
       connect: transport ?? absent(), hosts, name: name(), appVersion: APP_VERSION, hints,
       resume: (hostId) => late.jobs?.outstanding(hostId) ?? [],
+      keep: (hostId) => selectedHost(store) === hostId,
     })
+    // What a host holds outlives its session (`remoteModels`): kept as it is heard.
+    controller.onEvent((hostId, event) => { if (event.event === 'inventory') rememberModels(store, hostId, event.inventory.models) })
     const jobs = late.jobs = new RemoteJobs({ controller, store })
     return { ...(transport && { transport }), controller, jobs, bridge: new Bridge({ controller }), operations: new Operations({ store, jobs, controller, local }) }
   }
@@ -170,7 +181,9 @@ export async function interactionCompute(options: InteractionOptions): Promise<I
     live = build(transport)
     await retire(old)
     // What a restart left unanswered: ask each host how its jobs ended. Asking is never running them again.
-    for (const host of hosts.list()) if (live.jobs.outstanding(host.id).length > 0) void live.controller.ensure(host.id).catch(() => {})
+    // And the computer whose model is chosen: its session is what keeps its models listed and its state current.
+    const chosen = selectedHost(store)
+    for (const host of hosts.list()) if (host.id === chosen || live.jobs.outstanding(host.id).length > 0) void live.controller.ensure(host.id).catch(() => {})
     return transport
   })()
   // A paired computer is the only reason to run the sidecar before somebody asks for a pairing.
@@ -240,7 +253,7 @@ export async function interactionCompute(options: InteractionOptions): Promise<I
   return {
     api,
     provider: { ...REMOTE, prepare: async (model, signal) => { await settled; return live.bridge.prepare(parseCatalogId(model), signal) } },
-    models: () => remoteModels(live.controller.views(), selectedHost(store)),
+    models: () => remoteModels(live.controller.views(), selectedHost(store), (hostId) => seenModels(store, hostId)),
     remote: {
       ensure: async (hostId, signal) => {
         await settled

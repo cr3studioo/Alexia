@@ -4,6 +4,7 @@ import { randomBytes } from 'node:crypto'
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { compile } from './compile.js'
+import { referenceJob } from './references.js'
 import { DraftError, records as recordsOf } from './drafts.js'
 import { runLog } from './log.js'
 import { graphSha256, manifestSha256, settingsProblem, slotNamer } from './profiles.js'
@@ -29,6 +30,9 @@ import { batchState, isTerminal, passSeed, progressLabel, seeds as rollSeeds } f
  * **Nothing unchecked is published, and nothing is published after revocation.** A candidate's
  * output stays in quarantine until its own policy check passes; publication then rechecks
  * cancellation, conversation revocation and the lease under the same lock revocation takes.
+ * The one exception is ComfyUI's live preview while a candidate renders, which the person
+ * chose to see: it is held in memory, replaced by the next frame, dropped when the render
+ * ends, and never becomes a version.
  *
  * Every dependency is an adapter: core's attachments (`lease`, `isLive`, `release`, `register`,
  * `share`), the planner, policy, the renderer and the profile list. Test doubles stand in for
@@ -146,7 +150,12 @@ export function editor({
         throw new EditorFailure('attachment_unavailable', 'Open this picture in the editor first, so its selected areas can be kept exactly.')
       }
       // A plan made a moment ago for the same request and pictures (the chat path) is not made twice.
-      const planned = given ?? await plan({ request: draft.instruction, images, version, regions, answer, signal, deadlineAt: now() + 5 * 60_000 })
+      const referenceInstructions = (draft.referenceRoles ?? []).map((reference) => {
+        const label = context.attachments.find((a) => a.id === reference.attachmentId)?.label
+        return label ? `Use only the ${reference.roles.map((r) => r.replaceAll('_', ' ')).join(' and ')} from ${label}.` : ''
+      }).filter(Boolean)
+      const request = referenceInstructions.length ? [`Edit ${sourceLabel}.`, draft.instruction, ...referenceInstructions].join('\n') : draft.instruction
+      const planned = given ?? await plan({ request, images, version, regions, answer, signal, deadlineAt: now() + 5 * 60_000 })
       if (planned.outcome === 'needs_clarification') {
         await records.savePending({ draftId: draft.id, revision: draft.revision, question: planned.question, at: now() }, draft.conversationId)
         await say(draft.conversationId, { type: 'clarification', draftId: draft.id, question: planned.question })
@@ -161,6 +170,7 @@ export function editor({
         await release(context.leaseId)
         return { clarification: question }
       }
+      planned.job = referenceJob(planned.job, draft.referenceRoles, context.attachments)
       const compiled = compile(planned.job, context.attachments.map((a) => a.label), { slotName: slotNamer(profile) })
       const batchId = ids('batch')
       const checked = await policy.checkInputs({
@@ -283,7 +293,7 @@ export function editor({
       }
       let finalPath
       if (order.length === 0) {
-        const out = await render(envelopeFor({}), { inputs: compiled.slots.map((s) => ({ slot: s.slot, path: byLabel.get(s.label).path })), masks: [] }, { signal, report, label })
+        const out = await render(envelopeFor({}), { inputs: compiled.slots.map((s) => ({ slot: s.slot, path: byLabel.get(s.label).path })), masks: [] }, { signal, report, label, conversation, candidateId: c.id })
         noteCleanup(out)
         finalPath = out.file
       } else {
@@ -298,7 +308,7 @@ export function editor({
             seed: passSeeds[i] ?? c.seed,
             inputs: [{ attachmentId: current.id, sha256: current.sha256, slot: 1 }],
             masks: [note.mask],
-          }), { inputs: [{ slot: 1, path: current.path }], masks: [{ id: note.mask.id, path: maskPath(conversation, note.mask.id) }] }, { signal, report, label })
+          }), { inputs: [{ slot: 1, path: current.path }], masks: [{ id: note.mask.id, path: maskPath(conversation, note.mask.id) }] }, { signal, report, label, conversation, candidateId: c.id })
           noteCleanup(out)
           const before = decode(readFileSync(current.path))
           const mask = masks.get(note.mask.id)
@@ -485,7 +495,7 @@ export function editor({
         const draft = await current(conversation, cmd.draftId, cmd.revision)
         const version = await records.version(cmd.versionId, conversation)
         if (!version || version.removed) throw new EditorFailure('context_required', 'That version is not in this conversation.')
-        const next = { ...draft, source: version.source, regions: rebase(draft.regions, version.source.versionId), transform: null, referenceIds: draft.referenceIds.filter((id) => id !== version.source.attachmentId) }
+        const next = { ...draft, source: version.source, regions: rebase(draft.regions, version.source.versionId), transform: null, referenceIds: draft.referenceIds.filter((id) => id !== version.source.attachmentId), referenceRoles: (draft.referenceRoles ?? []).filter((r) => r.attachmentId !== version.source.attachmentId) }
         return result(await records.saveDraft(next, draft.revision, conversation))
       }
       case 'favorite': {

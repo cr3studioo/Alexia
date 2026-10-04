@@ -31,6 +31,12 @@ beforeAll(async () => {
       response.write(BODY.subarray(0, 500))
       return setTimeout(() => response.socket?.destroy(), 10)
     }
+    if (request.url === '/stall' || (request.url === '/stall-once' && !request.headers.range)) {
+      // Some bytes, then silence: the socket stays open and sends nothing more.
+      response.writeHead(200, { 'content-length': String(BODY.length) })
+      response.write(BODY.subarray(0, 500))
+      return
+    }
     const range = stubborn ? undefined : request.headers.range
     if (range) {
       const from = Number(/bytes=(\d+)-/.exec(range)?.[1] ?? 0)
@@ -150,4 +156,21 @@ test('a download whose bytes do not hash to the catalogue is not installed', asy
   await expect(fetchModel(`${at}/model`, to, { expect: BODY.length, sha256: '0'.repeat(64) })).rejects.toThrow(/checksum/)
   expect(existsSync(to)).toBe(false)
   expect(existsSync(`${to}.part`)).toBe(false)
+})
+
+test('a download that goes quiet is picked up again from where it stopped', async () => {
+  const to = join(scratch(), 'model.safetensors')
+  const said = []
+  const got = await fetchModel(`${at}/stall-once`, to, { expect: BODY.length, stallMs: 150, onProgress: (_d, _t, text) => said.push(text) })
+  expect(got.bytes).toBe(BODY.length)
+  expect(readFileSync(to).equals(BODY)).toBe(true)
+  expect(asked).toBe('bytes=500-')
+  expect(said.some((t) => /picking the download up again/.test(t))).toBe(true)
+})
+
+test('a download that keeps going quiet gives up, says so, and keeps what arrived', async () => {
+  const to = join(scratch(), 'model.safetensors')
+  await expect(fetchModel(`${at}/stall`, to, { expect: BODY.length, stallMs: 100, attempts: 2 })).rejects.toThrow(/stalled.*carry on from there/)
+  expect(existsSync(to)).toBe(false)
+  expect((await have(to)).part).toBeGreaterThan(0)
 })

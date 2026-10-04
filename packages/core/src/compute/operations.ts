@@ -7,7 +7,7 @@ import type { RemoteJobs } from './jobs.js'
 import { ARTIFACT_ARG } from './protocol.js'
 import { selectedHost } from './target.js'
 import { fetchArtifact, upload } from './transfer.js'
-import { ComputeError, THIS_HOST, type ArtifactRef, type JobProgress } from './types.js'
+import { ComputeError, THIS_HOST, type ArtifactRef, type RunProgress } from './types.js'
 
 /** Replace approved input paths wherever they occur; the caller's arguments stay untouched. */
 function staged(value: unknown, inputs: ReadonlyMap<string, string>): unknown {
@@ -37,7 +37,7 @@ export class Operations {
   }) {}
 
   async run(request: { cap: string; args: Record<string, unknown>; inputs: { name: string; path: string; mime: string }[]; toDir: string },
-    io: { signal?: AbortSignal; onProgress?(progress: JobProgress): void }): Promise<{ text?: string; files: string[] }> {
+    io: { signal?: AbortSignal; onProgress?(progress: RunProgress): void }): Promise<{ text?: string; files: string[] }> {
     if (io.signal?.aborted) throw new ComputeError('cancelled', 'The compute operation was cancelled.')
     const hostId = selectedHost(this.options.store)
     if (hostId === THIS_HOST) return localResult(await this.options.local(request.cap, request.args, io.signal))
@@ -54,12 +54,15 @@ export class Operations {
       ids.push(artifact.id)
     }
     let text: string | undefined
+    let last: RunProgress = { progress: 0 }
     const outputs = new Map<string, ArtifactRef>()
     const final = await jobs.run(hostId, {
       jobId, cap: request.cap, arguments: staged(request.args, inputs) as Record<string, unknown>, inputs: ids,
     }, { onEvent: (event) => {
-      if (event.type === 'progress') io.onProgress?.(event.progress)
+      if (event.type === 'progress') io.onProgress?.(last = event.progress)
       if (event.type !== 'output') return
+      // The picture so far, with the numbers it belongs to.
+      if (event.output.type === 'preview') io.onProgress?.({ ...last, preview: `data:${event.output.mime};base64,${event.output.data}` })
       if (event.output.type === 'text') text = (text ?? '') + event.output.text
       else if (event.output.type === 'artifact') outputs.set(event.output.artifact.id, event.output.artifact)
     } }, io.signal)

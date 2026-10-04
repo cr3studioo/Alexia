@@ -228,6 +228,24 @@ describe('generating versions', () => {
     expect(h.leases.get(batch.candidates[0] && 'lease1')).toBe('released')
   })
 
+  test('explicit clothes and pose slots reach both planning and the actual render prompt', async () => {
+    const h = harness()
+    const clothes = h.attach(picture(16, 8, [0, 200, 0, 255]))
+    const pose = h.attach(picture(16, 8, [200, 200, 0, 255]))
+    const draft = await open(h, {
+      instruction: 'standing outdoors',
+      referenceIds: [clothes.id, pose.id],
+      referenceRoles: [{ attachmentId: clothes.id, roles: ['clothing'] }, { attachmentId: pose.id, roles: ['pose'] }],
+    })
+    await generate(h, draft)
+    await h.e.idle()
+    expect(h.calls.plan[0].request).toContain(`Use only the clothing from ${clothes.label}.`)
+    expect(h.calls.plan[0].request).toContain(`Use only the pose from ${pose.label}.`)
+    expect(h.calls.render).toHaveLength(1)
+    expect(h.calls.render[0].envelope.instruction).toContain('Use only the clothing from Picture 2.')
+    expect(h.calls.render[0].envelope.instruction).toContain('Use only the pose from Picture 3.')
+  })
+
   test('the same invocation twice is one batch', async () => {
     const h = harness()
     const draft = await open(h, { instruction: 'warmer' })

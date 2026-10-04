@@ -209,11 +209,11 @@ const button = form.querySelector('button')!
 const prompt = document.querySelector<HTMLElement>('#prompt')!
 const promptWhy = document.querySelector<HTMLElement>('#prompt-why')!
 /**
- * What covers the rail: a sheet, or the palette. Apple's glass on the rail's switches is not
+ * What covers the rail: a sheet, a full-window overlay (`data-overlay`, the image editor), or the palette. Apple's glass on the rail's switches is not
  * part of the page, so it would float over either; it hides while one is open.
  */
 const around: Around = {
-  covered: () => sheetOpen() || document.querySelector<HTMLElement>('#palette')?.hidden === false,
+  covered: () => sheetOpen() || document.body.dataset.overlay !== undefined || document.querySelector<HTMLElement>('#palette')?.hidden === false,
 }
 /** The permission control, twice: on Settings > Safety (D205) and the rail's slider. One writer. */
 const permissions = document.querySelectorAll<HTMLSelectElement>('select.permission')

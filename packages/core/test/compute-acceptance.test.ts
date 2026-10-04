@@ -777,6 +777,11 @@ describe.runIf(built)('two Alexias and two real sidecars', () => {
     }, { timeout: 30_000, interval: 300 })
     expect((await here<{ machine: Machine }>(`/api/local-models?host=${hostId}`)).body.machine.chip).toBe('Studio GPU box')
     expect((await here<{ queue: QueueSnapshot }>(`/api/compute/queue?host=${hostId}`)).body.queue).toEqual({ waiting: [], paused: false })
+    // With no host named, the queue is the selected computer's: where picture jobs run.
+    const before = alexia.store.kvGet(CORE, TARGET_KEY)
+    alexia.store.kvSet(CORE, TARGET_KEY, { hostId, modelId: 'llama/any' })
+    expect((await here<{ queue: QueueSnapshot }>('/api/compute/queue')).body.queue).toEqual({ waiting: [], paused: false })
+    alexia.store.kvSet(CORE, TARGET_KEY, before ?? null)
     expect((await there<{ hosts: HostView[] }>('/api/compute/hosts')).body.hosts).toEqual([expect.objectContaining({ host: expect.objectContaining({ name: 'Laptop' }) })])
 
     // Unpaired from the host: the interaction computer can no longer reach it, and says so.

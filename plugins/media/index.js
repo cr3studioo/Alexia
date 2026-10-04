@@ -1524,7 +1524,15 @@ async function connectManaged({ signal, report = () => {}, probe = false } = {})
 }
 
 /** The image editor: its screen's tool, the chat's `edit_image`, and the `image.edit` operation. */
-const editing = mountEditor({ alexia, compute, own: () => own, connectManaged, log: (line) => log.info(line) })
+const editing = mountEditor({
+  alexia, compute, own: () => own, connectManaged,
+  installManaged: async ({ signal, report }) => {
+    await installComfy({ own, signal, onProgress: (done, total, message) => report(message, done, total) })
+    where_it_is = undefined
+  },
+  releaseManaged: async () => { workerKnown = undefined; await worker.release() },
+  log: (line) => log.info(line),
+})
 
 /**
  * Which ComfyUI a workflow is installed into, as `library/tools.js` asks it.

@@ -93,13 +93,13 @@ test('a picture is kept with its conversation, stripped of metadata, and private
   expect((await call(`/api/editor/picture?conversation=99999&id=${pictureId}`)).status).toBe(409)
 })
 
-test('the editor reaches the plugin through core, and no profile is presented as usable without evidence', async () => {
+test('the editor checks the render computer and reports missing installation', async () => {
   const listed = await call('/api/editor', { conversationId, call: 'profiles' })
   expect(listed.status).toBe(200)
   const profiles = listed.json.profiles as { availability: string; reason: string; selection: { id: string; version: string } }[]
   expect(profiles.length).toBeGreaterThan(0)
   expect(profiles.every((p) => p.availability !== 'available')).toBe(true)
-  expect(profiles[0]!.reason).toMatch(/Not measured/)
+  expect(profiles[0]!.reason).toMatch(/Install.*ComfyUI/)
 }, 60_000)
 
 test('opening, saving and generating: no model chosen, then an unverified one, and nothing renders', async () => {

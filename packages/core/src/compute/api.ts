@@ -620,7 +620,8 @@ export class ComputeApi {
         json({ queue: cleanQueue(this.scheduler().queue()) })
         return
       }
-      const host = this.paired(asked())
+      // No host named: the selected one, where picture and other operations run (operations.ts).
+      const host = this.paired(asked() ?? selectedHost(deps.store))
       await within(this.controller().ensure(host), HOST_MS)
       json({ queue: cleanQueue(this.controller().queue(host) ?? await within(this.controller().call(host, 'queue.get', {}), HOST_MS)) })
       return

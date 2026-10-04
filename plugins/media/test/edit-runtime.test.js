@@ -110,12 +110,14 @@ const runner = (fake, { managed = true, classes = Object.fromEntries(verified.no
 })
 
 describe('profiles', () => {
-  test('every shipped profile is well-formed, and none is verified without evidence', () => {
+  test('shipped profiles are installable with publisher hashes and do not claim benchmark evidence', () => {
     for (const p of PROFILES) {
       expect(() => checkProfile(p)).not.toThrow()
-      expect(describeProfile(p, { destination: { kind: 'interaction' } }).availability).toBe(p.evidence ? 'needs_installation' : 'unverified')
+      expect(describeProfile(p, { destination: { kind: 'interaction' } }).availability).toBe('needs_installation')
     }
-    expect(PROFILES.every((p) => p.status === 'candidate')).toBe(true)
+    expect(PROFILES.every((p) => p.status === 'supported' && p.evidence === null)).toBe(true)
+    const ready = describeProfile(PROFILES[0], { destination: { kind: 'interaction' }, installed: { ready: true, missing: [], mismatched: [] } })
+    expect(ready).toMatchObject({ availability: 'available', measuredMemory: null, evidenceId: null })
   })
 
   test('a verified profile must carry hashes, sizes, sources and a benchmark', () => {
@@ -189,8 +191,8 @@ describe('render boundary', () => {
     expect(out).toMatchObject({ width: 4, height: 4, promptId: 'prompt1', cleanup: 'complete' })
     expect(out.file).toContain(join('quarantine', 'run1', 'a1'))
     expect(existsSync(out.file)).toBe(true)
-    // No preview crossed the boundary, only words and numbers.
-    expect(JSON.stringify(reports)).not.toContain('data:image')
+    // ComfyUI's live preview goes out with the step it belongs to; the picture itself stays in quarantine.
+    expect(reports).toContainEqual({ message: 'Generating — step 1 of 8', value: 1, total: 8, preview: 'data:image/png;base64,AAAA' })
     expect(reports).toContainEqual({ promptId: 'prompt1' })
     // Everything lent and made was taken back.
     expect(fake.log.tidied.sort()).toEqual([...fake.log.uploads.map((u) => u.filename), 'alexia-edit_0001.png'].sort())

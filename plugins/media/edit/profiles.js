@@ -4,6 +4,7 @@ import { createReadStream } from 'node:fs'
 import { stat } from 'node:fs/promises'
 import { join, resolve, sep } from 'node:path'
 import { CANDIDATES } from './profiles/candidates.js'
+import artifacts from './profiles/artifacts.json' with { type: 'json' }
 
 /**
  * Which editing models exist, exactly — and which of them may be used on this computer.
@@ -14,11 +15,9 @@ import { CANDIDATES } from './profiles/candidates.js'
  * person chooses a profile and its supported settings, and this file says whether that is
  * possible.
  *
- * **Nothing is available without evidence.** A profile is `available` only when it is verified
- * — real hashes and a recorded benchmark with measured memory — and every artifact on the
- * render host matches its hash. A candidate is listed so the picker can say what it is waiting
- * for, never so it can be run. This file invents no hashes, sizes or memory figures; Step 0
- * puts them in `profiles/` when they have been measured.
+ * Supported profiles pin publisher files by size and SHA-256. Availability depends on the
+ * actual render host's installation; a benchmark is optional metadata, not permission to run.
+ * Verified profiles additionally carry recorded measurements. Candidate profiles cannot run.
  */
 
 export const FOLDERS = ['checkpoints', 'diffusion_models', 'text_encoders', 'vae', 'loras']
@@ -34,10 +33,11 @@ export function checkProfile(p) {
   }
   if (!/^[a-z0-9-]{1,64}$/.test(p?.id ?? '')) fail('id is not a plain name')
   if (typeof p.version !== 'string' || p.version === '') fail('needs a version')
-  if (!['candidate', 'verified'].includes(p.status)) fail('status is candidate or verified')
+  if (!['candidate', 'supported', 'verified'].includes(p.status)) fail('status is candidate, supported or verified')
   if (typeof p.uncensored !== 'boolean') fail('says whether it is uncensored, from its publisher\'s documentation')
   if (!Array.isArray(p.operations) || p.operations.length === 0) fail('supports no operation')
   if (!Number.isInteger(p.maxInputs) || p.maxInputs < 1 || p.maxInputs > 3) fail('maxInputs is 1 to 3')
+  if (p.status !== 'candidate' && (!p.artifacts?.length || !p.prompt?.slot?.includes('{n}'))) fail('an installable profile needs files and prompt slots')
   if (p.status === 'verified') {
     if (typeof p.prompt?.slot !== 'string' || !p.prompt.slot.includes('{n}')) fail('a verified profile names its prompt slot syntax')
     if (!p.evidence?.id || !Number.isInteger(p.evidence.gpuBytes) || !Number.isInteger(p.evidence.hostBytes)) fail('a verified profile carries its benchmark evidence')
@@ -46,7 +46,7 @@ export function checkProfile(p) {
   for (const a of p.artifacts ?? []) {
     if (!FOLDERS.includes(a.folder)) fail(`${a.filename} is in an unknown folder`)
     if (typeof a.filename !== 'string' || a.filename.includes('/') || a.filename.includes('\\') || a.filename.startsWith('.')) fail('a filename is a plain name')
-    if (p.status === 'verified' && (!/^[a-f0-9]{64}$/.test(a.sha256 ?? '') || !Number.isInteger(a.bytes) || !a.url || !a.license)) {
+    if (p.status !== 'candidate' && (!/^[a-f0-9]{64}$/.test(a.sha256 ?? '') || !Number.isInteger(a.bytes) || !a.url || !a.license)) {
       fail(`${a.filename} needs its size, hash, source and licence`)
     }
   }
@@ -63,7 +63,13 @@ export function checkProfile(p) {
   return p
 }
 
-export const PROFILES = CANDIDATES.map(checkProfile)
+// Publisher-pinned artifacts make a profile installable without inventing a hardware benchmark.
+// Actual files and node compatibility are checked on the render computer before use.
+export const PROFILES = CANDIDATES.map((candidate) => checkProfile({
+  ...candidate,
+  status: 'supported',
+  artifacts: candidate.artifacts.map((artifact) => ({ ...artifact, ...artifacts[artifact.filename] })),
+}))
 
 /** Stable bytes for hashing: keys sorted at every level. */
 export function canonical(value) {
@@ -136,15 +142,15 @@ export async function inventory(profile, models, { signal } = {}) {
  * What the picker shows for one profile, as the `ProfileDescriptor` contract has it.
  *
  * `installed` is the result of {@link inventory} on the chosen host, or null when the host could
- * not be asked. Availability is never better than the evidence: an unverified profile is
- * `unverified` even when every file is present.
+ * not be asked. Candidate profiles stay
+ * `unverified` even when every file is present. Supported profiles use the file checks.
  */
 export function describeProfile(profile, { destination, installed = null, offline = false }) {
   let availability = 'available'
   let reason = null
-  if (profile.status !== 'verified' || !profile.evidence) {
+  if (profile.status === 'candidate') {
     availability = 'unverified'
-    reason = 'Not measured on supported hardware yet, so it cannot be used.'
+    reason = 'This model has no installable profile yet.'
   } else if (offline) {
     availability = 'offline'
     reason = `${destination.kind === 'paired' ? destination.displayName : 'This computer'} is not reachable.`

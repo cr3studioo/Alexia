@@ -207,6 +207,21 @@ test('a lost session that nothing is waiting on is not reopened', async () => {
   expect(script.hellos()).toHaveLength(1)
 })
 
+test('the host whose model is chosen gets a session as soon as the transport finds it, with no job waiting', async () => {
+  // Without one its models are not listed and its state reads offline, until somebody presses Use this model.
+  const kept = new Set<string>()
+  const { controller, script, host, a, theirs } = await rig({ keep: (hostId) => kept.has(hostId) })
+  const reach = (state: 'direct' | 'offline'): void => { (a as unknown as { change(id: string, state: string): void }).change(theirs, state) }
+  reach('direct')
+  await quiet()
+  expect(script.hellos()).toEqual([])
+  reach('offline')
+  kept.add(host.id)
+  reach('direct')
+  await vi.waitFor(() => expect(controller.view(host.id)).toMatchObject({ inventory: inventory() }))
+  expect(script.hellos()).toHaveLength(1)
+})
+
 test('calls are answered by id, refusals keep their code, and a cancelled call stops waiting', async () => {
   const { controller, script, host } = await rig()
   script.answer = (request) => {

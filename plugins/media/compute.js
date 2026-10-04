@@ -91,7 +91,7 @@ export function split(alexia) {
             ...(signal && { signal }),
             // Only what crossed a wire arrives here. An operation in this process reports
             // through `mine` instead, so nothing is said twice.
-            onProgress: (done, total, message) => report(message, done, total),
+            onProgress: (done, total, message, preview) => (preview ? report(message, done, total, { preview }) : report(message, done, total)),
           },
         )
         return { ...(made.text !== undefined && { text: made.text }), files: made.files ?? [] }

@@ -43,6 +43,7 @@ export interface Draft {
   conversationId: string
   source: SourceVersion
   referenceIds: string[]
+  referenceRoles?: { attachmentId: string; roles: string[] }[]
   instruction: string
   regions: RegionNote[]
   operation: Operation
@@ -111,6 +112,20 @@ export interface EditorApi {
   file(url: string): Promise<Blob>
   upload(name: string, blob: Blob, normalizedFrom?: string): Promise<Picture>
   forget(): Promise<{ local: string; remote: { hostId: string; state: string }[] }>
+  /** What the picture computer is doing now, or nothing when it cannot be asked. Never throws. */
+  work(): Promise<Work | undefined>
+}
+
+/** The picture computer's running job, as the editor shows it: words and a fraction, no prompt. */
+export interface Work {
+  id: string
+  /** What the job is for, as the computer names it — a capability such as `image.edit`. */
+  label: string
+  startedAt?: number
+  message?: string
+  done: number
+  total?: number
+  waiting: number
 }
 
 export function editorApi(token: string, conversationId: string, fetcher: typeof fetch = fetch): EditorApi {
@@ -141,6 +156,20 @@ export function editorApi(token: string, conversationId: string, fetcher: typeof
         method: 'POST', headers, body: JSON.stringify({ conversationId, name, data, ...(normalizedFrom !== undefined && { normalizedFrom }) }),
       }))
       return said.picture
+    },
+    work: async () => {
+      try {
+        const answered = await fetcher('/api/compute/queue', { headers: { 'x-alexia-token': token } })
+        if (!answered.ok) return undefined
+        const { queue } = (await answered.json()) as { queue?: { running?: { id?: string; label?: string; startedAt?: number; progress?: { progress: number; total?: number; message?: string } }; waiting?: unknown[] } }
+        if (!queue?.running) return undefined
+        const p = queue.running.progress
+        return {
+          id: queue.running.id ?? '', label: queue.running.label ?? '', ...(queue.running.startedAt !== undefined && { startedAt: queue.running.startedAt }),
+          done: p?.progress ?? 0, ...(p?.total !== undefined && { total: p.total }), ...(p?.message !== undefined && { message: p.message }), waiting: queue.waiting?.length ?? 0 }
+      } catch {
+        return undefined
+      }
     },
     forget: async () => (await read<{ receipt: { local: string; remote: { hostId: string; state: string }[] } }>(
       await fetcher('/api/editor/forget', { method: 'POST', headers, body: JSON.stringify({ conversationId, confirm: true }) }),

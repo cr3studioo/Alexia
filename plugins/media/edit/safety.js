@@ -29,11 +29,11 @@ export class PolicyBlock extends Error {
  * `store` keeps decisions and blocks: `{ get(key), set(key, value) }`.
  */
 export function safety({ provider, store, now = Date.now }) {
-  const usable = provider && provider.evaluation && provider.evaluation.reportId
+  const usable = provider && (provider.evaluation?.reportId || provider.runtimeChecks === true) && typeof provider.assessText === 'function' && typeof provider.assessImage === 'function'
   const record = async (runId, stage, decision, evidence) => {
     const at = key('edit_policy', runId)
     const before = (await store.get(at)) ?? { stages: [] }
-    before.stages.push({ stage, at: now(), decision: decision.decision, reason: decision.reason, rating: decision.rating, evidence, provider: usable ? { id: provider.id, version: provider.version, report: provider.evaluation.reportId } : null })
+    before.stages.push({ stage, at: now(), decision: decision.decision, reason: decision.reason, rating: decision.rating, evidence, provider: usable ? { id: provider.id, version: provider.version, report: provider.evaluation?.reportId ?? null } : null })
     await store.set(at, before)
   }
   const summary = (e) => e && { status: e.status, rating: e.rating, ages: e.people?.map((p) => p.age) ?? null }

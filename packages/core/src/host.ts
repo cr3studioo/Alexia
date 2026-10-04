@@ -7,7 +7,7 @@ import { keychain, type SecretStore } from './secrets.js'
 import { declaredWidgets } from './settings.js'
 import { ALEXIA_VERSION, type HostServices } from './supervisor.js'
 import type { Store } from './store.js'
-import type { JobProgress } from './compute/types.js'
+import type { RunProgress } from './compute/types.js'
 
 /**
  * The other side of the `alexia/*` layer: what core answers when a plugin asks.
@@ -47,7 +47,7 @@ export interface HostOptions {
     pluginId: string,
     params: AlexiaParams<'alexia/compute/run'>,
     signal?: AbortSignal,
-    onProgress?: (progress: JobProgress) => void,
+    onProgress?: (progress: RunProgress) => void,
   ): Promise<AlexiaResult<'alexia/compute/run'>>
   /**
    * **Would anything answer this capability, and is something that would switched off?**
@@ -135,7 +135,7 @@ export class Host implements HostServices {
     method: M,
     params: AlexiaParams<M>,
     signal?: AbortSignal,
-    onProgress?: (progress: JobProgress) => void,
+    onProgress?: (progress: RunProgress) => void,
   ): Promise<unknown> {
     const manifest = this.options.manifest(pluginId)
     if (!manifest) return fail(ErrorCode.INTERNAL_ERROR, `${pluginId} is not an enabled plugin`)

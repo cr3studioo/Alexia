@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, test, vi } from 'vitest'
-import { rememberTarget, remoteModel, remoteModels, selectedHost, selectedTarget, TARGET_KEY } from '../src/compute/target.js'
+import { rememberModels, rememberTarget, remoteModel, remoteModels, seenModels, selectedHost, selectedTarget, TARGET_KEY } from '../src/compute/target.js'
 import { parseCatalogId, type HostModel, type HostView } from '../src/compute/types.js'
 import { CORE } from '../src/secrets.js'
 import { Store } from '../src/store.js'
@@ -115,4 +115,23 @@ test('remote rows belong only to the selected host with known inventory, includi
   expect(remoteModels(views, HOST).map((row) => row.id)).toEqual([`@${HOST}/llama/x`])
   expect(remoteModels(views, 'another0host').map((row) => row.id)).toEqual(['@another0host/llama/x'])
   for (const selected of ['this', 'unknown0host', 'missing0host']) expect(remoteModels(views, selected)).toEqual([])
+})
+
+test('a chosen host with no session since launch keeps the models it last said it holds', () => {
+  // The case: Alexia restarts, the pin is `@host/llama/x`, and no session has opened yet. Without the
+  // remembered list the pin is *not available right now* until somebody presses Use this model.
+  const store = fixture()
+  const seen = (hostId: string) => seenModels(store, hostId)
+  const closed = [view(HOST, false)]
+  expect(remoteModels(closed, HOST, seen)).toEqual([])
+  rememberModels(store, HOST, [{ ...model, loaded: true }])
+  expect(remoteModels(closed, HOST, seen).map((row) => row.id)).toEqual([`@${HOST}/llama/x`])
+  // What an open session says wins over what was remembered, and an unpaired host lists nothing.
+  const open = [{ ...view(HOST), inventory: { ...view(HOST).inventory!, models: [{ ...model, id: 'llama/y' }] } }]
+  expect(remoteModels(open, HOST, seen).map((row) => row.id)).toEqual([`@${HOST}/llama/y`])
+  expect(remoteModels([], HOST, seen)).toEqual([])
+  // Kept per host, and a damaged entry is nothing remembered.
+  expect(seenModels(store, 'another0host')).toBeUndefined()
+  store.kvSet(CORE, 'remote_models', { [HOST]: 'nonsense' })
+  expect(remoteModels(closed, HOST, seen)).toEqual([])
 })

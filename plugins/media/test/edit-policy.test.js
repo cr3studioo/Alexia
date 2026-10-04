@@ -92,12 +92,21 @@ describe('orchestration', () => {
   const images = [{ sha256: 'a'.repeat(64) }, { sha256: 'b'.repeat(64) }]
   const run = { runId: 'r1', conversationId: 'c1', request: 'warmer light', hint: { content_rating: 'sfw', named_real_people: [] }, images }
 
-  test('with no evaluated provider nothing can be published', async () => {
+  test('missing or failed runtime assessments cannot publish', async () => {
     for (const provider of [null, scripted({}, null), visionProvider({ sample: async () => ({}) })]) {
       const s = safety({ provider, store: memory() })
       expect((await s.checkInputs(run)).reason).toBe('policy_unavailable')
       expect((await s.checkOutput({ ...run, inputs: { decision: 'allowed', rating: 'sfw' }, output: { sha256: 'c' } })).reason).toBe('policy_unavailable')
     }
+  })
+
+  test('a confident runtime provider can assess an edit without a fabricated benchmark report', async () => {
+    const provider = visionProvider({ sample: async () => ({ stopReason: 'endTurn', content: { type: 'text', text: JSON.stringify({ rating: 'sfw', people: [{ age: 'adult' }], confident: true }) } }) })
+    const s = safety({ provider, store: memory() })
+    const inputs = await s.checkInputs(run)
+    expect(inputs.decision).toBe('allowed')
+    expect((await s.checkOutput({ ...run, inputs, output: { mimeType: 'image/png', data: 'AA', sha256: 'c' } })).decision).toBe('allowed')
+    expect((await s.decisions('r1')).stages[0].provider.report).toBeNull()
   })
 
   test('decisions are recorded with categories, not content', async () => {
@@ -130,7 +139,7 @@ describe('local vision provider', () => {
     return { content: { type: 'text', text }, stopReason }
   }
 
-  test('ships unevaluated, so it cannot authorize on its own', () => {
+  test('supports runtime assessments without claiming an evaluation report', () => {
     expect(visionProvider({ sample: answer('{}') }).evaluation).toBeNull()
   })
 

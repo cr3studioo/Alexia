@@ -9,6 +9,7 @@ import {
   type AlexiaParams,
   type Manifest,
   type StreamFrame,
+  PREVIEW_META,
 } from '@alexia/protocol'
 import {
   Client,
@@ -27,7 +28,8 @@ import { join } from 'node:path'
 import type { Readable } from 'node:stream'
 import { createInterface } from 'node:readline'
 import { negotiate } from './handshake.js'
-import type { JobProgress } from './compute/types.js'
+import { PREVIEW_MAX_CHARS } from './compute/protocol.js'
+import { previewOf, type RunProgress } from './compute/types.js'
 
 /**
  * One supervised plugin process.
@@ -90,7 +92,7 @@ export interface HostServices {
     method: M,
     params: AlexiaParams<M>,
     signal?: AbortSignal,
-    onProgress?: (progress: JobProgress) => void,
+    onProgress?: (progress: RunProgress) => void,
   ): Promise<unknown>
 }
 
@@ -367,13 +369,15 @@ export class PluginProcess {
           let sent: Promise<void> = Promise.resolve()
           let reported = false
           const onProgress = method !== 'alexia/compute/run' || progressToken === undefined ? undefined
-            : (progress: JobProgress): void => {
+            : ({ preview, ...progress }: RunProgress): void => {
               reported = true
+              // A preview travels under `_meta`, as a plugin's own progress does (`alexia.progress`).
+              const shown = previewOf(preview, PREVIEW_MAX_CHARS)
               sent = sent.then(async () => {
                 try {
                   await ctx.mcpReq.notify({
                     method: 'notifications/progress',
-                    params: { progressToken, ...progress },
+                    params: { progressToken, ...progress, ...(shown && { _meta: { [PREVIEW_META]: `data:${shown.mime};base64,${shown.data}` } }) },
                   })
                 } catch {
                   // The request or its process may already have gone away.

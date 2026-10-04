@@ -214,6 +214,22 @@ export type JobState = (typeof JOB_STATES)[number]
 
 export const finished = (state: JobState): boolean => ['succeeded', 'failed', 'cancelled', 'interrupted'].includes(state)
 
+/**
+ * Progress as the plugin that asked for a run hears it: the job's numbers and, while the work
+ * is a picture, the latest look at it as a `data:image/…` URL. Passed on and never stored —
+ * which is why it is not a field of {@link JobProgress}, which queue snapshots keep.
+ */
+export interface RunProgress extends JobProgress {
+  preview?: string
+}
+
+/** A preview a plugin sent, if it is one: an image `data:` URL, small enough to pass on. */
+export function previewOf(shown: unknown, most: number): { mime: string; data: string } | undefined {
+  if (typeof shown !== 'string') return undefined
+  const at = /^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/=]+)$/.exec(shown)
+  return at && at[2]!.length <= most ? { mime: at[1]!, data: at[2]! } : undefined
+}
+
 export interface JobProgress {
   progress: number
   total?: number

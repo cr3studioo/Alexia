@@ -39,8 +39,8 @@ export const ProfileDescriptor = z.strictObject({
   }),
   batchSize: z.literal(1),
 }).superRefine((p, ctx) => {
-  if (p.availability === 'available' && (!p.evidenceId || !p.measuredMemory)) {
-    ctx.addIssue({ code: 'custom', message: 'available profiles require benchmark evidence and measured memory' })
+  if ((p.evidenceId === null) !== (p.measuredMemory === null)) {
+    ctx.addIssue({ code: 'custom', message: 'benchmark evidence and measured memory must be supplied together' })
   }
   if (p.availability !== 'available' && !p.reason) {
     ctx.addIssue({ code: 'custom', message: 'unavailable profiles need an actionable reason' })
@@ -107,6 +107,10 @@ export const EditorDraft = z.strictObject({
   conversationId: OpaqueId,
   source: SourceVersion,
   referenceIds: z.array(OpaqueId).max(PRIVATE_LIMITS.imageInputs - 1),
+  referenceRoles: z.array(z.strictObject({
+    attachmentId: OpaqueId,
+    roles: z.array(z.enum(['identity', 'face', 'clothing', 'pose', 'hairstyle', 'expression', 'lighting', 'background', 'art_style', 'accessories'])).min(1).max(10),
+  })).max(PRIVATE_LIMITS.imageInputs - 1).default([]),
   instruction: z.string().max(PRIVATE_LIMITS.requestCharacters),
   regions: z.array(RegionNote).max(PRIVATE_LIMITS.regions),
   operation: EditorOperation,
@@ -121,6 +125,9 @@ export const EditorDraft = z.strictObject({
   }
   if (new Set(d.referenceIds).size !== d.referenceIds.length || d.referenceIds.includes(d.source.attachmentId)) {
     ctx.addIssue({ code: 'custom', message: 'references must be unique and exclude the source' })
+  }
+  if (new Set(d.referenceRoles.map((r) => r.attachmentId)).size !== d.referenceRoles.length || d.referenceRoles.some((r) => !d.referenceIds.includes(r.attachmentId))) {
+    ctx.addIssue({ code: 'custom', message: 'reference roles must name unique selected references' })
   }
   if (new Set(d.regions.map((r) => r.id)).size !== d.regions.length) ctx.addIssue({ code: 'custom', message: 'region IDs must be unique' })
   if (d.regions.some((r) => r.sourceVersionId !== d.source.versionId && !r.stale)) {

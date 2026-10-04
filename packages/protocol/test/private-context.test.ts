@@ -132,7 +132,7 @@ describe('trusted editor envelopes', () => {
       { ...envelope, inputs: [...envelope.inputs, ...envelope.inputs] }, { ...envelope, operation: 'inpaint' },
     ]) expect(EditRenderEnvelope.safeParse(bad).success).toBe(false)
   })
-  test('profiles cannot claim availability without measurements or regional support without 1.2', () => {
+  test('profiles allow installed models without benchmarks but require consistent evidence and regional support', () => {
     const profile = {
       selection: { id: 'profile-1', version: 'rev-1' }, name: 'Candidate', uncensored: false, operations: ['image_edit'],
       jobVersions: ['1.1'], maxInputs: 3, destination: { kind: 'interaction' },
@@ -141,7 +141,8 @@ describe('trusted editor envelopes', () => {
       controls: { presets: [], steps: null, changeAmount: null, seed: { min: 0, max: 4294967295 } },
     }
     expect(ProfileDescriptor.safeParse(profile).success).toBe(true)
-    expect(ProfileDescriptor.safeParse({ ...profile, availability: 'available' }).success).toBe(false)
+    expect(ProfileDescriptor.safeParse({ ...profile, availability: 'available', reason: null }).success).toBe(true)
+    expect(ProfileDescriptor.safeParse({ ...profile, evidenceId: 'report', measuredMemory: null }).success).toBe(false)
     expect(ProfileDescriptor.safeParse({ ...profile, operations: ['inpaint'] }).success).toBe(false)
   })
   test('batch recovery requires each stable candidate slot exactly once', () => {

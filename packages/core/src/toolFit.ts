@@ -65,6 +65,15 @@ export function fitTools(tools: readonly ToolSpec[], messages: readonly Message[
   }
   const rows = tools.map((tool, index) => ({ tool, index, cost: costs[index]!, must: called.has(tool.name) || pinned(tool), score: score(tool), plugin: tool.name.split('__')[0]! }))
   const best = (a: (typeof rows)[number], b: (typeof rows)[number]): number => Number(b.must) - Number(a.must) || b.score - a.score || a.cost - b.cost || a.index - b.index
+  /**
+   * A plugin's first tool is its front door — `media__generate`, `telegram__send` — the one it
+   * declares before its lists and settings. Words are a poor guide to it: *draw a dog*, *paint a red
+   * car*, *another one* and anything not in English match nothing in *Make an image*, while *pictures*
+   * matches the tool that lists them, which is cheaper and was kept in its place.
+   */
+  const lead = new Map<string, (typeof rows)[number]>()
+  for (const one of rows) if (!lead.has(one.plugin)) lead.set(one.plugin, one)
+  const relevant = new Set(rows.filter((one) => one.must || one.score > 0).map((one) => one.plugin))
 
   const chosen = new Set<number>()
   let spent = 0
@@ -73,15 +82,14 @@ export function fitTools(tools: readonly ToolSpec[], messages: readonly Message[
     chosen.add(one.index)
     spent += one.cost
   }
-  // What the conversation needs first, then what the words match — and nothing else for the sake of
-  // filling the room: a tool that has nothing to do with the request only gives the model something to misuse.
-  for (const one of [...rows].sort(best)) if (one.must || one.score > 0) take(one)
-  // Then one tool from every plugin that has none yet, the best match and then the cheapest, so a request the
-  // words did not catch (*what is the weather*, for a tool that says *search*) still finds a hand to start with.
-  for (const plugin of new Set(rows.map((one) => one.plugin))) {
-    const mine = rows.filter((one) => one.plugin === plugin)
-    if (mine.some((one) => chosen.has(one.index))) continue
-    take([...mine].sort(best)[0]!)
-  }
+  // What the conversation needs first, then the front door of every plugin it is about,
+  for (const one of rows) if (one.must) take(one)
+  for (const plugin of relevant) take(lead.get(plugin)!)
+  // then what the words match — and nothing else for the sake of filling the room: a tool that has
+  // nothing to do with the request only gives the model something to misuse.
+  for (const one of [...rows].sort(best)) if (one.score > 0) take(one)
+  // Then every other plugin's front door, so a request the words did not catch (*what is the weather*,
+  // for a tool that says *search*; a request in Czech) still finds a hand to start with.
+  for (const one of lead.values()) take(one)
   return tools.filter((_, index) => chosen.has(index))
 }

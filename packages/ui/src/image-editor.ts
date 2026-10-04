@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import {
   editorApi, EditorError, reasonText,
-  type Batch, type Candidate, type Draft, type EditorApi, type EditorEvent, type Picture, type Profile, type Version,
+  type Batch, type Candidate, type Draft, type EditorApi, type EditorEvent, type Picture, type Profile, type Version, type Work,
 } from './image-editor-api.js'
 import { labelled, mountSelection, type Selection } from './image-editor-selection.js'
 import { exportVersions, mountTransforms, type Transforms } from './image-editor-transforms.js'
@@ -24,6 +24,10 @@ import { el } from './widgets.js'
 type Tool = 'whole' | 'point' | 'remove' | 'crop'
 const TOOLS: [Tool, string][] = [['whole', 'Whole image'], ['point', 'Point edits'], ['remove', 'Remove'], ['crop', 'Crop / Resize']]
 
+/** What a reference can give, in the words on its chips. The common ones show first. */
+const ROLE_CHIPS: [string, string][] = [['identity', 'Character'], ['pose', 'Pose'], ['clothing', 'Clothing'], ['face', 'Face'], ['hairstyle', 'Hair'], ['background', 'Background']]
+const MORE_ROLES: [string, string][] = [['expression', 'Expression'], ['accessories', 'Accessories'], ['lighting', 'Lighting'], ['art_style', 'Style']]
+
 export interface EditorOptions {
   token: string
   conversationId: string
@@ -40,14 +44,30 @@ export async function openImageEditor(options: EditorOptions): Promise<void> {
   const sheet = el('div', 'image-editor')
   sheet.setAttribute('aria-labelledby', 'image-editor-heading')
   document.body.append(sheet)
+  // Apple's glass on the rail's switches is drawn by the shell over the page, so it would float
+  // on the editor; the rail reads this and hides it while the editor is open (switchers.ts).
+  document.body.dataset.overlay = 'image-editor'
   const dialog = modal(sheet, options.behind)
   const close = (): void => {
     dialog.close()
     sheet.remove()
+    delete document.body.dataset.overlay
     options.onClose?.()
   }
+  const openMenus = (): HTMLDetailsElement[] => [...sheet.querySelectorAll<HTMLDetailsElement>('details.image-editor-menu[open]')]
   sheet.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape') close()
+    if (event.key !== 'Escape') return
+    // An open menu closes first; the editor only on the next Escape.
+    const menus = openMenus()
+    if (menus.length > 0) {
+      for (const m of menus) m.open = false
+      menus[0]!.querySelector('summary')?.focus()
+      return
+    }
+    close()
+  })
+  sheet.addEventListener('pointerdown', (event) => {
+    for (const m of openMenus()) if (!m.contains(event.target as Node)) m.open = false
   })
   const heading = el('h2', 'image-editor-heading', 'Edit a picture')
   heading.id = 'image-editor-heading'
@@ -75,6 +95,8 @@ async function choose(api: EditorApi, sheet: HTMLElement, close: () => void): Pr
   const { pictures } = await api.call<{ pictures: Picture[] }>('pictures')
   return new Promise((resolve) => {
     const grid = el('div', 'image-editor-choose')
+    grid.append(el('p', 'image-editor-hint', 'Start with your photo. Add pose, clothes or other references in the next step.'))
+    const recent = el('div', 'image-editor-recent')
     const done = (id: string | undefined): void => {
       grid.remove()
       if (id === undefined) close()
@@ -96,13 +118,18 @@ async function choose(api: EditorApi, sheet: HTMLElement, close: () => void): Pr
       void api.picture(picture.id).then((blob) => (img.src = URL.createObjectURL(blob))).catch(() => undefined)
       b.append(img, el('span', undefined, `${picture.label.replace('_', ' ')} · ${picture.displayName}`))
       b.addEventListener('click', () => done(picture.id))
-      grid.append(b)
+      recent.append(b)
     }
-    const add = el('label', 'quiet-button image-editor-add', 'Add a picture…')
+    const add = el('label', 'image-editor-main-upload', '＋ Upload your photo')
     const input = el('input')
     input.type = 'file'
     input.accept = 'image/png,image/jpeg,image/webp'
     input.hidden = true
+    add.tabIndex = 0
+    add.setAttribute('role', 'button')
+    add.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); input.click() }
+    })
     input.addEventListener('change', () => {
       const file = input.files?.[0]
       if (!file) return
@@ -113,7 +140,9 @@ async function choose(api: EditorApi, sheet: HTMLElement, close: () => void): Pr
     const cancel = el('button', 'quiet-button', 'Close')
     cancel.type = 'button'
     cancel.addEventListener('click', () => done(undefined))
-    grid.append(add, cancel)
+    grid.append(add)
+    if (pictures.length > 0) grid.append(el('h3', undefined, 'Or choose a picture from this chat'), recent)
+    grid.append(cancel)
     if (pictures.length === 0) grid.prepend(el('p', 'image-editor-hint', 'No pictures in this conversation yet. Add one to start.'))
     sheet.append(grid)
   })
@@ -157,26 +186,53 @@ function workspace(sheet: HTMLElement, api: EditorApi, first: Draft, close: () =
   let question: string | undefined
   let compareWith: string | undefined
   let message = ''
+  let loading = true
+  /** ComfyUI's picture so far, while a version renders. Never kept. */
+  let live: { url: string; image: ImageBitmap; done: number; total: number } | undefined
+  /** The prompt as typed but not yet saved, so a re-render while typing keeps it. */
+  let typing: string | undefined
+  /** Whether the "Add a reference" picker is open, kept across re-renders. */
+  let adding = false
+  /** References whose less common roles are showing. */
+  const moreRoles = new Set<string>()
   const undo: { label: string; draft: Draft }[] = []
   const redo: { label: string; draft: Draft }[] = []
   const bitmaps = new Map<string, Promise<ImageBitmap>>()
   const thumbs = new Map<string, Promise<string>>()
+  const thumbnail = (attachmentId: string): Promise<string> => {
+    if (!thumbs.has(attachmentId)) thumbs.set(attachmentId, api.picture(attachmentId).then((blob) => URL.createObjectURL(blob)))
+    return thumbs.get(attachmentId)!
+  }
 
   // ---- layout ----------------------------------------------------------------------------
+  // The bar keeps what acts on the whole draft — history, comparing, saving out — and puts
+  // the rare and the destructive behind a menu, so the picture is what the eye lands on.
   const bar = el('header', 'image-editor-bar')
+  const titles = el('div', 'image-editor-titles')
   const title = el('span', 'image-editor-version')
-  const undoButton = button('Undo', () => void step(undo, redo))
-  const redoButton = button('Redo', () => void step(redo, undo))
+  heading.textContent = 'Edit a picture'
+  titles.append(heading, title)
+  const undoButton = iconButton('↶', 'Undo', () => void step(undo, redo))
+  const redoButton = iconButton('↷', 'Redo', () => void step(redo, undo))
+  const history = el('div', 'image-editor-group')
+  history.append(undoButton, redoButton)
   const compareButton = button('Compare', () => {
     compareWith = compareWith === undefined ? (versions.find((v) => v.source.versionId !== draft.source.versionId)?.source.versionId) : undefined
-    if (compareWith === undefined && versions.length < 2) say('There is nothing to compare with yet.')
-    paint()
+    if (compareWith === undefined && versions.length < 2) say('There is nothing to compare with yet. Make a version first.')
+    compareButton.setAttribute('aria-pressed', String(compareWith !== undefined))
+    void paint()
   })
-  const exportButton = button('Export', () => exportDialog())
-  const forgetButton = button('Forget pictures', () => void forget())
-  const closeButton = button('Close', close)
-  heading.textContent = 'Edit a picture'
-  bar.append(heading, title, undoButton, redoButton, compareButton, exportButton, forgetButton, closeButton)
+  compareButton.setAttribute('aria-pressed', 'false')
+  const exportMenu = menu('Export', 'Export')
+  exportMenu.root.addEventListener('toggle', () => {
+    if (exportMenu.root.open) renderExport(exportMenu.panel)
+  })
+  const more = menu('⋯', 'More')
+  more.panel.append(menuItem('Forget this chat’s pictures…', () => void forget(), 'danger'))
+  const closeButton = iconButton('✕', 'Close', close)
+  const actions = el('div', 'image-editor-actions')
+  actions.append(history, compareButton, exportMenu.root, more.root, closeButton)
+  bar.append(titles, actions)
 
   const rail = el('nav', 'image-editor-rail')
   rail.setAttribute('aria-label', 'Editing tools')
@@ -185,16 +241,32 @@ function workspace(sheet: HTMLElement, api: EditorApi, first: Draft, close: () =
   canvas.setAttribute('role', 'img')
   canvas.setAttribute('aria-label', 'The picture being edited')
   canvas.tabIndex = 0
-  stage.append(canvas)
+  // While a version renders: ComfyUI's picture so far, and how far it has got.
+  const liveBadge = el('div', 'image-editor-live')
+  liveBadge.setAttribute('role', 'status')
+  liveBadge.hidden = true
+  stage.append(canvas, liveBadge)
   const side = el('aside', 'image-editor-side')
   const toolPanel = el('section', 'image-editor-panel')
   const genPanel = el('section', 'image-editor-generate')
-  side.append(toolPanel, genPanel)
+  const footer = el('div', 'image-editor-footer')
+  // What the picture computer is busy with — a model downloading, a render — read from its
+  // queue, so it shows even after the editor was closed and opened again.
+  const work = el('div', 'image-editor-work')
+  work.setAttribute('role', 'status')
+  work.hidden = true
+  const workWords = el('p', 'image-editor-work-words')
+  const workBar = el('progress')
+  workBar.setAttribute('aria-label', 'Progress on the picture computer')
+  const workMore = el('p', 'image-editor-hint')
+  work.append(workWords, workBar, workMore)
+  side.append(rail, toolPanel, genPanel, footer)
   const strip = el('div', 'image-editor-strip')
+  strip.setAttribute('role', 'group')
   strip.setAttribute('aria-label', 'Versions')
   const line = el('p', 'image-editor-line')
   line.setAttribute('role', 'status')
-  sheet.append(bar, rail, stage, side, strip, line)
+  sheet.append(bar, stage, side, strip, line)
 
   const say = (text: string): void => {
     message = text
@@ -203,29 +275,48 @@ function workspace(sheet: HTMLElement, api: EditorApi, first: Draft, close: () =
 
   // ---- drafts ------------------------------------------------------------------------------
   /** One user operation, saved with the revision it started from, and one undo entry. */
+  let savedDraft = first
+  let saveTail: Promise<void> = Promise.resolve()
+  let preparing = false
+  let savesPending = 0
+  let saveError: unknown
   async function commit(label: string, next: Draft): Promise<Draft> {
-    let saved = next
-    try {
-      if (next.revision <= draft.revision) {
-        saved = (await api.command({ type: 'save', draft: { ...next, revision: draft.revision }, expectedRevision: draft.revision })).draft ?? next
+    const before = draft
+    draft = next
+    savesPending += 1
+    saveError = undefined
+    const work = saveTail.then(async () => {
+      let saved = next
+      if (next.revision <= before.revision) {
+        saved = (await api.command({ type: 'save', draft: { ...next, revision: savedDraft.revision }, expectedRevision: savedDraft.revision })).draft ?? next
       }
+      savedDraft = saved
+      undo.push({ label, draft: before })
+      redo.length = 0
+      if (draft === next) draft = saved
+      else draft = { ...draft, revision: saved.revision }
+      return saved
+    })
+    saveTail = work.then(() => undefined, (error: unknown) => { saveError = error })
+    try {
+      return await work
     } catch (error) {
+      draft = savedDraft
       say(error instanceof Error ? error.message : String(error))
       throw error
+    } finally {
+      savesPending -= 1
+      if (savesPending === 0) refresh()
     }
-    undo.push({ label, draft })
-    redo.length = 0
-    draft = saved
-    refresh()
-    return saved
   }
   async function step(from: typeof undo, to: typeof undo): Promise<void> {
+    await saveTail
     const back = from.pop()
     if (!back) return
     try {
       const saved = (await api.command({ type: 'save', draft: { ...back.draft, revision: draft.revision }, expectedRevision: draft.revision })).draft
       to.push({ label: back.label, draft })
-      if (saved) draft = saved
+      if (saved) { draft = saved; savedDraft = saved }
       say(`${from === undo ? 'Undid' : 'Redid'}: ${back.label}`)
       refresh()
       paint()
@@ -257,6 +348,16 @@ function workspace(sheet: HTMLElement, api: EditorApi, first: Draft, close: () =
     const scale = window.devicePixelRatio || 1
     context.setTransform(scale, 0, 0, scale, 0, 0)
     context.clearRect(0, 0, view.stage.width, view.stage.height)
+    if (live) {
+      // The new picture as it forms, as large as the stage allows. It is the size of the
+      // version being made, not of this one, so it is fitted on its own.
+      const fitted = Math.min(view.stage.width / live.image.width, view.stage.height / live.image.height)
+      const w = live.image.width * fitted
+      const h = live.image.height * fitted
+      context.imageSmoothingQuality = 'high'
+      context.drawImage(live.image, (view.stage.width - w) / 2, (view.stage.height - h) / 2, w, h)
+      return
+    }
     const at = { x: view.pan.x, y: view.pan.y, w: draft.source.dimensions.width * view.zoom, h: draft.source.dimensions.height * view.zoom }
     checker(context, at)
     try {
@@ -377,6 +478,7 @@ function workspace(sheet: HTMLElement, api: EditorApi, first: Draft, close: () =
         const done = await api.command({ type: 'generate', draftId: draft.id, revision: draft.revision, invocationId: id() })
         if (done.draft) {
           draft = done.draft
+          savedDraft = done.draft
           bitmaps.delete(draft.source.versionId)
           view = fit(draft.source.dimensions, view.stage)
         }
@@ -402,41 +504,179 @@ function workspace(sheet: HTMLElement, api: EditorApi, first: Draft, close: () =
         void paint()
       })
       b.setAttribute('aria-pressed', String(tool === value))
+      b.dataset.focus = `tool-${value}`
       rail.append(b)
     }
+  }
+
+  // ---- pictures in: your photo and up to two references ----------------------------------
+  const rolesOf = (attachmentId: string): string[] => draft.referenceRoles?.find((r) => r.attachmentId === attachmentId)?.roles ?? []
+
+  /** Your photo, then each reference with what to take from it as chips, then a way to add one. */
+  function pictureInputs(): HTMLElement {
+    const box = section('Pictures')
+    box.querySelector('h3')!.append(el('span', 'image-editor-count', `${String(1 + draft.referenceIds.length)} of 3`))
+    const slots = el('div', 'image-editor-inputs')
+    slots.setAttribute('role', 'list')
+    slots.setAttribute('aria-label', 'Input pictures, maximum three')
+    slots.append(inputSlot(draft.source.attachmentId, 'Your photo').card)
+    for (const [index, attachmentId] of draft.referenceIds.entries()) {
+      const name = `Reference ${String(index + 1)}`
+      const { card, body } = inputSlot(attachmentId, name)
+      body.append(roleChips(attachmentId, name))
+      const remove = iconButton('✕', `Remove ${name.toLowerCase()}`, () => {
+        moreRoles.delete(attachmentId)
+        void commit('Remove reference', { ...draft, referenceIds: draft.referenceIds.filter((id) => id !== attachmentId), referenceRoles: (draft.referenceRoles ?? []).filter((r) => r.attachmentId !== attachmentId) }).catch(() => undefined)
+      })
+      remove.classList.add('image-editor-slot-remove')
+      card.append(remove)
+      slots.append(card)
+    }
+    box.append(slots)
+    if (draft.referenceIds.length < 2) box.append(addReference())
+    return box
+  }
+
+  function inputSlot(attachmentId: string, name: string): { card: HTMLElement; body: HTMLElement } {
+    const card = el('article', 'image-editor-input-slot')
+    card.setAttribute('role', 'listitem')
+    const img = el('img', 'image-editor-input-thumb')
+    img.alt = name
+    void thumbnail(attachmentId).then((url) => { img.src = url }).catch(() => undefined)
+    const body = el('div', 'image-editor-input-body')
+    body.append(el('strong', undefined, name))
+    if (attachmentId === draft.source.attachmentId) body.append(el('span', 'image-editor-hint', 'The picture that changes'))
+    card.append(img, body)
+    return { card, body }
+  }
+
+  /** What to take from a reference: the common roles as chips, the rest one press away. */
+  function roleChips(attachmentId: string, name: string): HTMLElement {
+    const selected = rolesOf(attachmentId)
+    const group = el('div', 'image-editor-roles')
+    group.setAttribute('role', 'group')
+    group.setAttribute('aria-label', `What to take from ${name.toLowerCase()}`)
+    const all = moreRoles.has(attachmentId) || MORE_ROLES.some(([role]) => selected.includes(role))
+    for (const [role, label] of all ? [...ROLE_CHIPS, ...MORE_ROLES] : ROLE_CHIPS) {
+      const chip = el('button', 'image-editor-chip', label)
+      chip.type = 'button'
+      chip.setAttribute('aria-pressed', String(selected.includes(role)))
+      chip.dataset.focus = `role-${attachmentId}-${role}`
+      chip.addEventListener('click', () => {
+        chip.setAttribute('aria-pressed', String(chip.getAttribute('aria-pressed') !== 'true'))
+        void toggleRole(attachmentId, role, label).catch(() => undefined)
+      })
+      group.append(chip)
+    }
+    if (!all) {
+      const extra = el('button', 'image-editor-chip image-editor-chip-more', 'More…')
+      extra.type = 'button'
+      extra.setAttribute('aria-label', `More things to take from ${name.toLowerCase()}`)
+      extra.addEventListener('click', () => {
+        moreRoles.add(attachmentId)
+        renderTool()
+        toolPanel.querySelector<HTMLElement>(`[data-focus="role-${attachmentId}-${MORE_ROLES[0]![0]}"]`)?.focus()
+      })
+      group.append(extra)
+    }
+    const wrap = el('div', 'image-editor-roles-wrap')
+    wrap.append(group)
+    if (selected.length === 0) wrap.append(el('p', 'image-editor-hint', 'Nothing chosen: your words decide what is taken from it.'))
+    return wrap
+  }
+
+  /** One picture per role: choosing a role here takes it off the other reference. */
+  function toggleRole(attachmentId: string, role: string, label: string): Promise<Draft> {
+    const on = !rolesOf(attachmentId).includes(role)
+    const referenceRoles = draft.referenceIds.map((id) => {
+      const roles = rolesOf(id).filter((r) => r !== role)
+      return { attachmentId: id, roles: on && id === attachmentId ? [...roles, role] : roles }
+    }).filter((r) => r.roles.length > 0)
+    return commit(`${on ? 'Take' : 'Stop taking'} ${label.toLowerCase()} from a reference`, { ...draft, referenceRoles })
+  }
+
+  /** Opens in place: upload one, or pick one of the pictures already in this chat. */
+  function addReference(): HTMLElement {
+    const add = el('details', 'image-editor-add')
+    add.open = adding
+    add.addEventListener('toggle', () => { adding = add.open })
+    const summary = el('summary', 'image-editor-add-summary')
+    summary.append(el('span', 'image-editor-add-plus', '+'), el('span', undefined, 'Add a reference'), el('span', 'image-editor-hint', 'pose, clothing, a character…'))
+    summary.dataset.focus = 'add-reference'
+    const body = el('div', 'image-editor-add-body')
+    const use = async (p: Picture): Promise<void> => {
+      if (draft.referenceIds.length >= 2 || draft.referenceIds.includes(p.id) || p.id === draft.source.attachmentId) return
+      adding = false
+      say('Reference added. Choose what to take from it.')
+      await commit('Add reference picture', { ...draft, referenceIds: [...draft.referenceIds, p.id] })
+    }
+    const upload = el('label', 'image-editor-slot-upload')
+    upload.append(el('span', undefined, 'Upload a picture…'))
+    const file = el('input')
+    file.type = 'file'
+    file.accept = 'image/png,image/jpeg,image/webp'
+    file.hidden = true
+    upload.tabIndex = 0
+    upload.setAttribute('role', 'button')
+    upload.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); file.click() }
+    })
+    file.addEventListener('change', () => {
+      const chosenFile = file.files?.[0]
+      if (!chosenFile) return
+      file.disabled = true
+      say('Adding the reference…')
+      void upright(chosenFile).then((png) => api.upload(chosenFile.name.replace(/\.[^.]+$/, '') + '.png', png)).then(async (p) => {
+        pictures.push(p)
+        await use(p)
+      }).catch((error: unknown) => { file.disabled = false; say(error instanceof Error ? error.message : String(error)) })
+    })
+    upload.append(file)
+    body.append(upload)
+    const existing = pictures.filter((p) => p.id !== draft.source.attachmentId && !draft.referenceIds.includes(p.id))
+    if (existing.length > 0) {
+      body.append(el('p', 'image-editor-hint', 'Or use one from this chat'))
+      const grid = el('div', 'image-editor-add-pick')
+      for (const p of existing) {
+        const pick = el('button', 'image-editor-pick')
+        pick.type = 'button'
+        pick.title = p.displayName
+        pick.setAttribute('aria-label', `Use ${p.displayName} as a reference`)
+        const img = el('img')
+        img.alt = ''
+        void thumbnail(p.id).then((url) => { img.src = url }).catch(() => undefined)
+        pick.append(img)
+        pick.addEventListener('click', () => {
+          void (p.mime === 'image/png' ? Promise.resolve(p) : api.picture(p.id).then(upright).then((png) => api.upload(p.displayName + '.png', png, p.id)))
+            .then(use).catch((error: unknown) => say(error instanceof Error ? error.message : String(error)))
+        })
+        grid.append(pick)
+      }
+      body.append(grid)
+    }
+    add.append(summary, body)
+    return add
   }
 
   function renderTool(): void {
     toolPanel.replaceChildren()
     if (tool === 'whole') {
+      toolPanel.append(pictureInputs())
       const words = el('textarea', 'image-editor-prompt')
       words.rows = 4
       words.maxLength = 8000
-      words.value = draft.instruction
-      words.placeholder = 'Describe the change — "warmer evening lighting", "make it winter"'
+      words.value = typing ?? draft.instruction
+      words.placeholder = draft.referenceIds.length > 0
+        ? 'For example: put me in the reference outfit, in the pose from reference 2, on a sunlit street.'
+        : 'For example: make it a sunny day, and change the jacket to red leather.'
       words.setAttribute('aria-label', 'What to change in the whole picture')
-      words.addEventListener('change', () => void commit('Change the description', { ...draft, instruction: words.value }))
-      toolPanel.append(labelled('Change', words))
-      // References: up to two other pictures of this conversation to take things from.
-      const others = pictures.filter((p) => p.id !== draft.source.attachmentId)
-      if (others.length > 0) {
-        const box = el('fieldset', 'image-editor-refs')
-        box.append(el('legend', undefined, 'Take things from (up to 2)'))
-        for (const p of others) {
-          const label = el('label', 'image-editor-check')
-          const input = el('input')
-          input.type = 'checkbox'
-          input.checked = draft.referenceIds.includes(p.id)
-          input.disabled = !input.checked && draft.referenceIds.length >= 2
-          input.addEventListener('change', () => {
-            const ids = input.checked ? [...draft.referenceIds, p.id] : draft.referenceIds.filter((x) => x !== p.id)
-            void commit('Change the reference pictures', { ...draft, referenceIds: ids }).then(renderTool)
-          })
-          label.append(input, document.createTextNode(` ${p.label.replace('_', ' ')} · ${p.displayName}`))
-          box.append(label)
-        }
-        toolPanel.append(box, el('p', 'image-editor-hint', 'Say in the description what to take from each — "the jacket from image 2". Keeping everything else exactly as it was is not guaranteed for a whole-picture change.'))
-      }
+      words.dataset.focus = 'prompt'
+      words.addEventListener('input', () => { typing = words.value })
+      words.addEventListener('change', () => {
+        typing = undefined
+        void commit('Change the description', { ...draft, instruction: words.value })
+      })
+      toolPanel.append(section('Describe the result', words))
     } else if (tool === 'point' || tool === 'remove') {
       if (draft.instruction.trim() !== '') {
         toolPanel.append(el('p', 'image-editor-hint', 'There is also a whole-picture change in this draft. Make that first, check the result, then place notes on it.'))
@@ -473,6 +713,7 @@ function workspace(sheet: HTMLElement, api: EditorApi, first: Draft, close: () =
 
   function renderGenerate(): void {
     genPanel.replaceChildren()
+    footer.replaceChildren(work)
     if (tool === 'crop') return
     if (question !== undefined) {
       const box = el('div', 'image-editor-question')
@@ -482,8 +723,10 @@ function workspace(sheet: HTMLElement, api: EditorApi, first: Draft, close: () =
       box.append(el('p', undefined, question), answer, send)
       genPanel.append(box)
     }
+    const model = section('Model')
     const pick = el('select')
-    pick.append(Object.assign(el('option', undefined, profiles.length === 0 ? 'No editing models yet' : 'Choose a model…'), { value: '' }))
+    pick.dataset.focus = 'model'
+    pick.append(Object.assign(el('option', undefined, loading ? 'Loading models…' : profiles.length === 0 ? 'No editing models yet' : 'Choose a model…'), { value: '' }))
     for (const p of profiles) {
       const named = `${p.name}${p.uncensored ? ' (uncensored)' : ''}`
       const option = el('option', undefined, p.availability === 'available' ? named : `${named} — ${p.reason ?? 'not available'}`)
@@ -498,18 +741,38 @@ function workspace(sheet: HTMLElement, api: EditorApi, first: Draft, close: () =
       const sized = found && !found.dimensions.some((d) => d.width === draft.settings.dimensions.width && d.height === draft.settings.dimensions.height)
       void api.call('select_profile', { profile })
       void commit('Choose a model', { ...draft, profile }).then(() => {
-        if (sized) say(`${found.name} makes ${found.dimensions.map((d) => `${String(d.width)}×${String(d.height)}`).join(', ')}. Choose a size below.`)
+        if (sized) say(`${found.name} makes ${found.dimensions.map((d) => `${String(d.width)}×${String(d.height)}`).join(', ')}. Choose a size.`)
       })
     })
-    genPanel.append(labelled('Model', pick))
+    pick.setAttribute('aria-label', 'Model')
+    model.append(pick)
+    genPanel.append(model)
     const profile = chosen()
     if (profile) {
-      const about = el('p', 'image-editor-hint',
-        `Version ${profile.selection.version} · ${profile.operations.map((o) => o.replace('_', ' ')).join(', ')} · up to ${String(profile.maxInputs)} pictures` +
-        `${profile.measuredMemory ? ` · needs about ${(profile.measuredMemory.gpuBytes / 1e9).toFixed(1)} GB of graphics memory` : ''}` +
-        ` · renders on ${profile.destination.kind === 'paired' ? profile.destination.displayName : 'the computer chosen for pictures'}`)
-      genPanel.append(about)
+      model.append(el('p', 'image-editor-hint',
+        `Up to ${String(profile.maxInputs)} pictures` +
+        `${profile.measuredMemory ? ` · about ${(profile.measuredMemory.gpuBytes / 1e9).toFixed(1)} GB of graphics memory` : ''}` +
+        ` · runs on ${profile.destination.kind === 'paired' ? profile.destination.displayName : 'the computer chosen for pictures'}`))
+      if (profile.availability === 'needs_installation' || profile.availability === 'incompatible') {
+        const install = button('Install this model on the picture computer', () => {
+          install.disabled = true
+          install.textContent = 'Installing… keep Alexia open'
+          say('Downloading the editing model to the picture computer. It is tens of gigabytes, so this can take a long time; if it stops, pressing Install again carries on where it left off.')
+          void api.call<{ profiles: Profile[] }>('install_profile', { profile: profile.selection }).then((result) => {
+            profiles = result.profiles
+            say('Editing model installed.')
+            refresh()
+          }).catch((error: unknown) => { install.disabled = false; say(error instanceof Error ? error.message : String(error)) })
+        })
+        model.append(install)
+      }
+      const output = section('Output')
+      const row = el('div', 'image-editor-row')
       const sizes = el('select')
+      sizes.dataset.focus = 'size'
+      if (!profile.dimensions.some((d) => d.width === draft.settings.dimensions.width && d.height === draft.settings.dimensions.height)) {
+        sizes.append(Object.assign(el('option', undefined, 'Choose…'), { value: '', selected: true, disabled: true }))
+      }
       for (const d of profile.dimensions) {
         const option = el('option', undefined, `${String(d.width)} × ${String(d.height)}`)
         option.value = `${String(d.width)}x${String(d.height)}`
@@ -520,9 +783,10 @@ function workspace(sheet: HTMLElement, api: EditorApi, first: Draft, close: () =
         const [w, h] = sizes.value.split('x').map(Number)
         void commit('Change the size', { ...draft, settings: { ...draft.settings, dimensions: { width: w!, height: h! } } })
       })
-      genPanel.append(labelled('Size', sizes))
+      row.append(labelled('Size', sizes))
       if (profile.controls.presets.length > 0) {
         const preset = el('select')
+        preset.dataset.focus = 'preset'
         for (const p of ['', ...profile.controls.presets]) {
           const option = el('option', undefined, p === '' ? 'Standard' : p)
           option.value = p
@@ -530,8 +794,10 @@ function workspace(sheet: HTMLElement, api: EditorApi, first: Draft, close: () =
           preset.append(option)
         }
         preset.addEventListener('change', () => void commit('Change the quality', { ...draft, settings: { ...draft.settings, preset: preset.value || null } }))
-        genPanel.append(labelled('Quality', preset))
+        row.append(labelled('Quality', preset))
       }
+      output.append(row)
+      output.append(versionCount())
       const advanced = el('details', 'image-editor-advanced')
       advanced.append(el('summary', undefined, 'Advanced'))
       const seed = el('input')
@@ -548,7 +814,8 @@ function workspace(sheet: HTMLElement, api: EditorApi, first: Draft, close: () =
         }
         void commit('Change the seed', { ...draft, settings: { ...draft.settings, seed: v } })
       })
-      advanced.append(labelled('Seed', seed))
+      const tuning = el('div', 'image-editor-row')
+      tuning.append(labelled('Seed', seed))
       if (profile.controls.steps) {
         const steps = el('input')
         steps.type = 'number'
@@ -556,53 +823,71 @@ function workspace(sheet: HTMLElement, api: EditorApi, first: Draft, close: () =
         steps.max = String(profile.controls.steps.max)
         steps.value = String(draft.settings.steps ?? profile.controls.steps.default)
         steps.addEventListener('change', () => void commit('Change the steps', { ...draft, settings: { ...draft.settings, steps: Math.trunc(Number(steps.value)) } }))
-        advanced.append(labelled('Steps', steps))
+        tuning.append(labelled('Steps', steps))
       }
-      genPanel.append(advanced)
+      advanced.append(tuning)
+      output.append(advanced)
+      genPanel.append(output)
     }
-    const count = el('div', 'image-editor-segmented')
-    count.setAttribute('role', 'radiogroup')
-    count.setAttribute('aria-label', 'Versions')
-    for (const n of [1, 2, 4] as const) {
-      const b = button(String(n), () => void commit('Change how many versions', { ...draft, variantCount: n }))
-      b.setAttribute('role', 'radio')
-      b.setAttribute('aria-checked', String(draft.variantCount === n))
-      count.append(b)
-    }
-    genPanel.append(labelled('Versions', count))
 
+    // The footer stays at the bottom of the panel: what will happen, why not yet, and the button.
     const why = blocked()
     const notes = draft.regions.filter((r) => r.enabled).length
     const passes = tool === 'whole' ? draft.variantCount : draft.variantCount * Math.max(1, notes)
-    genPanel.append(el('p', 'image-editor-summary',
-      `From ${versionName(draft.source.versionId)} (${String(draft.source.dimensions.width)}×${String(draft.source.dimensions.height)})` +
-      ` · ${tool === 'whole' ? 'whole picture' : `${String(notes)} ${notes === 1 ? 'note' : 'notes'}`}` +
-      ` · ${chosen()?.name ?? 'no model'} · ${String(draft.settings.dimensions.width)}×${String(draft.settings.dimensions.height)}` +
-      ` · ${String(draft.variantCount)} ${draft.variantCount === 1 ? 'version' : 'versions'}${passes !== draft.variantCount ? ` (${String(passes)} passes)` : ''}`))
+    if (why !== undefined) footer.append(el('p', 'image-editor-why', why))
+    else {
+      footer.append(el('p', 'image-editor-summary',
+        `${tool === 'whole' ? `${String(1 + draft.referenceIds.length)} ${draft.referenceIds.length === 0 ? 'picture' : 'pictures'} in` : `${String(notes)} ${notes === 1 ? 'note' : 'notes'}`}` +
+        ` · ${String(draft.settings.dimensions.width)}×${String(draft.settings.dimensions.height)}` +
+        `${passes !== draft.variantCount ? ` · ${String(passes)} passes` : ''}`))
+    }
     const go = el('button', 'primary-button', draft.variantCount === 1 ? 'Generate' : `Generate ${String(draft.variantCount)} versions`)
     go.type = 'button'
-    go.disabled = why !== undefined || batch?.state === 'active'
+    go.disabled = preparing || why !== undefined || batch?.state === 'active'
     go.addEventListener('click', () => void generate())
-    genPanel.append(go)
-    if (why !== undefined) genPanel.append(el('p', 'image-editor-why', why))
+    footer.append(go)
     if (batch?.state === 'active') {
-      genPanel.append(button('Cancel the rest', () => void api.command({ type: 'cancel_remaining', batchId: batch!.id }).then((r) => {
+      footer.append(button('Cancel the rest', () => void api.command({ type: 'cancel_remaining', batchId: batch!.id }).then((r) => {
         if (r.batch) batch = r.batch
         refresh()
       })))
     }
     if (batch && batch.state !== 'active') {
-      genPanel.append(button('Make more', () => void api.command({ type: 'make_more', batchId: batch!.id, variantCount: draft.variantCount, invocationId: id() })
+      footer.append(button('Make more like these', () => void api.command({ type: 'make_more', batchId: batch!.id, variantCount: draft.variantCount, invocationId: id() })
         .then((r) => start(r)).catch((e: unknown) => say(e instanceof Error ? e.message : String(e)))))
     }
   }
 
+  function versionCount(): HTMLElement {
+    const count = el('div', 'image-editor-segmented')
+    count.setAttribute('role', 'radiogroup')
+    count.setAttribute('aria-label', 'How many versions')
+    for (const n of [1, 2, 4] as const) {
+      const b = button(String(n), () => void commit('Change how many versions', { ...draft, variantCount: n }))
+      b.setAttribute('role', 'radio')
+      b.setAttribute('aria-checked', String(draft.variantCount === n))
+      b.dataset.focus = `count-${String(n)}`
+      count.append(b)
+    }
+    const field = el('div', 'image-editor-field')
+    field.append(el('span', undefined, 'Versions'), count)
+    return field
+  }
+
   async function generate(): Promise<void> {
+    if (preparing || batch?.state === 'active') return
+    preparing = true
+    renderGenerate()
     try {
+      await saveTail
+      if (saveError) throw saveError
       say('Getting ready…')
       start(await api.command({ type: 'generate', draftId: draft.id, revision: draft.revision, invocationId: id() }))
     } catch (error) {
       say(error instanceof EditorError ? `${error.message}` : String(error))
+    } finally {
+      preparing = false
+      renderGenerate()
     }
   }
   async function clarify(answer: string): Promise<void> {
@@ -629,9 +914,32 @@ function workspace(sheet: HTMLElement, api: EditorApi, first: Draft, close: () =
     refresh()
   }
   /** Following a batch by its events, and by reading it whole after any gap. */
+  /** The newest preview, if it is new: decoded once, then drawn until the next replaces it. */
+  async function watchPreview(): Promise<void> {
+    const { preview } = await api.call<{ preview: { candidateId: string | null; preview: string; done: number; total: number } | null }>('preview')
+    if (!preview) {
+      if (live) showLive(undefined)
+      return
+    }
+    if (preview.preview === live?.url) return
+    const img = new Image()
+    img.src = preview.preview
+    await img.decode()
+    showLive({ url: preview.preview, image: await createImageBitmap(img), done: preview.done, total: preview.total })
+  }
+  function showLive(next: typeof live): void {
+    live?.image.close()
+    live = next
+    liveBadge.hidden = !next
+    if (next) liveBadge.textContent = next.total > 0 && next.total <= 10_000 ? `Live preview · step ${String(next.done)} of ${String(next.total)}` : 'Live preview'
+    void paint()
+  }
+
   async function follow(): Promise<void> {
     while (batch?.state === 'active') {
       await new Promise((resolve) => setTimeout(resolve, 1000))
+      // A preview that cannot be read is not worth stopping the follow for.
+      await watchPreview().catch(() => undefined)
       try {
         const { events } = await api.call<{ events: EditorEvent[] }>('events', { after: sequence })
         const gap = events.length > 0 && events[0]!.sequence !== sequence + 1 && sequence !== -1
@@ -646,6 +954,7 @@ function workspace(sheet: HTMLElement, api: EditorApi, first: Draft, close: () =
         return
       }
     }
+    showLive(undefined)
     if (batch) {
       const done = batch.candidates.filter((c) => c.state === 'completed').length
       say(done === batch.variantCount ? 'Done.' : `${String(done)} of ${String(batch.variantCount)} made. ${reasonText(batch.candidates.find((c) => c.state !== 'completed')?.reason)}`)
@@ -670,41 +979,53 @@ function workspace(sheet: HTMLElement, api: EditorApi, first: Draft, close: () =
   }
   function renderStrip(): void {
     strip.replaceChildren()
+    // Only the original and nothing being made: there is nothing to choose between yet.
+    strip.hidden = versions.length < 2 && !batch
+    if (strip.hidden) return
+    strip.append(el('span', 'image-editor-strip-label', 'Versions'))
     for (const v of versions) {
+      const name = versionName(v.source.versionId)
+      const current = v.source.versionId === draft.source.versionId
       const card = el('div', 'image-editor-card')
-      if (v.source.versionId === draft.source.versionId) card.classList.add('selected')
+      card.classList.toggle('selected', current)
+      card.classList.toggle('compared', v.source.versionId === compareWith)
       const show = el('button', 'image-editor-thumb')
       show.type = 'button'
-      show.setAttribute('aria-label', `Show ${versionName(v.source.versionId)}`)
+      show.setAttribute('aria-label', current ? `${name}, being edited` : `Compare with ${name}`)
       const img = el('img')
       img.alt = ''
       void thumb(v).then((url) => (img.src = url))
-      show.append(img, el('span', undefined, versionName(v.source.versionId)))
+      show.append(img, el('span', undefined, current ? `${name} · editing` : name))
       show.addEventListener('click', () => {
-        compareWith = v.source.versionId === draft.source.versionId ? undefined : v.source.versionId
+        compareWith = current || compareWith === v.source.versionId ? undefined : v.source.versionId
+        compareButton.setAttribute('aria-pressed', String(compareWith !== undefined))
+        renderStrip()
         void paint()
       })
-      const star = button(v.favorite ? '★' : '☆', () => void api.command({ type: 'favorite', versionId: v.source.versionId, favorite: !v.favorite }).then(loadVersions).then(refresh))
-      star.setAttribute('aria-label', v.favorite ? 'Unmark favourite' : 'Mark favourite')
-      const edit = button('Edit this version', () => void api.command({ type: 'edit_version', draftId: draft.id, revision: draft.revision, versionId: v.source.versionId }).then((r) => {
-        if (r.draft) {
-          undo.push({ label: 'Edit another version', draft })
-          draft = r.draft
-          view = fit(draft.source.dimensions, view.stage)
-          compareWith = undefined
-          refresh()
-          void paint()
-        }
-      }).catch((e: unknown) => say(e instanceof Error ? e.message : String(e))))
-      edit.disabled = v.source.versionId === draft.source.versionId
-      card.append(show, star, edit)
-      if (v.source.origin !== 'original') {
-        const remove = button('Remove', () => {
-          if (!window.confirm(`Remove ${versionName(v.source.versionId)} from the history? The original and the other versions stay.`)) return
-          void api.call('command', { command: { type: 'remove_version', versionId: v.source.versionId }, action: 'remove_version', confirm: true }).then(loadVersions).then(refresh)
-        })
-        card.append(remove)
+      const tools = el('div', 'image-editor-card-actions')
+      const star = iconButton(v.favorite ? '★' : '☆', v.favorite ? `Unmark ${name} as favourite` : `Mark ${name} as favourite`, () => void api.command({ type: 'favorite', versionId: v.source.versionId, favorite: !v.favorite }).then(loadVersions).then(refresh))
+      star.classList.toggle('on', v.favorite)
+      tools.append(star)
+      if (!current) {
+        tools.append(iconButton('✎', `Edit ${name}`, () => void api.command({ type: 'edit_version', draftId: draft.id, revision: draft.revision, versionId: v.source.versionId }).then((r) => {
+          if (r.draft) {
+            undo.push({ label: 'Edit another version', draft })
+            draft = r.draft
+            savedDraft = r.draft
+            view = fit(draft.source.dimensions, view.stage)
+            compareWith = undefined
+            refresh()
+            void paint()
+          }
+        }).catch((e: unknown) => say(e instanceof Error ? e.message : String(e)))))
       }
+      if (v.source.origin !== 'original') {
+        tools.append(iconButton('🗑', `Remove ${name}`, () => {
+          if (!window.confirm(`Remove ${name} from the history? The original and the other versions stay.`)) return
+          void api.call('command', { command: { type: 'remove_version', versionId: v.source.versionId }, action: 'remove_version', confirm: true }).then(loadVersions).then(refresh)
+        }))
+      }
+      card.append(show, tools)
       strip.append(card)
     }
     // The batch being made: one placeholder per slot until its version is published.
@@ -721,36 +1042,39 @@ function workspace(sheet: HTMLElement, api: EditorApi, first: Draft, close: () =
   }
 
   // ---- export & forget ---------------------------------------------------------------------
-  function exportDialog(): void {
-    const box = el('div', 'image-editor-export')
-    box.setAttribute('role', 'group')
-    box.setAttribute('aria-label', 'Export')
+  /** The Export menu's contents, built as it opens so it counts the favourites as they are now. */
+  function renderExport(panel: HTMLElement): void {
+    panel.replaceChildren()
     const format = el('select')
     for (const [value, label] of [['png', 'PNG — exact, keeps transparency'], ['jpeg', 'JPEG — smaller'], ['webp', 'WebP']] as const) {
       const option = el('option', undefined, label)
       option.value = value
       format.append(option)
     }
+    const fill = el('div', 'image-editor-row image-editor-fill')
     const colour = el('input')
     colour.type = 'color'
     colour.value = '#ffffff'
+    colour.setAttribute('aria-label', 'Fill colour')
     const useColour = el('label', 'image-editor-check')
     const flag = el('input')
     flag.type = 'checkbox'
-    useColour.append(flag, document.createTextNode(' Fill transparent areas with this colour'))
+    useColour.append(flag, document.createTextNode(' Fill transparent areas'))
+    fill.append(useColour, colour)
     const which = versions.filter((v) => v.favorite)
-    const go = button(which.length > 0 ? `Save ${String(which.length)} favourite${which.length === 1 ? '' : 's'}` : 'Save the version shown', () => {
+    const go = el('button', 'primary-button', which.length > 0 ? `Save ${String(which.length)} favourite${which.length === 1 ? '' : 's'}` : 'Save the version shown')
+    go.type = 'button'
+    go.addEventListener('click', () => {
       const chosenVersions = which.length > 0 ? which : versions.filter((v) => v.source.versionId === (compareWith ?? draft.source.versionId))
       void exportVersions(api, chosenVersions, format.value as 'png' | 'jpeg' | 'webp', flag.checked ? colour.value : null)
         .then(() => {
           say('Saved.')
-          box.remove()
+          exportMenu.root.open = false
         })
         .catch((e: unknown) => say(e instanceof Error ? e.message : String(e)))
     })
-    const cancel = button('Cancel', () => box.remove())
-    box.append(labelled('Format', format), colour, useColour, go, cancel)
-    side.prepend(box)
+    panel.append(labelled('Format', format), fill, go)
+    if (which.length === 0) panel.append(el('p', 'image-editor-hint', 'Star versions in the strip to save several at once.'))
     format.focus()
   }
   async function forget(): Promise<void> {
@@ -768,24 +1092,67 @@ function workspace(sheet: HTMLElement, api: EditorApi, first: Draft, close: () =
   }
 
   function refresh(): void {
+    // Re-rendering replaces the controls; whoever had one focused gets its replacement back.
+    const focused = (document.activeElement as HTMLElement | null)?.dataset?.focus
     title.textContent = `${versionName(draft.source.versionId)} · ${String(draft.source.dimensions.width)}×${String(draft.source.dimensions.height)}`
     undoButton.disabled = undo.length === 0
     redoButton.disabled = redo.length === 0
+    compareButton.setAttribute('aria-pressed', String(compareWith !== undefined))
     renderRail()
     renderTool()
     renderGenerate()
     renderStrip()
     if (message) line.textContent = message
+    if (focused) side.querySelector<HTMLElement>(`[data-focus="${CSS.escape(focused)}"]`)?.focus()
   }
 
+  // ---- the picture computer's work ---------------------------------------------------------
+  let last: Work | undefined
+  async function watchWork(): Promise<void> {
+    while (sheet.isConnected) {
+      const now = await api.work()
+      if (!sheet.isConnected) return
+      showWork(now)
+      // A job that said what it was doing just ended — a download, most likely — so the models
+      // may have changed. The models check says nothing, so asking again does not loop.
+      if (last?.message !== undefined && !now) void api.call<{ profiles: Profile[] }>('profiles').then((r) => { profiles = r.profiles; refresh() }).catch(() => undefined)
+      last = now
+      await new Promise((resolve) => setTimeout(resolve, now ? 1500 : 5000))
+    }
+  }
+  function showWork(now: Work | undefined): void {
+    work.hidden = now === undefined
+    if (!now) return
+    const [file, words] = splitMessage(now.message)
+    const what = JOB_NAMES[now.label] ?? (now.label || 'a job')
+    const since = now.startedAt !== undefined ? ` · for ${duration(Date.now() - now.startedAt)}` : ''
+    workWords.replaceChildren(el('strong', undefined, words ?? `The picture computer is busy with ${what}`))
+    workWords.append(el('span', 'image-editor-work-file', file ? `${file}${since}` : words ? `${what}${since}` : `It has not said how far along it is${since}.`))
+    if (now.total !== undefined && now.total > 0) {
+      workBar.max = now.total
+      workBar.value = Math.min(now.done, now.total)
+    } else workBar.removeAttribute('value')
+    const pace = rate.see(now)
+    const percent = now.total ? `${String(Math.floor((now.done / now.total) * 100))}%` : ''
+    const parts = [percent, pace, now.waiting > 0 ? `${String(now.waiting)} more waiting after this` : ''].filter((one) => one !== '')
+    workMore.textContent = parts.length > 0 ? parts.join(' · ') : 'Other picture work waits until this is done'
+  }
+  const rate = pacer()
+
+  // Draw at once from the draft alone, and fill in models, versions and pictures as they arrive:
+  // a slow picture computer should not leave the editor empty.
+  sizeStage()
+  view = fit(draft.source.dimensions, view.stage)
+  refresh()
+  void paint()
+  void watchWork()
   void Promise.all([
-    api.call<{ profiles: Profile[] }>('profiles').then((r) => (profiles = r.profiles)),
-    loadVersions(),
-    api.call<{ pictures: Picture[] }>('pictures').then((r) => (pictures = r.pictures)),
-    api.call<{ pending: { question: string } | null }>('pending', { draftId: draft.id }).then((r) => (question = r.pending?.question)),
+    api.call<{ profiles: Profile[] }>('profiles').then((r) => (profiles = r.profiles)).finally(() => { loading = false; refresh() }),
+    loadVersions().then(refresh),
+    api.call<{ pictures: Picture[] }>('pictures').then((r) => { pictures = r.pictures; refresh() }),
+    api.call<{ pending: { question: string } | null }>('pending', { draftId: draft.id }).then((r) => { question = r.pending?.question; refresh() }),
   ]).catch((error: unknown) => say(error instanceof Error ? error.message : String(error))).finally(() => {
     sizeStage()
-    view = fit(draft.source.dimensions, view.stage)
     refresh()
     void paint()
   })
@@ -817,6 +1184,100 @@ function checker(context: CanvasRenderingContext2D, at: { x: number; y: number; 
     for (let x = Math.floor(at.x / size) * size + ((y / size) % 2 === 0 ? 0 : size); x < at.x + at.w; x += size * 2) context.fillRect(x, y, size, size)
   }
   context.restore()
+}
+
+/**
+ * **How fast, and how long is left**, from the progress a job reports: bytes for a download,
+ * steps for a render. Measured over the last half minute so one slow chunk does not swing it;
+ * a new job, or a count that goes back (the next file), starts the measuring again.
+ */
+export function pacer(now: () => number = Date.now): { see(work: Work): string } {
+  let id = ''
+  let samples: { at: number; done: number }[] = []
+  return {
+    see(work) {
+      const last = samples.at(-1)
+      if (work.id !== id || (last !== undefined && work.done < last.done)) {
+        id = work.id
+        samples = []
+      }
+      const at = now()
+      samples.push({ at, done: work.done })
+      // The window, plus the newest reading just outside it: there is always a start to measure from.
+      const outside = samples.findLastIndex((one) => at - one.at > 30_000)
+      if (outside > 0) samples = samples.slice(outside)
+      const first = samples[0]!
+      const seconds = (at - first.at) / 1000
+      const moved = work.done - first.done
+      const steps = work.total !== undefined && work.total > 0 && work.total <= 10_000
+      const where = steps ? `step ${String(work.done)} of ${String(work.total)} · ` : ''
+      if (!work.total) return ''
+      if (seconds < 2) return `${where}measuring the speed…`
+      if (moved <= 0) return seconds >= 25 ? `${where}nothing has moved for ${String(Math.round(seconds))} s` : `${where}measuring the speed…`
+      const perSecond = moved / seconds
+      const left = (work.total - work.done) / perSecond
+      const remaining = left < 60 ? `about ${String(Math.max(1, Math.round(left)))} s left` : `about ${duration(left * 1000)} left`
+      // Small totals are steps; large ones are bytes.
+      if (steps) return `${where}${(seconds / moved).toFixed(1)} s per step · ${remaining}`
+      return `${perSecond >= 1e6 ? `${(perSecond / 1e6).toFixed(1)} MB/s` : `${Math.round(perSecond / 1e3).toString()} kB/s`} · ${remaining}`
+    },
+  }
+}
+
+/** Plain names for the jobs a picture computer runs, by capability. */
+const JOB_NAMES: Record<string, string> = { 'image.edit': 'picture editing', 'image.generate': 'making a picture' }
+
+/** 75 000 → "1 min"; 4 000 000 → "1 h 6 min". */
+export function duration(ms: number): string {
+  const minutes = Math.max(0, Math.floor(ms / 60_000))
+  if (minutes < 1) return 'under a minute'
+  return minutes < 60 ? `${String(minutes)} min` : `${String(Math.floor(minutes / 60))} h ${String(minutes % 60)} min`
+}
+
+/** "file.safetensors: Downloading the model — 3 GB of 20 GB" → the file, and the words. */
+export function splitMessage(message: string | undefined): [string | undefined, string | undefined] {
+  if (!message) return [undefined, undefined]
+  const at = message.indexOf(': ')
+  if (at > 0 && /\.[a-z0-9]{2,12}$/i.test(message.slice(0, at))) return [message.slice(0, at), message.slice(at + 2)]
+  return [undefined, message]
+}
+
+/** A small square button whose meaning is in its name, not its glyph. */
+function iconButton(glyph: string, name: string, press: () => void): HTMLButtonElement {
+  const b = button(glyph, press)
+  b.classList.add('image-editor-icon')
+  b.setAttribute('aria-label', name)
+  b.title = name
+  return b
+}
+
+/** A dropdown: a summary that opens a floating panel. Escape or a press outside closes it. */
+function menu(label: string, name: string): { root: HTMLDetailsElement; panel: HTMLElement } {
+  const root = el('details', 'image-editor-menu')
+  const summary = el('summary', 'quiet-button', label)
+  summary.setAttribute('aria-label', name)
+  summary.title = name
+  const panel = el('div', 'image-editor-menu-panel')
+  root.append(summary, panel)
+  return { root, panel }
+}
+
+function menuItem(label: string, press: () => void, tone?: 'danger'): HTMLButtonElement {
+  const b = el('button', `image-editor-menu-item${tone ? ` ${tone}` : ''}`, label)
+  b.type = 'button'
+  b.addEventListener('click', () => {
+    const owner = b.closest('details')
+    if (owner) owner.open = false
+    press()
+  })
+  return b
+}
+
+/** A titled group in the side panel. */
+function section(heading: string, ...children: HTMLElement[]): HTMLElement {
+  const box = el('section', 'image-editor-section')
+  box.append(el('h3', undefined, heading), ...children)
+  return box
 }
 
 function button(label: string, press: () => void): HTMLButtonElement {

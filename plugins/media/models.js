@@ -47,7 +47,7 @@ export async function have(to) {
  * ComfyUI**. When the catalogue does not know the size, the server's own `content-length` is used
  * and the check still happens.
  */
-export async function fetchModel(url, to, { expect, sha256, signal, onProgress } = {}) {
+export async function fetchModel(url, to, { expect, sha256, signal, onProgress, stallMs = STALL_MS, attempts = ATTEMPTS } = {}) {
   const there = await have(to)
   if (there.done > 0) {
     // **A file with the right name is not the right file.** Where the catalogue knows the hash,
@@ -57,12 +57,57 @@ export async function fetchModel(url, to, { expect, sha256, signal, onProgress }
     await rename(to, `${to}.mismatch`)
   }
 
-  const from = there.part
-  const response = await fetch(url, {
-    signal,
-    headers: from > 0 ? { range: `bytes=${from}-` } : {},
-  })
-  if (!response.ok) throw new Error(`could not download the model: ${response.status} ${response.statusText}`)
+  // **A connection that goes quiet is dropped and picked up again**, from the `.part`, a few
+  // times. Without this a stalled socket — one that neither sends nor closes — waits forever
+  // and the download looks alive when nothing is arriving. A refusal (a 4xx, a wrong file)
+  // is not a stall and is not retried.
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await fetchOnce(url, to, { expect, sha256, signal, onProgress, stallMs })
+    } catch (error) {
+      if (signal?.aborted || !error?.resumable || attempt >= attempts) {
+        if (error?.resumable) throw new Error(`${error.message} Ask again and it will carry on from there.`, { cause: error })
+        throw error
+      }
+      onProgress?.((await have(to)).part, Number(expect) || 0, `The connection went quiet — picking the download up again (try ${attempt + 1} of ${attempts})`)
+    }
+  }
+}
+
+/** How long a download may go without a byte before it is called stalled. */
+export const STALL_MS = 60_000
+const ATTEMPTS = 5
+const resumable = (message, cause) => Object.assign(new Error(message, cause ? { cause } : undefined), { resumable: true })
+
+async function fetchOnce(url, to, { expect, sha256, signal, onProgress, stallMs }) {
+  const from = (await have(to)).part
+  // Our own abort, for a stall, joined with the caller's.
+  const quiet = new AbortController()
+  const both = signal ? AbortSignal.any([signal, quiet.signal]) : quiet.signal
+  let timer
+  const wait = () => {
+    clearTimeout(timer)
+    timer = setTimeout(() => quiet.abort(), stallMs)
+    timer.unref?.()
+  }
+  wait()
+  let response
+  try {
+    response = await fetch(url, {
+      signal: both,
+      headers: from > 0 ? { range: `bytes=${from}-` } : {},
+    })
+  } catch (error) {
+    clearTimeout(timer)
+    if (signal?.aborted) throw error
+    throw resumable(quiet.signal.aborted ? 'the download stalled before it started.' : `could not reach the download: ${error?.message ?? error}.`, error)
+  }
+  if (!response.ok) {
+    clearTimeout(timer)
+    const said = `could not download the model: ${response.status} ${response.statusText}`
+    // The server's own trouble passes; a refusal does not.
+    throw response.status >= 500 ? resumable(`${said}.`) : new Error(said)
+  }
   // A server that ignores `Range` answers 200 with the whole file, and appending to a partial
   // one would produce a file that is too long and quietly wrong. Start again instead.
   const resuming = from > 0 && response.status === 206
@@ -76,6 +121,7 @@ export async function fetchModel(url, to, { expect, sha256, signal, onProgress }
       // Pass it on first. A transform that counts and forgets to enqueue writes an empty file
       // and reports every byte as having arrived, which is the worst possible pair.
       controller.enqueue(chunk)
+      wait()
       got += chunk.length
       // Once a second at most. A progress event per 16 KB chunk of seven gigabytes is half a
       // million messages nobody reads and a bar that cannot keep up.
@@ -87,15 +133,22 @@ export async function fetchModel(url, to, { expect, sha256, signal, onProgress }
     },
   })
 
-  await pipeline(
-    Readable.fromWeb(response.body.pipeThrough(counting)),
-    createWriteStream(`${to}.part`, { flags: resuming ? 'a' : 'w' }),
-    { signal },
-  )
+  try {
+    await pipeline(
+      Readable.fromWeb(response.body.pipeThrough(counting)),
+      createWriteStream(`${to}.part`, { flags: resuming ? 'a' : 'w' }),
+      { signal: both },
+    )
+  } catch (error) {
+    if (signal?.aborted) throw error
+    throw resumable(quiet.signal.aborted ? `the download stalled at ${gb(got)} of ${gb(total)}.` : `the connection dropped at ${gb(got)} of ${gb(total)}.`, error)
+  } finally {
+    clearTimeout(timer)
+  }
 
   if (total > 0 && got !== total) {
     // Deliberately not renamed. The `.part` stays so the next attempt can resume it.
-    throw new Error(`the download ended early — ${gb(got)} of ${gb(total)}. Ask again and it will carry on from there.`)
+    throw resumable(`the download ended early — ${gb(got)} of ${gb(total)}.`)
   }
   // The whole file, resumed part included: a range that joined two different versions of a
   // model is the right length and the wrong bytes, and is not a checkpoint to resume from.

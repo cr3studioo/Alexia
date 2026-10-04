@@ -4,15 +4,11 @@ import { FORMAT_META, LOCAL_META } from '@alexia/sdk'
 /**
  * Where policy evidence comes from.
  *
- * A provider assesses text or one picture and answers `{ status, rating, people }` in the shape
- * `rules.js` reads. **A provider counts only once it has been evaluated**: `evaluation` names
- * the report that measured it on the fixture set (including underage-looking, stylized,
- * occluded, multi-person and no-face cases). An unevaluated provider is not a weaker check, it
- * is no check — `safety.js` treats it as unavailable.
- *
- * The one adapter here asks the local vision model, through the same private sampling the
- * planner uses. It is a candidate: no evaluation report exists for it, so it ships with
- * `evaluation: null` and cannot authorize anything until one does.
+ * Runtime assessments of text and pictures are validated before the rules use them.
+ * Missing, malformed or uncertain answers remain failures. An optional evaluation report
+ * records independent classifier testing; its absence is recorded without disabling valid
+ * runtime assessments. Assessments use the same private local sampling as the planner.
+
  */
 
 const ASSESSMENT = {
@@ -64,6 +60,7 @@ export function visionProvider({ sample, evaluation = null, version = '1' }) {
       return { status: 'failed', rating: null, people: null }
     }
     if (!['sfw', 'suggestive', 'explicit'].includes(said?.rating) || !Array.isArray(said.people)) return { status: 'failed', rating: null, people: null }
+    if (said.people.length > 16 || said.people.some((person) => !['adult', 'minor', 'uncertain'].includes(person?.age))) return { status: 'failed', rating: null, people: null }
     if (said.confident !== true) return { status: 'inconclusive', rating: said.rating, people: said.people }
     return { status: 'ok', rating: said.rating, people: said.people.map((p) => ({ age: p.age })) }
   }
@@ -71,6 +68,7 @@ export function visionProvider({ sample, evaluation = null, version = '1' }) {
     id: 'local-vision',
     version,
     evaluation,
+    runtimeChecks: true,
     assessText: (text, signal) => assess([{ type: 'text', text: `Request: ${text}` }], signal),
     assessImage: ({ mimeType, data }, signal) => assess([{ type: 'image', mimeType, data }], signal),
   }

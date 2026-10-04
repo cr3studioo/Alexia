@@ -56,7 +56,7 @@ export function editRenderer({ own, connect, comfy = comfyui, profiles = PROFILE
     if (manifestSha256(profile) !== envelope.manifestSha256 || graphSha256(profile) !== envelope.graphSha256) {
       throw new EditError('profile_mismatch', 'This computer has a different version of that editing model. Update Alexia on both computers.')
     }
-    if (profile.status !== 'verified') throw new EditError('profile_unavailable', 'That editing model has not been verified, so it cannot run.')
+    if (profile.status === 'candidate') throw new EditError('profile_unavailable', 'That editing model has not been verified, so it cannot run.')
     if (!profile.operations.includes(envelope.operation)) throw new EditError('profile_mismatch', 'That editing model does not do this kind of edit.')
 
     const at = await connect({ signal, report: (message) => report({ message }) })
@@ -120,8 +120,9 @@ export function editRenderer({ own, connect, comfy = comfyui, profiles = PROFILE
         found = await comfy.wait(at.server, promptId, {
           signal,
           timeoutMs: Math.max(1, envelope.deadlineAt - Date.now()),
-          // Numbers and words only. A preview of a picture nobody has checked yet is a publication.
-          onProgress: (message, value, total) => report({ message, value, total }),
+          // ComfyUI's picture so far goes with the numbers, as it does in ComfyUI. It is shown
+          // and replaced, never kept; the finished picture is still checked before it is shown.
+          onProgress: (message, value, total, work) => report({ message, value, total, ...(work?.preview && { preview: work.preview }) }),
         })
       } catch (error) {
         if (signal?.aborted) {

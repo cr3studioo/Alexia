@@ -76,3 +76,16 @@ test('the same request is the same prompt twice, in the order the tools were giv
   const order = first.map((one) => shelf.indexOf(one))
   expect(order).toEqual([...order].sort((a, b) => a - b))
 })
+
+test('the plugin a request is about brings its first tool, whatever words were used', () => {
+  // The case: `media__generate` is the dearest tool, so *list my pictures* filled the room with the cheap
+  // tools that list them, and *draw a dog* or a request in Czech matched it on no word at all.
+  const big = [tool('media__make_picture', 'Paint a picture from a description with ComfyUI.', 1500), ...shelf.slice(1)]
+  const names = (messages: Message[], context = 4000): string[] => fitTools(big, messages, context).map((one) => one.name)
+  expect(names([said('list my pictures')])).toContain('media__make_picture')
+  // A request in another language, or one the words do not catch, still has every plugin's front door.
+  expect(names([said('udělej obrázek kočky')])).toContain('media__make_picture')
+  expect(names([said('another one please')])).toContain('media__make_picture')
+  expect(names([said('another one please')])).toContain('telegram__send')
+  expect(cost(fitTools(big, [said('another one please')], 4000))).toBeLessThanOrEqual(4000 * TOOL_SHARE)
+})

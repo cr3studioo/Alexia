@@ -7,6 +7,7 @@ import { plan as planEdit } from './planner.js'
 import { visionProvider } from './policy/providers.js'
 import { describeProfile, inventory, PROFILES } from './profiles.js'
 import { editor, EditorFailure } from './run.js'
+import { installProfile } from './install.js'
 import { EDIT, EDIT_PLAN_VERSION, editRenderer, sweep } from './runtime.js'
 import { safety } from './safety.js'
 
@@ -16,7 +17,7 @@ import { safety } from './safety.js'
  * Everything the modules in this folder take as an adapter is supplied here from the real
  * thing: sampling is MCP's `sampling/createMessage` marked private, pictures are core's
  * `alexia/attachments/*`, rendering is `compute.run` on the computer the person chose, and
- * policy evidence is the local-vision provider — **unevaluated**, so it authorizes nothing yet.
+ * policy evidence comes from strict local-vision assessments of the inputs and output.
  *
  * Two tools: `alexia_editor`, which core calls for the editor screen and never shows a model,
  * and `edit_image`, the chat-facing one whose `images` core resolves into pinned, authorized
@@ -37,7 +38,7 @@ const EDIT_IMAGE_SCHEMA = fromJsonSchema({
   additionalProperties: false,
 })
 
-export function mountEditor({ alexia, compute, own, connectManaged, log = () => {} }) {
+export function mountEditor({ alexia, compute, own, connectManaged, installManaged, releaseManaged = async () => {}, log = () => {} }) {
   const sample = (request) => alexia.server.server.createMessage(
     {
       messages: request.messages,
@@ -60,6 +61,12 @@ export function mountEditor({ alexia, compute, own, connectManaged, log = () => 
     return negotiatePrivateContext(Number(said?.protocol), said?.capabilities, jobVersion)
   }
 
+  /**
+   * The newest look at the picture being made, per conversation: ComfyUI's preview, as the
+   * screen asks for it while a version renders. Held in memory only and replaced by the next.
+   */
+  const previews = new Map()
+
   /** Events for the screen, kept briefly per conversation; a gap means reload the batch. */
   const events = new Map()
   const emit = (conversation, event) => {
@@ -69,12 +76,50 @@ export function mountEditor({ alexia, compute, own, connectManaged, log = () => 
   }
 
   /** The profiles the picker shows, checked against what is installed for this computer's own renders. */
-  async function profiles() {
+  async function localProfiles() {
     const managed = await connectManaged({ probe: true }).catch(() => undefined)
     return Promise.all(PROFILES.map(async (profile) => {
-      const installed = managed?.models && profile.status === 'verified' ? await inventory(profile, managed.models).catch(() => null) : null
-      return { profile, descriptor: describeProfile(profile, { destination: { kind: 'interaction' }, installed }) }
+      const installed = managed?.models && profile.status !== 'candidate' ? await inventory(profile, managed.models).catch(() => null) : null
+      const descriptor = describeProfile(profile, { destination: { kind: 'interaction' }, installed })
+      if (!managed?.managed) {
+        descriptor.availability = 'needs_installation'
+        descriptor.reason = 'Install the managed ComfyUI on the computer selected for pictures.'
+      }
+      return { profile, descriptor }
     }))
+  }
+
+  /**
+   * `patience` is for the picker: the check waits in the picture computer's queue like any
+   * job, and behind a model download that is hours. The picker answers "busy" instead and
+   * asks again when the queue is free. The check itself is left to finish, not cancelled: its
+   * first run on a computer hashes the model files, and that is what makes the next one quick.
+   */
+  async function profiles({ patience } = {}) {
+    let waited = false
+    try {
+      const check = compute.run(EDIT, { kind: 'profiles', version: EDIT_PLAN_VERSION })
+      const ran = patience
+        ? await Promise.race([check, new Promise((resolve) => setTimeout(resolve, patience).unref?.())])
+        : await check
+      if (ran === undefined) {
+        waited = true
+        check.catch(() => undefined)
+        throw new Error('busy')
+      }
+      const result = facts(ran.text)
+      if (!Array.isArray(result.profiles)) throw new Error('Update the media plugin on the picture computer to check editing models.')
+      return result.profiles.map((descriptor) => ({
+        descriptor,
+        profile: PROFILES.find((p) => p.id === descriptor.selection.id && p.version === descriptor.selection.version),
+      })).filter((p) => p.profile)
+    } catch (error) {
+      return PROFILES.map((profile) => ({ profile, descriptor: {
+        ...describeProfile(profile, { destination: { kind: 'interaction' } }),
+        availability: 'offline',
+        reason: waited ? 'The picture computer is busy. This updates when it is free.' : String(error?.message ?? error).slice(0, 300),
+      } }))
+    }
   }
 
   const backend = editor({
@@ -92,26 +137,46 @@ export function mountEditor({ alexia, compute, own, connectManaged, log = () => 
     policy,
     profiles,
     emit,
-    render: async (envelope, files, { signal, label }) => {
-      const out = await compute.run(EDIT, { kind: 'edit', version: EDIT_PLAN_VERSION, envelope, inputs: files.inputs, masks: files.masks }, {
-        signal,
-        report: (message) => log(`${label}: ${message}`),
-        inputs: [...files.inputs, ...files.masks].map((f) => ({ name: basename(f.path), path: f.path, mime: 'image/png' })),
-      })
-      const said = facts(out.text)
-      if (!out.files[0]) throw new EditorFailure('render_failed', 'The edit produced no picture.')
-      return { file: out.files[0], ...said }
+    render: async (envelope, files, { signal, label, conversation, candidateId }) => {
+      try {
+        const out = await compute.run(EDIT, { kind: 'edit', version: EDIT_PLAN_VERSION, envelope, inputs: files.inputs, masks: files.masks }, {
+          signal,
+          report: (message, done, total, work) => {
+            log(`${label}: ${message}`)
+            if (work?.preview && conversation !== undefined) previews.set(conversation, { candidateId, preview: work.preview, at: Date.now(), done, total })
+          },
+          inputs: [...files.inputs, ...files.masks].map((f) => ({ name: basename(f.path), path: f.path, mime: 'image/png' })),
+        })
+        const said = facts(out.text)
+        if (!out.files[0]) throw new EditorFailure('render_failed', 'The edit produced no picture.')
+        return { file: out.files[0], ...said }
+      } finally {
+        // The finished picture is checked before it is shown; the preview of it goes now.
+        if (conversation !== undefined && previews.get(conversation)?.candidateId === candidateId) previews.delete(conversation)
+      }
     },
   })
 
   // The heavy half: runs on whichever computer the person chose, against Alexia's own ComfyUI.
   const renderEdit = editRenderer({ own, connect: (io) => connectManaged(io) })
   compute.operation(EDIT, async (plan, io) => {
+    if (plan.kind === 'install_profile') {
+      let at = await connectManaged({ probe: true })
+      if (!at.managed && installManaged) {
+        await installManaged({ signal: io.signal, report: io.report })
+        at = await connectManaged({ probe: true })
+      }
+      if (!at.managed) throw new Error('Install the managed ComfyUI on the picture computer first.')
+      await releaseManaged()
+      await installProfile(plan.profile, { ...at, signal: io.signal, report: io.report })
+      return { text: note({ installed: true }) }
+    }
+    if (plan.kind === 'profiles') return { text: note({ profiles: (await localProfiles()).map((p) => p.descriptor) }) }
     const out = await renderEdit(plan, {
       signal: io.signal,
-      // Words and numbers only: no picture of unchecked work crosses this line.
+      // Words, numbers and ComfyUI's preview of the work so far — the person chose to see it.
       report: (r) => {
-        if (r.message !== undefined) io.report(r.message, r.value ?? 0, r.total ?? 0)
+        if (r.message !== undefined) io.report(r.message, r.value ?? 0, r.total ?? 0, r.preview ? { preview: r.preview } : undefined)
       },
     })
     return { text: note({ width: out.width, height: out.height, promptId: out.promptId, executed: out.executed, cleanup: out.cleanup }), files: [out.file] }
@@ -146,7 +211,11 @@ export function mountEditor({ alexia, compute, own, connectManaged, log = () => 
             return answer({ draft: await backend.open(conversation, { attachmentId: a.id, sha256: a.sha256, dimensions: a.dimensions }, { profile: chosen ?? null }) })
           }
           case 'loadDraft': return answer({ draft: await backend.loadDraft(conversation, String(args.draftId)) })
-          case 'profiles': return answer({ profiles: (await profiles()).map((p) => p.descriptor), selected: (await alexia.storage.get('edit_profile').catch(() => undefined)) ?? null })
+          case 'profiles': return answer({ profiles: (await profiles({ patience: 8_000 })).map((p) => p.descriptor), selected: (await alexia.storage.get('edit_profile').catch(() => undefined)) ?? null })
+          case 'install_profile': {
+            await compute.run(EDIT, { kind: 'install_profile', profile: args.profile }, { signal, report: log })
+            return answer({ profiles: (await profiles()).map((p) => p.descriptor) })
+          }
           case 'select_profile': {
             // The person's explicit choice, kept until they change it — never replaced for them.
             await alexia.storage.set('edit_profile', args.profile ?? null)
@@ -155,6 +224,10 @@ export function mountEditor({ alexia, compute, own, connectManaged, log = () => 
           case 'versions': return answer({ versions: await backend.versions(conversation) })
           case 'batch': return answer({ batch: await backend.batch(conversation, String(args.batchId)) })
           case 'pending': return answer({ pending: await backend.pending(conversation, String(args.draftId)) })
+          case 'preview': {
+            const now = previews.get(conversation)
+            return answer({ preview: now ? { candidateId: now.candidateId ?? null, preview: now.preview, at: now.at, done: now.done ?? 0, total: now.total ?? 0 } : null })
+          }
           case 'events': {
             const after = Number(args.after ?? -1)
             return answer({ events: (events.get(conversation) ?? []).filter((e) => e.sequence > after) })

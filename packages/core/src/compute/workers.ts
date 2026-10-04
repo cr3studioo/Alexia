@@ -8,9 +8,10 @@ import type { LocalRunners, RunnerLease } from '../localRunners.js'
 import { ensureMlxRuntime, mlxRuntimeReady, mlxSupported } from '../mlx.js'
 import type { Plugins } from '../plugins.js'
 import { runnerBackendProfile, type BackendPreference, type RunnerBackend } from '../runnerBackend.js'
-import type { JobOutput } from './protocol.js'
+import { PREVIEW_META } from '@alexia/protocol'
+import { PREVIEW_MAX_CHARS, type JobOutput } from './protocol.js'
 import type { Scheduler, WorkerHandle } from './scheduler.js'
-import { ARTIFACT_RETENTION_MS, ComputeError, type HostCapability, type HostModel, type JobProgress, type SetupRequirement } from './types.js'
+import { ARTIFACT_RETENTION_MS, ComputeError, previewOf, type HostCapability, type HostModel, type JobProgress, type SetupRequirement } from './types.js'
 
 /**
  * Everything on a compute host that can hold model memory, as one kind of thing: the text
@@ -220,7 +221,16 @@ function pluginWorker(plugins: PluginSeam, declared: Declared): ComputeWorker {
     try {
       result = await plugins.computeCall(handle, role, args, {
         timeout,
-        ...(io && { signal: io.signal, onprogress: ({ progress, total, message }) => io.progress({ progress, ...(total !== undefined && { total }), ...(message !== undefined && { message }) }) }),
+        ...(io && {
+          signal: io.signal,
+          onprogress: (update) => {
+            const { progress, total, message } = update
+            io.progress({ progress, ...(total !== undefined && { total }), ...(message !== undefined && { message }) })
+            // A picture of the work so far goes out as the job's preview: shown, replaced, never kept.
+            const shown = previewOf((update as { _meta?: Record<string, unknown> })._meta?.[PREVIEW_META], PREVIEW_MAX_CHARS)
+            if (shown) io.output({ type: 'preview', ...shown })
+          },
+        }),
       })
     } catch (error) { throw failed(error, io?.signal, 'The compute worker stopped answering.') }
     if (result.isError) throw failed(new Error(words(result)), io?.signal, 'The compute worker reported a failure.')

@@ -263,7 +263,8 @@ export interface AlexiaPlugin {
       args?: Args,
       options?: {
         inputs?: { name: string; path: string; mime: string }[]
-        onProgress?(progress: number, total?: number, message?: string): void
+        /** `preview`, when there is one, is the picture so far as a `data:image/…` URL: show it, replace it, never keep it. */
+        onProgress?(progress: number, total?: number, message?: string, preview?: string): void
         signal?: AbortSignal
       },
     ): Promise<{ text?: string; files: string[] }>
@@ -490,7 +491,10 @@ export function plugin(options: PluginOptions = {}): AlexiaPlugin {
             // A progress callback is what makes MCP attach a token, and the token is what core
             // answers on — so no callback, no frames, as with `alexia/stream`.
             ...(onProgress && {
-              onprogress: ({ progress, total, message }) => onProgress(progress, total, message),
+              onprogress: (update) => {
+                const shown = (update as { _meta?: Record<string, unknown> })._meta?.[PREVIEW_META]
+                onProgress(update.progress, update.total, update.message, typeof shown === 'string' && shown.startsWith('data:image/') ? shown : undefined)
+              },
             }),
           },
         ),

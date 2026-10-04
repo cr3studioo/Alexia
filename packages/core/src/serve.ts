@@ -2078,7 +2078,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
         if (url.pathname === '/api/editor' && request.method === 'POST') {
           const conversationId = conversation(sent.conversationId)
           const call = String(sent.call ?? '')
-          if (!['open', 'loadDraft', 'profiles', 'versions', 'batch', 'command', 'pending', 'events', 'pictures', 'select_profile'].includes(call)) {
+          if (!['open', 'loadDraft', 'profiles', 'versions', 'batch', 'command', 'pending', 'events', 'pictures', 'select_profile', 'install_profile', 'preview'].includes(call)) {
             throw Object.assign(new Error('That is not something the editor does.'), { code: 'schema_unsupported' })
           }
           if (call === 'pictures') return answer({ ok: true, pictures: album.list(conversationId) })
@@ -3440,7 +3440,9 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
    * is core's to name — checked to exist — and never taken from the plugin.
    */
   async function editorCall(args: Record<string, unknown>): Promise<Record<string, unknown>> {
-    const result = await plugins.editorCall(args, { timeout: 10 * 60_000 }, adultMode() ? { [ADULT_META]: true } : {})
+    // Installing an editing model downloads tens of gigabytes; everything else is minutes at most.
+    const timeout = args.call === 'install_profile' ? 6 * 60 * 60_000 : 10 * 60_000
+    const result = await plugins.editorCall(args, { timeout }, adultMode() ? { [ADULT_META]: true } : {})
     const text = result.content.find((c): c is { type: 'text'; text: string } => c.type === 'text')?.text ?? '{}'
     let said: Record<string, unknown>
     try {
