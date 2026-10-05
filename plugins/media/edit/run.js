@@ -166,7 +166,9 @@ export function editor({
         const label = context.attachments.find((a) => a.id === reference.attachmentId)?.label
         return label ? `Use only the ${reference.roles.map((r) => r.replaceAll('_', ' ')).join(' and ')} from ${label}.` : ''
       }).filter(Boolean)
-      const request = referenceInstructions.length ? [`Edit ${sourceLabel}.`, draft.instruction, ...referenceInstructions].join('\n') : draft.instruction
+      // The open picture is already the person's chosen target, including when its label is
+      // not image_1. State that choice for single-picture edits as well as reference edits.
+      const request = [`Edit ${sourceLabel}.`, draft.instruction, ...referenceInstructions].join('\n')
       const planned = given ?? await plan({ request, images, version, regions, answer, signal, deadlineAt: now() + 5 * 60_000 })
       if (planned.outcome === 'needs_clarification') {
         await records.savePending({ draftId: draft.id, revision: draft.revision, question: planned.question, at: now() }, draft.conversationId)

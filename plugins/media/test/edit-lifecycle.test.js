@@ -246,6 +246,18 @@ describe('generating versions', () => {
     expect(h.calls.render[0].envelope.instruction).toContain('Use only the pose from Picture 3.')
   })
 
+  test('a single-picture edit explicitly names the chosen target even after earlier attachments', async () => {
+    const h = harness()
+    h.attach(picture(16, 8, [0, 200, 0, 255]))
+    h.source = h.attach(picture(16, 8, [200, 200, 0, 255]))
+    const draft = await open(h, { instruction: 'change the square to blue' })
+    await generate(h, draft)
+    await h.e.idle()
+    expect(h.calls.plan[0].request).toBe('Edit image_3.\nchange the square to blue')
+    expect(h.calls.plan[0].images.map((image) => image.label)).toEqual(['image_3'])
+    expect(h.calls.render).toHaveLength(1)
+  })
+
   test('the same invocation twice is one batch', async () => {
     const h = harness()
     const draft = await open(h, { instruction: 'warmer' })
@@ -306,7 +318,7 @@ describe('generating versions', () => {
     expect(h.events.at(-1).event).toMatchObject({ type: 'clarification', question: 'Which parts?' })
     expect((await h.e.pending(h.conversation, draft.id)).question).toBe('Which parts?')
     const { batch } = await h.e.command(h.conversation, { type: 'clarify', draftId: draft.id, revision: draft.revision, answer: 'only the outfit', invocationId: 'c1' })
-    expect(h.calls.plan[1]).toMatchObject({ request: 'make me look like this', answer: 'only the outfit' })
+    expect(h.calls.plan[1]).toMatchObject({ request: 'Edit image_1.\nmake me look like this', answer: 'only the outfit' })
     await h.e.idle()
     expect((await h.e.batch(h.conversation, batch.id)).state).toBe('completed')
     expect(await h.e.pending(h.conversation, draft.id)).toBeNull()

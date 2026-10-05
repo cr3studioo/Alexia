@@ -1150,9 +1150,16 @@ function workspace(sheet: HTMLElement, api: EditorApi, first: Draft, close: () =
       const now = await api.work()
       if (!sheet.isConnected) return
       showWork(now)
-      // A job that said what it was doing just ended — a download, most likely — so the models
-      // may have changed. The models check says nothing, so asking again does not loop.
-      if (last?.message !== undefined && !now) void api.call<{ profiles: Profile[] }>('profiles').then((r) => { profiles = r.profiles; refresh() }).catch(() => undefined)
+      // Model-file checks can outlast the picker's timeout without reporting progress. Retry
+      // unavailable profiles once the computer is idle, including after those silent checks.
+      // One request at a time; an available or installable profile stops the retries.
+      if (!now && !loading && (last?.message !== undefined || profiles.some((p) => p.availability === 'offline'))) {
+        loading = true
+        void api.call<{ profiles: Profile[] }>('profiles')
+          .then((r) => { if (sheet.isConnected) profiles = r.profiles })
+          .catch(() => undefined)
+          .finally(() => { loading = false; if (sheet.isConnected) refresh() })
+      }
       last = now
       await new Promise((resolve) => setTimeout(resolve, now ? 1500 : 5000))
     }

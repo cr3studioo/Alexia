@@ -101,7 +101,7 @@ describe('orchestration', () => {
   })
 
   test('a confident runtime provider can assess an edit without a fabricated benchmark report', async () => {
-    const provider = visionProvider({ sample: async () => ({ stopReason: 'endTurn', content: { type: 'text', text: JSON.stringify({ rating: 'sfw', people: [{ age: 'adult' }], confident: true }) } }) })
+    const provider = visionProvider({ sample: async (request) => ({ stopReason: 'endTurn', content: { type: 'text', text: JSON.stringify(request._meta['alexia/format'].schema.properties.people ? { rating: 'sfw', people: [{ age: 'adult' }], confident: true } : { rating: 'sfw' }) } }) })
     const s = safety({ provider, store: memory() })
     const inputs = await s.checkInputs(run)
     expect(inputs.decision).toBe('allowed')
@@ -141,6 +141,34 @@ describe('local vision provider', () => {
 
   test('supports runtime assessments without claiming an evaluation report', () => {
     expect(visionProvider({ sample: answer('{}') }).evaluation).toBeNull()
+  })
+
+  test('text rating does not ask for unseen people; images still require their own assessment', async () => {
+    const requests = []
+    const provider = visionProvider({ sample: async (request) => {
+      requests.push(request)
+      return { stopReason: 'endTurn', content: { type: 'text', text: JSON.stringify(request._meta['alexia/format'].schema.properties.people ? { rating: 'sfw', people: [], confident: true } : { rating: 'sfw' }) } }
+    } })
+    expect(await provider.assessText('Change the red square to blue.')).toEqual(ok('sfw'))
+    expect(requests[0].systemPrompt).toContain('words only')
+    expect(requests[0]._meta['alexia/format'].schema.required).toEqual(['rating'])
+    expect(requests[0]._meta['alexia/format'].schema.properties.rating.enum).toContain('uncertain')
+    await provider.assessImage({ mimeType: 'image/png', data: 'AA' })
+    expect(requests[1].systemPrompt).toContain('one entry per visible person')
+    expect(requests[1].messages[0].content[0].type).toBe('image')
+  })
+
+  test('uncertain, malformed and truncated text assessments still stop the edit', async () => {
+    for (const [text, stop, status] of [
+      ['{"rating":"uncertain"}', 'endTurn', 'inconclusive'],
+      ['{"rating":"unknown"}', 'endTurn', 'failed'],
+      ['{"rating":"sfw","extra":true}', 'endTurn', 'failed'],
+      ['{"rating":"sfw"}', 'maxTokens', 'failed'],
+    ]) {
+      const provider = visionProvider({ sample: answer(text, stop) })
+      expect((await provider.assessText('Change the color.')).status).toBe(status)
+      expect((await safety({ provider, store: memory() }).checkInputs({ runId: 'r', conversationId: 'c', request: 'Change the color.', images: [] })).reason).toBe('policy_unavailable')
+    }
   })
 
   test('reads a confident answer, and treats doubt or nonsense as no answer', async () => {

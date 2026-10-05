@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { afterEach, expect, test, vi } from 'vitest'
 import { openImageEditor, pacer, splitMessage } from '../src/image-editor.js'
-import type { Draft, Picture } from '../src/image-editor-api.js'
+import type { Draft, Picture, Profile } from '../src/image-editor-api.js'
 
 afterEach(() => { document.body.replaceChildren(); vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
@@ -106,6 +106,43 @@ test('a download on the picture computer shows as a progress bar with its file',
   expect(card.textContent).toContain('25%')
   expect(card.querySelector('progress')!.value).toBe(5e9)
   document.querySelector<HTMLButtonElement>('[aria-label="Close"]')!.click()
+})
+
+test('a silent model check that timed out refreshes when idle and stops retrying once available', async () => {
+  const f = setup()
+  const profile: Profile = {
+    selection: { id: 'qwen-edit', version: '1' }, name: 'Qwen Edit', uncensored: false,
+    operations: ['image_edit'], jobVersions: ['1.1'], maxInputs: 3,
+    destination: { kind: 'paired', hostId: 'pc', displayName: 'PC' },
+    availability: 'offline', reason: 'The picture computer is busy.',
+    evidenceId: null, measuredMemory: null, dimensions: [{ width: 64, height: 64 }],
+    controls: { presets: [], steps: null, changeAmount: null, seed: { min: 0, max: 100 } }, batchSize: 1,
+  }
+  let checks = 0
+  const fetcher = (async (url: string, options?: RequestInit) => {
+    if (url === '/api/compute/queue') return Response.json({ queue: { running: null, waiting: [] } })
+    const body = JSON.parse(String(options?.body ?? '{}')) as { call?: string }
+    if (body.call === 'profiles') {
+      checks += 1
+      return Response.json({ profiles: [{ ...profile, ...(checks > 1 && { availability: 'available', reason: null }) }] })
+    }
+    return f.fetcher(url, options)
+  }) as unknown as typeof fetch
+  vi.useFakeTimers()
+  try {
+    await openImageEditor({ token: 'test', conversationId: 'c1', attachmentId: 'a1', behind: () => [], fetcher })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(checks).toBe(1)
+    expect(document.querySelector<HTMLSelectElement>('[aria-label="Model"]')?.textContent).toContain('busy')
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(checks).toBe(2)
+    expect(document.querySelector<HTMLSelectElement>('[aria-label="Model"]')?.textContent).not.toContain('busy')
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(checks).toBe(2)
+  } finally {
+    document.querySelector<HTMLButtonElement>('[aria-label="Close"]')?.click()
+    vi.useRealTimers()
+  }
 })
 
 test('a progress message is split into its file and its words only when it names a file', () => {

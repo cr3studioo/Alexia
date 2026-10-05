@@ -183,7 +183,13 @@ export function mountEditor({ alexia, compute, own, connectManaged, installManag
         // A whole-picture edit sends each picture at most 2048 on its long side: Qwen Image Edit
         // works at about a megapixel, and a phone photo is twelve, sent over the network. A
         // masked edit keeps its pictures as they are, because the mask matches them pixel for pixel.
-        if (files.masks.length === 0) files = { ...files, inputs: files.inputs.map((input) => ({ ...input, path: forRender(input.path, conversation) })) }
+        if (files.masks.length === 0) {
+          files = { ...files, inputs: files.inputs.map((input) => ({ ...input, path: forRender(input.path, conversation) })) }
+          // The renderer checks every picture against the hash it was authorized with, so the
+          // smaller copy is authorized as itself.
+          const hashes = new Map(files.inputs.map((input) => [Number(input.slot), createHash('sha256').update(readFileSync(input.path)).digest('hex')]))
+          envelope = { ...envelope, inputs: envelope.inputs.map((input) => (hashes.has(Number(input.slot)) ? { ...input, sha256: hashes.get(Number(input.slot)) } : input)) }
+        }
         const out = await compute.run(EDIT, { kind: 'edit', version: EDIT_PLAN_VERSION, envelope, inputs: files.inputs, masks: files.masks }, {
           signal,
           report: (message, done, total, work) => {
