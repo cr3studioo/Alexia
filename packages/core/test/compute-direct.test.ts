@@ -130,6 +130,7 @@ const client = (base: string, token: string) => async <T = Record<string, unknow
 
 describe.runIf(existsSync(binary))('two computers, no server', () => {
   test('the host is found, paired by four words alone, and saved hints gain its private-network address', async () => {
+    vi.stubEnv('ALEXIA_CONNECT_EPHEMERAL_KEY', '1')
     const port = 47_800 + Math.floor(Math.random() * 500)
     // Each side's Tailscale says the other computer is this machine. The studio says it is also
     // reachable at a private-network address, the one the laptop's hints should gain.

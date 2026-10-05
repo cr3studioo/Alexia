@@ -172,9 +172,17 @@ async fn a_computer_listens_on_the_same_port_after_a_restart() {
 /// The usual port is a preference: something else holding it is not a reason not to start.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_port_that_is_taken_is_not_a_reason_not_to_start() {
-    let key = SecretKey::generate();
+    // Windows can reserve ports in the dynamic range. Hold a bindable one before
+    // exercising the occupied-port fallback, rather than assuming a random port is free.
+    let (key, squatter) = (0..100).find_map(|_| {
+        let key = SecretKey::generate();
+        match std::net::UdpSocket::bind((Ipv4Addr::UNSPECIFIED, stable_port(&key))) {
+            Ok(socket) => Some((key, socket)),
+            Err(error) if matches!(error.kind(), std::io::ErrorKind::AddrInUse | std::io::ErrorKind::PermissionDenied) => None,
+            Err(error) => panic!("could not bind the test socket: {error}"),
+        }
+    }).expect("a bindable port for the test to take");
     let usual = stable_port(&key);
-    let squatter = std::net::UdpSocket::bind((Ipv4Addr::UNSPECIFIED, usual)).expect("the port is free for the test to take");
     let side = launch("laptop", &key).await;
     let ports = side.loopback().await;
     assert_eq!(ports.len(), 1, "it listens somewhere");

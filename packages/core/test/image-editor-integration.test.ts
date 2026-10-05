@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { crc32, deflateSync } from 'node:zlib'
-import { afterAll, expect, test } from 'vitest'
+import { afterAll, expect, test, vi } from 'vitest'
 import { memorySecrets } from '../src/secrets.js'
 import { serve, type Serving } from '../src/serve.js'
 import { Store } from '../src/store.js'
@@ -94,12 +94,15 @@ test('a picture is kept with its conversation, stripped of metadata, and private
 })
 
 test('the editor checks the render computer and reports missing installation', async () => {
-  const listed = await call('/api/editor', { conversationId, call: 'profiles' })
-  expect(listed.status).toBe(200)
-  const profiles = listed.json.profiles as { availability: string; reason: string; selection: { id: string; version: string } }[]
-  expect(profiles.length).toBeGreaterThan(0)
-  expect(profiles.every((p) => p.availability !== 'available')).toBe(true)
-  expect(profiles[0]!.reason).toMatch(/Install.*ComfyUI/)
+  // The picker can answer busy while its queued check finishes under CI load.
+  await vi.waitFor(async () => {
+    const listed = await call('/api/editor', { conversationId, call: 'profiles' })
+    expect(listed.status).toBe(200)
+    const profiles = listed.json.profiles as { availability: string; reason: string; selection: { id: string; version: string } }[]
+    expect(profiles.length).toBeGreaterThan(0)
+    expect(profiles.every((p) => p.availability !== 'available')).toBe(true)
+    expect(profiles[0]!.reason).toMatch(/Install.*ComfyUI/)
+  }, { timeout: 45_000, interval: 500 })
 }, 60_000)
 
 test('the planning model: only one on this computer that can see pictures may be chosen', async () => {

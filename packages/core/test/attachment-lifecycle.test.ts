@@ -16,7 +16,11 @@ import { Store, textOf } from '../src/store.js'
  */
 
 const root = mkdtempSync(join(tmpdir(), 'alexia-attachments-'))
-afterAll(() => rmSync(root, { recursive: true, force: true }))
+const stores = new Set<Store>()
+afterAll(() => {
+  for (const store of stores) store.close()
+  rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })
+})
 
 const chunk = (type: string, data: Buffer): Buffer => {
   const out = Buffer.alloc(12 + data.length)
@@ -62,6 +66,7 @@ const jpeg = (w: number, h: number, orientation?: number): Buffer => {
 const setup = () => {
   const dir = mkdtempSync(join(root, 'data-'))
   const store = new Store(join(dir, 'alexia.db'))
+  stores.add(store)
   const attachments = new Attachments(store, dir)
   const a = String(store.createSession('one'))
   const b = String(store.createSession('two'))
@@ -103,7 +108,10 @@ describe('records', () => {
     const third = attachments.ingest(a, { name: 'new.png', bytes: png(4, 4) })
     expect(third.label).toBe('image_3')
     store.close()
-    const reopened = new Attachments(new Store(join(dir, 'alexia.db')), dir)
+    stores.delete(store)
+    const reopenedStore = new Store(join(dir, 'alexia.db'))
+    stores.add(reopenedStore)
+    const reopened = new Attachments(reopenedStore, dir)
     expect(reopened.list(a).map((x) => x.label)).toEqual(['image_3'])
   })
 
