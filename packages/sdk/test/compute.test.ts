@@ -4,7 +4,7 @@ import { InMemoryTransport, type JSONRPCMessage } from '@modelcontextprotocol/se
 import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { expect, test } from 'vitest'
+import { expect, test, vi } from 'vitest'
 import { plugin, type AlexiaPlugin, type ComputeRequirement } from '../src/index.js'
 
 /**
@@ -65,12 +65,44 @@ async function connect(alexia: AlexiaPlugin, answer: (asked: Message, say: (mess
 
   return {
     tools: async () => (await request('tools/list')).result!.tools as Tool[],
-    call: async (name: string, args: Record<string, unknown> = {}) => (await request('tools/call', { name, arguments: args })).result!,
+    call: async (name: string, args: Record<string, unknown> = {}, meta?: Record<string, unknown>) =>
+      (await request('tools/call', { name, arguments: args, ...(meta && { _meta: meta }) })).result!,
   }
 }
 
 const bound = (tools: Tool[], binding: unknown): Tool | undefined =>
   tools.find((tool) => JSON.stringify(tool._meta?.[COMPUTE_META]) === JSON.stringify(binding))
+
+test.each(['operation', 'install'])('%s progress is dispatched before its result closes the token', async (role) => {
+  const alexia = plugin({ dir: folder() })
+  const report = (_args: unknown, ctx: Parameters<AlexiaPlugin['progress']>[0]) => {
+    alexia.progress(ctx, 1, 2, 'Rendering.')
+    return Promise.resolve({ text: 'Rendered.' })
+  }
+  alexia.computeOperation('image.render', report)
+  alexia.computeHooks({ install: async (requirementId, ctx) => { await report(requirementId, ctx) } })
+  const heard: Message[] = []
+  let acknowledge: (() => void) | undefined
+  const core = await connect(alexia, (message, say) => {
+    heard.push(message)
+    if (message.method === 'ping') acknowledge = () => say({ id: message.id, result: {} })
+  })
+  try {
+    let finished = false
+    const result = core.call(role === 'operation' ? 'alexia_compute_image.render' : 'alexia_compute_install',
+      role === 'operation' ? {} : { requirementId: 'model' }, { progressToken: 7 })
+      .then((answer) => { finished = true; return answer })
+    await vi.waitFor(() => expect(acknowledge).toBeTypeOf('function'))
+    expect(heard.map((message) => message.method)).toEqual(['notifications/progress', 'ping'])
+    expect(heard[0]!.params).toMatchObject({ progressToken: 7, progress: 1, total: 2, message: 'Rendering.' })
+    expect(finished).toBe(false)
+    acknowledge!()
+    await result
+    expect(finished).toBe(true)
+  } finally {
+    await alexia.server.close()
+  }
+})
 
 test("an operation's tool carries COMPUTE_META, and calling it runs the handler", async () => {
   const alexia = plugin({ dir: folder() })

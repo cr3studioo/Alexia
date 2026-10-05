@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync } fro
 import { request as httpRequest } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterAll, expect, test } from 'vitest'
+import { afterAll, expect, test, vi } from 'vitest'
 import { noPolling } from './staged.js'
 import { keyOf, PROVIDERS } from '../src/provider.js'
 import { CORE, memorySecrets } from '../src/secrets.js'
@@ -26,6 +26,23 @@ const ui = join(import.meta.dirname, '..', '..', 'ui')
 // file tests, and a laptop with Ollama running would answer it instead.
 const alexia: Serving = await serve({ dataDir: root, uiDir: ui, secrets: memorySecrets(), local: false })
 afterAll(() => alexia.close())
+
+test('closing core cancels the delayed picture cleanup before the database closes', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'alexia-cleanup-close-'))
+  noPolling(dir)
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+  let serving: Serving | undefined
+  try {
+    serving = await serve({ dataDir: dir, uiDir: ui, secrets: memorySecrets(), local: false })
+    await serving.close()
+    serving = undefined
+    expect(() => vi.advanceTimersByTime(15_000)).not.toThrow()
+  } finally {
+    if (serving) await serving.close()
+    vi.useRealTimers()
+    rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })
+  }
+})
 
 const get = (path: string, init: RequestInit = {}): Promise<Response> =>
   fetch(new URL(path, alexia.url), {

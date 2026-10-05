@@ -3535,7 +3535,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     return { revocationId, local, remote }
   }
   /** Cleanups a crash or an offline host left unfinished, tried again once the plugins are up. */
-  setTimeout(() => {
+  const pictureCleanup = setTimeout(() => {
     const pending = store.kvGet(CORE, 'pending_picture_cleanup')
     for (const id of Array.isArray(pending) ? pending : []) if (typeof id === 'number') void forgetPictures(id).catch(() => {})
   }, 15_000).unref()
@@ -3947,6 +3947,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     close: async () => {
       clearInterval(ticking)
       clearTimeout(firstTests)
+      clearTimeout(pictureCleanup)
       await modeTransitions.close()
       await localModels.close()
       await compute.close()

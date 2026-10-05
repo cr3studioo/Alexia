@@ -363,6 +363,11 @@ export function plugin(options: PluginOptions = {}): AlexiaPlugin {
     return [computeTool('op' in binding ? binding.op : binding.hook), { _meta: { [COMPUTE_META]: binding } }]
   }
   const done = { content: [] }
+  const flushProgress = async (ctx: ServerContext): Promise<void> => {
+    // MCP dispatches notifications in a microtask but removes their progress token as soon
+    // as the result arrives. A round trip lets core dispatch progress before that result.
+    if (ctx.mcpReq._meta?.progressToken !== undefined) await server.server.ping()
+  }
 
   return {
     manifest,
@@ -433,6 +438,7 @@ export function plugin(options: PluginOptions = {}): AlexiaPlugin {
         { ...tool, description: summary, inputSchema: anyArguments, annotations: { readOnlyHint: false, openWorldHint: false } },
         async (args, ctx) => {
           const { text, files = [] } = await handler(args, ctx)
+          await flushProgress(ctx)
           // `structuredContent` is what core reads; the text is repeated as content because
           // that is where MCP puts words, and a host that is not Alexia reads only that.
           return {
@@ -462,6 +468,7 @@ export function plugin(options: PluginOptions = {}): AlexiaPlugin {
         const annotations = { readOnlyHint: false, openWorldHint: true }
         register(name, { ...tool, inputSchema: text('requirementId'), annotations }, async (args, ctx) => {
           await install(args.requirementId!, ctx)
+          await flushProgress(ctx)
           return done
         })
       }
