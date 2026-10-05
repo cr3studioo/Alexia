@@ -170,7 +170,7 @@ test('a pin is never violated quietly, and the refusal says what to do', () => {
   // The sentence the spec asks for, word for word in intent: what is missing, and what to type.
   const uncensored = pins({ placement: MODES.local, uncensored: true })
   expect(ids(route({ messages: asked('hello') }, uncensored, machine))).toEqual([
-    'no uncensored model is installed on this Mac — install one, or type /cloud',
+    'no uncensored model is installed on this Mac — open Settings › Models › Uncensored to install one, or type /cloud',
   ])
 
   // Nothing installed at all is its own sentence.
@@ -1930,6 +1930,16 @@ test('when every paid rung could go past what today has left, the stop says so a
   const asked_ = await send([{ model: dear, provider: two }], { messages: asked('hello'), maxTokens: 6_000 }, ledger, keys)
   expect(asked_.model.id).toBe('paid/dear')
   ledger.close()
+})
+
+test('local context failures explain tool overhead and point to local settings', () => {
+  const choice = { model: model({ id: 'llama/local', tier: 'T0', context: 8192 }), provider: OLLAMA }
+  const failure = failed(new ProviderError(400, 'request (11609 tokens) exceeds the available context size (8192 tokens)'), choice)!
+  expect(failure).toMatchObject({ reach: 'request', outcome: 'too-long' })
+  expect(stopped([failure])).toContain('including tool definitions')
+  expect(stopped([failure])).toContain('8,192-token context')
+  expect(stopped([failure])).toContain('Settings → Models')
+  expect(stopped([failure])).not.toContain('start a new chat')
 })
 
 test('a reply ceiling the model cannot write is about the model, not a conversation that is too long', () => {

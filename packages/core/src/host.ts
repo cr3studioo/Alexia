@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { ErrorCode, type AlexiaMethod, type AlexiaParams, type HostInfo, type Manifest, type StreamFrame } from '@alexia/protocol'
+import { ErrorCode, type AlexiaMethod, type AlexiaParams, type AlexiaResult, type HostInfo, type Manifest, type StreamFrame } from '@alexia/protocol'
 import { ProtocolError, type CallToolResult, type CreateMessageRequestParams, type CreateMessageResult, type Root } from '@modelcontextprotocol/client'
-import { mkdirSync } from 'node:fs'
-import { join } from 'node:path'
+import { mkdirSync, realpathSync } from 'node:fs'
+import { join, sep } from 'node:path'
 import { keychain, type SecretStore } from './secrets.js'
 import { declaredWidgets } from './settings.js'
 import { ALEXIA_VERSION, type HostServices } from './supervisor.js'
 import type { Store } from './store.js'
+import type { RunProgress } from './compute/types.js'
 
 /**
  * The other side of the `alexia/*` layer: what core answers when a plugin asks.
@@ -41,6 +42,13 @@ export interface HostOptions {
   roots?(pluginId: string): Root[]
   /** Route a capability to whichever plugin provides it. The resolver lands at M0-7. */
   capability?(cap: string, args?: Record<string, unknown>): Promise<CallToolResult>
+  /** The interaction-side Operations seam. Absent means compute is unavailable. */
+  compute?(
+    pluginId: string,
+    params: AlexiaParams<'alexia/compute/run'>,
+    signal?: AbortSignal,
+    onProgress?: (progress: RunProgress) => void,
+  ): Promise<AlexiaResult<'alexia/compute/run'>>
   /**
    * **Would anything answer this capability, and is something that would switched off?**
    *
@@ -49,6 +57,17 @@ export interface HostOptions {
    * something, and a host that cannot say is a host where nothing is going to answer.
    */
   answers?(cap: string): { answers: boolean; here: boolean }
+  /**
+   * **The person's pictures, one conversation at a time** (`attachments.scoped`, protocol 14).
+   * Absent means this core keeps no pictures, and every `alexia/attachments/*` call says so.
+   */
+  attachments?: {
+    lease(conversationId: string, attachmentIds: string[]): AlexiaResult<'alexia/attachments/lease'>
+    release(leaseId: string): void
+    live(leaseId: string): boolean
+    register(conversationId: string, path: string, origin: AlexiaParams<'alexia/attachments/register'>['origin'], name?: string): AlexiaResult<'alexia/attachments/register'>
+    share(pluginId: string, conversationId: string, path: string, mime: string): string
+  }
   log?(pluginId: string, line: string): void
   /** A plugin's tool list changed under us. The aggregate the model sees is now stale. */
   toolsChanged?(pluginId: string): void
@@ -111,7 +130,13 @@ export class Host implements HostServices {
   }
 
   /** Every `alexia/*` request, already validated against the wire schema by the supervisor. */
-  async alexia<M extends AlexiaMethod>(pluginId: string, method: M, params: AlexiaParams<M>): Promise<unknown> {
+  async alexia<M extends AlexiaMethod>(
+    pluginId: string,
+    method: M,
+    params: AlexiaParams<M>,
+    signal?: AbortSignal,
+    onProgress?: (progress: RunProgress) => void,
+  ): Promise<unknown> {
     const manifest = this.options.manifest(pluginId)
     if (!manifest) return fail(ErrorCode.INTERNAL_ERROR, `${pluginId} is not an enabled plugin`)
     const { store } = this.options
@@ -170,6 +195,66 @@ export class Host implements HostServices {
           return fail(ErrorCode.CAPABILITY_NOT_AVAILABLE, `nothing enabled provides ${p.cap}`)
         }
         return this.options.capability(p.cap, p.arguments)
+      }
+
+      case 'alexia/attachments/lease':
+      case 'alexia/attachments/release':
+      case 'alexia/attachments/live':
+      case 'alexia/attachments/register':
+      case 'alexia/attachments/share': {
+        if (!manifest.requires?.some((r) => r.cap === 'attachments.scoped')) {
+          return fail(ErrorCode.CAPABILITY_NOT_PERMITTED, `${pluginId} did not ask for attachments.scoped in requires[]`)
+        }
+        const pictures = this.options.attachments
+        if (!pictures) return fail(ErrorCode.CAPABILITY_NOT_AVAILABLE, 'This Alexia keeps no pictures.')
+        /** A file the plugin hands over must be one of its own, really — not a link out of its folder. */
+        const own = (path: string): string => {
+          const dir = realpathSync(this.ownDir(pluginId))
+          let real: string
+          try {
+            real = realpathSync(path)
+          } catch {
+            return fail(ErrorCode.INVALID_PARAMS, 'That file does not exist.')
+          }
+          if (!real.startsWith(dir + sep)) return fail(ErrorCode.INVALID_PARAMS, 'Only a file in the plugin\'s own folder can be handed over.')
+          return real
+        }
+        try {
+          switch (method) {
+            case 'alexia/attachments/lease': {
+              const p = params as AlexiaParams<'alexia/attachments/lease'>
+              return pictures.lease(p.conversationId, p.attachmentIds)
+            }
+            case 'alexia/attachments/release':
+              pictures.release((params as AlexiaParams<'alexia/attachments/release'>).leaseId)
+              return {}
+            case 'alexia/attachments/live':
+              return { live: pictures.live((params as AlexiaParams<'alexia/attachments/live'>).leaseId) }
+            case 'alexia/attachments/register': {
+              const p = params as AlexiaParams<'alexia/attachments/register'>
+              return pictures.register(p.conversationId, own(p.path), p.origin, p.name)
+            }
+            default: {
+              const p = params as AlexiaParams<'alexia/attachments/share'>
+              return { url: pictures.share(pluginId, p.conversationId, own(p.path), p.mime) }
+            }
+          }
+        } catch (error) {
+          if (error instanceof ProtocolError) throw error
+          return fail(ErrorCode.INVALID_PARAMS, error instanceof Error ? error.message : String(error))
+        }
+      }
+
+      case 'alexia/compute/run': {
+        const p = params as AlexiaParams<'alexia/compute/run'>
+        if (!manifest.compute?.operations.some((op) => op.cap === p.cap) &&
+          !manifest.requires?.some((r) => r.cap === p.cap)) {
+          return fail(ErrorCode.CAPABILITY_NOT_PERMITTED, `${pluginId} did not declare compute operation ${p.cap} or ask for it in requires[]`)
+        }
+        if (!this.options.compute) {
+          return fail(ErrorCode.CAPABILITY_NOT_AVAILABLE, `compute is not available for ${p.cap}`)
+        }
+        return this.options.compute(pluginId, p, signal, onProgress)
       }
 
       case 'alexia/storage/insert': {

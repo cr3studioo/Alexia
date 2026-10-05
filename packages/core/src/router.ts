@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { createHash, randomBytes } from 'node:crypto'
 import { PLANNER, routes, stature, type Model } from './catalog.js'
+import { THIS_HOST, type TargetStatus } from './compute/types.js'
 import { OLLAMA } from './ollama.js'
 import { sent, spent, underHalf, type Rung } from './pool.js'
 import { BUSY_HALF_LIFE, type Judgement, type Health } from './health.js'
@@ -8,6 +9,7 @@ import { anonymous, chat, HEDGE_AFTER, MOST_AT_ONCE, PATIENCE, ProviderError, PR
 import { redact, summarise } from './redact.js'
 import { CORE, type SecretStore } from './secrets.js'
 import { textOf, type Message, type Outcome, type Source, type Store } from './store.js'
+import { fitTools } from './toolFit.js'
 import { floor, PER_TOKEN, size, summary } from './trim.js'
 import { affordable, costOf, dollars as money, type Allowance, type Today } from './usage.js'
 
@@ -365,6 +367,79 @@ export interface Ask {
    * written and was answered by whichever free model a JSON feed happened to list first.
    */
   capable?: boolean
+  /**
+   * **This request may only run on this computer** (`alexia/local`, the private image editor).
+   *
+   * A hard constraint, not a preference, and it is applied before anything else so that no
+   * retry, hedge, upgrade or fallback can reach past it: the plan holds only models that run on
+   * the interaction computer itself — not a hosted row, not a paired computer's model, and not a
+   * model an on-device runner merely relays to a cloud service ({@link Model.remote}). A runner
+   * being on loopback is not the test; the row saying where the model executes is.
+   *
+   * A pin that does not meet it is refused by name rather than overridden.
+   */
+  placement?: 'interaction'
+  /** **The answer must follow a JSON Schema** (`alexia/format`): only runners that enforce one may take it. */
+  structured?: boolean
+}
+
+/**
+ * Runners that run models on this computer, and the ones that enforce a JSON Schema on the answer
+ * through `response_format` — Ollama and llama.cpp's server both do; MLX's server is not relied on.
+ */
+export const ON_DEVICE = new Set(['ollama', 'llama', 'mlx'])
+export const SCHEMA_RUNNERS = new Set(['ollama', 'llama'])
+
+/** Whether a local model executes on this computer. */
+export const onDevice = (model: Model): boolean => model.host === undefined && model.remote !== true && ON_DEVICE.has(model.provider)
+
+/**
+ * **Whether a model may take a private request**: on this computer, or on the paired computer
+ * chosen for pictures (`World.pictureHost`) — the one the pictures are already sent to be made.
+ * Never a hosted model, never a model relayed elsewhere, and never another paired computer.
+ */
+export const privatelyAllowed = (model: Model, world: Pick<World, 'pictureHost'>): boolean =>
+  onDevice(model) || (model.host !== undefined && model.host === world.pictureHost && model.remote !== true && ON_DEVICE.has(model.engine ?? ''))
+
+/** Whether the runner behind a model holds its answer to a JSON Schema — on a paired computer, by its engine. */
+export const holdsFormat = (model: Model): boolean => SCHEMA_RUNNERS.has(model.host !== undefined ? model.engine ?? '' : model.provider)
+
+/**
+ * **The whole plan for a request that only a model running on this computer may answer.** Separate from the main route
+ * on purpose: nothing below it — the cloud pool, the spend axis, the paid pause — can widen it.
+ */
+function privateRoute(ask: Ask, pins: Pins, world: World): Verdict {
+  const carried = (ask.modality ?? []).filter((kind) => kind !== 'text')
+  const eligible = (model: Model): string | undefined => {
+    if (!privatelyAllowed(model, world)) return 'it does not run on this computer or the one chosen for pictures'
+    if (ask.structured === true && !holdsFormat(model)) return 'its runner cannot hold an answer to a fixed format'
+    const unseen = carried.filter((kind) => !model.modality.includes(kind))
+    if (unseen.length > 0) return `it cannot be given ${unseen.map((k) => (k === 'image' ? 'a picture' : k)).join(' or ')}`
+    if (!fits(model, ask.messages)) return 'this request is longer than it can read'
+    return undefined
+  }
+  const choices: Choice[] = world.local.flatMap((model) => {
+    const provider = world.runners?.find((one) => one.id === model.provider) ?? (model.provider === OLLAMA.id ? OLLAMA : undefined)
+    return provider === undefined ? [] : [{ model, provider }]
+  })
+  if (pins.model) {
+    const named = choices.find((c) => c.model.id === pins.model)
+    const why = named === undefined ? 'it is not a model on this computer' : eligible(named.model)
+    if (why !== undefined) {
+      return { ok: false, mode: 'pinned', why: `the model you chose, ${pins.model}, cannot do this because ${why} — this is answered only by a model running on this computer, so choose one here that can see pictures` }
+    }
+    return { ok: true, mode: 'pinned', choices: [named as Choice] }
+  }
+  const fitting = choices.filter((c) => eligible(c.model) === undefined && !(ask.avoid ?? []).includes(`${c.provider.id}\n${c.model.id}`))
+  if (fitting.length === 0) {
+    const what = carried.includes('image') ? 'a model on this computer that can see pictures' : 'a model on this computer'
+    return { ok: false, mode: 'automatic', why: `this is answered only by a model running on this computer and needs ${what}${ask.structured === true ? ' running in Ollama or Alexia\'s own runner' : ''}, and there is none — install one in Settings under Local models` }
+  }
+  // Adult mode (`/nsfw`): a model known to be uncensored is asked first, where there is one here.
+  const order = ranking(world).compare
+  const uncensoredFirst = (a: Choice, b: Choice): number =>
+    pins.uncensored === true ? Number(b.model.nsfwOk === 'yes') - Number(a.model.nsfwOk === 'yes') || order(a, b) : order(a, b)
+  return { ok: true, mode: 'automatic', choices: fitting.sort(uncensoredFirst) }
 }
 
 /**
@@ -447,6 +522,21 @@ export interface World {
   models: readonly Model[]
   /** What is installed locally and reachable. Empty when Ollama is not running. */
   local: readonly Model[]
+  /**
+   * **Which runner serves each local model**, by the provider id on the model's row: Ollama, or
+   * Alexia's own `llama-server` (`llama.ts`). Absent means Ollama alone, which is all there was.
+   */
+  runners?: readonly Provider[]
+  /**
+   * **Where the selected paired computer stands** (`compute/bridge.ts`): connecting, loading,
+   * ready, or the named reason it cannot serve. Absent means none has been selected since launch.
+   */
+  target?: TargetStatus
+  /**
+   * **The paired computer chosen for pictures**, whose models may take a private request
+   * (`privatelyAllowed`): the pictures go there to be made anyway. Absent when it is this one.
+   */
+  pictureHost?: string
   /** Hosted providers with a key and requests left, in the pool's order. */
   rungs: readonly Rung[]
   /**
@@ -618,6 +708,7 @@ export function shapeOf(ask: Ask): Shape {
  * the rung below might be rate-limited in the half-second between choosing and sending.
  */
 export function route(ask: Ask, pins: Pins, world: World): Verdict {
+  if (ask.placement === 'interaction') return privateRoute(ask, pins, world)
   const kind = ask.class ?? 'text'
   const where = pins.placement[kind]
   const connected = new Map(world.rungs.map((rung) => [rung.provider.id, rung]))
@@ -628,7 +719,15 @@ export function route(ask: Ask, pins: Pins, world: World): Verdict {
   // rung of the cascade rather than a mode they have to remember to switch into. See
   // {@link MODES} for why that is not the privacy pin being escalated past — and for why it
   // is text alone, images and speech being placed local by `combined` already.
-  const here = world.local.map((model) => ({ model, provider: OLLAMA }))
+  //
+  // A paired computer's model (`Model.host`) is neither of those. It is reached only where the
+  // placement is local, and only on the host somebody selected: never as the last rung of
+  // Cloud or Combined, and never on a host that merely happens to be listed.
+  const here = world.local.flatMap((model) => {
+    if (model.host !== undefined && (where !== 'local' || (world.target !== undefined && world.target.target.hostId !== model.host))) return []
+    const provider = world.runners?.find((one) => one.id === model.provider) ?? (model.provider === OLLAMA.id ? OLLAMA : undefined)
+    return provider === undefined ? [] : [{ model, provider }]
+  })
   const hosted = where === 'local' ? [] : reachable(world, connected)
   const avoided = new Set(ask.avoid ?? [])
   const everything: Choice[] = [...hosted.map((row) => row.choice), ...(where === 'local' || kind === 'text' ? here : [])].filter(
@@ -1489,11 +1588,14 @@ function refusal(
    */
   const tooLong = pool.length > 0 && !pool.some((c) => fits(c.model, messages))
   if (where === 'local') {
+    // A paired computer was chosen, so the reason is that computer's own state: sending somebody
+    // to install a model on this Mac would be an answer about the wrong machine.
+    if (pool.length === 0 && world.target !== undefined && world.target.target.hostId !== THIS_HOST) return world.target.message
     if (pool.length === 0) return 'no model is installed on this Mac — install one, or type /cloud'
     if (tooLong) {
       return 'this chat is longer than any model on this Mac can read — start a new chat, or type /cloud'
     }
-    if (pins.uncensored) return 'no uncensored model is installed on this Mac — install one, or type /cloud'
+    if (pins.uncensored) return 'no uncensored model is installed on this Mac — open Settings › Models › Uncensored to install one, or type /cloud'
     if (needsTools) return 'no model on this Mac can take actions — install one that can, or type /cloud'
     // The one refusal G5 added: the models are here, they can use tools, and they are too
     // small to be trusted with planning. Say which wall it is, because the fix differs.
@@ -1663,6 +1765,7 @@ export function failed(error: unknown, choice: Choice): Failure | undefined {
     return of('model', `${model.name} cannot write a reply as long as this asks for`, 'reply-too-long')
   }
   if (status === 413 || (status === 400 && TOO_LONG.test(error.message))) {
+    if (model.tier === 'T0') return of('request', `the prompt, including tool definitions, exceeds ${model.name}'s configured ${model.context.toLocaleString('en-US')}-token context`, 'too-long')
     return of('request', `this conversation is too long for ${model.name}`, 'too-long')
   }
   // The outcome is named here, beside the sentence, so the record and the stop cannot disagree
@@ -1729,10 +1832,16 @@ export function stopped(failures: readonly Failure[], blocked?: string): string 
   // Every one of them failed to connect: the likeliest reason is this Mac, not the services,
   // and naming each service that "could not be reached" sends somebody to check the wrong thing.
   if (failures.length > 0 && failures.every((one) => one.outcome === 'unreachable')) {
+    // A paired computer that does not answer is that computer, not this Mac's internet.
+    if (failures.every((one) => one.choice.model.host !== undefined)) {
+      return 'The paired computer could not be reached. Check that it is switched on and connected, then try again.'
+    }
     return 'It looks like you’re offline — none of the AI services could be reached. Check your internet connection, then try again.'
   }
   const lines = [`${reasons(failures, 'could not answer either')}.`]
-  if (last?.reach === 'request') lines.push('Nothing left to try reads more than that — start a new chat.')
+  if (last?.reach === 'request') lines.push(last.choice.model.tier === 'T0'
+    ? 'Increase the local context in Settings → Models if memory allows, or enable fewer plugins. A new chat may still carry the same tool definitions.'
+    : 'Nothing left to try reads more than that — start a new chat.')
   if (blocked !== undefined) lines.push(`${capital(blocked)}.`)
   return lines.join(' ')
 }
@@ -1846,6 +1955,19 @@ interface Asking {
   /** Its last busy reply while it is asked again: what is recorded, once, if the wait runs out. */
   busy?: Failure
 }
+
+/**
+ * **Whose hardware a payload is going to**, which is the whole of what decides whether {@link send}
+ * strips credentials and location from it.
+ *
+ * `T0` is a model on this computer — and a model on a paired computer, whose rows are `T0` too
+ * (`compute/target.ts`): hardware the person owns, chosen by them, over an end-to-end encrypted
+ * transport. **That second half is a decision the owner has still to confirm**
+ * (`docs/spec/remote-compute.md` §11, item 1), and this is the one place it is made. The
+ * stricter reading — a paired computer is somewhere else, so strip — is this line reading
+ * `model.tier === 'T0' && model.host === undefined`.
+ */
+const owned = (model: Model): boolean => model.tier === 'T0'
 
 /**
  * Walk the plan until one of them answers.
@@ -2363,9 +2485,11 @@ export async function send(
       }
       wake()
     }
+    // A model on this machine is sent the tools that fit its window, not every plugin's (`toolFit.ts`).
+    const tools = request.tools !== undefined && owned(choice.model) ? fitTools(request.tools, run.messages, choice.model.context) : request.tools
     void chat(
       choice.provider,
-      { ...request, messages: run.messages, model: choice.model.id, signal, ...(session !== undefined && { session }) },
+      { ...request, ...(tools !== undefined && { tools }), messages: run.messages, model: choice.model.id, signal, ...(session !== undefined && { session }) },
       (text) => {
         if (!current()) return
         if (run.chosen) deliver(run, text)
@@ -2447,7 +2571,7 @@ export async function send(
     // `T0` means the model is on this machine (only `ollama.ts` ever writes it), so the
     // payload is not going anywhere and stripping it would cost accuracy to protect against
     // nothing. Everything else is a third party, free tiers most of all.
-    const outbound = choice.model.tier === 'T0' ? { messages, kinds: [] } : redact(messages)
+    const outbound = owned(choice.model) ? { messages, kinds: [] } : redact(messages)
     if (outbound.kinds.length > 0) {
       // Enforcement that says so. Silently editing what somebody wrote is the same
       // surprise as a bill nobody announced.

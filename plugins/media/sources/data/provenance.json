@@ -1,0 +1,9 @@
+{
+  "repository": "https://github.com/Comfy-Org/ComfyUI-Manager",
+  "commit": "855a0f50ecc842adacab08aa24d8655a742fae40",
+  "recordedAt": "2026-10-03",
+  "url": "https://raw.githubusercontent.com/Comfy-Org/ComfyUI-Manager/855a0f50ecc842adacab08aa24d8655a742fae40/extension-node-map.json",
+  "upstreamSha256": "5088536bcae0855f3e97e13ba1592c466846fe1340bfd3396e32b09d055da6f5",
+  "builtins": "ComfyUI entry of the same mapping, plus four frontend-only node types",
+  "license": "GPL-3.0"
+}

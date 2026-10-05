@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import {
+  COMPUTE_META,
   Manifest,
   MCP_REVISIONS,
   pageOf,
@@ -218,8 +219,11 @@ export async function conform(given: string, options: ConformOptions = {}): Prom
     if (tools.length === 0) {
       add('tools', 'warn', 'it lists no tools, so the model has nothing to call')
     } else {
-      const undescribed = tools.filter((t) => !t.description || t.description.trim() === '')
-      const tooLong = tools.filter((t) => `${manifest.id}${SEPARATOR}${t.name}`.length > NAME_LIMIT)
+      // Compute tools are scheduled by core, so neither prompt text nor a model's name
+      // limit applies to them. Keep them in `tools` for the binding check below.
+      const agentTools = tools.filter((tool) => tool._meta?.[COMPUTE_META] === undefined)
+      const undescribed = agentTools.filter((t) => !t.description || t.description.trim() === '')
+      const tooLong = agentTools.filter((t) => `${manifest.id}${SEPARATOR}${t.name}`.length > NAME_LIMIT)
       if (tooLong.length > 0) {
         // Not a style note: the name goes into an OpenAI-shaped `function.name` and a long
         // one is a tool the model is never offered.
@@ -229,7 +233,9 @@ export async function conform(given: string, options: ConformOptions = {}): Prom
         // and will reach for it at the wrong moment.
         add('tools', 'warn', `no description, so the model has only the name: ${undescribed.map((t) => t.name).join(', ')}`)
       } else {
-        add('tools', 'pass', `${String(tools.length)} tools, all described and all reachable`)
+        add('tools', 'pass', agentTools.length === 0 ?
+          `${String(tools.length)} compute tools, none offered to the model`
+        : `${String(agentTools.length)} model tools, all described and all reachable`)
       }
 
       // MCP's own hints are what the permission gate reads. A tool that declares nothing is
@@ -257,8 +263,14 @@ export async function conform(given: string, options: ConformOptions = {}): Prom
     }
     const bound = new Set(
       tools.flatMap((tool) => {
-        const declared = (tool._meta as Record<string, unknown> | undefined)?.[PROVIDES_META]
-        return Array.isArray(declared) ? declared.filter((c): c is string => typeof c === 'string') : []
+        const declared = tool._meta?.[PROVIDES_META]
+        const provided = Array.isArray(declared) ? declared.filter((c): c is string => typeof c === 'string') : []
+        const compute = tool._meta?.[COMPUTE_META]
+        const op = compute && typeof compute === 'object' && 'op' in compute ? compute.op : undefined
+        if (typeof op === 'string' && manifest.compute?.operations.some((operation) => operation.cap === op)) {
+          provided.push(op)
+        }
+        return provided
       }),
     )
     const promised = manifest.provides ?? []

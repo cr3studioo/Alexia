@@ -9,6 +9,7 @@ import {
   type AlexiaParams,
   type Manifest,
   type StreamFrame,
+  PREVIEW_META,
 } from '@alexia/protocol'
 import {
   Client,
@@ -27,6 +28,8 @@ import { join } from 'node:path'
 import type { Readable } from 'node:stream'
 import { createInterface } from 'node:readline'
 import { negotiate } from './handshake.js'
+import { PREVIEW_MAX_CHARS } from './compute/protocol.js'
+import { previewOf, type RunProgress } from './compute/types.js'
 
 /**
  * One supervised plugin process.
@@ -84,7 +87,13 @@ export interface HostServices {
    * this never sees a shape a plugin made up. Absent means core offers no Alexia layer and
    * a plugin asking gets `-32601`, which is the honest answer.
    */
-  alexia?<M extends AlexiaMethod>(pluginId: string, method: M, params: AlexiaParams<M>): Promise<unknown>
+  alexia?<M extends AlexiaMethod>(
+    pluginId: string,
+    method: M,
+    params: AlexiaParams<M>,
+    signal?: AbortSignal,
+    onProgress?: (progress: RunProgress) => void,
+  ): Promise<unknown>
 }
 
 /** Every timeout in one place, so a test can run the five-minute ones in milliseconds. */
@@ -182,10 +191,12 @@ export class PluginProcess {
     name: string,
     args?: Record<string, unknown>,
     options?: CallToolRequestOptions,
+    /** Request `_meta` only core sets — the trusted attachment context (protocol 14). */
+    meta?: Record<string, unknown>,
   ): Promise<CallToolResult> {
     const { client } = await this.#ready()
     return this.#track(() =>
-      client.callTool({ name, arguments: args }, { timeout: this.t.callMs, ...options }),
+      client.callTool({ name, arguments: args, ...(meta !== undefined && { _meta: meta }) }, { timeout: this.t.callMs, ...options }),
     )
   }
 
@@ -210,7 +221,7 @@ export class PluginProcess {
   }
 
   /** Deliberate shutdown — idle, disabled, or Alexia quitting. Never counted as a crash. */
-  async stop(): Promise<void> {
+  async stop(options?: { force?: boolean }): Promise<void> {
     clearTimeout(this.#retry)
     // A spawn already on its way — a retry that fired, or a call — finishes into `#session`
     // after this returns unless it is waited for, and that process outlives the stop. On
@@ -220,6 +231,20 @@ export class PluginProcess {
     clearTimeout(this.#retry)
     const session = this.#take()
     if (!session) return
+    if (options?.force && session.transport.pid !== null) {
+      const pid = session.transport.pid
+      const onclose = session.transport.onclose
+      const exited = new Promise<void>((resolve) => {
+        session.transport.onclose = () => { try { onclose?.() } finally { resolve() } }
+      })
+      // The MCP transport's graceful close waits before signalling. A deadline cannot.
+      try { process.kill(pid, 'SIGKILL') } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error
+      }
+      await session.transport.close().catch(() => {})
+      await exited
+      return
+    }
     await session.transport.close().catch(() => {})
   }
 
@@ -339,9 +364,33 @@ export class PluginProcess {
         { params: StandardSchemaV1; result: StandardSchemaV1 },
       ][]
       for (const [method, schemas] of methods) {
-        client.setRequestHandler(method, schemas, (params) =>
-          alexia(this.id, method, params as AlexiaParams<AlexiaMethod>),
-        )
+        client.setRequestHandler(method, schemas, async (params, ctx) => {
+          const progressToken = ctx.mcpReq._meta?.progressToken
+          let sent: Promise<void> = Promise.resolve()
+          let reported = false
+          const onProgress = method !== 'alexia/compute/run' || progressToken === undefined ? undefined
+            : ({ preview, ...progress }: RunProgress): void => {
+              reported = true
+              // A preview travels under `_meta`, as a plugin's own progress does (`alexia.progress`).
+              const shown = previewOf(preview, PREVIEW_MAX_CHARS)
+              sent = sent.then(async () => {
+                try {
+                  await ctx.mcpReq.notify({
+                    method: 'notifications/progress',
+                    params: { progressToken, ...progress, ...(shown && { _meta: { [PREVIEW_META]: `data:${shown.mime};base64,${shown.data}` } }) },
+                  })
+                } catch {
+                  // The request or its process may already have gone away.
+                }
+              })
+            }
+          const answer = await alexia(this.id, method, params as AlexiaParams<AlexiaMethod>, ctx.mcpReq.signal, onProgress)
+          await sent
+          // MCP defers notification handlers but closes progress tokens synchronously on a
+          // response. A round-trip lets the peer dispatch progress before its token closes.
+          if (reported) await client.ping({ timeout: this.t.heartbeatMs, signal: ctx.mcpReq.signal }).catch(() => {})
+          return answer
+        })
       }
     }
 

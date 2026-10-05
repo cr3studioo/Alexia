@@ -1,17 +1,43 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { fromJsonSchema, log, plugin } from '@alexia/sdk'
-import { Buffer } from 'node:buffer'
-import { readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
-import { basename, join } from 'node:path'
-import { checkpoints, classes, download, interrupt, named, order, pick, queue, stats, template, templates, wait } from './comfy.js'
+import { readFileSync, readdirSync, statSync } from 'node:fs'
+import { basename, join, resolve } from 'node:path'
+import { checkpoints, classes, named, pick, stats, templates } from './comfy.js'
+import { facts, split } from './compute.js'
 import { alive, awake, install, loopback, port, ready, start, stop, tail } from './launch.js'
-import { API_SUFFIX, FOLDER, apply, isApi, knobs, missing, fromWeb, read, remove, reseed, saved, wired, write } from './workflows.js'
-import { api as starterGraph, editor as starterDoc, STARTER } from './starter.js'
-import { measure, tight } from './sizing.js'
+import { named_of, renderer } from './render.js'
+import { COMFYUI, comfyStatus, installComfy, installed, nvidia, requirement as comfyRequirement } from './install.js'
+import { RENDER, dedicated, fetchRequirement, onDisk, requirements } from './worker.js'
+import {
+  API_SUFFIX,
+  FOLDER,
+  apply,
+  isApi,
+  knobs,
+  missing,
+  fromWeb,
+  pictures,
+  read,
+  remove,
+  reseed,
+  roles,
+  saved,
+  told,
+  used,
+  wired,
+  write,
+} from './workflows.js'
+import { api as starterGraph, CHANGE, editor as starterDoc, STARTER } from './starter.js'
+import { memory, merge, recall } from './memory.js'
+import { picture } from './inputs.js'
+import { measure } from './sizing.js'
 import { fetchModel, have } from './models.js'
 import { reading, vram } from './tier.js'
-import { describe as line, flatten, pickEntry, runnable, search, shelf } from './catalog.js'
+import { describe as line, flatten, runnable, search, shelf } from './catalog.js'
 import { convert } from './convert.js'
+import { LIBRARY, library } from './library/tools.js'
+import { mountEditor } from './edit/mount.js'
+import { sweep } from './edit/runtime.js'
 
 /**
  * Local image generation (M4-6).
@@ -32,6 +58,10 @@ import { convert } from './convert.js'
  */
 
 const alexia = plugin()
+/** Where planning ends and rendering begins — see `compute.js`. */
+const compute = split(alexia)
+/** The workflow and model used last, and what the person set on each workflow — see `memory.js`. */
+const mind = memory(alexia.storage)
 
 let own
 /** What ComfyUI said it has, refreshed when it is reachable. Empty means not reached yet. */
@@ -57,7 +87,9 @@ const logFile = () => join(own ?? '.', 'comfyui.log')
 async function look(signal) {
   try {
     available = await checkpoints(await where(), signal)
-    if (available.length === 0) return { ok: false, said: '▲ ComfyUI is running but has no checkpoint installed' }
+    // Running, and that is the point: `bind` must not turn this into *not running — Alexia will start it*,
+    // which sent a model round in circles starting a ComfyUI that was already up and had nothing to paint with.
+    if (available.length === 0) return { ok: false, running: true, said: '▲ ComfyUI is running but has no checkpoint installed on this computer, so nothing can be painted here' }
     const many = `${available.length} model${available.length === 1 ? '' : 's'}`
     // A model named in the settings that is not installed is the one thing this screen can
     // catch and nothing else will: pictures still come out, painted by a different model,
@@ -72,9 +104,18 @@ async function look(signal) {
     return asked && !pick(available, asked) ?
         { ok: true, said: `▲ Ready — ${many}, and none of them is “${asked}”. Pictures use ${available[0]}.` }
       : { ok: true, said: `● Ready — ${many}` }
-  } catch {
+  } catch (error) {
     available = []
-    return { ok: false, said: `■ ComfyUI is not answering at ${await where()}` }
+    const at = await where()
+    // Something answers there but would not list its models: a ComfyUI that has got itself stuck, or another
+    // program on its port. Starting a second one cannot help — it dies on the busy port and the call comes back
+    // as *not running*, which is what sent a model round in circles — so say what is actually wrong.
+    const answering = await stats(at, signal).then(() => true, () => false)
+    if (answering) {
+      const why = error instanceof Error ? error.message : String(error)
+      return { ok: false, running: true, said: `■ Something is answering at ${at} but would not list its models (${why}). It is probably a stuck ComfyUI: close it, and Alexia will start a fresh one.` }
+    }
+    return { ok: false, said: `■ ComfyUI is not answering at ${at}` }
   }
 }
 
@@ -93,7 +134,7 @@ async function found() {
   const said = String(path ?? '').trim()
   if (said) return (await install(said)) ?? null
   if (where_it_is !== undefined) return where_it_is
-  where_it_is = (await install()) ?? null
+  where_it_is = (await install(undefined, undefined, async () => (await installed(own))?.dir)) ?? null
   return where_it_is
 }
 
@@ -107,14 +148,14 @@ async function found() {
  */
 async function bind(signal) {
   const state = await look(signal)
-  const startable = state.ok ? undefined : await canStart()
+  const startable = state.ok || state.running ? undefined : await canStart()
   const said =
-    state.ok ? state.said
+    state.ok || state.running ? state.said
     : startable?.ok ? '■ ComfyUI is not running — Alexia will start it when a picture is asked for'
     : `${state.said}. ${startable?.said ?? ''}`.trim()
   await alexia.status('state', said).catch(() => {})
   made.update({ _meta: state.ok || startable?.ok ? { 'alexia/provides': ['image.generate'] } : {} })
-  return { ok: state.ok, said, startable: startable?.ok === true }
+  return { ok: state.ok, said, startable: startable?.ok === true, running: state.running === true }
 }
 
 /** Everything that has to be true before Alexia may start ComfyUI itself. */
@@ -139,7 +180,7 @@ async function canStart() {
  * error — the process is detached and still loading, *ask me again in a minute* is true,
  * and the next call finds it up.
  */
-async function wake(signal, ctx) {
+async function wake(signal, ctx, report) {
   const can = await canStart()
   if (!can.ok) return { ok: false, said: can.said }
   booting ??= (async () => {
@@ -162,8 +203,12 @@ async function wake(signal, ctx) {
     await alexia.status('state', '▲ Starting ComfyUI…').catch(() => {})
     const up = await ready(server, {
       signal,
-      onProgress: (tick) =>
-        ctx && alexia.progress(ctx, tick, 90, tick < 20 ? 'Starting ComfyUI' : 'Starting ComfyUI — loading its nodes and models'),
+      onProgress: (tick) => {
+        const said = tick < 20 ? 'Starting ComfyUI' : 'Starting ComfyUI — loading its nodes and models'
+        // An operation has a reporter rather than a call of its own to report on.
+        if (report) report(said, tick, 90)
+        else if (ctx) alexia.progress(ctx, tick, 90, said)
+      },
     })
     if (!up) {
       const said =
@@ -180,27 +225,16 @@ async function wake(signal, ctx) {
   return done.ok ? await bind(signal) : done
 }
 
-/**
- * Which checkpoint to use: the one asked for, the one chosen, or whatever is there.
- *
- * The order matters and the first entry is new. *Whatever is there* means the first
- * checkpoint in the folder, and on a machine with six of them that is a coin toss — a
- * request for an anime picture answered by a photographic model is the plugin working
- * perfectly and getting it wrong. A name in the call is how the asker says which.
- */
-async function chosen(wanted) {
-  const { steps, vae_fp32: fp32 } = await settings()
-  const picked = pick(available, wanted) ?? pick(available, await preferred()) ?? available[0]
-  return { checkpoint: picked, steps: Number(steps) || 25, fp32: fp32 !== false }
-}
-
 const made = alexia.tool(
   'generate',
   {
     description:
       'Make an image on this machine from a description. The picture is handed straight to ' +
       'the user, so say what you made — do not describe where it was saved. Use when the ' +
-      'user asks for a picture, an illustration, a logo or a mock-up. Starts ComfyUI first ' +
+      'user asks for a picture, an illustration, a logo or a mock-up, or to change a picture they ' +
+      'attached (pass it in images). With no workflow named it uses the workflow and the model ' +
+      'used last time, and anything the user set before (a size, more steps) until they say ' +
+      'otherwise. The result says every setting it used, seed included. Starts ComfyUI first ' +
       'if it is not already running. Takes twenty seconds to a few minutes depending on the ' +
       'machine, and reports progress.',
     inputSchema: fromJsonSchema({
@@ -210,24 +244,50 @@ const made = alexia.tool(
           type: 'string',
           description: 'What the picture shows. Concrete and visual — subject, setting, style, lighting.',
         },
-        negative: { type: 'string', description: 'What to keep out of it. Optional.' },
-        width: { type: 'number', description: 'Pixels wide. Defaults to 1024; SDXL wants multiples of 64.' },
-        height: { type: 'number', description: 'Pixels tall. Defaults to 1024.' },
-        seed: { type: 'number', description: 'Same seed and same prompt gives the same picture. Omit for a new one.' },
+        negative: { type: 'string', description: 'What to keep out of it. Optional; kept for the next picture.' },
+        width: { type: 'number', description: 'Pixels wide. Defaults to 768, or what the user set before; SDXL wants multiples of 64. Kept for the next picture.' },
+        height: { type: 'number', description: 'Pixels tall. Defaults to 768, or what the user set before. Kept for the next picture.' },
+        steps: {
+          type: 'number',
+          description: 'How many steps to take — more is slower and usually better. Use for *more detail*, *faster*. Kept for the next picture.',
+        },
+        seed: {
+          type: 'number',
+          description: 'Same seed and same prompt gives the same picture. Omit for a new one; every result says the seed it used.',
+        },
         again: {
           type: 'boolean',
           description:
             'Reuse the last picture’s settings — including its seed — for anything not given here. ' +
-            'Use when the user says *again*, *same but bigger*, *that one but at night*. Without this a ' +
-            'new seed is rolled and the picture is a different one, because the seed was never in the ' +
-            'conversation for you to repeat.',
+            'Use when the user says *again*, *same seed*, *same settings*, *same but bigger*, *that one ' +
+            'but at night*. Without this a new seed is rolled and the picture is a different one.',
         },
         model: {
           type: 'string',
           description:
             'Which installed checkpoint to paint with — any part of its filename is enough. ' +
-            'Worth naming when the style matters, since the models installed are rarely ' +
-            'interchangeable: `models` lists them. Omit to use whichever ComfyUI has.',
+            'Worth naming when the style matters (*use the anime model*), since the models installed ' +
+            'are rarely interchangeable: `models` lists them. Omit to use the one used last time.',
+        },
+        workflow: {
+          type: 'string',
+          description:
+            'Which saved workflow to make it with, by any part of its name — `workflows` lists them. ' +
+            'Omit to use the one used last time; "starter" is Alexia’s own plain one.',
+        },
+        images: {
+          type: 'array',
+          items: { type: 'string' },
+          description:
+            'Pictures to start from — the paths of files the user attached or pointed at. The picture ' +
+            'is redrawn from the first one (image-to-image); a saved workflow with picture fields ' +
+            'takes them in order. Only paths the user gave you.',
+        },
+        strength: {
+          type: 'number',
+          description:
+            'How much to change a picture given in images, from 0 (barely) to 1 (start over). ' +
+            'Defaults to 0.6. Kept for the next picture.',
         },
       },
       required: ['prompt'],
@@ -236,63 +296,98 @@ const made = alexia.tool(
     // something new exists afterwards — and not destructive: nothing is overwritten.
     annotations: { destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
-  async ({ prompt, negative, width, height, seed, model, again }, ctx) => {
+  async ({ prompt, negative, width, height, steps, seed, model, again, workflow, images, strength }, ctx) => {
     const signal = ctx?.mcpReq?.signal
-    // Not running is a thing to fix rather than a thing to report. If it cannot be fixed —
-    // no install, another machine, switched off — `reachable` says which, in one sentence. It
-    // also plants the starter workflow the first time it succeeds, which is here rather than at
-    // boot because this is the first moment ComfyUI is known to be up.
-    const state = await reachable(ctx)
-    if (!state.ok) return { isError: true, content: [{ type: 'text', text: state.said }] }
     if (!own) return { isError: true, content: [{ type: 'text', text: 'Alexia has not given this plugin a folder to work in.' }] }
-
-    const server = await where()
-    if (model && !pick(available, model)) {
-      // Named and not found is a question, not a picture. Answering it with a different
-      // model would be the plugin deciding something the asker was explicit about.
-      return {
-        isError: true,
-        content: [{ type: 'text', text: `There is no model here called ${model}. What there is: ${available.join(', ')}` }],
+    const given = (Array.isArray(images) ? images : []).map(String).filter((one) => one.trim() !== '')
+    for (const one of given) {
+      try {
+        picture(one)
+      } catch (error) {
+        return refuse(String(error?.message ?? error))
       }
     }
-    const { checkpoint, steps, fp32 } = await chosen(model)
-    const size = measure({ width, height, seed, again }, await alexia.storage.get('last').catch(() => undefined))
-    const room = await free(server, signal)
-    const warning = room === undefined ? undefined : tight(size, room)
-    // **The same workflow the person can open**, rather than a second pipeline built in code.
-    // `starter.js` renders it, `install` writes it into ComfyUI's own folder, and the two are
-    // generated from one definition so the graph that runs and the graph they edit cannot drift.
-    const built = starterGraph({
-      prompt: String(prompt),
-      negative: String(negative ?? 'blurry, low quality, watermark, text'),
-      checkpoint,
-      steps,
-      // Rounded to 64 because SDXL's latent space is in units of 8 and its training is in
-      // units of 64. A model handed 1000x1000 makes something subtly wrong rather than
-      // refusing, which is the worst of both.
-      width: size.width,
-      height: size.height,
-      seed: size.seed,
-      fp32,
-      display: named_of(await nodes(signal).catch(() => ({}))),
-    })
 
-    const id = await queue(server, built, signal)
-    const found = await awaiting(server, id, {
-      signal,
-      label: naming(built),
-      // The pipeline, worked out from the graph rather than waited for: ComfyUI only names a
-      // node once it has started, and a strip that grew as it went would draw the reporting.
-      stages: order(built),
-      onProgress: (message, done, total, work) => alexia.progress(ctx, done, total, message, work),
-    })
+    // **Which workflow, before anything else.** A plain request is the workflow used last; the
+    // list of saved ones is only read when that is not Alexia's own, so a person who never left
+    // the plain pipeline never waits on a ComfyUI here to be asked anything.
+    const remembered = await mind.remembered()
+    const named = workflow !== undefined && String(workflow).trim() !== ''
+    const elsewhere = remembered.workflow && remembered.workflow !== STARTER
+    const notes = []
+    if (named || elsewhere) {
+      const state = await reachable(ctx)
+      let rows = []
+      if (state.ok) rows = await saved(await where(), signal).catch(() => [])
+      else if (named) return refuse(state.said)
+      const chosen =
+        state.ok ?
+          recall({ asked: workflow, remembered, rows, starter: STARTER, pick })
+        : { starter: true, said: `The workflow used last time, ${remembered.workflow}, could not be read: ${state.said} So this used Alexia’s own instead.` }
+      if (chosen.refused) return refuse(chosen.refused)
+      if (chosen.said) notes.push(chosen.said)
+      if (chosen.row) {
+        const ran = await runSaved(chosen.row, { seed, images: given, again, plain: { prompt, negative, width, height, model, steps, strength } }, ctx)
+        if (!ran.fallback) return ran
+        notes.push(ran.fallback)
+      }
+    }
 
-    const saved = []
-    for (const one of found.files) {
-      const bytes = await download(server, one, signal)
-      const to = join(own, `${Date.now()}-${one.filename}`)
-      writeFileSync(to, Buffer.from(bytes))
-      saved.push(to)
+    // **The plan, which is everything that belongs to the person**: their words, their settings,
+    // and the seed of the last picture they made. Which model is installed, whether ComfyUI is
+    // running and how much memory is free are the rendering computer's to answer, and that may
+    // not be this one — so none of it is asked here.
+    const { steps: configured, vae_fp32: fp32 } = await settings()
+    const last = (await alexia.storage.get('last').catch(() => undefined)) ?? {}
+    const before = again === true ? last : {}
+    const kept = await mind.kept(STARTER)
+    const size = measure({ width, height, seed, again }, last, kept)
+    const start = given[0]
+    if (given.length > 1) notes.push(`Only the first picture was used — Alexia’s own workflow starts from one. A saved workflow with more picture fields can take the rest.`)
+    // A size nobody asked for is the picture's own shape, not a square cut out of it.
+    const sized = [width, height, before.width, before.height, kept.width, kept.height].some((one) => one !== undefined)
+    const chosen = {
+      steps: Number(steps ?? before.steps ?? kept.steps ?? configured) || 25,
+      negative: String(negative ?? before.negative ?? kept.negative ?? 'blurry, low quality, watermark, text'),
+      change: Math.min(1, Math.max(0, Number(strength ?? before.change ?? kept.change ?? CHANGE))),
+    }
+    let made
+    try {
+      made = await compute.run(
+        RENDER,
+        {
+          kind: 'picture',
+          prompt: String(prompt),
+          negative: chosen.negative,
+          // Rounded to 64 because SDXL's latent space is in units of 8 and its training is in
+          // units of 64. A model handed 1000x1000 makes something subtly wrong rather than
+          // refusing, which is the worst of both.
+          width: size.width,
+          height: size.height,
+          seed: size.seed,
+          steps: chosen.steps,
+          fp32: fp32 !== false,
+          ...(model && { model: String(model) }),
+          // The model used last time, as a preference the rendering computer may not be able to
+          // keep. *Again* means the last picture's own model, which is usually the same one.
+          ...(!model && (before.model ?? remembered.checkpoint) && { remembered: String(before.model ?? remembered.checkpoint) }),
+          preferred: await preferred(),
+          ...(start && { images: [start], change: chosen.change, aspect: !sized }),
+        },
+        {
+          signal,
+          report: (message, done, total, work) => alexia.progress(ctx, done, total, message, work),
+          ...(start && { inputs: [picture(start)] }),
+        },
+      )
+    } catch (error) {
+      // Not running and not startable, a model nobody has, a computer that is not ready: each
+      // is one sentence, said by whichever computer was asked.
+      return { isError: true, content: [{ type: 'text', text: String(error?.message ?? error) }] }
+    }
+    const { checkpoint = 'the model that was there', warning, here, forgotten } = facts(made.text)
+
+    for (const to of made.files) {
       await alexia.storage
         .insert('images', { path: to, prompt: String(prompt), checkpoint, at: Date.now() })
         .catch(() => {})
@@ -301,47 +396,70 @@ const made = alexia.tool(
     // seed — and a seed nobody wrote down is a different picture, which is the whole failure the
     // model remembering the conversation cannot fix: it never saw the number.
     await alexia.storage
-      .set('last', { prompt: String(prompt), negative: String(negative ?? ''), model: checkpoint, ...size, at: Date.now() })
+      .set('last', {
+        prompt: String(prompt),
+        negative: chosen.negative,
+        model: checkpoint,
+        steps: chosen.steps,
+        ...(start && { change: chosen.change }),
+        ...size,
+        at: Date.now(),
+      })
       .catch(() => {})
+    // What the person said this time is what they want from now on; the rest stays as it was.
+    await mind.keep(STARTER, {
+      width: width === undefined ? undefined : size.width,
+      height: height === undefined ? undefined : size.height,
+      steps: steps === undefined ? undefined : chosen.steps,
+      negative,
+      change: strength === undefined ? undefined : chosen.change,
+    })
+    if (made.files.length > 0) await mind.used({ workflow: STARTER, checkpoint: facts(made.text).checkpoint })
     await bind(signal)
+
+    const from = (field, said) => (said !== undefined ? undefined : again === true && before[field] !== undefined ? 'again' : kept[field] !== undefined ? 'kept' : undefined)
+    const report = [
+      { field: 'model', value: checkpoint },
+      start && !sized ?
+        { field: 'size', value: `the picture’s own shape, ${size.height} tall` }
+      : { field: 'width', value: size.width, kept: from('width', width) === 'kept' },
+      ...(start && !sized ? [] : [{ field: 'height', value: size.height, kept: from('height', height) === 'kept' }]),
+      { field: 'steps', value: chosen.steps, kept: from('steps', steps) === 'kept' },
+      { field: 'negative', value: chosen.negative, kept: from('negative', negative) === 'kept' },
+      ...(start ?
+        [
+          { field: 'picture', value: basename(start) },
+          { field: 'how_much_to_change', value: chosen.change, kept: from('change', strength) === 'kept' },
+        ]
+      : []),
+      { field: 'seed', value: size.seed },
+    ]
     return {
       content: [
         {
           type: 'text',
-          text:
-            `Made here, with ${checkpoint}.` +
-            (size.reused ? ` Same seed as the last one (${size.seed}), so it is that picture again.` : '') +
-            (warning ? ` ▲ ${warning}` : ''),
+          text: [
+            // *Here* is only said when it was. The operation knows whether the tool that planned
+            // it is in its own process, and that is all it says — not which computer it was.
+            `Made ${here === false ? 'on the computer you chose' : 'here'} with ${STARTER}, using ${checkpoint}.`,
+            forgotten ? `The model used last time, ${forgotten}, is not on that computer any more, so ${checkpoint} was used instead.` : undefined,
+            ...notes,
+            size.reused ? `Same seed as the last one (${size.seed}), so it is that picture again.` : undefined,
+            `Settings used: ${told(report)}.`,
+            warning ? `▲ ${warning}` : undefined,
+          ]
+            .filter(Boolean)
+            .join(' '),
         },
         // The picture itself, not its path. The answer to *make me an image* used to open
         // with the filename — correct, nothing a person could press, and read straight back
         // to them by a model that could not see the difference. It is a row under the answer
         // now, on the window or as a photo over a channel, and the model is told only that.
-        ...saved.map((to) => alexia.file(to, { description: String(prompt) })),
+        ...made.files.map((to) => alexia.file(to, { description: String(prompt) })),
       ],
     }
   },
 )
-
-/**
- * How much of the graphics card is free this second, or nothing if the question cannot be asked.
- *
- * `/system_stats` gives it away for free. A machine with no card, a ComfyUI that will not answer,
- * or a shape this does not recognise all come back the same way: undefined, and nothing is said.
- */
-async function free(server, signal) {
-  try {
-    const machine = await stats(server, signal)
-    const card = (machine?.devices ?? []).find((one) => one?.type === 'cuda' || one?.type === 'mps')
-    return Number.isFinite(Number(card?.vram_free)) ? Number(card.vram_free) : undefined
-  } catch {
-    return undefined
-  }
-}
-
-/** Class name → display name, which is what an export writes into `_meta.title` for an untitled node. */
-const named_of = (spec) => Object.fromEntries(Object.entries(spec).map(([one, what]) => [one, what?.display_name ?? one]))
-
 
 alexia.tool(
   'models',
@@ -406,27 +524,11 @@ function standing(row) {
  */
 function describe(knob) {
   const kind =
-    knob.options ?
+    knob.type === 'image' ? 'a picture — the path of a file'
+    : knob.options ?
       `one of ${knob.options.slice(0, 12).join(', ')}${knob.options.length > 12 ? `, and ${knob.options.length - 12} more` : ''}`
     : knob.type
   return `  ${knob.field} (${kind}) — ${knob.title}`
-}
-
-/**
- * Wait for a job, and stop it if the waiting stops.
- *
- * `signal` used to reach only the fetch: the poll ended and **the job carried on rendering**, on
- * a graphics card nobody was waiting for and with the next request queued behind it. `/interrupt`
- * is a call this plugin never made. It is made without the signal, because the signal is the
- * thing that just aborted.
- */
-async function awaiting(server, id, options) {
-  try {
-    return await wait(server, id, options)
-  } catch (error) {
-    if (options?.signal?.aborted) await interrupt(server).catch(() => {})
-    throw error
-  }
 }
 
 /**
@@ -476,21 +578,14 @@ async function which(server, wanted, signal) {
 }
 
 /** ComfyUI up, by whatever means are allowed. The two workflow tools open the same way. */
-async function reachable(ctx) {
-  const signal = ctx?.mcpReq?.signal
+async function reachable(ctx, { signal = ctx?.mcpReq?.signal, report } = {}) {
   const state = await bind(signal)
-  const up = state.ok ? state : await wake(signal, ctx)
+  // Something already answers there and is not working: starting another cannot help.
+  const up = state.ok || state.running ? state : await wake(signal, ctx, report)
   if (up.ok) await plant(signal)
   return up
 }
 
-/**
- * What to call the node that is working, in the words its author used.
- *
- * The socket says `node: "12"`, which is true and says nothing. The graph being run is right
- * here, so the title wins over the class name and the class name over the id — *Load Model —
- * step 12 of 28* is a sentence about somebody’s own pipeline rather than about a graph.
- */
 /**
  * What a workflow offers to be set, and whether anybody named it.
  *
@@ -505,11 +600,6 @@ const fields = (graph, spec) => {
   if (named.length > 0) return { found: named, derived: false }
   const found = wired(graph, spec)
   return { found, derived: found.length > 0 }
-}
-
-const naming = (built) => (node) => {
-  const one = built?.[node]
-  return String(one?._meta?.title ?? one?.class_type ?? '').trim() || undefined
 }
 
 const refuse = (text) => ({ isError: true, content: [{ type: 'text', text }] })
@@ -567,6 +657,10 @@ alexia.tool(
         // Where the field came from changes how much to trust its name, so it is said rather
         // than left for somebody to notice.
         if (derived) said.push('  Nothing in it is titled, so these were read off its wiring.')
+        const kept = Object.entries(await mind.kept(row.name))
+          .filter(([field]) => found.some((one) => one.field === field))
+          .map(([field, value]) => ({ field, value }))
+        if (kept.length > 0) said.push(`  Set before and kept until changed: ${told(kept)}.`)
       } catch (error) {
         seen.fields = 'unreadable'
         said.push(`  Could not read the export: ${String(error?.message ?? error)}`)
@@ -576,6 +670,183 @@ alexia.tool(
   },
 )
 
+/**
+ * Run one saved workflow: its fields applied, its pictures sent, its seed rolled or repeated.
+ *
+ * Both `run_workflow` and a plain `generate` arrive here. `values` and `images` are what
+ * `run_workflow` was given; `plain` is `generate`'s fixed vocabulary — a description, a size, a
+ * model — put onto whichever fields of this workflow do those things (`roles`). A workflow with
+ * nowhere to put the description answers `{ fallback }` rather than running with the prompt its
+ * author baked in, which would be a picture of something nobody asked for.
+ */
+async function runSaved(row, { values, seed, stale, images = [], again, plain }, ctx) {
+  const signal = ctx?.mcpReq?.signal
+  if (!own) return refuse('Alexia has not given this plugin a folder to work in.')
+  const server = await where()
+  if (!row.export) return refuse(`${row.name} has not been exported for the API, so there is nothing to queue. ${EXPORT_IT}`)
+  // The one failure nothing downstream catches: a stale export runs, and what comes back is a
+  // picture rather than an error. Refusing costs a menu click; not refusing costs the trust in
+  // every picture after it, because none of them can be told apart from a right one.
+  if (row.stale && stale !== true) {
+    return refuse(
+      `${row.name} was edited ${ago(row.editedAt)} and last exported ${ago(row.exportedAt)}, so the export is behind ` +
+        `the workflow. Running it would quietly use the older version. ${EXPORT_IT} Or pass stale: true to run the ` +
+        'older one on purpose.',
+    )
+  }
+
+  const graph = await read(server, row.export, signal)
+  if (!isApi(graph)) return refuse(`${row.export} is the editor’s own save rather than an API export. ${EXPORT_IT}`)
+  const spec = await nodes(signal)
+  const absent = missing(graph, spec)
+  if (absent.length > 0) {
+    return refuse(
+      `${row.name} needs ${absent.join(', ')}, which ${absent.length === 1 ? 'is' : 'are'} not installed here. ` +
+        `Install the node pack ${absent.length === 1 ? 'it comes' : 'they come'} from and it will run.`,
+    )
+  }
+
+  const { found: titledFound } = fields(graph, spec)
+  const found = [...titledFound]
+  const said = { ...(values ?? {}) }
+  const notes = []
+  const role = roles(graph, spec, titledFound)
+  if (plain) {
+    if (!role.prompt) return { fallback: `${row.name} has no box for the description, so this used Alexia’s own workflow instead.` }
+    // A picture to start from that the workflow has nowhere to put would be quietly ignored;
+    // Alexia's own can start from one, so it is the better answer to the request.
+    if (images.length > 0 && !titledFound.some((knob) => knob.type === 'image')) {
+      return { fallback: `${row.name} takes no picture to start from, so this used Alexia’s own workflow, which does.` }
+    }
+    const left = []
+    for (const [name, value] of Object.entries(plain)) {
+      if (value === undefined || value === null || value === '') continue
+      const knob = role[name === 'strength' ? 'change' : name]
+      if (!knob) {
+        left.push(name === 'strength' ? 'how much to change' : name)
+        continue
+      }
+      // A role found only on the wiring is not one of the workflow's fields; it is set all the same.
+      if (!found.includes(knob)) found.push(knob)
+      said[knob.field] = value
+    }
+    if (left.length > 0) notes.push(`${row.name} has nothing to set ${left.join(', ')} on, so ${left.length === 1 ? 'that was' : 'those were'} left as the workflow has ${left.length === 1 ? 'it' : 'them'}.`)
+  }
+  const strange = Object.keys(said).filter((field) => !found.some((knob) => knob.field === field))
+  if (strange.length > 0) {
+    return refuse(
+      `${row.name} has no field called ${strange.join(', ')}. It takes: ` +
+        `${found.map((knob) => knob.field).join(', ') || 'nothing — it runs exactly as exported'}.`,
+    )
+  }
+  for (const knob of found) {
+    if (!knob.options || !Object.hasOwn(said, knob.field)) continue
+    // A combo's options are filenames again, so the same loose match `generate` uses applies —
+    // and the same refusal, because a near miss answered with a different LoRA is a picture
+    // nobody can explain.
+    const chose = pick(knob.options, String(said[knob.field]))
+    if (!chose) {
+      return refuse(`${knob.field} has nothing here called ${String(said[knob.field])}. It takes one of: ${knob.options.join(', ')}`)
+    }
+    said[knob.field] = chose
+  }
+
+  // **What the person said before, and what this workflow last ran with.** Pictures are never
+  // carried over — each request brings its own — and neither is the description, which is what
+  // a new request is *for*.
+  const settable = found.filter((knob) => knob.type !== 'image')
+  const describes = role.prompt?.field
+  const last = again === true ? await mind.last(row.name) : undefined
+  const kept = await mind.kept(row.name)
+  const carried = { ...(last?.values ?? {}) }
+  if (describes && Object.hasOwn(said, describes)) delete carried[describes]
+  const { values: merged, from } = merge({
+    fields: settable.map((knob) => knob.field),
+    said: Object.fromEntries(Object.entries(said).filter(([field]) => settable.some((knob) => knob.field === field))),
+    again: carried,
+    kept: Object.fromEntries(Object.entries(kept).filter(([field]) => field !== describes)),
+  })
+  // A kept model that has since been deleted is history, not a refusal: it is said and dropped.
+  for (const knob of settable) {
+    if (!knob.options || from[knob.field] === 'said' || !Object.hasOwn(merged, knob.field)) continue
+    if (knob.options.includes(String(merged[knob.field]))) continue
+    notes.push(`${knob.field} was set to ${String(merged[knob.field])} before, which is not here any more, so the workflow’s own was used.`)
+    delete merged[knob.field]
+  }
+
+  const { bound, unused } = pictures(found, said, images)
+  for (const one of bound) {
+    try {
+      picture(one.path)
+    } catch (error) {
+      return refuse(String(error?.message ?? error))
+    }
+  }
+  if (unused.length > 0) {
+    notes.push(
+      found.some((knob) => knob.type === 'image') ?
+        `${row.name} takes fewer pictures than were given, so ${unused.map((one) => basename(one)).join(', ')} ${unused.length === 1 ? 'was' : 'were'} not used.`
+      : `${row.name} has no picture to start from — nothing in it that loads one is titled — so ${unused.map((one) => basename(one)).join(', ')} ${unused.length === 1 ? 'was' : 'were'} not used.`,
+    )
+  }
+
+  const rolled =
+    Number.isFinite(Number(seed)) ? Number(seed)
+    : Number.isFinite(Number(last?.seed)) ? Number(last.seed)
+    : Math.floor(Math.random() * 2 ** 31)
+  // **Prepared here, rendered where the person chose.** The workflow is theirs and is read
+  // off the ComfyUI on this computer, with their fields applied and the seed rolled; what is
+  // handed over is the finished graph, and the rendering computer checks it against its own
+  // nodes before it queues anything — and uploads the pictures to its own ComfyUI.
+  const built = reseed(apply(graph, found, merged), rolled)
+  let made
+  try {
+    made = await compute.run(
+      RENDER,
+      { kind: 'workflow', name: row.name, graph: built, ...(bound.length > 0 && { images: bound.map(({ node, input, path }) => ({ node, input, path })) }) },
+      {
+        signal,
+        report: (message, done, total, work) => alexia.progress(ctx, done, total, message, work),
+        ...(bound.length > 0 && { inputs: bound.map((one) => picture(one.path)) }),
+      },
+    )
+  } catch (error) {
+    return refuse(String(error?.message ?? error))
+  }
+  const { text: reported = [] } = facts(made.text)
+
+  for (const to of made.files) {
+    await alexia.storage.insert('runs', { workflow: row.name, path: to, seed: rolled, at: Date.now() }).catch(() => {})
+  }
+  // What was said is kept for this workflow — never the description — and the run as a whole
+  // is written down for *again*.
+  await mind.keep(row.name, Object.fromEntries(Object.entries(merged).filter(([field]) => from[field] === 'said' && field !== describes)))
+  await mind.ran(row.name, { values: merged, seed: rolled })
+  if (made.files.length > 0) await mind.used({ workflow: row.name })
+  await bind(signal)
+  const shown = used(found, built, { pictures: bound }).map((one) => ({ ...one, kept: from[one.field] === 'kept' }))
+  return {
+    content: [
+      {
+        type: 'text',
+        text: [
+          `Ran ${row.name}${made.files.length === 0 ? ', which produced no file' : ''}.`,
+          ...notes,
+          last && !Number.isFinite(Number(seed)) && Number.isFinite(Number(last.seed)) ? `Same settings and seed as the last run (${rolled}).` : undefined,
+          `Fields used: ${told(shown) || 'none — it ran as exported'}. Seed ${rolled}.`,
+        ]
+          .filter(Boolean)
+          .join(' '),
+      },
+      // What the graph made of what it was given. On these workflows that is the prompt an
+      // Ollama node wrote out of the plain English, and it is the only way to see why a
+      // picture came out the way it did — the alternative is guessing at somebody else's graph.
+      ...(reported.length > 0 ? [{ type: 'text', text: `The workflow reported: ${reported.join(' / ')}` }] : []),
+      ...made.files.map((to) => alexia.file(to, { description: row.name })),
+    ],
+  }
+}
+
 alexia.tool(
   'run_workflow',
   {
@@ -584,6 +855,8 @@ alexia.tool(
       'built, with its LoRAs, ControlNet, reference images and its own settings, rather than the ' +
       'plain one generate uses. Call workflows first: it names each workflow and the fields this ' +
       'takes for it, which are different every time because the person who built it chose them. ' +
+      'Values set here are kept for that workflow until changed or cleared with reset_workflow, ' +
+      'and the result lists every field and the seed it actually ran with. ' +
       'Whatever it makes — a picture, a sound, a video — is handed straight to the user, so say ' +
       'what you made rather than where it was saved. Can take minutes.',
     inputSchema: fromJsonSchema({
@@ -594,16 +867,30 @@ alexia.tool(
           type: 'object',
           description:
             'The workflow’s own fields, by the names workflows gives for it. Anything left out ' +
-            'keeps the value it was exported with. Write these the way the field’s description ' +
-            'asks — a field called plain English wants a sentence, not a tag list.',
+            'keeps the value set last time, or else the one it was exported with. Write these the ' +
+            'way the field’s description asks — a field called plain English wants a sentence, not ' +
+            'a tag list. A picture field takes the path of a file.',
           additionalProperties: true,
+        },
+        images: {
+          type: 'array',
+          items: { type: 'string' },
+          description:
+            'Pictures for the workflow’s picture fields, in order — the paths of files the user ' +
+            'attached or pointed at. Only paths the user gave you.',
         },
         seed: {
           type: 'number',
           description:
             'Same seed and same fields gives the same result. Omit for a new one — an export ' +
             'carries whatever seed the editor last showed, so omitting this is what the editor’s ' +
-            'own randomise does.',
+            'own randomise does. Every result says the seed it used.',
+        },
+        again: {
+          type: 'boolean',
+          description:
+            'Reuse the last run of this workflow — every field and its seed — for anything not given ' +
+            'here. Use for *again*, *same seed*, *same settings but …*.',
         },
         stale: {
           type: 'boolean',
@@ -616,7 +903,7 @@ alexia.tool(
     }),
     annotations: { destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
-  async ({ workflow, values, seed, stale }, ctx) => {
+  async ({ workflow, values, images, seed, again, stale }, ctx) => {
     const signal = ctx?.mcpReq?.signal
     const state = await reachable(ctx)
     if (!state.ok) return refuse(state.said)
@@ -631,78 +918,62 @@ alexia.tool(
         : `There is no workflow here called ${String(workflow)}. What there is: ${rows.map((one) => one.name).join(', ')}`,
       )
     }
-    if (!row.export) return refuse(`${row.name} has not been exported for the API, so there is nothing to queue. ${EXPORT_IT}`)
-    // The one failure nothing downstream catches: a stale export runs, and what comes back is a
-    // picture rather than an error. Refusing costs a menu click; not refusing costs the trust in
-    // every picture after it, because none of them can be told apart from a right one.
-    if (row.stale && stale !== true) {
-      return refuse(
-        `${row.name} was edited ${ago(row.editedAt)} and last exported ${ago(row.exportedAt)}, so the export is behind ` +
-          `the workflow. Running it would quietly use the older version. ${EXPORT_IT} Or pass stale: true to run the ` +
-          'older one on purpose.',
-      )
-    }
+    return runSaved(row, { values, seed, stale, again, images: (Array.isArray(images) ? images : []).map(String) }, ctx)
+  },
+)
 
-    const graph = await read(server, row.export, signal)
-    if (!isApi(graph)) return refuse(`${row.export} is the editor’s own save rather than an API export. ${EXPORT_IT}`)
-    const spec = await nodes(signal)
-    const absent = missing(graph, spec)
-    if (absent.length > 0) {
-      return refuse(
-        `${row.name} needs ${absent.join(', ')}, which ${absent.length === 1 ? 'is' : 'are'} not installed here. ` +
-          `Install the node pack ${absent.length === 1 ? 'it comes' : 'they come'} from and it will run.`,
-      )
-    }
-
-    const { found } = fields(graph, spec)
-    const given = { ...(values ?? {}) }
-    const strange = Object.keys(given).filter((field) => !found.some((knob) => knob.field === field))
-    if (strange.length > 0) {
-      return refuse(
-        `${row.name} has no field called ${strange.join(', ')}. It takes: ` +
-          `${found.map((knob) => knob.field).join(', ') || 'nothing — it runs exactly as exported'}.`,
-      )
-    }
-    for (const knob of found) {
-      if (!knob.options || !Object.hasOwn(given, knob.field)) continue
-      // A combo's options are filenames again, so the same loose match `generate` uses applies —
-      // and the same refusal, because a near miss answered with a different LoRA is a picture
-      // nobody can explain.
-      const chose = pick(knob.options, String(given[knob.field]))
-      if (!chose) {
-        return refuse(`${knob.field} has nothing here called ${String(given[knob.field])}. It takes one of: ${knob.options.join(', ')}`)
+alexia.tool(
+  'reset_workflow',
+  {
+    description:
+      'Forget what the user set on a workflow — a size, steps, a model — so it goes back to its own ' +
+      'defaults. Use when they say *back to normal*, *reset the settings*, *forget the size*. Makes ' +
+      'nothing. Takes the workflow (omit for the one used last) and optionally which fields to forget.',
+    inputSchema: fromJsonSchema({
+      type: 'object',
+      properties: {
+        workflow: { type: 'string', description: 'Which workflow; any part of its name. Omit for the one used last.' },
+        fields: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Only these fields, by the names the last result listed. Omit to forget them all.',
+        },
+      },
+    }),
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  async ({ workflow, fields }, ctx) => {
+    const asked = String(workflow ?? '').trim()
+    let name = (await mind.remembered()).workflow || STARTER
+    if (asked) {
+      // Values are kept under a workflow's whole name, so a loose one is matched against the saved
+      // list — which needs ComfyUI here, but only for a name that is not Alexia's own.
+      const plain = recall({ asked, rows: [], starter: STARTER, pick })
+      if (plain.starter) name = STARTER
+      else {
+        const state = await reachable(ctx)
+        if (!state.ok) return refuse(state.said)
+        const chosen = recall({ asked, rows: await saved(await where(), ctx?.mcpReq?.signal).catch(() => []), starter: STARTER, pick })
+        if (chosen.refused) return refuse(chosen.refused)
+        name = chosen.row.name
       }
-      given[knob.field] = chose
     }
-
-    const rolled = Number.isFinite(Number(seed)) ? Number(seed) : Math.floor(Math.random() * 2 ** 31)
-    const built = reseed(apply(graph, found, given), rolled)
-    const id = await queue(server, built, signal)
-    const made = await awaiting(server, id, {
-      signal,
-      expect: 'output',
-      label: naming(built),
-      stages: order(built),
-      onProgress: (message, done, total, work) => alexia.progress(ctx, done, total, message, work),
-    })
-
-    const kept = []
-    for (const one of made.files) {
-      const bytes = await download(server, one, signal)
-      const to = join(own, `${Date.now()}-${one.filename}`)
-      writeFileSync(to, Buffer.from(bytes))
-      kept.push(to)
-      await alexia.storage.insert('runs', { workflow: row.name, path: to, seed: rolled, at: Date.now() }).catch(() => {})
-    }
-    await bind(signal)
+    const only = Array.isArray(fields) && fields.length > 0 ? fields.map(String) : undefined
+    // For Alexia's own, `model` is the model used last rather than a kept field, and forgetting
+    // it is what puts the settings screen's choice back in charge.
+    const model = name === STARTER && (!only || only.includes('model')) && (await mind.remembered()).checkpoint
+    if (model) await mind.forgetModel()
+    const cleared = await mind.reset(name, only?.filter((one) => !(name === STARTER && one === 'model')))
+    if (model) cleared.push('model')
     return {
       content: [
-        { type: 'text', text: `Ran ${row.name}${kept.length === 0 ? ', which produced no file' : ''}. Seed ${rolled}.` },
-        // What the graph made of what it was given. On these workflows that is the prompt an
-        // Ollama node wrote out of the plain English, and it is the only way to see why a
-        // picture came out the way it did — the alternative is guessing at somebody else's graph.
-        ...(made.text.length > 0 ? [{ type: 'text', text: `The workflow reported: ${made.text.join(' / ')}` }] : []),
-        ...kept.map((to) => alexia.file(to, { description: row.name })),
+        {
+          type: 'text',
+          text:
+            cleared.length === 0 ?
+              `Nothing was set on ${name}, so it already uses its own defaults.`
+            : `${name} is back to its own defaults for ${cleared.join(', ')}. The next picture uses them.`,
+        },
       ],
     }
   },
@@ -988,255 +1259,6 @@ alexia.tool(
   },
 )
 
-/**
- * The library, as a page somebody can read (§8.1, §8.4).
- *
- * **The tiers §8.4 ranks do not all exist yet.** *Verified* needs workflows the owner has run
- * and tagged, and *Curated* needs an Alexia set published the way plugins are; neither has been
- * built, and inventing a badge for them would be the rot that section warns about — a tick that
- * means nothing is worse than no tick. So this is the third tier, ComfyUI’s own, and it says so.
- *
- * **Filtered on the machine before it is ranked on the words** (D133). Showing somebody 468
- * workflows when 45 of them will run on their card is accurate and misleading at once, so what
- * is listed is what this card can actually run, and the hint carries the honest arithmetic.
- */
-alexia.tool(
-  'library',
-  {
-    description:
-      'List the workflows this machine could install and run, from the catalogue ComfyUI ships. ' +
-      'Takes no arguments. Use to show somebody what is available, or before install_workflow. ' +
-      'Only lists what this graphics card can run and what does not need a paid service.',
-    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
-  },
-  async (ctx) => {
-    const signal = ctx?.mcpReq?.signal
-    const state = await reachable(ctx)
-    if (!state.ok) {
-      return { content: [{ type: 'text', text: state.said }], structuredContent: { rows: [] } }
-    }
-    const server = await where()
-    const all = flatten(await templates(server, signal).catch(() => []))
-    const card = vram(await stats(server, signal).catch(() => undefined))
-    const mine = runnable(all, { vram: card?.total })
-    const known = new Map(all.map((one) => [one.name, one]))
-    const here = await saved(server, signal).catch(() => [])
-    const spec = await nodes(signal).catch(() => ({}))
-
-    /** What a workflow already here can be told, which is the useful thing to know about it. */
-    const settings = async (row) => {
-      if (!row.export) return 'not exported'
-      try {
-        const graph = await read(server, row.export, signal)
-        if (!isApi(graph)) return 'not an API export'
-        const { found, derived } = fields(graph, spec)
-        if (found.length === 0) return 'no settings'
-        return `${found.map((one) => one.field).join(', ')}${derived ? ' (from its wiring)' : ''}`
-      } catch {
-        return 'unreadable'
-      }
-    }
-
-    const rows = []
-    // **Installed first, then your own, then the rest** — the order somebody opening this page
-    // is looking in. Grouping is not sorting, so the sections are built in the order they read.
-    for (const row of here.filter((one) => known.has(one.name))) {
-      const one = known.get(row.name)
-      rows.push({
-        id: one.name,
-        name: one.title,
-        summary: one.description || 'Its author left no description.',
-        meta: await settings(row),
-        state: 'installed',
-        group: 'Installed',
-      })
-    }
-    for (const row of here.filter((one) => !known.has(one.name))) {
-      rows.push({
-        id: row.name,
-        name: row.name,
-        // A workflow somebody built or was given has no catalogue entry to describe it, and
-        // inventing one would be worse than saying where it came from.
-        summary: 'Yours — added from a file or a link rather than the catalogue.',
-        meta: await settings(row),
-        state: 'installed',
-        group: 'Your own',
-      })
-    }
-    const rest = mine.filter((one) => !here.some((row) => row.name === one.name))
-    for (const one of rest) {
-      rows.push({
-        id: one.name,
-        name: one.title,
-        summary: one.description || 'Its author left no description.',
-        meta:
-          [one.vram ? `${(one.vram / 1e9).toFixed(1)} GB` : undefined, one.models.length > 0 ? one.models.join(', ') : undefined]
-            .filter(Boolean)
-            .join(' · ') || 'nothing extra',
-        state: 'available',
-        group: `Not installed — ${rest.length} this card can run`,
-      })
-    }
-    return { content: [{ type: 'text', text: shelf(all, card?.total).said }], structuredContent: { rows } }
-  },
-)
-
-
-alexia.tool(
-  'about_workflow',
-  {
-    description: 'What one catalogue workflow is for, by its catalogue name. Used by the library page.',
-    inputSchema: fromJsonSchema({
-      type: 'object',
-      properties: { id: { type: 'string', description: 'The workflow’s catalogue name.' } },
-      required: ['id'],
-    }),
-    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
-  },
-  async ({ id }, ctx) => {
-    const signal = ctx?.mcpReq?.signal
-    const state = await reachable(ctx)
-    if (!state.ok) return refuse(state.said)
-    const server = await where()
-    const all = flatten(await templates(server, signal).catch(() => []))
-    const one = all.find((entry) => entry.name === String(id ?? '').trim())
-    if (!one) return refuse(`Nothing in the catalogue is called ${String(id)}.`)
-    const here = (await saved(server, signal).catch(() => [])).some((row) => row.name === one.name)
-    return {
-      content: [
-        {
-          type: 'text',
-          text: [
-            one.description || 'Its author left no description.',
-            one.models.length > 0 ? `Models: ${one.models.join(', ')}.` : undefined,
-            one.vram ? `Wants ${(one.vram / 1e9).toFixed(1)} GB of video memory.` : undefined,
-            one.paid ? 'Calls a paid service and needs an API key.' : undefined,
-            here ? 'Installed here already.' : 'Not installed — press Install to set it up.',
-          ]
-            .filter(Boolean)
-            .join(' '),
-        },
-      ],
-    }
-  },
-)
-
-alexia.tool(
-  'install_workflow',
-  {
-    description:
-      'Install one of the workflows ComfyUI ships, by the title find_workflow showed, so ' +
-      'run_workflow can use it. Use straight after find_workflow when the user picks one. It only ' +
-      'ever saves a JSON file — it never downloads or installs node packs, so a workflow needing a ' +
-      'node this machine does not have is refused by name instead.',
-    inputSchema: fromJsonSchema({
-      type: 'object',
-      properties: {
-        workflow: {
-          type: 'string',
-          description: 'The title of the workflow, as find_workflow or the library showed it.',
-        },
-        id: { type: 'string', description: 'Its catalogue name, which the library page passes.' },
-      },
-    }),
-    // Nothing is overwritten that was not already this same workflow, and installing the same
-    // one twice is the same file written twice.
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  },
-  async ({ workflow, id }, ctx) => {
-    const signal = ctx?.mcpReq?.signal
-    // `workflow` is what the model passes; `id` is what a row action on the library page passes.
-    const asked = String(workflow ?? id ?? '').trim()
-    if (asked === '') return refuse('Which one? Use the title find_workflow showed.')
-    const state = await reachable(ctx)
-    if (!state.ok) return refuse(state.said)
-    const server = await where()
-
-    const all = flatten(await templates(server, signal).catch(() => []))
-    if (all.length === 0) return refuse('This ComfyUI does not offer a workflow catalogue.')
-    const { entry, many } = pickEntry(all, asked)
-    if (many) return refuse(`More than one workflow matches “${asked}”: ${many.join(', ')}. Which one?`)
-    if (!entry) return refuse(`Nothing in ComfyUI’s workflows is called “${asked}”. find_workflow lists what is there.`)
-
-    let doc
-    try {
-      doc = await template(server, entry.name, signal)
-    } catch (error) {
-      return refuse(`${entry.title} is in the catalogue but its file could not be read: ${String(error?.message ?? error)}`)
-    }
-
-    /**
-     * **This is where the sharpest edge in the plan turns out not to be one.**
-     *
-     * §8.6 was written around installing node packs — arbitrary Python, no sandbox, no undo —
-     * and chose one consent then trust the catalogue. But the converter refuses any node class
-     * this machine does not already have, so a workflow that installs cleanly is one whose
-     * nodes are **already here**. Nothing is downloaded, nothing is executed, and the file
-     * written is JSON. The consent ladder that decision was buying is not needed for what this
-     * can actually do, and claiming it would be theatre.
-     */
-    const spec = await nodes(signal).catch(() => ({}))
-    const got = convert(doc, spec)
-    if (!got.ok) {
-      return refuse(
-        `${entry.title} cannot be converted here: ${got.why[0]}. Alexia will not guess at a graph it ` +
-          'cannot prove — the way round is to open it in ComfyUI (Workflow → Browse Templates), then ' +
-          'Workflow → Export (API), and hand the file to add_workflow.',
-      )
-    }
-
-    // Both halves, from the one source, so they cannot disagree. `workflows` pairs them by name
-    // and D126 refuses an export that has fallen behind its workflow — which is a real check
-    // only when the editor copy is actually there.
-    await write(server, `${FOLDER}/${entry.name}.json`, JSON.stringify(doc), signal)
-    await write(server, `${FOLDER}/${entry.name}${API_SUFFIX}`, JSON.stringify(got.graph), signal)
-
-    const absent = missing(got.graph, spec)
-    const { found, derived } = fields(got.graph, spec)
-    const wants = found.find((one) => one.field === 'model')
-    return {
-      content: [
-        {
-          type: 'text',
-          text: [
-            `Installed ${entry.title} as ${entry.name}. run_workflow can use it now.`,
-            entry.models.length > 0 ?
-              `It wants ${entry.models.join(', ')} — if a model is missing the run will say so rather than guess.`
-            : undefined,
-            entry.vram ? `Its author says it wants ${(entry.vram / 1e9).toFixed(1)} GB of video memory.` : undefined,
-            absent.length > 0 ? `Nodes this ComfyUI does not have: ${absent.join(', ')}.` : undefined,
-            // **The model it names is usually one this machine does not have, and swapping it is
-            // not free.** Measured: SDXL Turbo installed cleanly, took the prompt it was given,
-            // ran against another SDXL checkpoint and produced grey mush — because a Turbo
-            // workflow is one step at guidance 1, which is tuned to its own distilled model. So
-            // the substitution is offered and the cost is stated: a tool that quietly returns a
-            // ruined picture is worse than one that says this may not work.
-            wants && !wants.options?.includes(wants.value) ?
-              `It was built around ${String(wants.value)}, which is not on this machine. You can point it at one of ` +
-                `yours instead — but a workflow is tuned to its model, steps and guidance included, so the ` +
-                'result may be poor. Downloading the one it names is the reliable way.'
-            : undefined,
-            // **The normal case for a catalogue entry is the derived one.** D128 offers only the
-            // fields whose nodes an author renamed, and ComfyUI’s own templates rename nothing — so
-            // without the wiring every one of them would install and then ignore what was asked
-            // for. Where it came from is said, because a name read off a wire deserves less
-            // trust than one somebody chose.
-            found.length === 0 ?
-              'It exposes no settings and its wiring did not say — it runs with whatever its author put in ' +
-              'it. To steer it, open it in ComfyUI, rename the boxes you want to control, and export it ' +
-              'again with add_workflow.'
-            : derived ?
-              `Nothing in it is titled, so its fields were read off its wiring: ${found.map((one) => one.field).join(', ')}.`
-            : `What you can set: ${found.map((one) => one.field).join(', ')}.`,
-          ]
-            .filter(Boolean)
-            .join('\n'),
-        },
-      ],
-    }
-  },
-)
-
 alexia.tool(
   'remove_workflow',
   {
@@ -1285,34 +1307,43 @@ alexia.tool(
   'setup',
   {
     description:
-      'Set local media generation up on this machine: find ComfyUI, read what the graphics card ' +
-      'can hold, and download one image model if there are none. Takes no arguments. Safe to ' +
-      'call again — it downloads nothing that is already there, and resumes a download that was ' +
-      'interrupted rather than starting it over. The first run can take half an hour.',
+      'Set local media generation up on this machine: find ComfyUI — or, on a Windows PC with an ' +
+      'NVIDIA card and none installed, install Alexia’s own copy of it (about 2 GB) — read what the ' +
+      'graphics card can hold, and download one image model if there are none. Takes no arguments. ' +
+      'Safe to call again — it downloads nothing that is already there, and resumes a download that ' +
+      'was interrupted rather than starting it over. The first run can take half an hour.',
     // Something large arrives on the person's disk that was not there before, and it is theirs
     // to approve. Not destructive — nothing is overwritten — and asking twice is harmless.
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
   async (ctx) => {
     const signal = ctx?.mcpReq?.signal
-    const dir = await found()
+    let dir = await found()
     if (!dir) {
-      // **Hand off rather than build.** Getting PyTorch right for a specific card and driver is
-      // the commonest way this breaks for people, and ComfyUI's own installer already owns that
-      // problem. Alexia's job is to find the result and carry on.
-      return {
-        content: [
-          {
-            type: 'text',
-            text:
-              'ComfyUI is not on this machine, and it is what makes the pictures. Install it from ' +
-              'comfy.org — their own installer handles the graphics-card half, which is the part that ' +
-              'goes wrong. Alexia will find it afterwards; run this again once it is there, or just ' +
-              'ask for a picture. If it is installed somewhere unusual, put the folder in this ' +
-              'plugin’s settings instead.',
-          },
-        ],
+      // **Alexia's own copy, where there is one to install** (`install.js`): the pinned portable
+      // build, into this plugin's folder, on a Windows PC with an NVIDIA card. Everywhere else
+      // ComfyUI's own installer is still the right hand-off, and `comfyStatus` says which.
+      const status = await comfyStatus({ own })
+      if (status.state !== 'missing') {
+        return {
+          content: [
+            {
+              type: 'text',
+              text:
+                `ComfyUI is not on this machine, and it is what makes the pictures. ${status.said ?? ''} ` +
+                'If it is installed somewhere unusual, put the folder in this plugin’s settings instead.',
+            },
+          ],
+        }
       }
+      try {
+        await installComfy({ own, signal, onProgress: (done, total, text) => alexia.progress(ctx, done, total, text) })
+      } catch (error) {
+        return refuse(String(error?.message ?? error))
+      }
+      where_it_is = undefined
+      dir = await found()
+      if (!dir) return refuse('ComfyUI was installed, but Alexia could not find it afterwards.')
     }
 
     const state = await reachable(ctx)
@@ -1416,9 +1447,230 @@ alexia.tool(
   },
 )
 
+/**
+ * The ComfyUI this plugin runs as a compute worker — its own, and never the person's.
+ *
+ * `avoid` is the port in this plugin's settings: that address is where the person's ComfyUI
+ * lives or will, so the worker neither starts there nor speaks to whatever answers there.
+ */
+const worker = dedicated({
+  storage: alexia.storage,
+  own: () => own,
+  dir: () => found(),
+  avoid: async () => [port(await where())],
+  log: (line) => log.info(line),
+})
+
+/**
+ * Which ComfyUI renders this job.
+ *
+ * **Planned in this process, it is the one this plugin has always used**: whatever answers at
+ * the address in the settings — the person's own if they have it open, on this machine or on
+ * another — and otherwise one Alexia starts there. That is the behaviour of a computer with
+ * nothing paired, kept exactly.
+ *
+ * **Sent by another computer, it is the worker's own and nothing else.** See `worker.js`.
+ */
+async function connect({ here, signal, report }) {
+  if (here) {
+    // Not running is a thing to fix rather than a thing to report. If it cannot be fixed —
+    // no install, another machine, switched off — `reachable` says which, in one sentence. It
+    // also plants the starter workflow the first time it succeeds, which is here rather than at
+    // boot because this is the first moment ComfyUI is known to be up.
+    const state = await reachable(undefined, { signal, report })
+    if (!state.ok) throw new Error(state.said)
+    return { server: await where(), classes: (signal) => nodes(signal) }
+  }
+  const up = await worker.ensure({
+    signal,
+    onProgress: (tick) => report(tick < 20 ? 'Starting ComfyUI' : 'Starting ComfyUI — loading its nodes and models', tick, 0),
+  })
+  return { server: up.server, classes: (signal) => workerNodes(up.server, signal), tidy: worker.tidy }
+}
+
+/** The worker's own node classes, kept for as long as it is the same ComfyUI answering. */
+let workerKnown
+async function workerNodes(server, signal) {
+  if (workerKnown?.server === server && Date.now() - workerKnown.at < 5 * 60_000) return workerKnown.classes
+  workerKnown = { server, classes: await classes(server, signal), at: Date.now() }
+  return workerKnown.classes
+}
+
+compute.operation(RENDER, renderer({ own: () => own, connect }))
+
+/**
+ * **The ComfyUI an edit may run on: Alexia's own install, and only that.** Editing promises
+ * checked model files and a cleaned-up input folder, which only a copy this plugin installed can
+ * keep — so a ComfyUI somebody installed or started themselves is reported as unsupported for
+ * editing rather than used with weaker promises. Always the dedicated worker process, here or on
+ * the paired computer, never whatever answers at the address in the settings.
+ */
+async function managedComfy() {
+  const mine = await installed(own).catch(() => undefined)
+  const dir = await found()
+  const managed = Boolean(dir && mine?.dir && resolve(dir) === resolve(mine.dir))
+  // The worker runs ComfyUI with its input, output and temp folders inside this plugin's own
+  // folder (`worker.js`), so that is where anything an edit lent it is swept from.
+  return { managed, dir: managed ? dir : undefined, models: managed ? join(dir, 'models') : undefined, work: own ? join(own, 'worker') : undefined }
+}
+async function connectManaged({ signal, report = () => {}, probe = false } = {}) {
+  const facts_ = await managedComfy()
+  if (probe || !facts_.managed) return facts_
+  const up = await worker.ensure({
+    signal,
+    onProgress: (tick) => report(tick < 20 ? 'Starting ComfyUI' : 'Starting ComfyUI — loading its nodes and models', tick, 0),
+  })
+  return { ...facts_, server: up.server, classes: (asked) => workerNodes(up.server, asked), tidy: worker.tidy }
+}
+
+/** The image editor: its screen's tool, the chat's `edit_image`, and the `image.edit` operation. */
+const editing = mountEditor({
+  alexia, compute, own: () => own, connectManaged,
+  installManaged: async ({ signal, report }) => {
+    await installComfy({ own, signal, onProgress: (done, total, message) => report(message, done, total) })
+    where_it_is = undefined
+  },
+  releaseManaged: async () => { workerKnown = undefined; await worker.release() },
+  log: (line) => log.info(line),
+})
+
+/**
+ * Which ComfyUI a workflow is installed into, as `library/tools.js` asks it.
+ *
+ * **The same two answers as `connect`**, for the same reasons: planned here, it is the install
+ * this plugin has always used — the one at the address in the settings, if that address is this
+ * machine — and sent by another computer, it is the install the worker starts its own ComfyUI
+ * from. Either way **`own` is true only for the copy `install.js` put in this plugin's folder**,
+ * and that is the only one the library ever installs a node pack or a model into.
+ */
+async function place({ here, signal, report } = {}) {
+  const server = await where()
+  const dir = here && !loopback(server) ? undefined : ((await found()) ?? undefined)
+  const mine = await installed(own).catch(() => undefined)
+  const forget = () => {
+    // New packs are new node classes, and a cached list would refuse the workflow that needs them.
+    known = undefined
+    workerKnown = undefined
+  }
+  return {
+    dir,
+    own: Boolean(dir && mine?.dir && resolve(dir) === resolve(mine.dir)),
+    server:
+      here ?
+        async (asked = signal) => {
+          const up = await reachable(undefined, { signal: asked, report })
+          if (!up.ok) throw new Error(up.said)
+          return server
+        }
+      : async (asked = signal) => (await worker.ensure({ signal: asked })).server,
+    running: here ? async (asked = signal) => ((await awake(server, asked)) ? server : undefined) : async (asked = signal) => (await worker.running(asked))?.server,
+    // A restart, as this plugin does one: stopped now, and started by the next thing that needs it.
+    release: async () => {
+      forget()
+      await worker.release().catch(() => {})
+      await letGo().catch(() => {})
+    },
+    card: async () => {
+      const card = await nvidia().catch(() => undefined)
+      return card ? { total: card.vram, name: card.name } : undefined
+    },
+  }
+}
+
+/** The workflow library — by task, installed with what it needs, picked by what was asked. */
+const librarian = library({
+  alexia,
+  compute,
+  place,
+  classes,
+  fromWeb,
+  comfy: async () => comfyRequirement(await comfyStatus({ own })),
+})
+
+/**
+ * Give back a ComfyUI that Alexia started for this computer's own pictures.
+ *
+ * **Only a ComfyUI Alexia started is stopped** — the same two conditions `stop_comfyui` uses,
+ * because one somebody opened themselves is not Alexia's to close.
+ */
+async function letGo() {
+  const mine = await alexia.storage.get('started').catch(() => undefined)
+  if (!mine?.pid || !alive(mine.pid)) return false
+  if (!(await awake(await where()))) {
+    await alexia.storage.remove('started').catch(() => {})
+    return false
+  }
+  if (!(await stop(mine.pid))) return false
+  await alexia.storage.remove('started').catch(() => {})
+  await bind()
+  return true
+}
+
+/**
+ * The worker's lifecycle, as core runs it on a computer somebody paired (`worker.js`).
+ *
+ * `setup` reads and starts nothing; `install` is the only one that downloads, and only what
+ * its requirement named; `prepare` starts the worker's ComfyUI; `release` stops it, which is
+ * what returns the model memory. None of them reaches a ComfyUI the person started.
+ */
+/** The setup list as it was before the library: ComfyUI, then one model. */
+async function basics() {
+  const dir = await found()
+    // No ComfyUI anywhere: Alexia's own copy, with its size, where one can be installed here.
+  if (!dir) return [comfyRequirement(await comfyStatus({ own }))].filter(Boolean)
+  const up = await worker.running().catch(() => undefined)
+  // ComfyUI is the authority on what it has when it is running. When it is not, the disk
+  // is read instead: drawing a list is not a reason to start a program.
+  if (!up) return requirements({ dir, installed: await onDisk([dir, own]) })
+  return requirements({
+    dir,
+    installed: await checkpoints(up.server),
+    card: vram(await stats(up.server).catch(() => undefined)) ?? null,
+  })
+}
+
+alexia.computeHooks({
+  // Then every workflow somebody asked for from another computer, each with its size.
+  setup: async () => [...(await basics()), ...(await librarian.requirements().catch(() => []))],
+  install: async (requirementId, ctx) => {
+    if (await librarian.install(requirementId, ctx)) return
+    if (requirementId === COMFYUI) {
+      const onProgress = (done, total, text) => alexia.progress(ctx, done, total, text)
+      await installComfy({ own, signal: ctx?.mcpReq?.signal, onProgress })
+      // A search that found nothing was remembered; there is something to find now.
+      where_it_is = undefined
+      return
+    }
+    await fetchRequirement(requirementId, {
+      own,
+      signal: ctx?.mcpReq?.signal,
+      onProgress: (done, total, text) => alexia.progress(ctx, done, total, text),
+    })
+    // ComfyUI reads its model folders when it starts, so one that was already running is let
+    // go of here and the next job starts one that can see what just arrived.
+    await worker.release().catch(() => {})
+  },
+  prepare: async (cap) => {
+    // Reading the library is a list, and a list is not a reason to start a program.
+    if (cap === LIBRARY) return
+    // Whatever an earlier edit lent Alexia's own ComfyUI and could not take back goes first.
+    const managed = await managedComfy()
+    if (managed.work) sweep(managed.work)
+    await worker.ensure()
+  },
+  release: async () => {
+    await worker.release().catch(() => {})
+    await letGo().catch(() => {})
+    const managed = await managedComfy().catch(() => ({}))
+    if (managed.work) sweep(managed.work)
+  },
+})
+
 await alexia.start()
 own = (await alexia.host()).paths.ownDir
 await bind()
+// Edits that were mid-flight when this process stopped wait for the person; nothing re-renders.
+void managedComfy().then((m) => editing.recover(m.work)).catch(() => {})
 /**
  * The conversation is over, so give the graphics card back.
  *
@@ -1437,17 +1689,7 @@ await bind()
 alexia.onConversationEnded(() => {
   void (async () => {
     try {
-      const mine = await alexia.storage.get('started').catch(() => undefined)
-      if (!mine?.pid || !alive(mine.pid)) return
-      if (!(await awake(await where()))) {
-        await alexia.storage.remove('started').catch(() => {})
-        return
-      }
-      if (await stop(mine.pid)) {
-        await alexia.storage.remove('started').catch(() => {})
-        log.info('a new conversation started, so the ComfyUI Alexia started was stopped')
-        await bind()
-      }
+      if (await letGo()) log.info('a new conversation started, so the ComfyUI Alexia started was stopped')
     } catch {
       // Letting go of a graphics card is never worth failing over.
     }
@@ -1460,6 +1702,8 @@ alexia.onSettingsChanged((changed) => {
   // A different address is a different install, with its own node packs. Nothing about the one
   // that was cached is true of it, and a workflow bound against the wrong one binds silently.
   if ('server' in changed) known = undefined
+  // A model chosen on the settings screen is newer than the one remembered from the last picture.
+  if ('checkpoint' in changed) void mind.forgetModel()
   if ('server' in changed || 'checkpoint' in changed || 'path' in changed || 'autostart' in changed) void bind()
 })
 log.info(`${alexia.manifest.name} is ready`)

@@ -56,6 +56,7 @@ name that is not here does not install.
 | `input.control` | move the pointer and press keys | "control your mouse and keyboard" |
 | `proc.spawn` | run a child process — one it ships, or one on this machine it names in `why` | "run the programs it came with", or "start *…*" |
 | `notify` | a desktop notification | "notify you" |
+| `attachments.scoped` | lease, register and share the pictures of one conversation at a time (`alexia_protocol` 14) | "edit the pictures you attach" |
 
 `net.download` and `net.request` are separate on purpose. Almost every plugin that touches
 the network is fetching one model file, once, from one host — and *"download the speech
@@ -208,6 +209,55 @@ not claim it can. Declaring it in the manifest is a promise about the plugin; de
 on the tool is a statement about right now. If a plugin declares a capability in its
 manifest and no running tool binds it, the call gets `-32050` — the same answer as if the
 plugin were not installed, which is exactly what the caller needs to hear.
+
+## How a compute operation reaches a tool
+
+*`alexia_protocol` 13.* A capability listed in the manifest's
+[`compute.operations`](./manifest.md#compute) is **work core may run as a job** — on this
+computer or on one the person paired with it ([`remote-compute.md`](./remote-compute.md)). It
+is declared and bound the same two ways, with a different key:
+
+```jsonc
+{ "name": "alexia_compute_image.render",
+  "description": "Render an image from a prepared workflow",
+  "_meta": { "alexia/compute": { "op": "image.render" } } }
+
+{ "name": "alexia_compute_setup",
+  "_meta": { "alexia/compute": { "hook": "setup" } } }
+```
+
+`{ "op": "<cap>" }` marks the tool that performs that operation; `{ "hook": "<name>" }` marks
+the one that answers a lifecycle hook — `setup`, `install`, `prepare` or `release`. The names
+are what `@alexia/sdk` gives them and are reserved, but **the binding is the `_meta`**: core
+finds the tool by it and never by its name.
+
+**A tool carrying `alexia/compute` is never offered to a model.** It is work core schedules —
+one heavy job at a time, on the computer the person chose — and not a thing to be picked from a
+list mid-answer. Core leaves it out of the tool list and calls it by capability.
+
+What each one is handed, and what it answers:
+
+| Binding | `arguments` | `structuredContent` |
+|---|---|---|
+| `{ "op": cap }` | the operation's own, with every file that was sent replaced by a path the tool can read | `{ "text"?: string, "files": string[] }` — the paths of the files it made |
+| `{ "hook": "setup" }` | none | `{ "requirements": [...] }` — what is missing, see below |
+| `{ "hook": "install" }` | `{ "requirementId": string }` | — |
+| `{ "hook": "prepare" }` | `{ "cap": string }` | — |
+| `{ "hook": "release" }` | none | — |
+
+A requirement is `{ id, kind, title, detail?, bytes?, action, instructions?, blocks }`: `kind`
+is `runtime`, `model` or `dependency`; `action` is `install` (a button your `install` hook
+carries out) or `instructions` (something only a person can do, said in `instructions`);
+`bytes` is the download's size where you know it; `blocks` is the capabilities waiting on it.
+**Nothing is installed until the person presses that button.**
+
+A failure is a tool failure like any other: `isError: true` with the reason in `content`.
+Progress is `notifications/progress` and stopping is `notifications/cancelled`, both MCP's own.
+
+**An operation is asked for with `alexia/compute/run`, not `alexia/capability/call`**
+([`wire-protocol.md`](./wire-protocol.md#alexiacomputerun)). The second answers from this
+computer and carries no files; the first goes wherever the person chose. Neither says who
+answered.
 
 ## What a caller learns
 

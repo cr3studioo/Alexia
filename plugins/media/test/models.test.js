@@ -31,6 +31,12 @@ beforeAll(async () => {
       response.write(BODY.subarray(0, 500))
       return setTimeout(() => response.socket?.destroy(), 10)
     }
+    if (request.url === '/stall' || (request.url === '/stall-once' && !request.headers.range)) {
+      // Some bytes, then silence: the socket stays open and sends nothing more.
+      response.writeHead(200, { 'content-length': String(BODY.length) })
+      response.write(BODY.subarray(0, 500))
+      return
+    }
     const range = stubborn ? undefined : request.headers.range
     if (range) {
       const from = Number(/bytes=(\d+)-/.exec(range)?.[1] ?? 0)
@@ -131,4 +137,40 @@ test('ComfyUI is pointed at Alexia’s own model folder without anything being w
   expect(yaml).not.toMatch(/is_default/)
   // And the folders exist, because ComfyUI logs a warning for a search path that does not.
   expect(existsSync(join(own, 'models', 'checkpoints'))).toBe(true)
+})
+
+test('a file with the right name and the wrong bytes is set aside, not trusted', async () => {
+  const { createHash } = await import('node:crypto')
+  const sha256 = createHash('sha256').update(BODY).digest('hex')
+  const to = join(scratch(), 'model.safetensors')
+  writeFileSync(to, Buffer.from('y'.repeat(2000)))
+  const got = await fetchModel(`${at}/model`, to, { expect: BODY.length, sha256 })
+  expect(got.already).toBe(false)
+  expect(readFileSync(to).equals(BODY)).toBe(true)
+  expect(existsSync(`${to}.mismatch`)).toBe(true)
+  expect((await fetchModel(`${at}/model`, to, { sha256 })).already).toBe(true)
+})
+
+test('a download whose bytes do not hash to the catalogue is not installed', async () => {
+  const to = join(scratch(), 'model.safetensors')
+  await expect(fetchModel(`${at}/model`, to, { expect: BODY.length, sha256: '0'.repeat(64) })).rejects.toThrow(/checksum/)
+  expect(existsSync(to)).toBe(false)
+  expect(existsSync(`${to}.part`)).toBe(false)
+})
+
+test('a download that goes quiet is picked up again from where it stopped', async () => {
+  const to = join(scratch(), 'model.safetensors')
+  const said = []
+  const got = await fetchModel(`${at}/stall-once`, to, { expect: BODY.length, stallMs: 150, onProgress: (_d, _t, text) => said.push(text) })
+  expect(got.bytes).toBe(BODY.length)
+  expect(readFileSync(to).equals(BODY)).toBe(true)
+  expect(asked).toBe('bytes=500-')
+  expect(said.some((t) => /picking the download up again/.test(t))).toBe(true)
+})
+
+test('a download that keeps going quiet gives up, says so, and keeps what arrived', async () => {
+  const to = join(scratch(), 'model.safetensors')
+  await expect(fetchModel(`${at}/stall`, to, { expect: BODY.length, stallMs: 100, attempts: 2 })).rejects.toThrow(/stalled.*carry on from there/)
+  expect(existsSync(to)).toBe(false)
+  expect((await have(to)).part).toBeGreaterThan(0)
 })

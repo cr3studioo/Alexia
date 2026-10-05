@@ -61,6 +61,24 @@ export interface Model {
   created?: number
   /** **When the provider stops serving it**, from OpenRouter's `expiration_date` (§4 D reads it). */
   expires?: number
+  /** Details of a locally installed weight file. */
+  quant?: string
+  diskBytes?: number
+  abliterated?: boolean
+  /**
+   * **Where it runs**: the id of the paired computer that holds it. Absent means this computer,
+   * or a hosted provider. This is the only statement of location there is — a paired computer's
+   * model is reached through an address on this one, so nothing may read locality from a URL.
+   */
+  host?: string
+  /** On a paired computer, which of its engines serves it (`llama`, `mlx`): the provider here is the bridge. */
+  engine?: string
+  /**
+   * **The runner on this computer relays it to a service elsewhere** — an Ollama cloud model
+   * (`gpt-oss:120b-cloud`) is listed beside installed ones and answers on Ollama's servers.
+   * Such a model is never on-device, whatever address it is reached at.
+   */
+  remote?: boolean
 }
 
 /**

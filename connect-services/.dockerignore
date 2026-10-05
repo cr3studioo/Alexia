@@ -1,0 +1,6 @@
+*
+!Dockerfile.mailbox
+!Dockerfile.relay
+!mailbox-requirements.txt
+!run_service.py
+!healthcheck.py

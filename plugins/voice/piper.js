@@ -55,6 +55,9 @@ export const VOICES = {
   ryan: { at: 'en/en_US/ryan/high', file: 'en_US-ryan-high', mb: 114 },
 }
 
+/** What the program weighs as a download, for a list that states sizes before it fetches. */
+export const PROGRAM_MB = 22
+
 const VOICE_HOST = 'https://huggingface.co/rhasspy/piper-voices/resolve/main'
 
 export const build = () => BUILDS[`${process.platform}-${process.arch}`]
@@ -94,6 +97,20 @@ export async function ready(ownDir, voice, override) {
   return (
     found !== undefined && (await there(found.exe)) && (await there(found.model)) && (await there(found.config))
   )
+}
+
+/**
+ * What `install` would have to fetch, and what it weighs — `whisper.lacking`'s mirror.
+ *
+ * `voice` is true only for a published voice that is not here: one somebody added has nowhere
+ * to be downloaded from, so its absence is not a download and is not counted as one.
+ */
+export async function lacking(ownDir, voice, override) {
+  const program = !override && build() !== undefined && !(await programs(ownDir, voice, undefined))
+  const { model, config } = where(ownDir, voice)
+  const published = VOICES[voice]
+  const absent = published !== undefined && (!(await there(model)) || !(await there(config)))
+  return { program, voice: absent, mb: (program ? PROGRAM_MB : 0) + (absent ? published.mb : 0) }
 }
 
 export async function install(ownDir, voice, override, onProgress) {

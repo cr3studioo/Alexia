@@ -1196,7 +1196,8 @@ export function keepPlaced(switchers: Switcher[], rail: HTMLElement): void {
   const sizes = new ResizeObserver(place)
   sizes.observe(rail)
   for (const row of rail.querySelectorAll(':scope > *, .rail-group > *, #rail-setup > *')) sizes.observe(row)
-  new MutationObserver(place).observe(document.body, { attributes: true, attributeFilter: ['data-view'] })
+  // `data-overlay` is a full-window layer such as the image editor.
+  new MutationObserver(place).observe(document.body, { attributes: true, attributeFilter: ['data-view', 'data-overlay'] })
   const palette = document.querySelector('#palette')
   if (palette) new MutationObserver(place).observe(palette, { attributes: true, attributeFilter: ['hidden'] })
   // The rail is a page on the board: dragged by its grip (`style`), packed somewhere else, or

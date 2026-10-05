@@ -34,6 +34,9 @@ test('the three axes are core, and a plugin cannot take one of their words', asy
 
   expect((await run('/local', { store })).note).toContain('everything runs on this machine')
   expect(pins(store).placement).toEqual(MODES.local)
+  // Refused until adult content is turned on in Settings, with a sentence saying where.
+  expect((await run('/nsfw', { store })).note).toContain('Settings › Safety')
+  store.kvSet('_core', 'adult', { confirmedAt: 1 })
   await run('/nsfw', { store })
   await run('/best', { store })
   expect(pins(store)).toEqual({ placement: MODES.local, uncensored: true, prefer: 'best' })

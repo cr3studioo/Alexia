@@ -153,13 +153,25 @@ export async function remove(ownDir, voice) {
  * three values and the shell is not involved: `spawn` passes them as an array.
  */
 export async function say(ownDir, { python, voice, text, signal }) {
-  const { clip, about, out } = where(ownDir, voice)
+  const { out } = where(ownDir, voice)
+  return speak({ python, ...(await reference(ownDir, voice)), text, out, signal })
+}
+
+/**
+ * What a voice is made of: the recording, and the words in it.
+ *
+ * Read on the computer that keeps the voice, which is the one the person is sitting at. The
+ * two travel with a request to speak, so the computer doing the speaking needs no copy.
+ */
+export async function reference(ownDir, voice) {
+  const { clip, about } = where(ownDir, voice)
   if (!(await there(clip))) throw new Error(`${voice} has no recording behind it any more.`)
   const said = JSON.parse(await readFile(about, 'utf8').catch(() => '{}'))
-  await run(
-    python,
-    [BRIDGE, '--ref', clip, '--ref-text', String(said.transcript ?? ''), '--text', text, '--out', out],
-    { signal },
-  )
+  return { clip, transcript: String(said.transcript ?? '') }
+}
+
+/** The synthesis itself, given everything by path: a clip and its words in, a WAV at `out`. */
+export async function speak({ python, clip, transcript, text, out, signal }) {
+  await run(python, [BRIDGE, '--ref', clip, '--ref-text', String(transcript ?? ''), '--text', text, '--out', out], { signal })
   return out
 }

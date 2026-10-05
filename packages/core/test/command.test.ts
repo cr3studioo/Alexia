@@ -84,10 +84,12 @@ const say = async (input: string, approved?: boolean): Promise<Ran> =>
 const mode = (chosen: string): Promise<unknown> => post('/api/permissions', { mode: chosen })
 
 test('a command of core’s own is a setting, and nothing asks about a setting', async () => {
-  const ran = await say('/local')
+  // A mode change is a transition: the command answers at once and the mode lands when the
+  // transition commits. `/cloud`, because `/local` needs an installed model to commit at all.
+  const ran = await say('/cloud')
   expect(ran.ok).toBe(true)
   expect(ran.ask).toBeUndefined()
-  expect(ran.setup.mode).toBe('local')
+  await expect.poll(async () => (await say('/help')).setup.mode).toBe('cloud')
 })
 
 test('a plugin’s command is a tool call, and a read-only one runs', async () => {

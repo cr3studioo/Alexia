@@ -1,0 +1,65 @@
+[package]
+name = "alexia-connect"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-only"
+publish = false
+description = "Alexia's native transport: encrypted connectivity between two paired computers."
+
+# Deliberately outside the pnpm workspace and outside `src-tauri`. This is a sidecar: one
+# process that holds an endpoint identity and moves bytes between two paired computers. What
+# may run, when, and for whom is core's, on the other side of a loopback port (`README.md`).
+
+[lib]
+name = "alexia_connect"
+path = "src/lib.rs"
+
+[[bin]]
+name = "alexia-connect"
+path = "src/main.rs"
+
+[dependencies]
+# Pinned exactly: the relay and address-lookup services in `connect-services/` are built for
+# this version, and two computers must agree on the wire. Moving it is a decision, not a bump.
+iroh = "=1.3.0"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync", "time"] }
+# Already in the tree under iroh. The control API and the bridge are HTTP so that core can use
+# `fetch` and the SSE parser it already has; the forwarder is HTTP because the host service is.
+hyper = { version = "1", features = ["http1", "server", "client"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+http-body-util = "0.1"
+bytes = "1"
+futures-util = { version = "0.3", default-features = false }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+url = "2"
+# The endpoint's private key, and nothing else. Same family and version as `src-tauri`.
+keyring = "4.2"
+zeroize = "1"
+# Pairing's bootstrap: SPAKE2 over a mailbox server, as Magic Wormhole does it, and only that
+# part of it — no transit, no file transfer. Pinned exactly, like iroh: two computers must agree
+# on this wire too. `tls` is what makes a `wss://` mailbox reachable.
+magic-wormhole = { version = "=0.8.1", default-features = false, features = ["native-tls"] }
+# Pairing without a mailbox: the same SPAKE2 the wormhole runs, spoken directly between the two
+# endpoints over iroh. Already in the tree under magic-wormhole, at this version.
+spake2 = "=0.4.0"
+# The possession proof's MAC and its transcript hash. The versions the two above already use.
+hmac = "0.13"
+sha2 = "0.11"
+getrandom = "0.4"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "std", "registry"] }
+
+[dev-dependencies]
+hyper = { version = "1", features = ["http1", "server", "client"] }
+# The mailbox stub in `tests/pairing.rs`.
+tokio-tungstenite = "0.29"
+futures-util = { version = "0.3", default-features = false, features = ["sink"] }
+
+[profile.release]
+# The same as `src-tauri`: this ships inside the same installer.
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

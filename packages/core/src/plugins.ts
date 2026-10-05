@@ -1,15 +1,23 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import {
+  COMPUTE_META,
+  EDITOR_META,
+  PRIVATE_CONTEXT_CAPABILITY,
+  ALEXIA_PROTOCOL_MAX,
+  PRIVATE_CONTEXT_PROMISE,
   CONVERSATION_ENDED,
   ErrorCode,
   isPermission,
   Manifest,
   PROVIDES_META,
   SETTINGS_CHANGED,
+  type ComputeHook,
+  type ComputeOperation,
   type StreamFrame,
 } from '@alexia/protocol'
 import {
   ProtocolError,
+  type CallToolRequestOptions,
   type CallToolResult,
   type CreateMessageRequestParams,
   type CreateMessageResult,
@@ -19,7 +27,7 @@ import {
 import { cpSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, watch, type FSWatcher } from 'node:fs'
 import { basename, join } from 'node:path'
 import { receive, type Upload } from './attach.js'
-import { Host } from './host.js'
+import { Host, type HostOptions } from './host.js'
 import { readLayout, withoutGone } from './layout.js'
 import { home } from './servers.js'
 import { CORE, keychain, type SecretStore } from './secrets.js'
@@ -65,6 +73,10 @@ export interface PluginsOptions {
     stream?: (frame: StreamFrame) => void,
   ): Promise<CreateMessageResult>
   roots?(pluginId: string): Root[]
+  /** Runs a declared operation on the selected host, when Operations is wired in. */
+  compute?: HostOptions['compute']
+  /** The person's pictures, one conversation at a time (`attachments.scoped`, protocol 14). */
+  attachments?: HostOptions['attachments']
   log?(pluginId: string, line: string): void
   /** A plugin's tools changed, or the plugin itself went away. The loop re-plans. */
   onToolsChanged?(pluginId: string): void
@@ -157,6 +169,8 @@ export class Plugins {
       // is empty, because a plugin asking does not.
       answers: (cap) => ({ answers: this.answers(cap), here: this.couldAnswer(cap).length > 0 }),
       sample: options.sample,
+      compute: options.compute,
+      ...(options.attachments !== undefined && { attachments: options.attachments }),
       roots: options.roots,
       log: options.log,
       // A plugin saying its own tools changed lands in exactly the same place as core
@@ -392,10 +406,89 @@ export class Plugins {
         // Remembered on the way past, so a settings pane can say whether an `action` button
         // has a tool behind it without asking — and asking is what would spawn the plugin.
         this.#toolNames.set(entry.manifest.id, tools.map((tool) => tool.name))
-        return tools.map((tool) => ({ pluginId: entry.manifest.id, tool }))
+        return tools
+          .filter((tool) => tool._meta?.[COMPUTE_META] === undefined && tool._meta?.[EDITOR_META] === undefined)
+          .map((tool) => ({ pluginId: entry.manifest.id, tool }))
       }),
     )
     return lists.flat()
+  }
+
+  /** Enabled workers, from their manifests alone. Listing them never starts a process. */
+  computeWorkers(): { handle: string; operations: ComputeOperation[]; hooks: ComputeHook[] }[] {
+    return [...this.#entries.values()]
+      .filter((entry) => this.#enabled.has(entry.manifest.id) && entry.manifest.compute)
+      .map((entry) => ({
+        handle: entry.manifest.id,
+        operations: structuredClone(entry.manifest.compute!.operations),
+        hooks: [...(entry.manifest.compute!.hooks ?? [])],
+      }))
+  }
+
+  /** `run` takes { cap, arguments }; hooks receive their own arguments unchanged. */
+  async computeCall(
+    handle: string,
+    role: 'run' | ComputeHook,
+    args: Record<string, unknown>,
+    options?: CallToolRequestOptions,
+  ): Promise<CallToolResult> {
+    const entry = this.#entries.get(handle)
+    const compute = entry?.manifest.compute
+    if (!entry || !compute || !this.#enabled.has(handle)) {
+      throw new ProtocolError(ErrorCode.CAPABILITY_NOT_AVAILABLE, 'that compute worker is not enabled')
+    }
+    let arguments_ = args
+    if (role === 'run') {
+      if (!compute.operations.some((op) => op.cap === args.cap)) {
+        throw new ProtocolError(ErrorCode.CAPABILITY_NOT_PERMITTED, 'that worker did not declare the compute operation')
+      }
+      if (args.arguments !== undefined &&
+        (args.arguments === null || typeof args.arguments !== 'object' || Array.isArray(args.arguments))) {
+        throw new ProtocolError(ErrorCode.INVALID_PARAMS, 'compute operation arguments must be an object')
+      }
+      arguments_ = (args.arguments as Record<string, unknown> | undefined) ?? {}
+    } else if (!compute.hooks?.includes(role)) {
+      throw new ProtocolError(ErrorCode.CAPABILITY_NOT_PERMITTED, `that worker did not declare the ${role} hook`)
+    }
+    const tool = (await entry.process.listTools()).find((tool) => {
+      const binding = tool._meta?.[COMPUTE_META]
+      if (!binding || typeof binding !== 'object') return false
+      return role === 'run' ? 'op' in binding && binding.op === args.cap
+        : 'hook' in binding && binding.hook === role
+    })
+    if (!tool) {
+      throw new ProtocolError(ErrorCode.CAPABILITY_NOT_AVAILABLE, `that worker has no tool bound to ${role}`)
+    }
+    return entry.process.callTool(tool.name, arguments_, options)
+  }
+
+  /**
+   * **The image editor's own tool** (`alexia/editor`, protocol 14): the one enabled plugin that
+   * binds it and holds `attachments.scoped`. Never offered to a model — this is how the editor
+   * screen reaches the plugin, with a conversation core has already authenticated.
+   */
+  async editorCall(args: Record<string, unknown>, options?: CallToolRequestOptions, meta: Record<string, unknown> = {}): Promise<CallToolResult> {
+    for (const entry of this.#entries.values()) {
+      if (!this.#enabled.has(entry.manifest.id) || !entry.manifest.requires?.some((r) => r.cap === 'attachments.scoped')) continue
+      const tool = (await entry.process.listTools().catch(() => [])).find((t) => t._meta?.[EDITOR_META] !== undefined)
+      if (tool) {
+        return entry.process.callTool(tool.name, args, options, {
+          ...meta,
+          [PRIVATE_CONTEXT_CAPABILITY]: { protocol: ALEXIA_PROTOCOL_MAX, capabilities: PRIVATE_CONTEXT_PROMISE },
+        })
+      }
+    }
+    throw new ProtocolError(ErrorCode.CAPABILITY_NOT_AVAILABLE, 'No image editor is installed and switched on.')
+  }
+
+  /** Whether any enabled plugin could serve the editor — read from manifests, starting nothing. */
+  editorInstalled(): boolean {
+    return [...this.#entries.values()].some((e) => this.#enabled.has(e.manifest.id) && e.manifest.requires?.some((r) => r.cap === 'attachments.scoped'))
+  }
+
+  /** Release the process without disabling the worker; its next job can start it again. */
+  async stopProcess(handle: string, options?: { force?: boolean }): Promise<void> {
+    await this.#entries.get(handle)?.process.stop(options)
   }
 
   /**

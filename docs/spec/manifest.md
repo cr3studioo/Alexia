@@ -90,7 +90,7 @@ plugins are downloads rather than something that ships inside the installer, bef
 download too.
 
 `alexia_protocol` is an integer that goes up when the `alexia/*` layer or this file changes.
-Core speaks a range — **2 to 11 today** — and one revision back is supported, which is what
+Core speaks a range — **2 to 13 today** — and one revision back is supported, which is what
 makes raising the floor a deprecation rather than a surprise. Outside the range your plugin
 does not load and the user is told something they can act on:
 
@@ -594,6 +594,72 @@ itself is rebuilt from the manifest every time it is drawn, so a folder that is 
 page with it and the layout keeps nothing for it. The authoring guide is
 [`../authoring/pages.md`](../authoring/pages.md).
 
+### Compute
+
+```jsonc
+"provides": ["image.generate", "image.render"],
+"compute": {
+  "operations": [
+    { "cap": "image.render", "summary": "Render an image from a prepared workflow", "weight": "heavy" }
+  ],
+  "hooks": ["setup", "install", "release"]
+}
+```
+
+*Arrived in `alexia_protocol` 13 (2026-10-02). Declaring it while claiming 12 or lower is a
+load error: `compute arrived in alexia_protocol 13`. Optional: a manifest without it means
+what it always meant.*
+
+**The heavy half of your work, declared so Alexia can run it where the person chose.** Somebody
+may pair a second computer of their own — the one with the graphics card — and have models,
+image workflows and local voice run there while the conversation stays on the one they are
+sitting at. Core finds the plugins that can do that work by reading this field, on whichever
+computer the plugin is installed, and calls them by capability. It never learns your id, and
+deleting your folder takes your operations out of that computer's list and nothing else. The
+whole design is [`remote-compute.md`](./remote-compute.md); this is the part an author writes.
+
+| Field | Required | |
+|---|---|---|
+| `operations` | ✅ | At least one. |
+| `operations[].cap` | ✅ | A capability name, and one of your own `provides`. |
+| `operations[].summary` | ✅ | 1–120 characters. What the job does, for the list of what a computer can do. |
+| `operations[].weight` | — | `heavy` or `light`. Absent means `heavy`. |
+| `hooks` | — | Any of `setup`, `install`, `prepare`, `release`. Core calls only the ones listed. |
+
+**An operation is a second, narrower capability.** Keep the one a person asks for
+(`image.generate`: plan the prompt, ask permission, read their files) and add one for the work
+itself (`image.render`). The first always runs on the computer the person is at; only the
+second is listed here. An operation is files in and files out — it is handed its inputs as
+paths it can read and returns the files it made. On a paired computer it cannot ask for a
+model, start a task or see a root, so anything that needs the person belongs in the first half.
+
+**`heavy` waits its turn.** A computer runs one heavy job at a time, and stops whatever else
+is holding memory before it starts. `light` is for work that needs neither — it starts at once,
+beside whatever is running. Say `light` only when it is true: the default is the one that
+cannot starve somebody else's job.
+
+**The hooks** are the lifecycle, and every one is optional:
+
+| Hook | Called | Answers |
+|---|---|---|
+| `setup` | when the computer's setup list is drawn, and after an install | what is missing before your operations can run, each with a size where you know it |
+| `install` | only after the person pressed the button beside one of those | nothing; report progress |
+| `prepare` | before an operation of yours runs | nothing; load the model, start your worker process |
+| `release` | before another worker loads, and ten idle minutes after the last job | nothing; let go of memory and stop what you started |
+
+**The tools are not named here**, for the reason tools are never in the manifest. Each
+operation and each hook is bound at runtime by `_meta` on a tool — see
+[`capabilities.md`](./capabilities.md#how-a-compute-operation-reaches-a-tool) — and
+`@alexia/sdk` does it for you: `computeOperation(cap, handler)` and `computeHooks({ … })`.
+To *start* one of your operations, wherever it will run, call
+[`alexia/compute/run`](./wire-protocol.md#alexiacomputerun) (`compute.run()` in the SDK).
+
+**The constraints**, each a load error:
+
+- `compute` with `alexia_protocol` below 13.
+- An operation whose `cap` is not in `provides`.
+- Two operations with the same `cap`, or a hook listed twice.
+
 ### `min_tier`
 
 ```jsonc
@@ -648,6 +714,7 @@ mistake a real author makes:
 | `"skills": ["../../etc/passwd"]` | `skills.0` — stay inside your folder |
 | `page.sizes.M.show` naming `wich_voice` | `page.sizes.M.show.0` — `show "wich_voice" is not a widget this plugin declares` |
 | `page.fixed: true` with an S and an M | `page.fixed` — a fixed page has exactly one size |
+| a `compute` operation for `image.render` with only `image.generate` in `provides` | `compute.operations.0.cap` — `compute operation "image.render" must also be in provides` |
 
 Cross-field rules — the last one in each pair above — cannot be expressed in JSON Schema.
 They live in the zod schema and run when core loads your plugin. **Your editor will not
@@ -676,7 +743,7 @@ The plugin contract broke at M4, which is what M4 was for: `alexia_protocol` wen
 working — a plugin outside the range gets the refusal message above rather than a crash,
 which is the entire reason third-party plugins could be accepted this early.
 
-It has kept moving the same way since, and is at **12** as of 2026-09-24, for `page` (D204).
+It has kept moving the same way since, and is at **13** as of 2026-10-02, for `compute`.
 Every step from 3 was additive: a manifest that does not use what a revision added is still
 valid, and the floor is still 2.
 

@@ -1,0 +1,66 @@
+[
+  {
+    "_id": "688b451a53e70a07b0669a7c",
+    "id": "unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF",
+    "gated": false,
+    "lastModified": "2026-01-30T06:29:38.000Z",
+    "likes": 1087,
+    "downloads": 9901942
+  },
+  {
+    "_id": "6a7d8038d813eea1a14a8db4",
+    "id": "unsloth/Qwen3.8-27B-GGUF",
+    "gated": false,
+    "lastModified": "2026-08-20T12:04:25.000Z",
+    "likes": 4708,
+    "downloads": 6425606
+  },
+  {
+    "_id": "6a838b56859b6056ecfa5667",
+    "id": "cdiamond/Qwen3.8-27B-iMatrix-NVFP4-MTP-GGUF",
+    "gated": false,
+    "lastModified": "2026-08-17T22:40:35.000Z",
+    "likes": 21,
+    "downloads": 4454640
+  },
+  {
+    "_id": "6a7e8ee8b77fccb497299fb3",
+    "id": "JonathanColetti/Qwen3.8-27B-Uncensored-GGUF",
+    "gated": false,
+    "lastModified": "2026-08-29T04:18:18.000Z",
+    "likes": 1323,
+    "downloads": 2250567
+  },
+  {
+    "_id": "6a81b8bfa514d4eed962e012",
+    "id": "huihui-ai/Huihui-Qwen3.8-27B-abliterated-GGUF",
+    "gated": false,
+    "lastModified": "2026-09-21T17:35:19.000Z",
+    "likes": 944,
+    "downloads": 2064412
+  },
+  {
+    "_id": "6a832587e74e9a9edfb67ff9",
+    "id": "HauhauCS/Qwen3.8-27B-Uncensored-HauhauCS-Aggressive-MTP-GGUF",
+    "gated": false,
+    "lastModified": "2026-08-17T22:02:10.000Z",
+    "likes": 1516,
+    "downloads": 2059950
+  },
+  {
+    "_id": "6a81b8bfa514d4eed962e012",
+    "id": "huihui-ai/Huihui-Qwen3.8-27B-abliterated-GGUF",
+    "gated": false,
+    "lastModified": "2026-09-21T17:35:19.000Z",
+    "likes": 944,
+    "downloads": 2064412
+  },
+  {
+    "_id": "6a7f62fadca4ab8bcc0a546e",
+    "id": "0bserverx/Qwen3.8-27B-Heretic-Abliterated-Uncensored-GGUF",
+    "gated": false,
+    "lastModified": "2026-09-20T13:42:25.000Z",
+    "likes": 578,
+    "downloads": 1482951
+  }
+]

@@ -24,7 +24,9 @@ import { serve, type Serving } from '../src/serve.js'
  * and joins `pnpm check` on its own merits.
  */
 
-const source = readFileSync(join(import.meta.dirname, '..', 'src', 'serve.ts'), 'utf8')
+// `serve.ts`, and the one file it hands requests to: remote compute's routes are answered in
+// `compute/api.ts`, written with the same `url.pathname === '…'` so the same reader finds them.
+const source = ['serve.ts', join('compute', 'api.ts')].map((file) => readFileSync(join(import.meta.dirname, '..', 'src', file), 'utf8')).join('\n')
 
 /**
  * Every `if` in `serve.ts` that answers a path, as the file actually writes them.

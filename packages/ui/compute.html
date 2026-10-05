@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Alexia — compute</title>
+    <link rel="icon" href="/alexia.png" />
+    <link rel="stylesheet" href="/app.css" />
+    <!-- The theme, before the first paint, from the same copy `index.html` reads. There is no
+         theme control on this page: it shows whichever one the interaction role last chose. -->
+    <script>
+      try {
+        var remembered = localStorage.getItem('alexia.theme')
+        if (remembered === 'light' || remembered === 'dark') document.documentElement.dataset.theme = remembered
+      } catch (error) {}
+    </script>
+  </head>
+  <body>
+    <!-- The compute role's only page (remote-compute.md §2). Everything in it is drawn by
+         `src/compute-setup.ts` from the blocks Settings uses on the interaction computer. -->
+    <main id="compute-setup"></main>
+    <script type="module" src="/compute-setup.js" data-token="__TOKEN__"></script>
+  </body>
+</html>

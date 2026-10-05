@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import type { Manifest, Standing } from '@alexia/protocol'
+import { rememberTarget } from './compute/target.js'
+import { isRemoteId, parseCatalogId } from './compute/types.js'
 import { report, verify, type Provider } from './provider.js'
 import { MODES, type Pins } from './router.js'
 import { CORE } from './secrets.js'
@@ -15,6 +17,16 @@ import { allowance, dollars, today } from './usage.js'
  * manifest — so deleting a plugin's folder removes its commands, with no core file to edit
  * and nothing left pointing at something that is gone.
  */
+
+/**
+ * **Whether the person said, in Settings, that they are 18 or older** and turned adult content
+ * on. Kept as the moment they said it; turning adult content off in Settings removes it.
+ */
+export const ADULT = 'adult'
+export const adultConfirmed = (store: Pick<Store, 'kvGet'>): boolean => {
+  const said = store.kvGet(CORE, ADULT) as { confirmedAt?: unknown } | undefined
+  return typeof said?.confirmedAt === 'number'
+}
 
 export interface Command {
   /** What you type, without the slash. */
@@ -50,7 +62,7 @@ const BUILT_IN: Command[] = [
   { name: 'local', summary: 'Run everything on this machine.' },
   { name: 'combined', summary: 'The cloud thinks; this machine makes images and speech.' },
   { name: 'cloud', summary: 'Run everything through APIs.' },
-  { name: 'nsfw', summary: 'Allow uncensored models.' },
+  { name: 'nsfw', summary: 'Adult mode: uncensored models and adult picture edits. Turn on Adult content in Settings first.' },
   { name: 'sfw', summary: 'Back to the standard content policy.' },
   { name: 'cheap', summary: 'Prefer the cheapest model that can do the job.' },
   { name: 'best', summary: 'Prefer the strongest model available.' },
@@ -100,7 +112,13 @@ const chosen = (store: Store): Omit<Pins, 'placement'> =>
  * a slash command below, and a row action on the panel.
  */
 export function setPin(store: Store, change: Omit<Pins, 'placement'>): void {
+  if (change.model && (/^(llama|mlx)\//.test(change.model) || isRemoteId(change.model))) rememberLocalChoice(store, change.model)
   store.kvSet(CORE, 'pins', { ...chosen(store), ...change })
+}
+
+/** Separate from the active pin: Automatic must never forget a local choice. */
+export function rememberLocalChoice(store: Store, model: string): void {
+  rememberTarget(store, parseCatalogId(model))
 }
 
 /** Where the work runs, as the person last said it. Combined until they have said anything. */
@@ -187,6 +205,8 @@ export async function run(
      * and the line says nothing either way rather than guessing *no*.
      */
     running?(): boolean
+    /** The host owns runner lifecycle; parsing a command only starts its transition. */
+    changeMode?(mode: keyof typeof MODES): Promise<Ran>
     /** The table to check, defaulting to all of it. A seam, so the test does not need a network. */
     providers?: readonly Provider[]
   },
@@ -196,7 +216,8 @@ export async function run(
   const rest = typed.slice(word.length).trim()
   const { store } = context
 
-  const mode = (name: keyof typeof MODES, note: string): Ran => {
+  const mode = async (name: keyof typeof MODES, note: string): Promise<Ran> => {
+    if (context.changeMode) return context.changeMode(name)
     store.kvSet(CORE, 'mode', name)
     return { ok: true, note }
   }
@@ -228,7 +249,12 @@ export async function run(
     case 'cloud':
       return mode('cloud', 'Cloud: everything goes through the providers you have connected.')
     case 'nsfw':
-      return pin({ uncensored: true }, 'Uncensored models allowed. A model nobody has verified does not count.')
+      // Adult content is a setting somebody turns on once, saying they are 18 or older, in
+      // Settings › Safety. Until then the command says where that is rather than doing it.
+      if (!adultConfirmed(store)) {
+        return { ok: false, note: 'Adult content is off. Turn it on in Settings › Safety › Adult content, which asks you to confirm you are 18 or older.' }
+      }
+      return pin({ uncensored: true }, 'Adult mode on: uncensored models, and the picture editor allows adult content. A model nobody has verified does not count. /sfw turns it off.')
     case 'sfw':
       return pin({ uncensored: false }, 'Back to the standard content policy.')
     case 'cheap':

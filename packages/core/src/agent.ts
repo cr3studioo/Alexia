@@ -73,6 +73,8 @@ export interface Tooling {
     args: Record<string, unknown>,
     signal?: AbortSignal,
     onProgress?: (update: Progress) => void,
+    /** Which conversation the call belongs to: what a tool's declared attachment inputs resolve against. */
+    context?: { conversationId?: string },
   ): Promise<ToolOutcome>
 }
 
@@ -204,6 +206,11 @@ const SHAKY_AT_ONCE = 2
 export interface RunOptions {
   /** The conversation, ending with the line the user just sent. */
   messages: Message[]
+  /**
+   * **Every step is answered by a model running on this computer** — a conversation holding private editing context. The
+   * router's interaction-only placement, applied to every step, upgrade and retry of the loop.
+   */
+  placement?: 'interaction'
   /** Nobody at the screen is waiting: a plugin's task (§4 F). The chat keeps first claim on free requests. */
   background?: boolean
   /** Models not to ask in this task, keyed `provider\nmodel` — the one just marked a bad answer (§4 I). */
@@ -610,6 +617,7 @@ export async function run(options: RunOptions): Promise<RunResult> {
         ...(options.capable === true && { capable: true }),
         ...(named.length > 0 && { tools: named }),
         ...(seeing.length > 0 && { modality: seeing }),
+        ...(options.placement !== undefined && { placement: options.placement }),
       }
       if (signal !== undefined && route(upgrade, upward, now).ok) {
         above = answered
@@ -632,6 +640,7 @@ export async function run(options: RunOptions): Promise<RunResult> {
       ...(options.capable === true && { capable: true }),
       ...(named.length > 0 && { tools: named }),
       ...(seeing.length > 0 && { modality: seeing }),
+      ...(options.placement !== undefined && { placement: options.placement }),
     }
     const ask: Ask = above !== undefined && shape === planning ? { ...plain, above } : plain
     let verdict = route(ask, ask === plain ? pins : upward, now)
@@ -974,7 +983,7 @@ export async function run(options: RunOptions): Promise<RunResult> {
     return tools.call(step.name, step.args, options.signal, (update) => {
       step.progress = update
       on?.progress?.(step)
-    })
+    }, { conversationId: String(session) })
   }
 
   /**
@@ -986,7 +995,7 @@ export async function run(options: RunOptions): Promise<RunResult> {
    */
   function ranOutOfHands(ask: Ask, now: World): boolean {
     if (steps.length === 0 || (ask.tools?.length ?? 0) === 0) return false
-    return route({ messages: ask.messages, shape: 'simple' }, pins, now).ok
+    return route({ messages: ask.messages, shape: 'simple', ...(ask.placement !== undefined && { placement: ask.placement }) }, pins, now).ok
   }
 
   function finish(ended: RunResult['ended'], why?: string, mode?: Mode): RunResult {

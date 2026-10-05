@@ -14,7 +14,7 @@ import { dataDir, RUNS_KEPT, Store, STRUCK, type Outcome } from '../src/store.js
 const tmp = (): string => join(mkdtempSync(join(tmpdir(), 'alexia-store-')), 'data', 'alexia.db')
 
 /** How many migrations this build knows. Every fresh database should be at this version. */
-const MIGRATIONS = 10
+const MIGRATIONS = 11
 
 /** The schema version as SQLite holds it, read without going through `Store`. */
 function version(path: string): number {
@@ -162,6 +162,9 @@ test('migration 7 runs over a database that never had 6, and leaves the tables i
   db.exec('DROP TABLE seen')
   db.exec('ALTER TABLE usage DROP COLUMN writing') // 9's, which a database at 5 never had either
   db.exec('DROP TABLE runs') // and 10's
+  db.exec('DROP TABLE attachment_leases') // and 11's
+  db.exec('DROP TABLE attachments')
+  db.exec('ALTER TABLE sessions DROP COLUMN image_ordinal')
   db.exec('CREATE TABLE p_persona_personalities (name TEXT, doc TEXT, at INTEGER, active INTEGER)')
   db.exec(`INSERT INTO p_persona_personalities VALUES ('Alexia', 'kind', 1, 1)`)
   db.exec('PRAGMA user_version = 5')
@@ -183,6 +186,9 @@ test('migration 9 gives usage a writing time, keeps the rows before it, and a sp
   const db = new DatabaseSync(path)
   db.exec('ALTER TABLE usage DROP COLUMN writing')
   db.exec('DROP TABLE runs')
+  db.exec('DROP TABLE attachment_leases') // and 11's
+  db.exec('DROP TABLE attachments')
+  db.exec('ALTER TABLE sessions DROP COLUMN image_ordinal')
   db.exec(
     `INSERT INTO usage (at, model, provider, tokens_in, tokens_out, cost) VALUES (1, 'qwen3:8b', 'ollama', 10, 200, 0)`,
   )

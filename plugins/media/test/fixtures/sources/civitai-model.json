@@ -1,0 +1,156 @@
+{
+  "id": 617060,
+  "name": "ComfyUI workflow for Flux (simple + Lora)",
+  "description": "<p>It is a simple workflow of Flux AI on ComfyUI.</p><p>Actually there are many ",
+  "allowNoCredit": true,
+  "allowCommercialUse": [
+    "Image",
+    "RentCivit",
+    "Rent",
+    "Sell",
+    "SellMerge"
+  ],
+  "allowDerivatives": true,
+  "allowDifferentLicense": true,
+  "type": "Workflows",
+  "minor": false,
+  "sfwOnly": false,
+  "poi": false,
+  "nsfw": false,
+  "nsfwLevel": 5,
+  "availability": "Public",
+  "userId": 1121455,
+  "hasActivePaidAccess": false,
+  "baseModels": [
+    "Flux.1 D"
+  ],
+  "cosmetic": null,
+  "supportsGeneration": false,
+  "stats": {
+    "downloadCount": 20788,
+    "thumbsUpCount": 297,
+    "thumbsDownCount": 1,
+    "commentCount": 22,
+    "tippedAmountCount": 1531
+  },
+  "creator": {
+    "username": "maitruclam",
+    "image": "https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/bb86f175-e7de-4a92-9f37-88717234327e/width=96/maitruclam.jpeg"
+  },
+  "tags": [
+    "comfyui",
+    "character",
+    "flux"
+  ],
+  "modelVersions": [
+    {
+      "id": 819999,
+      "index": 0,
+      "name": "Add Lora",
+      "baseModel": "Flux.1 D",
+      "baseModelType": "Standard",
+      "createdAt": "2024-09-08T14:02:47.210Z",
+      "publishedAt": "2024-09-08T14:28:51.888Z",
+      "status": "Published",
+      "flags": 0,
+      "availability": "Public",
+      "nsfwLevel": 1,
+      "covered": false,
+      "coveredNext": false,
+      "stats": {
+        "downloadCount": 14008,
+        "thumbsUpCount": 166,
+        "thumbsDownCount": 0
+      },
+      "files": [
+        {
+          "id": 733789,
+          "sizeKB": 1.8623046875,
+          "name": "comfyuiWorkflowForFlux_addLora.zip",
+          "overrideName": null,
+          "type": "Archive",
+          "pickleScanResult": "Success",
+          "pickleScanMessage": "No Pickle imports",
+          "virusScanResult": "Success",
+          "virusScanMessage": null,
+          "scannedAt": "2024-09-08T14:06:31.420Z",
+          "metadata": {
+            "format": "Other"
+          },
+          "hashes": {
+            "AutoV2": "E9BB4CB218",
+            "SHA256": "E9BB4CB218B33E7F791BD8532265A7F0D43C1FCDD838980008A9BD1974577857",
+            "CRC32": "F225294D",
+            "BLAKE3": "64E60E4F35B75880382197D23D918E502EEA4DDD28BF591EE07AA481EB0630C8",
+            "AutoV3": "744F044E5C45",
+            "SHA256_12": "E9BB4CB218B3"
+          },
+          "downloadUrl": "https://civitai.com/api/download/models/819999?fileId=733789",
+          "primary": true
+        }
+      ],
+      "images": [
+        {
+          "url": "https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/f88aa6a7-6a74-4b4b-b9a4-89452dad52cc/original=true/28384239.jpeg",
+          "nsfwLevel": 1
+        }
+      ],
+      "downloadUrl": "https://civitai.com/api/download/models/819999",
+      "description": ""
+    },
+    {
+      "id": 689796,
+      "index": 1,
+      "name": "Original",
+      "baseModel": "Flux.1 D",
+      "baseModelType": "Standard",
+      "createdAt": "2024-08-02T06:08:56.059Z",
+      "publishedAt": "2024-08-02T06:12:03.731Z",
+      "status": "Published",
+      "flags": 0,
+      "availability": "Public",
+      "nsfwLevel": 5,
+      "description": "<p>Flux dev AI</p>",
+      "covered": false,
+      "coveredNext": false,
+      "stats": {
+        "downloadCount": 6780,
+        "thumbsUpCount": 146,
+        "thumbsDownCount": 1
+      },
+      "files": [
+        {
+          "id": 604719,
+          "sizeKB": 1.7109375,
+          "name": "comfyuiWorkflowForFlux_original.zip",
+          "overrideName": null,
+          "type": "Archive",
+          "pickleScanResult": "Success",
+          "pickleScanMessage": "No Pickle imports",
+          "virusScanResult": "Success",
+          "virusScanMessage": null,
+          "scannedAt": "2024-08-02T06:15:32.458Z",
+          "metadata": {
+            "format": "Other"
+          },
+          "hashes": {
+            "AutoV2": "15DEF9B490",
+            "SHA256": "15DEF9B49070ADD1A9E9DC7A288DBB4B7F65146D643F500106A68EDFBABEBD58",
+            "CRC32": "EA382E67",
+            "BLAKE3": "8EC375F3B2EE5F7AB6B2304FE2D22B9DBFEEED1EDC8DD60012E9A0119B76D1F7",
+            "SHA256_12": "15DEF9B49070"
+          },
+          "downloadUrl": "https://civitai.com/api/download/models/689796?fileId=604719",
+          "primary": true
+        }
+      ],
+      "images": [
+        {
+          "url": "https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/bffa787e-a74c-4d73-9452-f8ad6e795721/original=true/22403597.jpeg",
+          "nsfwLevel": 1
+        }
+      ],
+      "downloadUrl": "https://civitai.com/api/download/models/689796"
+    }
+  ]
+}

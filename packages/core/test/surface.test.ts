@@ -601,12 +601,12 @@ test('choosing a model pins it, and Automatic gives the choice back', async () =
   expect(String((await post('/api/action', { key: 'use_model', row: 'openrouter/reachable' })).said)).toContain(
     'stops and says why',
   )
-  // And with a list of your own above the table, this button does not call the result
-  // *automatic* — the list still decides, and it is not this button's to clear.
+  // Automatic hands both the model pin and custom sequence back to the router.
   await post('/api/action', { key: 'set_order', row: 'openrouter/reachable' })
   const listed = await post('/api/action', { key: 'automatic', row: 'openrouter/reachable' })
-  expect(String(listed.said)).toContain('Your own order of 1 still decides')
+  expect(String(listed.said)).toContain('Back to automatic')
   expect(await pinned()).toBeUndefined()
+  expect(alexia.store.kvGet(CORE, 'pins')).not.toHaveProperty('order')
   await post('/api/action', { key: 'set_order', row: '' })
 })
 

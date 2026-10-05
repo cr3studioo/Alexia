@@ -3,7 +3,8 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterEach, expect, test, vi } from 'vitest'
-import { MORE, mountRail, railModels, recentWhen, whenOf } from '../src/rail.js'
+import type { HostView } from '../src/compute.js'
+import { MORE, mountRail, railHost, railModels, recentWhen, whenOf } from '../src/rail.js'
 
 /**
  * The rail: the General page's conversations, model list and plugin switches, against a core
@@ -42,7 +43,7 @@ function core(partial: Partial<Core> = {}): Core {
   return state
 }
 
-function mount(): {
+function mount(hosts: HostView[] = []): {
   root: HTMLElement
   heading: HTMLElement
   openControl: ReturnType<typeof vi.fn>
@@ -60,6 +61,7 @@ function mount(): {
     openControl,
     openSettings,
     reload: () => Promise.resolve(),
+    hosts: () => hosts,
   })
   return { root, heading, openControl, openSettings, refresh: rail.refresh }
 }
@@ -96,6 +98,37 @@ test('rail models: each once, and the one just chosen does not jump to the top',
   expect(railModels(rows).map((row) => row.id)).toEqual(['kilo\na', 'kilo\nb', 'kilo\nc'])
   // A chosen model no plan holds is only in its own group, and is kept.
   expect(railModels([{ id: 'x\nz', state: '◆ everything goes here' }, rows[1]!]).map((row) => row.id)).toEqual(['x\nz', 'kilo\na'])
+})
+
+test('the local install link opens Models in Settings, including when no provider is connected', async () => {
+  core()
+  const { root, refresh, openSettings } = mount()
+  await refresh()
+  const local = [...root.querySelectorAll<HTMLButtonElement>('#model-drop button')].find((one) => one.textContent === 'Install a local model…')!
+  expect(local).toBeDefined()
+  root.querySelector<HTMLButtonElement>('#model-row')!.click()
+  local.click()
+  expect(openSettings).toHaveBeenCalledWith('models')
+  expect(root.querySelector<HTMLElement>('#model-drop')!.hidden).toBe(true)
+})
+
+test('a model on a paired computer shows that computer and how it is reached beside it', async () => {
+  const studio: HostView = { host: { id: 'studio0001', name: 'Studio', endpointId: 'e', peerRole: 'compute', pairedAt: 1 }, connection: 'relayed' }
+  expect(railHost('remote\n@studio0001/llama/qwen:Q4_K_M', [studio])).toBe('Studio · Relayed')
+  expect(railHost('remote\n@studio0001/llama/qwen:Q4_K_M', [{ ...studio, connection: 'offline' }])).toBe('Studio · Offline')
+  expect(railHost('llama\nllama/qwen:Q4_K_M', [studio])).toBe('')
+  expect(railHost('remote\n@gone000001/llama/qwen:Q4_K_M', [studio])).toBe('Paired computer')
+  core({
+    models: [
+      { id: 'remote\n@studio0001/llama/qwen:Q4_K_M', name: 'Qwen', provider: 'remote', price: 'free', state: '◆ everything goes here' },
+      { id: 'llama\nllama/qwen:Q4_K_M', name: 'Qwen', provider: 'llama', price: 'free', state: '✓' },
+    ],
+  })
+  const { root, refresh } = mount([studio])
+  await refresh()
+  expect(root.querySelector('#model-value')!.textContent).toBe('Qwen · Studio · Relayed')
+  // Two models of one name on two computers are two rows, told apart by where they run.
+  expect([...root.querySelectorAll('#model-drop .opt .meta')].map((meta) => meta.textContent)).toEqual(['per request', 'Studio · Relayed', 'free'])
 })
 
 test('rail recent: the open chat is marked, named in full on hover, and dated from its timestamp', async () => {

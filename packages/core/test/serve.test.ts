@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync } fro
 import { request as httpRequest } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterAll, expect, test } from 'vitest'
+import { afterAll, expect, test, vi } from 'vitest'
 import { noPolling } from './staged.js'
 import { keyOf, PROVIDERS } from '../src/provider.js'
 import { CORE, memorySecrets } from '../src/secrets.js'
@@ -26,6 +26,23 @@ const ui = join(import.meta.dirname, '..', '..', 'ui')
 // file tests, and a laptop with Ollama running would answer it instead.
 const alexia: Serving = await serve({ dataDir: root, uiDir: ui, secrets: memorySecrets(), local: false })
 afterAll(() => alexia.close())
+
+test('closing core cancels the delayed picture cleanup before the database closes', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'alexia-cleanup-close-'))
+  noPolling(dir)
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+  let serving: Serving | undefined
+  try {
+    serving = await serve({ dataDir: dir, uiDir: ui, secrets: memorySecrets(), local: false })
+    await serving.close()
+    serving = undefined
+    expect(() => vi.advanceTimersByTime(15_000)).not.toThrow()
+  } finally {
+    if (serving) await serving.close()
+    vi.useRealTimers()
+    rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })
+  }
+})
 
 const get = (path: string, init: RequestInit = {}): Promise<Response> =>
   fetch(new URL(path, alexia.url), {
@@ -133,11 +150,9 @@ test('a turn is kept even when the answer is a refusal', async () => {
    * network at all — Local mode on a machine with no Ollama — and what is being tested is
    * unchanged: that the question survives an answer that never came.
    */
-  await get('/api/setup', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ mode: 'local' }),
-  })
+  // A previously saved Local install can lose its files. A new mode switch refuses this
+  // state before committing; here the test is specifically of the chat's routing refusal.
+  alexia.store.kvSet(CORE, 'mode', 'local')
 
   const events = await stream('sort my downloads')
 
@@ -245,11 +260,11 @@ test('first run asks three things and then never asks again', async () => {
   await call('/api/setup', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ name: 'Ada', mode: 'local', provider: { id: 'openrouter', key: 'sk-users-own' } }),
+    body: JSON.stringify({ name: 'Ada', mode: 'cloud', provider: { id: 'openrouter', key: 'sk-users-own' } }),
   })
 
   const after = await read()
-  expect(after.setup).toEqual({ done: true, name: 'Ada', mode: 'local', theme: 'system', glass: 60, glassLook: 'auto', updates: true })
+  expect(after.setup).toEqual({ done: true, name: 'Ada', mode: 'cloud', theme: 'system', glass: 60, glassLook: 'auto', updates: true })
   // The key went to the keychain and nowhere near the database.
   expect(await secrets.get(CORE, keyOf(PROVIDERS[0]!))).toBe('sk-users-own')
   // And the screen can say so without being able to read it back — which is what stops the
@@ -280,7 +295,7 @@ test('first run asks three things and then never asks again', async () => {
   })
 
   const edited = await read()
-  expect(edited.setup).toEqual({ done: true, name: 'Grace', mode: 'local', theme: 'system', glass: 60, glassLook: 'auto', updates: true })
+  expect(edited.setup).toEqual({ done: true, name: 'Grace', mode: 'cloud', theme: 'system', glass: 60, glassLook: 'auto', updates: true })
   expect(await secrets.get(CORE, keyOf(PROVIDERS[0]!))).toBe('sk-the-second-one')
 
   // A sentence in the key box is refused here rather than at the provider. This exact string

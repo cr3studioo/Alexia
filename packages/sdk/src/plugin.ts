@@ -11,16 +11,24 @@ import {
   type AlexiaParams,
   type AlexiaResult,
   type CallToolResult,
+  type ComputeBinding,
   type HostInfo,
   type Manifest,
   type Stage,
   type Where,
+  COMPUTE_META,
   CONTROLS_META,
   PREVIEW_META,
   PLAN_META,
   STAGES_META,
 } from '@alexia/protocol'
-import { McpServer, type ServerContext, type StandardSchemaV1 } from '@modelcontextprotocol/server'
+import {
+  fromJsonSchema,
+  McpServer,
+  type RequestOptions,
+  type ServerContext,
+  type StandardSchemaV1,
+} from '@modelcontextprotocol/server'
 import { StdioServerTransport } from '@modelcontextprotocol/server/stdio'
 import { basename } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -98,6 +106,38 @@ export interface ResourceLink {
   name: string
   mimeType?: string
   description?: string
+}
+
+/**
+ * One thing missing before your compute operations can run on this computer, as your `setup`
+ * hook reports it. Alexia shows the list, with sizes, and installs nothing until the person
+ * presses the button beside one.
+ */
+export interface ComputeRequirement {
+  /** Stable for as long as the requirement stands. Your `install` hook is handed it back. */
+  id: string
+  kind: 'runtime' | 'model' | 'dependency'
+  title: string
+  detail?: string
+  /** The download's size, where you know it. Shown before anything is installed. */
+  bytes?: number
+  /** `install` is a button your `install` hook carries out; `instructions` is something only a person can do. */
+  action: 'install' | 'instructions'
+  instructions?: string
+  /** Which of your operations are waiting on it, by capability. */
+  blocks: string[]
+}
+
+/** The lifecycle hooks a compute worker may answer. Every one is optional. */
+export interface ComputeHooks {
+  /** What is missing before your operations can run here, with sizes. Called on setup and after an install. */
+  setup?(): Promise<ComputeRequirement[]>
+  /** Install one requirement you returned. Report progress on `ctx`. Called only after the person pressed its button. */
+  install?(requirementId: string, ctx: ServerContext): Promise<void>
+  /** Get ready for an operation that is about to run: load the model, start your worker process. */
+  prepare?(cap: string): Promise<void>
+  /** Let go of model memory and stop processes you started. Called before another backend loads and at the idle stop. */
+  release?(): Promise<void>
 }
 
 export interface AlexiaPlugin {
@@ -198,6 +238,38 @@ export interface AlexiaPlugin {
    */
   file(path: string, about?: { name?: string; mime?: string; description?: string }): ResourceLink
 
+  /**
+   * Register the tool that performs one of your declared `compute.operations`. Never shown to
+   * the model. `args` arrive with every staged input replaced by a path you can read; return
+   * the files you made and Alexia carries them back.
+   */
+  computeOperation(
+    cap: string,
+    handler: (args: Record<string, unknown>, ctx: ServerContext) => Promise<{ text?: string; files?: string[] }>,
+  ): void
+  /** The lifecycle hooks you listed in `compute.hooks`. Every one is optional. */
+  computeHooks(hooks: ComputeHooks): void
+  readonly compute: {
+    /**
+     * Run one of your operations where the person chose: this computer or their paired host.
+     *
+     * With nothing paired it is your own {@link AlexiaPlugin.computeOperation} handler, here,
+     * so a plugin written against this behaves the same either way. `inputs` are files to send
+     * with the job, each one you may already read; `files` are what came back, in your own
+     * directory. A place that cannot do the work is an error, and never quietly another place.
+     */
+    run(
+      cap: string,
+      args?: Args,
+      options?: {
+        inputs?: { name: string; path: string; mime: string }[]
+        /** `preview`, when there is one, is the picture so far as a `data:image/…` URL: show it, replace it, never keep it. */
+        onProgress?(progress: number, total?: number, message?: string, preview?: string): void
+        signal?: AbortSignal
+      },
+    ): Promise<{ text?: string; files: string[] }>
+  }
+
   /** The raw `alexia/*` call, typed against the protocol package. */
   call<M extends AlexiaMethod>(method: M, params: AlexiaParams<M>): Promise<AlexiaResult<M>>
   /** Connect stdio and start serving. Register your tools first. */
@@ -208,6 +280,23 @@ export interface PluginOptions {
   /** Where `plugin.json` lives. Defaults to the working directory, which is your folder. */
   dir?: string
 }
+
+/**
+ * How long `compute.run` waits before giving up on its own.
+ *
+ * **Core is the clock here too** (D149): a job waits its turn behind another, loads a model,
+ * and then does minutes of work, and every one of those ends with core answering — done,
+ * failed, cancelled or interrupted. MCP's sixty seconds would throw away any job that had to
+ * queue. A day is how long a finished job's files are kept for collection, so past that there
+ * is nothing left to wait for.
+ */
+const COMPUTE_RUN_MS = 24 * 60 * 60 * 1000
+
+/** A compute tool's name. Reserved: the binding core reads is `COMPUTE_META`, never this. */
+const computeTool = (role: string): string => `alexia_compute_${role}`
+
+/** Any JSON object. An operation's arguments are its author's own, and core passes them through. */
+const anyArguments = fromJsonSchema<Record<string, unknown>>({ type: 'object' })
 
 export function plugin(options: PluginOptions = {}): AlexiaPlugin {
   const manifest = readManifest(options.dir)
@@ -233,13 +322,13 @@ export function plugin(options: PluginOptions = {}): AlexiaPlugin {
   const call = <M extends AlexiaMethod>(
     method: M,
     params: AlexiaParams<M>,
-    timeout?: number,
+    patience?: RequestOptions,
   ): Promise<AlexiaResult<M>> =>
     server.server.request(
       { method, params },
       // The schemas the protocol package already owns. One source, both ends of the wire.
       ALEXIA_METHODS[method].result as unknown as StandardSchemaV1<unknown, AlexiaResult<M>>,
-      timeout === undefined ? undefined : { timeout },
+      patience,
     )
 
   const storage: Storage = {
@@ -255,6 +344,29 @@ export function plugin(options: PluginOptions = {}): AlexiaPlugin {
     get: async (key) => (await call('alexia/storage/kv/get', { key })).value,
     set: async (key, value) => void (await call('alexia/storage/kv/set', { key, value })),
     remove: async (key) => void (await call('alexia/storage/kv/delete', { key })),
+  }
+
+  /**
+   * One compute tool: an ordinary MCP tool with a reserved name and the binding in `_meta`,
+   * which is the only part core reads. Declared first, because a tool core has no declaration
+   * for is a tool it will never call — and saying so here beats a job that never starts.
+   */
+  const bind = (binding: ComputeBinding): [name: string, tool: { _meta: Record<string, unknown> }] => {
+    const declared =
+      'op' in binding ?
+        manifest.compute?.operations.some((o) => o.cap === binding.op) === true
+      : manifest.compute?.hooks?.includes(binding.hook) === true
+    if (!declared) {
+      const [what, list] = 'op' in binding ? [binding.op, 'compute.operations'] : [binding.hook, 'compute.hooks']
+      throw new Error(`${manifest.id} registers "${what}" and its plugin.json does not list it in ${list}.`)
+    }
+    return [computeTool('op' in binding ? binding.op : binding.hook), { _meta: { [COMPUTE_META]: binding } }]
+  }
+  const done = { content: [] }
+  const flushProgress = async (ctx: ServerContext): Promise<void> => {
+    // MCP dispatches notifications in a microtask but removes their progress token as soon
+    // as the result arrives. A round trip lets core dispatch progress before that result.
+    if (ctx.mcpReq._meta?.progressToken !== undefined) await server.server.ping()
   }
 
   return {
@@ -280,7 +392,7 @@ export function plugin(options: PluginOptions = {}): AlexiaPlugin {
     host: () => call('alexia/host/info', {}),
     // Another plugin's work rather than a row in core's database, so it gets core's patience
     // for that work instead of MCP's sixty seconds (D149).
-    capability: (cap, args) => call('alexia/capability/call', { cap, arguments: args }, CAPABILITY_CALL_MS),
+    capability: (cap, args) => call('alexia/capability/call', { cap, arguments: args }, { timeout: CAPABILITY_CALL_MS }),
     answers: (cap) => call('alexia/answers', { cap }),
     storage,
     progress: (ctx, progress, total, message, work) => {
@@ -318,6 +430,82 @@ export function plugin(options: PluginOptions = {}): AlexiaPlugin {
       ...(about.mime !== undefined && { mimeType: about.mime }),
       ...(about.description !== undefined && { description: about.description }),
     }),
+    computeOperation: (cap, handler) => {
+      const [name, tool] = bind({ op: cap })
+      const summary = manifest.compute?.operations.find((o) => o.cap === cap)?.summary
+      server.registerTool(
+        name,
+        { ...tool, description: summary, inputSchema: anyArguments, annotations: { readOnlyHint: false, openWorldHint: false } },
+        async (args, ctx) => {
+          const { text, files = [] } = await handler(args, ctx)
+          await flushProgress(ctx)
+          // `structuredContent` is what core reads; the text is repeated as content because
+          // that is where MCP puts words, and a host that is not Alexia reads only that.
+          return {
+            content: text === undefined ? [] : [{ type: 'text', text }],
+            structuredContent: { ...(text !== undefined && { text }), files },
+          }
+        },
+      )
+    },
+    computeHooks: ({ setup, install, prepare, release }) => {
+      const register = server.registerTool.bind(server)
+      const text = (key: string) =>
+        fromJsonSchema<Record<string, string>>({ type: 'object', properties: { [key]: { type: 'string' } }, required: [key] })
+      const changes = { readOnlyHint: false, openWorldHint: false }
+
+      if (setup) {
+        const [name, tool] = bind({ hook: 'setup' })
+        // Read-only, and it has to be: it runs whenever the list is drawn, before anybody
+        // has agreed to anything.
+        register(name, { ...tool, annotations: { readOnlyHint: true, openWorldHint: false } }, async () => ({
+          content: [],
+          structuredContent: { requirements: await setup() },
+        }))
+      }
+      if (install) {
+        const [name, tool] = bind({ hook: 'install' })
+        const annotations = { readOnlyHint: false, openWorldHint: true }
+        register(name, { ...tool, inputSchema: text('requirementId'), annotations }, async (args, ctx) => {
+          await install(args.requirementId!, ctx)
+          await flushProgress(ctx)
+          return done
+        })
+      }
+      if (prepare) {
+        const [name, tool] = bind({ hook: 'prepare' })
+        register(name, { ...tool, inputSchema: text('cap'), annotations: changes }, async (args) => {
+          await prepare(args.cap!)
+          return done
+        })
+      }
+      if (release) {
+        const [name, tool] = bind({ hook: 'release' })
+        register(name, { ...tool, annotations: changes }, async () => {
+          await release()
+          return done
+        })
+      }
+    },
+    compute: {
+      run: (cap, args, { inputs, onProgress, signal } = {}) =>
+        call(
+          'alexia/compute/run',
+          { cap, arguments: args, inputs },
+          {
+            timeout: COMPUTE_RUN_MS,
+            ...(signal && { signal }),
+            // A progress callback is what makes MCP attach a token, and the token is what core
+            // answers on — so no callback, no frames, as with `alexia/stream`.
+            ...(onProgress && {
+              onprogress: (update) => {
+                const shown = (update as { _meta?: Record<string, unknown> })._meta?.[PREVIEW_META]
+                onProgress(update.progress, update.total, update.message, typeof shown === 'string' && shown.startsWith('data:image/') ? shown : undefined)
+              },
+            }),
+          },
+        ),
+    },
     call,
     start: async () => {
       await server.connect(new StdioServerTransport())

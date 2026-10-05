@@ -531,19 +531,20 @@ one the log panel always shows.
 
 ## 6. The `alexia/*` layer
 
-Seven methods. Everything MCP covers is MCP; this is the remainder. **If you want an eighth,
+Eight methods. Everything MCP covers is MCP; this is the remainder. **If you want a ninth,
 argue it against MCP first** — the whole value of adopting MCP evaporates one private
 extension at a time. The sixth was argued and won on 2026-08-28: see
 [`alexia/settings/set`](#alexiasettingsset). The seventh on 2026-09-19: see
-[`alexia/answers`](#alexiaanswers).
+[`alexia/answers`](#alexiaanswers). The eighth on 2026-10-02: see
+[`alexia/compute/run`](#alexiacomputerun).
 
-> **These require the `2025-11-25` era**, because six of the seven are requests a plugin
+> **These require the `2025-11-25` era**, because seven of the eight are requests a plugin
 > sends to core and `2026-07-28` has no such direction. A server that speaks only the newer
 > revision still connects and its tools still work; it simply has no Alexia layer, and any
 > `alexia/*` request it sends is dropped unanswered. See
 > [§1.1](#11-two-eras-and-why-a-plugin-lives-on-the-older-one).
 
-All seven are called **plugin → core**, except `alexia/settings/changed`, which is a
+All eight are called **plugin → core**, except `alexia/settings/changed`, which is a
 notification core sends you.
 
 ### `alexia/settings/get`
@@ -672,6 +673,56 @@ inches away. Saying which costs no name.
 on your say-so and is gated; asking whether one exists runs nothing and changes nothing, and a
 plugin made to declare a dependency it does not have in order to *check* for it would be
 declaring something untrue.
+
+### `alexia/compute/run`
+
+*`alexia_protocol` 13.* **Run one of my compute operations wherever the person chose** — this
+computer, or the one they paired with it ([`remote-compute.md`](./remote-compute.md)).
+
+```jsonc
+// → { "jsonrpc":"2.0", "id":12, "method":"alexia/compute/run",
+//     "params": { "cap": "image.render",
+//                 "arguments": { "workflow": { … }, "source": "photo" },
+//                 "inputs": [ { "name": "photo", "path": "…/photo.png", "mime": "image/png" } ],
+//                 "_meta": { "progressToken": "t-12" } } }
+// ← { "jsonrpc":"2.0", "method":"notifications/progress",
+//     "params": { "progressToken": "t-12", "progress": 3, "total": 20, "message": "Sampling" } }
+// ← { "jsonrpc":"2.0", "id":12, "result": { "text": "Rendered.", "files": [ "…/picture.png" ] } }
+```
+
+| Param | |
+|---|---|
+| `cap` | The operation, by capability. One of your own [`compute.operations`](./manifest.md#compute), or a capability in your `requires[]`. Anything else is refused. |
+| `arguments` | The operation's own. Passed through to the tool that performs it. |
+| `inputs` | Files to send with the job: a `name`, a `path` you may already read, and a `mime`. Optional. |
+
+The result is `text`, where the operation said anything, and `files` — **absolute paths in your
+own directory, already verified**, whichever computer made them.
+
+**Why it is not `alexia/capability/call`.** That call answers from *this* computer and carries
+no files. This one says *wherever they chose*, sends the inputs there and brings what was made
+home. And why it is not MCP: MCP has no notion of where a tool runs, so there is nothing
+upstream to argue against — the bar [`alexia/answers`](#alexiaanswers) met.
+
+**It names nobody and nowhere.** There is no field for a computer, a plugin or a tool. The
+person chose the place; the manifest on that computer chose the tool
+([`capabilities.md`](./capabilities.md#how-a-compute-operation-reaches-a-tool)). With nothing
+paired, the operation is your own tool on this computer, so a plugin written against this
+behaves the same either way.
+
+**The place is strict.** If the chosen computer is offline, busy, missing something the
+operation needs, or does not offer it, the call fails and says which. It is never run
+somewhere else instead, and it is never sent twice.
+
+**Progress and stopping are MCP's own.** Put a `progressToken` on the request and core answers
+on it while the job runs, the way [`alexia/stream`](#alexiastream--the-answer-while-it-is-written)
+does. To stop, send `notifications/cancelled` for the request; core cancels the job. **Wait for
+the answer** — a job may queue behind another and then run for minutes, so MCP's sixty-second
+default is the wrong clock. `@alexia/sdk` waits a day, which is how long a finished job's files
+are kept.
+
+An Alexia that predates 13 drops it unanswered, as with any `alexia/*` name it has not heard
+of; one with no compute wired up answers `-32050`.
 
 ### `alexia/host/info`
 

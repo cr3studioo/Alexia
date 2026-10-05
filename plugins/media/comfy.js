@@ -380,6 +380,25 @@ export async function download(server, { filename, subfolder = '', type = 'outpu
   return Buffer.from(await response.arrayBuffer())
 }
 
+/**
+ * Put one picture into ComfyUI's input folder, through its own `POST /upload/image`.
+ *
+ * **Uploaded, never assumed to be there.** The ComfyUI that renders may be on another computer,
+ * and even on this one its input folder is not where the person's attachment lives — so the
+ * bytes go over the same HTTP everything else does. The name is the content's hash rather than
+ * the file's: it says nothing about the person's folders to a computer they lent, and the same
+ * picture twice is the same upload. Answers what a `LoadImage` node takes: `subfolder/name`.
+ */
+export async function upload(server, { bytes, name, type = 'image/png' }, signal) {
+  const form = new FormData()
+  form.append('image', new Blob([bytes], { type }), name)
+  form.append('type', 'input')
+  form.append('overwrite', 'true')
+  const said = await json(await fetch(`${server}/upload/image`, { method: 'POST', body: form, signal }))
+  if (typeof said?.name !== 'string' || said.name === '') throw new Error('ComfyUI took the picture but did not say what it called it.')
+  return { name: said.subfolder ? `${said.subfolder}/${said.name}` : said.name, filename: said.name, subfolder: String(said.subfolder ?? ''), type: 'input' }
+}
+
 /** The output keys ComfyUI writes a list of files under. */
 export const KINDS = ['images', 'gifs', 'audio', 'video', 'files']
 
@@ -467,5 +486,50 @@ export async function stats(server, signal) {
  */
 export async function interrupt(server, signal) {
   const response = await fetch(`${server}/interrupt`, { method: 'POST', signal })
+  return response.ok
+}
+
+/**
+ * Stop one job, and only that one.
+ *
+ * **`/interrupt` on its own stops whatever is rendering, whoever queued it** — and a ComfyUI
+ * somebody has open in a browser tab is rendering *their* picture as often as it is rendering
+ * Alexia's. Giving up on a job that was still waiting its turn used to end the one in front of
+ * it, which belonged to the person and not to this plugin.
+ *
+ * So the job is taken out of the queue by its own id, and the renderer is only interrupted when
+ * that id is the one it is working on. The id is sent with the interrupt as well: a ComfyUI new
+ * enough to read it checks again on its own side, and an older one ignores the body and is
+ * covered by the check made here.
+ */
+export async function cancel(server, id, signal) {
+  const post = (path, body) =>
+    fetch(`${server}${path}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+      signal,
+    })
+  // Still waiting: gone from the queue, and nothing that was running is touched.
+  await post('/queue', { delete: [id] }).catch(() => {})
+  const { queue_running: running = [] } = await json(await fetch(`${server}/queue`, { signal })).catch(() => ({}))
+  if (!running.some((item) => item[1] === id)) return false
+  return (await post('/interrupt', { prompt_id: id })).ok
+}
+
+/**
+ * Forget one finished job's history entry.
+ *
+ * `/history` keeps every queued graph — the prompt text included — until ComfyUI restarts. For a
+ * private edit that is a copy of the request sitting in another program's memory, so it is
+ * deleted by id as soon as the output has been collected.
+ */
+export async function forgetHistory(server, id, signal) {
+  const response = await fetch(`${server}/history`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ delete: [id] }),
+    signal,
+  })
   return response.ok
 }

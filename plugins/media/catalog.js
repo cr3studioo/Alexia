@@ -41,6 +41,9 @@ export function flatten(index) {
       // something look free.
       paid: one?.openSource === false,
       vram: Number.isFinite(Number(one?.vram)) && Number(one.vram) > 0 ? Number(one.vram) : undefined,
+      // What its models weigh on disk, all together. Newer indexes state this and not `vram`, and
+      // it is the number somebody needs before pressing Install.
+      size: Number.isFinite(Number(one?.size)) && Number(one.size) > 0 ? Number(one.size) : undefined,
       rank: Number(one?.searchRank) || 0,
     })),
   )
@@ -113,7 +116,7 @@ const gb = (n) => `${(n / 1e9).toFixed(1)} GB`
 
 /** One entry, as a line somebody can decide from. */
 export const describe = (one) =>
-  `${one.title} — ${one.category.toLowerCase()}${one.vram ? `, wants ${gb(one.vram)}` : ''}${one.paid ? ', **calls a paid service**' : ''}` +
+  `${one.title} — ${one.category.toLowerCase()}${one.vram ? `, wants ${gb(one.vram)}` : ''}${one.size ? `, ${gb(one.size)} to download` : ''}${one.paid ? ', **calls a paid service**' : ''}` +
   `${one.models.length > 0 ? `, needs ${one.models.join(', ')}` : ''}`
 
 /**

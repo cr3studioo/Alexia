@@ -614,6 +614,301 @@ body:not([data-view='settings']):not([data-view='control']) #sheet {
   color: var(--ink);
 }
 
+/* ---- local models: the same native controls and surfaces as Settings ----------------- */
+
+.local-models {
+  margin-block: var(--space-6);
+}
+
+.local-model-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.local-model-head .step-heading {
+  margin: 0;
+}
+
+.local-model-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(16rem, 100%), 1fr));
+  gap: var(--space-3);
+  margin-block: var(--space-4);
+}
+
+.local-model-card,
+.local-job,
+.local-mode-choice {
+  min-width: 0;
+  margin: 0;
+  padding: var(--space-4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface-raised);
+  overflow-wrap: anywhere;
+}
+
+.local-model-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+
+.local-model-card h3,
+.local-model-card p,
+.local-installed h3,
+.local-repo h3 {
+  margin: 0;
+}
+
+.local-model-card h3,
+.local-installed h3,
+.local-repo h3 {
+  font-size: var(--text-md);
+  line-height: var(--leading-tight);
+}
+
+.local-quant {
+  width: 100%;
+  margin-top: auto;
+  padding-top: var(--space-3);
+}
+
+.local-quant .field {
+  margin: 0;
+}
+
+.local-quant select {
+  width: 100%;
+  min-width: 0;
+}
+
+.local-quant .hint {
+  margin-block: var(--space-2) var(--space-3);
+}
+
+.local-installed,
+.local-repo {
+  margin-block: var(--space-4);
+  overflow-wrap: anywhere;
+}
+
+.local-installed-row {
+  padding-block: var(--space-3);
+  border-bottom: 1px solid var(--line);
+}
+
+.local-installed-row .quiet-button,
+.local-mode-choice .quiet-button {
+  margin: var(--space-1) var(--space-2) var(--space-1) 0;
+}
+
+.local-search {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-block: var(--space-3);
+}
+
+.local-search input {
+  flex: 1 1 14rem;
+  min-width: 0;
+}
+
+.local-search-results {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin-block: var(--space-3);
+}
+
+.local-search-results .quiet-button {
+  max-width: 100%;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+.local-jobs,
+.local-mode {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.local-jobs:not(:empty),
+.local-mode:not(:empty) {
+  margin-block: var(--space-4);
+}
+
+.local-mode-choice legend {
+  font-weight: 600;
+  padding-inline: var(--space-1);
+}
+
+.local-progress {
+  width: 100%;
+  height: var(--space-2);
+  accent-color: var(--chosen);
+}
+
+/* ---- paired computers: the same rows, surfaces and pills as the local models above ------
+
+   A host is a row, not a card: its name is the control, the pill beside it is how it is
+   reached, and its reason — when it cannot serve — is a line of its own under both. The
+   chosen one is marked the way a chosen model is, by the border and never by colour alone. */
+
+.host-picker,
+.host-detail,
+.compute-role {
+  margin-block: var(--space-6);
+}
+
+.host-list {
+  display: grid;
+  gap: var(--space-2);
+  margin-block: var(--space-3);
+}
+
+.host-row {
+  min-width: 0;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface-raised);
+  overflow-wrap: anywhere;
+}
+
+.host-row.on {
+  border-color: var(--chosen);
+}
+
+.host-row p,
+.host-detail h3,
+.host-queue h3,
+.pairing h3 {
+  margin: 0;
+}
+
+.host-row .hint,
+.host-row .error {
+  margin-top: var(--space-2);
+}
+
+.host-row .danger-button {
+  margin-top: var(--space-3);
+}
+
+.host-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+}
+
+.host-head .step-heading {
+  margin: 0;
+}
+
+.host-pick[aria-pressed='true'],
+.compute-role-choice [aria-pressed='true'] {
+  border-color: var(--chosen);
+  background: var(--chosen-wash);
+  font-weight: 600;
+}
+
+.host-row .armed {
+  font-weight: 600;
+  border-color: var(--ink);
+}
+
+.compute-role-choice {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: var(--space-3) 0 0;
+  padding: 0;
+  border: 0;
+}
+
+.compute-role-choice legend {
+  padding: 0;
+  margin-bottom: var(--space-2);
+}
+
+.host-pairing:not(:empty) {
+  margin-top: var(--space-4);
+  padding: var(--space-4);
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius-lg);
+}
+
+.host-pairing > .quiet-button {
+  margin-top: var(--space-3);
+}
+
+/* The code is read aloud from one computer to another, so it is the largest thing in its box
+   and never wraps in the middle of a word. */
+.pair-code {
+  display: block;
+  margin-block: var(--space-3);
+  font-family: var(--mono);
+  font-size: var(--text-lg);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
+.pair-countdown {
+  font-variant-numeric: tabular-nums;
+}
+
+.host-detail .local-installed h3,
+.host-queue h3 {
+  font-size: var(--text-md);
+  line-height: var(--leading-tight);
+}
+
+.host-queue {
+  margin-block: var(--space-4);
+}
+
+.host-waiting {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding-left: var(--space-5);
+}
+
+.host-waiting li {
+  padding-block: var(--space-2);
+  border-bottom: 1px solid var(--line);
+}
+
+.host-waiting li > * + * {
+  margin-left: var(--space-3);
+}
+
+.host-waiting .hint,
+.host-capability {
+  margin: 0;
+}
+
+.host-capability + .host-capability {
+  margin-top: var(--space-2);
+}
+
+/* The compute role's only page: one column of the blocks above, with nothing around it. */
+.compute-page {
+  max-width: 46rem;
+  margin-inline: auto;
+  padding: var(--space-6) var(--space-5);
+}
+
 /* ---- one plugin's page (D118) ---------------------------------------------------------
 
    The same shape for every plugin, whoever wrote it: the name with its switch, a row of
@@ -6248,3 +6543,331 @@ button:not([disabled]):active {
   clip-path: inset(50%);
   white-space: nowrap;
 }
+
+/* ---- The image editor (A07) ------------------------------------------------------------
+   The picture is the largest thing on the sheet. One bar above it for what acts on the whole
+   draft, one side panel for everything that shapes the next version, top to bottom in the
+   order it is decided — tool, pictures in, words, model, output — with Generate pinned to its
+   foot. The versions sit in a strip under the picture once there is more than one. On a narrow
+   window it is one column. Tokens only, so both themes and the contrast table hold. */
+
+.image-editor {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(20rem, 24rem);
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
+  grid-template-areas:
+    'bar bar'
+    'stage side'
+    'strip side'
+    'line side';
+  background: var(--surface-sunken);
+  color: var(--ink);
+}
+.image-editor button { padding: 0.4rem 0.8rem; font-size: var(--text-sm); border-radius: var(--radius-md); }
+.image-editor .quiet-button:not([disabled]):hover { background: var(--wash); }
+.image-editor :focus-visible { outline: 2px solid var(--chosen); outline-offset: 2px; }
+
+/* The bar: the title on the left, a few quiet controls on the right. */
+.image-editor-bar {
+  grid-area: bar;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface-raised);
+  border-bottom: 1px solid var(--line);
+}
+.image-editor-titles { display: flex; align-items: baseline; gap: var(--space-2); min-width: 0; }
+.image-editor-heading { font-size: var(--text-md); margin: 0; white-space: nowrap; }
+.image-editor-version { color: var(--ink-quiet); font-size: var(--text-sm); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.image-editor-actions { display: flex; align-items: center; gap: var(--space-1); }
+.image-editor-group { display: flex; margin-right: var(--space-1); }
+.image-editor-group > button:first-child { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.image-editor-group > button:last-child { border-top-left-radius: 0; border-bottom-left-radius: 0; margin-left: -1px; }
+.image-editor button.image-editor-icon { width: 2.1rem; height: 2.1rem; padding: 0; display: inline-grid; place-items: center; font-size: 1rem; line-height: 1; }
+.image-editor-bar button[aria-pressed='true'] { background: var(--chosen-wash); color: var(--chosen); border-color: var(--chosen); }
+
+/* Dropdowns: a summary that looks like the other buttons, and a floating panel under it. */
+.image-editor-menu { position: relative; }
+.image-editor-menu > summary {
+  list-style: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  height: 2.1rem;
+  padding: 0 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  cursor: pointer;
+  user-select: none;
+}
+.image-editor-menu > summary::-webkit-details-marker { display: none; }
+.image-editor-menu > summary:hover, .image-editor-menu[open] > summary { background: var(--wash); border-color: var(--line-strong); }
+.image-editor-menu-panel {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 0.35rem);
+  z-index: 5;
+  min-width: 15rem;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  background: var(--surface-raised);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 28%);
+}
+.image-editor button.image-editor-menu-item { text-align: left; background: none; border: 0; color: var(--ink); padding: 0.5rem 0.6rem; }
+.image-editor button.image-editor-menu-item:hover { background: var(--wash); }
+.image-editor button.image-editor-menu-item.danger { color: var(--danger); }
+
+/* The picture. */
+.image-editor-stage { grid-area: stage; position: relative; overflow: hidden; min-height: 12rem; touch-action: none; }
+.image-editor-stage canvas { display: block; outline-offset: -3px; }
+.image-editor-live {
+  position: absolute;
+  left: 50%;
+  bottom: var(--space-3);
+  translate: -50% 0;
+  padding: 0.3rem 0.8rem;
+  border-radius: var(--radius-full);
+  background: rgb(0 0 0 / 65%);
+  color: #fff;
+  font-size: var(--text-xs);
+  pointer-events: none;
+}
+.image-editor-live[hidden] { display: none; }
+
+/* The side panel: tabs pinned at the top, Generate pinned at the foot, the rest scrolls. */
+.image-editor-side {
+  grid-area: side;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+  background: var(--surface-raised);
+  border-left: 1px solid var(--line);
+}
+.image-editor-rail {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 2px;
+  margin: var(--space-3) var(--space-3) 0;
+  padding: 3px;
+  background: var(--surface-sunken);
+  border-radius: var(--radius-md);
+  box-shadow: 0 0 0 var(--space-3) var(--surface-raised);
+}
+.image-editor .image-editor-rail button {
+  padding: 0.4rem 0.25rem;
+  font-size: var(--text-xs);
+  background: none;
+  border: 0;
+  color: var(--ink-quiet);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.image-editor .image-editor-rail button[aria-pressed='true'] { background: var(--surface-raised); color: var(--ink); box-shadow: 0 1px 3px rgb(0 0 0 / 20%); }
+.image-editor-panel, .image-editor-generate { display: flex; flex-direction: column; gap: var(--space-4); padding: var(--space-4) var(--space-3) 0; }
+.image-editor-generate:empty { display: none; }
+.image-editor-section { display: flex; flex-direction: column; gap: var(--space-2); }
+.image-editor-section > h3 {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin: 0;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-quiet);
+}
+.image-editor-count { font-weight: 500; letter-spacing: 0; text-transform: none; color: var(--ink-faint); }
+.image-editor-footer {
+  position: sticky;
+  bottom: 0;
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  background: var(--surface-raised);
+  border-top: 1px solid var(--line);
+}
+.image-editor-footer:not(:has(> :not([hidden]))) { display: none; }
+.image-editor-work { display: flex; flex-direction: column; gap: 0.35rem; padding: var(--space-2) var(--space-3); background: var(--chosen-wash); border: 1px solid var(--chosen); border-radius: var(--radius-md); }
+.image-editor-work[hidden] { display: none; }
+.image-editor-work-words { margin: 0; display: flex; flex-direction: column; gap: 2px; font-size: var(--text-sm); }
+.image-editor-work-file { font-size: var(--text-xs); color: var(--ink-quiet); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.image-editor-work progress { width: 100%; height: 0.5rem; appearance: none; border: 0; border-radius: var(--radius-full); overflow: hidden; background: var(--surface-sunken); accent-color: var(--chosen); }
+.image-editor-work progress::-webkit-progress-bar { background: var(--surface-sunken); border-radius: var(--radius-full); }
+.image-editor-work progress::-webkit-progress-value { background: var(--chosen); border-radius: var(--radius-full); transition: width 400ms var(--ease-out); }
+.image-editor-side > .image-editor-generate { padding-bottom: var(--space-4); }
+
+.image-editor-field { display: flex; flex-direction: column; gap: var(--space-1); font-size: var(--text-sm); min-width: 0; }
+.image-editor-field > span { color: var(--ink-quiet); font-size: var(--text-xs); }
+.image-editor-field select, .image-editor-field input, .image-editor-section > select { width: 100%; }
+.image-editor-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(7rem, 1fr)); gap: var(--space-2); }
+.image-editor-check { font-size: var(--text-sm); display: flex; align-items: center; gap: var(--space-1); }
+.image-editor-prompt, .image-editor-note textarea { width: 100%; resize: vertical; font: inherit; min-height: 5.5rem; }
+.image-editor-tools { display: flex; flex-wrap: wrap; gap: var(--space-1); }
+.image-editor-tools button[aria-pressed='true'] { background: var(--chosen-wash); color: var(--chosen); border-color: var(--chosen); }
+.image-editor-segmented { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2px; padding: 3px; background: var(--surface-sunken); border-radius: var(--radius-md); }
+.image-editor .image-editor-segmented button { background: none; border: 0; color: var(--ink-quiet); padding: 0.3rem; }
+.image-editor .image-editor-segmented button[aria-checked='true'] { background: var(--surface-raised); color: var(--ink); box-shadow: 0 1px 3px rgb(0 0 0 / 20%); }
+.image-editor-hint { color: var(--ink-quiet); font-size: var(--text-xs); margin: 0; line-height: 1.4; }
+.image-editor-why { color: var(--caution); font-size: var(--text-sm); margin: 0; }
+.image-editor-error { color: var(--danger); }
+.image-editor-summary { font-size: var(--text-xs); margin: 0; color: var(--ink-quiet); text-align: center; }
+.image-editor-question { padding: var(--space-3); border: 1px solid var(--chosen); background: var(--chosen-wash); border-radius: var(--radius-md); display: flex; flex-direction: column; gap: var(--space-2); }
+.image-editor-question p { margin: 0; }
+.image-editor .primary-button {
+  background: var(--accent);
+  color: var(--on-accent);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-md);
+  padding: 0.6rem var(--space-4);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.image-editor-footer .primary-button { width: 100%; }
+.image-editor .primary-button:disabled { opacity: 0.45; cursor: not-allowed; }
+.image-editor-advanced > summary { cursor: pointer; font-size: var(--text-xs); color: var(--ink-quiet); padding: var(--space-1) 0; }
+.image-editor-advanced[open] > summary { margin-bottom: var(--space-2); }
+
+/* Pictures in: a card per picture, roles as chips, adding one opens in place. */
+.image-editor-inputs { display: flex; flex-direction: column; gap: var(--space-2); }
+.image-editor-input-slot {
+  position: relative;
+  display: grid;
+  grid-template-columns: 3.75rem minmax(0, 1fr);
+  gap: var(--space-3);
+  align-items: start;
+  padding: var(--space-2);
+  background: var(--surface-sunken);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  font-size: var(--text-sm);
+}
+.image-editor-input-thumb { width: 3.75rem; height: 3.75rem; object-fit: cover; border-radius: var(--radius-md); background: var(--surface); }
+.image-editor-input-body { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; padding-right: 1.75rem; }
+.image-editor-input-body > strong { font-size: var(--text-sm); }
+.image-editor button.image-editor-slot-remove { position: absolute; top: var(--space-1); right: var(--space-1); width: 1.6rem; height: 1.6rem; font-size: 0.75rem; background: none; border: 0; color: var(--ink-quiet); }
+.image-editor button.image-editor-slot-remove:hover { color: var(--danger); background: var(--wash); }
+.image-editor-roles-wrap { display: flex; flex-direction: column; gap: var(--space-1); }
+.image-editor-roles { display: flex; flex-wrap: wrap; gap: 0.3rem; }
+.image-editor button.image-editor-chip {
+  padding: 0.2rem 0.6rem;
+  font-size: var(--text-xs);
+  border-radius: var(--radius-full);
+  background: var(--surface-raised);
+  border: 1px solid var(--line);
+  color: var(--ink-quiet);
+}
+.image-editor button.image-editor-chip:hover { border-color: var(--line-strong); color: var(--ink); }
+.image-editor button.image-editor-chip[aria-pressed='true'] { background: var(--chosen-wash); border-color: var(--chosen); color: var(--chosen); }
+.image-editor button.image-editor-chip[aria-pressed='true']::before { content: '✓ '; }
+.image-editor button.image-editor-chip-more { border-style: dashed; }
+
+.image-editor-add { border: 1px dashed var(--line-strong); border-radius: var(--radius-lg); }
+.image-editor-add[open] { border-style: solid; border-color: var(--line); }
+.image-editor-add-summary {
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  cursor: pointer;
+  font-size: var(--text-sm);
+  font-weight: 500;
+}
+.image-editor-add-summary::-webkit-details-marker { display: none; }
+.image-editor-add-summary:hover { background: var(--wash); border-radius: var(--radius-lg); }
+.image-editor-add-summary .image-editor-hint { margin-left: auto; }
+.image-editor-add-plus { display: inline-grid; place-items: center; width: 1.5rem; height: 1.5rem; border-radius: var(--radius-full); background: var(--chosen-wash); color: var(--chosen); font-weight: 700; }
+.image-editor-add-body { display: flex; flex-direction: column; gap: var(--space-2); padding: 0 var(--space-3) var(--space-3); }
+.image-editor-slot-upload {
+  display: grid;
+  place-items: center;
+  min-height: 3.5rem;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  font-size: var(--text-sm);
+}
+.image-editor-slot-upload:hover { border-color: var(--chosen); background: var(--chosen-wash); }
+.image-editor-slot-upload:focus-visible { outline: 2px solid var(--chosen); outline-offset: 2px; }
+.image-editor-add-pick { display: grid; grid-template-columns: repeat(auto-fill, minmax(3.5rem, 1fr)); gap: var(--space-1); }
+.image-editor button.image-editor-pick { padding: 0; aspect-ratio: 1; overflow: hidden; background: var(--surface-sunken); border: 1px solid var(--line); border-radius: var(--radius-md); }
+.image-editor button.image-editor-pick:hover { border-color: var(--chosen); }
+.image-editor-pick img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+/* Point edits' notes (image-editor-selection.ts). */
+.image-editor-notes { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-2); }
+.image-editor-note { border: 1px solid var(--line); border-radius: var(--radius-md); padding: var(--space-2); display: flex; flex-direction: column; gap: var(--space-1); }
+.image-editor-note.active { border-color: var(--chosen); }
+.image-editor-note-title { text-align: left; font-weight: 600; background: none; border: 0; padding: 0; color: inherit; cursor: pointer; }
+.image-editor-rect input { width: 4.5rem; margin-right: var(--space-1); }
+
+/* The versions under the picture. Each card's actions show on hover or focus. */
+.image-editor-strip {
+  grid-area: strip;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  overflow-x: auto;
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface-raised);
+  border-top: 1px solid var(--line);
+}
+.image-editor-strip[hidden] { display: none; }
+.image-editor-strip-label { writing-mode: vertical-rl; rotate: 180deg; align-self: center; font-size: var(--text-xs); letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-faint); }
+.image-editor-card { position: relative; display: flex; flex-direction: column; gap: var(--space-1); flex: 0 0 auto; font-size: var(--text-xs); }
+.image-editor-card.selected .image-editor-thumb img { outline: 2px solid var(--chosen); outline-offset: 1px; }
+.image-editor-card.compared .image-editor-thumb img { outline: 2px dashed var(--chosen); outline-offset: 1px; }
+.image-editor-card.candidate { justify-content: center; width: 6.5rem; height: 5rem; padding: var(--space-2); border: 1px dashed var(--line-strong); border-radius: var(--radius-md); }
+.image-editor-card.candidate.failed, .image-editor-card.candidate.blocked { border-color: var(--danger); }
+.image-editor .image-editor-thumb { display: flex; flex-direction: column; gap: var(--space-1); background: none; border: 0; padding: 0; color: var(--ink-quiet); cursor: pointer; font-size: var(--text-xs); text-align: left; }
+.image-editor-thumb img { width: 6.5rem; height: 4.5rem; object-fit: cover; background: var(--surface-sunken); border-radius: var(--radius-md); }
+.image-editor-card-actions { position: absolute; top: 0.25rem; right: 0.25rem; display: flex; gap: 2px; opacity: 0; transition: opacity var(--t-fast) var(--ease-out); }
+.image-editor-card:hover .image-editor-card-actions, .image-editor-card:focus-within .image-editor-card-actions { opacity: 1; }
+.image-editor .image-editor-card-actions button.image-editor-icon { width: 1.5rem; height: 1.5rem; font-size: 0.75rem; background: rgb(0 0 0 / 60%); color: #fff; border: 0; }
+.image-editor .image-editor-card-actions button.on { color: #f5c542; }
+.image-editor .image-editor-card-actions button.image-editor-icon:not([disabled]):hover { background: rgb(0 0 0 / 80%); }
+.image-editor-card:has(button.on) .image-editor-card-actions { opacity: 1; }
+.image-editor-line { grid-area: line; margin: 0; padding: var(--space-1) var(--space-3); font-size: var(--text-xs); color: var(--ink-quiet); background: var(--surface-raised); border-top: 1px solid var(--line); min-height: 1.6em; }
+
+@media (max-width: 559px) {
+  .image-editor {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(14rem, 45dvh) auto auto auto;
+    grid-template-areas: 'bar' 'stage' 'strip' 'side' 'line';
+    overflow-y: auto;
+  }
+  .image-editor-side { border-left: 0; border-top: 1px solid var(--line); overflow: visible; }
+  .image-editor-version { display: none; }
+}
+
+/* Pairing without a mailbox: the computers found waiting, one to choose. */
+.pair-found { display: flex; flex-direction: column; gap: var(--space-1); margin: var(--space-2) 0; }
+.pair-found-row { display: flex; align-items: center; gap: var(--space-1); font-size: var(--text-sm); }
+
+.image-editor:has(.image-editor-choose) { display: flex; flex-direction: column; overflow-y: auto; padding: clamp(1rem, 4vw, 3rem); }
+.image-editor-choose { display: flex; flex-direction: column; align-items: flex-start; max-width: 52rem; padding: 1.5rem 0; }
+.image-editor-main-upload { display: grid; place-items: center; width: min(100%, 24rem); min-height: 11rem; padding: 1.5rem; border: 1px dashed var(--line-strong); border-radius: var(--radius-md); background: var(--surface-raised); cursor: pointer; font-size: var(--text-md); }
+.image-editor-main-upload:hover { border-color: var(--chosen); background: var(--chosen-wash); }
+.image-editor-main-upload:focus-visible { outline: 2px solid var(--chosen); outline-offset: 3px; }
+.image-editor-recent { display: flex; flex-wrap: wrap; gap: 1rem; }
+.image-editor-recent .image-editor-thumb { max-width: 11rem; text-align: left; overflow-wrap: anywhere; }

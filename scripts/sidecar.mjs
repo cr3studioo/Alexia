@@ -7,12 +7,13 @@
  * the way `tauri build` looks for them:
  *
  *   src-tauri/binaries/alexia-core-<target triple>.exe   the runtime, as the sidecar
+ *   src-tauri/binaries/alexia-connect-<target triple>.exe   native transport, spawned by core
  *   src-tauri/resources/                                  alexia.mjs, boot.mjs, ui/
  *
- * The split is Tauri's, not ours: an `externalBin` lands beside the executable and gets the
- * triple appended, while `resources` land in a directory of their own. `main.rs` bridges the
- * two by starting the sidecar with the resource directory as its working directory, which is
- * the whole of what that one line is doing.
+ * The split is Tauri's, not ours: an `externalBin` is staged with the triple appended and
+ * lands beside the executable without it, while `resources` land in a directory of their own.
+ * `main.rs` bridges the two by starting the sidecar with the resource directory as its working
+ * directory, which is the whole of what that one line is doing.
  *
  * **Re-evaluated here, as the plan asked: Node SEA against shipping `node.exe`** (M5-1). SEA
  * would be one signable artefact instead of an executable plus a script, which matters at
@@ -25,16 +26,16 @@
  * **`--universal` makes one Mac app for both processors** (D150), for
  * `tauri build --target universal-apple-darwin`. Two disk images asked somebody who has never
  * opened *About This Mac* which chip they have, on the download page, before anything else —
- * which is where setup dies. Tauri merges the shell's two builds itself; the two things here
- * that are per-architecture, Node and the keychain library, are merged with `lipo` from this
- * machine's copy and the other processor's, fetched and checked against the hash its publisher
- * wrote down.
+ * which is where setup dies. Tauri merges the shell's two builds itself; Node and the keychain
+ * library are merged with `lipo` from this machine's copy and the other processor's, fetched
+ * and checked against the hash its publisher wrote down. The transport is built with Cargo
+ * for both targets and merged the same way.
  */
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
@@ -89,6 +90,30 @@ if (universal) {
   lipo(Object.values(halves), sidecar)
 } else cpSync(join(packaged, `node${suffix}`), sidecar)
 
+// Core finds the transport beside process.execPath, not among the resources. Tauri removes
+// the target suffix when bundling and signs this externalBin the same way as alexia-core.
+const transport = join(binaries, `alexia-connect-${target}${suffix}`)
+const connectTarget = process.env.CARGO_TARGET_DIR ? resolve(process.env.CARGO_TARGET_DIR) : join(root, 'connect', 'target')
+if (universal) {
+  const halves = ['aarch64-apple-darwin', 'x86_64-apple-darwin'].map((arch) => {
+    const from = connectFor(arch)
+    cpSync(from, join(binaries, `alexia-connect-${arch}`))
+    return from
+  })
+  lipo(halves, transport)
+} else cpSync(connectFor(), transport)
+
+/** Build the crate's release binary, using the same output directory we copy from. */
+function connectFor(arch) {
+  const args = ['build', '--release', '--locked', '--manifest-path', join(root, 'connect', 'Cargo.toml'), '--target-dir', connectTarget]
+  if (arch) args.push('--target', arch)
+  const built = spawnSync('cargo', args, { cwd: root, stdio: 'inherit' })
+  if (built.status !== 0) throw new Error(`cargo could not build alexia-connect${arch ? ` for ${arch}` : ''}`)
+  const from = join(connectTarget, ...(arch ? [arch] : []), 'release', `alexia-connect${suffix}`)
+  if (!existsSync(from)) throw new Error(`cargo produced no ${from}`)
+  return from
+}
+
 // 3. Everything the sidecar reads once it is running. `Alexia.cmd` and the runtime itself do
 //    not come: the launcher is the app now, and the runtime is above. Neither do plugins —
 //    there are none to copy (D118), and every one of them arrives as a download into
@@ -113,7 +138,7 @@ if (universal) {
   sign(merged)
 }
 
-/** One Mach-O holding both halves. The inputs' signatures do not survive it, so both outputs are signed after. */
+/** One Mach-O holding both halves. The inputs' signatures do not survive it, so outputs are signed after. */
 function lipo(halves, to) {
   const made = spawnSync('lipo', ['-create', '-output', to, ...halves], { stdio: 'inherit' })
   if (made.status !== 0) throw new Error(`lipo could not merge ${halves.join(' and ')}`)
@@ -192,5 +217,6 @@ function sign(path) {
 if (!existsSync(join(resources, 'boot.mjs'))) throw new Error('the packaged build has no boot.mjs')
 
 console.log(`Sidecar: ${sidecar}`)
+console.log(`Transport: ${transport}`)
 console.log(`Resources: ${resources}`)
 console.log(universal ? 'Now: pnpm tauri build --target universal-apple-darwin' : 'Now: pnpm tauri build')

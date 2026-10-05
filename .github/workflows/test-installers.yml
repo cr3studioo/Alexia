@@ -1,0 +1,68 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Test installers for the owner's own machines: a Windows `.exe` and a universal Mac `.dmg`,
+# built from whichever branch this is started on, and kept as this run's downloads.
+#
+# **This is not a release.** It publishes nothing, creates no GitHub Release or draft, signs no
+# update and writes no `latest.json`, so no Alexia already installed anywhere can update to it.
+# The downloads are visible only to people who can see this repository's Actions, and they
+# expire. A release is still `release.yml`, started by a person.
+#
+# Unsigned on both platforms: Windows SmartScreen warns ("More info" → "Run anyway") and macOS
+# asks for the app to be opened from Finder's right-click menu the first time. `pnpm check`
+# is not repeated here; `ci.yml` runs it on every push of this branch.
+
+name: test-installers
+
+# A push to this one branch builds them too: GitHub offers *Run workflow* only for workflows
+# already on the default branch, and this one is not there until the branch is merged.
+on:
+  workflow_dispatch:
+  push:
+    branches: [cr3studioo/local-model-picker]
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: node scripts/sidecar.mjs
+      - run: pnpm tauri build
+      - uses: actions/upload-artifact@v5
+        with:
+          name: alexia-test-windows
+          path: src-tauri/target/release/bundle/nsis/*.exe
+          retention-days: 14
+
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: node scripts/sidecar.mjs --universal
+      - run: pnpm tauri build --target universal-apple-darwin
+      - uses: actions/upload-artifact@v5
+        with:
+          name: alexia-test-macos
+          path: src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
+          retention-days: 14

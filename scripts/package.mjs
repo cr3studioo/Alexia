@@ -60,13 +60,14 @@ const entry = (fromDir, id) => createRequire(join(fromDir, 'resolving.js')).reso
 rmSync(join(root, 'dist-app'), { recursive: true, force: true })
 mkdirSync(out, { recursive: true })
 
-// 1. Core, bundled. ESM out, because serve.ts reads `import.meta.dirname` to find the shell
-//    and `import.meta.main` to know it is being run rather than imported — both of which a
+// 1. Core, bundled from `entry.ts`, which reads the role and starts that role's service. ESM
+//    out, because core reads `import.meta.dirname` to find the shell and `import.meta.main`
+//    to know it is being run rather than imported — both of which a
 //    CJS bundle would quietly destroy. The banner gives the bundled CommonJS dependencies
 //    the `require` they expect, resolved against this file, which is also what makes the
 //    `.node` below land as a sibling.
 await build({
-  entryPoints: [join(root, 'packages', 'core', 'dist', 'src', 'serve.js')],
+  entryPoints: [join(root, 'packages', 'core', 'dist', 'src', 'entry.js')],
   outfile: join(out, 'alexia.mjs'),
   bundle: true,
   platform: 'node',
@@ -133,6 +134,8 @@ const ui = join(out, 'ui')
 mkdirSync(join(ui, 'dist', 'src'), { recursive: true })
 for (const file of [
   'index.html',
+  // The compute role's only page (remote-compute.md §1.6). Its script is a compiled module below.
+  'compute.html',
   'app.css',
   'alexia.png',
   'alexia-mark.svg',
@@ -198,7 +201,7 @@ import { spawn } from 'node:child_process'
 // takes the branch that would have worked out of reach, and the failure is silent, because
 // cross-keychain reads a missing native module as *this backend is not supported here* and
 // quietly spawns PowerShell for every secret instead.
-const { serve, fromShell } = await import('./alexia.mjs')
+const { start, fromShell } = await import('./alexia.mjs')
 
 // Under the desktop app the shell holds the keychain and hands core the way in down stdin
 // (D153), because an entry Node creates is readable by every script Node will run. Awaited
@@ -208,8 +211,9 @@ const secrets = process.env.ALEXIA_TAURI ? await fromShell(process.stdin) : unde
 
 // The port is Alexia's own choice when nothing says otherwise, and the shell's choice when
 // something does: the desktop app (M5-1) picks a free port before it builds its windows, so
-// that they can be pointed somewhere without waiting for Node to boot.
-const { url, close } = await serve({ port: Number(process.env.ALEXIA_PORT) || 0, secrets })
+// that they can be pointed somewhere without waiting for Node to boot. \`start\` reads the
+// role and serves the assistant or, on a compute host, only the compute service.
+const { url, close } = await start({ port: Number(process.env.ALEXIA_PORT) || 0, secrets })
 console.log('Alexia is running.')
 console.log('')
 console.log('   ' + url)

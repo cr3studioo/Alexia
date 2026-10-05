@@ -336,5 +336,5 @@ test('the core the shell hands the vault to cannot be steered from outside', () 
 test('boot waits for the handover under the app, and only there', () => {
   const source = packager()
   expect(source).toContain('const secrets = process.env.ALEXIA_TAURI ? await fromShell(process.stdin) : undefined')
-  expect(source).toMatch(/await serve\(\{ port: Number\(process\.env\.ALEXIA_PORT\) \|\| 0, secrets \}\)/)
+  expect(source).toMatch(/await start\(\{ port: Number\(process\.env\.ALEXIA_PORT\) \|\| 0, secrets \}\)/)
 })

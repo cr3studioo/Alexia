@@ -4,7 +4,15 @@ import { join } from 'node:path'
 import { describe, expect, test } from 'vitest'
 import {
   ALEXIA_METHODS,
+  ATTACHMENT_INPUTS_META,
+  ATTACHMENT_CONTEXT_META,
+  PRIVATE_CONTEXT_CAPABILITY,
+  LOCAL_META,
+  FORMAT_META,
   COMMAND_META,
+  COMPUTE_META,
+  EDITOR_META,
+  ADULT_META,
   ErrorCode,
   LENGTHS_META,
   PERMISSIONS,
@@ -33,14 +41,15 @@ const parse = <M extends AlexiaMethod>(m: M, params: unknown) =>
 describe('the specs and the code say the same thing', () => {
   test('every alexia/… name in the specs is a method this package defines', () => {
     // The lookbehind keeps `@alexia/protocol` out of it — a package, not a method.
-    const named = [...specs.matchAll(/(?<!@)alexia\/[a-z/]+/g)]
+    const named = [...specs.matchAll(/(?<!@)alexia\/[A-Za-z/]+/g)]
       .map((m) => m[0])
       .filter((n) => !n.endsWith('/'))
     expect(named.length).toBeGreaterThan(8) // the scanner is actually reading the specs
     // Some are not methods: one notification core sends down, and the `_meta` keys — the two
     // extension flags on a request (and a personality's lengths, D189), the two a plugin puts on
     // a progress notification, the one core puts on the progress it sends back while a plugin's
-    // answer is written, and a command's data on a result.
+    // answer is written, a command's data on a result, and the one on a tool that marks it as
+    // compute work.
     const known = [
       SETTINGS_CHANGED,
       PROVIDES_META,
@@ -50,6 +59,14 @@ describe('the specs and the code say the same thing', () => {
       STAGES_META,
       STREAM_META,
       COMMAND_META,
+      COMPUTE_META,
+      ATTACHMENT_INPUTS_META,
+      ATTACHMENT_CONTEXT_META,
+      PRIVATE_CONTEXT_CAPABILITY,
+      LOCAL_META,
+      FORMAT_META,
+      EDITOR_META,
+      ADULT_META,
     ] as string[]
     const unknown = [...new Set(named)].filter((n) => !isAlexiaMethod(n) && !known.includes(n))
     expect(unknown, 'documented but not implemented').toEqual([])

@@ -37,6 +37,9 @@ const needPlugins = [
   'packages/core/test/invariants/05-purge-leaves-no-residue.test.ts',
   'packages/core/test/invariants/09-memory-budget.test.ts',
   'packages/core/test/invariants/13-widgets-can-fill-themselves.test.ts',
+  'packages/core/test/image-editor-integration.test.ts',
+  // Compares the editor screen's crop rule with the media plugin's own.
+  'packages/ui/test/image-editor-workspace.test.ts',
 ]
 const withoutPlugins = existsSync(join(import.meta.dirname, 'plugins')) ? [] : needPlugins
 

@@ -2,7 +2,7 @@
 name: picture-prompts
 description: How to ask for a picture on this machine — which installed model suits the
   request, how to write for it, and when to reuse the last one. Use before calling anything
-  that provides image.generate, or before run_workflow.
+  that provides image.generate, or before run_workflow or pick_workflow.
 license: AGPL-3.0-only
 ---
 
@@ -52,17 +52,51 @@ person asks for it — *better*, *bigger*, *more detail* — and not before. Por
 landscape are worth setting when the subject implies one; a portrait at `768×1152` is better
 than a square one cropped in somebody's head.
 
+## Settings from the conversation
+
+**What the person sets is kept.** *Make it wider*, *more steps*, *use the anime model* — pass
+that one value (`width`, `steps`, `model` on `generate`; the field by name in `values` on
+`run_workflow`) and it stays set for that workflow on every picture after, until they change it.
+Do not re-send settings they gave earlier; the plugin already has them. When they say *back to
+normal* or *reset the size*, call `reset_workflow` (with `fields` for just some).
+
+**A plain request uses the workflow and model used last.** Do not name a workflow or model
+unless the person did. If what was used last is gone, the result says so — tell them.
+
+**Every result lists the settings and the seed it actually used.** Read them from there rather
+than guessing: *what seed was that?* and *same settings, but a cat* are answered from it.
+
+## Pictures to start from
+
+When the person attaches a picture or points at one and wants it changed, restyled or used as a
+reference, pass its path in `images`. On `generate` it is redrawn from that picture; `strength`
+is *how much to change* — about 0.3 for a light touch-up, the 0.6 default for a restyle, 0.8 and
+up to keep only the composition. On `run_workflow` pictures fill the workflow's picture fields
+in order (or by field name in `values`). Only ever pass a path the person gave you.
+
 ## Saying *again*
 
-When the person says *again*, *same but bigger*, *that one at night* — pass `again: true`.
-**The seed was rolled inside the plugin and was never in this conversation**, so without that
-flag you cannot reproduce the picture you are being asked to change; you would get a
-different one that merely matches the new words. Anything you do name still wins, so
+When the person says *again*, *same seed*, *same but bigger*, *that one at night* — pass `again: true` (on `generate` or `run_workflow`).
+Without that flag a new seed is rolled, and you would get a different picture that merely
+matches the new words. The last result names its seed, so `seed` works too. Anything you do name still wins, so
 `again: true` with a new size is exactly *same picture, bigger*.
 
 ## When the quick path is not enough
 
-`generate` is one plain pipeline. A request needing a reference image, a pose, a specific
+`generate` is one plain pipeline. A request needing a pose, a specific
 character, a LoRA, an upscale, video or speech wants `run_workflow` instead — call
 `workflows` to see what this machine has and what fields each one takes. The fields are named
 by whoever built the workflow, so read them rather than guessing.
+
+## A task rather than a picture
+
+*Remove the background*, *upscale this*, *fix her face*, *make it look like this painting*,
+*read this aloud*, *say it in my voice*, *make this photo move* — call `pick_workflow` with the
+person's own words first. It answers the installed workflow to run with `run_workflow`, or, when
+none is installed, which one would do it, its download size and whether it fits the graphics card.
+Say that size to the person and ask before calling `install_workflow` with `confirmed: true`;
+never install without a yes. On a paired computer, installing puts it on that computer's setup
+list, where the person presses Install. If no task matches, `find_workflow` searches everything
+ComfyUI ships and `search_community` searches community sources.
+
+Only clone a voice with its owner's agreement.

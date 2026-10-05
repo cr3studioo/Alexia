@@ -1,0 +1,42 @@
+{
+  "_id": "680f7b70e445a4be6af508b2",
+  "id": "bartowski/Qwen_Qwen3-8B-GGUF",
+  "private": false,
+  "pipeline_tag": "text-generation",
+  "tags": [
+    "gguf",
+    "text-generation",
+    "base_model:Qwen/Qwen3-8B",
+    "base_model:quantized:Qwen/Qwen3-8B",
+    "license:apache-2.0",
+    "endpoints_compatible",
+    "region:us",
+    "conversational"
+  ],
+  "downloads": 42873,
+  "likes": 39,
+  "modelId": "bartowski/Qwen_Qwen3-8B-GGUF",
+  "author": "bartowski",
+  "sha": "0b69f75b7472688e6808490aa2b85efdb81b5ce7",
+  "lastModified": "2025-04-28T16:20:38.000Z",
+  "gated": false,
+  "disabled": false,
+  "config": {},
+  "cardData": {
+    "quantized_by": "bartowski",
+    "pipeline_tag": "text-generation",
+    "license": "apache-2.0",
+    "base_model": "Qwen/Qwen3-8B",
+    "base_model_relation": "quantized"
+  },
+  "gguf": {
+    "total": 8190735360,
+    "architecture": "qwen3",
+    "context_length": 32768,
+    "bos_token": "<|endoftext|>",
+    "eos_token": "<|im_end|>",
+    "totalFileSize": 16388044064
+  },
+  "createdAt": "2025-04-28T12:58:24.000Z",
+  "usedStorage": 225968147118
+}

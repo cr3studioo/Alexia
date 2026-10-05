@@ -2,7 +2,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { routes, sizeOf, type Catalog, type Model } from './catalog.js'
-import { pins, setPin } from './commands.js'
+import { pins, rememberLocalChoice, setPin } from './commands.js'
 import type { Aside } from './health.js'
 import { OLLAMA } from './ollama.js'
 import { MODEL_GROUPS, WAITING } from './panels.js'
@@ -49,6 +49,11 @@ export interface Source {
 }
 
 export interface SurfaceOptions {
+  /**
+   * **A conversation's pictures, revoked and removed everywhere** before its messages go (A02).
+   * Absent means nothing keeps pictures, and deleting a conversation is the cascade alone.
+   */
+  forgetPictures?: (sessionId: number) => Promise<{ local: string; remote: { hostId: string; state: string }[] }>
   skills: Skills
   /** Where the consent ladder is kept (M6-9). */
   store: Store
@@ -81,6 +86,7 @@ export interface SurfaceOptions {
    * choose would be two routers, and the one nobody can see would win every time.
    */
   world(): Promise<World>
+  useLocal?(id: string): Promise<{ ok: boolean; said: string; data?: unknown }>
   /**
    * Ask every provider for its list again, if what is cached has aged out.
    *
@@ -444,7 +450,7 @@ export function sources(options: SurfaceOptions): Record<string, Source> {
             provider: provider.id,
             via: `${model.tier === 'T0' ? 'this Mac' : nameOf(provider.id)} · ${access(choice)}`,
             note,
-            size: sized(model),
+            size: [sized(model), model.quant, model.diskBytes === undefined ? undefined : `${(model.diskBytes / 1024 ** 3).toFixed(1)} GB on disk`].filter(Boolean).join(' · '),
             can: [
               model.supportsTools ? 'tools' : 'talk only',
               model.modality.includes('image') ? 'pictures' : '',
@@ -598,6 +604,9 @@ export function sources(options: SurfaceOptions): Record<string, Source> {
             `${model.tier} · ${price(model.priceIn)} in, ${price(model.priceOut)} out, per million tokens`,
             `Context: ${window(model.context)} · takes ${model.modality.join(', ')}`,
             `Tools: ${model.supportsTools ? 'yes' : 'not according to its provider'}`,
+            ...(model.quant ? [`Quantization: ${model.quant}`] : []),
+            ...(model.diskBytes === undefined ? [] : [`Disk: ${(model.diskBytes / 1024 ** 3).toFixed(1)} GB`]),
+            ...(model.abliterated ? ['Abliterated build: refusals were modified; quality and tool use may differ from the base model.'] : []),
             ...(routes(model) ?
               [`A router: ${ROUTER(model)}, chosen by ${model.provider}. Automatic asks it after every single model.`]
             : []),
@@ -996,17 +1005,26 @@ export function actions(
    * you are in.** The messages go by `ON DELETE CASCADE`, so deleting the open one would
    * leave every later append pointing at a session row that is not there.
    */
-  const forgetChat = (id: string): Promise<{ ok: boolean; said: string }> => {
+  const forgetChat = async (id: string): Promise<{ ok: boolean; said: string }> => {
     const chat = options.store.conversations().find((one) => String(one.id) === id)
-    if (!chat) return Promise.resolve({ ok: false, said: 'There is no conversation with that id.' })
+    if (!chat) return { ok: false, said: 'There is no conversation with that id.' }
     if (chat.id === options.session()) {
-      return Promise.resolve({
+      return {
         ok: false,
         said: 'That is the conversation you are in. Open another one first, or press New chat.',
-      })
+      }
     }
+    // Pictures first: every job using them is stopped and every copy removed before the
+    // messages that mention them go. What could not be finished yet is said, not hidden.
+    const receipt = await options.forgetPictures?.(chat.id).catch(() => ({ local: 'pending', remote: [] }))
     options.store.deleteSession(chat.id)
-    return Promise.resolve({ ok: true, said: `“${chat.title}” is gone, and everything said in it.` })
+    const waiting = receipt !== undefined && (receipt.local !== 'complete' || receipt.remote.some((r) => r.state !== 'complete'))
+    return {
+      ok: true,
+      said: waiting ?
+          `“${chat.title}” is gone. Some of its pictures are still being removed${receipt.remote.some((r) => r.state !== 'complete') ? ' from another computer' : ''}, and will be the next time that is possible.`
+        : `“${chat.title}” is gone, and everything said in it.`,
+    }
   }
 
   const allowSkill = (name: string): Promise<{ ok: boolean; said: string }> => {
@@ -1062,6 +1080,7 @@ export function actions(
       here.find((one) => one.id === id && (provider === undefined || one.provider === provider)) ??
       options.catalog.models.find((one) => one.id === id)
     if (!model) return { ok: false, said: 'That model is not in the catalog any more.' }
+    if (options.useLocal && pins(options.store).placement.text === 'local' && /^(llama|mlx)\//.test(id)) return options.useLocal(id)
     if (model.tier !== 'T0' && !(await options.connected()).has(model.provider)) {
       return {
         ok: false,
@@ -1069,6 +1088,7 @@ export function actions(
       }
     }
     setPin(options.store, { model: id })
+    if (model.tier === 'T0') rememberLocalChoice(options.store, id)
     return {
       ok: true,
       // One model never falls back (D155), and the moment somebody chooses one is the moment
@@ -1222,17 +1242,12 @@ export function actions(
      * — and *stop pinning* means the same thing pressed anywhere.
      */
     automatic: () => {
-      const { model: had, order = [] } = pins(options.store)
-      setPin(options.store, { model: undefined })
-      // The list above the table is a choice of its own, and this button does not clear it —
-      // so while it has anything in it, *automatic* would be the wrong word (D155).
-      const listed = order.length > 0
+      const { model: had, order } = pins(options.store)
+      setPin(options.store, { model: undefined, order: undefined })
       return Promise.resolve({
         ok: true,
         said:
-          listed ?
-            `No model is pinned. Your own order of ${String(order.length)} still decides which models answer — clear it above for Automatic.`
-          : had === undefined ? 'Already automatic — no model is pinned, so each request goes to the cheapest one that fits it.'
+          had === undefined && !order?.length ? 'Already automatic — each request goes to the cheapest model that fits it.'
           : 'Back to automatic. Each request goes to the cheapest model that fits it, and no model is pinned.',
       })
     },

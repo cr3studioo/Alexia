@@ -184,7 +184,11 @@ async function installPlugins() {
 
 quitDev()
 if (!dataOnly) {
-  run('pnpm', ['sidecar'])
+  // The native transport gets its own identity too. Keep its build output separate so a
+  // later real build cannot pick up the binary compiled for this keychain namespace.
+  run('pnpm', ['sidecar'], {
+    env: { ...process.env, ALEXIA_KEYCHAIN: KEYCHAIN, CARGO_TARGET_DIR: join(root, 'connect', 'target', 'dev') },
+  })
   run('pnpm', ['tauri', 'build', '--config', 'src-tauri/tauri.dev.conf.json', '--bundles', 'app'], {
     env: { ...process.env, ALEXIA_DEV_NAME: NAME, ALEXIA_KEYCHAIN: KEYCHAIN },
   })

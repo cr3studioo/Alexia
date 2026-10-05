@@ -95,8 +95,8 @@ jobs:
             exit 1
           fi
 
-      # The core sidecar and its resources, from the same packaging script the crude
-      # installer uses — one build, checked by one smoke test, shipped two ways.
+      # Both sidecars and core's resources: Node comes from the same packaging script the
+      # crude installer uses, and the native transport is built with Cargo beside it.
       - run: node scripts/sidecar.mjs
       - run: pnpm tauri build
 
@@ -169,7 +169,8 @@ jobs:
   # **One universal app, not one per processor** (D150). Two disk images asked the person
   # downloading which chip their Mac has, before they had seen anything work. So one Apple
   # Silicon runner builds both halves: Tauri merges the shell, and `sidecar.mjs --universal`
-  # merges Node and the keychain library. About twice the download, and one question fewer.
+  # merges Node, the native transport and the keychain library. About twice the download,
+  # and one question fewer.
   #
   # **`sign_macos` answers two questions, and only `developer-id` answers both** (D207).
   #
@@ -319,6 +320,9 @@ jobs:
       - name: The app runs on both processors
         run: |
           app=src-tauri/target/universal-apple-darwin/release/bundle/macos/Alexia.app
+          for sidecar in alexia-core alexia-connect; do
+            test -x "$app/Contents/MacOS/$sidecar" || { echo "$sidecar is missing from the app"; exit 1; }
+          done
           for binary in "$app"/Contents/MacOS/* "$app"/Contents/Resources/resources/keyring.darwin-universal.node; do
             archs=$(lipo -archs "$binary")
             echo "$(basename "$binary"): $archs"

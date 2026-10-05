@@ -159,6 +159,37 @@ const MIGRATIONS: string[] = [
      body TEXT NOT NULL
    );
    CREATE INDEX runs_at ON runs (at);`,
+  // 11 — pictures that stay with their conversation (the private image editor, A02). An
+  // attachment is a file under `uploads/<conversation>/` named by an opaque id, never by what
+  // somebody called it; its label (`image_3`) is given once and never reused, which is why the
+  // counter lives on the session and outlives a deletion of the pictures themselves. A lease is
+  // one authorized, immutable selection a job runs against; revoking the conversation's
+  // pictures ends every lease in the same transaction that marks the pictures gone.
+  `ALTER TABLE sessions ADD COLUMN image_ordinal INTEGER NOT NULL DEFAULT 0;
+   CREATE TABLE attachments (
+     id TEXT PRIMARY KEY,
+     session_id INTEGER NOT NULL REFERENCES sessions (id) ON DELETE CASCADE,
+     ordinal INTEGER NOT NULL,
+     label TEXT NOT NULL,
+     display_name TEXT NOT NULL,
+     mime TEXT NOT NULL,
+     width INTEGER NOT NULL,
+     height INTEGER NOT NULL,
+     bytes INTEGER NOT NULL,
+     sha256 TEXT NOT NULL,
+     file TEXT NOT NULL,
+     origin TEXT NOT NULL,
+     state TEXT NOT NULL,
+     created_at INTEGER NOT NULL
+   );
+   CREATE INDEX attachments_session ON attachments (session_id);
+   CREATE TABLE attachment_leases (
+     id TEXT PRIMARY KEY,
+     session_id INTEGER NOT NULL REFERENCES sessions (id) ON DELETE CASCADE,
+     attachment_ids TEXT NOT NULL,
+     state TEXT NOT NULL,
+     created_at INTEGER NOT NULL
+   );`,
 ]
 
 /**
@@ -835,6 +866,32 @@ export class Store {
     this.#db.prepare('UPDATE sessions SET title = ? WHERE id = ?').run(title, id)
   }
 
+  /** Raw access for core's attachment lifecycle (`attachments/`), which owns these two tables. */
+  attachmentsSql<T = Record<string, unknown>>(sql: string, ...args: (string | number | null)[]): T[] {
+    return this.#db.prepare(sql).all(...args) as T[]
+  }
+  attachmentsRun(sql: string, ...args: (string | number | null)[]): number {
+    return Number(this.#db.prepare(sql).run(...args).changes)
+  }
+
+  /**
+   * **Every picture this conversation's messages carry inline, removed** (legacy and current):
+   * each image part becomes a line saying one was there. History replay and summaries read
+   * these bodies, so this is what stops a deleted picture from being sent again.
+   */
+  scrubImages(sessionId: number): number {
+    const rows = this.#db.prepare('SELECT id, body FROM messages WHERE session_id = ?').all(sessionId) as { id: number; body: string }[]
+    let changed = 0
+    for (const row of rows) {
+      const body = JSON.parse(row.body) as { content?: unknown }
+      if (!Array.isArray(body.content) || !body.content.some((p: { type?: string }) => p?.type === 'image')) continue
+      body.content = (body.content as { type?: string }[]).map((p) => (p?.type === 'image' ? { type: 'text', text: '[A picture was here and has been deleted.]' } : p))
+      this.#db.prepare('UPDATE messages SET body = ? WHERE id = ?').run(JSON.stringify(body), row.id)
+      changed++
+    }
+    return changed
+  }
+
   /** The messages go with it, by `ON DELETE CASCADE` — hence `foreign_keys` in the constructor. */
   deleteSession(id: number): void {
     this.#db.prepare('DELETE FROM sessions WHERE id = ?').run(id)
@@ -1125,13 +1182,15 @@ export class Store {
    * something about. `undefined` when no answer from it has both numbers, which is every
    * database before migration 9 and every machine that has never run a local model.
    */
-  lastWriting(provider: string): { model: string; tokensOut: number; writing: number } | undefined {
+  lastWriting(provider: string | readonly string[]): { model: string; tokensOut: number; writing: number } | undefined {
+    const providers = typeof provider === 'string' ? [provider] : provider
+    if (providers.length === 0) return undefined
     const row = this.#db
       .prepare(
         'SELECT model, tokens_out AS tokensOut, writing FROM usage' +
-          ' WHERE provider = ? AND tokens_out > 0 AND writing > 0 ORDER BY at DESC, id DESC LIMIT 1',
+          ` WHERE provider IN (${providers.map(() => '?').join(',')}) AND tokens_out > 0 AND writing > 0 ORDER BY at DESC, id DESC LIMIT 1`,
       )
-      .get(provider) as { model: string; tokensOut: number; writing: number } | undefined
+      .get(...providers) as { model: string; tokensOut: number; writing: number } | undefined
     return row === undefined ? undefined : { ...row }
   }
 

@@ -119,6 +119,49 @@ export const ROUTES: Readonly<Record<string, Route>> = {
     ),
   },
 
+  '/api/local-models': { otherwise: read('The machine facts, model recommendations and installed model registry are read without starting a runner or downloading files.') },
+  '/api/local-models/search': { otherwise: read('Hugging Face search reads model metadata from the Hub; no weights or executable code are downloaded and nothing is installed.') },
+  '/api/local-models/repo': { otherwise: read('A repository preview reads pinned file hashes, sizes and licence metadata so the user can judge an install before starting it.') },
+  '/api/local-models/progress': { otherwise: read('Installation progress is a read of the running job in memory; polling neither starts another download nor changes the chosen model.') },
+  '/api/local-models/context': { otherwise: safe('The context size, cache precision and optional compatible draft are local runtime preferences. They take effect on the next model start and can be changed again here.') },
+  '/api/local-models/maintenance': { otherwise: read('Update and cleanup suggestions inspect installed model metadata. Nothing is installed or removed until the user chooses an action.') },
+  '/api/local-models/import-preview': { otherwise: read('The selected local GGUF header is parsed to show its name, size and context. No files are copied or changed.') },
+  '/api/local-models/import': { otherwise: safe('The user selected a local GGUF and whether Alexia should copy or reference it. Import verifies the source and runs a short local check before making it selectable.') },
+  '/api/local-models/benchmark': { otherwise: safe('A short local response measures the selected model. It does not change the pin or send the prompt to a hosted provider.') },
+  '/api/local-models/install': { otherwise: safe('The user chooses model weights and their licence on this screen; downloading and choosing them is reversible through Remove and Use, and the prior pin survives a failed install.') },
+  '/api/local-models/cancel': { otherwise: safe('Cancelling aborts the running installation and retains resumable partial files; a later Install continues it and the existing chosen model is preserved.') },
+  '/api/local-models/use': { otherwise: safe('Choosing an installed local model and an explicit run mode sets preferences shown on this screen, both changeable back without deleting data.') },
+  '/api/local-models/remove': { otherwise: safe('Removing deletes only verified downloadable weights managed by Alexia; conversations and user documents are untouched and Install restores the model.') },
+  '/api/local-models/token': { otherwise: safe('The token just entered is stored only in the operating system keychain; this same screen can replace or remove it without exposing its value.') },
+
+  // Remote compute (`compute/api.ts`, remote-compute.md §6). Answered before the local-model routes above.
+  '/api/compute/role': { otherwise: confirm('This switches this computer’s role between the one you talk to and one that only computes. Running work is finished or cancelled first, Alexia’s services and workers are stopped, and Alexia restarts in the new role. Existing chats are kept.') },
+  '/api/compute/role/cancel': { otherwise: safe('It stops a role switch that is still waiting for running work. Nothing has been stopped at that point, so the computer simply keeps the role it has, and the switch can be asked for again.') },
+  '/api/compute/hosts': { otherwise: read('The paired computers, how each is reached and what each last said about itself. It reads the pairing records and opens a session to ask; it changes nothing on either computer.') },
+  '/api/compute/tailscale': {
+    act: (body) => (typeof body.action === 'string' ? body.action : undefined),
+    acts: {
+      install: confirm('This downloads Tailscale from Tailscale’s own website and opens its installer, which asks for your permission. Tailscale is a separate program that lets your computers reach each other when they are not on the same network; it can be uninstalled like any other app.'),
+    },
+    otherwise: safe('It switches Tailscale on or opens its sign-in page in your browser. You sign in there yourself; Alexia never sees your password.'),
+  },
+  '/api/compute/discover': { otherwise: read('Looks for your other computer waiting to pair, on Tailscale and on this network. It only asks; nothing is paired or changed.') },
+  '/api/compute/pair/start': { otherwise: safe('Pairing only records another computer’s public identity after both sides proved it, and Unpair undoes it. The code is single-use, expires in five minutes and is never logged.') },
+  '/api/compute/pair': { otherwise: read('Where the open pairing stands, and the code for the page that is showing it. Reading it neither extends the code nor starts a pairing.') },
+  '/api/compute/pair/cancel': { otherwise: safe('Cancelling a pairing that has not finished kills its code and records nothing. A fresh code starts again, so nothing is lost by stopping.') },
+  '/api/compute/unpair': { otherwise: confirm('This forgets the paired computer. Its running jobs are cancelled, its connection is closed at once, and its models are no longer offered here. Pairing again needs a fresh code.') },
+  '/api/compute/inventory': { otherwise: read('What a computer says it has: its hardware, models, capabilities and what is missing. It is the last inventory that computer built, read without probing or installing anything.') },
+  '/api/compute/status': { otherwise: read('How a paired computer is reached right now — direct, relayed or offline — and why it cannot serve when it cannot. Nothing is connected or changed by asking.') },
+  '/api/compute/select': { otherwise: safe('It only changes which computer’s models the picker shows. No model is chosen, loaded or downloaded by it, and picking another computer changes it back.') },
+  '/api/compute/setup/install': { otherwise: safe('One missing requirement is installed on the computer named, from a button whose label showed the download’s size. It adds files there and nothing is removed; Remove undoes a model.') },
+  '/api/compute/queue': { otherwise: read('The running job and the jobs waiting behind it on one computer, in order. It is a read of the queue as that computer last described it.') },
+  '/api/compute/job': { otherwise: read('One job’s state by its id — queued, running, finished, failed or interrupted, with its progress. Asking never starts, repeats or cancels the job.') },
+  '/api/compute/jobs': { otherwise: read('The jobs this run of Alexia heard about on one computer, finished and interrupted ones included. It is held in memory and reading it changes nothing.') },
+  '/api/compute/jobs/cancel': { otherwise: safe('Cancelling one job is what the Cancel button beside it says. A queued job leaves the queue and a running one is stopped; nothing else is touched, and the job can be started again.') },
+  '/api/compute/pause': { otherwise: safe('Pausing a compute host makes its jobs wait in the queue and starts none; nothing running is stopped, and Resume on the same control undoes it.') },
+  '/api/compute/services': { otherwise: safe('The relay and mailbox addresses are two settings shown on this screen, used the next time the connection service starts. Clearing them restores the built-in defaults.') },
+  '/api/compute/window/close': { otherwise: safe('It lets the compute host’s window go while the host keeps working from the tray. Open window in the tray menu brings it back, and no job is affected.') },
+
   '/api/setup': {
     otherwise: safe(
       'The first-run answers plus the theme and where the pages sit, each written by the screen that shows it and each writable again. The only thing it can replace is a provider key, and only with one somebody has just typed into the box beside it.',
@@ -324,6 +367,51 @@ export const ROUTES: Readonly<Record<string, Route>> = {
     ),
   },
 
+  '/api/adult': {
+    act: (body) => (body.enabled === true || body.action === 'on' ? 'on' : 'off'),
+    acts: {
+      on: confirm(
+        'Turning adult content on records that you are 18 or older and lets /nsfw switch on uncensored models and adult picture edits. It is off again with one press.',
+      ),
+    },
+    otherwise: safe('Turning adult content off. Nothing is deleted, and /nsfw stops working until it is turned on again.'),
+  },
+
+  '/api/editor': {
+    act: (body) =>
+      body.call === 'command' && typeof body.command === 'object' && body.command !== null ? String((body.command as Body).type)
+      : typeof body.action === 'string' ? body.action
+      : undefined,
+    acts: {
+      remove_version: confirm(
+        'Removing a version takes it out of the editor’s history. The original and the other versions stay, but this one is not offered again.',
+      ),
+    },
+    otherwise: safe(
+      'The image editor’s own screen: opening a picture, saving a draft, asking for versions, comparing and exporting. Every generation goes through the same checks a request in chat does, and the original picture is never changed.',
+    ),
+  },
+
+  '/api/editor/upload': {
+    otherwise: safe(
+      'Adding a picture to this conversation for the editor — kept with the conversation and deleted with it. Nothing already there is changed.',
+    ),
+  },
+
+  '/api/editor/forget': {
+    otherwise: confirm(
+      'Forgetting the pictures in this conversation deletes them, every version made from them and every copy in its messages, and stops anything still being made from them. It cannot be undone.',
+    ),
+  },
+
+  '/api/editor/file': {
+    otherwise: read('A file the image editor made for this conversation, by the token it was shared under. No path is in the request.'),
+  },
+
+  '/api/editor/picture': {
+    otherwise: read('One of this conversation’s own pictures, by its id. Another conversation’s pictures are not found here.'),
+  },
+
   '/api/chat': {
     otherwise: safe(
       'Sending a sentence is the product. Everything it can then do goes through the permission gate, the never-touch list and the ceilings, and the preview asks before an expensive task starts — a confirm on the message box would be a confirm on typing.',
@@ -347,7 +435,7 @@ export const ROUTES: Readonly<Record<string, Route>> = {
 
 /** What a route is, for a given body. `undefined` means core does not serve this path. */
 export function verdictOf(path: string, body: Body = {}): Verdict | undefined {
-  const route = ROUTES[path]
+  const route = ROUTES[path] ?? (/^\/api\/local-models\/[^/]+$/.test(path) ? ROUTES['/api/local-models/remove'] : undefined)
   if (route === undefined) return undefined
   const act = (route.act ?? byAction)(body)
   return (act === undefined ? undefined : route.acts?.[act]) ?? route.otherwise
