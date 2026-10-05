@@ -195,7 +195,8 @@ test('a pinned model that fails stops, marked as the person’s choice, and Auto
   // (`shaky`): the pin, the only other model there is, asked beside it rather than ahead of it.
   const backups = again.events.filter((event) => 'phase' in event && (event.phase as { kind: string }).kind === 'backup')
   expect(backups.map((event) => event.phase)).toEqual([{ kind: 'backup', model: 'Stub One', behind: 'Stub Two', why: 'lately' }])
-  expect(asked.slice(1).sort()).toEqual(['stub/one', 'stub/two'])
+  // The winning answer can cancel its partner before that request reaches the server.
+  expect([['stub/two'], ['stub/one', 'stub/two']]).toContainEqual(asked.slice(1).sort())
 
   // **One answer, not a setting**: the pin is where the person left it, and the question was
   // asked again rather than written into the conversation a second time.

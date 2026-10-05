@@ -534,6 +534,8 @@ export interface LlamaServerOptions {
   spawn?: typeof spawn
   fetch?: typeof fetch
   port?: (signal: AbortSignal) => Promise<number>
+  /** Test seam: zero lets the kernel isolate fixture locks; production uses the directory hash. */
+  coordinationPort?: number
 }
 export interface Loaded { backend?: RunnerBackend; fallbackReason?: string; model: string; baseUrl: string; pid?: number; since: number }
 export interface LlamaLease { baseUrl: string; key: string; release: () => void }
@@ -713,7 +715,7 @@ export class LlamaServer {
         child.stdin.write(JSON.stringify({
           executable: runtime.executable, args, cwd: dirname(runtime.executable), folder,
           // Ownership is data-directory scoped, deliberately independent of the runtime pin.
-          lockPort: coordinationPort(this.options.dataDir, 'server'), stopMs: this.options.stopMs ?? 3000,
+          lockPort: this.options.coordinationPort ?? coordinationPort(this.options.dataDir, 'server'), stopMs: this.options.stopMs ?? 3000,
         }) + '\n')
         while (!s.dead) {
           aborted(deadline)

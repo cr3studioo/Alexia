@@ -3,6 +3,7 @@ import { spawn, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
+import { createServer as createLockServer } from 'node:net'
 import { basename, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { gzipSync } from 'node:zlib'
@@ -255,7 +256,7 @@ function setup(mode = 'normal', options: Partial<LlamaServerOptions> = {}): { di
   const dir = temp()
   record(dir, 'llama/one'); record(dir, 'llama/two')
   const executable = runner(dir, mode)
-  const server = new LlamaServer({ dataDir: dir, runtime: async () => ({ version: 'fixture', platform: `${process.platform}-${process.arch}`, executable, sha256: '', macPolicy: 'development' } as Runtime), pressure: async () => 'normal', healthMs: 10000, pollMs: 10, stopMs: 100, ...options })
+  const server = new LlamaServer({ dataDir: dir, runtime: async () => ({ version: 'fixture', platform: `${process.platform}-${process.arch}`, executable, sha256: '', macPolicy: 'development' } as Runtime), pressure: async () => 'normal', healthMs: 10000, pollMs: 10, stopMs: 100, coordinationPort: 0, ...options })
   owned.push(server)
   return { dir, server, executable }
 }
@@ -264,6 +265,22 @@ function starts(dir: string): { pid: number; model: string; args: string[]; keyM
 }
 // The executable fixture uses a native shebang; Windows still exercises archive validation.
 describe.skipIf(process.platform === 'win32')('owned guardian lifecycle', () => {
+  test('an occupied coordination port prevents a runner from being launched', async () => {
+    const listener = createLockServer()
+    await new Promise<void>((resolve, reject) => {
+      listener.once('error', reject)
+      listener.listen(0, '127.0.0.1', resolve)
+    })
+    try {
+      const address = listener.address() as import('node:net').AddressInfo
+      const { dir, server } = setup('normal', { coordinationPort: address.port })
+      await expect(server.ensure('llama/one')).rejects.toThrow('holds the coordination port')
+      expect(starts(dir)).toHaveLength(0)
+      expect(server.loaded()).toBeUndefined()
+    } finally {
+      await new Promise<void>((resolve) => listener.close(() => resolve()))
+    }
+  })
   test.each(['copy', 'reference'] as const)('launches single and split %s imports using their full identity; rejects later-shard tampering', async (mode) => {
     const { dir, server } = setup()
     for (const split of [false, true]) {
@@ -452,7 +469,7 @@ describe.skipIf(process.platform === 'win32')('owned guardian lifecycle', () => 
   test('SIGKILL of core makes guardian stop its real child; next owner starts without PID recovery', async () => {
     const { dir, executable } = setup()
     const source = pathToFileURL(resolve('packages/core/src/llama.ts')).href
-    const script = `import {LlamaServer} from ${JSON.stringify(source)};const s=new LlamaServer({dataDir:${JSON.stringify(dir)},runtime:async()=>({version:'fixture',executable:${JSON.stringify(executable)}}),healthMs:10000,stopMs:100,pollMs:10});await s.ensure('llama/one');console.log('READY');setInterval(()=>{},1000);`
+    const script = `import {LlamaServer} from ${JSON.stringify(source)};const s=new LlamaServer({dataDir:${JSON.stringify(dir)},runtime:async()=>({version:'fixture',executable:${JSON.stringify(executable)}}),healthMs:10000,stopMs:100,pollMs:10,coordinationPort:0});await s.ensure('llama/one');console.log('READY');setInterval(()=>{},1000);`
     const parent = spawn(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', script], { cwd: resolve('.'), stdio: ['ignore', 'pipe', 'pipe'] })
     children.push(parent)
     let output = '', errors = ''
