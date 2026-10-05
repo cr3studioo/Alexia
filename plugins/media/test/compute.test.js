@@ -415,7 +415,9 @@ test('a ComfyUI the person is running is never queued into, interrupted or stopp
   const busy = await comfyui({ at: mine.at, finishes: false, running: [[0, 'job-1']] })
   const giving = new AbortController()
   const abandoned = render(plan, { here: false, signal: giving.signal })
-  await expect.poll(() => busy.queued.length, { timeout: 5000 }).toBe(1)
+  // Wait until the renderer has received the job id and started waiting for it. The
+  // server recording the prompt does not mean its response has reached the client yet.
+  await expect.poll(() => busy.asked.some((one) => one.method === 'GET' && one.path === '/history/job-1'), { timeout: 5000 }).toBe(true)
   giving.abort()
   await expect(abandoned).rejects.toThrow()
   await expect.poll(() => busy.asked.some((one) => one.method === 'POST' && one.path === '/interrupt'), { timeout: 5000 }).toBe(true)

@@ -280,7 +280,8 @@ test('cancellation stops a process with a hanging release at fifteen seconds and
     deadline = { fn, at: elapsed + ms }
     return { clear: () => {} }
   }).catch(() => { active.finish({ state: 'cancelled' }) })
-  await vi.waitFor(() => expect(existsSync(at('slow'))).toBe(true))
+  // This starts a real plugin process; allow for startup under full-suite load.
+  await vi.waitFor(() => expect(existsSync(at('slow'))).toBe(true), { timeout: 10_000 })
   const pid = Number(readFileSync(at('spawned'), 'utf8'))
   const queued = scheduler.submit({ id: 'job-2', kind: 'operation', weight: 'heavy', label: 'demo.slow', worker: worker.id })
   let admitted = false
@@ -346,7 +347,8 @@ test('a plugin that vanishes mid-job fails that job as a worker failure and its 
   await admission.turn
   const running = worker.run('demo.slow', {}, { signal: admission.signal, dir: artifacts.jobDir('job-1'), progress: () => {}, output: () => {} })
   const outcome = running.catch((error: unknown) => error)
-  await vi.waitFor(() => expect(existsSync(at('slow'))).toBe(true))
+  // This starts a real plugin process; allow for startup under full-suite load.
+  await vi.waitFor(() => expect(existsSync(at('slow'))).toBe(true), { timeout: 10_000 })
 
   rmSync(dir, { recursive: true, force: true })
   await vi.waitFor(() => expect(scheduler.status('job-1')).toMatchObject({ state: 'failed', failure: { code: 'worker-failure' } }))

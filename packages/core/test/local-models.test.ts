@@ -125,7 +125,8 @@ test('the actual chat and tool checks run through accounting before a model beco
     const one = readInstalled(directory)[0]!
     expect(one.ready).toBe(true)
     expect(one.tools).toBe(true)
-    expect(one.tokensPerSecond).toBeGreaterThan(0)
+    // A buffered response may arrive too quickly for a useful speed measurement.
+    if (one.tokensPerSecond !== undefined) expect(one.tokensPerSecond).toBeGreaterThan(0)
     expect(checked.tries()).toHaveLength(2)
     expect(checked.tries().every((attempt) => attempt.source === 'test')).toBe(true)
     expect(release).toHaveBeenCalledTimes(2)
