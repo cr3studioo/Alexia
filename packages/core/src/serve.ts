@@ -998,6 +998,9 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     ...options.modeTransitions,
   })
   const changeMode = async (mode: LocalMode): Promise<Ran> => modeTransitions.request(mode)
+  // `alexia --mode <mode>` (Home/Away buttons, shortcuts): the same switch as the picker, so the
+  // GPU is freed or filled by the code that already knows how.
+  options.compute?.shell?.onMode?.((mode) => { modeTransitions.request(mode) })
   const answering = (): boolean => operating() || modeTransitions.pending()
   const testModels = async (): Promise<void> => {
     if (answering()) return

@@ -10,10 +10,14 @@
  *
  * - core → shell, on stdout: `@shell compute <status>` · `@shell status 0|1 <status>` · `@shell relaunch`
  * - shell → core, on stdin: `tray pause` · `tray resume` · `tray unpair` · `tray role` · `tray window`
+ *   · `mode local|combined|cloud` (from `alexia --mode <mode>`, so a script can free the GPU)
  */
 
 export type TrayAction = 'pause' | 'resume' | 'unpair' | 'role' | 'window'
 export const TRAY_ACTIONS: readonly TrayAction[] = ['pause', 'resume', 'unpair', 'role', 'window']
+/** The same three as `ModelMode`, named here so this module still imports nothing. */
+export type ShellMode = 'local' | 'combined' | 'cloud'
+export const SHELL_MODES: readonly ShellMode[] = ['local', 'combined', 'cloud']
 
 export interface Shell {
   /** Windows may go: setup is finished. The shell destroys them, unregisters hotkeys, and shows the compute menu. */
@@ -23,6 +27,8 @@ export interface Shell {
   /** Restart the whole app (windows included). Used by a role switch and by *Open window*. */
   relaunch(): void
   onTray(listener: (action: TrayAction) => void): () => void
+  /** `alexia --mode <mode>` from a script or a shortcut: switch models exactly as the picker does. */
+  onMode(listener: (mode: ShellMode) => void): () => void
 }
 
 /** The longest status the tray is handed. A menu item is one short line. */
@@ -41,6 +47,12 @@ export function trayAction(line: string): TrayAction | undefined {
   return found && (TRAY_ACTIONS as readonly string[]).includes(found[1]!) ? found[1] as TrayAction : undefined
 }
 
+/** One line from the shell, as the mode it names, or undefined for anything else. */
+export function modeLine(line: string): ShellMode | undefined {
+  const found = /^mode ([a-z]+)\r?$/.exec(line)
+  return found && (SHELL_MODES as readonly string[]).includes(found[1]!) ? found[1] as ShellMode : undefined
+}
+
 /**
  * Under the app (`ALEXIA_TAURI`): writes `@shell …` lines to stdout, reads `tray …` lines from
  * stdin. Stdin is read only once somebody listens, and after the vault line has been taken by
@@ -48,34 +60,42 @@ export function trayAction(line: string): TrayAction | undefined {
  */
 export function shellPipe(output: NodeJS.WritableStream = process.stdout, input: NodeJS.ReadableStream = process.stdin): Shell {
   const listeners = new Set<(action: TrayAction) => void>()
+  const modes = new Set<(mode: ShellMode) => void>()
   let said = ''
+  const tell = <T>(to: Set<(value: T) => void>, value: T | undefined): void => {
+    if (value) for (const listener of [...to]) { try { listener(value) } catch { /* A listener cannot stop the others hearing. */ } }
+  }
   const heard = (chunk: Buffer | string): void => {
     said += String(chunk)
     let end: number
     while ((end = said.indexOf('\n')) !== -1) {
-      const action = trayAction(said.slice(0, end))
+      const line = said.slice(0, end)
       said = said.slice(end + 1)
-      if (action) for (const listener of [...listeners]) { try { listener(action) } catch { /* A listener cannot stop the others hearing. */ } }
+      tell(listeners, trayAction(line))
+      tell(modes, modeLine(line))
     }
     // A line longer than any tray line is not one. Kept short, so nothing grows without end.
     if (said.length > 256) said = ''
+  }
+  // Stdin is read while either kind has a listener, and let go when the last of both leaves.
+  const listen = <T>(to: Set<T>, listener: T): (() => void) => {
+    if (listeners.size + modes.size === 0) {
+      input.on('data', heard)
+      input.resume()
+    }
+    to.add(listener)
+    return () => {
+      if (!to.delete(listener) || listeners.size + modes.size > 0) return
+      input.off('data', heard)
+    }
   }
   const write = (line: string): void => { output.write(`${line}\n`) }
   return {
     computeReady: (status) => { write(`@shell compute ${statusLine(status)}`) },
     status: (line, paused) => { write(`@shell status ${paused ? 1 : 0} ${statusLine(line)}`) },
     relaunch: () => { write('@shell relaunch') },
-    onTray: (listener) => {
-      if (listeners.size === 0) {
-        input.on('data', heard)
-        input.resume()
-      }
-      listeners.add(listener)
-      return () => {
-        if (!listeners.delete(listener) || listeners.size > 0) return
-        input.off('data', heard)
-      }
-    },
+    onTray: (listener) => listen(listeners, listener),
+    onMode: (listener) => listen(modes, listener),
   }
 }
 
@@ -86,5 +106,6 @@ export function noShell(exit: () => void = () => process.exit(0)): Shell {
     status: () => {},
     relaunch: exit,
     onTray: () => () => {},
+    onMode: () => () => {},
   }
 }

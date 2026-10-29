@@ -20,6 +20,7 @@ import { PREVIEW_MAX_CHARS } from './protocol.js'
 import { rememberModels, remoteModels, seenModels, selectedHost } from './target.js'
 import { ComputeError, parseCatalogId, previewOf, THIS_HOST, type ExecutionTarget, type RunProgress, type TargetStatus } from './types.js'
 import { Link, type LinkDeps } from './link.js'
+import type { Shell } from './shell.js'
 import { Tailscale } from './tailscale.js'
 
 export type { Connect } from './connect.js'
@@ -39,8 +40,8 @@ export interface InteractionOptions {
   stop(): Promise<void>
   /** Injectable for tests: one end of `memoryConnect()`. Absent, the sidecar is looked for and spawned. */
   connect?: Connect
-  /** The desktop shell (`compute/shell.ts`). Only `relaunch` is used here. */
-  shell?: { relaunch(): void }
+  /** The desktop shell (`compute/shell.ts`). `relaunch` is used here; `onMode` by `serve()`. */
+  shell?: Pick<Shell, 'relaunch'> & Partial<Pick<Shell, 'onMode'>>
   /** Cancel what `busy()` counts. Called only when a role switch was asked to cancel. */
   cancel?(): void | Promise<void>
   /** Choose a paired computer's model: `ModeTransitions.request`. */

@@ -340,6 +340,24 @@ fn sidecar(app: &AppHandle, port: u16) -> Result<Command, Box<dyn std::error::Er
 /// Set on the way out, so a core stopped by quitting is not started again behind it.
 static QUITTING: AtomicBool = AtomicBool::new(false);
 
+/// `--mode local|combined|cloud` from the first launch, held until core is listening: written
+/// sooner, it would share a chunk with the vault line, and the handshake drops what follows it.
+static PENDING_MODE: Mutex<Option<String>> = Mutex::new(None);
+
+/// The mode named by `--mode`, if it is one of the three core knows.
+fn mode_arg(argv: &[String]) -> Option<String> {
+    let mode = argv.iter().skip_while(|arg| *arg != "--mode").nth(1)?;
+    matches!(mode.as_str(), "local" | "combined" | "cloud").then(|| mode.clone())
+}
+
+/// A script's Home/Away button (`alexia --mode cloud`), down the same pipe as the tray's lines.
+fn send_mode(app: &AppHandle, mode: &str) {
+    if let Ok(mut held) = app.state::<Mutex<Option<CommandChild>>>().lock() {
+        if let Some(core) = held.as_mut() { let _ = core.write(format!("mode {mode}
+").as_bytes()); }
+    }
+}
+
 /// The running core, taken out of where quitting finds it — only if it is `pid`, when one is named.
 fn take_core(app: &AppHandle, pid: Option<u32>) -> Option<CommandChild> {
     let state = app.state::<Mutex<Option<CommandChild>>>();
@@ -384,6 +402,9 @@ fn start(app: &AppHandle, port: u16, handover: Arc<String>, lapse: u32) -> Resul
                     if label != "control" {
                         let _ = window.navigate(url.clone());
                     }
+                }
+                if let Some(mode) = PENDING_MODE.lock().ok().and_then(|mut pending| pending.take()) {
+                    send_mode(&waiting, &mode);
                 }
                 let handle = waiting.clone();
                 let _ = waiting.run_on_main_thread(move || {
@@ -453,8 +474,12 @@ fn main() {
         //
         // `--overlay` summons the overlay instead (D145), so anything that can run a command —
         // a launcher, a Shortcut, a test with no keyboard to press — reaches the hotkey's door.
+        //
+        // `--mode <mode>` switches models without showing anything, for the Home/Away buttons.
         .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
-            if argv.iter().any(|arg| arg == "--overlay") {
+            if let Some(mode) = mode_arg(&argv) {
+                send_mode(app, &mode)
+            } else if argv.iter().any(|arg| arg == "--overlay") {
                 reveal(app)
             } else {
                 // On the main thread as well, like `reveal`: a second launch is heard on another.
@@ -603,6 +628,9 @@ fn main() {
             // Core, after the windows and the tray it reports to. The vault is opened **before**
             // core is started: failing here leaves nothing running, where failing after the spawn
             // left a core that nothing held and nothing would stop.
+            if let Ok(mut pending) = PENDING_MODE.lock() {
+                *pending = mode_arg(&std::env::args().collect::<Vec<_>>());
+            }
             start(&handle, port, Arc::new(vault::open()?), 0)?;
             // The starting page's *Try again*: the core that has not answered is stopped, and the
             // watch in `start` brings up another.

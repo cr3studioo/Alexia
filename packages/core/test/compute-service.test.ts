@@ -65,6 +65,7 @@ function fakeShell() {
     status: (line, paused) => { said.push(`status ${paused ? 1 : 0} ${line}`) },
     relaunch: () => { said.push('relaunch') },
     onTray: (listener) => { listeners.add(listener); return () => { listeners.delete(listener) } },
+    onMode: () => () => {},
   }
   return { shell, said, listeners, click: (action: TrayAction) => { for (const listener of listeners) listener(action) } }
 }

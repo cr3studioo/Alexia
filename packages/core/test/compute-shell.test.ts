@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { PassThrough } from 'node:stream'
 import { expect, test, vi } from 'vitest'
-import { noShell, shellPipe, statusLine, trayAction, type TrayAction } from '../src/compute/shell.js'
+import { modeLine, noShell, shellPipe, statusLine, trayAction, type ShellMode, type TrayAction } from '../src/compute/shell.js'
 
 /**
  * The lines `src-tauri/src/main.rs` matches, byte for byte (T15): what core writes on stdout,
@@ -73,4 +73,23 @@ test('run from a checkout, the shell does nothing and relaunch leaves', () => {
   shell.onTray(() => { throw new Error('never') })()
   shell.relaunch()
   expect(exit).toHaveBeenCalledTimes(1)
+})
+
+test('the three mode lines reach their listener, and tray lines stay apart', async () => {
+  const p = pipes()
+  const shell = shellPipe(p.output, p.input)
+  const modes: ShellMode[] = []
+  const trays: TrayAction[] = []
+  const offMode = shell.onMode((mode) => { modes.push(mode) })
+  const offTray = shell.onTray((action) => { trays.push(action) })
+  p.input.write('mode cl')
+  p.input.write('oud\nmode local\r\nmode turbo\nmode  local\ntray pause\nmode combined\n')
+  await vi.waitFor(() => { expect(modes).toEqual(['cloud', 'local', 'combined']) })
+  expect(trays).toEqual(['pause'])
+  offMode()
+  expect(p.input.listenerCount('data')).toBe(1)
+  offTray()
+  expect(p.input.listenerCount('data')).toBe(0)
+  expect(modeLine('mode cloud')).toBe('cloud')
+  expect(modeLine('tray cloud')).toBeUndefined()
 })
