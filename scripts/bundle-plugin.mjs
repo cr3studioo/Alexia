@@ -11,8 +11,8 @@
  * here, in a second, rather than on a machine after a download.
  */
 import { build } from 'esbuild'
-import { cpSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { cpSync, mkdirSync, readFileSync, writeFileSync, realpathSync, statSync } from 'node:fs'
+import { join, dirname, sep } from 'node:path'
 import { Manifest } from '../packages/protocol/dist/src/index.js'
 
 /** Build `plugins/<id>` into `tree`. Throws with a sentence when it cannot. Returns the manifest. */
@@ -47,5 +47,14 @@ export async function bundlePlugin(root, id, tree) {
   })
   // Its skills (M2-2). Text, and they install and purge with the plugin that brought them.
   for (const skill of manifest.skills ?? []) cpSync(join(from, skill), join(tree, skill), { recursive: true })
+  // Companions are declared, bounded files; paths and symlinks cannot escape the plugin.
+  const sourceRoot = realpathSync(from)
+  for (const asset of manifest.assets ?? []) {
+    const source = realpathSync(join(from, asset))
+    if (!source.startsWith(sourceRoot + sep) || !statSync(source).isFile()) throw new Error(`${id}: asset must be a file inside the plugin: ${asset}`)
+    if (asset === 'plugin.json' || asset === script) throw new Error(`${id}: asset would overwrite the bundled entry or manifest: ${asset}`)
+    mkdirSync(dirname(join(tree, asset)), { recursive: true })
+    cpSync(source, join(tree, asset))
+  }
   return manifest
 }

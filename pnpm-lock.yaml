@@ -96,6 +96,12 @@ importers:
 
   packages/ui: {}
 
+  plugins/apple-context:
+    dependencies:
+      '@alexia/sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
+
   plugins/claude-code:
     dependencies:
       '@alexia/sdk':
@@ -169,6 +175,12 @@ importers:
         version: link:../../packages/sdk
 
   plugins/voice:
+    dependencies:
+      '@alexia/sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
+
+  plugins/web-research:
     dependencies:
       '@alexia/sdk':
         specifier: workspace:*

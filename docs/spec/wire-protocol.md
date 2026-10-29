@@ -914,3 +914,24 @@ then:
   the code wins by accident.
 - Anything that changes what a *conforming plugin* must do bumps `alexia_protocol`.
 - Anything that changes what core *offers* but not what a plugin must do does not.
+
+### Research progress (revision 15)
+
+A tool may attach `alexia/research` under a progress notification's `_meta`. Its value is a
+complete `ResearchUpdate` snapshot (see `packages/protocol/src/research.ts`), capped at
+12 sources and 6 passages per source. `sequence` increases within an immutable `runId`.
+Core supplies the owning `conversationId` in request `_meta['alexia/call-context']`;
+plugins must echo it, rather than accepting a model-supplied conversation argument.
+Duplicate, late, malformed and cross-conversation snapshots are discarded. Successful
+source counts derive from extraction states, rather than notification counts. Terminal
+snapshots are immutable; cancellation/crashes settle unfinished states. Reconnecting UIs
+retrieve the latest current-conversation snapshot without asking the provider to rerun.
+
+### Optional current observations
+
+`context.current` is a service capability, not a new wire method. Core resolves it
+once per desktop or channel task, independently of `memory.profile`. It accepts
+text content only, caps it at 1,500 characters, and waits at most two seconds.
+Absence, errors and late results add no context. Its output is labeled external
+observations, never instructions, and follows ordinary egress handling. Providers
+must expose only data suitable for the user's configured model destination.

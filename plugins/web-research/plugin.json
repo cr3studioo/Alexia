@@ -1,0 +1,87 @@
+{
+  "$schema": "../../docs/spec/plugin.schema.json",
+  "manifest_version": 1,
+  "id": "web-research",
+  "name": "Research",
+  "summary": "Searches and reads public websites in parallel, with a live viewer and a sourced Markdown report.",
+  "version": "0.1.0",
+  "license": "AGPL-3.0-only",
+  "entry": {
+    "run": "node",
+    "args": [
+      "index.js"
+    ]
+  },
+  "alexia_protocol": 15,
+  "mcp_protocol": "2025-11-25",
+  "requires": [
+    {
+      "cap": "fs.own_dir",
+      "why": "To keep a private Python runtime, isolated browser, cached public pages and downloadable reports."
+    },
+    {
+      "cap": "net.request",
+      "why": "To search and read public websites without accounts or paid APIs."
+    },
+    {
+      "cap": "net.download",
+      "why": "To install the private research runtime and Chromium automatically on first use."
+    },
+    {
+      "cap": "proc.spawn",
+      "why": "To run the research worker and its isolated Chromium browser."
+    }
+  ],
+  "provides": [
+    "web.research"
+  ],
+  "skills": [
+    "skills/web-research"
+  ],
+  "settings": [
+    {
+      "type": "status",
+      "key": "state",
+      "label": "Research setup"
+    }
+  ],
+  "panel": {
+    "label": "Research",
+    "widgets": [
+      {
+        "type": "research",
+        "key": "viewer",
+        "label": "Live research"
+      }
+    ]
+  },
+  "page": {
+    "title": "Research",
+    "sizes": {
+      "M": {
+        "at": [
+          16,
+          22
+        ],
+        "show": [
+          "viewer"
+        ]
+      },
+      "L": {
+        "at": [
+          24,
+          28
+        ],
+        "show": [
+          "viewer"
+        ]
+      }
+    },
+    "fixed": false
+  },
+  "assets": [
+    "worker.py",
+    "network.py",
+    "requirements.txt"
+  ]
+}

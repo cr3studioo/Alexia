@@ -50,7 +50,8 @@
     "voice.render",
     "voice.recognize",
     "voice.synthesize",
-    "voice.imitate"
+    "voice.imitate",
+    "reply.finished"
   ],
   "compute": {
     "operations": [
@@ -109,6 +110,30 @@
           "hint": "The same, with each reply marked up for emotion first. One extra AI request per reply, and it is the only engine here that can be told how to say something.",
           "needs": "fish_key",
           "reason": "Add a fish.audio key at the bottom of this page."
+        }
+      ]
+    },
+    {
+      "type": "choice",
+      "key": "speak_replies",
+      "label": "Answer out loud",
+      "default": "mirror",
+      "hint": "When Alexia reads her answer out in the chosen voice, as well as writing it. Asking her to read something out works whichever this is.",
+      "options": [
+        {
+          "value": "never",
+          "label": "Never",
+          "hint": "Every answer is text only, even when you spoke the question."
+        },
+        {
+          "value": "mirror",
+          "label": "When you speak",
+          "hint": "The answer comes back the way the question went in: speak and she speaks, type and she types."
+        },
+        {
+          "value": "always",
+          "label": "Always",
+          "hint": "Every answer is read out, including the answer to something you typed."
         }
       ]
     }

@@ -137,6 +137,59 @@
               },
               "type": {
                 "type": "string",
+                "const": "research"
+              },
+              "key": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_]*$"
+              },
+              "label": {
+                "type": "string",
+                "minLength": 1
+              },
+              "hint": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "key",
+              "label"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "when": {
+                "type": "object",
+                "properties": {
+                  "key": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_]*$"
+                  },
+                  "is": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "minItems": 1,
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "key",
+                  "is"
+                ],
+                "additionalProperties": false
+              },
+              "type": {
+                "type": "string",
                 "const": "text"
               },
               "key": {
@@ -1561,6 +1614,15 @@
         "minLength": 1
       }
     },
+    "assets": {
+      "maxItems": 100,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 240
+      }
+    },
     "min_tier": {
       "type": "string",
       "enum": [
@@ -1590,6 +1652,59 @@
           "type": "array",
           "items": {
             "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "when": {
+                    "type": "object",
+                    "properties": {
+                      "key": {
+                        "type": "string",
+                        "pattern": "^[a-z][a-z0-9_]*$"
+                      },
+                      "is": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "minItems": 1,
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "key",
+                      "is"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "type": {
+                    "type": "string",
+                    "const": "research"
+                  },
+                  "key": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_]*$"
+                  },
+                  "label": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "hint": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type",
+                  "key",
+                  "label"
+                ]
+              },
               {
                 "type": "object",
                 "properties": {

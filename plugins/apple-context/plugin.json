@@ -1,0 +1,251 @@
+{
+  "$schema": "../../docs/spec/plugin.schema.json",
+  "manifest_version": 1,
+  "id": "apple-context",
+  "name": "Health and places",
+  "summary": "Imports selected fitness, sleep and named-place events from your phone. Keeps detailed records locally; selected summaries may reach your configured cloud model. No proactive messages.",
+  "version": "0.1.0",
+  "license": "AGPL-3.0-only",
+  "entry": {
+    "run": "node",
+    "args": [
+      "index.js"
+    ]
+  },
+  "alexia_protocol": 15,
+  "mcp_protocol": "2025-11-25",
+  "lifetime": "resident",
+  "requires": [
+    {
+      "cap": "fs.own_dir",
+      "why": "Keep the local health database and summaries."
+    },
+    {
+      "cap": "fs.read_scoped",
+      "why": "Read only the selected iCloud inbox."
+    },
+    {
+      "cap": "fs.write_scoped",
+      "why": "Optionally remove acknowledged files from that inbox after seven days."
+    },
+    {
+      "cap": "net.listen",
+      "why": "Accept authenticated phone deliveries on loopback, optionally forwarded by private Tailscale Serve."
+    },
+    {
+      "cap": "proc.spawn",
+      "why": "Run the supplied Swift helper with /usr/bin/swift to download pending iCloud inbox files."
+    }
+  ],
+  "provides": [
+    "context.current"
+  ],
+  "storage": {
+    "namespace": "apple-context",
+    "tables": [],
+    "dir": true
+  },
+  "settings": [
+    {
+      "type": "action",
+      "key": "get_shortcuts",
+      "label": "Get iPhone shortcuts",
+      "tool": "get_shortcuts",
+      "hint": "Download eight signed templates, then configure the destination folder and your private token on your phone."
+    },
+    {
+      "type": "text",
+      "key": "inbox",
+      "label": "iCloud inbox folder",
+      "hint": "Absolute path to Shortcuts/Alexia in iCloud Drive. Add this folder to Alexia\u2019s allowed folders first; create events and health subfolders."
+    },
+    {
+      "type": "text",
+      "key": "device_id",
+      "label": "Phone identifier",
+      "default": "my-iphone",
+      "hint": "Use this same identifier in Send to Alexia."
+    },
+    {
+      "type": "text",
+      "key": "places",
+      "label": "Named places (JSON)",
+      "default": "{\"home\":\"Home\",\"gym\":\"Gym\",\"work\":\"Work\"}",
+      "hint": "Map identifiers to short labels. Do not include street addresses."
+    },
+    {
+      "type": "text",
+      "key": "timezone",
+      "label": "Summary timezone",
+      "default": "Europe/Prague"
+    },
+    {
+      "type": "text",
+      "key": "sources",
+      "label": "Preferred sources (JSON)",
+      "default": "{}",
+      "hint": "Optional metric-to-bundle-identifier mapping. Automatic choice prefers Watch, then iPhone."
+    },
+    {
+      "type": "toggle",
+      "key": "paused",
+      "label": "Pause incoming data",
+      "default": false
+    },
+    {
+      "type": "toggle",
+      "key": "direct",
+      "label": "Enable private direct delivery",
+      "default": false,
+      "hint": "Requires both tokens and Tailscale Serve. The listener binds only to this Mac\u2019s loopback interface."
+    },
+    {
+      "type": "password",
+      "key": "event_token",
+      "label": "Shortcut receiver token",
+      "hint": "Use at least 32 random characters; paste the same value into your private Shortcut. Changing it revokes the previous token."
+    },
+    {
+      "type": "password",
+      "key": "health_token",
+      "label": "Hozz receiver token",
+      "hint": "Use a different token of at least 32 random characters. Hozz Authorization: Bearer followed by this token."
+    },
+    {
+      "type": "toggle",
+      "key": "cleanup",
+      "label": "Clean acknowledged inbox files after seven days",
+      "default": false,
+      "hint": "Enable after setup verification. Only successfully imported files in events and health are removed."
+    },
+    {
+      "type": "status",
+      "key": "state",
+      "label": "Sync state"
+    },
+    {
+      "type": "status",
+      "key": "endpoint",
+      "label": "Local receiver"
+    },
+    {
+      "type": "action",
+      "key": "scan",
+      "label": "Check inbox now",
+      "tool": "scan"
+    },
+    {
+      "type": "text",
+      "key": "forget_from",
+      "label": "Forget from (YYYY-MM-DD)"
+    },
+    {
+      "type": "text",
+      "key": "forget_through",
+      "label": "Forget through (YYYY-MM-DD)"
+    },
+    {
+      "type": "choice",
+      "key": "forget_metric",
+      "label": "Forget category",
+      "options": [
+        "all",
+        "events",
+        "workout",
+        "sleep",
+        "steps",
+        "active_energy",
+        "exercise_minutes",
+        "resting_heart_rate",
+        "hrv"
+      ],
+      "default": "all"
+    },
+    {
+      "type": "action",
+      "key": "forget",
+      "label": "Forget selected range",
+      "tool": "forget_range",
+      "confirm": "Forget the selected range and prevent it being imported again?"
+    },
+    {
+      "type": "action",
+      "key": "reimport",
+      "label": "Allow forgotten data to be imported again",
+      "tool": "allow_reimport",
+      "confirm": "Remove all forgetting rules? Previously forgotten files can return."
+    }
+  ],
+  "panel": {
+    "label": "Health and places",
+    "widgets": [
+      {
+        "type": "table",
+        "key": "recent",
+        "label": "Recent events",
+        "rows": "event_rows",
+        "columns": [
+          {
+            "key": "type",
+            "label": "Event"
+          },
+          {
+            "key": "occurred_at",
+            "label": "When"
+          },
+          {
+            "key": "place",
+            "label": "Place"
+          }
+        ]
+      },
+      {
+        "type": "table",
+        "key": "history",
+        "label": "Daily summaries",
+        "rows": "summary_rows",
+        "columns": [
+          {
+            "key": "day",
+            "label": "Day"
+          },
+          {
+            "key": "metric",
+            "label": "Metric"
+          },
+          {
+            "key": "value",
+            "label": "Value"
+          },
+          {
+            "key": "unit",
+            "label": "Unit"
+          }
+        ]
+      }
+    ]
+  },
+  "assets": [
+    "assets/download-icloud.swift",
+    "README.md",
+    "assets/shortcuts-setup.md",
+    "assets/build-shortcuts.py",
+    "assets/shortcuts/Alexia - Gym arrived.unsigned.shortcut",
+    "assets/shortcuts/Alexia - Gym arrived.signed.b64",
+    "assets/shortcuts/Alexia - Gym left.unsigned.shortcut",
+    "assets/shortcuts/Alexia - Gym left.signed.b64",
+    "assets/shortcuts/Alexia - Home arrived.unsigned.shortcut",
+    "assets/shortcuts/Alexia - Home arrived.signed.b64",
+    "assets/shortcuts/Alexia - Home left.unsigned.shortcut",
+    "assets/shortcuts/Alexia - Home left.signed.b64",
+    "assets/shortcuts/Alexia - Location snapshot.unsigned.shortcut",
+    "assets/shortcuts/Alexia - Location snapshot.signed.b64",
+    "assets/shortcuts/Alexia - Work arrived.unsigned.shortcut",
+    "assets/shortcuts/Alexia - Work arrived.signed.b64",
+    "assets/shortcuts/Alexia - Work left.unsigned.shortcut",
+    "assets/shortcuts/Alexia - Work left.signed.b64",
+    "assets/shortcuts/Alexia - Workout ended.unsigned.shortcut",
+    "assets/shortcuts/Alexia - Workout ended.signed.b64",
+    "assets/sign-shortcuts.py"
+  ]
+}

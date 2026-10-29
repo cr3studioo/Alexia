@@ -224,6 +224,7 @@ export const CAN: Readonly<Record<string, string>> = {
   'fs.write_scoped': 'change files in folders you chose',
   'net.download': 'download files',
   'net.request': 'reach the internet',
+  'net.listen': 'receive data through a local network listener',
   'audio.input': 'hear your microphone',
   'audio.output': 'play sound',
   'screen.capture': 'see your screen',

@@ -50,6 +50,7 @@ name that is not here does not install.
 | `fs.write_scoped` | write inside those same folders | "change files in the folders you've opened" |
 | `net.download` | fetch from the hosts named in `why` | "download from *…*" |
 | `net.request` | general outbound HTTP | "use the internet" |
+| `net.listen` | an inbound listener, with interface and purpose declared in `why` | "receive data through a local network listener" |
 | `audio.input` | the microphone | "hear you speak" |
 | `audio.output` | the speakers | "play sound" |
 | `screen.capture` | read the screen | "see your screen" |
@@ -97,6 +98,7 @@ name and becomes a drop-in alternative rather than a competitor.
 
 | Name | Contract | First provided by |
 |---|---|---|
+| `context.current` | Nothing in; bounded timestamped factual context out. Core reads once per task, caps at 1,500 characters and waits at most two seconds. Failure or absence adds nothing. | `plugins/apple-context` |
 | `demo.greet` | a name in, a greeting out | `plugins/hello` (M0) |
 | `voice.transcribe` | audio file in, text out | `plugins/voice` (M2) |
 | `voice.speak` | text in, audio played, nothing out | `plugins/voice` (M2) |
@@ -106,6 +108,7 @@ name and becomes a drop-in alternative rather than a competitor.
 | `memory.remember` | a sentence in, **nothing out** — it is kept across conversations and read back by `memory.recall` | `plugins/memory` (M7) |
 | `memory.recall` | words in, what was remembered about them out | `plugins/memory` (M7) |
 | `memory.capture` | one finished exchange in, **nothing out** — core never reads it back, and `memory.profile` is the one exception | `plugins/memory` (M7) |
+| `reply.finished` | one finished exchange in (`said`, `answered`, `at`), **nothing out** — core hands every answer over and forgets it, and whatever provides it decides whether to present it another way (out loud, in the Voice plugin's case). Not sent for a conversation holding private pictures | `plugins/voice` |
 | `memory.profile` | nothing in, **a short block about the user out** (~600 characters: name, language, how to be spoken to, life stage) — assembled by code, read once per task and put in the system prompt before the personality. Empty text is nothing to say | `plugins/memory` |
 | `ask.confirm` | a question and its options in, the chosen option out | `plugins/telegram` (M7) |
 | `voice.render` | text in, **audio bytes out** — for audio that has to go somewhere other than these speakers | `plugins/voice` (M7) |
@@ -276,3 +279,8 @@ switch.
 
 This is deliberate to the point of being awkward, and it is what makes *delete the folder,
 nothing else notices* true rather than aspirational.
+
+`web.research` is an optional service capability for bounded, multi-source public-web
+research. A provider returns a concise sourced answer through `alexia/final` and a
+Markdown report through ordinary `resource_link` file attachments, with typed research
+progress for passive viewers. Core does not require or directly call this capability.
