@@ -8,6 +8,7 @@ import { there } from './fetching.js'
 import * as fish from './fish.js'
 import * as piper from './piper.js'
 import * as qwen from './qwen.js'
+import { aloud, replyMode, speaksReply } from './spoken.js'
 import * as whisper from './whisper.js'
 import { IMITATE, RECOGNIZE, SYNTHESIZE, installing, operations, requirements, wanting } from './worker.js'
 
@@ -121,6 +122,7 @@ async function chosen() {
     find: typeof settings.find === 'string' ? settings.find.trim() : '',
     tags: Array.isArray(settings.find_tags) ? settings.find_tags : [],
     langs: Array.isArray(settings.find_langs) ? settings.find_langs : [],
+    replies: replyMode(settings),
   }
 }
 
@@ -204,6 +206,8 @@ async function bind() {
   // Only the cloud engine returns a format a message can carry, so the binding follows the
   // engine rather than the plugin being enabled.
   rendered.update({ _meta: family === 'fish' && key !== undefined ? { 'alexia/provides': ['voice.render'] } : {} })
+  // Off under `never` rather than bound and saying no, so core's hand-off finds nothing to call.
+  replied.update({ _meta: speaks && picked.replies !== 'never' ? { 'alexia/provides': ['reply.finished'] } : {} })
   await alexia.status('ready', state({ ...picked, hears, speaks })).catch(() => {})
   return { hears, speaks }
 }
@@ -447,10 +451,13 @@ alexia.tool(
         ],
       }
     }
+    // She stops talking when she is about to listen, or the microphone hears her own answer.
+    hush()
     await alexia.status('ready', '▲ Listening').catch(() => {})
     try {
       const text = await whisper.listen({ ...found, seconds, threads, signal: ctx.mcpReq.signal })
       await keep(text, 'microphone')
+      if (text) task.heard = true
       return { content: [{ type: 'text', text: text || 'I did not hear anything.' }] }
     } finally {
       await bind()
@@ -502,8 +509,10 @@ const said = alexia.tool(
       // Only Piper has anything to download, and only the chosen voice is worth downloading:
       // this is the moment somebody actually asked to hear it, so `fetch` says it may.
       const { bytes } = await utter(picked, { id: voice, text: words, signal: ctx.mcpReq.signal, ctx, fetch: true })
+      hush()
       await writeFile(wav, bytes)
       await piper.play(wav, ctx.mcpReq.signal)
+      task.spoke = true
       return { content: [{ type: 'text', text: `Said it, in ${voice}’s voice.` }] }
     } catch (error) {
       return { isError: true, content: [{ type: 'text', text: error instanceof Error ? error.message : String(error) }] }
@@ -580,6 +589,101 @@ const rendered = alexia.tool(
     const marked = picked.expressive ? await annotate(words, ctx) : words
     const audio = await fish.say(picked.key, { text: marked, id, format: 'opus', signal: ctx?.mcpReq?.signal })
     return { content: [{ type: 'audio', data: audio.toString('base64'), mimeType: 'audio/ogg' }] }
+  },
+)
+
+/**
+ * What happened since the last answer: whether the question came in through the microphone,
+ * and whether the model already said something out loud. Reset by every answer.
+ */
+const task = { heard: false, spoke: false }
+
+/** The answer being read out right now, so a newer one, or the microphone, can stop it. */
+let reading
+
+/** Stop reading an answer out. Nothing if nothing is being read. */
+function hush() {
+  reading?.abort()
+  reading = undefined
+}
+
+/** The most a spoken answer runs to. The rest is on the screen, and a cloud voice charges by the character. */
+const LONGEST = 4000
+
+/** The answer cut where a sentence ends, short enough to listen to. */
+function trimmed(words) {
+  if (words.length <= LONGEST) return words
+  const cut = words.slice(0, LONGEST)
+  const end = Math.max(cut.lastIndexOf('. '), cut.lastIndexOf('? '), cut.lastIndexOf('! '), cut.lastIndexOf('\n'))
+  return `${cut.slice(0, end > LONGEST / 2 ? end + 1 : LONGEST).trim()} The rest is on the screen.`
+}
+
+/**
+ * Read one answer out, on this plugin's own clock.
+ *
+ * **Not on the call's.** Core hands the answer over and does not wait, and a request has a
+ * timeout a long answer would outlast — playback tied to it would stop mid-sentence for a
+ * reason nobody could see. So the call returns at once and this runs behind it, stopped only
+ * by the next answer, by `listen`, or by `speak`.
+ */
+async function sayReply(words) {
+  hush()
+  const stop = new AbortController()
+  reading = stop
+  const picked = await chosen()
+  if (picked.voice === undefined) return
+  try {
+    // Expression is a model call through sampling, and it needs no request to ride on.
+    const marked = picked.expressive ? await annotate(words, {}) : words
+    if (stop.signal.aborted) return
+    await alexia.status('ready', '▲ Speaking').catch(() => {})
+    const { bytes } = await utter({ ...picked, expressive: false }, { id: picked.voice, text: marked, signal: stop.signal, fetch: true })
+    if (stop.signal.aborted) return
+    // Its own file, so an answer being read and a `speak` the model asked for never write over each other.
+    const wav = piper.where(own, 'lessac').wav.replace(/\.wav$/, '-reply.wav')
+    await writeFile(wav, bytes)
+    await piper.play(wav, stop.signal)
+  } catch (error) {
+    if (!stop.signal.aborted) log.info(`could not read the answer out: ${error instanceof Error ? error.message : String(error)}`)
+  } finally {
+    if (reading === stop) reading = undefined
+    await bind()
+  }
+}
+
+/**
+ * The answer, out loud when the person's choice says so (`reply.finished`).
+ *
+ * Core hands over every finished answer and forgets it; whether it is heard is decided here,
+ * by *Answer out loud*, because it is a preference about this plugin's own job. Bound only
+ * while that is not `never` and there is a voice to speak in — see `bind`.
+ */
+const replied = alexia.tool(
+  'reply',
+  {
+    description:
+      'Read one finished answer out loud when the person chose to hear answers. Called by Alexia itself, ' +
+      'not by the model. Nothing is returned.',
+    inputSchema: fromJsonSchema({
+      type: 'object',
+      properties: {
+        said: { type: 'string', description: 'What the user said.' },
+        answered: { type: 'string', description: 'What Alexia answered.' },
+        at: { type: 'number', description: 'When, in milliseconds.' },
+      },
+      required: ['answered'],
+    }),
+    annotations: { destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  },
+  async ({ answered }) => {
+    const { replies } = await chosen()
+    const speak = speaksReply(replies, task)
+    task.heard = false
+    task.spoke = false
+    const words = trimmed(aloud(answered))
+    if (!speak || !words) return { content: [{ type: 'text', text: 'not read out' }] }
+    void sayReply(words)
+    return { content: [{ type: 'text', text: 'reading it out' }] }
   },
 )
 
@@ -1136,6 +1240,6 @@ alexia.onSettingsChanged((changed) => {
   // The engine joined the list, and it is the one that changes the most: which family speaks
   // decides which files matter, whether there is a key to reach anything with, and every
   // sentence the status line is able to say.
-  if (['engine', 'model_size', 'whisper_path', 'piper_path', 'qwen_path', 'fish_key'].some((key) => key in changed)) void bind()
+  if (['engine', 'speak_replies', 'model_size', 'whisper_path', 'piper_path', 'qwen_path', 'fish_key'].some((key) => key in changed)) void bind()
 })
 log.info(`${alexia.manifest.name} is ready`)

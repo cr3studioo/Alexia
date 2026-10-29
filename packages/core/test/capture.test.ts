@@ -53,6 +53,17 @@ test('core hands it over and does not wait, and does not care if nobody is liste
   expect(handoff).toContain('exchange(')
 })
 
+test('a finished answer is handed on to be presented another way, on the same terms', () => {
+  // Out loud, in practice. Core never waits on it and never learns whether anyone spoke.
+  const source = readFileSync(join(import.meta.dirname, '..', 'src', 'serve.ts'), 'utf8')
+  const [handoff] = source.split('\n').filter((line) => line.includes('CORE_CAPABILITIES.finished'))
+  expect(handoff, 'the hand-off went missing').toBeDefined()
+  expect(handoff).toContain('void plugins.capability')
+  expect(handoff).toContain('.catch(')
+  expect(handoff).toContain('exchange(')
+  expect(CORE_CAPABILITIES.finished).toBe('reply.finished')
+})
+
 test('the name core knows is a capability, not a plugin', () => {
   // Invariant 1, in the one place M7-3 could have broken it. Core asks for *whatever
   // remembers things* and never learns who answered — the capability registry holds the

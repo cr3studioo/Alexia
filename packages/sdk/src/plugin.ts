@@ -21,6 +21,8 @@ import {
   PREVIEW_META,
   PLAN_META,
   STAGES_META,
+  RESEARCH_META,
+  type ResearchUpdate,
 } from '@alexia/protocol'
 import {
   fromJsonSchema,
@@ -74,6 +76,8 @@ export interface Storage {
  * would make it five. Both fields are extensions an older Alexia ignores.
  */
 export interface Work {
+  /** Full research state; observers never control the job. */
+  research?: ResearchUpdate
   /**
    * **A picture of the work while it is still work** — a `data:` URL, replaced by the next one
    * and never stored. Keep them small: this is sent on every frame, and a progress channel is
@@ -402,6 +406,7 @@ export function plugin(options: PluginOptions = {}): AlexiaPlugin {
       // same door `alexia/tools` and `alexia/files` go through. One bag, so a plugin sending
       // both does not pay for two.
       const meta = {
+        ...(work?.research !== undefined && { [RESEARCH_META]: work.research }),
         ...(work?.preview !== undefined && { [PREVIEW_META]: work.preview }),
         ...(work?.stages !== undefined && { [STAGES_META]: work.stages }),
         ...(work?.plan === true && { [PLAN_META]: true }),

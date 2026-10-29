@@ -469,3 +469,25 @@ want an API key in the environment. Not added, because the moment a manifest can
 environment variable, a plugin can name one it did not declare — and settings plus the
 keychain already solve this for plugins that are ours. Revisit when somebody has an MCP
 server they actually cannot use without it.
+
+## 15 — passive research viewers and companion assets
+
+Revision 15 adds the declarative `research` widget. Its live data travels as complete,
+bounded `alexia/research` snapshots on the existing progress stream; the host provides
+`alexia/call-context: { conversationId }` on tool requests. Source identifiers, ordered
+sequences, extraction states, passage markers, counters, report references and completion
+state are specified in `packages/protocol/src/research.ts`. A viewer is an observer: no
+model command opens it and its visibility never cancels work. Older manifests remain valid.
+
+`assets` declares relative companion file paths for plugin bundlers. Absolute paths,
+traversal, empty segments, symlinks outside the plugin, directories and overwrites of the
+entrypoint/manifest are refused. This permits a Node entrypoint with a reusable Python
+worker and a hash-locked dependency file without special-casing a provider in core.
+
+### Current observations and inbound listeners
+
+The optional `context.current` capability supplies bounded recent observations
+without altering `memory.profile`. The permission registry additionally recognizes
+`net.listen`; its manifest reason must identify the listener's interface and
+purpose. Older hosts reject manifests using an unknown permission rather than
+silently granting it. Neither addition changes existing wire shapes.

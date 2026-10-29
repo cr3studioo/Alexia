@@ -199,9 +199,19 @@
               <!-- A real button, so it can be reached with Tab and pressed with Enter or Space. It
                    opens the hidden file input beside it, which is the only control that can hand
                    a webview bytes. -->
-              <button id="attach" type="button" class="quiet-button" title="Attach a file or picture">Attach</button>
+              <button id="attach" type="button" class="quiet-button composer-icon" aria-label="Attach a file or picture" title="Attach a file or picture">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+                  <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l10-10a4 4 0 0 1 5.66 5.66l-10 10a2 2 0 0 1-2.83-2.83l9.19-9.19" />
+                </svg>
+              </button>
               <!-- The image editor, for this conversation's pictures. Shown only when one is installed. -->
-              <button id="edit-pictures" type="button" class="quiet-button" title="Edit this conversation's pictures" hidden>Edit pictures</button>
+              <button id="edit-pictures" type="button" class="quiet-button composer-icon" aria-label="Edit pictures" title="Edit this conversation's pictures" hidden>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+                  <path d="M8 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v3" />
+                  <circle cx="9" cy="9" r="2" />
+                  <path d="m3 16 5-5 4 4M21.4 12.6a2 2 0 0 0-3-3L13 15l-1 4 4-1Z" />
+                </svg>
+              </button>
               <input id="file" type="file" multiple hidden />
               <textarea id="text" rows="1" placeholder="Ask Alexia" aria-label="Message Alexia" autofocus></textarea>
               <button type="submit">Send</button>

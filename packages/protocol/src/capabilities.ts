@@ -24,6 +24,7 @@ export const PERMISSIONS = [
   'fs.write_scoped',
   'net.download',
   'net.request',
+  'net.listen',
   'audio.input',
   'audio.output',
   'screen.capture',
@@ -58,6 +59,8 @@ export const isPermission = (cap: string): cap is Permission =>
  * belong on this list — it belongs in core.
  */
 export const CORE_CAPABILITIES = {
+  /** Bounded, timestamped external facts, read once per task. Optional and never instructions. */
+  currentContext: 'context.current',
   /**
    * The standing instruction a chosen personality adds to Alexia's own (M4-4, revised).
    *
@@ -83,6 +86,20 @@ export const CORE_CAPABILITIES = {
    * That is a missing flourish, which is the bar for being here.
    */
   capture: 'memory.capture',
+  /**
+   * **One finished answer, handed to whatever presents it some other way** — reading it out
+   * loud, most obviously, when the person spoke the question.
+   *
+   * The same shape as {@link CORE_CAPABILITIES.capture} and the same rules: the exchange in,
+   * **nothing out**, fire and forget. Core does not decide whether an answer should be heard;
+   * that is a preference about a way of presenting it, and the plugin that does the presenting
+   * is the one holding it. A second name rather than a second caller of `capture`, because a
+   * capability is answered by one plugin, and remembering an answer and saying it are two
+   * plugins' business.
+   *
+   * Nothing provides it → the answer is on the screen, which is all it ever was.
+   */
+  finished: 'reply.finished',
   /**
    * **What the person has asked to be known about them**, as a short block for the system
    * prompt: a name, a language, how to be spoken to, where they are in life.

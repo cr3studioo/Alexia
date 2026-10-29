@@ -1,0 +1,52 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Native first-install verification only. No publishing, model calls, or release credentials.
+name: research-runtime
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'plugins/web-research/**'
+      - 'scripts/check-research-runtime.mjs'
+      - 'scripts/bundle-plugin.mjs'
+      - '.github/workflows/research-runtime.yml'
+      - 'pnpm-lock.yaml'
+
+permissions:
+  contents: read
+
+jobs:
+  native-runtime:
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-latest
+            platform: win32-x64
+          - runner: macos-15-intel
+            platform: darwin-x64
+          - runner: macos-latest
+            platform: darwin-arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - name: Install private runtime and exercise bundled worker and browser
+        env:
+          RESEARCH_EXPECT_PLATFORM: ${{ matrix.platform }}
+          RESEARCH_SMOKE_REPORT: research-runtime-result.json
+        run: node scripts/check-research-runtime.mjs
+      - uses: actions/upload-artifact@v5
+        if: always()
+        with:
+          name: research-runtime-${{ matrix.platform }}
+          path: research-runtime-result.json
+          if-no-files-found: warn
+          retention-days: 14

@@ -37,7 +37,7 @@ const schema = {
 
 describe('private context negotiation', () => {
   test('a core at 14 negotiates the contract; a core at 13 cannot claim it', () => {
-    expect(ALEXIA_PROTOCOL_MAX).toBe(14)
+    expect(ALEXIA_PROTOCOL_MAX).toBeGreaterThanOrEqual(14)
     expect(negotiatePrivateContext(ALEXIA_PROTOCOL_MAX, capabilities, '1.1')).toEqual({ ok: true })
     expect(negotiatePrivateContext(13, capabilities, '1.1')).toEqual({ ok: false, reason: 'protocol_unsupported' })
   })

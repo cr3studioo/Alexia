@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { ADULT_META, ALEXIA_PROTOCOL_MAX, PRIVATE_CONTEXT_CAPABILITY, PRIVATE_CONTEXT_PROMISE, ATTACHMENT_CONTEXT_META, ATTACHMENT_INPUTS_META, AttachmentInputs, type AttachmentCallContext, CARD_META, CONTROLS_META, FINAL_META, PLAN_META, PREVIEW_META, type Stage, STAGES_META, TIMING_META } from '@alexia/protocol'
+import { CALL_CONTEXT_META, RESEARCH_META, ADULT_META, ALEXIA_PROTOCOL_MAX, PRIVATE_CONTEXT_CAPABILITY, PRIVATE_CONTEXT_PROMISE, ATTACHMENT_CONTEXT_META, ATTACHMENT_INPUTS_META, AttachmentInputs, type AttachmentCallContext, CARD_META, CONTROLS_META, FINAL_META, PLAN_META, PREVIEW_META, type Stage, STAGES_META, TIMING_META } from '@alexia/protocol'
 import type { CallToolResult } from '@modelcontextprotocol/client'
 import { statSync } from 'node:fs'
 import { basename } from 'node:path'
@@ -10,6 +10,7 @@ import type { Annotations } from './permissions.js'
 import type { Plugins } from './plugins.js'
 import type { ToolSpec } from './provider.js'
 import type { Progress } from './settings.js'
+import { ResearchRuns } from './research.js'
 import { SKILL_TOOL, type Skills } from './skills.js'
 
 /**
@@ -126,6 +127,9 @@ interface Known {
 }
 
 export class PluginTooling implements Tooling {
+  readonly research = new ResearchRuns()
+  #active = new Map<string, number>()
+  active(pluginId: string): boolean { return (this.#active.get(pluginId) ?? 0) > 0 }
   #known?: Promise<Known[]>
 
   constructor(
@@ -270,13 +274,17 @@ export class PluginTooling implements Tooling {
       }
     }
 
+    this.#active.set(found.pluginId, (this.#active.get(found.pluginId) ?? 0) + 1)
+    const owner = {}
+    const conversation = context?.conversationId
+    if (conversation !== undefined) this.research.begin(found.pluginId, conversation, owner)
     try {
       // `onprogress` is what puts a `progressToken` on the request, so a plugin that reports
       // has somewhere for it to go — and a plugin that does not simply never sends one.
       return outcomeOf(
         await process.callTool(found.tool, args, {
           ...(signal && { signal }),
-          ...(onProgress && {
+          ...((onProgress || this.plugins.manifest(found.pluginId)?.panel?.widgets.some((w) => w.type === 'research') || this.plugins.manifest(found.pluginId)?.settings?.some((w) => w.type === 'research')) && {
             // A tool that keeps saying how far it is — a task pressing its way through a page —
             // is not stuck, so each report starts the clock again. One that goes quiet is still
             // cut off, and nothing runs past the ceiling.
@@ -292,7 +300,9 @@ export class PluginTooling implements Tooling {
               const shown = meta?.[PREVIEW_META]
               const preview = typeof shown === 'string' && shown.startsWith('data:image/') ? shown : undefined
               const stages = stagesOf(meta?.[STAGES_META])
-              onProgress({
+              const research = conversation === undefined ? undefined : this.research.accept(found!.pluginId, conversation, owner, meta?.[RESEARCH_META])
+              onProgress?.({
+                ...(research !== undefined && { research }),
                 progress: update.progress,
                 ...(update.total !== undefined && { total: update.total }),
                 ...(update.message !== undefined && { message: update.message }),
@@ -303,10 +313,13 @@ export class PluginTooling implements Tooling {
               })
             },
           }),
-        }, attached === undefined ? undefined : {
-          [ATTACHMENT_CONTEXT_META]: attached,
-          ...(this.pictures?.adult?.() === true && { [ADULT_META]: true }),
-          [PRIVATE_CONTEXT_CAPABILITY]: { protocol: ALEXIA_PROTOCOL_MAX, capabilities: PRIVATE_CONTEXT_PROMISE },
+        }, {
+          ...(conversation !== undefined && { [CALL_CONTEXT_META]: { conversationId: conversation } }),
+          ...(attached !== undefined && { [ATTACHMENT_CONTEXT_META]: attached }),
+          ...(attached !== undefined && {
+            ...(this.pictures?.adult?.() === true && { [ADULT_META]: true }),
+            [PRIVATE_CONTEXT_CAPABILITY]: { protocol: ALEXIA_PROTOCOL_MAX, capabilities: PRIVATE_CONTEXT_PROMISE },
+          }),
         }),
       )
     } catch (error) {
@@ -315,6 +328,10 @@ export class PluginTooling implements Tooling {
       this.invalidate()
       return { ok: false, text: `${name} failed: ${error instanceof Error ? error.message : String(error)}` }
     } finally {
+      const count = (this.#active.get(found.pluginId) ?? 1) - 1
+      if (count > 0) this.#active.set(found.pluginId, count)
+      else this.#active.delete(found.pluginId)
+      if (conversation !== undefined) this.research.close(found.pluginId, conversation, owner, signal?.aborted === true)
       if (attached !== undefined) this.pictures?.release(attached.leaseId)
     }
   }

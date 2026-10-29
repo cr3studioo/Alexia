@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { optionValue, pageOf, type Manifest, type NormalizedPage, type Stage } from '@alexia/protocol'
+import { optionValue, pageOf, type Manifest, type NormalizedPage, type Stage, type ResearchUpdate } from '@alexia/protocol'
 import { existsSync, statSync } from 'node:fs'
 import { isAbsolute } from 'node:path'
 import type { SecretStore } from './secrets.js'
@@ -106,6 +106,7 @@ export type Rendered = (Setting | CoreWidget) & {
 }
 
 export interface Progress {
+  research?: ResearchUpdate
   progress: number
   total?: number
   message?: string
@@ -203,7 +204,7 @@ export function secretStoreName(platform: string = process.platform): string {
  * remember-to-extend that invariant 13 was written about. So the rule is stated instead: a
  * widget that fills itself from a tool is not one you type into, whatever it is called.
  */
-const DRIVEN = new Set(['status', 'progress', 'action'])
+const DRIVEN = new Set(['status', 'progress', 'action', 'research'])
 
 const driven = (declared: Setting): boolean => DRIVEN.has(declared.type) || 'rows' in declared
 

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+import { currentContext } from './current-context.js'
 import {
   APP_VERSION,
   COMMAND_META,
@@ -18,7 +19,7 @@ import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from
 import type { CreateMessageResult } from '@modelcontextprotocol/client'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { join, sep } from 'node:path'
+import { basename, join, sep } from 'node:path'
 import { run, said, type Produced } from './agent.js'
 import {
   discard,
@@ -975,7 +976,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
    * on a press (G13's build, not yet), this is how core tells the two apart.
    */
   const pressing = new Map<string, number>()
-  const background = (pluginId: string): boolean => (pressing.get(pluginId) ?? 0) === 0
+  const background = (pluginId: string): boolean => (pressing.get(pluginId) ?? 0) === 0 && !tooling.active(pluginId)
 
   /**
    * **Today's test messages** (§4 E): a minute after start, and on every six-hour tick. Never while
@@ -1651,7 +1652,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
       if (chosen === undefined) trace.personality(0, 'high')
       // Who the user is, read once like the personality; a phone asking *who am I* is exactly
       // the question this is for.
-      const known = await profile()
+      const [known, current] = await Promise.all([profile(), currentContext(plugins)])
       if (known.profile === '') trace.profile(0)
       const once = (asked: Message[]): ReturnType<typeof run> => run({
         messages: asked,
@@ -1667,6 +1668,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
         ...(chosen !== undefined && { personality: chosen }),
         ...(known.profile !== undefined && known.profile !== '' && { profile: known.profile }),
         ...(known.remembers && { remembers: true }),
+        ...(current !== '' && { currentContext: current }),
         name: calledBy(),
         // The spend lands on the plugin that asked, exactly as a plain `sampling` call's
         // does — and it is a run now, so it is a paid path like any other task (G12, D96).
@@ -3163,6 +3165,35 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
      * a symlink are the two ways a path that looks inside points outside, and a prefix test on
      * the string alone catches neither.
      */
+    if (url.pathname === '/api/research' && request.method === 'POST') {
+      const id = String(sent.plugin ?? '')
+      const manifest = plugins.manifest(id)
+      const visible = manifest !== undefined && [...(manifest.settings ?? []), ...(manifest.panel?.widgets ?? [])].some((w) => w.type === 'research')
+      response.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' })
+      response.end(JSON.stringify({ snapshot: visible ? tooling.research.get(id, String(session)) ?? null : null }))
+      return
+    }
+
+    if (url.pathname === '/api/research-file' && request.method === 'GET') {
+      const id = url.searchParams.get('plugin') ?? ''
+      const run = tooling.research.get(id, String(session))
+      const source = run?.sources.find((one) => one.id === url.searchParams.get('source'))
+      const report = url.searchParams.get('kind') === 'report'
+      const path = report ? run?.report?.path : source?.preview
+      if (!plugins.manifest(id) || !run || run.runId !== url.searchParams.get('run') || !path) {
+        response.writeHead(404); response.end(); return
+      }
+      try {
+        const root = realpathSync(plugins.ownDir(id))
+        const real = realpathSync(path)
+        if (!real.startsWith(root + sep) || !(report ? /\.md$/i : /\.png$/i).test(real)) throw new Error('Outside scope')
+        const bytes = readFileSync(real)
+        response.writeHead(200, { 'content-type': report ? 'text/markdown; charset=utf-8' : 'image/png', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', ...(report && { 'content-disposition': `attachment; filename="${basename(real).replace(/[^a-zA-Z0-9._-]/g, '_')}"` }) })
+        response.end(bytes)
+      } catch { response.writeHead(404); response.end() }
+      return
+    }
+
     if (url.pathname === '/api/plugin-file' && request.method === 'GET') {
       const id = url.searchParams.get('plugin') ?? ''
       const wanted = url.searchParams.get('path') ?? ''
@@ -3512,6 +3543,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
   async function forgetPictures(sessionId: number): Promise<CleanupReceipt> {
     const conversationId = String(sessionId)
     const revocationId = `rev_${randomUUID().replaceAll('-', '')}`
+    tooling.research.forget(conversationId)
     album.revoke(conversationId)
     for (const [token, one] of shared) if (one.conversationId === conversationId) shared.delete(token)
     let local: CleanupReceipt['local'] = 'complete'
@@ -3719,7 +3751,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     // Said per step by the loop (§2's three lengths); *none sent* has no step to wait for.
     if (chosen === undefined) trace.personality(0, 'high')
     // What the user asked to be known about them, read once, like the personality above.
-    const known = await profile()
+    const [known, current] = await Promise.all([profile(), currentContext(plugins)])
     if (known.profile === '') trace.profile(0)
     try {
       const result = await run({
@@ -3729,6 +3761,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
         ...(chosen !== undefined && { personality: chosen }),
         ...(known.profile !== undefined && known.profile !== '' && { profile: known.profile }),
         ...(known.remembers && { remembers: true }),
+        ...(current !== '' && { currentContext: current }),
         name: calledBy(),
         tools: tooling,
         // *Use Automatic for this answer* is this answer, not a setting (D155): the pin and the
@@ -3896,6 +3929,12 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
         void plugins.capability(CORE_CAPABILITIES.capture, exchange(text, answered)).catch(() => {
           // Nothing provides it, or whatever does is having a bad day. Either way this is
           // not the user's problem and never becomes one.
+        })
+        // And to whatever presents an answer another way — out loud, say. The same hand-off on
+        // the same terms, and the same exclusion: a reply about private pictures read out by a
+        // cloud voice would be those pictures leaving by the back door.
+        void plugins.capability(CORE_CAPABILITIES.finished, exchange(text, answered)).catch(() => {
+          // Nothing presents answers any other way, which is the ordinary case.
         })
       }
 

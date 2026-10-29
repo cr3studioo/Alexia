@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+import { researchViewer } from './research.js'
 import { COLD, DISTANCE, HELD, type Link, type Node, place, radius, settle, step, WARM } from './force.js'
 
 /**
@@ -20,6 +21,7 @@ import { COLD, DISTANCE, HELD, type Link, type Node, place, radius, settle, step
  */
 
 export type WidgetType =
+  | 'research'
   | 'text'
   | 'password'
   | 'number'
@@ -640,6 +642,11 @@ export function widget(host: WidgetHost, declared: Rendered): HTMLElement {
       field.append(el('span', 'label', declared.label))
       if (declared.hint) field.append(el('p', 'hint lede', declared.hint))
       field.append(tree(host, declared))
+      break
+    }
+
+    case 'research': {
+      field.append(researchViewer(host))
       break
     }
 

@@ -20,6 +20,9 @@ import {
   PROVIDES_META,
   STAGES_META,
   STREAM_META,
+  RESEARCH_META,
+  CALL_CONTEXT_META,
+  FINAL_META,
   TOOLS_META,
   isAlexiaMethod,
   KV_MAX_BYTES,
@@ -41,7 +44,7 @@ const parse = <M extends AlexiaMethod>(m: M, params: unknown) =>
 describe('the specs and the code say the same thing', () => {
   test('every alexia/… name in the specs is a method this package defines', () => {
     // The lookbehind keeps `@alexia/protocol` out of it — a package, not a method.
-    const named = [...specs.matchAll(/(?<!@)alexia\/[A-Za-z/]+/g)]
+    const named = [...specs.matchAll(/(?<!@)alexia\/[A-Za-z/-]+/g)]
       .map((m) => m[0])
       .filter((n) => !n.endsWith('/'))
     expect(named.length).toBeGreaterThan(8) // the scanner is actually reading the specs
@@ -58,6 +61,9 @@ describe('the specs and the code say the same thing', () => {
       PREVIEW_META,
       STAGES_META,
       STREAM_META,
+      RESEARCH_META,
+      CALL_CONTEXT_META,
+      FINAL_META,
       COMMAND_META,
       COMPUTE_META,
       ATTACHMENT_INPUTS_META,

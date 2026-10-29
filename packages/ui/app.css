@@ -4027,8 +4027,26 @@ button[disabled] {
   flex: none;
 }
 
-/* Attach is a real button now (so Tab reaches it), and takes the quiet button's own look. */
-#ask #attach {
+/* Quiet tools beside the field, with a full pointer target around each outline icon. */
+#ask .composer-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.75rem;
+  height: calc(1em * var(--leading-prose) + 2 * var(--space-3) + 2px);
+  padding: 0;
+  border-color: transparent;
+  background: transparent;
+  color: var(--ink-quiet);
+}
+
+#ask .composer-icon:not([disabled]):hover,
+#ask .composer-icon:focus-visible {
+  background: var(--wash);
+  color: var(--ink);
+}
+
+#ask .composer-icon svg {
   flex: none;
 }
 
@@ -6871,3 +6889,41 @@ button:not([disabled]):active {
 .image-editor-main-upload:focus-visible { outline: 2px solid var(--chosen); outline-offset: 3px; }
 .image-editor-recent { display: flex; flex-wrap: wrap; gap: 1rem; }
 .image-editor-recent .image-editor-thumb { max-width: 11rem; text-align: left; overflow-wrap: anywhere; }
+
+/* Passive research widget. All surfaces inherit the board's theme and typography. */
+.research-viewer { contain: inline-size; display: flex; flex-direction: column; min-width: 0; gap: 12px; }
+.research-heading, .research-toolbar { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.research-topic { font-size: var(--text-base); overflow-wrap: anywhere; }
+.research-stage { white-space: nowrap; font-size: var(--text-xs); opacity: .75; }
+.research-source-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--text-sm); }
+.research-frame { position: relative; min-height: 140px; max-height: 42vh; overflow: hidden; border: 1px solid var(--line); border-radius: 6px; background: var(--surface-sunken); }
+.research-preview { position: relative; min-height: 140px; max-height: 42vh; overflow: auto; overflow-wrap: anywhere; }
+.research-preview > .hint { padding: 16px; }
+.research-capture { position: relative; }
+.research-snapshot { display: block; width: 100%; height: auto; }
+.research-spider { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.research-reading-label { display: block; padding: 12px 16px 6px; font-size: var(--text-xs); opacity: .65; }
+.research-marker { display: block; margin: 10px 16px 16px; padding: 8px 10px; background: var(--accent-wash); color: inherit; border-left: 2px solid var(--accent); font-size: var(--text-sm); line-height: 1.6; }
+.research-page-marker { position: absolute; margin: 0; padding: 0; pointer-events: none; border: 1px solid var(--accent); }
+.research-marker[data-spider-active] { outline: 1px solid var(--accent); outline-offset: 2px; background: var(--accent-wash); }
+.research-leaving { position: absolute; inset: 0; pointer-events: none; z-index: 2; animation: research-depart 220ms ease-out forwards; }
+@keyframes research-depart { to { transform: translateY(32px) scale(.98); opacity: 0; } }
+.research-counters { margin: 0; font-size: var(--text-xs); font-variant-numeric: tabular-nums; opacity: .75; }
+.research-history { display: flex; flex-direction: column; max-height: 210px; overflow: auto; }
+.research-history-entry { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding: 10px 4px; color: inherit; font: inherit; text-align: left; border: 0; border-top: 1px solid var(--line); background: transparent; cursor: pointer; }
+.research-history-entry[aria-pressed='true'] { background: var(--accent-wash); }
+.research-history-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--text-sm); }
+.research-source-state { flex-shrink: 0; font-size: var(--text-xs); opacity: .65; }
+.research-footer .hint { margin: 6px 0; }
+/* A lone viewer fills a resizable board page, keeping counters and history in view. */
+.page-body:has(> .field:only-child > .research-viewer) { flex: 1; }
+.page-body > .field:only-child:has(> .research-viewer) { display: flex; flex: 1; min-height: 0; }
+.page-body > .field:only-child > .research-viewer { flex: 1; min-height: 0; overflow: hidden; gap: 8px; }
+.page-body .research-heading, .page-body .research-toolbar, .page-body .research-counters { flex-shrink: 0; }
+.page-body .research-frame { flex: 1; min-height: 96px; max-height: none; }
+.page-body .research-preview { height: 100%; min-height: 0; max-height: 100%; }
+.page-body .research-history { flex: 0 1 22%; min-height: 48px; }
+.page-body .research-footer { flex-shrink: 0; max-height: 72px; overflow: auto; }
+.research-toolbar .quiet-button { flex-shrink: 0; padding: 6px 10px; font-size: var(--text-xs); white-space: nowrap; }
+@media (max-width: 559px) { .research-heading { flex-wrap: wrap; gap: 4px; } }
+@media (prefers-reduced-motion: reduce) { .research-leaving { display: none; animation: none; } }

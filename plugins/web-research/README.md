@@ -1,0 +1,34 @@
+# Research
+
+Optional `web.research` provider. Enable the plugin and use Alexia's existing board controls to place its Research page beside chat. Research runs without the page open. Selecting a source pins only the display; **Follow latest** resumes following activity.
+
+The plugin includes a research skill in Alexia's live tool index, teaching her to use this tool when asked to research a topic or username even when an older Web search plugin is installed. Ordinary Web searches do not drive this viewer. Ask a focused research question; a Markdown report is included automatically. No slash command or viewer action is needed.
+
+First use automatically downloads checksum-verified uv 0.9.5, private Python 3.12.12, hash-locked dependencies, and Playwright Chromium into the plugin's own data directory. Download progress appears on the tool step. No system Python, Docker, accounts, search keys, paid proxies or CAPTCHA services are used. macOS arm64/x64 and Windows x64 are supported by the installer. Browser contexts are isolated, ephemeral, read-only, and never use a personal browser profile.
+
+DDGS tries Google, starts Bing and DuckDuckGo concurrently after 1.5 seconds without usable results, and bounds discovery to four seconds. Explicit URLs start reading during discovery. Up to twelve canonical, relevance/authority/diversity ranked candidates use six retrieval slots and two slots per hostname; extraction stops at eight sources or the twelve-second retrieval deadline. Scrapling performs HTTP retrieval and Trafilatura extracts text and metadata. Insufficient HTTP text escalates to the shared Chromium browser (two tasks maximum). Blocked sites are disclosed. Search results cache for five minutes, extracted content for one hour. `fresh: true` bypasses both; freshness terms in the query also bypass caches.
+
+HTTP and Chromium use a local public-only proxy. Each connection validates all DNS answers and connects to a validated IP. Redirects and browser subresources use the same boundary. Loopback, private, link-local, credential-bearing and non-web destinations are refused. Browser routes reject writes and WebSockets, block service workers and downloads, and disable non-proxied WebRTC traffic. These are public web sessions without the user's cookies.
+
+One coalescing preview queue follows the latest extracted page, yielding browser slots to extraction. It reuses rendered pages where available. Screenshots and animations never gate evidence or synthesis. Snapshots are actual captured pages; unavailable snapshots show a labelled reading view. Passage markers on images require exact DOM text matches; unmatched passages remain in the reading view. The robotic spider sprints between actual selected passages, turns toward its destination, and plants eight articulated legs. Pointer movement inside the preview guides it immediately, including on completed runs; pointer guidance never collects evidence or changes counters. Automatic passage visits finish once per source rather than repeating an idle motion. Threads remain anchored to the actual passage as the preview scrolls. The viewer uses one canvas at at most 30fps, stops rendering when hidden or settled, and honors reduced motion with immediate placement.
+
+A bounded evidence document (24,000 characters maximum) carries stable `[S1:P1]` passages, source URLs, retrieval dates and gaps. One sampling request through Alexia's normal model routing, pins and budget produces both findings and a concise answer. Code checks source identifiers and exact quotations before creating `research-<topic>-<timestamp>.md`. The report uses the ordinary file attachment mechanism; `alexia/final` returns the concise answer without another rewrite. Invalid or failed synthesis retains the downloadable evidence document and reports the failure.
+
+If the model omits citations from its concise answer, chat is composed from validated, cited findings instead. Optional quotations that do not match their cited passages are omitted and disclosed in the report's gaps; they are never delivered as quotes. Unknown citations in findings or the answer, and unverifiable inline quotations, still fail validation. Preview and report downloads use authenticated scoped requests and temporary blob URLs.
+
+Protocol 15 adds a reusable declarative `research` widget, `alexia/research` progress snapshots, host-supplied `alexia/call-context` conversation metadata, and bundled companion `assets`. Core accepts only the current call's ordered snapshots, derives counters from unique source states, and scopes viewer/file access to the current conversation and provider's own directory. UI reconnection reads the latest in-memory snapshot; as with ordinary file offers, restarting core clears that transient registry. Reports remain in the plugin's own data folder. Source URLs may be public, but reports and previews are only served through authenticated local routes.
+
+Verification:
+
+```sh
+pnpm typecheck
+pnpm exec vitest run --project unit packages/protocol/test/research.test.ts packages/core/test/research.test.ts packages/ui/test/research.test.ts plugins/web-research/test
+python3 -m unittest discover -s plugins/web-research/test -p test_worker.py
+node packages/conformance/dist/src/cli.js plugins/web-research --no-exercise
+```
+
+The Python tests use only standard-library offline fixtures; the Node wrapper skips them if no Python is installed on the test machine. Production always bootstraps its private Python. Release packaging copies the declared Python and lock files with `scripts/bundle-plugin.mjs`. The normal repository checks remain required. `node scripts/check-research-runtime.mjs` exercises a fresh native install in a temporary directory, including packaged worker startup and Chromium capture; `.github/workflows/research-runtime.yml` runs it on the three supported native targets. It downloads the private runtime but makes no model calls.
+
+Performance targets are acceptance benchmarks, not guarantees: roughly three seconds to useful source activity and 15–20 seconds to an answer on an ordinary warm run with a responsive model. Measure first installation, worker warm-up, retrieval and model generation separately. Public engines may block or throttle requests. Cross-platform installer paths are present; native Windows and Intel macOS installation still need to be exercised on those systems before release.
+
+Implementation note: Scrapling handles the HTTP layer; the shared browser is managed directly through Playwright so read-only routing, pinned proxy egress, isolated contexts and page reuse for snapshots share one lifecycle. Browser downloads use Playwright's pinned Chromium build. Generated previews are capped at 96 files; reports are retained in per-run directories to avoid collisions between concurrent conversations.

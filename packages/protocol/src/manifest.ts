@@ -91,7 +91,8 @@ export const ALEXIA_PROTOCOL_MIN = 2
  * `alexia/attachments/*` methods, `alexia/local` and `alexia/format` on sampling, attachment
  * inputs on tools, and the editor tool binding. Additive: a manifest at 13 means what it meant.
  */
-export const ALEXIA_PROTOCOL_MAX = 14
+/** 15: passive research viewer widget and typed progress snapshots. */
+export const ALEXIA_PROTOCOL_MAX = 15
 
 /**
  * The two MCP revisions core speaks, in preference order (D55, corrected by D57).
@@ -233,6 +234,7 @@ export const optionValue = (one: string | { value: string }): string =>
   typeof one === 'string' ? one : one.value
 
 const setting = z.discriminatedUnion('type', [
+  z.object({ ...gated, type: z.literal('research'), key: z.string().regex(IDENT), label: z.string().min(1), hint: z.string().optional() }),
   z.object({
     ...gated,
     type: z.literal('text'),
@@ -761,6 +763,8 @@ export const ManifestShape = z
 
     /** Paths relative to the plugin folder. They install and purge with the plugin. */
     skills: z.array(z.string().min(1)).optional(),
+    /** Static companion files copied by plugin bundlers (protocol 15). */
+    assets: z.array(z.string().min(1).max(240).refine((p) => !/^([A-Za-z]:|[\\/])/.test(p) && !p.split(/[\\/]/).some((part) => part === '..' || part === '.' || part === '') && !/[\0]/.test(p), 'an asset path must stay inside the plugin folder')).max(100).optional(),
 
     /** The cheapest router rung this plugin's work is safe on. */
     min_tier: z.enum(['T0', 'T1', 'T2', 'T3']).optional(),
@@ -985,6 +989,7 @@ export const Manifest = ManifestShape.superRefine((m, ctx) => {
       }
       if (s.type === 'graph') since(4, 'graph')
       if (s.type === 'image') since(5, 'image')
+      if (s.type === 'research') since(15, 'research')
       if (s.type === 'cards') since(6, 'cards')
       if (s.type === 'file') since(7, 'file')
       if (s.type === 'text' && s.multiline !== undefined) since(7, 'multiline', [...at(i), 'multiline'])
@@ -1100,6 +1105,7 @@ export const Manifest = ManifestShape.superRefine((m, ctx) => {
     for (const d of new Set(dupes(m.compute.hooks ?? []))) fail(['compute', 'hooks'], `hook "${d}" is declared twice`)
   }
 
+  if (m.assets !== undefined && m.alexia_protocol < 15) fail(['assets'], 'assets arrived in alexia_protocol 15')
   m.skills?.forEach((p, i) => {
     if (/^([A-Za-z]:|[\\/])/.test(p) || p.split(/[\\/]/).includes('..')) {
       fail(['skills', i], 'a skill path must stay inside the plugin folder')

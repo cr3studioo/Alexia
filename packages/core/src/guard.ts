@@ -113,6 +113,8 @@ const REVERSIBLE_CORE = new Set([
  * turns this list red without anybody having to remember it exists.
  */
 export const ROUTES: Readonly<Record<string, Route>> = {
+  '/api/research': { otherwise: safe('The viewer reads the latest research snapshot for the current conversation. Repeated requests do not start, cancel or change provider work.') },
+  '/api/research-file': { otherwise: read('The viewer downloads only the current conversation’s referenced preview or report, checked against the provider’s own directory and immutable run identifier.') },
   '/api/state': {
     otherwise: read(
       'Everything the shell draws itself from — the conversation, the pins, the spend, and the current value of every control that changes them. It reads the store and writes nothing.',

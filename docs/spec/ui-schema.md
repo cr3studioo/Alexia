@@ -616,3 +616,13 @@ Core owns it, which is the other reason plugins do not render their own UI. Ever
 above ships with a real label association, keyboard reach, focus that is visible, and
 contrast that holds in both themes. A plugin cannot break that because a plugin cannot
 reach it.
+
+### `research` (revision 15)
+
+`{ "type": "research", "key": "viewer", "label": "Research" }` declares a passive viewer
+for typed progress snapshots supplied by its provider. The renderer shows the topic,
+elapsed time, stage, latest captured page or labelled reading fallback, exact passage
+markers, source history, extraction counters and a Markdown report download. Sources can
+be pinned and followed again locally. Visibility and local display choices never control
+provider work. The same widget can be used by any research provider; no plugin name is
+part of the renderer. Existing board controls persist placement, size and visibility.
