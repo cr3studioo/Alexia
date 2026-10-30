@@ -45,3 +45,11 @@ test('typed SDK updates cross real MCP even without an open viewer or progress l
   expect(tooling.research.get('evidence-provider', 'chat-2')?.runId).toBe('run-chat-2')
   expect(tooling.research.get('evidence-provider', 'chat-1')?.runId).toBe('run-chat-1')
 })
+
+test('only a call somebody is watching makes its plugin count as pressed, so background runs stay on free tiers', async () => {
+  const seen: boolean[] = []
+  await tooling.call('evidence-provider__gather', {}, undefined, () => seen.push(tooling.active('evidence-provider')), { conversationId: 'chat-3' })
+  await tooling.call('evidence-provider__gather', {}, undefined, () => seen.push(tooling.active('evidence-provider')), { conversationId: 'chat-4', background: true })
+  expect(seen).toEqual([true, true, false, false])
+  expect(tooling.active('evidence-provider')).toBe(false)
+})

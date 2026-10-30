@@ -32,7 +32,7 @@ test('cancel and worker failure settle fetching states; completed runs stay comp
     runs.begin('p', 'c1', owner)
     const next = snapshot(); next.sources[0]!.state = 'fetching'
     runs.accept('p', 'c1', owner, next)
-    runs.close('p', 'c1', owner, cancelled)
+    runs.close('p', 'c1', owner, cancelled ? 'cancelled' : 'failed')
     expect(runs.get('p', 'c1')).toMatchObject({ stage: 'finished', completion: cancelled ? 'cancelled' : 'failed', counters: { read: 0, inProgress: 0, failed: 1 } })
     expect(runs.accept('p', 'c1', owner, snapshot(9))).toBeUndefined()
     runs.forget('c1'); expect(runs.get('p', 'c1')).toBeUndefined()
@@ -40,6 +40,35 @@ test('cancel and worker failure settle fetching states; completed runs stay comp
   const runs = new ResearchRuns(); const owner = {}
   runs.begin('p', 'c1', owner)
   runs.accept('p', 'c1', owner, { ...snapshot(), stage: 'finished', completion: 'complete' })
-  runs.close('p', 'c1', owner, false)
+  runs.close('p', 'c1', owner, 'failed')
   expect(runs.get('p', 'c1')?.completion).toBe('complete')
+})
+
+test('a tool that returns its answer completes a run its last report still called running', () => {
+  const runs = new ResearchRuns(); const owner = {}
+  runs.begin('p', 'c1', owner)
+  const next = snapshot(); next.sources[0]!.state = 'fetching'
+  runs.accept('p', 'c1', owner, next)
+  runs.close('p', 'c1', owner, 'complete')
+  expect(runs.get('p', 'c1')).toMatchObject({ stage: 'finished', completion: 'complete', gaps: [] })
+})
+
+test('a second call to the same plugin does not silence the first while it has not reported', () => {
+  const runs = new ResearchRuns(); const research = {}; const status = {}
+  runs.begin('p', 'c1', research)
+  runs.begin('p', 'c1', status)
+  expect(runs.accept('p', 'c1', research, snapshot(1))).toBeDefined()
+  runs.close('p', 'c1', status, 'complete')
+  expect(runs.accept('p', 'c1', research, snapshot(2))?.sequence).toBe(2)
+  runs.close('p', 'c1', research, 'complete')
+  expect(runs.get('p', 'c1')?.completion).toBe('complete')
+})
+
+test('the cap evicts the run that went quiet longest, not the first one started', () => {
+  const runs = new ResearchRuns(); const owner = {}
+  for (let i = 0; i < 50; i++) { runs.begin('p', `c${String(i)}`, owner); runs.accept('p', `c${String(i)}`, owner, snapshot(1, `c${String(i)}`)) }
+  runs.accept('p', 'c0', owner, snapshot(2, 'c0'))
+  runs.begin('p', 'c50', owner); runs.accept('p', 'c50', owner, snapshot(1, 'c50'))
+  expect(runs.get('p', 'c0')?.sequence).toBe(2)
+  expect(runs.get('p', 'c1')).toBeUndefined()
 })

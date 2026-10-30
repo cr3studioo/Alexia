@@ -73,8 +73,11 @@ export interface Tooling {
     args: Record<string, unknown>,
     signal?: AbortSignal,
     onProgress?: (update: Progress) => void,
-    /** Which conversation the call belongs to: what a tool's declared attachment inputs resolve against. */
-    context?: { conversationId?: string },
+    /**
+     * Which conversation the call belongs to: what a tool's declared attachment inputs resolve against.
+     * `background` marks a call from a run nobody is watching, which never makes its plugin a press.
+     */
+    context?: { conversationId?: string; background?: boolean },
   ): Promise<ToolOutcome>
 }
 
@@ -985,7 +988,7 @@ export async function run(options: RunOptions): Promise<RunResult> {
     return tools.call(step.name, step.args, options.signal, (update) => {
       step.progress = update
       on?.progress?.(step)
-    }, { conversationId: String(session) })
+    }, { conversationId: String(session), ...(options.background === true && { background: true }) })
   }
 
   /**

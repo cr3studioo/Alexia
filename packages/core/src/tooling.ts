@@ -10,7 +10,7 @@ import type { Annotations } from './permissions.js'
 import type { Plugins } from './plugins.js'
 import type { ToolSpec } from './provider.js'
 import type { Progress } from './settings.js'
-import { ResearchRuns } from './research.js'
+import { ResearchRuns, type Ending } from './research.js'
 import { SKILL_TOOL, type Skills } from './skills.js'
 
 /**
@@ -211,7 +211,7 @@ export class PluginTooling implements Tooling {
     args: Record<string, unknown>,
     signal?: AbortSignal,
     onProgress?: (update: Progress) => void,
-    context?: { conversationId?: string },
+    context?: { conversationId?: string; background?: boolean },
   ): Promise<ToolOutcome> {
     // Reading a skill is reading a file. There is nothing to report and nothing to wait for.
     if (name === SKILL_TOOL && this.skills?.tool) return this.skills.read(args)
@@ -274,14 +274,18 @@ export class PluginTooling implements Tooling {
       }
     }
 
-    this.#active.set(found.pluginId, (this.#active.get(found.pluginId) ?? 0) + 1)
+    // Only a call somebody is watching makes its plugin's own sampling count as a press. A call
+    // from a background run leaves that plugin on free tiers (G12, D96).
+    const watched = context?.background !== true
+    if (watched) this.#active.set(found.pluginId, (this.#active.get(found.pluginId) ?? 0) + 1)
     const owner = {}
     const conversation = context?.conversationId
     if (conversation !== undefined) this.research.begin(found.pluginId, conversation, owner)
+    let ending: Ending = 'failed'
     try {
       // `onprogress` is what puts a `progressToken` on the request, so a plugin that reports
       // has somewhere for it to go — and a plugin that does not simply never sends one.
-      return outcomeOf(
+      const outcome = outcomeOf(
         await process.callTool(found.tool, args, {
           ...(signal && { signal }),
           ...((onProgress || this.plugins.manifest(found.pluginId)?.panel?.widgets.some((w) => w.type === 'research') || this.plugins.manifest(found.pluginId)?.settings?.some((w) => w.type === 'research')) && {
@@ -322,16 +326,20 @@ export class PluginTooling implements Tooling {
           }),
         }),
       )
+      if (outcome.ok) ending = 'complete'
+      return outcome
     } catch (error) {
       // Whatever went wrong, the model's next move is the same: read this and try
       // something else. A stack trace would be worse prompt text than a sentence.
       this.invalidate()
       return { ok: false, text: `${name} failed: ${error instanceof Error ? error.message : String(error)}` }
     } finally {
-      const count = (this.#active.get(found.pluginId) ?? 1) - 1
-      if (count > 0) this.#active.set(found.pluginId, count)
-      else this.#active.delete(found.pluginId)
-      if (conversation !== undefined) this.research.close(found.pluginId, conversation, owner, signal?.aborted === true)
+      if (watched) {
+        const count = (this.#active.get(found.pluginId) ?? 1) - 1
+        if (count > 0) this.#active.set(found.pluginId, count)
+        else this.#active.delete(found.pluginId)
+      }
+      if (conversation !== undefined) this.research.close(found.pluginId, conversation, owner, signal?.aborted === true ? 'cancelled' : ending)
       if (attached !== undefined) this.pictures?.release(attached.leaseId)
     }
   }

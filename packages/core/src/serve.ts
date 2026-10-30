@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { currentContext } from './current-context.js'
+import { cachedContext } from './current-context.js'
 import {
   APP_VERSION,
   COMMAND_META,
@@ -763,6 +763,8 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
       }
     },
   })
+  /** What a context provider last said, so a turn never waits on it after the first (current-context.ts). */
+  const currentContext = cachedContext(plugins)
   /**
    * Know-how (M2-2). Two arrival routes and one format: folders the user installed on their
    * own, and folders a plugin declared — which is why the bundled half is a function rather
@@ -1652,7 +1654,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
       if (chosen === undefined) trace.personality(0, 'high')
       // Who the user is, read once like the personality; a phone asking *who am I* is exactly
       // the question this is for.
-      const [known, current] = await Promise.all([profile(), currentContext(plugins)])
+      const [known, current] = await Promise.all([profile(), currentContext()])
       if (known.profile === '') trace.profile(0)
       const once = (asked: Message[]): ReturnType<typeof run> => run({
         messages: asked,
@@ -3751,7 +3753,7 @@ export async function serve(options: ServeOptions = {}): Promise<Serving> {
     // Said per step by the loop (§2's three lengths); *none sent* has no step to wait for.
     if (chosen === undefined) trace.personality(0, 'high')
     // What the user asked to be known about them, read once, like the personality above.
-    const [known, current] = await Promise.all([profile(), currentContext(plugins)])
+    const [known, current] = await Promise.all([profile(), currentContext()])
     if (known.profile === '') trace.profile(0)
     try {
       const result = await run({
