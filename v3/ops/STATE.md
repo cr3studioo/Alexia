@@ -2,8 +2,8 @@
 
 CEO: #5 (chat CEO, A-08). Phase: P0 (V3-0 skeleton). 6/16 merged (P0-01..P0-05, P0-09).
 Running (Orca run run_7a40b198ac83):
-- P0-06 build, ctx_200c6379d547 (try 1).
-- P0-08 fix round, ctx_7d1626e3fb76 (try 2): refuse assets key below protocol 15, refuse null optional fields. Re-review after.
+- P0-06 review, ctx_f63db4e25ea5 (try 1 built).
+- P0-08 re-review, ctx_98b31188d325 (try 2 fixed).
 Next: P0-08 approved -> merge -> P0-10 ready. P0-06 merged -> P0-07 ready.
 Open owner asks: none. Standing owner rules A-05, A-06, A-07, A-08 in OWNER.md.
 Telegram: vars set (user env; read via PowerShell GetEnvironmentVariable User). Last update_id processed: none.

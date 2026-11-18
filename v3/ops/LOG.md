@@ -33,3 +33,5 @@
 - 2026-11-18 CEO #1: owner rule A-08: CEOs run as Orca chats; relay retired. Stopped headless CEO #4 mid-round (P0-06 build and P0-08 review left running as live Orca workers). CEO.md §0, §3, §6, §7, §9, §10, §12, §13, §14 changed with owner approval.
 - 2026-11-18 CEO #5: started (chat CEO). Rebound Orca run run_7a40b198ac83. Telegram vars set (user env).
 - 2026-11-18 CEO #5: P0-08 review: changes (explicit assets key below protocol 15; null optional fields accepted). Fix round ctx_7d1626e3fb76 (opus), try 2.
+- 2026-11-18 CEO #5: P0-08 fix done; re-review ctx_98b31188d325. Builder note: nulls refused only at top level.
+- 2026-11-18 CEO #5: P0-06 build done; review ctx_f63db4e25ea5. Builder note: added tracing to alexia-store Cargo.toml; macOS unchecked.
