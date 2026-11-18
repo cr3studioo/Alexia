@@ -156,6 +156,30 @@ fn import_v2_refuses_a_missing_folder() {
 }
 
 #[test]
+fn import_v2_files_only_refuses_a_missing_folder() {
+    let e = env("import-files-missing");
+    let o = hub(&e)
+        .args(["import-v2", "--files-only"])
+        .arg(e.data.join("no-such-v2"))
+        .output()
+        .unwrap();
+    assert_eq!(o.status.code(), Some(1));
+    assert!(err(&o).contains("does not exist"), "{}", err(&o));
+    assert!(out(&o).is_empty());
+}
+
+#[test]
+fn tools_warns_on_a_broken_plugin_json() {
+    let e = env("tools-broken");
+    let dir = e.plugins.join("broken");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("plugin.json"), "{ not json").unwrap();
+    let o = hub(&e).arg("tools").output().unwrap();
+    assert!(o.status.success(), "{}", err(&o));
+    assert!(err(&o).contains("WARN"), "{}", err(&o));
+}
+
+#[test]
 fn import_v2_imports_a_v2_file() {
     let e = env("import-v2");
     let v2 = e.data.parent().unwrap().join("v2");

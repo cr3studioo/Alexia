@@ -5,6 +5,7 @@
 
 use std::collections::HashSet;
 use std::error::Error;
+use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
@@ -27,14 +28,20 @@ type Res<T> = Result<T, Box<dyn Error>>;
 
 #[tokio::main]
 async fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    let args: Vec<&str> = args.iter().map(String::as_str).collect();
-    let result = match args.as_slice() {
-        ["run"] => run().await,
-        ["tools"] => tools().await,
-        ["plugins"] => plugins().await,
-        ["import-v2", "--files-only", folder] => import(folder, true),
-        ["import-v2", folder] if *folder != "--files-only" => import(folder, false),
+    let _ = tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
+        .with_ansi(false)
+        .try_init();
+    let args: Vec<OsString> = std::env::args_os().skip(1).collect();
+    let words: Vec<Option<&str>> = args.iter().map(|a| a.to_str()).collect();
+    let result = match (words.as_slice(), args.as_slice()) {
+        ([Some("run")], _) => run().await,
+        ([Some("tools")], _) => tools().await,
+        ([Some("plugins")], _) => plugins().await,
+        ([Some("import-v2"), Some("--files-only"), _], [_, _, folder]) => import(folder, true),
+        ([Some("import-v2"), w], [_, folder]) if *w != Some("--files-only") => {
+            import(folder, false)
+        }
         _ => {
             eprintln!("{USAGE}");
             return ExitCode::from(2);
@@ -85,6 +92,25 @@ struct Hub {
     bus: Bus,
 }
 
+/// Logs every plugin event at info, from the moment the bus exists.
+fn log_plugin_events(bus: &Bus) {
+    let mut rx = bus.subscribe();
+    tokio::spawn(async move {
+        use tokio::sync::broadcast::error::RecvError;
+        loop {
+            match rx.recv().await {
+                Ok(e) => {
+                    if let Event::Plugin(p) = &*e {
+                        tracing::info!("{p:?}");
+                    }
+                }
+                Err(RecvError::Lagged(_)) => {}
+                Err(RecvError::Closed) => break,
+            }
+        }
+    });
+}
+
 /// Store → bus → host → `start`. The enabled list is kv `_core`/`enabled`; absent means all.
 async fn boot(layout: &Layout) -> Res<Hub> {
     let store = Arc::new(Store::open(&layout.db())?);
@@ -101,6 +127,7 @@ async fn boot(layout: &Layout) -> Res<Hub> {
             .collect(),
     };
     let bus = Bus::new(1024);
+    log_plugin_events(&bus);
     let sink: EventSink = {
         let bus = bus.clone();
         Arc::new(move |e| bus.publish(Event::Plugin(e)))
@@ -117,29 +144,8 @@ async fn boot(layout: &Layout) -> Res<Hub> {
 }
 
 async fn run() -> Res<()> {
-    let _ = tracing_subscriber::fmt()
-        .with_writer(std::io::stderr)
-        .with_ansi(false)
-        .try_init();
     let layout = Layout::new(data_dir());
     let hub = boot(&layout).await?;
-    // ponytail: subscribes after `start`, so Loaded/Started events of boot are missed by this
-    // log; the host's own tracing covers them. Move the bus into `boot`'s caller if that matters.
-    let mut rx = hub.bus.subscribe();
-    tokio::spawn(async move {
-        use tokio::sync::broadcast::error::RecvError;
-        loop {
-            match rx.recv().await {
-                Ok(e) => {
-                    if let Event::Plugin(p) = &*e {
-                        tracing::info!("{p:?}");
-                    }
-                }
-                Err(RecvError::Lagged(_)) => {}
-                Err(RecvError::Closed) => break,
-            }
-        }
-    });
     let root = CancellationToken::new();
     // Test hook: with ALEXIA_HUB_STOP_ON_EOF=1, stdin reaching EOF behaves like Ctrl+C
     // (a real Ctrl+C can't be sent to a child on Windows without unsafe code).
@@ -195,10 +201,13 @@ async fn plugins() -> Res<()> {
     Ok(())
 }
 
-fn import(folder: &str, files_only: bool) -> Res<()> {
+fn import(folder: &OsStr, files_only: bool) -> Res<()> {
     let layout = Layout::new(data_dir());
     let v2 = Path::new(folder);
     if files_only {
+        if !v2.is_dir() {
+            return Err("The v2 folder does not exist.".into());
+        }
         println!("files\t{}", import_v2_files(v2, &layout)?);
     } else {
         let store = Store::open(&layout.db())?;
