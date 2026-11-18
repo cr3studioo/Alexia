@@ -3,6 +3,7 @@
 
 mod db;
 mod error;
+pub mod import;
 mod layout;
 mod migrations;
 mod namespace;
