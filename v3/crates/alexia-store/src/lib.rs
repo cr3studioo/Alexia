@@ -5,6 +5,7 @@ mod db;
 mod error;
 mod layout;
 mod migrations;
+mod namespace;
 mod types;
 
 pub use db::Store;
