@@ -4,13 +4,13 @@
 | -- | ----- | ----- | ----- | ------- | ------- | ------ | ----- | ------ | ---- |
 | P0-01 | Cargo workspace skeleton | P0 | sonnet | none | v3/Cargo.toml, crate stubs | merged | 1 | cr3studioo/v3-P0-01 | |
 | P0-02 | Store shared types, layout, error | P0 | opus | P0-01 | alexia-store types/layout/error | merged | 1 | cr3studioo/v3-P0-02 | |
-| P0-03 | MCP wire types, host types, core bus | P0 | opus | P0-02 | alexia-mcp wire, alexia-core bus | ready | 0 | | |
-| P0-04 | Store: open, migration 1, sqlite-vec | P0 | opus | P0-02 | alexia-store db/migrations | ready | 0 | | |
-| P0-05 | Store: plugin namespaces | P0 | opus | P0-04 | alexia-store namespace | todo | 0 | | |
+| P0-03 | MCP wire types, host types, core bus | P0 | opus | P0-02 | alexia-mcp wire, alexia-core bus | merged | 1 | cr3studioo/v3-P0-03 | |
+| P0-04 | Store: open, migration 1, sqlite-vec | P0 | opus | P0-02 | alexia-store db/migrations | merged | 1 | cr3studioo/v3-P0-04 | |
+| P0-05 | Store: plugin namespaces | P0 | opus | P0-04 | alexia-store namespace | review | 1 | cr3studioo/v3-P0-05 | review ctx_9a2dde40631b |
 | P0-06 | Store: secrets in Credential Manager | P0 | opus | P0-05 | alexia-store secrets | todo | 0 | | |
 | P0-07 | Store: the v2 importer | P0 | opus | P0-06 | alexia-store import | todo | 0 | | |
-| P0-08 | Manifest parsing, compatibility, discovery | P0 | opus | P0-03 | alexia-mcp manifest | todo | 0 | | |
-| P0-09 | The mcp-fixture test server | P0 | sonnet | P0-03 | alexia-mcp bin/mcp-fixture | todo | 0 | | |
+| P0-08 | Manifest parsing, compatibility, discovery | P0 | opus | P0-03 | alexia-mcp manifest | running | 1 | cr3studioo/v3-P0-08 | ctx_bf5c8f055339 |
+| P0-09 | The mcp-fixture test server | P0 | sonnet | P0-03 | alexia-mcp bin/mcp-fixture | running | 1 | cr3studioo/v3-P0-09 | ctx_44b056a8032f |
 | P0-10 | Plugin process and JSON-RPC connection | P0 | opus | P0-08, P0-09 | alexia-mcp process/job/conn, Cargo.toml | todo | 0 | | |
 | P0-11 | McpHost: start, handshake, tools, call_tool | P0 | opus | P0-10, P0-04 | alexia-mcp host | todo | 0 | | |
 | P0-12 | Supervision: lazy, idle, heartbeat, backoff | P0 | opus | P0-11 | alexia-mcp host/supervise | todo | 0 | | |

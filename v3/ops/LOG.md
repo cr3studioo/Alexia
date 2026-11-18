@@ -19,3 +19,10 @@
 - 2026-11-18 CEO #2: round 2 done (1 merged, 0 failed). Round 3 dispatched: P0-03, P0-04 (both opus).
 - 2026-11-18 CEO #2 (relay) merged P0-02, then was stopped by the owner's decision to move to Orca. P0-03 and P0-04 had no commits: worktrees removed, set back to ready, no try counted.
 - 2026-11-18 CEO #1: owner rule A-07: workers run as Orca workers. CEO.md §2/§7/§8/§15 and relay.ps1 (live output, Telegram vars) changed with owner approval. Orca smoke test passed (worker_done from a worker in an external worktree).
+- 2026-11-18 CEO #3: started. Telegram: nothing new. Orca run run_7a40b198ac83. Round 3 dispatched: P0-03, P0-04 (opus).
+- 2026-11-18 CEO #3: P0-04 reviewed (approve), merged, integration green, pushed. Reviewer notes for later: negative user_version wraps (db.rs:109); WAL result ignored (db.rs:107). P0-05 ready.
+- 2026-11-18 CEO #3: decision: dispatched P0-05 (opus) while P0-03 still runs; disjoint paths, width stays 2.
+- 2026-11-18 CEO #4: started; CEO #3 died mid-round. Rebound Orca run run_7a40b198ac83. Telegram: nothing new.
+- 2026-11-18 CEO #4: P0-03 had builder done + reviewer approve (CEO #3). Merged, integration green, pushed. Reviewer note: INTERFACES.md §3.3 should say optional MCP fields are omitted, not null.
+- 2026-11-18 CEO #4: P0-05 worker sent failed (usage limit) but then finished with commits and a report; per §7.1 sent to review (ctx_9a2dde40631b).
+- 2026-11-18 CEO #4: round 4 dispatched: P0-08 (opus), P0-09 (sonnet), disjoint paths.
