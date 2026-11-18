@@ -31,3 +31,5 @@
 - 2026-11-18 CEO #4: P0-09 done, in review (ctx_d1ba06d3c137). P0-06 dispatched (opus, ctx_200c6379d547).
 - 2026-11-18 CEO #4: P0-09 review approve; merged, integration green, pushed.
 - 2026-11-18 CEO #1: owner rule A-08: CEOs run as Orca chats; relay retired. Stopped headless CEO #4 mid-round (P0-06 build and P0-08 review left running as live Orca workers). CEO.md §0, §3, §6, §7, §9, §10, §12, §13, §14 changed with owner approval.
+- 2026-11-18 CEO #5: started (chat CEO). Rebound Orca run run_7a40b198ac83. Telegram vars set (user env).
+- 2026-11-18 CEO #5: P0-08 review: changes (explicit assets key below protocol 15; null optional fields accepted). Fix round ctx_7d1626e3fb76 (opus), try 2.
