@@ -5,7 +5,7 @@
 **Why:** So headless CEOs can ask and read answers.
 **How:** New @BotFather bot; setx both as user environment variables.
 **Until then:** OWNER.md only.
-**Answer:** Owner is setting them up at bootstrap. If unset at run start, fall back to OWNER.md only.
+**Answer:** Set. New dedicated ops bot @MyAlexia_bot (separate from Alexia's own bot). Test message delivered 2026-11-18.
 
 ## A-02 · 2026-11-18 · answered
 **What I need:** Pull in the five parked features SP-09, TR-06, TR-14, CO-02, HB-14?
