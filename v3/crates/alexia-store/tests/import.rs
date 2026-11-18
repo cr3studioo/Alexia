@@ -373,3 +373,64 @@ fn wal_is_checkpointed() {
     assert_eq!(rows["attachments"], 1);
     assert_eq!(store.history(SessionId(2), None).unwrap().len(), 1);
 }
+
+#[test]
+fn empty_hub_table_is_replaced() {
+    let dir = temp("hub-empty");
+    drop(full_v2(&dir.join("v2")));
+    let (store, layout) = v3(&dir.join("v3"));
+    // What a plugin start does on a fresh hub: the table exists, empty.
+    store.create_tables("memory", &["notes".into()]).unwrap();
+    let report = import_v2(&store, &dir.join("v2"), &layout).unwrap();
+
+    let rows: std::collections::BTreeMap<&str, u64> =
+        report.rows.iter().map(|(t, n)| (t.as_str(), *n)).collect();
+    assert_eq!(rows["p_memory_notes"], 3);
+    let notes = store.select("memory", "notes", &Select::default()).unwrap();
+    assert_eq!(notes.len(), 3);
+    assert_eq!(notes[0]["text"], json!("likes tea"));
+}
+
+#[test]
+fn filled_hub_table_is_refused() {
+    let dir = temp("hub-filled");
+    drop(full_v2(&dir.join("v2")));
+    let (store, layout) = v3(&dir.join("v3"));
+    store.create_tables("memory", &["notes".into()]).unwrap();
+    let main = Connection::open(layout.db()).unwrap();
+    main.execute_batch("INSERT INTO p_memory_notes DEFAULT VALUES")
+        .unwrap();
+    assert_eq!(
+        refusal(import_v2(&store, &dir.join("v2"), &layout)),
+        "This hub already has rows in a table named p_memory_notes, so v2 data was not \
+         imported over them."
+    );
+    // All or nothing: the hub's row is still the only one, and nothing else came in.
+    assert_eq!(count(&main, "p_memory_notes"), 1);
+    assert_eq!(count(&main, "sessions"), 0);
+    assert_eq!(count(&main, "imports"), 0);
+}
+
+#[test]
+fn plugin_table_may_reference_a_later_one() {
+    let dir = temp("fk");
+    let c = v2_db(&dir.join("v2"), 11);
+    c.execute_batch(
+        "INSERT INTO kv (ns, key, value) VALUES ('memory', 'last', '1');
+         CREATE TABLE p_memory_a (rowid INTEGER PRIMARY KEY, b INTEGER REFERENCES p_memory_b(rowid));
+         CREATE TABLE p_memory_b (rowid INTEGER PRIMARY KEY, text TEXT);
+         INSERT INTO p_memory_b VALUES (1, 'parent');
+         INSERT INTO p_memory_a VALUES (1, 1);",
+    )
+    .unwrap();
+    drop(c);
+    let (store, layout) = v3(&dir.join("v3"));
+    import_v2(&store, &dir.join("v2"), &layout).unwrap();
+
+    let main = Connection::open(layout.db()).unwrap();
+    let b: i64 = main
+        .query_row("SELECT b FROM p_memory_a WHERE rowid = 1", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(b, 1);
+    assert_eq!(count(&main, "p_memory_b"), 1);
+}
