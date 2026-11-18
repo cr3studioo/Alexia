@@ -14,6 +14,7 @@ mod job;
 pub mod jsonrpc;
 pub mod manifest;
 mod process;
+mod supervise;
 pub mod types;
 
 /// Crate-private pieces, re-exported only so `tests/conn.rs` can drive them.
