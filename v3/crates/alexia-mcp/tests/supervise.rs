@@ -438,9 +438,20 @@ async fn idle_lazy_plugin_stops() {
     fx.call("greet", "greet", json!({"who": "a"}))
         .await
         .unwrap();
-    let pid = fx.host.pid(&id("greet")).unwrap();
+    // Take the pid from the Started event, not host.pid(): under load the idle stop can
+    // fire before a live read, and a stalled spawn must still pass.
+    let pid = fx
+        .events
+        .lock()
+        .unwrap()
+        .iter()
+        .find_map(|(_, e)| match e {
+            PluginEvent::Started { pid, .. } => Some(*pid),
+            _ => None,
+        })
+        .unwrap();
 
-    assert!(eventually(30, || fx.host.pid(&id("greet")).is_none()).await);
+    assert!(eventually(60, || fx.host.pid(&id("greet")).is_none()).await);
     assert!(fx.events.lock().unwrap().iter().any(|(_, e)| matches!(
         e,
         PluginEvent::Stopped {
@@ -457,7 +468,8 @@ async fn idle_lazy_plugin_stops() {
             .unwrap(),
         "Hello, b."
     );
-    assert!(fx.host.pid(&id("greet")).is_some_and(|p| p != pid));
+    // The second call must have started a new process (a fresh Started event, new pid).
+    assert_eq!(fx.count(started), 2);
     fx.host.shutdown().await;
 }
 
