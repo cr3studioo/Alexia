@@ -64,3 +64,7 @@
 - 2026-11-18 CEO #6: P1-03 review approve; merged, integration green, pushed. (Unasked WAL-required refusal at db.rs:150 noted, accepted.)
 - 2026-11-18 CEO #6: P0-12 build done; review ctx_b2e69331e090. Builder notes: idle from host last-call not quiet_ms; list_changed race fix untested (fixture can't trigger).
 - 2026-11-18 CEO #6: P1-14 dispatched (opus, ctx_83b422128510).
+- 2026-11-18 CEO #6: P0-12 review: changes (supervise tests flaky, crash_window_ms 5s too tight on slow spawns). Fix round ctx_557a02bba533 (opus), try 2. Reviewer: idle-from-last-call matches v2 (spec wording wrong, not code). Follow-ups: fixture mode for list_changed mid-list; idle stop vs incoming call race (same as v2).
+- 2026-11-18 CEO #6: P0-12 fix done (timing bounds widened, 5/5 runs); re-review ctx_9516c0ffa120.
+- 2026-11-18 CEO #6: P1-14 build done (6 tests, agent.test.ts 34/34); review ctx_0d84fbeb2016.
+- 2026-11-18 CEO #6: pnpm check on Windows has a PRE-EXISTING failure: compute-connect.test.ts 'a paused request reader stalls uploads too' fails 2/2 on unchanged cr3studioo/v3 (fresh worktree). Decision: v2-path merges gate on pnpm check minus that one test. Owner's Mac likely passes it.
