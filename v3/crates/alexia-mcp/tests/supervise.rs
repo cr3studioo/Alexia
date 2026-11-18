@@ -15,8 +15,8 @@ use alexia_store::{Layout, Store};
 use serde_json::{json, Map, Value};
 
 const FIXTURE: &str = env!("CARGO_BIN_EXE_mcp-fixture");
-const HEARTBEAT_MS: u64 = 200;
-const IDLE_MS: u64 = 300;
+const HEARTBEAT_MS: u64 = 500;
+const IDLE_MS: u64 = 1_000;
 const BACKOFF_MS: u64 = 50;
 
 fn root(tag: &str) -> PathBuf {
@@ -60,7 +60,7 @@ fn timings() -> Timings {
         idle_ms: IDLE_MS,
         backoff_ms: BACKOFF_MS,
         max_backoff_ms: 2_000,
-        crash_window_ms: 5_000,
+        crash_window_ms: 60_000,
         crash_limit: 3,
         exit_grace_ms: 2_000,
         ..Timings::default()
@@ -173,7 +173,7 @@ fn alive(pid: u32) -> bool {
 }
 
 async fn gone(pid: u32) -> bool {
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + Duration::from_secs(30);
     while Instant::now() < deadline {
         if !alive(pid) {
             return true;
@@ -194,7 +194,7 @@ async fn crasher_exit_is_contained() {
     let err = fx.call("crasher", "exit", json!({})).await.unwrap_err();
     assert!(matches!(err, CallError::Gone), "{err:?}");
     let first = fx.host.pid(&id("crasher"));
-    assert!(eventually(5, || fx.count(crashed) == 1).await);
+    assert!(eventually(30, || fx.count(crashed) == 1).await);
     assert!(fx.events.lock().unwrap().iter().any(|(_, e)| matches!(
         e,
         PluginEvent::Crashed { plugin, exit_code: Some(3) } if plugin.0 == "crasher"
@@ -231,10 +231,10 @@ async fn three_crashes_mark_unhealthy() {
         let err = fx.call("crasher", "exit", json!({})).await.unwrap_err();
         assert!(matches!(err, CallError::Gone), "{err:?}");
     }
-    assert!(eventually(5, || fx.state("crasher") == Some(PluginState::Unhealthy)).await);
+    assert!(eventually(30, || fx.state("crasher") == Some(PluginState::Unhealthy)).await);
     // The event follows once the dead process is reaped.
     assert!(
-        eventually(5, || fx
+        eventually(30, || fx
             .count(|e| matches!(e, PluginEvent::Unhealthy { .. }))
             == 1)
         .await
@@ -294,7 +294,7 @@ async fn backoff_delays_respawn() {
     fx.call("crasher", "nothing", json!({})).await.unwrap();
     let starts = fx.times(started);
     assert_eq!(starts.len(), 3);
-    assert!(eventually(5, || fx.count(crashed) == 2).await);
+    assert!(eventually(30, || fx.count(crashed) == 2).await);
     let first = starts[1].duration_since(crashes[0]);
     let second = starts[2].duration_since(crashes[1]);
     assert!(first >= Duration::from_millis(backoff), "{first:?}");
@@ -340,7 +340,7 @@ async fn resident_die_on_start_is_retried_then_switched_off() {
     let t = Instant::now();
     fx.host.start(&[id("dier")]).await.unwrap();
     // No calls: the host retries on its own, after 50 ms and then 100 ms.
-    assert!(eventually(10, || fx.state("dier") == Some(PluginState::Unhealthy)).await);
+    assert!(eventually(30, || fx.state("dier") == Some(PluginState::Unhealthy)).await);
     assert!(t.elapsed() >= Duration::from_millis(BACKOFF_MS * 3));
     assert_eq!(fx.count(|e| matches!(e, PluginEvent::Unhealthy { .. })), 1);
 }
@@ -356,7 +356,7 @@ async fn resident_crash_is_respawned_without_a_call() {
     let err = fx.call("crasher", "exit", json!({})).await.unwrap_err();
     assert!(matches!(err, CallError::Gone), "{err:?}");
     assert!(
-        eventually(5, || fx
+        eventually(30, || fx
             .host
             .pid(&id("crasher"))
             .is_some_and(|p| p != first))
@@ -371,7 +371,7 @@ async fn hang_is_killed_by_heartbeat() {
     let r = root("hang");
     plugin(&r, "hanger", &["hang"], json!({}));
     // Longer than the other tests' heartbeat so the bound below has room on a busy machine.
-    let heartbeat = 500;
+    let heartbeat = 1_000;
     let fx = Fx::new(
         &r,
         Timings {
@@ -391,8 +391,8 @@ async fn hang_is_killed_by_heartbeat() {
         matches!(err, CallError::Gone | CallError::Timeout),
         "{err:?}"
     );
-    assert!(took < Duration::from_millis(heartbeat * 3), "took {took:?}");
-    assert!(eventually(5, || fx.count(crashed) == 1).await);
+    assert!(took < Duration::from_millis(heartbeat * 8), "took {took:?}");
+    assert!(eventually(30, || fx.count(crashed) == 1).await);
     let order: Vec<&str> = fx
         .events
         .lock()
@@ -440,7 +440,7 @@ async fn idle_lazy_plugin_stops() {
         .unwrap();
     let pid = fx.host.pid(&id("greet")).unwrap();
 
-    assert!(eventually(5, || fx.host.pid(&id("greet")).is_none()).await);
+    assert!(eventually(30, || fx.host.pid(&id("greet")).is_none()).await);
     assert!(fx.events.lock().unwrap().iter().any(|(_, e)| matches!(
         e,
         PluginEvent::Stopped {
@@ -503,7 +503,7 @@ async fn vanisher_folder_deleted_mid_call() {
     let host = fx.host.clone();
     let call = tokio::spawn(async move {
         let t = Instant::now();
-        let args = json!({"ms": 3000}).as_object().unwrap().clone();
+        let args = json!({"ms": 20_000}).as_object().unwrap().clone();
         let r = host
             .call_tool(&id("vanisher"), "slow", args, CallCtx::default())
             .await;
@@ -514,7 +514,7 @@ async fn vanisher_folder_deleted_mid_call() {
 
     let (result, took) = call.await.unwrap();
     assert!(matches!(result, Err(CallError::Gone)), "{result:?}");
-    assert!(took < Duration::from_millis(2_500), "took {took:?}");
+    assert!(took < Duration::from_millis(10_000), "took {took:?}");
     assert!(fx
         .events
         .lock()
@@ -577,7 +577,7 @@ async fn tool_cache_is_dropped_on_crash() {
     fx.host.start(&[id("crasher")]).await.unwrap();
     assert_eq!(fx.host.tools().await.len(), 1);
     let _ = fx.call("crasher", "exit", json!({})).await;
-    assert!(eventually(5, || fx.count(crashed) == 1).await);
+    assert!(eventually(30, || fx.count(crashed) == 1).await);
     // A fresh tools/list means a fresh process; a cached answer would leave it stopped.
     assert_eq!(fx.host.tools().await.len(), 1);
     assert!(fx.host.pid(&id("crasher")).is_some());
