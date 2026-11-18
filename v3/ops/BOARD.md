@@ -3,9 +3,9 @@
 | ID | Title | Phase | Model | Depends | Touches | Status | Tries | Branch | Note |
 | -- | ----- | ----- | ----- | ------- | ------- | ------ | ----- | ------ | ---- |
 | P0-01 | Cargo workspace skeleton | P0 | sonnet | none | v3/Cargo.toml, crate stubs | merged | 1 | cr3studioo/v3-P0-01 | |
-| P0-02 | Store shared types, layout, error | P0 | opus | P0-01 | alexia-store types/layout/error | ready | 0 | | |
-| P0-03 | MCP wire types, host types, core bus | P0 | opus | P0-02 | alexia-mcp wire, alexia-core bus | todo | 0 | | |
-| P0-04 | Store: open, migration 1, sqlite-vec | P0 | opus | P0-02 | alexia-store db/migrations | todo | 0 | | |
+| P0-02 | Store shared types, layout, error | P0 | opus | P0-01 | alexia-store types/layout/error | merged | 1 | cr3studioo/v3-P0-02 | |
+| P0-03 | MCP wire types, host types, core bus | P0 | opus | P0-02 | alexia-mcp wire, alexia-core bus | running | 1 | cr3studioo/v3-P0-03 | |
+| P0-04 | Store: open, migration 1, sqlite-vec | P0 | opus | P0-02 | alexia-store db/migrations | running | 1 | cr3studioo/v3-P0-04 | |
 | P0-05 | Store: plugin namespaces | P0 | opus | P0-04 | alexia-store namespace | todo | 0 | | |
 | P0-06 | Store: secrets in Credential Manager | P0 | opus | P0-05 | alexia-store secrets | todo | 0 | | |
 | P0-07 | Store: the v2 importer | P0 | opus | P0-06 | alexia-store import | todo | 0 | | |

@@ -14,3 +14,6 @@
 - 2026-11-18 CEO #1: round 1 dispatched: P0-01 (sonnet).
 - 2026-11-18 CEO #1: P0-01 reviewed (approve), merged, integration green, pushed. P0-02 ready.
 - 2026-11-18 CEO #1: round 1 done (1 merged, 0 failed). Handing off to the relay.
+- 2026-11-18 CEO #2: started. Telegram: only /start (update_id 363458137). Round 2 dispatched: P0-02 (opus).
+- 2026-11-18 CEO #2: P0-02 reviewed (approve), merged, integration green, pushed. Reviewer note: layout.rs doc comment says `plugins/<id>`, may trip P0-16 invariant grep; data_dir falls back to relative path with no home.
+- 2026-11-18 CEO #2: round 2 done (1 merged, 0 failed). Round 3 dispatched: P0-03, P0-04 (both opus).
