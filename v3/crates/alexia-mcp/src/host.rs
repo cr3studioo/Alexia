@@ -3,6 +3,7 @@
 //! list their tools and call them. Supervision (heartbeat, idle, backoff, vanish) is P0-12;
 //! the `alexia/*` layer and capability calls are P0-13.
 
+use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, HashSet};
 use std::sync::{Arc, Mutex, MutexGuard, RwLock, Weak};
 use std::time::Duration;
@@ -98,14 +99,14 @@ impl McpHost {
         for root in &self.inner.cfg.plugin_dirs {
             for entry in crate::manifest::discover(root) {
                 match entry {
-                    Ok(dir) => {
-                        let id = PluginId(dir.manifest.id.clone());
-                        if found.contains_key(&id) {
-                            tracing::info!(folder = %dir.path.display(), "a plugin with this id was already found in an earlier folder; ignored");
-                        } else {
-                            found.insert(id, dir);
+                    Ok(dir) => match found.entry(PluginId(dir.manifest.id.clone())) {
+                        Entry::Occupied(_) => {
+                            tracing::info!(folder = %dir.path.display(), "a plugin with this id was already found in an earlier folder; ignored")
                         }
-                    }
+                        Entry::Vacant(v) => {
+                            v.insert(dir);
+                        }
+                    },
                     // No id is known, so there is nothing to put in a `Refused` event.
                     Err((path, e)) => {
                         tracing::warn!(folder = %path.display(), "{}", e.sentence);
@@ -303,10 +304,7 @@ impl McpHost {
 
         let mut meta = Map::new();
         if let Some(c) = &ctx.conversation {
-            meta.insert(
-                "alexia/call-context".into(),
-                json!({ "conversationId": c }),
-            );
+            meta.insert("alexia/call-context".into(), json!({ "conversationId": c }));
         }
         meta.extend(ctx.meta);
         let params = CallToolParams {
@@ -317,7 +315,13 @@ impl McpHost {
         let params = serde_json::to_value(params).expect("serializable");
         let timeout = Duration::from_millis(self.inner.cfg.timings.call_ms);
         let v = conn
-            .request("tools/call", Some(params), ctx.progress, &ctx.cancel, timeout)
+            .request(
+                "tools/call",
+                Some(params),
+                ctx.progress,
+                &ctx.cancel,
+                timeout,
+            )
             .await?;
         serde_json::from_value(v).map_err(|_| {
             CallError::Rpc(RpcError::new(
@@ -420,7 +424,11 @@ impl McpHost {
         // ponytail: a call still in flight holds its own `Arc<Conn>`, so stdin stays open and
         // the process is killed after the grace period instead.
         drop(conn);
-        process::stop(proc, Duration::from_millis(self.inner.cfg.timings.exit_grace_ms)).await;
+        process::stop(
+            proc,
+            Duration::from_millis(self.inner.cfg.timings.exit_grace_ms),
+        )
+        .await;
         self.emit(PluginEvent::Stopped {
             plugin: id.clone(),
             reason,
@@ -463,7 +471,11 @@ impl McpHost {
             .manifest
             .password_keys()
             .iter()
-            .filter_map(|k| alexia_store::secrets::get(&dir.manifest.id, k).ok().flatten())
+            .filter_map(|k| {
+                alexia_store::secrets::get(&dir.manifest.id, k)
+                    .ok()
+                    .flatten()
+            })
             .collect();
         let cfg = &self.inner.cfg;
         let spawned = process::spawn(&dir, &cfg.layout, &cfg.node, secrets);
@@ -603,7 +615,10 @@ struct Handler {
 impl Incoming for Handler {
     async fn request(&self, method: String, params: Option<Value>) -> Result<Value, RpcError> {
         let Some(inner) = self.host.upgrade() else {
-            return Err(RpcError::new(code::INTERNAL_ERROR, "Alexia is shutting down."));
+            return Err(RpcError::new(
+                code::INTERNAL_ERROR,
+                "Alexia is shutting down.",
+            ));
         };
         let up = Arc::clone(&inner.up.read().unwrap_or_else(|e| e.into_inner()));
         drop(inner);
