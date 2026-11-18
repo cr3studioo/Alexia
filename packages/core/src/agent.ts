@@ -917,10 +917,19 @@ export async function run(options: RunOptions): Promise<RunResult> {
 
     // Every call this turn asked for, then back around. The model gets all of the results
     // at once, which is what it asked for by making the calls in one turn.
-    let failed = false
+    //
+    // **Two passes** (SP-16). The gate pass is sequential and in the model's order: the step,
+    // the ceiling and every approval question, one at a time, exactly as before. The run pass
+    // starts every call the gate allowed at once; a refusal is already its outcome. Results go
+    // back in the model's order however they finished, so the stored history is deterministic.
+    const gated: { step: Step; call: (typeof calls)[number]; ruled: Ruled }[] = []
+    let capped = false
     for (const call of calls) {
       if (options.signal?.aborted) return finish('stopped')
-      if (steps.length >= ceiling) return finish('ceiling')
+      if (steps.length >= ceiling) {
+        capped = true
+        break
+      }
 
       const step: Step = { n: steps.length + 1, name: call.name, args: parse(call.arguments) }
       steps.push(step)
@@ -928,17 +937,29 @@ export async function run(options: RunOptions): Promise<RunResult> {
       // The stage the wait is in now: a tool, by name, rather than the model that asked for it.
       // Beside `step`, so the stage begins where the step's own clock does, approval and all.
       on?.phase?.({ kind: 'tool', name: step.name })
+      gated.push({ step, call, ruled: await rule(step) })
+    }
 
-      const outcome = await permitted(step)
-      step.outcome = outcome
-      failed ||= !outcome.ok
-      on?.done?.(step)
+    // The gate's last phase was the last call asked about; the wait now is on the first that runs.
+    const running = gated.find((one) => one.ruled === undefined)
+    if (running !== undefined && running !== gated.at(-1)) on?.phase?.({ kind: 'tool', name: running.step.name })
 
-      const result: Message = { role: 'tool', callId: call.id, content: outcome.text }
+    let failed = false
+    await Promise.all(
+      gated.map(async ({ step, ruled }) => {
+        const outcome = ruled ?? (await act(step))
+        step.outcome = outcome
+        failed ||= !outcome.ok
+        on?.done?.(step)
+      }),
+    )
+    for (const { step, call } of gated) {
+      const result: Message = { role: 'tool', callId: call.id, content: step.outcome?.text ?? '' }
       messages.push(result)
       added.push(result)
       store.append(session, result)
     }
+    if (capped) return finish('ceiling')
 
     /**
      * **A tool that already has the answer gives it** (`alexia/final`). One call this turn, and
@@ -965,7 +986,7 @@ export async function run(options: RunOptions): Promise<RunResult> {
   }
 
   /**
-   * The gate, and then the call.
+   * The gate, without the call: the refusal as an outcome, or `undefined` when it may run.
    *
    * A refusal is an outcome, not an exception — the same as a tool that failed. *You are not
    * allowed to do that* is information the model can plan around, and stopping the whole task
@@ -973,7 +994,7 @@ export async function run(options: RunOptions): Promise<RunResult> {
    * it must never be is silent: what comes back is the reason, in the words the user would
    * read, so the answer at the end can say what it could not do.
    */
-  async function permitted(step: Step): Promise<ToolOutcome> {
+  async function rule(step: Step): Promise<Ruled> {
     const ruling = (await options.guard?.({ name: step.name, args: step.args })) ?? { verdict: 'run' }
     if (ruling.verdict === 'blocked') return { ok: false, text: ruling.why }
     if (ruling.verdict === 'ask') {
@@ -985,6 +1006,11 @@ export async function run(options: RunOptions): Promise<RunResult> {
         }
       }
     }
+    return undefined
+  }
+
+  /** The call, once {@link rule} let it through. */
+  function act(step: Step): Promise<ToolOutcome> {
     return tools.call(step.name, step.args, options.signal, (update) => {
       step.progress = update
       on?.progress?.(step)
@@ -1124,6 +1150,9 @@ function system(
  */
 const NO_HANDS =
   'I ran out of models that can take actions. The ones still available can only talk, and switching to one now would leave this half-done. Wait for the free models to reset, or add a key for an AI service whose models can take actions.'
+
+/** What the gate decided: a refusal already settled as the step's outcome, or nothing — run it. */
+type Ruled = ToolOutcome | undefined
 
 /** A provider error the loop could not route around, in the words the user gets. */
 export const said = (error: unknown): string =>
