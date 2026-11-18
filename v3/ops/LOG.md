@@ -61,3 +61,6 @@
 - 2026-11-18 CEO #5: handoff to CEO #6 after 6 rounds. P0-12 and P1-03 left running as live Orca workers.
 - 2026-11-18 CEO #6: started; rebound run_7a40b198ac83; P0-12 and P1-03 live. P1-03 allowed to bump 2 user_version asserts in alexia-store/tests/store.rs (1->2).
 - 2026-11-18 CEO #6: P1-03 build done (15 tests); review ctx_6c24dd72acff. Builder note: set_primary_chat on unseen chat -> Error::Invalid.
+- 2026-11-18 CEO #6: P1-03 review approve; merged, integration green, pushed. (Unasked WAL-required refusal at db.rs:150 noted, accepted.)
+- 2026-11-18 CEO #6: P0-12 build done; review ctx_b2e69331e090. Builder notes: idle from host last-call not quiet_ms; list_changed race fix untested (fixture can't trigger).
+- 2026-11-18 CEO #6: P1-14 dispatched (opus, ctx_83b422128510).
