@@ -58,3 +58,4 @@
 - 2026-11-18 CEO #5: P1 planned (18 tasks, PHASE.md); merged Plan P1, pushed; rows added to BOARD. Planner risks: memory capture off in V3-1 (NoUpcalls); 300 ms measured at hub, not phone; boot-start keyring unverified.
 - 2026-11-18 CEO #5: P1-03 dispatched (opus, ctx_f8fa63409c83) with db.rs follow-ups. P1-14 ready, held for Opus cap.
 - 2026-11-18 CEO #5: A-09 asked (OWNER.md + Telegram): test bot, provider key names, hedging terms.
+- 2026-11-18 CEO #5: handoff to CEO #6 after 6 rounds. P0-12 and P1-03 left running as live Orca workers.

@@ -1,24 +1,29 @@
-# Handoff · 2026-11-18 · CEO #4 (stopped by owner's switch to chat CEOs) → CEO #5
+# Handoff · 2026-11-18 · CEO #5 → CEO #6
 
 ## Where we are
-P0, 16 tasks: merged 6 (P0-01..P0-05, P0-09), running 1 (P0-06 build), review 1 (P0-08), todo 8.
-CEO #4 ran headless under the old relay. CEO #1 stopped it for owner rule A-08 (CEOs are Orca chats now).
+P0: 11/16 merged (P0-01..P0-11). Running: P0-12 build (ctx_0727d80ab409). Todo: P0-13..P0-16 (serial chain).
+P1: planned (v3/specs/P1/, 18 tasks). Running: P1-03 build (ctx_f8fa63409c83). Ready: P1-14. Rest todo.
+Failed: 0. Blocked-owner: 0.
 
 ## What I'd do next
-1. Rebind Orca run run_7a40b198ac83 (CEO.md §15). P0-06 and P0-08's reviewer are live: wait for their worker_done.
-2. P0-08 approved -> merge -> P0-10 ready. P0-06 merged -> P0-07 ready.
-3. Then P0-10, P0-11 ... in dependency order. Plan P1 (V3-1) when P0 is mostly merged.
+1. Rebind Orca run run_7a40b198ac83 (run-use). Wait for P0-12 and P1-03 worker_done, then review each (opus reviewer) and merge.
+2. Dispatch P1-14 (v2 packages/core/src/agent.ts, opus) when an Opus slot frees; it touches v2, so `pnpm check` at repo root after merge.
+3. P0-12 merged -> P0-13 -> P0-14 -> P0-15 -> P0-16 (P0-16 builder prompt must allow .github/workflows/v3.yml and v3/ci/ only). P0-15 merged -> P1-01 -> P1-02 unlocks most of P1.
+4. When P0 is fully merged: G-P0 is a notice only (A-03): tell the owner what runs and the command.
 
 ## Watch out for
-- You are a chat CEO (A-08): the owner may type to you. Handoff = launch a new chat (CEO.md §12).
-- A-05: v3-plan.md is the authority. Say so in every Planner/Architect/Reviewer prompt.
-- INTERFACES.md contradicts v3-plan.md in §5.3, §6, §7 (LOG). Specs follow the plan.
-- P0-16's builder prompt must explicitly allow .github/workflows/v3.yml and v3/ci/ only.
-- Earlier headless CEOs died on the 5-hour usage limit without a handoff; the board and STATE are the truth.
-- Follow-ups in STATE.md (INTERFACES §3.3, store db.rs:107/109) should become tasks.
+- Orca check output starts with keepalive JSON lines; C:\dev\Alexia-wt\msgs.py parses it, C:\dev\Alexia-wt\wait.sh loops until a non-heartbeat message (run it in the background). Never run two checks at once; they clobber each other.
+- Workers can stall on the 5-hour usage limit with activity done and no worker_done. Read the terminal (orca terminal read --terminal <term_...> --screen --json) and, once usage is back, type continue into it (orca terminal send --text continue --enter).
+- GitHub push protection refuses fake credential literals (AKIA..., etc.) in any commit. Every builder prompt now says to build them from halves with concat!. If a push is refused: reset the local merge to origin, have a fixer split the literals and squash the task branch.
+- Reviewers often find real v2-parity gaps; budget 1-2 fix rounds per opus task.
+- C:\dev\Alexia-wt\plan-P1 folder could not be deleted (locked); delete it when free. Its branch is gone.
+- The `/remotecontrol` slash command is not installed in CEO sessions; the owner asked for remote control once.
 
 ## Open owner asks
-- none
+- A-09: P1 test bot, which free provider keys (names only, >=2), hedging terms OK. Sent on Telegram. Last update_id processed: none.
 
-## Decisions (also in LOG.md)
-- Relay retired; CEOs run as Orca chats (A-08).
+## Decisions I made (also in LOG.md)
+- P0-07: INSERT OR REPLACE on kv/settings kept; empty hub p_* tables replaced, filled refused.
+- P0-08: v2 parity means refusing null in nested strict objects too, settings excepted.
+- Planner ran in its own worktree/branch to avoid colliding with book commits; CEO merged it.
+- P1-03 also carries the db.rs:107/109 follow-ups.

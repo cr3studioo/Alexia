@@ -1,6 +1,6 @@
 # STATE
 
-CEO: #5 (chat CEO, A-08). Phase: P0 (V3-0 skeleton) finishing; P1 (V3-1 Telegram fast) planned, 18 tasks, started. 11/16 merged (P0-01..P0-11).
+CEO: #6 next (chat CEO, A-08). CEO #5 handed off after 6 rounds. Phase: P0 (V3-0 skeleton) finishing; P1 (V3-1 Telegram fast) planned, 18 tasks, started. 11/16 merged (P0-01..P0-11).
 Running (Orca run run_7a40b198ac83):
 - P0-12 build, ctx_0727d80ab409 (try 1). Prompt carried P0-11 review notes (tool cache, list_changed race).
 - P1-03 build (store migration 2), ctx_f8fa63409c83 (try 1). Also fixes db.rs:107/109 follow-ups.
