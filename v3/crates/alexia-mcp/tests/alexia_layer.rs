@@ -500,3 +500,61 @@ async fn conversation_ended_reaches_running_plugins_only() {
     assert_eq!(started(&fx), 1);
     fx.host.shutdown().await;
 }
+
+#[tokio::test]
+async fn stored_null_setting_uses_default() {
+    let r = root("settings-null");
+    plugin(
+        &r.join("ext"),
+        "settings-null",
+        "greet",
+        json!({"settings": [
+            {"key": "greeting", "type": "text", "label": "Greeting", "default": "Hello"},
+        ]}),
+    );
+    let fx = start(&r, &["settings-null"]).await;
+    fx.store
+        .set_setting("settings-null", "greeting", &Value::Null)
+        .unwrap();
+
+    let got = answer(&tool(&fx, "settings-null", "greet", json!({"who": "ask"})).await);
+    assert_eq!(got, json!({"settings": {"greeting": "Hello"}}));
+    fx.host.shutdown().await;
+}
+
+#[tokio::test]
+async fn capability_tie_goes_to_lowest_id() {
+    let r = root("cap-tie");
+    plugin(
+        &r.join("ext"),
+        "asker",
+        "storage",
+        json!({"storage": storage("asker"),
+               "requires": [{"cap": "demo.greet", "why": "To say hello."}]}),
+    );
+    for p in ["greeter-a", "greeter-b"] {
+        plugin(
+            &r.join("ext"),
+            p,
+            "greet",
+            json!({"provides": ["demo.greet"]}),
+        );
+    }
+    let fx = start(&r, &["asker", "greeter-a", "greeter-b"]).await;
+    // v2 has no such key; a guess at one must not reorder the providers.
+    fx.store
+        .kv_set(
+            "_core",
+            "provenance",
+            &json!({"greeter-a": {"installed_at": 2}, "greeter-b": {"installed_at": 1}}),
+        )
+        .unwrap();
+
+    let call = json!({"cap": "demo.greet", "arguments": {"who": "Sam"}});
+    serve(&fx, "asker", "alexia/capability/call", call)
+        .await
+        .unwrap();
+    assert!(fx.host.pid(&id("greeter-a")).is_some());
+    assert_eq!(fx.host.pid(&id("greeter-b")), None);
+    fx.host.shutdown().await;
+}

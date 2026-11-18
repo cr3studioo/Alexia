@@ -5,7 +5,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use alexia_mcp::{CallCtx, HostConfig, McpHost, NoUpcalls, PluginId, Timings};
+use alexia_mcp::{CallCtx, CallError, HostConfig, McpHost, NoUpcalls, PluginId, Timings};
 use alexia_store::{secrets, Layout, Store};
 use serde_json::{json, Map, Value};
 
@@ -165,5 +165,55 @@ async fn purge_leaves_no_residue() {
     assert_eq!(db_snapshot(&store), db_before);
     assert_eq!(files(&data), files_before);
     assert_eq!(secrets::get(ID, "token").unwrap(), None);
+    host.shutdown().await;
+}
+
+#[tokio::test]
+async fn purge_disables_before_deleting() {
+    std::env::set_var(secrets::MEMORY_BACKEND_ENV, "1");
+    let root = std::env::temp_dir().join(format!("alexia-purge-off-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    plugin(&root.join("ext"));
+    let layout = Layout::new(root.join("data"));
+    let cfg = HostConfig {
+        layout: Layout::new(root.join("data")),
+        plugin_dirs: vec![root.join("ext")],
+        node: PathBuf::from("node"),
+        timings: Timings::default(),
+    };
+    let store = Arc::new(Store::open_in_memory().unwrap());
+    let host = McpHost::new(cfg, store, Arc::new(NoUpcalls), Arc::new(|_| {}));
+    let id = PluginId(ID.into());
+    host.start(std::slice::from_ref(&id)).await.unwrap();
+    let r = host
+        .call_tool(
+            &id,
+            "remember",
+            args(json!({"text": "a note"})),
+            CallCtx::default(),
+        )
+        .await
+        .unwrap();
+    assert_ne!(r.is_error, Some(true), "{:?}", r.content);
+    host.serve_for_test(&id, "alexia/host/info", json!({}))
+        .await
+        .unwrap();
+    let own = layout.own_dir(ID);
+    assert!(own.exists());
+
+    host.purge(&id).await.unwrap();
+
+    // Off, not merely stopped: a late call is refused instead of respawning the plugin.
+    let late = host
+        .call_tool(
+            &id,
+            "remember",
+            args(json!({"text": "late"})),
+            CallCtx::default(),
+        )
+        .await;
+    assert!(matches!(late, Err(CallError::Off { .. })), "{late:?}");
+    assert_eq!(host.pid(&id), None);
+    assert!(!own.exists());
     host.shutdown().await;
 }

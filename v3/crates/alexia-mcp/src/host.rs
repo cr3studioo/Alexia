@@ -446,8 +446,7 @@ impl McpHost {
         let none = || CallError::Off {
             sentence: format!("Nothing installed and switched on can do {cap}."),
         };
-        let installed = self.installed_at();
-        let mut candidates: Vec<PluginId> = lock(&self.inner.plugins)
+        let candidates: Vec<PluginId> = lock(&self.inner.plugins)
             .iter()
             .filter(|(_, s)| {
                 s.enabled
@@ -456,8 +455,7 @@ impl McpHost {
             })
             .map(|(id, _)| id.clone())
             .collect();
-        // Already in id order; a stable sort keeps it for equal or missing dates.
-        candidates.sort_by_key(|id| installed.get(&id.0).copied().unwrap_or(i64::MAX));
+        // BTreeMap: already in plugin id order, which breaks ties.
         for id in candidates {
             // The manifest is the promise; the binding is on a running tool (v2 `#binding`).
             let Some(tools) = self.plugin_tools(&id).await else {
@@ -480,17 +478,6 @@ impl McpHost {
                 });
         }
         Err(none())
-    }
-
-    /// kv `_core`/`provenance` as `{<id>: {"installed_at": ms}}`. Absent in P0 (the library
-    /// writes it later); anything unreadable counts as absent.
-    fn installed_at(&self) -> BTreeMap<String, i64> {
-        let Ok(Some(Value::Object(map))) = self.inner.store.kv_get("_core", "provenance") else {
-            return BTreeMap::new();
-        };
-        map.into_iter()
-            .filter_map(|(k, v)| Some((k, v.get("installed_at")?.as_i64()?)))
-            .collect()
     }
 
     /// From manifests' `provides[]` only, starting nothing. In P0 every plugin is this hub's
@@ -562,10 +549,15 @@ impl McpHost {
         let m = self
             .manifest(id)
             .ok_or_else(|| Error::UnknownPlugin(id.clone()))?;
-        self.stop(id).await;
+        // Off first, as v2: stopped, and a late call cannot respawn it into a half-purged dir.
+        self.set_enabled(id, false).await?;
         let ns = m.storage.as_ref().map(|s| s.namespace.as_str());
         self.inner.store.purge(&m.id, ns)?;
-        alexia_store::secrets::delete_all(&m.id, &m.password_keys())?;
+        // A refusing keychain must not leave the folders behind (v2): returned last.
+        let secrets = alexia_store::secrets::delete_all(&m.id, &m.password_keys());
+        if let Err(e) = &secrets {
+            tracing::warn!(plugin = %m.id, "purge could not clear its secrets: {e}");
+        }
         let layout = &self.inner.cfg.layout;
         for dir in [layout.own_dir(&m.id), layout.cache().join(&m.id)] {
             match std::fs::remove_dir_all(&dir) {
@@ -573,7 +565,7 @@ impl McpHost {
                 _ => {}
             }
         }
-        Ok(())
+        secrets.map_err(Into::into)
     }
 
     pub async fn shutdown(&self) {
