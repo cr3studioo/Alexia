@@ -78,3 +78,6 @@
 - 2026-11-19 CEO #6: P0-17 build done; review ctx_acc85f9d9d88.
 - 2026-11-19 CEO #6: P0-14 build done (8 CLI tests, rusqlite dev-dep); review ctx_929168183459.
 - 2026-11-19 CEO #6: P0-17 review approve; merged, integration green, pushed. Follow-up noted: alexia-store secrets::delete_all stops at first failing key (v2 tries each) - fold into a later store task.
+- 2026-11-19 CEO #6: P0-14 review: changes (bus subscribe after start, import-v2 missing dir exit 0, no tracing on tools/plugins, args() panics). Fix round ctx_09570616babe (sonnet), try 2. rusqlite dev-dep OK.
+- 2026-11-19 CEO #6: supervise.rs:444 idle_lazy_plugin_stops flaked once under P0-14 review (3 reruns pass). Follow-up: widen idle bound.
+- 2026-11-19 CEO #6: P0-18 (de-flake idle test) spec written by CEO, dispatched (sonnet, ctx_c1ef1998cf44).
