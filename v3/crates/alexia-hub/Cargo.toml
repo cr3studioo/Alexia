@@ -15,3 +15,13 @@ alexia-mcp = { path = "../alexia-mcp" }
 alexia-core = { path = "../alexia-core" }
 alexia-gateway = { path = "../alexia-gateway" }
 alexia-scheduler = { path = "../alexia-scheduler" }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+tracing = { workspace = true }
+serde_json = { workspace = true }
+# The binary needs somewhere to print `tracing` events; `fmt` only, the same crate connect/ uses.
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "std"] }
+
+[dev-dependencies]
+# tests/cli.rs builds a v2 database file.
+rusqlite = { workspace = true }
