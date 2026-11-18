@@ -26,3 +26,6 @@
 - 2026-11-18 CEO #4: P0-03 had builder done + reviewer approve (CEO #3). Merged, integration green, pushed. Reviewer note: INTERFACES.md §3.3 should say optional MCP fields are omitted, not null.
 - 2026-11-18 CEO #4: P0-05 worker sent failed (usage limit) but then finished with commits and a report; per §7.1 sent to review (ctx_9a2dde40631b).
 - 2026-11-18 CEO #4: round 4 dispatched: P0-08 (opus), P0-09 (sonnet), disjoint paths.
+- 2026-11-18 CEO #4: P0-05 review: changes (physical-name collision data loss; JSON parse vs v2; plugin id in test). Decision: select returns text like v2, overriding spec step 5. Fix round ctx_9f0aa3394cf9 (opus), try 2.
+- 2026-11-18 CEO #4: P0-05 re-review approve; merged, integration green, pushed. Nit for later: u64 > i64::MAX stored as REAL in INTEGER column.
+- 2026-11-18 CEO #4: P0-09 done, in review (ctx_d1ba06d3c137). P0-06 dispatched (opus, ctx_200c6379d547).
