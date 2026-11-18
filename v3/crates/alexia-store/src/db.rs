@@ -8,7 +8,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::migrations::{APPLICATION_ID, MIGRATIONS};
-use crate::{Error, Message, MessageBody, MessageId, Ms, Result, Role, Session, SessionId, Try, Usage};
+use crate::{
+    Error, Message, MessageBody, MessageId, Ms, Result, Role, Session, SessionId, Try, Usage,
+};
 
 /// sqlite-vec is a C extension; registering it is one FFI call, so this module (and only this
 /// module) opts out of the workspace's `unsafe_code = "deny"`.
@@ -19,7 +21,8 @@ mod vec_ext {
 
     use rusqlite::ffi::{sqlite3, sqlite3_api_routines, sqlite3_auto_extension};
 
-    type Init = unsafe extern "C" fn(*mut sqlite3, *mut *mut c_char, *const sqlite3_api_routines) -> c_int;
+    type Init =
+        unsafe extern "C" fn(*mut sqlite3, *mut *mut c_char, *const sqlite3_api_routines) -> c_int;
 
     /// Every connection opened after this has sqlite-vec loaded (SP-15).
     pub(super) fn register() {
@@ -29,7 +32,9 @@ mod vec_ext {
             // `Init` signature; the crate declares it without arguments only because it is
             // meant to be passed to `sqlite3_auto_extension`, as its README does.
             unsafe {
-                let init = std::mem::transmute::<unsafe extern "C" fn(), Init>(sqlite_vec::sqlite3_vec_init);
+                let init = std::mem::transmute::<unsafe extern "C" fn(), Init>(
+                    sqlite_vec::sqlite3_vec_init,
+                );
                 sqlite3_auto_extension(Some(init));
             }
         });
@@ -58,7 +63,9 @@ fn role_str(role: Role) -> &'static str {
 }
 
 fn parse_role(s: &str) -> Result<Role> {
-    Ok(serde_json::from_value(serde_json::Value::String(s.to_owned()))?)
+    Ok(serde_json::from_value(serde_json::Value::String(
+        s.to_owned(),
+    ))?)
 }
 
 impl Store {
@@ -86,7 +93,9 @@ impl Store {
         // Foreign before newer: a v2 file has a high user_version too, and "not an Alexia v3
         // database" is the true sentence for it.
         if app_id != APPLICATION_ID && tables > 0 {
-            return Err(Error::Refused("This file is not an Alexia v3 database.".into()));
+            return Err(Error::Refused(
+                "This file is not an Alexia v3 database.".into(),
+            ));
         }
         if version > MIGRATIONS.len() as i64 {
             return Err(Error::Refused(
@@ -103,7 +112,9 @@ impl Store {
             tx.pragma_update(None, "user_version", i as i64 + 1)?;
             tx.commit()?;
         }
-        Ok(Store { conn: Mutex::new(conn) })
+        Ok(Store {
+            conn: Mutex::new(conn),
+        })
     }
 
     /// The locked connection, for other modules' `impl Store` blocks.
@@ -150,14 +161,17 @@ impl Store {
     }
 
     pub fn set_title(&self, id: SessionId, title: &str) -> Result<()> {
-        self.conn()
-            .execute("UPDATE sessions SET title = ? WHERE id = ?", params![title, id.0])?;
+        self.conn().execute(
+            "UPDATE sessions SET title = ? WHERE id = ?",
+            params![title, id.0],
+        )?;
         Ok(())
     }
 
     /// Removes the session; its messages and attachments go with it (ON DELETE CASCADE).
     pub fn delete_session(&self, id: SessionId) -> Result<()> {
-        self.conn().execute("DELETE FROM sessions WHERE id = ?", [id.0])?;
+        self.conn()
+            .execute("DELETE FROM sessions WHERE id = ?", [id.0])?;
         Ok(())
     }
 
@@ -177,7 +191,10 @@ impl Store {
                 params![id.0, role_str(role), model, body, at],
             )?;
             let msg = MessageId(tx.last_insert_rowid());
-            tx.execute("UPDATE sessions SET updated_at = ? WHERE id = ?", params![at, id.0])?;
+            tx.execute(
+                "UPDATE sessions SET updated_at = ? WHERE id = ?",
+                params![at, id.0],
+            )?;
             Ok(msg)
         })
     }
@@ -312,7 +329,15 @@ impl Store {
         self.conn().execute(
             "INSERT INTO tries (at, provider, model, outcome, status, source, waited) \
              VALUES (?, ?, ?, ?, ?, ?, ?)",
-            params![t.at, t.provider, t.model, t.outcome, t.status, t.source, t.waited_ms],
+            params![
+                t.at,
+                t.provider,
+                t.model,
+                t.outcome,
+                t.status,
+                t.source,
+                t.waited_ms
+            ],
         )?;
         Ok(())
     }
