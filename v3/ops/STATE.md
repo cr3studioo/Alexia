@@ -2,7 +2,7 @@
 
 CEO: #5 (chat CEO, A-08). Phase: P0 (V3-0 skeleton). 10/16 merged (P0-01..P0-10).
 Running (Orca run run_7a40b198ac83):
-- P0-11 build, ctx_eb563202070f (try 1). Prompt carried the Conn::start and drop-Conn-before-stop notes.
+- P0-11 review, ctx_99c8b24c6a5d (built, try 1).
 - P1 planner, ctx_1bb7bc898375, worktree C:/dev/Alexia-wt/plan-P1 (branch cr3studioo/v3-plan-P1; merge it into cr3studioo/v3 when done).
 Next: P0-11 -> P0-12 -> P0-13 -> P0-14 -> P0-15 -> P0-16 (serial). P0-14 waits only on P0-13. P1 being planned.
 Open owner asks: none. Standing owner rules A-05, A-06, A-07, A-08 in OWNER.md.

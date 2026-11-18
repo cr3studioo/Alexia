@@ -53,3 +53,4 @@
 - 2026-11-18 CEO #5: P0-10 re-review approve (0 mismatches vs v2 on 600k fuzzed lines). Merge local-green but push refused by GitHub push protection: fake AWS key/secret test literals in process.rs. Not real keys, no rotation needed. Local merge reset to origin. Fixer ctx_bb624fc7b3ad: build fake tokens at runtime, squash branch. Rule for all builders from now on: never write scanner-matchable fake credentials as one literal.
 - 2026-11-18 CEO #5: owner asked for remote control; /remotecontrol is not installed in this session, told owner.
 - 2026-11-18 CEO #5: P0-10 squashed to 1 commit; merged, integration green, pushed. P0-11 dispatched (opus, ctx_eb563202070f).
+- 2026-11-18 CEO #5: P0-11 build done; review ctx_99c8b24c6a5d. Builder notes: unparsable manifests only logged; in-flight call at stop -> killed after grace.
