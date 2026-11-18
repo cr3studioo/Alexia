@@ -215,6 +215,30 @@ pub struct Try {
     pub waited_ms: Option<i64>,
 }
 
+/// SP-09: one timed stage of one turn. `origin` is JSON text, so the store never depends on
+/// `alexia-core`'s `Origin`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SpanRow {
+    pub turn: String,
+    pub at: Ms,
+    pub origin: String,
+    pub lane: String,
+    pub name: String,
+    pub start: Ms,
+    pub ms: i64,
+}
+
+/// A `tries` row as the router reads it back.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TryRow {
+    pub at: Ms,
+    pub provider: String,
+    pub model: String,
+    pub outcome: String,
+    pub status: i64,
+    pub waited_ms: Option<i64>,
+}
+
 /// `^[a-z][a-z0-9_]*$`, the column and table name rule from storage.md.
 pub fn is_ident(s: &str) -> bool {
     let mut b = s.bytes();

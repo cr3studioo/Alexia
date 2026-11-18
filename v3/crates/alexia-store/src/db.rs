@@ -9,7 +9,8 @@ use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::migrations::{APPLICATION_ID, MIGRATIONS};
 use crate::{
-    Error, Message, MessageBody, MessageId, Ms, Result, Role, Session, SessionId, Try, Usage,
+    Error, Message, MessageBody, MessageId, Ms, Result, Role, Session, SessionId, SpanRow, Try,
+    TryRow, Usage,
 };
 
 /// sqlite-vec is a C extension; registering it is one FFI call, so this module (and only this
@@ -51,6 +52,43 @@ fn now() -> Ms {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.as_millis() as Ms)
+}
+
+/// `record_request`'s bucket for `span` ("minute" or "day") at `at`.
+fn bucket(span: &str, at: Ms) -> Result<Ms> {
+    match span {
+        "minute" => Ok(at.div_euclid(60_000)),
+        "day" => Ok(at.div_euclid(24 * 60 * 60 * 1000)),
+        _ => Err(Error::Invalid(format!(
+            "A request span is \"minute\" or \"day\", not \"{span}\"."
+        ))),
+    }
+}
+
+fn insert_session(tx: &rusqlite::Transaction, title: &str) -> Result<SessionId> {
+    let at = now();
+    tx.execute(
+        "INSERT INTO sessions (title, created_at, updated_at) VALUES (?, ?, ?)",
+        params![title, at, at],
+    )?;
+    Ok(SessionId(tx.last_insert_rowid()))
+}
+
+/// Points (channel, chat) at `session`. A chat seen for the first time is the channel's primary
+/// when the channel has no chat yet; an existing chat keeps its primary flag.
+fn point_chat(
+    tx: &rusqlite::Transaction,
+    channel: &str,
+    chat: &str,
+    session: SessionId,
+) -> Result<()> {
+    tx.execute(
+        "INSERT INTO channel_chats (channel, chat, session_id, is_primary) \
+         VALUES (?1, ?2, ?3, NOT EXISTS (SELECT 1 FROM channel_chats WHERE channel = ?1)) \
+         ON CONFLICT (channel, chat) DO UPDATE SET session_id = excluded.session_id",
+        params![channel, chat, session.0],
+    )?;
+    Ok(())
 }
 
 fn role_str(role: Role) -> &'static str {
@@ -97,6 +135,11 @@ impl Store {
                 "This file is not an Alexia v3 database.".into(),
             ));
         }
+        if version < 0 {
+            return Err(Error::Refused(
+                "This database is damaged: its schema version is negative.".into(),
+            ));
+        }
         if version > MIGRATIONS.len() as i64 {
             return Err(Error::Refused(
                 "This database is from a newer Alexia than this one.".into(),
@@ -104,7 +147,12 @@ impl Store {
         }
         // After the checks, so a refused file is left exactly as it was.
         if wal {
-            let _: String = conn.query_row("PRAGMA journal_mode = WAL", [], |r| r.get(0))?;
+            let mode: String = conn.query_row("PRAGMA journal_mode = WAL", [], |r| r.get(0))?;
+            if !mode.eq_ignore_ascii_case("wal") {
+                return Err(Error::Refused(format!(
+                    "The database could not switch to write-ahead logging (it is in {mode} mode)."
+                )));
+            }
         }
         for (i, sql) in MIGRATIONS.iter().enumerate().skip(version as usize) {
             let tx = conn.transaction()?;
@@ -285,8 +333,8 @@ impl Store {
     /// table stays the size of the number of providers.
     pub fn record_request(&self, provider: &str, at: Ms) -> Result<()> {
         let spans: [(&str, Ms); 2] = [
-            ("minute", at.div_euclid(60_000)),
-            ("day", at.div_euclid(24 * 60 * 60 * 1000)),
+            ("minute", bucket("minute", at)?),
+            ("day", bucket("day", at)?),
         ];
         self.transaction(|tx| {
             for (span, bucket) in spans {
@@ -340,5 +388,151 @@ impl Store {
             ],
         )?;
         Ok(())
+    }
+
+    /// Requests counted by `record_request` in the `"minute"` or `"day"` bucket that holds `at`.
+    /// 0 when there is no row.
+    pub fn request_count(&self, provider: &str, span: &str, at: Ms) -> Result<u64> {
+        let bucket = bucket(span, at)?;
+        let n: Option<i64> = self
+            .conn()
+            .query_row(
+                "SELECT count FROM provider_usage WHERE provider = ? AND span = ? AND bucket = ?",
+                params![provider, span, bucket],
+                |r| r.get(0),
+            )
+            .optional()?;
+        Ok(n.map_or(0, |n| n.max(0) as u64))
+    }
+
+    /// Tries at or after `at`, oldest first.
+    pub fn tries_since(&self, at: Ms) -> Result<Vec<TryRow>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT at, provider, model, outcome, status, waited FROM tries \
+             WHERE at >= ? ORDER BY at, rowid",
+        )?;
+        let rows = stmt.query_map([at], |r| {
+            Ok(TryRow {
+                at: r.get(0)?,
+                provider: r.get(1)?,
+                model: r.get(2)?,
+                outcome: r.get(3)?,
+                status: r.get(4)?,
+                waited_ms: r.get(5)?,
+            })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    // ---- channel chats (CH-01) ----
+
+    /// The session for this chat, created (titled "<channel>") on first sight. The first chat
+    /// ever seen on a channel becomes its primary.
+    pub fn channel_session(&self, channel: &str, chat: &str) -> Result<SessionId> {
+        self.transaction(|tx| {
+            let known: Option<i64> = tx
+                .query_row(
+                    "SELECT session_id FROM channel_chats WHERE channel = ? AND chat = ?",
+                    [channel, chat],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            if let Some(id) = known {
+                return Ok(SessionId(id));
+            }
+            let id = insert_session(tx, channel)?;
+            point_chat(tx, channel, chat, id)?;
+            Ok(id)
+        })
+    }
+
+    /// Points the chat at a fresh session (`/new`) and returns it. The old session stays.
+    pub fn new_channel_session(&self, channel: &str, chat: &str) -> Result<SessionId> {
+        self.transaction(|tx| {
+            let id = insert_session(tx, channel)?;
+            point_chat(tx, channel, chat, id)?;
+            Ok(id)
+        })
+    }
+
+    pub fn primary_chat(&self, channel: &str) -> Result<Option<String>> {
+        Ok(self
+            .conn()
+            .query_row(
+                "SELECT chat FROM channel_chats WHERE channel = ? AND is_primary = 1",
+                [channel],
+                |r| r.get(0),
+            )
+            .optional()?)
+    }
+
+    /// Makes `chat` the channel's one primary. `Error::Invalid` if the chat was never seen.
+    pub fn set_primary_chat(&self, channel: &str, chat: &str) -> Result<()> {
+        self.transaction(|tx| {
+            let n = tx.execute(
+                "UPDATE channel_chats SET is_primary = 1 WHERE channel = ? AND chat = ?",
+                [channel, chat],
+            )?;
+            if n == 0 {
+                return Err(Error::Invalid(
+                    "That chat has not been seen on this channel.".into(),
+                ));
+            }
+            tx.execute(
+                "UPDATE channel_chats SET is_primary = 0 WHERE channel = ? AND chat <> ?",
+                [channel, chat],
+            )?;
+            Ok(())
+        })
+    }
+
+    // ---- spans (SP-09) ----
+
+    /// All rows in one transaction.
+    pub fn record_spans(&self, rows: &[SpanRow]) -> Result<()> {
+        self.transaction(|tx| {
+            let mut stmt = tx.prepare(
+                "INSERT INTO spans (turn, at, origin, lane, name, start, ms) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?)",
+            )?;
+            for s in rows {
+                stmt.execute(params![
+                    s.turn, s.at, s.origin, s.lane, s.name, s.start, s.ms
+                ])?;
+            }
+            Ok(())
+        })
+    }
+
+    /// The newest `n` turns' rows, oldest turn first, rows in `start` order.
+    pub fn last_turns(&self, n: u32) -> Result<Vec<SpanRow>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT s.turn, s.at, s.origin, s.lane, s.name, s.start, s.ms FROM spans s \
+             JOIN (SELECT turn, max(at) AS t_at FROM spans GROUP BY turn \
+                   ORDER BY t_at DESC, turn DESC LIMIT ?) t ON t.turn = s.turn \
+             ORDER BY t.t_at, s.turn, s.start, s.rowid",
+        )?;
+        let rows = stmt.query_map([n], |r| {
+            Ok(SpanRow {
+                turn: r.get(0)?,
+                at: r.get(1)?,
+                origin: r.get(2)?,
+                lane: r.get(3)?,
+                name: r.get(4)?,
+                start: r.get(5)?,
+                ms: r.get(6)?,
+            })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Deletes spans of turns received before `before` (the dashboard keeps 30 days).
+    pub fn prune_spans(&self, before: Ms) -> Result<u64> {
+        let n = self
+            .conn()
+            .execute("DELETE FROM spans WHERE at < ?", [before])?;
+        Ok(n as u64)
     }
 }

@@ -127,4 +127,26 @@ CREATE TABLE imports (
   report      TEXT NOT NULL       -- JSON ImportReport
 );
 "#,
+    // 2 — channel chats (CH-01) and latency spans (SP-09).
+    r#"
+CREATE TABLE channel_chats (
+  channel    TEXT NOT NULL,
+  chat       TEXT NOT NULL,
+  session_id INTEGER NOT NULL REFERENCES sessions (id) ON DELETE CASCADE,
+  is_primary INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (channel, chat)
+);
+-- SP-09. One row per timed stage. `turn` groups the stages of one message.
+CREATE TABLE spans (
+  turn   TEXT NOT NULL,
+  at     INTEGER NOT NULL,      -- when the turn was received (ms)
+  origin TEXT NOT NULL,         -- JSON Origin
+  lane   TEXT NOT NULL,         -- 'command' | 'chat' | 'task'
+  name   TEXT NOT NULL,
+  start  INTEGER NOT NULL,      -- ms
+  ms     INTEGER NOT NULL
+);
+CREATE INDEX spans_at ON spans (at);
+CREATE INDEX spans_turn ON spans (turn);
+"#,
 ];
