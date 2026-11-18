@@ -12,6 +12,8 @@ workspace = true
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
+keyring.workspace = true
+tracing.workspace = true
 thiserror.workspace = true
 rusqlite.workspace = true
 # SP-15: vector search in the same file. Compiles the C source into the binary.
