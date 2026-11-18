@@ -229,7 +229,9 @@ impl Store {
 
     pub fn insert(&self, ns: &str, table: &str, row: &Row) -> Result<i64> {
         if row.contains_key("rowid") {
-            return Err(Error::Invalid("rowid is set by core, not by an insert.".into()));
+            return Err(Error::Invalid(
+                "rowid is set by core, not by an insert.".into(),
+            ));
         }
         if row.is_empty() {
             return Err(Error::Invalid("There is nothing to insert.".into()));
@@ -240,7 +242,11 @@ impl Store {
             let keys: Vec<String> = row.keys().map(|k| q(k)).collect();
             let marks = vec!["?"; keys.len()].join(", ");
             tx.execute(
-                &format!("INSERT INTO {} ({}) VALUES ({marks})", q(&name), keys.join(", ")),
+                &format!(
+                    "INSERT INTO {} ({}) VALUES ({marks})",
+                    q(&name),
+                    keys.join(", ")
+                ),
                 params_from_iter(row.values().map(encode)),
             )?;
             Ok(tx.last_insert_rowid())
