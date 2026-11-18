@@ -35,3 +35,4 @@
 - 2026-11-18 CEO #5: P0-08 review: changes (explicit assets key below protocol 15; null optional fields accepted). Fix round ctx_7d1626e3fb76 (opus), try 2.
 - 2026-11-18 CEO #5: P0-08 fix done; re-review ctx_98b31188d325. Builder note: nulls refused only at top level.
 - 2026-11-18 CEO #5: P0-06 build done; review ctx_f63db4e25ea5. Builder note: added tracing to alexia-store Cargo.toml; macOS unchecked.
+- 2026-11-18 CEO #5: P0-08 re-review: changes (nested nulls accepted, e.g. operations weight). Fixer ctx_4c32fb056b11 (opus), try 3.
