@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! `McpHost`: load manifests, refuse what cannot run, spawn plugins with the §3.2 handshake,
 //! list their tools and call them, supervised (heartbeat, idle, backoff, vanish: `supervise`).
-//! The `alexia/*` layer and capability calls are P0-13.
+//! Requests a plugin sends under `alexia/*` are answered by `serve`; capability calls are
+//! resolved here, by capability name only.
 
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, HashSet};
@@ -11,9 +12,10 @@ use std::time::{Duration, Instant};
 use serde_json::{json, Map, Value};
 use tokio_util::sync::CancellationToken;
 
+use crate::alexia::AlexiaCall;
 use crate::conn::{Conn, Incoming};
 use crate::jsonrpc::{code, RpcError};
-use crate::manifest::Lifetime;
+use crate::manifest::{Lifetime, Manifest};
 use crate::process::{self, Proc, StderrLog};
 use crate::supervise::{self, Busy, CrashLog, Verdict, Watch};
 use crate::types::{self, CallToolParams, CallToolResult, Implementation, InitializeParams};
@@ -113,8 +115,36 @@ impl McpHost {
         *self.inner.up.write().unwrap_or_else(|e| e.into_inner()) = up;
     }
 
-    fn upcalls(&self) -> Arc<dyn Upcalls> {
+    pub(crate) fn upcalls(&self) -> Arc<dyn Upcalls> {
         Arc::clone(&self.inner.up.read().unwrap_or_else(|e| e.into_inner()))
+    }
+
+    pub(crate) fn store(&self) -> &alexia_store::Store {
+        &self.inner.store
+    }
+
+    pub(crate) fn layout(&self) -> &alexia_store::Layout {
+        &self.inner.cfg.layout
+    }
+
+    pub(crate) fn manifest(&self, id: &PluginId) -> Option<Manifest> {
+        lock(&self.inner.plugins)
+            .get(id)
+            .map(|s| s.dir.manifest.clone())
+    }
+
+    /// Test hook: one `alexia/*` request as if plugin `id` had sent it.
+    #[doc(hidden)]
+    pub async fn serve_for_test(
+        &self,
+        id: &PluginId,
+        method: &str,
+        params: Value,
+    ) -> Result<Value, RpcError> {
+        match AlexiaCall::parse(method, Some(params))? {
+            Some(call) => crate::serve::serve(self, id, call).await,
+            None => Err(not_alexia(method)),
+        }
     }
 
     fn emit(&self, event: PluginEvent) {
@@ -124,6 +154,11 @@ impl McpHost {
     /// Scan `plugin_dirs` in order (the first folder holding an id wins), refuse what this
     /// build cannot run, create declared tables, spawn enabled resident plugins.
     pub async fn start(&self, enabled: &[PluginId]) -> Result<(), Error> {
+        // Core's containers, made once: a plugin's folders live inside them and the
+        // containers outlive every plugin, so a purge can leave nothing behind.
+        let layout = &self.inner.cfg.layout;
+        std::fs::create_dir_all(layout.root.join("plugins"))?;
+        std::fs::create_dir_all(layout.cache())?;
         let enabled: HashSet<&PluginId> = enabled.iter().collect();
         let mut found: BTreeMap<PluginId, PluginDir> = BTreeMap::new();
         for root in &self.inner.cfg.plugin_dirs {
@@ -341,6 +376,18 @@ impl McpHost {
         args: Map<String, Value>,
         ctx: CallCtx,
     ) -> Result<CallToolResult, CallError> {
+        let within = Duration::from_millis(self.inner.cfg.timings.call_ms);
+        self.call_tool_within(plugin, name, args, ctx, within).await
+    }
+
+    async fn call_tool_within(
+        &self,
+        plugin: &PluginId,
+        name: &str,
+        args: Map<String, Value>,
+        ctx: CallCtx,
+        timeout: Duration,
+    ) -> Result<CallToolResult, CallError> {
         let off = |sentence: String| CallError::Off { sentence };
         {
             let plugins = lock(&self.inner.plugins);
@@ -370,7 +417,6 @@ impl McpHost {
             meta: (!meta.is_empty()).then_some(meta),
         };
         let params = serde_json::to_value(params).expect("serializable");
-        let timeout = Duration::from_millis(self.inner.cfg.timings.call_ms);
         let v = conn
             .request(
                 "tools/call",
@@ -388,16 +434,63 @@ impl McpHost {
         })
     }
 
-    /// P0-13 resolves capabilities; until then nothing answers.
+    /// By capability name only (INTERFACES.md §2.2): the enabled plugin whose tool lists `cap`
+    /// in `_meta["alexia/provides"]`, the one installed first if several do, else by id.
+    /// The result is the provider's, unchanged, and never says which plugin answered.
     pub async fn call_capability(
         &self,
-        _cap: &str,
-        _args: Map<String, Value>,
-        _ctx: CallCtx,
+        cap: &str,
+        args: Map<String, Value>,
+        ctx: CallCtx,
     ) -> Result<CallToolResult, CallError> {
-        Err(CallError::Off {
-            sentence: "Nothing installed and switched on can do that yet.".into(),
-        })
+        let none = || CallError::Off {
+            sentence: format!("Nothing installed and switched on can do {cap}."),
+        };
+        let installed = self.installed_at();
+        let mut candidates: Vec<PluginId> = lock(&self.inner.plugins)
+            .iter()
+            .filter(|(_, s)| {
+                s.enabled
+                    && !matches!(s.state, PluginState::Refused | PluginState::Unhealthy)
+                    && s.dir.manifest.provides.iter().any(|p| p == cap)
+            })
+            .map(|(id, _)| id.clone())
+            .collect();
+        // Already in id order; a stable sort keeps it for equal or missing dates.
+        candidates.sort_by_key(|id| installed.get(&id.0).copied().unwrap_or(i64::MAX));
+        for id in candidates {
+            // The manifest is the promise; the binding is on a running tool (v2 `#binding`).
+            let Some(tools) = self.plugin_tools(&id).await else {
+                continue;
+            };
+            let Some(tool) = tools
+                .into_iter()
+                .find(|t| t.provides.iter().any(|p| p == cap))
+            else {
+                continue;
+            };
+            let within = Duration::from_millis(self.inner.cfg.timings.capability_ms);
+            return self
+                .call_tool_within(&id, &tool.tool.name, args, ctx, within)
+                .await
+                // Its own sentence would name it.
+                .map_err(|e| match e {
+                    CallError::Off { .. } => none(),
+                    e => e,
+                });
+        }
+        Err(none())
+    }
+
+    /// kv `_core`/`provenance` as `{<id>: {"installed_at": ms}}`. Absent in P0 (the library
+    /// writes it later); anything unreadable counts as absent.
+    fn installed_at(&self) -> BTreeMap<String, i64> {
+        let Ok(Some(Value::Object(map))) = self.inner.store.kv_get("_core", "provenance") else {
+            return BTreeMap::new();
+        };
+        map.into_iter()
+            .filter_map(|(k, v)| Some((k, v.get("installed_at")?.as_i64()?)))
+            .collect()
     }
 
     /// From manifests' `provides[]` only, starting nothing. In P0 every plugin is this hub's
@@ -414,11 +507,32 @@ impl McpHost {
         }
     }
 
-    /// P0-13 sends `alexia/settings/changed`.
-    pub async fn settings_changed(&self, _id: &PluginId, _changed: Map<String, Value>) {}
+    /// `alexia/settings/changed` with only the changed keys, to `id` if it is running.
+    pub async fn settings_changed(&self, id: &PluginId, changed: Map<String, Value>) {
+        let conn = lock(&self.inner.plugins).get(id).and_then(live_conn);
+        if let Some(conn) = conn {
+            let params = json!({ "changed": changed });
+            if let Err(e) = conn.notify("alexia/settings/changed", Some(params)).await {
+                tracing::debug!(plugin = %id.0, "settings/changed not delivered: {e}");
+            }
+        }
+    }
 
-    /// P0-13 sends `alexia/conversation/ended`.
-    pub async fn conversation_ended(&self) {}
+    /// `alexia/conversation/ended` (deliberately empty) to every running plugin; starts none.
+    pub async fn conversation_ended(&self) {
+        let conns: Vec<(PluginId, Arc<Conn>)> = lock(&self.inner.plugins)
+            .iter()
+            .filter_map(|(id, s)| live_conn(s).map(|c| (id.clone(), c)))
+            .collect();
+        for (id, conn) in conns {
+            let sent = conn
+                .notify("alexia/conversation/ended", Some(json!({})))
+                .await;
+            if let Err(e) = sent {
+                tracing::debug!(plugin = %id.0, "conversation/ended not delivered: {e}");
+            }
+        }
+    }
 
     /// Stop now (D213). Not a crash: the next call respawns.
     pub async fn stop(&self, id: &PluginId) {
@@ -442,11 +556,24 @@ impl McpHost {
             .unwrap_or_default()
     }
 
-    /// P0-13 removes the plugin's data.
-    pub async fn purge(&self, _id: &PluginId) -> Result<(), Error> {
-        Err(Error::Refused(
-            "Removing a plugin's data isn't available yet.".into(),
-        ))
+    /// Stop, then remove everything the plugin left: its tables, kv and settings, the
+    /// secrets of its `password` settings, its own folder and its cache (invariant check 5).
+    pub async fn purge(&self, id: &PluginId) -> Result<(), Error> {
+        let m = self
+            .manifest(id)
+            .ok_or_else(|| Error::UnknownPlugin(id.clone()))?;
+        self.stop(id).await;
+        let ns = m.storage.as_ref().map(|s| s.namespace.as_str());
+        self.inner.store.purge(&m.id, ns)?;
+        alexia_store::secrets::delete_all(&m.id, &m.password_keys())?;
+        let layout = &self.inner.cfg.layout;
+        for dir in [layout.own_dir(&m.id), layout.cache().join(&m.id)] {
+            match std::fs::remove_dir_all(&dir) {
+                Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e.into()),
+                _ => {}
+            }
+        }
+        Ok(())
     }
 
     pub async fn shutdown(&self) {
@@ -822,6 +949,21 @@ enum AfterCrash {
     Wait,
 }
 
+/// The connection of a plugin that is running right now, if any.
+fn live_conn(slot: &Slot) -> Option<Arc<Conn>> {
+    slot.running
+        .as_ref()
+        .filter(|r| !r.conn.closed().is_cancelled())
+        .map(|r| Arc::clone(&r.conn))
+}
+
+fn not_alexia(method: &str) -> RpcError {
+    RpcError::new(
+        code::METHOD_NOT_FOUND,
+        format!("{method} is not an Alexia method."),
+    )
+}
+
 fn refuse(slot: &mut Slot, sentence: String) {
     slot.state = PluginState::Refused;
     slot.sentence = Some(sentence);
@@ -872,6 +1014,13 @@ impl Incoming for Handler {
                 "Alexia is shutting down.",
             ));
         };
+        if method.starts_with("alexia/") {
+            let host = McpHost { inner };
+            return match AlexiaCall::parse(&method, params)? {
+                Some(call) => crate::serve::serve(&host, &self.id, call).await,
+                None => Err(not_alexia(&method)),
+            };
+        }
         let up = Arc::clone(&inner.up.read().unwrap_or_else(|e| e.into_inner()));
         drop(inner);
         match method.as_str() {
@@ -882,10 +1031,6 @@ impl Incoming for Handler {
                 up.sample(&self.id, p, None, CancellationToken::new()).await
             }
             "elicitation/create" => up.elicit(&self.id, params.unwrap_or(Value::Null)).await,
-            m if m.starts_with("alexia/") => Err(RpcError::new(
-                code::METHOD_NOT_FOUND,
-                format!("{m} is not available yet."),
-            )),
             _ => Err(RpcError::method_not_found()),
         }
     }
