@@ -36,3 +36,5 @@
 - 2026-11-18 CEO #5: P0-08 fix done; re-review ctx_98b31188d325. Builder note: nulls refused only at top level.
 - 2026-11-18 CEO #5: P0-06 build done; review ctx_f63db4e25ea5. Builder note: added tracing to alexia-store Cargo.toml; macOS unchecked.
 - 2026-11-18 CEO #5: P0-08 re-review: changes (nested nulls accepted, e.g. operations weight). Fixer ctx_4c32fb056b11 (opus), try 3.
+- 2026-11-18 CEO #5: P0-06 review approve; merged, integration green, pushed. Notes for later: delete_all not atomic (secrets.rs:48); test uses real plugin id hello (tests/secrets.rs:12); macOS keychain unchecked.
+- 2026-11-18 CEO #5: P0-07 dispatched (opus, ctx_ec02c3b734e0), alongside P0-08 fixer; disjoint paths.
