@@ -14,6 +14,7 @@ mod job;
 pub mod jsonrpc;
 pub mod manifest;
 mod process;
+mod serve;
 mod supervise;
 pub mod types;
 
