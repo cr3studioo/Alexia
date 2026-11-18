@@ -39,3 +39,5 @@
 - 2026-11-18 CEO #5: P0-06 review approve; merged, integration green, pushed. Notes for later: delete_all not atomic (secrets.rs:48); test uses real plugin id hello (tests/secrets.rs:12); macOS keychain unchecked.
 - 2026-11-18 CEO #5: P0-07 dispatched (opus, ctx_ec02c3b734e0), alongside P0-08 fixer; disjoint paths.
 - 2026-11-18 CEO #5: P0-08 fixer done (nested nulls refused); review 3 ctx_5eecee6643fb.
+- 2026-11-18 CEO #5: P0-08 review 3 approve; merged, integration green, pushed.
+- 2026-11-18 CEO #5: P0-10 dispatched (opus, ctx_727fd56e5249), alongside P0-07; disjoint paths.
