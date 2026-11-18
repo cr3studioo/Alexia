@@ -68,3 +68,4 @@
 - 2026-11-18 CEO #6: P0-12 fix done (timing bounds widened, 5/5 runs); re-review ctx_9516c0ffa120.
 - 2026-11-18 CEO #6: P1-14 build done (6 tests, agent.test.ts 34/34); review ctx_0d84fbeb2016.
 - 2026-11-18 CEO #6: pnpm check on Windows has a PRE-EXISTING failure: compute-connect.test.ts 'a paused request reader stalls uploads too' fails 2/2 on unchanged cr3studioo/v3 (fresh worktree). Decision: v2-path merges gate on pnpm check minus that one test. Owner's Mac likely passes it.
+- 2026-11-18 CEO #6: P0-12 re-review approve; merged, integration green, pushed. P0-13 dispatched (opus, ctx_825941c102ae).
