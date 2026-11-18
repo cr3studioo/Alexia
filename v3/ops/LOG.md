@@ -54,3 +54,4 @@
 - 2026-11-18 CEO #5: owner asked for remote control; /remotecontrol is not installed in this session, told owner.
 - 2026-11-18 CEO #5: P0-10 squashed to 1 commit; merged, integration green, pushed. P0-11 dispatched (opus, ctx_eb563202070f).
 - 2026-11-18 CEO #5: P0-11 build done; review ctx_99c8b24c6a5d. Builder notes: unparsable manifests only logged; in-flight call at stop -> killed after grace.
+- 2026-11-18 CEO #5: P0-11 review approve; merged, integration green, pushed. P0-12 dispatched (opus, ctx_0727d80ab409).
