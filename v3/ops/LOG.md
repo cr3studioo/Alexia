@@ -59,3 +59,5 @@
 - 2026-11-18 CEO #5: P1-03 dispatched (opus, ctx_f8fa63409c83) with db.rs follow-ups. P1-14 ready, held for Opus cap.
 - 2026-11-18 CEO #5: A-09 asked (OWNER.md + Telegram): test bot, provider key names, hedging terms.
 - 2026-11-18 CEO #5: handoff to CEO #6 after 6 rounds. P0-12 and P1-03 left running as live Orca workers.
+- 2026-11-18 CEO #6: started; rebound run_7a40b198ac83; P0-12 and P1-03 live. P1-03 allowed to bump 2 user_version asserts in alexia-store/tests/store.rs (1->2).
+- 2026-11-18 CEO #6: P1-03 build done (15 tests); review ctx_6c24dd72acff. Builder note: set_primary_chat on unseen chat -> Error::Invalid.
