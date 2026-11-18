@@ -74,3 +74,6 @@
 - 2026-11-18 CEO #6: P0-13 build done (12 tests); review ctx_cb50ee4af1f0. Builder doubt: _core/provenance shape guessed, falls back to id order.
 - 2026-11-19 CEO #6: P0-13 review approve; merged, integration green, pushed. Review follow-ups (purge disables first, purge carries on past keychain error, stored null -> default, drop provenance guess) filed as P0-17; CEO wrote that small spec directly (findings were exact, no planner needed).
 - 2026-11-19 CEO #6: P0-14 dispatched (sonnet, ctx_e3ba3ed97ab2); P0-17 dispatched (opus, ctx_d2600fd69609). Disjoint paths.
+- 2026-11-19 CEO #6: P0-17 asked how to test keychain-delete failure (no injection exists). Chose (a): skip that test, no test hook in alexia-store prod code; reviewer verifies by reading.
+- 2026-11-19 CEO #6: P0-17 build done; review ctx_acc85f9d9d88.
+- 2026-11-19 CEO #6: P0-14 build done (8 CLI tests, rusqlite dev-dep); review ctx_929168183459.
