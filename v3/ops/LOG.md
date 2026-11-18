@@ -43,3 +43,4 @@
 - 2026-11-18 CEO #5: P0-10 dispatched (opus, ctx_727fd56e5249), alongside P0-07; disjoint paths.
 - 2026-11-18 CEO #5: P0-07 build done; review ctx_c5974e3735d5. Builder note: kv/settings INSERT OR REPLACE; existing p_* table refused.
 - 2026-11-18 CEO #5: P0-07 review: changes (existing empty p_* table blocks import; check outside tx; verbatim/UNC URI; FK order). Fix round ctx_1d3b4448da38 (opus), try 2. Decision: INTERFACES.md §6 wording is a follow-up, not in P0-07 paths.
+- 2026-11-18 CEO #5: P0-10 build done; review ctx_6f80e723ae85. Builder note: Conn::start takes StderrLog; hand-ported redaction.
