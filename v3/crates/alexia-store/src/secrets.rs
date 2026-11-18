@@ -14,9 +14,16 @@ pub const MEMORY_BACKEND_ENV: &str = "ALEXIA_SECRETS_IN_MEMORY";
 const SERVICE: &str = "alexia";
 
 /// Service "alexia", account "<owner>.<key>", where owner is a plugin id or "_core".
-/// Never logged, never cached by callers.
+/// Never logged, never cached by callers. `env_name(owner, key)`, when set and non-empty, wins
+/// over the keychain (INTERFACES.md §0.3: environment variables for CI).
 pub fn get(owner: &str, key: &str) -> Result<Option<String>> {
     let account = account(owner, key)?;
+    if let Some(secret) = std::env::var(env_name(owner, key))
+        .ok()
+        .filter(|s| !s.is_empty())
+    {
+        return Ok(Some(secret));
+    }
     if in_memory() {
         Ok(mem::get(&account))
     } else {
@@ -47,6 +54,18 @@ pub fn delete(owner: &str, key: &str) -> Result<()> {
 
 pub fn delete_all(owner: &str, keys: &[String]) -> Result<()> {
     keys.iter().try_for_each(|key| delete(owner, key))
+}
+
+/// `ALEXIA_SECRET_<OWNER>_<KEY>`: uppercased, every character outside A-Z and 0-9 becomes `_`,
+/// so `_core`/`telegram_bot_token` → `ALEXIA_SECRET__CORE_TELEGRAM_BOT_TOKEN`.
+pub fn env_name(owner: &str, key: &str) -> String {
+    let clean = |s: &str| -> String {
+        s.chars()
+            .map(|c| c.to_ascii_uppercase())
+            .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+            .collect()
+    };
+    format!("ALEXIA_SECRET_{}_{}", clean(owner), clean(key))
 }
 
 fn in_memory() -> bool {
