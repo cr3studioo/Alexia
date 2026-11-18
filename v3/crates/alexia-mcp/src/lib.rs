@@ -7,10 +7,21 @@ use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
 pub mod alexia;
+mod conn;
 mod error;
+mod job;
 pub mod jsonrpc;
 pub mod manifest;
+mod process;
 pub mod types;
+
+/// Crate-private pieces, re-exported only so `tests/conn.rs` can drive them.
+#[doc(hidden)]
+pub mod testing {
+    pub use crate::conn::{Conn, Incoming};
+    pub use crate::job::Job;
+    pub use crate::process::{spawn, stop, Proc, StderrLog};
+}
 
 pub use alexia_store::{Cond, Dir, Operator, Row, Scalar, Where};
 pub use error::{Error, Result};

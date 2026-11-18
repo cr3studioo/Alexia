@@ -18,3 +18,8 @@ async-trait.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
 tracing.workspace = true
+
+# Job Objects have no std or tokio API, and without one a plugin's own children outlive it on
+# Windows (INTERFACES.md §3.2).
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_System_JobObjects", "Win32_System_Threading", "Win32_Foundation", "Win32_Security"] }
