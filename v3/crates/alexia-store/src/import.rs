@@ -3,13 +3,18 @@
 //!
 //! The database half is one transaction. The file half copies, never moves, and can be repeated
 //! on its own (`import_v2_files`). Secrets are never read or written here.
+//!
+//! A hub that has run its plugins already has their `p_*` tables, created empty at plugin
+//! start. A hub table with v2's name and no rows is dropped in the import's transaction and
+//! made again from v2's definition; one that holds rows refuses the import, so nothing the hub
+//! wrote is lost.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use rusqlite::{params, Connection, OpenFlags, OptionalExtension};
+use rusqlite::{params, Connection, OpenFlags, OptionalExtension, TransactionBehavior};
 
 use crate::{is_ident, Error, Layout, MessageBody, Result, Store};
 
@@ -58,18 +63,30 @@ fn is_plugin_id(s: &str) -> bool {
         && b.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')
 }
 
-/// `file:/C:/…?mode=ro`: SQLite URI with forward slashes and `%`, `?`, `#` escaped.
 fn ro_uri(path: &Path) -> Result<String> {
-    let abs = std::path::absolute(path)?;
-    let mut s = abs.to_string_lossy().replace('\\', "/");
-    if !s.starts_with('/') {
-        s.insert(0, '/');
-    }
+    Ok(uri(&std::path::absolute(path)?.to_string_lossy()))
+}
+
+/// `file:/C:/…?mode=ro`, `file:////server/share/…?mode=ro` or `file:/home/…?mode=ro`: forward
+/// slashes, the Windows `\\?\` and `\\?\UNC\` prefixes dropped, `%`, `?`, `#` escaped.
+fn uri(path: &str) -> String {
+    let s = path.replace('\\', "/");
+    let s = match (s.strip_prefix("//?/UNC/"), s.strip_prefix("//?/")) {
+        (Some(unc), _) => format!("//{unc}"),
+        (None, Some(local)) => local.to_owned(),
+        (None, None) => s,
+    };
     let s = s
         .replace('%', "%25")
         .replace('?', "%3F")
         .replace('#', "%23");
-    Ok(format!("file:{s}?mode=ro"))
+    if s.starts_with("//") {
+        format!("file://{s}?mode=ro")
+    } else if s.starts_with('/') {
+        format!("file:{s}?mode=ro")
+    } else {
+        format!("file:/{s}?mode=ro")
+    }
 }
 
 /// §6, all of it: checks, one transaction, the `imports` row, then the files.
@@ -92,16 +109,6 @@ pub fn import_v2(store: &Store, v2_root: &Path, v3: &Layout) -> Result<ImportRep
         if !(1..=V2_LATEST).contains(&version) {
             return Err(refused(
                 "This v2 data is from a newer Alexia than the importer knows.",
-            ));
-        }
-        let taken: bool = store.conn().query_row(
-            "SELECT EXISTS (SELECT 1 FROM imports) OR EXISTS (SELECT 1 FROM sessions)",
-            [],
-            |r| r.get(0),
-        )?;
-        if taken {
-            return Err(refused(
-                "This hub already has conversations, so v2 data was not imported over them.",
             ));
         }
         v2.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()))?;
@@ -142,7 +149,20 @@ fn columns(conn: &Connection, schema: &str, table: &str) -> Result<Vec<String>> 
 
 /// The database half, in one transaction. Returns the `imports` row id and the report so far.
 fn copy_db(conn: &mut Connection, v2_root: &Path, v2_schema: i64) -> Result<(i64, ImportReport)> {
-    let tx = conn.transaction()?;
+    // Immediate: the write lock is held from this check to commit, so no session slips in.
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let taken: bool = tx.query_row(
+        "SELECT EXISTS (SELECT 1 FROM imports) OR EXISTS (SELECT 1 FROM sessions)",
+        [],
+        |r| r.get(0),
+    )?;
+    if taken {
+        return Err(refused(
+            "This hub already has conversations, so v2 data was not imported over them.",
+        ));
+    }
+    // v2's `p_*` tables may reference each other in any order; checked once, at commit.
+    tx.execute_batch("PRAGMA defer_foreign_keys = ON")?;
     let mut rows = Vec::new();
     let mut skipped = Vec::new();
 
@@ -218,7 +238,8 @@ fn copy_db(conn: &mut Connection, v2_root: &Path, v2_schema: i64) -> Result<(i64
     }
     ids.retain(|id| is_plugin_id(id));
 
-    let mut owned: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    // Every `p_*` table is created before any is filled: an insert needs its parent to exist.
+    let mut plugin_tables = Vec::new();
     for (name, sql) in &v2_tables {
         if CORE_TABLES.contains(&name.as_str()) || LEFT_BEHIND.contains(&name.as_str()) {
             continue;
@@ -230,14 +251,23 @@ fn copy_db(conn: &mut Connection, v2_root: &Path, v2_schema: i64) -> Result<(i64
             continue;
         };
         let exists: bool = tx.query_row(
-            "SELECT EXISTS (SELECT 1 FROM main.sqlite_master WHERE name = ?)",
+            "SELECT EXISTS (SELECT 1 FROM main.sqlite_master WHERE type = 'table' AND name = ?)",
             [name],
             |r| r.get(0),
         )?;
         if exists {
-            return Err(Error::Refused(format!(
-                "This hub already has a table named {name}, so v2 data was not imported over it."
-            )));
+            let filled: bool = tx.query_row(
+                &format!("SELECT EXISTS (SELECT 1 FROM main.{})", q(name)),
+                [],
+                |r| r.get(0),
+            )?;
+            if filled {
+                return Err(Error::Refused(format!(
+                    "This hub already has rows in a table named {name}, so v2 data was not \
+                     imported over them."
+                )));
+            }
+            tx.execute_batch(&format!("DROP TABLE main.{}", q(name)))?;
         }
         // Unqualified CREATE lands in main. `execute` refuses a second statement.
         tx.execute(sql, [])?;
@@ -252,8 +282,19 @@ fn copy_db(conn: &mut Connection, v2_root: &Path, v2_schema: i64) -> Result<(i64
         for sql in indexes {
             tx.execute(&sql, [])?;
         }
+        plugin_tables.push(name);
+    }
+
+    let mut owned: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for name in plugin_tables {
+        // `WHERE true` turns off SQLite's table-to-table copy, which skips the deferred
+        // foreign-key count a parent's rows must settle; without it a child copied first
+        // still fails at commit.
         let n = tx.execute(
-            &format!("INSERT INTO main.{t} SELECT * FROM v2.{t}", t = q(name)),
+            &format!(
+                "INSERT INTO main.{t} SELECT * FROM v2.{t} WHERE true",
+                t = q(name)
+            ),
             [],
         )?;
         rows.push((name.clone(), n as u64));
@@ -367,4 +408,40 @@ fn copy_tree(from: &Path, to: &Path, skipped: &mut Vec<String>) -> Result<u64> {
         }
     }
     Ok(n)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::uri;
+
+    #[test]
+    fn uri_of_a_drive_path() {
+        assert_eq!(
+            uri(r"C:\Users\v\a b\alexia.db"),
+            "file:/C:/Users/v/a b/alexia.db?mode=ro"
+        );
+    }
+
+    #[test]
+    fn uri_of_a_verbatim_path() {
+        assert_eq!(
+            uri(r"\\?\C:\data\100%\alexia.db"),
+            "file:/C:/data/100%25/alexia.db?mode=ro"
+        );
+    }
+
+    #[test]
+    fn uri_of_a_unc_path() {
+        let want = "file:////server/share/v2/alexia.db?mode=ro";
+        assert_eq!(uri(r"\\server\share\v2\alexia.db"), want);
+        assert_eq!(uri(r"\\?\UNC\server\share\v2\alexia.db"), want);
+    }
+
+    #[test]
+    fn uri_of_a_unix_path() {
+        assert_eq!(
+            uri("/home/v/#1/alexia.db"),
+            "file:/home/v/%231/alexia.db?mode=ro"
+        );
+    }
 }
