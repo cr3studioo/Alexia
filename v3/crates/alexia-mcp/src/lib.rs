@@ -9,6 +9,7 @@ use tokio_util::sync::CancellationToken;
 pub mod alexia;
 mod conn;
 mod error;
+mod host;
 mod job;
 pub mod jsonrpc;
 pub mod manifest;
@@ -25,6 +26,7 @@ pub mod testing {
 
 pub use alexia_store::{Cond, Dir, Operator, Row, Scalar, Where};
 pub use error::{Error, Result};
+pub use host::McpHost;
 pub use manifest::{discover, Manifest, ManifestError, PluginDir};
 
 /// A plugin's id as read from its manifest. Opaque to everything above this crate: core may
