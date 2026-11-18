@@ -37,7 +37,12 @@ const hosted = model({ id: 'hosted', tier: 'T1', priceIn: 1 })
  * One scripted assistant turn: it calls something, it answers, it fails with a status, or it
  * starts answering and the connection dies under it.
  */
-type Turn = { say: string } | { call: string; args?: string } | { status: number } | { dies: string }
+type Turn =
+  | { say: string }
+  | { call: string; args?: string }
+  | { calls: { name: string; args?: string }[] }
+  | { status: number }
+  | { dies: string }
 
 let script: Turn[] = []
 /** Which model id served each step, in order. The per-step tiering assertions read this. */
@@ -79,6 +84,14 @@ const server: Server = createServer((request, response) => {
               function: { name: turn.call, arguments: turn.args ?? '{}' },
             },
           ],
+        }
+      : 'calls' in turn ?
+        {
+          tool_calls: turn.calls.map((one, index) => ({
+            index,
+            id: `c${String(served.length)}.${String(index)}`,
+            function: { name: one.name, arguments: one.args ?? '{}' },
+          })),
         }
       : { content: turn.say }
     response.writeHead(200, { 'content-type': 'text/event-stream' })
@@ -1007,4 +1020,181 @@ test('the speed switch reaches the walk: Fastest starts three providers at once,
   expect(await partners('fastest')).toEqual(['fastest', 'fastest'])
   expect(await partners('balanced', shaky)).toEqual(['lately'])
   expect(await partners('balanced')).toEqual([])
+})
+
+// SP-16: several calls in one turn. The gate is one question at a time, in the model's order;
+// what the gate lets through runs at once; results go back in the model's order.
+
+/** A tool that answers `text` after `ms`, or gives up the moment the signal is pulled. */
+const after = (ms: number, text: string, signal?: AbortSignal): Promise<{ text: string; ok: boolean }> =>
+  new Promise((resolve) => {
+    const timer = setTimeout(() => resolve({ text, ok: true }), ms)
+    signal?.addEventListener('abort', () => {
+      clearTimeout(timer)
+      resolve({ text: `${text} (stopped)`, ok: false })
+    })
+  })
+
+test('independent calls run at the same time', async () => {
+  script = [{ calls: [{ name: 'notes.read', args: '{"which":"a"}' }, { name: 'notes.read', args: '{"which":"b"}' }] }, { say: 'both read' }]
+  served = []
+  const { store, session, world } = bench()
+  const tools = tooling({ call: (_name, args) => after(200, `note ${String(args['which'])}`) })
+  let began = 0
+  let ended = 0
+
+  const result = await run({
+    messages: start('read both'),
+    tools,
+    pins,
+    world,
+    store,
+    secrets,
+    session,
+    on: { step: () => (began ||= performance.now()), done: () => (ended = performance.now()) },
+  })
+
+  expect(result.ended).toBe('answered')
+  expect(result.steps.map((s) => s.outcome?.ok)).toEqual([true, true])
+  // One after the other would be 400 ms; together it is one wait.
+  expect(ended - began).toBeLessThan(350)
+  // Both results reached the next model request.
+  expect(shownTurns()).toBe(2)
+  const shown = body?.messages.filter((m) => m.role === 'tool').map((m) => m.content)
+  expect(shown).toEqual(['note a', 'note b'])
+  store.close()
+})
+
+test('approvals are asked one at a time in call order', async () => {
+  script = [{ calls: [{ name: 'notes.read', args: '{"which":"first"}' }, { name: 'notes.read', args: '{"which":"second"}' }] }, { say: 'ok' }]
+  served = []
+  const { store, session, world } = bench()
+  const asked: string[] = []
+  let open = 0
+  let most = 0
+
+  const result = await run({
+    messages: start('read both'),
+    tools: tooling(),
+    pins,
+    world,
+    store,
+    secrets,
+    session,
+    guard: ({ args }) => ({ verdict: 'ask', why: `read ${String(args['which'])}?` }),
+    approve: async (ruling) => {
+      asked.push(ruling.why)
+      open += 1
+      most = Math.max(most, open)
+      await new Promise((resolve) => setTimeout(resolve, 30))
+      open -= 1
+      return true
+    },
+  })
+
+  expect(result.ended).toBe('answered')
+  expect(asked).toEqual(['read first?', 'read second?'])
+  // Never two questions on screen at once.
+  expect(most).toBe(1)
+  store.close()
+})
+
+test("results keep the model's order", async () => {
+  script = [{ calls: [{ name: 'notes.slow' }, { name: 'notes.fast' }] }, { say: 'ok' }]
+  served = []
+  const { store, session, world } = bench()
+  const finished: string[] = []
+  const tools = tooling({ call: (name) => after(name === 'notes.slow' ? 120 : 10, name) })
+
+  await run({ messages: start('go'), tools, pins, world, store, secrets, session, on: { done: (step) => finished.push(step.name) } })
+
+  // The second finished first…
+  expect(finished).toEqual(['notes.fast', 'notes.slow'])
+  // …and the stored history is still first call, second call.
+  const stored = store.history(session).filter((m) => m.role === 'tool')
+  expect(stored.map((m) => [m.callId, m.content])).toEqual([
+    ['c1.0', 'notes.slow'],
+    ['c1.1', 'notes.fast'],
+  ])
+  store.close()
+})
+
+test('a refused call does not hold up the others', async () => {
+  script = [{ calls: [{ name: 'files.delete' }, { name: 'notes.read' }] }, { say: 'ok' }]
+  served = []
+  const { store, session, world } = bench()
+  const tools = tooling()
+  const finished: string[] = []
+
+  const result = await run({
+    messages: start('go'),
+    tools,
+    pins,
+    world,
+    store,
+    secrets,
+    session,
+    guard: ({ name }) => (name === 'files.delete' ? { verdict: 'blocked', why: 'Deleting is off.' } : { verdict: 'run' }),
+    on: { done: (step) => finished.push(step.name) },
+  })
+
+  expect(result.ended).toBe('answered')
+  // The refused one never reached the tools; the allowed one ran.
+  expect(tools.calls.map((c) => c.name)).toEqual(['notes.read'])
+  expect(result.steps.map((s) => [s.name, s.outcome?.ok, s.outcome?.text])).toEqual([
+    ['files.delete', false, 'Deleting is off.'],
+    ['notes.read', true, 'the note says hi'],
+  ])
+  expect(finished.sort()).toEqual(['files.delete', 'notes.read'])
+  store.close()
+})
+
+test('stop during parallel calls stops all', async () => {
+  script = [{ calls: [{ name: 'notes.a' }, { name: 'notes.b' }] }, { say: 'must not be asked' }]
+  served = []
+  const { store, session, world } = bench()
+  const stop = new AbortController()
+  const tools = tooling({ call: (name, _args, signal) => after(5_000, name, signal) })
+  const seen: Step[] = []
+
+  const result = await run({
+    messages: start('go'),
+    tools,
+    pins,
+    world,
+    store,
+    secrets,
+    session,
+    signal: stop.signal,
+    on: {
+      // Pressed once both are running: the gate is done in a moment, the tools take seconds.
+      step: (step) => {
+        if (step.n === 1) setTimeout(() => stop.abort(), 50)
+      },
+      done: (step) => seen.push(step),
+    },
+  })
+
+  expect(result.ended).toBe('stopped')
+  // Both were in flight, both heard the stop, both were recorded.
+  expect(tools.calls.map((c) => c.name)).toEqual(['notes.a', 'notes.b'])
+  expect(seen.map((s) => s.outcome?.text).sort()).toEqual(['notes.a (stopped)', 'notes.b (stopped)'])
+  expect(store.history(session).filter((m) => m.role === 'tool')).toHaveLength(2)
+  // No model turn after the stop.
+  expect(served).toHaveLength(1)
+  store.close()
+})
+
+test('the ceiling inside one turn runs what fits, then stops on the ceiling', async () => {
+  script = [{ calls: [{ name: 'notes.a' }, { name: 'notes.b' }, { name: 'notes.c' }] }, { say: 'must not be asked' }]
+  served = []
+  const { store, session, world } = bench()
+  const tools = tooling()
+
+  const result = await run({ messages: start('go'), tools, pins, world, store, secrets, session, maxSteps: 2 })
+
+  expect(result.ended).toBe('ceiling')
+  expect(tools.calls.map((c) => c.name)).toEqual(['notes.a', 'notes.b'])
+  expect(store.history(session).filter((m) => m.role === 'tool')).toHaveLength(2)
+  store.close()
 })
