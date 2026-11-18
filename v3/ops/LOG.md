@@ -49,3 +49,4 @@
 - 2026-11-18 CEO #5: P0 is now a serial chain; P1 Planner dispatched (opus, ctx_1bb7bc898375) in its own worktree/branch cr3studioo/v3-plan-P1 so it cannot collide with book commits in the main checkout. CEO merges that branch.
 - 2026-11-18 CEO #5: P0-10 review: changes (4 redaction leaks: cut before redact, JS \s set, JS \b, secret order). Fix round ctx_ee86406d2598 (opus), try 2. Notes for P0-11 in STATE.
 - 2026-11-18 CEO #5: P0-10 fix done (4 leaks); re-review ctx_8c6d81de8d06.
+- 2026-11-18 CEO #5: P0-10 re-reviewer and P1 planner hit the 5-hour usage limit mid-task (no worker_done). Owner restored usage and said to restart; CEO typed continue into both terminals; both resumed. Lesson: a live worker with activity done and no worker_done may be limit-paused: read its terminal (orca terminal read --screen).
