@@ -252,7 +252,8 @@ fn settings(host: &McpHost, m: &Manifest) -> Result<Map<String, Value>, RpcError
             }
             continue;
         }
-        if let Some(v) = stored.get(key).or(default) {
+        // A stored null falls back to the default, as v2's `??`.
+        if let Some(v) = stored.get(key).filter(|v| !v.is_null()).or(default) {
             out.insert(key.into(), v.clone());
         }
     }
