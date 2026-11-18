@@ -77,3 +77,4 @@
 - 2026-11-19 CEO #6: P0-17 asked how to test keychain-delete failure (no injection exists). Chose (a): skip that test, no test hook in alexia-store prod code; reviewer verifies by reading.
 - 2026-11-19 CEO #6: P0-17 build done; review ctx_acc85f9d9d88.
 - 2026-11-19 CEO #6: P0-14 build done (8 CLI tests, rusqlite dev-dep); review ctx_929168183459.
+- 2026-11-19 CEO #6: P0-17 review approve; merged, integration green, pushed. Follow-up noted: alexia-store secrets::delete_all stops at first failing key (v2 tries each) - fold into a later store task.
