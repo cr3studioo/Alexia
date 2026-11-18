@@ -81,3 +81,4 @@
 - 2026-11-19 CEO #6: P0-14 review: changes (bus subscribe after start, import-v2 missing dir exit 0, no tracing on tools/plugins, args() panics). Fix round ctx_09570616babe (sonnet), try 2. rusqlite dev-dep OK.
 - 2026-11-19 CEO #6: supervise.rs:444 idle_lazy_plugin_stops flaked once under P0-14 review (3 reruns pass). Follow-up: widen idle bound.
 - 2026-11-19 CEO #6: P0-18 (de-flake idle test) spec written by CEO, dispatched (sonnet, ctx_c1ef1998cf44).
+- 2026-11-19 CEO #6: handoff to CEO #7 after 6 rounds. P0-14 fix and P0-18 left running as live Orca workers.

@@ -1,29 +1,30 @@
-# Handoff · 2026-11-18 · CEO #5 → CEO #6
+# Handoff · 2026-11-19 · CEO #6 → CEO #7
 
 ## Where we are
-P0: 11/16 merged (P0-01..P0-11). Running: P0-12 build (ctx_0727d80ab409). Todo: P0-13..P0-16 (serial chain).
-P1: planned (v3/specs/P1/, 18 tasks). Running: P1-03 build (ctx_f8fa63409c83). Ready: P1-14. Rest todo.
+P0: 14/18 merged (P0-01..P0-13, P0-17). Running: P0-14 fix round (ctx_09570616babe), P0-18 build (ctx_c1ef1998cf44). Todo: P0-15, P0-16.
+P1: 2/18 merged (P1-03, P1-14). Rest todo (P1-01 waits on P0-15).
 Failed: 0. Blocked-owner: 0.
 
 ## What I'd do next
-1. Rebind Orca run run_7a40b198ac83 (run-use). Wait for P0-12 and P1-03 worker_done, then review each (opus reviewer) and merge.
-2. Dispatch P1-14 (v2 packages/core/src/agent.ts, opus) when an Opus slot frees; it touches v2, so `pnpm check` at repo root after merge.
-3. P0-12 merged -> P0-13 -> P0-14 -> P0-15 -> P0-16 (P0-16 builder prompt must allow .github/workflows/v3.yml and v3/ci/ only). P0-15 merged -> P1-01 -> P1-02 unlocks most of P1.
-4. When P0 is fully merged: G-P0 is a notice only (A-03): tell the owner what runs and the command.
+1. Rebind run_7a40b198ac83 (orca orchestration run-use --id ...). Wait (bash C:\dev\Alexia-wt\wait.sh in background) for P0-14 fix and P0-18 worker_done.
+2. P0-14: opus re-review of the fix commits only, then merge. P0-18: opus review, merge.
+3. P0-15 (sonnet) right after P0-14 merges; it is the gate to all of P1 via P1-01.
+4. P0-16 after P0-15: its builder prompt must lift the workflow rule for .github/workflows/v3.yml and v3/ci/ only (template.sh start takes a 4th arg for an extra rule line; replace the workflows line by hand instead).
+5. When P0 is fully merged: G-P0 notice to the owner (A-03): what runs and the command (v3\target\release\alexia-hub.exe tools / run), and the by-hand v2-plugins tools check P0-14 left for the owner. Run the whole-phase P0 review (§8, also due by merge count).
 
 ## Watch out for
-- Orca check output starts with keepalive JSON lines; C:\dev\Alexia-wt\msgs.py parses it, C:\dev\Alexia-wt\wait.sh loops until a non-heartbeat message (run it in the background). Never run two checks at once; they clobber each other.
-- Workers can stall on the 5-hour usage limit with activity done and no worker_done. Read the terminal (orca terminal read --terminal <term_...> --screen --json) and, once usage is back, type continue into it (orca terminal send --text continue --enter).
-- GitHub push protection refuses fake credential literals (AKIA..., etc.) in any commit. Every builder prompt now says to build them from halves with concat!. If a push is refused: reset the local merge to origin, have a fixer split the literals and squash the task branch.
-- Reviewers often find real v2-parity gaps; budget 1-2 fix rounds per opus task.
-- C:\dev\Alexia-wt\plan-P1 folder could not be deleted (locked); delete it when free. Its branch is gone.
-- The `/remotecontrol` slash command is not installed in CEO sessions; the owner asked for remote control once.
+- The owner's chat gets a "You have 1 orchestration message" line for every heartbeat. wait.sh filters heartbeats; when the owner forwards one, stop wait.sh (TaskStop) before running check yourself — never two checks at once.
+- Orca sometimes redelivers a worker_done already handled; just ack it.
+- pnpm check on Windows is never fully green (see STATE). Compare against a base run in base2 before blaming a branch.
+- Timing tests flake under load; ask builders for generous bounds (now in template.sh).
+- GitHub push protection refuses fake credential literals; rule is in every builder prompt.
 
 ## Open owner asks
-- A-09: P1 test bot, which free provider keys (names only, >=2), hedging terms OK. Sent on Telegram. Last update_id processed: none.
+- A-09: P1 test bot, which free provider keys (names only, >=2), hedging terms OK. No reply yet.
 
 ## Decisions I made (also in LOG.md)
-- P0-07: INSERT OR REPLACE on kv/settings kept; empty hub p_* tables replaced, filled refused.
-- P0-08: v2 parity means refusing null in nested strict objects too, settings excepted.
-- Planner ran in its own worktree/branch to avoid colliding with book commits; CEO merged it.
-- P1-03 also carries the db.rs:107/109 follow-ups.
+- P1-03 allowed a 2-line user_version assert bump in alexia-store/tests/store.rs.
+- P0-13 allowed one stderr logging line in mcp-fixture.rs.
+- v2-path merges gate on pnpm check minus the known Windows failures listed in STATE.
+- Small follow-up specs written by the CEO directly when the reviewer named the exact fixes (P0-17, P0-18).
+- P0-17: keychain-delete-failure test skipped rather than adding a test hook to alexia-store prod code.
