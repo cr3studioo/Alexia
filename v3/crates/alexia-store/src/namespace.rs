@@ -180,22 +180,34 @@ fn compile(filter: Option<&Where>, cols: &[String], table: &str) -> Result<(Stri
     Ok((sql, params))
 }
 
-/// A column value as JSON. Text that starts with `{` or `[` and parses comes back parsed.
+/// A column value as JSON. Text stays text, as in v2: a stored object comes back as its JSON.
 fn decode(v: ValueRef<'_>) -> Json {
     match v {
         ValueRef::Null => Json::Null,
         ValueRef::Integer(i) => Json::from(i),
         ValueRef::Real(f) => serde_json::Number::from_f64(f).map_or(Json::Null, Json::Number),
-        ValueRef::Text(t) | ValueRef::Blob(t) => {
-            let s = String::from_utf8_lossy(t);
-            if s.starts_with('{') || s.starts_with('[') {
-                if let Ok(parsed) = serde_json::from_str(&s) {
-                    return parsed;
-                }
+        ValueRef::Text(t) | ValueRef::Blob(t) => Json::String(String::from_utf8_lossy(t).into()),
+    }
+}
+
+/// Every physical name another namespace has recorded.
+fn others(conn: &Connection, ns: &str) -> Result<BTreeSet<String>> {
+    let mut stmt =
+        conn.prepare("SELECT key, value FROM kv WHERE ns = ? AND key LIKE 'tables:%'")?;
+    let rows = stmt.query_map([CORE], |r| {
+        Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+    })?;
+    let mut names = BTreeSet::new();
+    for r in rows {
+        let (key, value) = r?;
+        let other = &key["tables:".len()..];
+        if other != ns {
+            for t in serde_json::from_str::<BTreeSet<String>>(&value)? {
+                names.insert(physical(other, &t)?);
             }
-            Json::String(s.into_owned())
         }
     }
+    Ok(names)
 }
 
 fn to_i64(n: u64) -> i64 {
@@ -210,13 +222,29 @@ impl Store {
             .map(|t| physical(ns, t))
             .collect::<Result<Vec<_>>>()?;
         self.transaction(|tx| {
+            // `a`/`b_x` and `a-b`/`x` are both `p_a_b_x`: a new name must be free.
+            let mine = declared(tx, ns)?;
+            let taken = others(tx, ns)?;
+            for (table, name) in tables.iter().zip(&names) {
+                if mine.contains(table) {
+                    continue;
+                }
+                let exists: bool = tx.query_row(
+                    "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE name = ?)",
+                    [name],
+                    |r| r.get(0),
+                )?;
+                if exists || taken.contains(name) {
+                    return Err(Error::Invalid(format!("{table} is already taken.")));
+                }
+            }
             for name in &names {
                 tx.execute_batch(&format!(
                     "CREATE TABLE IF NOT EXISTS {} (rowid INTEGER PRIMARY KEY)",
                     q(name)
                 ))?;
             }
-            let mut record = declared(tx, ns)?;
+            let mut record = mine;
             record.extend(tables.iter().cloned());
             tx.execute(
                 "INSERT INTO kv (ns, key, value) VALUES (?, ?, ?) \
@@ -355,7 +383,7 @@ impl Store {
     }
 
     /// In one transaction: the tables recorded for `ns`, that record, the plugin's kv and
-    /// settings. Only recorded tables are dropped: `a`/`b_x` and `a-b`/`x` share a name.
+    /// settings. Only recorded tables are dropped; create_tables refuses shared names.
     pub fn purge(&self, plugin: &str, ns: Option<&str>) -> Result<()> {
         self.transaction(|tx| {
             if let Some(ns) = ns {

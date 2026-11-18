@@ -87,7 +87,8 @@ fn insert_grows_columns_with_v2_types() {
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0]["rowid"], json!(1));
     assert_eq!(rows[0]["b"], json!(1));
-    assert_eq!(rows[0]["o"], json!({"k": 1}));
+    // Text is never parsed, as in v2: an object comes back as its JSON text.
+    assert_eq!(rows[0]["o"], json!("{\"k\":1}"));
     assert_eq!(rows[0]["x"], json!(1.5));
     assert_eq!(rows[0]["text"], json!("a"));
     assert_eq!(rows[0]["z"], Value::Null);
@@ -239,11 +240,39 @@ fn injection_is_refused() {
 
 #[test]
 fn hyphenated_namespace() {
-    let s = store("web-research", &["pages"]);
-    s.insert("web-research", "pages", &row(json!({"url": "u"})))
+    let s = store("two-part", &["pages"]);
+    s.insert("two-part", "pages", &row(json!({"url": "u"})))
         .unwrap();
-    assert!(tables(&s).contains(&"p_web_research_pages".to_string()));
-    assert_eq!(s.count("web-research", "pages", None).unwrap(), 1);
+    assert!(tables(&s).contains(&"p_two_part_pages".to_string()));
+    assert_eq!(s.count("two-part", "pages", None).unwrap(), 1);
+}
+
+#[test]
+fn arrays_come_back_as_text() {
+    let s = store("demo", &["t"]);
+    s.insert("demo", "t", &row(json!({"a": [1, 2], "s": "[not json"})))
+        .unwrap();
+    let rows = s.select("demo", "t", &Select::default()).unwrap();
+    assert_eq!(rows[0]["a"], json!("[1,2]"));
+    assert_eq!(rows[0]["s"], json!("[not json"));
+}
+
+#[test]
+fn colliding_physical_name_is_refused() {
+    let s = store("a", &["b_x"]);
+    s.insert("a", "b_x", &row(json!({"v": 1}))).unwrap();
+    // `a-b`/`x` is also `p_a_b_x`.
+    assert!(matches!(
+        s.create_tables("a-b", &["x".into()]),
+        Err(Error::Invalid(_))
+    ));
+    assert_eq!(s.kv_get("_core", "tables:a-b").unwrap(), None);
+    // Recreating your own table is still fine.
+    s.create_tables("a", &["b_x".into()]).unwrap();
+    s.purge("a-b", Some("a-b")).unwrap();
+    assert_eq!(s.count("a", "b_x", None).unwrap(), 1);
+    let rows = s.select("a", "b_x", &Select::default()).unwrap();
+    assert_eq!(rows[0]["v"], json!(1));
 }
 
 #[test]
