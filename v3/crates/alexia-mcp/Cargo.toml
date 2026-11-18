@@ -11,3 +11,10 @@ workspace = true
 
 [dependencies]
 alexia-store = { path = "../alexia-store" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+async-trait.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+tracing.workspace = true
