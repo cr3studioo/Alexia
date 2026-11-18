@@ -59,11 +59,14 @@ fn message_classifies_lines() {
         m => panic!("expected a notification, got {m:?}"),
     }
     // A wrong version marker is not a message at all.
-    assert!(serde_json::from_str::<Message>(r#"{"jsonrpc":"1.0","id":1,"method":"ping"}"#).is_err());
+    assert!(
+        serde_json::from_str::<Message>(r#"{"jsonrpc":"1.0","id":1,"method":"ping"}"#).is_err()
+    );
 
     // And back out: Outcome flattens to "result"/"error" keys, ids keep their type.
     let ok = json!({"jsonrpc":"2.0","id":"s","result":{}});
-    let err = json!({"jsonrpc":"2.0","id":9,"error":{"code":-32602,"message":"bad","data":{"k":1}}});
+    let err =
+        json!({"jsonrpc":"2.0","id":9,"error":{"code":-32602,"message":"bad","data":{"k":1}}});
     for v in [ok, err] {
         let m: Message = serde_json::from_value(v.clone()).unwrap();
         assert_eq!(serde_json::to_value(&m).unwrap(), v);
@@ -104,7 +107,10 @@ fn tool_keeps_meta_and_annotations() {
         "_meta": {"alexia/provides": ["demo.greet"], "x/other": {"kept": 1}}
     });
     let tool: Tool = serde_json::from_value(wire.clone()).unwrap();
-    assert_eq!(tool.annotations.as_ref().unwrap().read_only_hint, Some(true));
+    assert_eq!(
+        tool.annotations.as_ref().unwrap().read_only_hint,
+        Some(true)
+    );
     assert_eq!(
         tool.meta.as_ref().unwrap()["alexia/provides"],
         json!(["demo.greet"])
@@ -134,24 +140,51 @@ fn alexia_call_parse() {
     let samples: [(&str, Value); 20] = [
         ("alexia/settings/get", json!({})),
         ("alexia/settings/set", json!({"key":"status","value":"ok"})),
-        ("alexia/storage/insert", json!({"table":"notes","row":{"text":"a"}})),
-        ("alexia/storage/select", json!({"table":"notes","where":{"id":{"gt":1}},"limit":5})),
-        ("alexia/storage/update", json!({"table":"notes","set":{"text":"b"},"where":{"id":1}})),
+        (
+            "alexia/storage/insert",
+            json!({"table":"notes","row":{"text":"a"}}),
+        ),
+        (
+            "alexia/storage/select",
+            json!({"table":"notes","where":{"id":{"gt":1}},"limit":5}),
+        ),
+        (
+            "alexia/storage/update",
+            json!({"table":"notes","set":{"text":"b"},"where":{"id":1}}),
+        ),
         ("alexia/storage/delete", json!({"table":"notes","all":true})),
         ("alexia/storage/count", json!({"table":"notes"})),
         ("alexia/storage/kv/get", json!({"key":"k"})),
         ("alexia/storage/kv/set", json!({"key":"k","value":[1,2]})),
         ("alexia/storage/kv/delete", json!({"key":"k"})),
-        ("alexia/storage/raw", json!({"sql":"SELECT 1","params":[1,"a",null]})),
-        ("alexia/capability/call", json!({"cap":"demo.greet","arguments":{"who":"Sam"}})),
+        (
+            "alexia/storage/raw",
+            json!({"sql":"SELECT 1","params":[1,"a",null]}),
+        ),
+        (
+            "alexia/capability/call",
+            json!({"cap":"demo.greet","arguments":{"who":"Sam"}}),
+        ),
         ("alexia/answers", json!({"cap":"voice.speak"})),
         ("alexia/host/info", json!({})),
-        ("alexia/compute/run", json!({"cap":"image.edit","inputs":[{"name":"a","path":"p","mime":"image/png"}]})),
-        ("alexia/attachments/lease", json!({"conversationId":"c","attachmentIds":["a"]})),
+        (
+            "alexia/compute/run",
+            json!({"cap":"image.edit","inputs":[{"name":"a","path":"p","mime":"image/png"}]}),
+        ),
+        (
+            "alexia/attachments/lease",
+            json!({"conversationId":"c","attachmentIds":["a"]}),
+        ),
         ("alexia/attachments/release", json!({"leaseId":"l"})),
         ("alexia/attachments/live", json!({"leaseId":"l"})),
-        ("alexia/attachments/register", json!({"conversationId":"c","path":"p","origin":"normalized"})),
-        ("alexia/attachments/share", json!({"conversationId":"c","path":"p","mime":"image/png"})),
+        (
+            "alexia/attachments/register",
+            json!({"conversationId":"c","path":"p","origin":"normalized"}),
+        ),
+        (
+            "alexia/attachments/share",
+            json!({"conversationId":"c","path":"p","mime":"image/png"}),
+        ),
     ];
     for (method, params) in samples {
         let call = AlexiaCall::parse(method, Some(params))
@@ -175,11 +208,17 @@ fn alexia_call_parse() {
             (AlexiaCall::Answers(c), "alexia/answers") => c.cap == "voice.speak",
             (AlexiaCall::HostInfo(_), "alexia/host/info") => true,
             (AlexiaCall::ComputeRun(p), "alexia/compute/run") => p.inputs.len() == 1,
-            (AlexiaCall::AttachmentsLease(v), "alexia/attachments/lease") => v["conversationId"] == "c",
-            (AlexiaCall::AttachmentsRelease(v), "alexia/attachments/release") => v["leaseId"] == "l",
+            (AlexiaCall::AttachmentsLease(v), "alexia/attachments/lease") => {
+                v["conversationId"] == "c"
+            }
+            (AlexiaCall::AttachmentsRelease(v), "alexia/attachments/release") => {
+                v["leaseId"] == "l"
+            }
             (AlexiaCall::AttachmentsLive(v), "alexia/attachments/live") => v["leaseId"] == "l",
             (AlexiaCall::AttachmentsRegister(v), "alexia/attachments/register") => v["path"] == "p",
-            (AlexiaCall::AttachmentsShare(v), "alexia/attachments/share") => v["mime"] == "image/png",
+            (AlexiaCall::AttachmentsShare(v), "alexia/attachments/share") => {
+                v["mime"] == "image/png"
+            }
             _ => false,
         };
         assert!(ok, "{method} parsed as {call:?}");
@@ -202,7 +241,11 @@ fn alexia_call_parse() {
 
     let err = AlexiaCall::parse("alexia/storage/insert", Some(json!({"row":{}}))).unwrap_err();
     assert_eq!(err.code, -32602);
-    assert!(err.message.contains("alexia/storage/insert"), "{}", err.message);
+    assert!(
+        err.message.contains("alexia/storage/insert"),
+        "{}",
+        err.message
+    );
 
     // The SDK puts `_meta` in every params object; it is ignored, not a parse error.
     let call = AlexiaCall::parse(
