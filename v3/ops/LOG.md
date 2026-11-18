@@ -12,3 +12,5 @@
 - 2026-11-18 CEO #1: Planner merged P0 plan (470cc18): 16 tasks P0-01..P0-16. INTERFACES.md vs v3-plan.md conflicts (§5.3 sqlite-vec, §6 settings import, §7 V2 check): specs follow v3-plan.md.
 - 2026-11-18 CEO #1: decision: P0-16 builder prompt lifts the .github/workflows rule for v3/ci and .github/workflows/v3.yml only.
 - 2026-11-18 CEO #1: round 1 dispatched: P0-01 (sonnet).
+- 2026-11-18 CEO #1: P0-01 reviewed (approve), merged, integration green, pushed. P0-02 ready.
+- 2026-11-18 CEO #1: round 1 done (1 merged, 0 failed). Handing off to the relay.
