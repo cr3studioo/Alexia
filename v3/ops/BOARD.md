@@ -8,7 +8,7 @@
 | P0-04 | Store: open, migration 1, sqlite-vec | P0 | opus | P0-02 | alexia-store db/migrations | merged | 1 | cr3studioo/v3-P0-04 | |
 | P0-05 | Store: plugin namespaces | P0 | opus | P0-04 | alexia-store namespace | merged | 2 | cr3studioo/v3-P0-05 | |
 | P0-06 | Store: secrets in Credential Manager | P0 | opus | P0-05 | alexia-store secrets | merged | 1 | cr3studioo/v3-P0-06 | |
-| P0-07 | Store: the v2 importer | P0 | opus | P0-06 | alexia-store import | running | 2 | cr3studioo/v3-P0-07 | fix ctx_1d3b4448da38 (empty p_ tables, tx, UNC, FKs) |
+| P0-07 | Store: the v2 importer | P0 | opus | P0-06 | alexia-store import | review | 2 | cr3studioo/v3-P0-07 | re-review ctx_6b8f0d2a2742 |
 | P0-08 | Manifest parsing, compatibility, discovery | P0 | opus | P0-03 | alexia-mcp manifest | merged | 3 | cr3studioo/v3-P0-08 | |
 | P0-09 | The mcp-fixture test server | P0 | sonnet | P0-03 | alexia-mcp bin/mcp-fixture | merged | 1 | cr3studioo/v3-P0-09 | |
 | P0-10 | Plugin process and JSON-RPC connection | P0 | opus | P0-08, P0-09 | alexia-mcp process/job/conn, Cargo.toml | review | 1 | cr3studioo/v3-P0-10 | review ctx_6f80e723ae85 |

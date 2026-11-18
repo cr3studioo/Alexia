@@ -2,7 +2,7 @@
 
 CEO: #5 (chat CEO, A-08). Phase: P0 (V3-0 skeleton). 8/16 merged (P0-01..P0-06, P0-08, P0-09).
 Running (Orca run run_7a40b198ac83):
-- P0-07 fix round, ctx_1d3b4448da38 (try 2). Re-review after.
+- P0-07 re-review, ctx_6b8f0d2a2742 (fixed, try 2).
 - P0-10 review, ctx_6f80e723ae85 (built, try 1).
 Next: P0-10 merged -> P0-11 ready (needs P0-04, merged). P0-07 merged + P0-13 -> P0-14. Plan P1 once P0 is mostly merged.
 Open owner asks: none. Standing owner rules A-05, A-06, A-07, A-08 in OWNER.md.
