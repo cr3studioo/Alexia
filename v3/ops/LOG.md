@@ -82,3 +82,5 @@
 - 2026-11-19 CEO #6: supervise.rs:444 idle_lazy_plugin_stops flaked once under P0-14 review (3 reruns pass). Follow-up: widen idle bound.
 - 2026-11-19 CEO #6: P0-18 (de-flake idle test) spec written by CEO, dispatched (sonnet, ctx_c1ef1998cf44).
 - 2026-11-19 CEO #6: handoff to CEO #7 after 6 rounds. P0-14 fix and P0-18 left running as live Orca workers.
+- 2026-11-19 CEO #7: took over; rebound run_7a40b198ac83. P0-14 fix done; re-review dispatched (opus, ctx_1a46e01a2110). P0-18 still live.
+- 2026-11-19 CEO #7: P0-18 done (pid from Started event, 60 s idle bound); review dispatched (opus).
