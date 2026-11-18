@@ -524,12 +524,16 @@ impl McpHost {
                         return Ok((Arc::clone(&r.conn), Arc::clone(&r.busy)))
                     }
                     // Exited before its watcher noticed: the same crash, counted here.
-                    Some(_) => (slot.dir.clone(), slot.running.take(), Duration::ZERO),
+                    Some(_) => {
+                        let run = slot.running.take().map(|r| (r, self.record_crash(slot)));
+                        (slot.dir.clone(), run, Duration::ZERO)
+                    }
                     None => (slot.dir.clone(), None, slot.crashes.wait(Instant::now())),
                 }
             };
-            if let Some(run) = dead {
+            if let Some((run, after)) = dead {
                 self.reap(id, run, false).await;
+                self.after_crash(id, after);
                 continue; // it may be unhealthy now, or have to wait
             }
             if !wait.is_zero() {
@@ -671,37 +675,41 @@ impl McpHost {
 
     /// Records why a start failed (a crash for the tally) and hands the sentence back.
     fn failed(&self, id: &PluginId, sentence: String, log: Option<StderrLog>) -> String {
-        if let Some(slot) = lock(&self.inner.plugins).get_mut(id) {
+        let (after, sentence) = {
+            let mut plugins = lock(&self.inner.plugins);
+            let Some(slot) = plugins.get_mut(id) else {
+                return sentence;
+            };
             slot.state = PluginState::Stopped;
             slot.sentence = Some(sentence.clone());
             if log.is_some() {
                 slot.log = log;
             }
-        }
-        self.count_crash(id);
-        lock(&self.inner.plugins)
-            .get(id)
-            .and_then(|s| s.sentence.clone())
-            .unwrap_or(sentence)
+            let after = self.record_crash(slot);
+            (after, slot.sentence.clone().unwrap_or(sentence))
+        };
+        self.after_crash(id, after);
+        sentence
     }
 
     /// The watcher saw process `gen` exit on its own, or stop answering pings (`heartbeat`).
     pub(crate) async fn crashed(&self, id: &PluginId, gen: u64, heartbeat: bool) {
-        let run = {
+        let taken = {
             let mut plugins = lock(&self.inner.plugins);
             match plugins.get_mut(id) {
                 Some(slot) if slot.running.as_ref().is_some_and(|r| r.gen == gen) => {
-                    slot.running.take()
+                    slot.running.take().map(|r| (r, self.record_crash(slot)))
                 }
                 _ => None,
             }
         };
-        if let Some(run) = run {
+        if let Some((run, after)) = taken {
             self.reap(id, run, heartbeat).await;
+            self.after_crash(id, after);
         }
     }
 
-    /// Kill what is left of a process that ended without being asked to, say so, count it.
+    /// Kill what is left of a process that ended without being asked to, and say so.
     /// In-flight calls get `Gone` when its stdout closes.
     async fn reap(&self, id: &PluginId, run: Running, heartbeat: bool) {
         let Running {
@@ -724,47 +732,51 @@ impl McpHost {
             plugin: id.clone(),
             exit_code,
         });
-        self.count_crash(id);
     }
 
-    /// One more crash: switched off at `crash_limit`, otherwise a resident plugin is
-    /// respawned once the backoff allows (a lazy one waits for its next use).
-    fn count_crash(&self, id: &PluginId) {
-        let (unhealthy, resident) = {
-            let mut plugins = lock(&self.inner.plugins);
-            let Some(slot) = plugins.get_mut(id) else {
-                return;
-            };
-            slot.drop_tools();
-            let resident = slot.enabled && slot.dir.manifest.lifetime() == Lifetime::Resident;
-            match slot.crashes.record(Instant::now()) {
-                Verdict::Unhealthy => {
-                    let t = &self.inner.cfg.timings;
-                    let sentence = unhealthy_sentence(&slot.dir.manifest.name, t.crash_limit);
-                    slot.state = PluginState::Unhealthy;
-                    slot.sentence = Some(sentence.clone());
-                    (Some(sentence), false)
-                }
-                Verdict::Retry { after_ms } => {
-                    tracing::info!(plugin = %id.0, after_ms, "plugin stopped; it will be started again");
-                    slot.state = PluginState::Stopped;
-                    (None, resident)
+    /// One more crash, counted in the same lock that took the process out, so a caller
+    /// arriving meanwhile already sees the backoff.
+    fn record_crash(&self, slot: &mut Slot) -> AfterCrash {
+        slot.drop_tools();
+        match slot.crashes.record(Instant::now()) {
+            Verdict::Unhealthy => {
+                let t = &self.inner.cfg.timings;
+                let sentence = unhealthy_sentence(&slot.dir.manifest.name, t.crash_limit);
+                slot.state = PluginState::Unhealthy;
+                slot.sentence = Some(sentence.clone());
+                AfterCrash::Unhealthy(sentence)
+            }
+            Verdict::Retry { after_ms } => {
+                tracing::info!(plugin = %slot.dir.manifest.id, after_ms, "plugin stopped; it will be started again");
+                slot.state = PluginState::Stopped;
+                let resident = slot.enabled && slot.dir.manifest.lifetime() == Lifetime::Resident;
+                if resident {
+                    AfterCrash::Respawn
+                } else {
+                    AfterCrash::Wait
                 }
             }
-        };
-        if let Some(sentence) = unhealthy {
-            self.emit(PluginEvent::Unhealthy {
+        }
+    }
+
+    /// Switched off at `crash_limit`; otherwise a resident plugin is respawned once the
+    /// backoff allows (a lazy one waits for its next use).
+    fn after_crash(&self, id: &PluginId, after: AfterCrash) {
+        match after {
+            AfterCrash::Unhealthy(sentence) => self.emit(PluginEvent::Unhealthy {
                 plugin: id.clone(),
                 sentence,
-            });
-        } else if resident && !self.inner.closing.is_cancelled() {
-            // Not async on purpose: spawning `ensure_running` from inside its own call tree
-            // needs a plain fn between them, or the future's type would contain itself.
-            let host = self.clone();
-            let id = id.clone();
-            tokio::spawn(async move {
-                let _ = host.ensure_running(&id).await;
-            });
+            }),
+            AfterCrash::Respawn if !self.inner.closing.is_cancelled() => {
+                // A plain fn between `ensure_running` and the task that calls it again:
+                // spawning from inside its own async call tree would make its type recursive.
+                let host = self.clone();
+                let id = id.clone();
+                tokio::spawn(async move {
+                    let _ = host.ensure_running(&id).await;
+                });
+            }
+            _ => {}
         }
     }
 
@@ -783,6 +795,8 @@ impl McpHost {
         let Some(slot) = lock(&self.inner.plugins).remove(id) else {
             return;
         };
+        // Its tools are already gone from `tools()`; the process follows.
+        self.emit(PluginEvent::Removed { plugin: id.clone() });
         if let Some(Running {
             proc, conn, stop, ..
         }) = slot.running
@@ -791,7 +805,6 @@ impl McpHost {
             drop(conn);
             process::stop(proc, Duration::ZERO).await;
         }
-        self.emit(PluginEvent::Removed { plugin: id.clone() });
     }
 }
 
@@ -801,6 +814,12 @@ fn unhealthy_sentence(name: &str, limit: u32) -> String {
         "{name} stopped {limit} times in a minute, so Alexia has switched it off.
 Everything else is still running."
     )
+}
+
+enum AfterCrash {
+    Unhealthy(String),
+    Respawn,
+    Wait,
 }
 
 fn refuse(slot: &mut Slot, sentence: String) {

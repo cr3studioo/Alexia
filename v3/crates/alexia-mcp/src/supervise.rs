@@ -105,7 +105,12 @@ impl Busy {
         if self.calls.load(Ordering::SeqCst) > 0 {
             return None;
         }
-        Some(self.last.lock().unwrap_or_else(|e| e.into_inner()).elapsed())
+        Some(
+            self.last
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .elapsed(),
+        )
     }
 }
 
