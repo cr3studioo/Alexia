@@ -238,6 +238,7 @@ fn main() {
                     ctx.cancelled.lock().unwrap().insert(id);
                 }
             }
+            Ok(Message::Notification(_)) => eprintln!("note {line}"),
             _ => {}
         }
     }
