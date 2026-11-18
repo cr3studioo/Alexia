@@ -55,3 +55,13 @@
 **How:** Standing rule.
 **Until then:** n/a
 **Answer:** Each CEO is a Claude chat in Orca, in the main checkout C:\dev\Alexia. The owner can type to it. At handoff the CEO launches its successor as a new chat (`orca agent launch`, CEO.md §12). The relay (relay.ps1) is retired. On a usage limit the chat pauses; the owner uses a reset and types `continue`.
+
+## A-09 · 2026-11-18 · open
+**What I need:** Three things for Phase 1 (fast Telegram), ready before its last tasks, a few rounds from now:
+1. A **second Telegram bot** from @BotFather just for testing the hub (recommended), or say "use the real Alexia bot". (Not the ops bot @MyAlexia_bot.)
+2. **Free AI provider keys**: which of Groq, Cerebras, Google AI Studio, OpenRouter, Mistral, NVIDIA, GitHub Models you have keys for. **At least two** are needed for racing two providers. Only say which ones; don't paste any keys here.
+3. That you've read the free-tier terms of those providers and are OK with each chat message going to two providers at once (v3-plan "Still open").
+**Why:** Phase 1 is planned (v3/specs/P1/PHASE.md, "Owner needs"). The hub talks to Telegram and to free models directly.
+**How:** Answer under **Answer:** or on Telegram ("A-09 ..."). You'll enter tokens and keys later, on the PC, with `alexia-hub secret set <name>`, which reads them hidden from the keyboard. That command doesn't exist yet; I'll tell you when it does. Later, once only: switch off v2's Telegram plugin before the hub uses the real bot, and run `alexia-hub install` from an Administrator terminal for the watchdog.
+**Until then:** Phase 0 and the Phase 1 code keep going. Only the final real-message run (P1-18) waits.
+**Answer:**
