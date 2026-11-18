@@ -360,3 +360,25 @@ fn discover_missing_dir_is_empty() {
     let s = Scratch::new("missing");
     assert!(discover(&s.0.join("nowhere")).is_empty());
 }
+
+#[test]
+fn empty_assets_needs_protocol_15() {
+    refused(
+        with(json!({ "alexia_protocol": 14, "assets": [] })),
+        "alexia_protocol 15",
+    );
+    assert!(parse(&with(json!({ "alexia_protocol": 15, "assets": [] }))).is_ok());
+}
+
+#[test]
+fn null_optional_field_is_refused() {
+    refused(
+        with(json!({ "alexia_protocol": 1, "lifetime": null })),
+        "“lifetime” must not be null",
+    );
+    refused(with(json!({ "panel": null })), "“panel” must not be null");
+    refused(
+        with(json!({ "min_app": null })),
+        "“min_app” must not be null",
+    );
+}

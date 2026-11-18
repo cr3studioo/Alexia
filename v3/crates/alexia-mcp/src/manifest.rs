@@ -336,6 +336,17 @@ fn parse_as(json: &str, subject: &str) -> Result<Manifest, ManifestError> {
             "{subject} has a manifest with an unknown field “{key}”."
         )));
     }
+    // zod's `.optional()` refuses null, but serde reads null as absent: check the raw keys.
+    if let Some(key) = top.iter().find(|(_, v)| v.is_null()).map(|(k, _)| k) {
+        return Err(invalid(format!("“{key}” must not be null")));
+    }
+    // v2 checks `assets !== undefined`; serde's default can't tell `[]` from absent.
+    let protocol = top.get("alexia_protocol").and_then(Value::as_u64);
+    if top.contains_key("assets") && protocol.is_some_and(|p| p < 15) {
+        return Err(invalid(
+            "assets arrived in alexia_protocol 15; declare “alexia_protocol”: 15 to use it".into(),
+        ));
+    }
     let mut m: Manifest =
         serde_json::from_value(raw).map_err(|e| invalid(curly(&e.to_string())))?;
     check(&m).map_err(invalid)?;
@@ -513,10 +524,6 @@ fn check(m: &Manifest) -> Result<(), String> {
             !s.is_empty() && !is_absolute(s) && !s.split(['/', '\\']).any(|p| p == ".."),
             "a skill path must stay inside the plugin folder".into(),
         )?;
-    }
-    if !m.assets.is_empty() {
-        // v2 checks `assets !== undefined`; an explicit `[]` is let through here.
-        since("assets", 15)?;
     }
     rule(
         m.assets.len() <= 100,
