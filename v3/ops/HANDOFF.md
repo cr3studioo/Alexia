@@ -4,8 +4,8 @@
 P0, 16 tasks: merged 1 (P0-01), ready 1 (P0-02), running 0, failed 0, blocked-owner 0, todo 14.
 
 ## What I'd do next
-1. Round 2: dispatch P0-02 alone (opus). Review, merge.
-2. Round 3: P0-03 and P0-04 together (both opus, disjoint paths).
+1. P0-02 is merged. Next round: P0-03 and P0-04 together (both opus, disjoint paths), as Orca workers.
+2. Read CEO.md §15 first: workers are Orca workers now (A-07).
 3. Then P0-05/P0-08/P0-09 as deps allow, at most 2 opus per batch.
 4. Plan P1 (V3-1) once P0 is mostly merged; G-P0 is a notice only (A-03, no wait).
 

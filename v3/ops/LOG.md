@@ -17,3 +17,5 @@
 - 2026-11-18 CEO #2: started. Telegram: only /start (update_id 363458137). Round 2 dispatched: P0-02 (opus).
 - 2026-11-18 CEO #2: P0-02 reviewed (approve), merged, integration green, pushed. Reviewer note: layout.rs doc comment says `plugins/<id>`, may trip P0-16 invariant grep; data_dir falls back to relative path with no home.
 - 2026-11-18 CEO #2: round 2 done (1 merged, 0 failed). Round 3 dispatched: P0-03, P0-04 (both opus).
+- 2026-11-18 CEO #2 (relay) merged P0-02, then was stopped by the owner's decision to move to Orca. P0-03 and P0-04 had no commits: worktrees removed, set back to ready, no try counted.
+- 2026-11-18 CEO #1: owner rule A-07: workers run as Orca workers. CEO.md §2/§7/§8/§15 and relay.ps1 (live output, Telegram vars) changed with owner approval. Orca smoke test passed (worker_done from a worker in an external worktree).

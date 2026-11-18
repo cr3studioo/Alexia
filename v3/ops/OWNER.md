@@ -41,3 +41,10 @@
 **How:** Standing rule.
 **Until then:** n/a
 **Answer:** When any CEO or worker hits a usage/rate limit, send ONE Telegram message (if the vars are set): "Usage limit hit. Use your banked reset now if you want the build to keep going." Then follow CEO.md §10 as usual (handoff, ALEXIA-CEO: LIMIT).
+
+## A-07 · 2026-11-18 · answered
+**What I need:** How workers are run.
+**Why:** Owner wants to see the build in the Orca app.
+**How:** Standing rule.
+**Until then:** n/a
+**Answer:** Every worker (Planner, Architect, Builder, Reviewer, Fixer) is a supervised Orca worker started with `orca orchestration worker-start`, never the Agent tool. CEO.md §2, §7, §8 and the new §15 were changed for this with the owner's approval. The relay runs in an Orca terminal and shows each CEO live.

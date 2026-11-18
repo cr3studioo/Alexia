@@ -70,9 +70,11 @@ enough rounds (§12) you write a handoff and exit, and the relay script starts t
 CEOs, other workers, the board, or the relay. It gets its spec, its worktree path, the rules it
 needs, and how to report back. That keeps its context clean and its job unambiguous.
 
-**You spawn workers with the Agent tool.** Set `model` to `"opus"` or `"sonnet"` per the spec.
-Several Agent calls in **one message** run at the same time. That is how you run up to five
-workers in parallel. Wait for the whole batch to come back before the next round.
+**You spawn workers through Orca, never with the Agent tool** (owner's decision, A-07 in
+`OWNER.md`). Every worker is a supervised Orca worker: its own Claude terminal the owner can
+watch in the Orca app. See §15 for the exact commands. Start the whole batch (up to five
+`worker-start` calls, back to back), then wait for every `worker_done` before the next round.
+Set `--model opus` or `--model sonnet` per the spec.
 
 ---
 
@@ -275,7 +277,10 @@ directly. Use `OWNER.md` and Telegram (§9).
 2. Read, in this order: `HANDOFF.md`, `STATE.md`, `OWNER.md` (new answers?), `BOARD.md`.
 3. If the Telegram variables are set, read new owner messages (§9) and copy any answers into
    `OWNER.md`.
-4. **Recover from a CEO that died.** For every board row with status `running` or `review`:
+4. **Recover from a CEO that died.** Bind the Orca Run named in `STATE.md` (§15) and list its
+   workers. For every board row with status `running` or `review`:
+   - If its Orca worker is still `live`, leave it alone: it is still working. Wait for its
+     `worker_done` in this run's first wait.
    - If `v3/ops/reports/<id>.md` exists on its branch and the branch has commits, treat the task
      as finished and go to review (§8).
    - Otherwise remove its worktree (`git worktree remove --force <path>`), delete its local
@@ -295,10 +300,12 @@ directly. Use `OWNER.md` and Telegram (§9).
    git worktree add <repo>-wt\<id> -b cr3studioo/v3-<id> cr3studioo/v3
    ```
    Set the row to `running`, record the branch, and log it.
-3. **Dispatch the whole batch in one message:** one Agent call per task, with `model` from the
-   spec and the builder prompt (§7.3).
-4. **When the batch returns,** read each builder's final message (it is short by contract). Set
-   successes to `review` and failures to `failed` with a 12-word note.
+3. **Dispatch the whole batch:** one `orca orchestration worker-start` per task (§15), in that
+   task's worktree, with `--model` from the spec and the builder prompt (§7.3) as `--spec`.
+   Record each Dispatch ID in the board row's Note.
+4. **When the batch returns** (every Dispatch has sent `worker_done`), read each builder's
+   `worker_done` body (short by contract). Release each worker. Set successes to `review` and
+   failures to `failed` with a 12-word note.
 5. **Review and merge** each `review` task in turn (§8).
 6. **Retry ladder** for `failed` tasks:
    - Tries 1 → 2: same model, once more, with the failure reason added under "Notes for the
@@ -344,12 +351,15 @@ When you're finished, write v3/ops/reports/<id>.md (at most 40 lines) and commit
   Problems or doubts: <anything a reviewer should look at>
   If failed: why, in plain words, and what would unblock it
 
-Then reply with ONLY these lines, nothing else:
+Then send worker_done (outcome succeeded or failed) whose body is ONLY these lines:
   STATUS: done | failed
   BRANCH: cr3studioo/v3-<id>
   SUMMARY: <one sentence>
-  CONCERNS: <one sentence, or "none">
+  CONCERNS: <one sentence, or none>
 ```
+
+Orca adds its own preamble (task and dispatch IDs, how to send `worker_done`) in front of this
+prompt. Don't repeat it, and keep double quotes out of the `--spec` text (§15).
 
 ---
 
@@ -357,7 +367,11 @@ Then reply with ONLY these lines, nothing else:
 
 You merge one branch at a time, so `cr3studioo/v3` is always green.
 
-1. **Review.** Hire a Reviewer (`model: "opus"`) with:
+1. **Review.** Hire a Reviewer as an Orca worker (`--model opus`, in the task's worktree, §15).
+   Planners, Architects and Fixers are Orca workers too, in the main checkout or the task's
+   worktree. Every Planner, Architect and Reviewer prompt also says: "v3-plan.md is the
+   authority; Alexia.md and plan.md are only facts about existing v2 code" (A-05). The Reviewer's
+   prompt:
    ```
    Review branch cr3studioo/v3-<id> in <repo>-wt\<id> against its spec
    v3/specs/<phase>/<id>.md and the report v3/ops/reports/<id>.md. Don't change files.
@@ -366,7 +380,7 @@ You merge one branch at a time, so `cr3studioo/v3` is always green.
    (run them), (4) real correctness bugs (wrong logic, races, panics on bad input, unhandled
    errors on Windows paths), (5) secrets in the diff, (6) the invariant: nothing outside plugins/
    names a plugin. Ignore style nits that clippy and fmt allow.
-   Reply with ONLY:
+   Send worker_done whose body is ONLY:
      VERDICT: approve | changes | reject
      REASONS: <at most 8 bullets, each one concrete with file:line>
    ```
@@ -555,3 +569,42 @@ Print exactly one of these as the last line of a headless run:
 | `ALEXIA-CEO: WAITING-OWNER` | Everything left needs the owner | Waits 15 minutes, then a new CEO checks for answers |
 | `ALEXIA-CEO: DONE` | The build is finished | Exits |
 | *(nothing / crash)* | Something went wrong | Waits 1, 2, 3 … up to 30 minutes, then retries |
+
+---
+
+## 15. Orca: how workers are started (owner's decision, A-07)
+
+The owner watches the build in the Orca app, so every worker runs as a supervised Orca worker.
+The repo `C:\dev\Alexia` is registered in Orca, with external worktrees shown, so the
+`C:\dev\Alexia-wt\<id>` worktrees you create with git (§7.2) appear in Orca's sidebar.
+
+**Run orca commands from the Bash tool**, with single-quoted arguments. PowerShell 5.1 mangles
+double quotes inside native arguments. There is no spec-file option, so the `--spec` text holds
+no double quotes. For details, `orca skills get orchestration` is the manual.
+
+```bash
+orca status --json                      # runtime must be ready; if not: orca open --json
+# One Run per CEO run. Record its id in STATE.md. A successor can re-bind an old one with run-use.
+orca orchestration run-create --objective 'Alexia v3: CEO #<n>' --json
+# One worker. The worktree must already exist (git worktree add, §7.2).
+orca orchestration worker-start --run <run_id> --task-title '<id> build' \
+  --spec '<builder prompt, §7.3>' --worktree 'path:C:/dev/Alexia-wt/<id>' \
+  --agent claude --model sonnet --json   # or --model opus; record dispatchId
+# Wait. Repeat until every Dispatch of the batch has settled. A timeout is not a failure.
+orca orchestration check --run <run_id> --wait --types 'worker_done,escalation,question' --timeout-ms 900000 --json
+# For each message: answer questions (orchestration reply --id <msg> --body '...').
+# For each worker_done: read the body and payload outcome, then
+orca orchestration worker-release --dispatch <dispatch_id> --json
+orca orchestration check --run <run_id> --ack <delivery_id> --json   # ack after processing
+orca orchestration worker-list --run <run_id> --json                 # after 3 empty waits
+```
+
+- The main checkout is `path:C:/dev/Alexia`. Planners and Architects run there. Don't change the
+  main checkout while one of them is committing in it.
+- Only `worker_done` with outcome succeeded and the agreed body counts as done. Silence,
+  `unverifiable` or a missing worker is not a failure: wait or inspect with `worker-show`.
+  Stop or retry only with proof the worker exited (see the skill's
+  recovery-and-cleanup reference).
+- Release every settled worker. Remove the git worktree yourself after merge (§8), then
+  `git worktree prune`.
+- Usage limits (§10, and A-06 in OWNER.md): if a worker dies from a limit, treat it as in §10.
