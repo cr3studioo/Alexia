@@ -336,8 +336,16 @@ fn parse_as(json: &str, subject: &str) -> Result<Manifest, ManifestError> {
             "{subject} has a manifest with an unknown field “{key}”."
         )));
     }
-    // zod's `.optional()` refuses null, but serde reads null as absent: check the raw keys.
-    if let Some(key) = top.iter().find(|(_, v)| v.is_null()).map(|(k, _)| k) {
+    // zod's `.optional()` refuses null, but serde reads null as absent: check the raw keys,
+    // and every key inside the strict objects. Settings are not walked: their widget fields
+    // stay v2's, and zod strips unknown keys such as a password `default`.
+    const STRICT: &[&str] = &["entry", "requires", "storage", "commands", "compute"];
+    let null = top.iter().find_map(|(k, v)| match v {
+        Value::Null => Some(k.clone()),
+        v if STRICT.contains(&k.as_str()) => null_path(v, k),
+        _ => None,
+    });
+    if let Some(key) = null {
         return Err(invalid(format!("“{key}” must not be null")));
     }
     // v2 checks `assets !== undefined`; serde's default can't tell `[]` from absent.
@@ -355,6 +363,21 @@ fn parse_as(json: &str, subject: &str) -> Result<Manifest, ManifestError> {
         s.default = None;
     }
     Ok(m)
+}
+
+/// The path of the first null inside `v`, e.g. `compute.operations[0].weight`.
+fn null_path(v: &Value, path: &str) -> Option<String> {
+    match v {
+        Value::Null => Some(path.to_string()),
+        Value::Array(a) => a
+            .iter()
+            .enumerate()
+            .find_map(|(i, x)| null_path(x, &format!("{path}[{i}]"))),
+        Value::Object(o) => o
+            .iter()
+            .find_map(|(k, x)| null_path(x, &format!("{path}.{k}"))),
+        _ => None,
+    }
 }
 
 /// serde writes `name`; the owner reads “name”.

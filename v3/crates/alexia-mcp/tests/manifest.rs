@@ -381,4 +381,29 @@ fn null_optional_field_is_refused() {
         with(json!({ "min_app": null })),
         "“min_app” must not be null",
     );
+    refused(
+        with(json!({ "entry": { "run": "node", "args": null } })),
+        "“entry.args” must not be null",
+    );
+    let compute = |weight: Value| {
+        with(json!({
+            "alexia_protocol": 13,
+            "provides": ["image.generate"],
+            "compute": { "operations": [
+                { "cap": "image.generate", "summary": "Make an image.", "weight": weight }
+            ]}
+        }))
+    };
+    refused(
+        compute(Value::Null),
+        "“compute.operations[0].weight” must not be null",
+    );
+    assert!(parse(&compute(json!("light"))).is_ok());
+
+    // Settings are not walked: zod strips a password's `default`, null or not.
+    let m = parse(&with(json!({ "settings": [
+        { "type": "password", "key": "api_key", "label": "Key", "default": null }
+    ]})))
+    .unwrap();
+    assert_eq!(m.settings[0].default, None);
 }
