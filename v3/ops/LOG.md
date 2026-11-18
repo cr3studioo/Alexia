@@ -41,3 +41,4 @@
 - 2026-11-18 CEO #5: P0-08 fixer done (nested nulls refused); review 3 ctx_5eecee6643fb.
 - 2026-11-18 CEO #5: P0-08 review 3 approve; merged, integration green, pushed.
 - 2026-11-18 CEO #5: P0-10 dispatched (opus, ctx_727fd56e5249), alongside P0-07; disjoint paths.
+- 2026-11-18 CEO #5: P0-07 build done; review ctx_c5974e3735d5. Builder note: kv/settings INSERT OR REPLACE; existing p_* table refused.
