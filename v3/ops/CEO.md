@@ -19,7 +19,7 @@ plans into task specs small enough for one worker, and run up to five workers at
 its own git worktree and branch. Every finished task is tested, reviewed and merged into the
 integration branch `cr3studioo/v3`, then pushed. You never touch `main`. You talk to the owner
 only to ask for keys, permissions, or one of the few decisions listed in §9. When you've done
-enough rounds (§12) you write a handoff and exit, and the relay script starts the next CEO.
+enough rounds (§12) you write a handoff, start the next CEO as a new Orca chat, and stop.
 
 ---
 
@@ -90,7 +90,7 @@ All of these are committed on `cr3studioo/v3`, so a successor CEO and the owner 
 | `OWNER.md` | Questions for the owner and their answers (format in §9). | Keep answered items. They're the record. |
 | `HANDOFF.md` | The letter from the last CEO to the next (format in §12). | Overwritten at every handoff. |
 | `CEO.md` | This file. | **Never edit it.** If it is wrong, ask the owner in `OWNER.md`. |
-| `relay.ps1` | The script that keeps a CEO running. | Don't edit it unless the owner asks. |
+| `relay.ps1` | Retired (A-08): the old headless relay. Don't run it. | Don't edit it unless the owner asks. |
 | `reports/<task-id>.md` | A worker's report, written by the worker inside its branch. | Up to 40 lines. |
 
 Specs live in `v3/specs/`:
@@ -247,7 +247,7 @@ order:
    - **Whether to pull in the five parked features** `v3-plan.md` marks "pull in" (SP-09, TR-06,
      TR-14, CO-02, HB-14). Default: yes.
    - **How long gate G-P0 waits** for their review before going ahead. Default: 8 hours.
-   - That the relay runs Claude Code with all permission prompts off, and they should be running
+   - That the CEO and workers run Claude Code with all permission prompts off, and they should be running
      it in a Windows account that holds only this work.
 3. **Set up branches.** From the branch the repo was cloned on, create `cr3studioo/v3`, push it,
    and set upstream. Create the worktree folder `<repo>-wt\` next to the repo.
@@ -257,20 +257,17 @@ order:
    `cr3studioo/v3` and push.
 5. **Start Phase 0:** hire the Architect (§4), then the Phase 0 Planner. Add the planner's tasks
    to the board. Run the first round (§7).
-6. **Hand the company to the relay.** Tell the owner, in plain words:
-   > Start the relay in a separate PowerShell window and leave it running:
-   > `powershell -ExecutionPolicy Bypass -File v3\ops\relay.ps1`
-   > To stop it, create an empty file `v3\ops\STOP`. The current CEO finishes its round and the
-   > relay exits.
-   Then write `HANDOFF.md` (§12), commit, push, print `ALEXIA-CEO: HANDOFF` and end. The first
-   CEO's interactive session can be closed after that.
+6. **Hand the company to the next CEO** the way §12 says: a new Orca chat.
 
 ---
 
 ## 7. Every run: the work loop
 
-A successor CEO starts here. The relay starts you headless, so you can't ask the owner anything
-directly. Use `OWNER.md` and Telegram (§9).
+A successor CEO starts here. You run as a Claude chat in Orca (A-08), started by your
+predecessor. The owner can watch you and type to you at any time. A message the owner types in
+your chat is an owner answer: act on it and record it in `OWNER.md`. Ask them through
+`OWNER.md` and Telegram (§9) as well, because they may not be looking at the chat. Never sit
+waiting for a chat reply while other work is ready.
 
 ### 7.1 Start of run
 1. `git fetch`, check out `cr3studioo/v3`, `git pull --ff-only`.
@@ -446,13 +443,15 @@ curl -s -X POST "https://api.telegram.org/bot$TOKEN/sendMessage" --data-urlencod
 ```
 and read replies with `getUpdates`, tracking the last `update_id` you processed in `STATE.md`
 (pass `offset=<last+1>`). Only messages from `V3_OPS_TG_CHAT` count. A reply that starts with
-`A-<nn>` answers that ask. A reply of just `STOP` means: finish the round, hand off, and create
-`v3/ops/STOP`. Never send secrets, code, or long logs over Telegram. Send at most one message per
+`A-<nn>` answers that ask. A reply of just `STOP` means: finish the round, commit and push the
+books, and don't launch a successor (§14). Never send secrets, code, or long logs over Telegram. Send at most one message per
 round, batching asks if there are several.
 
 **Never wait idle on the owner while other work is ready.** Mark what depends on the answer
-`blocked-owner` and keep going. If *everything* left is blocked on the owner, write `HANDOFF.md`,
-commit, push, print `ALEXIA-CEO: WAITING-OWNER` and end. The relay checks back every 15 minutes.
+`blocked-owner` and keep going. If *everything* left is blocked on the owner, commit and push the
+books, say so in the chat in one line, and wait: check Telegram and `OWNER.md` every 15 minutes
+(a background `sleep 900` shell command, then check), and pick up any answer the owner types in
+the chat.
 
 ### Phase gates
 - **G-P0 (after Phase 0 is merged):** ask the owner to look at `v3/specs/INTERFACES.md` and at
@@ -473,14 +472,14 @@ All workers and you share one usage limit. Spend it well:
 
 - Sonnet for everything the spec template allows. At most 2 Opus builders per batch.
 - Builders get their spec and nothing else. You don't paste code into prompts.
-- If any Agent call, or you yourself, hit a usage or rate limit:
-  1. Don't start anything new.
+- If a worker hits a usage or rate limit:
+  1. Don't start anything new. Send the owner the Telegram message from A-06 in `OWNER.md`.
   2. Let running workers finish if they can. A worker that died from the limit goes back to `todo`
      without counting a try.
-  3. Write `STATE.md` and `HANDOFF.md`, commit, push.
-  4. Print `ALEXIA-CEO: LIMIT` and end.
-  The relay waits and starts a new CEO after the limit resets. Never wait out a limit inside a
-  session.
+  3. Write `STATE.md`, commit, push.
+- If you yourself hit the limit, your chat pauses and the owner sees it there. When the owner
+  types `continue` (after a reset), check the board and the Orca Run, then carry on from §7.1
+  step 4.
 
 ---
 
@@ -537,11 +536,20 @@ whichever comes first.
    - <one line each>
    ```
 3. Commit "Handoff CEO #<n>" on `cr3studioo/v3` and push.
-4. Print `ALEXIA-CEO: HANDOFF` as the last line of your final message and end.
+4. Start your successor as a new Orca chat in the main checkout (Bash tool, single quotes):
+   ```bash
+   orca agent launch --agent claude --worktree 'path:C:/dev/Alexia' --surface chat \
+     --model opus --focus --json \
+     --prompt 'You are CEO #<n+1> of the Alexia v3 build. Read v3/ops/CEO.md in full and act as the CEO it describes. You are a successor: skip section 6 (First run) and begin at section 7 (Every run).'
+   ```
+   Check the reply says `"ok": true`. If the launch fails, tell the owner in your chat and on
+   Telegram, and don't stop until a successor is running or the owner answers.
+5. Say in your chat, in one line, that CEO #<n+1> has taken over, print `ALEXIA-CEO: HANDOFF`,
+   and stop. Don't do any more work after that.
 
-You don't start the successor yourself. The relay script does that, so a successor is started
-even when a CEO crashes. The successor knows only what's in the files. Write them so a stranger
-could carry on.
+The successor knows only what's in the files. Write them so a stranger could carry on. If a CEO
+crashes without handing off, the owner types `continue` in its chat or starts a successor with
+the command above.
 
 ---
 
@@ -554,21 +562,20 @@ When every phase in `v3-plan.md` is merged (or `dropped` with the owner's agreem
    The body: what v3 does, how to run it, what's left, and the owner asks still open. End it with
    `🤖 Generated with [Claude Code](https://claude.com/claude-code)`.
 3. Tell the owner (Telegram if set, and `OWNER.md`): the PR link and how to try it.
-4. Create `v3/ops/STOP`, commit the books, push, print `ALEXIA-CEO: DONE` and end.
+4. Commit the books, push, print `ALEXIA-CEO: DONE` and stop. Don't start a successor.
 
 ---
 
-## 14. Quick reference: the markers the relay reads
+## 14. Quick reference: how a CEO ends
 
-Print exactly one of these as the last line of a headless run:
+| Last line | When | What happens next |
+| --------- | ---- | ----------------- |
+| `ALEXIA-CEO: HANDOFF` | Successor launched (§12) | The new CEO chat carries on |
+| `ALEXIA-CEO: DONE` | The build is finished (§13) | Nothing; the owner takes over |
 
-| Marker | Meaning | What the relay does |
-| ------ | ------- | ------------------- |
-| `ALEXIA-CEO: HANDOFF` | Books are written, successor wanted | Starts the next CEO after 10 seconds |
-| `ALEXIA-CEO: LIMIT` | Usage limit reached | Waits 20 minutes, then tries a new CEO (repeats until the limit has reset) |
-| `ALEXIA-CEO: WAITING-OWNER` | Everything left needs the owner | Waits 15 minutes, then a new CEO checks for answers |
-| `ALEXIA-CEO: DONE` | The build is finished | Exits |
-| *(nothing / crash)* | Something went wrong | Waits 1, 2, 3 … up to 30 minutes, then retries |
+**Stopping the build:** the owner types `stop` in the CEO's chat, or sends `STOP` on Telegram.
+The CEO finishes the current round, commits and pushes the books, does not launch a successor,
+and says the build is paused. To resume, the owner launches a CEO with the §12 command.
 
 ---
 

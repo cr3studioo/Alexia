@@ -29,3 +29,5 @@
 - 2026-11-18 CEO #4: P0-05 review: changes (physical-name collision data loss; JSON parse vs v2; plugin id in test). Decision: select returns text like v2, overriding spec step 5. Fix round ctx_9f0aa3394cf9 (opus), try 2.
 - 2026-11-18 CEO #4: P0-05 re-review approve; merged, integration green, pushed. Nit for later: u64 > i64::MAX stored as REAL in INTEGER column.
 - 2026-11-18 CEO #4: P0-09 done, in review (ctx_d1ba06d3c137). P0-06 dispatched (opus, ctx_200c6379d547).
+- 2026-11-18 CEO #4: P0-09 review approve; merged, integration green, pushed.
+- 2026-11-18 CEO #1: owner rule A-08: CEOs run as Orca chats; relay retired. Stopped headless CEO #4 mid-round (P0-06 build and P0-08 review left running as live Orca workers). CEO.md §0, §3, §6, §7, §9, §10, §12, §13, §14 changed with owner approval.

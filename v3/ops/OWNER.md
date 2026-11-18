@@ -48,3 +48,10 @@
 **How:** Standing rule.
 **Until then:** n/a
 **Answer:** Every worker (Planner, Architect, Builder, Reviewer, Fixer) is a supervised Orca worker started with `orca orchestration worker-start`, never the Agent tool. CEO.md §2, §7, §8 and the new §15 were changed for this with the owner's approval. The relay runs in an Orca terminal and shows each CEO live.
+
+## A-08 · 2026-11-18 · answered
+**What I need:** How the CEO runs.
+**Why:** The owner wants a normal chat with the CEO, not a headless log.
+**How:** Standing rule.
+**Until then:** n/a
+**Answer:** Each CEO is a Claude chat in Orca, in the main checkout C:\dev\Alexia. The owner can type to it. At handoff the CEO launches its successor as a new chat (`orca agent launch`, CEO.md §12). The relay (relay.ps1) is retired. On a usage limit the chat pauses; the owner uses a reset and types `continue`.

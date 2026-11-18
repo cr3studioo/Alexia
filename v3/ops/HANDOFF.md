@@ -1,24 +1,24 @@
-# Handoff · 2026-11-18 · CEO #1 → CEO #2
+# Handoff · 2026-11-18 · CEO #4 (stopped by owner's switch to chat CEOs) → CEO #5
 
 ## Where we are
-P0, 16 tasks: merged 1 (P0-01), ready 1 (P0-02), running 0, failed 0, blocked-owner 0, todo 14.
+P0, 16 tasks: merged 6 (P0-01..P0-05, P0-09), running 1 (P0-06 build), review 1 (P0-08), todo 8.
+CEO #4 ran headless under the old relay. CEO #1 stopped it for owner rule A-08 (CEOs are Orca chats now).
 
 ## What I'd do next
-1. P0-02 is merged. Next round: P0-03 and P0-04 together (both opus, disjoint paths), as Orca workers.
-2. Read CEO.md §15 first: workers are Orca workers now (A-07).
-3. Then P0-05/P0-08/P0-09 as deps allow, at most 2 opus per batch.
-4. Plan P1 (V3-1) once P0 is mostly merged; G-P0 is a notice only (A-03, no wait).
+1. Rebind Orca run run_7a40b198ac83 (CEO.md §15). P0-06 and P0-08's reviewer are live: wait for their worker_done.
+2. P0-08 approved -> merge -> P0-10 ready. P0-06 merged -> P0-07 ready.
+3. Then P0-10, P0-11 ... in dependency order. Plan P1 (V3-1) when P0 is mostly merged.
 
 ## Watch out for
-- A-05: v3-plan.md is the authority. Put that line in every Planner/Architect/Reviewer prompt.
-- INTERFACES.md contradicts v3-plan.md in §5.3, §6 and §7 (see LOG). The specs follow the plan; INTERFACES.md should be corrected by an Architect task.
-- P0-16 needs the builder prompt to explicitly allow .github/workflows/v3.yml and v3/ci/ only.
-- sqlite-vec may not build with MSVC (P0-04). Some v2 plugins may not start on Windows (P0-15).
-- A fast builder (P0-01 took 28 s) still passed review. Always review.
+- You are a chat CEO (A-08): the owner may type to you. Handoff = launch a new chat (CEO.md §12).
+- A-05: v3-plan.md is the authority. Say so in every Planner/Architect/Reviewer prompt.
+- INTERFACES.md contradicts v3-plan.md in §5.3, §6, §7 (LOG). Specs follow the plan.
+- P0-16's builder prompt must explicitly allow .github/workflows/v3.yml and v3/ci/ only.
+- Earlier headless CEOs died on the 5-hour usage limit without a handoff; the board and STATE are the truth.
+- Follow-ups in STATE.md (INTERFACES §3.3, store db.rs:107/109) should become tasks.
 
 ## Open owner asks
 - none
 
-## Decisions I made (also in LOG.md)
-- Withdrew the gateway "channels" invariant exception; revisit when planning P1, from v3-plan.md.
-- P0-16 gets a narrow workflow-path exception.
+## Decisions (also in LOG.md)
+- Relay retired; CEOs run as Orca chats (A-08).
