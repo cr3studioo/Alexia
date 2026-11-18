@@ -69,3 +69,5 @@
 - 2026-11-18 CEO #6: P1-14 build done (6 tests, agent.test.ts 34/34); review ctx_0d84fbeb2016.
 - 2026-11-18 CEO #6: pnpm check on Windows has a PRE-EXISTING failure: compute-connect.test.ts 'a paused request reader stalls uploads too' fails 2/2 on unchanged cr3studioo/v3 (fresh worktree). Decision: v2-path merges gate on pnpm check minus that one test. Owner's Mac likely passes it.
 - 2026-11-18 CEO #6: P0-12 re-review approve; merged, integration green, pushed. P0-13 dispatched (opus, ctx_825941c102ae).
+- 2026-11-18 CEO #6: P0-13 allowed one eprintln line in alexia-mcp/src/bin/mcp-fixture.rs so notifications are logged (real test for conversation_ended).
+- 2026-11-18 CEO #6: P1-14 review approve; merged, pushed. Integration: cargo green; pnpm lint/typecheck/invariants green; pnpm test 2 failures, both pre-existing/flaky on Windows (base run fails compute-connect + compute-plugins cancel; merged run fails compute-connect + plugins/media compute.test.js, which passes 3/3 alone). Known-Windows-failures list: compute-connect 'paused request reader', compute-plugins 'cancelling a plugin tool', media compute 'ComfyUI the person is running' (load-flaky).
