@@ -27,3 +27,17 @@
 **How:** Yes or no.
 **Until then:** n/a
 **Answer:** Yes, go ahead.
+
+## A-05 · 2026-11-18 · answered
+**What I need:** Which document wins when the old docs and the v3 plan disagree.
+**Why:** Owner said to ignore what they said about the project before and follow their plan.
+**How:** Standing rule.
+**Until then:** n/a
+**Answer:** v3-plan.md is the authority for scope, crates and tasks. Alexia.md and plan.md count only as facts about how existing v2 code works (wire protocol, data layout), never as what v3 should be. Where they disagree, follow v3-plan.md without raising it as a risk. Tell every Planner, Architect and Reviewer this.
+
+## A-06 · 2026-11-18 · answered
+**What I need:** What to do when a usage limit is hit.
+**Why:** Owner has banked resets they can use.
+**How:** Standing rule.
+**Until then:** n/a
+**Answer:** When any CEO or worker hits a usage/rate limit, send ONE Telegram message (if the vars are set): "Usage limit hit. Use your banked reset now if you want the build to keep going." Then follow CEO.md §10 as usual (handoff, ALEXIA-CEO: LIMIT).
