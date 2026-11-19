@@ -127,3 +127,8 @@
 - 2026-11-19 CEO #8: P1-16 review approve with risks. Merge failed invariants (C:\ in a message, newly caught by P0-24's fix); CEO fixed the one line on the task branch, re-merged, green, pushed. Risks filed as P1-19.
 - 2026-11-19 CEO #8: note for P1-17: cancel the heartbeat and await it before clean_stop (P1-16 review).
 - 2026-11-19 CEO #8: P1-05 done (catalog, 8 tests; chats() is a word list, seed per keyless provider); P1-15 fix done; P1-11 done (14 tests, 20/20 runs); P0-21 done. Reviews dispatched: P1-05, P1-11, P1-15 re-review, P0-21 (all opus). Dispatched P1-09 build (opus ctx_6788047f5009).
+- 2026-11-19 CEO #8: P0-21 review approve (weak test noted: purge.rs:221 calls delete_all directly); merged, green, pushed. Dispatched P0-22 (opus).
+- 2026-11-19 CEO #8: P1-15 re-review approve; merged, green, pushed.
+- 2026-11-19 CEO #8: P1-05 review: changes. Decided: ocr word as id segment; port v2 seeds exactly incl. nara/cloudflare-ai, no-list rows seed when keyed; chats() word list accepted plus orpheus/veo/guardian; Refused drops like NeedsKey; unique tmp name.
+- 2026-11-19 CEO #8: P1-11 review: changes. Decided: spans relative to first receipt; brain spans at hand-off offset + start; second record_spans on late ack accepted; Phase::Tool steer heuristic accepted for now (Lanes should report lane early, P1-07/P1-17); fix acks leak and bare ellipsis; spec phase words win.
+- 2026-11-19 CEO #8: P1-05 and P1-11 fix rounds queued until an opus builder slot frees (P1-09, P0-22 running). Dispatched P0-23, P1-19 (sonnet).
