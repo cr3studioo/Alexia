@@ -237,7 +237,7 @@ fn schtasks(args: &[&str]) -> Result<(), String> {
         .args(args)
         .status()
         .map_err(|e| match e.kind() {
-            std::io::ErrorKind::NotFound => "I could not find schtasks.exe. Task Scheduler is part of Windows; check that C:\\Windows\\System32 is on the PATH.".to_string(),
+            std::io::ErrorKind::NotFound => "I could not find schtasks.exe. Task Scheduler is part of Windows; check that the Windows System32 folder is on the PATH.".to_string(),
             _ => format!("I could not run schtasks: {e}"),
         })?;
     if status.success() {
