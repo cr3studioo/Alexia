@@ -86,3 +86,5 @@
 - 2026-11-19 CEO #7: P0-18 done (pid from Started event, 60 s idle bound); review dispatched (opus).
 - 2026-11-19 CEO #7: P0-14 re-review approve; merged, integration green, pushed. P0-15 dispatched (sonnet, ctx_323035ad401c).
 - 2026-11-19 CEO #7: P0-18 review approve; merged, integration green, pushed.
+- 2026-11-19 CEO #7: P0-15 failed (not builder's fault): listing test found 2 host bugs - NoUpcalls empty display_name kills v2 SDK plugins; store errors on where/order over unwritten declared table. pnpm check failure = known compute-connect flake.
+- 2026-11-19 CEO #7: spec gap, not retry: wrote P0-19 (mirror v2 'Alexia' default + store.ts #unwritten), dispatched opus ctx_bdf1157ba00d. P0-15 branch kept; after P0-19 merges, merge v3 into it, rerun listing test, review. Watch: P0-15 report says plugin Running/Stopped mix varies run to run.
