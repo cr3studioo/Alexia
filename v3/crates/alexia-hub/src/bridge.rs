@@ -165,7 +165,10 @@ impl V2Bridge {
     async fn start_child(&self) -> Result<(Child, String), String> {
         let entry = self.cfg.root.join("packages/core/dist/src/entry.js");
         if !entry.is_file() {
-            return Err(format!("v2 core is not built: {} is missing.", entry.display()));
+            return Err(format!(
+                "v2 core is not built: {} is missing.",
+                entry.display()
+            ));
         }
         let mut cmd = Command::new(&self.cfg.node);
         cmd.arg(&entry)
@@ -234,7 +237,10 @@ impl V2Bridge {
                     Role::Assistant => "Alexia",
                     _ => return None,
                 };
-                let said: String = text_of(&m.body.content).chars().take(CONTEXT_CHARS).collect();
+                let said: String = text_of(&m.body.content)
+                    .chars()
+                    .take(CONTEXT_CHARS)
+                    .collect();
                 Some(format!("{who}: {said}"))
             })
             .collect();
@@ -624,4 +630,781 @@ fn now_ms() -> Ms {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.as_millis() as Ms)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alexia_core::Origin;
+    use alexia_store::SessionId;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::{TcpListener, TcpStream};
+    use tokio::sync::mpsc;
+
+    const TOKEN: &str = "1b4e28ba-2fa1-41d2-883f-0016d3cca427";
+
+    enum Step {
+        /// One `data:` event (JSON text).
+        Send(&'static str),
+        /// Hold the stream until the fake has received a request for this path.
+        Wait(&'static str),
+    }
+    use Step::{Send, Wait};
+
+    #[derive(Default)]
+    struct Opts {
+        /// Statuses for the first `/api/chat` requests, in order; then 200.
+        first: Vec<u16>,
+        /// Every `/api/chat` gets this status.
+        always: Option<u16>,
+    }
+
+    #[derive(Clone, Default)]
+    struct Log(Arc<Mutex<Vec<(String, String)>>>);
+    impl Log {
+        fn all(&self) -> Vec<(String, String)> {
+            self.0.lock().unwrap().clone()
+        }
+        fn bodies(&self, path: &str) -> Vec<Value> {
+            self.all()
+                .into_iter()
+                .filter(|(p, _)| p == path)
+                .map(|(_, b)| serde_json::from_str(&b).unwrap_or(Value::Null))
+                .collect()
+        }
+        fn count(&self, path: &str) -> usize {
+            self.all().iter().filter(|(p, _)| p == path).count()
+        }
+    }
+
+    async fn fake(script: Vec<Step>, opts: Opts) -> (String, Log) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/", listener.local_addr().unwrap());
+        let log = Log::default();
+        let script = Arc::new(script);
+        let opts = Arc::new(opts);
+        let chats = Arc::new(AtomicUsize::new(0));
+        let l = log.clone();
+        tokio::spawn(async move {
+            while let Ok((sock, _)) = listener.accept().await {
+                let (log, script, opts, chats) =
+                    (l.clone(), script.clone(), opts.clone(), chats.clone());
+                tokio::spawn(serve(sock, log, script, opts, chats));
+            }
+        });
+        (url, log)
+    }
+
+    async fn serve(
+        mut sock: TcpStream,
+        log: Log,
+        script: Arc<Vec<Step>>,
+        opts: Arc<Opts>,
+        chats: Arc<AtomicUsize>,
+    ) {
+        let mut buf = Vec::new();
+        let head_end = loop {
+            let mut b = [0u8; 4096];
+            let n = sock.read(&mut b).await.unwrap_or(0);
+            if n == 0 {
+                return;
+            }
+            buf.extend_from_slice(&b[..n]);
+            if let Some(i) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                break i + 4;
+            }
+        };
+        let head = String::from_utf8_lossy(&buf[..head_end]).to_lowercase();
+        let path = head.split_whitespace().nth(1).unwrap_or("").to_owned();
+        let header = |name: &str| {
+            head.lines()
+                .find_map(|l| l.strip_prefix(&format!("{name}: ")))
+                .map(|v| v.trim().to_owned())
+        };
+        let len: usize = header("content-length")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0);
+        while buf.len() < head_end + len {
+            let mut b = [0u8; 4096];
+            let n = sock.read(&mut b).await.unwrap_or(0);
+            if n == 0 {
+                break;
+            }
+            buf.extend_from_slice(&b[..n]);
+        }
+        let body = String::from_utf8_lossy(&buf[head_end..]).into_owned();
+        log.0.lock().unwrap().push((path.clone(), body));
+
+        let plain = |status: &str, body: &str| {
+            format!(
+                "HTTP/1.1 {status}\r\ncontent-type: text/html\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                body.len()
+            )
+        };
+        if path == "/" {
+            let page = format!("<html><script>window.token = \"{TOKEN}\"</script></html>");
+            let _ = sock.write_all(plain("200 OK", &page).as_bytes()).await;
+            return;
+        }
+        if header("x-alexia-token").as_deref() != Some(TOKEN)
+            || !header("host").unwrap_or_default().starts_with("127.0.0.1")
+        {
+            let _ = sock
+                .write_all(plain("403 Forbidden", "not for you").as_bytes())
+                .await;
+            return;
+        }
+        if path != "/api/chat" {
+            let _ = sock
+                .write_all(plain("200 OK", "{\"ok\":true}").as_bytes())
+                .await;
+            return;
+        }
+        let i = chats.fetch_add(1, Ordering::SeqCst);
+        let status = opts
+            .always
+            .or_else(|| opts.first.get(i).copied())
+            .unwrap_or(200);
+        if status != 200 {
+            let _ = sock
+                .write_all(plain(&format!("{status} No"), "{}").as_bytes())
+                .await;
+            return;
+        }
+        let _ = sock
+            .write_all(
+                b"HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\nconnection: close\r\n\r\n",
+            )
+            .await;
+        for step in script.iter() {
+            match step {
+                Send(event) => {
+                    let _ = sock
+                        .write_all(format!("data: {event}\n\n").as_bytes())
+                        .await;
+                    let _ = sock.flush().await;
+                }
+                Wait(p) => {
+                    let until = Instant::now() + Duration::from_secs(30);
+                    while log.count(p) == 0 && Instant::now() < until {
+                        tokio::time::sleep(Duration::from_millis(20)).await;
+                    }
+                }
+            }
+        }
+    }
+
+    fn attached(url: &str) -> (Arc<V2Bridge>, Arc<Store>, SessionId) {
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        let session = store.create_session(None).unwrap();
+        let cfg = V2Config {
+            root: PathBuf::from("no-such-v2-checkout"),
+            node: PathBuf::from("no-such-node"),
+            data_name: DEFAULT_DATA_NAME.into(),
+            attach: Some((url.to_owned(), TOKEN.to_owned())),
+        };
+        (Arc::new(V2Bridge::new(cfg, store.clone())), store, session)
+    }
+
+    fn turn(session: SessionId, text: &str) -> Turn {
+        Turn {
+            session,
+            origin: Origin::Desktop,
+            content: Content::Text(text.into()),
+            received_at: now_ms(),
+        }
+    }
+
+    async fn ask_once(bridge: &V2Bridge, t: Turn) -> (Result<Reply, BrainError>, Vec<DraftFrame>) {
+        let (tx, mut rx) = mpsc::channel(256);
+        let out = bridge.reply(t, tx, CancellationToken::new()).await;
+        let mut frames = Vec::new();
+        while let Ok(f) = rx.try_recv() {
+            frames.push(f);
+        }
+        (out, frames)
+    }
+
+    struct FakeAsk {
+        says: bool,
+        asked: Mutex<Vec<String>>,
+    }
+    #[async_trait::async_trait]
+    impl Ask for FakeAsk {
+        async fn confirm(&self, _: &Origin, q: &Question, _: CancellationToken) -> bool {
+            self.asked.lock().unwrap().push(q.text.clone());
+            self.says
+        }
+    }
+    fn asker(says: bool) -> Arc<FakeAsk> {
+        Arc::new(FakeAsk {
+            says,
+            asked: Mutex::new(Vec::new()),
+        })
+    }
+
+    fn node_on_path() -> Option<PathBuf> {
+        let name = format!("node{}", std::env::consts::EXE_SUFFIX);
+        std::env::split_paths(&std::env::var_os("PATH")?)
+            .map(|d| d.join(&name))
+            .find(|p| p.is_file())
+    }
+
+    /// A temp "v2 checkout" whose entry.js serves the token page, prints the line, records each
+    /// start (with `ALEXIA_DATA_NAME`) in `starts.txt`, and exits after `exit_ms`.
+    fn fake_checkout(tag: &str, exit_ms: u64) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "alexia-bridge-{tag}-{}-{nanos}",
+            std::process::id()
+        ));
+        let src = root.join("packages/core/dist/src");
+        std::fs::create_dir_all(&src).unwrap();
+        let js = format!(
+            r#"const http = require('node:http')
+const fs = require('node:fs')
+fs.appendFileSync('starts.txt', (process.env.ALEXIA_DATA_NAME || '') + '\n')
+const s = http.createServer((q, r) => r.end('<script>const token = "{TOKEN}"</script>'))
+s.listen(0, '127.0.0.1', () => {{
+  console.log(`Alexia (interaction) is at http://127.0.0.1:${{s.address().port}}/`)
+  setTimeout(() => process.exit(0), {exit_ms})
+}})
+"#
+        );
+        std::fs::write(src.join("entry.js"), js).unwrap();
+        root
+    }
+
+    fn spawned(root: &std::path::Path, node: PathBuf) -> Arc<V2Bridge> {
+        let cfg = V2Config {
+            root: root.to_path_buf(),
+            node,
+            data_name: "AlexiaBridgeTest".into(),
+            attach: None,
+        };
+        Arc::new(V2Bridge::new(
+            cfg,
+            Arc::new(Store::open_in_memory().unwrap()),
+        ))
+    }
+
+    /// The two tests that spawn node. Serialized: `tracing` caches a callsite's interest, and
+    /// the same `info!` hit on another thread with no subscriber would hide it from the capture.
+    static NODE: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+    async fn until(secs: u64, mut ok: impl FnMut() -> bool) -> bool {
+        let end = Instant::now() + Duration::from_secs(secs);
+        while Instant::now() < end {
+            if ok() {
+                return true;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        ok()
+    }
+
+    fn body(text: &str) -> MessageBody {
+        MessageBody {
+            content: Content::Text(text.into()),
+            calls: None,
+            call_id: None,
+            provider: None,
+            notes: None,
+            bad: None,
+            stopped: None,
+            typed: None,
+            extra: Default::default(),
+        }
+    }
+
+    #[tokio::test]
+    async fn attach_mode_reads_no_child() {
+        let (url, _log) = fake(vec![Send(r#"{"delta":"hi"}"#)], Opts::default()).await;
+        let (bridge, _, session) = attached(&url);
+        assert!(bridge.ready(), "attached is ready without a child");
+        let cancel = CancellationToken::new();
+        let (b, c) = (bridge.clone(), cancel.clone());
+        let running = tokio::spawn(async move { b.run(c).await });
+        // A spawn attempt would fail (no checkout, no such node) and clear the connection.
+        tokio::time::sleep(Duration::from_millis(1500)).await;
+        assert!(bridge.ready(), "attach mode never tried to start a child");
+        let (out, _) = ask_once(&bridge, turn(session, "good morning")).await;
+        assert_eq!(out.unwrap().text, "hi");
+        cancel.cancel();
+        tokio::time::timeout(Duration::from_secs(10), running)
+            .await
+            .expect("run returns on cancel")
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn deltas_become_draft_and_reply() {
+        let (url, log) = fake(
+            vec![
+                Send(r#"{"phase":{"kind":"writing"}}"#),
+                Send(r#"{"delta":"Hel"}"#),
+                Send(r#"{"delta":"lo"}"#),
+                Send(r#"{"restart":true}"#),
+                Send(r#"{"note":"ignored"}"#),
+                Send(r#"{"switch":{"from":["a"],"to":"model-b","reasons":[],"says":"x"}}"#),
+                Send(r#"{"delta":"Hello "}"#),
+                Send(r#"{"delta":"there"}"#),
+                Send(r#"{"done":{"model":"model-z","steps":0}}"#),
+            ],
+            Opts::default(),
+        )
+        .await;
+        let (bridge, store, session) = attached(&url);
+        let (out, frames) = ask_once(&bridge, turn(session, "say hello")).await;
+        let reply = out.unwrap();
+        assert_eq!(reply.text, "Hello there");
+        assert_eq!(reply.model.as_deref(), Some("model-b"));
+        assert_eq!(reply.lane, Lane::Task);
+        let deltas: Vec<String> = frames
+            .iter()
+            .filter_map(|f| match f {
+                DraftFrame::Delta(d) => Some(d.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(deltas, ["Hel", "lo", "Hello ", "there"]);
+        assert!(frames.iter().any(|f| matches!(f, DraftFrame::Restart)));
+        let names: Vec<&str> = reply.spans.iter().map(|s| s.name).collect();
+        assert!(names.contains(&"bridge") && names.contains(&"bridge-first-byte"));
+        assert_eq!(log.bodies("/api/chat")[0]["text"], "say hello");
+        let history = store.history(session, None).unwrap();
+        assert_eq!(history.len(), 2);
+        assert_eq!(history[0].role, Role::User);
+        assert_eq!(history[0].body.content, Content::Text("say hello".into()));
+        assert_eq!(history[1].body.content, Content::Text("Hello there".into()));
+        assert_eq!(history[1].model.as_deref(), Some("model-b"));
+        assert!(history.iter().all(is_task));
+    }
+
+    #[tokio::test]
+    async fn images_go_as_uploads() {
+        let (url, log) = fake(vec![Send(r#"{"delta":"a cat"}"#)], Opts::default()).await;
+        let (bridge, _, session) = attached(&url);
+        let mut t = turn(session, "");
+        t.content = Content::Parts(vec![
+            Part::Text {
+                text: "what is this".into(),
+            },
+            Part::Image {
+                url: "data:image/png;base64,iVBORw0KGgo=".into(),
+            },
+        ]);
+        ask_once(&bridge, t).await.0.unwrap();
+        let sent = &log.bodies("/api/chat")[0];
+        assert_eq!(sent["text"], "what is this");
+        assert_eq!(
+            sent["files"],
+            json!([{ "name": "image-1.png", "data": "iVBORw0KGgo=", "type": "image/png" }])
+        );
+    }
+
+    #[tokio::test]
+    async fn phase_and_step_frames_map() {
+        let (url, _log) = fake(
+            vec![
+                Send(r#"{"phase":{"kind":"reading"}}"#),
+                Send(r#"{"phase":{"kind":"choosing"}}"#),
+                Send(r#"{"phase":{"kind":"thinking"}}"#),
+                Send(r#"{"phase":{"kind":"retrying"}}"#),
+                Send(r#"{"phase":{"kind":"backup"}}"#),
+                Send(r#"{"step":{"n":1,"name":"web_search","args":{}}}"#),
+                Send(r#"{"step":{"n":1,"name":"web_search","progress":0.5}}"#),
+                Send(r#"{"step":{"n":1,"name":"web_search","text":"found"}}"#),
+                Send(r#"{"phase":{"kind":"writing"}}"#),
+                Send(r#"{"step":{"n":2,"name":"read_file","args":{}}}"#),
+                Send(r#"{"delta":"ok"}"#),
+            ],
+            Opts::default(),
+        )
+        .await;
+        let (bridge, _, session) = attached(&url);
+        let (out, frames) = ask_once(&bridge, turn(session, "search")).await;
+        let reply = out.unwrap();
+        let phases: Vec<Phase> = frames
+            .iter()
+            .filter_map(|f| match f {
+                DraftFrame::Phase(p) => Some(*p),
+                _ => None,
+            })
+            .collect();
+        use Phase::*;
+        assert_eq!(
+            phases,
+            [Choosing, Choosing, Thinking, Retrying, Backup, Tool, Writing, Tool]
+        );
+        let tools: Vec<&str> = reply
+            .spans
+            .iter()
+            .map(|s| s.name)
+            .filter(|n| n.starts_with("tool:"))
+            .collect();
+        assert_eq!(tools, ["tool:web_search", "tool:read_file"]);
+    }
+
+    #[tokio::test]
+    async fn ask_goes_to_asker_and_answer_is_posted() {
+        let script = || {
+            vec![
+                Send(r#"{"ask":"Delete report.txt?"}"#),
+                Wait("/api/approve"),
+                Send(r#"{"delta":"done"}"#),
+            ]
+        };
+        let (url, log) = fake(script(), Opts::default()).await;
+        let (bridge, _, session) = attached(&url);
+        let yes = asker(true);
+        bridge.set_ask(yes.clone());
+        let (out, _) = ask_once(&bridge, turn(session, "clean up")).await;
+        assert_eq!(out.unwrap().text, "done");
+        assert_eq!(*yes.asked.lock().unwrap(), ["Delete report.txt?"]);
+        assert_eq!(log.bodies("/api/approve"), [json!({ "allowed": true })]);
+
+        // No asker set yet: the answer is no.
+        let (url, log) = fake(script(), Opts::default()).await;
+        let (bridge, _, session) = attached(&url);
+        let (out, _) = ask_once(&bridge, turn(session, "clean up")).await;
+        assert!(out.is_ok());
+        assert_eq!(log.bodies("/api/approve"), [json!({ "allowed": false })]);
+    }
+
+    #[tokio::test]
+    async fn paid_is_always_refused() {
+        let (url, log) = fake(
+            vec![
+                Send(r#"{"delta":"Working."}"#),
+                Send(r#"{"paid":"This answer costs $0.02."}"#),
+                Wait("/api/approve"),
+                Send(r#"{"paused":"The free models are done.","daily":0}"#),
+            ],
+            Opts::default(),
+        )
+        .await;
+        let (bridge, _, session) = attached(&url);
+        let yes = asker(true);
+        bridge.set_ask(yes.clone());
+        let (out, _) = ask_once(&bridge, turn(session, "big job")).await;
+        let reply = out.unwrap();
+        assert_eq!(reply.text, format!("Working. {FREE_ONLY}"));
+        assert!(
+            yes.asked.lock().unwrap().is_empty(),
+            "spending is never asked"
+        );
+        let approvals = log.bodies("/api/approve");
+        assert_eq!(approvals.len(), 2);
+        assert!(approvals.iter().all(|a| *a == json!({ "allowed": false })));
+    }
+
+    #[tokio::test]
+    async fn busy_423_retries_then_sentence() {
+        let (url, log) = fake(
+            vec![Send(r#"{"delta":"after the wait"}"#)],
+            Opts {
+                first: vec![423, 423],
+                always: None,
+            },
+        )
+        .await;
+        let (bridge, _, session) = attached(&url);
+        let (out, _) = ask_once(&bridge, turn(session, "go")).await;
+        assert_eq!(out.unwrap().text, "after the wait");
+        assert_eq!(log.count("/api/chat"), 3);
+
+        let (url, log) = fake(
+            vec![],
+            Opts {
+                first: vec![],
+                always: Some(423),
+            },
+        )
+        .await;
+        let (bridge, store, session) = attached(&url);
+        let began = Instant::now();
+        let (out, _) = ask_once(&bridge, turn(session, "go")).await;
+        match out {
+            Err(BrainError::Unavailable(s)) => assert_eq!(s, BUSY),
+            other => panic!("expected the busy sentence, got {other:?}"),
+        }
+        assert!(began.elapsed() >= Duration::from_secs(9));
+        // Every 500 ms for 10 s; a loaded machine may fit fewer in.
+        assert!(log.count("/api/chat") >= 3, "retried");
+        assert!(store.history(session, None).unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn cancel_posts_stop() {
+        let (url, log) = fake(
+            vec![Send(r#"{"delta":"partial"}"#), Wait("/api/stop")],
+            Opts::default(),
+        )
+        .await;
+        let (bridge, store, session) = attached(&url);
+        let (tx, mut rx) = mpsc::channel(16);
+        let cancel = CancellationToken::new();
+        let (b, c) = (bridge.clone(), cancel.clone());
+        let t = turn(session, "long task");
+        let job = tokio::spawn(async move { b.reply(t, tx, c).await });
+        let first = tokio::time::timeout(Duration::from_secs(20), rx.recv()).await;
+        assert!(matches!(first, Ok(Some(DraftFrame::Delta(_)))));
+        cancel.cancel();
+        let out = tokio::time::timeout(Duration::from_secs(20), job)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(matches!(out, Err(BrainError::Cancelled)));
+        assert_eq!(log.count("/api/stop"), 1);
+        assert!(
+            store.history(session, None).unwrap().is_empty(),
+            "nothing stored"
+        );
+    }
+
+    #[tokio::test]
+    async fn error_event_is_the_sentence_and_nothing_is_stored() {
+        let (url, _log) = fake(
+            vec![
+                Send(r#"{"delta":"half"}"#),
+                Send(r#"{"error":"No model could answer."}"#),
+            ],
+            Opts::default(),
+        )
+        .await;
+        let (bridge, store, session) = attached(&url);
+        let (out, _) = ask_once(&bridge, turn(session, "x")).await;
+        match out {
+            Err(BrainError::Unavailable(s)) => assert_eq!(s, "No model could answer."),
+            other => panic!("expected the error sentence, got {other:?}"),
+        }
+        assert!(store.history(session, None).unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn token_from_index_page() {
+        let (url, _log) = fake(vec![], Opts::default()).await;
+        let http = reqwest::Client::builder().no_proxy().build().unwrap();
+        assert_eq!(fetch_token(&http, &url).await.as_deref(), Some(TOKEN));
+        assert_eq!(find_uuid("x = '__TOKEN__'"), None);
+        assert_eq!(find_uuid(&format!("a{TOKEN}b")), Some(TOKEN));
+        assert_eq!(
+            url_in("Alexia (interaction) is at http://127.0.0.1:5173/").as_deref(),
+            Some("http://127.0.0.1:5173/")
+        );
+        assert_eq!(url_in("Alexia is at http://127.0.0.1:/"), None);
+        assert_eq!(url_in("Alexia is at http://example.com:80/"), None);
+    }
+
+    #[derive(Clone, Default)]
+    struct Logs(Arc<Mutex<Vec<u8>>>);
+    impl std::io::Write for Logs {
+        fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(b);
+            Ok(b.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    impl Logs {
+        fn text(&self) -> String {
+            String::from_utf8_lossy(&self.0.lock().unwrap()).into_owned()
+        }
+    }
+
+    #[tokio::test]
+    async fn token_never_logged() {
+        let _node = NODE.lock().await;
+        let logs = Logs::default();
+        let w = logs.clone();
+        let sub = tracing_subscriber::fmt()
+            .with_writer(move || w.clone())
+            .with_max_level(tracing::Level::TRACE)
+            .with_ansi(false)
+            .finish();
+        let _guard = tracing::subscriber::set_default(sub);
+
+        // The attached path: a refused chat logs a warning.
+        let (url, _log) = fake(
+            vec![],
+            Opts {
+                first: vec![],
+                always: Some(500),
+            },
+        )
+        .await;
+        let (bridge, _, session) = attached(&url);
+        assert!(ask_once(&bridge, turn(session, "x")).await.0.is_err());
+        assert!(logs.text().contains("v2 core answered /api/chat with 500"));
+
+        // The spawn path, where the token is actually read.
+        match node_on_path() {
+            Some(node) => {
+                let root = fake_checkout("log", 60_000);
+                let bridge = spawned(&root, node);
+                let cancel = CancellationToken::new();
+                let (b, c) = (bridge.clone(), cancel.clone());
+                let running = tokio::spawn(async move { b.run(c).await });
+                assert!(until(40, || bridge.ready()).await, "fake v2 came up");
+                cancel.cancel();
+                let _ = tokio::time::timeout(Duration::from_secs(20), running).await;
+                let _ = std::fs::remove_dir_all(&root);
+                let text = logs.text();
+                assert!(text.contains("v2 core is up at"), "{text}");
+                assert!(
+                    text.contains("is at http://127.0.0.1:"),
+                    "stdout line logged"
+                );
+            }
+            None => eprintln!("token_never_logged: node is not on PATH; spawn path not run"),
+        }
+        let text = logs.text();
+        assert_eq!(find_uuid(&text), None, "a token was logged: {text}");
+    }
+
+    #[tokio::test]
+    async fn chat_context_is_prefixed_once() {
+        let (url, log) = fake(vec![Send(r#"{"delta":"ok"}"#)], Opts::default()).await;
+        let (bridge, store, session) = attached(&url);
+        let chat = |role: Role, text: &str| {
+            store.append(session, role, None, &body(text)).unwrap();
+        };
+        let long = "y".repeat(400);
+        for (i, said) in ["one", "two", "three", "four", "five", "six", "seven"]
+            .iter()
+            .enumerate()
+        {
+            chat(
+                if i % 2 == 0 {
+                    Role::User
+                } else {
+                    Role::Assistant
+                },
+                said,
+            );
+        }
+        chat(Role::Assistant, &long);
+
+        ask_once(&bridge, turn(session, "task one"))
+            .await
+            .0
+            .unwrap();
+        ask_once(&bridge, turn(session, "task two"))
+            .await
+            .0
+            .unwrap();
+        chat(Role::User, "hi again");
+        ask_once(&bridge, turn(session, "task three"))
+            .await
+            .0
+            .unwrap();
+
+        let texts: Vec<String> = log
+            .bodies("/api/chat")
+            .iter()
+            .map(|b| b["text"].as_str().unwrap().to_owned())
+            .collect();
+        let cut = "y".repeat(300);
+        assert_eq!(
+            texts[0],
+            format!(
+                "{CONTEXT_HEAD}You: three\nAlexia: four\nYou: five\nAlexia: six\nYou: seven\nAlexia: {cut}\n\ntask one"
+            )
+        );
+        assert_eq!(texts[1], "task two", "no chat turns since the last task");
+        assert_eq!(
+            texts[2],
+            format!("{CONTEXT_HEAD}You: hi again\n\ntask three")
+        );
+        // v3 keeps what was typed, not the quoted context.
+        let history = store.history(session, None).unwrap();
+        assert_eq!(history[8].body.content, Content::Text("task one".into()));
+    }
+
+    #[tokio::test]
+    async fn child_restarts_after_exit() {
+        let _node = NODE.lock().await;
+        let Some(node) = node_on_path() else {
+            eprintln!("child_restarts_after_exit: skipped, node is not on PATH");
+            return;
+        };
+        let root = fake_checkout("restart", 1000);
+        let bridge = spawned(&root, node);
+        let cancel = CancellationToken::new();
+        let (b, c) = (bridge.clone(), cancel.clone());
+        let running = tokio::spawn(async move { b.run(c).await });
+        let starts = root.join("starts.txt");
+        let count = || {
+            std::fs::read_to_string(&starts)
+                .map(|s| s.lines().count())
+                .unwrap_or(0)
+        };
+        assert!(
+            until(40, || bridge.ready()).await,
+            "first start became ready"
+        );
+        assert!(
+            until(40, || count() >= 2 && bridge.ready()).await,
+            "restarted after exit; starts = {}",
+            count()
+        );
+        let recorded = std::fs::read_to_string(&starts).unwrap();
+        assert!(
+            recorded.lines().all(|l| l == "AlexiaBridgeTest"),
+            "{recorded}"
+        );
+        cancel.cancel();
+        tokio::time::timeout(Duration::from_secs(20), running)
+            .await
+            .expect("run returns on cancel")
+            .unwrap();
+        assert!(!bridge.ready());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// By hand, with a built v2 checkout:
+    /// `ALEXIA_V2_ROOT=<checkout> cargo test -p alexia-hub bridge -- --ignored live_v2 --nocapture`
+    #[tokio::test(flavor = "multi_thread")]
+    #[ignore = "needs ALEXIA_V2_ROOT pointing at a built v2 checkout"]
+    async fn live_v2() {
+        let cfg = V2Config::from_env().expect("set ALEXIA_V2_ROOT");
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        let session = store.create_session(None).unwrap();
+        let bridge = Arc::new(V2Bridge::new(cfg, store));
+        let cancel = CancellationToken::new();
+        let (b, c) = (bridge.clone(), cancel.clone());
+        let running = tokio::spawn(async move { b.run(c).await });
+        assert!(until(120, || bridge.ready()).await, "v2 core came up");
+        let (tx, mut rx) = mpsc::channel(256);
+        let printer = tokio::spawn(async move {
+            use std::io::Write;
+            while let Some(f) = rx.recv().await {
+                match f {
+                    DraftFrame::Delta(d) => print!("{d}"),
+                    other => print!("[{other:?}]"),
+                }
+                let _ = std::io::stdout().flush();
+            }
+        });
+        let reply = bridge
+            .reply(
+                turn(session, "list the plugins you have"),
+                tx,
+                CancellationToken::new(),
+            )
+            .await;
+        let _ = printer.await;
+        println!();
+        cancel.cancel();
+        let _ = running.await;
+        let reply = reply.expect("v2 answered");
+        println!("model: {:?}\nspans: {:?}", reply.model, reply.spans);
+        assert!(!reply.text.trim().is_empty());
+    }
 }
