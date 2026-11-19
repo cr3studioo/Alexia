@@ -65,3 +65,17 @@
 **How:** Answer under **Answer:** or on Telegram ("A-09 ..."). You'll enter tokens and keys later, on the PC, with `alexia-hub secret set <name>`, which reads them hidden from the keyboard. That command doesn't exist yet; I'll tell you when it does. Later, once only: switch off v2's Telegram plugin before the hub uses the real bot, and run `alexia-hub install` from an Administrator terminal for the watchdog.
 **Until then:** Phase 0 and the Phase 1 code keep going. Only the final real-message run (P1-18) waits.
 **Answer:**
+
+## A-10 · 2026-11-19 · notice (G-P0, no wait per A-03)
+**What I need:** Nothing. Phase 0 (the v3 skeleton) is merged on `cr3studioo/v3`. Try it if you want.
+**Why:** Phase gate G-P0.
+**How:** What works now: a Rust hub that runs the v2 plugins unchanged through its own MCP host, its own store (secrets in Credential Manager), an importer for v2 data, and CI (`.github/workflows/v3.yml`). Every v2 plugin in `plugins/` starts and lists its tools (15 of 15, locally and on GitHub). To try it, in PowerShell at the repo root, after `pnpm install`:
+```
+cd v3; cargo build --release
+$env:ALEXIA_PLUGINS_DIR = "C:\dev\Alexia\plugins"
+.\target\release\alexia-hub.exe plugins
+.\target\release\alexia-hub.exe tools
+```
+`plugins` shows each plugin's status, and `tools` lists every tool. This is the by-hand check P0-14 left for you. `alexia-hub run` starts everything (Ctrl+C stops it). The contracts are in `v3/specs/INTERFACES.md`.
+**Until then:** Nothing waits. Phase 1 (fast Telegram) is being built.
+**Answer:**

@@ -109,3 +109,9 @@
 - 2026-11-19 CEO #7: P1-04 review: changes (finish_reason error, retry-after overflow, had_key vs anonymous key, gsk_ test key shape, send vs cancel, error:null). Fix round opus ctx_8ea2ebf6d15b, try 2.
 - 2026-11-19 CEO #7: P0-16 fix done: Rust 1.96.1 pinned, cfg(test) mod-only skip, v2 conformance serial; run 44430327112 green. Re-review dispatched (opus), asked to judge serial vs hidden host issue.
 - 2026-11-19 CEO #7: P1-02 review: changes (private mod telegram/api blocks P1-09/P1-10 integration tests). Fix round opus ctx_cc7db25cbbb8, try 2.
+- 2026-11-19 CEO #7: P1-04 fix round done; re-review dispatched (opus ctx_777b035eb210).
+- 2026-11-19 CEO #7: P1-02 fix (pub mod telegram/api) checked by CEO directly (2-line diff); merged, integration green, pushed.
+- 2026-11-19 CEO #7: dispatched P1-11 (opus ctx_6020295b50a7), P1-15 (sonnet ctx_3d4e57320c00), P1-16 (sonnet ctx_669d952b5bc3).
+- 2026-11-19 CEO #7: P0-16 re-review approve (CI run 44430327112 green; serial v2 tests fair: 2 s heartbeat test-only). Merged, invariants + integration green, pushed; remote task branch deleted. PHASE 0 COMPLETE (20/20).
+- 2026-11-19 CEO #7: G-P0 notice A-10 in OWNER.md and Telegram. P0 whole-phase review dispatched (opus ctx_a1fa6738f47e, worktree P0-review).
+- 2026-11-19 CEO #7: handoff to CEO #8 (phase fully merged). 5 live workers left running.
