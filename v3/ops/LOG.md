@@ -100,3 +100,5 @@
 - 2026-11-19 CEO #7: P0-16 reported failed only on known pnpm flake + unverified GH run; treated as done. Pushed task branch to run v3.yml on GitHub; review dispatched (opus).
 - 2026-11-19 CEO #7: P1-01 review approve; merged. Integration: idle_lazy_plugin_stops flaked at supervise.rs:455 (Stopped{Idle} not yet seen) under parallel load; full rerun green, kept merge, pushed. Wrote P0-20 (round-2 de-flake).
 - 2026-11-19 CEO #7: later-spec notes from P1-01 review: P1-05 'keep v2 regexes' but no regex crate and P1-05 cannot touch Cargo.toml; P1-04 tokio net comes only via reqwest.
+- 2026-11-19 CEO #7: dispatched P1-02 (opus ctx_f26b716a8476), P1-04 (opus ctx_2136a4bbfd40), P0-20 (sonnet ctx_5c66c6cf0cf9).
+- 2026-11-19 CEO #7: P0-16 review: changes - CI run 44428804086 red (stable rustc 1.100 moves test exes; apple-context/memory/telegram Stopped on runner); invariants.mjs cfg(test) cut too wide. Fix round sonnet ctx_75821a686191, try 2; CEO allowed it to push its own task branch only, to iterate on CI.
