@@ -61,12 +61,15 @@ impl Offsets {
     }
 }
 
+/// An ask waiting for its button: its number and who to tell.
+type Pending = (u64, oneshot::Sender<bool>);
+
 pub struct Telegram {
     api: Api,
     store: Arc<Store>,
     cache: PathBuf,
     /// (chat id, ask message id) → the ask's number and its waiting `ask()`.
-    asks: Mutex<HashMap<(i64, i64), (u64, oneshot::Sender<bool>)>>,
+    asks: Mutex<HashMap<(i64, i64), Pending>>,
     /// Seeded from the clock, so a button left over from an earlier run never matches.
     ask_seq: AtomicU64,
     /// Wrong pairing guesses since the code last changed.
@@ -547,9 +550,7 @@ impl Telegram {
         let word = if yes { "approved" } else { "denied" };
         let text = format!("{} — {word}", m.text.unwrap_or_default());
         self.api.remove_buttons(m.chat.id, m.message_id).await?;
-        self.api
-            .edit_message(m.chat.id, m.message_id, &text)
-            .await
+        self.api.edit_message(m.chat.id, m.message_id, &text).await
     }
 }
 

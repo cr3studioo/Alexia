@@ -110,7 +110,9 @@ impl Fake {
             path: headers.split(' ').nth(1).unwrap_or("").to_owned(),
             body: buf[header_end..].to_vec(),
         };
-        let (status, body) = if seen.path.contains("/file/") {
+        let (status, body) = if seen.path.contains("/file/") && seen.path.ends_with("/broken") {
+            (404, b"not found".to_vec())
+        } else if seen.path.contains("/file/") {
             (200, FILE_BYTES.to_vec())
         } else {
             let (status, value) = match seen.method() {
@@ -125,7 +127,11 @@ impl Fake {
                         }
                     }
                 }
-                "getfile" => (200, ok(json!({"file_id": "x", "file_path": "f/x"}))),
+                // The path echoes the id, so a file id "broken" fails to download.
+                "getfile" => {
+                    let id = seen.json()["file_id"].as_str().unwrap_or("x").to_owned();
+                    (200, ok(json!({"file_id": id, "file_path": id})))
+                }
                 "sendmessage" | "senddocument" | "sendvoice" => (
                     200,
                     ok(json!({"message_id": 77, "date": 1, "chat": {"id": 5, "type": "private"}})),
@@ -410,6 +416,62 @@ async fn voice_becomes_infile() {
 }
 
 #[tokio::test]
+async fn failed_download_still_reaches_the_owner() {
+    let fake = Fake::start().await;
+    let store = store_with_owners(&[5]);
+    let ch = fake.channel(&store, cache("broken"));
+    let voice = json!({"file_id": "broken", "file_unique_id": "b", "duration": 4});
+    fake.batch(json!([
+        message(110, 5, json!({"caption": "listen", "voice": voice})),
+        message(
+            111,
+            5,
+            json!({"document": {"file_id": "broken", "file_unique_id": "d"}})
+        ),
+    ]));
+    let got = next(&ch).await;
+    assert_eq!(got.len(), 2, "neither message is lost");
+    assert_eq!(
+        got[0].content,
+        Content::Text("listen\n\n[The attachment couldn't be read.]".into())
+    );
+    assert_eq!(
+        got[1].content,
+        Content::Text("[The attachment couldn't be read.]".into())
+    );
+    assert!(got.iter().all(|i| i.files.is_empty()));
+    assert_eq!(saved_offset(&store), Some(110), "both wait for their reply");
+}
+
+#[tokio::test]
+async fn pairing_code_changes_after_five_misses() {
+    let fake = Fake::start().await;
+    let store = store_with_owners(&[]);
+    let ch = fake.channel(&store, cache("guesses"));
+    let code = ch.pairing_code().unwrap();
+    let wrong = if code == "000000" { "000001" } else { "000000" };
+    let misses: Vec<Value> = (0..5)
+        .map(|i| message(400 + i, 9, json!({"text": wrong})))
+        .collect();
+    fake.batch(json!(misses));
+    fake.batch(json!([message(405, 9, json!({"text": code}))]));
+    next_until(&ch, fake.until("getUpdates", 3)).await.ok();
+    assert!(
+        fake.seen("sendMessage").is_empty(),
+        "the old code no longer pairs"
+    );
+    assert_eq!(store.kv_get("_core", "telegram_owners").unwrap(), None);
+    let fresh = ch.pairing_code().unwrap();
+    assert_ne!(fresh, code, "five misses change the code");
+    fake.batch(json!([message(406, 9, json!({"text": fresh}))]));
+    next_until(&ch, fake.until("sendMessage", 1)).await.ok();
+    assert_eq!(
+        store.kv_get("_core", "telegram_owners").unwrap(),
+        Some(json!([9]))
+    );
+}
+
+#[tokio::test]
 async fn stop_update_is_stop_kind() {
     let fake = Fake::start().await;
     let store = store_with_owners(&[5]);
@@ -549,6 +611,64 @@ async fn ask_ignores_non_owner() {
     let edit = fake.until("editMessageText", 1).await[0].json();
     assert_eq!(edit["text"], "Delete it? — denied");
     poll.cancel();
+}
+
+#[tokio::test]
+async fn press_from_an_earlier_run_does_not_answer_a_new_ask() {
+    let fake = Fake::start().await;
+    let store = store_with_owners(&[5]);
+    let old = fake.channel(&store, cache("ask-restart"));
+    let stop_old = CancellationToken::new();
+    let (task, question) = asking(&fake, &old, stop_old.clone()).await;
+    let stale = question["reply_markup"]["inline_keyboard"][0][0]["callback_data"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    stop_old.cancel();
+    assert_eq!(task.await.unwrap().unwrap(), None);
+    drop(old);
+    // The restart: a new channel, and its first ask lands on the same message id (the fake
+    // always answers 77).
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    let ch = fake.channel(&store, cache("ask-restart"));
+    let poll = polling(&ch);
+    let c = ch.clone();
+    let task = tokio::spawn(async move {
+        c.ask(&chat(5), "Delete it?", CancellationToken::new())
+            .await
+    });
+    let sent = fake.until("sendMessage", 2).await;
+    let fresh = sent[1].json()["reply_markup"]["inline_keyboard"][0][0]["callback_data"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert_ne!(stale, fresh, "a new run numbers its asks afresh");
+    fake.batch(json!([press(300, 5, &stale)]));
+    let answered = fake.until("answerCallbackQuery", 1).await[0].json();
+    assert_eq!(answered["text"], "This question has expired.");
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(!task.is_finished(), "the old button decides nothing");
+    fake.batch(json!([press(301, 5, &fresh)]));
+    let got = tokio::time::timeout(WAIT, task).await.unwrap().unwrap();
+    assert_eq!(got.unwrap(), Some(true));
+    poll.cancel();
+}
+
+#[tokio::test]
+async fn unknown_press_leaves_the_message_alone() {
+    let fake = Fake::start().await;
+    let store = store_with_owners(&[5]);
+    let ch = fake.channel(&store, cache("ask-unknown"));
+    fake.batch(json!([press(300, 5, "y:1")]));
+    let got = next_until(&ch, fake.until("answerCallbackQuery", 1)).await;
+    assert!(matches!(got, Err(Error::Cancelled)), "{got:?}");
+    let answered = fake.seen("answerCallbackQuery")[0].json();
+    assert_eq!(answered["text"], "This question has expired.");
+    assert!(
+        fake.seen("editMessageText").is_empty(),
+        "not marked approved"
+    );
+    assert!(fake.seen("editMessageReplyMarkup").is_empty());
 }
 
 #[tokio::test]
