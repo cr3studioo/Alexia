@@ -20,6 +20,8 @@ tokio-util = { workspace = true }
 tracing = { workspace = true }
 serde_json = { workspace = true }
 serde = { workspace = true }
+base64 = { workspace = true }
+rpassword = "7"
 async-trait = { workspace = true }
 # bridge, latency (P1-13, P1-15).
 reqwest = { workspace = true }

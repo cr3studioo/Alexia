@@ -5,6 +5,7 @@
 
 mod bridge;
 mod latency;
+mod media;
 mod watchdog;
 
 use std::error::Error;
@@ -12,18 +13,31 @@ use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
+use std::time::Duration;
 
+use alexia_core::catalog::Catalog;
+use alexia_core::chat::{Caps, FastChat};
+use alexia_core::lane::Lanes;
+use alexia_core::router::Router;
+use alexia_core::{free, Brain, BrainError, Budget, DraftSink, Provider, Reply, Turn, Urgency};
 use alexia_core::{Bus, Event};
+use alexia_gateway::{channels, Gateway, GatewayConfig};
 use alexia_mcp::{EventSink, HostConfig, McpHost, NoUpcalls, PluginId, PluginState, Timings};
 use alexia_store::import::{import_v2, import_v2_files};
-use alexia_store::{data_dir, secrets, Layout, Store};
+use alexia_store::{data_dir, now_ms, secrets, Layout, Store};
 use tokio_util::sync::CancellationToken;
+use tokio_util::task::TaskTracker;
 
 const USAGE: &str = "usage:
   alexia-hub run                                   start everything; Ctrl+C stops it cleanly
   alexia-hub tools                                 load plugins, print every enabled plugin's tools
   alexia-hub plugins                               print the status of every plugin found
-  alexia-hub import-v2 [--files-only] <v2-folder>  import a v2 data folder";
+  alexia-hub import-v2 [--files-only] <v2-folder>  import a v2 data folder
+  alexia-hub secret set|clear <key>                store (value asked, never shown) or remove a secret
+  alexia-hub secret list                           the key names that can be set
+  alexia-hub pair                                  print the pairing code of each unpaired channel
+  alexia-hub latency [--last N] [--html FILE] [--check]  the latency dashboard
+  alexia-hub install | uninstall                   start the hub at boot (Windows Task Scheduler)";
 
 type Res<T> = Result<T, Box<dyn Error>>;
 
@@ -39,6 +53,16 @@ async fn main() -> ExitCode {
         ([Some("run")], _) => run().await,
         ([Some("tools")], _) => tools().await,
         ([Some("plugins")], _) => plugins().await,
+        ([Some("secret"), Some("list")], _) => {
+            secret_keys().iter().for_each(|k| println!("{k}"));
+            Ok(())
+        }
+        ([Some("secret"), Some("set"), Some(k)], _) => secret_set(k),
+        ([Some("secret"), Some("clear"), Some(k)], _) => secret_clear(k),
+        ([Some("pair")], _) => pair(),
+        ([Some("latency"), rest @ ..], _) => return latency(rest),
+        ([Some("install")], _) => watchdog::install().map_err(Into::into),
+        ([Some("uninstall")], _) => watchdog::uninstall().map_err(Into::into),
         ([Some("import-v2"), Some("--files-only"), _], [_, _, folder]) => import(folder, true),
         ([Some("import-v2"), w], [_, folder]) if *w != Some("--files-only") => {
             import(folder, false)
@@ -78,6 +102,7 @@ fn plugin_dirs(layout: &Layout) -> Vec<PathBuf> {
 }
 
 struct Hub {
+    store: Arc<Store>,
     host: McpHost,
     bus: Bus,
 }
@@ -125,14 +150,52 @@ async fn boot(layout: &Layout) -> Res<Hub> {
         node: node(),
         timings: Timings::default(),
     };
-    let host = McpHost::new(cfg, store, Arc::new(NoUpcalls), sink);
+    let host = McpHost::new(cfg, store.clone(), Arc::new(NoUpcalls), sink);
     host.start(&enabled).await?;
-    Ok(Hub { host, bus })
+    Ok(Hub { store, host, bus })
+}
+
+/// The task brain when v2 core isn't configured.
+struct NoTaskBrain;
+
+#[async_trait::async_trait]
+impl Brain for NoTaskBrain {
+    async fn reply(
+        &self,
+        _: Turn,
+        _: DraftSink,
+        _: CancellationToken,
+    ) -> Result<Reply, BrainError> {
+        Err(BrainError::Unavailable(
+            "Tasks need v2 core on this PC. Set ALEXIA_V2_ROOT and restart.".into(),
+        ))
+    }
+}
+
+/// Runs `f` every `period`, first after one period, until `root` is cancelled.
+fn every(
+    tracker: &TaskTracker,
+    root: &CancellationToken,
+    period: Duration,
+    f: impl Fn() + Send + 'static,
+) {
+    let cancel = root.child_token();
+    tracker.spawn(async move {
+        let mut tick = tokio::time::interval_at(tokio::time::Instant::now() + period, period);
+        loop {
+            tokio::select! {
+                _ = cancel.cancelled() => return,
+                _ = tick.tick() => f(),
+            }
+        }
+    });
 }
 
 async fn run() -> Res<()> {
+    const DAY_MS: i64 = 24 * 60 * 60 * 1000;
     let layout = Layout::new(data_dir());
     let hub = boot(&layout).await?;
+    let (store, bus, host) = (hub.store.clone(), hub.bus.clone(), hub.host.clone());
     let root = CancellationToken::new();
     // Test hook: with ALEXIA_HUB_STOP_ON_EOF=1, stdin reaching EOF behaves like Ctrl+C
     // (a real Ctrl+C can't be sent to a child on Windows without unsafe code).
@@ -143,15 +206,217 @@ async fn run() -> Res<()> {
             stop.cancel();
         });
     }
+
+    let free_providers = free::configured();
+    let rows = free_providers.iter().map(|p| p.row().clone()).collect();
+    let providers: Vec<Arc<dyn Provider>> = free_providers
+        .into_iter()
+        .map(|p| Arc::new(p) as Arc<dyn Provider>)
+        .collect();
+    let catalog = Arc::new(Catalog::new(
+        providers.clone(),
+        rows,
+        layout.cache().join("v3-free-models.json"),
+    ));
+    let router = Arc::new(Router::new(providers, catalog.clone(), store.clone()));
+    let caps: Arc<dyn Caps> = Arc::new(host.clone());
+    let fast_chat = Arc::new(FastChat::new(
+        router,
+        caps.clone(),
+        store.clone(),
+        Budget::CHAT,
+    ));
+    let bridge = bridge::V2Config::from_env().map(|mut cfg| {
+        cfg.node = node();
+        if let Some(n) = std::env::var("ALEXIA_V2_DATA_NAME")
+            .ok()
+            .filter(|n| !n.is_empty())
+        {
+            cfg.data_name = n;
+        }
+        Arc::new(bridge::V2Bridge::new(cfg, store.clone()))
+    });
+    let task_brain: Arc<dyn Brain> = match &bridge {
+        Some(b) => b.clone(),
+        None => Arc::new(NoTaskBrain),
+    };
+    let lanes = Arc::new(Lanes::new(fast_chat.clone(), task_brain));
+    let media = Arc::new(media::McpMedia {
+        caps,
+        host: host.clone(),
+        cache: layout.cache(),
+    });
+    let mut gateway = Gateway::new(
+        GatewayConfig::default(),
+        store.clone(),
+        bus.clone(),
+        lanes,
+        media,
+    );
+    let channels = channels::configured(store.clone(), &layout);
+    if channels.is_empty() {
+        println!(
+            "No channel is set up. Run `alexia-hub secret set <key>` with one of: {}",
+            channels::secret_keys().join(", ")
+        );
+    }
+    for c in channels {
+        gateway.add(c);
+    }
+    if let Some(b) = &bridge {
+        b.set_ask(gateway.asker());
+    }
+    for (channel, code) in channels::pairing_codes(&store)? {
+        println!("Send {code} to the {channel} bot to pair it.");
+    }
+    // ponytail: no store accessor for the `imports` table (store is off-limits here); an import
+    // that created no sessions would still print this line.
+    if store.sessions()?.is_empty() {
+        println!("Import v2 first (`alexia-hub import-v2`).");
+    }
+    let gap = watchdog::offline_gap(&store, now_ms());
+
+    let tracker = TaskTracker::new();
+    {
+        let c = root.child_token();
+        let catalog = catalog.clone();
+        tracker.spawn(async move { catalog.run(c).await });
+    }
+    if let Some(b) = bridge {
+        let c = root.child_token();
+        tracker.spawn(async move { b.run(c).await });
+    }
+    {
+        let c = root.child_token();
+        tracker.spawn(async move {
+            if let Err(e) = gateway.run(c).await {
+                tracing::error!("the gateway stopped: {e}");
+            }
+        });
+    }
+    tracker.spawn(watchdog::heartbeat(store.clone(), root.child_token()));
+    let invalidate = fast_chat.clone();
+    every(&tracker, &root, Duration::from_secs(600), move || {
+        invalidate.invalidate()
+    });
+    let prune = store.clone();
+    every(
+        &tracker,
+        &root,
+        Duration::from_millis(DAY_MS as u64),
+        move || {
+            if let Err(e) = prune.prune_spans(now_ms().saturating_sub(30 * DAY_MS)) {
+                tracing::warn!("pruning old spans failed: {e}");
+            }
+        },
+    );
+    if let Some(text) = gap {
+        // ponytail: fixed pause so the gateway has subscribed to the bus; an event bus has no replay.
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        bus.publish(Event::Say {
+            at: now_ms(),
+            text,
+            urgency: Urgency::Normal,
+            job: None,
+        });
+    }
+
     println!("Alexia hub is running. Press Ctrl+C to stop.");
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {}
         _ = root.cancelled() => {}
     }
-    hub.host.shutdown().await;
-    hub.bus.publish(Event::ShuttingDown);
+    root.cancel();
+    tracker.close();
+    // The heartbeat must be done before `clean_stop`, or a late tick looks like a crash.
+    if tokio::time::timeout(Duration::from_secs(5), tracker.wait())
+        .await
+        .is_err()
+    {
+        tracing::warn!("some tasks did not stop within 5 s");
+    }
+    host.shutdown().await;
+    watchdog::clean_stop(&store, now_ms());
+    bus.publish(Event::ShuttingDown);
     println!("Stopped.");
     Ok(())
+}
+
+/// Every key `secret` accepts: the channels' keys and one `provider_<id>` per free provider.
+fn secret_keys() -> Vec<String> {
+    channels::secret_keys()
+        .iter()
+        .map(|k| (*k).to_owned())
+        .chain(
+            free::ladder()
+                .into_iter()
+                .map(|r| format!("provider_{}", r.id)),
+        )
+        .collect()
+}
+
+fn known_key(key: &str) -> Res<()> {
+    let keys = secret_keys();
+    if keys.iter().any(|k| k == key) {
+        return Ok(());
+    }
+    Err(format!(
+        "'{key}' is not a known key. Known keys: {}",
+        keys.join(", ")
+    )
+    .into())
+}
+
+fn secret_set(key: &str) -> Res<()> {
+    use std::io::IsTerminal;
+    known_key(key)?;
+    let value = if std::io::stdin().is_terminal() {
+        rpassword::prompt_password("Paste the value (it won't be shown): ")?
+    } else {
+        let mut line = String::new();
+        std::io::stdin().read_line(&mut line)?;
+        line
+    };
+    let value = value.trim();
+    if value.is_empty() {
+        return Err("No value was given; nothing was saved.".into());
+    }
+    secrets::set("_core", key, value)?;
+    println!("Saved.");
+    Ok(())
+}
+
+fn secret_clear(key: &str) -> Res<()> {
+    known_key(key)?;
+    secrets::delete("_core", key)?;
+    println!("Cleared.");
+    Ok(())
+}
+
+fn pair() -> Res<()> {
+    let store = Store::open(&Layout::new(data_dir()).db())?;
+    for (channel, code) in channels::pairing_codes(&store)? {
+        println!("{channel}\t{code}");
+    }
+    Ok(())
+}
+
+fn latency(rest: &[Option<&str>]) -> ExitCode {
+    let args: Vec<String> = rest.iter().map(|a| a.unwrap_or("").to_owned()).collect();
+    let opts = match latency::parse(&args) {
+        Ok(o) => o,
+        Err(e) => {
+            eprintln!("{e}");
+            return ExitCode::from(2);
+        }
+    };
+    match Store::open(&Layout::new(data_dir()).db()) {
+        Ok(store) => ExitCode::from(u8::try_from(latency::run(&store, &opts)).unwrap_or(1)),
+        Err(e) => {
+            eprintln!("{e}");
+            ExitCode::FAILURE
+        }
+    }
 }
 
 async fn tools() -> Res<()> {
