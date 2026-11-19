@@ -1195,6 +1195,43 @@ test('the ceiling inside one turn runs what fits, then stops on the ceiling', as
 
   expect(result.ended).toBe('ceiling')
   expect(tools.calls.map((c) => c.name)).toEqual(['notes.a', 'notes.b'])
-  expect(store.history(session).filter((m) => m.role === 'tool')).toHaveLength(2)
+  expect(store.history(session).filter((m) => m.role === 'tool')).toHaveLength(3)
+  store.close()
+})
+
+test('the ceiling leaves no call without a result', async () => {
+  script = [{ calls: [{ name: 'notes.a' }, { name: 'notes.b' }, { name: 'notes.c' }] }, { say: 'must not be asked' }]
+  served = []
+  const { store, session, world } = bench()
+  const tools = tooling()
+
+  await run({ messages: start('go'), tools, pins, world, store, secrets, session, maxSteps: 2 })
+
+  const history = store.history(session)
+  const asked = history.filter((m) => m.role === 'assistant').flatMap((m) => (m.calls ?? []).map((c) => c.id))
+  const tools_ = history.filter((m) => m.role === 'tool')
+  expect(asked).toHaveLength(3)
+  expect(tools_.map((m) => m.callId)).toEqual(asked)
+  expect(tools_.at(-1)?.content).toBe('not run: step limit reached')
+  expect(served).toHaveLength(1)
+  store.close()
+})
+
+test("a ceiling hit before a turn's first call still answers it", async () => {
+  script = Array.from({ length: 50 }, () => ({ call: 'notes.read' }) as Turn)
+  served = []
+  const { store, session, world } = bench()
+  const tools = tooling()
+
+  const result = await run({ messages: start('go'), tools, pins, world, store, secrets, session, maxSteps: 4 })
+
+  expect(result.ended).toBe('ceiling')
+  expect(result.steps).toHaveLength(4)
+  const history = store.history(session)
+  const asked = history.filter((m) => m.role === 'assistant').flatMap((m) => (m.calls ?? []).map((c) => c.id))
+  const answered = history.filter((m) => m.role === 'tool')
+  expect(answered).toHaveLength(5)
+  expect(answered.map((m) => m.callId)).toEqual(asked)
+  expect(answered.at(-1)?.content).toBe('not run: step limit reached')
   store.close()
 })
