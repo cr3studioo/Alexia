@@ -606,8 +606,15 @@ pub enum Origin {
     Scheduler { job: JobId },
 }
 
+/// (V3-1) A file that came with a message, already downloaded under `layout.cache()`.
+#[derive(Clone, Debug)] pub struct InFile { pub name: String, pub mime: String, pub path: PathBuf }
+
 #[derive(Clone, Debug)]
-pub struct Turn { pub session: SessionId, pub origin: Origin, pub content: Content, pub received_at: Ms }
+pub struct Turn { pub session: SessionId, pub origin: Origin, pub content: Content,
+                  /// (V3-1) Documents and other files that came with the message, not voice notes
+                  /// (already text in `content`) and not photos (image parts of `content`). A turn
+                  /// with files always takes the task lane: the chat lane cannot read one.
+                  pub files: Vec<InFile>, pub received_at: Ms }
 
 /// What the reply is doing while it is written. Mirrors `alexia/stream` (wire-protocol.md §5).
 #[derive(Clone, Debug)]
@@ -810,8 +817,8 @@ under `crates/alexia-gateway/src/channels/`. See §8 for what this means for inv
 #[derive(Clone, Debug, PartialEq, Eq, Hash)] pub struct MsgRef { pub id: String }
 /// (V3-1) `Stop`: the owner asks to stop the answer being written.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)] pub enum InKind { Message, Stop }
-/// (V3-1) A file that came with a message, already downloaded under `layout.cache()`.
-#[derive(Clone, Debug)] pub struct InFile { pub name: String, pub mime: String, pub path: PathBuf }
+/// (V3-1) `InFile` is core's (§2.3), re-exported so channels and media name it from here.
+pub use alexia_core::InFile;
 #[derive(Clone, Debug)]
 pub struct Inbound { pub chat: ChatRef, pub msg: MsgRef, /** (V3-1) */ pub kind: InKind, pub from_owner: bool,
                      pub content: Content, /** (V3-1) */ pub files: Vec<InFile>, pub at: Ms }
