@@ -190,3 +190,6 @@
 2026-11-19 Merged P1-17 (gate ok, pushed). Review minors: early Err return at main.rs:269/274 skips host.shutdown/clean_stop; 500 ms offline-gap sleep before ctrl_c select (main.rs:315); non-UTF-8 latency args (main.rs:405); daily prune first runs after 24 h (main.rs:306). Not yet specced.
 2026-11-19 Dispatched P1-26 (opus) ctx_63927afdb362 and P1-28 (sonnet) ctx_d2d475534832. Telegram: A-09 reminder sent; getUpdates empty.
 2026-11-19 CEO #10 hands off after 6 rounds (11 merged this run).
+2026-11-19 CEO #11 started. Bound run_7a40b198ac83; P1-26, P1-28 live. Dispatched planner plan-fu3 ctx_72189bbc54cd (P1-32 hub main.rs minors; split P1-18 into e2e test + P1-33 by-hand run needing A-09).
+2026-11-19 P1-28 build done; review dispatched ctx_3c7d5a37f217.
+2026-11-19 Merged plan-fu3 (P1-32, P1-33 new; P1-18 now test only, P1-33 needs A-09). Dispatched P1-32 (sonnet) ctx_4e5ea17aea34.
