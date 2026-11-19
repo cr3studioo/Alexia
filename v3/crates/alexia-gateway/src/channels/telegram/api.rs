@@ -4,7 +4,6 @@
 //! The token is in every URL, so no URL is ever logged or formatted: a reqwest error becomes
 //! `Error::Unreachable` without its `Display`, and `Api`'s `Debug` prints only `base`.
 
-use std::path::Path;
 use std::time::Duration;
 
 use reqwest::multipart::{Form, Part};
@@ -342,8 +341,9 @@ impl Api {
             .map(drop)
     }
 
-    /// getFile then download to `dest`. Refuses files over 20 MB (the Bot API's own limit).
-    pub async fn download(&self, file_id: &str, dest: &Path) -> Result<()> {
+    /// getFile then download, returning the bytes. Refuses files over 20 MB (the Bot API's own
+    /// limit).
+    pub async fn download(&self, file_id: &str) -> Result<Vec<u8>> {
         let too_big = || Error::Service("the file is over Telegram's 20 MB limit".into());
         let file: TgFile = self.call("getFile", json!({"file_id": file_id})).await?;
         if file.file_size.is_some_and(|n| n > FILE_MAX) {
@@ -369,8 +369,7 @@ impl Api {
         if response.content_length().is_some_and(|n| n > FILE_MAX) {
             return Err(too_big());
         }
-        // ponytail: whole file in memory (at most 20 MB) and a blocking write; stream to disk
-        // if the limit ever grows.
+        // ponytail: whole file in memory (at most 20 MB); stream if the limit ever grows.
         let mut bytes = Vec::new();
         while let Some(chunk) = response.chunk().await.map_err(unreachable)? {
             bytes.extend_from_slice(&chunk);
@@ -378,7 +377,6 @@ impl Api {
                 return Err(too_big());
             }
         }
-        std::fs::write(dest, bytes)
-            .map_err(|e| Error::Service(format!("couldn't save the file: {e}")))
+        Ok(bytes)
     }
 }
