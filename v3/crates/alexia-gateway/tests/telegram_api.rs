@@ -340,12 +340,7 @@ async fn download_outlives_the_call_timeout() {
     )
     .await;
     let api = Api::new(&base, token());
-    let dir = std::env::temp_dir().join(format!("alexia-p1-21-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    let dest = dir.join("slow.bin");
-    api.download("f", &dest).await.unwrap();
-    assert_eq!(std::fs::read(&dest).unwrap(), b"slow!");
-    std::fs::remove_dir_all(&dir).unwrap();
+    assert_eq!(api.download("f").await.unwrap(), b"slow!");
 }
 
 #[tokio::test]
@@ -437,30 +432,21 @@ async fn download_writes_file_and_refuses_over_20mb() {
     }))
     .await;
     let api = Api::new(&base, token());
-    let dir = std::env::temp_dir().join(format!("alexia-p1-09-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-
-    let dest = dir.join("photo.jpg");
-    api.download("small", &dest).await.unwrap();
-    assert_eq!(std::fs::read(&dest).unwrap(), content);
+    assert_eq!(api.download("small").await.unwrap(), content);
     assert!(rx.recv().await.unwrap().path.ends_with("/getFile"));
     assert_eq!(
         rx.recv().await.unwrap().path,
         format!("/file/bot{}/photos/file_1.jpg", token())
     );
 
-    let refused = dir.join("huge.jpg");
-    let err = api.download("huge", &refused).await.unwrap_err();
+    let err = api.download("huge").await.unwrap_err();
     assert!(
         matches!(&err, Error::Service(s) if s.contains("20 MB")),
         "{err:?}"
     );
-    assert!(!refused.exists());
     // Refused at getFile: the file itself was never fetched.
     assert!(rx.recv().await.unwrap().path.ends_with("/getFile"));
     assert!(rx.try_recv().is_err());
-
-    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 #[tokio::test]

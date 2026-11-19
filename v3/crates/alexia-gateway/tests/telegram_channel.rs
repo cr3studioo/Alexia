@@ -3,6 +3,7 @@
 
 use std::collections::VecDeque;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -213,8 +214,11 @@ fn store_with_owners(owners: &[i64]) -> Arc<Store> {
     Arc::new(store)
 }
 
+/// A new, empty folder for every call, so no two tests (or two calls in one test) share one.
 fn cache(test: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("alexia-p1-10-{test}-{}", std::process::id()));
+    static N: AtomicUsize = AtomicUsize::new(0);
+    let n = N.fetch_add(1, Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!("alexia-p1-10-{test}-{}-{n}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     dir
 }
@@ -390,8 +394,9 @@ async fn photo_becomes_image_part() {
             },
         ])
     );
-    let saved = dir.join("telegram").join("101.jpg");
-    assert_eq!(std::fs::read(saved).unwrap(), FILE_BYTES);
+    assert!(got[0].files.is_empty());
+    let left = std::fs::read_dir(dir.join("telegram")).map_or(0, Iterator::count);
+    assert_eq!(left, 0, "a photo leaves nothing in the cache");
     let _ = std::fs::remove_dir_all(dir);
 }
 

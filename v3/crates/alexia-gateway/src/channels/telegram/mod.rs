@@ -243,6 +243,10 @@ fn safe_name(name: &str) -> String {
     }
 }
 
+fn write(path: &Path, bytes: &[u8]) -> Result<()> {
+    std::fs::write(path, bytes).map_err(|e| Error::Service(format!("couldn't save the file: {e}")))
+}
+
 fn read(path: &Path) -> Result<Vec<u8>> {
     std::fs::read(path).map_err(|e| Error::Service(format!("couldn't read the file: {e}")))
 }
@@ -477,10 +481,9 @@ impl Telegram {
             .filter(|p| p.file_size.is_none_or(|n| n <= PHOTO_MAX))
             .max_by_key(|p| u64::from(p.width) * u64::from(p.height));
         if let Some(photo) = best {
-            ensure_dir()?;
-            let path = dir.join(format!("{update}.jpg"));
-            self.api.download(&photo.file_id, &path).await?;
-            let url = format!("data:image/jpeg;base64,{}", base64(&read(&path)?));
+            // Only the image part is passed on, so nothing is written to the cache.
+            let bytes = self.api.download(&photo.file_id).await?;
+            let url = format!("data:image/jpeg;base64,{}", base64(&bytes));
             let text = text.to_owned();
             Ok(Some((
                 Content::Parts(vec![Part::Text { text }, Part::Image { url }]),
@@ -494,7 +497,7 @@ impl Telegram {
             ensure_dir()?;
             let name = format!("{update}.ogg");
             let path = dir.join(&name);
-            self.api.download(&voice.file_id, &path).await?;
+            write(&path, &self.api.download(&voice.file_id).await?)?;
             let file = InFile {
                 name,
                 mime: "audio/ogg".into(),
@@ -505,7 +508,7 @@ impl Telegram {
             ensure_dir()?;
             let name = safe_name(doc.file_name.as_deref().unwrap_or("file"));
             let path = dir.join(format!("{update}-{name}"));
-            self.api.download(&doc.file_id, &path).await?;
+            write(&path, &self.api.download(&doc.file_id).await?)?;
             let mime = doc
                 .mime_type
                 .clone()
