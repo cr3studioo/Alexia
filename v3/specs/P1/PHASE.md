@@ -116,6 +116,8 @@ Crate paths are under `v3/crates/`.
 | P1-23 | Gateway: spawned tasks on the tracker | opus | none | `alexia-gateway/{src/gateway.rs, tests/gateway.rs}` |
 | P1-24 | v2 agent: dangling tool ids at the ceiling | sonnet | none | `packages/core/src/agent.ts`, `packages/core/test/agent.test.ts` |
 | P1-25 | One time helper | sonnet | P1-20, P1-22, P1-23, P1-17, P0-25 | `alexia-store/{src/types.rs, src/db.rs, src/import.rs, tests/time.rs}`, `alexia-core/src/catalog.rs`, `alexia-gateway/src/gateway.rs`, `alexia-hub/src/{watchdog.rs, latency.rs, main.rs}`, `v3/specs/INTERFACES.md` |
+| P1-26 | Documents reach the task lane; no empty assistant turns; bounded prompt fetches | opus | P1-07, P1-17, P1-23 | `alexia-core/{src/brain.rs, src/lane.rs, src/chat.rs, tests/lane.rs, tests/chat.rs, tests/types.rs}`, `alexia-gateway/{src/channel.rs, src/gateway.rs, tests/gateway.rs}`, `alexia-hub/{src/bridge.rs, Cargo.toml}`, `v3/Cargo.lock`, `v3/specs/INTERFACES.md` |
+| P1-27 | De-flake call_at_idle_deadline_never_gone | sonnet | none | `alexia-mcp/tests/supervise.rs` |
 
 ## Owner needs
 
@@ -174,3 +176,7 @@ that file. The task named after each is the one that implements it.
 5. (P1-03, P1-17) `secrets::get` reads `ALEXIA_SECRET_<OWNER>_<KEY>` first (§0.3's "environment
    variables for CI"); §2.6 gains `secret set|clear|list`, `pair`, `latency`, `install`,
    `uninstall`; `V2Bridge` gains `V2Config` and `set_ask` (§2.6).
+
+## Notes
+
+- P1-22 skips tool rows on the no-tools path (`openai.rs` `wire`); V3-2 must map `calls` → `tool_calls` and `call_id` → `tool_call_id` when it sends tools.
