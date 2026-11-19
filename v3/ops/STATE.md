@@ -14,7 +14,7 @@ Ready (opus, wait for a free opus builder slot): P1-07 (lanes), P1-23 (gateway t
 Integration gate: bash C:/dev/Alexia-wt/gate.sh after each merge (prints GATE OK or failures).
 Critical path: P1-10 fix, P1-12, P1-07 -> P1-17 -> P1-18.
 Opus cap (2 builders) is the bottleneck. Reviewers are not counted, but the 5-worker cap counts everyone.
-Merges since the last phase review: 8 (P0-22, P1-20, P1-22, P1-06, P0-25, P1-08, P1-13, P1-21).
+Merges since the last phase review: 0 (phase review 2 done; re-plan running).
 Follow-ups: being specced by the planner above (Turn files field, supervise.rs de-flake, chat.rs bounds/empty turns, P1-22 note).
 Open owner asks: A-09 (test bot, free provider key names, OK to race two providers), no reply. Only P1-18 waits on it. A-10 is a notice.
 Telegram: vars set (user env; read via PowerShell GetEnvironmentVariable User). getUpdates empty at handoff; no update_id processed yet.

@@ -173,3 +173,6 @@
 2026-11-19 pnpm check on P1-24 merge (base2): only known compute-connect fail plus compute-acceptance and provider.test load flakes (both pass 2/2 alone). Merged P1-24, P1-12, P1-07 (gate ok, pushed).
 2026-11-19 Merges since phase review: 12. Phase review due.
 2026-11-19 Planner done: P1-26 (opus, after P1-17/P1-23) and P1-27 (sonnet) specced; P1-18 now depends on P1-26. Dispatched P1-27 ctx_6158978428d2.
+2026-11-19 P1-10 fixer asked to edit telegram/api.rs (download returns bytes): allowed, root cause and no other owner. P1-23 build done; review ctx_7e7d94168ca5.
+2026-11-19 Phase review 2: 12 findings (3 high: span start epoch vs since-turn, Turn lacks files = P1-26, P1-10 unmerged). P1-17 spec assumes supervise/base64/SettingsChanged the code lacks.
+2026-11-19 P1-17 held until re-plan. Planner ctx_4026058819e2 in C:\dev\Alexia-wt\plan-rv (branch cr3studioo/v3-plan-rv) re-plans P1-17/P1-25, adds INTERFACES signatures, new tasks from P1-28.
