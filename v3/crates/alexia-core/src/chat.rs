@@ -151,7 +151,10 @@ impl FastChat {
         if !self.caps.answers(cap) {
             return None;
         }
-        let text = self.caps.call(cap, Map::new(), cancel.child_token()).await?;
+        let text = self
+            .caps
+            .call(cap, Map::new(), cancel.child_token())
+            .await?;
         let text = text.trim();
         (!text.is_empty()).then(|| text.to_owned())
     }
