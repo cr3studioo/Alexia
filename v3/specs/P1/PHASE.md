@@ -84,6 +84,7 @@ P1-28 ─┬─ P1-29 telegram finish + pairing
        └─ P1-30 approval timeout tests
 P1-31 v2 stop answers its calls (independent)
 P1-32 hub run exits and prune (independent; main.rs + cli_p1.rs only)
+P1-34 secret import-v2 (independent of P1-18; never touches telegram_e2e.rs)
 ```
 
 P1-25, P1-17 and P1-26 run one after another: all three edit the hub, and P1-25 and P1-26 both
@@ -133,6 +134,7 @@ Crate paths are under `v3/crates/`.
 | P1-31 | v2 agent: dangling tool ids on a stop | sonnet | none | `packages/core/src/agent.ts`, `packages/core/test/agent.test.ts` |
 | P1-32 | Hub run: every exit stops cleanly, Ctrl+C always wins, prune at boot, text-only latency args | sonnet | none | `alexia-hub/{src/main.rs, tests/cli_p1.rs}` |
 | P1-33 | The 50-real-message latency run | sonnet | P1-18 | `v3/ops/reports/P1-latency.md` |
+| P1-34 | `alexia-hub secret import-v2`: copy v2's secrets into v3's store, once | opus | none | `alexia-store/{src/secrets.rs, tests/v2_secrets.rs}`, `alexia-gateway/src/channels/mod.rs`, `alexia-hub/src/main.rs`, `v3/specs/INTERFACES.md` |
 
 ## Owner needs
 
