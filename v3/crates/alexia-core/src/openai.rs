@@ -80,7 +80,12 @@ impl OpenAiCompat {
         }
     }
 
-    fn request(&self, method: reqwest::Method, url: &str, key: Option<&str>) -> reqwest::RequestBuilder {
+    fn request(
+        &self,
+        method: reqwest::Method,
+        url: &str,
+        key: Option<&str>,
+    ) -> reqwest::RequestBuilder {
         let mut req = self.client.request(method, url);
         for (name, value) in &self.row.headers {
             req = req.header(name, value);
@@ -191,7 +196,10 @@ impl Provider for OpenAiCompat {
             return Err(self.refusal(response, key.is_some()).await);
         }
         let list: Value = response.json().await.map_err(|_| {
-            ProviderError::Other(format!("{} sent a model list that is not JSON", self.row.id))
+            ProviderError::Other(format!(
+                "{} sent a model list that is not JSON",
+                self.row.id
+            ))
         })?;
         // OpenAI's `{data: [...]}`, or Ollama's `{models: [...]}`.
         let rows = list["data"]
@@ -235,7 +243,9 @@ impl Provider for OpenAiCompat {
     ) -> Result<ChatDone, ProviderError> {
         // ponytail: no tool calls on the fast path; V3-2's agent loop adds them.
         if !req.tools.is_empty() {
-            return Err(ProviderError::Other("tools are not sent on this path".into()));
+            return Err(ProviderError::Other(
+                "tools are not sent on this path".into(),
+            ));
         }
         let (base, key) = self.reaching()?;
         let mut messages = Vec::with_capacity(req.messages.len() + 1);
@@ -260,7 +270,11 @@ impl Provider for OpenAiCompat {
             retry_after_ms: None,
         };
         let send = self
-            .request(reqwest::Method::POST, &format!("{base}/chat/completions"), key)
+            .request(
+                reqwest::Method::POST,
+                &format!("{base}/chat/completions"),
+                key,
+            )
             .json(&body)
             .send();
         let mut response = tokio::select! {

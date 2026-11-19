@@ -86,7 +86,10 @@ fn headers_for(id: &str) -> Vec<(String, String)> {
             ("HTTP-Referer", "https://github.com/cr3studioo/Alexia"),
             ("X-Title", "Alexia"),
         ],
-        "navy" => &[("User-Agent", "Alexia (+https://github.com/cr3studioo/Alexia)")],
+        "navy" => &[(
+            "User-Agent",
+            "Alexia (+https://github.com/cr3studioo/Alexia)",
+        )],
         _ => &[],
     };
     pairs
