@@ -3,7 +3,7 @@
 
 use std::collections::VecDeque;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -59,6 +59,8 @@ struct Fake {
     updates: Arc<Mutex<VecDeque<(u16, Value)>>>,
     /// When each non-empty `getUpdates` answer was written.
     replied_at: Arc<Mutex<Vec<i64>>>,
+    /// While set, `sendMessage`, `sendDocument` and `sendVoice` answer 400.
+    fail_sends: Arc<AtomicBool>,
 }
 
 impl Fake {
@@ -69,6 +71,7 @@ impl Fake {
             log: Arc::default(),
             updates: Arc::default(),
             replied_at: Arc::default(),
+            fail_sends: Arc::default(),
         };
         let f = fake.clone();
         tokio::spawn(async move {
@@ -132,6 +135,14 @@ impl Fake {
                 "getfile" => {
                     let id = seen.json()["file_id"].as_str().unwrap_or("x").to_owned();
                     (200, ok(json!({"file_id": id, "file_path": id})))
+                }
+                "sendmessage" | "senddocument" | "sendvoice"
+                    if self.fail_sends.load(Ordering::Relaxed) =>
+                {
+                    (
+                        400,
+                        json!({"ok": false, "error_code": 400, "description": "Bad Request: chat not found"}),
+                    )
                 }
                 "sendmessage" | "senddocument" | "sendvoice" => (
                     200,
@@ -562,6 +573,90 @@ async fn stopped_turn_is_not_replayed_after_restart() {
         fake.seen("getUpdates")[polls_before].json()["offset"],
         301,
         "restart does not ask for the stopped message again"
+    );
+}
+
+#[tokio::test]
+async fn failed_reply_is_replayed_after_restart() {
+    let fake = Fake::start().await;
+    let store = store_with_owners(&[5]);
+    let ch = fake.channel(&store, cache("failed"));
+    fake.batch(json!([message(500, 5, json!({"text": "hi"}))]));
+    assert_eq!(next(&ch).await.len(), 1);
+    fake.fail_sends.store(true, Ordering::Relaxed);
+    assert!(ch.send(&chat(5), &plain("hello")).await.is_err());
+    // The gateway clears the draft after every delivery, a failed one too.
+    ch.draft(&chat(5), None).await.unwrap();
+    assert_eq!(
+        saved_offset(&store),
+        Some(500),
+        "a reply that never arrived is not done"
+    );
+    drop(ch);
+
+    let polls_before = fake.seen("getUpdates").len();
+    let ch = fake.channel(&store, cache("failed"));
+    fake.batch(json!([message(500, 5, json!({"text": "hi"}))]));
+    assert_eq!(next(&ch).await.len(), 1);
+    assert_eq!(
+        fake.seen("getUpdates")[polls_before].json()["offset"],
+        500,
+        "restart asks for the unanswered message again"
+    );
+    fake.fail_sends.store(false, Ordering::Relaxed);
+    ch.send(&chat(5), &plain("hello")).await.unwrap();
+    assert_eq!(saved_offset(&store), Some(501));
+}
+
+#[tokio::test]
+async fn paired_bot_ignores_codes() {
+    let fake = Fake::start().await;
+    let store = store_with_owners(&[5]);
+    let ch = fake.channel(&store, cache("paired"));
+    let code = ch.pairing_code().unwrap();
+    let wrong = if code == "000000" { "000001" } else { "000000" };
+    let mut guesses = vec![message(600, 9, json!({"text": code}))];
+    guesses.extend((1..=6).map(|i| message(600 + i, 9, json!({"text": wrong}))));
+    fake.batch(json!(guesses));
+    next_until(&ch, fake.until("getUpdates", 2)).await.ok();
+    assert!(
+        fake.seen("sendMessage").is_empty(),
+        "no reply to a stranger"
+    );
+    assert_eq!(
+        store.kv_get("_core", "telegram_owners").unwrap(),
+        Some(json!([5])),
+        "a paired bot never adds an owner"
+    );
+    assert_eq!(
+        store.kv_get("_core", "telegram_pairing_code").unwrap(),
+        Some(json!(code)),
+        "guesses no longer rotate the code"
+    );
+}
+
+#[tokio::test]
+async fn misses_count_per_sender() {
+    let fake = Fake::start().await;
+    let store = store_with_owners(&[]);
+    let ch = fake.channel(&store, cache("per-sender"));
+    let code = ch.pairing_code().unwrap();
+    let wrong = if code == "000000" { "000001" } else { "000000" };
+    let misses: Vec<Value> = (0..8)
+        .map(|i| message(700 + i, 9 + i % 2, json!({"text": wrong})))
+        .collect();
+    fake.batch(json!(misses));
+    next_until(&ch, fake.until("getUpdates", 2)).await.ok();
+    assert_eq!(
+        ch.pairing_code().unwrap(),
+        code,
+        "four misses each do not change the code"
+    );
+    fake.batch(json!([message(708, 9, json!({"text": code}))]));
+    next_until(&ch, fake.until("sendMessage", 1)).await.ok();
+    assert_eq!(
+        store.kv_get("_core", "telegram_owners").unwrap(),
+        Some(json!([9]))
     );
 }
 
