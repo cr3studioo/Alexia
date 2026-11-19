@@ -84,8 +84,12 @@ pub trait Brain: Send + Sync {
 /// gateway (asks in the chat the turn came from) and by a fake that always says no.
 #[async_trait::async_trait]
 pub trait Ask: Send + Sync {
-    async fn confirm(&self, origin: &Origin, question: &Question, cancel: CancellationToken)
-        -> bool;
+    async fn confirm(
+        &self,
+        origin: &Origin,
+        question: &Question,
+        cancel: CancellationToken,
+    ) -> bool;
 }
 
 #[derive(Clone, Debug)]

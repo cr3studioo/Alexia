@@ -48,7 +48,13 @@ async fn brain_is_object_safe() {
         .reply(turn, draft, CancellationToken::new())
         .await
         .unwrap();
-    assert!(matches!(reply, Reply { lane: Lane::Chat, .. }));
+    assert!(matches!(
+        reply,
+        Reply {
+            lane: Lane::Chat,
+            ..
+        }
+    ));
     assert_eq!(reply.text, "hello");
 }
 
