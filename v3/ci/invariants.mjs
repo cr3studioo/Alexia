@@ -7,6 +7,11 @@
  * 1. No crate names a plugin (v2's rule: the id quoted, or a path segment after `plugins/`).
  * 2. Internal dependency edges are exactly the allowed table; licence and SPDX headers.
  * 3. No hard-coded absolute paths in crate sources.
+ *
+ * Deliberate deviation from the spec (CEO-approved): lines whose trimmed text starts with `//`
+ * (so `///` and `//!` too) are skipped by every check; and the path check (3) also skips test
+ * code: files under a `tests/` folder and everything from a `#[cfg(test)]` line to the end of
+ * the file. The plugin-name check still scans test code outside comments.
  */
 import { execFileSync } from 'node:child_process'
 import { readdirSync, readFileSync } from 'node:fs'
@@ -26,12 +31,14 @@ const ALLOWED = {
 /** A service a channel adapter speaks to may be named there (INTERFACES.md §8.1). */
 const CHANNELS = 'v3/crates/alexia-gateway/src/channels/'
 
+const isComment = (line) => line.trim().startsWith('//')
 const escape = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
 /** Hits for check 1 in one file's text. `path` is repo-relative with forward slashes. */
 export function pluginHits(path, text, ids) {
   const out = []
   text.split('\n').forEach((line, i) => {
+    if (isComment(line)) return
     const at = `${path}:${i + 1}`
     if (/plugins[\\/]/.test(line)) out.push(`${at}: names the plugins/ folder`)
     if (path.startsWith(CHANNELS)) return
@@ -46,7 +53,11 @@ export function pluginHits(path, text, ids) {
 /** Hits for check 3. */
 export function pathHits(path, text) {
   const out = []
-  text.split('\n').forEach((line, i) => {
+  if (/(^|\/)tests\//.test(path)) return out
+  const lines = text.split('\n')
+  const cut = lines.findIndex((l) => l.trim() === '#[cfg(test)]')
+  lines.slice(0, cut < 0 ? undefined : cut).forEach((line, i) => {
+    if (isComment(line)) return
     if (/C:\\|C:\/|\/home\/|\/Users\//.test(line)) out.push(`${path}:${i + 1}: hard-coded path`)
   })
   return out
@@ -120,6 +131,8 @@ function selfTest() {
   expect('a bare plugins/ string', pluginHits(src, 'let p = "plugins/";', ['voice']))
   expect('a plugins\\ string', pluginHits(src, 'let p = "plugins\\\\";', ['voice']))
   expect('a plugins\\x path', pluginHits(src, 'let p = "plugins\\\\voice";', ['voice']))
+  ok('a plugin id in a doc comment', pluginHits(src, '/// the channel name ("voice")', ['voice']))
+  expect('a plugin id in test code', pluginHits(src, '#[cfg(test)]\nlet a = "voice";', ['voice']))
   ok('the English word memory', pluginHits(src, '// memory of the media', ['memory', 'media']))
   ok('a channel naming its service', pluginHits(`${CHANNELS}telegram.rs`, 'let n = "telegram";', ['telegram']))
   const pkg = (name, deps, license = 'AGPL-3.0-only') => ({
@@ -139,6 +152,10 @@ function selfTest() {
   expect('a C:/ path', pathHits(src, 'let p = "C:/x";'))
   expect('a /home/ path', pathHits(src, 'let p = "/home/me";'))
   expect('a /Users/ path', pathHits(src, 'let p = "/Users/me";'))
+  ok('a path in a comment', pathHits(src, '/// `file:///C:/x`'))
+  ok('a path in #[cfg(test)] code', pathHits(src, 'fn a() {}\n#[cfg(test)]\nmod t { const P: &str = "C:\\\\x"; }'))
+  expect('a path before #[cfg(test)]', pathHits(src, 'const P: &str = "/home/x";\n#[cfg(test)]\nmod t {}'))
+  ok('a path under tests/', pathHits('v3/crates/a/tests/t.rs', 'let p = "/home/x";'))
   ok('a relative path', pathHits(src, 'let p = "data/x";'))
   return bad
 }
