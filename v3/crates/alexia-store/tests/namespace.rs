@@ -328,3 +328,57 @@ fn purge_does_not_cross_namespaces() {
     assert!(!t.contains(&"p_a_b_y".to_string()));
     assert_eq!(s.count("a", "b_x", None).unwrap(), 1);
 }
+
+/// v2 `#unwritten`: a declared table nothing has been written to has no columns yet.
+#[test]
+fn unwritten_table_selects_empty_with_where_and_order() {
+    let s = store("demo", &["t"]);
+    let q = Select {
+        filter: Some(filter(json!({"at": {"gt": 1}}))),
+        order: vec![("at".into(), Dir::Desc)],
+        limit: Some(5),
+        offset: Some(1),
+    };
+    assert_eq!(s.select("demo", "t", &q).unwrap(), Vec::<Row>::new());
+    assert!(s
+        .select("demo", "t", &Select::default())
+        .unwrap()
+        .is_empty());
+    // Ownership still comes first.
+    assert!(matches!(
+        s.select("demo", "nope", &q),
+        Err(Error::OutOfNamespace(_))
+    ));
+}
+
+#[test]
+fn unwritten_table_update_delete_count_are_zero() {
+    let s = store("demo", &["t"]);
+    let w = filter(json!({"id": "x"}));
+    assert_eq!(
+        s.update("demo", "t", &row(json!({"done": true})), &w)
+            .unwrap(),
+        0
+    );
+    assert_eq!(s.delete("demo", "t", DeleteScope::Where(&w)).unwrap(), 0);
+    assert_eq!(s.delete("demo", "t", DeleteScope::All).unwrap(), 0);
+    assert_eq!(s.count("demo", "t", Some(&w)).unwrap(), 0);
+    assert_eq!(s.count("demo", "t", None).unwrap(), 0);
+    // The update added no columns: the table is still unwritten.
+    assert_eq!(column_types(&s, "p_demo_t").len(), 1);
+}
+
+#[test]
+fn written_table_still_rejects_unknown_column() {
+    let s = store("demo", &["t"]);
+    s.insert("demo", "t", &row(json!({"n": 1}))).unwrap();
+    let q = Select {
+        order: vec![("at".into(), Dir::Asc)],
+        ..Select::default()
+    };
+    let e = s.select("demo", "t", &q).unwrap_err().to_string();
+    assert!(e.contains("is not a column of"), "{e}");
+    let w = filter(json!({"at": 1}));
+    let e = s.count("demo", "t", Some(&w)).unwrap_err().to_string();
+    assert!(e.contains("is not a column of"), "{e}");
+}

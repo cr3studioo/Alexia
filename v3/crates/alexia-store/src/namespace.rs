@@ -82,6 +82,19 @@ fn columns(conn: &Connection, name: &str) -> Result<Vec<String>> {
     Ok(cols.collect::<rusqlite::Result<_>>()?)
 }
 
+/// The columns `create_tables` makes. A table with no others has never had a row.
+const CREATED: &[&str] = &["rowid"];
+
+/// The table's columns, or `None` if it is unwritten (v2 `#unwritten`): declared, but no row
+/// has added a column yet. Such a table has no rows, so reading, changing and deleting from
+/// it are all nothing, whatever columns the query names. A typo in a column of a table that
+/// has rows still fails loudly.
+fn written(conn: &Connection, name: &str) -> Result<Option<Vec<String>>> {
+    let cols = columns(conn, name)?;
+    let only_created = cols.iter().all(|c| CREATED.contains(&c.as_str()));
+    Ok((!only_created).then_some(cols))
+}
+
 /// storage.md: integer or bool → INTEGER, other number → REAL, everything else → TEXT.
 fn column_type(v: &Json) -> &'static str {
     match v {
@@ -284,7 +297,9 @@ impl Store {
     pub fn select(&self, ns: &str, table: &str, query: &Select) -> Result<Vec<Row>> {
         let conn = self.conn();
         let name = owned(&conn, ns, table)?;
-        let cols = columns(&conn, &name)?;
+        let Some(cols) = written(&conn, &name)? else {
+            return Ok(Vec::new());
+        };
         let (clause, mut params) = compile(query.filter.as_ref(), &cols, table)?;
         let mut order = Vec::new();
         for (col, dir) in &query.order {
@@ -329,6 +344,9 @@ impl Store {
         }
         self.transaction(|tx| {
             let name = owned(tx, ns, table)?;
+            if written(tx, &name)?.is_none() {
+                return Ok(0);
+            }
             grow(tx, &name, set)?;
             let cols = columns(tx, &name)?;
             let (clause, wparams) = compile(Some(filter), &cols, table)?;
@@ -355,7 +373,9 @@ impl Store {
         };
         let conn = self.conn();
         let name = owned(&conn, ns, table)?;
-        let cols = columns(&conn, &name)?;
+        let Some(cols) = written(&conn, &name)? else {
+            return Ok(0);
+        };
         let (clause, params) = compile(filter, &cols, table)?;
         let n = conn.execute(
             &format!("DELETE FROM {}{clause}", q(&name)),
@@ -367,7 +387,9 @@ impl Store {
     pub fn count(&self, ns: &str, table: &str, filter: Option<&Where>) -> Result<u64> {
         let conn = self.conn();
         let name = owned(&conn, ns, table)?;
-        let cols = columns(&conn, &name)?;
+        let Some(cols) = written(&conn, &name)? else {
+            return Ok(0);
+        };
         let (clause, params) = compile(filter, &cols, table)?;
         let n: i64 = conn.query_row(
             &format!("SELECT count(*) FROM {}{clause}", q(&name)),
