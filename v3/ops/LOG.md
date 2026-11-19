@@ -159,3 +159,6 @@
 - 2026-11-19 CEO #9: P1-08 asked how to redact secrets in memory.capture; decided (a): make alexia-mcp process::redact public (2 lines in process.rs, lib.rs added to its touch list). Core already depends on alexia-mcp.
 - 2026-11-19 CEO #9: P0-25 review approve; merged, green, pushed. Phase 0 fully merged (25/25 + P0-26 below). Merges since phase review: 5.
 - 2026-11-19 CEO #9: P1-21 done; review dispatched. conn.rs junk_is_skipped_and_logged flaked a 3rd time under load: CEO wrote spec P0-26 (sonnet, test-only de-flake) and dispatched it.
+- 2026-11-19 CEO #9: P1-24 done (pnpm check: plugins/media models.test.js bytes=500- failed; reviewer told to compare with base). Review dispatched.
+- 2026-11-19 CEO #9: P1-13 fix round 1 done; re-review dispatched. supervise.rs call_at_idle_deadline_never_gone (new in P0-22) also flaked under load: needs a de-flake task.
+- 2026-11-19 CEO #9: handoff to CEO #10 (Phase 0 fully merged). 5 live workers.

@@ -31,7 +31,7 @@
 | P1-10 | Telegram channel: poll, pairing, offsets, buttons | P1 | opus | P1-09, P1-03 | alexia-gateway/{src/channels/mod.rs, src/channels/telegra... | review | 2 | cr3studioo/v3-P1-10 | changes; fix queued for opus slot |
 | P1-11 | Gateway loop: ack, merge, steer, drafts, spans | P1 | opus | P1-02, P1-03 | alexia-gateway/{src/gateway.rs, tests/gateway.rs} | merged | 2 | cr3studioo/v3-P1-11 |  |
 | P1-12 | Approvals and voice notes | P1 | opus | P1-11 | alexia-gateway/{src/ask.rs, src/voice.rs, tests/ask_voice... | ready | 0 | |  |
-| P1-13 | V2Bridge: v2 core as the task lane | P1 | opus | P1-02, P1-03 | alexia-hub/src/bridge.rs | running | 2 | cr3studioo/v3-P1-13 | fix 1 ctx_1cbed84690c5 |
+| P1-13 | V2Bridge: v2 core as the task lane | P1 | opus | P1-02, P1-03 | alexia-hub/src/bridge.rs | review | 2 | cr3studioo/v3-P1-13 | re-review ctx_01fc0222f8ed |
 | P1-14 | v2: parallel tool calls | P1 | opus | none | packages/core/src/agent.ts, packages/core/test/agent.test.ts | merged | 1 | cr3studioo/v3-P1-14 | |
 | P1-15 | Latency dashboard | P1 | sonnet | P1-02, P1-03 | alexia-hub/src/latency.rs | merged | 2 | cr3studioo/v3-P1-15 |  |
 | P1-16 | Hub watchdog | P1 | sonnet | P1-02 | alexia-hub/src/watchdog.rs | merged | 1 | cr3studioo/v3-P1-16 | |
@@ -49,6 +49,6 @@
 | P1-21 | Telegram api: file transfers and retry_after | P1 | sonnet | none | alexia-gateway telegram/api.rs, tests/telegram_api.rs | review | 1 | cr3studioo/v3-P1-21 | review ctx_00b95a0f5956 |
 | P1-22 | Core: tool rows on the wire, catalog temp file | P1 | sonnet | none | alexia-core openai.rs, catalog.rs, tests | merged | 1 | cr3studioo/v3-P1-22 |  |
 | P1-23 | Gateway: spawned tasks on the tracker | P1 | opus | none | alexia-gateway/{src/gateway.rs, tests/gateway.rs} | ready | 0 | | |
-| P1-24 | v2 agent: dangling tool ids at the ceiling | P1 | sonnet | none | packages/core/src/agent.ts, test/agent.test.ts | running | 1 | cr3studioo/v3-P1-24 | ctx_fe8e450e4939 |
+| P1-24 | v2 agent: dangling tool ids at the ceiling | P1 | sonnet | none | packages/core/src/agent.ts, test/agent.test.ts | review | 1 | cr3studioo/v3-P1-24 | review ctx_0f7a6c70cacd |
 | P1-25 | One time helper | P1 | sonnet | P1-20, P1-22, P1-23, P1-17, P0-25 | alexia-store types/db/import, core catalog, gateway, hub watchdog/latency/main, INTERFACES.md | todo | 0 | | |
-| P0-26 | De-flake junk_is_skipped_and_logged | P0 | sonnet | none | alexia-mcp tests/conn.rs | running | 1 | cr3studioo/v3-P0-26 | |
+| P0-26 | De-flake junk_is_skipped_and_logged | P0 | sonnet | none | alexia-mcp tests/conn.rs | running | 1 | cr3studioo/v3-P0-26 | ctx_d965db584aa9 |
