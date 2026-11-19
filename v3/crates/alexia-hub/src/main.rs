@@ -191,12 +191,35 @@ fn every(
     });
 }
 
+/// Spawns the gap announcement. It waits 500 ms, unless `root` is cancelled first.
+fn announce_gap(tracker: &TaskTracker, root: &CancellationToken, bus: Bus, text: String) {
+    let cancel = root.child_token();
+    tracker.spawn(async move {
+        tokio::select! {
+            _ = cancel.cancelled() => {}
+            // ponytail: fixed pause so the gateway has subscribed to the bus; an event bus has no replay.
+            _ = tokio::time::sleep(Duration::from_millis(500)) => bus.publish(Event::Say {
+                at: now_ms(),
+                text,
+                urgency: Urgency::Normal,
+                job: None,
+            }),
+        }
+    });
+}
+
 async fn run() -> Res<()> {
-    const DAY_MS: i64 = 24 * 60 * 60 * 1000;
     let layout = Layout::new(data_dir());
     let hub = boot(&layout).await?;
-    let (store, bus, host) = (hub.store.clone(), hub.bus.clone(), hub.host.clone());
     let root = CancellationToken::new();
+    {
+        let stop = root.clone();
+        tokio::spawn(async move {
+            if tokio::signal::ctrl_c().await.is_ok() {
+                stop.cancel()
+            }
+        });
+    }
     // Test hook: with ALEXIA_HUB_STOP_ON_EOF=1, stdin reaching EOF behaves like Ctrl+C
     // (a real Ctrl+C can't be sent to a child on Windows without unsafe code).
     if std::env::var_os("ALEXIA_HUB_STOP_ON_EOF").is_some_and(|v| v == "1") {
@@ -206,6 +229,33 @@ async fn run() -> Res<()> {
             stop.cancel();
         });
     }
+    let tracker = TaskTracker::new();
+    let result = serve(&hub, &layout, &root, &tracker).await;
+    // Every exit after `boot` ends here, so plugin children stop and the next boot sees a clean stop.
+    root.cancel();
+    tracker.close();
+    // The heartbeat must be done before `clean_stop`, or a late tick looks like a crash.
+    if tokio::time::timeout(Duration::from_secs(5), tracker.wait())
+        .await
+        .is_err()
+    {
+        tracing::warn!("some tasks did not stop within 5 s");
+    }
+    hub.host.shutdown().await;
+    watchdog::clean_stop(&hub.store, now_ms());
+    hub.bus.publish(Event::ShuttingDown);
+    println!("Stopped.");
+    result
+}
+
+async fn serve(
+    hub: &Hub,
+    layout: &Layout,
+    root: &CancellationToken,
+    tracker: &TaskTracker,
+) -> Res<()> {
+    const DAY_MS: i64 = 24 * 60 * 60 * 1000;
+    let (store, bus, host) = (hub.store.clone(), hub.bus.clone(), hub.host.clone());
 
     let free_providers = free::configured();
     let rows = free_providers.iter().map(|p| p.row().clone()).collect();
@@ -253,7 +303,7 @@ async fn run() -> Res<()> {
         lanes,
         media,
     );
-    let channels = channels::configured(store.clone(), &layout);
+    let channels = channels::configured(store.clone(), layout);
     if channels.is_empty() {
         println!(
             "No channel is set up. Run `alexia-hub secret set <key>` with one of: {}",
@@ -276,7 +326,6 @@ async fn run() -> Res<()> {
     }
     let gap = watchdog::offline_gap(&store, now_ms());
 
-    let tracker = TaskTracker::new();
     {
         let c = root.child_token();
         let catalog = catalog.clone();
@@ -296,49 +345,23 @@ async fn run() -> Res<()> {
     }
     tracker.spawn(watchdog::heartbeat(store.clone(), root.child_token()));
     let invalidate = fast_chat.clone();
-    every(&tracker, &root, Duration::from_secs(600), move || {
+    every(tracker, root, Duration::from_secs(600), move || {
         invalidate.invalidate()
     });
     let prune = store.clone();
-    every(
-        &tracker,
-        &root,
-        Duration::from_millis(DAY_MS as u64),
-        move || {
-            if let Err(e) = prune.prune_spans(now_ms().saturating_sub(30 * DAY_MS)) {
-                tracing::warn!("pruning old spans failed: {e}");
-            }
-        },
-    );
+    let prune = move || {
+        if let Err(e) = prune.prune_spans(now_ms().saturating_sub(30 * DAY_MS)) {
+            tracing::warn!("pruning old spans failed: {e}");
+        }
+    };
+    prune();
+    every(tracker, root, Duration::from_millis(DAY_MS as u64), prune);
     if let Some(text) = gap {
-        // ponytail: fixed pause so the gateway has subscribed to the bus; an event bus has no replay.
-        tokio::time::sleep(Duration::from_millis(500)).await;
-        bus.publish(Event::Say {
-            at: now_ms(),
-            text,
-            urgency: Urgency::Normal,
-            job: None,
-        });
+        announce_gap(tracker, root, bus, text);
     }
 
     println!("Alexia hub is running. Press Ctrl+C to stop.");
-    tokio::select! {
-        _ = tokio::signal::ctrl_c() => {}
-        _ = root.cancelled() => {}
-    }
-    root.cancel();
-    tracker.close();
-    // The heartbeat must be done before `clean_stop`, or a late tick looks like a crash.
-    if tokio::time::timeout(Duration::from_secs(5), tracker.wait())
-        .await
-        .is_err()
-    {
-        tracing::warn!("some tasks did not stop within 5 s");
-    }
-    host.shutdown().await;
-    watchdog::clean_stop(&store, now_ms());
-    bus.publish(Event::ShuttingDown);
-    println!("Stopped.");
+    root.cancelled().await;
     Ok(())
 }
 
@@ -402,7 +425,11 @@ fn pair() -> Res<()> {
 }
 
 fn latency(rest: &[Option<&str>]) -> ExitCode {
-    let args: Vec<String> = rest.iter().map(|a| a.unwrap_or("").to_owned()).collect();
+    if rest.iter().any(Option::is_none) {
+        eprintln!("The arguments to latency must be text.");
+        return ExitCode::from(2);
+    }
+    let args: Vec<String> = rest.iter().flatten().map(|a| (*a).to_owned()).collect();
     let opts = match latency::parse(&args) {
         Ok(o) => o,
         Err(e) => {
@@ -483,4 +510,32 @@ fn import(folder: &OsStr, files_only: bool) -> Res<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Real time: the hub has no tokio `test-util`.
+    #[tokio::test]
+    async fn gap_announcement_never_delays_stop() {
+        let bus = Bus::new(16);
+        let mut rx = bus.subscribe();
+        let (tracker, root) = (TaskTracker::new(), CancellationToken::new());
+        announce_gap(&tracker, &root, bus.clone(), "gap".into());
+        root.cancel();
+        tracker.close();
+        tokio::time::timeout(Duration::from_millis(100), tracker.wait())
+            .await
+            .expect("the announcement held up the stop");
+        assert!(rx.try_recv().is_err(), "a cancelled announcement was said");
+
+        let (tracker, root) = (TaskTracker::new(), CancellationToken::new());
+        announce_gap(&tracker, &root, bus, "gap".into());
+        let e = tokio::time::timeout(Duration::from_secs(2), rx.recv())
+            .await
+            .expect("no announcement")
+            .unwrap();
+        assert!(matches!(&*e, Event::Say { text, .. } if text == "gap"));
+    }
 }

@@ -113,3 +113,98 @@ fn run_without_channel_says_so_and_stops() {
     assert!(out(&o).contains("No channel is set up"), "{}", out(&o));
     assert!(out(&o).contains("Stopped."), "{}", out(&o));
 }
+
+fn data_of(c: &Command) -> PathBuf {
+    c.get_envs()
+        .find(|(k, _)| *k == "ALEXIA_V3_DATA")
+        .and_then(|(_, v)| v.map(PathBuf::from))
+        .unwrap()
+}
+
+fn db_of(c: &Command) -> PathBuf {
+    alexia_store::Layout::new(data_of(c)).db()
+}
+
+#[test]
+fn run_error_after_boot_still_stops_cleanly() {
+    let mut c = hub("run-error");
+    let db = db_of(&c);
+    // Opening the store runs the migrations; then break `store.sessions()`.
+    drop(alexia_store::Store::open(&db).unwrap());
+    let conn = rusqlite::Connection::open(&db).unwrap();
+    conn.execute("ALTER TABLE sessions RENAME TO sessions_gone", [])
+        .unwrap();
+    c.env("ALEXIA_HUB_STOP_ON_EOF", "1").arg("run");
+    let o = run_with(c, "");
+    assert_eq!(o.status.code(), Some(1), "{}{}", out(&o), err(&o));
+    assert!(err(&o).contains("sessions"), "{}", err(&o));
+    assert!(out(&o).contains("Stopped."), "{}", out(&o));
+    let n: i64 = conn
+        .query_row(
+            "SELECT count(*) FROM kv WHERE ns = '_core' AND key = 'hub_clean_stop'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(n, 1, "no clean-stop marker was written");
+}
+
+#[test]
+fn run_prunes_old_spans_at_boot() {
+    let mut c = hub("run-prune");
+    let db = db_of(&c);
+    let now = alexia_store::now_ms();
+    let span = |turn: &str, at| alexia_store::SpanRow {
+        turn: turn.into(),
+        at,
+        origin: "test".into(),
+        lane: "fast".into(),
+        name: "total".into(),
+        start: at,
+        ms: 5,
+    };
+    {
+        let store = alexia_store::Store::open(&db).unwrap();
+        let day = 24 * 60 * 60 * 1000;
+        store
+            .record_spans(&[span("old", now - 31 * day), span("new", now)])
+            .unwrap();
+    }
+    c.env("ALEXIA_HUB_STOP_ON_EOF", "1").arg("run");
+    let o = run_with(c, "");
+    assert!(o.status.success(), "{}", err(&o));
+    let conn = rusqlite::Connection::open(&db).unwrap();
+    let turns: Vec<String> = conn
+        .prepare("SELECT turn FROM spans")
+        .unwrap()
+        .query_map([], |r| r.get(0))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(turns, ["new"]);
+}
+
+#[test]
+fn latency_rejects_non_text_args() {
+    #[cfg(windows)]
+    let bad = {
+        use std::os::windows::ffi::OsStringExt;
+        std::ffi::OsString::from_wide(&[0xD800])
+    };
+    #[cfg(unix)]
+    let bad = {
+        use std::os::unix::ffi::OsStrExt;
+        std::ffi::OsStr::from_bytes(b"\xff").to_owned()
+    };
+    let mut c = hub("latency-bad");
+    let data = data_of(&c);
+    c.args(["latency", "--html"]).arg(bad);
+    let o = run_with(c, "");
+    assert_eq!(o.status.code(), Some(2), "{}{}", out(&o), err(&o));
+    assert!(
+        err(&o).contains("The arguments to latency must be text."),
+        "{}",
+        err(&o)
+    );
+    assert_eq!(std::fs::read_dir(&data).unwrap().count(), 0);
+}
