@@ -6,8 +6,8 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use alexia_core::{
-    Ask, Brain, BrainError, Budget, Bus, DraftSink, Lane, Origin, OutFile, Question, Reply, RunId,
-    Turn,
+    Ask, Brain, BrainError, Budget, Bus, DraftSink, JobId, Lane, Origin, OutFile, Question, Reply,
+    RunId, Turn,
 };
 use alexia_gateway::{
     Channel, ChatRef, Error, Gateway, GatewayConfig, InFile, InKind, Inbound, Media, MsgRef,
@@ -196,6 +196,8 @@ struct Setup {
     reply: String,
     heard: Option<&'static str>,
     voice_replies: Option<&'static str>,
+    /// A primary chat on the "fake" channel, set before the gateway starts.
+    primary: Option<&'static str>,
 }
 
 impl Default for Setup {
@@ -206,6 +208,7 @@ impl Default for Setup {
             reply: "ok".into(),
             heard: Some("hello"),
             voice_replies: None,
+            primary: None,
         }
     }
 }
@@ -216,6 +219,10 @@ fn start(s: Setup) -> H {
         store
             .kv_set("_core", "voice_replies", &serde_json::json!(v))
             .unwrap();
+    }
+    if let Some(chat) = s.primary {
+        store.channel_session("fake", chat).unwrap();
+        store.set_primary_chat("fake", chat).unwrap();
     }
     let (inbox, rx) = mpsc::unbounded_channel();
     let ch = Arc::new(FakeChannel {
@@ -381,6 +388,65 @@ async fn deny_and_timeout_are_false() {
     cancel.cancel();
     let r = tokio::time::timeout(Duration::from_secs(30), pending).await;
     assert!(!r.expect("confirm hung").unwrap());
+    h.stop().await;
+}
+
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn unanswered_approval_gives_up_after_ten_minutes() {
+    let h = start(Setup {
+        answer: Answer::Hang,
+        ..Setup::default()
+    });
+    let asker = h.asker.clone();
+    let pending = tokio::spawn(async move {
+        asker
+            .confirm(&in_chat("x"), &question(), CancellationToken::new())
+            .await
+    });
+    while h.ch.asks().is_empty() {
+        tokio::task::yield_now().await;
+    }
+    tokio::time::advance(Duration::from_secs(9 * 60 + 59)).await;
+    tokio::task::yield_now().await;
+    assert!(!pending.is_finished(), "gave up before ten minutes");
+    assert!(h.ch.sent().is_empty(), "sent something before ten minutes");
+    tokio::time::advance(Duration::from_secs(2)).await;
+    tokio::task::yield_now().await;
+    assert!(pending.is_finished(), "still waiting after ten minutes");
+    assert!(!pending.await.unwrap());
+    let sent = h.ch.sent();
+    assert_eq!(sent.len(), 1);
+    assert_eq!(sent[0].0, "x");
+    assert_eq!(sent[0].1.text, "— no answer, so I didn't");
+    h.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn scheduled_job_asks_in_the_primary_chat() {
+    let origin = Origin::Scheduler { job: JobId(1) };
+    let h = start(Setup {
+        primary: Some("chat-p"),
+        ..Setup::default()
+    });
+    assert!(
+        h.asker
+            .confirm(&origin, &question(), CancellationToken::new())
+            .await
+    );
+    assert_eq!(
+        h.ch.asks(),
+        vec![("chat-p".to_string(), "Delete the old backups?".to_string())]
+    );
+    h.stop().await;
+
+    // No primary chat: nowhere to ask, so no.
+    let h = start(Setup::default());
+    assert!(
+        !h.asker
+            .confirm(&origin, &question(), CancellationToken::new())
+            .await
+    );
+    assert!(h.ch.asks().is_empty());
     h.stop().await;
 }
 
