@@ -25,3 +25,11 @@ tracing-subscriber = { version = "0.3", default-features = false, features = ["f
 [dev-dependencies]
 # tests/cli.rs builds a v2 database file.
 rusqlite = { workspace = true }
+
+[features]
+# Runs tests/v2_plugins.rs. Needs Node and a built v2 checkout; never on in `cargo test --workspace`.
+v2-conformance = []
+
+[[test]]
+name = "v2_plugins"
+required-features = ["v2-conformance"]
