@@ -186,10 +186,11 @@ impl Provider for OpenAiCompat {
     }
 
     async fn models(&self) -> Result<Vec<ModelInfo>, ProviderError> {
+        // The key first: a keyless no-list row is NeedsKey, not an answer that offers its seed.
+        let (base, key) = self.reaching()?;
         let Some(path) = &self.row.models_path else {
             return Ok(Vec::new());
         };
-        let (base, key) = self.reaching()?;
         let response = self
             .request(reqwest::Method::GET, &format!("{base}{path}"), key)
             .timeout(self.first_byte)
@@ -197,7 +198,15 @@ impl Provider for OpenAiCompat {
             .await
             .map_err(sent_error)?;
         if !response.status().is_success() {
-            return Err(self.refusal(response).await);
+            // Only a key problem may drop the cache: a moved or broken list endpoint
+            // (400/404/422) is Other here, so the catalog keeps what it had.
+            let status = response.status().as_u16();
+            return Err(match self.refusal(response).await {
+                ProviderError::Refused(said) if matches!(status, 400 | 404 | 422) => {
+                    ProviderError::Other(format!("{} said {status}: {said}", self.row.id))
+                }
+                e => e,
+            });
         }
         let list: Value = response.json().await.map_err(|_| {
             ProviderError::Other(format!(

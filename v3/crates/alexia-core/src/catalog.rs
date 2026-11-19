@@ -139,8 +139,9 @@ impl Catalog {
 
     /// What the router may choose from: per provider, v2's written-down seed first, then the
     /// lists (or the cache) without the seeded ids (v2 `Catalog.models`: the seed wins on a
-    /// clash, per provider here so a seeded id does not hide another provider's row). A seed is offered unless the provider's last answer was NeedsKey/Refused, and
-    /// for a key-only row only once its `models()` has answered (it was built with a key).
+    /// clash, per provider here so a seeded id does not hide another provider's row). A seed
+    /// is offered unless the provider's last answer was NeedsKey/Refused, and for a key-only
+    /// row only once its `models()` has answered (it was built with a key).
     pub fn candidates(&self) -> Vec<Candidate> {
         let fetched = self.fetched.read().unwrap_or_else(|e| e.into_inner());
         let answered = self.answered.read().unwrap_or_else(|e| e.into_inner());

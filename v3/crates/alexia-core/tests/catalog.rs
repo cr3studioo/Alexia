@@ -477,8 +477,8 @@ async fn seed_when_nothing_answers() {
 
 #[tokio::test]
 async fn no_list_rows_with_a_key_use_their_seed() {
-    // nara, cloudflare-ai and github publish no list: `models()` is Ok(empty) when built with
-    // a key and NeedsKey without one.
+    // nara, cloudflare-ai and github publish no list: the real `models()` is Ok(empty) when
+    // built with a key and NeedsKey without one, without touching the network.
     let mut rows = vec![
         row("nara", Auth::Required),
         row("cloudflare-ai", Auth::Required),
@@ -489,9 +489,9 @@ async fn no_list_rows_with_a_key_use_their_seed() {
     }
     let catalog = Catalog::new(
         vec![
-            fake("nara", Says::List(Vec::new())),
-            fake("cloudflare-ai", Says::List(Vec::new())),
-            fake("github", Says::List(Vec::new())),
+            real(&rows[0], Some("k")),
+            real(&rows[1], Some("k")),
+            real(&rows[2], Some("k")),
         ],
         rows.clone(),
         cache("no-list"),
@@ -513,15 +513,60 @@ async fn no_list_rows_with_a_key_use_their_seed() {
 
     // Without a key there is nothing to offer.
     let catalog = Catalog::new(
-        vec![
-            fake("nara", Says::NeedsKey),
-            fake("cloudflare-ai", Says::NeedsKey),
-        ],
+        vec![real(&rows[0], None), real(&rows[1], None)],
         rows,
         cache("no-list-keyless"),
     );
     catalog.refresh().await;
     assert!(catalog.candidates().is_empty());
+}
+
+fn real(row: &FreeRow, key: Option<&str>) -> Arc<dyn Provider> {
+    Arc::new(OpenAiCompat::new(
+        row.clone(),
+        key.map(str::to_owned),
+        reqwest::Client::new(),
+    ))
+}
+
+#[tokio::test]
+async fn list_endpoint_404_keeps_cached_entries() {
+    // A moved list endpoint is not a key problem: the cache stays, and a restart still has it.
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let mut groq = row("groq", Auth::Required);
+    groq.base_url = format!("http://{}/v1", listener.local_addr().unwrap());
+    tokio::spawn(async move {
+        let (mut sock, _) = listener.accept().await.unwrap();
+        let mut buf = [0u8; 4096];
+        let _ = sock.read(&mut buf).await;
+        let _ = sock
+            .write_all(
+                b"HTTP/1.1 404 Not Found
+content-length: 9
+connection: close
+
+not found",
+            )
+            .await;
+    });
+    let rows = vec![groq.clone()];
+    let path = cache("list-404");
+    Catalog::new(
+        vec![fake("groq", Says::List(vec![model("llama-3.3-70b", true)]))],
+        rows.clone(),
+        path.clone(),
+    )
+    .refresh()
+    .await;
+    let catalog = Catalog::new(vec![real(&groq, Some("k"))], rows.clone(), path.clone());
+    catalog.refresh().await;
+    assert_eq!(ids(&catalog.candidates()), vec![("groq", "llama-3.3-70b")]);
+    let restarted = Catalog::new(vec![fake("groq", Says::Down)], rows, path);
+    assert_eq!(
+        ids(&restarted.candidates()),
+        vec![("groq", "llama-3.3-70b")]
+    );
 }
 
 #[tokio::test]
