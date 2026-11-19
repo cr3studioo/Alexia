@@ -3,8 +3,19 @@
 
 use serde::{Deserialize, Serialize};
 
+mod brain;
 pub mod bus;
+pub mod catalog;
+pub mod chat;
+pub mod free;
+pub mod lane;
+pub mod openai;
+mod provider;
+pub mod router;
+
+pub use brain::*;
 pub use bus::{Bus, Event};
+pub use provider::*;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
