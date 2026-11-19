@@ -959,7 +959,17 @@ export async function run(options: RunOptions): Promise<RunResult> {
       added.push(result)
       store.append(session, result)
     }
-    if (capped) return finish('ceiling')
+    if (capped) {
+      // Every call id in the stored assistant row needs a result, or a strict provider refuses
+      // the next turn. These were never run, so they are not steps and fire no `step`/`done`.
+      for (const call of calls.slice(gated.length)) {
+        const result: Message = { role: 'tool', callId: call.id, content: 'not run: step limit reached' }
+        messages.push(result)
+        added.push(result)
+        store.append(session, result)
+      }
+      return finish('ceiling')
+    }
 
     /**
      * **A tool that already has the answer gives it** (`alexia/final`). One call this turn, and
