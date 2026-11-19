@@ -205,3 +205,4 @@
 2026-11-19 P1-34 build done (invariants.mjs edit approved); review dispatched.
 2026-11-19 Merged P1-34 (approve, gate ok, pushed). Follow-ups: secrets.rs:206 stored() Err treated as absent (should be failed); two v2 names mapping to one v3 name.
 2026-11-19 Release build done. Asked A-12 (owner runs secret import-v2 once).
+2026-11-19 P1-18 failed try 1: e2e test written, passes 3/5; found bridge save has no span (~385 ms unaccounted) and slow commits. CEO wrote P1-35 (span + synchronous=NORMAL); dispatched opus ctx_cb2564601b09. P1-18 retry reuses its branch after P1-35.
