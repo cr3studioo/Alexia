@@ -386,6 +386,21 @@ async fn only_free_and_usable() {
 }
 
 #[tokio::test]
+async fn failed_rename_leaves_no_temp_file() {
+    let path = cache("rename");
+    // A directory where the cache file belongs: the rename onto it fails everywhere.
+    std::fs::create_dir_all(&path).unwrap();
+    let catalog = Catalog::new(
+        vec![fake("groq", Says::List(vec![model("llama-3.3-70b", true)]))],
+        vec![row("groq", Auth::Required)],
+        path.clone(),
+    );
+    catalog.refresh().await;
+    assert_eq!(ids(&catalog.candidates()), vec![("groq", "llama-3.3-70b")]);
+    assert!(no_temp_left(&path));
+}
+
+#[tokio::test]
 async fn refused_key_drops_cached_entries() {
     // A 401/403 with a stored key (Refused) drops the cache the same way NeedsKey does.
     let rows = vec![row("groq", Auth::Required)];
