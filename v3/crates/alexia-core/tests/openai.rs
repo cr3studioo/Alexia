@@ -211,6 +211,42 @@ async fn system_goes_first_and_images_map() {
 }
 
 #[tokio::test]
+async fn tool_turns_are_left_out_without_tools() {
+    let (base, body) = fake(SSE, vec![(0, "data: [DONE]\n\n".into())]).await;
+    let call = |id: &str| json!([{"id": id, "name": "find", "arguments": "{}"}]);
+    let with = |content: &str, calls: Option<Value>, call_id: Option<&str>| -> MessageBody {
+        serde_json::from_value(json!({"content": content, "calls": calls, "call_id": call_id}))
+            .unwrap()
+    };
+    let req = ChatRequest {
+        messages: vec![
+            (Role::User, text("find it")),
+            (Role::Assistant, with("", Some(call("c1")), None)),
+            (Role::Tool, with("found", None, Some("c1"))),
+            (Role::Assistant, with("Here it is", Some(call("c2")), None)),
+            (Role::User, text("thanks")),
+        ],
+        system: None,
+        tools: vec![],
+        max_tokens: None,
+    };
+    run(&provider(&base), &req).await.1.unwrap();
+    let body = body.await.unwrap();
+    assert_eq!(
+        body["messages"],
+        json!([
+            {"role": "user", "content": "find it"},
+            {"role": "assistant", "content": "Here it is"},
+            {"role": "user", "content": "thanks"}
+        ])
+    );
+    let sent = body.to_string();
+    for banned in ["\"tool\"", "tool_calls", "tool_call_id"] {
+        assert!(!sent.contains(banned), "{banned} in {sent}");
+    }
+}
+
+#[tokio::test]
 async fn status_429_is_busy_with_retry_after() {
     let (base, _) = fake(
         "HTTP/1.1 429 Too Many Requests\r\nretry-after: 3\r\ncontent-length: 0\r\nconnection: close\r\n\r\n",
