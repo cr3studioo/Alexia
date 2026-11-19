@@ -777,6 +777,14 @@ impl TurnCtx {
             session: self.session,
             origin: origin.clone(),
             content: inbound.content.clone(),
+            // Voice notes are already text in `content` (voice::hear); the rest go to the brain,
+            // which reads them during `reply`. `delete_files` still removes them after the turn.
+            files: inbound
+                .files
+                .iter()
+                .filter(|f| !f.mime.starts_with("audio/"))
+                .cloned()
+                .collect(),
             received_at: self.first.ms,
         };
         spans.push(Span {

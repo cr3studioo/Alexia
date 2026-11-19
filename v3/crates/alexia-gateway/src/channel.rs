@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! The channel contract: what every chat surface implements, and what the gateway hands on.
 
-use std::path::PathBuf;
 
 use alexia_core::{Budget, OutFile};
 use alexia_store::{Content, Ms};
@@ -23,13 +22,8 @@ pub enum InKind {
     Stop,
 }
 
-/// A file that came with a message, already downloaded under `layout.cache()`.
-#[derive(Clone, Debug)]
-pub struct InFile {
-    pub name: String,
-    pub mime: String,
-    pub path: PathBuf,
-}
+/// A file that came with a message (INTERFACES.md §2.3); `Turn.files` carries it on.
+pub use alexia_core::InFile;
 
 #[derive(Clone, Debug)]
 pub struct Inbound {
