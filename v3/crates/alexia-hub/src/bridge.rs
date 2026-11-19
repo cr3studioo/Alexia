@@ -251,7 +251,8 @@ impl V2Bridge {
         Ok(format!("{CONTEXT_HEAD}{}\n\n{typed}", last.join("\n")))
     }
 
-    /// POST `/api/chat`, retrying a 423 for up to 10 s. `None` when cancelled meanwhile.
+    /// POST `/api/chat`, retrying a 423 for up to 10 s. `None` when cancelled meanwhile; a
+    /// cancel while a request is in flight has already POSTed `/api/stop`.
     async fn post_chat(
         &self,
         url: &str,
@@ -268,7 +269,11 @@ impl V2Bridge {
                 .json(body)
                 .send();
             let resp = tokio::select! {
-                _ = cancel.cancelled() => return Ok(None),
+                _ = cancel.cancelled() => {
+                    // The body may be in v2 already; a stop when v2 is idle does nothing.
+                    self.post(url, token, "api/stop", json!({})).await;
+                    return Ok(None);
+                }
                 r = send => r.map_err(|_| BrainError::Unavailable(LOST.into()))?,
             };
             match resp.status().as_u16() {
@@ -347,9 +352,9 @@ impl V2Bridge {
         let now = now_ms();
         let step = e.get("step");
         let n = step.and_then(|s| s.get("n")).and_then(Value::as_i64);
-        // A tool span runs from its step's start to the next event that is not that step.
+        // A tool span runs from its step's start to a delta or another step's event.
         if let Some((open, name, start)) = st.tool {
-            if n != Some(open) {
+            if e.get("delta").is_some() || n.is_some_and(|n| n != open) {
                 st.spans.push(span(name, start, now));
                 st.tool = None;
             }
@@ -366,16 +371,21 @@ impl V2Bridge {
             st.text.clear();
             let _ = draft.send(DraftFrame::Restart).await;
         } else if let Some(kind) = e.pointer("/phase/kind").and_then(Value::as_str) {
-            if let Some(p) = phase(kind) {
-                let _ = draft.send(DraftFrame::Phase(p)).await;
+            // v2 follows each step with phase{tool}; the step already said Tool.
+            match phase(kind) {
+                Some(Phase::Tool) if st.tool.is_some() => {}
+                Some(p) => {
+                    let _ = draft.send(DraftFrame::Phase(p)).await;
+                }
+                None => {}
             }
         } else if let Some(step) = step {
             let name = step.get("name").and_then(Value::as_str).unwrap_or("?");
-            if st.tool.is_none() {
-                if let Some(n) = n {
-                    st.tool = Some((n, intern(format!("tool:{name}")), now));
-                    let _ = draft.send(DraftFrame::Phase(Phase::Tool)).await;
-                }
+            // Steps count up from 1; one seen before (its done event) never reopens.
+            if let Some(n) = n.filter(|&n| n > st.last_step) {
+                st.last_step = n;
+                st.tool = Some((n, intern(format!("tool:{name}")), now));
+                let _ = draft.send(DraftFrame::Phase(Phase::Tool)).await;
             }
         } else if let Some(why) = e.get("ask").and_then(Value::as_str) {
             let q = Question {
@@ -452,6 +462,8 @@ struct Run {
     spans: Vec<Span>,
     /// The open tool step: (n, span name, start).
     tool: Option<(i64, &'static str, Ms)>,
+    /// The highest step n opened so far.
+    last_step: i64,
     refused_paid: bool,
 }
 
@@ -470,7 +482,6 @@ impl Brain for V2Bridge {
         let body = json!({ "text": text, "files": uploads(&turn.content) });
         let sent = now_ms();
         let Some(resp) = self.post_chat(&url, &token, &body, &cancel).await? else {
-            // Nothing of ours is running in v2, so there is nothing to stop.
             return Err(BrainError::Cancelled);
         };
         let mut st = Run {
@@ -482,6 +493,7 @@ impl Brain for V2Bridge {
             model: None,
             spans: Vec::new(),
             tool: None,
+            last_step: 0,
             refused_paid: false,
         };
         let out = self.stream(&mut st, resp, &turn, &draft, &cancel).await;
@@ -649,8 +661,10 @@ mod tests {
         Send(&'static str),
         /// Hold the stream until the fake has received a request for this path.
         Wait(&'static str),
+        /// Hold the stream this many ms.
+        Pause(u64),
     }
-    use Step::{Send, Wait};
+    use Step::{Pause, Send, Wait};
 
     #[derive(Default)]
     struct Opts {
@@ -658,6 +672,8 @@ mod tests {
         first: Vec<u16>,
         /// Every `/api/chat` gets this status.
         always: Option<u16>,
+        /// Hold `/api/chat`'s response headers until a request for this path arrives.
+        headers_after: Option<&'static str>,
     }
 
     #[derive(Clone, Default)]
@@ -772,6 +788,12 @@ mod tests {
                 .await;
             return;
         }
+        if let Some(p) = opts.headers_after {
+            let until = Instant::now() + Duration::from_secs(30);
+            while log.count(p) == 0 && Instant::now() < until {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        }
         let _ = sock
             .write_all(
                 b"HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\nconnection: close\r\n\r\n",
@@ -785,6 +807,7 @@ mod tests {
                         .await;
                     let _ = sock.flush().await;
                 }
+                Pause(ms) => tokio::time::sleep(Duration::from_millis(*ms)).await,
                 Wait(p) => {
                     let until = Instant::now() + Duration::from_secs(30);
                     while log.count(p) == 0 && Instant::now() < until {
@@ -1016,11 +1039,18 @@ s.listen(0, '127.0.0.1', () => {{
                 Send(r#"{"phase":{"kind":"thinking"}}"#),
                 Send(r#"{"phase":{"kind":"retrying"}}"#),
                 Send(r#"{"phase":{"kind":"backup"}}"#),
+                // As agent.ts sends a step: step, phase{tool}, progress, then done (same n).
                 Send(r#"{"step":{"n":1,"name":"web_search","args":{}}}"#),
+                Send(r#"{"phase":{"kind":"tool","name":"web_search"}}"#),
+                Pause(150),
                 Send(r#"{"step":{"n":1,"name":"web_search","progress":0.5}}"#),
+                Pause(150),
                 Send(r#"{"step":{"n":1,"name":"web_search","text":"found"}}"#),
                 Send(r#"{"phase":{"kind":"writing"}}"#),
                 Send(r#"{"step":{"n":2,"name":"read_file","args":{}}}"#),
+                Send(r#"{"phase":{"kind":"tool","name":"read_file"}}"#),
+                Pause(150),
+                Send(r#"{"step":{"n":2,"name":"read_file","text":"done"}}"#),
                 Send(r#"{"delta":"ok"}"#),
             ],
             Opts::default(),
@@ -1041,13 +1071,19 @@ s.listen(0, '127.0.0.1', () => {{
             phases,
             [Choosing, Choosing, Thinking, Retrying, Backup, Tool, Writing, Tool]
         );
-        let tools: Vec<&str> = reply
+        let tools: Vec<&Span> = reply
             .spans
             .iter()
-            .map(|s| s.name)
-            .filter(|n| n.starts_with("tool:"))
+            .filter(|s| s.name.starts_with("tool:"))
             .collect();
-        assert_eq!(tools, ["tool:web_search", "tool:read_file"]);
+        let names: Vec<&str> = tools.iter().map(|s| s.name).collect();
+        assert_eq!(names, ["tool:web_search", "tool:read_file"]);
+        // The script holds 300 ms and 150 ms inside the steps; generous lower bounds.
+        let took: Vec<u32> = tools.iter().map(|s| s.ms).collect();
+        assert!(
+            took[0] >= 200 && took[1] >= 100,
+            "tool spans too short: {took:?}"
+        );
     }
 
     #[tokio::test]
@@ -1110,6 +1146,7 @@ s.listen(0, '127.0.0.1', () => {{
             Opts {
                 first: vec![423, 423],
                 always: None,
+                ..Opts::default()
             },
         )
         .await;
@@ -1123,6 +1160,7 @@ s.listen(0, '127.0.0.1', () => {{
             Opts {
                 first: vec![],
                 always: Some(423),
+                ..Opts::default()
             },
         )
         .await;
@@ -1165,6 +1203,30 @@ s.listen(0, '127.0.0.1', () => {{
             store.history(session, None).unwrap().is_empty(),
             "nothing stored"
         );
+    }
+
+    #[tokio::test]
+    async fn cancel_while_waiting_for_headers_posts_stop() {
+        let opts = Opts {
+            headers_after: Some("/api/stop"),
+            ..Opts::default()
+        };
+        let (url, log) = fake(vec![Send(r#"{"delta":"late"}"#)], opts).await;
+        let (bridge, store, session) = attached(&url);
+        let (tx, _rx) = mpsc::channel(16);
+        let cancel = CancellationToken::new();
+        let (b, c) = (bridge.clone(), cancel.clone());
+        let t = turn(session, "long task");
+        let job = tokio::spawn(async move { b.reply(t, tx, c).await });
+        assert!(until(20, || log.count("/api/chat") == 1).await, "chat sent");
+        cancel.cancel();
+        let out = tokio::time::timeout(Duration::from_secs(20), job)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(matches!(out, Err(BrainError::Cancelled)));
+        assert_eq!(log.count("/api/stop"), 1);
+        assert!(store.history(session, None).unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -1236,6 +1298,7 @@ s.listen(0, '127.0.0.1', () => {{
             Opts {
                 first: vec![],
                 always: Some(500),
+                ..Opts::default()
             },
         )
         .await;
