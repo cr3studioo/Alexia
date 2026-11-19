@@ -513,9 +513,13 @@ async fn call_at_idle_deadline_never_gone() {
     let r = root("deadline");
     plugin(&r, "greet", &["greet"], json!({}));
     // Idle is checked on heartbeat ticks, the first one a heartbeat after the spawn. The
-    // heartbeat stays at the suite's usual length, so a ping slowed by a loaded machine is not
-    // taken for a hang; the idle is short, so that first tick idles the plugin out. No exit
-    // grace: a call the idle stop overtook is killed with the process at once, so it shows.
+    // heartbeat stays at the suite's usual length; the idle is short, so that first tick idles
+    // the plugin out. No exit grace: a call the idle stop overtook is killed with the process
+    // at once, so it shows. The ping deadline is the heartbeat, so on a loaded machine a
+    // fixture that answers a ping late is killed as hung and its calls get Gone. That says
+    // nothing about the idle stop, so a loop containing a heartbeat stop is voided, not
+    // counted; only clean loops count. crash_limit is unbounded so those kills never switch
+    // the plugin off.
     let (heartbeat, idle) = (HEARTBEAT_MS, 100);
     let fx = Fx::new(
         &r,
@@ -523,17 +527,31 @@ async fn call_at_idle_deadline_never_gone() {
             heartbeat_ms: heartbeat,
             idle_ms: idle,
             exit_grace_ms: 0,
+            crash_limit: u32::MAX,
             ..timings()
         },
     );
     fx.host.start(&[id("greet")]).await.unwrap();
-    for i in 0..50u64 {
+    let heartbeat_stop = |e: &PluginEvent| {
+        matches!(
+            e,
+            PluginEvent::Stopped {
+                reason: StopReason::Heartbeat,
+                ..
+            }
+        )
+    };
+    let (mut clean, mut void) = (0u64, 0u64);
+    for _ in 0..150 {
+        if clean == 50 {
+            break;
+        }
+        let i = clean;
         // Each loop starts from a stopped plugin, so this call spawns it and its first tick
         // (the idle stop) comes about one heartbeat from now.
         assert!(eventually(30, || fx.host.pid(&id("greet")).is_none()).await);
-        fx.call("greet", "greet", json!({"who": "warm"}))
-            .await
-            .unwrap();
+        let from = fx.events.lock().unwrap().len();
+        let warm = fx.call("greet", "greet", json!({"who": "warm"})).await;
         // Sweep the calls below across that tick (measured at about heartbeat + 30 ms), from
         // 70 ms before to 50 ms after it.
         let gap = heartbeat - 40 + (i * 7) % 120;
@@ -543,18 +561,34 @@ async fn call_at_idle_deadline_never_gone() {
             fx.call("greet", "greet", json!({"who": "b"})),
             fx.call("greet", "greet", json!({"who": "c"})),
         );
+        if fx.events.lock().unwrap()[from..]
+            .iter()
+            .any(|(_, e)| heartbeat_stop(e))
+        {
+            void += 1;
+            continue;
+        }
         let ok = |r: &Result<String, CallError>, who: &str| {
             r.as_ref().is_ok_and(|t| *t == format!("Hello, {who}."))
         };
-        if !(ok(&got.0, "a") && ok(&got.1, "b") && ok(&got.2, "c")) {
+        if !(warm.is_ok() && ok(&got.0, "a") && ok(&got.1, "b") && ok(&got.2, "c")) {
             let events = fx.events.lock().unwrap();
             let last: Vec<_> = events.iter().rev().take(6).map(|(_, e)| e).collect();
-            panic!("loop {i}, gap {gap} ms: {got:?}, last events {last:?}");
+            panic!(
+                "loop {i}, gap {gap} ms, {void} voided: warm {warm:?}, {got:?}, last events {last:?}"
+            );
         }
+        clean += 1;
     }
+    assert_eq!(
+        clean, 50,
+        "only {clean} clean loops in 150 ({void} voided by heartbeat stops: the machine is too loaded to test the idle deadline)"
+    );
+    eprintln!("call_at_idle_deadline_never_gone: {void} loops voided");
     // The sweep did cross the deadline: the plugin was idled out and started again.
     assert!(fx.count(started) > 1);
-    assert_eq!(fx.count(crashed), 0);
+    // Every crash is one a heartbeat stop caused, none came from an idle stop.
+    assert_eq!(fx.count(crashed), fx.count(heartbeat_stop));
     fx.host.shutdown().await;
 }
 
