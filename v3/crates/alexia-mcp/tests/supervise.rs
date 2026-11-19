@@ -512,37 +512,49 @@ async fn busy_lazy_plugin_does_not_idle_stop() {
 async fn call_at_idle_deadline_never_gone() {
     let r = root("deadline");
     plugin(&r, "greet", &["greet"], json!({}));
-    // Short idle and heartbeat so the watcher's idle stop lands among the calls below.
-    let (heartbeat, idle) = (50, 150);
+    // Idle is checked on heartbeat ticks, the first one a heartbeat after the spawn. The
+    // heartbeat stays at the suite's usual length, so a ping slowed by a loaded machine is not
+    // taken for a hang; the idle is short, so that first tick idles the plugin out. No exit
+    // grace: a call the idle stop overtook is killed with the process at once, so it shows.
+    let (heartbeat, idle) = (HEARTBEAT_MS, 100);
     let fx = Fx::new(
         &r,
         Timings {
             heartbeat_ms: heartbeat,
             idle_ms: idle,
+            exit_grace_ms: 0,
             ..timings()
         },
     );
     fx.host.start(&[id("greet")]).await.unwrap();
     for i in 0..50u64 {
+        // Each loop starts from a stopped plugin, so this call spawns it and its first tick
+        // (the idle stop) comes about one heartbeat from now.
+        assert!(eventually(30, || fx.host.pid(&id("greet")).is_none()).await);
         fx.call("greet", "greet", json!({"who": "warm"}))
             .await
             .unwrap();
-        // Sweep the gap across the idle deadline and the heartbeat tick after it.
-        tokio::time::sleep(Duration::from_millis(
-            idle - heartbeat + (i * 7) % (heartbeat * 3),
-        ))
-        .await;
-        let (a, b, c) = tokio::join!(
+        // Sweep the calls below across that tick (measured at about heartbeat + 30 ms), from
+        // 70 ms before to 50 ms after it.
+        let gap = heartbeat - 40 + (i * 7) % 120;
+        tokio::time::sleep(Duration::from_millis(gap)).await;
+        let got = tokio::join!(
             fx.call("greet", "greet", json!({"who": "a"})),
             fx.call("greet", "greet", json!({"who": "b"})),
             fx.call("greet", "greet", json!({"who": "c"})),
         );
-        assert_eq!(a.unwrap(), "Hello, a.", "loop {i}");
-        assert_eq!(b.unwrap(), "Hello, b.", "loop {i}");
-        assert_eq!(c.unwrap(), "Hello, c.", "loop {i}");
+        let ok = |r: &Result<String, CallError>, who: &str| {
+            r.as_ref().is_ok_and(|t| *t == format!("Hello, {who}."))
+        };
+        if !(ok(&got.0, "a") && ok(&got.1, "b") && ok(&got.2, "c")) {
+            let events = fx.events.lock().unwrap();
+            let last: Vec<_> = events.iter().rev().take(6).map(|(_, e)| e).collect();
+            panic!("loop {i}, gap {gap} ms: {got:?}, last events {last:?}");
+        }
     }
     // The sweep did cross the deadline: the plugin was idled out and started again.
     assert!(fx.count(started) > 1);
+    assert_eq!(fx.count(crashed), 0);
     fx.host.shutdown().await;
 }
 
