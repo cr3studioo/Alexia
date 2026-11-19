@@ -13,6 +13,11 @@ use alexia_gateway::{
 use alexia_store::{Content, Store};
 use tokio_util::sync::CancellationToken;
 
+// Integration tests (P1-09, P1-10) reach the adapter: this fails to compile if it goes private.
+const _: Option<(
+    alexia_gateway::channels::telegram::api::Api,
+    alexia_gateway::channels::telegram::api::Update,
+)> = None;
 /// Echoes every `send` back as a message id, and answers every `ask` with yes.
 struct FakeChannel;
 

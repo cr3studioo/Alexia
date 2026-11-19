@@ -7,7 +7,8 @@ use alexia_store::{Layout, Store};
 
 use crate::Channel;
 
-mod telegram;
+#[doc(hidden)]
+pub mod telegram;
 
 /// The `_core` secret keys channels read, for `alexia-hub secret set`. Stub: empty.
 pub fn secret_keys() -> &'static [&'static str] {
