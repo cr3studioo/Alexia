@@ -192,7 +192,7 @@ pub async fn stop(mut proc: Proc, grace: Duration) -> Option<i32> {
 // ---- redaction: v2's `redactSecrets` patterns (packages/core/src/redact.ts), by hand ----
 
 /// Every secret value, then every credential shape, replaced by `•••`.
-pub(crate) fn redact(line: &str, secrets: &[String]) -> String {
+pub fn redact(line: &str, secrets: &[String]) -> String {
     let mut out = line.to_string();
     // Longest first: a shorter secret inside a longer one would otherwise break it up and
     // leave the longer one's ends behind.
