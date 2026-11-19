@@ -176,3 +176,4 @@
 2026-11-19 P1-10 fixer asked to edit telegram/api.rs (download returns bytes): allowed, root cause and no other owner. P1-23 build done; review ctx_7e7d94168ca5.
 2026-11-19 Phase review 2: 12 findings (3 high: span start epoch vs since-turn, Turn lacks files = P1-26, P1-10 unmerged). P1-17 spec assumes supervise/base64/SettingsChanged the code lacks.
 2026-11-19 P1-17 held until re-plan. Planner ctx_4026058819e2 in C:\dev\Alexia-wt\plan-rv (branch cr3studioo/v3-plan-rv) re-plans P1-17/P1-25, adds INTERFACES signatures, new tasks from P1-28.
+2026-11-19 Merged P1-23 (gate ok, pushed). P1-27 and P1-10 fixer done; reviews ctx_178e82b708ce, ctx_99df8d736766.
