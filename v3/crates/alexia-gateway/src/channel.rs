@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! The channel contract: what every chat surface implements, and what the gateway hands on.
 
-
 use alexia_core::{Budget, OutFile};
 use alexia_store::{Content, Ms};
 use tokio_util::sync::CancellationToken;

@@ -22,6 +22,7 @@ use alexia_core::{
     Ask, Brain, BrainError, DraftFrame, DraftSink, Lane, Phase, Question, Reply, RunId, Span, Turn,
 };
 use alexia_store::{Content, MessageBody, Part, Role, Store};
+use base64::Engine;
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
@@ -39,6 +40,9 @@ const FREE_ONLY: &str = "I only use free models.";
 const BUSY: &str = "I'm still finishing the last task.";
 const STARTING: &str = "The task engine is still starting. Try again in a moment.";
 const LOST: &str = "I lost the connection to the task engine.";
+const NO_REPLY: &str = "The task ended without a reply.";
+/// Telegram's own download ceiling; past it the JSON body would be the problem.
+const MAX_DOCUMENT: u64 = 20 * 1024 * 1024;
 
 pub struct V2Config {
     /// The v2 checkout (`ALEXIA_V2_ROOT`). Its `packages/core/dist/src/entry.js` must exist.
@@ -418,7 +422,8 @@ impl V2Bridge {
         Ok(())
     }
 
-    fn save(&self, turn: &Turn, st: &Run) -> Result<(), BrainError> {
+    /// The user row always (v2 saw it); the assistant row only when v2 `wrote` words.
+    fn save(&self, turn: &Turn, st: &Run, wrote: bool) -> Result<(), BrainError> {
         let task = |content: Content| {
             let mut extra = serde_json::Map::new();
             extra.insert("lane".into(), json!("task"));
@@ -437,6 +442,9 @@ impl V2Bridge {
         self.store
             .append(turn.session, Role::User, None, &task(turn.content.clone()))
             .map_err(store_err)?;
+        if !wrote {
+            return Ok(());
+        }
         self.store
             .append(
                 turn.session,
@@ -480,7 +488,7 @@ impl Brain for V2Bridge {
             return Err(BrainError::Unavailable(STARTING.into()));
         };
         let text = self.with_context(&turn)?;
-        let body = json!({ "text": text, "files": uploads(&turn.content) });
+        let body = json!({ "text": text, "files": uploads(&turn).await });
         let sent = Instant::now();
         let Some(resp) = self.post_chat(&url, &token, &body, &cancel).await? else {
             return Err(BrainError::Cancelled);
@@ -508,13 +516,19 @@ impl Brain for V2Bridge {
             st.spans.push(Span::since(name, began, start));
         }
         st.spans.push(Span::since("bridge", began, sent));
+        let wrote = !st.text.trim().is_empty();
         if st.refused_paid {
-            if !st.text.is_empty() {
+            if wrote {
                 st.text.push(' ');
+            } else {
+                st.text.clear();
             }
             st.text.push_str(FREE_ONLY);
         }
-        self.save(&turn, &st)?;
+        self.save(&turn, &st, wrote)?;
+        if !wrote && !st.refused_paid {
+            return Err(BrainError::Unavailable(NO_REPLY.into()));
+        }
         Ok(Reply {
             text: st.text,
             files: Vec::new(),
@@ -533,8 +547,31 @@ fn is_task(m: &alexia_store::Message) -> bool {
     m.body.extra.get("lane").and_then(Value::as_str) == Some("task")
 }
 
-/// The turn's image parts as v2 `Upload { name, data, type }` (base64 without the prefix).
-fn uploads(c: &Content) -> Vec<Value> {
+/// The turn's image parts, then its files read from disk, as v2 `Upload { name, data, type }`
+/// (standard base64 without a prefix), as v2's own window sends them. v2 reads documents itself.
+async fn uploads(turn: &Turn) -> Vec<Value> {
+    let mut out = images(&turn.content);
+    for f in &turn.files {
+        let size = tokio::fs::metadata(&f.path).await.map(|m| m.len()).ok();
+        if size.is_some_and(|n| n > MAX_DOCUMENT) {
+            tracing::warn!(file = %f.name, ?size, "bridge: document over 20 MB skipped");
+            continue;
+        }
+        match tokio::fs::read(&f.path).await {
+            Ok(bytes) => out.push(json!({
+                "name": f.name,
+                "data": base64::engine::general_purpose::STANDARD.encode(bytes),
+                "type": f.mime,
+            })),
+            Err(e) => {
+                tracing::warn!(file = %f.name, ?size, "bridge: document unreadable, skipped: {e}")
+            }
+        }
+    }
+    out
+}
+
+fn images(c: &Content) -> Vec<Value> {
     let Content::Parts(parts) = c else {
         return Vec::new();
     };
@@ -808,6 +845,7 @@ mod tests {
             session,
             origin: Origin::Desktop,
             content: Content::Text(text.into()),
+            files: Vec::new(),
             received_at: alexia_store::now_ms(),
         }
     }
@@ -1003,6 +1041,80 @@ s.listen(0, '127.0.0.1', () => {{
     }
 
     #[tokio::test]
+    async fn documents_go_as_uploads() {
+        let path = std::env::temp_dir().join(format!(
+            "alexia-bridge-notes-{}-{}.txt",
+            std::process::id(),
+            alexia_store::now_ms()
+        ));
+        std::fs::write(&path, "hello").unwrap();
+        let (url, log) = fake(vec![Send(r#"{"delta":"read it"}"#)], Opts::default()).await;
+        let (bridge, _, session) = attached(&url);
+        let mut t = turn(session, "");
+        t.content = Content::Parts(vec![
+            Part::Text {
+                text: "what's in these".into(),
+            },
+            Part::Image {
+                url: "data:image/png;base64,iVBORw0KGgo=".into(),
+            },
+        ]);
+        t.files.push(alexia_core::InFile {
+            name: "notes.txt".into(),
+            mime: "text/plain".into(),
+            path: path.clone(),
+        });
+        let (out, _) = ask_once(&bridge, t).await;
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(out.unwrap().text, "read it");
+        assert_eq!(
+            log.bodies("/api/chat")[0]["files"],
+            json!([
+                { "name": "image-1.png", "data": "iVBORw0KGgo=", "type": "image/png" },
+                { "name": "notes.txt", "data": "aGVsbG8=", "type": "text/plain" },
+            ])
+        );
+    }
+
+    #[tokio::test]
+    async fn missing_document_is_skipped() {
+        let (url, log) = fake(vec![Send(r#"{"delta":"nothing there"}"#)], Opts::default()).await;
+        let (bridge, _, session) = attached(&url);
+        let mut t = turn(session, "read this");
+        t.files.push(alexia_core::InFile {
+            name: "gone.pdf".into(),
+            mime: "application/pdf".into(),
+            path: PathBuf::from("no-such-dir/gone.pdf"),
+        });
+        let (out, _) = ask_once(&bridge, t).await;
+        assert_eq!(out.unwrap().text, "nothing there");
+        assert_eq!(log.bodies("/api/chat")[0]["files"], json!([]));
+    }
+
+    #[tokio::test]
+    async fn no_words_store_no_assistant_row() {
+        let (url, log) = fake(
+            vec![
+                Send(r#"{"ask":"Delete report.txt?"}"#),
+                Wait("/api/approve"),
+            ],
+            Opts::default(),
+        )
+        .await;
+        let (bridge, store, session) = attached(&url);
+        let (out, _) = ask_once(&bridge, turn(session, "clean up")).await;
+        match out {
+            Err(BrainError::Unavailable(s)) => assert_eq!(s, NO_REPLY),
+            other => panic!("expected the no-reply sentence, got {other:?}"),
+        }
+        assert_eq!(log.bodies("/api/approve"), [json!({ "allowed": false })]);
+        let history = store.history(session, None).unwrap();
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].role, Role::User);
+        assert_eq!(history[0].body.content, Content::Text("clean up".into()));
+    }
+
+    #[tokio::test]
     async fn phase_and_step_frames_map() {
         let (url, _log) = fake(
             vec![
@@ -1134,6 +1246,22 @@ s.listen(0, '127.0.0.1', () => {{
         let approvals = log.bodies("/api/approve");
         assert_eq!(approvals.len(), 2);
         assert!(approvals.iter().all(|a| *a == json!({ "allowed": false })));
+
+        // No words before the cost ask: the sentence is the reply, and it is not stored as v2's.
+        let (url, _log) = fake(
+            vec![
+                Send(r#"{"paid":"This answer costs $0.02."}"#),
+                Wait("/api/approve"),
+            ],
+            Opts::default(),
+        )
+        .await;
+        let (bridge, store, session) = attached(&url);
+        let (out, _) = ask_once(&bridge, turn(session, "big job")).await;
+        assert_eq!(out.unwrap().text, FREE_ONLY);
+        let history = store.history(session, None).unwrap();
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].role, Role::User);
     }
 
     #[tokio::test]

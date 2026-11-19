@@ -426,9 +426,16 @@ async fn hung_profile_does_not_stall_the_first_turn() {
 
     say(&w, "again").await.0.unwrap();
     let second = requests(&w)[1].system.clone().unwrap();
-    let upto_day = |s: &str| s[..s.find("
+    let upto_day = |s: &str| {
+        s[..s
+            .find(
+                "
 
-Today is ").unwrap()].to_owned();
+Today is ",
+            )
+            .unwrap()]
+            .to_owned()
+    };
     assert_eq!(upto_day(&system).as_bytes(), upto_day(&second).as_bytes());
     assert_eq!(caps.calls_to("memory.profile").len(), 1);
     assert_eq!(caps.calls_to("persona.personality").len(), 1);
@@ -448,10 +455,9 @@ async fn reasoning_only_reply_stores_nothing() {
     }
     assert!(w.store.history(w.session, None).unwrap().is_empty());
     assert!(
-        !frames.iter().any(|f| matches!(
-            f,
-            DraftFrame::Delta(_) | DraftFrame::Phase(Phase::Writing)
-        )),
+        !frames
+            .iter()
+            .any(|f| matches!(f, DraftFrame::Delta(_) | DraftFrame::Phase(Phase::Writing))),
         "{frames:?}"
     );
     // Capture is spawned when it runs at all; give it time to show up.
