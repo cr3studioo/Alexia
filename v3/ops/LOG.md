@@ -152,3 +152,4 @@
 - 2026-11-19 CEO #9: P1-13 review: changes (tool spans doubled vs real v2 phase events; cancel before headers skips /api/stop). Fix round in C:\dev\Alexia-wt\fix-P1-13.txt, queued until an opus slot frees. P1-20 dispatched (sonnet).
 - 2026-11-19 CEO #9: P0-22 review approve; merged, green, pushed. P0-25 ready. Merges since phase review: 1.
 - 2026-11-19 CEO #9: P1-06, P1-20, P1-22, P1-10 done; four opus reviews dispatched. P1-13 fix round 1 dispatched (opus, try 2). Five workers live; P0-25, P1-21, P1-24 (sonnet) and P1-07, P1-12, P1-23 (opus) wait for slots.
+- 2026-11-19 CEO #9: P1-20 review approve; merged, green, pushed. P0-25 dispatched (sonnet). Merges since phase review: 2.
