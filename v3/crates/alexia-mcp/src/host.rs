@@ -17,7 +17,7 @@ use crate::conn::{Conn, Incoming};
 use crate::jsonrpc::{code, RpcError};
 use crate::manifest::{Lifetime, Manifest};
 use crate::process::{self, Proc, StderrLog};
-use crate::supervise::{self, Busy, CrashLog, Verdict, Watch};
+use crate::supervise::{self, Busy, BusyGuard, CrashLog, Verdict, Watch};
 use crate::types::{self, CallToolParams, CallToolResult, Implementation, InitializeParams};
 use crate::{
     Answers, CallCtx, CallError, Error, EventSink, HostConfig, HostedTool, PluginDir, PluginEvent,
@@ -331,8 +331,7 @@ impl McpHost {
         if let Some(tools) = lock(&self.inner.plugins).get(id)?.tools.clone() {
             return Some(tools);
         }
-        let (conn, busy) = self.ensure_running(id).await.ok()?;
-        let _busy = busy.enter();
+        let (conn, _busy) = self.ensure_running(id).await.ok()?;
         let epoch = lock(&self.inner.plugins).get(id)?.tools_epoch;
         let timeout = Duration::from_millis(self.inner.cfg.timings.start_ms);
         let never = CancellationToken::new();
@@ -403,8 +402,7 @@ impl McpHost {
             self.vanish(plugin).await;
             return Err(CallError::Gone);
         }
-        let (conn, busy) = self.ensure_running(plugin).await.map_err(off)?;
-        let _busy = busy.enter();
+        let (conn, _busy) = self.ensure_running(plugin).await.map_err(off)?;
 
         let mut meta = Map::new();
         if let Some(c) = &ctx.conversation {
@@ -585,16 +583,29 @@ impl McpHost {
         set.join_all().await;
     }
 
-    pub(crate) async fn stop_with(&self, id: &PluginId, reason: StopReason) {
+    /// False when there was nothing to stop, or an idle stop found the plugin busy again.
+    pub(crate) async fn stop_with(&self, id: &PluginId, reason: StopReason) -> bool {
         let Some(spawn) = lock(&self.inner.plugins).get(id).map(|s| s.spawn.clone()) else {
-            return;
+            return false;
         };
         let _g = spawn.lock().await;
         let running = {
             let mut plugins = lock(&self.inner.plugins);
             let Some(slot) = plugins.get_mut(id) else {
-                return;
+                return false;
             };
+            // Calls enter Busy under this same lock (`ensure_running`), so this check and the
+            // stop below cannot be split by one.
+            if matches!(reason, StopReason::Idle) {
+                let idle = Duration::from_millis(self.inner.cfg.timings.idle_ms);
+                let still_idle = slot
+                    .running
+                    .as_ref()
+                    .is_some_and(|r| r.busy.idle_for().is_some_and(|d| d >= idle));
+                if !still_idle {
+                    return false;
+                }
+            }
             if slot.state == PluginState::Running {
                 slot.state = PluginState::Stopped;
             }
@@ -605,7 +616,7 @@ impl McpHost {
             proc, conn, stop, ..
         }) = running
         else {
-            return;
+            return false;
         };
         stop.cancel();
         // Conn owns stdin: dropping it is what lets the plugin see EOF and leave on its own.
@@ -621,11 +632,13 @@ impl McpHost {
             plugin: id.clone(),
             reason,
         });
+        true
     }
 
     /// The running plugin's connection, spawning and handshaking first if needed, not before
-    /// the crash backoff allows. Err is the sentence saying why it is not running.
-    async fn ensure_running(&self, id: &PluginId) -> Result<(Arc<Conn>, Arc<Busy>), String> {
+    /// the crash backoff allows. The guard is entered under the spawn lock, so an idle stop
+    /// never lands between this and the call. Err is the sentence saying why it is not running.
+    async fn ensure_running(&self, id: &PluginId) -> Result<(Arc<Conn>, BusyGuard), String> {
         let spawn = lock(&self.inner.plugins)
             .get(id)
             .map(|s| s.spawn.clone())
@@ -646,7 +659,7 @@ impl McpHost {
                 }
                 match &slot.running {
                     Some(r) if !r.conn.closed().is_cancelled() => {
-                        return Ok((Arc::clone(&r.conn), Arc::clone(&r.busy)))
+                        return Ok((Arc::clone(&r.conn), r.busy.enter()))
                     }
                     // Exited before its watcher noticed: the same crash, counted here.
                     Some(_) => {
@@ -678,7 +691,7 @@ impl McpHost {
         &self,
         id: &PluginId,
         dir: PluginDir,
-    ) -> Result<(Arc<Conn>, Arc<Busy>), String> {
+    ) -> Result<(Arc<Conn>, BusyGuard), String> {
         let name = dir.manifest.name.clone();
         let fail = |e: &dyn std::fmt::Display| format!("{name} didn't start: {e}");
         let secrets = dir
@@ -795,7 +808,7 @@ impl McpHost {
             plugin: id.clone(),
             pid,
         });
-        Ok((conn, busy))
+        Ok((conn, busy.enter()))
     }
 
     /// Records why a start failed (a crash for the tally) and hands the sentence back.

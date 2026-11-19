@@ -110,6 +110,12 @@ Crate paths are under `v3/crates/`.
 | P1-16 | Hub watchdog | sonnet | P1-02 | `alexia-hub/src/watchdog.rs` |
 | P1-17 | Hub wiring and CLI | sonnet | P1-07, P1-08, P1-10, P1-12, P1-13, P1-15, P1-16 | `alexia-hub/{Cargo.toml, src/main.rs, src/media.rs, tests/cli_p1.rs}`, `v3/Cargo.lock` |
 | P1-18 | End-to-end latency test and the 50-message run | sonnet | P1-17 | `alexia-hub/tests/telegram_e2e.rs`, `v3/ops/reports/P1-latency.md` |
+| P1-20 | Hub: latency offsets and hidden console | sonnet | none | `alexia-hub/src/{latency.rs, watchdog.rs}`, `v3/specs/INTERFACES.md` |
+| P1-21 | Telegram api: file transfers and retry_after | sonnet | none | `alexia-gateway/{src/channels/telegram/api.rs, tests/telegram_api.rs}` |
+| P1-22 | Core: tool rows on the wire, catalog temp file | sonnet | none | `alexia-core/{src/openai.rs, src/catalog.rs, tests/openai.rs, tests/catalog.rs}` |
+| P1-23 | Gateway: spawned tasks on the tracker | opus | none | `alexia-gateway/{src/gateway.rs, tests/gateway.rs}` |
+| P1-24 | v2 agent: dangling tool ids at the ceiling | sonnet | none | `packages/core/src/agent.ts`, `packages/core/test/agent.test.ts` |
+| P1-25 | One time helper | sonnet | P1-20, P1-22, P1-23, P1-17, P0-25 | `alexia-store/{src/types.rs, src/db.rs, src/import.rs, tests/time.rs}`, `alexia-core/src/catalog.rs`, `alexia-gateway/src/gateway.rs`, `alexia-hub/src/{watchdog.rs, latency.rs, main.rs}`, `v3/specs/INTERFACES.md` |
 
 ## Owner needs
 

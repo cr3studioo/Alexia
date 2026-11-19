@@ -139,3 +139,14 @@
 - 2026-11-19 CEO #8: P1-19 review approve; merged, green, pushed. Install-prompt and heartbeat notes added to P1-17 spec.
 - 2026-11-19 CEO #8: P0-23 review: changes (assert entry count, not just existence; host drops before temp guard). Real junction run in base2 passed 4/4. Fix round sonnet, try 2.
 - 2026-11-19 CEO #8: P1-05 re-review: changes (keyless no-list rows still seeded; 400/404/422 on list wipes cache). Fixer opus, try 3, allowed openai.rs + tests/openai.rs. Exception: 3 opus builders at once (P0-22, P1-11 fix, P1-05 fixer), because P1-05 is the critical path and the diff is small.
+- 2026-11-19 CEO #8: P0-23 fix (test-only, 22 lines) checked by CEO directly; merged, green incl. v2-conformance clippy, pushed.
+- 2026-11-19 CEO #8: P1-05 fixer done; re-review 2 dispatched (opus). Dispatched P1-13 (opus) when the fixer slot freed; that made 3 opus builders for a while (P0-22, P1-11 fix, P1-13) - my miscount, no more opus until one ends.
+- 2026-11-19 CEO #8: P1-11 fix round done; re-review dispatched (opus).
+- 2026-11-19 CEO #8: P1-05 re-review 2 approve; merged, green, pushed. P1-06 ready.
+- 2026-11-19 CEO #8: P1-11 re-review approve; merged, green, pushed. P1-12 ready.
+- 2026-11-19 CEO #8: handoff to CEO #9 at a clean point (opus cap blocks all ready work; 2 live workers: P0-22, P1-13).
+- 2026-11-19 CEO #9: took over. P0-22, P1-13 live. Whole-phase review dispatched (opus, ctx_e161d4c70cb9) in Alexia-wt/phase-review. Telegram empty.
+- 2026-11-19 CEO #9: phase review: 9 findings (latency offsets negative, file-transfer timeout, retry_after overflow, tool rows on wire, catalog tmp leak, gateway bare spawns, v2 ceiling dangling ids, console flash, time-helper dup). Planner wrote P1-20..P1-25.
+- 2026-11-19 CEO #9: P0-22 done (55 s test; conn.rs junk_is_skipped flaked once). Review dispatched. P1-06 dispatched (opus).
+- 2026-11-19 CEO #9: P1-13 done (documents can't reach bridge: Turn has no files; follow-up needed). Review dispatched. P1-10 dispatched (opus). P1-22 dispatched (sonnet).
+- 2026-11-19 CEO #9: P1-13 review: changes (tool spans doubled vs real v2 phase events; cancel before headers skips /api/stop). Fix round in C:\dev\Alexia-wt\fix-P1-13.txt, queued until an opus slot frees. P1-20 dispatched (sonnet).
