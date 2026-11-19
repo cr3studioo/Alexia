@@ -66,7 +66,10 @@ impl FakeChannel {
     async fn slow(&self, chat: &str, what: What) {
         self.in_flight.fetch_add(1, Ordering::SeqCst);
         let delay = *self.delay.lock().unwrap();
-        sleep(delay).await;
+        // Zero = no await at all, so the existing timing tests see the old fake.
+        if !delay.is_zero() {
+            sleep(delay).await;
+        }
         self.note(chat, what);
         self.in_flight.fetch_sub(1, Ordering::SeqCst);
     }
