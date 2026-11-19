@@ -12,7 +12,7 @@ pub mod api;
 use std::collections::{BTreeMap, HashMap};
 use std::hash::BuildHasher;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -39,6 +39,10 @@ const CLASH_FIRST: Duration = Duration::from_secs(10);
 const CLASH_MAX: Duration = Duration::from_secs(5 * 60);
 const DOWN_FIRST: Duration = Duration::from_secs(1);
 const DOWN_MAX: Duration = Duration::from_secs(30);
+/// Wrong pairing guesses before the code changes.
+const GUESSES: u32 = 5;
+/// Added to what the owner wrote when a photo, voice note or file couldn't be fetched.
+const UNREAD: &str = "[The attachment couldn't be read.]";
 
 /// v2's `Acks`: the saved offset is the oldest update not yet finished, else one past the
 /// newest. `poll` is what the loop asks for next, which runs ahead of it.
@@ -61,8 +65,12 @@ pub struct Telegram {
     api: Api,
     store: Arc<Store>,
     cache: PathBuf,
-    asks: Mutex<HashMap<u64, oneshot::Sender<bool>>>,
+    /// (chat id, ask message id) → the ask's number and its waiting `ask()`.
+    asks: Mutex<HashMap<(i64, i64), (u64, oneshot::Sender<bool>)>>,
+    /// Seeded from the clock, so a button left over from an earlier run never matches.
     ask_seq: AtomicU64,
+    /// Wrong pairing guesses since the code last changed.
+    misses: AtomicU32,
     offsets: Mutex<Offsets>,
     /// chat id → the draft id of the reply being written there.
     drafts: Mutex<HashMap<i64, i64>>,
@@ -251,7 +259,8 @@ impl Telegram {
             store,
             cache,
             asks: Mutex::default(),
-            ask_seq: AtomicU64::new(0),
+            ask_seq: AtomicU64::new(now_ms().max(0) as u64),
+            misses: AtomicU32::new(0),
             offsets: Mutex::new(Offsets {
                 poll: saved.unwrap_or(0),
                 open: BTreeMap::new(),
@@ -378,9 +387,24 @@ impl Telegram {
     /// Somebody not paired: the code pairs them; anything else gets no answer at all.
     async fn stranger(&self, m: &TgMessage, user: i64) -> Result<()> {
         let code = self.pairing_code()?;
-        if m.text.as_deref().map(str::trim) != Some(code.as_str()) {
+        let Some(guess) = m.text.as_deref().map(str::trim) else {
+            return Ok(());
+        };
+        if guess != code {
+            // ponytail: the count lives in memory, so a restart grants five more guesses; keep
+            // it in kv if restarts ever become cheap for a stranger to cause.
+            if self.misses.fetch_add(1, Ordering::Relaxed) + 1 >= GUESSES {
+                self.misses.store(0, Ordering::Relaxed);
+                let code = new_code();
+                self.store.kv_set(NS, CODE, &json!(code))?;
+                tracing::info!(
+                    "telegram: {GUESSES} wrong pairing codes, so the code changed. \
+                     Waiting to be paired — send {code} to the bot"
+                );
+            }
             return Ok(());
         }
+        self.misses.store(0, Ordering::Relaxed);
         let mut who = owners(&self.store)?;
         who.push(user);
         self.store.kv_set(NS, OWNERS, &json!(who))?;
@@ -400,55 +424,22 @@ impl Telegram {
 
     async fn message(&self, update: i64, m: TgMessage, at: Ms) -> Result<Option<Inbound>> {
         let text = m.text.clone().or(m.caption.clone()).unwrap_or_default();
-        let dir = self.cache.join("telegram");
-        let mut files = Vec::new();
-        let mut content = Content::Text(text.clone());
-        let ensure_dir = || {
-            std::fs::create_dir_all(&dir)
-                .map_err(|e| Error::Service(format!("couldn't make the cache folder: {e}")))
-        };
-        let best = m
-            .photo
-            .iter()
-            .filter(|p| p.file_size.is_none_or(|n| n <= PHOTO_MAX))
-            .max_by_key(|p| u64::from(p.width) * u64::from(p.height));
-        if let Some(photo) = best {
-            ensure_dir()?;
-            let path = dir.join(format!("{update}.jpg"));
-            self.api.download(&photo.file_id, &path).await?;
-            let url = format!("data:image/jpeg;base64,{}", base64(&read(&path)?));
-            content = Content::Parts(vec![Part::Text { text }, Part::Image { url }]);
-        } else if !m.photo.is_empty() {
-            return Err(Error::Service(
-                "every size of that photo is over 10 MB".into(),
-            ));
-        } else if let Some(voice) = m.voice.as_ref().or(m.audio.as_ref()) {
-            ensure_dir()?;
-            let name = format!("{update}.ogg");
-            let path = dir.join(&name);
-            self.api.download(&voice.file_id, &path).await?;
-            files.push(InFile {
-                name,
-                mime: "audio/ogg".into(),
-                path,
-            });
-        } else if let Some(doc) = &m.document {
-            ensure_dir()?;
-            let name = safe_name(doc.file_name.as_deref().unwrap_or("file"));
-            let path = dir.join(format!("{update}-{name}"));
-            self.api.download(&doc.file_id, &path).await?;
-            files.push(InFile {
-                name,
-                mime: doc
-                    .mime_type
-                    .clone()
-                    .unwrap_or_else(|| "application/octet-stream".into()),
-                path,
-            });
-        } else if text.trim().is_empty() {
+        let (content, files) = match self.attachment(update, &m, &text).await {
+            Ok(Some(got)) => got,
             // A sticker, a location: nothing P1 reads.
-            return Ok(None);
-        }
+            Ok(None) if text.trim().is_empty() => return Ok(None),
+            Ok(None) => (Content::Text(text), Vec::new()),
+            // Passed on anyway, so the owner hears back instead of losing the message.
+            Err(e) => {
+                tracing::warn!("telegram: the attachment of update {update} was not read: {e}");
+                let text = if text.trim().is_empty() {
+                    UNREAD.to_owned()
+                } else {
+                    format!("{text}\n\n{UNREAD}")
+                };
+                (Content::Text(text), Vec::new())
+            }
+        };
         Ok(Some(Inbound {
             chat: ChatRef {
                 chat: m.chat.id.to_string(),
@@ -462,6 +453,64 @@ impl Telegram {
             files,
             at,
         }))
+    }
+
+    /// The photo, voice note or document of `m`, fetched into the cache; `None` when it has none.
+    async fn attachment(
+        &self,
+        update: i64,
+        m: &TgMessage,
+        text: &str,
+    ) -> Result<Option<(Content, Vec<InFile>)>> {
+        let dir = self.cache.join("telegram");
+        let ensure_dir = || {
+            std::fs::create_dir_all(&dir)
+                .map_err(|e| Error::Service(format!("couldn't make the cache folder: {e}")))
+        };
+        let caption = || Content::Text(text.to_owned());
+        let best = m
+            .photo
+            .iter()
+            .filter(|p| p.file_size.is_none_or(|n| n <= PHOTO_MAX))
+            .max_by_key(|p| u64::from(p.width) * u64::from(p.height));
+        if let Some(photo) = best {
+            ensure_dir()?;
+            let path = dir.join(format!("{update}.jpg"));
+            self.api.download(&photo.file_id, &path).await?;
+            let url = format!("data:image/jpeg;base64,{}", base64(&read(&path)?));
+            let text = text.to_owned();
+            Ok(Some((
+                Content::Parts(vec![Part::Text { text }, Part::Image { url }]),
+                Vec::new(),
+            )))
+        } else if !m.photo.is_empty() {
+            Err(Error::Service(
+                "every size of that photo is over 10 MB".into(),
+            ))
+        } else if let Some(voice) = m.voice.as_ref().or(m.audio.as_ref()) {
+            ensure_dir()?;
+            let name = format!("{update}.ogg");
+            let path = dir.join(&name);
+            self.api.download(&voice.file_id, &path).await?;
+            let file = InFile {
+                name,
+                mime: "audio/ogg".into(),
+                path,
+            };
+            Ok(Some((caption(), vec![file])))
+        } else if let Some(doc) = &m.document {
+            ensure_dir()?;
+            let name = safe_name(doc.file_name.as_deref().unwrap_or("file"));
+            let path = dir.join(format!("{update}-{name}"));
+            self.api.download(&doc.file_id, &path).await?;
+            let mime = doc
+                .mime_type
+                .clone()
+                .unwrap_or_else(|| "application/octet-stream".into());
+            Ok(Some((caption(), vec![InFile { name, mime, path }])))
+        } else {
+            Ok(None)
+        }
     }
 
     /// A button press: routed to the waiting `ask()` when it is the owner's.
@@ -479,20 +528,28 @@ impl Telegram {
             let only = "Only the owner can answer this.";
             return self.api.answer_callback(&cq.id, Some(only)).await;
         }
-        let waiting = lock(&self.asks).remove(&n);
-        if let Some(tx) = waiting {
-            let _ = tx.send(yes);
-        }
+        // Only the ask that sent this very message, with this very number, is answered.
+        let waiting = cq.message.as_ref().and_then(|m| {
+            let mut asks = lock(&self.asks);
+            let key = (m.chat.id, m.message_id);
+            match asks.get(&key) {
+                Some((seq, _)) if *seq == n => asks.remove(&key).map(|(_, tx)| tx),
+                _ => None,
+            }
+        });
+        let (Some(tx), Some(m)) = (waiting, cq.message) else {
+            // Stale or unknown (an earlier run, a cancelled ask): the message stays as it is.
+            let expired = "This question has expired.";
+            return self.api.answer_callback(&cq.id, Some(expired)).await;
+        };
+        let _ = tx.send(yes);
         self.api.answer_callback(&cq.id, None).await?;
-        if let Some(m) = cq.message {
-            let word = if yes { "approved" } else { "denied" };
-            let text = format!("{} — {word}", m.text.unwrap_or_default());
-            self.api.remove_buttons(m.chat.id, m.message_id).await?;
-            self.api
-                .edit_message(m.chat.id, m.message_id, &text)
-                .await?;
-        }
-        Ok(())
+        let word = if yes { "approved" } else { "denied" };
+        let text = format!("{} — {word}", m.text.unwrap_or_default());
+        self.api.remove_buttons(m.chat.id, m.message_id).await?;
+        self.api
+            .edit_message(m.chat.id, m.message_id, &text)
+            .await
     }
 }
 
@@ -619,28 +676,22 @@ impl Channel for Telegram {
     ) -> Result<Option<bool>> {
         let chat = chat_id(chat)?;
         let n = self.ask_seq.fetch_add(1, Ordering::Relaxed) + 1;
-        let (tx, rx) = oneshot::channel();
-        // Registered before sending, so a fast press is never lost.
-        lock(&self.asks).insert(n, tx);
         let buttons = [
             ("Approve".to_owned(), format!("y:{n}")),
             ("Deny".to_owned(), format!("n:{n}")),
         ];
-        let msg = match self
+        let msg = self
             .api
             .send_message(chat, text, Some(&buttons), None)
-            .await
-        {
-            Ok(id) => id,
-            Err(e) => {
-                lock(&self.asks).remove(&n);
-                return Err(e);
-            }
-        };
+            .await?;
+        // Keyed by the message, known only once it is sent. A press needs the owner to see the
+        // message first, so it cannot beat this insert.
+        let (tx, rx) = oneshot::channel();
+        lock(&self.asks).insert((chat, msg), (n, tx));
         tokio::select! {
             got = rx => Ok(got.ok()),
             () = cancel.cancelled() => {
-                lock(&self.asks).remove(&n);
+                lock(&self.asks).remove(&(chat, msg));
                 let _ = self.api.remove_buttons(chat, msg).await;
                 Ok(None)
             }
