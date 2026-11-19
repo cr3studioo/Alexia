@@ -151,17 +151,10 @@ impl McpHost {
         (self.inner.events)(event);
     }
 
-    /// Scan `plugin_dirs` in order (the first folder holding an id wins), refuse what this
-    /// build cannot run, create declared tables, spawn enabled resident plugins.
-    pub async fn start(&self, enabled: &[PluginId]) -> Result<(), Error> {
-        // Core's containers, made once: a plugin's folders live inside them and the
-        // containers outlive every plugin, so a purge can leave nothing behind.
-        let layout = &self.inner.cfg.layout;
-        std::fs::create_dir_all(layout.root.join("plugins"))?;
-        std::fs::create_dir_all(layout.cache())?;
-        let enabled: HashSet<&PluginId> = enabled.iter().collect();
+    /// Every plugin folder in `dirs`, in order; the first folder holding an id wins.
+    pub fn scan(dirs: &[std::path::PathBuf]) -> BTreeMap<PluginId, PluginDir> {
         let mut found: BTreeMap<PluginId, PluginDir> = BTreeMap::new();
-        for root in &self.inner.cfg.plugin_dirs {
+        for root in dirs {
             for entry in crate::manifest::discover(root) {
                 match entry {
                     Ok(dir) => match found.entry(PluginId(dir.manifest.id.clone())) {
@@ -179,6 +172,19 @@ impl McpHost {
                 }
             }
         }
+        found
+    }
+
+    /// Scan `plugin_dirs` with [`McpHost::scan`], refuse what this
+    /// build cannot run, create declared tables, spawn enabled resident plugins.
+    pub async fn start(&self, enabled: &[PluginId]) -> Result<(), Error> {
+        // Core's containers, made once: a plugin's folders live inside them and the
+        // containers outlive every plugin, so a purge can leave nothing behind.
+        let layout = &self.inner.cfg.layout;
+        std::fs::create_dir_all(layout.root.join("plugins"))?;
+        std::fs::create_dir_all(layout.cache())?;
+        let enabled: HashSet<&PluginId> = enabled.iter().collect();
+        let found = Self::scan(&self.inner.cfg.plugin_dirs);
 
         let mut resident = vec![];
         for (id, dir) in found {

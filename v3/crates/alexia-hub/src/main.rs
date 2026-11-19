@@ -7,7 +7,6 @@ mod bridge;
 mod latency;
 mod watchdog;
 
-use std::collections::HashSet;
 use std::error::Error;
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
@@ -15,9 +14,7 @@ use std::process::ExitCode;
 use std::sync::Arc;
 
 use alexia_core::{Bus, Event};
-use alexia_mcp::{
-    discover, EventSink, HostConfig, Manifest, McpHost, NoUpcalls, PluginId, PluginState, Timings,
-};
+use alexia_mcp::{EventSink, HostConfig, McpHost, NoUpcalls, PluginId, PluginState, Timings};
 use alexia_store::import::{import_v2, import_v2_files};
 use alexia_store::{data_dir, secrets, Layout, Store};
 use tokio_util::sync::CancellationToken;
@@ -80,17 +77,6 @@ fn plugin_dirs(layout: &Layout) -> Vec<PathBuf> {
     dirs
 }
 
-/// Every plugin found in `dirs`, the first folder holding an id winning.
-fn discovered(dirs: &[PathBuf]) -> Vec<Manifest> {
-    let mut seen = HashSet::new();
-    dirs.iter()
-        .flat_map(|d| discover(d))
-        .filter_map(|r| r.ok())
-        .map(|p| p.manifest)
-        .filter(|m| seen.insert(m.id.clone()))
-        .collect()
-}
-
 struct Hub {
     host: McpHost,
     bus: Bus,
@@ -125,10 +111,7 @@ async fn boot(layout: &Layout) -> Res<Hub> {
             .into_iter()
             .map(PluginId)
             .collect(),
-        None => discovered(&dirs)
-            .into_iter()
-            .map(|m| PluginId(m.id))
-            .collect(),
+        None => McpHost::scan(&dirs).into_keys().collect(),
     };
     let bus = Bus::new(1024);
     log_plugin_events(&bus);
@@ -224,7 +207,10 @@ fn import(folder: &OsStr, files_only: bool) -> Res<()> {
             println!("skipped\t{item}");
         }
     }
-    for m in discovered(&plugin_dirs(&layout)) {
+    for m in McpHost::scan(&plugin_dirs(&layout))
+        .into_values()
+        .map(|d| d.manifest)
+    {
         for key in m.password_keys() {
             if matches!(secrets::get(&m.id, &key), Ok(None)) {
                 println!("secret missing\t{}.{key}", m.id);
