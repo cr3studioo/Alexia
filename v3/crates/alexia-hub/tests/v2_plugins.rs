@@ -20,15 +20,41 @@ fn node() -> PathBuf {
     std::env::var_os("ALEXIA_NODE").map_or_else(|| PathBuf::from("node"), PathBuf::from)
 }
 
-fn temp(name: &str) -> PathBuf {
+/// A temp dir removed on drop, also when the test fails.
+struct Tmp(PathBuf);
+
+impl Drop for Tmp {
+    fn drop(&mut self) {
+        remove_tree(&self.0);
+    }
+}
+
+/// Delete `p` without ever following a link (junction or symlink): a link is removed itself.
+fn remove_tree(p: &Path) {
+    let Ok(meta) = std::fs::symlink_metadata(p) else {
+        return;
+    };
+    if meta.file_type().is_symlink() {
+        let _ = std::fs::remove_dir(p).or_else(|_| std::fs::remove_file(p));
+    } else if meta.is_dir() {
+        for e in std::fs::read_dir(p).into_iter().flatten().flatten() {
+            remove_tree(&e.path());
+        }
+        let _ = std::fs::remove_dir(p);
+    } else {
+        let _ = std::fs::remove_file(p);
+    }
+}
+
+fn temp(name: &str) -> Tmp {
     let p = std::env::temp_dir().join(format!("alexia-v2-{}-{name}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&p);
+    remove_tree(&p);
     std::fs::create_dir_all(&p).unwrap();
-    p
+    Tmp(p)
 }
 
 /// A host over `dirs` with every discovered plugin enabled, started.
-async fn host(dirs: Vec<PathBuf>, name: &str) -> (McpHost, Vec<PluginId>, PathBuf) {
+async fn host(dirs: Vec<PathBuf>, name: &str) -> (Tmp, McpHost, Vec<PluginId>) {
     std::env::set_var("ALEXIA_SECRETS_IN_MEMORY", "1");
     let ids: Vec<PluginId> = dirs
         .iter()
@@ -43,7 +69,7 @@ async fn host(dirs: Vec<PathBuf>, name: &str) -> (McpHost, Vec<PluginId>, PathBu
         .collect();
     let root = temp(name);
     let cfg = HostConfig {
-        layout: Layout::new(root.clone()),
+        layout: Layout::new(root.0.clone()),
         plugin_dirs: dirs,
         node: node(),
         timings: Timings {
@@ -58,7 +84,7 @@ async fn host(dirs: Vec<PathBuf>, name: &str) -> (McpHost, Vec<PluginId>, PathBu
     let store = Arc::new(Store::open_in_memory().unwrap());
     let host = McpHost::new(cfg, store, Arc::new(NoUpcalls), Arc::new(|_| {}));
     host.start(&ids).await.unwrap();
-    (host, ids, root)
+    (root, host, ids)
 }
 
 fn provider(tools: &[HostedTool], pick: impl Fn(&HostedTool) -> bool) -> Option<&PluginId> {
@@ -74,7 +100,7 @@ async fn every_v2_plugin_lists_its_tools() {
     let dir = v2_plugins();
     let found = discover(&dir);
     assert!(!found.is_empty(), "no plugin found in {}", dir.display());
-    let (host, ids, _) = host(vec![dir], "list").await;
+    let (_tmp, host, ids) = host(vec![dir], "list").await;
     let tools = host.tools().await;
     let mut bad = vec![];
     println!("{:<16} {:>5}  state", "id", "tools");
@@ -102,7 +128,7 @@ async fn every_v2_plugin_lists_its_tools() {
 
 #[tokio::test]
 async fn capability_round_trip() {
-    let (host, _, _) = host(vec![v2_plugins()], "cap").await;
+    let (_tmp, host, _) = host(vec![v2_plugins()], "cap").await;
     let tools = host.tools().await;
     assert!(
         provider(&tools, |t| t.provides.iter().any(|p| p == "demo.greet")).is_some(),
@@ -123,7 +149,7 @@ async fn capability_round_trip() {
 
 #[tokio::test]
 async fn a_crashing_plugin_is_contained() {
-    let (host, ids, _) = host(vec![v2_plugins()], "crash").await;
+    let (_tmp, host, ids) = host(vec![v2_plugins()], "crash").await;
     let tools = host.tools().await;
     let listed: Vec<PluginId> = ids
         .iter()
@@ -192,7 +218,7 @@ fn copy_without_node_modules(from: &Path, to: &Path) {
 async fn a_vanishing_plugin_is_removed() {
     // Find the plugin with a `slow` tool using a throwaway host over the original folder.
     let orig = v2_plugins();
-    let (probe, _, _) = host(vec![orig.clone()], "vprobe").await;
+    let (_probe_tmp, probe, _) = host(vec![orig.clone()], "vprobe").await;
     let id = provider(&probe.tools().await, |t| t.tool.name == "slow")
         .expect("no plugin has a `slow` tool")
         .clone();
@@ -205,13 +231,19 @@ async fn a_vanishing_plugin_is_removed() {
         .path;
 
     let plugins = temp("vplugins");
-    let copy = plugins.join(src.file_name().unwrap());
+    let copy = plugins.0.join(src.file_name().unwrap());
     copy_without_node_modules(&src, &copy);
-    if src.join("node_modules").exists() {
+    let nm = src.join("node_modules");
+    let had_node_modules = nm.exists();
+    let entries = |d: &Path| -> usize { std::fs::read_dir(d).map_or(0, |r| r.count()) };
+    let count_before = entries(&nm);
+    let sdk = nm.join("@alexia").join("sdk");
+    let had_sdk = sdk.exists();
+    if had_node_modules {
         link_dir(&copy.join("node_modules"), &src.join("node_modules"));
     }
 
-    let (host, _, _) = host(vec![plugins.clone()], "vanish").await;
+    let (_tmp, host, _) = host(vec![plugins.0.clone()], "vanish").await;
     assert!(
         host.tools().await.iter().any(|t| t.plugin == id),
         "copy did not start"
@@ -236,6 +268,10 @@ async fn a_vanishing_plugin_is_removed() {
         !host.tools().await.iter().any(|t| t.plugin == id),
         "still listed"
     );
-    assert!(src.join("node_modules").exists() || !copy.exists());
+    assert!(!copy.exists(), "copy still there");
+    // remove_dir_all must not have followed the junction into the real checkout.
+    assert_eq!(nm.exists(), had_node_modules);
+    assert_eq!(entries(&nm), count_before, "node_modules was emptied");
+    assert_eq!(sdk.exists(), had_sdk, "@alexia/sdk was removed");
     host.shutdown().await;
 }
