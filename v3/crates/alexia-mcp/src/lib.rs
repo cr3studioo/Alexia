@@ -30,6 +30,7 @@ pub use alexia_store::{Cond, Dir, Operator, Row, Scalar, Where};
 pub use error::{Error, Result};
 pub use host::McpHost;
 pub use manifest::{discover, Manifest, ManifestError, PluginDir};
+pub use process::redact;
 
 /// A plugin's id as read from its manifest. Opaque to everything above this crate: core may
 /// hold one at runtime (to route a tool call back) and must never compare it to a literal.
