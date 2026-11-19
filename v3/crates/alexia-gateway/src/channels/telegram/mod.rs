@@ -386,8 +386,11 @@ impl Telegram {
         self.store.kv_set(NS, OWNERS, &json!(who))?;
         // A used code is spent: one screenshot must not be a permanent way in.
         self.store.kv_set(NS, CODE, &json!(new_code()))?;
-        self.store
-            .set_primary_chat("telegram", &m.chat.id.to_string())?;
+        // The chat that paired is where Alexia speaks when nothing asked her. It must be known
+        // before it can be the primary.
+        let chat = m.chat.id.to_string();
+        self.store.channel_session("telegram", &chat)?;
+        self.store.set_primary_chat("telegram", &chat)?;
         tracing::info!("telegram: paired a new account");
         self.api
             .send_message(m.chat.id, "Paired. I'm listening.", None, None)
