@@ -53,7 +53,15 @@ pub fn delete(owner: &str, key: &str) -> Result<()> {
 }
 
 pub fn delete_all(owner: &str, keys: &[String]) -> Result<()> {
-    keys.iter().try_for_each(|key| delete(owner, key))
+    // Every key is tried; the keychain cannot be atomic. The first error is returned.
+    let mut first = Ok(());
+    for key in keys {
+        let r = delete(owner, key);
+        if first.is_ok() {
+            first = r;
+        }
+    }
+    first
 }
 
 /// `ALEXIA_SECRET_<OWNER>_<KEY>`: uppercased, every character outside A-Z and 0-9 becomes `_`,

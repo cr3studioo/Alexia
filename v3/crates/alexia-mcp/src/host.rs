@@ -553,19 +553,25 @@ impl McpHost {
         self.set_enabled(id, false).await?;
         let ns = m.storage.as_ref().map(|s| s.namespace.as_str());
         self.inner.store.purge(&m.id, ns)?;
-        // A refusing keychain must not leave the folders behind (v2): returned last.
-        let secrets = alexia_store::secrets::delete_all(&m.id, &m.password_keys());
-        if let Err(e) = &secrets {
+        // Every step runs whatever the others do; the first error seen is returned.
+        let mut first: Result<(), Error> = Ok(());
+        if let Err(e) = alexia_store::secrets::delete_all(&m.id, &m.password_keys()) {
             tracing::warn!(plugin = %m.id, "purge could not clear its secrets: {e}");
+            first = Err(e.into());
         }
         let layout = &self.inner.cfg.layout;
         for dir in [layout.own_dir(&m.id), layout.cache().join(&m.id)] {
             match std::fs::remove_dir_all(&dir) {
-                Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e.into()),
+                Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+                    tracing::warn!(plugin = %m.id, "purge could not remove {}: {e}", dir.display());
+                    if first.is_ok() {
+                        first = Err(e.into());
+                    }
+                }
                 _ => {}
             }
         }
-        secrets.map_err(Into::into)
+        first
     }
 
     pub async fn shutdown(&self) {
