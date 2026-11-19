@@ -36,7 +36,7 @@
 | P1-15 | Latency dashboard | P1 | sonnet | P1-02, P1-03 | alexia-hub/src/latency.rs | merged | 2 | cr3studioo/v3-P1-15 |  |
 | P1-16 | Hub watchdog | P1 | sonnet | P1-02 | alexia-hub/src/watchdog.rs | merged | 1 | cr3studioo/v3-P1-16 | |
 | P1-17 | Hub wiring and CLI | P1 | sonnet | P1-07, P1-08, P1-10, P1-12, P1-13, P1-15, P1-16 | alexia-hub/{Cargo.toml, src/main.rs, src/media.rs, tests/... | todo | 0 | | |
-| P1-18 | End-to-end latency test and the 50-message run | P1 | sonnet | P1-17 | alexia-hub/tests/telegram_e2e.rs, v3/ops/reports/P1-laten... | todo | 0 | | |
+| P1-18 | End-to-end latency test and the 50-message run | P1 | sonnet | P1-17, P1-26 | alexia-hub/tests/telegram_e2e.rs, v3/ops/reports/P1-laten... | todo | 0 | | |
 | P0-19 | Host display name and unwritten tables | P0 | opus | P0-13 | alexia-mcp lib.rs, tests/alexia_layer; alexia-store namespace | merged | 2 | cr3studioo/v3-P0-19 | |
 | P0-20 | De-flake idle_lazy_plugin_stops, round 2 | P0 | sonnet | P0-18 | alexia-mcp tests/supervise.rs | merged | 1 | cr3studioo/v3-P0-20 | |
 | P0-21 | Purge keeps going when one step fails | P0 | sonnet | P0-17 | alexia-store secrets, alexia-mcp host purge, tests/purge | merged | 1 | cr3studioo/v3-P0-21 | |
@@ -52,3 +52,5 @@
 | P1-24 | v2 agent: dangling tool ids at the ceiling | P1 | sonnet | none | packages/core/src/agent.ts, test/agent.test.ts | merged | 1 | cr3studioo/v3-P1-24 |  |
 | P1-25 | One time helper | P1 | sonnet | P1-20, P1-22, P1-23, P1-17, P0-25 | alexia-store types/db/import, core catalog, gateway, hub watchdog/latency/main, INTERFACES.md | todo | 0 | | |
 | P0-26 | De-flake junk_is_skipped_and_logged | P0 | sonnet | none | alexia-mcp tests/conn.rs | merged | 1 | cr3studioo/v3-P0-26 |  |
+| P1-26 | Documents to task lane; no empty turns; bounded fetches | P1 | opus | P1-07, P1-17, P1-23 | core brain/lane/chat+tests, gateway channel/gateway+test, hub bridge/Cargo.toml, INTERFACES.md | todo | 0 | | run after or before P1-25, not alongside |
+| P1-27 | De-flake call_at_idle_deadline_never_gone | P1 | sonnet | none | alexia-mcp tests/supervise.rs | running | 1 | cr3studioo/v3-P1-27 | |

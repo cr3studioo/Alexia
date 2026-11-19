@@ -172,3 +172,4 @@
 2026-11-19 Dispatched P1-07 build ctx_d1ad714f889f (done), P1-23 build ctx_b62926f71720, P1-07 review ctx_dbacf82231d9, P1-10 fixer (try 3) ctx_0cbbe5ec941a.
 2026-11-19 pnpm check on P1-24 merge (base2): only known compute-connect fail plus compute-acceptance and provider.test load flakes (both pass 2/2 alone). Merged P1-24, P1-12, P1-07 (gate ok, pushed).
 2026-11-19 Merges since phase review: 12. Phase review due.
+2026-11-19 Planner done: P1-26 (opus, after P1-17/P1-23) and P1-27 (sonnet) specced; P1-18 now depends on P1-26. Dispatched P1-27 ctx_6158978428d2.
