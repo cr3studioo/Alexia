@@ -39,4 +39,4 @@
 | P1-17 | Hub wiring and CLI | P1 | sonnet | P1-07, P1-08, P1-10, P1-12, P1-13, P1-15, P1-16 | alexia-hub/{Cargo.toml, src/main.rs, src/media.rs, tests/... | todo | 0 | | |
 | P1-18 | End-to-end latency test and the 50-message run | P1 | sonnet | P1-17 | alexia-hub/tests/telegram_e2e.rs, v3/ops/reports/P1-laten... | todo | 0 | | |
 | P0-19 | Host display name and unwritten tables | P0 | opus | P0-13 | alexia-mcp lib.rs, tests/alexia_layer; alexia-store namespace | merged | 2 | cr3studioo/v3-P0-19 | |
-| P0-20 | De-flake idle_lazy_plugin_stops, round 2 | P0 | sonnet | P0-18 | alexia-mcp tests/supervise.rs | running | 1 | cr3studioo/v3-P0-20 | ctx_5c66c6cf0cf9 |
+| P0-20 | De-flake idle_lazy_plugin_stops, round 2 | P0 | sonnet | P0-18 | alexia-mcp tests/supervise.rs | merged | 1 | cr3studioo/v3-P0-20 | |

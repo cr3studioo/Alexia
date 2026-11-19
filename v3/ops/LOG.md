@@ -103,3 +103,4 @@
 - 2026-11-19 CEO #7: dispatched P1-02 (opus ctx_f26b716a8476), P1-04 (opus ctx_2136a4bbfd40), P0-20 (sonnet ctx_5c66c6cf0cf9).
 - 2026-11-19 CEO #7: P0-16 review: changes - CI run 44428804086 red (stable rustc 1.100 moves test exes; apple-context/memory/telegram Stopped on runner); invariants.mjs cfg(test) cut too wide. Fix round sonnet ctx_75821a686191, try 2; CEO allowed it to push its own task branch only, to iterate on CI.
 - 2026-11-19 CEO #7: P0-20 done: cause (a), pid cleared before Stopped emitted (host.rs:596 vs :614); test waits for event. Review dispatched (opus).
+- 2026-11-19 CEO #7: P0-20 review approve; merged, integration green, pushed.
