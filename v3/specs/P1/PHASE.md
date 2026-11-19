@@ -80,10 +80,13 @@ P1-14 v2 parallel tool calls (independent)
 P1-07, P1-08, P1-10, P1-12, P1-13, P1-15, P1-16 ── P1-17 hub wiring ── P1-18 e2e + 50 real messages
 P1-23 ── P1-25 time helper + brain spans ── P1-17 ──┬─ P1-26 documents ── P1-18
                                                     └─ P1-28 channels private, one base64 (+P1-10)
+P1-28 ─┬─ P1-29 telegram finish + pairing
+       └─ P1-30 approval timeout tests
+P1-31 v2 stop answers its calls (independent)
 ```
 
 P1-25, P1-17 and P1-26 run one after another: all three edit the hub, and P1-25 and P1-26 both
-edit `chat.rs`, `lane.rs`, `bridge.rs` and `gateway.rs`. P1-26 ∥ P1-28 is fine (no shared file).
+edit `chat.rs`, `lane.rs`, `bridge.rs` and `gateway.rs`. P1-26 ∥ P1-28 is fine (no shared file). P1-29 ∥ P1-30 ∥ P1-31 is fine too.
 
 P1-01 waits for P0-15 (both change `Cargo.lock`); P1-03 can start as soon as P0-07 is merged and
 P1-14 at any time. Can run together: P1-01 ∥ P1-03 ∥ P1-14. After P1-01: P1-02 ∥ P1-04 ∥ P1-07. After P1-02 and
@@ -124,6 +127,9 @@ Crate paths are under `v3/crates/`.
 | P1-26 | Documents reach the task lane; no empty assistant turns; bounded prompt fetches | opus | P1-07, P1-17, P1-23, P1-25 | `alexia-core/{src/brain.rs, src/lane.rs, src/chat.rs, tests/lane.rs, tests/chat.rs, tests/types.rs}`, `alexia-gateway/{src/channel.rs, src/gateway.rs, tests/gateway.rs}`, `alexia-hub/src/bridge.rs`, `v3/specs/INTERFACES.md` |
 | P1-27 | De-flake call_at_idle_deadline_never_gone | sonnet | none | `alexia-mcp/tests/supervise.rs` |
 | P1-28 | Telegram stays inside the gateway; one base64 | sonnet | P1-10, P1-17 | `v3/ci/invariants.mjs`, `alexia-gateway/{Cargo.toml, src/channels/telegram/mod.rs}`, `v3/Cargo.lock` |
+| P1-29 | Telegram: finish only what was delivered; pairing closes once paired | opus | P1-28 | `alexia-gateway/{src/channels/telegram/mod.rs, tests/telegram_channel.rs}` |
+| P1-30 | Approvals: test the 10-minute give-up and scheduled jobs | sonnet | P1-28 | `alexia-gateway/{Cargo.toml, tests/ask_voice.rs}` |
+| P1-31 | v2 agent: dangling tool ids on a stop | sonnet | none | `packages/core/src/agent.ts`, `packages/core/test/agent.test.ts` |
 
 ## Owner needs
 
