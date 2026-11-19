@@ -204,3 +204,4 @@
 2026-11-19 P1-34 asked: invariants 1b blocks channels::v2_secret_names in hub; allowed (a) add it to 1b allowlist + self-test.
 2026-11-19 P1-34 build done (invariants.mjs edit approved); review dispatched.
 2026-11-19 Merged P1-34 (approve, gate ok, pushed). Follow-ups: secrets.rs:206 stored() Err treated as absent (should be failed); two v2 names mapping to one v3 name.
+2026-11-19 Release build done. Asked A-12 (owner runs secret import-v2 once).
