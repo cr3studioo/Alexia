@@ -22,6 +22,9 @@ use crate::{Budget, ChatChunk, ChatDone, ChatRequest, Provider, ProviderError};
 
 /// v2's `STRIKE_HALF_LIFE`: a failure counts one when it happens and halves every hour.
 pub const STRIKE_HALF_LIFE_MS: f64 = 60.0 * 60.0 * 1000.0;
+/// v2's `BUSY_HALF_LIFE` (`health.ts`): a busy reply is a host full for a moment, so it halves
+/// in two minutes, not an hour.
+pub const BUSY_HALF_LIFE_MS: f64 = 2.0 * 60.0 * 1000.0;
 /// The store forgets a strike after a day (v2), so the ranking reads no further back.
 const LOOKBACK_MS: Ms = 24 * 60 * 60 * 1000;
 const MAX_RUNNING: usize = 4;
@@ -131,10 +134,7 @@ impl Router {
         };
         let under = |span: &str, limit: Option<u32>| {
             limit.is_none_or(|limit| {
-                self.store
-                    .request_count(provider, span, now)
-                    .unwrap_or(0)
-                    < u64::from(limit)
+                self.store.request_count(provider, span, now).unwrap_or(0) < u64::from(limit)
             })
         };
         under("minute", row.rpm) && under("day", row.rpd)
@@ -302,7 +302,11 @@ impl Race<'_> {
         if self.watching.len() >= MAX_RUNNING || self.slots.len() >= MAX_STARTED {
             return;
         }
-        let busy = |p: &str| self.slots.iter().any(|s| s.live && s.candidate.provider == p);
+        let busy = |p: &str| {
+            self.slots
+                .iter()
+                .any(|s| s.live && s.candidate.provider == p)
+        };
         let Some(at) = self.queue.iter().position(|c| !busy(&c.provider)) else {
             return;
         };
@@ -375,7 +379,14 @@ impl Score {
         let carried: f64 = own
             .clone()
             .filter(|t| !matches!(t.outcome.as_str(), "ok" | "lost-race"))
-            .map(|t| 0.5f64.powf((now - t.at).max(0) as f64 / STRIKE_HALF_LIFE_MS))
+            .map(|t| {
+                let half = if t.outcome == "busy" {
+                    BUSY_HALF_LIFE_MS
+                } else {
+                    STRIKE_HALF_LIFE_MS
+                };
+                0.5f64.powf((now - t.at).max(0) as f64 / half)
+            })
             .sum();
         let waited: Vec<i64> = own
             .filter(|t| t.outcome == "ok")
