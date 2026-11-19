@@ -217,3 +217,57 @@ async fn purge_disables_before_deleting() {
     assert!(!own.exists());
     host.shutdown().await;
 }
+
+#[test]
+fn purge_continues_after_a_secret_fails() {
+    std::env::set_var(secrets::MEMORY_BACKEND_ENV, "1");
+    let owner = "purge-partial";
+    for k in ["first", "last"] {
+        secrets::set(owner, k, "x").unwrap();
+    }
+    // The middle key is refused (not a valid key); the ones around it must still go.
+    let keys = [
+        "first".to_string(),
+        "NOT A KEY".to_string(),
+        "last".to_string(),
+    ];
+    assert!(secrets::delete_all(owner, &keys).is_err());
+    assert_eq!(secrets::get(owner, "first").unwrap(), None);
+    assert_eq!(secrets::get(owner, "last").unwrap(), None);
+}
+
+#[tokio::test]
+async fn purge_removes_cache_dir_when_data_dir_fails() {
+    std::env::set_var(secrets::MEMORY_BACKEND_ENV, "1");
+    let root = std::env::temp_dir().join(format!("alexia-purge-fail-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    plugin(&root.join("ext"));
+    let layout = Layout::new(root.join("data"));
+    let cfg = HostConfig {
+        layout: Layout::new(root.join("data")),
+        plugin_dirs: vec![root.join("ext")],
+        node: PathBuf::from("node"),
+        timings: Timings::default(),
+    };
+    let host = McpHost::new(
+        cfg,
+        Arc::new(Store::open_in_memory().unwrap()),
+        Arc::new(NoUpcalls),
+        Arc::new(|_| {}),
+    );
+    host.start(&[]).await.unwrap();
+    // A file where the data dir should be: remove_dir_all refuses it, and it is not NotFound.
+    let own = layout.own_dir(ID);
+    std::fs::create_dir_all(own.parent().unwrap()).unwrap();
+    std::fs::write(&own, "not a directory").unwrap();
+    let cache = layout.cache().join(ID);
+    std::fs::create_dir_all(&cache).unwrap();
+    std::fs::write(cache.join("c.bin"), "cache").unwrap();
+
+    let r = host.purge(&PluginId(ID.into())).await;
+
+    assert!(r.is_err(), "the data dir failure is returned");
+    assert!(!cache.exists(), "the cache dir is removed anyway");
+    host.shutdown().await;
+    let _ = std::fs::remove_dir_all(&root);
+}
