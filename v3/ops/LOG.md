@@ -137,3 +137,5 @@
 - 2026-11-19 CEO #8: P0-23 done (junction path unrun locally), P1-19 done. Reviews dispatched (opus); P0-23 reviewer also runs v2_plugins in base2 (has node_modules).
 - 2026-11-19 CEO #8: P1-05 fix done (github still no seed: v2 has none). Re-review dispatched (opus). P1-11 fix round dispatched (opus, try 2).
 - 2026-11-19 CEO #8: P1-19 review approve; merged, green, pushed. Install-prompt and heartbeat notes added to P1-17 spec.
+- 2026-11-19 CEO #8: P0-23 review: changes (assert entry count, not just existence; host drops before temp guard). Real junction run in base2 passed 4/4. Fix round sonnet, try 2.
+- 2026-11-19 CEO #8: P1-05 re-review: changes (keyless no-list rows still seeded; 400/404/422 on list wipes cache). Fixer opus, try 3, allowed openai.rs + tests/openai.rs. Exception: 3 opus builders at once (P0-22, P1-11 fix, P1-05 fixer), because P1-05 is the critical path and the diff is small.
