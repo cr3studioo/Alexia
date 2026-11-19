@@ -132,3 +132,6 @@
 - 2026-11-19 CEO #8: P1-05 review: changes. Decided: ocr word as id segment; port v2 seeds exactly incl. nara/cloudflare-ai, no-list rows seed when keyed; chats() word list accepted plus orpheus/veo/guardian; Refused drops like NeedsKey; unique tmp name.
 - 2026-11-19 CEO #8: P1-11 review: changes. Decided: spans relative to first receipt; brain spans at hand-off offset + start; second record_spans on late ack accepted; Phase::Tool steer heuristic accepted for now (Lanes should report lane early, P1-07/P1-17); fix acks leak and bare ellipsis; spec phase words win.
 - 2026-11-19 CEO #8: P1-05 and P1-11 fix rounds queued until an opus builder slot frees (P1-09, P0-22 running). Dispatched P0-23, P1-19 (sonnet).
+- 2026-11-19 CEO #8: P1-09 done (Bot API client, 12 tests; cancel bound 5 s, 15 s upload timeout). Review dispatched (opus). P1-05 fix round dispatched (opus, try 2).
+- 2026-11-19 CEO #8: P1-09 review approve; merged, green, pushed. P1-10 now ready; added the 5xx->Service retry note to its spec.
+- 2026-11-19 CEO #8: P0-23 done (junction path unrun locally), P1-19 done. Reviews dispatched (opus); P0-23 reviewer also runs v2_plugins in base2 (has node_modules).
