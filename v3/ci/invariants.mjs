@@ -10,8 +10,8 @@
  *
  * Deliberate deviation from the spec (CEO-approved): lines whose trimmed text starts with `//`
  * (so `///` and `//!` too) are skipped by every check; and the path check (3) also skips test
- * code: files under a `tests/` folder and everything from a `#[cfg(test)]` line to the end of
- * the file. The plugin-name check still scans test code outside comments.
+ * code: files under a `tests/` folder and everything from a `#[cfg(test)]` line that is directly followed by a
+ * `mod` line to the end of the file. The plugin-name check still scans test code outside comments.
  */
 import { execFileSync } from 'node:child_process'
 import { readdirSync, readFileSync } from 'node:fs'
@@ -55,7 +55,10 @@ export function pathHits(path, text) {
   const out = []
   if (/(^|\/)tests\//.test(path)) return out
   const lines = text.split('\n')
-  const cut = lines.findIndex((l) => l.trim() === '#[cfg(test)]')
+  // Only a `#[cfg(test)]` directly followed by a `mod` line opens the test module.
+  const cut = lines.findIndex(
+    (l, i) => l.trim() === '#[cfg(test)]' && /^\s*(pub(\([^)]*\))?\s+)?mod\s/.test(lines[i + 1] ?? ''),
+  )
   lines.slice(0, cut < 0 ? undefined : cut).forEach((line, i) => {
     if (isComment(line)) return
     if (/C:\\|C:\/|\/home\/|\/Users\//.test(line)) out.push(`${path}:${i + 1}: hard-coded path`)
@@ -154,6 +157,7 @@ function selfTest() {
   expect('a /Users/ path', pathHits(src, 'let p = "/Users/me";'))
   ok('a path in a comment', pathHits(src, '/// `file:///C:/x`'))
   ok('a path in #[cfg(test)] code', pathHits(src, 'fn a() {}\n#[cfg(test)]\nmod t { const P: &str = "C:\\\\x"; }'))
+  expect('a path after a mid-file #[cfg(test)] fn', pathHits(src, '#[cfg(test)]\nfn helper() {}\nconst P: &str = "/home/x";'))
   expect('a path before #[cfg(test)]', pathHits(src, 'const P: &str = "/home/x";\n#[cfg(test)]\nmod t {}'))
   ok('a path under tests/', pathHits('v3/crates/a/tests/t.rs', 'let p = "/home/x";'))
   ok('a relative path', pathHits(src, 'let p = "data/x";'))
