@@ -109,3 +109,29 @@
 - 2026-11-19 CEO #7: P1-04 review: changes (finish_reason error, retry-after overflow, had_key vs anonymous key, gsk_ test key shape, send vs cancel, error:null). Fix round opus ctx_8ea2ebf6d15b, try 2.
 - 2026-11-19 CEO #7: P0-16 fix done: Rust 1.96.1 pinned, cfg(test) mod-only skip, v2 conformance serial; run 44430327112 green. Re-review dispatched (opus), asked to judge serial vs hidden host issue.
 - 2026-11-19 CEO #7: P1-02 review: changes (private mod telegram/api blocks P1-09/P1-10 integration tests). Fix round opus ctx_cc7db25cbbb8, try 2.
+- 2026-11-19 CEO #7: P1-04 fix round done; re-review dispatched (opus ctx_777b035eb210).
+- 2026-11-19 CEO #7: P1-02 fix (pub mod telegram/api) checked by CEO directly (2-line diff); merged, integration green, pushed.
+- 2026-11-19 CEO #7: dispatched P1-11 (opus ctx_6020295b50a7), P1-15 (sonnet ctx_3d4e57320c00), P1-16 (sonnet ctx_669d952b5bc3).
+- 2026-11-19 CEO #7: P0-16 re-review approve (CI run 44430327112 green; serial v2 tests fair: 2 s heartbeat test-only). Merged, invariants + integration green, pushed; remote task branch deleted. PHASE 0 COMPLETE (20/20).
+- 2026-11-19 CEO #7: G-P0 notice A-10 in OWNER.md and Telegram. P0 whole-phase review dispatched (opus ctx_a1fa6738f47e, worktree P0-review).
+- 2026-11-19 CEO #7: handoff to CEO #8 (phase fully merged). 5 live workers left running.
+- 2026-11-19 CEO #8: took over. P1-11 and P1-16 builders died from the usage limit at 00:43 (limit since reset); back to running, no try counted.
+- 2026-11-19 CEO #8: P1-04 re-review approve; merged, integration green, pushed.
+- 2026-11-19 CEO #8: P1-05 decision: port v2's 3 catalog regexes by hand (no regex crate, no Cargo.toml change).
+- 2026-11-19 CEO #8: P0 whole-phase review: 5 tasks -> specs P0-21..P0-25 written by CEO. Open design note for V3-1 library uninstall: purge after vanish returns UnknownPlugin (host.rs:551/914).
+- 2026-11-19 CEO #8: dispatched P1-05 (opus ctx_87081118145d), P1-11 (opus ctx_8ddd88f91663, continues commit 01ffde9), P1-16 (sonnet ctx_39226e05765c), P0-24 (sonnet ctx_a47d0c516c4b), P1-15 review (opus ctx_798dd98bcdaf).
+- 2026-11-19 CEO #8: P0-24 done; review dispatched (opus ctx_104839c44bd3).
+- 2026-11-19 CEO #8: P1-16 done (watchdog, 6 tests; reboot by-hand check left); review dispatched (opus ctx_49f2d34b7efd).
+- 2026-11-19 CEO #8: P1-15 review: changes (UTC time column, keep deliver in top3, html to target/, reject --last 0). Fix round sonnet, try 2.
+- 2026-11-19 CEO #8: P0-24 review approve; merged, integration green, pushed. Dispatched P0-21 (sonnet).
+- 2026-11-19 CEO #8: P1-16 review approve with risks. Merge failed invariants (C:\ in a message, newly caught by P0-24's fix); CEO fixed the one line on the task branch, re-merged, green, pushed. Risks filed as P1-19.
+- 2026-11-19 CEO #8: note for P1-17: cancel the heartbeat and await it before clean_stop (P1-16 review).
+- 2026-11-19 CEO #8: P1-05 done (catalog, 8 tests; chats() is a word list, seed per keyless provider); P1-15 fix done; P1-11 done (14 tests, 20/20 runs); P0-21 done. Reviews dispatched: P1-05, P1-11, P1-15 re-review, P0-21 (all opus). Dispatched P1-09 build (opus ctx_6788047f5009).
+- 2026-11-19 CEO #8: P0-21 review approve (weak test noted: purge.rs:221 calls delete_all directly); merged, green, pushed. Dispatched P0-22 (opus).
+- 2026-11-19 CEO #8: P1-15 re-review approve; merged, green, pushed.
+- 2026-11-19 CEO #8: P1-05 review: changes. Decided: ocr word as id segment; port v2 seeds exactly incl. nara/cloudflare-ai, no-list rows seed when keyed; chats() word list accepted plus orpheus/veo/guardian; Refused drops like NeedsKey; unique tmp name.
+- 2026-11-19 CEO #8: P1-11 review: changes. Decided: spans relative to first receipt; brain spans at hand-off offset + start; second record_spans on late ack accepted; Phase::Tool steer heuristic accepted for now (Lanes should report lane early, P1-07/P1-17); fix acks leak and bare ellipsis; spec phase words win.
+- 2026-11-19 CEO #8: P1-05 and P1-11 fix rounds queued until an opus builder slot frees (P1-09, P0-22 running). Dispatched P0-23, P1-19 (sonnet).
+- 2026-11-19 CEO #8: P1-09 done (Bot API client, 12 tests; cancel bound 5 s, 15 s upload timeout). Review dispatched (opus). P1-05 fix round dispatched (opus, try 2).
+- 2026-11-19 CEO #8: P1-09 review approve; merged, green, pushed. P1-10 now ready; added the 5xx->Service retry note to its spec.
+- 2026-11-19 CEO #8: P0-23 done (junction path unrun locally), P1-19 done. Reviews dispatched (opus); P0-23 reviewer also runs v2_plugins in base2 (has node_modules).
