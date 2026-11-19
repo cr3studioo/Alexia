@@ -166,3 +166,9 @@
 2026-11-19 CEO #10 started; bound run_7a40b198ac83. Reviews approved: P1-08, P1-13, P1-21. P0-26 build done.
 2026-11-19 Dispatched P1-10 fix 1 (opus) ctx_47b851e49707, P1-12 build (opus) ctx_57bb946afe73, P0-26 review ctx_69127b377058.
 2026-11-19 Merged P1-08, P1-13, P1-21 (gate ok each, pushed). Merges since phase review: 8.
+2026-11-19 Approved: P0-26, P1-24, P1-12. P1-10 review 2: changes (flaky photo test, photo cache leak, offset gap on stop).
+2026-11-19 P1-12 asked for tokio test-util (outside paths); finished without it. Real 10-min timeout test left for a follow-up.
+2026-11-19 Merged P0-26 (pushed). P1-24 merged locally; main checkout lacks node_modules, so pnpm check runs in base2 on the merge commit.
+2026-11-19 Dispatched P1-07 build ctx_d1ad714f889f (done), P1-23 build ctx_b62926f71720, P1-07 review ctx_dbacf82231d9, P1-10 fixer (try 3) ctx_0cbbe5ec941a.
+2026-11-19 pnpm check on P1-24 merge (base2): only known compute-connect fail plus compute-acceptance and provider.test load flakes (both pass 2/2 alone). Merged P1-24, P1-12, P1-07 (gate ok, pushed).
+2026-11-19 Merges since phase review: 12. Phase review due.
