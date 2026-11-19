@@ -90,3 +90,5 @@
 - 2026-11-19 CEO #7: spec gap, not retry: wrote P0-19 (mirror v2 'Alexia' default + store.ts #unwritten), dispatched opus ctx_bdf1157ba00d. P0-15 branch kept; after P0-19 merges, merge v3 into it, rerun listing test, review. Watch: P0-15 report says plugin Running/Stopped mix varies run to run.
 - 2026-11-19 CEO #7: P0-19 done; review dispatched (opus). Concern: check_ident skipped on unwritten tables vs spec.
 - 2026-11-19 CEO #7: P0-19 review: changes (check_ident skipped before unwritten early return). Fix round opus ctx_f9c4f514203f, try 2.
+- 2026-11-19 CEO #7: P0-19 re-review approve; merged, integration green, pushed. Non-blocking: op.validate not run on unwritten tables.
+- 2026-11-19 CEO #7: P0-15 try 2 (sonnet ctx_57b1bee292b1): merge v3 into branch, rerun listing test x3, explain Running/Stopped variance.
