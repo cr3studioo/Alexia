@@ -197,3 +197,4 @@
 2026-11-19 P1-26 build done (test string 'hello world' vs spec 'hello': invariants false positive, accepted); review dispatched.
 2026-11-19 P1-32 build done; review dispatched.
 2026-11-19 Owner asked if v3 sees v2 keys. Found v2 vault entry (names only): 6 providers, telegram, hello, voice. v3 cannot read it. Asked A-11 (import-v2 command).
+2026-11-19 Merged P1-32 (approve, gate ok, pushed). Follow-up nit: plugin children may leak on boot failure (host.start ?).
