@@ -79,3 +79,10 @@ $env:ALEXIA_PLUGINS_DIR = "C:\dev\Alexia\plugins"
 `plugins` shows each plugin's status, and `tools` lists every tool. This is the by-hand check P0-14 left for you. `alexia-hub run` starts everything (Ctrl+C stops it). The contracts are in `v3/specs/INTERFACES.md`.
 **Until then:** Nothing waits. Phase 1 (fast Telegram) is being built.
 **Answer:**
+
+## A-11 · 2026-11-19 · open
+**What I need:** A yes or no: may v3 copy your v2 keys out of Windows Credential Manager into its own store (a copy; v2 keeps its own)?
+**Why:** Owner asked in chat whether v3 can see the v2 keys. It found them (names only, values never printed) in the v2 entry `_core.vault.dev.alexia.app`: provider keys for OpenRouter, Groq, Cerebras, Google, Mistral, NVIDIA, plus the Telegram bot token and two plugin keys (hello, voice). v3 keeps secrets in its own entries (service `alexia`), so today it cannot use them; nothing copies them yet.
+**How:** Answer yes/no. With yes, a small task adds `alexia-hub secret import-v2`, which you run once; no key passes through any chat, file or log. With no, you enter each key with `alexia-hub secret set <name>`.
+**Until then:** Nothing stops. This also answers part 2 of A-09 (six free providers available). A-09 parts 1 (test bot or use the real bot) and 3 (OK to race two providers) are still open.
+**Answer:**

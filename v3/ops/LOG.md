@@ -194,3 +194,6 @@
 2026-11-19 P1-28 build done; review dispatched ctx_3c7d5a37f217.
 2026-11-19 Merged plan-fu3 (P1-32, P1-33 new; P1-18 now test only, P1-33 needs A-09). Dispatched P1-32 (sonnet) ctx_4e5ea17aea34.
 2026-11-19 Merged P1-28 (approve, gate ok, pushed). Review nit: 1b misses brace/glob imports, trailing-comment false positive. Dispatched P1-29 (opus) ctx_86423e92e07d, P1-30 (sonnet) ctx_25b4a10201f2.
+2026-11-19 P1-26 build done (test string 'hello world' vs spec 'hello': invariants false positive, accepted); review dispatched.
+2026-11-19 P1-32 build done; review dispatched.
+2026-11-19 Owner asked if v3 sees v2 keys. Found v2 vault entry (names only): 6 providers, telegram, hello, voice. v3 cannot read it. Asked A-11 (import-v2 command).
