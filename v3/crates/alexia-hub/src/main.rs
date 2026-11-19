@@ -3,6 +3,10 @@
 //!
 //! The hub never names a plugin: ids come from manifests at runtime.
 
+mod bridge;
+mod latency;
+mod watchdog;
+
 use std::collections::HashSet;
 use std::error::Error;
 use std::ffi::{OsStr, OsString};
