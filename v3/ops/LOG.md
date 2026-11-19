@@ -186,3 +186,4 @@
 2026-11-19 Owner asked in chat how phases/task ids work; explained (no decision, A-09 still open).
 2026-11-19 P1-17 asked: notices on stdout break P0 tests/cli.rs; answered (a) stdout, minimal edit to cli.rs allowed (first line + last Stopped. still asserted).
 2026-11-19 Merged P1-31 (gate ok; pnpm check in base2: known compute-connect fail plus noticing.test load flake, passes 3/3 alone). Pushed.
+2026-11-19 P1-17 build done (cli.rs edit approved); review dispatched.
