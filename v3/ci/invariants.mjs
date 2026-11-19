@@ -5,6 +5,8 @@
  *   node v3/ci/invariants.mjs --self-test  prove each check catches a planted violation
  *
  * 1. No crate names a plugin (v2's rule: the id quoted, or a path segment after `plugins/`).
+ * 1b. No crate outside alexia-gateway names a `channels::<module>` path (only secret_keys,
+ *    configured, pairing_codes); scans `src/` and `tests/`.
  * 2. Internal dependency edges are exactly the allowed table; licence and SPDX headers.
  * 3. No hard-coded absolute paths in crate sources.
  *
@@ -46,6 +48,21 @@ export function pluginHits(path, text, ids) {
     for (const id of ids) {
       const re = new RegExp(`['"\`]${escape(id)}['"\`]|plugins[\\\\/]${escape(id)}\\b`)
       if (re.test(line)) out.push(`${at}: names plugin "${id}"`)
+    }
+  })
+  return out
+}
+
+/** Hits for check 1b: a `channels::<module>` path outside alexia-gateway (INTERFACES.md §7). */
+export function channelHits(path, text) {
+  const out = []
+  if (path.startsWith('v3/crates/alexia-gateway/')) return out
+  text.split('\n').forEach((line, i) => {
+    if (isComment(line)) return
+    if (/\bchannels::(?!secret_keys\b|configured\b|pairing_codes\b)[a-z_]+/.test(line)) {
+      out.push(
+        `${path}:${i + 1}: reaches into a channel adapter (use channels::{secret_keys, configured, pairing_codes})`,
+      )
     }
   })
   return out
@@ -105,7 +122,7 @@ function run() {
     for (const f of rustFiles(join('v3/crates', c))) {
       const path = rel(f)
       const text = readFileSync(f, 'utf8')
-      hits.push(...spdxHits(path, text))
+      hits.push(...spdxHits(path, text), ...channelHits(path, text))
       if (path.startsWith(`v3/crates/${c}/src/`)) {
         hits.push(...pluginHits(path, text, ids), ...pathHits(path, text))
       }
@@ -128,6 +145,19 @@ function selfTest() {
   const ok = (what, got) => {
     if (got.length !== 0) bad.push(`self-test: ${what} was flagged: ${got.join('; ')}`)
   }
+  const hub = 'v3/crates/alexia-hub/src/main.rs'
+  expect('the hub reaching the telegram api', channelHits(hub, 'use alexia_gateway::channels::telegram::api::Api;'))
+  expect(
+    'a hub test reaching the adapter',
+    channelHits('v3/crates/alexia-hub/tests/t.rs', 'let t = channels::telegram::Telegram::new(a, s, c);'),
+  )
+  ok('the hub calling configured', channelHits(hub, 'let c = channels::configured(store, &layout);'))
+  ok('pairing_codes and secret_keys', channelHits(hub, 'channels::pairing_codes(&s); channels::secret_keys()'))
+  ok(
+    'the gateway own tests',
+    channelHits('v3/crates/alexia-gateway/tests/telegram_api.rs', 'use alexia_gateway::channels::telegram::api::Api;'),
+  )
+  ok('a comment', channelHits(hub, '// channels::telegram is private'))
   const src = 'v3/crates/alexia-core/src/x.rs'
   expect('a quoted plugin id', pluginHits(src, 'let a = "voice";', ['voice']))
   expect('a single-quoted plugin id', pluginHits(src, "let a = 'voice';", ['voice']))

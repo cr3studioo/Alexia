@@ -18,6 +18,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use alexia_core::Budget;
 use alexia_store::{Content, Ms, Part, Store};
+use base64::Engine;
 use serde_json::json;
 use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
@@ -200,25 +201,6 @@ fn chunk(text: &str, limit: usize) -> Vec<String> {
     parts.push(left.trim_end().to_owned());
     parts.retain(|p| !p.trim().is_empty());
     parts
-}
-
-/// Standard base64 with padding, for a photo's `data:` URL.
-fn base64(bytes: &[u8]) -> String {
-    const ABC: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
-    for c in bytes.chunks(3) {
-        let n = (u32::from(c[0]) << 16)
-            | (u32::from(*c.get(1).unwrap_or(&0)) << 8)
-            | u32::from(*c.get(2).unwrap_or(&0));
-        for i in 0..4 {
-            if i <= c.len() {
-                out.push(ABC[((n >> (18 - 6 * i)) & 63) as usize] as char);
-            } else {
-                out.push('=');
-            }
-        }
-    }
-    out
 }
 
 /// v2 `safeName`: only the basename, `[A-Za-z0-9._-]`, no leading dot, at most 100, never
@@ -483,7 +465,10 @@ impl Telegram {
         if let Some(photo) = best {
             // Only the image part is passed on, so nothing is written to the cache.
             let bytes = self.api.download(&photo.file_id).await?;
-            let url = format!("data:image/jpeg;base64,{}", base64(&bytes));
+            let url = format!(
+                "data:image/jpeg;base64,{}",
+                base64::engine::general_purpose::STANDARD.encode(&bytes)
+            );
             let text = text.to_owned();
             Ok(Some((
                 Content::Parts(vec![Part::Text { text }, Part::Image { url }]),
