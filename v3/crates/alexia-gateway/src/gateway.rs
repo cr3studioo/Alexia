@@ -156,6 +156,7 @@ async fn poll(
     let mut actors: HashMap<String, mpsc::UnboundedSender<ToActor>> = HashMap::new();
     loop {
         let batch = tokio::select! {
+            biased;
             _ = cancel.cancelled() => break,
             r = ch.next(cancel.clone()) => r,
         };
@@ -812,7 +813,11 @@ impl TurnCtx {
         // time (after the turn arrived) is kept as it is.
         spans.extend(reply.spans.iter().map(|s| Span {
             name: s.name,
-            start: if s.start >= self.first.ms { s.start } else { brain_start + s.start },
+            start: if s.start >= self.first.ms {
+                s.start
+            } else {
+                brain_start + s.start
+            },
             ms: s.ms,
         }));
 
@@ -918,7 +923,11 @@ impl Pump {
         // Set once cancelled: how long the brain gets to stop by itself.
         let mut give_up: Option<Instant> = None;
         loop {
-            let next = if give_up.is_none() { self.next_at() } else { None };
+            let next = if give_up.is_none() {
+                self.next_at()
+            } else {
+                None
+            };
             tokio::select! {
                 biased;
                 r = &mut brain => {
@@ -938,16 +947,16 @@ impl Pump {
                     brain.abort();
                     return Err(BrainError::Cancelled);
                 }
-                f = self.frames.recv(), if open => match f {
-                    Some(f) => self.frame(f),
-                    None => open = false,
-                },
-                _ = wait(next) => self.send().await,
                 _ = sleep_until(typing_at), if !self.shown && give_up.is_none() => {
                     let (ch, chat) = (self.ch.clone(), self.chat.clone());
                     tokio::spawn(async move { ch.typing(&chat).await });
                     typing_at += TYPING_EVERY;
                 }
+                f = self.frames.recv(), if open => match f {
+                    Some(f) => self.frame(f),
+                    None => open = false,
+                },
+                _ = wait(next) => self.send().await,
             }
         }
     }
