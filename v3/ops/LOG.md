@@ -146,3 +146,6 @@
 - 2026-11-19 CEO #8: P1-11 re-review approve; merged, green, pushed. P1-12 ready.
 - 2026-11-19 CEO #8: handoff to CEO #9 at a clean point (opus cap blocks all ready work; 2 live workers: P0-22, P1-13).
 - 2026-11-19 CEO #9: took over. P0-22, P1-13 live. Whole-phase review dispatched (opus, ctx_e161d4c70cb9) in Alexia-wt/phase-review. Telegram empty.
+- 2026-11-19 CEO #9: phase review: 9 findings (latency offsets negative, file-transfer timeout, retry_after overflow, tool rows on wire, catalog tmp leak, gateway bare spawns, v2 ceiling dangling ids, console flash, time-helper dup). Planner wrote P1-20..P1-25.
+- 2026-11-19 CEO #9: P0-22 done (55 s test; conn.rs junk_is_skipped flaked once). Review dispatched. P1-06 dispatched (opus).
+- 2026-11-19 CEO #9: P1-13 done (documents can't reach bridge: Turn has no files; follow-up needed). Review dispatched. P1-10 dispatched (opus). P1-22 dispatched (sonnet).
