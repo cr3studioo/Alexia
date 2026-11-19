@@ -399,7 +399,11 @@ async fn hang_is_killed_by_heartbeat() {
         .unwrap()
         .iter()
         .filter_map(|(_, e)| match e {
-            PluginEvent::Stopped { .. } => Some("stopped"),
+            PluginEvent::Stopped {
+                reason: StopReason::Heartbeat,
+                ..
+            } => Some("stopped"),
+            PluginEvent::Stopped { .. } => Some("stopped, not by the heartbeat"),
             PluginEvent::Crashed { .. } => Some("crashed"),
             _ => None,
         })
@@ -501,6 +505,44 @@ async fn busy_lazy_plugin_does_not_idle_stop() {
         "done"
     );
     assert_eq!(fx.count(|e| matches!(e, PluginEvent::Stopped { .. })), 0);
+    fx.host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn call_at_idle_deadline_never_gone() {
+    let r = root("deadline");
+    plugin(&r, "greet", &["greet"], json!({}));
+    // Short idle and heartbeat so the watcher's idle stop lands among the calls below.
+    let (heartbeat, idle) = (50, 150);
+    let fx = Fx::new(
+        &r,
+        Timings {
+            heartbeat_ms: heartbeat,
+            idle_ms: idle,
+            ..timings()
+        },
+    );
+    fx.host.start(&[id("greet")]).await.unwrap();
+    for i in 0..50u64 {
+        fx.call("greet", "greet", json!({"who": "warm"}))
+            .await
+            .unwrap();
+        // Sweep the gap across the idle deadline and the heartbeat tick after it.
+        tokio::time::sleep(Duration::from_millis(
+            idle - heartbeat + (i * 7) % (heartbeat * 3),
+        ))
+        .await;
+        let (a, b, c) = tokio::join!(
+            fx.call("greet", "greet", json!({"who": "a"})),
+            fx.call("greet", "greet", json!({"who": "b"})),
+            fx.call("greet", "greet", json!({"who": "c"})),
+        );
+        assert_eq!(a.unwrap(), "Hello, a.", "loop {i}");
+        assert_eq!(b.unwrap(), "Hello, b.", "loop {i}");
+        assert_eq!(c.unwrap(), "Hello, c.", "loop {i}");
+    }
+    // The sweep did cross the deadline: the plugin was idled out and started again.
+    assert!(fx.count(started) > 1);
     fx.host.shutdown().await;
 }
 

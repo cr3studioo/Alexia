@@ -5,7 +5,7 @@
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Mutex, Weak};
+use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, Instant};
 
 use tokio_util::sync::CancellationToken;
@@ -96,12 +96,13 @@ impl Busy {
         }
     }
 
-    pub(crate) fn enter(&self) -> BusyGuard<'_> {
+    /// Owned, so `ensure_running` can enter under the spawn lock and hand the guard out.
+    pub(crate) fn enter(self: &Arc<Self>) -> BusyGuard {
         self.calls.fetch_add(1, Ordering::SeqCst);
-        BusyGuard(self)
+        BusyGuard(Arc::clone(self))
     }
 
-    fn idle_for(&self) -> Option<Duration> {
+    pub(crate) fn idle_for(&self) -> Option<Duration> {
         if self.calls.load(Ordering::SeqCst) > 0 {
             return None;
         }
@@ -114,9 +115,9 @@ impl Busy {
     }
 }
 
-pub(crate) struct BusyGuard<'a>(&'a Busy);
+pub(crate) struct BusyGuard(Arc<Busy>);
 
-impl Drop for BusyGuard<'_> {
+impl Drop for BusyGuard {
     fn drop(&mut self) {
         *self.0.last.lock().unwrap_or_else(|e| e.into_inner()) = Instant::now();
         self.0.calls.fetch_sub(1, Ordering::SeqCst);
@@ -161,10 +162,12 @@ pub(crate) async fn watch(w: Watch) {
             return;
         }
         let idle = w.busy.upgrade().and_then(|b| b.idle_for());
-        if w.lazy && idle.is_some_and(|d| d >= w.idle) {
-            // ponytail: a call landing between this check and the stop is killed after the
-            // grace period (Gone); a per-call lock would close the window if it ever matters.
-            host.stop_with(&w.id, StopReason::Idle).await;
+        // `stop_with` checks again under the spawn lock: a call that got in first keeps the
+        // process, and this watcher keeps watching it.
+        if w.lazy
+            && idle.is_some_and(|d| d >= w.idle)
+            && host.stop_with(&w.id, StopReason::Idle).await
+        {
             return;
         }
         let Some(conn) = w.conn.upgrade() else { return };
