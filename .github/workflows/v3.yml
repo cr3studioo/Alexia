@@ -1,0 +1,68 @@
+name: v3
+
+on:
+  push:
+    branches: ["cr3studioo/v3", "cr3studioo/v3-*"]
+  pull_request:
+    paths: ["v3/**", ".github/workflows/v3.yml"]
+
+jobs:
+  # Invariant 2: core runs with plugins/ empty. The invariant script runs first because
+  # check 1 needs the folder names; then plugins/ moves away for build and test.
+  core:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: v3
+      - run: node v3/ci/invariants.mjs --self-test
+      - run: node v3/ci/invariants.mjs
+      - run: cargo fmt --all --check
+        working-directory: v3
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+        working-directory: v3
+      - run: |
+          mv plugins "$RUNNER_TEMP/plugins"
+          mkdir "$RUNNER_TEMP/empty-plugins"
+      # ALEXIA_SECRETS_IN_MEMORY stays unset so the Credential Manager test runs for real.
+      - name: Build and test with plugins/ empty
+        working-directory: v3
+        env:
+          ALEXIA_PLUGINS_DIR: ${{ runner.temp }}\empty-plugins
+        run: |
+          cargo build --workspace --bins --locked
+          cargo test --workspace --locked
+
+  # The real v2 plugins through the Rust host.
+  v2-conformance:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: v3
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: cargo test -p alexia-hub --features v2-conformance --test v2_plugins --locked -- --nocapture
+        working-directory: v3
+        env:
+          ALEXIA_V2_PLUGINS: ${{ github.workspace }}\plugins
