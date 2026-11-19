@@ -135,3 +135,5 @@
 - 2026-11-19 CEO #8: P1-09 done (Bot API client, 12 tests; cancel bound 5 s, 15 s upload timeout). Review dispatched (opus). P1-05 fix round dispatched (opus, try 2).
 - 2026-11-19 CEO #8: P1-09 review approve; merged, green, pushed. P1-10 now ready; added the 5xx->Service retry note to its spec.
 - 2026-11-19 CEO #8: P0-23 done (junction path unrun locally), P1-19 done. Reviews dispatched (opus); P0-23 reviewer also runs v2_plugins in base2 (has node_modules).
+- 2026-11-19 CEO #8: P1-05 fix done (github still no seed: v2 has none). Re-review dispatched (opus). P1-11 fix round dispatched (opus, try 2).
+- 2026-11-19 CEO #8: P1-19 review approve; merged, green, pushed. Install-prompt and heartbeat notes added to P1-17 spec.
