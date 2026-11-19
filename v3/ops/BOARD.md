@@ -60,3 +60,4 @@
 | P1-31 | v2 agent: dangling tool ids on a stop | P1 | sonnet | none | packages/core/src/agent.ts, test/agent.test.ts | merged | 1 | cr3studioo/v3-P1-31 | |
 | P1-32 | Hub run: clean stop on every exit, Ctrl+C wins, boot prune | P1 | sonnet | none | alexia-hub src/main.rs, tests/cli_p1.rs | merged | 1 | cr3studioo/v3-P1-32 | |
 | P1-33 | The 50-real-message latency run | P1 | sonnet | P1-18 | v3/ops/reports/P1-latency.md | todo | 0 | | real bot; v2 telegram off first |
+| P1-34 | secret import-v2: copy v2 secrets into v3, once | P1 | opus | none | store secrets.rs+tests/v2_secrets.rs, gateway channels/mod.rs, hub main.rs, INTERFACES.md | running | 1 | cr3studioo/v3-P1-34 | ctx_cd033c16c0a0 |
