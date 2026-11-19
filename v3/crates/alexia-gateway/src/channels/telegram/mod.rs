@@ -9,10 +9,10 @@
 #[doc(hidden)]
 pub mod api;
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::hash::BuildHasher;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -73,8 +73,10 @@ pub struct Telegram {
     asks: Mutex<HashMap<(i64, i64), Pending>>,
     /// Seeded from the clock, so a button left over from an earlier run never matches.
     ask_seq: AtomicU64,
-    /// Wrong pairing guesses since the code last changed.
-    misses: AtomicU32,
+    /// Sender id → wrong pairing guesses since that sender's count last reset.
+    misses: Mutex<HashMap<i64, u32>>,
+    /// Chats whose last `send` failed: their updates stay open, so a restart replays them.
+    failed: Mutex<HashSet<i64>>,
     offsets: Mutex<Offsets>,
     /// chat id → the draft id of the reply being written there.
     drafts: Mutex<HashMap<i64, i64>>,
@@ -249,7 +251,8 @@ impl Telegram {
             cache,
             asks: Mutex::default(),
             ask_seq: AtomicU64::new(now_ms().max(0) as u64),
-            misses: AtomicU32::new(0),
+            misses: Mutex::default(),
+            failed: Mutex::default(),
             offsets: Mutex::new(Offsets {
                 poll: saved.unwrap_or(0),
                 open: BTreeMap::new(),
@@ -273,6 +276,26 @@ impl Telegram {
         let mut o = lock(&self.offsets);
         o.open.retain(|_, c| *c != chat);
         self.save(&mut o);
+    }
+
+    /// Every chunk, then every file; the id of the last message sent.
+    async fn send_all(&self, chat: i64, out: &Outbound) -> Result<i64> {
+        let mut last = None;
+        for part in chunk(&out.text, LIMIT) {
+            last = Some(self.api.send_message(chat, &part, None, None).await?);
+        }
+        let voice = out.voice && out.files.len() == 1 && out.files[0].mime == "audio/ogg";
+        for f in &out.files {
+            let bytes = read(&f.path)?;
+            last = Some(if voice {
+                self.api.send_voice(chat, bytes, None).await?
+            } else {
+                self.api
+                    .send_document(chat, &f.name, &f.mime, bytes)
+                    .await?
+            });
+        }
+        last.ok_or_else(|| Error::Service("There was nothing to send.".into()))
     }
 
     fn save(&self, o: &mut Offsets) {
@@ -375,15 +398,30 @@ impl Telegram {
 
     /// Somebody not paired: the code pairs them; anything else gets no answer at all.
     async fn stranger(&self, m: &TgMessage, user: i64) -> Result<()> {
+        // Once paired, nobody can know the code (it is shown only while unpaired), so a guess
+        // serves nobody: no compare, no count, no rotation, and no code is ever created.
+        if !owners(&self.store)?.is_empty() {
+            return Ok(());
+        }
         let code = self.pairing_code()?;
         let Some(guess) = m.text.as_deref().map(str::trim) else {
             return Ok(());
         };
         if guess != code {
-            // ponytail: the count lives in memory, so a restart grants five more guesses; keep
-            // it in kv if restarts ever become cheap for a stranger to cause.
-            if self.misses.fetch_add(1, Ordering::Relaxed) + 1 >= GUESSES {
-                self.misses.store(0, Ordering::Relaxed);
+            // ponytail: the map lives in memory, so a restart grants five more guesses per
+            // sender, and many accounts can still rotate the code before pairing; the owner is
+            // at the console then and sees the new code in the log. Keep it in kv if that bites.
+            let rotate = {
+                let mut misses = lock(&self.misses);
+                let n = misses.entry(user).or_insert(0);
+                *n += 1;
+                let rotate = *n >= GUESSES;
+                if rotate {
+                    misses.remove(&user);
+                }
+                rotate
+            };
+            if rotate {
                 let code = new_code();
                 self.store.kv_set(NS, CODE, &json!(code))?;
                 tracing::info!(
@@ -393,7 +431,7 @@ impl Telegram {
             }
             return Ok(());
         }
-        self.misses.store(0, Ordering::Relaxed);
+        lock(&self.misses).clear();
         let mut who = owners(&self.store)?;
         who.push(user);
         self.store.kv_set(NS, OWNERS, &json!(who))?;
@@ -618,35 +656,32 @@ impl Channel for Telegram {
 
     async fn send(&self, chat: &ChatRef, out: &Outbound) -> Result<MsgRef> {
         let chat = chat_id(chat)?;
-        let mut last = None;
-        for part in chunk(&out.text, LIMIT) {
-            last = Some(self.api.send_message(chat, &part, None, None).await?);
+        match self.send_all(chat, out).await {
+            Ok(last) => {
+                lock(&self.failed).remove(&chat);
+                self.finished(chat);
+                Ok(MsgRef {
+                    id: last.to_string(),
+                })
+            }
+            Err(e) => {
+                // Nothing is finished: the following `draft(None)` must not finish it either.
+                lock(&self.failed).insert(chat);
+                Err(e)
+            }
         }
-        let voice = out.voice && out.files.len() == 1 && out.files[0].mime == "audio/ogg";
-        for f in &out.files {
-            let bytes = read(&f.path)?;
-            last = Some(if voice {
-                self.api.send_voice(chat, bytes, None).await?
-            } else {
-                self.api
-                    .send_document(chat, &f.name, &f.mime, bytes)
-                    .await?
-            });
-        }
-        let last = last.ok_or_else(|| Error::Service("There was nothing to send.".into()))?;
-        self.finished(chat);
-        Ok(MsgRef {
-            id: last.to_string(),
-        })
     }
 
     async fn draft(&self, chat: &ChatRef, text: Option<&str>) -> Result<()> {
         let chat = chat_id(chat)?;
         let Some(text) = text else {
             // Telegram drops an unrefreshed draft by itself. A reply cleared with nothing sent
-            // (a stopped turn) is done too, so a crash now does not replay it (v2 `Acks`).
+            // (a stopped turn) is done, so a crash now does not replay it (v2 `Acks`). One
+            // cleared after a failed send is not: its updates stay open and a restart replays it.
             lock(&self.drafts).remove(&chat);
-            self.finished(chat);
+            if !lock(&self.failed).remove(&chat) {
+                self.finished(chat);
+            }
             return Ok(());
         };
         let id = *lock(&self.drafts).entry(chat).or_insert_with(draft_id);
