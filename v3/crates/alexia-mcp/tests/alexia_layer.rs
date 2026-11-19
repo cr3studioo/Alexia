@@ -448,6 +448,18 @@ async fn host_info_shape() {
     assert!(info["paths"]["cacheDir"].is_string());
 }
 
+/// The v2 SDK refuses an empty `displayName`; the plugin would exit (P0-15).
+#[tokio::test]
+async fn host_info_display_name_is_not_empty() {
+    let r = root("host-info-name");
+    plugin(&r.join("ext"), "named", "greet", json!({}));
+    let fx = start(&r, &["named"]).await;
+    let info = serve(&fx, "named", "alexia/host/info", json!({}))
+        .await
+        .unwrap();
+    assert_eq!(info["displayName"], "Alexia", "{info}");
+}
+
 /// Waits (generously: a loaded machine is slow) for a `note` line naming `method`.
 async fn noted(fx: &Fx, plugin: &str, method: &str) -> Option<Value> {
     let deadline = Instant::now() + Duration::from_secs(30);

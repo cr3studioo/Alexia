@@ -215,7 +215,9 @@ impl Upcalls for NoUpcalls {
 
     fn host_facts(&self) -> HostFacts {
         HostFacts {
-            display_name: String::new(),
+            // v2 host.ts: `displayName: this.options.displayName ?? 'Alexia'`. The SDK
+            // refuses an empty one and the plugin exits.
+            display_name: "Alexia".into(),
             privacy_mode: alexia::PrivacyMode::Cloud,
             locale: "en-GB".into(),
         }
