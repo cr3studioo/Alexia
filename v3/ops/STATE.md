@@ -1,21 +1,21 @@
 # STATE
 
-CEO: #10 next (chat CEO, A-08). CEO #9 handed off at a clean point (no approved branch unmerged).
+CEO: #10 running (chat CEO, A-08).
 Orca run: run_7a40b198ac83 (bind with run-use). Helpers in C:\dev\Alexia-wt: wait.sh, msgs.py, template.sh (source; `start <id> <phase> <model> [extra rule]`), rv.sh (source; `rv <id> <phase>` dispatches the standard opus review). Fix rounds: file like fix-P1-13.txt, dispatch with --spec "$(cat file)" in the task worktree.
-P0: all 25 merged. P0-26 (de-flake conn.rs junk_is_skipped_and_logged, sonnet) running.
-P1 merged: P1-01..P1-06, P1-09, P1-11, P1-14, P1-15, P1-16, P1-19, P1-20, P1-22.
+P0: all 25 merged. P0-26 (de-flake conn.rs) in review ctx_69127b377058.
+P1 merged: P1-01..P1-06, P1-08, P1-09, P1-11, P1-13..P1-16, P1-19..P1-22.
 Live Orca workers (wait for worker_done):
-- P1-08 review (opus) ctx_6b0002a09fec. Build done (15 tests; redact made pub in alexia-mcp per CEO answer; day line is UTC).
-- P1-13 re-review (opus) ctx_01fc0222f8ed, after fix round 1 (try 2).
-- P1-21 review ctx_00b95a0f5956.
-- P1-24 review ctx_0f7a6c70cacd (also judges plugins/media models.test.js bytes=500- failure vs base).
-- P0-26 build (sonnet) ctx_d965db584aa9.
-Queued: P1-10 fix round 1 (opus, try 2): C:\dev\Alexia-wt\fix-P1-10.txt, worktree C:\dev\Alexia-wt\P1-10 exists. Dispatch it in the first free opus slot.
-Ready (opus): P1-23 (gateway tracker), P1-07 (lanes), P1-12 (approvals/voice). Todo: P1-17 (needs P1-07, P1-08, P1-10, P1-12, P1-13), P1-18 (needs P1-17, A-09), P1-25 (needs P1-17, P1-20, P1-22, P1-23, P0-25).
-Critical path: P1-08 review -> P1-17 -> P1-18. P1-10 fix, P1-12, P1-07, P1-13 also feed P1-17.
+- P1-24 review (opus) ctx_0f7a6c70cacd (also judges plugins/media models.test.js bytes=500- vs base).
+- P0-26 review (opus) ctx_69127b377058.
+- P1-10 fix round 1 (opus builder, try 2) ctx_47b851e49707.
+- P1-12 build (opus builder, try 1) ctx_57bb946afe73.
+- Planner for follow-ups (opus) ctx_89d86a6448bb in worktree C:\dev\Alexia-wt\plan-fu, branch cr3studioo/v3-plan-fu (not pushed): writes P1-26+ specs. Merge that branch into cr3studioo/v3 (books commit), add its rows to BOARD, remove worktree.
+Ready (opus, wait for a free opus builder slot): P1-07 (lanes), P1-23 (gateway tracker). Todo: P1-17 (needs P1-07, P1-10, P1-12), P1-18 (needs P1-17, A-09), P1-25 (needs P1-17, P1-23).
+Integration gate: bash C:/dev/Alexia-wt/gate.sh after each merge (prints GATE OK or failures).
+Critical path: P1-10 fix, P1-12, P1-07 -> P1-17 -> P1-18.
 Opus cap (2 builders) is the bottleneck. Reviewers are not counted, but the 5-worker cap counts everyone.
-Merges since the last phase review: 5 (P0-22, P1-20, P1-22, P1-06, P0-25).
-Follow-ups to plan (no spec yet): (1) Turn has no files field, so documents cannot reach V2Bridge (needs alexia-core Turn change; plan before or with P1-17). (2) De-flake alexia-mcp tests/supervise.rs call_at_idle_deadline_never_gone (new in P0-22, flaked under load in the P1-13 fix run). (3) P1-22 skips tool rows on the no-tools path; V3-2 must map calls/call_id when tools are sent.
+Merges since the last phase review: 8 (P0-22, P1-20, P1-22, P1-06, P0-25, P1-08, P1-13, P1-21).
+Follow-ups: being specced by the planner above (Turn files field, supervise.rs de-flake, chat.rs bounds/empty turns, P1-22 note).
 Open owner asks: A-09 (test bot, free provider key names, OK to race two providers), no reply. Only P1-18 waits on it. A-10 is a notice.
 Telegram: vars set (user env; read via PowerShell GetEnvironmentVariable User). getUpdates empty at handoff; no update_id processed yet.
 pnpm check on Windows: known pre-existing failures: compute-connect 'a paused request reader stalls uploads too' (always), compute-plugins 'cancelling a plugin tool propagates' and plugins/media compute 'ComfyUI the person is running' (load-flaky). Possibly also plugins/media models.test.js bytes=500- (P1-24 reviewer is checking).

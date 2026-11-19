@@ -34,8 +34,16 @@ impl Seen {
 /// What the fake answers: `Some((status, body))`, or `None` to hold the request open.
 type Route = Arc<dyn Fn(&Seen) -> Option<(u16, Vec<u8>)> + Send + Sync>;
 
+/// How long the fake waits before answering a request.
+type Delay = Arc<dyn Fn(&Seen) -> Duration + Send + Sync>;
+
 /// A fake Bot API: every connection is one request, answered by `route` then closed.
 async fn fake(route: Route) -> (String, mpsc::UnboundedReceiver<Seen>) {
+    fake_slow(route, Arc::new(|_| Duration::ZERO)).await
+}
+
+/// Like `fake`, but sleeps `delay(&seen)` before writing the answer.
+async fn fake_slow(route: Route, delay: Delay) -> (String, mpsc::UnboundedReceiver<Seen>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());
     let (tx, rx) = mpsc::unbounded_channel();
@@ -45,6 +53,7 @@ async fn fake(route: Route) -> (String, mpsc::UnboundedReceiver<Seen>) {
                 return;
             };
             let route = route.clone();
+            let delay = delay.clone();
             let tx = tx.clone();
             tokio::spawn(async move {
                 let mut buf = Vec::new();
@@ -82,7 +91,9 @@ async fn fake(route: Route) -> (String, mpsc::UnboundedReceiver<Seen>) {
                     body: buf[header_end..].to_vec(),
                 };
                 let answer = route(&seen);
+                let wait = delay(&seen);
                 let _ = tx.send(seen);
+                tokio::time::sleep(wait).await;
                 let Some((status, body)) = answer else {
                     tokio::time::sleep(Duration::from_secs(600)).await;
                     return;
@@ -276,6 +287,65 @@ async fn status_429_is_rate_limited_with_ms() {
         ),
         "{err:?}"
     );
+}
+
+#[tokio::test]
+async fn status_429_huge_retry_after_is_clamped() {
+    let body = json!({"ok": false, "error_code": 429,
+        "description": "Too Many Requests", "parameters": {"retry_after": u64::MAX}});
+    let (api, _rx) = answering(429, body).await;
+    let err = api.send_message(5, "hi", None, None).await.unwrap_err();
+    assert!(
+        matches!(
+            err,
+            Error::RateLimited {
+                retry_after_ms: 3_600_000
+            }
+        ),
+        "{err:?}"
+    );
+}
+
+#[tokio::test]
+async fn voice_upload_outlives_the_call_timeout() {
+    let bytes = sent().to_string().into_bytes();
+    let (base, _rx) = fake_slow(
+        Arc::new(move |_| Some((200, bytes.clone()))),
+        Arc::new(|_| Duration::from_secs(16)),
+    )
+    .await;
+    let api = Api::new(&base, token());
+    let id = api.send_voice(5, b"OggS\x00slow".to_vec(), None).await;
+    assert!(matches!(id, Ok(77)), "{id:?}");
+}
+
+#[tokio::test]
+async fn download_outlives_the_call_timeout() {
+    let (base, _rx) = fake_slow(
+        Arc::new(|seen: &Seen| {
+            if seen.path.ends_with("/getFile") {
+                let file = json!({"file_id": "f", "file_unique_id": "u", "file_size": 5, "file_path": "docs/slow.bin"});
+                Some((200, ok(file).to_string().into_bytes()))
+            } else {
+                Some((200, b"slow!".to_vec()))
+            }
+        }),
+        Arc::new(|seen: &Seen| {
+            if seen.path.ends_with("/getFile") {
+                Duration::ZERO
+            } else {
+                Duration::from_secs(16)
+            }
+        }),
+    )
+    .await;
+    let api = Api::new(&base, token());
+    let dir = std::env::temp_dir().join(format!("alexia-p1-21-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let dest = dir.join("slow.bin");
+    api.download("f", &dest).await.unwrap();
+    assert_eq!(std::fs::read(&dest).unwrap(), b"slow!");
+    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 #[tokio::test]

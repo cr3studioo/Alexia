@@ -18,6 +18,10 @@ use crate::{Error, Result};
 /// The Bot API's own download limit.
 pub const FILE_MAX: u64 = 20 * 1024 * 1024;
 const CALL_TIMEOUT: Duration = Duration::from_secs(15);
+/// Whole-body timeout for file uploads and downloads (up to FILE_MAX on a slow link).
+const FILE_TIMEOUT: Duration = Duration::from_secs(120);
+/// The longest wait a 429 may ask for; longer answers are clamped.
+const RETRY_AFTER_MAX_MS: u64 = 3_600_000;
 
 /// The Bot API client: one kept-alive HTTPS connection pool for every call.
 pub struct Api {
@@ -168,7 +172,11 @@ impl Api {
         Err(match code {
             409 => Error::Conflict,
             429 => Error::RateLimited {
-                retry_after_ms: answer["parameters"]["retry_after"].as_u64().unwrap_or(1) * 1000,
+                retry_after_ms: answer["parameters"]["retry_after"]
+                    .as_u64()
+                    .unwrap_or(1)
+                    .saturating_mul(1000)
+                    .min(RETRY_AFTER_MAX_MS),
             },
             401 => Error::Unauthorized,
             404 if method == "getMe" => Error::Unauthorized,
@@ -287,7 +295,7 @@ impl Api {
             .client
             .post(self.url(method))
             .multipart(form)
-            .timeout(CALL_TIMEOUT);
+            .timeout(FILE_TIMEOUT);
         Ok(self.answer::<Sent>(method, request).await?.message_id)
     }
 
@@ -348,7 +356,7 @@ impl Api {
         let mut response = self
             .client
             .get(url)
-            .timeout(CALL_TIMEOUT)
+            .timeout(FILE_TIMEOUT)
             .send()
             .await
             .map_err(unreachable)?;
