@@ -12,11 +12,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use rusqlite::{params, Connection, OpenFlags, OptionalExtension, TransactionBehavior};
 
-use crate::{is_ident, is_plugin_id, Error, Layout, MessageBody, Result, Store};
+use crate::{is_ident, is_plugin_id, now_ms, Error, Layout, MessageBody, Result, Store};
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ImportReport {
@@ -338,9 +337,7 @@ fn copy_db(conn: &mut Connection, v2_root: &Path, v2_schema: i64) -> Result<(i64
         files: 0,
         skipped,
     };
-    let at = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| d.as_millis() as i64);
+    let at = now_ms();
     tx.execute(
         "INSERT INTO imports (at, v2_schema, report) VALUES (?, ?, ?)",
         params![at, v2_schema, serde_json::to_string(&report)?],

@@ -59,12 +59,27 @@ pub enum Lane {
     Task,
 }
 
-/// One timed stretch of answering, for the latency dashboard (SP-09).
+/// One timed stretch of answering, for the latency dashboard (SP-09). `start` is ms since
+/// the brain was handed the turn (a brain's spans); the gateway shifts them by when it called
+/// the brain, so stored spans are ms since the turn's first receipt.
 #[derive(Clone, Debug, Serialize)]
 pub struct Span {
     pub name: &'static str,
     pub start: alexia_store::Ms,
     pub ms: u32,
+}
+
+impl Span {
+    /// From `from` to now, with `start` = `from − began` (saturating at 0) and `ms` capped at
+    /// u32::MAX.
+    pub fn since(name: &'static str, began: std::time::Instant, from: std::time::Instant) -> Span {
+        let start = from.saturating_duration_since(began).as_millis();
+        Span {
+            name,
+            start: alexia_store::Ms::try_from(start).unwrap_or(alexia_store::Ms::MAX),
+            ms: u32::try_from(from.elapsed().as_millis()).unwrap_or(u32::MAX),
+        }
+    }
 }
 
 /// PR-06; re-exported by alexia-scheduler.

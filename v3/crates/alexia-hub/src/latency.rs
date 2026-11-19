@@ -100,22 +100,8 @@ pub fn turns(rows: &[SpanRow]) -> Vec<TurnView> {
 
 /// UTC "YYYY-MM-DD HH:MM:SS" from epoch ms (civil-from-days).
 fn utc(ms: Ms) -> String {
-    let t = ms.div_euclid(1000);
-    let (z, sod) = (t.div_euclid(86_400) + 719_468, t.rem_euclid(86_400));
-    let era = z.div_euclid(146_097);
-    let doe = z.rem_euclid(146_097);
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = yoe + era * 400 + i64::from(m <= 2);
-    format!(
-        "{y:04}-{m:02}-{d:02} {:02}:{:02}:{:02}",
-        sod / 3600,
-        sod % 3600 / 60,
-        sod % 60
-    )
+    let (y, m, d, h, mi, s) = alexia_store::civil_utc(ms);
+    format!("{y:04}-{m:02}-{d:02} {h:02}:{mi:02}:{s:02}")
 }
 
 fn secs(ms: i64) -> String {
@@ -695,10 +681,7 @@ mod tests {
             "total {}",
             v[0].total_ms
         );
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as i64;
+        let now = alexia_store::now_ms();
         assert!(
             (now - rows[0].at).abs() < 10_000,
             "at {} now {now}",

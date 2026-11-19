@@ -5,9 +5,9 @@
 //! byte from turn to turn so providers' prefix caches hit; recall and the new message go last.
 
 use std::sync::{Arc, RwLock};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
-use alexia_store::{Content, MessageBody, Ms, Part, Role, Store};
+use alexia_store::{civil_utc, now_ms, Content, MessageBody, Ms, Part, Role, Store};
 use serde_json::{Map, Value};
 use tokio::sync::mpsc;
 use tokio::time::Instant;
@@ -102,8 +102,7 @@ impl FastChat {
         }
     }
 
-    /// Drop the cached profile/personality (the hub calls it on `Event::SettingsChanged`
-    /// and every 10 minutes).
+    /// Drop the cached profile/personality (the hub calls it every 10 minutes).
     pub fn invalidate(&self) {
         *self.prefix.write().unwrap_or_else(|e| e.into_inner()) = None;
     }
@@ -170,7 +169,7 @@ impl FastChat {
             .filter(|m| matches!(m.role, Role::User | Role::Assistant))
             .filter(|m| m.body.calls.as_ref().is_none_or(Vec::is_empty))
             .filter_map(|m| {
-                let text = text_of(&m.body.content);
+                let text = m.body.content.text();
                 (!text.is_empty()).then(|| (m.role, body(Content::Text(text), None)))
             })
             .collect())
@@ -186,7 +185,8 @@ impl Brain for FastChat {
         cancel: CancellationToken,
     ) -> Result<Reply, BrainError> {
         let started = Instant::now();
-        let said = text_of(&turn.content);
+        let began = started.into_std();
+        let said = turn.content.text();
 
         // Recall starts the moment the turn arrives (SP-04).
         let recall_cancel = cancel.child_token();
@@ -198,13 +198,13 @@ impl Brain for FastChat {
         });
 
         let mut spans = Vec::new();
-        let at = now_ms();
+        let at = Instant::now();
         let prefix = self.prefix(&cancel).await;
         let system = format!("{prefix}\n\nToday is {}.", day_of(now_ms()));
         let mut messages = self.history(&turn)?;
-        spans.push(span("prompt", at, started.elapsed()));
+        spans.push(Span::since("prompt", began, at.into_std()));
 
-        let (at, waiting) = (now_ms(), Instant::now());
+        let waiting = Instant::now();
         let deadline = started + Duration::from_millis(Self::RECALL_WAIT_MS);
         let recalled = match recall.as_mut() {
             None => None,
@@ -216,7 +216,7 @@ impl Brain for FastChat {
                 }
             },
         };
-        spans.push(span("recall-wait", at, waiting.elapsed()));
+        spans.push(Span::since("recall-wait", began, waiting.into_std()));
         let recalled = recalled
             .map(|t| t.trim().to_owned())
             .filter(|t| !t.is_empty() && !t.starts_with(NOTHING));
@@ -229,7 +229,7 @@ impl Brain for FastChat {
             max_tokens: None,
         };
 
-        let (asked_at, asked) = (now_ms(), Instant::now());
+        let asked = Instant::now();
         let (tx, rx) = mpsc::channel(64);
         let (result, streamed) = tokio::join!(
             self.router.hedged(&req, self.budget, tx, cancel.clone()),
@@ -245,14 +245,19 @@ impl Brain for FastChat {
         };
         let total = asked.elapsed();
         let first = Duration::from_millis(u64::from(done.first_byte_ms.unwrap_or(0)));
-        spans.push(span("first-byte", asked_at, first));
-        spans.push(span(
-            "writing",
-            asked_at + first.as_millis() as Ms,
-            total.saturating_sub(first),
-        ));
+        let first_byte = Span {
+            name: "first-byte",
+            start: asked.saturating_duration_since(started).as_millis() as Ms,
+            ms: done.first_byte_ms.unwrap_or(0),
+        };
+        let writing = Span {
+            name: "writing",
+            start: first_byte.start + Ms::from(first_byte.ms),
+            ms: u32::try_from(total.saturating_sub(first).as_millis()).unwrap_or(u32::MAX),
+        };
+        spans.extend([first_byte, writing]);
 
-        let (at, storing) = (now_ms(), Instant::now());
+        let storing = Instant::now();
         let store = |role, model, b: &MessageBody| {
             self.store
                 .append(turn.session, role, model, b)
@@ -264,7 +269,7 @@ impl Brain for FastChat {
             Some(&done.model),
             &body(Content::Text(text.clone()), Some(done.provider.clone())),
         )?;
-        spans.push(span("store", at, storing.elapsed()));
+        spans.push(Span::since("store", began, storing.into_std()));
 
         if self.caps.answers(CAPTURE) {
             let caps = self.caps.clone();
@@ -352,20 +357,6 @@ fn tail(content: &Content, recalled: Option<String>) -> Content {
     }
 }
 
-fn text_of(content: &Content) -> String {
-    match content {
-        Content::Text(t) => t.clone(),
-        Content::Parts(parts) => parts
-            .iter()
-            .filter_map(|p| match p {
-                Part::Text { text } => Some(text.as_str()),
-                Part::Image { .. } => None,
-            })
-            .collect::<Vec<_>>()
-            .join("\n"),
-    }
-}
-
 fn body(content: Content, provider: Option<String>) -> MessageBody {
     MessageBody {
         content,
@@ -378,20 +369,6 @@ fn body(content: Content, provider: Option<String>) -> MessageBody {
         typed: None,
         extra: Map::new(),
     }
-}
-
-fn span(name: &'static str, start: Ms, took: Duration) -> Span {
-    Span {
-        name,
-        start,
-        ms: u32::try_from(took.as_millis()).unwrap_or(u32::MAX),
-    }
-}
-
-fn now_ms() -> Ms {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| d.as_millis() as Ms)
 }
 
 /// v2's `dayOf`: *Sunday 27 September 2026*.
@@ -421,16 +398,7 @@ fn day_of(at: Ms) -> String {
         "December",
     ];
     let days = at.div_euclid(86_400_000);
-    // Howard Hinnant's civil_from_days.
-    let z = days + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z - era * 146_097;
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let day = doy - (153 * mp + 2) / 5 + 1;
-    let month = if mp < 10 { mp + 3 } else { mp - 9 };
-    let year = yoe + era * 400 + i64::from(month <= 2);
+    let (year, month, day, ..) = civil_utc(at);
     format!(
         "{} {day} {} {year}",
         DAYS[days.rem_euclid(7) as usize],

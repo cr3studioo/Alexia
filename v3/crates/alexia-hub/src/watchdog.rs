@@ -4,11 +4,11 @@
 // P1-17 wires these into main.rs; until then the binary does not call them.
 #![allow(dead_code)]
 
-use alexia_store::{Ms, Store};
+use alexia_store::{civil_utc, now_ms, Ms, Store};
 use std::future::Future;
 use std::path::Path;
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
 
 pub const TASK_NAME: &str = "Alexia hub";
@@ -63,19 +63,8 @@ fn local_offset_minutes() -> i64 {
 
 /// Civil date and time of a local instant (Howard Hinnant's days-to-date algorithm).
 fn civil(ms: Ms, offset_min: i64) -> (i64, i64, i64, i64, i64) {
-    let local = ms + offset_min * 60_000;
-    let days = local.div_euclid(DAY_MS);
-    let rem = local.rem_euclid(DAY_MS) / 60_000;
-    let z = days + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z.rem_euclid(146_097);
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = yoe + era * 400 + i64::from(m <= 2);
-    (y, m, d, rem / 60, rem % 60)
+    let (y, m, d, h, mi, _) = civil_utc(ms + offset_min * 60_000);
+    (y, m, d, h, mi)
 }
 
 fn gap_sentence(alive: Ms, now: Ms, offset_min: i64) -> String {
@@ -105,12 +94,6 @@ fn offline_gap_at(store: &Store, now: Ms, offset_min: impl FnOnce() -> i64) -> O
         return None;
     }
     Some(gap_sentence(alive, now, offset_min()))
-}
-
-fn now_ms() -> Ms {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| d.as_millis() as Ms)
 }
 
 /// Writes `hub_alive` now and every HEARTBEAT_MS until cancelled.

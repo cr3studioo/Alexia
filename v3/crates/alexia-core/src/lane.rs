@@ -6,7 +6,7 @@
 //! wrong `Task` guess is the slow path, so borderline rules stay out.
 
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::Instant;
 
 use alexia_store::{Content, Ms, Part};
 use tokio_util::sync::CancellationToken;
@@ -79,24 +79,12 @@ const WORDS: &[&str] = &[
 
 /// `Command` for a leading `/`; `Task` when any rule fires; else `Chat`.
 pub fn lane(content: &Content) -> Lane {
-    let text = match content {
-        Content::Text(t) => t.clone(),
-        Content::Parts(parts) => {
-            let mut text = String::new();
-            for p in parts {
-                match p {
-                    Part::Image { .. } => return Lane::Task,
-                    Part::Text { text: t } => {
-                        if !text.is_empty() {
-                            text.push('\n');
-                        }
-                        text.push_str(t);
-                    }
-                }
-            }
-            text
+    if let Content::Parts(parts) = content {
+        if parts.iter().any(|p| matches!(p, Part::Image { .. })) {
+            return Lane::Task;
         }
-    };
+    }
+    let text = content.text();
     let text = text.trim();
     if text.starts_with('/') {
         return Lane::Command;
@@ -147,53 +135,46 @@ impl Brain for Lanes {
         draft: DraftSink,
         cancel: CancellationToken,
     ) -> Result<Reply, BrainError> {
-        let start = now();
-        let t0 = Instant::now();
+        let began = Instant::now();
         let picked = lane(&turn.content);
-        let mut spans = vec![span("lane", start, t0.elapsed())];
+        let mut spans = vec![Span::since("lane", began, began)];
         if cancel.is_cancelled() {
             return Err(BrainError::Cancelled);
         }
-        let (answered, result) = match picked {
+        // The inner brain measures from when it was handed the turn: `handed` is that moment.
+        let (answered, handed, result) = match picked {
             Lane::Chat => {
-                let chat_start = now();
-                let t1 = Instant::now();
+                let t_chat = Instant::now();
                 match self
                     .chat
                     .reply(turn.clone(), draft.clone(), cancel.clone())
                     .await
                 {
                     Err(BrainError::NeedsTask) => {
-                        spans.push(span("chat-escalated", chat_start, t1.elapsed()));
+                        spans.push(Span::since("chat-escalated", began, t_chat));
                         if cancel.is_cancelled() {
                             return Err(BrainError::Cancelled);
                         }
                         // Nothing reached the draft (P1-08), so the task brain gets the same sink.
-                        (Lane::Task, self.task.reply(turn, draft, cancel).await)
+                        let t_task = Instant::now();
+                        (Lane::Task, t_task, self.task.reply(turn, draft, cancel).await)
                     }
-                    other => (Lane::Chat, other),
+                    other => (Lane::Chat, t_chat, other),
                 }
             }
-            other => (other, self.task.reply(turn, draft, cancel).await),
+            other => {
+                let t_task = Instant::now();
+                (other, t_task, self.task.reply(turn, draft, cancel).await)
+            }
         };
         let mut reply = result?;
         reply.lane = answered;
-        spans.append(&mut reply.spans);
+        let shift = handed.saturating_duration_since(began).as_millis() as Ms;
+        spans.extend(reply.spans.drain(..).map(|mut s| {
+            s.start = s.start.saturating_add(shift);
+            s
+        }));
         reply.spans = spans;
         Ok(reply)
-    }
-}
-
-fn now() -> Ms {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| d.as_millis() as Ms)
-}
-
-fn span(name: &'static str, start: Ms, took: Duration) -> Span {
-    Span {
-        name,
-        start,
-        ms: u32::try_from(took.as_millis()).unwrap_or(u32::MAX),
     }
 }
