@@ -160,8 +160,9 @@ impl Api {
         let bytes = response.bytes().await.map_err(unreachable)?;
         let answer: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
         if (200..300).contains(&status) && answer["ok"] == true {
-            return serde_json::from_value(answer["result"].clone())
-                .map_err(|_| Error::Service(format!("Telegram's answer to {method} didn't parse")));
+            return serde_json::from_value(answer["result"].clone()).map_err(|_| {
+                Error::Service(format!("Telegram's answer to {method} didn't parse"))
+            });
         }
         let code = answer["error_code"].as_u64().map_or(status, |c| c as u16);
         Err(match code {
@@ -214,7 +215,9 @@ impl Api {
             "message_id": message,
             "reaction": [{"type": "emoji", "emoji": emoji}],
         });
-        self.call::<Value>("setMessageReaction", body).await.map(drop)
+        self.call::<Value>("setMessageReaction", body)
+            .await
+            .map(drop)
     }
 
     /// `action`: "typing", "record_voice", "upload_voice".
