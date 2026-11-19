@@ -193,3 +193,4 @@
 2026-11-19 CEO #11 started. Bound run_7a40b198ac83; P1-26, P1-28 live. Dispatched planner plan-fu3 ctx_72189bbc54cd (P1-32 hub main.rs minors; split P1-18 into e2e test + P1-33 by-hand run needing A-09).
 2026-11-19 P1-28 build done; review dispatched ctx_3c7d5a37f217.
 2026-11-19 Merged plan-fu3 (P1-32, P1-33 new; P1-18 now test only, P1-33 needs A-09). Dispatched P1-32 (sonnet) ctx_4e5ea17aea34.
+2026-11-19 Merged P1-28 (approve, gate ok, pushed). Review nit: 1b misses brace/glob imports, trailing-comment false positive. Dispatched P1-29 (opus) ctx_86423e92e07d, P1-30 (sonnet) ctx_25b4a10201f2.
