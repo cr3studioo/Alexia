@@ -9,14 +9,14 @@ use std::collections::HashMap;
 use std::future::pending;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use alexia_core::{Brain, BrainError, Bus, DraftFrame, Event, Lane, Origin, Phase, Span};
 use alexia_store::{Content, Ms, Part, SessionId, SpanRow, Store};
 use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
-use tokio::time::sleep_until;
+use tokio::time::{sleep_until, Instant};
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 
@@ -345,7 +345,7 @@ struct Actor {
     cancel: CancellationToken,
     /// Messages inside the merge window.
     window: Vec<Msg>,
-    deadline: Option<tokio::time::Instant>,
+    deadline: Option<Instant>,
     /// Messages waiting for a visible chat reply to be delivered.
     queued: Vec<Msg>,
     running: Option<Running>,
@@ -438,7 +438,7 @@ impl Actor {
         let Some(running) = &self.running else {
             if self.window.is_empty() {
                 let at = msg.rec.instant + Duration::from_millis(self.g.cfg.merge_ms);
-                self.deadline = Some(at.into());
+                self.deadline = Some(at);
             }
             self.window.push(msg);
             return;
@@ -658,7 +658,7 @@ async fn join(
     }
 }
 
-async fn wait(deadline: Option<tokio::time::Instant>) {
+async fn wait(deadline: Option<Instant>) {
     match deadline {
         Some(d) => sleep_until(d).await,
         None => pending().await,
@@ -771,9 +771,12 @@ impl TurnCtx {
 
         let brain_t = Instant::now();
         let (tx, frames) = mpsc::channel(64);
-        let fut = g.brain.reply(turn, tx, self.cancel.clone());
+        // Its own task: a slow draft call never stalls the brain, and on cancel the brain keeps
+        // running until it has stopped its own work (the v2 bridge POSTs /api/stop).
+        let (brain, cancel) = (g.brain.clone(), self.cancel.clone());
+        let handle = tokio::spawn(async move { brain.reply(turn, tx, cancel).await });
         let mut pump = Pump::new(&self, frames);
-        let result = pump.run(fut).await;
+        let result = pump.run(handle).await;
         let drafted = pump.text;
 
         let reply = match result {
@@ -805,10 +808,11 @@ impl TurnCtx {
             start: brain_start,
             ms: ms_since(brain_t),
         });
-        // The brain measures from when it was handed the turn.
+        // The brain measures from when it was handed the turn; a start that is already a clock
+        // time (after the turn arrived) is kept as it is.
         spans.extend(reply.spans.iter().map(|s| Span {
             name: s.name,
-            start: brain_start + s.start,
+            start: if s.start >= self.first.ms { s.start } else { brain_start + s.start },
             ms: s.ms,
         }));
 
@@ -905,25 +909,41 @@ impl Pump {
         }
     }
 
-    async fn run<F>(&mut self, fut: F) -> std::result::Result<alexia_core::Reply, BrainError>
-    where
-        F: std::future::Future<Output = std::result::Result<alexia_core::Reply, BrainError>>,
-    {
-        tokio::pin!(fut);
+    async fn run(
+        &mut self,
+        mut brain: JoinHandle<std::result::Result<alexia_core::Reply, BrainError>>,
+    ) -> std::result::Result<alexia_core::Reply, BrainError> {
         let mut open = true;
         let mut typing_at = Instant::now();
+        // Set once cancelled: how long the brain gets to stop by itself.
+        let mut give_up: Option<Instant> = None;
         loop {
-            let next = self.next_at();
+            let next = if give_up.is_none() { self.next_at() } else { None };
             tokio::select! {
                 biased;
-                r = &mut fut => return r,
-                _ = self.cancel.cancelled() => return Err(BrainError::Cancelled),
+                r = &mut brain => {
+                    if give_up.is_some() {
+                        return Err(BrainError::Cancelled);
+                    }
+                    return r.unwrap_or_else(|e| {
+                        tracing::error!("gateway: the brain panicked: {e}");
+                        Err(BrainError::Unavailable(SORRY.to_string()))
+                    });
+                }
+                _ = self.cancel.cancelled(), if give_up.is_none() => {
+                    give_up = Some(Instant::now() + SHUTDOWN_WAIT);
+                }
+                _ = wait(give_up) => {
+                    tracing::warn!("gateway: the brain did not stop within 3 s");
+                    brain.abort();
+                    return Err(BrainError::Cancelled);
+                }
                 f = self.frames.recv(), if open => match f {
                     Some(f) => self.frame(f),
                     None => open = false,
                 },
-                _ = wait(next.map(Into::into)) => self.send().await,
-                _ = sleep_until(typing_at.into()), if !self.shown => {
+                _ = wait(next) => self.send().await,
+                _ = sleep_until(typing_at), if !self.shown && give_up.is_none() => {
                     let (ch, chat) = (self.ch.clone(), self.chat.clone());
                     tokio::spawn(async move { ch.typing(&chat).await });
                     typing_at += TYPING_EVERY;
