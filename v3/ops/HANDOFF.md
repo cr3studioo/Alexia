@@ -1,28 +1,27 @@
-# Handoff · 2026-11-19 · CEO #9 → CEO #10
+# Handoff · 2026-11-19 · CEO #10 → CEO #11
 
 ## Where we are
-Phase 0: 25/25 merged; P0-26 (de-flake) running. Phase 1: 14 of 25 merged; P1-08, P1-13, P1-21, P1-24 in review; P1-10 fix queued; ready P1-07, P1-12, P1-23 (opus); todo P1-17, P1-18, P1-25. Failed 0, blocked-owner 0.
+Phase 0: 26/26 merged. Phase 1: 26 of 31 merged; running P1-26 (opus) and P1-28 (sonnet); todo P1-29, P1-30 (after P1-28), P1-18 (after P1-26, needs A-09). Failed 0, blocked-owner 0.
 
 ## What I'd do next
-1. `orca orchestration run-use --id run_7a40b198ac83`, then `bash C:/dev/Alexia-wt/wait.sh` in the background. Five workers are live (see STATE.md).
-2. No opus builder is running now. First free worker slot (5-worker cap is full): the P1-10 fix (fix-P1-10.txt, already written). Then P1-12, P1-07, P1-23.
-3. Merge approved reviews one at a time: pull, merge --no-ff, fmt/clippy/test in v3/, invariants from repo root, push, remove worktree.
-4. Have a Planner spec the three follow-ups in STATE.md (Turn files field, supervise.rs de-flake, and note the tool-row mapping for V3-2).
-5. Phase review is due again at 10 merges (5 so far).
+1. `orca orchestration run-use --id run_7a40b198ac83`, then `bash C:/dev/Alexia-wt/wait.sh` in the background (timeout 7200000; it can time out, so just restart it).
+2. On P1-28 done: `rv P1-28 P1`; after its merge start P1-29 (opus) and P1-30 (sonnet) together.
+3. On P1-26 done: review, merge, then P1-18 if A-09 is answered. If not, P1-18's code part (fake Bot API e2e test) can still be built; only the 50 real messages need the owner. Consider splitting it.
+4. Have a Planner spec the P1-17 review minors (STATE.md, Follow-ups) as one sonnet task touching alexia-hub/src/main.rs.
+5. When P1 is fully merged: phase review, the P1 phase notice to the owner (§9), then plan P2 (V3-2) and hand off (phase merged = handoff rule).
 
 ## Watch out for
-- Full-workspace test runs are flaky under load in alexia-mcp: conn.rs junk_is_skipped_and_logged (P0-26 fixing) and supervise.rs call_at_idle_deadline_never_gone. A rerun passes; don't fail a merge on those alone.
-- Orca often sends the same worker_done twice. Check the dispatch id before acting.
-- One `start` call for a worktree with packages/ can take more than 2 min; the Bash tool backgrounds it. Read its output file for the dispatch id.
-- invariants.mjs must run from the repo root (it fails with ENOENT from v3/).
+- The owner asked in chat what P1 and the task numbers mean. Explain status in plain words with a phase table; they are not following the jargon.
+- The owner often types "You have 1 orchestration message". Most are heartbeats: check, ack, and say so in one line.
+- gate.sh is the merge gate; for v2 paths also pnpm check in base2 (STATE.md). Load flakes: rerun the single file 2-3 times on its own before calling it a real failure.
+- Workers ask questions mid-task (orca reply --id msg_... ). Answer fast. I allowed: P1-10 to edit telegram/api.rs (download returns bytes), P1-17 to loosen tests/cli.rs run_starts_and_stops.
+- Orca sends the same worker_done twice sometimes; check the dispatch id.
 
 ## Open owner asks
-- A-09: P1 test bot, which free provider keys (names only, >=2), OK to race two providers. No reply.
+- A-09: test bot, free provider key names (2+), OK to race two providers. No reply; Telegram reminder sent.
 - A-10: G-P0 notice. No reply needed.
 
 ## Decisions I made (also in LOG.md)
-- Phase review findings became P1-20..P1-25 (Planner); conn.rs flake became P0-26 (CEO wrote the spec, test-only).
-- P1-08 may make alexia-mcp process::redact public instead of copying it.
-- P1-10 fixes: asks keyed by (chat, message id) with a time-seeded seq; failed downloads still deliver text with a note; stale presses don't edit; pairing code rotates after 5 misses.
-- P1-13 fixes: one span per step through phase/progress events; cancel during POST always sends /api/stop; documents gap tracked separately.
-- P1-08 went ahead of the P1-10 fix for the opus slot (critical path).
+- Phase review 2 findings: P1-25 widened to opus (span start fix); P1-17 re-planned; new P1-26..P1-31 follow-ups.
+- P1-12 shipped without the 10-min paused-time test (P1-30 adds it).
+- noticing.test, compute-acceptance and provider.test failures treated as load flakes (pass alone).

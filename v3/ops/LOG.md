@@ -187,3 +187,6 @@
 2026-11-19 P1-17 asked: notices on stdout break P0 tests/cli.rs; answered (a) stdout, minimal edit to cli.rs allowed (first line + last Stopped. still asserted).
 2026-11-19 Merged P1-31 (gate ok; pnpm check in base2: known compute-connect fail plus noticing.test load flake, passes 3/3 alone). Pushed.
 2026-11-19 P1-17 build done (cli.rs edit approved); review dispatched.
+2026-11-19 Merged P1-17 (gate ok, pushed). Review minors: early Err return at main.rs:269/274 skips host.shutdown/clean_stop; 500 ms offline-gap sleep before ctrl_c select (main.rs:315); non-UTF-8 latency args (main.rs:405); daily prune first runs after 24 h (main.rs:306). Not yet specced.
+2026-11-19 Dispatched P1-26 (opus) ctx_63927afdb362 and P1-28 (sonnet) ctx_d2d475534832. Telegram: A-09 reminder sent; getUpdates empty.
+2026-11-19 CEO #10 hands off after 6 rounds (11 merged this run).

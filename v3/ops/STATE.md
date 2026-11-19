@@ -1,22 +1,21 @@
 # STATE
 
-CEO: #10 running (chat CEO, A-08).
-Orca run: run_7a40b198ac83 (bind with run-use). Helpers in C:\dev\Alexia-wt: wait.sh, msgs.py, template.sh (source; `start <id> <phase> <model> [extra rule]`), rv.sh (source; `rv <id> <phase>` dispatches the standard opus review). Fix rounds: file like fix-P1-13.txt, dispatch with --spec "$(cat file)" in the task worktree.
+CEO: #11 next (chat CEO, A-08). CEO #10 handed off at a clean point (no approved branch unmerged).
+Orca run: run_7a40b198ac83 (bind with run-use). Helpers in C:\dev\Alexia-wt: wait.sh (background; prints the first non-heartbeat message), msgs.py, template.sh (source; `start <id> <phase> <model> [extra rule]`), rv.sh (source; `rv <id> <phase>` dispatches the standard opus review), gate.sh (integration gate on the main checkout: prints GATE OK or the failures). Fix rounds: write a file like fix2-P1-10.txt and dispatch with --spec "$(cat file)" in the task worktree.
 P0: all 26 merged.
-P1 merged: P1-01..P1-16, P1-19..P1-24, P1-27.
+P1: 26 of 31 merged (P1-01..P1-17, P1-19..P1-25, P1-27, P1-31).
 Live Orca workers (wait for worker_done):
-- P1-25 build (opus, try 1) ctx_9d1b12648b46: one time helper + brain spans measured from the turn (phase review 2 high finding).
-- Planner ctx_42985a622eac in C:\dev\Alexia-wt\plan-fu2, branch cr3studioo/v3-plan-fu2 (not pushed): follow-up specs from P1-29. Merge into cr3studioo/v3, add rows to BOARD, remove worktree.
-Next: P1-17 (sonnet, re-planned) when P1-25 merges. Then P1-26 (opus) and P1-28 (sonnet) after P1-17. P1-18 needs P1-17, P1-26 and A-09.
-pnpm check: main checkout has no node_modules; run it in base2 (git checkout --detach <merge sha>, pnpm install --offline, pnpm check). compute-acceptance and provider.test also flake under load.
-Integration gate: bash C:/dev/Alexia-wt/gate.sh after each merge (prints GATE OK or failures).
-Critical path: P1-25 -> P1-17 -> P1-26 -> P1-18.
-Opus cap (2 builders) is the bottleneck. Reviewers are not counted, but the 5-worker cap counts everyone.
-Merges since the last phase review: 3 (P1-23, P1-10, P1-27).
-Open owner asks: A-09 (test bot, free provider key names, OK to race two providers), no reply. Only P1-18 waits on it. A-10 is a notice.
+- P1-26 build (opus, try 1) ctx_63927afdb362: documents reach the task lane, no empty assistant turns, bounded prompt fetches.
+- P1-28 build (sonnet, try 1) ctx_d2d475534832: telegram stays inside the gateway (invariants.mjs check), one base64.
+Todo: P1-29 (opus) and P1-30 (sonnet), both after P1-28, they don't share files, so run them together. P1-18 (sonnet) after P1-26 and needs A-09.
+Critical path: P1-26 -> P1-18 (needs owner A-09) -> P1 done -> phase review -> plan P2 (V3-2 Core in Rust).
+Follow-ups not specced yet: P1-17 review minors (see LOG 2026-11-19: main.rs:269/274 early return skips clean stop; main.rs:315 Ctrl+C window; main.rs:405 non-UTF-8 args; main.rs:306 prune). P1-31 nit: unanswered() sits between rule()'s JSDoc and rule() in packages/core/src/agent.ts:1004.
+Merges since the last phase review: 8 (P1-23, P1-10, P1-27, P1-25, P1-31, P1-17 + 2 plan merges not counted).
+Open owner asks: A-09 (test bot, free provider key names, OK to race two providers): no reply; Telegram reminder sent 2026-11-19. Only P1-18 waits on it. A-10 is a notice.
 Telegram: vars set (user env; read via PowerShell GetEnvironmentVariable User). getUpdates empty at handoff; no update_id processed yet.
-pnpm check on Windows: known pre-existing failures: compute-connect 'a paused request reader stalls uploads too' (always), compute-plugins 'cancelling a plugin tool propagates' and plugins/media compute 'ComfyUI the person is running' (load-flaky). Possibly also plugins/media models.test.js bytes=500- (P1-24 reviewer is checking).
-CI: .github/workflows/v3.yml runs on pushes to cr3studioo/v3 and cr3studioo/v3-*. node v3/ci/invariants.mjs (run from repo root) is a local merge gate; it rejects C:\ even inside message strings in src/.
-v2 conformance test: --features v2-conformance, run in C:\dev\Alexia-wt\base2 (detached, has node_modules) with ALEXIA_V2_PLUGINS=C:\dev\Alexia-wt\base2\plugins.
+pnpm check: the main checkout has no node_modules. Run it in C:\dev\Alexia-wt\base2: git checkout -q --detach <merge sha>, pnpm check. Known failures: compute-connect 'a paused request reader stalls uploads too' (always). Load flakes that pass alone: compute-acceptance, provider.test, noticing.test, compute-plugins cancel, plugins/media ComfyUI and models.test.js bytes=.
+Rust load flakes: fixed by P0-26 (conn.rs) and P1-27 (supervise.rs). If gate.sh fails on an alexia-mcp test, rerun once.
+CI: .github/workflows/v3.yml runs on pushes to cr3studioo/v3 and cr3studioo/v3-*. node v3/ci/invariants.mjs (run from repo root) is part of gate.sh.
+v2 conformance test: --features v2-conformance, run in base2 with ALEXIA_V2_PLUGINS=C:\dev\Alexia-wt\base2\plugins.
 Every builder prompt: no fake credentials in any key shape; generous timing bounds; no hard-coded absolute paths in src/.
 Leftover folders base\ and plan-P1\ in C:\dev\Alexia-wt are locked non-worktrees; delete when free.
