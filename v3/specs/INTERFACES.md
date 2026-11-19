@@ -115,6 +115,7 @@ tracing = "0.1"
 rusqlite = { version = "0.37", features = ["bundled"] }
 keyring = "4.2"          # same family as connect/
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
+base64 = "0.22"          # (V3-1, P1-17) voice notes, photo data URLs, v2 uploads; already in Cargo.lock via reqwest's deps
 
 [workspace.lints.rust]
 unsafe_code = "deny"     # alexia-mcp's Job Object code opts out with a module-level allow
@@ -700,6 +701,78 @@ impl Router {
     pub fn ranked(&self, now: Ms) -> Vec<Candidate>;
 }
 
+// ---- (V3-1) free providers and the catalog (P1-04, P1-05) ----
+pub mod free {
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)] #[serde(rename_all = "lowercase")]
+    pub enum Auth { Required, Optional, None }
+    #[derive(Clone, Debug)]
+    pub struct FreeRow { pub id: String, pub base_url: String, pub models_path: Option<String>,
+                         pub headers: Vec<(String, String)>, pub auth: Auth, pub all_free: bool,
+                         pub rpm: Option<u32>, pub rpd: Option<u32>, pub router: bool }
+    /// v2's free provider ladder, in v2's order (the names `secret set provider_<id>` accepts).
+    pub fn ladder() -> Vec<FreeRow>;
+    /// `secrets::get("_core", "provider_<id>")`, empty treated as missing.
+    pub fn key_for(row: &FreeRow) -> Option<String>;
+    /// One provider per row, keys read now. Rows come from `ladder()`, or from the JSON file
+    /// `ALEXIA_FREE_PROVIDERS` names (test hook). The catalog's rows are
+    /// `configured().iter().map(|p| p.row().clone())`, so both always match.
+    pub fn configured() -> Vec<OpenAiCompat>;
+}
+pub mod openai {
+    pub struct OpenAiCompat { /* row, key, client, timeouts */ }
+    impl OpenAiCompat {
+        pub fn new(row: FreeRow, key: Option<String>, client: reqwest::Client) -> OpenAiCompat;
+        pub fn row(&self) -> &FreeRow;
+        /// true when `auth` is None/Optional or a key is present.
+        pub fn usable(&self) -> bool;
+    }
+    impl Provider for OpenAiCompat { /* ... */ }
+}
+pub mod catalog {
+    pub struct Catalog { /* ... */ }
+    impl Catalog {
+        pub const REFRESH_MS: u64 = 6 * 60 * 60 * 1000;
+        pub fn new(providers: Vec<Arc<dyn Provider>>, rows: Vec<FreeRow>, cache: PathBuf) -> Catalog;
+        /// `refresh` now, then every REFRESH_MS; returns only when cancelled.
+        pub async fn run(&self, cancel: CancellationToken);
+    }
+}
+
+// ---- (V3-1) lanes and the fast chat (P1-07, P1-08) ----
+pub mod lane {
+    /// `Command` for a leading `/`; `Task` for an image part or when any task rule fires; else `Chat`.
+    pub fn lane(content: &Content) -> Lane;
+    /// The `Brain` the gateway holds: chat turns to `chat`, the rest to `task`; a chat
+    /// `Err(NeedsTask)` goes to `task` with the same turn and draft. `Reply.spans` start with
+    /// "lane" (then "chat-escalated" if the chat brain gave up); `Reply.lane` is the lane that answered.
+    pub struct Lanes { /* chat, task */ }
+    impl Lanes { pub fn new(chat: Arc<dyn Brain>, task: Arc<dyn Brain>) -> Lanes; }
+    impl Brain for Lanes { /* ... */ }
+}
+pub mod chat {
+    /// What FastChat needs from plugins, by capability name. Implemented for `McpHost`
+    /// (`call_capability`, text blocks joined with "\n"; `isError` or a failed call → `None`)
+    /// and by a fake in tests.
+    #[async_trait::async_trait]
+    pub trait Caps: Send + Sync {
+        fn answers(&self, cap: &str) -> bool;
+        async fn call(&self, cap: &str, args: Map<String, Value>, cancel: CancellationToken) -> Option<String>;
+    }
+    impl Caps for alexia_mcp::McpHost { /* ... */ }
+    /// The chat lane: one hedged call, no tools, no loop (SP-03); a byte-stable prompt prefix (SP-05).
+    pub struct FastChat { /* router, caps, store, budget, cached prefix */ }
+    impl FastChat {
+        pub const RECALL_WAIT_MS: u64 = 250;
+        pub const HISTORY: u32 = 20;
+        /// The exact reply that means "this needs the task lane".
+        pub const MARKER: &'static str = "[[task]]";
+        pub fn new(router: Arc<Router>, caps: Arc<dyn Caps>, store: Arc<Store>, budget: Budget) -> FastChat;
+        /// Drop the cached profile/personality; the hub calls it every 10 minutes.
+        pub fn invalidate(&self);
+    }
+    impl Brain for FastChat { /* ... */ }
+}
+
 // ---- the agent loop (V3-2) ----
 pub struct Agent { /* router, mcp, store, bus, ask, limits */ }
 impl Agent {
@@ -798,6 +871,9 @@ pub mod channels {
     pub fn secret_keys() -> &'static [&'static str];
     /// (V3-1) Every channel whose secret is present.
     pub fn configured(store: Arc<Store>, layout: &Layout) -> Vec<Arc<dyn Channel>>;
+    /// (V3-1) For `alexia-hub pair`: (channel name, six-digit code) for every configured
+    /// channel with no owner yet. Empty when every configured channel is paired.
+    pub fn pairing_codes(store: &Store) -> Result<Vec<(&'static str, String)>>;
 }
 ```
 
@@ -1526,6 +1602,7 @@ Run in CI on `windows-latest`, every push to `cr3studioo/v3` and every task bran
 | # | Check | How |
 |---|---|---|
 | 1 | **no crate names a plugin** | For every folder name under `plugins/`, grep `v3/crates/*/src` (word boundary, case-insensitive). Fails on any hit, except a channel adapter file under `crates/alexia-gateway/src/channels/` naming the *service* it speaks to (§8). Also fails on any path containing `plugins/` or `plugins\` in v3 source. |
+| 1b | **channels stay inside the gateway** (V3-1, P1-28) | `node v3/ci/invariants.mjs`: any `.rs` file outside `crates/alexia-gateway/` naming a `channels::<module>` path other than `channels::{secret_keys, configured, pairing_codes}` fails, so no other crate reaches a channel adapter (`channels::telegram` is `pub` only for the gateway's own tests). |
 | 2 | **boots with no plugins** | `cargo test --workspace` with `ALEXIA_PLUGINS_DIR` pointing at an empty temp folder and `plugins/` renamed away. Host tests use the fixture below, never `plugins/`. |
 | 3 | **crasher contained** | fixture exits, hangs, floods stdout with junk; the host stays up, backs off, marks it `Unhealthy` after 3 crashes in 60 s. |
 | 4 | **vanisher** | fixture's folder deleted mid-call: `CallError::Gone`, `Removed` emitted, its tools gone from `tools()`. (The re-plan half lands with the agent loop, V3-2.) |

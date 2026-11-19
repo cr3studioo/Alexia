@@ -78,7 +78,12 @@ P1-02 ─┬─ P1-09 telegram api ── P1-10 telegram channel (+P1-03)
        └─ P1-16 watchdog
 P1-14 v2 parallel tool calls (independent)
 P1-07, P1-08, P1-10, P1-12, P1-13, P1-15, P1-16 ── P1-17 hub wiring ── P1-18 e2e + 50 real messages
+P1-23 ── P1-25 time helper + brain spans ── P1-17 ──┬─ P1-26 documents ── P1-18
+                                                    └─ P1-28 channels private, one base64 (+P1-10)
 ```
+
+P1-25, P1-17 and P1-26 run one after another: all three edit the hub, and P1-25 and P1-26 both
+edit `chat.rs`, `lane.rs`, `bridge.rs` and `gateway.rs`. P1-26 ∥ P1-28 is fine (no shared file).
 
 P1-01 waits for P0-15 (both change `Cargo.lock`); P1-03 can start as soon as P0-07 is merged and
 P1-14 at any time. Can run together: P1-01 ∥ P1-03 ∥ P1-14. After P1-01: P1-02 ∥ P1-04 ∥ P1-07. After P1-02 and
@@ -108,16 +113,17 @@ Crate paths are under `v3/crates/`.
 | P1-14 | v2: parallel tool calls | opus | none | `packages/core/src/agent.ts`, `packages/core/test/agent.test.ts` |
 | P1-15 | Latency dashboard | sonnet | P1-02, P1-03 | `alexia-hub/src/latency.rs` |
 | P1-16 | Hub watchdog | sonnet | P1-02 | `alexia-hub/src/watchdog.rs` |
-| P1-17 | Hub wiring and CLI | sonnet | P1-07, P1-08, P1-10, P1-12, P1-13, P1-15, P1-16 | `alexia-hub/{Cargo.toml, src/main.rs, src/media.rs, tests/cli_p1.rs}`, `v3/Cargo.lock` |
+| P1-17 | Hub wiring and CLI | sonnet | P1-07, P1-08, P1-10, P1-12, P1-13, P1-15, P1-16, P1-25 | `v3/Cargo.toml`, `alexia-hub/{Cargo.toml, src/main.rs, src/media.rs, tests/cli_p1.rs}`, `v3/Cargo.lock` |
 | P1-18 | End-to-end latency test and the 50-message run | sonnet | P1-17, P1-26 | `alexia-hub/tests/telegram_e2e.rs`, `v3/ops/reports/P1-latency.md` |
 | P1-20 | Hub: latency offsets and hidden console | sonnet | none | `alexia-hub/src/{latency.rs, watchdog.rs}`, `v3/specs/INTERFACES.md` |
 | P1-21 | Telegram api: file transfers and retry_after | sonnet | none | `alexia-gateway/{src/channels/telegram/api.rs, tests/telegram_api.rs}` |
 | P1-22 | Core: tool rows on the wire, catalog temp file | sonnet | none | `alexia-core/{src/openai.rs, src/catalog.rs, tests/openai.rs, tests/catalog.rs}` |
 | P1-23 | Gateway: spawned tasks on the tracker | opus | none | `alexia-gateway/{src/gateway.rs, tests/gateway.rs}` |
 | P1-24 | v2 agent: dangling tool ids at the ceiling | sonnet | none | `packages/core/src/agent.ts`, `packages/core/test/agent.test.ts` |
-| P1-25 | One time helper | sonnet | P1-20, P1-22, P1-23, P1-17, P0-25 | `alexia-store/{src/types.rs, src/db.rs, src/import.rs, tests/time.rs}`, `alexia-core/src/catalog.rs`, `alexia-gateway/src/gateway.rs`, `alexia-hub/src/{watchdog.rs, latency.rs, main.rs}`, `v3/specs/INTERFACES.md` |
-| P1-26 | Documents reach the task lane; no empty assistant turns; bounded prompt fetches | opus | P1-07, P1-17, P1-23 | `alexia-core/{src/brain.rs, src/lane.rs, src/chat.rs, tests/lane.rs, tests/chat.rs, tests/types.rs}`, `alexia-gateway/{src/channel.rs, src/gateway.rs, tests/gateway.rs}`, `alexia-hub/{src/bridge.rs, Cargo.toml}`, `v3/Cargo.lock`, `v3/specs/INTERFACES.md` |
+| P1-25 | One time helper; brain spans measured from the turn | opus | P1-20, P1-22, P1-23, P0-25 | `alexia-store/{src/types.rs, src/db.rs, src/import.rs, tests/time.rs}`, `alexia-core/{src/lib.rs, src/catalog.rs, src/router.rs, src/lane.rs, src/chat.rs, tests/lane.rs, tests/chat.rs}`, `alexia-gateway/src/gateway.rs`, `alexia-hub/src/{bridge.rs, watchdog.rs, latency.rs}`, `v3/specs/INTERFACES.md` |
+| P1-26 | Documents reach the task lane; no empty assistant turns; bounded prompt fetches | opus | P1-07, P1-17, P1-23, P1-25 | `alexia-core/{src/brain.rs, src/lane.rs, src/chat.rs, tests/lane.rs, tests/chat.rs, tests/types.rs}`, `alexia-gateway/{src/channel.rs, src/gateway.rs, tests/gateway.rs}`, `alexia-hub/src/bridge.rs`, `v3/specs/INTERFACES.md` |
 | P1-27 | De-flake call_at_idle_deadline_never_gone | sonnet | none | `alexia-mcp/tests/supervise.rs` |
+| P1-28 | Telegram stays inside the gateway; one base64 | sonnet | P1-10, P1-17 | `v3/ci/invariants.mjs`, `alexia-gateway/{Cargo.toml, src/channels/telegram/mod.rs}`, `v3/Cargo.lock` |
 
 ## Owner needs
 
@@ -178,5 +184,12 @@ that file. The task named after each is the one that implements it.
    `uninstall`; `V2Bridge` gains `V2Config` and `set_ask` (§2.6).
 
 ## Notes
+
+- Phase review 2 (2026-11-19): brain spans were written in epoch ms where the gateway expects ms
+  since the brain got the turn; P1-25 fixes it (and `Span.start`'s definition in §2.3) before
+  P1-17 and P1-18. P1-17 was rewritten against the real code (spawned loops, not `supervise`;
+  `base64` as a workspace dependency; `McpMedia` over `chat::Caps`; catalog rows from
+  `configured()`; no `SettingsChanged`). INTERFACES.md §2.3/§2.4 now list `free`, `openai`,
+  `catalog`, `lane`, `chat` and `channels::pairing_codes` as built, and §7 check 1b (P1-28).
 
 - P1-22 skips tool rows on the no-tools path (`openai.rs` `wire`); V3-2 must map `calls` → `tool_calls` and `call_id` → `tool_call_id` when it sends tools.
