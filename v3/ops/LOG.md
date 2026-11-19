@@ -104,3 +104,6 @@
 - 2026-11-19 CEO #7: P0-16 review: changes - CI run 44428804086 red (stable rustc 1.100 moves test exes; apple-context/memory/telegram Stopped on runner); invariants.mjs cfg(test) cut too wide. Fix round sonnet ctx_75821a686191, try 2; CEO allowed it to push its own task branch only, to iterate on CI.
 - 2026-11-19 CEO #7: P0-20 done: cause (a), pid cleared before Stopped emitted (host.rs:596 vs :614); test waits for event. Review dispatched (opus).
 - 2026-11-19 CEO #7: P0-20 review approve; merged, integration green, pushed.
+- 2026-11-19 CEO #7: P1-04 done (free ladder + OpenAI SSE provider, 14 tests); review dispatched (opus).
+- 2026-11-19 CEO #7: P1-02 done (gateway contract + stubs); review dispatched (opus).
+- 2026-11-19 CEO #7: P1-04 review: changes (finish_reason error, retry-after overflow, had_key vs anonymous key, gsk_ test key shape, send vs cancel, error:null). Fix round opus ctx_8ea2ebf6d15b, try 2.
