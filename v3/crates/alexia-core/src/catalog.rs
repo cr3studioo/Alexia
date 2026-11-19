@@ -5,7 +5,9 @@
 //! every six hours (v2 D161), and cached to disk so the hub can route the moment it boots and
 //! while a list endpoint is down. v2: `packages/core/src/catalog.ts`.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -38,6 +40,9 @@ pub struct Catalog {
     cache: PathBuf,
     /// What the lists said (or the cache), in provider order. The seed is added on read.
     fetched: RwLock<Vec<Candidate>>,
+    /// Each provider's last `models()` answer: true = it answered, false = it has no key or its
+    /// key was refused. Absent = not asked yet, or down. Decides whether its seed is offered.
+    answered: RwLock<HashMap<String, bool>>,
 }
 
 impl Catalog {
@@ -55,6 +60,7 @@ impl Catalog {
             rows,
             cache,
             fetched: RwLock::new(fetched),
+            answered: RwLock::default(),
         }
     }
 
@@ -77,26 +83,40 @@ impl Catalog {
             answers[at] = Some(match result {
                 // An empty list is a shape change, not a world with no models in it (v2 `refresh`).
                 Ok(models) if !models.is_empty() => Answer::List(listed(&row, &models)),
-                // No key: the row is not usable, so nothing of it is a candidate any more.
-                Err(ProviderError::NeedsKey) => Answer::Unusable,
-                Ok(_) | Err(_) => Answer::Kept,
+                // No key, or the stored key refused (401/403): the row is not usable, so nothing
+                // of it is a candidate any more.
+                Err(ProviderError::NeedsKey | ProviderError::Refused(_)) => Answer::Unusable,
+                Ok(_) => Answer::Answered,
+                Err(_) => Answer::Kept,
             });
         }
 
         let next = {
             let old = self.fetched.read().unwrap_or_else(|e| e.into_inner());
             let mut next = Vec::with_capacity(old.len());
-            for (provider, answer) in self.providers.iter().zip(answers) {
+            for (provider, answer) in self.providers.iter().zip(&answers) {
                 match answer {
-                    Some(Answer::List(list)) => next.extend(list),
+                    Some(Answer::List(list)) => next.extend(list.iter().cloned()),
                     Some(Answer::Unusable) => {}
-                    Some(Answer::Kept) | None => {
+                    Some(Answer::Answered | Answer::Kept) | None => {
                         next.extend(old.iter().filter(|c| c.provider == provider.id()).cloned())
                     }
                 }
             }
             next
         };
+        {
+            let mut answered = self.answered.write().unwrap_or_else(|e| e.into_inner());
+            for (provider, answer) in self.providers.iter().zip(&answers) {
+                let state = match answer {
+                    Some(Answer::Unusable) => false,
+                    Some(Answer::List(_) | Answer::Answered) => true,
+                    // Down says nothing about the key: the last answer stands.
+                    Some(Answer::Kept) | None => continue,
+                };
+                answered.insert(provider.id().into(), state);
+            }
+        }
         if let Err(e) = self.write(&next) {
             tracing::warn!("the model catalog cache could not be written: {e}");
         }
@@ -117,19 +137,30 @@ impl Catalog {
         }
     }
 
-    /// What the router may choose from: the lists (or the cache), for providers this catalog
-    /// was given, plus v2's written-down floor for a keyless row that has nothing else.
+    /// What the router may choose from: per provider, v2's written-down seed first, then the
+    /// lists (or the cache) without the seeded ids (v2 `Catalog.models`: the seed wins on a
+    /// clash, per provider here so a seeded id does not hide another provider's row). A seed is offered unless the provider's last answer was NeedsKey/Refused, and
+    /// for a key-only row only once its `models()` has answered (it was built with a key).
     pub fn candidates(&self) -> Vec<Candidate> {
         let fetched = self.fetched.read().unwrap_or_else(|e| e.into_inner());
+        let answered = self.answered.read().unwrap_or_else(|e| e.into_inner());
         let mut out = Vec::new();
         for provider in &self.providers {
             let id = provider.id();
             let Some(row) = self.row(id) else { continue };
-            let before = out.len();
-            out.extend(fetched.iter().filter(|c| c.provider == id).cloned());
-            if out.len() == before && row.auth != Auth::Required {
+            let state = answered.get(id).copied();
+            if state != Some(false) && (row.auth != Auth::Required || state == Some(true)) {
                 out.extend(seeded(&row));
             }
+            out.extend(
+                fetched
+                    .iter()
+                    .filter(|c| {
+                        c.provider == id
+                            && !SEEDED.iter().any(|s| (s.0, s.1) == (id, c.model.as_str()))
+                    })
+                    .cloned(),
+            );
         }
         out
     }
@@ -147,8 +178,14 @@ impl Catalog {
             fetched_at: now(),
             candidates: candidates.to_vec(),
         };
+        // Unique per write, so two refreshes at once never write the same temp file.
+        static WRITES: AtomicU64 = AtomicU64::new(0);
         let mut tmp = self.cache.clone().into_os_string();
-        tmp.push(".tmp");
+        tmp.push(format!(
+            ".{}-{}.tmp",
+            std::process::id(),
+            WRITES.fetch_add(1, Ordering::Relaxed)
+        ));
         std::fs::write(&tmp, serde_json::to_vec(&file)?)?;
         std::fs::rename(&tmp, &self.cache)
     }
@@ -157,6 +194,8 @@ impl Catalog {
 #[derive(Clone)]
 enum Answer {
     List(Vec<Candidate>),
+    /// Answered with an empty list: usable, but its cached entries are kept.
+    Answered,
     Unusable,
     Kept,
 }
@@ -188,7 +227,8 @@ fn sep(c: char) -> bool {
 }
 
 /// Words that name something other than a text chat: embeddings, rerankers, speech in or out,
-/// image generators, OCR, and guard / moderation classifiers.
+/// image and video generators, TTS voices, and guard / moderation classifiers. OCR is matched
+/// as a whole id segment below.
 const NOT_CHAT: &[&str] = &[
     "bge",
     "tts",
@@ -203,7 +243,8 @@ const NOT_CHAT: &[&str] = &[
     "sdxl",
     "diffusion",
     "dall",
-    "ocr",
+    "veo",
+    "orpheus",
     "moderation",
     "safety",
 ];
@@ -214,12 +255,18 @@ const NOT_CHAT: &[&str] = &[
 /// their id, split on anything that is not a letter or digit.
 pub fn chats(model_id: &str) -> bool {
     let id = model_id.to_lowercase();
-    !id.split(|c: char| !c.is_ascii_alphanumeric()).any(|word| {
-        NOT_CHAT.contains(&word)
-            || word.starts_with("embed")
-            || word.starts_with("rerank")
-            || word.ends_with("guard")
-    })
+    let dashed = format!(
+        "-{}-",
+        id.replace(|c: char| !c.is_ascii_alphanumeric(), "-")
+    );
+    !dashed.contains("-ocr-")
+        && !id.contains("guardian")
+        && !id.split(|c: char| !c.is_ascii_alphanumeric()).any(|word| {
+            NOT_CHAT.contains(&word)
+                || word.starts_with("embed")
+                || word.starts_with("rerank")
+                || word.ends_with("guard")
+        })
 }
 
 /// Routers v2 knows only by their display name ("Free Models Router", "Pareto Code Router",
@@ -287,9 +334,7 @@ pub fn same(model_id: &str) -> String {
     id.rsplit('/').next().unwrap_or(id).to_owned()
 }
 
-/// v2's `SEEDED` (id, context), keyless rows only. ponytail: nara and cloudflare-ai are seeded
-/// in v2 too, but they need a key and publish no list, and `Provider` cannot say whether one
-/// has a key; add them when it can.
+/// v2's `SEEDED` (provider, id, context), every row of it.
 const SEEDED: &[(&str, &str, u32)] = &[
     ("ovhcloud", "gpt-oss-120b", 131_072),
     ("ovhcloud", "Meta-Llama-3_3-70B-Instruct", 131_072),
@@ -300,6 +345,10 @@ const SEEDED: &[(&str, &str, u32)] = &[
     ("aihorde", "aphrodite/TheDrummer/Cydonia-24B-v4.3", 32_768),
     ("aihorde", "aphrodite/TheDrummer/Skyfall-31B-v4.2", 32_768),
     ("aihorde", "koboldcpp/gemma-4-31B-it-heretic", 32_768),
+    ("nara", "mistral-large", 0),
+    ("nara", "mistral-medium-3-5", 0),
+    ("nara", "tencent-hy3", 1_000_000),
+    ("cloudflare-ai", "@cf/zai-org/glm-4.7-flash", 0),
 ];
 
 fn seeded(row: &FreeRow) -> impl Iterator<Item = Candidate> + '_ {

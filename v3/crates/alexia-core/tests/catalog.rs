@@ -14,6 +14,7 @@ enum Says {
     List(Vec<ModelInfo>),
     Down,
     NeedsKey,
+    Refused,
 }
 
 struct Fake {
@@ -31,6 +32,7 @@ impl Provider for Fake {
             Says::List(list) => Ok(list.clone()),
             Says::Down => Err(ProviderError::Unreachable),
             Says::NeedsKey => Err(ProviderError::NeedsKey),
+            Says::Refused => Err(ProviderError::Refused("the key was refused".into())),
         }
     }
     async fn chat(
@@ -89,6 +91,12 @@ fn cache(name: &str) -> PathBuf {
     dir.join("cache").join("v3-free-models.json")
 }
 
+fn no_temp_left(cache: &std::path::Path) -> bool {
+    std::fs::read_dir(cache.parent().unwrap())
+        .unwrap()
+        .all(|e| !e.unwrap().file_name().to_string_lossy().ends_with(".tmp"))
+}
+
 fn ids(candidates: &[Candidate]) -> Vec<(&str, &str)> {
     candidates
         .iter()
@@ -140,6 +148,17 @@ fn chats_keeps_text_drops_others() {
         "nvidia/llama-3.1-nemoguard-8b-content-safety",
         "mistral-moderation-latest",
         "mistral-ocr-latest",
+        "ocr/some-reader",
+        // Groq's text-to-speech voices.
+        "canopylabs/orpheus-v1-english",
+        "canopylabs/orpheus-arabic-saudi",
+        // Google's video generators.
+        "veo-2.0-generate-001",
+        "veo-3.0-generate-preview",
+        // Guard classifiers named guardian.
+        "ibm/granite-guardian-3.2-5b",
+        "granite-guardian-3.0-8b",
+        "vendor/someguardian-small",
     ];
     for id in dropped {
         assert!(!chats(id), "{id} is not a chat model");
@@ -254,7 +273,7 @@ async fn refresh_writes_and_new_reads_cache() {
     let file: serde_json::Value = serde_json::from_str(&text).unwrap();
     assert!(file["fetched_at"].as_i64().unwrap() > 0);
     assert_eq!(file["candidates"].as_array().unwrap().len(), 2);
-    assert!(!path.with_extension("json.tmp").exists());
+    assert!(no_temp_left(&path));
 
     let restarted = Catalog::new(
         vec![fake("groq", Says::Down), fake("openrouter", Says::Down)],
@@ -356,10 +375,54 @@ async fn only_free_and_usable() {
     )
     .refresh()
     .await;
-    let catalog = Catalog::new(vec![fake("groq", Says::NeedsKey)], rows, path);
+    let catalog = Catalog::new(
+        vec![fake("groq", Says::NeedsKey)],
+        rows.clone(),
+        path.clone(),
+    );
     assert_eq!(catalog.candidates().len(), 1);
     catalog.refresh().await;
     assert!(catalog.candidates().is_empty());
+}
+
+#[tokio::test]
+async fn refused_key_drops_cached_entries() {
+    // A 401/403 with a stored key (Refused) drops the cache the same way NeedsKey does.
+    let rows = vec![row("groq", Auth::Required)];
+    let path = cache("refused");
+    Catalog::new(
+        vec![fake("groq", Says::List(vec![model("llama-3.3-70b", true)]))],
+        rows.clone(),
+        path.clone(),
+    )
+    .refresh()
+    .await;
+    let catalog = Catalog::new(
+        vec![fake("groq", Says::Refused)],
+        rows.clone(),
+        path.clone(),
+    );
+    assert_eq!(catalog.candidates().len(), 1);
+    catalog.refresh().await;
+    assert!(catalog.candidates().is_empty());
+    // And the cache says so: a restart does not bring them back.
+    let restarted = Catalog::new(vec![fake("groq", Says::Down)], rows, path);
+    assert!(restarted.candidates().is_empty());
+}
+
+#[tokio::test]
+async fn concurrent_refreshes_do_not_collide() {
+    let path = cache("concurrent");
+    let catalog = Catalog::new(
+        vec![fake("groq", Says::List(vec![model("llama-3.3-70b", true)]))],
+        vec![row("groq", Auth::Required)],
+        path.clone(),
+    );
+    for _ in 0..10 {
+        tokio::join!(catalog.refresh(), catalog.refresh(), catalog.refresh());
+    }
+    assert_eq!(ids(&catalog.candidates()), vec![("groq", "llama-3.3-70b")]);
+    assert!(no_temp_left(&path));
 }
 
 #[tokio::test]
@@ -388,20 +451,77 @@ async fn seed_when_nothing_answers() {
     assert_eq!(seeded.iter().filter(|c| c.provider == "aihorde").count(), 3);
     assert!(seeded.iter().all(|c| c.provider != "groq"));
 
-    // A list that answers replaces the seed for that provider.
+    // v2 `Catalog.models`: the seed stays beside a live list, first, and wins on a clash.
     let catalog = Catalog::new(
         vec![fake(
             "aihorde",
-            Says::List(vec![model("koboldcpp/live-13b", true)]),
+            Says::List(vec![
+                model("koboldcpp/live-13b", true),
+                model("koboldcpp/gemma-4-31B-it-heretic", true),
+            ]),
         )],
         vec![row("aihorde", Auth::Optional)],
-        cache("seed-replaced"),
+        cache("seed-beside-list"),
     );
     catalog.refresh().await;
     assert_eq!(
         ids(&catalog.candidates()),
-        vec![("aihorde", "koboldcpp/live-13b")]
+        vec![
+            ("aihorde", "aphrodite/TheDrummer/Cydonia-24B-v4.3"),
+            ("aihorde", "aphrodite/TheDrummer/Skyfall-31B-v4.2"),
+            ("aihorde", "koboldcpp/gemma-4-31B-it-heretic"),
+            ("aihorde", "koboldcpp/live-13b"),
+        ]
     );
+}
+
+#[tokio::test]
+async fn no_list_rows_with_a_key_use_their_seed() {
+    // nara, cloudflare-ai and github publish no list: `models()` is Ok(empty) when built with
+    // a key and NeedsKey without one.
+    let mut rows = vec![
+        row("nara", Auth::Required),
+        row("cloudflare-ai", Auth::Required),
+        row("github", Auth::Required),
+    ];
+    for r in &mut rows {
+        r.models_path = None;
+    }
+    let catalog = Catalog::new(
+        vec![
+            fake("nara", Says::List(Vec::new())),
+            fake("cloudflare-ai", Says::List(Vec::new())),
+            fake("github", Says::List(Vec::new())),
+        ],
+        rows.clone(),
+        cache("no-list"),
+    );
+    // Not asked yet: a key-only row's seed waits for its first answer.
+    assert!(catalog.candidates().is_empty());
+    catalog.refresh().await;
+    let got = catalog.candidates();
+    assert_eq!(
+        ids(&got),
+        vec![
+            ("nara", "mistral-large"),
+            ("nara", "mistral-medium-3-5"),
+            ("nara", "tencent-hy3"),
+            ("cloudflare-ai", "@cf/zai-org/glm-4.7-flash"),
+        ]
+    );
+    assert_eq!(got[2].context, 1_000_000);
+
+    // Without a key there is nothing to offer.
+    let catalog = Catalog::new(
+        vec![
+            fake("nara", Says::NeedsKey),
+            fake("cloudflare-ai", Says::NeedsKey),
+        ],
+        rows,
+        cache("no-list-keyless"),
+    );
+    catalog.refresh().await;
+    assert!(catalog.candidates().is_empty());
 }
 
 #[tokio::test]
