@@ -93,3 +93,5 @@
 - 2026-11-19 CEO #7: P0-19 re-review approve; merged, integration green, pushed. Non-blocking: op.validate not run on unwritten tables.
 - 2026-11-19 CEO #7: P0-15 try 2 (sonnet ctx_57b1bee292b1): merge v3 into branch, rerun listing test x3, explain Running/Stopped variance.
 - 2026-11-19 CEO #7: P0-15 try 2 done: 4/4 v2_plugins tests pass 3/3 runs, all 15 plugins list tools; variance was the host bugs. Review dispatched (opus).
+- 2026-11-19 CEO #7: P0-15 review approve; merged, integration green, pushed. Minor follow-ups: v2_plugins.rs:239 assert always true; temp dirs left in %TEMP%.
+- 2026-11-19 CEO #7: dispatched P0-16 (sonnet ctx_274002cdba35, workflow rule lifted for v3.yml only) and P1-01 (opus ctx_78a4c0021824).
