@@ -12,3 +12,12 @@ workspace = true
 [dependencies]
 alexia-store = { path = "../alexia-store" }
 alexia-core = { path = "../alexia-core" }
+tokio.workspace = true
+tokio-util.workspace = true
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+# The channel adapters' HTTPS (P1-09).
+reqwest.workspace = true
