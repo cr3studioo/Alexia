@@ -35,7 +35,7 @@
 | P1-14 | v2: parallel tool calls | P1 | opus | none | packages/core/src/agent.ts, packages/core/test/agent.test.ts | merged | 1 | cr3studioo/v3-P1-14 | |
 | P1-15 | Latency dashboard | P1 | sonnet | P1-02, P1-03 | alexia-hub/src/latency.rs | merged | 2 | cr3studioo/v3-P1-15 |  |
 | P1-16 | Hub watchdog | P1 | sonnet | P1-02 | alexia-hub/src/watchdog.rs | merged | 1 | cr3studioo/v3-P1-16 | |
-| P1-17 | Hub wiring and CLI | P1 | sonnet | P1-07, P1-08, P1-10, P1-12, P1-13, P1-15, P1-16 | alexia-hub/{Cargo.toml, src/main.rs, src/media.rs, tests/... | todo | 0 |  | held: re-plan after phase review 2 (ctx_4026058819e2) |
+| P1-17 | Hub wiring and CLI | P1 | sonnet | P1-07, P1-08, P1-10, P1-12, P1-13, P1-15, P1-16, P1-25 | v3/Cargo.toml, hub Cargo.toml/main.rs/media.rs/tests/cli_p1.rs, Cargo.lock | todo | 0 |  | re-planned |
 | P1-18 | End-to-end latency test and the 50-message run | P1 | sonnet | P1-17, P1-26 | alexia-hub/tests/telegram_e2e.rs, v3/ops/reports/P1-laten... | todo | 0 | | |
 | P0-19 | Host display name and unwritten tables | P0 | opus | P0-13 | alexia-mcp lib.rs, tests/alexia_layer; alexia-store namespace | merged | 2 | cr3studioo/v3-P0-19 | |
 | P0-20 | De-flake idle_lazy_plugin_stops, round 2 | P0 | sonnet | P0-18 | alexia-mcp tests/supervise.rs | merged | 1 | cr3studioo/v3-P0-20 | |
@@ -50,7 +50,8 @@
 | P1-22 | Core: tool rows on the wire, catalog temp file | P1 | sonnet | none | alexia-core openai.rs, catalog.rs, tests | merged | 1 | cr3studioo/v3-P1-22 |  |
 | P1-23 | Gateway: spawned tasks on the tracker | P1 | opus | none | alexia-gateway/{src/gateway.rs, tests/gateway.rs} | merged | 1 | cr3studioo/v3-P1-23 |  |
 | P1-24 | v2 agent: dangling tool ids at the ceiling | P1 | sonnet | none | packages/core/src/agent.ts, test/agent.test.ts | merged | 1 | cr3studioo/v3-P1-24 |  |
-| P1-25 | One time helper | P1 | sonnet | P1-20, P1-22, P1-23, P1-17, P0-25 | alexia-store types/db/import, core catalog, gateway, hub watchdog/latency/main, INTERFACES.md | todo | 0 | | |
+| P1-25 | One time helper; brain spans measured from the turn | P1 | opus | P1-20, P1-22, P1-23, P0-25 | store types/db/import, core lib/catalog/router/lane/chat+tests, gateway.rs, hub bridge/watchdog/latency, INTERFACES | running | 1 | cr3studioo/v3-P1-25 |  |
 | P0-26 | De-flake junk_is_skipped_and_logged | P0 | sonnet | none | alexia-mcp tests/conn.rs | merged | 1 | cr3studioo/v3-P0-26 |  |
-| P1-26 | Documents to task lane; no empty turns; bounded fetches | P1 | opus | P1-07, P1-17, P1-23 | core brain/lane/chat+tests, gateway channel/gateway+test, hub bridge/Cargo.toml, INTERFACES.md | todo | 0 | | run after or before P1-25, not alongside |
+| P1-26 | Documents to task lane; no empty turns; bounded fetches | P1 | opus | P1-07, P1-17, P1-23, P1-25 | core brain/lane/chat+tests, gateway channel/gateway+test, hub bridge/Cargo.toml, INTERFACES.md | todo | 0 |  | run after or before P1-25, not alongside |
 | P1-27 | De-flake call_at_idle_deadline_never_gone | P1 | sonnet | none | alexia-mcp tests/supervise.rs | review | 1 | cr3studioo/v3-P1-27 | review ctx_178e82b708ce |
+| P1-28 | Telegram stays inside the gateway; one base64 | P1 | sonnet | P1-10, P1-17 | ci/invariants.mjs, gateway Cargo.toml + telegram/mod.rs, Cargo.lock | todo | 0 | | |

@@ -177,3 +177,4 @@
 2026-11-19 Phase review 2: 12 findings (3 high: span start epoch vs since-turn, Turn lacks files = P1-26, P1-10 unmerged). P1-17 spec assumes supervise/base64/SettingsChanged the code lacks.
 2026-11-19 P1-17 held until re-plan. Planner ctx_4026058819e2 in C:\dev\Alexia-wt\plan-rv (branch cr3studioo/v3-plan-rv) re-plans P1-17/P1-25, adds INTERFACES signatures, new tasks from P1-28.
 2026-11-19 Merged P1-23 (gate ok, pushed). P1-27 and P1-10 fixer done; reviews ctx_178e82b708ce, ctx_99df8d736766.
+2026-11-19 Re-plan merged: P1-25 widened to opus (span start fix), P1-17 depends on P1-25, P1-26 on P1-25, new P1-28 (sonnet). Dispatched P1-25 ctx_9d1b12648b46.
