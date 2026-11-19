@@ -369,6 +369,39 @@ fn unwritten_table_update_delete_count_are_zero() {
 }
 
 #[test]
+fn unwritten_table_rejects_malformed_column_name() {
+    let s = store("demo", &["t"]);
+    let bad = filter(json!({"a b": 1}));
+    let q = Select {
+        filter: Some(bad.clone()),
+        ..Select::default()
+    };
+    assert!(matches!(s.select("demo", "t", &q), Err(Error::Invalid(_))));
+    let q = Select {
+        order: vec![("x;y".into(), Dir::Asc)],
+        ..Select::default()
+    };
+    assert!(matches!(s.select("demo", "t", &q), Err(Error::Invalid(_))));
+    let ok = filter(json!({"id": "x"}));
+    assert!(matches!(
+        s.update("demo", "t", &row(json!({"a b": 1})), &ok),
+        Err(Error::Invalid(_))
+    ));
+    assert!(matches!(
+        s.update("demo", "t", &row(json!({"done": true})), &bad),
+        Err(Error::Invalid(_))
+    ));
+    assert!(matches!(
+        s.delete("demo", "t", DeleteScope::Where(&bad)),
+        Err(Error::Invalid(_))
+    ));
+    assert!(matches!(
+        s.count("demo", "t", Some(&bad)),
+        Err(Error::Invalid(_))
+    ));
+}
+
+#[test]
 fn written_table_still_rejects_unknown_column() {
     let s = store("demo", &["t"]);
     s.insert("demo", "t", &row(json!({"n": 1}))).unwrap();
