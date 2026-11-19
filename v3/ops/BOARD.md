@@ -55,3 +55,6 @@
 | P1-26 | Documents to task lane; no empty turns; bounded fetches | P1 | opus | P1-07, P1-17, P1-23, P1-25 | core brain/lane/chat+tests, gateway channel/gateway+test, hub bridge/Cargo.toml, INTERFACES.md | todo | 0 |  | run after or before P1-25, not alongside |
 | P1-27 | De-flake call_at_idle_deadline_never_gone | P1 | sonnet | none | alexia-mcp tests/supervise.rs | merged | 1 | cr3studioo/v3-P1-27 |  |
 | P1-28 | Telegram stays inside the gateway; one base64 | P1 | sonnet | P1-10, P1-17 | ci/invariants.mjs, gateway Cargo.toml + telegram/mod.rs, Cargo.lock | todo | 0 | | |
+| P1-29 | Telegram: finish only what was delivered; pairing closes once paired | P1 | opus | P1-28 | gateway telegram/mod.rs, tests/telegram_channel.rs | todo | 0 | | |
+| P1-30 | Approvals: test the 10-minute give-up and scheduled jobs | P1 | sonnet | P1-28 | gateway Cargo.toml, tests/ask_voice.rs | todo | 0 | | |
+| P1-31 | v2 agent: dangling tool ids on a stop | P1 | sonnet | none | packages/core/src/agent.ts, test/agent.test.ts | running | 1 | cr3studioo/v3-P1-31 | |

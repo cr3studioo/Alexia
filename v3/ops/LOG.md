@@ -180,3 +180,4 @@
 2026-11-19 Re-plan merged: P1-25 widened to opus (span start fix), P1-17 depends on P1-25, P1-26 on P1-25, new P1-28 (sonnet). Dispatched P1-25 ctx_9d1b12648b46.
 2026-11-19 Merged P1-10 (try 3, api.rs change allowed) and P1-27 (gate ok, pushed). Merges since phase review: 3.
 2026-11-19 Planner ctx_42985a622eac (worktree plan-fu2) specs follow-ups from P1-29: telegram finish-on-failed-send, pairing rotation DoS, ask timeout test (test-util), v2 agent aborted call ids.
+2026-11-19 Follow-ups 2 merged: P1-29 (opus), P1-30 (sonnet) after P1-28; P1-31 (sonnet, v2) dispatched ctx_de6a153539a0.
