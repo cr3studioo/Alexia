@@ -273,16 +273,13 @@ async fn junk_is_skipped_and_logged() {
     let tools = call(&fx.conn, "tools/list", json!({})).await.unwrap();
     assert_eq!(tools["tools"][0]["name"], "junk");
     let log = fx.proc.stderr.clone();
-    assert!(
-        eventually(|| log
-            .lines()
-            .last()
-            .is_some_and(|l| l == "[not json] this is not json 999"))
-        .await,
-        "{:?}",
-        log.lines().last()
-    );
-    assert!(log.lines().len() <= 500);
+    // Not necessarily last: the fixture's own `got ...` stderr lines come through a separate
+    // pipe and can land after the junk line.
+    let junk = "[not json] this is not json 999";
+    let seen = eventually(|| log.lines().iter().any(|l| l == junk)).await;
+    let lines = log.lines();
+    assert!(seen, "{junk:?} not among {} lines: {lines:#?}", lines.len());
+    assert!(lines.len() <= 500, "{} lines", lines.len());
     fx.done().await;
 }
 
