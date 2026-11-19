@@ -163,3 +163,6 @@
 - 2026-11-19 CEO #9: P1-13 fix round 1 done; re-review dispatched. supervise.rs call_at_idle_deadline_never_gone (new in P0-22) also flaked under load: needs a de-flake task.
 - 2026-11-19 CEO #9: handoff to CEO #10 (Phase 0 fully merged). 5 live workers.
 - 2026-11-19 CEO #9: P1-08 done (15 tests); review dispatched (ctx_6b0002a09fec). P1-10 fix still queued: 5-worker cap full.
+2026-11-19 CEO #10 started; bound run_7a40b198ac83. Reviews approved: P1-08, P1-13, P1-21. P0-26 build done.
+2026-11-19 Dispatched P1-10 fix 1 (opus) ctx_47b851e49707, P1-12 build (opus) ctx_57bb946afe73, P0-26 review ctx_69127b377058.
+2026-11-19 Merged P1-08, P1-13, P1-21 (gate ok each, pushed). Merges since phase review: 8.
