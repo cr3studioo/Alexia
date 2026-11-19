@@ -10,8 +10,9 @@
  *
  * Deliberate deviation from the spec (CEO-approved): lines whose trimmed text starts with `//`
  * (so `///` and `//!` too) are skipped by every check; and the path check (3) also skips test
- * code: files under a `tests/` folder and everything from a `#[cfg(test)]` line that is directly followed by a
- * `mod` line to the end of the file. The plugin-name check still scans test code outside comments.
+ * code: files under a `tests/` folder and everything from a `#[cfg(test)]` line that is directly followed by an
+ * inline `mod x {` line to the end of the file (an out-of-line `mod x;` skips nothing). Checks 1 and 3
+ * scan only each crate's `src/`. The plugin-name check does not skip test code inside `src/`.
  */
 import { execFileSync } from 'node:child_process'
 import { readdirSync, readFileSync } from 'node:fs'
@@ -57,7 +58,7 @@ export function pathHits(path, text) {
   const lines = text.split('\n')
   // Only a `#[cfg(test)]` directly followed by a `mod` line opens the test module.
   const cut = lines.findIndex(
-    (l, i) => l.trim() === '#[cfg(test)]' && /^\s*(pub(\([^)]*\))?\s+)?mod\s/.test(lines[i + 1] ?? ''),
+    (l, i) => l.trim() === '#[cfg(test)]' && /^\s*(pub(\([^)]*\))?\s+)?mod\s[^;]*\{/.test(lines[i + 1] ?? ''),
   )
   lines.slice(0, cut < 0 ? undefined : cut).forEach((line, i) => {
     if (isComment(line)) return
@@ -159,6 +160,8 @@ function selfTest() {
   ok('a path in #[cfg(test)] code', pathHits(src, 'fn a() {}\n#[cfg(test)]\nmod t { const P: &str = "C:\\\\x"; }'))
   expect('a path after a mid-file #[cfg(test)] fn', pathHits(src, '#[cfg(test)]\nfn helper() {}\nconst P: &str = "/home/x";'))
   expect('a path before #[cfg(test)]', pathHits(src, 'const P: &str = "/home/x";\n#[cfg(test)]\nmod t {}'))
+  expect('a path after an out-of-line #[cfg(test)] mod tests;', pathHits(src, '#[cfg(test)]\nmod tests;\nconst P: &str = "/home/x";'))
+  expect('a plugin id after an out-of-line #[cfg(test)] mod tests;', pluginHits(src, '#[cfg(test)]\nmod tests;\nlet a = "voice";', ['voice']))
   ok('a path under tests/', pathHits('v3/crates/a/tests/t.rs', 'let p = "/home/x";'))
   ok('a relative path', pathHits(src, 'let p = "data/x";'))
   return bad
