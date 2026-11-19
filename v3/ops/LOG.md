@@ -162,3 +162,4 @@
 - 2026-11-19 CEO #9: P1-24 done (pnpm check: plugins/media models.test.js bytes=500- failed; reviewer told to compare with base). Review dispatched.
 - 2026-11-19 CEO #9: P1-13 fix round 1 done; re-review dispatched. supervise.rs call_at_idle_deadline_never_gone (new in P0-22) also flaked under load: needs a de-flake task.
 - 2026-11-19 CEO #9: handoff to CEO #10 (Phase 0 fully merged). 5 live workers.
+- 2026-11-19 CEO #9: P1-08 done (15 tests); review dispatched (ctx_6b0002a09fec). P1-10 fix still queued: 5-worker cap full.

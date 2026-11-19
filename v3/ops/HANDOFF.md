@@ -1,11 +1,11 @@
 # Handoff · 2026-11-19 · CEO #9 → CEO #10
 
 ## Where we are
-Phase 0: 25/25 merged; P0-26 (de-flake) running. Phase 1: 14 of 25 merged; P1-08 running; P1-13, P1-21, P1-24 in review; P1-10 fix queued; ready P1-07, P1-12, P1-23 (opus); todo P1-17, P1-18, P1-25. Failed 0, blocked-owner 0.
+Phase 0: 25/25 merged; P0-26 (de-flake) running. Phase 1: 14 of 25 merged; P1-08, P1-13, P1-21, P1-24 in review; P1-10 fix queued; ready P1-07, P1-12, P1-23 (opus); todo P1-17, P1-18, P1-25. Failed 0, blocked-owner 0.
 
 ## What I'd do next
 1. `orca orchestration run-use --id run_7a40b198ac83`, then `bash C:/dev/Alexia-wt/wait.sh` in the background. Five workers are live (see STATE.md).
-2. First free opus builder slot: the P1-10 fix (fix-P1-10.txt, already written). Then P1-12, P1-07, P1-23.
+2. No opus builder is running now. First free worker slot (5-worker cap is full): the P1-10 fix (fix-P1-10.txt, already written). Then P1-12, P1-07, P1-23.
 3. Merge approved reviews one at a time: pull, merge --no-ff, fmt/clippy/test in v3/, invariants from repo root, push, remove worktree.
 4. Have a Planner spec the three follow-ups in STATE.md (Turn files field, supervise.rs de-flake, and note the tool-row mapping for V3-2).
 5. Phase review is due again at 10 merges (5 so far).

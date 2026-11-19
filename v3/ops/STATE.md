@@ -5,14 +5,14 @@ Orca run: run_7a40b198ac83 (bind with run-use). Helpers in C:\dev\Alexia-wt: wai
 P0: all 25 merged. P0-26 (de-flake conn.rs junk_is_skipped_and_logged, sonnet) running.
 P1 merged: P1-01..P1-06, P1-09, P1-11, P1-14, P1-15, P1-16, P1-19, P1-20, P1-22.
 Live Orca workers (wait for worker_done):
-- P1-08 build (opus) ctx_d6df95888b92. Allowed by CEO answer to make alexia-mcp process::redact public (process.rs + lib.rs, 2 lines).
+- P1-08 review (opus) ctx_6b0002a09fec. Build done (15 tests; redact made pub in alexia-mcp per CEO answer; day line is UTC).
 - P1-13 re-review (opus) ctx_01fc0222f8ed, after fix round 1 (try 2).
 - P1-21 review ctx_00b95a0f5956.
 - P1-24 review ctx_0f7a6c70cacd (also judges plugins/media models.test.js bytes=500- failure vs base).
 - P0-26 build (sonnet) ctx_d965db584aa9.
 Queued: P1-10 fix round 1 (opus, try 2): C:\dev\Alexia-wt\fix-P1-10.txt, worktree C:\dev\Alexia-wt\P1-10 exists. Dispatch it in the first free opus slot.
 Ready (opus): P1-23 (gateway tracker), P1-07 (lanes), P1-12 (approvals/voice). Todo: P1-17 (needs P1-07, P1-08, P1-10, P1-12, P1-13), P1-18 (needs P1-17, A-09), P1-25 (needs P1-17, P1-20, P1-22, P1-23, P0-25).
-Critical path: P1-08 -> P1-17 -> P1-18. P1-10 fix, P1-12, P1-07, P1-13 also feed P1-17.
+Critical path: P1-08 review -> P1-17 -> P1-18. P1-10 fix, P1-12, P1-07, P1-13 also feed P1-17.
 Opus cap (2 builders) is the bottleneck. Reviewers are not counted, but the 5-worker cap counts everyone.
 Merges since the last phase review: 5 (P0-22, P1-20, P1-22, P1-06, P0-25).
 Follow-ups to plan (no spec yet): (1) Turn has no files field, so documents cannot reach V2Bridge (needs alexia-core Turn change; plan before or with P1-17). (2) De-flake alexia-mcp tests/supervise.rs call_at_idle_deadline_never_gone (new in P0-22, flaked under load in the P1-13 fix run). (3) P1-22 skips tool rows on the no-tools path; V3-2 must map calls/call_id when tools are sent.

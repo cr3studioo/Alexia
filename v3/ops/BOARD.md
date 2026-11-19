@@ -26,7 +26,7 @@
 | P1-05 | Free chat catalog | P1 | opus | P1-04 | alexia-core/{src/catalog.rs, tests/catalog.rs} | merged | 3 | cr3studioo/v3-P1-05 |  |
 | P1-06 | Router::hedged with a latency budget | P1 | opus | P1-05, P1-03 | alexia-core/{src/router.rs, tests/router.rs} | merged | 1 | cr3studioo/v3-P1-06 |  |
 | P1-07 | Lane classifier and the Lanes brain | P1 | opus | P1-01 | alexia-core/{src/lane.rs, tests/lane.rs} | ready | 0 |  |  |
-| P1-08 | FastChat: the chat lane brain | P1 | opus | P1-06, P1-03, P0-13 | alexia-core/{src/chat.rs, tests/chat.rs} | running | 1 | cr3studioo/v3-P1-08 | ctx_d6df95888b92 |
+| P1-08 | FastChat: the chat lane brain | P1 | opus | P1-06, P1-03, P0-13 | alexia-core/{src/chat.rs, tests/chat.rs} | review | 1 | cr3studioo/v3-P1-08 | review ctx_6b0002a09fec |
 | P1-09 | Telegram Bot API client | P1 | opus | P1-02 | alexia-gateway/{src/channels/telegram/api.rs, tests/teleg... | merged | 1 | cr3studioo/v3-P1-09 |  |
 | P1-10 | Telegram channel: poll, pairing, offsets, buttons | P1 | opus | P1-09, P1-03 | alexia-gateway/{src/channels/mod.rs, src/channels/telegra... | review | 2 | cr3studioo/v3-P1-10 | changes; fix queued for opus slot |
 | P1-11 | Gateway loop: ack, merge, steer, drafts, spans | P1 | opus | P1-02, P1-03 | alexia-gateway/{src/gateway.rs, tests/gateway.rs} | merged | 2 | cr3studioo/v3-P1-11 |  |
