@@ -534,6 +534,37 @@ async fn offset_survives_restart_without_replay() {
     assert_eq!(saved_offset(&store), Some(202), "all finished: newest + 1");
 }
 
+#[tokio::test]
+async fn stopped_turn_is_not_replayed_after_restart() {
+    let fake = Fake::start().await;
+    let store = store_with_owners(&[5]);
+    let ch = fake.channel(&store, cache("stopped"));
+    fake.batch(json!([message(
+        300,
+        5,
+        json!({"text": "write me an essay"})
+    )]));
+    assert_eq!(next(&ch).await.len(), 1);
+    ch.draft(&chat(5), Some("Once upon")).await.unwrap();
+    assert_eq!(saved_offset(&store), Some(300), "still open while drafting");
+    // The turn is stopped with nothing kept: the gateway only clears the draft.
+    ch.draft(&chat(5), None).await.unwrap();
+    assert_eq!(saved_offset(&store), Some(301), "a stopped message is done");
+    drop(ch);
+
+    let polls_before = fake.seen("getUpdates").len();
+    let ch = fake.channel(&store, cache("stopped"));
+    fake.batch(json!([message(301, 5, json!({"text": "next"}))]));
+    let got = next(&ch).await;
+    assert_eq!(got.len(), 1);
+    assert_eq!(got[0].content, Content::Text("next".into()));
+    assert_eq!(
+        fake.seen("getUpdates")[polls_before].json()["offset"],
+        301,
+        "restart does not ask for the stopped message again"
+    );
+}
+
 /// Starts `ask` in a task and waits for its question to reach the fake.
 async fn asking(
     fake: &Fake,

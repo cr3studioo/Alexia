@@ -658,8 +658,10 @@ impl Channel for Telegram {
     async fn draft(&self, chat: &ChatRef, text: Option<&str>) -> Result<()> {
         let chat = chat_id(chat)?;
         let Some(text) = text else {
-            // Telegram drops an unrefreshed draft by itself.
+            // Telegram drops an unrefreshed draft by itself. A reply cleared with nothing sent
+            // (a stopped turn) is done too, so a crash now does not replay it (v2 `Acks`).
             lock(&self.drafts).remove(&chat);
+            self.finished(chat);
             return Ok(());
         };
         let id = *lock(&self.drafts).entry(chat).or_insert_with(draft_id);
