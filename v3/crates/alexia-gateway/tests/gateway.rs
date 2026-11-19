@@ -505,6 +505,40 @@ async fn message_during_visible_task_steers() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn steer_after_restart_sends_no_bare_ellipsis() {
+    let h = start(
+        cfg(20),
+        vec![
+            Script::new(
+                vec![
+                    (0, DraftFrame::Phase(Phase::Tool)),
+                    (10, DraftFrame::Delta("Draft one".into())),
+                    (400, DraftFrame::Restart),
+                ],
+                10_000,
+                Outcome::Text("never", Lane::Task, vec![]),
+            ),
+            Script::new(vec![], 0, Outcome::Text("Rome it is", Lane::Task, vec![])),
+        ],
+    );
+    h.push(vec![msg("a", "1", "find flights")]);
+    until("the restart shown", || {
+        let d = h.ch.drafts();
+        let first = d.iter().position(|(_, t)| t == "Draft one");
+        first.is_some_and(|i| d[i..].iter().any(|(_, t)| t == "Working…"))
+    })
+    .await;
+    h.push(vec![msg("a", "2", "to Rome")]);
+    until("the steered reply", || {
+        h.ch.sent().contains(&"Rome it is".into())
+    })
+    .await;
+    assert_eq!(h.brain.cancelled.load(Ordering::SeqCst), 1);
+    assert_eq!(h.ch.sent(), vec!["Rome it is".to_string()]);
+    h.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn message_during_visible_chat_queues() {
     let h = start(
         cfg(20),
@@ -737,8 +771,20 @@ async fn spans_cover_the_turn() {
     let rows = h.store.last_turns(10).unwrap();
     assert!(rows.iter().all(|r| r.turn == "fake:a:7"), "{rows:?}");
     assert!(rows.iter().all(|r| r.lane == "task"));
+    // `at` is the receipt time; every `start` is ms after it (the test runs well under 30 s).
     let at = rows[0].at;
-    assert!(rows.iter().all(|r| r.at == at && r.start >= at), "{rows:?}");
+    assert!(
+        rows.iter()
+            .all(|r| r.at == at && (0..30_000).contains(&r.start)),
+        "{rows:?}"
+    );
+    let named = |n: &str| rows.iter().find(|r| r.name == n).unwrap();
+    assert_eq!(named("merge").start, 0);
+    assert!(
+        named("brain").start >= 20,
+        "brain starts after the merge window"
+    );
+    assert!(named("deliver").start >= named("brain").start + 50);
     let brain = rows.iter().find(|r| r.name == "brain").unwrap();
     let bridge = rows.iter().find(|r| r.name == "bridge").unwrap();
     assert_eq!(bridge.start, brain.start + 5, "brain spans not shifted");

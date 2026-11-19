@@ -5,7 +5,7 @@
 //! actor owns that chat's state (merge window, running turn, queue) and talks to its turn task
 //! over channels. The turn task runs the brain, pumps drafts and delivers; the actor records.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::future::pending;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
@@ -122,6 +122,11 @@ fn ms_since(t: Instant) -> u32 {
     t.elapsed().as_millis().min(u32::MAX as u128) as u32
 }
 
+/// A span's `start`: ms from the turn's first receipt to `t`.
+fn offset(first: Instant, t: Instant) -> Ms {
+    t.saturating_duration_since(first).as_millis() as Ms
+}
+
 /// When a message reached the gateway, on both clocks.
 #[derive(Clone, Copy)]
 struct Received {
@@ -139,7 +144,7 @@ enum ToActor {
     /// A reaction answered: `ms` = receipt → answer. `ok == false` = it failed (no span).
     Acked {
         msg: String,
-        start: Ms,
+        rec: Instant,
         ms: u32,
         ok: bool,
     },
@@ -245,7 +250,7 @@ fn spawn_ack(
         }
         let _ = tx.send(ToActor::Acked {
             msg: msg.id,
-            start: rec.ms,
+            rec: rec.instant,
             ms,
             ok,
         });
@@ -314,6 +319,8 @@ fn plain(text: &str) -> Outbound {
 struct TurnMeta {
     turn: String,
     at: Ms,
+    /// The turn's first receipt, which span starts count from.
+    first: Instant,
     origin: String,
     lane: String,
 }
@@ -350,10 +357,12 @@ struct Actor {
     /// Messages waiting for a visible chat reply to be delivered.
     queued: Vec<Msg>,
     running: Option<Running>,
-    /// Reactions that answered before their turn was recorded.
-    acks: HashMap<String, (Ms, u32)>,
+    /// Reactions that answered before their turn was recorded: (receipt, ms), `None` = failed.
+    acks: HashMap<String, Option<(Instant, u32)>>,
     /// Recorded turns whose reaction has not answered yet, by message id.
     late: HashMap<String, TurnMeta>,
+    /// Dropped (cancelled) messages whose reaction has not answered yet; it is ignored.
+    gone: HashSet<String>,
 }
 
 impl Actor {
@@ -374,6 +383,7 @@ impl Actor {
             running: None,
             acks: HashMap::new(),
             late: HashMap::new(),
+            gone: HashSet::new(),
         }
     }
 
@@ -390,7 +400,7 @@ impl Actor {
                 }
                 m = rx.recv() => match m {
                     Some(ToActor::In(msg)) => self.inbound(msg).await,
-                    Some(ToActor::Acked { msg, start, ms, ok }) => self.acked(msg, start, ms, ok),
+                    Some(ToActor::Acked { msg, rec, ms, ok }) => self.acked(msg, rec, ms, ok),
                     None => return,
                 },
                 end = join(&mut self.running) => {
@@ -461,17 +471,18 @@ impl Actor {
             // CH-08: steer. Keep what was written, then answer the new message.
             let r = self.running.take().expect("running");
             r.cancel.cancel();
-            match r.handle.await {
-                Ok(TurnEnd::Cancelled { drafted }) => {
+            let end = r.handle.await;
+            if let Ok(TurnEnd::Cancelled { drafted }) = &end {
+                // After a `Restart` nothing may be left to keep.
+                if !drafted.trim().is_empty() {
                     let kept = format!("{}…", drafted.trim_end());
                     if let Err(e) = self.ch.send(&self.chat, &plain(&kept)).await {
                         tracing::warn!("gateway: keeping the draft failed: {e}");
                     }
-                    let _ = self.ch.draft(&self.chat, None).await;
-                    delete_files(&r.msgs);
                 }
-                end => self.finished(r.msgs, end),
+                let _ = self.ch.draft(&self.chat, None).await;
             }
+            self.finished(r.msgs, end);
             self.start(vec![msg]);
         } else {
             self.queued.push(msg);
@@ -482,50 +493,53 @@ impl Actor {
         if let Some(r) = self.running.take() {
             r.cancel.cancel();
             let end = r.handle.await;
-            if let Ok(TurnEnd::Finished { .. }) = &end {
-                self.finished(r.msgs, end);
-            } else {
-                delete_files(&r.msgs);
+            let delivered = matches!(end, Ok(TurnEnd::Finished { .. }));
+            self.finished(r.msgs, end);
+            if !delivered {
                 let _ = self.ch.draft(&self.chat, None).await;
             }
         }
         self.deadline = None;
-        delete_files(&self.window);
-        delete_files(&self.queued);
-        self.window.clear();
-        self.queued.clear();
+        let dropped: Vec<Msg> = self.window.drain(..).chain(self.queued.drain(..)).collect();
+        delete_files(&dropped);
+        self.forget(&dropped);
         self.command(msg, "Stopped.").await;
     }
 
     /// Answers a command the gateway handles itself, and records it as a `command` turn.
     async fn command(&mut self, msg: Msg, reply: &str) {
-        let start = now_ms();
         let t = Instant::now();
         if let Err(e) = self.ch.send(&self.chat, &plain(reply)).await {
             tracing::warn!("gateway: command reply failed: {e}");
         }
         let spans = vec![Span {
             name: "deliver",
-            start,
+            start: offset(msg.rec.instant, t),
             ms: ms_since(t),
         }];
         delete_files(std::slice::from_ref(&msg));
         self.record(&[msg], Lane::Command, spans);
     }
 
-    fn acked(&mut self, msg: String, start: Ms, ms: u32, ok: bool) {
-        match self.late.remove(&msg) {
-            Some(meta) if ok => {
-                let row = row(&meta, "ack", start, ms as i64);
+    fn acked(&mut self, msg: String, rec: Instant, ms: u32, ok: bool) {
+        if let Some(meta) = self.late.remove(&msg) {
+            if ok {
+                let row = row(&meta, "ack", offset(meta.first, rec), ms as i64);
                 if let Err(e) = self.g.store.record_spans(&[row]) {
                     tracing::error!("gateway: recording a span: {e}");
                 }
             }
-            Some(_) => {}
-            None if ok => {
-                self.acks.insert(msg, (start, ms));
+        } else if !self.gone.remove(&msg) {
+            self.acks.insert(msg, ok.then_some((rec, ms)));
+        }
+    }
+
+    /// Messages dropped without a recorded turn: their reactions are not kept.
+    fn forget(&mut self, msgs: &[Msg]) {
+        for m in msgs {
+            if self.acks.remove(&m.inbound.msg.id).is_none() {
+                self.gone.insert(m.inbound.msg.id.clone());
             }
-            None => {}
         }
     }
 
@@ -539,6 +553,7 @@ impl Actor {
             Err(e) => {
                 tracing::error!("gateway: channel session: {e}");
                 delete_files(&msgs);
+                self.forget(&msgs);
                 let (ch, chat) = (self.ch.clone(), self.chat.clone());
                 tokio::spawn(async move { ch.send(&chat, &plain(SORRY)).await });
                 return;
@@ -588,8 +603,11 @@ impl Actor {
                     spans,
                 });
             }
-            Ok(TurnEnd::Cancelled { .. }) => {}
-            Err(e) => tracing::error!("gateway: a turn panicked: {e}"),
+            Ok(TurnEnd::Cancelled { .. }) => self.forget(&msgs),
+            Err(e) => {
+                tracing::error!("gateway: a turn panicked: {e}");
+                self.forget(&msgs);
+            }
         }
     }
 
@@ -604,16 +622,18 @@ impl Actor {
                 first.inbound.msg.id
             ),
             at: first.rec.ms,
+            first: first.rec.instant,
             origin: serde_json::to_string(&origin(self.ch.name(), &self.chat)).unwrap_or_default(),
             lane: lane_name(lane).to_string(),
         };
         for m in msgs {
             match self.acks.remove(&m.inbound.msg.id) {
-                Some((start, ms)) => spans.push(Span {
+                Some(Some((rec, ms))) => spans.push(Span {
                     name: "ack",
-                    start,
+                    start: offset(meta.first, rec),
                     ms,
                 }),
+                Some(None) => {}
                 None => {
                     self.late.insert(m.inbound.msg.id.clone(), meta.clone());
                 }
@@ -739,7 +759,8 @@ impl TurnCtx {
             .files
             .iter()
             .any(|f| f.mime.starts_with("audio/"));
-        let (hear_start, hear_t) = (now_ms(), Instant::now());
+        let off = |t: Instant| offset(self.first.instant, t);
+        let hear_t = Instant::now();
         let inbound = tokio::select! {
             _ = self.cancel.cancelled() => return TurnEnd::Cancelled { drafted: String::new() },
             i = voice::hear(&*g.media, self.inbound.clone()) => i,
@@ -747,7 +768,7 @@ impl TurnCtx {
         if voiced {
             spans.push(Span {
                 name: "hear",
-                start: hear_start,
+                start: off(hear_t),
                 ms: ms_since(hear_t),
             });
         }
@@ -758,19 +779,19 @@ impl TurnCtx {
             content: inbound.content.clone(),
             received_at: self.first.ms,
         };
-        let brain_start = now_ms();
         spans.push(Span {
             name: "merge",
-            start: self.first.ms,
+            start: 0,
             ms: ms_since(self.first.instant),
         });
         g.bus.publish(Event::Received {
-            at: brain_start,
+            at: now_ms(),
             origin,
             session: self.session,
         });
 
         let brain_t = Instant::now();
+        let brain_start = off(brain_t);
         let (tx, frames) = mpsc::channel(64);
         // Its own task: a slow draft call never stalls the brain, and on cancel the brain keeps
         // running until it has stopped its own work (the v2 bridge POSTs /api/stop).
@@ -809,15 +830,10 @@ impl TurnCtx {
             start: brain_start,
             ms: ms_since(brain_t),
         });
-        // The brain measures from when it was handed the turn; a start that is already a clock
-        // time (after the turn arrived) is kept as it is.
+        // The brain measures from when it was handed the turn.
         spans.extend(reply.spans.iter().map(|s| Span {
             name: s.name,
-            start: if s.start >= self.first.ms {
-                s.start
-            } else {
-                brain_start + s.start
-            },
+            start: brain_start + s.start,
             ms: s.ms,
         }));
 
@@ -827,11 +843,11 @@ impl TurnCtx {
             voice: false,
         };
         if voice::wants_voice(&g.store, &inbound) {
-            let (start, t) = (now_ms(), Instant::now());
+            let t = Instant::now();
             let note = voice::speak(&*g.media, &reply.text).await;
             spans.push(Span {
                 name: "speak",
-                start,
+                start: off(t),
                 ms: ms_since(t),
             });
             if let Some(note) = note {
@@ -848,11 +864,11 @@ impl TurnCtx {
     }
 
     async fn deliver(&self, spans: &mut Vec<Span>, out: Outbound) {
-        let (start, t) = (now_ms(), Instant::now());
+        let t = Instant::now();
         let sent = self.ch.send(&self.chat, &out).await;
         spans.push(Span {
             name: "deliver",
-            start,
+            start: offset(self.first.instant, t),
             ms: ms_since(t),
         });
         if let Err(e) = sent {
@@ -1100,5 +1116,112 @@ mod tests {
             msg(Content::Text("b".into()), None),
         ]);
         assert_eq!(m.content, Content::Text("a\nb".into()));
+    }
+
+    struct Quiet;
+
+    #[async_trait::async_trait]
+    impl Channel for Quiet {
+        fn name(&self) -> &'static str {
+            "quiet"
+        }
+        fn budget(&self) -> alexia_core::Budget {
+            alexia_core::Budget::CHAT
+        }
+        async fn next(&self, cancel: CancellationToken) -> Result<Vec<Inbound>> {
+            cancel.cancelled().await;
+            Err(Error::Cancelled)
+        }
+        async fn react(&self, _: &ChatRef, _: &MsgRef, _: &str) -> Result<()> {
+            Ok(())
+        }
+        async fn typing(&self, _: &ChatRef) -> Result<()> {
+            Ok(())
+        }
+        async fn send(&self, _: &ChatRef, _: &Outbound) -> Result<MsgRef> {
+            Ok(MsgRef { id: "s".into() })
+        }
+        async fn draft(&self, _: &ChatRef, _: Option<&str>) -> Result<()> {
+            Ok(())
+        }
+        async fn edit(&self, _: &ChatRef, _: &MsgRef, _: &str) -> Result<()> {
+            Ok(())
+        }
+        async fn ask(&self, _: &ChatRef, _: &str, _: CancellationToken) -> Result<Option<bool>> {
+            Ok(None)
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl Media for Quiet {
+        async fn transcribe(&self, _: &InFile) -> Result<Option<String>> {
+            Ok(None)
+        }
+        async fn speak(&self, _: &str) -> Result<Option<alexia_core::OutFile>> {
+            Ok(None)
+        }
+    }
+
+    /// Uses a tool, writes, then waits to be cancelled.
+    struct Busy;
+
+    #[async_trait::async_trait]
+    impl Brain for Busy {
+        async fn reply(
+            &self,
+            _: alexia_core::Turn,
+            draft: alexia_core::DraftSink,
+            cancel: CancellationToken,
+        ) -> std::result::Result<alexia_core::Reply, BrainError> {
+            let _ = draft.send(DraftFrame::Phase(Phase::Tool)).await;
+            let _ = draft.send(DraftFrame::Delta("x".into())).await;
+            cancel.cancelled().await;
+            Err(BrainError::Cancelled)
+        }
+    }
+
+    fn said(id: &str, text: &str) -> Msg {
+        let mut m = msg(Content::Text(text.into()), None);
+        m.inbound.msg.id = id.into();
+        m
+    }
+
+    async fn until_visible(a: &Actor) {
+        let r = a.running.as_ref().expect("running");
+        for _ in 0..3_000 {
+            if r.visible.load(Ordering::SeqCst) && r.tasky.load(Ordering::SeqCst) {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+        panic!("the draft never became visible");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn acks_are_dropped_after_a_steer_and_a_stop() {
+        let g = Arc::new(Shared {
+            cfg: GatewayConfig::default(),
+            store: Arc::new(Store::open_in_memory().unwrap()),
+            bus: Bus::new(16),
+            brain: Arc::new(Busy),
+            media: Arc::new(Quiet),
+        });
+        let chat = ChatRef { chat: "1".into() };
+        let mut a = Actor::new(g, Arc::new(Quiet), chat, CancellationToken::new());
+        let now = Instant::now();
+
+        // Steer: the reaction to "1" answered before its turn was cancelled.
+        a.acked("1".into(), now, 3, true);
+        a.start(vec![said("1", "go")]);
+        until_visible(&a).await;
+        a.inbound(said("2", "steer")).await;
+        assert!(a.acks.is_empty() && a.gone.is_empty());
+
+        // Stop: "2"'s reaction answers after its turn is gone and is ignored.
+        until_visible(&a).await;
+        a.inbound(said("3", "/stop")).await;
+        a.acked("2".into(), now, 3, true);
+        a.acked("3".into(), now, 3, true);
+        assert!(a.acks.is_empty() && a.gone.is_empty() && a.late.is_empty());
     }
 }
