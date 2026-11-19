@@ -40,3 +40,8 @@
 | P1-18 | End-to-end latency test and the 50-message run | P1 | sonnet | P1-17 | alexia-hub/tests/telegram_e2e.rs, v3/ops/reports/P1-laten... | todo | 0 | | |
 | P0-19 | Host display name and unwritten tables | P0 | opus | P0-13 | alexia-mcp lib.rs, tests/alexia_layer; alexia-store namespace | merged | 2 | cr3studioo/v3-P0-19 | |
 | P0-20 | De-flake idle_lazy_plugin_stops, round 2 | P0 | sonnet | P0-18 | alexia-mcp tests/supervise.rs | merged | 1 | cr3studioo/v3-P0-20 | |
+| P0-21 | Purge keeps going when one step fails | P0 | sonnet | P0-17 | alexia-store secrets, alexia-mcp host purge, tests/purge | ready | 0 | | |
+| P0-22 | Close idle-stop vs incoming-call race | P0 | opus | P0-21 | alexia-mcp host, supervise, tests/supervise | todo | 0 | | |
+| P0-23 | v2 conformance: real junction assert, temp cleanup | P0 | sonnet | P0-15 | alexia-hub tests/v2_plugins | ready | 0 | | |
+| P0-24 | invariants.mjs: out-of-line test mod, header | P0 | sonnet | P0-16 | v3/ci/invariants.mjs | ready | 0 | | |
+| P0-25 | One plugin-id rule | P0 | sonnet | P0-21, P0-22 | alexia-store lib/namespace/secrets/import, alexia-mcp manifest/host, alexia-hub main | todo | 0 | | |
