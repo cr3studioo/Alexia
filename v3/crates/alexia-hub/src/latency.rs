@@ -27,6 +27,9 @@ pub fn parse(args: &[String]) -> Result<Options, String> {
                 o.last = v
                     .parse()
                     .map_err(|_| format!("--last: '{v}' is not a number"))?;
+                if o.last == 0 {
+                    return Err("--last must be at least 1".into());
+                }
             }
             "--html" => o.html = Some(it.next().ok_or("--html needs a file")?.into()),
             "--check" => o.check = true,
@@ -95,6 +98,26 @@ pub fn turns(rows: &[SpanRow]) -> Vec<TurnView> {
         i = j;
     }
     out
+}
+
+/// UTC "YYYY-MM-DD HH:MM:SS" from epoch ms (civil-from-days).
+fn utc(ms: Ms) -> String {
+    let t = ms.div_euclid(1000);
+    let (z, sod) = (t.div_euclid(86_400) + 719_468, t.rem_euclid(86_400));
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + i64::from(m <= 2);
+    format!(
+        "{y:04}-{m:02}-{d:02} {:02}:{:02}:{:02}",
+        sod / 3600,
+        sod % 3600 / 60,
+        sod % 60
+    )
 }
 
 fn secs(ms: i64) -> String {
@@ -182,7 +205,7 @@ fn top3(v: &TurnView) -> String {
     let mut s: Vec<&(String, i64, i64)> = v
         .stages
         .iter()
-        .filter(|s| s.0 != "ack" && s.0 != "brain" && s.0 != "deliver")
+        .filter(|s| s.0 != "ack" && s.0 != "brain")
         .collect();
     s.sort_by_key(|x| std::cmp::Reverse(x.2));
     s.iter()
@@ -198,8 +221,8 @@ fn table(views: &[TurnView]) -> String {
         let ack = v.ack_ms.map_or("-".into(), |a| format!("{a}ms"));
         let _ = writeln!(
             o,
-            "{:>13}  {:<8} total {:>6}  ack {:>7}  {}",
-            v.at,
+            "{}  {:<8} total {:>6}  ack {:>7}  {}",
+            utc(v.at),
             v.lane,
             secs(v.total_ms),
             ack,
@@ -310,10 +333,10 @@ fn html(views: &[TurnView]) -> String {
         .collect();
     let _ = write!(
         o,
-        "<h1>Latency: {} turns</h1><p>{} to {} (ms since epoch) · {}</p>",
+        "<h1>Latency: {} turns</h1><p>{} to {} UTC · {}</p>",
         views.len(),
-        lo,
-        hi,
+        utc(lo),
+        utc(hi),
         lane_txt.join(" · ")
     );
     o.push_str("<table><tr><th>stage</th><th>n</th><th>p50</th><th>p90</th><th>max</th><th>share</th></tr>");
@@ -342,7 +365,7 @@ fn html(views: &[TurnView]) -> String {
         let _ = write!(
             o,
             "<div><b>{}</b> {} · {} · total {}<svg viewBox=\"0 0 1000 30\" preserveAspectRatio=\"none\">",
-            esc(short_id(&v.turn)), v.at, esc(&v.lane), secs(v.total_ms)
+            esc(short_id(&v.turn)), utc(v.at), esc(&v.lane), secs(v.total_ms)
         );
         let x = |ms: i64| ms as f64 * 1000.0 / widest as f64;
         for (n, st, ms) in &v.stages {
@@ -501,10 +524,26 @@ mod tests {
         let page = html(&turns(&rows));
         assert!(!page.contains("src=\"http") && !page.contains("<script src"));
         assert_eq!(page.matches("<svg").count(), 2);
-        let dir = std::env::var("CARGO_TARGET_TMPDIR")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| std::env::temp_dir());
-        let _ = std::fs::write(dir.join("latency.html"), page);
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("latency.html"), page).unwrap();
+    }
+
+    #[test]
+    fn utc_known_dates() {
+        assert_eq!(utc(0), "1970-01-01 00:00:00");
+        assert_eq!(utc(951_782_400_000), "2000-02-29 00:00:00"); // leap day
+        assert_eq!(utc(1_709_251_199_999), "2024-02-29 23:59:59"); // leap day
+        assert_eq!(utc(1_700_000_000_000), "2023-11-14 22:13:20");
+    }
+
+    #[test]
+    fn top3_keeps_deliver() {
+        let v = turns(&[
+            r("t", 0, "chat", "ack", 0, 100),
+            r("t", 0, "chat", "deliver", 0, 900),
+        ]);
+        assert!(top3(&v[0]).contains("deliver"));
     }
 
     #[test]
@@ -515,6 +554,7 @@ mod tests {
         assert_eq!((o.last, o.check), (5, true));
         assert_eq!(o.html, Some(PathBuf::from("x.html")));
         assert!(parse(&s(&["--last", "x"])).is_err());
+        assert!(parse(&s(&["--last", "0"])).is_err());
         assert!(parse(&s(&["--nope"])).is_err());
     }
 }
