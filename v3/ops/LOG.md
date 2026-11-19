@@ -149,3 +149,4 @@
 - 2026-11-19 CEO #9: phase review: 9 findings (latency offsets negative, file-transfer timeout, retry_after overflow, tool rows on wire, catalog tmp leak, gateway bare spawns, v2 ceiling dangling ids, console flash, time-helper dup). Planner wrote P1-20..P1-25.
 - 2026-11-19 CEO #9: P0-22 done (55 s test; conn.rs junk_is_skipped flaked once). Review dispatched. P1-06 dispatched (opus).
 - 2026-11-19 CEO #9: P1-13 done (documents can't reach bridge: Turn has no files; follow-up needed). Review dispatched. P1-10 dispatched (opus). P1-22 dispatched (sonnet).
+- 2026-11-19 CEO #9: P1-13 review: changes (tool spans doubled vs real v2 phase events; cancel before headers skips /api/stop). Fix round in C:\dev\Alexia-wt\fix-P1-13.txt, queued until an opus slot frees. P1-20 dispatched (sonnet).
