@@ -107,3 +107,5 @@
 - 2026-11-19 CEO #7: P1-04 done (free ladder + OpenAI SSE provider, 14 tests); review dispatched (opus).
 - 2026-11-19 CEO #7: P1-02 done (gateway contract + stubs); review dispatched (opus).
 - 2026-11-19 CEO #7: P1-04 review: changes (finish_reason error, retry-after overflow, had_key vs anonymous key, gsk_ test key shape, send vs cancel, error:null). Fix round opus ctx_8ea2ebf6d15b, try 2.
+- 2026-11-19 CEO #7: P0-16 fix done: Rust 1.96.1 pinned, cfg(test) mod-only skip, v2 conformance serial; run 44430327112 green. Re-review dispatched (opus), asked to judge serial vs hidden host issue.
+- 2026-11-19 CEO #7: P1-02 review: changes (private mod telegram/api blocks P1-09/P1-10 integration tests). Fix round opus ctx_cc7db25cbbb8, try 2.
