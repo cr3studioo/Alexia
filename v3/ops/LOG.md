@@ -181,3 +181,6 @@
 2026-11-19 Merged P1-10 (try 3, api.rs change allowed) and P1-27 (gate ok, pushed). Merges since phase review: 3.
 2026-11-19 Planner ctx_42985a622eac (worktree plan-fu2) specs follow-ups from P1-29: telegram finish-on-failed-send, pairing rotation DoS, ask timeout test (test-util), v2 agent aborted call ids.
 2026-11-19 Follow-ups 2 merged: P1-29 (opus), P1-30 (sonnet) after P1-28; P1-31 (sonnet, v2) dispatched ctx_de6a153539a0.
+2026-11-19 P1-25 build done; review ctx_ec2d6d8db08e.
+2026-11-19 Merged P1-25 (gate ok, pushed). Dispatched P1-17 (sonnet) ctx_261f5af8af1a. P1-31 done; review dispatched.
+2026-11-19 Owner asked in chat how phases/task ids work; explained (no decision, A-09 still open).
