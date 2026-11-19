@@ -38,4 +38,4 @@
 | P1-16 | Hub watchdog | P1 | sonnet | P1-02 | alexia-hub/src/watchdog.rs | todo | 0 | | |
 | P1-17 | Hub wiring and CLI | P1 | sonnet | P1-07, P1-08, P1-10, P1-12, P1-13, P1-15, P1-16 | alexia-hub/{Cargo.toml, src/main.rs, src/media.rs, tests/... | todo | 0 | | |
 | P1-18 | End-to-end latency test and the 50-message run | P1 | sonnet | P1-17 | alexia-hub/tests/telegram_e2e.rs, v3/ops/reports/P1-laten... | todo | 0 | | |
-| P0-19 | Host display name and unwritten tables | P0 | opus | P0-13 | alexia-mcp lib.rs, tests/alexia_layer; alexia-store namespace | running | 1 | cr3studioo/v3-P0-19 | ctx_bdf1157ba00d |
+| P0-19 | Host display name and unwritten tables | P0 | opus | P0-13 | alexia-mcp lib.rs, tests/alexia_layer; alexia-store namespace | running | 2 | cr3studioo/v3-P0-19 | fix ctx_f9c4f514203f (check_ident on unwritten) |

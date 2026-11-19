@@ -88,3 +88,5 @@
 - 2026-11-19 CEO #7: P0-18 review approve; merged, integration green, pushed.
 - 2026-11-19 CEO #7: P0-15 failed (not builder's fault): listing test found 2 host bugs - NoUpcalls empty display_name kills v2 SDK plugins; store errors on where/order over unwritten declared table. pnpm check failure = known compute-connect flake.
 - 2026-11-19 CEO #7: spec gap, not retry: wrote P0-19 (mirror v2 'Alexia' default + store.ts #unwritten), dispatched opus ctx_bdf1157ba00d. P0-15 branch kept; after P0-19 merges, merge v3 into it, rerun listing test, review. Watch: P0-15 report says plugin Running/Stopped mix varies run to run.
+- 2026-11-19 CEO #7: P0-19 done; review dispatched (opus). Concern: check_ident skipped on unwritten tables vs spec.
+- 2026-11-19 CEO #7: P0-19 review: changes (check_ident skipped before unwritten early return). Fix round opus ctx_f9c4f514203f, try 2.
