@@ -48,6 +48,10 @@ struct FakeChannel {
     log: Mutex<Vec<Call>>,
     /// The next `draft(Some(..))` answers `RateLimited { retry_after_ms }`.
     rate_limit_next: Mutex<Option<u64>>,
+    /// How long `react` and `typing` take.
+    delay: Mutex<Duration>,
+    /// `react` / `typing` calls that have started and not yet returned.
+    in_flight: AtomicUsize,
 }
 
 impl FakeChannel {
@@ -57,6 +61,17 @@ impl FakeChannel {
             chat: chat.to_string(),
             what,
         });
+    }
+    /// A slow call: in flight for `delay`, logged at its end.
+    async fn slow(&self, chat: &str, what: What) {
+        self.in_flight.fetch_add(1, Ordering::SeqCst);
+        let delay = *self.delay.lock().unwrap();
+        // Zero = no await at all, so the existing timing tests see the old fake.
+        if !delay.is_zero() {
+            sleep(delay).await;
+        }
+        self.note(chat, what);
+        self.in_flight.fetch_sub(1, Ordering::SeqCst);
     }
     fn calls(&self) -> Vec<Call> {
         self.log.lock().unwrap().clone()
@@ -113,11 +128,11 @@ impl Channel for FakeChannel {
         }
     }
     async fn react(&self, chat: &ChatRef, msg: &MsgRef, _emoji: &str) -> Result<()> {
-        self.note(&chat.chat, What::React(msg.id.clone()));
+        self.slow(&chat.chat, What::React(msg.id.clone())).await;
         Ok(())
     }
     async fn typing(&self, chat: &ChatRef) -> Result<()> {
-        self.note(&chat.chat, What::Typing);
+        self.slow(&chat.chat, What::Typing).await;
         Ok(())
     }
     async fn send(&self, chat: &ChatRef, out: &Outbound) -> Result<MsgRef> {
@@ -296,6 +311,8 @@ fn start_with(cfg: GatewayConfig, scripts: Vec<Script>, store: Arc<Store>) -> H 
         inbox: tokio::sync::Mutex::new(rx),
         log: Mutex::new(Vec::new()),
         rate_limit_next: Mutex::new(None),
+        delay: Mutex::new(Duration::ZERO),
+        in_flight: AtomicUsize::new(0),
     });
     let brain = Arc::new(FakeBrain {
         scripts: Mutex::new(scripts.into()),
@@ -877,4 +894,32 @@ async fn shutdown_within_3s() {
     assert!(matches!(r, Ok(Ok(Ok(())))));
     assert!(took < Duration::from_millis(4_000), "took {took:?}");
     assert!(!h.ch.sent().contains(&"never".to_string()));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn no_channel_call_after_run_returns() {
+    let h = start(
+        cfg(20),
+        vec![Script::new(vec![], 60_000, chat_reply("never"))],
+    );
+    *h.ch.delay.lock().unwrap() = Duration::from_millis(800);
+    h.push(vec![msg("a", "1", "hi")]);
+    // Both the reaction and the first typing call are in flight.
+    until("the turn and slow calls", || {
+        h.brain.calls() == 1 && h.ch.in_flight.load(Ordering::SeqCst) >= 2
+    })
+    .await;
+    h.cancel.cancel();
+    let r = tokio::time::timeout(Duration::from_secs(30), h.run).await;
+    assert!(matches!(r, Ok(Ok(Ok(())))));
+    assert_eq!(h.ch.in_flight.load(Ordering::SeqCst), 0);
+    let calls = h.ch.calls();
+    assert!(calls.iter().any(|c| c.what == What::React("1".into())));
+    assert!(calls.iter().any(|c| c.what == What::Typing));
+    sleep(Duration::from_millis(1_500)).await;
+    assert_eq!(
+        h.ch.calls().len(),
+        calls.len(),
+        "a channel call after run returned"
+    );
 }
