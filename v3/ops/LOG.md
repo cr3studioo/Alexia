@@ -92,3 +92,4 @@
 - 2026-11-19 CEO #7: P0-19 review: changes (check_ident skipped before unwritten early return). Fix round opus ctx_f9c4f514203f, try 2.
 - 2026-11-19 CEO #7: P0-19 re-review approve; merged, integration green, pushed. Non-blocking: op.validate not run on unwritten tables.
 - 2026-11-19 CEO #7: P0-15 try 2 (sonnet ctx_57b1bee292b1): merge v3 into branch, rerun listing test x3, explain Running/Stopped variance.
+- 2026-11-19 CEO #7: P0-15 try 2 done: 4/4 v2_plugins tests pass 3/3 runs, all 15 plugins list tools; variance was the host bugs. Review dispatched (opus).
