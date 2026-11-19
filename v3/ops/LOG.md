@@ -126,3 +126,4 @@
 - 2026-11-19 CEO #8: P0-24 review approve; merged, integration green, pushed. Dispatched P0-21 (sonnet).
 - 2026-11-19 CEO #8: P1-16 review approve with risks. Merge failed invariants (C:\ in a message, newly caught by P0-24's fix); CEO fixed the one line on the task branch, re-merged, green, pushed. Risks filed as P1-19.
 - 2026-11-19 CEO #8: note for P1-17: cancel the heartbeat and await it before clean_stop (P1-16 review).
+- 2026-11-19 CEO #8: P1-05 done (catalog, 8 tests; chats() is a word list, seed per keyless provider); P1-15 fix done; P1-11 done (14 tests, 20/20 runs); P0-21 done. Reviews dispatched: P1-05, P1-11, P1-15 re-review, P0-21 (all opus). Dispatched P1-09 build (opus ctx_6788047f5009).
