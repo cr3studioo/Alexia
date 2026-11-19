@@ -9,9 +9,9 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
-use alexia_store::Ms;
+use alexia_store::{now_ms, Ms};
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
@@ -176,7 +176,7 @@ impl Catalog {
             std::fs::create_dir_all(dir)?;
         }
         let file = CacheFile {
-            fetched_at: now(),
+            fetched_at: now_ms(),
             candidates: candidates.to_vec(),
         };
         // Unique per write, so two refreshes at once never write the same temp file.
@@ -218,12 +218,6 @@ fn listed(row: &FreeRow, models: &[ModelInfo]) -> Vec<Candidate> {
             router: row.router || routes(&m.id),
         })
         .collect()
-}
-
-fn now() -> Ms {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| d.as_millis() as Ms)
 }
 
 /// v2's `[\s/:_-]`, the separator its id regexes anchor on.

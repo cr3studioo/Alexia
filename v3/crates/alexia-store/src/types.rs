@@ -7,6 +7,29 @@ use crate::{Error, Result};
 
 pub type Ms = i64;
 
+/// Unix epoch milliseconds, now; 0 if the clock reads before 1970.
+pub fn now_ms() -> Ms {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis() as Ms)
+}
+
+/// The UTC calendar date and time of epoch `ms` (Howard Hinnant's days-to-civil):
+/// (year, month 1..=12, day 1..=31, hour, minute, second). Negative `ms` is before 1970.
+pub fn civil_utc(ms: Ms) -> (i64, i64, i64, i64, i64, i64) {
+    let t = ms.div_euclid(1000);
+    let (z, sod) = (t.div_euclid(86_400) + 719_468, t.rem_euclid(86_400));
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + i64::from(m <= 2);
+    (y, m, d, sod / 3600, sod % 3600 / 60, sod % 60)
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct SessionId(pub i64);
@@ -41,6 +64,23 @@ pub enum Part {
 pub enum Content {
     Text(String),
     Parts(Vec<Part>),
+}
+
+impl Content {
+    /// The text parts joined with "\n" (a `Text` as is); image parts are skipped.
+    pub fn text(&self) -> String {
+        match self {
+            Content::Text(t) => t.clone(),
+            Content::Parts(parts) => parts
+                .iter()
+                .filter_map(|p| match p {
+                    Part::Text { text } => Some(text.as_str()),
+                    Part::Image { .. } => None,
+                })
+                .collect::<Vec<_>>()
+                .join("\n"),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

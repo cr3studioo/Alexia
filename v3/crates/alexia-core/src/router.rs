@@ -9,9 +9,9 @@
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
-use alexia_store::{Ms, Store, Try, TryRow, Usage};
+use alexia_store::{now_ms, Ms, Store, Try, TryRow, Usage};
 use tokio::sync::mpsc;
 use tokio::task::{JoinHandle, JoinSet};
 use tokio::time::Instant;
@@ -424,10 +424,4 @@ fn stopped(e: tokio::task::JoinError) -> ProviderError {
 
 fn elapsed_ms(since: Instant) -> u32 {
     u32::try_from(since.elapsed().as_millis()).unwrap_or(u32::MAX)
-}
-
-fn now_ms() -> Ms {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| d.as_millis() as Ms)
 }

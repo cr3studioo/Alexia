@@ -530,3 +530,24 @@ async fn busy_is_a_sentence() {
     assert!(deltas(&frames).is_empty());
     assert!(w.store.history(w.session, None).unwrap().is_empty());
 }
+
+#[tokio::test]
+async fn spans_are_offsets_from_the_turn() {
+    let w = world(text(&["Hello ", "there."]), Arc::new(memory(0))).await;
+    let reply = say(&w, "hi").await.0.unwrap();
+    let names: Vec<&str> = reply.spans.iter().map(|s| s.name).collect();
+    assert_eq!(
+        names,
+        ["prompt", "recall-wait", "first-byte", "writing", "store"]
+    );
+    assert!(
+        reply.spans.iter().all(|s| s.start < 60_000),
+        "a span start is not an offset from the turn: {:?}",
+        reply.spans
+    );
+    assert!(
+        reply.spans.windows(2).all(|w| w[0].start <= w[1].start),
+        "span starts go backwards: {:?}",
+        reply.spans
+    );
+}

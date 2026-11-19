@@ -9,10 +9,10 @@ use std::collections::{HashMap, HashSet};
 use std::future::pending;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use alexia_core::{Brain, BrainError, Bus, DraftFrame, Event, Lane, Origin, Phase, Span};
-use alexia_store::{Content, Ms, Part, SessionId, SpanRow, Store};
+use alexia_store::{now_ms, Content, Ms, Part, SessionId, SpanRow, Store};
 use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
@@ -112,13 +112,6 @@ impl Gateway {
     pub fn asker(&self) -> Arc<dyn alexia_core::Ask> {
         Arc::new(Asker::new(self.channels.clone(), self.store.clone()))
     }
-}
-
-fn now_ms() -> Ms {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as Ms)
-        .unwrap_or(0)
 }
 
 fn ms_since(t: Instant) -> u32 {

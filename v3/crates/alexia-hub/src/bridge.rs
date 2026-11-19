@@ -16,12 +16,12 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use alexia_core::{
     Ask, Brain, BrainError, DraftFrame, DraftSink, Lane, Phase, Question, Reply, RunId, Span, Turn,
 };
-use alexia_store::{Content, MessageBody, Ms, Part, Role, Store};
+use alexia_store::{Content, MessageBody, Part, Role, Store};
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
@@ -222,7 +222,7 @@ impl V2Bridge {
 
     /// Text for v2: the turn, prefixed with chat-lane turns v2 has not seen (step 6).
     fn with_context(&self, turn: &Turn) -> Result<String, BrainError> {
-        let typed = text_of(&turn.content);
+        let typed = turn.content.text();
         let history = self.store.history(turn.session, None).map_err(store_err)?;
         let since = history
             .iter()
@@ -237,10 +237,7 @@ impl V2Bridge {
                     Role::Assistant => "Alexia",
                     _ => return None,
                 };
-                let said: String = text_of(&m.body.content)
-                    .chars()
-                    .take(CONTEXT_CHARS)
-                    .collect();
+                let said: String = m.body.content.text().chars().take(CONTEXT_CHARS).collect();
                 Some(format!("{who}: {said}"))
             })
             .collect();
@@ -349,13 +346,13 @@ impl V2Bridge {
         draft: &DraftSink,
         cancel: &CancellationToken,
     ) -> Result<(), BrainError> {
-        let now = now_ms();
+        let now = Instant::now();
         let step = e.get("step");
         let n = step.and_then(|s| s.get("n")).and_then(Value::as_i64);
         // A tool span runs from its step's start to a delta or another step's event.
         if let Some((open, name, start)) = st.tool {
             if e.get("delta").is_some() || n.is_some_and(|n| n != open) {
-                st.spans.push(span(name, start, now));
+                st.spans.push(Span::since(name, st.began, start));
                 st.tool = None;
             }
         }
@@ -363,7 +360,8 @@ impl V2Bridge {
         if let Some(d) = e.get("delta").and_then(Value::as_str) {
             if st.first.is_none() {
                 st.first = Some(now);
-                st.spans.push(span("bridge-first-byte", st.sent, now));
+                st.spans
+                    .push(Span::since("bridge-first-byte", st.began, st.sent));
             }
             st.text.push_str(d);
             let _ = draft.send(DraftFrame::Delta(d.to_owned())).await;
@@ -455,13 +453,15 @@ impl V2Bridge {
 struct Run {
     url: String,
     token: String,
-    sent: Ms,
-    first: Option<Ms>,
+    /// When `reply` was handed the turn; every span's `start` is measured from it.
+    began: Instant,
+    sent: Instant,
+    first: Option<Instant>,
     text: String,
     model: Option<String>,
     spans: Vec<Span>,
     /// The open tool step: (n, span name, start).
-    tool: Option<(i64, &'static str, Ms)>,
+    tool: Option<(i64, &'static str, Instant)>,
     /// The highest step n opened so far.
     last_step: i64,
     refused_paid: bool,
@@ -475,18 +475,20 @@ impl Brain for V2Bridge {
         draft: DraftSink,
         cancel: CancellationToken,
     ) -> Result<Reply, BrainError> {
+        let began = Instant::now();
         let Some((url, token)) = self.conn() else {
             return Err(BrainError::Unavailable(STARTING.into()));
         };
         let text = self.with_context(&turn)?;
         let body = json!({ "text": text, "files": uploads(&turn.content) });
-        let sent = now_ms();
+        let sent = Instant::now();
         let Some(resp) = self.post_chat(&url, &token, &body, &cancel).await? else {
             return Err(BrainError::Cancelled);
         };
         let mut st = Run {
             url,
             token,
+            began,
             sent,
             first: None,
             text: String::new(),
@@ -502,11 +504,10 @@ impl Brain for V2Bridge {
             self.post(&st.url, &st.token, "api/stop", json!({})).await;
         }
         out?;
-        let end = now_ms();
         if let Some((_, name, start)) = st.tool.take() {
-            st.spans.push(span(name, start, end));
+            st.spans.push(Span::since(name, began, start));
         }
-        st.spans.push(span("bridge", sent, end));
+        st.spans.push(Span::since("bridge", began, sent));
         if st.refused_paid {
             if !st.text.is_empty() {
                 st.text.push(' ');
@@ -530,20 +531,6 @@ fn store_err(e: alexia_store::Error) -> BrainError {
 
 fn is_task(m: &alexia_store::Message) -> bool {
     m.body.extra.get("lane").and_then(Value::as_str) == Some("task")
-}
-
-fn text_of(c: &Content) -> String {
-    match c {
-        Content::Text(t) => t.clone(),
-        Content::Parts(parts) => parts
-            .iter()
-            .filter_map(|p| match p {
-                Part::Text { text } => Some(text.as_str()),
-                Part::Image { .. } => None,
-            })
-            .collect::<Vec<_>>()
-            .join("\n"),
-    }
 }
 
 /// The turn's image parts as v2 `Upload { name, data, type }` (base64 without the prefix).
@@ -576,14 +563,6 @@ fn phase(kind: &str) -> Option<Phase> {
         "backup" => Phase::Backup,
         _ => return None,
     })
-}
-
-fn span(name: &'static str, start: Ms, end: Ms) -> Span {
-    Span {
-        name,
-        start,
-        ms: u32::try_from((end - start).max(0)).unwrap_or(u32::MAX),
-    }
 }
 
 /// `Span.name` is `&'static str`; each distinct tool name is leaked once.
@@ -636,12 +615,6 @@ async fn fetch_token(http: &reqwest::Client, url: &str) -> Option<String> {
         .await
         .ok()?;
     find_uuid(&page).map(str::to_owned)
-}
-
-fn now_ms() -> Ms {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| d.as_millis() as Ms)
 }
 
 #[cfg(test)]
@@ -835,7 +808,7 @@ mod tests {
             session,
             origin: Origin::Desktop,
             content: Content::Text(text.into()),
-            received_at: now_ms(),
+            received_at: alexia_store::now_ms(),
         }
     }
 
@@ -877,13 +850,12 @@ mod tests {
     /// A temp "v2 checkout" whose entry.js serves the token page, prints the line, records each
     /// start (with `ALEXIA_DATA_NAME`) in `starts.txt`, and exits after `exit_ms`.
     fn fake_checkout(tag: &str, exit_ms: u64) -> PathBuf {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
+        static N: AtomicUsize = AtomicUsize::new(0);
         let root = std::env::temp_dir().join(format!(
-            "alexia-bridge-{tag}-{}-{nanos}",
-            std::process::id()
+            "alexia-bridge-{tag}-{}-{}-{}",
+            std::process::id(),
+            alexia_store::now_ms(),
+            N.fetch_add(1, Ordering::SeqCst)
         ));
         let src = root.join("packages/core/dist/src");
         std::fs::create_dir_all(&src).unwrap();
@@ -1084,6 +1056,31 @@ s.listen(0, '127.0.0.1', () => {{
             took[0] >= 200 && took[1] >= 100,
             "tool spans too short: {took:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn spans_are_offsets_from_the_turn() {
+        let (url, _log) = fake(
+            vec![
+                Send(r#"{"step":{"n":1,"name":"web_search","args":{}}}"#),
+                Pause(100),
+                Send(r#"{"step":{"n":1,"name":"web_search","text":"found"}}"#),
+                Send(r#"{"delta":"ok"}"#),
+            ],
+            Opts::default(),
+        )
+        .await;
+        let (bridge, _, session) = attached(&url);
+        let reply = ask_once(&bridge, turn(session, "search")).await.0.unwrap();
+        let names: Vec<&str> = reply.spans.iter().map(|s| s.name).collect();
+        assert_eq!(names, ["tool:web_search", "bridge-first-byte", "bridge"]);
+        assert!(
+            reply.spans.iter().all(|s| s.start < 60_000),
+            "a span start is not an offset from the turn: {:?}",
+            reply.spans
+        );
+        let bridge_span = reply.spans.iter().find(|s| s.name == "bridge").unwrap();
+        assert!(bridge_span.start < 1_000, "{bridge_span:?}");
     }
 
     #[tokio::test]

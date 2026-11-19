@@ -3,14 +3,14 @@
 
 use std::path::Path;
 use std::sync::{Mutex, MutexGuard, PoisonError};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::migrations::{APPLICATION_ID, MIGRATIONS};
 use crate::{
-    Error, Message, MessageBody, MessageId, Ms, Result, Role, Session, SessionId, SpanRow, Try,
-    TryRow, Usage,
+    now_ms, Error, Message, MessageBody, MessageId, Ms, Result, Role, Session, SessionId, SpanRow,
+    Try, TryRow, Usage,
 };
 
 /// sqlite-vec is a C extension; registering it is one FFI call, so this module (and only this
@@ -47,13 +47,6 @@ pub struct Store {
     conn: Mutex<Connection>,
 }
 
-/// Unix epoch milliseconds, now.
-fn now() -> Ms {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| d.as_millis() as Ms)
-}
-
 /// `record_request`'s bucket for `span` ("minute" or "day") at `at`.
 fn bucket(span: &str, at: Ms) -> Result<Ms> {
     match span {
@@ -66,7 +59,7 @@ fn bucket(span: &str, at: Ms) -> Result<Ms> {
 }
 
 fn insert_session(tx: &rusqlite::Transaction, title: &str) -> Result<SessionId> {
-    let at = now();
+    let at = now_ms();
     tx.execute(
         "INSERT INTO sessions (title, created_at, updated_at) VALUES (?, ?, ?)",
         params![title, at, at],
@@ -183,7 +176,7 @@ impl Store {
 
     pub fn create_session(&self, title: Option<&str>) -> Result<SessionId> {
         let conn = self.conn();
-        let at = now();
+        let at = now_ms();
         conn.execute(
             "INSERT INTO sessions (title, created_at, updated_at) VALUES (?, ?, ?)",
             params![title, at, at],
@@ -232,7 +225,7 @@ impl Store {
         body: &MessageBody,
     ) -> Result<MessageId> {
         let body = serde_json::to_string(body)?;
-        let at = now();
+        let at = now_ms();
         self.transaction(|tx| {
             tx.execute(
                 "INSERT INTO messages (session_id, role, model, body, at) VALUES (?, ?, ?, ?, ?)",
