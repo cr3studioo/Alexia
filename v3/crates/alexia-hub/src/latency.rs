@@ -61,10 +61,8 @@ pub fn turns(rows: &[SpanRow]) -> Vec<TurnView> {
         }
         let g = &rows[i..j];
         let at = g.iter().map(|r| r.at).min().unwrap_or(0);
-        let stages: Vec<(String, i64, i64)> = g
-            .iter()
-            .map(|r| (r.name.clone(), r.start - at, r.ms))
-            .collect();
+        let stages: Vec<(String, i64, i64)> =
+            g.iter().map(|r| (r.name.clone(), r.start, r.ms)).collect();
         let total_ms = stages
             .iter()
             .filter(|s| s.0 == "deliver")
@@ -419,6 +417,14 @@ pub fn run(store: &Store, opts: &Options) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alexia_core::{Brain, BrainError, Budget, Bus, DraftSink, Lane, OutFile, Reply, Turn};
+    use alexia_gateway::{
+        Channel, ChatRef, Error as GwError, Gateway, GatewayConfig, InFile, InKind, Inbound, Media,
+        MsgRef, Outbound, Result as GwResult,
+    };
+    use alexia_store::Content;
+    use std::sync::Arc;
+    use tokio_util::sync::CancellationToken;
 
     fn r(turn: &str, at: Ms, lane: &str, name: &str, start: Ms, ms: i64) -> SpanRow {
         SpanRow {
@@ -434,9 +440,9 @@ mod tests {
 
     fn good(turn: &str, at: Ms) -> Vec<SpanRow> {
         vec![
-            r(turn, at, "chat", "ack", at, 100),
-            r(turn, at, "chat", "first-byte", at, 500),
-            r(turn, at, "chat", "deliver", at + 500, 500),
+            r(turn, at, "chat", "ack", 0, 100),
+            r(turn, at, "chat", "first-byte", 0, 500),
+            r(turn, at, "chat", "deliver", 500, 500),
         ]
     }
 
@@ -544,6 +550,160 @@ mod tests {
             r("t", 0, "chat", "deliver", 0, 900),
         ]);
         assert!(top3(&v[0]).contains("deliver"));
+    }
+
+    #[test]
+    fn absolute_start_is_not_subtracted() {
+        let at = 1_700_000_000_000;
+        let v = turns(&[
+            r("t", at, "chat", "ack", 0, 120),
+            r("t", at, "chat", "first-byte", 0, 900), // covers the gap so `check` is clean
+            r("t", at, "chat", "deliver", 900, 100),
+        ]);
+        assert_eq!(v[0].ack_ms, Some(120));
+        assert_eq!(v[0].total_ms, 1000);
+        assert!(check(&v, 1).is_empty());
+    }
+
+    #[test]
+    fn check_fails_slow_ack_with_real_epoch() {
+        let at = 1_700_000_000_000;
+        let v = turns(&[
+            r("t:a", at, "chat", "ack", 0, 400),
+            r("t:a", at, "chat", "deliver", 0, 1000),
+        ]);
+        assert!(check(&v, 1).iter().any(|l| l.contains("ack took 400 ms")));
+    }
+
+    struct OneMsg(std::sync::Mutex<bool>);
+
+    #[async_trait::async_trait]
+    impl Channel for OneMsg {
+        fn name(&self) -> &'static str {
+            "fake"
+        }
+        fn budget(&self) -> Budget {
+            Budget::CHAT
+        }
+        async fn next(&self, cancel: CancellationToken) -> GwResult<Vec<Inbound>> {
+            let first = !std::mem::replace(&mut *self.0.lock().unwrap(), true);
+            if first {
+                return Ok(vec![Inbound {
+                    chat: ChatRef { chat: "a".into() },
+                    msg: MsgRef { id: "1".into() },
+                    kind: InKind::Message,
+                    from_owner: true,
+                    content: Content::Text("hi".into()),
+                    files: vec![],
+                    at: 0,
+                }]);
+            }
+            cancel.cancelled().await;
+            Err(GwError::Cancelled)
+        }
+        async fn react(&self, _: &ChatRef, _: &MsgRef, _: &str) -> GwResult<()> {
+            Ok(())
+        }
+        async fn typing(&self, _: &ChatRef) -> GwResult<()> {
+            Ok(())
+        }
+        async fn send(&self, _: &ChatRef, _: &Outbound) -> GwResult<MsgRef> {
+            Ok(MsgRef { id: "s".into() })
+        }
+        async fn draft(&self, _: &ChatRef, _: Option<&str>) -> GwResult<()> {
+            Ok(())
+        }
+        async fn edit(&self, _: &ChatRef, _: &MsgRef, _: &str) -> GwResult<()> {
+            Ok(())
+        }
+        async fn ask(&self, _: &ChatRef, _: &str, _: CancellationToken) -> GwResult<Option<bool>> {
+            Ok(None)
+        }
+    }
+
+    struct NoMedia;
+
+    #[async_trait::async_trait]
+    impl Media for NoMedia {
+        async fn transcribe(&self, _: &InFile) -> GwResult<Option<String>> {
+            Ok(None)
+        }
+        async fn speak(&self, _: &str) -> GwResult<Option<OutFile>> {
+            Ok(None)
+        }
+    }
+
+    struct SlowBrain;
+
+    #[async_trait::async_trait]
+    impl Brain for SlowBrain {
+        async fn reply(
+            &self,
+            _: Turn,
+            _: DraftSink,
+            _: CancellationToken,
+        ) -> Result<Reply, BrainError> {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            Ok(Reply {
+                text: "ok".into(),
+                files: vec![],
+                lane: Lane::Chat,
+                model: None,
+                spans: vec![],
+            })
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn gateway_spans_round_trip() {
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        let mut gw = Gateway::new(
+            GatewayConfig {
+                merge_ms: 20,
+                ..Default::default()
+            },
+            store.clone(),
+            Bus::new(64),
+            Arc::new(SlowBrain),
+            Arc::new(NoMedia),
+        );
+        gw.add(Arc::new(OneMsg(Default::default())));
+        let cancel = CancellationToken::new();
+        let run = tokio::spawn(gw.run(cancel.clone()));
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let rows = loop {
+            let rows = store.last_turns(1).unwrap();
+            let has = |n: &str| rows.iter().any(|r| r.name == n);
+            if has("ack") && has("deliver") {
+                break rows;
+            }
+            assert!(
+                std::time::Instant::now() < end,
+                "no ack+deliver rows: {rows:?}"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        };
+        cancel.cancel();
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(30), run).await;
+        let v = turns(&rows);
+        assert_eq!(v.len(), 1);
+        let a = v[0].ack_ms.expect("ack");
+        assert!((0..300).contains(&a), "ack_ms {a}");
+        assert!(v[0].stages.iter().all(|s| s.1 >= 0), "{:?}", v[0].stages);
+        assert!(
+            (50..5_000).contains(&v[0].total_ms),
+            "total {}",
+            v[0].total_ms
+        );
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+        assert!(
+            (now - rows[0].at).abs() < 10_000,
+            "at {} now {now}",
+            rows[0].at
+        );
     }
 
     #[test]
