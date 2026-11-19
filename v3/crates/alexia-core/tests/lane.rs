@@ -218,3 +218,60 @@ async fn cancel_passes_through() {
     }
     assert!(task.calls().is_empty());
 }
+
+/// Sleeps, then answers `NeedsTask` (the chat brain) or one `{start: 0, ms: 10}` span.
+struct Slow {
+    sleep_ms: u64,
+    escalate: bool,
+}
+
+#[async_trait::async_trait]
+impl Brain for Slow {
+    async fn reply(
+        &self,
+        _: Turn,
+        _: DraftSink,
+        _: CancellationToken,
+    ) -> Result<Reply, BrainError> {
+        tokio::time::sleep(std::time::Duration::from_millis(self.sleep_ms)).await;
+        if self.escalate {
+            return Err(BrainError::NeedsTask);
+        }
+        Ok(Reply {
+            text: "done".into(),
+            files: Vec::new(),
+            lane: Lane::Task,
+            model: None,
+            spans: vec![Span {
+                name: "task-work",
+                start: 0,
+                ms: 10,
+            }],
+        })
+    }
+}
+
+#[tokio::test]
+async fn escalated_task_spans_start_after_the_chat_attempt() {
+    let chat = Arc::new(Slow {
+        sleep_ms: 200,
+        escalate: true,
+    });
+    let task = Arc::new(Slow {
+        sleep_ms: 0,
+        escalate: false,
+    });
+    let lanes = Lanes::new(chat, task);
+    let r = ask(&lanes, "hi", CancellationToken::new()).await.unwrap();
+    assert_eq!(names(&r), ["lane", "chat-escalated", "task-work"]);
+    let escalated = &r.spans[1];
+    assert!(escalated.ms >= 200, "{:?}", r.spans);
+    let work = &r.spans[2];
+    assert!(
+        work.start >= 200 && work.start < 60_000,
+        "task span not shifted past the chat attempt: {:?}",
+        r.spans
+    );
+    assert_eq!(work.ms, 10);
+    assert!(r.spans.iter().all(|s| s.start < 60_000), "{:?}", r.spans);
+}

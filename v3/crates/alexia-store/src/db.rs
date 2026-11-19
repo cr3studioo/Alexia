@@ -9,8 +9,8 @@ use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::migrations::{APPLICATION_ID, MIGRATIONS};
 use crate::{
-    now_ms, Error, Message, MessageBody, MessageId, Ms, Result, Role, Session, SessionId, SpanRow, Try,
-    TryRow, Usage,
+    now_ms, Error, Message, MessageBody, MessageId, Ms, Result, Role, Session, SessionId, SpanRow,
+    Try, TryRow, Usage,
 };
 
 /// sqlite-vec is a C extension; registering it is one FFI call, so this module (and only this

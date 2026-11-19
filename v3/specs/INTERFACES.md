@@ -135,6 +135,11 @@ Only public items are listed. Private helpers are the implementer's choice.
 
 ```rust
 pub type Ms = i64;
+/// Unix epoch milliseconds, now; 0 if the clock reads before 1970.
+pub fn now_ms() -> Ms;
+/// The UTC calendar date and time of epoch `ms` (Howard Hinnant's days-to-civil):
+/// (year, month 1..=12, day 1..=31, hour, minute, second). Negative `ms` is before 1970.
+pub fn civil_utc(ms: Ms) -> (i64, i64, i64, i64, i64, i64);
 
 /// Where v3 keeps its data. `%LOCALAPPDATA%\AlexiaHub` on Windows,
 /// `~/Library/Application Support/AlexiaHub` on macOS (the limb's fallback brain),
@@ -178,6 +183,10 @@ pub enum Part {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum Content { Text(String), Parts(Vec<Part>) }
+impl Content {
+    /// The text parts joined with "\n" (a `Text` as is); image parts are skipped.
+    pub fn text(&self) -> String;
+}
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ToolCall { pub id: String, pub name: String, /** JSON text, as the provider sent it */ pub arguments: String }
@@ -611,9 +620,15 @@ pub type DraftSink = tokio::sync::mpsc::Sender<DraftFrame>;
 #[serde(rename_all = "lowercase")]
 pub enum Lane { Command, Chat, Task }   // Chat = the fast path: one model call, no tools, no loop
 
-/// One timed stretch of answering, for the latency dashboard (SP-09).
+/// One timed stretch of answering, for the latency dashboard (SP-09). `start` is ms since
+/// the brain was handed the turn (a brain's spans); the gateway shifts them by when it called
+/// the brain, so stored spans are ms since the turn's first receipt.
 #[derive(Clone, Debug, Serialize)]
 pub struct Span { pub name: &'static str, pub start: Ms, pub ms: u32 }
+impl Span {
+    /// From `from` to now, with `start` = `from − began` (saturating at 0) and `ms` capped at u32::MAX.
+    pub fn since(name: &'static str, began: std::time::Instant, from: std::time::Instant) -> Span;
+}
 
 #[derive(Clone, Debug)]
 pub struct OutFile { pub name: String, pub mime: String, pub path: PathBuf }

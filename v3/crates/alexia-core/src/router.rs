@@ -425,4 +425,3 @@ fn stopped(e: tokio::task::JoinError) -> ProviderError {
 fn elapsed_ms(since: Instant) -> u32 {
     u32::try_from(since.elapsed().as_millis()).unwrap_or(u32::MAX)
 }
-

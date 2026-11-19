@@ -237,10 +237,7 @@ impl V2Bridge {
                     Role::Assistant => "Alexia",
                     _ => return None,
                 };
-                let said: String = m.body.content.text()
-                    .chars()
-                    .take(CONTEXT_CHARS)
-                    .collect();
+                let said: String = m.body.content.text().chars().take(CONTEXT_CHARS).collect();
                 Some(format!("{who}: {said}"))
             })
             .collect();
@@ -1059,6 +1056,31 @@ s.listen(0, '127.0.0.1', () => {{
             took[0] >= 200 && took[1] >= 100,
             "tool spans too short: {took:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn spans_are_offsets_from_the_turn() {
+        let (url, _log) = fake(
+            vec![
+                Send(r#"{"step":{"n":1,"name":"web_search","args":{}}}"#),
+                Pause(100),
+                Send(r#"{"step":{"n":1,"name":"web_search","text":"found"}}"#),
+                Send(r#"{"delta":"ok"}"#),
+            ],
+            Opts::default(),
+        )
+        .await;
+        let (bridge, _, session) = attached(&url);
+        let reply = ask_once(&bridge, turn(session, "search")).await.0.unwrap();
+        let names: Vec<&str> = reply.spans.iter().map(|s| s.name).collect();
+        assert_eq!(names, ["tool:web_search", "bridge-first-byte", "bridge"]);
+        assert!(
+            reply.spans.iter().all(|s| s.start < 60_000),
+            "a span start is not an offset from the turn: {:?}",
+            reply.spans
+        );
+        let bridge_span = reply.spans.iter().find(|s| s.name == "bridge").unwrap();
+        assert!(bridge_span.start < 1_000, "{bridge_span:?}");
     }
 
     #[tokio::test]

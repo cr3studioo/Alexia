@@ -157,7 +157,11 @@ impl Brain for Lanes {
                         }
                         // Nothing reached the draft (P1-08), so the task brain gets the same sink.
                         let t_task = Instant::now();
-                        (Lane::Task, t_task, self.task.reply(turn, draft, cancel).await)
+                        (
+                            Lane::Task,
+                            t_task,
+                            self.task.reply(turn, draft, cancel).await,
+                        )
                     }
                     other => (Lane::Chat, t_chat, other),
                 }
