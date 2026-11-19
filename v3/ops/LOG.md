@@ -146,3 +146,20 @@
 - 2026-11-19 CEO #8: P1-11 re-review approve; merged, green, pushed. P1-12 ready.
 - 2026-11-19 CEO #8: handoff to CEO #9 at a clean point (opus cap blocks all ready work; 2 live workers: P0-22, P1-13).
 - 2026-11-19 CEO #9: took over. P0-22, P1-13 live. Whole-phase review dispatched (opus, ctx_e161d4c70cb9) in Alexia-wt/phase-review. Telegram empty.
+- 2026-11-19 CEO #9: phase review: 9 findings (latency offsets negative, file-transfer timeout, retry_after overflow, tool rows on wire, catalog tmp leak, gateway bare spawns, v2 ceiling dangling ids, console flash, time-helper dup). Planner wrote P1-20..P1-25.
+- 2026-11-19 CEO #9: P0-22 done (55 s test; conn.rs junk_is_skipped flaked once). Review dispatched. P1-06 dispatched (opus).
+- 2026-11-19 CEO #9: P1-13 done (documents can't reach bridge: Turn has no files; follow-up needed). Review dispatched. P1-10 dispatched (opus). P1-22 dispatched (sonnet).
+- 2026-11-19 CEO #9: P1-13 review: changes (tool spans doubled vs real v2 phase events; cancel before headers skips /api/stop). Fix round in C:\dev\Alexia-wt\fix-P1-13.txt, queued until an opus slot frees. P1-20 dispatched (sonnet).
+- 2026-11-19 CEO #9: P0-22 review approve; merged, green, pushed. P0-25 ready. Merges since phase review: 1.
+- 2026-11-19 CEO #9: P1-06, P1-20, P1-22, P1-10 done; four opus reviews dispatched. P1-13 fix round 1 dispatched (opus, try 2). Five workers live; P0-25, P1-21, P1-24 (sonnet) and P1-07, P1-12, P1-23 (opus) wait for slots.
+- 2026-11-19 CEO #9: P1-20 review approve; merged, green, pushed. P0-25 dispatched (sonnet). Merges since phase review: 2.
+- 2026-11-19 CEO #9: P1-22 and P1-06 approve; merged, green, pushed. Merges since phase review: 4. P1-08 ready.
+- 2026-11-19 CEO #9: P1-10 review: changes. Decided: key asks by (chat, message id) + time-seeded seq; failed attachment download still delivers text with a note; stale press does not edit; pairing code rotates after 5 misses (beyond v2 parity, security). Fix in Alexia-wt/fix-P1-10.txt, queued for an opus slot.
+- 2026-11-19 CEO #9: dispatched P1-08 (opus, critical path, ahead of the P1-10 fix), P1-21, P1-24 (sonnet).
+- 2026-11-19 CEO #9: P1-08 asked how to redact secrets in memory.capture; decided (a): make alexia-mcp process::redact public (2 lines in process.rs, lib.rs added to its touch list). Core already depends on alexia-mcp.
+- 2026-11-19 CEO #9: P0-25 review approve; merged, green, pushed. Phase 0 fully merged (25/25 + P0-26 below). Merges since phase review: 5.
+- 2026-11-19 CEO #9: P1-21 done; review dispatched. conn.rs junk_is_skipped_and_logged flaked a 3rd time under load: CEO wrote spec P0-26 (sonnet, test-only de-flake) and dispatched it.
+- 2026-11-19 CEO #9: P1-24 done (pnpm check: plugins/media models.test.js bytes=500- failed; reviewer told to compare with base). Review dispatched.
+- 2026-11-19 CEO #9: P1-13 fix round 1 done; re-review dispatched. supervise.rs call_at_idle_deadline_never_gone (new in P0-22) also flaked under load: needs a de-flake task.
+- 2026-11-19 CEO #9: handoff to CEO #10 (Phase 0 fully merged). 5 live workers.
+- 2026-11-19 CEO #9: P1-08 done (15 tests); review dispatched (ctx_6b0002a09fec). P1-10 fix still queued: 5-worker cap full.

@@ -150,12 +150,26 @@ fn sent_error(e: reqwest::Error) -> ProviderError {
     }
 }
 
-fn wire(role: &Role, body: &MessageBody) -> Value {
+// ponytail: tool turns are left out because this path sends no tools; V3-2 maps
+// `calls` -> `tool_calls` and `call_id` -> `tool_call_id`.
+fn wire(role: &Role, body: &MessageBody) -> Option<Value> {
     let role = match role {
         Role::System => "system",
         Role::User => "user",
-        Role::Assistant => "assistant",
-        Role::Tool => "tool",
+        Role::Assistant => {
+            let has_calls = body.calls.as_ref().is_some_and(|c| !c.is_empty());
+            let has_text = match &body.content {
+                Content::Text(t) => !t.trim().is_empty(),
+                Content::Parts(ps) => ps
+                    .iter()
+                    .any(|p| matches!(p, Part::Text { text } if !text.trim().is_empty())),
+            };
+            if has_calls && !has_text {
+                return None;
+            }
+            "assistant"
+        }
+        Role::Tool => return None,
     };
     let content = match &body.content {
         Content::Text(text) => json!(text),
@@ -167,7 +181,7 @@ fn wire(role: &Role, body: &MessageBody) -> Value {
             })
             .collect(),
     };
-    json!({"role": role, "content": content})
+    Some(json!({"role": role, "content": content}))
 }
 
 /// `"0"`, `0` and `0.0` are all zero; anything else (absent included) is not.
@@ -265,7 +279,7 @@ impl Provider for OpenAiCompat {
         if let Some(system) = &req.system {
             messages.push(json!({"role": "system", "content": system}));
         }
-        messages.extend(req.messages.iter().map(|(role, body)| wire(role, body)));
+        messages.extend(req.messages.iter().filter_map(|(r, b)| wire(r, b)));
         let mut body = json!({
             "model": model,
             "messages": messages,

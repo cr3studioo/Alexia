@@ -14,6 +14,7 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use crate::{ALEXIA_PROTOCOL_MAX, ALEXIA_PROTOCOL_MIN, APP_VERSION, MCP_REVISIONS};
+use alexia_store::{is_ident, is_plugin_id};
 
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 #[error("{sentence}")]
@@ -693,20 +694,13 @@ fn newer(candidate: &str, installed: &str) -> bool {
     parts(candidate) > parts(installed)
 }
 
+/// The plugin id rule, minus empty `-` parts: `^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$`.
+fn is_id(s: &str) -> bool {
+    is_plugin_id(s) && !s.ends_with('-') && !s.contains("--")
+}
+
 fn lower_alnum(c: char) -> bool {
     c.is_ascii_lowercase() || c.is_ascii_digit()
-}
-
-/// `^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$`
-fn is_id(s: &str) -> bool {
-    s.starts_with(|c: char| c.is_ascii_lowercase())
-        && s.split('-')
-            .all(|part| !part.is_empty() && part.chars().all(lower_alnum))
-}
-
-/// `^[a-z][a-z0-9_]*$`
-fn is_ident(s: &str) -> bool {
-    s.starts_with(|c: char| c.is_ascii_lowercase()) && s.chars().all(|c| lower_alnum(c) || c == '_')
 }
 
 /// `^[a-z][a-z0-9]*(?:\.[a-z][a-z0-9_]*)+$`

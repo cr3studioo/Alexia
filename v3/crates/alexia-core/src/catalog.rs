@@ -187,8 +187,12 @@ impl Catalog {
             std::process::id(),
             WRITES.fetch_add(1, Ordering::Relaxed)
         ));
-        std::fs::write(&tmp, serde_json::to_vec(&file)?)?;
-        std::fs::rename(&tmp, &self.cache)
+        let bytes = serde_json::to_vec(&file)?;
+        let r = std::fs::write(&tmp, bytes).and_then(|()| std::fs::rename(&tmp, &self.cache));
+        if r.is_err() {
+            let _ = std::fs::remove_file(&tmp);
+        }
+        r
     }
 }
 

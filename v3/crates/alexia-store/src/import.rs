@@ -16,7 +16,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use rusqlite::{params, Connection, OpenFlags, OptionalExtension, TransactionBehavior};
 
-use crate::{is_ident, Error, Layout, MessageBody, Result, Store};
+use crate::{is_ident, is_plugin_id, Error, Layout, MessageBody, Result, Store};
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ImportReport {
@@ -54,13 +54,6 @@ fn refused(s: &str) -> Error {
 
 fn q(name: &str) -> String {
     format!("\"{}\"", name.replace('"', "\"\""))
-}
-
-/// `^[a-z][a-z0-9-]*$`, the plugin id rule.
-fn is_plugin_id(s: &str) -> bool {
-    let mut b = s.bytes();
-    b.next().is_some_and(|c| c.is_ascii_lowercase())
-        && b.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')
 }
 
 fn ro_uri(path: &Path) -> Result<String> {
