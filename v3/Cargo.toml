@@ -19,7 +19,7 @@ async-trait = "0.1"
 tracing = "0.1"
 rusqlite = { version = "0.37", features = ["bundled"] }
 keyring = "4.2"          # same family as connect/
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream", "multipart"] }
 
 [workspace.lints.rust]
 unsafe_code = "deny"     # alexia-mcp's Job Object code opts out with a module-level allow

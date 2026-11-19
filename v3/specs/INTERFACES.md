@@ -27,6 +27,9 @@
 3. **No secrets in files.** Secrets live in Windows Credential Manager through the `keyring`
    crate (service `alexia`, account `<owner>.<key>`, the v2 naming), or in environment variables
    for CI. Never in the database, never in logs, specs, tests or fixtures.
+   (V3-1) The environment variable is `ALEXIA_SECRET_<OWNER>_<KEY>`: owner and key uppercased,
+   every character that is not A-Z or 0-9 becomes `_` (`_core.telegram_bot_token` →
+   `ALEXIA_SECRET__CORE_TELEGRAM_BOT_TOKEN`). If set and non-empty it wins over the keychain.
 4. **Windows first.** Paths are built with `Path::join`, never with literal separators or
    drive letters. The data directory comes from `%LOCALAPPDATA%` (§2.1). Child processes are
    created with `CREATE_NO_WINDOW` and placed in a Job Object (§3.2). Tests run on
@@ -83,7 +86,8 @@ through the bus. A CI step (`cargo metadata` + a 20-line script) fails on any ed
 table.
 
 **Not crates, on purpose.** The GPU job arbiter (D213) is a module of `alexia-core`
-(`alexia_core::gpu`, V3-6). The latency dashboard (SP-09) is a page served by the hub (V3-1).
+(`alexia_core::gpu`, V3-6). The latency dashboard (SP-09) is a page the hub **writes** (`alexia-hub latency --html FILE`),
+not one it serves, so the hub opens no port (V3-1).
 The iOS app is `apps/ios`, outside the workspace (D215).
 
 ### 1.2 `v3/Cargo.toml`
@@ -286,12 +290,43 @@ impl Store {
     pub fn record_request(&self, provider: &str, at: Ms) -> Result<()>;
     pub fn record_usage(&self, u: &Usage) -> Result<()>;
     pub fn record_try(&self, t: &Try) -> Result<()>;
+
+    // (V3-1) channel chats and spans, migration 2 (§5.3)
+    /// The session for this chat, created (titled "<channel>") on first sight. The first chat ever
+    /// seen on a channel becomes its primary.
+    pub fn channel_session(&self, channel: &str, chat: &str) -> Result<SessionId>;
+    /// Point the chat at a fresh session (`/new`). Returns it.
+    pub fn new_channel_session(&self, channel: &str, chat: &str) -> Result<SessionId>;
+    pub fn primary_chat(&self, channel: &str) -> Result<Option<String>>;
+    /// Exactly one primary per channel.
+    pub fn set_primary_chat(&self, channel: &str, chat: &str) -> Result<()>;
+    pub fn record_spans(&self, rows: &[SpanRow]) -> Result<()>;                // one transaction
+    /// The newest `n` turns' rows, oldest turn first, rows in `start` order.
+    pub fn last_turns(&self, n: u32) -> Result<Vec<SpanRow>>;
+    pub fn tries_since(&self, at: Ms) -> Result<Vec<TryRow>>;                  // oldest first
+    /// Requests counted by `record_request` in the `"minute"` or `"day"` bucket that holds `at`.
+    /// 0 when there is no row.
+    pub fn request_count(&self, provider: &str, span: &str, at: Ms) -> Result<u64>;
+    /// Spans older than `before` are deleted (the dashboard keeps 30 days).
+    pub fn prune_spans(&self, before: Ms) -> Result<u64>;
 }
+
+/// (V3-1)
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SpanRow { pub turn: String, pub at: Ms, pub origin: String, pub lane: String,
+                     pub name: String, pub start: Ms, pub ms: i64 }
+/// (V3-1)
+#[derive(Clone, Debug, PartialEq)]
+pub struct TryRow { pub at: Ms, pub provider: String, pub model: String, pub outcome: String,
+                    pub status: i64, pub waited_ms: Option<i64> }
 
 pub mod secrets {
     /// Windows Credential Manager via `keyring`. Service "alexia", account "<owner>.<key>",
     /// where owner is a plugin id or "_core". Never logged, never cached by callers.
+    /// (V3-1) Reads the environment variable `env_name(owner, key)` first; set and non-empty, it wins.
     pub fn get(owner: &str, key: &str) -> super::Result<Option<String>>;
+    /// (V3-1) `ALEXIA_SECRET_<OWNER>_<KEY>`, spelled as §0.3 says.
+    pub fn env_name(owner: &str, key: &str) -> String;
     pub fn set(owner: &str, key: &str, secret: &str) -> super::Result<()>;
     pub fn delete(owner: &str, key: &str) -> super::Result<()>;
     pub fn delete_all(owner: &str, keys: &[String]) -> super::Result<()>;
@@ -560,6 +595,7 @@ pub enum Origin {
     Scheduler { job: JobId },
 }
 
+#[derive(Clone, Debug)]
 pub struct Turn { pub session: SessionId, pub origin: Origin, pub content: Content, pub received_at: Ms }
 
 /// What the reply is doing while it is written. Mirrors `alexia/stream` (wire-protocol.md §5).
@@ -577,13 +613,17 @@ pub enum Lane { Command, Chat, Task }   // Chat = the fast path: one model call,
 #[derive(Clone, Debug, Serialize)]
 pub struct Span { pub name: &'static str, pub start: Ms, pub ms: u32 }
 
+#[derive(Clone, Debug)]
 pub struct OutFile { pub name: String, pub mime: String, pub path: PathBuf }
+#[derive(Clone, Debug)]
 pub struct Reply { pub text: String, pub files: Vec<OutFile>, pub lane: Lane, pub model: Option<String>, pub spans: Vec<Span> }
 
 #[derive(Debug, thiserror::Error)]
 pub enum BrainError {
     #[error("{0}")] Unavailable(String),   // a sentence: nothing could answer right now
     #[error("stopped")] Cancelled,
+    /// (V3-1) The chat lane decided this turn needs tools; nothing was shown or stored yet.
+    #[error("needs the task lane")] NeedsTask,
     #[error(transparent)] Other(#[from] Error),
 }
 
@@ -601,6 +641,7 @@ pub trait Brain: Send + Sync {
 pub trait Ask: Send + Sync {
     async fn confirm(&self, origin: &Origin, question: &Question, cancel: CancellationToken) -> bool;
 }
+#[derive(Clone, Debug)]
 pub struct Question { pub run: RunId, pub text: String, pub detail: Option<String> }
 
 // ---- permissions (plan.md, "Permission modes") ----
@@ -616,14 +657,19 @@ pub fn gate(mode: PermissionMode, annotations: Option<&alexia_mcp::types::ToolAn
 pub struct Limits { pub max_steps: u32, pub max_spend_usd: f64 }   // default 25 steps, 0.0 (D212)
 
 // ---- providers and the router ----
+#[derive(Clone, Debug)]
 pub struct ChatRequest { pub messages: Vec<(Role, MessageBody)>, pub system: Option<String>,
                          pub tools: Vec<alexia_mcp::types::Tool>, pub max_tokens: Option<u32> }
+#[derive(Clone, Debug, PartialEq)]
 pub enum ChatChunk { Text(String), Reasoning(String), ToolCall(ToolCall) }
-pub struct ChatDone { pub model: String, pub tokens_in: i64, pub tokens_out: i64, pub cost: f64, pub first_byte_ms: Option<u32> }
+#[derive(Clone, Debug)]
+pub struct ChatDone { pub model: String, /** (V3-1) */ pub provider: String, pub tokens_in: i64, pub tokens_out: i64,
+                      pub cost: f64, pub first_byte_ms: Option<u32> }
 #[derive(Debug, thiserror::Error)]
 pub enum ProviderError { #[error("busy")] Busy { retry_after_ms: Option<u64> }, #[error("needs a key")] NeedsKey,
                          #[error("refused: {0}")] Refused(String), #[error("unreachable")] Unreachable,
                          #[error("stopped")] Cancelled, #[error("{0}")] Other(String) }
+#[derive(Clone, Debug)]
 pub struct ModelInfo { pub id: String, pub context: u32, pub free: bool, pub tools: bool, pub vision: bool }
 
 #[async_trait::async_trait]
@@ -634,13 +680,23 @@ pub trait Provider: Send + Sync {
                   cancel: CancellationToken) -> Result<ChatDone, ProviderError>;
 }
 
-pub struct Router { /* providers, store */ }
+/// (V3-1) SP-07: how long a channel can wait for the first byte. The router starts another
+/// candidate each time this passes with nothing back.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Budget { pub first_byte_ms: u32 }
+impl Budget { pub const CHAT: Budget = Budget { first_byte_ms: 2_500 }; }
+
+pub struct Router { /* providers by id, catalog, store */ }
 impl Router {
-    pub fn new(providers: Vec<Arc<dyn Provider>>, store: Arc<Store>) -> Router;
-    /// D212: starts the best two free candidates at once, keeps the first to produce a byte,
-    /// cancels the other. Records both in `tries`.
-    pub async fn hedged(&self, req: &ChatRequest, out: tokio::sync::mpsc::Sender<ChatChunk>,
+    pub fn new(providers: Vec<Arc<dyn Provider>>, catalog: Arc<Catalog>, store: Arc<Store>) -> Router;
+    /// D212 + SP-07: starts the best two free candidates at once; whichever sends a first chunk
+    /// wins and the other is cancelled. Each time `budget.first_byte_ms` passes with no first
+    /// chunk, one more candidate starts (at most 4 running). Records every try in `tries`.
+    /// (V3-1) `budget` is the new third argument.
+    pub async fn hedged(&self, req: &ChatRequest, budget: Budget, out: tokio::sync::mpsc::Sender<ChatChunk>,
                         cancel: CancellationToken) -> Result<ChatDone, ProviderError>;
+    /// (V3-1) The ranked list `hedged` would use now, for the dashboard and tests.
+    pub fn ranked(&self, now: Ms) -> Vec<Candidate>;
 }
 
 // ---- the agent loop (V3-2) ----
@@ -661,41 +717,73 @@ of deliberate exception as core's model providers (`Alexia.md`, *What core owns*
 under `crates/alexia-gateway/src/channels/`. See §8 for what this means for invariant check 1.
 
 ```rust
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct ChatRef { pub chat: String }          // the service's chat id, as text
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct MsgRef { pub id: String }
-
-pub struct Inbound { pub chat: ChatRef, pub msg: MsgRef, pub from_owner: bool, pub content: Content, pub at: Ms }
-pub struct Outbound { pub text: String, pub files: Vec<OutFile> }
+#[derive(Clone, Debug, PartialEq, Eq, Hash)] pub struct ChatRef { pub chat: String }   // the service's chat id, as text
+#[derive(Clone, Debug, PartialEq, Eq, Hash)] pub struct MsgRef { pub id: String }
+/// (V3-1) `Stop`: the owner asks to stop the answer being written.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)] pub enum InKind { Message, Stop }
+/// (V3-1) A file that came with a message, already downloaded under `layout.cache()`.
+#[derive(Clone, Debug)] pub struct InFile { pub name: String, pub mime: String, pub path: PathBuf }
+#[derive(Clone, Debug)]
+pub struct Inbound { pub chat: ChatRef, pub msg: MsgRef, /** (V3-1) */ pub kind: InKind, pub from_owner: bool,
+                     pub content: Content, /** (V3-1) */ pub files: Vec<InFile>, pub at: Ms }
+#[derive(Clone, Debug)]
+pub struct Outbound { pub text: String, pub files: Vec<OutFile>, /** (V3-1) send as a voice note */ pub voice: bool }
 
 #[async_trait::async_trait]
 pub trait Channel: Send + Sync {
     /// "telegram". Goes into `Origin::Channel { channel }` and the session map.
     fn name(&self) -> &'static str;
+    /// (V3-1) SP-07: how long this surface can wait for a first word.
+    fn budget(&self) -> alexia_core::Budget;
     /// Long-poll for the next batch. Nothing is exposed to the internet (CH-01).
     async fn next(&self, cancel: CancellationToken) -> Result<Vec<Inbound>>;
     /// The instant reaction (target: < 300 ms from receipt, V3-1).
     async fn react(&self, chat: &ChatRef, msg: &MsgRef, emoji: &str) -> Result<()>;
     async fn typing(&self, chat: &ChatRef) -> Result<()>;
     async fn send(&self, chat: &ChatRef, out: &Outbound) -> Result<MsgRef>;
-    /// Replace a draft in place.
+    /// (V3-1) Show `text` as the message being written. `None` clears it. Rate limits come back
+    /// as `Error::RateLimited`; the gateway paces itself.
+    async fn draft(&self, chat: &ChatRef, text: Option<&str>) -> Result<()>;
+    /// Replace a sent message in place.
     async fn edit(&self, chat: &ChatRef, msg: &MsgRef, text: &str) -> Result<()>;
     /// A yes/no with two buttons; `None` if the owner did not answer before `cancel`.
     async fn ask(&self, chat: &ChatRef, text: &str, cancel: CancellationToken) -> Result<Option<bool>>;
 }
 
+/// (V3-1) Voice in and out (CH-05). The hub implements it over `McpHost::call_capability`
+/// (`voice.transcribe`, `voice.render`); tests use a fake. `None` = nothing installed can do it.
+#[async_trait::async_trait]
+pub trait Media: Send + Sync {
+    async fn transcribe(&self, file: &InFile) -> Result<Option<String>>;
+    async fn speak(&self, text: &str) -> Result<Option<OutFile>>;
+}
+
+#[derive(Clone, Debug)]
 pub struct GatewayConfig {
     /// Messages from one chat this close together are merged into one turn.
-    pub merge_ms: u64,            // 1_500
-    /// Minimum gap between draft edits (Telegram rate limit).
-    pub draft_every_ms: u64,      // 700
+    pub merge_ms: u64,            // (V3-1) 500
+    /// Minimum gap between draft updates: Telegram's real rate; the gateway backs off on 429.
+    pub draft_every_ms: u64,      // (V3-1) 300
     pub ack_emoji: String,        // "👀"
 }
+impl Default for GatewayConfig { /* 500, 300, "👀" */ }
+
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    #[error("{0}")] Service(String),                         // a sentence the owner can read
+    #[error("rate limited")] RateLimited { retry_after_ms: u64 },
+    #[error("another program is reading this bot's messages")] Conflict,   // 409
+    #[error("the token was refused")] Unauthorized,           // 401
+    #[error("unreachable")] Unreachable,
+    #[error("stopped")] Cancelled,
+    #[error(transparent)] Store(#[from] alexia_store::Error),
+}
+pub type Result<T> = std::result::Result<T, Error>;
 
 pub struct Gateway { /* ... */ }
 impl Gateway {
-    pub fn new(cfg: GatewayConfig, store: Arc<Store>, bus: Bus, brain: Arc<dyn Brain>) -> Gateway;
+    /// (V3-1) `media` is new.
+    pub fn new(cfg: GatewayConfig, store: Arc<Store>, bus: Bus, brain: Arc<dyn Brain>, media: Arc<dyn Media>) -> Gateway;
     pub fn add(&mut self, channel: Arc<dyn Channel>);
     /// Polls every channel, acks, merges, calls the brain with a draft sink, delivers.
     /// Also delivers `Event::Say` from the bus to the owner's primary chat.
@@ -703,10 +791,18 @@ impl Gateway {
     /// The gateway's `Ask`, for `Agent::new`.
     pub fn asker(&self) -> Arc<dyn alexia_core::Ask>;
 }
+
+pub mod channels {
+    /// (V3-1) The `_core` secret keys channels read, for `alexia-hub secret set`.
+    pub fn secret_keys() -> &'static [&'static str];
+    /// (V3-1) Every channel whose secret is present.
+    pub fn configured(store: Arc<Store>, layout: &Layout) -> Vec<Arc<dyn Channel>>;
+}
 ```
 
 The owner's chat on each channel maps to one session, stored in kv `_core.channel_sessions` as
 `{"<channel>:<chat>": <session id>}` until the V3-1 migration gives it a table (§5.3).
+(V3-1) That table is migration 2's `channel_chats`, reached through `Store::channel_session`.
 
 ### 2.5 `alexia-scheduler` (V3-3; types fixed now so the bus is stable)
 
@@ -748,6 +844,13 @@ alexia-hub run                     start everything; Ctrl+C or the tray's Quit s
 alexia-hub tools                   load plugins, print every enabled plugin's tools, exit (V3-0 done-when)
 alexia-hub import-v2 <v2-folder>   §6; prints the ImportReport
 alexia-hub plugins                 print PluginStatus for every plugin found
+alexia-hub secret set <key>        (V3-1) reads the value without echo; key ∈ channels::secret_keys()
+                                   or "provider_<id>" for an id in free::ladder()
+alexia-hub secret clear <key>      (V3-1)
+alexia-hub secret list             (V3-1) the allowed key names, never values
+alexia-hub pair                    (V3-1) prints "<channel>\t<code>" per unpaired channel
+alexia-hub latency [--last N] [--html FILE] [--check]   (V3-1) SP-09; --html writes the page
+alexia-hub install | uninstall     (V3-1) watchdog::install / uninstall
 ```
 
 Wiring in `run`: `Store::open(layout.db())` → `Bus::new(1024)` → `McpHost::new(.., Arc::new(NoUpcalls), sink)`
@@ -758,8 +861,30 @@ where `sink` publishes `Event::Plugin` → (V3-2) `Agent::new(.., host.clone(), 
 ```rust
 /// V3-1 only: the v2 core answers. Speaks v2's local HTTP API at `base` (reached through
 /// connect's forwarder when v2 runs on the Mac). Deleted at V3-2.
-pub struct V2Bridge { /* reqwest client, base url */ }
-impl V2Bridge { pub fn new(base: String) -> V2Bridge; }
+/// (V3-1)
+pub struct V2Config {
+    /// The v2 checkout (`ALEXIA_V2_ROOT`). Its `packages/core/dist/src/entry.js` must exist.
+    pub root: PathBuf,
+    /// Node (`ALEXIA_NODE`, else `node` on PATH).
+    pub node: PathBuf,
+    /// `ALEXIA_DATA_NAME` for the child: the v2 data folder under `%LOCALAPPDATA%`. Default "AlexiaBridge".
+    pub data_name: String,
+    /// Test hook and escape hatch: `ALEXIA_V2_URL` + `ALEXIA_V2_TOKEN` → don't spawn, use these.
+    pub attach: Option<(String, String)>,
+}
+pub struct V2Bridge { /* config, child handle, url+token behind a RwLock, reqwest client, store, asker */ }
+impl V2Bridge {
+    /// (V3-1) Takes a `V2Config` and the store instead of a base url.
+    pub fn new(cfg: V2Config, store: Arc<Store>) -> V2Bridge;
+    /// (V3-1) The gateway's asker (CH-07). Set once after the gateway exists (the gateway needs
+    /// the bridge as its brain first); until then every question is answered no.
+    pub fn set_ask(&self, ask: Arc<dyn alexia_core::Ask>);
+    /// (V3-1) Start (or attach), then keep v2 core alive until cancelled: if the child exits,
+    /// start it again with backoff 1 s doubling to 60 s (HB-12). Kills the child on cancel.
+    pub async fn run(&self, cancel: CancellationToken);
+    /// (V3-1) Ready to answer (child up and its token read).
+    pub fn ready(&self) -> bool;
+}
 impl Brain for V2Bridge { /* ... */ }
 ```
 
@@ -1308,9 +1433,33 @@ plan confirms its own):
 
 | # | Phase | Adds |
 |---|---|---|
-| 2 | V3-1 | `channel_chats (channel, chat, session_id, primary)`, `spans (at, origin, lane, name, start, ms)` for SP-09 |
+| 2 | V3-1 | `channel_chats (channel, chat, session_id, is_primary)`, `spans (turn, at, origin, lane, name, start, ms)` for SP-09 (V3-1: below) |
 | 3 | V3-2 | `audit (at, run_id, plugin, tool, gate, decision)` |
 | 4 | V3-3 | `jobs`, `job_runs`; `sqlite-vec` virtual table for embeddings; life graph tables |
+
+(V3-1) Migration 2. `primary` is spelled `is_primary` (`PRIMARY` is an SQL keyword); `spans`
+gains `turn`, which groups the stages of one message.
+
+```sql
+CREATE TABLE channel_chats (
+  channel    TEXT NOT NULL,
+  chat       TEXT NOT NULL,
+  session_id INTEGER NOT NULL REFERENCES sessions (id) ON DELETE CASCADE,
+  is_primary INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (channel, chat)
+);
+CREATE TABLE spans (
+  turn   TEXT NOT NULL,
+  at     INTEGER NOT NULL,      -- when the turn was received (ms)
+  origin TEXT NOT NULL,         -- JSON Origin
+  lane   TEXT NOT NULL,         -- 'command' | 'chat' | 'task'
+  name   TEXT NOT NULL,
+  start  INTEGER NOT NULL,      -- ms
+  ms     INTEGER NOT NULL
+);
+CREATE INDEX spans_at ON spans (at);
+CREATE INDEX spans_turn ON spans (turn);
+```
 
 ---
 
