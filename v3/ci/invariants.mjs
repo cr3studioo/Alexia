@@ -6,7 +6,7 @@
  *
  * 1. No crate names a plugin (v2's rule: the id quoted, or a path segment after `plugins/`).
  * 1b. No crate outside alexia-gateway names a `channels::<module>` path (only secret_keys,
- *    configured, pairing_codes); scans `src/` and `tests/`.
+ *    configured, pairing_codes, v2_secret_names); scans `src/` and `tests/`.
  * 2. Internal dependency edges are exactly the allowed table; licence and SPDX headers.
  * 3. No hard-coded absolute paths in crate sources.
  *
@@ -59,9 +59,9 @@ export function channelHits(path, text) {
   if (path.startsWith('v3/crates/alexia-gateway/')) return out
   text.split('\n').forEach((line, i) => {
     if (isComment(line)) return
-    if (/\bchannels::(?!secret_keys\b|configured\b|pairing_codes\b)[a-z_]+/.test(line)) {
+    if (/\bchannels::(?!secret_keys\b|configured\b|pairing_codes\b|v2_secret_names\b)[a-z_]+/.test(line)) {
       out.push(
-        `${path}:${i + 1}: reaches into a channel adapter (use channels::{secret_keys, configured, pairing_codes})`,
+        `${path}:${i + 1}: reaches into a channel adapter (use channels::{secret_keys, configured, pairing_codes, v2_secret_names})`,
       )
     }
   })
@@ -153,6 +153,7 @@ function selfTest() {
   )
   ok('the hub calling configured', channelHits(hub, 'let c = channels::configured(store, &layout);'))
   ok('pairing_codes and secret_keys', channelHits(hub, 'channels::pairing_codes(&s); channels::secret_keys()'))
+  ok('v2_secret_names', channelHits(hub, 'let renames = channels::v2_secret_names();'))
   ok(
     'the gateway own tests',
     channelHits('v3/crates/alexia-gateway/tests/telegram_api.rs', 'use alexia_gateway::channels::telegram::api::Api;'),
