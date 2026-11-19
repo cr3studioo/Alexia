@@ -95,3 +95,6 @@
 - 2026-11-19 CEO #7: P0-15 try 2 done: 4/4 v2_plugins tests pass 3/3 runs, all 15 plugins list tools; variance was the host bugs. Review dispatched (opus).
 - 2026-11-19 CEO #7: P0-15 review approve; merged, integration green, pushed. Minor follow-ups: v2_plugins.rs:239 assert always true; temp dirs left in %TEMP%.
 - 2026-11-19 CEO #7: dispatched P0-16 (sonnet ctx_274002cdba35, workflow rule lifted for v3.yml only) and P1-01 (opus ctx_78a4c0021824).
+- 2026-11-19 CEO #7: P0-16 question (invariants.mjs hits 10 doc-comment/test strings): answered A - skip comment lines; path check also skips test code; prove real hits still caught.
+- 2026-11-19 CEO #7: P1-01 done; review dispatched (opus).
+- 2026-11-19 CEO #7: P0-16 reported failed only on known pnpm flake + unverified GH run; treated as done. Pushed task branch to run v3.yml on GitHub; review dispatched (opus).
