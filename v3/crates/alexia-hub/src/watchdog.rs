@@ -41,13 +41,15 @@ fn put(store: &Store, key: &str, now: Ms) {
 fn local_offset_minutes() -> i64 {
     #[cfg(windows)]
     {
-        let out = std::process::Command::new("powershell")
-            .args([
-                "-NoProfile",
-                "-Command",
-                "[int][TimeZoneInfo]::Local.GetUtcOffset([DateTime]::UtcNow).TotalMinutes",
-            ])
-            .output();
+        use std::os::windows::process::CommandExt;
+        let mut cmd = std::process::Command::new("powershell");
+        cmd.args([
+            "-NoProfile",
+            "-Command",
+            "[int][TimeZoneInfo]::Local.GetUtcOffset([DateTime]::UtcNow).TotalMinutes",
+        ])
+        .creation_flags(0x0800_0000); // CREATE_NO_WINDOW: no console flash under Task Scheduler
+        let out = cmd.output();
         if let Some(m) = out
             .ok()
             .and_then(|o| String::from_utf8(o.stdout).ok())

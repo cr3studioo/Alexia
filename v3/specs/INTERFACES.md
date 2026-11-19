@@ -311,7 +311,8 @@ impl Store {
     pub fn prune_spans(&self, before: Ms) -> Result<u64>;
 }
 
-/// (V3-1)
+/// (V3-1) `at`: epoch ms of the turn's first receipt. `start`: ms from that receipt (`at`) to
+/// the span's start, not an epoch time. `ms`: the span's length.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SpanRow { pub turn: String, pub at: Ms, pub origin: String, pub lane: String,
                      pub name: String, pub start: Ms, pub ms: i64 }
