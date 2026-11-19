@@ -45,6 +45,7 @@ dependencies = [
  "alexia-core",
  "alexia-store",
  "async-trait",
+ "base64 0.22.1",
  "reqwest",
  "serde",
  "serde_json",
