@@ -48,6 +48,8 @@ struct Shared {
     bus: Bus,
     brain: Arc<dyn Brain>,
     media: Arc<dyn Media>,
+    /// Every task the gateway starts, so `run` can wait for all of them.
+    tracker: TaskTracker,
 }
 
 impl Gateway {
@@ -83,14 +85,15 @@ impl Gateway {
             .read()
             .unwrap_or_else(|e| e.into_inner())
             .clone();
+        let tracker = TaskTracker::new();
         let g = Arc::new(Shared {
             cfg: self.cfg,
             store: self.store,
             bus: self.bus,
             brain: self.brain,
             media: self.media,
+            tracker: tracker.clone(),
         });
-        let tracker = TaskTracker::new();
         for ch in &channels {
             tracker.spawn(poll(g.clone(), ch.clone(), cancel.clone(), tracker.clone()));
         }
@@ -231,7 +234,8 @@ fn spawn_ack(
 ) {
     let (g, ch) = (g.clone(), ch.clone());
     let (chat, msg) = (inbound.chat.clone(), inbound.msg.clone());
-    tokio::spawn(async move {
+    let tracker = g.tracker.clone();
+    tracker.spawn(async move {
         let r = ch.react(&chat, &msg, &g.cfg.ack_emoji).await;
         let ms = ms_since(rec.instant);
         let ok = match r {
@@ -555,7 +559,9 @@ impl Actor {
                 delete_files(&msgs);
                 self.forget(&msgs);
                 let (ch, chat) = (self.ch.clone(), self.chat.clone());
-                tokio::spawn(async move { ch.send(&chat, &plain(SORRY)).await });
+                self.g
+                    .tracker
+                    .spawn(async move { ch.send(&chat, &plain(SORRY)).await });
                 return;
             }
         };
@@ -577,6 +583,7 @@ impl Actor {
             cancel,
             visible,
             tasky,
+            // Off the tracker on purpose: the actor awaits this handle on cancel.
             handle: tokio::spawn(ctx.run()),
             msgs,
         });
@@ -796,6 +803,7 @@ impl TurnCtx {
         // Its own task: a slow draft call never stalls the brain, and on cancel the brain keeps
         // running until it has stopped its own work (the v2 bridge POSTs /api/stop).
         let (brain, cancel) = (g.brain.clone(), self.cancel.clone());
+        // Off the tracker on purpose: the pump aborts it 3 s after cancel.
         let handle = tokio::spawn(async move { brain.reply(turn, tx, cancel).await });
         let mut pump = Pump::new(&self, frames);
         let result = pump.run(handle).await;
@@ -906,6 +914,7 @@ struct Pump {
     last: Option<Instant>,
     blocked_until: Option<Instant>,
     shown: bool,
+    tracker: TaskTracker,
 }
 
 impl Pump {
@@ -927,6 +936,7 @@ impl Pump {
             last: None,
             blocked_until: None,
             shown: false,
+            tracker: t.g.tracker.clone(),
         }
     }
 
@@ -965,7 +975,7 @@ impl Pump {
                 }
                 _ = sleep_until(typing_at), if !self.shown && give_up.is_none() => {
                     let (ch, chat) = (self.ch.clone(), self.chat.clone());
-                    tokio::spawn(async move { ch.typing(&chat).await });
+                    self.tracker.spawn(async move { ch.typing(&chat).await });
                     typing_at += TYPING_EVERY;
                 }
                 f = self.frames.recv(), if open => match f {
@@ -1205,6 +1215,7 @@ mod tests {
             bus: Bus::new(16),
             brain: Arc::new(Busy),
             media: Arc::new(Quiet),
+            tracker: TaskTracker::new(),
         });
         let chat = ChatRef { chat: "1".into() };
         let mut a = Actor::new(g, Arc::new(Quiet), chat, CancellationToken::new());
