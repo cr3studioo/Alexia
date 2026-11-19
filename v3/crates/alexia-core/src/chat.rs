@@ -26,6 +26,8 @@ const CAPTURE: &str = "memory.capture";
 /// What `memory.recall` says when it found nothing: not worth a line in the prompt.
 const NOTHING: &str = "Nothing was written down";
 const BUSY: &str = "The free models are all busy right now. Try again in a minute.";
+/// The model streamed reasoning and no words: nothing to show, nothing worth storing.
+const NO_ANSWER: &str = "The free model sent back no answer. Try again.";
 /// How many characters are held back before deciding the reply is not the marker.
 const HOLD: usize = 8;
 
@@ -124,8 +126,20 @@ impl FastChat {
             .and_then(|v| v.as_str().map(|s| s.trim().to_owned()))
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| "Alexia".into());
-        let profile = self.cap_text(PROFILE, cancel).await;
-        let personality = self.cap_text(PERSONALITY, cancel).await;
+        // ponytail: a hung plugin costs RECALL_WAIT_MS once, not every turn: the prefix built
+        // without its text is cached like any other, and `invalidate` (every 10 min) retries.
+        let child = cancel.child_token();
+        let fetched = tokio::time::timeout(Duration::from_millis(Self::RECALL_WAIT_MS), async {
+            tokio::join!(
+                self.cap_text(PROFILE, &child),
+                self.cap_text(PERSONALITY, &child)
+            )
+        })
+        .await;
+        let (profile, personality) = fetched.unwrap_or_else(|_| {
+            child.cancel();
+            (None, None)
+        });
         // v2 `system()`, the no-tools branch.
         let mut parts = vec![format!(
             "You are {name}, an assistant running on the user’s own machine. \
@@ -243,6 +257,9 @@ impl Brain for FastChat {
         let Streamed::Text(text) = streamed else {
             return Err(BrainError::NeedsTask);
         };
+        if text.trim().is_empty() {
+            return Err(BrainError::Unavailable(NO_ANSWER.into()));
+        }
         let total = asked.elapsed();
         let first = Duration::from_millis(u64::from(done.first_byte_ms.unwrap_or(0)));
         let first_byte = Span {
@@ -325,7 +342,9 @@ async fn relay(mut rx: mpsc::Receiver<ChatChunk>, draft: &DraftSink) -> Streamed
         if text.trim() == FastChat::MARKER {
             return Streamed::Marker;
         }
-        flush(&text, draft).await;
+        if !text.trim().is_empty() {
+            flush(&text, draft).await;
+        }
     }
     Streamed::Text(text)
 }

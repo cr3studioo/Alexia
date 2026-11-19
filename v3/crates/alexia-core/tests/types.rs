@@ -42,6 +42,7 @@ async fn brain_is_object_safe() {
         session: SessionId(1),
         origin: Origin::Desktop,
         content: Content::Text("hello".into()),
+        files: Vec::new(),
         received_at: 0,
     };
     let reply = brain

@@ -923,3 +923,33 @@ async fn no_channel_call_after_run_returns() {
         "a channel call after run returned"
     );
 }
+
+// ---- documents (P1-26) ----
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn documents_reach_the_brain_voice_does_not() {
+    let h = start(cfg(20), vec![]);
+    let mut m = msg("a", "1", "read this");
+    m.files = vec![
+        InFile {
+            name: "report.pdf".into(),
+            mime: "application/pdf".into(),
+            path: "no-such-dir/report.pdf".into(),
+        },
+        InFile {
+            name: "voice.ogg".into(),
+            mime: "audio/ogg".into(),
+            path: "no-such-dir/voice.ogg".into(),
+        },
+    ];
+    h.push(vec![m]);
+    until("the brain call", || h.brain.calls() == 1).await;
+    {
+        let turns = h.brain.turns.lock().unwrap();
+        let files = &turns[0].files;
+        assert_eq!(files.len(), 1, "{files:?}");
+        assert_eq!(files[0].name, "report.pdf");
+        assert_eq!(files[0].mime, "application/pdf");
+    }
+    h.stop().await;
+}

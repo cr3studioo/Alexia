@@ -8,11 +8,22 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{Error, Lane, Origin, RunId, Span};
 
+/// (V3-1) A file that came with a message, already downloaded under `layout.cache()`.
+#[derive(Clone, Debug)]
+pub struct InFile {
+    pub name: String,
+    pub mime: String,
+    pub path: PathBuf,
+}
+
 #[derive(Clone, Debug)]
 pub struct Turn {
     pub session: SessionId,
     pub origin: Origin,
     pub content: Content,
+    /// (V3-1) Documents and other files that came with the message, not voice notes (those
+    /// are already text in `content`) and not photos (image parts of `content`).
+    pub files: Vec<InFile>,
     pub received_at: Ms,
 }
 

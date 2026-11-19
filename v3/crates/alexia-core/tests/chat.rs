@@ -221,6 +221,7 @@ async fn say(w: &World, said: &str) -> (Result<Reply, BrainError>, Vec<DraftFram
         session: w.session,
         origin: Origin::Desktop,
         content: Content::Text(said.into()),
+        files: Vec::new(),
         received_at: now(),
     };
     let result = w.chat.reply(turn, tx, CancellationToken::new()).await;
@@ -404,6 +405,64 @@ async fn slow_recall_is_not_waited_for() {
     );
     assert!(waited < Duration::from_secs(10), "{waited:?}");
     assert_eq!(last_user(&seen.0), "hello");
+}
+
+#[tokio::test]
+async fn hung_profile_does_not_stall_the_first_turn() {
+    // Far slower than any bound below; the prefix bound is RECALL_WAIT_MS for both together.
+    let caps = Arc::new(
+        FakeCaps::default()
+            .with("memory.profile", 60_000, |_| Some("Lives in Brno.".into()))
+            .with("persona.personality", 60_000, |_| Some("Be warm.".into())),
+    );
+    let w = world(text(&["Hi."]), caps.clone()).await;
+    let started = Instant::now();
+    say(&w, "hello").await.0.unwrap();
+    let (first, at) = w.fake.seen.lock().unwrap()[0].clone();
+    assert!(at - started < Duration::from_secs(2), "{:?}", at - started);
+    let system = first.system.unwrap();
+    assert!(!system.contains("What you know about the user"), "{system}");
+    assert!(!system.contains("Be warm."), "{system}");
+
+    say(&w, "again").await.0.unwrap();
+    let second = requests(&w)[1].system.clone().unwrap();
+    let upto_day = |s: &str| {
+        s[..s
+            .find(
+                "
+
+Today is ",
+            )
+            .unwrap()]
+            .to_owned()
+    };
+    assert_eq!(upto_day(&system).as_bytes(), upto_day(&second).as_bytes());
+    assert_eq!(caps.calls_to("memory.profile").len(), 1);
+    assert_eq!(caps.calls_to("persona.personality").len(), 1);
+}
+
+#[tokio::test]
+async fn reasoning_only_reply_stores_nothing() {
+    let caps = Arc::new(memory(0));
+    let chunks = vec![ChatChunk::Reasoning("hmm".into())];
+    let w = world(Answer::Chunks(chunks), caps.clone()).await;
+    let (reply, frames) = say(&w, "well?").await;
+    match reply {
+        Err(BrainError::Unavailable(s)) => {
+            assert_eq!(s, "The free model sent back no answer. Try again.")
+        }
+        other => panic!("{other:?}"),
+    }
+    assert!(w.store.history(w.session, None).unwrap().is_empty());
+    assert!(
+        !frames
+            .iter()
+            .any(|f| matches!(f, DraftFrame::Delta(_) | DraftFrame::Phase(Phase::Writing))),
+        "{frames:?}"
+    );
+    // Capture is spawned when it runs at all; give it time to show up.
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert!(caps.calls_to("memory.capture").is_empty());
 }
 
 #[tokio::test]

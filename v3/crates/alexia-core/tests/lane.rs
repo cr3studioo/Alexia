@@ -4,7 +4,7 @@
 use std::sync::{Arc, Mutex};
 
 use alexia_core::lane::{lane, Lanes};
-use alexia_core::{Brain, BrainError, DraftSink, Lane, Origin, Reply, Span, Turn};
+use alexia_core::{Brain, BrainError, DraftSink, InFile, Lane, Origin, Reply, Span, Turn};
 use alexia_store::{Content, Part, SessionId};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -143,6 +143,7 @@ fn turn(s: &str) -> Turn {
         session: SessionId(1),
         origin: Origin::Desktop,
         content: text(s),
+        files: Vec::new(),
         received_at: 0,
     }
 }
@@ -167,6 +168,24 @@ async fn lanes_routes_chat_to_chat_brain() {
     assert_eq!(names(&r), ["lane", "inner"]);
     assert_eq!(chat.calls(), ["hi"]);
     assert!(task.calls().is_empty());
+}
+
+#[tokio::test]
+async fn file_is_task() {
+    let chat = Fake::new(Says::Answer, Lane::Chat);
+    let task = Fake::new(Says::Answer, Lane::Task);
+    let lanes = Lanes::new(chat.clone(), task.clone());
+    let mut t = turn("hi");
+    t.files.push(InFile {
+        name: "a.pdf".into(),
+        mime: "application/pdf".into(),
+        path: "a.pdf".into(),
+    });
+    let (tx, _rx) = mpsc::channel(8);
+    let r = lanes.reply(t, tx, CancellationToken::new()).await.unwrap();
+    assert_eq!(r.lane, Lane::Task);
+    assert!(chat.calls().is_empty());
+    assert_eq!(task.calls(), ["hi"]);
 }
 
 #[tokio::test]

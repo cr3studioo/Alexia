@@ -136,7 +136,12 @@ impl Brain for Lanes {
         cancel: CancellationToken,
     ) -> Result<Reply, BrainError> {
         let began = Instant::now();
-        let picked = lane(&turn.content);
+        // CH-06: the chat lane cannot read a document, so a turn with files is a task.
+        let picked = if turn.files.is_empty() {
+            lane(&turn.content)
+        } else {
+            Lane::Task
+        };
         let mut spans = vec![Span::since("lane", began, began)];
         if cancel.is_cancelled() {
             return Err(BrainError::Cancelled);
