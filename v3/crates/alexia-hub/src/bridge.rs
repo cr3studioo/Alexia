@@ -525,7 +525,9 @@ impl Brain for V2Bridge {
             }
             st.text.push_str(FREE_ONLY);
         }
+        let storing = Instant::now();
         self.save(&turn, &st, wrote)?;
+        st.spans.push(Span::since("store", began, storing));
         if !wrote && !st.refused_paid {
             return Err(BrainError::Unavailable(NO_REPLY.into()));
         }
@@ -1186,7 +1188,10 @@ s.listen(0, '127.0.0.1', () => {{
         let (bridge, _, session) = attached(&url);
         let reply = ask_once(&bridge, turn(session, "search")).await.0.unwrap();
         let names: Vec<&str> = reply.spans.iter().map(|s| s.name).collect();
-        assert_eq!(names, ["tool:web_search", "bridge-first-byte", "bridge"]);
+        assert_eq!(
+            names,
+            ["tool:web_search", "bridge-first-byte", "bridge", "store"]
+        );
         assert!(
             reply.spans.iter().all(|s| s.start < 60_000),
             "a span start is not an offset from the turn: {:?}",
@@ -1194,6 +1199,22 @@ s.listen(0, '127.0.0.1', () => {{
         );
         let bridge_span = reply.spans.iter().find(|s| s.name == "bridge").unwrap();
         assert!(bridge_span.start < 1_000, "{bridge_span:?}");
+    }
+
+    #[tokio::test]
+    async fn save_has_a_store_span() {
+        let (url, _log) = fake(vec![Send(r#"{"delta":"ok"}"#)], Opts::default()).await;
+        let (bridge, store, session) = attached(&url);
+        let reply = ask_once(&bridge, turn(session, "hi")).await.0.unwrap();
+        let find = |n: &str| reply.spans.iter().find(|s| s.name == n).cloned();
+        let bridge_span = find("bridge").expect("a bridge span");
+        let store_span = find("store").expect("a store span");
+        assert!(
+            store_span.start >= bridge_span.start + i64::from(bridge_span.ms),
+            "store {store_span:?} starts before bridge {bridge_span:?} ends"
+        );
+        // The save it times really happened: the user's words and the reply.
+        assert_eq!(store.history(session, None).unwrap().len(), 2);
     }
 
     #[tokio::test]
