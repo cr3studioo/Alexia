@@ -452,13 +452,28 @@ async fn idle_lazy_plugin_stops() {
         .unwrap();
 
     assert!(eventually(60, || fx.host.pid(&id("greet")).is_none()).await);
-    assert!(fx.events.lock().unwrap().iter().any(|(_, e)| matches!(
-        e,
-        PluginEvent::Stopped {
-            reason: StopReason::Idle,
-            ..
-        }
-    )));
+    // host.pid() clears before process::stop finishes; Stopped is emitted after it, so wait.
+    let idle_stopped = || {
+        fx.count(|e| {
+            matches!(
+                e,
+                PluginEvent::Stopped {
+                    reason: StopReason::Idle,
+                    ..
+                }
+            )
+        }) > 0
+    };
+    assert!(
+        eventually(60, idle_stopped).await,
+        "no Stopped{{Idle}} event; recorded events: {:#?}",
+        fx.events
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(_, e)| e)
+            .collect::<Vec<_>>()
+    );
     assert!(gone(pid).await);
     assert_eq!(fx.count(crashed), 0);
 
