@@ -93,15 +93,16 @@ fn gap_sentence(alive: Ms, now: Ms, offset_min: i64) -> String {
 /// the sentence to say ("I was offline from 14:02 to 14:31."), local time, day added when it
 /// isn't today. `None` otherwise.
 pub fn offline_gap(store: &Store, now: Ms) -> Option<String> {
-    offline_gap_at(store, now, local_offset_minutes())
+    offline_gap_at(store, now, local_offset_minutes)
 }
 
-fn offline_gap_at(store: &Store, now: Ms, offset_min: i64) -> Option<String> {
+/// `offset_min` is only called once a gap has been found, so a normal boot spawns nothing.
+fn offline_gap_at(store: &Store, now: Ms, offset_min: impl FnOnce() -> i64) -> Option<String> {
     let alive = get(store, ALIVE)?;
     if now - alive <= GAP_MS || get(store, CLEAN).is_some_and(|c| c >= alive) {
         return None;
     }
-    Some(gap_sentence(alive, now, offset_min))
+    Some(gap_sentence(alive, now, offset_min()))
 }
 
 fn now_ms() -> Ms {
@@ -132,7 +133,14 @@ where
     F: FnMut(CancellationToken) -> Fut,
     Fut: Future<Output = Result<(), String>>,
 {
-    supervise_with(name, cancel, f, Duration::from_secs(1)).await
+    supervise_with(
+        name,
+        cancel,
+        f,
+        Duration::from_secs(1),
+        Duration::from_secs(5),
+    )
+    .await
 }
 
 /// `unit` is the 1 s of the spec; tests shrink it (tokio's `test-util` clock is not enabled).
@@ -141,6 +149,7 @@ async fn supervise_with<F, Fut>(
     cancel: CancellationToken,
     mut f: F,
     unit: Duration,
+    grace: Duration,
 ) where
     F: FnMut(CancellationToken) -> Fut,
     Fut: Future<Output = Result<(), String>>,
@@ -148,9 +157,15 @@ async fn supervise_with<F, Fut>(
     let mut delay = unit;
     while !cancel.is_cancelled() {
         let started = Instant::now();
+        let fut = f(cancel.child_token());
+        tokio::pin!(fut);
         let result = tokio::select! {
-            _ = cancel.cancelled() => return,
-            r = f(cancel.child_token()) => r,
+            _ = cancel.cancelled() => {
+                // The child token is cancelled too; give the service a moment to stop cleanly.
+                let _ = tokio::time::timeout(grace, &mut fut).await;
+                return;
+            }
+            r = &mut fut => r,
         };
         if cancel.is_cancelled() {
             return;
@@ -178,7 +193,7 @@ fn xml_escape(s: &str) -> String {
         .replace('\'', "&apos;")
 }
 
-/// The Task Scheduler XML for `exe` (boot trigger + logon trigger, restart on failure every
+/// The Task Scheduler XML for `exe` (boot trigger + logon trigger, each repeating every minute so a killed hub is started again; restart on failure every
 /// minute up to 999 times, no execution time limit, run whether the user is logged on or not,
 /// highest privileges off, `run` as the argument, working dir = exe's folder).
 pub fn task_xml(exe: &Path, user: &str) -> String {
@@ -196,8 +211,8 @@ pub fn task_xml(exe: &Path, user: &str) -> String {
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo><Description>Starts the Alexia hub at boot and restarts it if it stops.</Description></RegistrationInfo>
   <Triggers>
-    <BootTrigger><Enabled>true</Enabled></BootTrigger>
-    <LogonTrigger><Enabled>true</Enabled><UserId>{user}</UserId></LogonTrigger>
+    <BootTrigger><Repetition><Interval>PT1M</Interval></Repetition><Enabled>true</Enabled></BootTrigger>
+    <LogonTrigger><Repetition><Interval>PT1M</Interval></Repetition><Enabled>true</Enabled><UserId>{user}</UserId></LogonTrigger>
   </Triggers>
   <Principals>
     <Principal id="Author"><UserId>{user}</UserId><LogonType>Password</LogonType><RunLevel>LeastPrivilege</RunLevel></Principal>
@@ -229,21 +244,47 @@ pub fn uninstall() -> Result<(), String> {
     Err("Only on Windows for now.".into())
 }
 
+/// The sentence for a failed schtasks step (`/Create`, `/Run`, ...).
+fn schtasks_error(step: &str, code: Option<i32>, stderr: &str) -> String {
+    let code = code.map_or("none".to_string(), |c| c.to_string());
+    let text = stderr.trim();
+    if text.to_lowercase().contains("access is denied") {
+        "Run this from an Administrator terminal: Task Scheduler needs it to start the hub at boot."
+            .into()
+    } else if step == "/Run" {
+        format!("The task was registered but did not start (schtasks exit code {code}). {text}")
+    } else {
+        format!("schtasks {step} failed with exit code {code}. {text}")
+    }
+}
+
+/// Account name for the task: `DOMAIN\user`, else `COMPUTER\user`, else just `user`.
+fn user_id(domain: &str, computer: &str, user: &str) -> String {
+    match [domain, computer].into_iter().find(|d| !d.is_empty()) {
+        Some(d) if !user.is_empty() => format!("{d}\\{user}"),
+        _ => user.to_string(),
+    }
+}
+
 #[cfg(windows)]
 fn schtasks(args: &[&str]) -> Result<(), String> {
-    // Inherit stdio: `/RP` makes schtasks ask for the password in the owner's terminal, and this
-    // code never sees it.
-    let status = std::process::Command::new("schtasks")
+    // Inherit stdin/stdout: `/RP` makes schtasks ask for the password in the owner's terminal,
+    // and this code never sees it. Only stderr is read, to tell access denied from other errors.
+    let out = std::process::Command::new("schtasks")
         .args(args)
-        .status()
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .and_then(|c| c.wait_with_output())
         .map_err(|e| match e.kind() {
             std::io::ErrorKind::NotFound => "I could not find schtasks.exe. Task Scheduler is part of Windows; check that the Windows System32 folder is on the PATH.".to_string(),
             _ => format!("I could not run schtasks: {e}"),
         })?;
-    if status.success() {
+    if out.status.success() {
         Ok(())
     } else {
-        Err("Run this from an Administrator terminal: Task Scheduler needs it to start the hub at boot.".into())
+        let step = args.first().copied().unwrap_or("");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        Err(schtasks_error(step, out.status.code(), &stderr))
     }
 }
 
@@ -251,7 +292,7 @@ fn schtasks(args: &[&str]) -> Result<(), String> {
 pub fn install() -> Result<(), String> {
     let exe = std::env::current_exe().map_err(|e| format!("I could not find my own path: {e}"))?;
     let var = |k| std::env::var(k).unwrap_or_default();
-    let user = format!("{}\\{}", var("USERDOMAIN"), var("USERNAME"));
+    let user = user_id(&var("USERDOMAIN"), &var("COMPUTERNAME"), &var("USERNAME"));
     let xml = task_xml(&exe, &user);
     let mut bytes = vec![0xFF, 0xFE];
     bytes.extend(xml.encode_utf16().flat_map(u16::to_le_bytes));
@@ -286,7 +327,7 @@ mod tests {
 
     #[test]
     fn no_gap_on_first_boot() {
-        assert_eq!(offline_gap_at(&store(), NOW, 0), None);
+        assert_eq!(offline_gap_at(&store(), NOW, || 0), None);
     }
 
     #[test]
@@ -294,7 +335,7 @@ mod tests {
         let s = store();
         put(&s, ALIVE, NOW - 40 * 60_000);
         clean_stop(&s, NOW - 39 * 60_000);
-        assert_eq!(offline_gap_at(&s, NOW, 0), None);
+        assert_eq!(offline_gap_at(&s, NOW, || 0), None);
     }
 
     #[test]
@@ -302,17 +343,17 @@ mod tests {
         let s = store();
         put(&s, ALIVE, NOW - 40 * 60_000);
         assert_eq!(
-            offline_gap_at(&s, NOW, 0).unwrap(),
+            offline_gap_at(&s, NOW, || 0).unwrap(),
             "I was offline from 21:33 to 22:13."
         );
         // Two hours ahead of UTC pushes the heartbeat to the day before "now", so its date is shown.
         assert_eq!(
-            offline_gap_at(&s, NOW, 120).unwrap(),
+            offline_gap_at(&s, NOW, || 120).unwrap(),
             "I was offline from 2023-11-14 23:33 to 00:13."
         );
         // A heartbeat only 2 minutes old is not a gap.
         put(&s, ALIVE, NOW - 2 * 60_000);
-        assert_eq!(offline_gap_at(&s, NOW, 0), None);
+        assert_eq!(offline_gap_at(&s, NOW, || 0), None);
     }
 
     #[tokio::test]
@@ -338,6 +379,7 @@ mod tests {
                 }
             },
             unit,
+            Duration::from_secs(5),
         ));
         tokio::time::timeout(Duration::from_secs(30), async {
             while calls.lock().unwrap().len() < 4 {
@@ -377,6 +419,62 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn no_heartbeat_does_not_ask_for_the_offset() {
+        let asked = AtomicUsize::new(0);
+        let got = offline_gap_at(&store(), NOW, || {
+            asked.fetch_add(1, Ordering::SeqCst);
+            0
+        });
+        assert_eq!(got, None);
+        assert_eq!(asked.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn cancelled_service_gets_grace() {
+        let cancel = CancellationToken::new();
+        let flag = Arc::new(AtomicUsize::new(0));
+        let f2 = flag.clone();
+        let task = tokio::spawn(supervise("test", cancel.clone(), move |token| {
+            let f3 = f2.clone();
+            async move {
+                token.cancelled().await;
+                tokio::time::sleep(Duration::from_millis(200)).await;
+                f3.store(1, Ordering::SeqCst);
+                Ok(())
+            }
+        }));
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        cancel.cancel();
+        tokio::time::timeout(Duration::from_secs(30), task)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(flag.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn task_xml_has_repetition() {
+        let xml = task_xml(Path::new("hub.exe"), "PC\\vac");
+        assert!(xml.contains("<Repetition><Interval>PT1M</Interval></Repetition>"));
+    }
+
+    #[test]
+    fn user_id_without_domain() {
+        assert_eq!(user_id("PC", "BOX", "vac"), "PC\\vac");
+        assert_eq!(user_id("", "BOX", "vac"), "BOX\\vac");
+        assert_eq!(user_id("", "", "vac"), "vac");
+    }
+
+    #[test]
+    fn schtasks_errors_say_what_failed() {
+        let denied = schtasks_error("/Create", Some(1), "ERROR: Access is denied.");
+        assert!(denied.contains("Administrator"));
+        let run = schtasks_error("/Run", Some(1), "boom");
+        assert!(run.contains("registered but did not start"));
+        assert!(schtasks_error("/Create", Some(5), "bad xml").contains("exit code 5"));
     }
 
     #[test]
