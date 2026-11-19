@@ -341,6 +341,28 @@ pub mod secrets {
     pub fn set(owner: &str, key: &str, secret: &str) -> super::Result<()>;
     pub fn delete(owner: &str, key: &str) -> super::Result<()>;
     pub fn delete_all(owner: &str, keys: &[String]) -> super::Result<()>;
+    /// (P1-34) v2's Credential Manager vault (service `dev.alexia.app`, account `_core.vault`),
+    /// decoded. Its Debug prints names only, never a value.
+    pub struct V2Vault { /* account -> value, private */ }
+    impl V2Vault {
+        /// UTF-16LE JSON `{"secrets": {"<owner>.<key>": "<value>", ..}, "looked": [..], "moved"?: "all"}`,
+        /// a trailing NUL allowed. Every error is one fixed sentence that quotes nothing.
+        pub fn parse(blob: &[u8]) -> super::Result<V2Vault>;
+        pub fn names(&self) -> Vec<&str>;
+    }
+    /// (P1-34) (owner, key) for a v2 account: `renames` first (v2 account -> v3 `_core` key),
+    /// else split at the first dot. None when v3 cannot hold it.
+    pub fn v3_name(v2_account: &str, renames: &[(&str, &str)]) -> Option<(String, String)>;
+    /// (P1-34) Names only. Each list sorted.
+    pub struct V2Report { pub copied: Vec<String>, pub kept: Vec<String>, pub not_in_v2: Vec<String>,
+                          pub unusable: Vec<String>, pub failed: Vec<String> }
+    /// (P1-34) Writes through `set`; never reads or writes v2. "v3 has one" is the backend, not
+    /// the `env_name` override. `expected` are the v3 names the hub uses.
+    pub fn import_v2(vault: &V2Vault, renames: &[(&str, &str)], expected: &[(String, String)],
+                     overwrite: bool) -> V2Report;
+    /// (P1-34) The one read of v2's entry (`get_secret`, raw bytes): `Ok(None)` when absent.
+    /// Not Windows: Err("Importing v2 secrets works only on Windows.").
+    pub fn read_v2_vault() -> super::Result<Option<Vec<u8>>>;
 }
 
 pub mod import {
@@ -896,6 +918,9 @@ pub mod channels {
     /// (V3-1) For `alexia-hub pair`: (channel name, six-digit code) for every configured
     /// channel with no owner yet. Empty when every configured channel is paired.
     pub fn pairing_codes(store: &Store) -> Result<Vec<(&'static str, String)>>;
+    /// (P1-34) (v2 account, v3 `_core` key) for every channel secret v2 kept under a plugin's
+    /// name, for `alexia-hub secret import-v2`. Today: ("telegram.bot_token", "telegram_bot_token").
+    pub fn v2_secret_names() -> &'static [(&'static str, &'static str)];
 }
 ```
 
@@ -947,6 +972,9 @@ alexia-hub secret set <key>        (V3-1) reads the value without echo; key ∈ 
                                    or "provider_<id>" for an id in free::ladder()
 alexia-hub secret clear <key>      (V3-1)
 alexia-hub secret list             (V3-1) the allowed key names, never values
+alexia-hub secret import-v2 [--overwrite]   (P1-34) copy v2's vault on this PC into v3's store, v2
+                                   untouched; prints "copied|kept|not in v2|unusable|failed	<name>",
+                                   names only, then a count line. Any failed: exit 1
 alexia-hub pair                    (V3-1) prints "<channel>\t<code>" per unpaired channel
 alexia-hub latency [--last N] [--html FILE] [--check]   (V3-1) SP-09; --html writes the page
 alexia-hub install | uninstall     (V3-1) watchdog::install / uninstall
@@ -1624,7 +1652,7 @@ Run in CI on `windows-latest`, every push to `cr3studioo/v3` and every task bran
 | # | Check | How |
 |---|---|---|
 | 1 | **no crate names a plugin** | For every folder name under `plugins/`, grep `v3/crates/*/src` (word boundary, case-insensitive). Fails on any hit, except a channel adapter file under `crates/alexia-gateway/src/channels/` naming the *service* it speaks to (§8). Also fails on any path containing `plugins/` or `plugins\` in v3 source. |
-| 1b | **channels stay inside the gateway** (V3-1, P1-28) | `node v3/ci/invariants.mjs`: any `.rs` file outside `crates/alexia-gateway/` naming a `channels::<module>` path other than `channels::{secret_keys, configured, pairing_codes}` fails, so no other crate reaches a channel adapter (`channels::telegram` is `pub` only for the gateway's own tests). |
+| 1b | **channels stay inside the gateway** (V3-1, P1-28) | `node v3/ci/invariants.mjs`: any `.rs` file outside `crates/alexia-gateway/` naming a `channels::<module>` path other than `channels::{secret_keys, configured, pairing_codes, v2_secret_names}` fails, so no other crate reaches a channel adapter (`channels::telegram` is `pub` only for the gateway's own tests). |
 | 2 | **boots with no plugins** | `cargo test --workspace` with `ALEXIA_PLUGINS_DIR` pointing at an empty temp folder and `plugins/` renamed away. Host tests use the fixture below, never `plugins/`. |
 | 3 | **crasher contained** | fixture exits, hangs, floods stdout with junk; the host stays up, backs off, marks it `Unhealthy` after 3 crashes in 60 s. |
 | 4 | **vanisher** | fixture's folder deleted mid-call: `CallError::Gone`, `Removed` emitted, its tools gone from `tools()`. (The re-plan half lands with the agent loop, V3-2.) |
