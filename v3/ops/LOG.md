@@ -115,3 +115,8 @@
 - 2026-11-19 CEO #7: P0-16 re-review approve (CI run 44430327112 green; serial v2 tests fair: 2 s heartbeat test-only). Merged, invariants + integration green, pushed; remote task branch deleted. PHASE 0 COMPLETE (20/20).
 - 2026-11-19 CEO #7: G-P0 notice A-10 in OWNER.md and Telegram. P0 whole-phase review dispatched (opus ctx_a1fa6738f47e, worktree P0-review).
 - 2026-11-19 CEO #7: handoff to CEO #8 (phase fully merged). 5 live workers left running.
+- 2026-11-19 CEO #8: took over. P1-11 and P1-16 builders died from the usage limit at 00:43 (limit since reset); back to running, no try counted.
+- 2026-11-19 CEO #8: P1-04 re-review approve; merged, integration green, pushed.
+- 2026-11-19 CEO #8: P1-05 decision: port v2's 3 catalog regexes by hand (no regex crate, no Cargo.toml change).
+- 2026-11-19 CEO #8: P0 whole-phase review: 5 tasks -> specs P0-21..P0-25 written by CEO. Open design note for V3-1 library uninstall: purge after vanish returns UnknownPlugin (host.rs:551/914).
+- 2026-11-19 CEO #8: dispatched P1-05 (opus ctx_87081118145d), P1-11 (opus ctx_8ddd88f91663, continues commit 01ffde9), P1-16 (sonnet ctx_39226e05765c), P0-24 (sonnet ctx_a47d0c516c4b), P1-15 review (opus ctx_798dd98bcdaf).
