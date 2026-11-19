@@ -1047,7 +1047,8 @@ s.listen(0, '127.0.0.1', () => {{
             std::process::id(),
             alexia_store::now_ms()
         ));
-        std::fs::write(&path, "hello").unwrap();
+        // Not the bare word: the invariant check reads a quoted "hello" as a plugin id.
+        std::fs::write(&path, "hello world").unwrap();
         let (url, log) = fake(vec![Send(r#"{"delta":"read it"}"#)], Opts::default()).await;
         let (bridge, _, session) = attached(&url);
         let mut t = turn(session, "");
@@ -1071,7 +1072,7 @@ s.listen(0, '127.0.0.1', () => {{
             log.bodies("/api/chat")[0]["files"],
             json!([
                 { "name": "image-1.png", "data": "iVBORw0KGgo=", "type": "image/png" },
-                { "name": "notes.txt", "data": "aGVsbG8=", "type": "text/plain" },
+                { "name": "notes.txt", "data": "aGVsbG8gd29ybGQ=", "type": "text/plain" },
             ])
         );
     }
