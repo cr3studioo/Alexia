@@ -135,6 +135,7 @@ Crate paths are under `v3/crates/`.
 | P1-32 | Hub run: every exit stops cleanly, Ctrl+C always wins, prune at boot, text-only latency args | sonnet | none | `alexia-hub/{src/main.rs, tests/cli_p1.rs}` |
 | P1-33 | The 50-real-message latency run | sonnet | P1-18 | `v3/ops/reports/P1-latency.md` |
 | P1-34 | `alexia-hub secret import-v2`: copy v2's secrets into v3's store, once | opus | none | `alexia-store/{src/secrets.rs, tests/v2_secrets.rs}`, `alexia-gateway/src/channels/mod.rs`, `alexia-hub/src/main.rs`, `v3/specs/INTERFACES.md` |
+| P1-35 | Time the bridge's save; synchronous = NORMAL in WAL | opus | none | `alexia-hub/src/bridge.rs`, `alexia-store/src/db.rs` |
 
 ## Owner needs
 
