@@ -218,19 +218,34 @@ fn run_starts_and_stops() {
     let mut lines = BufReader::new(child.stdout.take().unwrap()).lines();
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
-        let first = lines.next().and_then(|l| l.ok());
-        let _ = tx.send(first);
-        let rest: Vec<String> = lines.map_while(|l| l.ok()).collect();
-        let _ = tx.send(Some(rest.join("\n")));
+        while let Some(Ok(line)) = lines.next() {
+            if tx.send(line).is_err() {
+                break;
+            }
+        }
     });
-    let first = rx.recv_timeout(Duration::from_secs(30)).unwrap();
-    assert_eq!(
-        first.as_deref(),
-        Some("Alexia hub is running. Press Ctrl+C to stop.")
-    );
+    // P1 prints setup notices before the running line; nothing else may appear.
+    let notice =
+        |l: &str| l.starts_with("No channel is set up") || l.starts_with("Import v2 first");
+    let running = "Alexia hub is running. Press Ctrl+C to stop.";
+    loop {
+        let line = rx.recv_timeout(Duration::from_secs(30)).unwrap();
+        if line == running {
+            break;
+        }
+        assert!(
+            notice(&line),
+            "unexpected line before the running line: {line}"
+        );
+    }
     drop(child.stdin.take()); // EOF = Ctrl+C
-    let rest = rx.recv_timeout(Duration::from_secs(30)).unwrap().unwrap();
-    assert_eq!(rest.trim(), "Stopped.");
+    let rest: Vec<String> = rx.iter().collect();
+    assert_eq!(
+        rest.last().map(String::as_str),
+        Some("Stopped."),
+        "{rest:?}"
+    );
+    assert!(rest[..rest.len() - 1].iter().all(|l| notice(l)), "{rest:?}");
     let status = child.wait().unwrap();
     assert!(status.success());
 }
