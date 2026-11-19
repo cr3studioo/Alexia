@@ -452,6 +452,27 @@ async fn models_mark_free_rows() {
     );
 }
 
+#[tokio::test]
+async fn models_404_is_other_not_refused() {
+    // A moved list endpoint is not a key problem, so the catalog keeps its cache (Other).
+    let said = json!({"error": {"message": "no such route"}}).to_string();
+    let head = format!(
+        "HTTP/1.1 404 Not Found
+content-type: application/json
+content-length: {}
+connection: close
+
+{said}",
+        said.len()
+    );
+    let (base, _) = fake(&head, vec![]).await;
+    let got = provider(&base).models().await;
+    assert!(
+        matches!(&got, Err(ProviderError::Other(m)) if m.contains("404") && m.contains("no such route")),
+        "{got:?}"
+    );
+}
+
 #[test]
 fn ladder_has_no_paid_or_local_rows() {
     let ladder = free::ladder();
