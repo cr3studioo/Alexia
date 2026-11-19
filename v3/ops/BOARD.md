@@ -36,7 +36,7 @@
 | P1-15 | Latency dashboard | P1 | sonnet | P1-02, P1-03 | alexia-hub/src/latency.rs | merged | 2 | cr3studioo/v3-P1-15 |  |
 | P1-16 | Hub watchdog | P1 | sonnet | P1-02 | alexia-hub/src/watchdog.rs | merged | 1 | cr3studioo/v3-P1-16 | |
 | P1-17 | Hub wiring and CLI | P1 | sonnet | P1-07, P1-08, P1-10, P1-12, P1-13, P1-15, P1-16, P1-25 | v3/Cargo.toml, hub Cargo.toml/main.rs/media.rs/tests/cli_p1.rs, Cargo.lock | merged | 1 | cr3studioo/v3-P1-17 |  |
-| P1-18 | End-to-end latency test | P1 | sonnet | P1-17, P1-26 | alexia-hub/tests/telegram_e2e.rs | todo | 0 | | run after P1-32 |
+| P1-18 | End-to-end latency test | P1 | sonnet | P1-17, P1-26 | alexia-hub/tests/telegram_e2e.rs | running | 1 | cr3studioo/v3-P1-18 | ctx_50bc93da3483 |
 | P0-19 | Host display name and unwritten tables | P0 | opus | P0-13 | alexia-mcp lib.rs, tests/alexia_layer; alexia-store namespace | merged | 2 | cr3studioo/v3-P0-19 | |
 | P0-20 | De-flake idle_lazy_plugin_stops, round 2 | P0 | sonnet | P0-18 | alexia-mcp tests/supervise.rs | merged | 1 | cr3studioo/v3-P0-20 | |
 | P0-21 | Purge keeps going when one step fails | P0 | sonnet | P0-17 | alexia-store secrets, alexia-mcp host purge, tests/purge | merged | 1 | cr3studioo/v3-P0-21 | |
@@ -55,8 +55,8 @@
 | P1-26 | Documents to task lane; no empty turns; bounded fetches | P1 | opus | P1-07, P1-17, P1-23, P1-25 | core brain/lane/chat+tests, gateway channel/gateway+test, hub bridge/Cargo.toml, INTERFACES.md | merged | 1 | cr3studioo/v3-P1-26 | |
 | P1-27 | De-flake call_at_idle_deadline_never_gone | P1 | sonnet | none | alexia-mcp tests/supervise.rs | merged | 1 | cr3studioo/v3-P1-27 |  |
 | P1-28 | Telegram stays inside the gateway; one base64 | P1 | sonnet | P1-10, P1-17 | ci/invariants.mjs, gateway Cargo.toml + telegram/mod.rs, Cargo.lock | merged | 1 | cr3studioo/v3-P1-28 | |
-| P1-29 | Telegram: finish only what was delivered; pairing closes once paired | P1 | opus | P1-28 | gateway telegram/mod.rs, tests/telegram_channel.rs | running | 1 | cr3studioo/v3-P1-29 | ctx_86423e92e07d |
-| P1-30 | Approvals: test the 10-minute give-up and scheduled jobs | P1 | sonnet | P1-28 | gateway Cargo.toml, tests/ask_voice.rs | running | 1 | cr3studioo/v3-P1-30 | ctx_25b4a10201f2 |
+| P1-29 | Telegram: finish only what was delivered; pairing closes once paired | P1 | opus | P1-28 | gateway telegram/mod.rs, tests/telegram_channel.rs | merged | 1 | cr3studioo/v3-P1-29 | |
+| P1-30 | Approvals: test the 10-minute give-up and scheduled jobs | P1 | sonnet | P1-28 | gateway Cargo.toml, tests/ask_voice.rs | merged | 1 | cr3studioo/v3-P1-30 | |
 | P1-31 | v2 agent: dangling tool ids on a stop | P1 | sonnet | none | packages/core/src/agent.ts, test/agent.test.ts | merged | 1 | cr3studioo/v3-P1-31 | |
 | P1-32 | Hub run: clean stop on every exit, Ctrl+C wins, boot prune | P1 | sonnet | none | alexia-hub src/main.rs, tests/cli_p1.rs | merged | 1 | cr3studioo/v3-P1-32 | |
 | P1-33 | The 50-real-message latency run | P1 | sonnet | P1-18 | v3/ops/reports/P1-latency.md | todo | 0 | | real bot; v2 telegram off first |

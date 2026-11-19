@@ -198,3 +198,5 @@
 2026-11-19 P1-32 build done; review dispatched.
 2026-11-19 Owner asked if v3 sees v2 keys. Found v2 vault entry (names only): 6 providers, telegram, hello, voice. v3 cannot read it. Asked A-11 (import-v2 command).
 2026-11-19 Merged P1-32 (approve, gate ok, pushed). Follow-up nit: plugin children may leak on boot failure (host.start ?).
+2026-11-19 Merged P1-26, P1-29, P1-30 (all approve, gate ok, pushed). P1-29 nit: failed send without draft(None) leaves chat in failed set (no caller does that).
+2026-11-19 Owner answered A-09 (real Alexia bot; racing OK) and A-11 (yes, import v2 keys). Dispatched planner plan-fu4 ctx_6cf90e8917f8 (P1-34 secret import-v2, opus) and P1-18 (sonnet) ctx_50bc93da3483.
