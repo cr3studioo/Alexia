@@ -17,13 +17,19 @@ const SERVICE: &str = "alexia";
 /// Never logged, never cached by callers. `env_name(owner, key)`, when set and non-empty, wins
 /// over the keychain (INTERFACES.md §0.3: environment variables for CI).
 pub fn get(owner: &str, key: &str) -> Result<Option<String>> {
-    let account = account(owner, key)?;
+    account(owner, key)?;
     if let Some(secret) = std::env::var(env_name(owner, key))
         .ok()
         .filter(|s| !s.is_empty())
     {
         return Ok(Some(secret));
     }
+    stored(owner, key)
+}
+
+/// The backend only (keychain or memory map), never the environment override.
+fn stored(owner: &str, key: &str) -> Result<Option<String>> {
+    let account = account(owner, key)?;
     if in_memory() {
         Ok(mem::get(&account))
     } else {
@@ -99,6 +105,147 @@ fn account(owner: &str, key: &str) -> Result<String> {
 /// `_core` or a plugin id.
 fn is_owner(s: &str) -> bool {
     s == "_core" || is_plugin_id(s)
+}
+
+/// v2's vault, decoded. Its Debug prints names only, never a value.
+// ponytail: values are plain Strings, not zeroized; zeroize is not a dependency and this runs once.
+pub struct V2Vault {
+    /// v2 account -> value; `None` when the value is not a non-empty string.
+    secrets: std::collections::BTreeMap<String, Option<String>>,
+}
+
+impl std::fmt::Debug for V2Vault {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("V2Vault")
+            .field("names", &self.names())
+            .finish()
+    }
+}
+
+const V2_SHAPE: &str = "The v2 secrets entry is not in the shape v2 writes.";
+
+impl V2Vault {
+    /// The blob as Credential Manager holds it: UTF-16LE JSON
+    /// `{"secrets": {"<owner>.<key>": "<value>", ..}, "looked": [..], "moved"?: "all"}`.
+    /// A trailing NUL is allowed. Every error is one fixed sentence: serde_json's and UTF-16's
+    /// messages can quote the value.
+    pub fn parse(blob: &[u8]) -> Result<V2Vault> {
+        let bad = || Error::Refused(V2_SHAPE.into());
+        if blob.len() % 2 != 0 {
+            return Err(bad());
+        }
+        let mut units: Vec<u16> = blob
+            .chunks_exact(2)
+            .map(|p| u16::from_le_bytes([p[0], p[1]]))
+            .collect();
+        if units.last() == Some(&0) {
+            units.pop();
+        }
+        let text = String::from_utf16(&units).map_err(|_| bad())?;
+        let json: serde_json::Value = serde_json::from_str(&text).map_err(|_| bad())?;
+        let map = json
+            .get("secrets")
+            .and_then(|s| s.as_object())
+            .ok_or_else(bad)?;
+        let secrets = map
+            .iter()
+            .map(|(k, v)| {
+                let v = v.as_str().filter(|s| !s.is_empty()).map(str::to_owned);
+                (k.clone(), v)
+            })
+            .collect();
+        Ok(V2Vault { secrets })
+    }
+
+    pub fn names(&self) -> Vec<&str> {
+        self.secrets.keys().map(String::as_str).collect()
+    }
+}
+
+/// (owner, key) for a v2 account: `renames` first (v2 account -> v3 `_core` key), else split at
+/// the first dot. None when v3 cannot hold it.
+pub fn v3_name(v2_account: &str, renames: &[(&str, &str)]) -> Option<(String, String)> {
+    let (owner, key) = match renames.iter().find(|(from, _)| *from == v2_account) {
+        Some((_, to)) => ("_core", *to),
+        None => v2_account.split_once('.')?,
+    };
+    account(owner, key).ok()?;
+    Some((owner.to_owned(), key.to_owned()))
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct V2Report {
+    /// "<owner>.<key>" written.
+    pub copied: Vec<String>,
+    /// v3 already had one; untouched (no `overwrite`).
+    pub kept: Vec<String>,
+    /// An expected v3 name v2 had nothing for.
+    pub not_in_v2: Vec<String>,
+    /// v2 names v3 can't hold, or whose value isn't non-empty text.
+    pub unusable: Vec<String>,
+    /// The write failed (name only).
+    pub failed: Vec<String>,
+}
+
+/// Writes through `set`; never reads or writes v2. `expected` are the v3 names the hub uses.
+pub fn import_v2(
+    vault: &V2Vault,
+    renames: &[(&str, &str)],
+    expected: &[(String, String)],
+    overwrite: bool,
+) -> V2Report {
+    let mut r = V2Report::default();
+    let mut supplied = std::collections::HashSet::new();
+    for (v2, value) in &vault.secrets {
+        let (Some((owner, key)), Some(value)) = (v3_name(v2, renames), value) else {
+            r.unusable.push(v2.clone());
+            continue;
+        };
+        let name = format!("{owner}.{key}");
+        supplied.insert((owner.clone(), key.clone()));
+        if !overwrite && matches!(stored(&owner, &key), Ok(Some(_))) {
+            r.kept.push(name);
+        } else if set(&owner, &key, value).is_ok() {
+            r.copied.push(name);
+        } else {
+            r.failed.push(name);
+        }
+    }
+    r.not_in_v2 = expected
+        .iter()
+        .filter(|n| !supplied.contains(*n))
+        .map(|(o, k)| format!("{o}.{k}"))
+        .collect();
+    for list in [
+        &mut r.copied,
+        &mut r.kept,
+        &mut r.not_in_v2,
+        &mut r.unusable,
+        &mut r.failed,
+    ] {
+        list.sort();
+        list.dedup();
+    }
+    r
+}
+
+/// The one Credential Manager read of v2's entry: `Ok(None)` when it is absent.
+#[cfg(windows)]
+pub fn read_v2_vault() -> Result<Option<Vec<u8>>> {
+    match keyring::Entry::new("dev.alexia.app", "_core.vault").and_then(|e| e.get_secret()) {
+        Ok(blob) => Ok(Some(blob)),
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(_) => Err(Error::Keychain(
+            "The v2 keychain entry could not be read.".into(),
+        )),
+    }
+}
+
+#[cfg(not(windows))]
+pub fn read_v2_vault() -> Result<Option<Vec<u8>>> {
+    Err(Error::Refused(
+        "Importing v2 secrets works only on Windows.".into(),
+    ))
 }
 
 mod mem {

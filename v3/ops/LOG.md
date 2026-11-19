@@ -198,3 +198,11 @@
 2026-11-19 P1-32 build done; review dispatched.
 2026-11-19 Owner asked if v3 sees v2 keys. Found v2 vault entry (names only): 6 providers, telegram, hello, voice. v3 cannot read it. Asked A-11 (import-v2 command).
 2026-11-19 Merged P1-32 (approve, gate ok, pushed). Follow-up nit: plugin children may leak on boot failure (host.start ?).
+2026-11-19 Merged P1-26, P1-29, P1-30 (all approve, gate ok, pushed). P1-29 nit: failed send without draft(None) leaves chat in failed set (no caller does that).
+2026-11-19 Owner answered A-09 (real Alexia bot; racing OK) and A-11 (yes, import v2 keys). Dispatched planner plan-fu4 ctx_6cf90e8917f8 (P1-34 secret import-v2, opus) and P1-18 (sonnet) ctx_50bc93da3483.
+2026-11-19 Merged plan P1-34. Dispatched P1-34 (opus) ctx_cd033c16c0a0.
+2026-11-19 P1-34 asked: invariants 1b blocks channels::v2_secret_names in hub; allowed (a) add it to 1b allowlist + self-test.
+2026-11-19 P1-34 build done (invariants.mjs edit approved); review dispatched.
+2026-11-19 Merged P1-34 (approve, gate ok, pushed). Follow-ups: secrets.rs:206 stored() Err treated as absent (should be failed); two v2 names mapping to one v3 name.
+2026-11-19 Release build done. Asked A-12 (owner runs secret import-v2 once).
+2026-11-19 P1-18 failed try 1: e2e test written, passes 3/5; found bridge save has no span (~385 ms unaccounted) and slow commits. CEO wrote P1-35 (span + synchronous=NORMAL); dispatched opus ctx_cb2564601b09. P1-18 retry reuses its branch after P1-35.

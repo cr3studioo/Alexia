@@ -35,6 +35,7 @@ const USAGE: &str = "usage:
   alexia-hub import-v2 [--files-only] <v2-folder>  import a v2 data folder
   alexia-hub secret set|clear <key>                store (value asked, never shown) or remove a secret
   alexia-hub secret list                           the key names that can be set
+  alexia-hub secret import-v2 [--overwrite]        copy v2's secrets on this PC into v3 (v2 untouched)
   alexia-hub pair                                  print the pairing code of each unpaired channel
   alexia-hub latency [--last N] [--html FILE] [--check]  the latency dashboard
   alexia-hub install | uninstall                   start the hub at boot (Windows Task Scheduler)";
@@ -59,6 +60,11 @@ async fn main() -> ExitCode {
         }
         ([Some("secret"), Some("set"), Some(k)], _) => secret_set(k),
         ([Some("secret"), Some("clear"), Some(k)], _) => secret_clear(k),
+        ([Some("secret"), Some("import-v2"), flags @ ..], _)
+            if matches!(flags, [] | [Some("--overwrite")]) =>
+        {
+            return secret_import_v2(!flags.is_empty());
+        }
         ([Some("pair")], _) => pair(),
         ([Some("latency"), rest @ ..], _) => return latency(rest),
         ([Some("install")], _) => watchdog::install().map_err(Into::into),
@@ -414,6 +420,57 @@ fn secret_clear(key: &str) -> Res<()> {
     secrets::delete("_core", key)?;
     println!("Cleared.");
     Ok(())
+}
+
+/// `secret import-v2`: copies v2's Credential Manager vault into v3's store. Names only, never values.
+fn secret_import_v2(overwrite: bool) -> ExitCode {
+    let blob = match secrets::read_v2_vault() {
+        Ok(Some(b)) => b,
+        Ok(None) => {
+            println!("No v2 secrets found on this PC.");
+            return ExitCode::SUCCESS;
+        }
+        Err(e) => {
+            eprintln!("{e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let vault = match secrets::V2Vault::parse(&blob) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("{e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let mut expected: Vec<(String, String)> = secret_keys()
+        .into_iter()
+        .map(|k| ("_core".to_owned(), k))
+        .collect();
+    for m in McpHost::scan(&plugin_dirs(&Layout::new(data_dir())))
+        .into_values()
+        .map(|d| d.manifest)
+    {
+        expected.extend(m.password_keys().into_iter().map(|k| (m.id.clone(), k)));
+    }
+    let r = secrets::import_v2(&vault, channels::v2_secret_names(), &expected, overwrite);
+    r.copied.iter().for_each(|n| println!("copied\t{n}"));
+    r.kept.iter().for_each(|n| {
+        println!("kept\t{n} (v3 already has one; --overwrite replaces it)");
+    });
+    r.not_in_v2.iter().for_each(|n| println!("not in v2\t{n}"));
+    r.unusable.iter().for_each(|n| println!("unusable\t{n}"));
+    r.failed.iter().for_each(|n| println!("failed\t{n}"));
+    println!(
+        "{} copied, {} kept, {} not in v2.",
+        r.copied.len(),
+        r.kept.len(),
+        r.not_in_v2.len()
+    );
+    if r.failed.is_empty() {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    }
 }
 
 fn pair() -> Res<()> {

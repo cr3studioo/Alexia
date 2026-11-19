@@ -146,6 +146,8 @@ impl Store {
                     "The database could not switch to write-ahead logging (it is in {mode} mode)."
                 )));
             }
+            // WAL's standard setting: no corruption on a crash, no fsync on every commit.
+            conn.pragma_update(None, "synchronous", "NORMAL")?;
         }
         for (i, sql) in MIGRATIONS.iter().enumerate().skip(version as usize) {
             let tx = conn.transaction()?;
@@ -527,5 +529,25 @@ impl Store {
             .conn()
             .execute("DELETE FROM spans WHERE at < ?", [before])?;
         Ok(n as u64)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wal_store_uses_synchronous_normal() {
+        let dir = std::env::temp_dir().join(format!("alexia-store-sync-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = Store::open(&dir.join("alexia.db")).unwrap();
+        // Per connection, so it must be read through the store's own.
+        let sync: i64 = store
+            .conn()
+            .query_row("PRAGMA synchronous", [], |r| r.get(0))
+            .unwrap();
+        drop(store);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(sync, 1, "PRAGMA synchronous is not NORMAL");
     }
 }
