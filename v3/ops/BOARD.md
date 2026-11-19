@@ -28,7 +28,7 @@
 | P1-07 | Lane classifier and the Lanes brain | P1 | opus | P1-01 | alexia-core/{src/lane.rs, tests/lane.rs} | merged | 1 | cr3studioo/v3-P1-07 |  |
 | P1-08 | FastChat: the chat lane brain | P1 | opus | P1-06, P1-03, P0-13 | alexia-core/{src/chat.rs, tests/chat.rs} | merged | 1 | cr3studioo/v3-P1-08 |  |
 | P1-09 | Telegram Bot API client | P1 | opus | P1-02 | alexia-gateway/{src/channels/telegram/api.rs, tests/teleg... | merged | 1 | cr3studioo/v3-P1-09 |  |
-| P1-10 | Telegram channel: poll, pairing, offsets, buttons | P1 | opus | P1-09, P1-03 | alexia-gateway/{src/channels/mod.rs, src/channels/telegra... | review | 3 | cr3studioo/v3-P1-10 | review 3 ctx_99df8d736766 (api.rs allowed) |
+| P1-10 | Telegram channel: poll, pairing, offsets, buttons | P1 | opus | P1-09, P1-03 | alexia-gateway/{src/channels/mod.rs, src/channels/telegra... | merged | 3 | cr3studioo/v3-P1-10 |  |
 | P1-11 | Gateway loop: ack, merge, steer, drafts, spans | P1 | opus | P1-02, P1-03 | alexia-gateway/{src/gateway.rs, tests/gateway.rs} | merged | 2 | cr3studioo/v3-P1-11 |  |
 | P1-12 | Approvals and voice notes | P1 | opus | P1-11 | alexia-gateway/{src/ask.rs, src/voice.rs, tests/ask_voice... | merged | 1 | cr3studioo/v3-P1-12 |  |
 | P1-13 | V2Bridge: v2 core as the task lane | P1 | opus | P1-02, P1-03 | alexia-hub/src/bridge.rs | merged | 2 | cr3studioo/v3-P1-13 |  |
@@ -53,5 +53,5 @@
 | P1-25 | One time helper; brain spans measured from the turn | P1 | opus | P1-20, P1-22, P1-23, P0-25 | store types/db/import, core lib/catalog/router/lane/chat+tests, gateway.rs, hub bridge/watchdog/latency, INTERFACES | running | 1 | cr3studioo/v3-P1-25 |  |
 | P0-26 | De-flake junk_is_skipped_and_logged | P0 | sonnet | none | alexia-mcp tests/conn.rs | merged | 1 | cr3studioo/v3-P0-26 |  |
 | P1-26 | Documents to task lane; no empty turns; bounded fetches | P1 | opus | P1-07, P1-17, P1-23, P1-25 | core brain/lane/chat+tests, gateway channel/gateway+test, hub bridge/Cargo.toml, INTERFACES.md | todo | 0 |  | run after or before P1-25, not alongside |
-| P1-27 | De-flake call_at_idle_deadline_never_gone | P1 | sonnet | none | alexia-mcp tests/supervise.rs | review | 1 | cr3studioo/v3-P1-27 | review ctx_178e82b708ce |
+| P1-27 | De-flake call_at_idle_deadline_never_gone | P1 | sonnet | none | alexia-mcp tests/supervise.rs | merged | 1 | cr3studioo/v3-P1-27 |  |
 | P1-28 | Telegram stays inside the gateway; one base64 | P1 | sonnet | P1-10, P1-17 | ci/invariants.mjs, gateway Cargo.toml + telegram/mod.rs, Cargo.lock | todo | 0 | | |
