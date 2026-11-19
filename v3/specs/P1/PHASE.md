@@ -40,7 +40,7 @@ Measured, not claimed:
   the fake Bot API's own clock) even when the brain takes 5 s; no chat-lane message ever reaches
   the fake v2 `/api/chat`; every task-lane message does; every turn has spans covering receipt to
   delivery.
-- On the PC, after the owner has sent 50 real messages: `alexia-hub latency --last 50 --check`
+- On the PC (P1-33), after the owner has sent 50 real messages: `alexia-hub latency --last 50 --check`
   exits 0. `--check` fails if any turn's `ack` span is ≥ 300 ms, if any `chat`-lane turn has a
   `bridge` span, or if any turn's spans leave more than 5 % of receipt → delivered unaccounted.
   `alexia-hub latency --last 50 --html latency.html` writes the dashboard page (P1-15).
@@ -77,12 +77,13 @@ P1-02 ─┬─ P1-09 telegram api ── P1-10 telegram channel (+P1-03)
        ├─ P1-15 latency dashboard (+P1-03)
        └─ P1-16 watchdog
 P1-14 v2 parallel tool calls (independent)
-P1-07, P1-08, P1-10, P1-12, P1-13, P1-15, P1-16 ── P1-17 hub wiring ── P1-18 e2e + 50 real messages
+P1-07, P1-08, P1-10, P1-12, P1-13, P1-15, P1-16 ── P1-17 hub wiring ── P1-18 e2e ── P1-33 50 real messages (owner, A-09)
 P1-23 ── P1-25 time helper + brain spans ── P1-17 ──┬─ P1-26 documents ── P1-18
                                                     └─ P1-28 channels private, one base64 (+P1-10)
 P1-28 ─┬─ P1-29 telegram finish + pairing
        └─ P1-30 approval timeout tests
 P1-31 v2 stop answers its calls (independent)
+P1-32 hub run exits and prune (independent; main.rs + cli_p1.rs only)
 ```
 
 P1-25, P1-17 and P1-26 run one after another: all three edit the hub, and P1-25 and P1-26 both
@@ -117,7 +118,7 @@ Crate paths are under `v3/crates/`.
 | P1-15 | Latency dashboard | sonnet | P1-02, P1-03 | `alexia-hub/src/latency.rs` |
 | P1-16 | Hub watchdog | sonnet | P1-02 | `alexia-hub/src/watchdog.rs` |
 | P1-17 | Hub wiring and CLI | sonnet | P1-07, P1-08, P1-10, P1-12, P1-13, P1-15, P1-16, P1-25 | `v3/Cargo.toml`, `alexia-hub/{Cargo.toml, src/main.rs, src/media.rs, tests/cli_p1.rs}`, `v3/Cargo.lock` |
-| P1-18 | End-to-end latency test and the 50-message run | sonnet | P1-17, P1-26 | `alexia-hub/tests/telegram_e2e.rs`, `v3/ops/reports/P1-latency.md` |
+| P1-18 | End-to-end latency test | sonnet | P1-17, P1-26 | `alexia-hub/tests/telegram_e2e.rs` |
 | P1-20 | Hub: latency offsets and hidden console | sonnet | none | `alexia-hub/src/{latency.rs, watchdog.rs}`, `v3/specs/INTERFACES.md` |
 | P1-21 | Telegram api: file transfers and retry_after | sonnet | none | `alexia-gateway/{src/channels/telegram/api.rs, tests/telegram_api.rs}` |
 | P1-22 | Core: tool rows on the wire, catalog temp file | sonnet | none | `alexia-core/{src/openai.rs, src/catalog.rs, tests/openai.rs, tests/catalog.rs}` |
@@ -130,6 +131,8 @@ Crate paths are under `v3/crates/`.
 | P1-29 | Telegram: finish only what was delivered; pairing closes once paired | opus | P1-28 | `alexia-gateway/{src/channels/telegram/mod.rs, tests/telegram_channel.rs}` |
 | P1-30 | Approvals: test the 10-minute give-up and scheduled jobs | sonnet | P1-28 | `alexia-gateway/{Cargo.toml, tests/ask_voice.rs}` |
 | P1-31 | v2 agent: dangling tool ids on a stop | sonnet | none | `packages/core/src/agent.ts`, `packages/core/test/agent.test.ts` |
+| P1-32 | Hub run: every exit stops cleanly, Ctrl+C always wins, prune at boot, text-only latency args | sonnet | none | `alexia-hub/{src/main.rs, tests/cli_p1.rs}` |
+| P1-33 | The 50-real-message latency run | sonnet | P1-18 | `v3/ops/reports/P1-latency.md` |
 
 ## Owner needs
 
@@ -137,7 +140,7 @@ Crate paths are under `v3/crates/`.
   Telegram plugin uses), stored in Windows Credential Manager, service `alexia`, account
   `_core.telegram_bot_token`. The owner enters it once on the PC with
   `alexia-hub secret set telegram_bot_token` (read from stdin, never from the command line, never
-  echoed). For P1-18's by-hand run before cutover, a second bot from @BotFather is safer: same
+  echoed). For P1-33's by-hand run before cutover, a second bot from @BotFather is safer: same
   command, and switch back later.
 - **Only one program may read the bot.** Telegram answers a second long-poller with 409. Before
   the hub uses the real bot, switch off the Telegram plugin in v2 on the Mac, and in the v2 data
@@ -166,7 +169,7 @@ Crate paths are under `v3/crates/`.
   not sleep (HB-10's "keep the PC on").
 - **Network.** Outbound HTTPS from the PC to `api.telegram.org` and the provider APIs. Nothing
   inbound, no port forwarding, no firewall rule: the hub listens on nothing but loopback to v2.
-- **The 50 real messages** for the done-when: the owner uses Telegram normally over a day or two
+- **The 50 real messages** for the done-when (P1-33, owner ask A-09): the owner uses Telegram normally over a day or two
   (a mix of chat and tasks), then runs `alexia-hub latency --last 50 --check --html latency.html`.
 
 ## INTERFACES.md additions this phase makes
