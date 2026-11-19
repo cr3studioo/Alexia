@@ -25,11 +25,11 @@
 | P1-03 | Store: migration 2, channel chats, spans, tries_since, env secrets | P1 | opus | P0-07 | alexia-store/{src/lib.rs, src/types.rs, src/db.rs, src/mi... | merged | 1 | cr3studioo/v3-P1-03 | |
 | P1-04 | OpenAI-compatible provider and v2's free ladder | P1 | opus | P1-01 | alexia-core/{src/openai.rs, src/free.rs, tests/openai.rs} | merged | 2 | cr3studioo/v3-P1-04 |  |
 | P1-05 | Free chat catalog | P1 | opus | P1-04 | alexia-core/{src/catalog.rs, tests/catalog.rs} | merged | 3 | cr3studioo/v3-P1-05 |  |
-| P1-06 | Router::hedged with a latency budget | P1 | opus | P1-05, P1-03 | alexia-core/{src/router.rs, tests/router.rs} | review | 1 | cr3studioo/v3-P1-06 | review ctx_a21b887db675 |
+| P1-06 | Router::hedged with a latency budget | P1 | opus | P1-05, P1-03 | alexia-core/{src/router.rs, tests/router.rs} | merged | 1 | cr3studioo/v3-P1-06 |  |
 | P1-07 | Lane classifier and the Lanes brain | P1 | opus | P1-01 | alexia-core/{src/lane.rs, tests/lane.rs} | ready | 0 |  |  |
-| P1-08 | FastChat: the chat lane brain | P1 | opus | P1-06, P1-03, P0-13 | alexia-core/{src/chat.rs, tests/chat.rs} | todo | 0 | | |
+| P1-08 | FastChat: the chat lane brain | P1 | opus | P1-06, P1-03, P0-13 | alexia-core/{src/chat.rs, tests/chat.rs} | running | 1 | cr3studioo/v3-P1-08 | ctx_d6df95888b92 |
 | P1-09 | Telegram Bot API client | P1 | opus | P1-02 | alexia-gateway/{src/channels/telegram/api.rs, tests/teleg... | merged | 1 | cr3studioo/v3-P1-09 |  |
-| P1-10 | Telegram channel: poll, pairing, offsets, buttons | P1 | opus | P1-09, P1-03 | alexia-gateway/{src/channels/mod.rs, src/channels/telegra... | review | 1 | cr3studioo/v3-P1-10 | review ctx_f8a33c71489b |
+| P1-10 | Telegram channel: poll, pairing, offsets, buttons | P1 | opus | P1-09, P1-03 | alexia-gateway/{src/channels/mod.rs, src/channels/telegra... | review | 2 | cr3studioo/v3-P1-10 | changes; fix queued for opus slot |
 | P1-11 | Gateway loop: ack, merge, steer, drafts, spans | P1 | opus | P1-02, P1-03 | alexia-gateway/{src/gateway.rs, tests/gateway.rs} | merged | 2 | cr3studioo/v3-P1-11 |  |
 | P1-12 | Approvals and voice notes | P1 | opus | P1-11 | alexia-gateway/{src/ask.rs, src/voice.rs, tests/ask_voice... | ready | 0 | |  |
 | P1-13 | V2Bridge: v2 core as the task lane | P1 | opus | P1-02, P1-03 | alexia-hub/src/bridge.rs | running | 2 | cr3studioo/v3-P1-13 | fix 1 ctx_1cbed84690c5 |
@@ -47,8 +47,8 @@
 | P0-25 | One plugin-id rule | P0 | sonnet | P0-21, P0-22 | alexia-store lib/namespace/secrets/import, alexia-mcp manifest/host, alexia-hub main | running | 1 | cr3studioo/v3-P0-25 | ctx_9ff4099b8310 |
 | P1-19 | Watchdog hardening | P1 | sonnet | P1-16 | alexia-hub/src/watchdog.rs | merged | 1 | cr3studioo/v3-P1-19 | |
 | P1-20 | Hub: latency offsets and hidden console | P1 | sonnet | none | alexia-hub/src/{latency.rs, watchdog.rs}, INTERFACES.md | merged | 1 | cr3studioo/v3-P1-20 |  |
-| P1-21 | Telegram api: file transfers and retry_after | P1 | sonnet | none | alexia-gateway telegram/api.rs, tests/telegram_api.rs | ready | 0 | | |
-| P1-22 | Core: tool rows on the wire, catalog temp file | P1 | sonnet | none | alexia-core openai.rs, catalog.rs, tests | review | 1 | cr3studioo/v3-P1-22 | review ctx_504cf3cfb284 |
+| P1-21 | Telegram api: file transfers and retry_after | P1 | sonnet | none | alexia-gateway telegram/api.rs, tests/telegram_api.rs | running | 1 | cr3studioo/v3-P1-21 | ctx_206413906824 |
+| P1-22 | Core: tool rows on the wire, catalog temp file | P1 | sonnet | none | alexia-core openai.rs, catalog.rs, tests | merged | 1 | cr3studioo/v3-P1-22 |  |
 | P1-23 | Gateway: spawned tasks on the tracker | P1 | opus | none | alexia-gateway/{src/gateway.rs, tests/gateway.rs} | ready | 0 | | |
-| P1-24 | v2 agent: dangling tool ids at the ceiling | P1 | sonnet | none | packages/core/src/agent.ts, test/agent.test.ts | ready | 0 | | |
+| P1-24 | v2 agent: dangling tool ids at the ceiling | P1 | sonnet | none | packages/core/src/agent.ts, test/agent.test.ts | running | 1 | cr3studioo/v3-P1-24 | ctx_fe8e450e4939 |
 | P1-25 | One time helper | P1 | sonnet | P1-20, P1-22, P1-23, P1-17, P0-25 | alexia-store types/db/import, core catalog, gateway, hub watchdog/latency/main, INTERFACES.md | todo | 0 | | |

@@ -153,3 +153,6 @@
 - 2026-11-19 CEO #9: P0-22 review approve; merged, green, pushed. P0-25 ready. Merges since phase review: 1.
 - 2026-11-19 CEO #9: P1-06, P1-20, P1-22, P1-10 done; four opus reviews dispatched. P1-13 fix round 1 dispatched (opus, try 2). Five workers live; P0-25, P1-21, P1-24 (sonnet) and P1-07, P1-12, P1-23 (opus) wait for slots.
 - 2026-11-19 CEO #9: P1-20 review approve; merged, green, pushed. P0-25 dispatched (sonnet). Merges since phase review: 2.
+- 2026-11-19 CEO #9: P1-22 and P1-06 approve; merged, green, pushed. Merges since phase review: 4. P1-08 ready.
+- 2026-11-19 CEO #9: P1-10 review: changes. Decided: key asks by (chat, message id) + time-seeded seq; failed attachment download still delivers text with a note; stale press does not edit; pairing code rotates after 5 misses (beyond v2 parity, security). Fix in Alexia-wt/fix-P1-10.txt, queued for an opus slot.
+- 2026-11-19 CEO #9: dispatched P1-08 (opus, critical path, ahead of the P1-10 fix), P1-21, P1-24 (sonnet).
