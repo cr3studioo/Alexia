@@ -99,7 +99,7 @@ fn headers_for(id: &str) -> Vec<(String, String)> {
 }
 
 /// v2's `anonymousKey`: a published literal sent when no key is stored. Not secrets.
-fn anonymous_key(id: &str) -> Option<&'static str> {
+pub(crate) fn anonymous_key(id: &str) -> Option<&'static str> {
     match id {
         "aihorde" => Some("0000000000"),
         "uncloseai" => Some("alexia"),
@@ -134,14 +134,13 @@ pub fn ladder() -> Vec<FreeRow> {
         .collect()
 }
 
-/// The key for a row: `secrets::get("_core", "provider_<id>")` (v2's `keyOf`), else the row's
-/// published anonymous key, if it has one.
+/// The key for a row: `secrets::get("_core", "provider_<id>")` (v2's `keyOf`). Only a stored
+/// key: the row's published anonymous key is added when the request is made.
 pub fn key_for(row: &FreeRow) -> Option<String> {
-    let stored = alexia_store::secrets::get("_core", &format!("provider_{}", row.id))
+    alexia_store::secrets::get("_core", &format!("provider_{}", row.id))
         .ok()
         .flatten()
-        .filter(|k| !k.is_empty());
-    stored.or_else(|| anonymous_key(&row.id).map(Into::into))
+        .filter(|k| !k.is_empty())
 }
 
 /// Test hook: if `ALEXIA_FREE_PROVIDERS` names a JSON file, rows come from it instead

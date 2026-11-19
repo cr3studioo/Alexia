@@ -10,7 +10,7 @@ use serde_json::{json, Value};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-use crate::free::{Auth, FreeRow};
+use crate::free::{anonymous_key, Auth, FreeRow};
 use crate::{ChatChunk, ChatDone, ChatRequest, ModelInfo, Provider, ProviderError};
 
 /// v2's `PATIENCE` (D163): to the first byte, and between chunks once it has started.
@@ -56,14 +56,16 @@ impl OpenAiCompat {
         self.row.auth != Auth::Required || self.key.is_some()
     }
 
-    /// v2's `reaching`: the address and the credential. A `{account}` row's key is
-    /// `account_id:api_token`, split once on the first colon.
+    /// v2's `reaching`: the address and the credential (the stored key, else the row's
+    /// published anonymous one). A `{account}` row's key is `account_id:api_token`, split once
+    /// on the first colon.
     fn reaching(&self) -> Result<(String, Option<&str>), ProviderError> {
         if !self.row.base_url.contains("{account}") {
             if self.row.auth == Auth::Required && self.key.is_none() {
                 return Err(ProviderError::NeedsKey);
             }
-            return Ok((self.row.base_url.clone(), self.key.as_deref()));
+            let key = self.key.as_deref().or_else(|| anonymous_key(&self.row.id));
+            return Ok((self.row.base_url.clone(), key));
         }
         let Some(key) = self.key.as_deref() else {
             return Err(ProviderError::NeedsKey);
@@ -97,15 +99,17 @@ impl OpenAiCompat {
         req
     }
 
-    /// What a refusal means, as v2 reads it (`provider.ts`).
-    async fn refusal(&self, response: reqwest::Response, had_key: bool) -> ProviderError {
+    /// What a refusal means, as v2 reads it (`provider.ts`). Whether a key was *stored* decides
+    /// 401/403: an anonymous key refused is a row that wants the person's own key.
+    async fn refusal(&self, response: reqwest::Response) -> ProviderError {
+        let had_key = self.key.is_some();
         let status = response.status().as_u16();
         let retry_after_ms = response
             .headers()
             .get(reqwest::header::RETRY_AFTER)
             .and_then(|v| v.to_str().ok())
             .and_then(|v| v.trim().parse::<u64>().ok())
-            .map(|s| s * 1000);
+            .map(|s| s.saturating_mul(1000));
         tracing::debug!(provider = %self.row.id, status, "refused");
         match status {
             429 | 503 => ProviderError::Busy { retry_after_ms },
@@ -193,7 +197,7 @@ impl Provider for OpenAiCompat {
             .await
             .map_err(sent_error)?;
         if !response.status().is_success() {
-            return Err(self.refusal(response, key.is_some()).await);
+            return Err(self.refusal(response).await);
         }
         let list: Value = response.json().await.map_err(|_| {
             ProviderError::Other(format!(
@@ -285,7 +289,7 @@ impl Provider for OpenAiCompat {
         let status = response.status().as_u16();
         tracing::debug!(provider = %self.row.id, model, status, ms = sent.elapsed().as_millis() as u64, "answered");
         if !response.status().is_success() {
-            return Err(self.refusal(response, key.is_some()).await);
+            return Err(self.refusal(response).await);
         }
 
         let mut buf: Vec<u8> = Vec::new();
@@ -329,7 +333,7 @@ impl Provider for OpenAiCompat {
                 let Ok(frame) = serde_json::from_str::<Value>(data) else {
                     continue;
                 };
-                if frame.get("error").is_some() {
+                if frame.get("error").is_some_and(|e| !e.is_null()) {
                     return Err(ProviderError::Other(format!(
                         "{} stopped partway: {}",
                         self.row.id,
@@ -344,6 +348,13 @@ impl Provider for OpenAiCompat {
                     done.tokens_out = usage["completion_tokens"].as_i64().unwrap_or(0);
                 }
                 let choice = &frame["choices"][0];
+                // v2: `finish_reason: "error"` is the provider saying the answer failed.
+                if choice["finish_reason"] == "error" {
+                    return Err(ProviderError::Other(format!(
+                        "{} dropped the answer: it said the answer failed",
+                        self.row.id
+                    )));
+                }
                 if !choice["finish_reason"].is_null() {
                     finished = true;
                 }
@@ -361,8 +372,13 @@ impl Provider for OpenAiCompat {
                 .flatten()
                 {
                     first_byte_ms.get_or_insert(sent.elapsed().as_millis() as u32);
-                    if out.send(chunk).await.is_err() {
-                        return Err(ProviderError::Cancelled); // nobody is listening any more
+                    // A slow reader must not hold off a cancel.
+                    tokio::select! {
+                        biased;
+                        _ = cancel.cancelled() => return Err(ProviderError::Cancelled),
+                        sent = out.send(chunk) => if sent.is_err() {
+                            return Err(ProviderError::Cancelled); // nobody is listening any more
+                        },
                     }
                 }
             }

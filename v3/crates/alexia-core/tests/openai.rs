@@ -249,6 +249,85 @@ async fn status_401_is_needs_key() {
 }
 
 #[tokio::test]
+async fn huge_retry_after_saturates() {
+    let (base, _) = fake(
+        "HTTP/1.1 429 Too Many Requests
+retry-after: 18446744073709551615
+content-length: 0
+connection: close
+
+",
+        vec![],
+    )
+    .await;
+    let (_, done) = run(&provider(&base), &hello()).await;
+    assert!(
+        matches!(
+            done,
+            Err(ProviderError::Busy {
+                retry_after_ms: Some(u64::MAX)
+            })
+        ),
+        "{done:?}"
+    );
+}
+
+#[test]
+fn status_401_with_only_the_anonymous_key_is_needs_key() {
+    // uncloseai, as `configured()` builds it: its published anonymous key is sent, none of
+    // the person's is stored, so a 401 means it wants their key, not that a key was refused.
+    let _guard = ENV.lock().unwrap_or_else(|e| e.into_inner());
+    std::env::set_var("ALEXIA_SECRETS_IN_MEMORY", "1");
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let head = "HTTP/1.1 401 Unauthorized
+content-length: 0
+connection: close
+
+";
+    let (base, _) = rt.block_on(fake(head, vec![]));
+    let path = std::env::temp_dir().join(format!("alexia-anon-{}.json", std::process::id()));
+    let rows = json!([{"id": "uncloseai", "base_url": base, "auth": "none", "all_free": true}]);
+    std::fs::write(&path, rows.to_string()).unwrap();
+    std::env::set_var("ALEXIA_FREE_PROVIDERS", &path);
+    let got = free::configured();
+    std::env::remove_var("ALEXIA_FREE_PROVIDERS");
+    let _ = std::fs::remove_file(&path);
+    assert_eq!(free::key_for(got[0].row()), None);
+    let (_, done) = rt.block_on(run(&got[0], &hello()));
+    assert!(matches!(done, Err(ProviderError::NeedsKey)), "{done:?}");
+}
+
+#[tokio::test]
+async fn finish_reason_error_is_failure() {
+    let failed = format!(
+        "data: {}
+
+",
+        json!({"choices": [{"delta": {}, "finish_reason": "error"}]})
+    );
+    let (base, _) = fake(
+        SSE,
+        vec![
+            (0, delta("content", "half")),
+            (0, failed),
+            (
+                0,
+                "data: [DONE]
+
+"
+                .into(),
+            ),
+        ],
+    )
+    .await;
+    let (_, done) = run(&provider(&base), &hello()).await;
+    assert!(
+        matches!(&done, Err(ProviderError::Other(m)) if m.contains("said the answer failed")),
+        "{done:?}"
+    );
+}
+
+#[tokio::test]
 async fn status_400_carries_the_providers_message() {
     let said = json!({"error": {"message": "model not found"}}).to_string();
     let head = format!(
@@ -445,8 +524,7 @@ fn keys_use_v2_names() {
             .unwrap()
     };
     assert!(!groq().usable());
-    // Two halves, so no file holds anything shaped like a real key.
-    let key = format!("{}{}", "gsk_", "test-only");
+    let key = "test-key".to_owned();
     alexia_store::secrets::set("_core", "provider_groq", &key).unwrap();
     assert!(groq().usable());
     assert_eq!(free::key_for(groq().row()), Some(key));
