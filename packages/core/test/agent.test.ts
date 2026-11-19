@@ -1217,6 +1217,41 @@ test('the ceiling leaves no call without a result', async () => {
   store.close()
 })
 
+test('a stop during the gate leaves no call without a result', async () => {
+  script = [{ calls: [{ name: 'notes.a' }, { name: 'notes.b' }] }, { say: 'done' }]
+  served = []
+  const { store, session, world } = bench()
+  const stop = new AbortController()
+  const tools = tooling()
+
+  const result = await run({
+    messages: start('go'),
+    tools,
+    pins,
+    world,
+    store,
+    secrets,
+    session,
+    signal: stop.signal,
+    guard: () => ({ verdict: 'ask', why: 'ok?' }),
+    approve: async () => {
+      stop.abort()
+      return true
+    },
+  })
+
+  expect(result.ended).toBe('stopped')
+  expect(tools.calls).toEqual([])
+  const history = store.history(session)
+  const asked = history.filter((m) => m.role === 'assistant').flatMap((m) => (m.calls ?? []).map((c) => c.id))
+  const answered = history.filter((m) => m.role === 'tool')
+  expect(asked).toHaveLength(2)
+  expect(answered.map((m) => m.callId)).toEqual(asked)
+  expect(answered.map((m) => m.content)).toEqual(['not run: stopped', 'not run: stopped'])
+  expect(served).toHaveLength(1)
+  store.close()
+})
+
 test("a ceiling hit before a turn's first call still answers it", async () => {
   script = Array.from({ length: 50 }, () => ({ call: 'notes.read' }) as Turn)
   served = []

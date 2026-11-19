@@ -925,7 +925,11 @@ export async function run(options: RunOptions): Promise<RunResult> {
     const gated: { step: Step; call: (typeof calls)[number]; ruled: Ruled }[] = []
     let capped = false
     for (const call of calls) {
-      if (options.signal?.aborted) return finish('stopped')
+      if (options.signal?.aborted) {
+        // Gated calls have not run either: the run pass never started.
+        unanswered(calls, 'not run: stopped')
+        return finish('stopped')
+      }
       if (steps.length >= ceiling) {
         capped = true
         break
@@ -960,14 +964,7 @@ export async function run(options: RunOptions): Promise<RunResult> {
       store.append(session, result)
     }
     if (capped) {
-      // Every call id in the stored assistant row needs a result, or a strict provider refuses
-      // the next turn. These were never run, so they are not steps and fire no `step`/`done`.
-      for (const call of calls.slice(gated.length)) {
-        const result: Message = { role: 'tool', callId: call.id, content: 'not run: step limit reached' }
-        messages.push(result)
-        added.push(result)
-        store.append(session, result)
-      }
+      unanswered(calls.slice(gated.length), 'not run: step limit reached')
       return finish('ceiling')
     }
 
@@ -1004,6 +1001,17 @@ export async function run(options: RunOptions): Promise<RunResult> {
    * it must never be is silent: what comes back is the reason, in the words the user would
    * read, so the answer at the end can say what it could not do.
    */
+  function unanswered(left: { id: string }[], why: string): void {
+    // Every call id in the stored assistant row needs a result, or a strict provider refuses
+    // the next turn. These never ran, so they are not steps and fire no `step`/`done`.
+    for (const call of left) {
+      const result: Message = { role: 'tool', callId: call.id, content: why }
+      messages.push(result)
+      added.push(result)
+      store.append(session, result)
+    }
+  }
+
   async function rule(step: Step): Promise<Ruled> {
     const ruling = (await options.guard?.({ name: step.name, args: step.args })) ?? { verdict: 'run' }
     if (ruling.verdict === 'blocked') return { ok: false, text: ruling.why }
