@@ -62,7 +62,9 @@ jobs:
           workspaces: v3
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
-      - run: cargo test -p alexia-hub --features v2-conformance --test v2_plugins --locked -- --nocapture
+      # Serial: each test starts every v2 plugin (~15 node processes); in parallel a 4-core runner
+      # starves the resident plugins and the 2 s test heartbeat kills them.
+      - run: cargo test -p alexia-hub --features v2-conformance --test v2_plugins --locked -- --nocapture --test-threads=1
         working-directory: v3
         env:
           ALEXIA_V2_PLUGINS: ${{ github.workspace }}\plugins
