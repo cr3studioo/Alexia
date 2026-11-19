@@ -10,17 +10,16 @@ use rusqlite::types::{Value, ValueRef};
 use rusqlite::{params, params_from_iter, Connection, OptionalExtension};
 use serde_json::Value as Json;
 
-use crate::{is_ident, Cond, DeleteScope, Dir, Error, Result, Row, Scalar, Select, Store, Where};
+use crate::{
+    is_ident, is_plugin_id, Cond, DeleteScope, Dir, Error, Result, Row, Scalar, Select, Store,
+    Where,
+};
 
 /// The kv namespace and key prefix of the record of which tables belong to which ns.
 const CORE: &str = "_core";
 
-/// `^[a-z][a-z0-9-]*$`, the plugin id rule.
 fn check_ns(ns: &str) -> Result<()> {
-    let mut b = ns.bytes();
-    let ok = b.next().is_some_and(|c| c.is_ascii_lowercase())
-        && b.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-');
-    if ok {
+    if is_plugin_id(ns) {
         Ok(())
     } else {
         Err(Error::Invalid(format!("{ns} is not a usable namespace.")))

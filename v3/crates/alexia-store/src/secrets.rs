@@ -5,7 +5,7 @@
 //! so an entry v2's core wrote through `cross-keychain` is the same entry here. A secret is never
 //! logged and never put in an `Error`.
 
-use crate::{is_ident, Error, Result};
+use crate::{is_ident, is_plugin_id, Error, Result};
 
 /// When set (any value), secrets live in a process-local map instead of the OS keychain.
 /// Tests and CI only; the hub never sets it.
@@ -96,12 +96,9 @@ fn account(owner: &str, key: &str) -> Result<String> {
     Ok(format!("{owner}.{key}"))
 }
 
-/// `^(_core|[a-z][a-z0-9-]*)$`
+/// `_core` or a plugin id.
 fn is_owner(s: &str) -> bool {
-    let mut b = s.bytes();
-    s == "_core"
-        || (b.next().is_some_and(|c| c.is_ascii_lowercase())
-            && b.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-'))
+    s == "_core" || is_plugin_id(s)
 }
 
 mod mem {
