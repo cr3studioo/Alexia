@@ -98,3 +98,5 @@
 - 2026-11-19 CEO #7: P0-16 question (invariants.mjs hits 10 doc-comment/test strings): answered A - skip comment lines; path check also skips test code; prove real hits still caught.
 - 2026-11-19 CEO #7: P1-01 done; review dispatched (opus).
 - 2026-11-19 CEO #7: P0-16 reported failed only on known pnpm flake + unverified GH run; treated as done. Pushed task branch to run v3.yml on GitHub; review dispatched (opus).
+- 2026-11-19 CEO #7: P1-01 review approve; merged. Integration: idle_lazy_plugin_stops flaked at supervise.rs:455 (Stopped{Idle} not yet seen) under parallel load; full rerun green, kept merge, pushed. Wrote P0-20 (round-2 de-flake).
+- 2026-11-19 CEO #7: later-spec notes from P1-01 review: P1-05 'keep v2 regexes' but no regex crate and P1-05 cannot touch Cargo.toml; P1-04 tokio net comes only via reqwest.
