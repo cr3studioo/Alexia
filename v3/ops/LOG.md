@@ -120,3 +120,9 @@
 - 2026-11-19 CEO #8: P1-05 decision: port v2's 3 catalog regexes by hand (no regex crate, no Cargo.toml change).
 - 2026-11-19 CEO #8: P0 whole-phase review: 5 tasks -> specs P0-21..P0-25 written by CEO. Open design note for V3-1 library uninstall: purge after vanish returns UnknownPlugin (host.rs:551/914).
 - 2026-11-19 CEO #8: dispatched P1-05 (opus ctx_87081118145d), P1-11 (opus ctx_8ddd88f91663, continues commit 01ffde9), P1-16 (sonnet ctx_39226e05765c), P0-24 (sonnet ctx_a47d0c516c4b), P1-15 review (opus ctx_798dd98bcdaf).
+- 2026-11-19 CEO #8: P0-24 done; review dispatched (opus ctx_104839c44bd3).
+- 2026-11-19 CEO #8: P1-16 done (watchdog, 6 tests; reboot by-hand check left); review dispatched (opus ctx_49f2d34b7efd).
+- 2026-11-19 CEO #8: P1-15 review: changes (UTC time column, keep deliver in top3, html to target/, reject --last 0). Fix round sonnet, try 2.
+- 2026-11-19 CEO #8: P0-24 review approve; merged, integration green, pushed. Dispatched P0-21 (sonnet).
+- 2026-11-19 CEO #8: P1-16 review approve with risks. Merge failed invariants (C:\ in a message, newly caught by P0-24's fix); CEO fixed the one line on the task branch, re-merged, green, pushed. Risks filed as P1-19.
+- 2026-11-19 CEO #8: note for P1-17: cancel the heartbeat and await it before clean_stop (P1-16 review).
