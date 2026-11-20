@@ -239,3 +239,7 @@
 2026-11-20 P2-15 build done; review dispatched.
 2026-11-20 P2-12 review 2: changes (empty root matches everything; computer__click names a plugin). Fixer opus try 3 ctx_e0e9087a0610.
 2026-11-20 Merged P2-02 (approve, gate ok after session drop, pushed). For P2-22: host.rs:510 host_caps under plugins lock (deadlock risk); host.rs:330 reviewed fails open on kv error -> must fail closed. Release size check (SP-12) still open, P2-24.
+2026-11-20 P2-15 review: changes (user-turn floor blocks collapse; clip chars vs UTF-16). Fix queued (sonnet, same worktree, C:/dev/Alexia-wt/fix-P2-15.txt) for next free slot.
+2026-11-20 P2-12 fixer done (empty roots dropped, demo__click); review 3 dispatched. P2-15 fix try 2 dispatched sonnet ctx_c0f54b3bae47.
+2026-11-20 Merged P2-12 locally (approve on review 3; gate running). Filed P2-42 (sonnet): fail-closed for Windows trailing dot/space segments and per-element boundary parse; added to P2-38 deps. P2-15 fix done; review 2 dispatched.
+2026-11-20 P2-12 gate ok, pushed. P2-42 ready.
