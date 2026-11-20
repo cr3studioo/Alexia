@@ -63,7 +63,7 @@
 | P1-34 | secret import-v2: copy v2 secrets into v3, once | P1 | opus | none | store secrets.rs+tests/v2_secrets.rs, gateway channels/mod.rs, hub main.rs, INTERFACES.md | merged | 1 | cr3studioo/v3-P1-34 | owner runs import once |
 | P1-35 | Time the bridge's save; synchronous = NORMAL in WAL | P1 | opus | none | hub bridge.rs, store db.rs | merged | 1 | cr3studioo/v3-P1-35 | |
 | P2-01 | Core P2 types, module stubs, dependencies, INTERFACES.md | P2 | opus | P1-18 | v3/Cargo.toml, v3/Cargo.lock, v3/specs/INTERFACES.md, alexia-core/{Cargo.toml, src/lib.... | merged | 1 | cr3studioo/v3-P2-01 | |
-| P2-02 | MCP host P2 interfaces: host calls, reviewed, wasm stub | P2 | sonnet | P2-01 | v3/Cargo.lock, v3/specs/INTERFACES.md, alexia-mcp/{Cargo.toml, src/lib.rs, src/wasm.rs ... | review | 1 | cr3studioo/v3-P2-02 | review |
+| P2-02 | MCP host P2 interfaces: host calls, reviewed, wasm stub | P2 | sonnet | P2-01 | v3/Cargo.lock, v3/specs/INTERFACES.md, alexia-mcp/{Cargo.toml, src/lib.rs, src/wasm.rs ... | merged | 1 | cr3studioo/v3-P2-02 | P2-22: lock+fail-open notes |
 | P2-03 | Store: migration 3 (audit, live runs, approvals, jobs) | P2 | opus | none | alexia-store/{src/lib.rs, src/types.rs, src/db.rs, src/migrations.rs, tests/p2.rs} | merged | 1 | cr3studioo/v3-P2-03 | |
 | P2-04 | Tools on the OpenAI-compatible wire | P2 | sonnet | P2-01 | alexia-core/{src/openai.rs, tests/openai.rs} | running | 1 | cr3studioo/v3-P2-04 | ctx_96523afcf10f |
 | P2-05 | Candidates know tools, vision and context; rank by what a re | P2 | sonnet | P2-01 | alexia-core/{src/catalog.rs, src/router.rs, tests/router.rs, tests/catalog.rs} | running | 1 | cr3studioo/v3-P2-05 | ctx_35e3b74bf17e |
@@ -73,17 +73,17 @@
 | P2-09 | Hub: dead code and stale allow(dead_code) | P2 | sonnet | none | alexia-hub/src/{latency.rs, watchdog.rs} | merged | 1 | cr3studioo/v3-P2-09 | stale comments watchdog.rs:2,4 |
 | P2-10 | Secrets: no echo, read errors kept, in-memory only for tests | P2 | sonnet | none | alexia-store/{src/secrets.rs, tests/secrets.rs, tests/v2_secrets.rs}, alexia-hub/{src/m... | merged | 1 | cr3studioo/v3-P2-10 | |
 | P2-11 | Channels exception narrowed to service names | P2 | sonnet | P2-01 | v3/ci/invariants.mjs, alexia-gateway/src/channels/mod.rs | ready | 0 | | |
-| P2-12 | Permission modes, scope, never-touch, spoken boundaries | P2 | opus | P2-01 | alexia-core/{src/permissions.rs, tests/permissions.rs} | running | 2 | cr3studioo/v3-P2-12 | fix ctx_312e213192a7: dangling link |
+| P2-12 | Permission modes, scope, never-touch, spoken boundaries | P2 | opus | P2-01 | alexia-core/{src/permissions.rs, tests/permissions.rs} | running | 3 | cr3studioo/v3-P2-12 | fixer ctx_e0e9087a0610: empty root |
 | P2-13 | The safety checker | P2 | opus | P2-01 | alexia-core/{src/checker.rs, tests/checker.rs} | review | 1 | cr3studioo/v3-P2-13 | waits P2-14 merge, then merge v3 in, review |
 | P2-14 | Redaction before cloud | P2 | sonnet | P2-01 | alexia-core/{src/redact.rs, tests/redact.rs} | running | 2 | cr3studioo/v3-P2-14 | fix ctx_e3075fb03a51: location args, 2nd postcode |
-| P2-15 | Trimming the step trace | P2 | sonnet | P2-01 | alexia-core/{src/trim.rs, tests/trim.rs} | running | 1 | cr3studioo/v3-P2-15 | ctx_93e425165364 |
+| P2-15 | Trimming the step trace | P2 | sonnet | P2-01 | alexia-core/{src/trim.rs, tests/trim.rs} | review | 1 | cr3studioo/v3-P2-15 | review |
 | P2-16 | System prompt, skills, injection guard | P2 | sonnet | P2-01 | alexia-core/{src/prompt.rs, tests/prompt.rs} | running | 1 | cr3studioo/v3-P2-16 | ctx_07abe9092dc9 |
 | P2-17 | Router for task steps: model per job, $0 cap, catalog news | P2 | sonnet | P2-04, P2-05, P2-14 | alexia-core/{src/router.rs, src/catalog.rs, tests/router_steps.rs} | todo | 0 | | |
-| P2-18 | Tooling over the MCP host | P2 | sonnet | P2-02 | alexia-core/{src/tools.rs, tests/tools.rs} | todo | 0 | | |
+| P2-18 | Tooling over the MCP host | P2 | sonnet | P2-02 | alexia-core/{src/tools.rs, tests/tools.rs} | ready | 0 | | |
 | P2-19 | Trace, runs and the audit log | P2 | sonnet | P2-01, P2-03, P2-14 | alexia-core/{src/trace.rs, tests/trace.rs} | todo | 0 | | |
 | P2-20 | The agent loop | P2 | opus | P2-07, P2-12, P2-13, P2-14, P2-15, P2-16, P2-17, P2-18, P2-19 | alexia-core/{src/agent.rs, tests/agent.rs} | todo | 0 | | |
 | P2-21 | Upcalls: sampling, tasks for plugins, elicit, roots, attachm | P2 | sonnet | P2-20, P2-02 | alexia-core/{src/upcalls.rs, tests/upcalls.rs} | todo | 0 | | |
-| P2-22 | MCP: compute/run locally, host-answered capabilities | P2 | sonnet | P2-02 | alexia-mcp/{src/serve.rs, src/host.rs, src/bin/mcp-fixture.rs, tests/compute.rs} | todo | 0 | | |
+| P2-22 | MCP: compute/run locally, host-answered capabilities | P2 | sonnet | P2-02 | alexia-mcp/{src/serve.rs, src/host.rs, src/bin/mcp-fixture.rs, tests/compute.rs} | ready | 0 | | |
 | P2-23 | Hot reload of plugins | P2 | sonnet | P2-22 | alexia-mcp/{src/host.rs, src/supervise.rs, tests/reload.rs} | todo | 0 | | |
 | P2-24 | WASM plugins in a capability sandbox | P2 | sonnet | P2-23 | alexia-mcp/{src/wasm.rs, src/host.rs, fixtures/wasm-hello/**, tests/fixtures/wasm-hello... | todo | 0 | | |
 | P2-25 | Commands | P2 | sonnet | P2-20 | alexia-core/{src/commands.rs, tests/commands.rs} | todo | 0 | | |
@@ -98,7 +98,7 @@
 | P2-34 | Local vision, local embeddings, the local checker model | P2 | sonnet | P2-31, P2-32, P2-33, P2-21 | alexia-core/{src/local.rs, src/upcalls.rs, tests/local_jobs.rs} | todo | 0 | | |
 | P2-35 | Subscriptions through their official CLIs | P2 | sonnet | P2-17 | alexia-core/{src/subscription.rs, tests/subscription.rs} | todo | 0 | | |
 | P2-36 | Compare two models | P2 | sonnet | P2-17 | alexia-core/{src/compare.rs, tests/compare.rs} | todo | 0 | | |
-| P2-37 | Encrypted database at rest | P2 | opus | P2-02, P2-03, P2-10 | v3/Cargo.toml, v3/Cargo.lock, alexia-store/{Cargo.toml, src/db.rs, src/encrypt.rs, src/... | todo | 0 | | |
+| P2-37 | Encrypted database at rest | P2 | opus | P2-02, P2-03, P2-10 | v3/Cargo.toml, v3/Cargo.lock, alexia-store/{Cargo.toml, src/db.rs, src/encrypt.rs, src/... | ready | 0 | | |
 | P2-38 | Hub wiring: Agent is the brain, bridge deleted, P2 CLI | P2 | sonnet | P2-08..P2-11, P2-20..P2-37 | alexia-hub/{Cargo.toml, src/main.rs, src/bridge.rs (delete), src/media.rs, tests/cli_p2... | todo | 0 | | |
 | P2-39 | End-to-end: the agent on the real binary | P2 | sonnet | P2-38 | alexia-hub/tests/{agent_e2e.rs, telegram_e2e.rs, common/mod.rs} | todo | 0 | | |
 | P2-40 | Every v2 plugin on the Rust host | P2 | sonnet | P2-38 | alexia-hub/tests/v2_plugins.rs | todo | 0 | | |

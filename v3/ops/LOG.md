@@ -235,3 +235,7 @@
 2026-11-20 P2-13 build done; 5 tests need real redact. Review after P2-14 merges and v3 is merged into its branch.
 2026-11-20 Dispatched P2-04, P2-05, P2-15, P2-16 (sonnet) while reviews run.
 2026-11-20 P2-14 review: changes (location key in tool args not redacted; 2nd postcode survives). Fix try 2 sonnet ctx_e3075fb03a51. Open for P2-17: redact_request takes no known secrets; P2-17 must pass keychain values (note when dispatching P2-17).
+2026-11-20 P2-12 fix done (dangling links/junctions followed; loop = outside). Review 2 dispatched. telegram_e2e fifty_messages_ack test failed 1794 ms under load (pre-existing).
+2026-11-20 P2-15 build done; review dispatched.
+2026-11-20 P2-12 review 2: changes (empty root matches everything; computer__click names a plugin). Fixer opus try 3 ctx_e0e9087a0610.
+2026-11-20 Merged P2-02 (approve, gate ok after session drop, pushed). For P2-22: host.rs:510 host_caps under plugins lock (deadlock risk); host.rs:330 reviewed fails open on kv error -> must fail closed. Release size check (SP-12) still open, P2-24.
