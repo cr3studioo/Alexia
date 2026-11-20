@@ -609,3 +609,49 @@ async fn run_refreshes_then_stops_on_cancel() {
         .unwrap();
     assert_eq!(Catalog::REFRESH_MS, 6 * 60 * 60 * 1000);
 }
+
+#[test]
+fn candidate_cache_round_trip_with_and_without_new_fields() {
+    let full = Candidate {
+        provider: "p".into(),
+        model: "m-8b".into(),
+        context: 32_768,
+        tools: true,
+        vision: true,
+        size_b: Some(8.0),
+        router: false,
+    };
+    let back: Candidate = serde_json::from_str(&serde_json::to_string(&full).unwrap()).unwrap();
+    assert_eq!(back, full);
+    // A cache file from before tools / vision / context: they load as unknown.
+    let old: Candidate =
+        serde_json::from_str(r#"{"provider":"p","model":"m-8b","size_b":8.0,"router":false}"#)
+            .unwrap();
+    assert_eq!((old.tools, old.vision, old.context), (false, false, 0));
+}
+
+#[tokio::test]
+async fn refresh_carries_tools_vision_context() {
+    let path = cache("capabilities");
+    let mut m = model("seer-8b", true);
+    m.tools = true;
+    m.vision = true;
+    m.context = 65_536;
+    let c = Catalog::new(
+        vec![fake("a", Says::List(vec![m]))],
+        vec![row("a", Auth::Optional)],
+        path.clone(),
+    );
+    c.refresh().await;
+    let got = Catalog::new(
+        vec![fake("a", Says::Down)],
+        vec![row("a", Auth::Optional)],
+        path,
+    )
+    .candidates();
+    assert_eq!(got.len(), 1);
+    assert_eq!(
+        (got[0].tools, got[0].vision, got[0].context),
+        (true, true, 65_536)
+    );
+}

@@ -13,9 +13,9 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use alexia_core::catalog::Catalog;
 use alexia_core::free::{Auth, FreeRow};
-use alexia_core::router::Router;
+use alexia_core::router::{Needs, Router};
 use alexia_core::{Budget, ChatChunk, ChatDone, ChatRequest, ModelInfo, Provider, ProviderError};
-use alexia_store::{Ms, Store, Try};
+use alexia_store::{Content, MessageBody, Ms, Part, Role, Store, Try};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
@@ -684,4 +684,154 @@ async fn no_paid_ever() {
     assert_eq!(text, "");
     assert!(w.log.started().is_empty());
     assert!(w.store.tries_since(0).unwrap().is_empty());
+}
+
+// ---- P2-05: rank by what a request needs ----
+
+fn cap(id: &str, context: u32, tools: bool, vision: bool) -> ModelInfo {
+    ModelInfo {
+        id: id.into(),
+        context,
+        free: true,
+        tools,
+        vision,
+    }
+}
+
+/// One provider "x" listing exactly `infos`.
+async fn capable(infos: Vec<ModelInfo>) -> World {
+    let cache = std::env::temp_dir().join(format!(
+        "alexia-router-cap-{}-{}.json",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let log = Arc::new(Log::default());
+    let fake: Arc<dyn Provider> = Arc::new(Fake {
+        id: "x".into(),
+        models: infos,
+        scripts: HashMap::new(),
+        log: log.clone(),
+    });
+    let catalog = Arc::new(Catalog::new(
+        vec![fake.clone()],
+        rows(&["x"]),
+        cache.clone(),
+    ));
+    catalog.refresh().await;
+    let store = Arc::new(Store::open_in_memory().unwrap());
+    World {
+        router: Router::new(vec![fake], catalog, store.clone()),
+        store,
+        log,
+        cache,
+    }
+}
+
+fn body(content: Content) -> MessageBody {
+    serde_json::from_value(serde_json::json!({ "content": content })).unwrap()
+}
+
+fn text_turn(text: &str) -> (Role, MessageBody) {
+    (Role::User, body(Content::Text(text.into())))
+}
+
+fn names(list: Vec<alexia_core::catalog::Candidate>) -> Vec<String> {
+    let mut v: Vec<String> = list.into_iter().map(|c| c.model).collect();
+    v.sort();
+    v
+}
+
+fn a_tool() -> alexia_mcp::types::Tool {
+    serde_json::from_value(serde_json::json!({
+        "name": "look", "inputSchema": {"type": "object"}
+    }))
+    .unwrap()
+}
+
+#[tokio::test]
+async fn tools_request_skips_models_without_tools() {
+    let w = capable(vec![
+        cap("plain-70b", 32_768, false, false),
+        cap("handy-8b", 32_768, true, false),
+    ])
+    .await;
+    let mut req = request();
+    req.tools = vec![a_tool()];
+    let needs = Needs::of(&req);
+    assert!(needs.tools);
+    assert_eq!(names(w.router.ranked_for(now(), &needs)), ["handy-8b"]);
+    assert_eq!(w.router.ranked_for(now(), &Needs::of(&request())).len(), 2);
+}
+
+#[tokio::test]
+async fn image_request_skips_blind_models() {
+    let w = capable(vec![
+        cap("blind-70b", 32_768, true, false),
+        cap("seeing-8b", 32_768, false, true),
+    ])
+    .await;
+    let mut req = request();
+    req.messages = vec![(
+        Role::User,
+        body(Content::Parts(vec![
+            Part::Text {
+                text: "what is this".into(),
+            },
+            Part::Image {
+                url: "data:image/png;base64,AAAA".into(),
+            },
+        ])),
+    )];
+    let needs = Needs::of(&req);
+    assert!(needs.vision);
+    assert_eq!(names(w.router.ranked_for(now(), &needs)), ["seeing-8b"]);
+}
+
+#[tokio::test]
+async fn long_request_skips_small_windows() {
+    let w = capable(vec![
+        cap("small-8b", 4_096, false, false),
+        cap("big-70b", 131_072, false, false),
+    ])
+    .await;
+    let mut req = request();
+    req.messages = vec![text_turn(&"a".repeat(30_000))]; // 10 000 tokens
+    let needs = Needs::of(&req);
+    assert_eq!(needs.tokens, 10_000);
+    assert_eq!(names(w.router.ranked_for(now(), &needs)), ["big-70b"]);
+}
+
+#[tokio::test]
+async fn unknown_context_only_short() {
+    let w = capable(vec![cap("quiet-8b", 0, false, false)]).await;
+    let mut req = request();
+    req.messages = vec![text_turn(&"a".repeat(3 * 8_191))];
+    assert_eq!(w.router.ranked_for(now(), &Needs::of(&req)).len(), 1);
+    req.messages = vec![text_turn(&"a".repeat(3 * 8_192))];
+    assert!(w.router.ranked_for(now(), &Needs::of(&req)).is_empty());
+}
+
+#[tokio::test]
+async fn empty_after_filter_says_why() {
+    let w = capable(vec![cap("plain-8b", 32_768, false, false)]).await;
+    let mut req = request();
+    req.tools = vec![a_tool()];
+    let (tx, _rx) = mpsc::channel(8);
+    let r = w
+        .router
+        .hedged(&req, budget(60_000), tx, CancellationToken::new())
+        .await;
+    match r {
+        Err(ProviderError::Other(said)) => {
+            assert_eq!(
+                said,
+                "No free model that can use tools can answer right now."
+            )
+        }
+        other => panic!("{other:?}"),
+    }
+    assert!(w.log.started().is_empty());
 }

@@ -22,7 +22,14 @@ use crate::{ModelInfo, Provider, ProviderError};
 pub struct Candidate {
     pub provider: String,
     pub model: String,
+    /// 0 = unknown (also what a cache file from before this field loads as).
+    #[serde(default)]
     pub context: u32,
+    /// Unknown counts as no, so a cache file from before this field loads as no.
+    #[serde(default)]
+    pub tools: bool,
+    #[serde(default)]
+    pub vision: bool,
     /// A size in billions read from the id, v2 `sizeOf`.
     pub size_b: Option<f32>,
     pub router: bool,
@@ -214,6 +221,8 @@ fn listed(row: &FreeRow, models: &[ModelInfo]) -> Vec<Candidate> {
             provider: row.id.clone(),
             model: m.id.clone(),
             context: m.context,
+            tools: m.tools,
+            vision: m.vision,
             size_b: size_of(&m.id),
             router: row.router || routes(&m.id),
         })
@@ -358,6 +367,9 @@ fn seeded(row: &FreeRow) -> impl Iterator<Item = Candidate> + '_ {
             provider: provider.into(),
             model: model.into(),
             context,
+            // The seed does not say; unknown counts as no.
+            tools: false,
+            vision: false,
             size_b: size_of(model),
             router: row.router || routes(model),
         })
