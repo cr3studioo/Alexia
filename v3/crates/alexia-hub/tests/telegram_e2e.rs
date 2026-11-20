@@ -764,11 +764,17 @@ async fn fifty_messages_ack_under_300ms_and_chat_skips_v2() {
     let everything = format!("{}{}", hub.log(), lock(&hub.stdout).join("\n"));
     assert!(!everything.contains(TOKEN), "the bot token was printed");
 
-    // The hub kept 47 turns, each with an ack column. No --check: that tool fails on any single
-    // ack >= 300 ms on purpose (for real owner runs), which a loaded machine can trip.
+    // The hub kept 47 turns; `latency --check` fails on a missing ack, a chat turn through the
+    // bridge, an unaccounted gap, or p95 ack >= 300 ms.
     let html = root.join("latency.html");
     let o = command(&root)
-        .args(["latency", "--last", &recorded.to_string(), "--html"])
+        .args([
+            "latency",
+            "--last",
+            &recorded.to_string(),
+            "--check",
+            "--html",
+        ])
         .arg(&html)
         .output()
         .unwrap();
@@ -777,16 +783,11 @@ async fn fifty_messages_ack_under_300ms_and_chat_skips_v2() {
         String::from_utf8_lossy(&o.stdout),
         String::from_utf8_lossy(&o.stderr)
     );
-    assert_eq!(o.status.code(), Some(0), "latency failed:\n{said}");
-    // One line per turn: "<utc>  <lane>  total <s>  ack <ms>  <top3>" (latency.rs `table`).
-    let stdout = String::from_utf8_lossy(&o.stdout);
-    let turn_lines = stdout
-        .lines()
-        .filter(|l| l.contains(" total ") && l.contains("  ack "))
-        .count();
     assert_eq!(
-        turn_lines as u64, recorded as u64,
-        "latency turn lines:\n{said}"
+        o.status.code(),
+        Some(0),
+        "latency --check failed:
+{said}"
     );
     assert!(
         std::fs::metadata(&html).is_ok_and(|m| m.len() > 0),
