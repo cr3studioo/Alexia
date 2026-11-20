@@ -342,12 +342,15 @@ impl Runtime {
     ) -> Result<Arc<dyn Provider>, LocalError> {
         let _one = self.starting.lock().await;
         let epoch = self.epoch.load(Ordering::SeqCst);
-        let old = self.servers.lock().unwrap().get(&model.id).cloned();
-        if let Some(s) = old {
-            if !s.dead.load(Ordering::SeqCst) && !s.stop.is_cancelled() {
+        // Reuse under the servers lock, so the idle stopper's re-check sees the fresh `used`.
+        let stale = match self.servers.lock().unwrap().get(&model.id) {
+            Some(s) if !s.dead.load(Ordering::SeqCst) && !s.stop.is_cancelled() => {
                 *s.used.lock().unwrap() = Instant::now();
                 return Ok(s.provider.clone());
             }
+            other => other.is_some(),
+        };
+        if stale {
             self.stop_server(&model.id).await;
         }
         let exe = self.installed().ok_or(LocalError::NotInstalled)?;
@@ -392,24 +395,26 @@ impl Runtime {
             task: Mutex::new(None),
             provider: provider.clone(),
         });
-        let task = tokio::spawn(supervise(spec, (child, job), server.clone(), self.backoff));
-        *server.task.lock().unwrap() = Some(task);
-        self.servers
-            .lock()
-            .unwrap()
-            .insert(model.id.clone(), server);
-        Ok(provider)
+        {
+            // stop_all bumps the epoch before it lists the servers under this lock, so checking
+            // the epoch here, with the insert, closes the gap after wait_healthy's last check.
+            let mut servers = self.servers.lock().unwrap();
+            if self.epoch.load(Ordering::SeqCst) == epoch {
+                let task =
+                    tokio::spawn(supervise(spec, (child, job), server.clone(), self.backoff));
+                *server.task.lock().unwrap() = Some(task);
+                servers.insert(model.id.clone(), server);
+                return Ok(provider);
+            }
+        }
+        job.kill();
+        let _ = child.kill().await;
+        Err(LocalError::Start("everything was stopped meanwhile".into()))
     }
 
     async fn stop_server(&self, model_id: &str) {
         let server = self.servers.lock().unwrap().remove(model_id);
-        if let Some(s) = server {
-            s.stop.cancel();
-            let task = s.task.lock().unwrap().take();
-            if let Some(task) = task {
-                let _ = task.await;
-            }
-        }
+        shutdown(server).await;
     }
 
     pub async fn stop(&self, model_id: &str) {
@@ -445,20 +450,25 @@ impl Runtime {
                 () = cancel.cancelled() => return,
                 () = tokio::time::sleep(self.tick) => {}
             }
-            let idle: Vec<String> = self
-                .servers
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|(_, s)| {
-                    s.busy.load(Ordering::SeqCst) == 0
-                        && s.used.lock().unwrap().elapsed() >= self.idle
-                })
-                .map(|(id, _)| id.clone())
-                .collect();
-            for id in idle {
-                tracing::info!(model = %id, "local model idle, stopping its server");
-                self.stop_server(&id).await;
+            let ids: Vec<String> = self.servers.lock().unwrap().keys().cloned().collect();
+            for id in ids {
+                // Checked and removed under one lock: a serve or chat since then keeps it.
+                let server = {
+                    let mut servers = self.servers.lock().unwrap();
+                    let idle = servers.get(&id).is_some_and(|s| {
+                        s.busy.load(Ordering::SeqCst) == 0
+                            && s.used.lock().unwrap().elapsed() >= self.idle
+                    });
+                    if idle {
+                        servers.remove(&id)
+                    } else {
+                        None
+                    }
+                };
+                if server.is_some() {
+                    tracing::info!(model = %id, "local model idle, stopping its server");
+                    shutdown(server).await;
+                }
             }
         }
     }
@@ -598,6 +608,29 @@ mod job {
     }
 }
 
+async fn shutdown(server: Option<Arc<Server>>) {
+    if let Some(s) = server {
+        s.stop.cancel();
+        let task = s.task.lock().unwrap().take();
+        if let Some(task) = task {
+            let _ = task.await;
+        }
+    }
+}
+
+/// What llama-server may see of the hub's environment (as v2): no provider keys, no LLAMA_*
+/// controls, no loader injection.
+const CHILD_ENV: [&str; 8] = [
+    "PATH",
+    "HOME",
+    "USERPROFILE",
+    "TMPDIR",
+    "TEMP",
+    "TMP",
+    "SystemRoot",
+    "WINDIR",
+];
+
 fn io(e: std::io::Error) -> LocalError {
     LocalError::Install(e.to_string())
 }
@@ -650,7 +683,13 @@ fn spawn(spec: &Spec) -> std::io::Result<(Child, job::Job)> {
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
-        .kill_on_drop(true);
+        .kill_on_drop(true)
+        .env_clear();
+    for name in CHILD_ENV {
+        if let Some(v) = std::env::var_os(name) {
+            cmd.env(name, v);
+        }
+    }
     if let Some(dir) = spec.exe.parent() {
         cmd.current_dir(dir);
     }

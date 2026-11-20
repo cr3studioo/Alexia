@@ -4,7 +4,9 @@
 //! The fake is a small std-only Rust program the test compiles with `rustc` once and points
 //! `ALEXIA_LLAMA_SERVER` at. It records its arguments in `args.txt` beside the model file, answers
 //! `/health`, `/v1/models` and a streamed `/v1/chat/completions` (with the `--api-key` required),
-//! and exits when a `crash` file appears. Real time throughout: alexia-core's tokio has no
+//! and exits when a `crash` file appears. It writes its environment's names to `env.txt`, and with a
+//! `slowhealth` file it writes `asked` and holds each `/health` reply for 1 s (under the 2 s GET
+//! timeout). Real time throughout: alexia-core's tokio has no
 //! `test-util`, so the idle test uses a short idle limit (the hidden `with_timing`), not a paused clock.
 //! Nothing is downloaded from GitHub: the download tests talk to a local HTTP server.
 
@@ -37,6 +39,9 @@ fn main() {
     let mut log = std::fs::OpenOptions::new().create(true).append(true).open(dir.join("args.txt")).unwrap();
     writeln!(log, "{}", args.join(" ")).unwrap();
     drop(log);
+    let names: Vec<String> = std::env::vars_os().map(|(k, _)| k.to_string_lossy().into_owned()).collect();
+    std::fs::write(dir.join("env.txt"), names.join("
+")).unwrap();
     let crash = dir.join("crash");
     std::thread::spawn(move || loop {
         if crash.exists() {
@@ -70,6 +75,10 @@ fn main() {
             let line = head.lines().next().unwrap_or("").to_owned();
             let json = |code: &str, ctype: &str, body: &str| format!("HTTP/1.1 {code}\r\ncontent-type: {ctype}\r\nconnection: close\r\ncontent-length: {}\r\n\r\n{body}", body.len());
             let reply = if line.starts_with("GET /health") {
+                if dir.join("slowhealth").exists() {
+                    let _ = std::fs::write(dir.join("asked"), "x");
+                    std::thread::sleep(std::time::Duration::from_secs(1));
+                }
                 if dir.join("hold").exists() {
                     json("503 Service Unavailable", "application/json", r#"{"status":"loading"}"#)
                 } else {
@@ -500,4 +509,50 @@ async fn long_chat_is_not_idled_out() {
     until("idle stop after the chat", || rt.pids().is_empty()).await;
     cancel.cancel();
     runner.await.unwrap();
+}
+
+#[tokio::test]
+async fn stop_all_during_a_health_check() {
+    // stop_all lands while the /health GET that will say "ok" is in flight.
+    let rt = runtime(None);
+    let m = Arc::new(model("inflight"));
+    let dir = m.path.parent().unwrap().to_owned();
+    std::fs::write(dir.join("slowhealth"), "x").unwrap();
+    let task = {
+        let (rt, m) = (rt.clone(), m.clone());
+        tokio::spawn(async move { rt.serve(&m, 0).await.map(|_| ()) })
+    };
+    until("a health check in flight", || dir.join("asked").exists()).await;
+    rt.stop_all().await;
+    assert!(task.await.unwrap().is_err(), "serve kept its server");
+    assert!(rt.pids().is_empty());
+    assert!(rt.port("inflight").is_none());
+}
+
+#[tokio::test]
+async fn child_env_is_clean() {
+    std::env::set_var("ALEXIA_TEST_PROVIDER_API_KEY", "planted");
+    let rt = runtime(None);
+    let m = model("env");
+    rt.serve(&m, 0).await.unwrap();
+    let env = std::fs::read_to_string(m.path.parent().unwrap().join("env.txt")).unwrap();
+    let names: Vec<String> = env.lines().map(str::to_uppercase).collect();
+    assert!(
+        !names.contains(&"ALEXIA_TEST_PROVIDER_API_KEY".to_owned()),
+        "{env}"
+    );
+    assert!(!names.contains(&"ALEXIA_LLAMA_SERVER".to_owned()), "{env}");
+    assert!(names.contains(&"PATH".to_owned()), "{env}");
+    let allowed = [
+        "PATH",
+        "HOME",
+        "USERPROFILE",
+        "TMPDIR",
+        "TEMP",
+        "TMP",
+        "SYSTEMROOT",
+        "WINDIR",
+    ];
+    assert!(names.iter().all(|n| allowed.contains(&n.as_str())), "{env}");
+    rt.stop_all().await;
 }
