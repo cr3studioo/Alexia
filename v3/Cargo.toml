@@ -21,6 +21,10 @@ rusqlite = { version = "0.37", features = ["bundled"] }
 keyring = "4.2"          # same family as connect/
 base64 = "0.22"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream", "multipart"] }
+regex = "1"                # core's redaction patterns
+sha2 = "0.10"              # core's download digests
+zip = { version = "2", default-features = false, features = ["deflate"] }   # llama.cpp's Windows release
+chrono = { version = "0.4", default-features = false, features = ["clock"] }   # local wall-clock time: schedules, `today`
 
 [workspace.lints.rust]
 unsafe_code = "deny"     # alexia-mcp's Job Object code opts out with a module-level allow

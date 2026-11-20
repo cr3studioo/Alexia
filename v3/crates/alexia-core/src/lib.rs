@@ -3,19 +3,40 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod agent;
 mod brain;
 pub mod bus;
 pub mod catalog;
 pub mod chat;
+pub mod checker;
+pub mod commands;
+pub mod compare;
 pub mod free;
+pub mod gpu;
+pub mod helpers;
+pub mod hf;
 pub mod lane;
+pub mod local;
 pub mod openai;
+pub mod permissions;
+pub mod prompt;
 mod provider;
+pub mod redact;
+pub mod resume;
 pub mod router;
+mod run;
+pub mod subscription;
+pub mod tools;
+pub mod trace;
+pub mod trim;
+pub mod undo;
+mod upcalls;
 
+pub use agent::Agent;
 pub use brain::*;
 pub use bus::{Bus, Event};
 pub use provider::*;
+pub use run::*;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
