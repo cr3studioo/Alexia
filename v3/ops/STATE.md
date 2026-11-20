@@ -18,5 +18,5 @@ Open owner asks: none blocking. Telegram ops bot: vars set (read via PowerShell 
 pnpm check: run in C:\dev\Alexia-wt\base2 (detached; `git checkout -q --detach <sha>`). NOTE base2 is now also the hub's v2 root and plugin source: don't check out another sha there while the hub runs; use a new detached worktree for pnpm check (needs pnpm install). No P2 task touches v2 paths.
 Known flakes: alexia-mcp supervise.rs hang_is_killed_by_heartbeat under full load (rerun alone). pnpm: compute-connect paused reader (always), others pass alone.
 Follow-ups not specced: importer copies plugin files with fs::copy (46 GB media models; should hard-link or skip model dirs); P1-18 e2e token-leak check sees only last 40 stderr lines; steered turn ack not recorded.
-Merges since last phase review: 8 (review 3 done 2026-11-20, v3/ops/phase-review-3.md).
+Merges since last phase review: 9 (review 3 done 2026-11-20, v3/ops/phase-review-3.md).
 Leftover non-worktree folders in C:\dev\Alexia-wt: base\, plan-P1\ (locked; delete when free). v2-db-backup-20261120\ is a safety backup; keep.

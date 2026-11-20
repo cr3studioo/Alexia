@@ -249,3 +249,5 @@
 2026-11-20 P2-22 approve, merged locally, gate running. Filed P2-44 (sonnet): serve.rs TOCTOU path, same-name copies, partial dir cleanup; added to P2-38 deps.
 2026-11-20 P2-42 build done; review dispatched. Dispatched P2-43 sonnet.
 2026-11-20 P2-22 gate ok, pushed. P2-23, P2-44 ready.
+2026-11-20 P2-42 approve, merged locally. Known edge (logged, no task): verbatim \?\ paths with trailing-dot segments key as inside the stripped root.
+2026-11-20 P2-42 gate ok, pushed.

@@ -103,6 +103,6 @@
 | P2-39 | End-to-end: the agent on the real binary | P2 | sonnet | P2-38, P2-43 | alexia-hub/tests/{agent_e2e.rs, telegram_e2e.rs, common/mod.rs} | todo | 0 | | |
 | P2-40 | Every v2 plugin on the Rust host | P2 | sonnet | P2-38 | alexia-hub/tests/v2_plugins.rs | todo | 0 | | |
 | P2-41 | Twenty real tasks on the PC | P2 | sonnet | P2-39, P2-40 | v3/ops/reports/P2-tasks.md | todo | 0 | | |
-| P2-42 | Permissions fail closed: trailing dots, bad boundary entries | P2 | sonnet | P2-12 | alexia-core/{src/permissions.rs, tests/permissions.rs} | review | 1 | cr3studioo/v3-P2-42 | review |
+| P2-42 | Permissions fail closed: trailing dots, bad boundary entries | P2 | sonnet | P2-12 | alexia-core/{src/permissions.rs, tests/permissions.rs} | merged | 1 | cr3studioo/v3-P2-42 | |
 | P2-43 | telegram_e2e ack check survives a loaded machine | P2 | sonnet | none | alexia-hub/tests/telegram_e2e.rs | running | 1 | cr3studioo/v3-P2-43 | ctx_085179151400 |
 | P2-44 | compute/run: checked path used; copies no collide/leak | P2 | sonnet | P2-22 | alexia-mcp/{src/serve.rs, tests/compute.rs} | ready | 0 | | review follow-up of P2-22 |
