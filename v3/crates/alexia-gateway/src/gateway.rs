@@ -11,7 +11,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use alexia_core::{ms_since, Brain, BrainError, Bus, DraftFrame, Event, Lane, Origin, Phase, Span};
+use alexia_core::{
+    ms_since, Brain, BrainError, Bus, DraftFrame, Event, Lane, Origin, Phase, Span, Steer,
+};
 use alexia_store::{now_ms, Content, Ms, Part, SessionId, SpanRow, Store};
 use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::mpsc;
@@ -30,6 +32,8 @@ const HELP: &str =
     "/stop — stop what I'm doing\n/new — start a new conversation\n/help — this list";
 const TYPING_EVERY: Duration = Duration::from_secs(4);
 const DRAFT_CAP_MS: u64 = 2_000;
+/// How many steer messages can wait for the brain before the old cancel path takes over.
+const STEER_CAP: usize = 32;
 const SHUTDOWN_WAIT: Duration = Duration::from_secs(3);
 
 pub struct Gateway {
@@ -332,7 +336,14 @@ struct Running {
     /// The brain used a tool, so this is the task lane (the chat lane has none).
     tasky: Arc<AtomicBool>,
     handle: JoinHandle<TurnEnd>,
+    /// The turn's messages; steered ones are appended, `steered` counts them.
     msgs: Vec<Msg>,
+    /// The brain said it reads `turn.steer` (`DraftFrame::Steerable`).
+    steerable: Arc<AtomicBool>,
+    steer_tx: mpsc::Sender<Content>,
+    /// Shares the turn's receiver, so what the brain left can be drained once it has ended.
+    steer: Steer,
+    steered: usize,
 }
 
 enum TurnEnd {
@@ -405,11 +416,15 @@ impl Actor {
                 },
                 end = join(&mut self.running) => {
                     let r = self.running.take().expect("joined a running turn");
-                    self.finished(r.msgs, end);
-                    if !self.queued.is_empty() {
-                        let msgs = std::mem::take(&mut self.queued);
-                        self.start(msgs);
+                    let mut msgs = r.msgs;
+                    let mut next = Vec::new();
+                    if matches!(end, Ok(TurnEnd::Finished { .. })) {
+                        // What the brain never took becomes a turn: nothing is lost to the end.
+                        next = unread_steers(&r.steer, r.steered, &mut msgs).await;
                     }
+                    self.finished(msgs, end);
+                    next.append(&mut self.queued);
+                    self.start(next);
                 }
                 _ = wait(self.deadline) => {
                     self.deadline = None;
@@ -446,6 +461,18 @@ impl Actor {
             };
             return self.command(msg, reply).await;
         }
+        if let Some(r) = &mut self.running {
+            // The run takes steering: hand the message over, do not cancel. Steering carries
+            // `Content` only, so a message with files takes the normal path to keep them.
+            if r.steerable.load(Ordering::SeqCst)
+                && msg.inbound.files.is_empty()
+                && r.steer_tx.try_send(msg.inbound.content.clone()).is_ok()
+            {
+                r.msgs.push(msg);
+                r.steered += 1;
+                return;
+            }
+        }
         let Some(running) = &self.running else {
             if self.window.is_empty() {
                 let at = msg.rec.instant + Duration::from_millis(self.g.cfg.merge_ms);
@@ -462,8 +489,9 @@ impl Actor {
             let mut msgs = r.msgs;
             if let Ok(TurnEnd::Finished { .. }) = &end {
                 // It finished before it saw the cancel: it was delivered, this one is new.
+                let mut unread = unread_steers(&r.steer, r.steered, &mut msgs).await;
                 self.finished(msgs, end);
-                msgs = Vec::new();
+                msgs = std::mem::take(&mut unread);
             }
             msgs.push(msg);
             self.start(msgs);
@@ -472,6 +500,9 @@ impl Actor {
             let r = self.running.take().expect("running");
             r.cancel.cancel();
             let end = r.handle.await;
+            let mut msgs = r.msgs;
+            // Steered messages the brain never read are not part of the cancelled turn.
+            let mut next = unread_steers(&r.steer, r.steered, &mut msgs).await;
             if let Ok(TurnEnd::Cancelled { drafted }) = &end {
                 // After a `Restart` nothing may be left to keep.
                 if !drafted.trim().is_empty() {
@@ -482,8 +513,9 @@ impl Actor {
                 }
                 let _ = self.ch.draft(&self.chat, None).await;
             }
-            self.finished(r.msgs, end);
-            self.start(vec![msg]);
+            self.finished(msgs, end);
+            next.push(msg);
+            self.start(next);
         } else {
             self.queued.push(msg);
         }
@@ -564,6 +596,8 @@ impl Actor {
         let cancel = self.cancel.child_token();
         let visible = Arc::new(AtomicBool::new(false));
         let tasky = Arc::new(AtomicBool::new(false));
+        let steerable = Arc::new(AtomicBool::new(false));
+        let (steer_tx, steer) = Steer::channel(STEER_CAP);
         let ctx = TurnCtx {
             g: self.g.clone(),
             ch: self.ch.clone(),
@@ -574,6 +608,8 @@ impl Actor {
             cancel: cancel.clone(),
             visible: visible.clone(),
             tasky: tasky.clone(),
+            steerable: steerable.clone(),
+            steer: steer.clone(),
         };
         self.running = Some(Running {
             cancel,
@@ -582,6 +618,10 @@ impl Actor {
             // Off the tracker on purpose: the actor awaits this handle on cancel.
             handle: tokio::spawn(ctx.run()),
             msgs,
+            steerable,
+            steer_tx,
+            steer,
+            steered: 0,
         });
     }
 
@@ -689,6 +729,12 @@ async fn wait(deadline: Option<Instant>) {
     }
 }
 
+/// Splits off the trailing steered messages the brain left in the channel (the newest ones).
+async fn unread_steers(steer: &Steer, steered: usize, msgs: &mut Vec<Msg>) -> Vec<Msg> {
+    let left = steer.take().await.len().min(steered);
+    msgs.split_off(msgs.len() - left)
+}
+
 fn delete_files(msgs: &[Msg]) {
     for f in msgs.iter().flat_map(|m| &m.inbound.files) {
         if let Err(e) = std::fs::remove_file(&f.path) {
@@ -749,6 +795,8 @@ struct TurnCtx {
     cancel: CancellationToken,
     visible: Arc<AtomicBool>,
     tasky: Arc<AtomicBool>,
+    steerable: Arc<AtomicBool>,
+    steer: Steer,
 }
 
 impl TurnCtx {
@@ -789,6 +837,7 @@ impl TurnCtx {
                 .cloned()
                 .collect(),
             received_at: self.first.ms,
+            steer: self.steer.clone(),
         };
         spans.push(Span {
             name: "merge",
@@ -908,6 +957,7 @@ struct Pump {
     frames: mpsc::Receiver<DraftFrame>,
     visible: Arc<AtomicBool>,
     tasky: Arc<AtomicBool>,
+    steerable: Arc<AtomicBool>,
     cancel: CancellationToken,
     floor: Duration,
     every: Duration,
@@ -930,6 +980,7 @@ impl Pump {
             frames,
             visible: t.visible.clone(),
             tasky: t.tasky.clone(),
+            steerable: t.steerable.clone(),
             cancel: t.cancel.clone(),
             floor,
             every: floor,
@@ -1000,6 +1051,10 @@ impl Pump {
                 self.text.push_str(&d);
             }
             DraftFrame::Restart => self.text.clear(),
+            DraftFrame::Steerable => {
+                self.steerable.store(true, Ordering::SeqCst);
+                return;
+            }
             DraftFrame::Phase(p) => {
                 if p == Phase::Tool {
                     self.tasky.store(true, Ordering::SeqCst);

@@ -2,8 +2,10 @@
 //! The brain contract: whatever answers a turn (INTERFACES.md §2.3).
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use alexia_store::{Content, Ms, SessionId};
+use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use crate::{Error, Lane, Origin, RunId, Span};
@@ -16,6 +18,33 @@ pub struct InFile {
     pub path: PathBuf,
 }
 
+/// Extra user messages for a run already going. Clone shares one receiver.
+#[derive(Clone, Debug, Default)]
+pub struct Steer(Option<Arc<tokio::sync::Mutex<mpsc::Receiver<Content>>>>);
+
+impl Steer {
+    pub fn none() -> Steer {
+        Steer(None)
+    }
+
+    pub fn channel(capacity: usize) -> (mpsc::Sender<Content>, Steer) {
+        let (tx, rx) = mpsc::channel(capacity);
+        (tx, Steer(Some(Arc::new(tokio::sync::Mutex::new(rx)))))
+    }
+
+    /// Everything waiting now, without waiting. Empty for `none()`.
+    pub async fn take(&self) -> Vec<Content> {
+        let mut out = Vec::new();
+        if let Some(rx) = &self.0 {
+            let mut rx = rx.lock().await;
+            while let Ok(c) = rx.try_recv() {
+                out.push(c);
+            }
+        }
+        out
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Turn {
     pub session: SessionId,
@@ -25,6 +54,8 @@ pub struct Turn {
     /// are already text in `content`) and not photos (image parts of `content`).
     pub files: Vec<InFile>,
     pub received_at: Ms,
+    /// Messages that arrive while the run is going; read only after `DraftFrame::Steerable`.
+    pub steer: Steer,
 }
 
 /// What the reply is doing while it is written. Mirrors `alexia/stream` (wire-protocol.md §5).
@@ -33,6 +64,8 @@ pub enum DraftFrame {
     Delta(String),
     Restart,
     Phase(Phase),
+    /// The brain reads `turn.steer` from now on.
+    Steerable,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

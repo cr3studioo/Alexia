@@ -6,7 +6,7 @@
 //! except the two the spec pins (ack ≤ 10 ms, ≤ 5 drafts over 1 s, shutdown ≤ 3 s plus slack).
 
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -589,6 +589,342 @@ async fn message_during_visible_chat_queues() {
         h.brain.texts(),
         vec!["hi".to_string(), "and another thing".to_string()]
     );
+    h.stop().await;
+}
+
+// ---- CH-08 into the agent loop (P2-07) ----
+
+/// A brain that says `Steerable`. The first call either reads `turn.steer` until something is
+/// there (`takes`), or ignores it until `release` is set. Later calls answer "second" at once.
+struct SteerBrain {
+    takes: bool,
+    release: AtomicBool,
+    /// Set a second after `Steerable` was sent, so the gateway has surely seen the frame.
+    ready: AtomicBool,
+    calls: Mutex<Vec<String>>,
+    steered: Mutex<Vec<String>>,
+    /// Per call: each file of the turn and whether it still existed when the brain got it.
+    files_seen: Mutex<Vec<Vec<bool>>>,
+    cancelled: AtomicUsize,
+    token_cancelled_at_end: AtomicBool,
+}
+
+impl SteerBrain {
+    fn new(takes: bool) -> Arc<SteerBrain> {
+        Arc::new(SteerBrain {
+            takes,
+            release: AtomicBool::new(false),
+            ready: AtomicBool::new(false),
+            calls: Mutex::new(Vec::new()),
+            steered: Mutex::new(Vec::new()),
+            files_seen: Mutex::new(Vec::new()),
+            cancelled: AtomicUsize::new(0),
+            token_cancelled_at_end: AtomicBool::new(false),
+        })
+    }
+}
+
+fn reply_of(text: &str) -> Reply {
+    Reply {
+        text: text.into(),
+        files: vec![],
+        lane: Lane::Task,
+        model: None,
+        spans: vec![],
+    }
+}
+
+#[async_trait::async_trait]
+impl Brain for SteerBrain {
+    async fn reply(
+        &self,
+        turn: Turn,
+        draft: DraftSink,
+        cancel: CancellationToken,
+    ) -> std::result::Result<Reply, BrainError> {
+        let first = {
+            let mut calls = self.calls.lock().unwrap();
+            calls.push(text_of(&turn.content));
+            calls.len() == 1
+        };
+        self.files_seen
+            .lock()
+            .unwrap()
+            .push(turn.files.iter().map(|f| f.path.exists()).collect());
+        if !first {
+            return Ok(reply_of("second"));
+        }
+        let _ = draft.send(DraftFrame::Steerable).await;
+        sleep(Duration::from_secs(1)).await;
+        self.ready.store(true, Ordering::SeqCst);
+        let end = Instant::now() + Duration::from_secs(30);
+        loop {
+            if cancel.is_cancelled() {
+                self.cancelled.fetch_add(1, Ordering::SeqCst);
+                return Err(BrainError::Cancelled);
+            }
+            if self.takes {
+                let got = turn.steer.take().await;
+                if !got.is_empty() {
+                    self.steered.lock().unwrap().extend(got.iter().map(text_of));
+                    self.token_cancelled_at_end
+                        .store(cancel.is_cancelled(), Ordering::SeqCst);
+                    return Ok(reply_of("done"));
+                }
+            } else if self.release.load(Ordering::SeqCst) {
+                return Ok(reply_of("first"));
+            }
+            assert!(Instant::now() < end, "the steer test brain timed out");
+            sleep(Duration::from_millis(10)).await;
+        }
+    }
+}
+
+struct SteerHarness {
+    ch: Arc<FakeChannel>,
+    inbox: mpsc::UnboundedSender<Vec<Inbound>>,
+    cancel: CancellationToken,
+    run: JoinHandle<Result<()>>,
+}
+
+/// The same fake channel and store, with any brain.
+fn start_brain(brain: Arc<dyn Brain>) -> SteerHarness {
+    let (inbox, rx) = mpsc::unbounded_channel();
+    let ch = Arc::new(FakeChannel {
+        inbox: tokio::sync::Mutex::new(rx),
+        log: Mutex::new(Vec::new()),
+        rate_limit_next: Mutex::new(None),
+        delay: Mutex::new(Duration::ZERO),
+        in_flight: AtomicUsize::new(0),
+    });
+    let channels = ChannelSet::new();
+    channels.add(ch.clone());
+    let gw = Gateway::with_channels(
+        cfg(20),
+        Arc::new(Store::open_in_memory().unwrap()),
+        Bus::new(256),
+        brain,
+        Arc::new(FakeMedia),
+        channels,
+    );
+    let cancel = CancellationToken::new();
+    let run = tokio::spawn(gw.run(cancel.clone()));
+    SteerHarness {
+        ch,
+        inbox,
+        cancel,
+        run,
+    }
+}
+
+impl SteerHarness {
+    fn push(&self, m: Inbound) {
+        self.inbox.send(vec![m]).unwrap();
+    }
+    async fn stop(self) {
+        self.cancel.cancel();
+        let r = tokio::time::timeout(Duration::from_secs(30), self.run).await;
+        assert!(matches!(r, Ok(Ok(Ok(())))), "the gateway did not stop");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn message_mid_task_steers_without_cancel() {
+    let brain = SteerBrain::new(true);
+    let h = start_brain(brain.clone());
+    h.push(msg("a", "1", "one"));
+    until("the brain to be ready", || {
+        brain.ready.load(Ordering::SeqCst)
+    })
+    .await;
+    h.push(msg("a", "2", "two"));
+    until("the reply", || h.ch.sent().contains(&"done".to_string())).await;
+    assert_eq!(*brain.steered.lock().unwrap(), vec!["two".to_string()]);
+    assert!(!brain.token_cancelled_at_end.load(Ordering::SeqCst));
+    assert_eq!(brain.cancelled.load(Ordering::SeqCst), 0);
+    // One turn only: the steered message started nothing of its own.
+    assert_eq!(*brain.calls.lock().unwrap(), vec!["one".to_string()]);
+    // The reaction rule is unchanged: the steered message got its reaction too.
+    assert!(h.ch.at_of(&What::React("2".into())).is_some());
+    h.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn leftover_after_end_becomes_a_turn() {
+    let brain = SteerBrain::new(false);
+    let h = start_brain(brain.clone());
+    h.push(msg("a", "1", "one"));
+    until("the brain to be ready", || {
+        brain.ready.load(Ordering::SeqCst)
+    })
+    .await;
+    h.push(msg("a", "2", "two"));
+    until("the steered reaction", || {
+        h.ch.at_of(&What::React("2".into())).is_some()
+    })
+    .await;
+    // Let the actor hand it over before the run ends without reading it.
+    sleep(Duration::from_secs(1)).await;
+    brain.release.store(true, Ordering::SeqCst);
+    until("both replies", || h.ch.sent().len() == 2).await;
+    assert_eq!(h.ch.sent(), vec!["first".to_string(), "second".to_string()]);
+    assert_eq!(
+        *brain.calls.lock().unwrap(),
+        vec!["one".to_string(), "two".to_string()]
+    );
+    assert_eq!(brain.cancelled.load(Ordering::SeqCst), 0);
+    h.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn chat_lane_still_restarts() {
+    let h = start(
+        cfg(20),
+        vec![
+            Script::new(
+                vec![(0, DraftFrame::Phase(Phase::Thinking))],
+                10_000,
+                chat_reply("never"),
+            ),
+            Script::new(vec![], 0, chat_reply("again")),
+        ],
+    );
+    h.push(vec![msg("a", "1", "one")]);
+    until("the phase in the draft", || !h.ch.drafts().is_empty()).await;
+    h.push(vec![msg("a", "2", "two")]);
+    until("the restarted reply", || {
+        h.ch.sent().contains(&"again".into())
+    })
+    .await;
+    assert_eq!(h.brain.cancelled.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        h.brain.texts(),
+        vec!["one".to_string(), "one\ntwo".to_string()]
+    );
+    h.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn stop_still_stops_a_steerable_run() {
+    let brain = SteerBrain::new(false);
+    let h = start_brain(brain.clone());
+    h.push(msg("a", "1", "one"));
+    until("the brain to be ready", || {
+        brain.ready.load(Ordering::SeqCst)
+    })
+    .await;
+    h.push(msg("a", "2", "/stop"));
+    until("Stopped.", || h.ch.sent().contains(&"Stopped.".to_string())).await;
+    until("the brain to see the cancel", || {
+        brain.cancelled.load(Ordering::SeqCst) == 1
+    })
+    .await;
+    assert_eq!(h.ch.sent(), vec!["Stopped.".to_string()]);
+    assert_eq!(brain.calls.lock().unwrap().len(), 1);
+    h.stop().await;
+}
+
+/// A task-lane brain with visible text that says `Steerable` but never reads `turn.steer`;
+/// it only ends when cancelled. Later calls answer at once.
+struct DeafBrain {
+    calls: Mutex<Vec<String>>,
+}
+
+#[async_trait::async_trait]
+impl Brain for DeafBrain {
+    async fn reply(
+        &self,
+        turn: Turn,
+        draft: DraftSink,
+        cancel: CancellationToken,
+    ) -> std::result::Result<Reply, BrainError> {
+        let first = {
+            let mut calls = self.calls.lock().unwrap();
+            calls.push(text_of(&turn.content));
+            calls.len() == 1
+        };
+        if !first {
+            return Ok(reply_of("second"));
+        }
+        let _ = draft.send(DraftFrame::Phase(Phase::Tool)).await;
+        let _ = draft.send(DraftFrame::Delta("working".into())).await;
+        let _ = draft.send(DraftFrame::Steerable).await;
+        cancel.cancelled().await;
+        Err(BrainError::Cancelled)
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn message_with_a_file_mid_run_is_not_steered_and_keeps_its_file() {
+    let brain = SteerBrain::new(false);
+    let h = start_brain(brain.clone());
+    let dir = std::env::temp_dir().join(format!("alexia-steer-file-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("report.pdf");
+    std::fs::write(&path, b"%PDF").unwrap();
+    h.push(msg("a", "1", "one"));
+    until("the brain to be ready", || {
+        brain.ready.load(Ordering::SeqCst)
+    })
+    .await;
+    let mut m = msg("a", "2", "read this");
+    m.files = vec![InFile {
+        name: "report.pdf".into(),
+        mime: "application/pdf".into(),
+        path: path.clone(),
+    }];
+    h.push(m);
+    until("the second reply", || {
+        h.ch.sent().contains(&"second".to_string())
+    })
+    .await;
+    // Not steered: the old path restarted the turn with the message, file and all.
+    assert_eq!(brain.cancelled.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        *brain.calls.lock().unwrap(),
+        vec![
+            "one".to_string(),
+            "one
+read this"
+                .to_string()
+        ]
+    );
+    assert_eq!(*brain.files_seen.lock().unwrap(), vec![vec![], vec![true]]);
+    assert!(brain.steered.lock().unwrap().is_empty());
+    h.stop().await;
+    assert!(!path.exists(), "the file is deleted once the turn is over");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn full_steer_queue_does_not_lose_unread_messages() {
+    let brain = Arc::new(DeafBrain {
+        calls: Mutex::new(Vec::new()),
+    });
+    let h = start_brain(brain.clone());
+    h.push(msg("a", "1", "one"));
+    until("the draft text", || {
+        h.ch.drafts().iter().any(|(_, t)| t == "working")
+    })
+    .await;
+    // Let the gateway see `Steerable`, then fill the 32-slot queue and overflow it by one.
+    sleep(Duration::from_secs(1)).await;
+    for i in 2..=34 {
+        h.push(msg("a", &i.to_string(), &format!("m{i}")));
+    }
+    until("the second reply", || {
+        h.ch.sent().contains(&"second".to_string())
+    })
+    .await;
+    let calls = brain.calls.lock().unwrap().clone();
+    assert_eq!(calls.len(), 2, "{calls:?}");
+    for i in 2..=34 {
+        assert!(
+            calls[1].contains(&format!("m{i}")),
+            "m{i} lost: {}",
+            calls[1]
+        );
+    }
     h.stop().await;
 }
 

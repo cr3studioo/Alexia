@@ -223,6 +223,7 @@ async fn say(w: &World, said: &str) -> (Result<Reply, BrainError>, Vec<DraftFram
         content: Content::Text(said.into()),
         files: Vec::new(),
         received_at: now(),
+        steer: alexia_core::Steer::none(),
     };
     let result = w.chat.reply(turn, tx, CancellationToken::new()).await;
     let mut frames = Vec::new();

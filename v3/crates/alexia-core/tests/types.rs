@@ -44,6 +44,7 @@ async fn brain_is_object_safe() {
         content: Content::Text("hello".into()),
         files: Vec::new(),
         received_at: 0,
+        steer: alexia_core::Steer::none(),
     };
     let reply = brain
         .reply(turn, draft, CancellationToken::new())

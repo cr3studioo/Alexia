@@ -279,6 +279,7 @@ impl Scheduler {
                     content: Content::Text(job.prompt.clone()),
                     files: vec![],
                     received_at: at,
+                    steer: alexia_core::Steer::none(),
                 };
                 // Nobody watches a scheduled turn being drafted.
                 let (tx, mut rx) = tokio::sync::mpsc::channel(16);
