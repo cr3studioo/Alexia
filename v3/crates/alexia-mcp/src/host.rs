@@ -265,6 +265,16 @@ impl McpHost {
             .collect()
     }
 
+    /// Every loaded plugin that is enabled and not refused, by id: its folder and manifest.
+    /// Reads what `start`/`reload` loaded; spawns nothing.
+    pub fn manifests(&self) -> Vec<PluginDir> {
+        lock(&self.inner.plugins)
+            .values()
+            .filter(|s| s.enabled && s.state != PluginState::Refused)
+            .map(|s| s.dir.clone())
+            .collect()
+    }
+
     /// Persisting `enabled` is the hub's job, not the host's.
     pub async fn set_enabled(&self, id: &PluginId, on: bool) -> Result<(), Error> {
         let (dir, refused) = {
