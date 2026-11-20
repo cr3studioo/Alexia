@@ -666,3 +666,49 @@ fn last_user_turn_always_kept() {
         assert_paired(&t, "last_user");
     }
 }
+
+#[test]
+fn early_user_turn_pinned_while_rest_collapses() {
+    // A follow-up early in a long trace: it stays verbatim, the cycles around it still collapse.
+    let mut trace = with(vec![task()], long(3));
+    trace.push(text(Role::User, "Also skip the drafts."));
+    trace.extend((0..50).flat_map(|i| {
+        cycle(
+            100 + i,
+            "files__read",
+            &format!(r#"{{"name":"m{i}.txt"}}"#),
+            &"z".repeat(1_500),
+        )
+    }));
+    let budget = 13_000; // the summary lines alone are ~11k; the whole trace is ~80k
+    let t = trim(&trace, &opts(4, Some(budget)));
+    assert!(size(&t) <= budget, "size {} over {budget}", size(&t));
+    assert_eq!(
+        t.iter()
+            .filter(|m| m.0 == Role::User && text_of(m) == "Also skip the drafts.")
+            .count(),
+        1
+    );
+    assert_eq!(t[0], task());
+    assert_paired(&t, "early_user");
+}
+
+#[test]
+fn clip_counts_utf16_and_keeps_surrogate_pairs() {
+    // Odd leading unit puts the naive cut inside an emoji's surrogate pair.
+    let big = format!("a{}", "😀".repeat(3_000));
+    let mut a = body(Content::Text(String::new()));
+    a.calls = Some(vec![call("c1", "shell__run", "{}")]);
+    let mut t = body(Content::Text(big));
+    t.call_id = Some("c1".into());
+    let trace = vec![task(), (Role::Assistant, a), (Role::Tool, t)];
+    let out = trim(&trace, &opts(4, None));
+    let said = text_of(&out[2]);
+    assert!(said.contains("6001") || said.contains("characters cut"));
+    assert!(!said.contains('\u{FFFD}'), "pair split: {said:?}");
+    assert!(
+        said.encode_utf16().count() <= 2_000 + 40,
+        "not clipped to UTF-16 limit"
+    );
+    assert!(said.contains('😀'));
+}

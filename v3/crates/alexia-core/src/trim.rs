@@ -307,22 +307,32 @@ pub fn trim(messages: &[Msg], opts: &TrimOptions) -> Vec<Msg> {
     }
 
     // The last user turn after the trace began is never collapsed: it is what is being asked.
-    let floor_keep = cycles
-        .iter()
-        .rposition(|c| c.assistant.0 == Role::User)
-        .map_or(1, |at| n - at);
-    let mut keep = opts.keep.min(n).max(floor_keep.min(n));
+    // Only that turn is pinned: it is lifted out of the summarised range and laid verbatim in
+    // its place, so the cycles before and after it still collapse.
+    let pinned = cycles.iter().rposition(|c| c.assistant.0 == Role::User);
+    let summed = |end: usize| -> Vec<Msg> {
+        let part = |r: &[Cycle]| (!r.is_empty()).then(|| summarise(r));
+        match pinned.filter(|&u| u < end) {
+            Some(u) => part(&cycles[..u])
+                .into_iter()
+                .chain(std::iter::once(cycles[u].assistant.clone()))
+                .chain(part(&cycles[u + 1..end]))
+                .collect(),
+            None => vec![summarise(&cycles[..end])],
+        }
+    };
+    let mut keep = opts.keep.min(n).max(1.min(n));
     loop {
         let built = if n > keep {
             let mut b = head.clone();
-            b.push(summarise(&cycles[..n - keep]));
+            b.extend(summed(n - keep));
             b.extend(laid(n - keep));
             b
         } else {
             whole.clone()
         };
         // Under budget, or nothing left to give up.
-        if size(&built) <= budget || keep <= floor_keep.max(1) {
+        if size(&built) <= budget || keep <= 1 {
             return smaller(built, whole);
         }
         keep -= 1;
@@ -443,14 +453,23 @@ fn shrink(cycle: &Cycle, result: &Msg, limit: usize) -> Msg {
 /// Long tool output, middle removed. The ends are where the useful part usually is.
 fn clip(m: &Msg, limit: usize) -> Msg {
     let said = text_of(m);
-    let chars: Vec<char> = said.chars().collect();
-    if chars.len() <= limit {
+    // UTF-16 units, as size and shrink count; a cut never lands inside a surrogate pair.
+    let units: Vec<u16> = said.encode_utf16().collect();
+    if units.len() <= limit {
         return m.clone();
     }
     let half = limit.saturating_sub(40) / 2;
-    let cut = chars.len() - limit;
-    let head: String = chars[..half].iter().collect();
-    let tail: String = chars[chars.len() - half..].iter().collect();
+    let cut = units.len() - limit;
+    let mut head_end = half;
+    if head_end > 0 && (0xD800..0xDC00).contains(&units[head_end - 1]) {
+        head_end -= 1;
+    }
+    let mut tail_start = units.len() - half;
+    if tail_start < units.len() && (0xDC00..0xE000).contains(&units[tail_start]) {
+        tail_start += 1;
+    }
+    let head = String::from_utf16_lossy(&units[..head_end]);
+    let tail = String::from_utf16_lossy(&units[tail_start..]);
     with_text(m, format!("{head}\n… {cut} characters cut …\n{tail}"))
 }
 
