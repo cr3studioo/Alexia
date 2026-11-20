@@ -295,3 +295,22 @@
 - 2026-11-20 P2-31: first worker_done failed (usage limit), then finished after reset (rejected as settled); branch has commit+report -> review ctx_fe572e7a4ecd
 - 2026-11-20 P2-31 review: changes (Job import, stop_all race, idle mid-stream). Fix round ctx_c0af3529a04b
 - 2026-11-20 Merged P2-47 (gate OK, pushed); P2-24 ready
+- 2026-11-20 P2-31 fix done -> review 2 ctx_565d36027453; P2-49 dispatched (sonnet) ctx_af6e66eb42d7
+- 2026-11-20 P2-31 review 2: changes (epoch race, child env leak, idle race). Try 3: Opus fixer ctx_325aeaf8a44b. Accepted with_timing test deviation (CEO)
+- 2026-11-20 P2-31 fixer done -> review 3
+- 2026-11-20 17:35 Found P2-04/05/14/16 builders and P2-06 reviewer dead (no claude process; Orca showed restored frozen screens, likely Orca restart ~16:58). worker-stop all 5; resumed in same worktrees keeping uncommitted work (no try counted); P2-06 review restarted. P2-31 approved (review 3), merged, gating
+- 2026-11-20 P2-16 built -> review ctx_5e4a2927dc30; P2-30 dispatched (sonnet) ctx_3ff40d30bbbb
+- 2026-11-20 P2-06 approved (review restarted); merge after P2-31 gate
+- 2026-11-20 P2-49 built -> review ctx_8979dd564e59; P2-32 dispatched (sonnet) ctx_7b0b46d66109
+- 2026-11-20 P2-05 built -> review ctx_01130e7a97b8; P2-33 dispatched (sonnet) ctx_2afb56a69170
+- 2026-11-20 P2-04 built -> review ctx_f47fa6c00419; P2-24 dispatched (sonnet) ctx_c0708c99e146
+- 2026-11-20 Merged P2-31 (gate OK, pushed). P2-06 merged, gating
+- 2026-11-20 P2-24: allowed alexia-mcp/Cargo.toml wasmtime-wasi preview1 feature + Cargo.lock (CEO spec extension)
+- 2026-11-20 P2-16 approved; merge queue
+- 2026-11-20 P2-04 approved; merge queue. Follow-up: unanswered assistant tool_call still sent; non-array delta.tool_calls ignored
+- 2026-11-20 P2-49 approved; merge queue. P2-06 gate: alexia-mcp conn plugin_cancel_reaches_incoming failed under load (passes 3/3 alone); rerunning --no-fail-fast
+- 2026-11-20 P2-14 review: changes (numeric coords leak). Try 3 Opus fixer ctx_2c006980656d, also adds redact_request_known for P2-17. Follow-up: INTERFACES.md:1054 lists IBAN/card/OTP rows v2 never had
+- 2026-11-20 P2-05 approved; merge queue
+- 2026-11-20 Merged P2-06 (no-fail-fast 54 ok; only plugin_cancel_reaches_incoming flaked), pushed; P2-07 ready. Merged P2-16, P2-04, P2-49, P2-05 together (disjoint), gating
+- 2026-11-20 P2-14 fixer done -> review ctx_79bbec33e43e; P2-07 dispatched (sonnet) ctx_d1da7ba84e84
+- 2026-11-20 Merged P2-16, P2-04, P2-49, P2-05 (gate OK 55 suites, pushed)
