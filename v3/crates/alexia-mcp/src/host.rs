@@ -327,17 +327,30 @@ impl McpHost {
             .collect();
         all.sort_by(|a, b| a.0.cmp(&b.0));
         // v2's list (`servers.ts`): small, so read fresh each time rather than cached with the tools.
-        let unreviewed: Vec<String> = self
-            .inner
-            .store
-            .kv_get("_core", "unreviewed")
-            .ok()
-            .flatten()
-            .and_then(|v| serde_json::from_value(v).ok())
-            .unwrap_or_default();
+        // Fail closed: a list that cannot be read or understood leaves every plugin unreviewed.
+        let unreviewed: Option<Vec<String>> = match self.inner.store.kv_get("_core", "unreviewed") {
+            Ok(None) => Some(vec![]),
+            Ok(Some(v)) => match serde_json::from_value(v) {
+                Ok(list) => Some(list),
+                Err(e) => {
+                    tracing::warn!(
+                        "the unreviewed list is malformed; every plugin is unreviewed: {e}"
+                    );
+                    None
+                }
+            },
+            Err(e) => {
+                tracing::warn!(
+                    "the unreviewed list could not be read; every plugin is unreviewed: {e}"
+                );
+                None
+            }
+        };
         let mut tools: Vec<HostedTool> = all.into_iter().flat_map(|(_, t)| t).collect();
         for t in &mut tools {
-            t.reviewed = !unreviewed.contains(&t.plugin.0);
+            t.reviewed = unreviewed
+                .as_ref()
+                .is_some_and(|u| !u.contains(&t.plugin.0));
         }
         tools
     }
@@ -467,6 +480,18 @@ impl McpHost {
         args: Map<String, Value>,
         ctx: CallCtx,
     ) -> Result<CallToolResult, CallError> {
+        self.call_capability_as(None, cap, args, ctx).await
+    }
+
+    /// `asker` is the plugin that sent the request, if one did; core's own callers have none
+    /// and `host_call` then sees an empty id.
+    pub(crate) async fn call_capability_as(
+        &self,
+        asker: Option<&PluginId>,
+        cap: &str,
+        args: Map<String, Value>,
+        ctx: CallCtx,
+    ) -> Result<CallToolResult, CallError> {
         let none = || CallError::Off {
             sentence: format!("Nothing installed and switched on can do {cap}."),
         };
@@ -501,17 +526,84 @@ impl McpHost {
                     e => e,
                 });
         }
+        // No plugin: core may answer it itself.
+        let up = self.upcalls();
+        let nobody = PluginId(String::new());
+        match up
+            .host_call(asker.unwrap_or(&nobody), cap, args, ctx.cancel)
+            .await
+        {
+            Some(Ok(r)) => Ok(r),
+            Some(Err(e)) => Err(CallError::Rpc(e)),
+            None => Err(none()),
+        }
+    }
+
+    /// v2 `Plugins.computeCall` (local branch): the enabled plugin whose manifest declares the
+    /// operation `cap` runs its hidden tool bound to it (`_meta["alexia/compute"].op`).
+    /// Returns the provider with its result, so the caller can tell where its files are.
+    pub(crate) async fn compute_call(
+        &self,
+        cap: &str,
+        args: Map<String, Value>,
+        mut ctx: CallCtx,
+    ) -> Result<(PluginId, CallToolResult), CallError> {
+        let none = || CallError::Off {
+            sentence: format!("Nothing installed and switched on can do {cap}."),
+        };
+        let candidates: Vec<PluginId> = lock(&self.inner.plugins)
+            .iter()
+            .filter(|(_, s)| {
+                s.enabled
+                    && !matches!(s.state, PluginState::Refused | PluginState::Unhealthy)
+                    && s.dir
+                        .manifest
+                        .compute
+                        .as_ref()
+                        .is_some_and(|c| c.operations.iter().any(|o| o.cap == cap))
+            })
+            .map(|(id, _)| id.clone())
+            .collect();
+        for id in candidates {
+            let Some(tools) = self.plugin_tools(&id).await else {
+                continue;
+            };
+            let Some(tool) = tools.into_iter().find(|t| {
+                t.tool
+                    .meta
+                    .as_ref()
+                    .and_then(|m| m.get("alexia/compute"))
+                    .and_then(|b| b.get("op"))
+                    .and_then(Value::as_str)
+                    == Some(cap)
+            }) else {
+                continue;
+            };
+            ctx.meta
+                .insert("alexia/compute".into(), json!({ "op": cap }));
+            let within = Duration::from_millis(self.inner.cfg.timings.capability_ms);
+            return self
+                .call_tool_within(&id, &tool.tool.name, args, ctx, within)
+                .await
+                .map(|r| (id, r))
+                .map_err(|e| match e {
+                    CallError::Off { .. } => none(),
+                    e => e,
+                });
+        }
         Err(none())
     }
 
     /// From manifests' `provides[]` only, starting nothing. In P0 every plugin is this hub's
     /// own, so `here` is `answers`.
     pub fn answers(&self, cap: &str) -> Answers {
-        let found = lock(&self.inner.plugins).values().any(|s| {
+        let by_plugin = lock(&self.inner.plugins).values().any(|s| {
             s.enabled
                 && s.state != PluginState::Refused
                 && s.dir.manifest.provides.iter().any(|p| p == cap)
-        }) || self.upcalls().host_caps().iter().any(|c| c == cap);
+        });
+        // The plugins lock is released above: core's `host_caps` may call back into the host.
+        let found = by_plugin || self.upcalls().host_caps().iter().any(|c| c == cap);
         Answers {
             answers: found,
             here: found,
