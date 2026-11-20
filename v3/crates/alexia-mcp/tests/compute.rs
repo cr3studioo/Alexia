@@ -347,3 +347,148 @@ async fn unreadable_reviewed_list_fails_closed() {
     assert!(tools.iter().all(|t| t.reviewed == (t.plugin.0 != "a")));
     fx.host.shutdown().await;
 }
+
+/// A Node worker (the fixture binary can't report the paths it was given or return custom
+/// links). It records `arguments.inputs` to `seen.json` in its own folder, then answers by
+/// `arguments.mode`: `twins` links two same-named files, `half` links one real and one missing.
+const WORKER_JS: &str = r#"
+const fs = require('fs'), path = require('path');
+const send = (m) => process.stdout.write(JSON.stringify(m) + '\n');
+const link = (p) => ({ type: 'resource_link', uri: 'file:///' + p.split(path.sep).join('/'), name: path.basename(p) });
+require('readline').createInterface({ input: process.stdin }).on('line', (line) => {
+  const req = JSON.parse(line);
+  if (req.id === undefined) return;
+  const reply = (result) => send({ jsonrpc: '2.0', id: req.id, result });
+  if (req.method === 'initialize') {
+    return reply({ protocolVersion: '2025-11-25', serverInfo: { name: 'w', version: '0' }, capabilities: { tools: {} } });
+  }
+  if (req.method === 'tools/list') {
+    return reply({ tools: [{ name: 'render', inputSchema: { type: 'object' }, _meta: { 'alexia/compute': { op: 'demo.compute' } } }] });
+  }
+  if (req.method === 'tools/call') {
+    const args = req.params.arguments || {};
+    fs.writeFileSync('seen.json', JSON.stringify(args.inputs || []));
+    const put = (dir, name, text) => {
+      fs.mkdirSync(dir, { recursive: true });
+      const p = path.resolve(dir, name);
+      fs.writeFileSync(p, text);
+      return p;
+    };
+    const content = [];
+    if (args.mode === 'twins') {
+      content.push(link(put('a', 'out.png', 'first')), link(put('b', 'out.png', 'second')));
+    } else if (args.mode === 'half') {
+      content.push(link(put('a', 'ok.png', 'ok')), link(path.resolve('gone.png')));
+    }
+    return reply({ content });
+  }
+  send({ jsonrpc: '2.0', id: req.id, error: { code: -32601, message: 'no' } });
+});
+"#;
+
+async fn node_worker_fx(tag: &str) -> Fx {
+    let root = root(tag);
+    let ext = root.join("ext");
+    plugin(
+        &ext,
+        "worker",
+        "compute",
+        json!({
+            "provides": ["demo.compute"],
+            "compute": {"operations": [{"cap": "demo.compute", "summary": "Writes files."}]},
+            "entry": {"run": "node", "args": ["worker.js"]}
+        }),
+    );
+    std::fs::write(ext.join("worker").join("worker.js"), WORKER_JS).unwrap();
+    plugin(&ext, "asker", "greet", requires("demo.compute"));
+    start(&root, &["worker", "asker"], Arc::new(NoUpcalls)).await
+}
+
+fn compute_params(mode: &str, inputs: Vec<Value>) -> Value {
+    json!({"cap": "demo.compute", "arguments": {"mode": mode}, "inputs": inputs})
+}
+
+fn compute_dirs(own: &Path) -> Vec<PathBuf> {
+    std::fs::read_dir(own.join("compute"))
+        .map(|d| d.map(|e| e.unwrap().path()).collect())
+        .unwrap_or_default()
+}
+
+#[tokio::test]
+async fn compute_uses_the_checked_path() {
+    let fx = node_worker_fx("checked").await;
+    let own = fx.layout.own_dir("asker");
+    let real_dir = own.join("real");
+    std::fs::create_dir_all(&real_dir).unwrap();
+    std::fs::write(real_dir.join("in.txt"), "x").unwrap();
+    // A junction (no privileges needed) inside the caller's own folder.
+    let junction = own.join("via");
+    let made = std::process::Command::new("cmd")
+        .args(["/C", "mklink", "/J"])
+        .arg(&junction)
+        .arg(&real_dir)
+        .output()
+        .unwrap();
+    assert!(made.status.success(), "mklink /J failed: {made:?}");
+    let given = junction.join("in.txt");
+    let direct = real_dir.join("in.txt");
+    let params = compute_params("none", vec![input("a", &given), input("b", &direct)]);
+    serve(&fx, "asker", "alexia/compute/run", params)
+        .await
+        .unwrap();
+    let seen = std::fs::read_to_string(fx.layout.own_dir("worker").join("seen.json")).unwrap();
+    let seen: Vec<Value> = serde_json::from_str(&seen).unwrap();
+    let canonical = std::fs::canonicalize(&direct).unwrap();
+    assert_eq!(seen.len(), 2);
+    for s in &seen {
+        assert_eq!(Path::new(s["path"].as_str().unwrap()), canonical);
+    }
+    assert!(!seen[0]["path"].as_str().unwrap().contains("via"));
+    fx.host.shutdown().await;
+}
+
+#[tokio::test]
+async fn same_name_outputs_both_kept() {
+    let fx = node_worker_fx("twins").await;
+    let out = serve(
+        &fx,
+        "asker",
+        "alexia/compute/run",
+        compute_params("twins", vec![]),
+    )
+    .await
+    .unwrap();
+    let files: Vec<PathBuf> = out["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| PathBuf::from(f.as_str().unwrap()))
+        .collect();
+    let names: Vec<_> = files
+        .iter()
+        .map(|f| f.file_name().unwrap().to_str().unwrap())
+        .collect();
+    assert_eq!(names, ["out.png", "out-2.png"]);
+    assert_eq!(std::fs::read_to_string(&files[0]).unwrap(), "first");
+    assert_eq!(std::fs::read_to_string(&files[1]).unwrap(), "second");
+    fx.host.shutdown().await;
+}
+
+#[tokio::test]
+async fn failed_copy_leaves_no_folder() {
+    let fx = node_worker_fx("half").await;
+    let own = fx.layout.own_dir("asker");
+    // The first link copies fine (so the folder exists); the second names a missing file.
+    let e = serve(
+        &fx,
+        "asker",
+        "alexia/compute/run",
+        compute_params("half", vec![]),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(e.code, -32603);
+    let left = compute_dirs(&own);
+    assert!(left.is_empty(), "left behind: {left:?}");
+    fx.host.shutdown().await;
+}
