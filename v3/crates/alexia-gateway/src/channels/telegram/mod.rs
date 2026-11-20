@@ -17,7 +17,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use alexia_core::Budget;
-use alexia_store::{Content, Ms, Part, Store};
+use alexia_store::{now_ms, Content, Ms, Part, Store};
 use base64::Engine;
 use serde_json::json;
 use tokio::sync::oneshot;
@@ -87,13 +87,6 @@ pub struct Telegram {
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
-}
-
-fn now_ms() -> Ms {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as Ms)
-        .unwrap_or(0)
 }
 
 /// ponytail: std's per-process-seeded SipHash over the clock, enough for a six-digit code and a
