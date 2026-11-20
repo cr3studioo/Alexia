@@ -215,24 +215,57 @@ static LOCATION_KEY: LazyLock<Regex> = LazyLock::new(|| {
         .expect("location key pattern")
 });
 
-fn walk(v: &Value, kinds: &mut Vec<String>) -> Value {
+/// A number pair that the "gps" rule would match as `a,b` text, as v2 saw it in the raw JSON.
+fn is_coord_pair(a: &Value, b: &Value) -> bool {
+    static GPS: LazyLock<&'static Rule> = LazyLock::new(|| {
+        LOCATIONS
+            .iter()
+            .find(|r| r.kind == "gps")
+            .expect("gps rule")
+    });
+    match (a, b) {
+        (Value::Number(a), Value::Number(b)) => GPS.re.is_match(&format!("{a},{b}")),
+        _ => false,
+    }
+}
+
+fn walk(v: &Value, known: &[String], kinds: &mut Vec<String>) -> Value {
     match v {
         Value::String(s) => {
-            let (t, k) = redact_text(s);
+            let (t, k) = redact_known(s, known);
             kinds.extend(k);
             Value::String(t)
         }
-        Value::Array(a) => Value::Array(a.iter().map(|x| walk(x, kinds)).collect()),
+        Value::Array(a) => {
+            let mut out = Vec::with_capacity(a.len());
+            let mut i = 0;
+            while i < a.len() {
+                // Numbers carry no text for the gps rule to see; an adjacent pair is checked
+                // as the `a,b` it was in v2's raw arguments.
+                if i + 1 < a.len() && is_coord_pair(&a[i], &a[i + 1]) {
+                    kinds.push("gps".to_string());
+                    out.push(Value::String(PLACEHOLDER.to_string()));
+                    out.push(Value::String(PLACEHOLDER.to_string()));
+                    i += 2;
+                } else {
+                    out.push(walk(&a[i], known, kinds));
+                    i += 1;
+                }
+            }
+            Value::Array(out)
+        }
         Value::Object(o) => Value::Object(
             o.iter()
                 .map(|(k, x)| match x {
                     // The "location field" rule matches `"key":"value"` text, which a parsed
                     // leaf no longer has; so the key decides here (same key list as the rule).
-                    Value::String(_) if LOCATION_KEY.is_match(k) => {
+                    // Any non-null value goes whole: numbers, arrays and objects too.
+                    Value::Null => (k.clone(), Value::Null),
+                    _ if LOCATION_KEY.is_match(k) => {
                         kinds.push("location field".to_string());
                         (k.clone(), Value::String(PLACEHOLDER.to_string()))
                     }
-                    _ => (k.clone(), walk(x, kinds)),
+                    _ => (k.clone(), walk(x, known, kinds)),
                 })
                 .collect(),
         ),
@@ -240,18 +273,18 @@ fn walk(v: &Value, kinds: &mut Vec<String>) -> Value {
     }
 }
 
-/// Every string leaf through `redact_text`.
+/// Every string leaf through `redact_text`; location-keyed values and coordinate pairs whole.
 pub fn redact_json(v: &Value) -> Value {
-    walk(v, &mut Vec::new())
+    walk(v, &[], &mut Vec::new())
 }
 
-/// Tool-call arguments are JSON text. Valid JSON: redact its string leaves, and re-serialise
+/// Tool-call arguments are JSON text. Valid JSON: redact it by walking, and re-serialise
 /// only if something went (so untouched arguments stay byte for byte). Not JSON: redact as text.
-fn redact_arguments(args: &str, kinds: &mut Vec<String>) -> String {
+fn redact_arguments(args: &str, known: &[String], kinds: &mut Vec<String>) -> String {
     match serde_json::from_str::<Value>(args) {
         Ok(v) => {
             let mut found = Vec::new();
-            let out = walk(&v, &mut found);
+            let out = walk(&v, known, &mut found);
             if found.is_empty() {
                 return args.to_string();
             }
@@ -259,17 +292,17 @@ fn redact_arguments(args: &str, kinds: &mut Vec<String>) -> String {
             out.to_string()
         }
         Err(_) => {
-            let (t, k) = redact_text(args);
+            let (t, k) = redact_known(args, known);
             kinds.extend(k);
             t
         }
     }
 }
 
-fn redact_body(body: &MessageBody, kinds: &mut Vec<String>) -> MessageBody {
+fn redact_body(body: &MessageBody, known: &[String], kinds: &mut Vec<String>) -> MessageBody {
     let mut out = body.clone();
     let mut text = |s: &str| {
-        let (t, k) = redact_text(s);
+        let (t, k) = redact_known(s, known);
         kinds.extend(k);
         t
     };
@@ -288,7 +321,7 @@ fn redact_body(body: &MessageBody, kinds: &mut Vec<String>) -> MessageBody {
     };
     if let Some(calls) = &mut out.calls {
         for call in calls {
-            call.arguments = redact_arguments(&call.arguments, kinds);
+            call.arguments = redact_arguments(&call.arguments, known, kinds);
         }
     }
     out
@@ -296,15 +329,20 @@ fn redact_body(body: &MessageBody, kinds: &mut Vec<String>) -> MessageBody {
 
 /// Every text part of every message and the system prompt; images untouched. `kinds` deduped.
 pub fn redact_request(req: &ChatRequest) -> (ChatRequest, Vec<String>) {
+    redact_request_known(req, &[])
+}
+
+/// `redact_request`, plus every value in `known` (keychain secrets) wherever it looks.
+pub fn redact_request_known(req: &ChatRequest, known: &[String]) -> (ChatRequest, Vec<String>) {
     let mut kinds = Vec::new();
     let mut out = req.clone();
     out.messages = req
         .messages
         .iter()
-        .map(|(role, body)| (*role, redact_body(body, &mut kinds)))
+        .map(|(role, body)| (*role, redact_body(body, known, &mut kinds)))
         .collect();
     if let Some(system) = &req.system {
-        let (t, k) = redact_text(system);
+        let (t, k) = redact_known(system, known);
         kinds.extend(k);
         out.system = Some(t);
     }

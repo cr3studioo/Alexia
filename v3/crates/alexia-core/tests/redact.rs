@@ -279,3 +279,86 @@ fn json_leaves_and_summary() {
     );
     assert_eq!(summarise(&[]), "");
 }
+
+fn one_call(arguments: String) -> ChatRequest {
+    ChatRequest {
+        messages: vec![(
+            Role::Assistant,
+            MessageBody {
+                calls: Some(vec![ToolCall {
+                    id: "1".into(),
+                    name: "maps.pin".into(),
+                    arguments,
+                }]),
+                ..body(Content::Text(String::new()))
+            },
+        )],
+        system: None,
+        tools: vec![],
+        max_tokens: None,
+    }
+}
+
+fn first_args(req: &ChatRequest) -> serde_json::Value {
+    serde_json::from_str(&req.messages[0].1.calls.as_ref().unwrap()[0].arguments).unwrap()
+}
+
+#[test]
+fn numeric_locations_in_tool_arguments_do_not_survive() {
+    let cases = [
+        (
+            r#"{"lat":50.0875,"lng":14.4213,"zoom":12}"#,
+            json!({"lat":"[redacted]","lng":"[redacted]","zoom":12}),
+        ),
+        (
+            r#"{"place":{"lat":50.0875,"lon":14.4213},"note":null,"where":null}"#,
+            json!({"place":"[redacted]","note":null,"where":null}),
+        ),
+        (
+            r#"{"pin":[50.0875,14.4213],"steps":[1,2,3]}"#,
+            json!({"pin":["[redacted]","[redacted]"],"steps":[1,2,3]}),
+        ),
+        (
+            r#"{"coords":[50.0875,14.4213]}"#,
+            json!({"coords":"[redacted]"}),
+        ),
+    ];
+    for (args, want) in cases {
+        let (out, k) = redact_request(&one_call(args.into()));
+        let got = first_args(&out);
+        assert_eq!(got, want, "{args}");
+        let text = got.to_string();
+        assert!(
+            !text.contains("50.0875") && !text.contains("14.4213"),
+            "{args}"
+        );
+        assert!(!k.is_empty(), "{args}");
+    }
+    // redact_json takes the same path.
+    assert_eq!(
+        redact_json(&json!({"route":[[50.0875,14.4213]]})),
+        json!({"route":[["[redacted]","[redacted]"]]})
+    );
+}
+
+#[test]
+fn known_secret_across_whole_request() {
+    let secret = format!("{}{}", "hunter2-", "correct-horse");
+    let mut req = one_call(format!(r#"{{"auth":"{secret}"}}"#));
+    req.system = Some(format!("use {secret}"));
+    req.messages
+        .push((Role::User, body(Content::Text(format!("it is {secret}")))));
+    let (out, k) = redact_request_known(&req, std::slice::from_ref(&secret));
+    assert_eq!(out.system.as_deref(), Some("use [redacted]"));
+    assert_eq!(first_args(&out), json!({"auth":"[redacted]"}));
+    match &out.messages[1].1.content {
+        Content::Text(t) => assert_eq!(t, "it is [redacted]"),
+        _ => panic!("text"),
+    }
+    assert_eq!(k, kinds(&["known secret"]));
+    // Without the known list the plain request leaves it, so the known path did the work.
+    assert_eq!(
+        redact_request(&req).0.system.as_deref(),
+        Some(format!("use {secret}").as_str())
+    );
+}
