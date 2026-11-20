@@ -9,8 +9,8 @@ use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::migrations::{APPLICATION_ID, MIGRATIONS};
 use crate::{
-    now_ms, Error, Message, MessageBody, MessageId, Ms, Result, Role, Session, SessionId, SpanRow,
-    Try, TryRow, Usage,
+    now_ms, ApprovalRow, AuditRow, Error, JobRow, LiveRunRow, Message, MessageBody, MessageId, Ms,
+    Result, Role, Session, SessionId, SpanRow, Try, TryRow, Usage,
 };
 
 /// sqlite-vec is a C extension; registering it is one FFI call, so this module (and only this
@@ -529,6 +529,362 @@ impl Store {
             .conn()
             .execute("DELETE FROM spans WHERE at < ?", [before])?;
         Ok(n as u64)
+    }
+}
+
+const AUDIT_COLS: &str = "id, at, run_id, session_id, origin, step, tool, plugin, args, gate, \
+                          decision, why, ok, result, undo, undone_at";
+
+fn audit_row(r: &rusqlite::Row) -> rusqlite::Result<AuditRow> {
+    Ok(AuditRow {
+        id: r.get(0)?,
+        at: r.get(1)?,
+        run: r.get(2)?,
+        session: r.get::<_, Option<i64>>(3)?.map(SessionId),
+        origin: r.get(4)?,
+        step: r.get(5)?,
+        tool: r.get(6)?,
+        plugin: r.get(7)?,
+        args: r.get(8)?,
+        gate: r.get(9)?,
+        decision: r.get(10)?,
+        why: r.get(11)?,
+        ok: r.get(12)?,
+        result: r.get(13)?,
+        undo: r.get(14)?,
+        undone_at: r.get(15)?,
+    })
+}
+
+const LIVE_COLS: &str =
+    "run_id, session_id, origin, started_at, touched_at, steps, background, parent";
+
+fn live_row(r: &rusqlite::Row) -> rusqlite::Result<LiveRunRow> {
+    Ok(LiveRunRow {
+        run: r.get(0)?,
+        session: SessionId(r.get(1)?),
+        origin: r.get(2)?,
+        started_at: r.get(3)?,
+        touched_at: r.get(4)?,
+        steps: r.get(5)?,
+        background: r.get(6)?,
+        parent: r.get(7)?,
+    })
+}
+
+const APPROVAL_COLS: &str = "id, run_id, origin, text, detail, asked_at, answered_at, answer, via";
+
+fn approval_row(r: &rusqlite::Row) -> rusqlite::Result<ApprovalRow> {
+    Ok(ApprovalRow {
+        id: r.get(0)?,
+        run: r.get(1)?,
+        origin: r.get(2)?,
+        text: r.get(3)?,
+        detail: r.get(4)?,
+        asked_at: r.get(5)?,
+        answered_at: r.get(6)?,
+        answer: r.get(7)?,
+        via: r.get(8)?,
+    })
+}
+
+fn job_row(r: &rusqlite::Row) -> rusqlite::Result<JobRow> {
+    Ok(JobRow {
+        id: r.get(0)?,
+        trigger: r.get(1)?,
+        prompt: r.get(2)?,
+        urgency: r.get(3)?,
+        origin: r.get(4)?,
+        created_at: r.get(5)?,
+        next_at: r.get(6)?,
+        cancelled_at: r.get(7)?,
+    })
+}
+
+/// `%q%` for `LIKE … ESCAPE '\'`, with `q`'s own `%`, `_` and `\` matched literally.
+fn like_pattern(q: &str) -> String {
+    let mut p = String::with_capacity(q.len() + 2);
+    p.push('%');
+    for c in q.chars() {
+        if matches!(c, '%' | '_' | '\\') {
+            p.push('\\');
+        }
+        p.push(c);
+    }
+    p.push('%');
+    p
+}
+
+/// Migration 3's methods. JSON columns are opaque text, and nothing here redacts: callers hand
+/// the store text that is already redacted (P2-19).
+impl Store {
+    // ---- runs (the trace, migration 1's table): newest 200 and 30 days kept ----
+
+    /// Inserts or replaces run `id`. `body` must already have its credentials stripped.
+    pub fn save_run(&self, id: &str, at: Ms, body: &serde_json::Value) -> Result<()> {
+        self.conn().execute(
+            "INSERT INTO runs (id, at, body) VALUES (?, ?, ?) \
+             ON CONFLICT (id) DO UPDATE SET at = excluded.at, body = excluded.body",
+            params![id, at, body.to_string()],
+        )?;
+        Ok(())
+    }
+
+    pub fn run_body(&self, id: &str) -> Result<Option<serde_json::Value>> {
+        let text: Option<String> = self
+            .conn()
+            .query_row("SELECT body FROM runs WHERE id = ?", [id], |r| r.get(0))
+            .optional()?;
+        Ok(text.map(|t| serde_json::from_str(&t)).transpose()?)
+    }
+
+    /// The newest `limit` runs, newest first.
+    pub fn runs(&self, limit: u32) -> Result<Vec<(String, Ms, serde_json::Value)>> {
+        let raw: Vec<(String, Ms, String)> = {
+            let conn = self.conn();
+            let mut stmt =
+                conn.prepare("SELECT id, at, body FROM runs ORDER BY at DESC, rowid DESC LIMIT ?")?;
+            let rows = stmt.query_map([limit], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+            rows.collect::<rusqlite::Result<_>>()?
+        };
+        raw.into_iter()
+            .map(|(id, at, body)| Ok((id, at, serde_json::from_str(&body)?)))
+            .collect()
+    }
+
+    /// Deletes runs older than `before` and every run past the newest `keep`. Returns how many.
+    pub fn prune_runs(&self, before: Ms, keep: u32) -> Result<u64> {
+        let n = self.conn().execute(
+            "DELETE FROM runs WHERE at < ?1 OR rowid NOT IN \
+             (SELECT rowid FROM runs ORDER BY at DESC, rowid DESC LIMIT ?2)",
+            params![before, keep],
+        )?;
+        Ok(n as u64)
+    }
+
+    // ---- audit (TR-08) ----
+
+    /// Appends `row` (its `id` is ignored) and returns the new id. `args` and `result` must
+    /// already be redacted; the store writes them as given.
+    pub fn audit(&self, row: &AuditRow) -> Result<i64> {
+        let conn = self.conn();
+        conn.execute(
+            "INSERT INTO audit (at, run_id, session_id, origin, step, tool, plugin, args, gate, \
+             decision, why, ok, result, undo, undone_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            params![
+                row.at,
+                row.run,
+                row.session.map(|s| s.0),
+                row.origin,
+                row.step,
+                row.tool,
+                row.plugin,
+                row.args,
+                row.gate,
+                row.decision,
+                row.why,
+                row.ok,
+                row.result,
+                row.undo,
+                row.undone_at,
+            ],
+        )?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    /// The run's rows in the order they were written.
+    pub fn audit_for_run(&self, run: &str) -> Result<Vec<AuditRow>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {AUDIT_COLS} FROM audit WHERE run_id = ? ORDER BY id"
+        ))?;
+        let rows = stmt.query_map([run], audit_row)?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// LIKE over tool, args, why, result; newest first. `q` is matched literally. The text
+    /// searched is what callers wrote, already redacted.
+    pub fn audit_search(&self, q: &str, limit: u32) -> Result<Vec<AuditRow>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {AUDIT_COLS} FROM audit WHERE tool LIKE ?1 ESCAPE '\\' \
+             OR args LIKE ?1 ESCAPE '\\' OR why LIKE ?1 ESCAPE '\\' OR result LIKE ?1 ESCAPE '\\' \
+             ORDER BY at DESC, id DESC LIMIT ?2"
+        ))?;
+        let rows = stmt.query_map(params![like_pattern(q), limit], audit_row)?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Newest row in `session` with undo set and undone_at NULL.
+    pub fn last_undoable(&self, session: SessionId) -> Result<Option<AuditRow>> {
+        Ok(self
+            .conn()
+            .query_row(
+                &format!(
+                    "SELECT {AUDIT_COLS} FROM audit WHERE session_id = ? AND undo IS NOT NULL \
+                     AND undone_at IS NULL ORDER BY at DESC, id DESC LIMIT 1"
+                ),
+                [session.0],
+                audit_row,
+            )
+            .optional()?)
+    }
+
+    pub fn mark_undone(&self, id: i64, at: Ms) -> Result<()> {
+        self.conn().execute(
+            "UPDATE audit SET undone_at = ? WHERE id = ?",
+            params![at, id],
+        )?;
+        Ok(())
+    }
+
+    // ---- live runs ----
+
+    pub fn live_begin(&self, row: &LiveRunRow) -> Result<()> {
+        self.conn().execute(
+            &format!("INSERT INTO live_runs ({LIVE_COLS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"),
+            params![
+                row.run,
+                row.session.0,
+                row.origin,
+                row.started_at,
+                row.touched_at,
+                row.steps,
+                row.background,
+                row.parent,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn live_touch(&self, run: &str, steps: u32, at: Ms) -> Result<()> {
+        self.conn().execute(
+            "UPDATE live_runs SET steps = ?, touched_at = ? WHERE run_id = ?",
+            params![steps, at, run],
+        )?;
+        Ok(())
+    }
+
+    pub fn live_end(&self, run: &str) -> Result<()> {
+        self.conn()
+            .execute("DELETE FROM live_runs WHERE run_id = ?", [run])?;
+        Ok(())
+    }
+
+    /// Oldest first.
+    pub fn live_runs(&self) -> Result<Vec<LiveRunRow>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {LIVE_COLS} FROM live_runs ORDER BY started_at, rowid"
+        ))?;
+        let rows = stmt.query_map([], live_row)?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    // ---- approvals ----
+
+    pub fn approval_open(
+        &self,
+        run: &str,
+        origin: &str,
+        text: &str,
+        detail: Option<&str>,
+        at: Ms,
+    ) -> Result<i64> {
+        let conn = self.conn();
+        conn.execute(
+            "INSERT INTO approvals (run_id, origin, text, detail, asked_at) VALUES (?, ?, ?, ?, ?)",
+            params![run, origin, text, detail, at],
+        )?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    /// false when it was already answered (the first answer wins), or there is no such id.
+    pub fn approval_answer(&self, id: i64, answer: bool, via: &str, at: Ms) -> Result<bool> {
+        let n = self.conn().execute(
+            "UPDATE approvals SET answered_at = ?, answer = ?, via = ? \
+             WHERE id = ? AND answered_at IS NULL",
+            params![at, answer, via, id],
+        )?;
+        Ok(n == 1)
+    }
+
+    /// Unanswered, oldest first.
+    pub fn approvals_pending(&self) -> Result<Vec<ApprovalRow>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {APPROVAL_COLS} FROM approvals WHERE answered_at IS NULL ORDER BY asked_at, id"
+        ))?;
+        let rows = stmt.query_map([], approval_row)?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    pub fn approval(&self, id: i64) -> Result<Option<ApprovalRow>> {
+        Ok(self
+            .conn()
+            .query_row(
+                &format!("SELECT {APPROVAL_COLS} FROM approvals WHERE id = ?"),
+                [id],
+                approval_row,
+            )
+            .optional()?)
+    }
+
+    // ---- jobs ----
+
+    pub fn job_add(
+        &self,
+        trigger: &str,
+        prompt: &str,
+        urgency: &str,
+        origin: &str,
+        next_at: Option<Ms>,
+        at: Ms,
+    ) -> Result<i64> {
+        let conn = self.conn();
+        conn.execute(
+            "INSERT INTO jobs (trigger, prompt, urgency, origin, created_at, next_at) \
+             VALUES (?, ?, ?, ?, ?, ?)",
+            params![trigger, prompt, urgency, origin, at, next_at],
+        )?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    /// Jobs not cancelled, oldest first.
+    pub fn jobs(&self) -> Result<Vec<JobRow>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT id, trigger, prompt, urgency, origin, created_at, next_at, cancelled_at \
+             FROM jobs WHERE cancelled_at IS NULL ORDER BY id",
+        )?;
+        let rows = stmt.query_map([], job_row)?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// false when the job was already cancelled or does not exist.
+    pub fn job_cancel(&self, id: i64, at: Ms) -> Result<bool> {
+        let n = self.conn().execute(
+            "UPDATE jobs SET cancelled_at = ? WHERE id = ? AND cancelled_at IS NULL",
+            params![at, id],
+        )?;
+        Ok(n == 1)
+    }
+
+    pub fn job_set_next(&self, id: i64, next_at: Option<Ms>) -> Result<()> {
+        self.conn().execute(
+            "UPDATE jobs SET next_at = ? WHERE id = ?",
+            params![next_at, id],
+        )?;
+        Ok(())
+    }
+
+    pub fn job_ran(&self, id: i64, at: Ms, run: Option<&str>, outcome: &str) -> Result<()> {
+        self.conn().execute(
+            "INSERT INTO job_runs (job_id, at, run_id, outcome) VALUES (?, ?, ?, ?)",
+            params![id, at, run, outcome],
+        )?;
+        Ok(())
     }
 }
 

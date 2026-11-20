@@ -65,7 +65,7 @@ fn a_try(at: Ms, model: &str) -> Try {
 #[test]
 fn migration_2_applies() {
     let s = Store::open_in_memory().unwrap();
-    assert_eq!(user_version(&s), 2);
+    assert_eq!(user_version(&s), 3);
     assert!(has_table(&s, "channel_chats"));
     assert!(has_table(&s, "spans"));
 }
@@ -73,17 +73,20 @@ fn migration_2_applies() {
 #[test]
 fn upgrade_from_1() {
     let db = temp("upgrade").join("alexia.db");
-    // A real v1 file: migration 1's schema, with migration 2 taken back off.
+    // A real v1 file: migration 1's schema, with migrations 2 and 3 taken back off.
     {
         let s = Store::open(&db).unwrap();
         s.create_session(Some("kept")).unwrap();
     }
     Connection::open(&db)
         .unwrap()
-        .execute_batch("DROP TABLE channel_chats; DROP TABLE spans; PRAGMA user_version = 1;")
+        .execute_batch(
+            "DROP TABLE channel_chats; DROP TABLE spans; DROP TABLE audit; DROP TABLE live_runs; \
+             DROP TABLE approvals; DROP TABLE job_runs; DROP TABLE jobs; PRAGMA user_version = 1;",
+        )
         .unwrap();
     let s = Store::open(&db).unwrap();
-    assert_eq!(user_version(&s), 2);
+    assert_eq!(user_version(&s), 3);
     assert!(has_table(&s, "channel_chats") && has_table(&s, "spans"));
     let sessions = s.sessions().unwrap();
     assert_eq!(sessions.len(), 1);
