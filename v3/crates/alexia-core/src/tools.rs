@@ -40,6 +40,24 @@ impl McpTooling {
             .push(b);
     }
 
+    /// Whether `list()` would offer `name`: a builtin, or a visible plugin tool within the limit.
+    async fn callable(&self, name: &str) -> bool {
+        if self
+            .builtins()
+            .iter()
+            .any(|b| b.specs().iter().any(|s| s.name == name))
+        {
+            return true;
+        }
+        name.len() <= NAME_LIMIT
+            && self
+                .host
+                .tools()
+                .await
+                .iter()
+                .any(|t| !t.hidden && namespaced(&t.plugin, &t.tool.name) == name)
+    }
+
     fn builtins(&self) -> Vec<Arc<dyn Builtin>> {
         self.builtins
             .lock()
@@ -113,6 +131,10 @@ impl Tooling for McpTooling {
         let Some((plugin, tool)) = name.split_once(SEPARATOR) else {
             return no_tool();
         };
+        // `list()` never offers a name past the limit, so `call()` does not take one.
+        if name.len() > NAME_LIMIT {
+            return no_tool();
+        }
         let plugin = PluginId(plugin.to_string());
         let installed = |host: &McpHost| host.plugins().iter().any(|p| p.id == plugin);
         if !installed(&self.host) {
@@ -189,6 +211,12 @@ impl Tooling for McpTooling {
                         u.tool = namespaced(&plugin, &u.tool);
                     }
                 }
+                // No undo the model could not call: a hidden or over-long target is dropped.
+                if let Some(u) = &out.undo {
+                    if !self.callable(&u.tool).await {
+                        out.undo = None;
+                    }
+                }
                 out
             }
             Err(CallError::Gone) => gone(),
@@ -238,9 +266,19 @@ fn file_uri_path(uri: &str) -> Option<PathBuf> {
     }
     let path = String::from_utf8_lossy(&out).into_owned();
     let b = path.as_bytes();
+    let sep = |c: u8| c == b'/' || c == b'\\';
+    // Two leading separators (or `\\?\UNC\`) name a network share: stat'ing one makes
+    // Windows talk SMB to that server. Never a local path, so never touched.
+    if (b.len() > 1 && sep(b[0]) && sep(b[1])) || path.starts_with(r"\\?\UNC\") {
+        return None;
+    }
     // `/C:/...` is a Windows drive path.
-    if b.len() > 2 && b[0] == b'/' && b[2] == b':' {
+    if b.len() > 2 && b[0] == b'/' && b[1].is_ascii_alphabetic() && b[2] == b':' {
         return Some(PathBuf::from(&path[1..]));
+    }
+    // On Windows only a drive-letter path is local; `/x` or `\x` would be drive-relative.
+    if cfg!(windows) {
+        return None;
     }
     Some(PathBuf::from(path))
 }

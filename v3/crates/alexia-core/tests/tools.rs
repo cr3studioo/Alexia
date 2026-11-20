@@ -102,10 +102,11 @@ require('readline').createInterface({ input: process.stdin }).on('line', (line) 
   if (m.method === 'notifications/cancelled') { fs.appendFileSync(log, JSON.stringify(m.params) + '\n'); return; }
   if (m.id === undefined) return;
   if (m.method === 'initialize') send({ id: m.id, result: { protocolVersion: m.params.protocolVersion, serverInfo: { name: 'n', version: '0' }, capabilities: { tools: {} } } });
-  else if (m.method === 'tools/list') send({ id: m.id, result: { tools: ['slow', 'set', 'unset'].map((name) => ({ name, inputSchema: obj })) } });
+  else if (m.method === 'tools/list') send({ id: m.id, result: { tools: ['slow', 'set', 'unset', 'set_hid', 'hid'].map((name) => ({ name, inputSchema: obj, ...(name === 'hid' ? { _meta: { 'alexia/compute': {} } } : {}) })) } });
   else if (m.method === 'tools/call') {
     const n = m.params.name;
     if (n === 'set') send({ id: m.id, result: text('set k', { 'alexia/undo': { tool: 'unset', arguments: { key: 'k' }, summary: 'set k' } }) });
+    else if (n === 'set_hid') send({ id: m.id, result: text('set h', { 'alexia/undo': { tool: 'hid', arguments: {}, summary: 'set h' } }) });
     else if (n === 'unset') send({ id: m.id, result: text('unset k') });
     // `slow` never answers: only a cancel ends it.
   } else send({ id: m.id, result: {} });
@@ -444,6 +445,59 @@ async fn undo_tool_is_namespaced_for_the_next_call() {
     let back = tooling.call(&undo.tool, undo.arguments, ctx()).await;
     assert!(back.ok && back.text == "unset k", "{}", back.text);
     e.done().await;
+}
+
+#[tokio::test]
+async fn undo_to_hidden_tool_is_dropped() {
+    let e = node_env("undo-hid", "undoer").await;
+    let tooling = McpTooling::new(e.host.clone(), vec![]);
+    let out = tooling.call("undoer__set_hid", Map::new(), ctx()).await;
+    assert!(out.ok, "{}", out.text);
+    assert!(out.undo.is_none(), "undo to a hidden tool must not survive");
+    e.done().await;
+}
+
+#[tokio::test]
+async fn call_refuses_a_name_list_hides() {
+    let long = "p".repeat(60);
+    let e = env("hides", &[(long.as_str(), "greet")]).await;
+    let tooling = McpTooling::new(e.host.clone(), vec![]);
+    // `list()` hides it for its length; `call()` must too.
+    assert!(tooling.list().await.is_empty());
+    let over = format!("{long}__greet");
+    assert!(over.len() > 64);
+    for name in [over.as_str(), &format!("{long}__secret_tool")] {
+        let out = tooling.call(name, Map::new(), ctx()).await;
+        assert!(!out.ok, "{name}");
+        assert_eq!(out.text, format!("There is no tool called {name}."));
+    }
+    e.done().await;
+    // A hidden tool, on a plugin whose names fit.
+    let e = env("hides2", &[("hello", "greet")]).await;
+    let tooling = McpTooling::new(e.host.clone(), vec![]);
+    let out = tooling.call("hello__secret_tool", Map::new(), ctx()).await;
+    assert_eq!(out.text, "There is no tool called hello__secret_tool.");
+    e.done().await;
+}
+
+#[test]
+fn unc_file_uris_are_not_written() {
+    let started = std::time::Instant::now();
+    let link = |uri: &str| json!({"type":"resource_link","uri": uri, "name": "x"});
+    let o = outcome_of(&result(
+        json!([
+            link("file:////srv/share/x"),
+            link("file:///%5C%5Csrv/share/x"),
+            link(r"file:///\srv\share\x"),
+            link("file:///%5C%3F%5CUNC%5Csrv%5Cshare%5Cx"),
+        ]),
+        None,
+        false,
+    ));
+    assert!(o.files.is_empty());
+    assert!(o.text.lines().all(|l| l == "[file: x — not written]"));
+    assert_eq!(o.text.lines().count(), 4);
+    assert!(started.elapsed() < Duration::from_secs(2));
 }
 
 #[test]
