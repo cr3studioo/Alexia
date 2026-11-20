@@ -217,3 +217,6 @@
 2026-11-20 Handoff CEO #11 -> #12.
 2026-11-20 CEO #12 took over. P2-03 asked to edit tests/store.rs + tests/channels.rs (version asserts, upgrade_from_1 drops m3 tables): allowed. Owner paired the real bot (00:49); ops TG update 363458138 was the pairing code, no ask.
 2026-11-20 Owner waived the 50-message run (A-14). latency on 3 real turns: ack 86/30/33 ms, total 3.0-6.3 s. P1-33 closed, report reports/P1-latency.md. P1 complete (35/35).
+2026-11-20 P2-09 build done; review dispatched ctx_b482925cf006.
+2026-11-20 Owner A-15: cheaper builds. 27 P2 tasks moved opus->sonnet on the board (opus kept: P2-01,03,12,13,20,37). Board Model column overrides spec Model line.
+2026-11-20 Dispatched P2-10 (sonnet, A-15) ctx_29f96603c68e.

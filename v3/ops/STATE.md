@@ -8,7 +8,7 @@ P2: planned (v3/specs/P2/PHASE.md, 41 tasks). Running:
 - P2-03 (opus) ctx_4de98296dd61: store migration 3.
 - P2-09 (sonnet) ctx_fcaa99248657: hub dead code.
 Ready next: P2-10 (opus, no deps). After P2-01: P2-02, 04, 05, 06, 11..16, 30..33.
-Max 2 opus builders per batch; nearly all P2 tasks are opus, so batches are 2 opus + sonnet ones.
+A-15: P2 builders are sonnet except P2-12, 13, 20, 37 (opus). Board Model column overrides the spec Model line. Reviews stay opus. Max 2 opus builders per batch.
 
 P1-33 (the real run): the hub runs DETACHED on this PC with the real Alexia bot (started by CEO #11, PID in LOG; check with Get-Process alexia-hub). Env: ALEXIA_PLUGINS_DIR=C:\dev\Alexia-wt\hub-plugins (base2 plugins minus telegram/crasher/vanisher, mirrored with junctions/hardlinks because the scanner ignores junction dirs), ALEXIA_V2_ROOT=C:\dev\Alexia-wt\base2. Logs: C:\dev\Alexia-wt\hub-out.log / hub-err.log. Data: %LOCALAPPDATA%\AlexiaHub (v2 imported: 24 sessions, 370 messages; media's 46 GB hard-linked). Keys: secret import-v2 done (9 copied).
 Owner PAIRED the bot 2026-11-20 00:49. Waiting for them to use it for 50 messages. Then run `alexia-hub latency --last 50 --check --html latency.html` (same env) and dispatch P1-33 (or write the report via a sonnet worker). Don't rebuild target/release while the hub runs from it (exe locked); stop it first if needed and restart with the same env.

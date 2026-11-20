@@ -112,3 +112,7 @@ $env:ALEXIA_PLUGINS_DIR = "C:\dev\Alexia\plugins"
 ## A-14 · 2026-11-20 · answered
 **What I need:** (owner, in chat) Skip the 50-message test; 3 messages worked. Main wish: get the full plan built, it is taking long (about 7 usage resets so far).
 **Answer:** Done. P1-33 closed with the 3 real messages (ack max 86 ms). CEO keeps building P2 onward.
+
+## A-15 · 2026-11-20 · answered
+**What I need:** (CEO offer in chat) Build P2 with Sonnet to save usage, keep Opus for reviews and the core pieces.
+**Answer:** "yes cheaper". P2 builders are Sonnet except P2-12 permissions, P2-13 checker, P2-20 agent loop, P2-37 encryption (and P2-01/03, already running on Opus). Reviews stay Opus. Board Model column is the authority over a spec's Model line.
