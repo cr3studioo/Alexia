@@ -61,6 +61,14 @@ fn tools(mode: &str) -> Value {
             {"name": "secret_tool", "inputSchema": schema(json!({})),
              "_meta": {"alexia/compute": {"op": "demo.compute"}}},
         ]),
+        "compute" => json!([
+            {"name": "render", "inputSchema": schema(json!({"text": {"type": "string"}})),
+             "_meta": {"alexia/compute": {"op": "demo.compute"}}},
+        ]),
+        "undoable" => json!([
+            {"name": "set", "inputSchema": schema(json!({"key": {"type": "string"}, "value": {}}))},
+            {"name": "unset", "inputSchema": schema(json!({"key": {"type": "string"}}))},
+        ]),
         "exit" => json!([{"name": "exit", "inputSchema": schema(json!({}))}]),
         "hang" => json!([{"name": "hang", "inputSchema": schema(json!({}))}]),
         "junk" => json!([{"name": "junk", "inputSchema": schema(json!({}))}]),
@@ -116,6 +124,32 @@ fn call_tool(ctx: &Ctx, id: &Id, params: &Value) -> Option<Value> {
             }
             text_result(format!("Hello, {who}."), false)
         }
+        "render" => {
+            // The tool runs in the plugin's own folder: the file it writes is its own.
+            let path = std::env::current_dir().unwrap().join("out.txt");
+            std::fs::write(&path, s("text")).expect("write out.txt");
+            let op = params["_meta"]["alexia/compute"]["op"].clone();
+            let inputs = args["inputs"].as_array().map_or(0, Vec::len);
+            let p = path
+                .to_string_lossy()
+                .replace(std::path::MAIN_SEPARATOR, "/");
+            let uri = if p.starts_with('/') {
+                format!("file://{p}")
+            } else {
+                format!("file:///{p}")
+            };
+            json!({"content": [
+                {"type": "text", "text": format!("ran {op} with {inputs} inputs")},
+                {"type": "resource_link", "uri": uri, "name": "out.txt", "mimeType": "text/plain"},
+            ]})
+        }
+        "set" => {
+            let key = s("key");
+            let mut r = text_result(format!("set {key}"), false);
+            r["_meta"] = json!({"alexia/undo": {"tool": "unset", "arguments": {"key": key}}});
+            r
+        }
+        "unset" => text_result(format!("unset {}", s("key")), false),
         "exit" => std::process::exit(3),
         "slow" => {
             let ms = args["ms"].as_u64().unwrap_or(0);
