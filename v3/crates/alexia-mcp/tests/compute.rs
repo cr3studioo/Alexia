@@ -4,11 +4,15 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use alexia_mcp::jsonrpc::RpcError;
-use alexia_mcp::types::{CallToolResult, ClientCapabilities, CreateMessageParams, Root};
+use alexia_mcp::types::{
+    CallToolResult, ClientCapabilities, CreateMessageParams, ProgressToken, Root,
+};
 use alexia_mcp::{
-    EventSink, HostConfig, HostFacts, McpHost, NoUpcalls, PluginId, ProgressSink, Timings, Upcalls,
+    CallCtx, EventSink, HostConfig, HostFacts, McpHost, NoUpcalls, PluginId, ProgressSink, Timings,
+    Upcalls,
 };
 use alexia_store::{secrets, Layout, Store};
 use serde_json::{json, Map, Value};
@@ -137,8 +141,11 @@ async fn compute_fx(tag: &str) -> Fx {
         "worker",
         "compute",
         json!({
-            "provides": ["demo.compute"],
-            "compute": {"operations": [{"cap": "demo.compute", "summary": "Writes a file."}]}
+            "provides": ["demo.compute", "demo.slow"],
+            "compute": {"operations": [
+                {"cap": "demo.compute", "summary": "Writes a file."},
+                {"cap": "demo.slow", "summary": "Takes its time."}
+            ]}
         }),
     );
     plugin(&ext, "asker", "greet", requires("demo.compute"));
@@ -490,5 +497,67 @@ async fn failed_copy_leaves_no_folder() {
     assert_eq!(e.code, -32603);
     let left = compute_dirs(&own);
     assert!(left.is_empty(), "left behind: {left:?}");
+    fx.host.shutdown().await;
+}
+
+#[tokio::test]
+async fn cancelled_compute_stops_provider() {
+    let fx = compute_fx("cancel").await;
+    let cancel = CancellationToken::new();
+    let trigger = cancel.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        trigger.cancel();
+    });
+    let ctx = CallCtx {
+        cancel,
+        ..CallCtx::default()
+    };
+    let started = Instant::now();
+    // Far longer than the test waits; `capability_ms` is longer still.
+    let params = json!({"cap": "demo.slow", "arguments": {"ms": 120_000}});
+    let r = fx
+        .host
+        .serve_ctx_for_test(&id("worker"), "alexia/compute/run", params, ctx)
+        .await;
+    assert!(r.is_err(), "{r:?}");
+    assert!(
+        started.elapsed() < Duration::from_secs(30),
+        "{:?}",
+        started.elapsed()
+    );
+    // The provider itself saw `notifications/cancelled` and stopped.
+    let proof = fx.layout.own_dir("worker").join("cancelled.txt");
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while !proof.exists() && Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(proof.exists(), "the provider never saw the cancel");
+    fx.host.shutdown().await;
+}
+
+#[tokio::test]
+async fn compute_progress_reaches_caller() {
+    let fx = compute_fx("progress").await;
+    let (tx, mut rx) = tokio::sync::mpsc::channel(16);
+    let ctx = CallCtx {
+        progress: Some(tx),
+        ..CallCtx::default()
+    };
+    let params = json!({"cap": "demo.slow", "arguments": {"ms": 0}});
+    let out = fx
+        .host
+        .serve_ctx_for_test(&id("worker"), "alexia/compute/run", params, ctx)
+        .await
+        .unwrap();
+    assert_eq!(out["text"], "crunched");
+    let mut seen = vec![];
+    while let Ok(frame) = rx.try_recv() {
+        seen.push(frame);
+    }
+    assert_eq!(seen.len(), 2, "{seen:?}");
+    assert_eq!(seen[1].progress, 2.0);
+    assert_eq!(seen[1].total, Some(2.0));
+    assert!(matches!(seen[0].progress_token, ProgressToken::Num(_)));
     fx.host.shutdown().await;
 }

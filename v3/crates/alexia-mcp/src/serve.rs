@@ -57,6 +57,7 @@ pub(crate) async fn serve(
     host: &McpHost,
     id: &PluginId,
     call: AlexiaCall,
+    ctx: CallCtx,
 ) -> Result<Value, RpcError> {
     let Some(m) = host.manifest(id) else {
         return Err(err(code::INTERNAL_ERROR, "That plugin is not installed."));
@@ -162,7 +163,7 @@ pub(crate) async fn serve(
                 return Err(not_permitted(id, &p.cap));
             }
             let args = p.arguments.unwrap_or_default();
-            host.call_capability_as(Some(id), &p.cap, args, CallCtx::default())
+            host.call_capability_as(Some(id), &p.cap, args, ctx)
                 .await
                 .map(|r| serde_json::to_value(r).expect("serializable"))
                 .map_err(rpc_of)
@@ -180,7 +181,7 @@ pub(crate) async fn serve(
             if !declared && !requires(&m, &p.cap) {
                 return Err(not_permitted(id, &p.cap));
             }
-            compute(host, id, p).await
+            compute(host, id, p, ctx).await
         }
         AlexiaCall::AttachmentsLease(v) => attachments(host, id, &m, "lease", v).await,
         AlexiaCall::AttachmentsRelease(v) => attachments(host, id, &m, "release", v).await,
@@ -199,6 +200,8 @@ fn rpc_of(e: CallError) -> RpcError {
 }
 
 /// `path` resolved (symlinks, `..`) and required to sit inside one of `roots`.
+/// Not `alexia_core::permissions::{within, file_uri}` on purpose: core depends on this crate,
+/// not the other way round, and compute checks a plugin's own folder, not the owner's scope.
 fn inside(path: &str, roots: &[std::path::PathBuf]) -> Option<std::path::PathBuf> {
     let real = std::fs::canonicalize(path).ok()?;
     roots
@@ -261,7 +264,12 @@ fn free_name(dir: &std::path::Path, from: &std::path::Path) -> std::path::PathBu
 
 /// v2's local compute path: inputs must be the caller's own or uploads; the provider's tool
 /// runs here; the files it names are copied into the caller's own folder.
-async fn compute(host: &McpHost, id: &PluginId, p: ComputeRunParams) -> Result<Value, RpcError> {
+async fn compute(
+    host: &McpHost,
+    id: &PluginId,
+    p: ComputeRunParams,
+    ctx: CallCtx,
+) -> Result<Value, RpcError> {
     let layout = host.layout();
     let own = layout.own_dir(&id.0);
     let mut args = p.arguments.unwrap_or_default();
@@ -283,10 +291,7 @@ async fn compute(host: &McpHost, id: &PluginId, p: ComputeRunParams) -> Result<V
         }
         args.insert("inputs".into(), Value::Array(inputs));
     }
-    let (provider, result) = host
-        .compute_call(&p.cap, args, CallCtx::default())
-        .await
-        .map_err(rpc_of)?;
+    let (provider, result) = host.compute_call(&p.cap, args, ctx).await.map_err(rpc_of)?;
     let blocks = |kind: &str| {
         result
             .content

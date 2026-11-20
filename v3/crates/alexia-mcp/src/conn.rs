@@ -21,7 +21,16 @@ use crate::{CallError, ProgressSink};
 #[async_trait::async_trait]
 pub trait Incoming: Send + Sync {
     /// A request from the plugin (alexia/*, roots/list, sampling/…, ping is answered by Conn).
-    async fn request(&self, method: String, params: Option<Value>) -> Result<Value, RpcError>;
+    /// `cancel` fires on the plugin's `notifications/cancelled` (or when it goes away). With
+    /// `_meta.progressToken` in `params`, frames sent to `progress` reach the plugin as
+    /// `notifications/progress` under its token.
+    async fn request(
+        &self,
+        method: String,
+        params: Option<Value>,
+        cancel: CancellationToken,
+        progress: Option<ProgressSink>,
+    ) -> Result<Value, RpcError>;
     /// A notification from the plugin other than progress and cancelled.
     async fn notification(&self, method: String, params: Option<Value>);
 }
@@ -255,10 +264,16 @@ fn on_line(s: &Arc<Shared>, log: &StderrLog, incoming: &Arc<dyn Incoming>, line:
         Message::Request(r) => {
             let token = CancellationToken::new();
             lock(&s.incoming).insert(r.id.clone(), token.clone());
+            let progress = r
+                .params
+                .as_ref()
+                .and_then(|p| serde_json::from_value(p["_meta"]["progressToken"].clone()).ok())
+                .map(|t| forward_progress(s, t, token.clone()));
             let (s, incoming) = (Arc::clone(s), Arc::clone(incoming));
             tokio::spawn(async move {
+                let request = incoming.request(r.method, r.params, token.clone(), progress);
                 tokio::select! {
-                    out = incoming.request(r.method, r.params) => {
+                    out = request => {
                         let outcome = match out {
                             Ok(v) => Outcome::Result(v),
                             Err(e) => Outcome::Error(e),
@@ -268,6 +283,8 @@ fn on_line(s: &Arc<Shared>, log: &StderrLog, incoming: &Arc<dyn Incoming>, line:
                     () = token.cancelled() => {}
                 }
                 lock(&s.incoming).remove(&r.id);
+                // Ends this request's progress forwarding, whoever still holds the sink.
+                token.cancel();
             });
         }
         Message::Notification(n) if n.method == "notifications/progress" => {
@@ -300,4 +317,35 @@ fn on_line(s: &Arc<Shared>, log: &StderrLog, incoming: &Arc<dyn Incoming>, line:
             tokio::spawn(async move { incoming.notification(n.method, n.params).await });
         }
     }
+}
+
+/// A sink whose frames go to the plugin as `notifications/progress` under its own `token`.
+/// The forwarder ends when every sender is dropped or `done` fires (the request finished or
+/// was cancelled); it holds the connection only weakly, so a stray sink keeps nothing alive.
+fn forward_progress(
+    s: &Arc<Shared>,
+    token: ProgressToken,
+    done: CancellationToken,
+) -> ProgressSink {
+    let (tx, mut rx) = mpsc::channel::<ProgressParams>(16);
+    let s = Arc::downgrade(s);
+    tokio::spawn(async move {
+        loop {
+            // Frames already queued go out before `done` is honoured.
+            let frame = tokio::select! {
+                biased;
+                f = rx.recv() => f,
+                () = done.cancelled() => None,
+            };
+            let (Some(mut frame), Some(s)) = (frame, s.upgrade()) else {
+                break;
+            };
+            frame.progress_token = token.clone();
+            let params = serde_json::to_value(frame).expect("serializable");
+            if s.notify("notifications/progress", Some(params)).is_err() {
+                break;
+            }
+        }
+    });
+    tx
 }

@@ -2,12 +2,14 @@
 //! `process::spawn` + `Conn` against the `mcp-fixture` binary and a few shell one-liners.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use alexia_mcp::jsonrpc::RpcError;
 use alexia_mcp::testing::{spawn, stop, Conn, Incoming, Proc};
-use alexia_mcp::{CallError, Manifest, PluginDir};
+use alexia_mcp::types::{ProgressParams, ProgressToken};
+use alexia_mcp::{CallError, Manifest, PluginDir, ProgressSink};
 use alexia_store::Layout;
 use serde_json::{json, Value};
 use tokio_util::sync::CancellationToken;
@@ -37,18 +39,50 @@ fn plugin(tag: &str, run: &str, args: &[&str]) -> (PluginDir, Layout) {
     (PluginDir { path, manifest }, Layout::new(root.join("data")))
 }
 
-/// Answers `alexia/settings/get`; remembers every method it was asked.
+/// Answers `alexia/settings/get`; remembers every method it was asked. `test/wait` never
+/// answers and records when its cancel token fires; `test/progress` sends two frames.
 #[derive(Default)]
 struct Recorder {
     asked: Mutex<Vec<String>>,
+    cancel_seen: Arc<AtomicBool>,
 }
 
 #[async_trait::async_trait]
 impl Incoming for Recorder {
-    async fn request(&self, method: String, _params: Option<Value>) -> Result<Value, RpcError> {
+    async fn request(
+        &self,
+        method: String,
+        _params: Option<Value>,
+        cancel: CancellationToken,
+        progress: Option<ProgressSink>,
+    ) -> Result<Value, RpcError> {
         self.asked.lock().unwrap().push(method.clone());
         match method.as_str() {
             "alexia/settings/get" => Ok(json!({"settings": {"a": 1}})),
+            "test/wait" => {
+                // On its own task: Conn drops this future once the token fires.
+                let seen = Arc::clone(&self.cancel_seen);
+                tokio::spawn(async move {
+                    cancel.cancelled().await;
+                    seen.store(true, Ordering::SeqCst);
+                });
+                std::future::pending().await
+            }
+            "test/progress" => {
+                let sink = progress.expect("a progressToken gives a sink");
+                for n in 1..=2 {
+                    let frame = ProgressParams {
+                        // Conn puts the plugin's own token on every frame.
+                        progress_token: ProgressToken::Num(0),
+                        progress: f64::from(n),
+                        total: Some(2.0),
+                        message: None,
+                        meta: None,
+                    };
+                    sink.send(frame).await.unwrap();
+                }
+                Ok(json!({}))
+            }
             _ => Err(RpcError::method_not_found()),
         }
     }
@@ -207,6 +241,48 @@ async fn plugin_requests_reach_incoming() {
         *fx.incoming.asked.lock().unwrap(),
         vec!["alexia/settings/get".to_string()]
     );
+    fx.done().await;
+}
+
+#[tokio::test]
+async fn plugin_cancel_reaches_incoming() {
+    let fx = fixture("plugin-cancel", "greet").await;
+    let result = call(
+        &fx.conn,
+        "tools/call",
+        tool("greet", json!({"who": "ask-cancel"})),
+    )
+    .await
+    .unwrap();
+    assert_eq!(text(&result), "Hello, ask-cancel.");
+    let seen = Arc::clone(&fx.incoming.cancel_seen);
+    assert!(eventually(|| seen.load(Ordering::SeqCst)).await);
+    // The plugin is still there: it was the request that stopped, not the connection.
+    assert!(!fx.conn.closed().is_cancelled());
+    fx.done().await;
+}
+
+#[tokio::test]
+async fn plugin_progress_token_gets_frames() {
+    let fx = fixture("plugin-progress", "greet").await;
+    call(
+        &fx.conn,
+        "tools/call",
+        tool("greet", json!({"who": "ask-progress"})),
+    )
+    .await
+    .unwrap();
+    // The fixture logs each notification it receives to stderr as `note <line>`.
+    let log = fx.proc.stderr.clone();
+    let frames = || {
+        log.lines()
+            .iter()
+            .filter(|l| {
+                l.contains("notifications/progress") && l.contains(r#""progressToken":"tok-1""#)
+            })
+            .count()
+    };
+    assert!(eventually(|| frames() == 2).await, "{:#?}", log.lines());
     fx.done().await;
 }
 

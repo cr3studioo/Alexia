@@ -21,7 +21,7 @@ use crate::supervise::{self, Busy, BusyGuard, CrashLog, Stamp, Verdict, Watch};
 use crate::types::{self, CallToolParams, CallToolResult, Implementation, InitializeParams};
 use crate::{
     Answers, CallCtx, CallError, Error, EventSink, HostConfig, HostedTool, PluginDir, PluginEvent,
-    PluginId, PluginState, PluginStatus, StopReason, Upcalls, APP_VERSION,
+    PluginId, PluginState, PluginStatus, ProgressSink, StopReason, Upcalls, APP_VERSION,
 };
 
 /// Cheap to clone: everything lives behind one `Arc`.
@@ -143,8 +143,21 @@ impl McpHost {
         method: &str,
         params: Value,
     ) -> Result<Value, RpcError> {
+        self.serve_ctx_for_test(id, method, params, CallCtx::default())
+            .await
+    }
+
+    /// Test hook: as `serve_for_test`, with the plugin's cancel token and progress sink.
+    #[doc(hidden)]
+    pub async fn serve_ctx_for_test(
+        &self,
+        id: &PluginId,
+        method: &str,
+        params: Value,
+        ctx: CallCtx,
+    ) -> Result<Value, RpcError> {
         match AlexiaCall::parse(method, Some(params))? {
-            Some(call) => crate::serve::serve(self, id, call).await,
+            Some(call) => crate::serve::serve(self, id, call, ctx).await,
             None => Err(not_alexia(method)),
         }
     }
@@ -1279,7 +1292,8 @@ fn hosted(id: &PluginId, tool: types::Tool) -> HostedTool {
         tool,
         provides,
         hidden,
-        reviewed: true,
+        // Only `tools()`, having read `_core.unreviewed`, may say otherwise.
+        reviewed: false,
     }
 }
 
@@ -1291,7 +1305,13 @@ struct Handler {
 
 #[async_trait::async_trait]
 impl Incoming for Handler {
-    async fn request(&self, method: String, params: Option<Value>) -> Result<Value, RpcError> {
+    async fn request(
+        &self,
+        method: String,
+        params: Option<Value>,
+        cancel: CancellationToken,
+        progress: Option<ProgressSink>,
+    ) -> Result<Value, RpcError> {
         let Some(inner) = self.host.upgrade() else {
             return Err(RpcError::new(
                 code::INTERNAL_ERROR,
@@ -1301,7 +1321,14 @@ impl Incoming for Handler {
         if method.starts_with("alexia/") {
             let host = McpHost { inner };
             return match AlexiaCall::parse(&method, params)? {
-                Some(call) => crate::serve::serve(&host, &self.id, call).await,
+                Some(call) => {
+                    let ctx = CallCtx {
+                        cancel,
+                        progress,
+                        ..CallCtx::default()
+                    };
+                    crate::serve::serve(&host, &self.id, call, ctx).await
+                }
                 None => Err(not_alexia(&method)),
             };
         }
@@ -1312,7 +1339,7 @@ impl Incoming for Handler {
             "sampling/createMessage" => {
                 let p = serde_json::from_value(params.unwrap_or(Value::Null))
                     .map_err(|e| RpcError::new(code::INVALID_PARAMS, e.to_string()))?;
-                up.sample(&self.id, p, None, CancellationToken::new()).await
+                up.sample(&self.id, p, progress, cancel).await
             }
             "elicitation/create" => up.elicit(&self.id, params.unwrap_or(Value::Null)).await,
             _ => Err(RpcError::method_not_found()),
@@ -1332,5 +1359,19 @@ impl Incoming for Handler {
         (inner.events)(PluginEvent::ToolsChanged {
             plugin: self.id.clone(),
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hosted_tool_unreviewed_until_list_read() {
+        let tool: types::Tool =
+            serde_json::from_value(json!({"name": "t", "inputSchema": {"type": "object"}}))
+                .unwrap();
+        let t = hosted(&PluginId("a".into()), tool);
+        assert!(!t.reviewed, "a tool is unreviewed until the list was read");
     }
 }
