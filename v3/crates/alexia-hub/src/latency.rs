@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! The latency dashboard (SP-09). Reads only the `spans` table.
-#![allow(dead_code)] // main.rs wires `run` in P1-17.
 
 use alexia_store::{Ms, SpanRow, Store};
 use std::fmt::Write;

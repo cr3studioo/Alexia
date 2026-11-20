@@ -2,13 +2,11 @@
 //! The hub watchdog: heartbeat, offline-gap sentence, in-hub restart with backoff, and the
 //! Windows Task Scheduler task that brings the hub back after a reboot or a crash.
 // P1-17 wires these into main.rs; until then the binary does not call them.
-#![allow(dead_code)]
 
 use alexia_store::{civil_utc, now_ms, Ms, Store};
-use std::future::Future;
 use std::path::Path;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
 pub const TASK_NAME: &str = "Alexia hub";
@@ -109,65 +107,6 @@ pub async fn heartbeat(store: Arc<Store>, cancel: CancellationToken) {
 
 pub fn clean_stop(store: &Store, now: Ms) {
     put(store, CLEAN, now);
-}
-
-/// Run `f` until cancelled; when it returns or errors, log and run it again after 1 s doubling
-/// to 60 s (reset after 10 minutes up). For the gateway, catalog refresh and bridge loops.
-pub async fn supervise<F, Fut>(name: &'static str, cancel: CancellationToken, f: F)
-where
-    F: FnMut(CancellationToken) -> Fut,
-    Fut: Future<Output = Result<(), String>>,
-{
-    supervise_with(
-        name,
-        cancel,
-        f,
-        Duration::from_secs(1),
-        Duration::from_secs(5),
-    )
-    .await
-}
-
-/// `unit` is the 1 s of the spec; tests shrink it (tokio's `test-util` clock is not enabled).
-async fn supervise_with<F, Fut>(
-    name: &'static str,
-    cancel: CancellationToken,
-    mut f: F,
-    unit: Duration,
-    grace: Duration,
-) where
-    F: FnMut(CancellationToken) -> Fut,
-    Fut: Future<Output = Result<(), String>>,
-{
-    let mut delay = unit;
-    while !cancel.is_cancelled() {
-        let started = Instant::now();
-        let fut = f(cancel.child_token());
-        tokio::pin!(fut);
-        let result = tokio::select! {
-            _ = cancel.cancelled() => {
-                // The child token is cancelled too; give the service a moment to stop cleanly.
-                let _ = tokio::time::timeout(grace, &mut fut).await;
-                return;
-            }
-            r = &mut fut => r,
-        };
-        if cancel.is_cancelled() {
-            return;
-        }
-        if started.elapsed() >= unit * 600 {
-            delay = unit;
-        }
-        match result {
-            Err(e) => tracing::warn!("{name} stopped: {e}. Starting it again in {delay:?}."),
-            Ok(()) => tracing::warn!("{name} ended. Starting it again in {delay:?}."),
-        }
-        tokio::select! {
-            _ = cancel.cancelled() => return,
-            _ = tokio::time::sleep(delay) => {}
-        }
-        delay = (delay * 2).min(unit * 60);
-    }
 }
 
 fn xml_escape(s: &str) -> String {
@@ -301,7 +240,6 @@ pub fn uninstall() -> Result<(), String> {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::Mutex;
 
     // 2023-11-14 22:13:20 UTC.
     const NOW: Ms = 1_700_000_000_000;
@@ -341,71 +279,6 @@ mod tests {
         assert_eq!(offline_gap_at(&s, NOW, || 0), None);
     }
 
-    #[tokio::test]
-    async fn supervise_restarts_with_backoff() {
-        let unit = Duration::from_millis(40);
-        let calls = Arc::new(Mutex::new(Vec::<Instant>::new()));
-        let cancel = CancellationToken::new();
-        let c2 = calls.clone();
-        let task = tokio::spawn(supervise_with(
-            "test",
-            cancel.clone(),
-            move |token: CancellationToken| {
-                let mut v = c2.lock().unwrap();
-                v.push(Instant::now());
-                let n = v.len();
-                async move {
-                    if n <= 3 {
-                        Err("boom".to_string())
-                    } else {
-                        token.cancelled().await;
-                        Ok(())
-                    }
-                }
-            },
-            unit,
-            Duration::from_secs(5),
-        ));
-        tokio::time::timeout(Duration::from_secs(30), async {
-            while calls.lock().unwrap().len() < 4 {
-                tokio::time::sleep(Duration::from_millis(10)).await;
-            }
-        })
-        .await
-        .unwrap();
-        cancel.cancel();
-        tokio::time::timeout(Duration::from_secs(30), task)
-            .await
-            .unwrap()
-            .unwrap();
-        let t = calls.lock().unwrap().clone();
-        assert_eq!(t.len(), 4);
-        for (i, want) in [1u32, 2, 4].into_iter().enumerate() {
-            assert!(t[i + 1] - t[i] >= unit * want, "gap {i} was too short");
-        }
-    }
-
-    #[tokio::test]
-    async fn supervise_stops_on_cancel() {
-        let cancel = CancellationToken::new();
-        let calls = Arc::new(AtomicUsize::new(0));
-        let c2 = calls.clone();
-        let task = tokio::spawn(supervise("test", cancel.clone(), move |token| {
-            c2.fetch_add(1, Ordering::SeqCst);
-            async move {
-                token.cancelled().await;
-                Ok(())
-            }
-        }));
-        tokio::time::sleep(Duration::from_millis(100)).await;
-        cancel.cancel();
-        tokio::time::timeout(Duration::from_secs(30), task)
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(calls.load(Ordering::SeqCst), 1);
-    }
-
     #[test]
     fn no_heartbeat_does_not_ask_for_the_offset() {
         let asked = AtomicUsize::new(0);
@@ -415,29 +288,6 @@ mod tests {
         });
         assert_eq!(got, None);
         assert_eq!(asked.load(Ordering::SeqCst), 0);
-    }
-
-    #[tokio::test]
-    async fn cancelled_service_gets_grace() {
-        let cancel = CancellationToken::new();
-        let flag = Arc::new(AtomicUsize::new(0));
-        let f2 = flag.clone();
-        let task = tokio::spawn(supervise("test", cancel.clone(), move |token| {
-            let f3 = f2.clone();
-            async move {
-                token.cancelled().await;
-                tokio::time::sleep(Duration::from_millis(200)).await;
-                f3.store(1, Ordering::SeqCst);
-                Ok(())
-            }
-        }));
-        tokio::time::sleep(Duration::from_millis(100)).await;
-        cancel.cancel();
-        tokio::time::timeout(Duration::from_secs(30), task)
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(flag.load(Ordering::SeqCst), 1);
     }
 
     #[test]
