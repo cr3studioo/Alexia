@@ -11,14 +11,14 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use alexia_store::{now_ms, Ms, Store, Try, TryRow, Usage};
+use alexia_store::{now_ms, Content, Ms, Part, Store, Try, TryRow, Usage};
 use tokio::sync::mpsc;
 use tokio::task::{JoinHandle, JoinSet};
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
 use crate::catalog::{Candidate, Catalog};
-use crate::{Budget, ChatChunk, ChatDone, ChatRequest, Provider, ProviderError};
+use crate::{ms_since, Budget, ChatChunk, ChatDone, ChatRequest, Provider, ProviderError};
 
 /// v2's `STRIKE_HALF_LIFE`: a failure counts one when it happens and halves every hour.
 pub const STRIKE_HALF_LIFE_MS: f64 = 60.0 * 60.0 * 1000.0;
@@ -32,6 +32,79 @@ const MAX_STARTED: usize = 6;
 /// How many successful tries the first-byte median is taken over.
 const MEDIAN_OF: usize = 10;
 const NO_FREE: &str = "No free model can answer right now.";
+/// v2 `trim.ts` `PER_TOKEN`: characters per token.
+const PER_TOKEN: usize = 3;
+/// A model whose window is unknown is trusted with requests under this many tokens only.
+const UNKNOWN_WINDOW_OK: u32 = 8_192;
+
+/// What a request asks of a model.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Needs {
+    pub tools: bool,
+    pub vision: bool,
+    pub tokens: u32,
+}
+
+impl Needs {
+    pub fn of(req: &ChatRequest) -> Needs {
+        let mut chars = req.system.as_deref().map_or(0, |s| s.chars().count());
+        let mut vision = false;
+        for (_, body) in &req.messages {
+            match &body.content {
+                Content::Text(t) => chars += t.chars().count(),
+                Content::Parts(parts) => {
+                    for part in parts {
+                        match part {
+                            Part::Text { text } => chars += text.chars().count(),
+                            Part::Image { .. } => vision = true, // not counted: a data URL is not text
+                        }
+                    }
+                }
+            }
+            if let Some(calls) = &body.calls {
+                chars += serde_json::to_string(calls).map_or(0, |s| s.len());
+            }
+        }
+        if !req.tools.is_empty() {
+            chars += serde_json::to_string(&req.tools).map_or(0, |s| s.len());
+        }
+        Needs {
+            tools: !req.tools.is_empty(),
+            vision,
+            tokens: u32::try_from(chars.div_ceil(PER_TOKEN)).unwrap_or(u32::MAX),
+        }
+    }
+
+    fn tools_ok(&self, c: &Candidate) -> bool {
+        !self.tools || c.tools
+    }
+    fn vision_ok(&self, c: &Candidate) -> bool {
+        !self.vision || c.vision
+    }
+    fn room_ok(&self, c: &Candidate) -> bool {
+        if c.context == 0 {
+            self.tokens < UNKNOWN_WINDOW_OK
+        } else {
+            self.tokens <= c.context
+        }
+    }
+    fn fits(&self, c: &Candidate) -> bool {
+        self.tools_ok(c) && self.vision_ok(c) && self.room_ok(c)
+    }
+
+    /// The sentence for a list the filter emptied: the first need no candidate meets alone.
+    fn unmet(&self, list: &[Candidate]) -> &'static str {
+        if !list.iter().any(|c| self.tools_ok(c)) {
+            "No free model that can use tools can answer right now."
+        } else if !list.iter().any(|c| self.vision_ok(c)) {
+            "No free model that can see pictures can answer right now."
+        } else if !list.iter().any(|c| self.room_ok(c)) {
+            "No free model with a window this large can answer right now."
+        } else {
+            "No free model that can do all of this can answer right now."
+        }
+    }
+}
 
 pub struct Router {
     providers: HashMap<String, Arc<dyn Provider>>,
@@ -94,6 +167,13 @@ impl Router {
         self.rank(now, Budget::CHAT)
     }
 
+    /// `ranked`, without the models that cannot do what `needs` asks.
+    pub fn ranked_for(&self, now: Ms, needs: &Needs) -> Vec<Candidate> {
+        let mut list = self.ranked(now);
+        list.retain(|c| needs.fits(c));
+        list
+    }
+
     fn rank(&self, now: Ms, budget: Budget) -> Vec<Candidate> {
         let tries = self
             .store
@@ -151,9 +231,18 @@ impl Router {
         out: mpsc::Sender<ChatChunk>,
         cancel: CancellationToken,
     ) -> Result<ChatDone, ProviderError> {
-        let queue = self.rank(now_ms(), budget);
+        let now = now_ms();
+        let needs = Needs::of(req);
+        let mut queue = self.rank(now, budget);
         if queue.is_empty() {
             return Err(ProviderError::Other(NO_FREE.into()));
+        }
+        if !queue.iter().all(|c| needs.fits(c)) {
+            let all = std::mem::take(&mut queue);
+            queue = all.iter().filter(|c| needs.fits(c)).cloned().collect();
+            if queue.is_empty() {
+                return Err(ProviderError::Other(needs.unmet(&all).into()));
+            }
         }
         let mut race = Race {
             router: self,
@@ -246,7 +335,7 @@ impl Router {
                     };
                 }
                 let result = attempt.await.unwrap_or_else(|e| Err(stopped(e)));
-                (result, first_ms, elapsed_ms(started))
+                (result, first_ms, ms_since(started.into_std()))
             }
         };
 
@@ -332,7 +421,7 @@ impl Race<'_> {
                 Some(chunk) = rx.recv() => Ok(chunk),
                 r = &mut attempt => Err(r),
             };
-            let ms = elapsed_ms(started);
+            let ms = ms_since(started.into_std());
             let heard = match got {
                 Ok(chunk) => Heard::First {
                     chunk,
@@ -420,8 +509,4 @@ fn outcome(e: &ProviderError) -> &'static str {
 
 fn stopped(e: tokio::task::JoinError) -> ProviderError {
     ProviderError::Other(format!("the request stopped: {e}"))
-}
-
-fn elapsed_ms(since: Instant) -> u32 {
-    u32::try_from(since.elapsed().as_millis()).unwrap_or(u32::MAX)
 }
