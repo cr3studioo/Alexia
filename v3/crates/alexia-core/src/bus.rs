@@ -93,6 +93,12 @@ pub enum Event {
         keys: Vec<String>,
     },
     Plugin(alexia_mcp::PluginEvent),
+    /// An approval was answered (AC-10), from whichever chat answered it.
+    Answered {
+        at: Ms,
+        approval: i64,
+        answer: bool,
+    },
 
     // ---- scheduler ----
     Fired {
