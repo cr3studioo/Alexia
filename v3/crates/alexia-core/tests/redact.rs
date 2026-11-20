@@ -120,6 +120,24 @@ fn where_he_is_goes_and_the_city_does_not() {
 }
 
 #[test]
+fn two_postcodes_in_one_context_both_go() {
+    assert_eq!(
+        redact_text("110 00 a 120 00 Praha").0,
+        "[redacted] a [redacted] Praha"
+    );
+}
+
+#[test]
+fn location_key_in_json_values_and_tool_arguments_is_redacted() {
+    let v =
+        serde_json::json!({"summary": "shift", "location": "Cafe Slavia", "n": {"Address": "x"}});
+    let out = alexia_core::redact::redact_json(&v);
+    assert_eq!(out["location"], "[redacted]");
+    assert_eq!(out["n"]["Address"], "[redacted]");
+    assert_eq!(out["summary"], "shift");
+}
+
+#[test]
 fn no_false_positive_on_plain_sentence() {
     for kept in [
         "I live in Prague and study at CTU FEL",
@@ -192,6 +210,31 @@ fn request_redacts_system_and_calls() {
     // Deduped, first seen first.
     assert_eq!(k, kinds(&["api key", "street"]));
     assert_eq!(summarise(&k), "api key×1, street×1");
+}
+
+#[test]
+fn location_key_inside_tool_arguments_is_redacted() {
+    let req = ChatRequest {
+        messages: vec![(
+            Role::Assistant,
+            MessageBody {
+                calls: Some(vec![ToolCall {
+                    id: "1".into(),
+                    name: "calendar.add".into(),
+                    arguments: r#"{"title":"shift","location":"Cafe Slavia"}"#.into(),
+                }]),
+                ..body(Content::Text(String::new()))
+            },
+        )],
+        system: None,
+        tools: vec![],
+        max_tokens: None,
+    };
+    let (out, k) = redact_request(&req);
+    let args: serde_json::Value =
+        serde_json::from_str(&out.messages[0].1.calls.as_ref().unwrap()[0].arguments).unwrap();
+    assert_eq!(args, json!({"title":"shift","location":"[redacted]"}));
+    assert_eq!(k, kinds(&["location field"]));
 }
 
 #[test]

@@ -170,16 +170,25 @@ fn apply<'a>(
         }
     }
     for r in rules {
-        out =
-            r.re.replace_all(&out, |c: &Captures| {
-                kinds.push(r.kind.to_string());
-                match (r.keep, c.get(1)) {
-                    (Keep::Key, Some(k)) => format!("{}{PLACEHOLDER}\"", k.as_str()),
-                    (Keep::After, Some(k)) => format!("{PLACEHOLDER}{}", k.as_str()),
-                    _ => PLACEHOLDER.to_string(),
-                }
-            })
-            .into_owned();
+        // Keep::After writes its context back unredacted, so a second postcode inside it
+        // needs another pass: repeat until the text stops changing (each pass removes one).
+        loop {
+            let next =
+                r.re.replace_all(&out, |c: &Captures| {
+                    kinds.push(r.kind.to_string());
+                    match (r.keep, c.get(1)) {
+                        (Keep::Key, Some(k)) => format!("{}{PLACEHOLDER}\"", k.as_str()),
+                        (Keep::After, Some(k)) => format!("{PLACEHOLDER}{}", k.as_str()),
+                        _ => PLACEHOLDER.to_string(),
+                    }
+                })
+                .into_owned();
+            let again = matches!(r.keep, Keep::After) && next != out;
+            out = next;
+            if !again {
+                break;
+            }
+        }
     }
     (out, kinds)
 }
@@ -201,6 +210,11 @@ pub fn redact_known(text: &str, extra: &[String]) -> (String, Vec<String>) {
     apply(SECRETS.iter().chain(LOCATIONS.iter()), text, extra)
 }
 
+static LOCATION_KEY: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)^(?:location|address|street|venue|place|where|geo|coordinates|coords|lat|lng|lon|latitude|longitude|postcode|postal_code|zip|zipcode|formatted_address)$")
+        .expect("location key pattern")
+});
+
 fn walk(v: &Value, kinds: &mut Vec<String>) -> Value {
     match v {
         Value::String(s) => {
@@ -209,9 +223,19 @@ fn walk(v: &Value, kinds: &mut Vec<String>) -> Value {
             Value::String(t)
         }
         Value::Array(a) => Value::Array(a.iter().map(|x| walk(x, kinds)).collect()),
-        Value::Object(o) => {
-            Value::Object(o.iter().map(|(k, x)| (k.clone(), walk(x, kinds))).collect())
-        }
+        Value::Object(o) => Value::Object(
+            o.iter()
+                .map(|(k, x)| match x {
+                    // The "location field" rule matches `"key":"value"` text, which a parsed
+                    // leaf no longer has; so the key decides here (same key list as the rule).
+                    Value::String(_) if LOCATION_KEY.is_match(k) => {
+                        kinds.push("location field".to_string());
+                        (k.clone(), Value::String(PLACEHOLDER.to_string()))
+                    }
+                    _ => (k.clone(), walk(x, kinds)),
+                })
+                .collect(),
+        ),
         other => other.clone(),
     }
 }
