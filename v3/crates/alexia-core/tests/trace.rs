@@ -320,3 +320,58 @@ fn resume_keeps_live_row_and_counts_on() {
     let text = replay(&store, "r8").unwrap().unwrap();
     assert!(text.contains("note: Resumed after a restart at step 2."));
 }
+
+#[test]
+fn resumed_steps_get_distinct_numbers_and_bodies() {
+    let (store, bus, session) = setup();
+    let t = begin(&store, &bus, session, "r9");
+    t.step(&step(1, "a", json!({}), None));
+    t.step(&step(2, "b", json!({}), None));
+    drop(t);
+    let t = Trace::resume(
+        store.clone(),
+        bus.clone(),
+        RunId("r9".into()),
+        session,
+        Origin::Desktop,
+        false,
+        None,
+        2,
+    )
+    .unwrap();
+    for n in 1..=3 {
+        let s = step(n, &format!("s{n}"), json!({}), Some(outcome("ok", true)));
+        t.step(&s);
+        t.audited(&s, None, "run", "ran", None).unwrap();
+    }
+    let rows = store.audit_for_run("r9").unwrap();
+    assert_eq!(rows.iter().map(|r| r.step).collect::<Vec<_>>(), [3, 4, 5]);
+    t.end(&RunEnd::Answered).unwrap();
+    let body = store.run_body("r9").unwrap().unwrap();
+    let steps = body["steps"].as_array().unwrap();
+    assert_eq!(
+        steps.iter().map(|s| s["n"].clone()).collect::<Vec<_>>(),
+        [3, 4, 5]
+    );
+    assert_eq!(
+        steps.iter().map(|s| s["name"].clone()).collect::<Vec<_>>(),
+        ["s1", "s2", "s3"]
+    );
+}
+
+#[test]
+fn resume_without_live_row_is_an_error() {
+    let (store, bus, session) = setup();
+    let r = Trace::resume(
+        store.clone(),
+        bus.clone(),
+        RunId("ghost".into()),
+        session,
+        Origin::Desktop,
+        false,
+        None,
+        2,
+    );
+    assert!(r.is_err());
+    assert_eq!(live(&store), 0);
+}

@@ -111,6 +111,14 @@ impl Trace {
         steps_done: u32,
     ) -> Result<Trace> {
         // `_background` and `_parent` are already on the surviving row.
+        // `live_touch` is a plain UPDATE that matches nothing without error, so look first.
+        if !store.live_runs()?.iter().any(|r| r.run == run.0) {
+            return Err(alexia_store::Error::Refused(format!(
+                "Run {} has no live row to resume.",
+                run.0
+            ))
+            .into());
+        }
         store.live_touch(&run.0, steps_done, now_ms())?;
         let note = format!("Resumed after a restart at step {steps_done}.");
         Ok(Self::open(
@@ -159,14 +167,10 @@ impl Trace {
         self.body.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// A step's number in this run. A resumed run's counter continues after `base`: a step
-    /// numbered at or below it is counted from there.
+    /// A step's number in this run: the caller counts from 1 in this process, and a resumed
+    /// run continues after `base` (0 for a fresh run).
     fn number(&self, step: &Step) -> u32 {
-        if step.n > self.base {
-            step.n
-        } else {
-            self.base + step.n
-        }
+        self.base + step.n
     }
 
     pub fn phase(&self, p: Phase) {
