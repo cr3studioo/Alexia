@@ -136,15 +136,15 @@ impl Store {
     }
 
     /// True when `path` exists and does not start with SQLite's plain header: SQLCipher
-    /// encrypts the whole file, header included. A missing or empty file is not encrypted.
+    /// encrypts the whole file, header included. A missing or empty file, or a name that is not
+    /// a file at all (`:memory:`), is not encrypted.
     pub fn is_encrypted(path: &Path) -> Result<bool> {
         use std::io::Read;
+        if !path.is_file() {
+            return Ok(false);
+        }
         let mut head = [0u8; 16];
-        let n = match std::fs::File::open(path) {
-            Ok(f) => f.take(16).read(&mut head)?,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
-            Err(e) => return Err(e.into()),
-        };
+        let n = std::fs::File::open(path)?.take(16).read(&mut head)?;
         Ok(n > 0 && head[..n] != b"SQLite format 3\0"[..n])
     }
 
