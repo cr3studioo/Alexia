@@ -268,3 +268,13 @@
 2026-11-20 P2-18 build done (attachmentInputs no store; stagesOf not ported); review dispatched. P2-43 review 2: changes (turn-line assert missing, report claimed it). Fixer opus try 3 ctx_02a084e13359.
 2026-11-20 P2-11 blocked: 2 existing hits (mod.rs:61 telegram, api.rs:309 voice = Bot API field). Decision: fix mod.rs per rule; api.rs const + marker, allowed 1 line. Spec gap, no try. Continued ctx_9ced06271b68.
 2026-11-20 Merged plan after review 4 (c0a9cd9): new P2-45..49; P2-19/20/24/25/26/38/41 specs changed; P2-38 now opus (wiring only), CLI verbs -> P2-48; P2-24 back to todo (waits P2-47). P2-46: unannotated non-read-only tools count destructive (deliberate v2 split).
+2026-11-20 P2-18 review: changes (undo tool not namespaced; file:// host accepted; cancel test weak). Fix queued sonnet; first in line. Follow-up later: attachmentInputs needs a picture store.
+2026-11-20 10:45 Machine overloaded: 6 builders + reviewers each run cargo test --workspace (15+ min, telegram flake makes them rerun). P2-06 review alive after 5 h. Keep builders <= 5 until P2-43 merges.
+2026-11-20 P2-11 done (api.rs sendVoice uses v2-import marker); review dispatched.
+2026-11-20 P2-43 fixer done (47 turn lines asserted; 1 unexplained fail right after compile, then 3 passes); review 3 dispatched. P2-18 fix dispatched ctx_d3cdfa31c962.
+2026-11-20 P2-18 fix done; review 2 dispatched. Dispatched P2-46 opus.
+2026-11-20 P2-11 review: changes (stringify! evasion in mod.rs; v2-import marker misused in api.rs). Decision: move telegram bit into channels/telegram; new marker 'invariant: bot api term' only under channels/telegram. Fix try 2 sonnet ctx_203074a48430 (6 builders, small).
+2026-11-20 P2-43 review 3: changes (dropping --check lost missing-ack/bridge/gap checks; line count accepts 'ack -'). Spec change 2: p95 rule moves into latency.rs check, test uses --check again. Spec churn, not counted. ctx_9724002b9b9e.
+2026-11-20 P2-18 approve (review 2), merged locally. Filed P2-50 (security: file:////srv UNC -> SMB stat, NTLM leak; call() limits); in P2-38 deps. Attachment inputs follow-up: check P2-21 covers it.
+2026-11-20 P2-11 fix done (telegram::pairing_entry; bot api term marker); review 2 dispatched. New flake seen: alexia-mcp conn::out_of_order_answers under load.
+2026-11-20 P2-18 gate: only telegram flake (P2-43), 50 other suites ok, invariants ok; pushed.
