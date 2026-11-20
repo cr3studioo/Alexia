@@ -6,10 +6,12 @@
 
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, HashSet};
+use std::path::{Component, Path};
 use std::sync::{Arc, Mutex, MutexGuard, RwLock, Weak};
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Map, Value};
+use tokio::process::{ChildStdin, ChildStdout};
 use tokio_util::sync::CancellationToken;
 
 use crate::alexia::AlexiaCall;
@@ -19,6 +21,7 @@ use crate::manifest::{Lifetime, Manifest};
 use crate::process::{self, Proc, StderrLog};
 use crate::supervise::{self, Busy, BusyGuard, CrashLog, Stamp, Verdict, Watch};
 use crate::types::{self, CallToolParams, CallToolResult, Implementation, InitializeParams};
+use crate::wasm::{Limits, WasmPlugin};
 use crate::{
     Answers, CallCtx, CallError, Error, EventSink, HostConfig, HostedTool, PluginDir, PluginEvent,
     PluginId, PluginState, PluginStatus, ProgressSink, StopReason, Upcalls, APP_VERSION,
@@ -63,7 +66,7 @@ struct Slot {
 }
 
 struct Running {
-    proc: Proc,
+    proc: Guest,
     conn: Arc<Conn>,
     gen: u64,
     /// Ends this process's watcher: a stop the host asked for, not a crash.
@@ -798,7 +801,7 @@ impl McpHost {
             .get(id)?
             .running
             .as_ref()
-            .map(|r| r.proc.pid)
+            .map(|r| r.proc.pid())
     }
 
     /// The last 500 stderr lines, redacted. Empty if the plugin never ran.
@@ -892,7 +895,7 @@ impl McpHost {
         // ponytail: a call still in flight holds its own `Arc<Conn>`, so stdin stays open and
         // the process is killed after the grace period instead.
         drop(conn);
-        process::stop(
+        stop_guest(
             proc,
             Duration::from_millis(self.inner.cfg.timings.exit_grace_ms),
         )
@@ -990,16 +993,9 @@ impl McpHost {
             })
             .collect();
         let cfg = &self.inner.cfg;
-        let spawned = process::spawn(&dir, &cfg.layout, &cfg.node, secrets);
-        let mut proc = match spawned {
-            Ok(proc) => proc,
-            Err(e) => return Err(self.failed(id, fail(&e), None)),
-        };
-        let log = proc.stderr.clone();
-        let (Some(stdin), Some(stdout)) = (proc.child.stdin.take(), proc.child.stdout.take())
-        else {
-            process::stop(proc, Duration::ZERO).await;
-            return Err(self.failed(id, fail(&"no stdio"), Some(log)));
+        let (proc, stdin, stdout, log) = match start_guest(&dir, cfg, secrets) {
+            Ok(g) => g,
+            Err((e, log)) => return Err(self.failed(id, fail(&e), log)),
         };
         let handler = Arc::new(Handler {
             host: Arc::downgrade(&self.inner),
@@ -1032,13 +1028,13 @@ impl McpHost {
             Ok(r) => r.protocol_version,
             Err(sentence) => {
                 drop(conn);
-                process::stop(proc, grace).await;
+                stop_guest(proc, grace).await;
                 return Err(self.failed(id, sentence, Some(log)));
             }
         };
         if spoken != dir.manifest.mcp_protocol {
             drop(conn);
-            process::stop(proc, grace).await;
+            stop_guest(proc, grace).await;
             let sentence = mcp_refusal(&name, &spoken);
             if let Some(slot) = lock(&self.inner.plugins).get_mut(id) {
                 refuse(slot, sentence.clone());
@@ -1052,7 +1048,7 @@ impl McpHost {
         }
         let _ = conn.notify("notifications/initialized", None).await;
 
-        let pid = proc.pid;
+        let pid = proc.pid();
         let busy = Arc::new(Busy::new());
         let stop = CancellationToken::new();
         let gen = {
@@ -1150,7 +1146,7 @@ impl McpHost {
             // Its stdout closed: it is on its way out, give it the time to report a code.
             Duration::from_millis(self.inner.cfg.timings.exit_grace_ms)
         };
-        let exit_code = process::stop(proc, grace).await;
+        let exit_code = stop_guest(proc, grace).await;
         self.emit(PluginEvent::Crashed {
             plugin: id.clone(),
             exit_code,
@@ -1226,7 +1222,7 @@ impl McpHost {
         {
             stop.cancel();
             drop(conn);
-            process::stop(proc, Duration::ZERO).await;
+            stop_guest(proc, Duration::ZERO).await;
         }
     }
 }
@@ -1359,6 +1355,80 @@ impl Incoming for Handler {
         (inner.events)(PluginEvent::ToolsChanged {
             plugin: self.id.clone(),
         });
+    }
+}
+
+/// What a plugin runs in: a child process, or a wasm instance inside the hub (SP-10).
+pub(crate) enum Guest {
+    Process(Proc),
+    Wasm(WasmPlugin),
+}
+
+impl Guest {
+    /// A wasm guest has no process: 0.
+    fn pid(&self) -> u32 {
+        match self {
+            Guest::Process(p) => p.pid,
+            Guest::Wasm(_) => 0,
+        }
+    }
+}
+
+/// `process::stop` for either kind: wait `grace` for it to leave, then kill it.
+async fn stop_guest(guest: Guest, grace: Duration) -> Option<i32> {
+    match guest {
+        Guest::Process(p) => process::stop(p, grace).await,
+        Guest::Wasm(w) => w.stop(grace).await,
+    }
+}
+
+type Started = (Guest, ChildStdin, ChildStdout, StderrLog);
+
+/// Starts the plugin's process or wasm instance and takes its stdio. An error comes with
+/// the log to keep, if there is one.
+fn start_guest(
+    dir: &PluginDir,
+    cfg: &crate::HostConfig,
+    secrets: Vec<String>,
+) -> Result<Started, (String, Option<StderrLog>)> {
+    let entry = &dir.manifest.entry;
+    if entry.run == "wasm" {
+        let id = &dir.manifest.id;
+        // `args[0]` is the module, a file inside the plugin folder.
+        let rel = Path::new(entry.args.first().map(String::as_str).unwrap_or_default());
+        if entry.args.len() != 1 || !rel.components().all(|c| matches!(c, Component::Normal(_))) {
+            return Err((
+                "the manifest must name one .wasm file in its folder".into(),
+                None,
+            ));
+        }
+        let own = dir
+            .manifest
+            .requires
+            .iter()
+            .any(|r| r.cap == "fs.own_dir")
+            .then(|| cfg.layout.own_dir(id));
+        if let Some(own) = &own {
+            std::fs::create_dir_all(own).map_err(|e| (e.to_string(), None))?;
+        }
+        let limits = Limits {
+            start_ms: cfg.timings.start_ms,
+            ..Limits::default()
+        };
+        let mut wasm = WasmPlugin::spawn_as(&dir.path.join(rel), own.as_deref(), limits, id)
+            .map_err(|e| (e.to_string(), None))?;
+        let (stdin, stdout) = wasm.take_stdio().expect("fresh instance has its pipes");
+        return Ok((Guest::Wasm(wasm), stdin, stdout, StderrLog::new(secrets)));
+    }
+    let mut proc =
+        process::spawn(dir, &cfg.layout, &cfg.node, secrets).map_err(|e| (e.to_string(), None))?;
+    let log = proc.stderr.clone();
+    match (proc.child.stdin.take(), proc.child.stdout.take()) {
+        (Some(stdin), Some(stdout)) => Ok((Guest::Process(proc), stdin, stdout, log)),
+        _ => {
+            // Dropping `proc` kills it.
+            Err(("no stdio".into(), Some(log)))
+        }
     }
 }
 
