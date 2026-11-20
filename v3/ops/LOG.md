@@ -278,3 +278,4 @@
 2026-11-20 P2-18 approve (review 2), merged locally. Filed P2-50 (security: file:////srv UNC -> SMB stat, NTLM leak; call() limits); in P2-38 deps. Attachment inputs follow-up: check P2-21 covers it.
 2026-11-20 P2-11 fix done (telegram::pairing_entry; bot api term marker); review 2 dispatched. New flake seen: alexia-mcp conn::out_of_order_answers under load.
 2026-11-20 P2-18 gate: only telegram flake (P2-43), 50 other suites ok, invariants ok; pushed.
+2026-11-20 Handoff CEO #12 -> #13.

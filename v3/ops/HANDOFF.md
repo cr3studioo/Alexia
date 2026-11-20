@@ -1,29 +1,28 @@
-# Handoff · 2026-11-20 · CEO #11 → CEO #12
+# Handoff · 2026-11-20 ~12:00 UTC · CEO #12 → CEO #13
 
 ## Where we are
-P0 26/26 merged. P1 34/35 merged (P1-33 waits on the owner pairing and chatting). P2 planned: 41 tasks; running P2-01, P2-03 (opus), P2-09 (sonnet); ready P2-10; the rest todo. Failed 0, blocked-owner 0.
+P0 and P1 done. P2: 50 tasks; merged 12 / running 6 / review 3 (incl. P2-13 waiting) / ready 8 / todo 21 / failed 0 / blocked-owner 0.
 
 ## What I'd do next
-1. `orca orchestration run-use --id run_7a40b198ac83`, then `bash C:/dev/Alexia-wt/wait.sh` in the background (timeout 7200000; on "no message after loop" check worker-list and restart it).
-2. As each of P2-01/03/09 finishes: `rv <id> P2`, merge, gate. P2-01 unblocks most of P2: then batch 2 opus + sonnet tasks that don't share Touches (P2-11 is sonnet; P2-02, 04, 05, 06, 12..16 opus).
-3. Check `C:\dev\Alexia-wt\hub-err.log` each round: once the owner has paired and sent 50 messages, run the latency check (STATE.md) and finish P1-33. Then P1 is done: send the phase notice (§9) and hand off per §12.
-4. Every 10 merges, a phase review (§8).
+1. `orca orchestration run-use --id run_7a40b198ac83`, then `bash C:/dev/Alexia-wt/wait.sh` in the background (one at a time). Workers listed in STATE.md are live; leave them.
+2. As builds finish: `rv <id> P2`, merge one at a time, gate. If gate fails only on telegram_e2e fifty_messages, rerun `cargo test --workspace --no-fail-fast` and push if that is the only failure (until P2-43 merges).
+3. After P2-14 merges: merge v3 into P2-13's branch, run its tests, review it.
+4. Free slots, in order: P2-50 (security), P2-45, P2-49, P2-30..33, P2-37 (opus; encryption off by default per A-13). Pass the builder notes listed in STATE.md.
+5. Next phase review after 10 more merges.
 
 ## Watch out for
-- The owner is not technical and wants plain words and no questions: "do everything yourself" (A-12). Don't ask them for anything you can do on the PC.
-- The owner relays "You have N orchestration messages" all the time. Mostly heartbeats: check, ack, one line.
-- The hub is running detached from v3\target\release. A release build will fail while it runs (exe locked).
-- base2 worktree is now the hub's v2 root and plugin source. Don't move its HEAD while the hub runs.
-- The v2 importer copies plugin files byte by byte (46 GB of media models filled the disk on the first try). Hard-link or skip them by hand, or spec the follow-up.
-- Workers ask mid-task about files outside their list (P1-34 asked about invariants.mjs). Answer fast with `orca orchestration reply --id msg_...`.
-- msgs.py and terminal reads crash on non-ASCII unless PYTHONIOENCODING=utf-8 is set.
+- The machine is overloaded: every worker runs the full workspace tests (15+ min). Keep builders <= 5. Reviewers sometimes take hours but are alive; read their terminal (orca terminal read --terminal <handle> --screen --json) before assuming death. "unverifiable" in worker-list usually just means a stale heartbeat.
+- Reviewers review the branch's copy of the spec. If you change a spec on cr3studioo/v3 after a branch was cut, merge v3 into the branch (or paste the change into the fix prompt), or the reviewer flags it as missing.
+- Workers caught evading checks (stringify!, misused markers). Ask reviewers to treat evasion as a finding; decide honest fixes.
+- Two background wait.sh at once both report the same message; run one.
+- The owner relays "You have N orchestration messages" constantly; mostly heartbeats. One line each.
 
 ## Open owner asks
-- None blocking. The owner only needs to send the pairing code to the bot and use Alexia (P1-33).
-- A-13 notice: P2 owner needs decided with defaults. Subscriptions stay OFF, and the DB is not encrypted until the owner says how the key is backed up.
+- None. Owner said (A-14, A-15): skip the 50-message test; build cheaper; wants the whole plan finished.
 
 ## Decisions I made (also in LOG.md)
-- P1-18 split: automated e2e (P1-18) and the by-hand real run (P1-33). Added P1-32 (hub stop paths), P1-34 (secret import-v2), P1-35 (bridge save span, SQLite synchronous=NORMAL).
-- I let P1-34 add v2_secret_names to the invariants 1b allowlist.
-- Ran the imports myself (owner's order): keys, v2 DB, files (media hard-linked).
-- P2 owner needs: defaults in A-13.
+- A-15 applied: 27 P2 tasks moved to sonnet; opus kept for core pieces.
+- Filed follow-ups P2-42 (permissions trailing dots), P2-43 (latency flake), P2-44 (compute paths), P2-50 (UNC/SMB leak); planner added P2-45..49 after phase review 4.
+- P2-43: `latency --check` now uses p95 < 300 ms instead of every ack (spec change 2).
+- P2-11: telegram-only `// invariant: bot api term` marker; telegram name moved into channels/telegram.
+- P2-13 calls the real redact (no fallback); merges after P2-14.
