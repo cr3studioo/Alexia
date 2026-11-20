@@ -12,11 +12,10 @@ use std::collections::HashMap;
 use std::hash::{BuildHasher, Hasher};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use alexia_mcp::testing::Job as ProcJob;
 use alexia_store::{Layout, MessageBody, Role, Store};
 use sha2::{Digest, Sha256};
 use tokio::io::AsyncWriteExt;
@@ -76,6 +75,8 @@ struct Server {
     port: u16,
     pid: AtomicU32,
     used: Arc<Mutex<Instant>>,
+    /// Chats in flight; the idle stopper never stops a server with one running.
+    busy: Arc<AtomicU32>,
     stop: CancellationToken,
     dead: AtomicBool,
     task: Mutex<Option<JoinHandle<()>>>,
@@ -86,6 +87,23 @@ struct Server {
 struct Local {
     inner: OpenAiCompat,
     used: Arc<Mutex<Instant>>,
+    busy: Arc<AtomicU32>,
+}
+
+/// Counts a chat as in use for as long as it lives, even if its future is dropped.
+struct InUse(Arc<AtomicU32>);
+
+impl InUse {
+    fn new(busy: &Arc<AtomicU32>) -> InUse {
+        busy.fetch_add(1, Ordering::SeqCst);
+        InUse(busy.clone())
+    }
+}
+
+impl Drop for InUse {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
 }
 
 impl Local {
@@ -112,6 +130,7 @@ impl Provider for Local {
         out: mpsc::Sender<ChatChunk>,
         cancel: CancellationToken,
     ) -> Result<ChatDone, ProviderError> {
+        let _in_use = InUse::new(&self.busy);
         self.touch();
         let done = self.inner.chat(req, model, out, cancel).await;
         self.touch();
@@ -125,6 +144,8 @@ pub struct Runtime {
     servers: Mutex<HashMap<String, Arc<Server>>>,
     /// One start or install at a time.
     starting: tokio::sync::Mutex<()>,
+    /// Bumped by `stop_all`; a `serve` that began before it kills its new child instead of keeping it.
+    epoch: AtomicU64,
     idle: Duration,
     tick: Duration,
     backoff: Duration,
@@ -149,6 +170,7 @@ impl Runtime {
             client,
             servers: Mutex::new(HashMap::new()),
             starting: tokio::sync::Mutex::new(()),
+            epoch: AtomicU64::new(0),
             idle,
             tick,
             backoff,
@@ -207,8 +229,13 @@ impl Runtime {
                 let _ = tokio::fs::remove_dir_all(&part).await;
                 tokio::fs::create_dir_all(&part).await.map_err(io)?;
                 let url = format!("{RELEASE_URL}/{}", CPU.0);
-                self.install_archive(&url, CPU.1, &part, (0, 100), progress.as_ref(), &cancel)
-                    .await?;
+                let cpu = self
+                    .install_archive(&url, CPU.1, &part, (0, 100), progress.as_ref(), &cancel)
+                    .await;
+                if let Err(e) = cpu {
+                    let _ = tokio::fs::remove_dir_all(&part).await;
+                    return Err(e);
+                }
             }
             Err(e) => {
                 let _ = tokio::fs::remove_dir_all(&part).await;
@@ -314,6 +341,7 @@ impl Runtime {
         gpu_layers: u32,
     ) -> Result<Arc<dyn Provider>, LocalError> {
         let _one = self.starting.lock().await;
+        let epoch = self.epoch.load(Ordering::SeqCst);
         let old = self.servers.lock().unwrap().get(&model.id).cloned();
         if let Some(s) = old {
             if !s.dead.load(Ordering::SeqCst) && !s.stop.is_cancelled() {
@@ -330,12 +358,14 @@ impl Runtime {
             exe,
         };
         let (mut child, job) = spawn(&spec).map_err(|e| LocalError::Start(e.to_string()))?;
-        if let Err(e) = wait_healthy(&self.client, &mut child, port).await {
+        let up = wait_healthy(&self.client, &mut child, port, &self.epoch, epoch).await;
+        if let Err(e) = up {
             job.kill();
             let _ = child.kill().await;
             return Err(e);
         }
         let used = Arc::new(Mutex::new(Instant::now()));
+        let busy = Arc::new(AtomicU32::new(0));
         let row = FreeRow {
             id: format!("local:{}", model.id),
             base_url: format!("http://127.0.0.1:{port}/v1"),
@@ -350,11 +380,13 @@ impl Runtime {
         let provider: Arc<dyn Provider> = Arc::new(Local {
             inner: OpenAiCompat::new(row, Some(key), self.client.clone()),
             used: used.clone(),
+            busy: busy.clone(),
         });
         let server = Arc::new(Server {
             port,
             pid: AtomicU32::new(child.id().unwrap_or(0)),
             used,
+            busy,
             stop: CancellationToken::new(),
             dead: AtomicBool::new(false),
             task: Mutex::new(None),
@@ -386,6 +418,9 @@ impl Runtime {
 
     /// D213 / MO-09: stop everything now.
     pub async fn stop_all(&self) {
+        // Not the `starting` lock (an install can hold it for minutes): a serve that is still
+        // starting sees the new epoch, kills its child and fails.
+        self.epoch.fetch_add(1, Ordering::SeqCst);
         let ids: Vec<String> = self.servers.lock().unwrap().keys().cloned().collect();
         for id in ids {
             self.stop_server(&id).await;
@@ -415,7 +450,10 @@ impl Runtime {
                 .lock()
                 .unwrap()
                 .iter()
-                .filter(|(_, s)| s.used.lock().unwrap().elapsed() >= self.idle)
+                .filter(|(_, s)| {
+                    s.busy.load(Ordering::SeqCst) == 0
+                        && s.used.lock().unwrap().elapsed() >= self.idle
+                })
                 .map(|(id, _)| id.clone())
                 .collect();
             for id in idle {
@@ -429,6 +467,134 @@ impl Runtime {
     #[doc(hidden)]
     pub fn port(&self, model_id: &str) -> Option<u16> {
         self.servers.lock().unwrap().get(model_id).map(|s| s.port)
+    }
+}
+
+/// A Windows Job Object with KILL_ON_JOB_CLOSE (copied from alexia-mcp's `job.rs`, with the
+/// few kernel32 calls declared here because alexia-core has no `windows-sys`): llama-server dies
+/// with its job, and with the hub. Elsewhere a no-op.
+#[allow(unsafe_code)]
+mod job {
+    #[cfg(windows)]
+    use std::ffi::c_void;
+
+    #[cfg(windows)]
+    #[repr(C)]
+    struct Basic {
+        per_process_user_time: i64,
+        per_job_user_time: i64,
+        limit_flags: u32,
+        min_working_set: usize,
+        max_working_set: usize,
+        active_process_limit: u32,
+        affinity: usize,
+        priority_class: u32,
+        scheduling_class: u32,
+    }
+
+    #[cfg(windows)]
+    #[repr(C)]
+    struct Extended {
+        basic: Basic,
+        io_counters: [u64; 6],
+        process_memory_limit: usize,
+        job_memory_limit: usize,
+        peak_process_memory: usize,
+        peak_job_memory: usize,
+    }
+
+    #[cfg(windows)]
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn CreateJobObjectW(attrs: *const c_void, name: *const u16) -> *mut c_void;
+        fn SetInformationJobObject(
+            job: *mut c_void,
+            class: i32,
+            info: *const c_void,
+            len: u32,
+        ) -> i32;
+        fn AssignProcessToJobObject(job: *mut c_void, process: *mut c_void) -> i32;
+        fn TerminateJobObject(job: *mut c_void, code: u32) -> i32;
+        fn CloseHandle(handle: *mut c_void) -> i32;
+    }
+
+    #[cfg(windows)]
+    pub struct Job(*mut c_void);
+
+    // SAFETY: a job handle is a kernel object handle, usable from any thread.
+    #[cfg(windows)]
+    unsafe impl Send for Job {}
+    #[cfg(windows)]
+    unsafe impl Sync for Job {}
+
+    #[cfg(windows)]
+    impl Job {
+        pub fn new() -> std::io::Result<Job> {
+            const EXTENDED_LIMIT_INFORMATION: i32 = 9;
+            const KILL_ON_JOB_CLOSE: u32 = 0x2000;
+            // SAFETY: null attributes and name are allowed; the handle is checked before use.
+            let handle = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
+            if handle.is_null() {
+                return Err(std::io::Error::last_os_error());
+            }
+            let job = Job(handle);
+            // SAFETY: all-zero is a valid "no limits" value for this plain C struct.
+            let mut info: Extended = unsafe { std::mem::zeroed() };
+            info.basic.limit_flags = KILL_ON_JOB_CLOSE;
+            // SAFETY: `info` lives across the call and the size matches its type.
+            let ok = unsafe {
+                SetInformationJobObject(
+                    job.0,
+                    EXTENDED_LIMIT_INFORMATION,
+                    std::ptr::from_ref(&info).cast(),
+                    std::mem::size_of::<Extended>() as u32,
+                )
+            };
+            if ok == 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(job)
+        }
+
+        pub fn assign(&self, child: &tokio::process::Child) -> std::io::Result<()> {
+            let Some(process) = child.raw_handle() else {
+                return Err(std::io::Error::other("the process already exited"));
+            };
+            // SAFETY: both handles are open; the child owns its handle.
+            if unsafe { AssignProcessToJobObject(self.0, process.cast()) } == 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        }
+
+        pub fn kill(&self) {
+            // SAFETY: the handle is open until drop.
+            unsafe { TerminateJobObject(self.0, 1) };
+        }
+    }
+
+    #[cfg(windows)]
+    impl Drop for Job {
+        fn drop(&mut self) {
+            // SAFETY: the handle is open and owned; closing it kills what is left.
+            unsafe { CloseHandle(self.0) };
+        }
+    }
+
+    #[cfg(not(windows))]
+    pub struct Job;
+
+    #[cfg(not(windows))]
+    impl Job {
+        pub fn new() -> std::io::Result<Job> {
+            Ok(Job)
+        }
+
+        pub fn assign(&self, _child: &tokio::process::Child) -> std::io::Result<()> {
+            Ok(())
+        }
+
+        pub fn kill(&self) {}
     }
 }
 
@@ -478,7 +644,7 @@ fn server_args(model: &LocalModel, gpu_layers: u32, port: u16, key: &str) -> Vec
     a
 }
 
-fn spawn(spec: &Spec) -> std::io::Result<(Child, ProcJob)> {
+fn spawn(spec: &Spec) -> std::io::Result<(Child, job::Job)> {
     let mut cmd = Command::new(&spec.exe);
     cmd.args(&spec.args)
         .stdin(Stdio::null())
@@ -490,9 +656,9 @@ fn spawn(spec: &Spec) -> std::io::Result<(Child, ProcJob)> {
     }
     #[cfg(windows)]
     cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
-    let job = ProcJob::new()?;
+    let job = job::Job::new()?;
     let mut child = cmd.spawn()?;
-    if let Err(e) = job.assign(child.id().unwrap_or_default()) {
+    if let Err(e) = job.assign(&child) {
         let _ = child.start_kill();
         return Err(e);
     }
@@ -501,7 +667,7 @@ fn spawn(spec: &Spec) -> std::io::Result<(Child, ProcJob)> {
 
 /// Keeps the child alive: restarts it on the same port and key after a crash, with a doubling
 /// delay, and gives up after `MAX_RESTARTS` quick deaths (`dead`, so `serve` starts a new one).
-async fn supervise(spec: Spec, first: (Child, ProcJob), server: Arc<Server>, backoff: Duration) {
+async fn supervise(spec: Spec, first: (Child, job::Job), server: Arc<Server>, backoff: Duration) {
     let mut next = Some(first);
     let mut fails = 0u32;
     loop {
@@ -561,10 +727,15 @@ async fn wait_healthy(
     client: &reqwest::Client,
     child: &mut Child,
     port: u16,
+    epoch: &AtomicU64,
+    began: u64,
 ) -> Result<(), LocalError> {
     let url = format!("http://127.0.0.1:{port}/health");
     let start = Instant::now();
     loop {
+        if epoch.load(Ordering::SeqCst) != began {
+            return Err(LocalError::Start("everything was stopped meanwhile".into()));
+        }
         if child.try_wait().map_err(io)?.is_some() {
             return Err(LocalError::Exited);
         }

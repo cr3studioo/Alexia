@@ -49,6 +49,7 @@ fn main() {
     for conn in listener.incoming() {
         let Ok(mut s) = conn else { continue };
         let key = key.clone();
+        let dir = dir.clone();
         std::thread::spawn(move || {
             let mut buf = Vec::new();
             let mut b = [0u8; 1024];
@@ -69,12 +70,19 @@ fn main() {
             let line = head.lines().next().unwrap_or("").to_owned();
             let json = |code: &str, ctype: &str, body: &str| format!("HTTP/1.1 {code}\r\ncontent-type: {ctype}\r\nconnection: close\r\ncontent-length: {}\r\n\r\n{body}", body.len());
             let reply = if line.starts_with("GET /health") {
-                json("200 OK", "application/json", r#"{"status":"ok"}"#)
+                if dir.join("hold").exists() {
+                    json("503 Service Unavailable", "application/json", r#"{"status":"loading"}"#)
+                } else {
+                    json("200 OK", "application/json", r#"{"status":"ok"}"#)
+                }
             } else if !lower.contains(&format!("authorization: bearer {}", key.to_lowercase())) {
                 json("401 Unauthorized", "application/json", r#"{"error":{"message":"no key"}}"#)
             } else if line.starts_with("GET /v1/models") {
                 json("200 OK", "application/json", r#"{"data":[{"id":"fake"}]}"#)
             } else {
+                if dir.join("slow").exists() {
+                    std::thread::sleep(std::time::Duration::from_secs(5));
+                }
                 let body = "data: {\"choices\":[{\"delta\":{\"content\":\"hi\"},\"finish_reason\":null}]}\n\ndata: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":1,\"completion_tokens\":1}}\n\ndata: [DONE]\n\n";
                 json("200 OK", "text/event-stream", body)
             };
@@ -438,4 +446,58 @@ async fn zip_slip_refused() {
     .await
     .unwrap();
     assert!(dest.join("bin").join("llama-server.exe").is_file());
+}
+
+#[tokio::test]
+async fn stop_all_beats_a_server_mid_start() {
+    let rt = runtime(None);
+    let m = model("mid");
+    let dir = m.path.parent().unwrap().to_owned();
+    std::fs::write(dir.join("hold"), "x").unwrap(); // /health says "loading"
+    let starting = {
+        let (rt, m) = (rt.clone(), Arc::new(m));
+        let m2 = m.clone();
+        (
+            tokio::spawn(async move { rt.serve(&m, 0).await.map(|_| ()) }),
+            m2,
+        )
+    };
+    let (task, m) = starting;
+    until("the child started", || !starts(&m).is_empty()).await;
+    let port: u16 = starts(&m)[0]
+        .split(' ')
+        .skip_while(|a| *a != "--port")
+        .nth(1)
+        .unwrap()
+        .parse()
+        .unwrap();
+    rt.stop_all().await;
+    assert!(task.await.unwrap().is_err(), "serve kept its server");
+    assert!(rt.pids().is_empty());
+    assert!(rt.port("mid").is_none());
+    until("the child died", || !listening(port)).await;
+}
+
+#[tokio::test]
+async fn long_chat_is_not_idled_out() {
+    // Idle limit 2 s; the fake holds the reply for 5 s, so the chat outlives the limit.
+    let rt = runtime(Some((
+        Duration::from_secs(2),
+        Duration::from_millis(200),
+        Duration::from_millis(200),
+    )));
+    let cancel = CancellationToken::new();
+    let runner = {
+        let (rt, cancel) = (rt.clone(), cancel.clone());
+        tokio::spawn(async move { rt.run(cancel).await })
+    };
+    let m = model("long");
+    let p = rt.serve(&m, 0).await.unwrap();
+    std::fs::write(m.path.parent().unwrap().join("slow"), "x").unwrap();
+    assert!(says_hi(&p).await, "the chat was cut off mid-run");
+    assert_eq!(rt.pids().len(), 1, "stopped while in use");
+    // Once the chat is over the server is idle again and goes.
+    until("idle stop after the chat", || rt.pids().is_empty()).await;
+    cancel.cancel();
+    runner.await.unwrap();
 }
