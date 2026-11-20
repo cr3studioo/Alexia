@@ -420,8 +420,7 @@ impl Actor {
                     let mut next = Vec::new();
                     if matches!(end, Ok(TurnEnd::Finished { .. })) {
                         // What the brain never took becomes a turn: nothing is lost to the end.
-                        let left = r.steer.take().await.len().min(r.steered);
-                        next = msgs.split_off(msgs.len() - left);
+                        next = unread_steers(&r.steer, r.steered, &mut msgs).await;
                     }
                     self.finished(msgs, end);
                     next.append(&mut self.queued);
@@ -463,8 +462,10 @@ impl Actor {
             return self.command(msg, reply).await;
         }
         if let Some(r) = &mut self.running {
-            // The run takes steering: hand the message over, do not cancel.
+            // The run takes steering: hand the message over, do not cancel. Steering carries
+            // `Content` only, so a message with files takes the normal path to keep them.
             if r.steerable.load(Ordering::SeqCst)
+                && msg.inbound.files.is_empty()
                 && r.steer_tx.try_send(msg.inbound.content.clone()).is_ok()
             {
                 r.msgs.push(msg);
@@ -488,8 +489,9 @@ impl Actor {
             let mut msgs = r.msgs;
             if let Ok(TurnEnd::Finished { .. }) = &end {
                 // It finished before it saw the cancel: it was delivered, this one is new.
+                let mut unread = unread_steers(&r.steer, r.steered, &mut msgs).await;
                 self.finished(msgs, end);
-                msgs = Vec::new();
+                msgs = std::mem::take(&mut unread);
             }
             msgs.push(msg);
             self.start(msgs);
@@ -498,6 +500,9 @@ impl Actor {
             let r = self.running.take().expect("running");
             r.cancel.cancel();
             let end = r.handle.await;
+            let mut msgs = r.msgs;
+            // Steered messages the brain never read are not part of the cancelled turn.
+            let mut next = unread_steers(&r.steer, r.steered, &mut msgs).await;
             if let Ok(TurnEnd::Cancelled { drafted }) = &end {
                 // After a `Restart` nothing may be left to keep.
                 if !drafted.trim().is_empty() {
@@ -508,8 +513,9 @@ impl Actor {
                 }
                 let _ = self.ch.draft(&self.chat, None).await;
             }
-            self.finished(r.msgs, end);
-            self.start(vec![msg]);
+            self.finished(msgs, end);
+            next.push(msg);
+            self.start(next);
         } else {
             self.queued.push(msg);
         }
@@ -721,6 +727,12 @@ async fn wait(deadline: Option<Instant>) {
         Some(d) => sleep_until(d).await,
         None => pending().await,
     }
+}
+
+/// Splits off the trailing steered messages the brain left in the channel (the newest ones).
+async fn unread_steers(steer: &Steer, steered: usize, msgs: &mut Vec<Msg>) -> Vec<Msg> {
+    let left = steer.take().await.len().min(steered);
+    msgs.split_off(msgs.len() - left)
 }
 
 fn delete_files(msgs: &[Msg]) {
