@@ -82,7 +82,8 @@ pub fn env_name(owner: &str, key: &str) -> String {
     format!("ALEXIA_SECRET_{}_{}", clean(owner), clean(key))
 }
 
-fn in_memory() -> bool {
+/// True while the in-memory backend is on (tests only).
+pub fn in_memory() -> bool {
     std::env::var_os(MEMORY_BACKEND_ENV).is_some()
 }
 
@@ -183,7 +184,7 @@ pub struct V2Report {
     pub not_in_v2: Vec<String>,
     /// v2 names v3 can't hold, or whose value isn't non-empty text.
     pub unusable: Vec<String>,
-    /// The write failed (name only).
+    /// The read or the write failed (name only); v3's value, if any, is untouched by a failed read.
     pub failed: Vec<String>,
 }
 
@@ -194,6 +195,17 @@ pub fn import_v2(
     expected: &[(String, String)],
     overwrite: bool,
 ) -> V2Report {
+    import_with(vault, renames, expected, overwrite, stored, set)
+}
+
+fn import_with(
+    vault: &V2Vault,
+    renames: &[(&str, &str)],
+    expected: &[(String, String)],
+    overwrite: bool,
+    read: impl Fn(&str, &str) -> Result<Option<String>>,
+    write: impl Fn(&str, &str, &str) -> Result<()>,
+) -> V2Report {
     let mut r = V2Report::default();
     let mut supplied = std::collections::HashSet::new();
     for (v2, value) in &vault.secrets {
@@ -203,12 +215,12 @@ pub fn import_v2(
         };
         let name = format!("{owner}.{key}");
         supplied.insert((owner.clone(), key.clone()));
-        if !overwrite && matches!(stored(&owner, &key), Ok(Some(_))) {
-            r.kept.push(name);
-        } else if set(&owner, &key, value).is_ok() {
-            r.copied.push(name);
-        } else {
-            r.failed.push(name);
+        // A read that errors says nothing about what v3 holds, so it is never written over.
+        match read(&owner, &key) {
+            Err(_) => r.failed.push(name),
+            Ok(Some(_)) if !overwrite => r.kept.push(name),
+            Ok(_) if write(&owner, &key, value).is_ok() => r.copied.push(name),
+            Ok(_) => r.failed.push(name),
         }
     }
     r.not_in_v2 = expected
@@ -246,6 +258,44 @@ pub fn read_v2_vault() -> Result<Option<Vec<u8>>> {
     Err(Error::Refused(
         "Importing v2 secrets works only on Windows.".into(),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::RefCell;
+
+    /// A v2 vault with one `plug.token` entry.
+    fn vault() -> V2Vault {
+        let json = r#"{"secrets":{"plug.token":"v2-value"}}"#;
+        let blob: Vec<u8> = json.encode_utf16().flat_map(u16::to_le_bytes).collect();
+        V2Vault::parse(&blob).unwrap()
+    }
+
+    #[test]
+    fn import_read_error_is_failed_not_overwritten() {
+        for overwrite in [false, true] {
+            let writes = RefCell::new(Vec::new());
+            let r = import_with(
+                &vault(),
+                &[],
+                &[],
+                overwrite,
+                |_, _| {
+                    Err(Error::Keychain(
+                        "The system keychain could not be read.".into(),
+                    ))
+                },
+                |o, k, v| {
+                    writes.borrow_mut().push(format!("{o}.{k}={v}"));
+                    Ok(())
+                },
+            );
+            assert_eq!(r.failed, ["plug.token"], "overwrite={overwrite}");
+            assert!(r.copied.is_empty() && r.kept.is_empty());
+            assert!(writes.borrow().is_empty(), "overwrite={overwrite}");
+        }
+    }
 }
 
 mod mem {

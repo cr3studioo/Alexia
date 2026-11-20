@@ -62,16 +62,30 @@ fn secret_list_names_keys_only() {
     );
 }
 
+/// The real hub never runs with the in-memory backend, so `set` and `clear` refuse it. The value
+/// on stdin must not come back out either.
 #[test]
-fn secret_set_reads_stdin_and_never_prints_it() {
+fn secret_set_refuses_in_memory() {
     let key = secret_list("set-list").remove(0);
     let value = "correct-horse-battery-staple-7731";
-    let mut c = hub("set");
-    c.args(["secret", "set", &key]);
-    let o = run_with(c, &format!("{value}\n"));
-    assert!(o.status.success(), "{}", err(&o));
-    assert!(out(&o).contains("Saved."));
-    assert!(!out(&o).contains(value) && !err(&o).contains(value));
+    for verb in ["set", "clear"] {
+        let mut c = hub(&format!("mem-{verb}"));
+        c.args(["secret", verb, &key]);
+        let o = run_with(c, &format!("{value}\n"));
+        assert_eq!(o.status.code(), Some(1), "{verb}: {}", err(&o));
+        assert!(
+            err(&o).contains("Secrets are in memory for tests"),
+            "{}",
+            err(&o)
+        );
+        assert!(
+            err(&o).contains("Unset ALEXIA_SECRETS_IN_MEMORY"),
+            "{}",
+            err(&o)
+        );
+        assert!(!out(&o).contains("Saved.") && !out(&o).contains("Cleared."));
+        assert!(!out(&o).contains(value) && !err(&o).contains(value));
+    }
 }
 
 #[test]
@@ -82,6 +96,21 @@ fn secret_set_refuses_unknown_key() {
     assert!(!o.status.success());
     assert!(err(&o).contains("not a known key"), "{}", err(&o));
     assert!(err(&o).contains("telegram_bot_token"), "{}", err(&o));
+}
+
+/// A pasted token in the key position (argv) or on stdin must not be echoed.
+#[test]
+fn secret_set_unknown_key_does_not_echo() {
+    let pasted = "pasted-token-in-the-key-place-4417";
+    let on_stdin = "stdin-text-that-must-stay-quiet-9082";
+    let mut c = hub("echo");
+    c.args(["secret", "set", pasted]);
+    let o = run_with(c, &format!("{on_stdin}\n"));
+    assert_eq!(o.status.code(), Some(1), "{}", err(&o));
+    assert!(err(&o).contains("not a known key"), "{}", err(&o));
+    for text in [pasted, on_stdin] {
+        assert!(!out(&o).contains(text) && !err(&o).contains(text), "{text}");
+    }
 }
 
 #[test]
