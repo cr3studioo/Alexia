@@ -287,3 +287,11 @@
 - 2026-11-20 Merged P2-11 (gate OK, pushed). P2-50+P2-43 merged together (disjoint files), one gate
 - 2026-11-20 Merged P2-50, P2-43 (gate OK, pushed). A-16 answered yes on Telegram (update 363458139)
 - 2026-11-20 Merged P2-45 (gate OK, pushed); P2-47 ready
+- 2026-11-20 P2-37 built -> review ctx_3eb4fc7f3bf2. gate.sh/rv.sh/template.sh now set OPENSSL_SRC_PERL (portable Strawberry) and CARGO_BUILD_JOBS=2 for workers
+- 2026-11-20 P2-47 dispatched (opus) ctx_51c05cd3007e
+- 2026-11-20 Merged P2-37 (gate OK with portable Perl, pushed)
+- 2026-11-20 P2-47 built -> review ctx_0c3528b4536c; P2-31 dispatched (sonnet) ctx_a42be3f9cfb8
+- 2026-11-20 P2-47 approved (reviewer hit usage limit before tests; gate confirms). Usage limit: A-06 Telegram sent, no new dispatches (§10)
+- 2026-11-20 P2-31: first worker_done failed (usage limit), then finished after reset (rejected as settled); branch has commit+report -> review ctx_fe572e7a4ecd
+- 2026-11-20 P2-31 review: changes (Job import, stop_all race, idle mid-stream). Fix round ctx_c0af3529a04b
+- 2026-11-20 Merged P2-47 (gate OK, pushed); P2-24 ready

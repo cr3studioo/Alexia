@@ -85,20 +85,20 @@
 | P2-21 | Upcalls: sampling, tasks for plugins, elicit, roots, attachm | P2 | sonnet | P2-20, P2-02 | alexia-core/{src/upcalls.rs, tests/upcalls.rs} | todo | 0 | | |
 | P2-22 | MCP: compute/run locally, host-answered capabilities | P2 | sonnet | P2-02 | alexia-mcp/{src/serve.rs, src/host.rs, src/bin/mcp-fixture.rs, tests/compute.rs} | merged | 1 | cr3studioo/v3-P2-22 | follow-up P2-44 |
 | P2-23 | Hot reload of plugins | P2 | sonnet | P2-22 | alexia-mcp/{src/host.rs, src/supervise.rs, tests/reload.rs} | merged | 1 | cr3studioo/v3-P2-23 | |
-| P2-24 | WASM plugins in a capability sandbox | P2 | sonnet | P2-23, P2-47 | alexia-mcp/{src/wasm.rs, src/host.rs, fixtures/wasm-hello/**, tests/fixtures/wasm-hello... | todo | 0 | | |
+| P2-24 | WASM plugins in a capability sandbox | P2 | sonnet | P2-23, P2-47 | alexia-mcp/{src/wasm.rs, src/host.rs, fixtures/wasm-hello/**, tests/fixtures/wasm-hello... | ready | 0 | | |
 | P2-25 | Commands | P2 | sonnet | P2-20, P2-45 | alexia-core/{src/commands.rs, tests/commands.rs} | todo | 0 | | |
 | P2-26 | Resume after restart; jobs that run for days | P2 | sonnet | P2-20 | alexia-core/{src/resume.rs, tests/resume.rs} | todo | 0 | | |
 | P2-27 | Parallel helpers | P2 | sonnet | P2-20 | alexia-core/{src/helpers.rs, tests/helpers.rs} | todo | 0 | | |
 | P2-28 | Undo | P2 | sonnet | P2-20 | alexia-core/{src/undo.rs, tests/undo.rs} | todo | 0 | | |
 | P2-29 | Approvals inbox | P2 | sonnet | P2-03, P2-06, P2-08 | alexia-gateway/{src/ask.rs, tests/approvals.rs} | todo | 0 | | |
 | P2-30 | Scheduled jobs | P2 | sonnet | P2-01, P2-03 | alexia-scheduler/{Cargo.toml, src/lib.rs, tests/scheduler.rs}, v3/Cargo.lock | ready | 0 | | |
-| P2-31 | Managed llama.cpp, speculative decoding | P2 | sonnet | P2-01 | alexia-core/{src/local.rs, tests/local.rs} | ready | 0 | | |
+| P2-31 | Managed llama.cpp, speculative decoding | P2 | sonnet | P2-01 | alexia-core/{src/local.rs, tests/local.rs} | running | 2 | cr3studioo/v3-P2-31 | fix ctx_c0af3529a04b: Job copy, stop_all race, idle |
 | P2-32 | GPU: fit, load cap, steps aside for games | P2 | sonnet | P2-01 | alexia-core/{src/gpu.rs, tests/gpu.rs} | ready | 0 | | |
 | P2-33 | Hugging Face import and GGUF split files | P2 | sonnet | P2-01 | alexia-core/{src/hf.rs, tests/hf.rs} | ready | 0 | | |
 | P2-34 | Local vision, local embeddings, the local checker model | P2 | sonnet | P2-31, P2-32, P2-33, P2-21 | alexia-core/{src/local.rs, src/upcalls.rs, tests/local_jobs.rs} | todo | 0 | | |
 | P2-35 | Subscriptions through their official CLIs | P2 | sonnet | P2-17 | alexia-core/{src/subscription.rs, tests/subscription.rs} | todo | 0 | | |
 | P2-36 | Compare two models | P2 | sonnet | P2-17 | alexia-core/{src/compare.rs, tests/compare.rs} | todo | 0 | | |
-| P2-37 | Encrypted database at rest | P2 | opus | P2-02, P2-03, P2-10 | v3/Cargo.toml, v3/Cargo.lock, alexia-store/{Cargo.toml, src/db.rs, src/encrypt.rs, src/... | running | 1 | cr3studioo/v3-P2-37 | ctx_2b59bd59af5b; encryption off by default |
+| P2-37 | Encrypted database at rest | P2 | opus | P2-02, P2-03, P2-10 | v3/Cargo.toml, v3/Cargo.lock, alexia-store/{Cargo.toml, src/db.rs, src/encrypt.rs, src/... | merged | 1 | cr3studioo/v3-P2-37 | crash-recovery follow-up (review) |
 | P2-38 | Hub wiring: Agent is the brain, bridge deleted | P2 | opus | P2-08..P2-11, P2-20..P2-37, P2-42, P2-44, P2-45, P2-46, P2-47, P2-50 | alexia-hub/{Cargo.toml, src/main.rs, src/bridge.rs (delete), src/media.rs, tests/cli_p2... | todo | 0 | | |
 | P2-39 | End-to-end: the agent on the real binary | P2 | sonnet | P2-38, P2-43 | alexia-hub/tests/{agent_e2e.rs, telegram_e2e.rs, common/mod.rs} | todo | 0 | | |
 | P2-40 | Every v2 plugin on the Rust host | P2 | sonnet | P2-38 | alexia-hub/tests/v2_plugins.rs | todo | 0 | | |
@@ -108,7 +108,7 @@
 | P2-44 | compute/run: checked path used; copies no collide/leak | P2 | sonnet | P2-22 | alexia-mcp/{src/serve.rs, tests/compute.rs} | merged | 1 | cr3studioo/v3-P2-44 | |
 | P2-45 | McpHost::manifests, the agent's source of plugin commands and skills | P2 | sonnet | P2-23 | alexia-mcp/{src/host.rs, tests/manifests.rs} | merged | 1 | cr3studioo/v3-P2-45 | |
 | P2-46 | Permissions fail closed: kv read errors, unannotated deletes, ~ and file:// paths | P2 | opus | P2-42 | alexia-core/{src/permissions.rs, tests/permissions.rs} | merged | 1 | cr3studioo/v3-P2-46 | FILE:// uppercase follow-up |
-| P2-47 | MCP: plugin requests keep cancel and progress; tools unreviewed until read | P2 | opus | P2-45 | alexia-mcp/{src/conn.rs, src/host.rs, src/serve.rs, src/bin/mcp-fixture.rs, tests/conn.rs, tests/compute.rs} | ready | 0 | | review4 #6,#8,#10 |
+| P2-47 | MCP: plugin requests keep cancel and progress; tools unreviewed until read | P2 | opus | P2-45 | alexia-mcp/{src/conn.rs, src/host.rs, src/serve.rs, src/bin/mcp-fixture.rs, tests/conn.rs, tests/compute.rs} | merged | 1 | cr3studioo/v3-P2-47 | |
 | P2-48 | Hub: the P2 CLI verbs | P2 | opus | P2-38 | alexia-hub/{src/main.rs, tests/cli_p2.rs} | todo | 0 | | review4 #7 split |
 | P2-49 | Small cleanups: trim's helpers private, one now_ms | P2 | sonnet | none | alexia-core/{src/trim.rs, tests/trim.rs}, alexia-gateway/src/channels/telegram/mod.rs | ready | 0 | | review4 #9,#10 |
 | P2-50 | Tooling: no UNC paths from file URIs; call() applies list() limits | P2 | sonnet | P2-18 | alexia-core/{src/tools.rs, tests/tools.rs} | merged | 1 | cr3studioo/v3-P2-50 | |
