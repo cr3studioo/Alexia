@@ -226,3 +226,12 @@
 2026-11-20 P2-01 and P2-10 builds done; reviews dispatched. P2-01 notes: spec mismatch Asker::new/Weekly (INTERFACES follows P2-06/P2-30). Both saw telegram_e2e ack<300ms flake under load.
 2026-11-20 Merged P2-01 and P2-10 (approve, gate ok, pushed). P2-20 must add Task.steer; P2-12/13 fill EVERYWHERE_WARNING/QUESTIONS. Gap: no test for real-keychain secret set.
 2026-11-20 Round: dispatched P2-12, P2-13 (opus), P2-02, P2-14, P2-06 (sonnet).
+2026-11-20 P2-13 asked: checker needs redact (P2-14 stub todo!). Answered: call it directly, no fallback; merge P2-14 first, then rerun P2-13 tests. Spec gap: P2-13 should depend on P2-14.
+2026-11-20 P2-12 build done; review dispatched.
+2026-11-20 P2-14 build done (omitted card/IBAN/OTP like v2); review dispatched.
+2026-11-20 P2-06 build done; review dispatched. telegram_e2e timing flake now seen by 4 workers.
+2026-11-20 P2-02 build done (wasmtime 34.0.2 added); review dispatched.
+2026-11-20 P2-12 review: changes (dangling symlink/junction folded lexically -> write into never-touch). Fix round try 2 opus ctx_312e213192a7.
+2026-11-20 P2-13 build done; 5 tests need real redact. Review after P2-14 merges and v3 is merged into its branch.
+2026-11-20 Dispatched P2-04, P2-05, P2-15, P2-16 (sonnet) while reviews run.
+2026-11-20 P2-14 review: changes (location key in tool args not redacted; 2nd postcode survives). Fix try 2 sonnet ctx_e3075fb03a51. Open for P2-17: redact_request takes no known secrets; P2-17 must pass keychain values (note when dispatching P2-17).

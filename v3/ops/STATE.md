@@ -6,7 +6,7 @@ P0: 26/26 merged. P1: 35/35 merged (P1-33 closed by owner A-14: 3 real msgs, ack
 P2: planned (v3/specs/P2/PHASE.md, 41 tasks). Merged: P2-01, 03, 09, 10. Running:
 - P2-12 (opus) ctx_709543b0573f permissions; P2-13 (opus) ctx_b670481882fb checker
 - P2-02 (sonnet) ctx_336155068d55 MCP host interfaces; P2-14 (sonnet) ctx_22df7e40eb00 redaction; P2-06 (sonnet) ctx_9975a7e7dd33 asker
-Ready next: P2-04, 05, 11, 15, 16, 30 (Cargo.lock: not with P2-02), 31, 32, 33.
+Ready next: P2-11, 30 (Cargo.lock: not with P2-02), 31, 32, 33. P2-13 waits P2-14 merge (merge v3 into it, then review). P2-17 note: redact_request has no known-secrets param; tell its builder to pass keychain values.
 A-15: P2 builders are sonnet except P2-12, 13, 20, 37 (opus). Board Model column overrides the spec Model line. Reviews stay opus. Max 2 opus builders per batch.
 
 P1-33 (the real run): the hub runs DETACHED on this PC with the real Alexia bot (started by CEO #11, PID in LOG; check with Get-Process alexia-hub). Env: ALEXIA_PLUGINS_DIR=C:\dev\Alexia-wt\hub-plugins (base2 plugins minus telegram/crasher/vanisher, mirrored with junctions/hardlinks because the scanner ignores junction dirs), ALEXIA_V2_ROOT=C:\dev\Alexia-wt\base2. Logs: C:\dev\Alexia-wt\hub-out.log / hub-err.log. Data: %LOCALAPPDATA%\AlexiaHub (v2 imported: 24 sessions, 370 messages; media's 46 GB hard-linked). Keys: secret import-v2 done (9 copied).
