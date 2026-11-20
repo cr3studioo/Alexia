@@ -222,3 +222,7 @@
 2026-11-20 Dispatched P2-10 (sonnet, A-15) ctx_29f96603c68e.
 2026-11-20 Merged P2-09 (approve, gate ok, pushed). Nit: stale doc comments watchdog.rs:2,4.
 2026-11-20 P2-03 build done (edited tests/store.rs, channels.rs as allowed); review dispatched.
+2026-11-20 Merged P2-03 (approve, gate ok, pushed). Minor: mark_undone/live_touch/job_set_next Ok on unknown id.
+2026-11-20 P2-01 and P2-10 builds done; reviews dispatched. P2-01 notes: spec mismatch Asker::new/Weekly (INTERFACES follows P2-06/P2-30). Both saw telegram_e2e ack<300ms flake under load.
+2026-11-20 Merged P2-01 and P2-10 (approve, gate ok, pushed). P2-20 must add Task.steer; P2-12/13 fill EVERYWHERE_WARNING/QUESTIONS. Gap: no test for real-keychain secret set.
+2026-11-20 Round: dispatched P2-12, P2-13 (opus), P2-02, P2-14, P2-06 (sonnet).
