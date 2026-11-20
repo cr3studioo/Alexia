@@ -5,7 +5,7 @@
 
 use std::time::{Duration, Instant};
 
-use alexia_store::{Content, MessageBody, Part, Role};
+use alexia_store::{Content, MessageBody, Part, Role, ToolCall};
 use serde_json::{json, Value};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -150,28 +150,51 @@ fn sent_error(e: reqwest::Error) -> ProviderError {
     }
 }
 
-// ponytail: tool turns are left out because this path sends no tools; V3-2 maps
-// `calls` -> `tool_calls` and `call_id` -> `tool_call_id`.
-fn wire(role: &Role, body: &MessageBody) -> Option<Value> {
-    let role = match role {
-        Role::System => "system",
-        Role::User => "user",
-        Role::Assistant => {
-            let has_calls = body.calls.as_ref().is_some_and(|c| !c.is_empty());
-            let has_text = match &body.content {
-                Content::Text(t) => !t.trim().is_empty(),
-                Content::Parts(ps) => ps
-                    .iter()
-                    .any(|p| matches!(p, Part::Text { text } if !text.trim().is_empty())),
-            };
-            if has_calls && !has_text {
-                return None;
+/// OpenAI's name rule is `^[a-zA-Z0-9_-]{1,64}$`; core names may hold `.` and be longer.
+/// Wrong characters become `_`; a name that is too long, or lands on one already taken in this
+/// request, is cut and gets a short hash of the original so two long names never collide.
+fn wire_name(name: &str, taken: &[String]) -> String {
+    use sha2::{Digest, Sha256};
+    let base: String = name
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+                c
+            } else {
+                '_'
             }
-            "assistant"
-        }
-        Role::Tool => return None,
+        })
+        .collect();
+    let base = if base.is_empty() {
+        "_".to_owned()
+    } else {
+        base
     };
-    let content = match &body.content {
+    if base.chars().count() <= 64 && !taken.contains(&base) {
+        return base;
+    }
+    let h = Sha256::digest(name.as_bytes());
+    let keep: String = base.chars().take(64 - 9).collect();
+    format!("{keep}_{:02x}{:02x}{:02x}{:02x}", h[0], h[1], h[2], h[3])
+}
+
+/// The words of a turn, images left out.
+fn plain(content: &Content) -> String {
+    match content {
+        Content::Text(t) => t.clone(),
+        Content::Parts(ps) => ps
+            .iter()
+            .filter_map(|p| match p {
+                Part::Text { text } => Some(text.as_str()),
+                Part::Image { .. } => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n"),
+    }
+}
+
+fn content_value(content: &Content) -> Value {
+    match content {
         Content::Text(text) => json!(text),
         Content::Parts(parts) => parts
             .iter()
@@ -180,8 +203,86 @@ fn wire(role: &Role, body: &MessageBody) -> Option<Value> {
                 Part::Image { url } => json!({"type": "image_url", "image_url": {"url": url}}),
             })
             .collect(),
+    }
+}
+
+/// v2: an empty `arguments` is `{}`.
+fn args(arguments: &str) -> &str {
+    if arguments.trim().is_empty() {
+        "{}"
+    } else {
+        arguments
+    }
+}
+
+/// Port of v2 `provider.ts` `toWire` (`calls` -> `tool_calls`, `callId` -> `tool_call_id`).
+/// `names` pairs each request tool's wire name with its core name. A tool turn whose call id no
+/// earlier assistant turn made is sent as a user note, so a strict provider never sees a result
+/// without a call (v2 P1-24).
+fn wire_messages(messages: &[(Role, MessageBody)], names: &[(String, String)]) -> Vec<Value> {
+    let to_wire = |name: &str| {
+        names
+            .iter()
+            .find(|(_, core)| core == name)
+            .map_or_else(|| wire_name(name, &[]), |(wire, _)| wire.clone())
     };
-    Some(json!({"role": role, "content": content}))
+    let mut seen: Vec<&str> = Vec::new();
+    let mut out = Vec::with_capacity(messages.len());
+    for (role, body) in messages {
+        let content = content_value(&body.content);
+        out.push(match role {
+            Role::System => json!({"role": "system", "content": content}),
+            Role::User => json!({"role": "user", "content": content}),
+            Role::Assistant => {
+                let mut m = json!({"role": "assistant", "content": content});
+                if let Some(calls) = body.calls.as_ref().filter(|c| !c.is_empty()) {
+                    seen.extend(calls.iter().map(|c| c.id.as_str()));
+                    m["tool_calls"] = calls
+                        .iter()
+                        .map(|c| {
+                            json!({
+                                "id": c.id,
+                                "type": "function",
+                                "function": {"name": to_wire(&c.name), "arguments": args(&c.arguments)},
+                            })
+                        })
+                        .collect();
+                }
+                m
+            }
+            Role::Tool => match body.call_id.as_deref().filter(|id| seen.contains(id)) {
+                Some(id) => {
+                    json!({"role": "tool", "tool_call_id": id, "content": plain(&body.content)})
+                }
+                None => json!({
+                    "role": "user",
+                    "content": format!("A tool answered: {}", plain(&body.content)),
+                }),
+            },
+        });
+    }
+    out
+}
+
+/// One streamed call, pieced together from `delta.tool_calls[i]` (v2 `chat`'s `calls[index]`).
+#[derive(Default)]
+struct Piece {
+    id: String,
+    name: String,
+    arguments: String,
+}
+
+/// A slow reader must not hold off a cancel.
+async fn emit(
+    out: &mpsc::Sender<ChatChunk>,
+    cancel: &CancellationToken,
+    chunk: ChatChunk,
+) -> Result<(), ProviderError> {
+    tokio::select! {
+        biased;
+        _ = cancel.cancelled() => Err(ProviderError::Cancelled),
+        sent = out.send(chunk) => sent.map_err(|_| ProviderError::Cancelled), // nobody is listening
+    }
 }
 
 /// `"0"`, `0` and `0.0` are all zero; anything else (absent included) is not.
@@ -268,18 +369,17 @@ impl Provider for OpenAiCompat {
         out: mpsc::Sender<ChatChunk>,
         cancel: CancellationToken,
     ) -> Result<ChatDone, ProviderError> {
-        // ponytail: no tool calls on the fast path; V3-2's agent loop adds them.
-        if !req.tools.is_empty() {
-            return Err(ProviderError::Other(
-                "tools are not sent on this path".into(),
-            ));
-        }
         let (base, key) = self.reaching()?;
+        let mut names: Vec<(String, String)> = Vec::with_capacity(req.tools.len());
+        for t in &req.tools {
+            let taken: Vec<String> = names.iter().map(|(w, _)| w.clone()).collect();
+            names.push((wire_name(&t.name, &taken), t.name.clone()));
+        }
         let mut messages = Vec::with_capacity(req.messages.len() + 1);
         if let Some(system) = &req.system {
             messages.push(json!({"role": "system", "content": system}));
         }
-        messages.extend(req.messages.iter().filter_map(|(r, b)| wire(r, b)));
+        messages.extend(wire_messages(&req.messages, &names));
         let mut body = json!({
             "model": model,
             "messages": messages,
@@ -289,6 +389,25 @@ impl Provider for OpenAiCompat {
         });
         if let Some(max) = req.max_tokens {
             body["max_tokens"] = json!(max);
+        }
+        // v2 `asFunction`.
+        if !req.tools.is_empty() {
+            body["tools"] = req
+                .tools
+                .iter()
+                .zip(&names)
+                .map(|(t, (wire, _))| {
+                    json!({"type": "function", "function": {
+                        "name": wire,
+                        "description": t.description.as_deref().unwrap_or(""),
+                        "parameters": if t.input_schema.is_null() {
+                            json!({"type": "object", "properties": {}})
+                        } else {
+                            t.input_schema.clone()
+                        },
+                    }})
+                })
+                .collect();
         }
 
         let sent = Instant::now();
@@ -318,6 +437,7 @@ impl Provider for OpenAiCompat {
         let mut buf: Vec<u8> = Vec::new();
         let mut first_byte_ms: Option<u32> = None;
         let mut finished = false;
+        let mut pieces: std::collections::BTreeMap<u64, Piece> = Default::default();
         let mut done = ChatDone {
             model: model.to_owned(),
             provider: self.row.id.clone(),
@@ -395,13 +515,26 @@ impl Provider for OpenAiCompat {
                 .flatten()
                 {
                     first_byte_ms.get_or_insert(sent.elapsed().as_millis() as u32);
-                    // A slow reader must not hold off a cancel.
-                    tokio::select! {
-                        biased;
-                        _ = cancel.cancelled() => return Err(ProviderError::Cancelled),
-                        sent = out.send(chunk) => if sent.is_err() {
-                            return Err(ProviderError::Cancelled); // nobody is listening any more
-                        },
+                    emit(&out, &cancel, chunk).await?;
+                }
+                // Keyed by index: id and name arrive once, arguments in fragments.
+                if let Some(calls) = delta["tool_calls"].as_array() {
+                    for (n, call) in calls.iter().enumerate() {
+                        first_byte_ms.get_or_insert(sent.elapsed().as_millis() as u32);
+                        let at = pieces
+                            .entry(call["index"].as_u64().unwrap_or(n as u64))
+                            .or_default();
+                        if let Some(id) = call["id"].as_str().filter(|s| !s.is_empty()) {
+                            at.id = id.to_owned();
+                        }
+                        if let Some(name) =
+                            call["function"]["name"].as_str().filter(|s| !s.is_empty())
+                        {
+                            at.name = name.to_owned();
+                        }
+                        if let Some(a) = call["function"]["arguments"].as_str() {
+                            at.arguments.push_str(a);
+                        }
                     }
                 }
             }
@@ -412,6 +545,28 @@ impl Provider for OpenAiCompat {
                 "{} dropped the answer before it finished",
                 self.row.id
             )));
+        }
+        for (index, p) in pieces {
+            if p.name.is_empty() {
+                continue;
+            }
+            // An unknown wire name goes through unchanged: the loop reports an unknown tool.
+            let name = names
+                .iter()
+                .find(|(wire, _)| *wire == p.name)
+                .map_or(p.name, |(_, core)| core.clone());
+            let id = if p.id.is_empty() {
+                format!("call_{index}")
+            } else {
+                p.id
+            };
+            let arguments = args(&p.arguments).to_owned();
+            let call = ToolCall {
+                id,
+                name,
+                arguments,
+            };
+            emit(&out, &cancel, ChatChunk::ToolCall(call)).await?;
         }
         done.first_byte_ms = first_byte_ms;
         tracing::debug!(provider = %self.row.id, model = %done.model, first_byte_ms, ms = sent.elapsed().as_millis() as u64, "done");
