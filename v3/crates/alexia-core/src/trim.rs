@@ -155,24 +155,6 @@ fn split(messages: &[Msg]) -> (Vec<Msg>, Vec<Cycle>) {
     (head, cycles)
 }
 
-fn flat(c: &Cycle) -> impl Iterator<Item = &Msg> {
-    std::iter::once(&c.assistant).chain(c.results.iter())
-}
-
-/// The part of a trace that can never be collapsed: the head plus the newest cycle.
-pub fn floor(messages: &[Msg]) -> Vec<Msg> {
-    let (mut head, cycles) = split(messages);
-    if let Some(newest) = cycles.last() {
-        head.extend(flat(newest).cloned());
-    }
-    head
-}
-
-/// What a task learned, as lines: one summary for trimming and for skill distillation.
-pub fn summary(messages: &[Msg]) -> String {
-    lines(&split(messages).1).join("\n")
-}
-
 fn re(cell: &'static OnceLock<Regex>, pattern: &str) -> &'static Regex {
     cell.get_or_init(|| Regex::new(pattern).expect("static regex"))
 }
@@ -219,7 +201,7 @@ fn about(a: &Map<String, Value>, b: &Map<String, Value>, same_name: bool) -> boo
 /// The mechanical collapse (§11.3), run before anything is measured: a result that a later
 /// call already answered becomes "superseded by a later X". Messages are never removed, so
 /// pairing holds. The newest cycle is never touched.
-pub fn collapse(messages: &[Msg]) -> Vec<Msg> {
+pub(crate) fn collapse(messages: &[Msg]) -> Vec<Msg> {
     struct Made {
         id: String,
         name: String,

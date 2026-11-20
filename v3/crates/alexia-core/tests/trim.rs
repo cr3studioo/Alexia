@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! Port of v2 `packages/core/test/trim.test.ts`, plus the pairing / budget / last-user tests.
 
-use alexia_core::trim::{budget_for, collapse, floor, size, summary, trim, TrimOptions, PER_TOKEN};
+use alexia_core::trim::{budget_for, size, trim, TrimOptions, PER_TOKEN};
 use alexia_store::{Content, MessageBody, Part, Role, ToolCall};
 use std::collections::HashSet;
 
@@ -81,11 +81,28 @@ fn opts(keep: usize, budget: Option<usize>) -> TrimOptions {
 fn tools(m: &[Msg]) -> Vec<&Msg> {
     m.iter().filter(|m| m.0 == Role::Tool).collect()
 }
+/// What `trim()` leaves of each tool result when everything fits: only the mechanical collapse.
 fn after(trace: &[Msg]) -> Vec<String> {
-    collapse(trace)
+    trim(trace, &opts(usize::MAX, None))
         .iter()
         .filter(|m| m.0 == Role::Tool)
         .map(text_of)
+        .collect()
+}
+
+/// The running-summary lines `trim()` writes for every step but the newest. `trace` gets a
+/// bulky first step (its line is dropped again) so the summary is smaller than the steps it
+/// replaces, and a closing step so every step the test cares about is in the summarised range.
+fn summed(trace: Vec<Msg>) -> Vec<String> {
+    let pad = cycle(98, "pad__fill", "{}", &"x".repeat(3_000));
+    let trace = with(trace, cycle(99, "clock__now", "{}", "Tuesday"));
+    let trace = [trace[..1].to_vec(), pad, trace[1..].to_vec()].concat();
+    let t = trim(&trace, &opts(1, Some(1)));
+    let s = text_of(t.iter().find(|m| m.0 == Role::System).expect("summary"));
+    let mut l = s.lines();
+    assert_eq!(l.next().unwrap(), "Earlier steps in this task, summarised:");
+    l.filter(|l| !l.contains("pad__fill"))
+        .map(String::from)
         .collect()
 }
 
@@ -131,10 +148,14 @@ fn summary_records_what_worked() {
         ]
         .concat(),
     );
-    let d = summary(&trace);
+    let d = summed(trace).join(
+        "
+",
+    );
     assert!(d.contains("Worked: files__list({})"));
     assert!(d.contains(r#"Failed: files__read({"name":"archive.txt"})"#));
     assert!(d.contains(r#"Worked: files__read({"name":"notes.txt"})"#));
+    assert!(d.contains("Worked: files__write({})"));
 }
 
 fn assert_paired(t: &[Msg], label: &str) {
@@ -230,13 +251,18 @@ fn wide_window_keeps_what_narrow_summarises() {
 }
 
 #[test]
-fn floor_is_head_plus_newest_cycle() {
+fn floor_is_kept_whatever_the_budget() {
     let trace = with(vec![task()], long(5));
-    let kept = floor(&trace);
-    assert_eq!(kept[0], task());
-    assert_eq!(kept[1..], trace[trace.len() - 2..]);
-    assert!(size(&kept) < size(&trace));
-    assert!(size(&kept) <= size(&trim(&trace, &opts(4, Some(1)))));
+    let t = trim(&trace, &opts(0, Some(1)));
+    assert_eq!(t[0], task());
+    // The newest cycle is the last two messages: the call, and its result as it came back.
+    assert_eq!(t[t.len() - 2..], trace[trace.len() - 2..]);
+    assert!(size(&t) < size(&trace));
+    assert!(
+        t.iter().any(|m| m.0 == Role::System),
+        "older steps summarised"
+    );
+    assert_eq!(tools(&t).len(), 1, "only the newest result is left");
 }
 
 #[test]
@@ -417,7 +443,7 @@ fn collapsing_shrinks_and_trim_still_fits() {
 
 #[test]
 fn closed_subgoal_collapses_to_answer() {
-    let d = summary(&with(
+    let d = summed(with(
         vec![task()],
         [
             saying(
@@ -445,7 +471,7 @@ fn closed_subgoal_collapses_to_answer() {
         .concat(),
     ));
     assert_eq!(
-        d.split('\n').collect::<Vec<_>>(),
+        d,
         [
             "Said: Let me find the calculator.",
             r#"Worked: files__list({"in":"apps"}) — calculator.exe"#,
@@ -457,7 +483,7 @@ fn closed_subgoal_collapses_to_answer() {
 
 #[test]
 fn failed_subgoal_keeps_every_path() {
-    let d = summary(&with(
+    let d = summed(with(
         vec![task()],
         [
             saying(
@@ -490,7 +516,7 @@ fn failed_subgoal_keeps_every_path() {
         .concat(),
     ));
     assert_eq!(
-        d.split('\n').collect::<Vec<_>>(),
+        d,
         [
             "Said: Let me find the calculator.",
             r#"Failed: files__list({"in":"bin"}) — files__list failed: no bin"#,
@@ -504,7 +530,7 @@ fn failed_subgoal_keeps_every_path() {
 
 #[test]
 fn open_subgoal_left_whole() {
-    let d = summary(&with(
+    let d = summed(with(
         vec![task()],
         [
             saying(
@@ -526,7 +552,7 @@ fn open_subgoal_left_whole() {
         .concat(),
     ));
     assert_eq!(
-        d.split('\n').collect::<Vec<_>>(),
+        d,
         [
             "Said: First I will list the folder.",
             "Worked: files__list({}) — notes.txt done.txt",
