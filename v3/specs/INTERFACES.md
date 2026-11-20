@@ -547,7 +547,7 @@ pub struct HostConfig {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
-pub enum PluginState { Stopped, Running, Unhealthy, Refused }
+pub enum PluginState { Stopped, Running, Unhealthy, Refused, Reloading /* P2-23 */ }
 
 #[derive(Clone, Debug, Serialize)]
 pub struct PluginStatus { pub id: PluginId, pub name: String, pub version: String, pub enabled: bool,
@@ -556,7 +556,9 @@ pub struct PluginStatus { pub id: PluginId, pub name: String, pub version: Strin
 /// A tool as the host knows it. `provides` is read off `_meta["alexia/provides"]`;
 /// `hidden` is true when the tool carries `alexia/compute` or `alexia/editor` (never shown to a model).
 #[derive(Clone, Debug)]
-pub struct HostedTool { pub plugin: PluginId, pub tool: types::Tool, pub provides: Vec<String>, pub hidden: bool }
+pub struct HostedTool { pub plugin: PluginId, pub tool: types::Tool, pub provides: Vec<String>, pub hidden: bool,
+                        /// false when kv `_core`/`unreviewed` (v2's list, a JSON array of plugin ids) holds the plugin id
+                        pub reviewed: bool }
 
 pub type ProgressSink = tokio::sync::mpsc::Sender<types::ProgressParams>;
 
@@ -601,6 +603,12 @@ pub trait Upcalls: Send + Sync {
     async fn attachments(&self, plugin: &PluginId, call: alexia::AttachmentsCall) -> Result<serde_json::Value, jsonrpc::RpcError> {
         let _ = (plugin, call); Err(jsonrpc::RpcError::method_not_found())
     }
+    /// Capabilities core answers itself (P2-34: `vision.describe`, `text.embed`). Default: none.
+    /// `McpHost::answers(cap)` also counts these.
+    fn host_caps(&self) -> Vec<String> { Vec::new() }
+    /// `alexia/capability/call` for a cap no enabled plugin provides. None = not mine (-32050).
+    async fn host_call(&self, plugin: &PluginId, cap: &str, args: serde_json::Map<String, serde_json::Value>, cancel: CancellationToken)
+        -> Option<Result<types::CallToolResult, jsonrpc::RpcError>> { let _ = (plugin, cap, args, cancel); None }
 }
 pub struct HostFacts { pub display_name: String, pub privacy_mode: alexia::PrivacyMode, pub locale: String }
 /// Offers `{roots:{}}` only; `sample`/`elicit` answer -32021; roots empty.
@@ -619,6 +627,9 @@ pub enum PluginEvent {
 }
 #[derive(Clone, Copy, Debug)] pub enum StopReason { Idle, Disabled, Shutdown, Heartbeat }
 pub type EventSink = std::sync::Arc<dyn Fn(PluginEvent) + Send + Sync>;
+
+/// (P2-24) `entry.run == "wasm"`: an MCP server compiled to wasm32-wasip1, run in-process.
+pub mod wasm { pub struct WasmPlugin { /* ... */ } }
 
 pub struct McpHost { /* Arc inside; Clone is cheap */ }
 impl Clone for McpHost { /* ... */ }
@@ -650,6 +661,9 @@ impl McpHost {
     pub async fn conversation_ended(&self);
     /// Stop now (D213: a game started). Not a crash; the next call respawns.
     pub async fn stop(&self, id: &PluginId);
+    /// (P2-23, EX-12) Re-read the plugin's folder; in-flight calls finish; the next call spawns
+    /// the new version. Emits `ToolsChanged`.
+    pub async fn reload(&self, id: &PluginId) -> Result<(), Error>;
     pub fn pid(&self, id: &PluginId) -> Option<u32>;
     /// Last 500 stderr lines, tagged and secret-redacted. Never on the bus.
     pub fn log(&self, id: &PluginId) -> Vec<String>;
@@ -1570,7 +1584,7 @@ impl RpcError { pub fn new(code: i32, message: impl Into<String>) -> Self; pub f
 
 | | |
 |---|---|
-| command | `entry.run`; `"node"` → `HostConfig::node`. Otherwise and for every arg naming a file in the plugin folder: made absolute against the folder. |
+| command | `entry.run`; `"node"` → `HostConfig::node`; `"wasm"` → no process: `args[0]` is the `.wasm` path relative to the plugin folder, run in-process (P2-24, `wasm::WasmPlugin`). Otherwise and for every arg naming a file in the plugin folder: made absolute against the folder. |
 | cwd | `layout.own_dir(id)`, created before spawn, **never the plugin folder** (Windows can't delete a running process's cwd). |
 | env | Only: `APPDATA HOMEDRIVE HOMEPATH LOCALAPPDATA PATH PATHEXT PROCESSOR_ARCHITECTURE PROGRAMFILES SYSTEMDRIVE SYSTEMROOT TEMP TMP USERNAME USERPROFILE` (what v2's MCP SDK passes on Windows), plus `ALEXIA_PLUGIN_DIR=<plugin folder>`. |
 | Windows | `CREATE_NO_WINDOW`; assigned to a Job Object with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, so a plugin's own children die with it and with the hub. |
