@@ -87,9 +87,9 @@ $env:ALEXIA_PLUGINS_DIR = "C:\dev\Alexia\plugins"
 **Until then:** Nothing stops. This also answers part 2 of A-09 (six free providers available). A-09 parts 1 (test bot or use the real bot) and 3 (OK to race two providers) are still open.
 **Answer:** (chat, 2026-11-19) Yes: build alexia-hub secret import-v2 and take the keys from v2.
 
-## A-12 · 2026-11-19 · open
+## A-12 · 2026-11-19 · answered
 **What I need:** Run the v2 key import once, on this PC.
 **Why:** You approved it (A-11). Phase 1's real-message run needs the keys in v3's own store.
 **How:** In PowerShell: `C:\dev\Alexia\v3\target\release\alexia-hub.exe secret import-v2`. It prints only key names (copied / already there / not found), never a value, and leaves v2 untouched. Paste the printed names back here or in the chat if you like.
 **Until then:** The automated speed test (P1-18) keeps going; only the real 50-message run (P1-33) waits.
-**Answer:**
+**Answer:** (chat, 2026-11-20) "Do everything yourself, do the import also." Standing rule from now on: the CEO runs by-hand steps on this PC itself and asks the owner only for what physically needs them (e.g. sending a message from their own Telegram account).
