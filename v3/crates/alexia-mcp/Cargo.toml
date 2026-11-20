@@ -18,6 +18,10 @@ async-trait.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
 tracing.workspace = true
+# SP-10 runs plugins in-process as wasm; there is no std answer. Compiler and async only,
+# to keep the single binary (SP-12) small.
+wasmtime = { version = "34.0.2", default-features = false, features = ["cranelift", "async"] }
+wasmtime-wasi = { version = "34.0.2", default-features = false }
 
 # Job Objects have no std or tokio API, and without one a plugin's own children outlive it on
 # Windows (INTERFACES.md §3.2).

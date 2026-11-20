@@ -326,7 +326,27 @@ impl McpHost {
             .filter_map(|(id, tools)| tools.map(|t| (id, t)))
             .collect();
         all.sort_by(|a, b| a.0.cmp(&b.0));
-        all.into_iter().flat_map(|(_, t)| t).collect()
+        // v2's list (`servers.ts`): small, so read fresh each time rather than cached with the tools.
+        let unreviewed: Vec<String> = self
+            .inner
+            .store
+            .kv_get("_core", "unreviewed")
+            .ok()
+            .flatten()
+            .and_then(|v| serde_json::from_value(v).ok())
+            .unwrap_or_default();
+        let mut tools: Vec<HostedTool> = all.into_iter().flat_map(|(_, t)| t).collect();
+        for t in &mut tools {
+            t.reviewed = !unreviewed.contains(&t.plugin.0);
+        }
+        tools
+    }
+
+    /// EX-12, P2-23: re-read the plugin's folder; let in-flight calls finish; the next call
+    /// spawns the new version. Emits `ToolsChanged`.
+    pub async fn reload(&self, id: &PluginId) -> Result<(), Error> {
+        let _ = id;
+        todo!("P2-23")
     }
 
     async fn plugin_tools(&self, id: &PluginId) -> Option<Vec<HostedTool>> {
@@ -491,7 +511,7 @@ impl McpHost {
             s.enabled
                 && s.state != PluginState::Refused
                 && s.dir.manifest.provides.iter().any(|p| p == cap)
-        });
+        }) || self.upcalls().host_caps().iter().any(|c| c == cap);
         Answers {
             answers: found,
             here: found,
@@ -1013,6 +1033,7 @@ fn hosted(id: &PluginId, tool: types::Tool) -> HostedTool {
         tool,
         provides,
         hidden,
+        reviewed: true,
     }
 }
 
