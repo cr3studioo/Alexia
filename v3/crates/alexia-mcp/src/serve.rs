@@ -242,6 +242,23 @@ fn file_uri_path(uri: &str) -> Option<String> {
     Some(rest)
 }
 
+/// `dir/<name of from>`, or `name-2.ext`, `name-3.ext`... when that is already taken.
+fn free_name(dir: &std::path::Path, from: &std::path::Path) -> std::path::PathBuf {
+    let name = from.file_name().unwrap_or_default();
+    let first = dir.join(name);
+    if !first.exists() {
+        return first;
+    }
+    let stem = from.file_stem().unwrap_or_default().to_string_lossy();
+    let ext = from
+        .extension()
+        .map_or(String::new(), |e| format!(".{}", e.to_string_lossy()));
+    (2..)
+        .map(|n| dir.join(format!("{stem}-{n}{ext}")))
+        .find(|p| !p.exists())
+        .expect("an unbounded range has a free name")
+}
+
 /// v2's local compute path: inputs must be the caller's own or uploads; the provider's tool
 /// runs here; the files it names are copied into the caller's own folder.
 async fn compute(host: &McpHost, id: &PluginId, p: ComputeRunParams) -> Result<Value, RpcError> {
@@ -252,7 +269,7 @@ async fn compute(host: &McpHost, id: &PluginId, p: ComputeRunParams) -> Result<V
         let roots = [own.clone(), layout.uploads()];
         let mut inputs = vec![];
         for i in &p.inputs {
-            if inside(&i.path, &roots).is_none() {
+            let Some(real) = inside(&i.path, &roots) else {
                 return Err(err(
                     code::INVALID_PARAMS,
                     format!(
@@ -260,8 +277,9 @@ async fn compute(host: &McpHost, id: &PluginId, p: ComputeRunParams) -> Result<V
                         i.name
                     ),
                 ));
-            }
-            inputs.push(json!({ "name": i.name, "path": i.path, "mime": i.mime }));
+            };
+            // The worker gets the path that was checked, never the raw one a link could swap.
+            inputs.push(json!({ "name": i.name, "path": real, "mime": i.mime }));
         }
         args.insert("inputs".into(), Value::Array(inputs));
     }
@@ -308,19 +326,23 @@ async fn compute(host: &McpHost, id: &PluginId, p: ComputeRunParams) -> Result<V
             .and_then(file_uri_path)
             .and_then(|f| inside(&f, &theirs));
         let Some(from) = from else {
+            let _ = std::fs::remove_dir_all(&dest);
             return Err(err(
                 code::INTERNAL_ERROR,
                 "The compute worker named a file it does not own.",
             ));
         };
-        let name = from.file_name().unwrap_or_default();
-        let to = dest.join(name);
-        let copied = std::fs::create_dir_all(&dest).and_then(|()| std::fs::copy(&from, &to));
-        if let Err(e) = copied {
-            tracing::warn!(plugin = %id.0, "a compute result could not be copied: {e}");
-            return Err(err(code::INTERNAL_ERROR, CANNOT));
+        let to = std::fs::create_dir_all(&dest)
+            .map(|()| free_name(&dest, &from))
+            .and_then(|to| std::fs::copy(&from, &to).map(|_| to));
+        match to {
+            Ok(to) => files.push(to.to_string_lossy().into_owned()),
+            Err(e) => {
+                tracing::warn!(plugin = %id.0, "a compute result could not be copied: {e}");
+                let _ = std::fs::remove_dir_all(&dest);
+                return Err(err(code::INTERNAL_ERROR, CANNOT));
+            }
         }
-        files.push(to.to_string_lossy().into_owned());
     }
     let mut out = json!({ "files": files });
     if !text.is_empty() {
