@@ -213,10 +213,10 @@ fn quant_grouping_like_v2() {
         [
             "Q4_K_M",
             "UD-Q4_K_XL",
-            "Q8_0",
             "Q6_K",
             "Q6_K_L",
             "Q3_K_M",
+            "Q8_0",
             "BF16"
         ]
     );
