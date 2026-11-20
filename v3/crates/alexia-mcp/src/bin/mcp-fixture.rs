@@ -64,6 +64,8 @@ fn tools(mode: &str) -> Value {
         "compute" => json!([
             {"name": "render", "inputSchema": schema(json!({"text": {"type": "string"}})),
              "_meta": {"alexia/compute": {"op": "demo.compute"}}},
+            {"name": "crunch", "inputSchema": schema(json!({"ms": {"type": "integer"}})),
+             "_meta": {"alexia/compute": {"op": "demo.slow"}}},
         ]),
         "undoable" => json!([
             {"name": "set", "inputSchema": schema(json!({"key": {"type": "string"}, "value": {}}))},
@@ -122,6 +124,21 @@ fn call_tool(ctx: &Ctx, id: &Id, params: &Value) -> Option<Value> {
             if who == "ask" {
                 return Some(via_host(ctx, "alexia/settings/get", json!({})));
             }
+            if who == "ask-cancel" {
+                // Asks the host for something, then takes it back without waiting.
+                let id = ctx.next_id.fetch_add(1, Ordering::SeqCst);
+                send(&Request {
+                    jsonrpc: V2,
+                    id: Id::Num(id),
+                    method: "test/wait".into(),
+                    params: None,
+                });
+                notify("notifications/cancelled", json!({"requestId": id}));
+            }
+            if who == "ask-progress" {
+                let params = json!({"_meta": {"progressToken": "tok-1"}});
+                return Some(via_host(ctx, "test/progress", params));
+            }
             text_result(format!("Hello, {who}."), false)
         }
         "render" => {
@@ -142,6 +159,27 @@ fn call_tool(ctx: &Ctx, id: &Id, params: &Value) -> Option<Value> {
                 {"type": "text", "text": format!("ran {op} with {inputs} inputs")},
                 {"type": "resource_link", "uri": uri, "name": "out.txt", "mimeType": "text/plain"},
             ]})
+        }
+        "crunch" => {
+            let token = &params["_meta"]["progressToken"];
+            if !token.is_null() {
+                for n in 1..=2 {
+                    notify(
+                        "notifications/progress",
+                        json!({"progressToken": token, "progress": n, "total": 2}),
+                    );
+                }
+            }
+            let deadline = Instant::now() + Duration::from_millis(args["ms"].as_u64().unwrap_or(0));
+            while Instant::now() < deadline {
+                if cancelled() {
+                    // Proof for the test that the cancel arrived, in the plugin's own folder.
+                    std::fs::write("cancelled.txt", "cancelled").expect("write cancelled.txt");
+                    return None;
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            text_result("crunched".into(), false)
         }
         "set" => {
             let key = s("key");
