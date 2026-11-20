@@ -157,6 +157,7 @@ function selfTest() {
   expect('a plugin named in channels/mod.rs without the marker', pluginHits(mod, naming, ['telegram']))
   ok('a plugin named in channels/mod.rs with the marker', pluginHits(mod, `${naming} ${V2_IMPORT}`, ['telegram']))
   ok('telegram named in channels/telegram/', pluginHits(`${CHANNELS}telegram/api.rs`, naming, ['telegram']))
+  ok('Bot API field name marked in channels/telegram/', pluginHits(`${CHANNELS}telegram/api.rs`, `.part("voice", v); ${V2_IMPORT}`, ['telegram', 'voice']))
   expect('voice named in channels/telegram/', pluginHits(`${CHANNELS}telegram/api.rs`, 'let x = "voice";', ['telegram', 'voice']))
   expect('the hub reaching the telegram api', channelHits(hub, 'use alexia_gateway::channels::telegram::api::Api;'))
   expect(
