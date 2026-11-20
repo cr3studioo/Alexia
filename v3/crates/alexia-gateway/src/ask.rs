@@ -4,31 +4,54 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use alexia_core::{Origin, Question};
+use alexia_core::{Bus, Origin, Question};
 use alexia_store::Store;
 use tokio_util::sync::CancellationToken;
 
 use crate::{Channel, ChatRef, Outbound};
 
-pub(crate) type Channels = Arc<std::sync::RwLock<Vec<Arc<dyn Channel>>>>;
+/// The channels the gateway polls and the asker asks in. Cheap to clone; shared.
+#[derive(Clone, Default)]
+pub struct ChannelSet(Arc<std::sync::RwLock<Vec<Arc<dyn Channel>>>>);
+
+impl ChannelSet {
+    pub fn new() -> ChannelSet {
+        ChannelSet::default()
+    }
+
+    pub fn add(&self, c: Arc<dyn Channel>) {
+        self.0.write().unwrap_or_else(|e| e.into_inner()).push(c);
+    }
+
+    pub fn all(&self) -> Vec<Arc<dyn Channel>> {
+        self.0.read().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+}
 
 /// v2 `ANSWER_WAIT`.
 const ANSWER_WAIT: Duration = Duration::from_secs(10 * 60);
 const NO_ANSWER: &str = "— no answer, so I didn't";
 
-pub(crate) struct Asker {
-    channels: Channels,
+pub struct Asker {
+    channels: ChannelSet,
     store: Arc<Store>,
+    /// Held for P2-29: answers from other chats arrive as `Event::Answered`.
+    #[allow(dead_code)]
+    bus: Bus,
 }
 
 impl Asker {
-    pub(crate) fn new(channels: Channels, store: Arc<Store>) -> Asker {
-        Asker { channels, store }
+    pub fn new(channels: ChannelSet, store: Arc<Store>, bus: Bus) -> Arc<Asker> {
+        Arc::new(Asker {
+            channels,
+            store,
+            bus,
+        })
     }
 
     /// The channel and chat to ask in, or `None` (then the answer is no).
     fn target(&self, origin: &Origin) -> Option<(Arc<dyn Channel>, ChatRef)> {
-        let channels = self.channels.read().unwrap_or_else(|e| e.into_inner());
+        let channels = self.channels.all();
         match origin {
             Origin::Channel { channel, chat } => channels
                 .iter()

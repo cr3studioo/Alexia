@@ -10,8 +10,8 @@ use alexia_core::{
     RunId, Turn,
 };
 use alexia_gateway::{
-    Channel, ChatRef, Error, Gateway, GatewayConfig, InFile, InKind, Inbound, Media, MsgRef,
-    Outbound, Result,
+    Asker, Channel, ChannelSet, ChatRef, Error, Gateway, GatewayConfig, InFile, InKind, Inbound,
+    Media, MsgRef, Outbound, Result,
 };
 use alexia_store::{Content, Store};
 use tokio::sync::mpsc;
@@ -241,19 +241,22 @@ fn start(s: Setup) -> H {
         text: s.reply,
         turns: Mutex::new(Vec::new()),
     });
-    let mut gw = Gateway::new(
+    let bus = Bus::new(64);
+    let channels = ChannelSet::new();
+    channels.add(ch.clone());
+    let asker: Arc<dyn Ask> = Asker::new(channels.clone(), store.clone(), bus.clone());
+    let _ = brain.asker.set(asker.clone());
+    let gw = Gateway::with_channels(
         GatewayConfig {
             merge_ms: 10,
             ..GatewayConfig::default()
         },
         store,
-        Bus::new(64),
+        bus,
         brain.clone(),
         media.clone(),
+        channels,
     );
-    gw.add(ch.clone());
-    let asker = gw.asker();
-    let _ = brain.asker.set(asker.clone());
     let cancel = CancellationToken::new();
     let run = tokio::spawn(gw.run(cancel.clone()));
     H {
@@ -538,6 +541,30 @@ async fn never_and_long_replies_are_text() {
     assert!(
         h.media.spoke.lock().unwrap().is_empty(),
         "speak was called for a long reply"
+    );
+    h.stop().await;
+}
+
+/// P2-06: the asker is built first and handed to the brain; the gateway comes after.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn asker_before_gateway() {
+    let h = start(Setup {
+        ask: true,
+        answer: Answer::Yes,
+        ..Setup::default()
+    });
+    h.push(msg("7", "buy"));
+    let out = h.reply_in("7").await;
+    assert_eq!(out.text, "yes");
+    assert_eq!(
+        h.ch.asks(),
+        vec![(
+            "7".to_string(),
+            "Buy it?
+
+£12"
+            .to_string()
+        )]
     );
     h.stop().await;
 }
