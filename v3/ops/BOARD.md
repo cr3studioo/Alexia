@@ -64,13 +64,13 @@
 | P1-35 | Time the bridge's save; synchronous = NORMAL in WAL | P1 | opus | none | hub bridge.rs, store db.rs | merged | 1 | cr3studioo/v3-P1-35 | |
 | P2-01 | Core P2 types, module stubs, dependencies, INTERFACES.md | P2 | opus | P1-18 | v3/Cargo.toml, v3/Cargo.lock, v3/specs/INTERFACES.md, alexia-core/{Cargo.toml, src/lib.... | running | 1 | cr3studioo/v3-P2-01 | ctx_1caa79a5d640 |
 | P2-02 | MCP host P2 interfaces: host calls, reviewed, wasm stub | P2 | sonnet | P2-01 | v3/Cargo.lock, v3/specs/INTERFACES.md, alexia-mcp/{Cargo.toml, src/lib.rs, src/wasm.rs ... | todo | 0 | | |
-| P2-03 | Store: migration 3 (audit, live runs, approvals, jobs) | P2 | opus | none | alexia-store/{src/lib.rs, src/types.rs, src/db.rs, src/migrations.rs, tests/p2.rs} | running | 1 | cr3studioo/v3-P2-03 | ctx_4de98296dd61 |
+| P2-03 | Store: migration 3 (audit, live runs, approvals, jobs) | P2 | opus | none | alexia-store/{src/lib.rs, src/types.rs, src/db.rs, src/migrations.rs, tests/p2.rs} | review | 1 | cr3studioo/v3-P2-03 | review |
 | P2-04 | Tools on the OpenAI-compatible wire | P2 | sonnet | P2-01 | alexia-core/{src/openai.rs, tests/openai.rs} | todo | 0 | | |
 | P2-05 | Candidates know tools, vision and context; rank by what a re | P2 | sonnet | P2-01 | alexia-core/{src/catalog.rs, src/router.rs, tests/router.rs, tests/catalog.rs} | todo | 0 | | |
 | P2-06 | The asker exists before the gateway | P2 | sonnet | P2-01 | alexia-gateway/{src/lib.rs, src/gateway.rs, src/ask.rs, tests/gateway.rs, tests/ask_voi... | todo | 0 | | |
 | P2-07 | Steering into a running run | P2 | sonnet | P2-06 | alexia-core/{src/brain.rs, tests/types.rs, tests/chat.rs, tests/lane.rs}, alexia-gatewa... | todo | 0 | | |
 | P2-08 | Media takes a cancel token | P2 | sonnet | P2-07 | alexia-gateway/{src/channel.rs, src/voice.rs, src/gateway.rs, tests/ask_voice.rs}, alex... | todo | 0 | | |
-| P2-09 | Hub: dead code and stale allow(dead_code) | P2 | sonnet | none | alexia-hub/src/{latency.rs, watchdog.rs} | review | 1 | cr3studioo/v3-P2-09 | rv ctx_b482925cf006 |
+| P2-09 | Hub: dead code and stale allow(dead_code) | P2 | sonnet | none | alexia-hub/src/{latency.rs, watchdog.rs} | merged | 1 | cr3studioo/v3-P2-09 | stale comments watchdog.rs:2,4 |
 | P2-10 | Secrets: no echo, read errors kept, in-memory only for tests | P2 | sonnet | none | alexia-store/{src/secrets.rs, tests/secrets.rs, tests/v2_secrets.rs}, alexia-hub/{src/m... | running | 1 | cr3studioo/v3-P2-10 | ctx_29f96603c68e |
 | P2-11 | Channels exception narrowed to service names | P2 | sonnet | P2-01 | v3/ci/invariants.mjs, alexia-gateway/src/channels/mod.rs | todo | 0 | | |
 | P2-12 | Permission modes, scope, never-touch, spoken boundaries | P2 | opus | P2-01 | alexia-core/{src/permissions.rs, tests/permissions.rs} | todo | 0 | | |

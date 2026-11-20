@@ -220,3 +220,5 @@
 2026-11-20 P2-09 build done; review dispatched ctx_b482925cf006.
 2026-11-20 Owner A-15: cheaper builds. 27 P2 tasks moved opus->sonnet on the board (opus kept: P2-01,03,12,13,20,37). Board Model column overrides spec Model line.
 2026-11-20 Dispatched P2-10 (sonnet, A-15) ctx_29f96603c68e.
+2026-11-20 Merged P2-09 (approve, gate ok, pushed). Nit: stale doc comments watchdog.rs:2,4.
+2026-11-20 P2-03 build done (edited tests/store.rs, channels.rs as allowed); review dispatched.
