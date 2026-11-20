@@ -306,7 +306,7 @@ impl Api {
             .map_err(|_| Error::Service("audio/ogg refused as a mime type".into()))?;
         let mut form = Form::new()
             .text("chat_id", chat.to_string())
-            .part("voice", voice);
+            .part("voice", voice); // invariant: bot api term
         if let Some(id) = reply_to {
             form = form.text("reply_parameters", json!({"message_id": id}).to_string());
         }

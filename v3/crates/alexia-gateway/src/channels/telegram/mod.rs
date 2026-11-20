@@ -115,6 +115,11 @@ fn draft_id() -> i64 {
     1 + (random() % ((1 << 31) - 1)) as i64
 }
 
+/// (channel name, code) for `alexia-hub pair`.
+pub(crate) fn pairing_entry(store: &Store) -> Result<(&'static str, String)> {
+    Ok(("telegram", pairing_code(store)?))
+}
+
 /// The six-digit code, created on first use and kept in kv `_core/telegram_pairing_code`.
 pub(crate) fn pairing_code(store: &Store) -> Result<String> {
     if let Some(code) = store
