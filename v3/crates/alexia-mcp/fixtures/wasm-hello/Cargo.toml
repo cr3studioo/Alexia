@@ -1,0 +1,18 @@
+[package]
+name = "wasm-hello"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-only"
+publish = false
+
+[dependencies]
+serde_json = "1"
+
+# Not a member of the v3 workspace: it builds for wasm32-wasip1 on its own.
+[workspace]
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true
+panic = "abort"
