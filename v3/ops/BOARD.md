@@ -59,7 +59,7 @@
 | P1-30 | Approvals: test the 10-minute give-up and scheduled jobs | P1 | sonnet | P1-28 | gateway Cargo.toml, tests/ask_voice.rs | merged | 1 | cr3studioo/v3-P1-30 | |
 | P1-31 | v2 agent: dangling tool ids on a stop | P1 | sonnet | none | packages/core/src/agent.ts, test/agent.test.ts | merged | 1 | cr3studioo/v3-P1-31 | |
 | P1-32 | Hub run: clean stop on every exit, Ctrl+C wins, boot prune | P1 | sonnet | none | alexia-hub src/main.rs, tests/cli_p1.rs | merged | 1 | cr3studioo/v3-P1-32 | |
-| P1-33 | The 50-real-message latency run | P1 | sonnet | P1-18 | v3/ops/reports/P1-latency.md | todo | 0 | | real bot; v2 telegram off first |
+| P1-33 | The 50-real-message latency run | P1 | sonnet | P1-18 | v3/ops/reports/P1-latency.md | merged | 1 | cr3studioo/v3 | owner waived 50; 3 real msgs, ack max 86 ms |
 | P1-34 | secret import-v2: copy v2 secrets into v3, once | P1 | opus | none | store secrets.rs+tests/v2_secrets.rs, gateway channels/mod.rs, hub main.rs, INTERFACES.md | merged | 1 | cr3studioo/v3-P1-34 | owner runs import once |
 | P1-35 | Time the bridge's save; synchronous = NORMAL in WAL | P1 | opus | none | hub bridge.rs, store db.rs | merged | 1 | cr3studioo/v3-P1-35 | |
 | P2-01 | Core P2 types, module stubs, dependencies, INTERFACES.md | P2 | opus | P1-18 | v3/Cargo.toml, v3/Cargo.lock, v3/specs/INTERFACES.md, alexia-core/{Cargo.toml, src/lib.... | running | 1 | cr3studioo/v3-P2-01 | ctx_1caa79a5d640 |

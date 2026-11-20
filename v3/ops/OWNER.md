@@ -108,3 +108,7 @@ $env:ALEXIA_PLUGINS_DIR = "C:\dev\Alexia\plugins"
 **Until then:** Nothing waits.
 **Answer:**
 
+
+## A-14 · 2026-11-20 · answered
+**What I need:** (owner, in chat) Skip the 50-message test; 3 messages worked. Main wish: get the full plan built, it is taking long (about 7 usage resets so far).
+**Answer:** Done. P1-33 closed with the 3 real messages (ack max 86 ms). CEO keeps building P2 onward.

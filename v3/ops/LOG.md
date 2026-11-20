@@ -215,3 +215,5 @@
 2026-11-20 Finding for follow-up: importer copies plugin files with fs::copy (46 GB media models); should hard-link on same volume or skip large model dirs.
 2026-11-20 Merged plan P2 (41 tasks; all 12 phase-review findings covered). A-13 notice: P2 owner needs decided with defaults. Dispatched P2-01 (opus) ctx_1caa79a5d640, P2-03 (opus) ctx_4de98296dd61, P2-09 (sonnet) ctx_fcaa99248657.
 2026-11-20 Handoff CEO #11 -> #12.
+2026-11-20 CEO #12 took over. P2-03 asked to edit tests/store.rs + tests/channels.rs (version asserts, upgrade_from_1 drops m3 tables): allowed. Owner paired the real bot (00:49); ops TG update 363458138 was the pairing code, no ask.
+2026-11-20 Owner waived the 50-message run (A-14). latency on 3 real turns: ack 86/30/33 ms, total 3.0-6.3 s. P1-33 closed, report reports/P1-latency.md. P1 complete (35/35).
