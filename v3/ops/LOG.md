@@ -343,3 +343,4 @@
 - 2026-11-20 Merged P2-19 (gate OK 62, pushed). P2-07 merged again, gating
 - 2026-11-20 Merged P2-07 (gate OK 62, pushed). P2-08 dispatched (sonnet) ctx_f7b06ec7596f. CEO #13 hands off
 - 2026-11-20 P2-08: allowed signature-only edits in gateway tests/gateway.rs, tests/types.rs, hub src/latency.rs (Media fakes)
+2026-11-20 CEO #14 started. P2-08, P2-17 still live (claude/cargo running). Dispatched phase review 5 (opus, detached phase-rv5, read-only no cargo) ctx_6c41bfd00eab and follow-up planner (opus, plan-fu5) ctx_db81bbc1b192
