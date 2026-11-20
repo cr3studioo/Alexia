@@ -24,6 +24,7 @@ enum Kv<'a> {
     Str(&'a str),
     Strs(&'a [&'a str]),
     Floats(usize),
+    U64(u64),
 }
 
 fn s(out: &mut Vec<u8>, v: &str) {
@@ -47,6 +48,10 @@ fn gguf(kvs: &[(&str, Kv)], pad: usize) -> Vec<u8> {
             Kv::Str(t) => {
                 o.extend(8u32.to_le_bytes());
                 s(&mut o, t);
+            }
+            Kv::U64(n) => {
+                o.extend(10u32.to_le_bytes());
+                o.extend(n.to_le_bytes());
             }
             Kv::Strs(a) => {
                 o.extend(9u32.to_le_bytes());
@@ -156,6 +161,74 @@ fn split_parts_followed() {
         assert_eq!(m.bytes, total);
         assert_eq!(m.layers, 32);
     }
+}
+
+/// What `gguf-split` writes into parts 2..N: split keys only, no general.*.
+fn split_tail(no: u32, count: u32, tensors: u32, pad: usize) -> Vec<u8> {
+    gguf(
+        &[
+            ("split.no", Kv::U32(no)),
+            ("split.count", Kv::U32(count)),
+            ("split.tensors.count", Kv::U32(tensors)),
+        ],
+        pad,
+    )
+}
+
+fn split_head(tensors: u32) -> Vec<u8> {
+    gguf(
+        &[
+            ("general.architecture", Kv::Str("llama")),
+            ("llama.block_count", Kv::U32(32)),
+            ("llama.context_length", Kv::U32(4096)),
+            ("llama.embedding_length", Kv::U32(4096)),
+            ("llama.attention.head_count", Kv::U32(32)),
+            ("split.no", Kv::U32(0)),
+            ("split.count", Kv::U32(2)),
+            ("split.tensors.count", Kv::U32(tensors)),
+        ],
+        10,
+    )
+}
+
+#[test]
+fn split_tail_without_general_keys_accepted() {
+    let d = temp("tail");
+    let (a, b) = (
+        d.join("m-00001-of-00002.gguf"),
+        d.join("m-00002-of-00002.gguf"),
+    );
+    std::fs::write(&a, split_head(7)).unwrap();
+    std::fs::write(&b, split_tail(1, 2, 7, 20)).unwrap();
+    for start in [&a, &b] {
+        let m = read_gguf(start).unwrap();
+        assert_eq!(m.arch, "llama");
+        assert_eq!(m.parts, vec![a.clone(), b.clone()]);
+    }
+    // parts that disagree on the tensor total are refused
+    std::fs::write(&b, split_tail(1, 2, 8, 20)).unwrap();
+    assert!(matches!(read_gguf(&a), Err(HfError::SplitMismatch(_))));
+}
+
+#[test]
+fn huge_key_length_is_a_parse_error() {
+    let d = temp("huge");
+    let p = d.join("m.gguf");
+    let big = Kv::U64(u64::MAX);
+    std::fs::write(
+        &p,
+        gguf(
+            &[
+                ("general.architecture", Kv::Str("llama")),
+                ("llama.attention.head_count", Kv::U32(1)),
+                ("llama.attention.key_length", big),
+                ("llama.attention.value_length", Kv::U64(u64::MAX)),
+            ],
+            8,
+        ),
+    )
+    .unwrap();
+    assert!(matches!(read_gguf(&p), Err(HfError::BadGguf(_))));
 }
 
 #[test]
@@ -551,6 +624,51 @@ fn import_file_copies_with_split_and_projector() {
         import_file(&d.join("mmproj-f16.gguf"), &layout, true),
         Err(HfError::Invalid(_))
     ));
+}
+
+#[test]
+fn concurrent_copy_imports_do_not_collide() {
+    let d = temp("conc");
+    let layout = Arc::new(Layout::new(temp("conc-home")));
+    let srcs: Vec<PathBuf> = (0..4)
+        .map(|i| {
+            let p = d.join(format!("m{}.gguf", i % 2));
+            std::fs::write(&p, llama(None, 200_000 + (i % 2) * 7)).unwrap();
+            p
+        })
+        .collect();
+    let handles: Vec<_> = srcs
+        .into_iter()
+        .map(|p| {
+            let layout = layout.clone();
+            std::thread::spawn(move || import_file(&p, &layout, true))
+        })
+        .collect();
+    for h in handles {
+        let r = h.join().unwrap().unwrap();
+        assert!(r.path.is_file());
+        assert_eq!(r.meta.bytes, std::fs::metadata(&r.path).unwrap().len());
+    }
+}
+
+#[test]
+fn projector_added_later_is_copied() {
+    let d = temp("late");
+    let m = d.join("m.gguf");
+    std::fs::write(&m, llama(None, 10)).unwrap();
+    let layout = Layout::new(temp("late-home"));
+    let first = import_file(&m, &layout, true).unwrap();
+    assert!(first.mmproj.is_none());
+
+    std::fs::write(d.join("mmproj-f16.gguf"), mmproj()).unwrap();
+    let second = import_file(&m, &layout, true).unwrap();
+    let proj = second.mmproj.expect("projector");
+    assert!(proj.is_file() && proj.starts_with(layout.cache()));
+    assert_ne!(second.id, first.id);
+    // and importing it again finds the same place with the projector in it
+    let third = import_file(&m, &layout, true).unwrap();
+    assert_eq!(third.id, second.id);
+    assert!(third.mmproj.is_some_and(|p| p.is_file()));
 }
 
 #[test]

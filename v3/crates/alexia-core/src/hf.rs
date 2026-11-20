@@ -102,6 +102,7 @@ fn bad(s: &str) -> HfError {
 
 // ---- GGUF header (gguf.ts `parse`) ----
 
+#[derive(PartialEq)]
 enum V {
     Num(u64),
     Str(String),
@@ -327,15 +328,14 @@ pub fn read_gguf(path: &Path) -> Result<GgufMeta, HfError> {
         }
         let p = parse(f)?;
         let h: &Parsed = head.get_or_insert(parse(&files[0])?);
-        let same_arch = p.kv.get("general.architecture").and_then(|v| match v {
-            V::Str(s) => Some(s),
-            _ => None,
-        }) == h.kv.get("general.architecture").and_then(|v| match v {
-            V::Str(s) => Some(s),
-            _ => None,
-        });
+        // gguf-split writes general.* only into part 1: compare only what the part carries
+        let both_agree = |k: &str| match (p.kv.get(k), h.kv.get(k)) {
+            (Some(a), Some(b)) => a == b,
+            _ => true,
+        };
         if n > 1
-            && (!same_arch
+            && (!both_agree("general.architecture")
+                || !both_agree("split.tensors.count")
                 || p.version != h.version
                 || p.num("split.count") != Some(n)
                 || p.num("split.no") != Some(i as u64))
@@ -374,10 +374,13 @@ pub fn read_gguf(path: &Path) -> Result<GgufMeta, HfError> {
     };
     let emb = g("embedding_length").unwrap_or(0);
     let each = |k: &str| g(k).unwrap_or(emb.checked_div(heads).unwrap_or(0));
+    let per_head = each("attention.key_length")
+        .checked_add(each("attention.value_length"))
+        .ok_or_else(|| bad("the attention key and value lengths are too large"))?;
     let kv_bytes = 2u64
         .saturating_mul(u64::from(layers))
         .saturating_mul(kv_heads)
-        .saturating_mul(each("attention.key_length") + each("attention.value_length"));
+        .saturating_mul(per_head);
     Ok(GgufMeta {
         vision_projector: arch == "clip",
         arch: arch.clone(),
@@ -1124,7 +1127,9 @@ pub fn import_file(path: &Path, layout: &Layout, copy: bool) -> Result<Installed
         });
     }
     let root = layout.cache().join("models").join("local");
-    let staging = root.join(format!(".import-{}", std::process::id()));
+    static CALLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let call = CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let staging = root.join(format!(".import-{}-{call}", std::process::id()));
     let _ = std::fs::remove_dir_all(&staging);
     std::fs::create_dir_all(&staging).map_err(io)?;
     let done = (|| {
@@ -1137,9 +1142,8 @@ pub fn import_file(path: &Path, layout: &Layout, copy: bool) -> Result<Installed
             if want != got {
                 return Err(HfError::Io("the copy does not match the source".into()));
             }
-            if mmproj.as_ref().is_none_or(|m| m != p) {
-                group.update(want.as_bytes());
-            }
+            // the projector is part of the id, so an existing dir always holds it
+            group.update(want.as_bytes());
         }
         Ok(hex(group.finalize()))
     })();
@@ -1154,7 +1158,13 @@ pub fn import_file(path: &Path, layout: &Layout, copy: bool) -> Result<Installed
     if final_dir.exists() {
         let _ = std::fs::remove_dir_all(&staging);
     } else {
-        std::fs::rename(&staging, &final_dir).map_err(io)?;
+        if let Err(e) = std::fs::rename(&staging, &final_dir) {
+            // a concurrent import of the same files won the race: its copy is identical
+            let _ = std::fs::remove_dir_all(&staging);
+            if !final_dir.exists() {
+                return Err(io(e));
+            }
+        }
     }
     let first = final_dir.join(meta.parts[0].file_name().unwrap_or_default());
     Ok(Installed {
