@@ -22,7 +22,7 @@ pub fn secret_keys() -> &'static [&'static str] {
 
 /// (v2 account, v3 `_core` key) for every channel secret v2 kept under a plugin's name.
 pub fn v2_secret_names() -> &'static [(&'static str, &'static str)] {
-    &[("telegram.bot_token", TELEGRAM_TOKEN)]
+    &[("telegram.bot_token", TELEGRAM_TOKEN)] // invariant: v2 import
 }
 
 /// The bot token, or `None` when it is missing or unreadable. Never logged.

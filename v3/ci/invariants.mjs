@@ -33,6 +33,8 @@ const ALLOWED = {
 }
 /** A service a channel adapter speaks to may be named there (INTERFACES.md §8.1). */
 const CHANNELS = 'v3/crates/alexia-gateway/src/channels/'
+/** Marks a line in channels/ that names a plugin because it reads v2 data (INTERFACES.md §8.9). */
+const V2_IMPORT = '// invariant: v2 import'
 
 const isComment = (line) => line.trim().startsWith('//')
 const escape = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -40,12 +42,16 @@ const escape = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 /** Hits for check 1 in one file's text. `path` is repo-relative with forward slashes. */
 export function pluginHits(path, text, ids) {
   const out = []
+  // The service a channel file speaks to: `channels/<svc>/...` (none for channels/mod.rs).
+  const parts = path.startsWith(CHANNELS) ? path.slice(CHANNELS.length).split('/') : []
+  const svc = parts.length > 1 ? parts[0] : null
   text.split('\n').forEach((line, i) => {
     if (isComment(line)) return
     const at = `${path}:${i + 1}`
     if (/plugins[\\/]/.test(line)) out.push(`${at}: names the plugins/ folder`)
-    if (path.startsWith(CHANNELS)) return
+    if (path.startsWith(CHANNELS) && line.includes(V2_IMPORT)) return
     for (const id of ids) {
+      if (id === svc) continue
       const re = new RegExp(`['"\`]${escape(id)}['"\`]|plugins[\\\\/]${escape(id)}\\b`)
       if (re.test(line)) out.push(`${at}: names plugin "${id}"`)
     }
@@ -146,6 +152,12 @@ function selfTest() {
     if (got.length !== 0) bad.push(`self-test: ${what} was flagged: ${got.join('; ')}`)
   }
   const hub = 'v3/crates/alexia-hub/src/main.rs'
+  const mod = `${CHANNELS}mod.rs`
+  const naming = 'let x = "telegram";'
+  expect('a plugin named in channels/mod.rs without the marker', pluginHits(mod, naming, ['telegram']))
+  ok('a plugin named in channels/mod.rs with the marker', pluginHits(mod, `${naming} ${V2_IMPORT}`, ['telegram']))
+  ok('telegram named in channels/telegram/', pluginHits(`${CHANNELS}telegram/api.rs`, naming, ['telegram']))
+  expect('voice named in channels/telegram/', pluginHits(`${CHANNELS}telegram/api.rs`, 'let x = "voice";', ['telegram', 'voice']))
   expect('the hub reaching the telegram api', channelHits(hub, 'use alexia_gateway::channels::telegram::api::Api;'))
   expect(
     'a hub test reaching the adapter',
@@ -169,7 +181,6 @@ function selfTest() {
   ok('a plugin id in a doc comment', pluginHits(src, '/// the channel name ("voice")', ['voice']))
   expect('a plugin id in test code', pluginHits(src, '#[cfg(test)]\nlet a = "voice";', ['voice']))
   ok('the English word memory', pluginHits(src, '// memory of the media', ['memory', 'media']))
-  ok('a channel naming its service', pluginHits(`${CHANNELS}telegram.rs`, 'let n = "telegram";', ['telegram']))
   const pkg = (name, deps, license = 'AGPL-3.0-only') => ({
     name,
     license,
