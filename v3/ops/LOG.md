@@ -314,3 +314,22 @@
 - 2026-11-20 Merged P2-06 (no-fail-fast 54 ok; only plugin_cancel_reaches_incoming flaked), pushed; P2-07 ready. Merged P2-16, P2-04, P2-49, P2-05 together (disjoint), gating
 - 2026-11-20 P2-14 fixer done -> review ctx_79bbec33e43e; P2-07 dispatched (sonnet) ctx_d1da7ba84e84
 - 2026-11-20 Merged P2-16, P2-04, P2-49, P2-05 (gate OK 55 suites, pushed)
+- 2026-11-20 Merged P2-14 (gate OK, pushed); P2-17, P2-19 ready. Low memory killed P2-30/32/33 workspace runs: told them to commit, rerun with CARGO_BUILD_JOBS=1 (P2-30: per-crate accepted)
+- 2026-11-20 P2-13: merged v3 (with P2-14) into branch; review started
+- 2026-11-20 P2-30 built -> review. Decision: max 4 builders until memory recovers
+- 2026-11-20 P2-30 review: changes (clock after sleep, run() dies on read error, one-shot origin, overflow). Fix ctx_0926c0678642
+- 2026-11-20 P2-07 built -> review
+- 2026-11-20 P2-24 built -> review ctx_27d83454cc2a; P2-17 dispatched (sonnet) ctx_c4932a2b7e3b with redact_request_known note
+- 2026-11-20 P2-30 fix done -> review 2
+- 2026-11-20 P2-33 built -> review; P2-19 dispatched (sonnet)
+- 2026-11-20 P2-32 built -> review
+- 2026-11-20 P2-07 review: changes (files deleted when steered; full queue loses msgs). Fix round
+- 2026-11-20 P2-24 approved, merged, gating. Follow-ups: rust-version 1.85->1.87 (io::pipe), wasm spawn blocks tokio worker
+- 2026-11-20 P2-30 approved (review 2); merge after P2-24 gate. Follow-ups: cut-short one-shot lost, Every overlap
+- 2026-11-20 P2-33 review: changes (real split GGUF rejected, staging race, mmproj path, overflow). Fix round
+- 2026-11-20 P2-13 approved (reviewer tests killed OOM; gate verifies); merge queue
+- 2026-11-20 DISK FULL (C: 100%): gate + P2-19 failed os error 112. Deleted v3/target in finished worktrees P2-24, P2-13, P2-30, P2-32 (31 GB free). P2-32 approved; P2-33, P2-07 fixes done -> review 2. Rule: delete a worktree's target as soon as its task is approved
+- 2026-11-20 Merged P2-24 (gate OK, pushed). P2-30, P2-13, P2-32 merged together (Cargo.lock auto-merged), gating
+- 2026-11-20 P2-33 approved (review 2); merge queue. Follow-ups: hash_file blocks tokio; \?\ paths to llama-server
+- 2026-11-20 Merged P2-30, P2-13, P2-32 (gate OK 60 suites, pushed). P2-33 merged, gating
+- 2026-11-20 Merged P2-33 (gate OK 61, pushed)
