@@ -8,10 +8,10 @@
 use std::collections::{HashMap, HashSet};
 use std::future::pending;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use std::time::Duration;
 
-use alexia_core::{Brain, BrainError, Bus, DraftFrame, Event, Lane, Origin, Phase, Span};
+use alexia_core::{ms_since, Brain, BrainError, Bus, DraftFrame, Event, Lane, Origin, Phase, Span};
 use alexia_store::{now_ms, Content, Ms, Part, SessionId, SpanRow, Store};
 use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::mpsc;
@@ -20,7 +20,7 @@ use tokio::time::{sleep_until, Instant};
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 
-use crate::ask::{Asker, Channels};
+use crate::ask::{Asker, ChannelSet};
 use crate::{
     voice, Channel, ChatRef, Error, GatewayConfig, InFile, InKind, Inbound, Media, Outbound, Result,
 };
@@ -38,7 +38,7 @@ pub struct Gateway {
     bus: Bus,
     brain: Arc<dyn Brain>,
     media: Arc<dyn Media>,
-    channels: Channels,
+    channels: ChannelSet,
 }
 
 /// What every task of one gateway shares.
@@ -53,12 +53,14 @@ struct Shared {
 }
 
 impl Gateway {
-    pub fn new(
+    /// The P2 constructor: the set (and the asker built on it) exist before the gateway.
+    pub fn with_channels(
         cfg: GatewayConfig,
         store: Arc<Store>,
         bus: Bus,
         brain: Arc<dyn Brain>,
         media: Arc<dyn Media>,
+        channels: ChannelSet,
     ) -> Gateway {
         Gateway {
             cfg,
@@ -66,25 +68,29 @@ impl Gateway {
             bus,
             brain,
             media,
-            channels: Arc::new(RwLock::new(Vec::new())),
+            channels,
         }
     }
 
+    // P2-38 deletes this
+    pub fn new(
+        cfg: GatewayConfig,
+        store: Arc<Store>,
+        bus: Bus,
+        brain: Arc<dyn Brain>,
+        media: Arc<dyn Media>,
+    ) -> Gateway {
+        Gateway::with_channels(cfg, store, bus, brain, media, ChannelSet::new())
+    }
+
     pub fn add(&mut self, channel: Arc<dyn Channel>) {
-        self.channels
-            .write()
-            .unwrap_or_else(|e| e.into_inner())
-            .push(channel);
+        self.channels.add(channel);
     }
 
     /// Runs until `cancel`, then stops polling, cancels running turns and waits at most 3 s.
     pub async fn run(self, cancel: CancellationToken) -> Result<()> {
         let says = self.bus.subscribe();
-        let channels: Vec<Arc<dyn Channel>> = self
-            .channels
-            .read()
-            .unwrap_or_else(|e| e.into_inner())
-            .clone();
+        let channels = self.channels.all();
         let tracker = TaskTracker::new();
         let g = Arc::new(Shared {
             cfg: self.cfg,
@@ -109,13 +115,10 @@ impl Gateway {
         Ok(())
     }
 
+    // P2-38 deletes this
     pub fn asker(&self) -> Arc<dyn alexia_core::Ask> {
-        Arc::new(Asker::new(self.channels.clone(), self.store.clone()))
+        Asker::new(self.channels.clone(), self.store.clone(), self.bus.clone())
     }
-}
-
-fn ms_since(t: Instant) -> u32 {
-    t.elapsed().as_millis().min(u32::MAX as u128) as u32
 }
 
 /// A span's `start`: ms from the turn's first receipt to `t`.
@@ -230,7 +233,7 @@ fn spawn_ack(
     let tracker = g.tracker.clone();
     tracker.spawn(async move {
         let r = ch.react(&chat, &msg, &g.cfg.ack_emoji).await;
-        let ms = ms_since(rec.instant);
+        let ms = ms_since(rec.instant.into_std());
         let ok = match r {
             Ok(()) => true,
             Err(e) => {
@@ -512,7 +515,7 @@ impl Actor {
         let spans = vec![Span {
             name: "deliver",
             start: offset(msg.rec.instant, t),
-            ms: ms_since(t),
+            ms: ms_since(t.into_std()),
         }];
         delete_files(std::slice::from_ref(&msg));
         self.record(&[msg], Lane::Command, spans);
@@ -769,7 +772,7 @@ impl TurnCtx {
             spans.push(Span {
                 name: "hear",
                 start: off(hear_t),
-                ms: ms_since(hear_t),
+                ms: ms_since(hear_t.into_std()),
             });
         }
 
@@ -790,7 +793,7 @@ impl TurnCtx {
         spans.push(Span {
             name: "merge",
             start: 0,
-            ms: ms_since(self.first.instant),
+            ms: ms_since(self.first.instant.into_std()),
         });
         g.bus.publish(Event::Received {
             at: now_ms(),
@@ -824,7 +827,7 @@ impl TurnCtx {
                 spans.push(Span {
                     name: "brain",
                     start: brain_start,
-                    ms: ms_since(brain_t),
+                    ms: ms_since(brain_t.into_std()),
                 });
                 self.deliver(&mut spans, plain(&text)).await;
                 return TurnEnd::Finished {
@@ -837,7 +840,7 @@ impl TurnCtx {
         spans.push(Span {
             name: "brain",
             start: brain_start,
-            ms: ms_since(brain_t),
+            ms: ms_since(brain_t.into_std()),
         });
         // The brain measures from when it was handed the turn.
         spans.extend(reply.spans.iter().map(|s| Span {
@@ -857,7 +860,7 @@ impl TurnCtx {
             spans.push(Span {
                 name: "speak",
                 start: off(t),
-                ms: ms_since(t),
+                ms: ms_since(t.into_std()),
             });
             if let Some(note) = note {
                 out.files.push(note);
@@ -878,7 +881,7 @@ impl TurnCtx {
         spans.push(Span {
             name: "deliver",
             start: offset(self.first.instant, t),
-            ms: ms_since(t),
+            ms: ms_since(t.into_std()),
         });
         if let Err(e) = sent {
             tracing::error!(channel = self.ch.name(), "gateway: delivering failed: {e}");
