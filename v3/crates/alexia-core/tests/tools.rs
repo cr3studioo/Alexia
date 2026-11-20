@@ -63,6 +63,10 @@ async fn env(tag: &str, plugins: &[(&str, &str)]) -> Env {
         });
         std::fs::write(dir.join("plugin.json"), m.to_string()).unwrap();
     }
+    boot(root, ext, plugins.iter().map(|(id, _)| *id).collect()).await
+}
+
+async fn boot(root: PathBuf, ext: PathBuf, ids: Vec<&str>) -> Env {
     let cfg = HostConfig {
         layout: Layout::new(root.join("data")),
         plugin_dirs: vec![ext],
@@ -79,12 +83,51 @@ async fn env(tag: &str, plugins: &[(&str, &str)]) -> Env {
         Arc::new(NoUpcalls),
         sink,
     );
-    let ids: Vec<PluginId> = plugins
-        .iter()
-        .map(|(id, _)| PluginId((*id).into()))
-        .collect();
+    let ids: Vec<PluginId> = ids.into_iter().map(|id| PluginId(id.into())).collect();
     host.start(&ids).await.unwrap();
     Env { root, host }
+}
+
+/// A plugin that is a node script, for what the fixture cannot show: it appends every
+/// `notifications/cancelled` it receives to `cancelled.log` beside it, and its `set` answers
+/// with an un-namespaced `alexia/undo`.
+const NODE_PLUGIN: &str = r#"
+const fs = require('fs'), path = require('path');
+const log = path.join(__dirname, 'cancelled.log');
+const send = (m) => process.stdout.write(JSON.stringify({ jsonrpc: '2.0', ...m }) + '\n');
+const text = (t, meta) => ({ content: [{ type: 'text', text: t }], ...(meta ? { _meta: meta } : {}) });
+const obj = { type: 'object' };
+require('readline').createInterface({ input: process.stdin }).on('line', (line) => {
+  const m = JSON.parse(line);
+  if (m.method === 'notifications/cancelled') { fs.appendFileSync(log, JSON.stringify(m.params) + '\n'); return; }
+  if (m.id === undefined) return;
+  if (m.method === 'initialize') send({ id: m.id, result: { protocolVersion: m.params.protocolVersion, serverInfo: { name: 'n', version: '0' }, capabilities: { tools: {} } } });
+  else if (m.method === 'tools/list') send({ id: m.id, result: { tools: ['slow', 'set', 'unset'].map((name) => ({ name, inputSchema: obj })) } });
+  else if (m.method === 'tools/call') {
+    const n = m.params.name;
+    if (n === 'set') send({ id: m.id, result: text('set k', { 'alexia/undo': { tool: 'unset', arguments: { key: 'k' }, summary: 'set k' } }) });
+    else if (n === 'unset') send({ id: m.id, result: text('unset k') });
+    // `slow` never answers: only a cancel ends it.
+  } else send({ id: m.id, result: {} });
+});
+"#;
+
+/// A host with one node plugin running [`NODE_PLUGIN`].
+async fn node_env(tag: &str, id: &str) -> Env {
+    let root = std::env::temp_dir().join(format!("alexia-tools-{tag}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let ext = root.join("ext");
+    let dir = ext.join(id);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("plugin.js"), NODE_PLUGIN).unwrap();
+    let m = json!({
+        "manifest_version": 1, "id": id, "name": format!("Plugin {id}"),
+        "summary": "A plugin that exists for tests.", "version": "0.1.0",
+        "license": "AGPL-3.0-only", "entry": { "run": "node", "args": ["plugin.js"] },
+        "alexia_protocol": 2, "mcp_protocol": "2025-11-25"
+    });
+    std::fs::write(dir.join("plugin.json"), m.to_string()).unwrap();
+    boot(root, ext, vec![id]).await
 }
 
 fn ctx() -> ToolCtx {
@@ -356,7 +399,7 @@ fn resource_link_is_produced() {
 
 #[tokio::test]
 async fn cancel_reaches_the_plugin() {
-    let e = env("cancel", &[("vanisher", "vanish")]).await;
+    let e = node_env("cancel", "canceller").await;
     let tooling = McpTooling::new(e.host.clone(), vec![]);
     let c = ctx();
     let cancel = c.cancel.clone();
@@ -365,20 +408,83 @@ async fn cancel_reaches_the_plugin() {
         tokio::time::sleep(Duration::from_millis(500)).await;
         cancel.cancel();
     });
-    // The plugin would sleep a minute; cancelling must end the call long before.
-    let out = tooling
-        .call("vanisher__slow", args(json!({"ms": 60_000})), c)
-        .await;
+    // The plugin never answers `slow`; cancelling must end the call.
+    let out = tooling.call("canceller__slow", Map::new(), c).await;
     canceller.await.unwrap();
     assert!(!out.ok);
     assert_eq!(out.text, "Stopped.");
     assert!(started.elapsed() < Duration::from_secs(30));
-    // The plugin is still good for the next call.
-    let out = tooling
-        .call("vanisher__slow", args(json!({"ms": 0})), ctx())
-        .await;
+    // The plugin itself was told: it logged `notifications/cancelled` for that request.
+    // The script writes beside itself, in the plugin folder.
+    let log = e.root.join("ext").join("canceller").join("cancelled.log");
+    let mut seen = String::new();
+    for _ in 0..300 {
+        seen = std::fs::read_to_string(&log).unwrap_or_default();
+        if !seen.is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert!(seen.contains("requestId"), "plugin got no cancel: {seen:?}");
+    // And the plugin is still good for the next call.
+    let out = tooling.call("canceller__unset", Map::new(), ctx()).await;
     assert!(out.ok, "{}", out.text);
     e.done().await;
+}
+
+#[tokio::test]
+async fn undo_tool_is_namespaced_for_the_next_call() {
+    let e = node_env("undo-ns", "undoer").await;
+    let tooling = McpTooling::new(e.host.clone(), vec![]);
+    let out = tooling.call("undoer__set", Map::new(), ctx()).await;
+    assert!(out.ok, "{}", out.text);
+    let undo = out.undo.expect("undo read");
+    assert_eq!(undo.tool, "undoer__unset");
+    // The undo is a call the tooling can make as given.
+    let back = tooling.call(&undo.tool, undo.arguments, ctx()).await;
+    assert!(back.ok && back.text == "unset k", "{}", back.text);
+    e.done().await;
+}
+
+#[test]
+fn file_links_with_a_host_are_not_written() {
+    let dir = std::env::temp_dir().join(format!("alexia-tools-host-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("a.txt");
+    std::fs::write(&file, b"x").unwrap();
+    let slashed = file.to_string_lossy().replace('\\', "/");
+    let abs = if slashed.starts_with('/') {
+        slashed
+    } else {
+        format!("/{slashed}")
+    };
+    let link = |uri: String| json!({"type":"resource_link","uri": uri, "name": "a.txt"});
+    let o = outcome_of(&result(
+        json!([
+            link(format!("file://localhost{abs}")),
+            link(format!("file://{abs}")),
+            // `Cargo.toml` is in the test's working directory: a host must not turn it
+            // into a relative path.
+            link("file://Cargo.toml".into()),
+            link("file://srv/share/x".into()),
+            link("file://etc/passwd".into()),
+        ]),
+        None,
+        false,
+    ));
+    let lines: Vec<&str> = o.text.lines().collect();
+    assert_eq!(
+        lines,
+        [
+            "[file: a.txt]",
+            "[file: a.txt]",
+            "[file: a.txt — not written]",
+            "[file: a.txt — not written]",
+            "[file: a.txt — not written]"
+        ]
+    );
+    assert_eq!(o.files.len(), 2);
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]

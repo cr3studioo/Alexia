@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use alexia_mcp::types::{CallToolResult, ProgressParams};
-use alexia_mcp::{CallCtx, CallError, McpHost, PluginId};
+use alexia_mcp::{CallCtx, CallError, HostedTool, McpHost, PluginId};
 use serde_json::{Map, Value};
 
 use crate::{Builtin, Produced, ToolCtx, ToolOutcome, ToolSpec, Tooling, UndoCall};
@@ -20,6 +20,8 @@ const FINAL_MAX: usize = 4000;
 pub struct McpTooling {
     host: McpHost,
     builtins: Mutex<Vec<Arc<dyn Builtin>>>,
+    /// What the last `list()` saw, so a call need not ask every plugin again.
+    listed: Mutex<Vec<HostedTool>>,
 }
 
 impl McpTooling {
@@ -27,6 +29,7 @@ impl McpTooling {
         McpTooling {
             host,
             builtins: Mutex::new(builtins),
+            listed: Mutex::new(vec![]),
         }
     }
 
@@ -70,7 +73,9 @@ fn progress_line(p: &ProgressParams) -> String {
 impl Tooling for McpTooling {
     async fn list(&self) -> Vec<ToolSpec> {
         let mut specs: Vec<ToolSpec> = self.builtins().iter().flat_map(|b| b.specs()).collect();
-        for t in self.host.tools().await {
+        let tools = self.host.tools().await;
+        *self.listed.lock().unwrap_or_else(|e| e.into_inner()) = tools.clone();
+        for t in tools {
             if t.hidden {
                 continue;
             }
@@ -115,12 +120,18 @@ impl Tooling for McpTooling {
         }
         // Hidden tools (compute, editor) are not the model's to call; and listing is what
         // notices a deleted folder, so a plugin missing afterwards vanished just now.
-        let found = self
-            .host
-            .tools()
-            .await
-            .into_iter()
-            .find(|t| t.plugin == plugin && t.tool.name == tool && !t.hidden);
+        let is_it = |t: &HostedTool| t.plugin == plugin && t.tool.name == tool && !t.hidden;
+        let cached = self
+            .listed
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .find(|t| is_it(t))
+            .cloned();
+        let found = match cached {
+            Some(t) => Some(t),
+            None => self.host.tools().await.into_iter().find(is_it),
+        };
         let Some(found) = found else {
             return if installed(&self.host) {
                 no_tool()
@@ -161,7 +172,25 @@ impl Tooling for McpTooling {
         // The host dropped its sender with the call, so the forwarder drains and ends.
         let _ = forward.await;
         match result {
-            Ok(r) => outcome_of(&r),
+            Ok(r) => {
+                let mut out = outcome_of(&r);
+                // The plugin names its own tools; the model, and so `call`, knows them by
+                // `<plugin>__<tool>`.
+                if let Some(u) = out.undo.as_mut() {
+                    let own = self
+                        .builtins()
+                        .iter()
+                        .any(|b| b.specs().iter().any(|s| s.name == u.tool));
+                    let namespaced_already = u
+                        .tool
+                        .split_once(SEPARATOR)
+                        .is_some_and(|(p, _)| self.host.plugins().iter().any(|i| i.id.0 == p));
+                    if !own && !namespaced_already {
+                        u.tool = namespaced(&plugin, &u.tool);
+                    }
+                }
+                out
+            }
             Err(CallError::Gone) => gone(),
             Err(CallError::Off { sentence }) => failed(sentence),
             Err(CallError::Timeout) => failed(format!(
@@ -180,7 +209,15 @@ pub fn namespaced(plugin: &PluginId, tool: &str) -> String {
 
 /// `file:///C:/a%20b` or `file:///a/b` to a path; None for any other kind of link.
 fn file_uri_path(uri: &str) -> Option<PathBuf> {
-    let raw = uri.strip_prefix("file://")?.as_bytes();
+    let rest = uri.strip_prefix("file://")?;
+    // Only this machine: an empty host or `localhost`, never `file://srv/share/x`.
+    let rest = if rest.starts_with('/') {
+        rest
+    } else {
+        rest.strip_prefix("localhost")
+            .filter(|r| r.starts_with('/'))?
+    };
+    let raw = rest.as_bytes();
     let mut out = Vec::with_capacity(raw.len());
     let mut i = 0;
     while i < raw.len() {
