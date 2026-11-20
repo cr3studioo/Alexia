@@ -373,7 +373,7 @@ pub fn read_gguf(path: &Path) -> Result<GgufMeta, HfError> {
         Some(_) => 0,
     };
     let emb = g("embedding_length").unwrap_or(0);
-    let each = |k: &str| g(k).unwrap_or(if heads > 0 { emb / heads } else { 0 });
+    let each = |k: &str| g(k).unwrap_or(emb.checked_div(heads).unwrap_or(0));
     let kv_bytes = 2u64
         .saturating_mul(u64::from(layers))
         .saturating_mul(kv_heads)
@@ -1137,7 +1137,7 @@ pub fn import_file(path: &Path, layout: &Layout, copy: bool) -> Result<Installed
             if want != got {
                 return Err(HfError::Io("the copy does not match the source".into()));
             }
-            if !mmproj.as_ref().is_some_and(|m| m == p) {
+            if mmproj.as_ref().is_none_or(|m| m != p) {
                 group.update(want.as_bytes());
             }
         }
