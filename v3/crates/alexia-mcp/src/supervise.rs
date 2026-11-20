@@ -81,6 +81,38 @@ pub(crate) fn vanished(dir: &Path) -> bool {
     !dir.join("plugin.json").exists()
 }
 
+/// What a plugin's folder looked like when its manifest was read (P2-23): the size and mtime
+/// of `plugin.json` and of the entry files that live inside the folder, and the `version`
+/// field. Any difference means "reload".
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub(crate) struct Stamp {
+    files: Vec<Option<(std::time::SystemTime, u64)>>,
+    version: Option<String>,
+}
+
+impl Stamp {
+    pub(crate) fn of(dir: &Path, entry: &crate::manifest::Entry) -> Stamp {
+        let stat = |p: PathBuf| {
+            std::fs::metadata(p)
+                .ok()
+                .and_then(|m| Some((m.modified().ok()?, m.len())))
+        };
+        // `run` and the args that name a file in the folder (`node` + `index.js`); a bare
+        // `node` or `--flag` is not a file there and stays `None` every time.
+        let mut files = vec![stat(dir.join("plugin.json"))];
+        files.extend(
+            std::iter::once(&entry.run)
+                .chain(&entry.args)
+                .map(|a| stat(dir.join(a))),
+        );
+        let version = std::fs::read_to_string(dir.join("plugin.json"))
+            .ok()
+            .and_then(|j| serde_json::from_str::<serde_json::Value>(&j).ok())
+            .and_then(|v| v.get("version")?.as_str().map(String::from));
+        Stamp { files, version }
+    }
+}
+
 /// Calls in flight and when the last one ended, for the idle check. `Conn::quiet_ms` cannot
 /// serve: the heartbeat's own ping answers keep it near zero.
 pub(crate) struct Busy {
@@ -161,6 +193,7 @@ pub(crate) async fn watch(w: Watch) {
             host.vanish(&w.id).await;
             return;
         }
+        host.reload_if_changed(&w.id);
         let idle = w.busy.upgrade().and_then(|b| b.idle_for());
         // `stop_with` checks again under the spawn lock: a call that got in first keeps the
         // process, and this watcher keeps watching it.

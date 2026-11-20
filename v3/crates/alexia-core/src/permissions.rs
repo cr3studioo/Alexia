@@ -223,15 +223,24 @@ pub fn within(parent: &Path, path: &Path) -> bool {
     !from.is_empty() && to.len() >= from.len() && to[..from.len()] == from[..]
 }
 
-/// Segments to compare. Windows paths are case-insensitive.
+/// Segments to compare. Windows paths are case-insensitive, and Win32 drops trailing dots and
+/// spaces from every segment when it opens a path (`.aws.` opens `.aws`).
 fn key(p: &Path) -> Vec<String> {
     p.components()
-        .map(|c| {
+        .filter_map(|c| {
             let s = c.as_os_str().to_string_lossy();
             if cfg!(windows) {
-                s.to_lowercase()
+                let t = s.trim_end_matches(['.', ' ']);
+                // `.` and `..` keep their meaning; a segment of only dots/spaces is nothing.
+                if matches!(s.as_ref(), "." | "..") {
+                    Some(s.into_owned())
+                } else if t.is_empty() {
+                    None
+                } else {
+                    Some(t.to_lowercase())
+                }
             } else {
-                s.into_owned()
+                Some(s.into_owned())
             }
         })
         .collect()
@@ -425,9 +434,24 @@ pub fn scope(store: &Store, data_dir: &Path) -> Scope {
                 .collect()
         })
         .unwrap_or_default();
-    let boundaries = get("boundaries")
-        .and_then(|v| serde_json::from_value(v).ok())
-        .unwrap_or_default();
+    let boundaries = match get("boundaries") {
+        None | Some(Value::Null) => Vec::new(),
+        Some(Value::Array(items)) => items
+            .into_iter()
+            .enumerate()
+            .filter_map(|(i, v)| match serde_json::from_value(v) {
+                Ok(b) => Some(b),
+                Err(_) => {
+                    tracing::warn!("spoken boundary {i} could not be read and was skipped");
+                    None
+                }
+            })
+            .collect(),
+        Some(_) => {
+            tracing::warn!("_core.boundaries is not a list; no spoken boundaries were loaded");
+            Vec::new()
+        }
+    };
     Scope {
         mode,
         roots,

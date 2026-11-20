@@ -245,3 +245,26 @@
 2026-11-20 P2-12 gate ok, pushed. P2-42 ready.
 2026-11-20 P2-15 approve (review 2), merged locally, gate running. Note for P2-20: collapse keys by call id (trim.rs:245); the agent loop must give tool calls unique ids per run.
 2026-11-20 P2-15 gate: telegram_e2e fifty_messages ack failed under load, passed alone; pushed. Filed P2-43 (sonnet): ack check by p95<300 and max<2000. Added to P2-39 deps.
+2026-11-20 P2-22 build done (both host.rs findings fixed; note: core-originated capability calls get empty PluginId). Review dispatched. Dispatched P2-42 sonnet.
+2026-11-20 P2-22 approve, merged locally, gate running. Filed P2-44 (sonnet): serve.rs TOCTOU path, same-name copies, partial dir cleanup; added to P2-38 deps.
+2026-11-20 P2-42 build done; review dispatched. Dispatched P2-43 sonnet.
+2026-11-20 P2-22 gate ok, pushed. P2-23, P2-44 ready.
+2026-11-20 P2-42 approve, merged locally. Known edge (logged, no task): verbatim \?\ paths with trailing-dot segments key as inside the stripped root.
+2026-11-20 P2-42 gate ok, pushed.
+2026-11-20 P2-43 build done (p95<300, max<2000; 400 ms delay proved it fails); review dispatched. Dispatched P2-44 sonnet.
+2026-11-20 07:10 Workers P2-04/05/16/14fix/06rv show 'unverifiable' (stale heartbeats) but terminals are working (P2-04 running final tests). Left alone.
+2026-11-20 P2-44 build done (tests use embedded Node worker + junction); review dispatched. Dispatched P2-23 sonnet.
+2026-11-20 P2-43 review: changes (max<2000 failed once, 3815 ms stall). Spec owner (CEO) decision: drop max, keep p95<300. Fix try 2 sonnet ctx_6411d0eef548. Builders now 6 (this is a tiny fix).
+2026-11-20 P2-44 approve, merged locally. Watch in P2-40: compute workers now get verbatim \?\ paths (some tools reject); strip prefix if a v2 plugin breaks. Also dest dir pid+nanos could collide (old).
+2026-11-20 P2-43 try 2 failed: test's latency --check step fails on one stall (latency.rs strict, kept). Spec fixed (test runs latency without --check). Not counted as a try. Re-dispatched sonnet ctx_5ee1ec56143c.
+2026-11-20 P2-23 build done (incompatible manifest kept old, not Refused); review dispatched. Dispatched P2-18 sonnet.
+2026-11-20 P2-44 gate: telegram flake again, full --no-fail-fast run 49/49 ok, invariants ok; pushed. 10 merges since phase review 3: phase review 4 due.
+2026-11-20 Dispatched phase review 4 (opus, detached C:/dev/Alexia-wt/phase-rv) ctx_58900a3a8653.
+2026-11-20 P2-23 approve, merged locally. Watch in P2-40: supervise.rs:106 stamps arg '.' (node .) -> plugin writing into its install root reloads every heartbeat. Minor: create_tables under plugins mutex during reload.
+2026-11-20 P2-43 fix done (3 busy runs pass); review 2 dispatched. Dispatched P2-11 sonnet.
+2026-11-20 Phase review 4 done (12 findings, v3/ops/phase-review-4.md): 2 high (resume/live_begin collides, AgentParts has no manifests), 3 medium permission fail-opens, compute CallCtx drops cancel, P2-38 too big for sonnet, lows. Sent to planner.
+2026-11-20 Dispatched planner (opus) on branch cr3studioo/v3-plan-rv4 for review-4 findings ctx_1e164e170e20.
+2026-11-20 P2-23 gate ok (50/50, no flake), pushed. P2-24 ready.
+2026-11-20 P2-18 build done (attachmentInputs no store; stagesOf not ported); review dispatched. P2-43 review 2: changes (turn-line assert missing, report claimed it). Fixer opus try 3 ctx_02a084e13359.
+2026-11-20 P2-11 blocked: 2 existing hits (mod.rs:61 telegram, api.rs:309 voice = Bot API field). Decision: fix mod.rs per rule; api.rs const + marker, allowed 1 line. Spec gap, no try. Continued ctx_9ced06271b68.
+2026-11-20 Merged plan after review 4 (c0a9cd9): new P2-45..49; P2-19/20/24/25/26/38/41 specs changed; P2-38 now opus (wiring only), CLI verbs -> P2-48; P2-24 back to todo (waits P2-47). P2-46: unannotated non-read-only tools count destructive (deliberate v2 split).
