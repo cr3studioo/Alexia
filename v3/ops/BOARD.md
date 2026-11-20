@@ -79,12 +79,12 @@
 | P2-15 | Trimming the step trace | P2 | sonnet | P2-01 | alexia-core/{src/trim.rs, tests/trim.rs} | merged | 2 | cr3studioo/v3-P2-15 | |
 | P2-16 | System prompt, skills, injection guard | P2 | sonnet | P2-01 | alexia-core/{src/prompt.rs, tests/prompt.rs} | running | 1 | cr3studioo/v3-P2-16 | ctx_07abe9092dc9 |
 | P2-17 | Router for task steps: model per job, $0 cap, catalog news | P2 | sonnet | P2-04, P2-05, P2-14 | alexia-core/{src/router.rs, src/catalog.rs, tests/router_steps.rs} | todo | 0 | | |
-| P2-18 | Tooling over the MCP host | P2 | sonnet | P2-02 | alexia-core/{src/tools.rs, tests/tools.rs} | ready | 0 | | |
+| P2-18 | Tooling over the MCP host | P2 | sonnet | P2-02 | alexia-core/{src/tools.rs, tests/tools.rs} | running | 1 | cr3studioo/v3-P2-18 | ctx_691952849dae |
 | P2-19 | Trace, runs and the audit log | P2 | sonnet | P2-01, P2-03, P2-14 | alexia-core/{src/trace.rs, tests/trace.rs} | todo | 0 | | |
 | P2-20 | The agent loop | P2 | opus | P2-07, P2-12, P2-13, P2-14, P2-15, P2-16, P2-17, P2-18, P2-19 | alexia-core/{src/agent.rs, tests/agent.rs} | todo | 0 | | |
 | P2-21 | Upcalls: sampling, tasks for plugins, elicit, roots, attachm | P2 | sonnet | P2-20, P2-02 | alexia-core/{src/upcalls.rs, tests/upcalls.rs} | todo | 0 | | |
 | P2-22 | MCP: compute/run locally, host-answered capabilities | P2 | sonnet | P2-02 | alexia-mcp/{src/serve.rs, src/host.rs, src/bin/mcp-fixture.rs, tests/compute.rs} | merged | 1 | cr3studioo/v3-P2-22 | follow-up P2-44 |
-| P2-23 | Hot reload of plugins | P2 | sonnet | P2-22 | alexia-mcp/{src/host.rs, src/supervise.rs, tests/reload.rs} | ready | 0 | | |
+| P2-23 | Hot reload of plugins | P2 | sonnet | P2-22 | alexia-mcp/{src/host.rs, src/supervise.rs, tests/reload.rs} | review | 1 | cr3studioo/v3-P2-23 | review |
 | P2-24 | WASM plugins in a capability sandbox | P2 | sonnet | P2-23 | alexia-mcp/{src/wasm.rs, src/host.rs, fixtures/wasm-hello/**, tests/fixtures/wasm-hello... | todo | 0 | | |
 | P2-25 | Commands | P2 | sonnet | P2-20 | alexia-core/{src/commands.rs, tests/commands.rs} | todo | 0 | | |
 | P2-26 | Resume after restart; jobs that run for days | P2 | sonnet | P2-20 | alexia-core/{src/resume.rs, tests/resume.rs} | todo | 0 | | |
@@ -104,5 +104,5 @@
 | P2-40 | Every v2 plugin on the Rust host | P2 | sonnet | P2-38 | alexia-hub/tests/v2_plugins.rs | todo | 0 | | |
 | P2-41 | Twenty real tasks on the PC | P2 | sonnet | P2-39, P2-40 | v3/ops/reports/P2-tasks.md | todo | 0 | | |
 | P2-42 | Permissions fail closed: trailing dots, bad boundary entries | P2 | sonnet | P2-12 | alexia-core/{src/permissions.rs, tests/permissions.rs} | merged | 1 | cr3studioo/v3-P2-42 | |
-| P2-43 | telegram_e2e ack check survives a loaded machine | P2 | sonnet | none | alexia-hub/tests/telegram_e2e.rs | running | 1 | cr3studioo/v3-P2-43 | ctx_085179151400 |
-| P2-44 | compute/run: checked path used; copies no collide/leak | P2 | sonnet | P2-22 | alexia-mcp/{src/serve.rs, tests/compute.rs} | ready | 0 | | review follow-up of P2-22 |
+| P2-43 | telegram_e2e ack check survives a loaded machine | P2 | sonnet | none | alexia-hub/tests/telegram_e2e.rs | running | 2 | cr3studioo/v3-P2-43 | spec fixed; ctx_5ee1ec56143c |
+| P2-44 | compute/run: checked path used; copies no collide/leak | P2 | sonnet | P2-22 | alexia-mcp/{src/serve.rs, tests/compute.rs} | merged | 1 | cr3studioo/v3-P2-44 | |

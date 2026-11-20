@@ -251,3 +251,11 @@
 2026-11-20 P2-22 gate ok, pushed. P2-23, P2-44 ready.
 2026-11-20 P2-42 approve, merged locally. Known edge (logged, no task): verbatim \?\ paths with trailing-dot segments key as inside the stripped root.
 2026-11-20 P2-42 gate ok, pushed.
+2026-11-20 P2-43 build done (p95<300, max<2000; 400 ms delay proved it fails); review dispatched. Dispatched P2-44 sonnet.
+2026-11-20 07:10 Workers P2-04/05/16/14fix/06rv show 'unverifiable' (stale heartbeats) but terminals are working (P2-04 running final tests). Left alone.
+2026-11-20 P2-44 build done (tests use embedded Node worker + junction); review dispatched. Dispatched P2-23 sonnet.
+2026-11-20 P2-43 review: changes (max<2000 failed once, 3815 ms stall). Spec owner (CEO) decision: drop max, keep p95<300. Fix try 2 sonnet ctx_6411d0eef548. Builders now 6 (this is a tiny fix).
+2026-11-20 P2-44 approve, merged locally. Watch in P2-40: compute workers now get verbatim \?\ paths (some tools reject); strip prefix if a v2 plugin breaks. Also dest dir pid+nanos could collide (old).
+2026-11-20 P2-43 try 2 failed: test's latency --check step fails on one stall (latency.rs strict, kept). Spec fixed (test runs latency without --check). Not counted as a try. Re-dispatched sonnet ctx_5ee1ec56143c.
+2026-11-20 P2-23 build done (incompatible manifest kept old, not Refused); review dispatched. Dispatched P2-18 sonnet.
+2026-11-20 P2-44 gate: telegram flake again, full --no-fail-fast run 49/49 ok, invariants ok; pushed. 10 merges since phase review 3: phase review 4 due.
