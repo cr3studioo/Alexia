@@ -17,7 +17,7 @@ use crate::conn::{Conn, Incoming};
 use crate::jsonrpc::{code, RpcError};
 use crate::manifest::{Lifetime, Manifest};
 use crate::process::{self, Proc, StderrLog};
-use crate::supervise::{self, Busy, BusyGuard, CrashLog, Verdict, Watch};
+use crate::supervise::{self, Busy, BusyGuard, CrashLog, Stamp, Verdict, Watch};
 use crate::types::{self, CallToolParams, CallToolResult, Implementation, InitializeParams};
 use crate::{
     Answers, CallCtx, CallError, Error, EventSink, HostConfig, HostedTool, PluginDir, PluginEvent,
@@ -43,6 +43,8 @@ struct Inner {
 
 struct Slot {
     dir: PluginDir,
+    /// What the folder looked like when `dir.manifest` was read; a difference is a reload.
+    stamp: Stamp,
     enabled: bool,
     state: PluginState,
     sentence: Option<String>,
@@ -190,6 +192,7 @@ impl McpHost {
         for (id, dir) in found {
             let on = enabled.contains(&id);
             let mut slot = Slot {
+                stamp: Stamp::of(&dir.path, &dir.manifest.entry),
                 enabled: on,
                 state: PluginState::Stopped,
                 sentence: None,
@@ -356,16 +359,138 @@ impl McpHost {
     }
 
     /// EX-12, P2-23: re-read the plugin's folder; let in-flight calls finish; the next call
-    /// spawns the new version. Emits `ToolsChanged`.
+    /// spawns the new version (a resident plugin is respawned at once). Emits `ToolsChanged`.
+    /// A manifest that does not load leaves the old version running and is `Err(Refused)`
+    /// with the same sentence in the plugin's status; no `Refused` event.
     pub async fn reload(&self, id: &PluginId) -> Result<(), Error> {
-        let _ = id;
-        todo!("P2-23")
+        let spawn = lock(&self.inner.plugins)
+            .get(id)
+            .map(|s| s.spawn.clone())
+            .ok_or_else(|| Error::UnknownPlugin(id.clone()))?;
+        // The spawn lock: a spawn under way finishes first, and after the claim below every
+        // later `ensure_running` sees `Reloading` and waits.
+        let (dir, stamp, busy) = {
+            let _g = spawn.lock().await;
+            let mut plugins = lock(&self.inner.plugins);
+            let slot = plugins
+                .get_mut(id)
+                .ok_or_else(|| Error::UnknownPlugin(id.clone()))?;
+            if slot.state == PluginState::Reloading {
+                return Ok(()); // someone else is on it
+            }
+            let path = slot.dir.path.clone();
+            // Stamped before reading, so an edit in between is seen by the next scan.
+            let stamp = Stamp::of(&path, &slot.dir.manifest.entry);
+            match self.read_new(id, &path, slot.enabled) {
+                Err(sentence) => {
+                    slot.stamp = stamp;
+                    slot.sentence = Some(sentence.clone());
+                    return Err(Error::Refused(sentence));
+                }
+                Ok(dir) => {
+                    slot.state = PluginState::Reloading;
+                    let busy = slot.running.as_ref().map(|r| Arc::clone(&r.busy));
+                    (dir, stamp, busy)
+                }
+            }
+        };
+        // In-flight calls run to completion (each is bounded by `call_ms`).
+        let deadline = Instant::now() + Duration::from_millis(self.inner.cfg.timings.call_ms);
+        while busy
+            .as_ref()
+            .is_some_and(|b| b.idle_for().is_none() && Instant::now() < deadline)
+        {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        self.stop_with(id, StopReason::Disabled).await;
+        let respawn = {
+            let mut plugins = lock(&self.inner.plugins);
+            let Some(slot) = plugins.get_mut(id) else {
+                return Ok(()); // removed meanwhile
+            };
+            let respawn = slot.enabled && dir.manifest.lifetime() == Lifetime::Resident;
+            slot.dir = dir;
+            slot.stamp = stamp;
+            slot.state = PluginState::Stopped;
+            slot.sentence = None;
+            // A new version gets a fresh tally; this was not a crash.
+            slot.crashes.clear();
+            slot.drop_tools();
+            respawn
+        };
+        self.emit(PluginEvent::Loaded { plugin: id.clone() });
+        self.emit(PluginEvent::ToolsChanged { plugin: id.clone() });
+        if respawn {
+            self.after_crash(id, AfterCrash::Respawn);
+        }
+        Ok(())
+    }
+
+    /// The folder's manifest as it is now, with start's checks and the tables made. Err is the
+    /// sentence; nothing has been stopped.
+    fn read_new(
+        &self,
+        id: &PluginId,
+        path: &std::path::Path,
+        enabled: bool,
+    ) -> Result<PluginDir, String> {
+        let json = std::fs::read_to_string(path.join("plugin.json")).map_err(|_| {
+            "This plugin's plugin.json can't be read any more; the old version is still running."
+                .to_string()
+        })?;
+        let manifest = Manifest::parse(&json).map_err(|e| e.sentence)?;
+        if manifest.id != id.0 {
+            return Err(format!(
+                "The new manifest calls the plugin “{}”; the folder and the id must match.",
+                manifest.id
+            ));
+        }
+        manifest.compatible()?;
+        let dir = PluginDir {
+            path: path.to_path_buf(),
+            manifest,
+        };
+        if enabled {
+            self.create_tables(&dir)?;
+        }
+        Ok(dir)
+    }
+
+    /// True when the plugin's folder differs from what was loaded (and no reload is under way).
+    fn changed(&self, id: &PluginId) -> bool {
+        let Some((path, entry, stamp)) = lock(&self.inner.plugins).get(id).and_then(|s| {
+            (s.state != PluginState::Reloading).then(|| {
+                (
+                    s.dir.path.clone(),
+                    s.dir.manifest.entry.clone(),
+                    s.stamp.clone(),
+                )
+            })
+        }) else {
+            return false;
+        };
+        Stamp::of(&path, &entry) != stamp
+    }
+
+    /// The watcher's scan: a plain fn so the watcher's future does not contain `reload`'s.
+    pub(crate) fn reload_if_changed(&self, id: &PluginId) {
+        if self.changed(id) {
+            let (host, id) = (self.clone(), id.clone());
+            tokio::spawn(async move {
+                if let Err(e) = host.reload(&id).await {
+                    tracing::warn!(plugin = %id.0, "reload: {e}");
+                }
+            });
+        }
     }
 
     async fn plugin_tools(&self, id: &PluginId) -> Option<Vec<HostedTool>> {
         if self.vanished(id) {
             self.vanish(id).await;
             return None;
+        }
+        if self.changed(id) {
+            let _ = self.reload(id).await;
         }
         if let Some(tools) = lock(&self.inner.plugins).get(id)?.tools.clone() {
             return Some(tools);
@@ -440,6 +565,9 @@ impl McpHost {
         if self.vanished(plugin) {
             self.vanish(plugin).await;
             return Err(CallError::Gone);
+        }
+        if self.changed(plugin) {
+            let _ = self.reload(plugin).await;
         }
         let (conn, _busy) = self.ensure_running(plugin).await.map_err(off)?;
 
@@ -761,8 +889,24 @@ impl McpHost {
             .get(id)
             .map(|s| s.spawn.clone())
             .ok_or_else(|| UNKNOWN.to_string())?;
+        let began = Instant::now();
         loop {
             let guard = spawn.lock().await;
+            // `reload` sets `Reloading` only under this spawn lock, so it cannot change below.
+            let updating = lock(&self.inner.plugins)
+                .get(id)
+                .filter(|s| s.state == PluginState::Reloading)
+                .map(|s| s.dir.manifest.name.clone());
+            if let Some(name) = updating {
+                // New calls wait for the swap, but not longer than a call may take.
+                if began.elapsed() >= Duration::from_millis(self.inner.cfg.timings.call_ms) {
+                    return Err(format!("{name} is being updated."));
+                }
+                drop(guard);
+                // ponytail: polls; a Notify if reloads ever get long or frequent.
+                tokio::time::sleep(Duration::from_millis(10)).await;
+                continue;
+            }
             let (dir, dead, wait) = {
                 let mut plugins = lock(&self.inner.plugins);
                 let slot = plugins.get_mut(id).ok_or_else(|| UNKNOWN.to_string())?;
