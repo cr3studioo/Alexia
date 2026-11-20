@@ -562,3 +562,35 @@ fn scope_reads_v2_kv_and_defaults_safe() {
         Some(json!([{ "said": "never delete anything", "blocks": "destructive", "at": 42 }]))
     );
 }
+
+#[cfg(windows)]
+#[test]
+fn trailing_dot_segment_is_never_touch() {
+    // `.aws` does not exist at this spelling; Windows opens `.aws.` as `.aws`.
+    let sneaky = home().join(".aws.").join("credentials");
+    assert!(never_touch(&sneaky, &data_dir()));
+    // `std::path::absolute` already trims dots on a plain path; a verbatim path keeps them.
+    let verbatim = PathBuf::from(format!(r"\\?\{}", sneaky.display()));
+    assert!(never_touch(&verbatim, &data_dir()));
+}
+
+#[cfg(windows)]
+#[test]
+fn trailing_space_segment_is_never_touch() {
+    let sneaky = home().join(".aws ").join("credentials");
+    assert!(never_touch(&sneaky, &data_dir()));
+}
+
+#[test]
+fn one_bad_boundary_keeps_the_rest() {
+    let good = heard("don’t delete anything", 7).unwrap();
+    let store = Store::open_in_memory().unwrap();
+    store
+        .kv_set("_core", "boundaries", &json!([{ "said": 5 }, good.clone()]))
+        .unwrap();
+    let s = scope(&store, &data_dir());
+    assert_eq!(s.boundaries.len(), 1);
+    let w = ann(false, true);
+    let writing = ask("notes__write", Some(&w), vec![]);
+    assert!(is_blocked(&rule(&writing, &s)));
+}
