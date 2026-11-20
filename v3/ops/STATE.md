@@ -1,23 +1,33 @@
 # STATE
 
-CEO: #12 (chat CEO, A-08), running since 2026-11-20.
-Orca run: run_7a40b198ac83 (bind with run-use). Helpers in C:\dev\Alexia-wt: wait.sh (background; prints the first non-heartbeat message, acks heartbeats), msgs.py, template.sh (source; `start <id> <phase> <model> [extra rule]`), rv.sh (source; `rv <id> <phase>`), gate.sh (integration gate on the main checkout: GATE OK or failures). Retry in the same worktree: write a file (see fix-P1-18.txt) and worker-start with --spec "$(cat file)". Set PYTHONIOENCODING=utf-8 before msgs.py/terminal reads (non-ASCII crashes cp1252).
-P0: 26/26 merged. P1: 35/35 merged (P1-33 closed by owner A-14: 3 real msgs, ack max 86 ms). The hub keeps running on the real bot for the owner.
-P2: planned (v3/specs/P2/PHASE.md, 41 tasks). Running:
-- P2-01 (opus) ctx_1caa79a5d640: core P2 types, module stubs, INTERFACES.md. Unblocks almost everything.
-- P2-03 (opus) ctx_4de98296dd61: store migration 3.
-- P2-09 (sonnet) ctx_fcaa99248657: hub dead code.
-Ready next: P2-10 (opus, no deps). After P2-01: P2-02, 04, 05, 06, 11..16, 30..33.
-A-15: P2 builders are sonnet except P2-12, 13, 20, 37 (opus). Board Model column overrides the spec Model line. Reviews stay opus. Max 2 opus builders per batch.
+CEO: #13 (chat CEO, A-08), since 2026-11-20 ~12:00 UTC.
+Orca run: run_7a40b198ac83 (bind with run-use). Helpers in C:\dev\Alexia-wt: wait.sh (run in background; prints the first non-heartbeat message, acks heartbeats; run ONE at a time), msgs.py, template.sh (source; `start <id> <phase> <model> [extra rule]`, `mk` builds a builder prompt), rv.sh (source; `rv <id> <phase>`), gate.sh (integration gate; stops at first failing test binary, so on a telegram flake rerun with `cargo test --workspace --no-fail-fast`). Fix round in same worktree: write a file (fix-*.txt) and worker-start with --spec "$(cat file)". PYTHONIOENCODING=utf-8 for msgs.py and terminal reads.
 
-P1-33 (the real run): the hub runs DETACHED on this PC with the real Alexia bot (started by CEO #11, PID in LOG; check with Get-Process alexia-hub). Env: ALEXIA_PLUGINS_DIR=C:\dev\Alexia-wt\hub-plugins (base2 plugins minus telegram/crasher/vanisher, mirrored with junctions/hardlinks because the scanner ignores junction dirs), ALEXIA_V2_ROOT=C:\dev\Alexia-wt\base2. Logs: C:\dev\Alexia-wt\hub-out.log / hub-err.log. Data: %LOCALAPPDATA%\AlexiaHub (v2 imported: 24 sessions, 370 messages; media's 46 GB hard-linked). Keys: secret import-v2 done (9 copied).
-Owner PAIRED the bot 2026-11-20 00:49. Waiting for them to use it for 50 messages. Then run `alexia-hub latency --last 50 --check --html latency.html` (same env) and dispatch P1-33 (or write the report via a sonnet worker). Don't rebuild target/release while the hub runs from it (exe locked); stop it first if needed and restart with the same env.
+P0 26/26, P1 35/35 merged (P1 done; owner waived the 50-message run, A-14).
+P2: 50 tasks. 17 merged: P2-01, 02, 03, 09, 10, 11, 12, 15, 18, 22, 23, 42, 43, 44, 45, 46, 50.
+Running (dispatch id in BOARD Note):
+- P2-04 tools on wire, P2-05 router, P2-16 prompt (sonnet; slow)
+- P2-14 fix try 2 (redact: location keys in tool args, 2nd postcode)
+- P2-37 (opus) encryption; uses portable Strawberry Perl in C:\dev\Alexia-wt	ools via OPENSSL_SRC_PERL (A-16). Its report names the env var; gate.sh must export it once P2-37 merges (or the system Perl if the owner finishes the winget install).
+In review: P2-06 (asker; review running many hours, alive).
+P2-13 (checker) built, waits: after P2-14 merges, `git -C C:/dev/Alexia-wt/P2-13 merge cr3studioo/v3`, run its tests, then `rv P2-13 P2`.
+Ready: P2-47 (opus), P2-49, P2-30, 31, 32, 33 (sonnet). P2-30 touches Cargo.lock like P2-37: don't run both.
+A-15: P2 builders sonnet except P2-12, 13, 20, 37, 38, 46, 47, 48 (opus). BOARD Model column overrides spec Model line. Reviews opus. Max 2 opus builders at once.
+A-17: Telegram progress line after every merge (source C:\dev\Alexia-wt	g.sh; tg 'text'). Overall % = (phases done + P-fraction)/8.
+Follow-ups to file: permissions.rs:332 'FILE://' uppercase scheme skips never-touch (P2-46 review); INTERFACES.md §8 item 1 lacks the '// invariant: bot api term' exception (P2-11 review).
+Keep builders <= 5: each worker runs cargo test --workspace (15+ min under load) and load causes flakes.
+Notes to pass to builders when dispatching:
+- P2-17: redact_request has no known-secrets param; builder must pass keychain values.
+- P2-20: tool calls need unique ids per run (trim collapses by call id); fills Agent constructors first (spec).
+- P2-21: picture attachments (alexia/attachmentInputs) still refused in tools.rs; check P2-21 covers it, else file a task.
+- P2-40: watch compute workers getting verbatim \?\ paths, and plugins run as `node .` reloading every heartbeat (supervise.rs:106).
+
+P1-33 hub: still running detached on this PC with the real Alexia bot (paired by owner 2026-11-20 00:49). Owner uses it.
+Hub env: ALEXIA_PLUGINS_DIR=C:\dev\Alexia-wt\hub-plugins (base2 plugins minus telegram/crasher/vanisher, junction/hardlink mirror), ALEXIA_V2_ROOT=C:\dev\Alexia-wt\base2. Logs C:\dev\Alexia-wt\hub-out.log / hub-err.log. Data %LOCALAPPDATA%\AlexiaHub. Runs from v3\target\release (exe locked: stop it before a release build, restart with the same env). base2 worktree is its v2 root and plugin source: don't move base2's HEAD while it runs. Latency: `alexia-hub latency --last 50 --check` (same env).
 If hub-err.log shows "Another program is reading this bot", v2 on the Mac still has its Telegram plugin on: tell the owner.
 
-Owner standing rule (A-12): do every by-hand step on this PC yourself; ask only for what physically needs the owner (their Telegram account). A-13: P2 owner needs decided with defaults (subscriptions OFF; don't encrypt DB until owner says how to back up the key).
-Open owner asks: none blocking. Telegram ops bot: vars set (read via PowerShell GetEnvironmentVariable User); last update_id processed: 363458138.
-pnpm check: run in C:\dev\Alexia-wt\base2 (detached; `git checkout -q --detach <sha>`). NOTE base2 is now also the hub's v2 root and plugin source: don't check out another sha there while the hub runs; use a new detached worktree for pnpm check (needs pnpm install). No P2 task touches v2 paths.
-Known flakes: alexia-mcp supervise.rs hang_is_killed_by_heartbeat under full load (rerun alone). pnpm: compute-connect paused reader (always), others pass alone.
-Follow-ups not specced: importer copies plugin files with fs::copy (46 GB media models; should hard-link or skip model dirs); P1-18 e2e token-leak check sees only last 40 stderr lines; steered turn ack not recorded.
-Merges since last phase review: 1 (review 3 done 2026-11-20, v3/ops/phase-review-3.md).
+Owner standing rules: A-12 do every by-hand step yourself; A-13 subscriptions OFF, DB not encrypted until owner says how the key is backed up (P2-37 must keep encryption off by default); A-14 50-msg run waived; A-15 cheaper builds.
+Open owner asks: none (A-16 answered yes; winget install got 1602, admin prompt unanswered). Telegram ops bot: last update_id processed 363458139.
+Known flakes: alexia-hub telegram_e2e fifty_messages (P2-43 fixes); alexia-mcp conn::out_of_order_answers and supervise hang_is_killed_by_heartbeat under load (rerun alone).
+Merges since last phase review: 7 (review 4 done, v3/ops/phase-review-4.md). Next review after 10.
 Leftover non-worktree folders in C:\dev\Alexia-wt: base\, plan-P1\ (locked; delete when free). v2-db-backup-20261120\ is a safety backup; keep.

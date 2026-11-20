@@ -5,7 +5,7 @@
 
 use serde_json::{json, Map, Value};
 
-use crate::alexia::{AlexiaCall, AttachmentsCall, HostInfo, HostPaths};
+use crate::alexia::{AlexiaCall, AttachmentsCall, ComputeRunParams, HostInfo, HostPaths};
 use crate::jsonrpc::{code, RpcError};
 use crate::manifest::Manifest;
 use crate::{CallCtx, CallError, McpHost, PluginId, ALEXIA_PROTOCOL_MAX, APP_VERSION};
@@ -57,6 +57,7 @@ pub(crate) async fn serve(
     host: &McpHost,
     id: &PluginId,
     call: AlexiaCall,
+    ctx: CallCtx,
 ) -> Result<Value, RpcError> {
     let Some(m) = host.manifest(id) else {
         return Err(err(code::INTERNAL_ERROR, "That plugin is not installed."));
@@ -162,14 +163,10 @@ pub(crate) async fn serve(
                 return Err(not_permitted(id, &p.cap));
             }
             let args = p.arguments.unwrap_or_default();
-            match host.call_capability(&p.cap, args, CallCtx::default()).await {
-                Ok(r) => Ok(serde_json::to_value(r).expect("serializable")),
-                Err(CallError::Rpc(e)) => Err(e),
-                Err(CallError::Off { sentence }) => {
-                    Err(err(code::CAPABILITY_NOT_AVAILABLE, sentence))
-                }
-                Err(e) => Err(err(code::INTERNAL_ERROR, format!("{e}."))),
-            }
+            host.call_capability_as(Some(id), &p.cap, args, ctx)
+                .await
+                .map(|r| serde_json::to_value(r).expect("serializable"))
+                .map_err(rpc_of)
         }
         // No `requires[]` check, as v2: asking whether something exists runs nothing.
         AlexiaCall::Answers(c) => {
@@ -184,11 +181,7 @@ pub(crate) async fn serve(
             if !declared && !requires(&m, &p.cap) {
                 return Err(not_permitted(id, &p.cap));
             }
-            // V3-2 serves compute.
-            Err(err(
-                code::CAPABILITY_NOT_AVAILABLE,
-                format!("Nothing installed and switched on can do {}.", p.cap),
-            ))
+            compute(host, id, p, ctx).await
         }
         AlexiaCall::AttachmentsLease(v) => attachments(host, id, &m, "lease", v).await,
         AlexiaCall::AttachmentsRelease(v) => attachments(host, id, &m, "release", v).await,
@@ -196,6 +189,171 @@ pub(crate) async fn serve(
         AlexiaCall::AttachmentsRegister(v) => attachments(host, id, &m, "register", v).await,
         AlexiaCall::AttachmentsShare(v) => attachments(host, id, &m, "share", v).await,
     }
+}
+
+fn rpc_of(e: CallError) -> RpcError {
+    match e {
+        CallError::Rpc(e) => e,
+        CallError::Off { sentence } => err(code::CAPABILITY_NOT_AVAILABLE, sentence),
+        e => err(code::INTERNAL_ERROR, format!("{e}.")),
+    }
+}
+
+/// `path` resolved (symlinks, `..`) and required to sit inside one of `roots`.
+/// Not `alexia_core::permissions::{within, file_uri}` on purpose: core depends on this crate,
+/// not the other way round, and compute checks a plugin's own folder, not the owner's scope.
+fn inside(path: &str, roots: &[std::path::PathBuf]) -> Option<std::path::PathBuf> {
+    let real = std::fs::canonicalize(path).ok()?;
+    roots
+        .iter()
+        .filter_map(|r| std::fs::canonicalize(r).ok())
+        .any(|r| real.starts_with(r))
+        .then_some(real)
+}
+
+fn percent_decode(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        let hex = b
+            .get(i + 1..i + 3)
+            .and_then(|h| std::str::from_utf8(h).ok())
+            .and_then(|h| u8::from_str_radix(h, 16).ok());
+        match (b[i], hex) {
+            (b'%', Some(v)) => {
+                out.push(v);
+                i += 3;
+            }
+            (c, _) => {
+                out.push(c);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// `file:///C:/a%20b` or `file:///a/b` to a path; None for any other kind of link.
+fn file_uri_path(uri: &str) -> Option<String> {
+    let rest = percent_decode(uri.strip_prefix("file://")?);
+    let b = rest.as_bytes();
+    // `/C:/...` is a Windows drive path.
+    if b.len() > 2 && b[0] == b'/' && b[2] == b':' {
+        return Some(rest[1..].to_string());
+    }
+    Some(rest)
+}
+
+/// `dir/<name of from>`, or `name-2.ext`, `name-3.ext`... when that is already taken.
+fn free_name(dir: &std::path::Path, from: &std::path::Path) -> std::path::PathBuf {
+    let name = from.file_name().unwrap_or_default();
+    let first = dir.join(name);
+    if !first.exists() {
+        return first;
+    }
+    let stem = from.file_stem().unwrap_or_default().to_string_lossy();
+    let ext = from
+        .extension()
+        .map_or(String::new(), |e| format!(".{}", e.to_string_lossy()));
+    (2..)
+        .map(|n| dir.join(format!("{stem}-{n}{ext}")))
+        .find(|p| !p.exists())
+        .expect("an unbounded range has a free name")
+}
+
+/// v2's local compute path: inputs must be the caller's own or uploads; the provider's tool
+/// runs here; the files it names are copied into the caller's own folder.
+async fn compute(
+    host: &McpHost,
+    id: &PluginId,
+    p: ComputeRunParams,
+    ctx: CallCtx,
+) -> Result<Value, RpcError> {
+    let layout = host.layout();
+    let own = layout.own_dir(&id.0);
+    let mut args = p.arguments.unwrap_or_default();
+    if !p.inputs.is_empty() {
+        let roots = [own.clone(), layout.uploads()];
+        let mut inputs = vec![];
+        for i in &p.inputs {
+            let Some(real) = inside(&i.path, &roots) else {
+                return Err(err(
+                    code::INVALID_PARAMS,
+                    format!(
+                        "The input \"{}\" is not in this plugin's own folder or the uploads.",
+                        i.name
+                    ),
+                ));
+            };
+            // The worker gets the path that was checked, never the raw one a link could swap.
+            inputs.push(json!({ "name": i.name, "path": real, "mime": i.mime }));
+        }
+        args.insert("inputs".into(), Value::Array(inputs));
+    }
+    let (provider, result) = host.compute_call(&p.cap, args, ctx).await.map_err(rpc_of)?;
+    let blocks = |kind: &str| {
+        result
+            .content
+            .iter()
+            .filter(move |b| b["type"] == kind)
+            .collect::<Vec<_>>()
+    };
+    let text = blocks("text")
+        .iter()
+        .filter_map(|b| b["text"].as_str())
+        .collect::<Vec<_>>()
+        .join(
+            "
+",
+        );
+    if result.is_error == Some(true) {
+        let first = text.lines().next().unwrap_or_default();
+        let sentence = if first.is_empty() {
+            "The compute worker reported a failure."
+        } else {
+            first
+        };
+        return Err(err(code::INTERNAL_ERROR, sentence));
+    }
+    let theirs = [layout.own_dir(&provider.0)];
+    let dest = own.join("compute").join(format!(
+        "{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos())
+    ));
+    let mut files = vec![];
+    for b in blocks("resource_link") {
+        let from = b["uri"]
+            .as_str()
+            .and_then(file_uri_path)
+            .and_then(|f| inside(&f, &theirs));
+        let Some(from) = from else {
+            let _ = std::fs::remove_dir_all(&dest);
+            return Err(err(
+                code::INTERNAL_ERROR,
+                "The compute worker named a file it does not own.",
+            ));
+        };
+        let to = std::fs::create_dir_all(&dest)
+            .map(|()| free_name(&dest, &from))
+            .and_then(|to| std::fs::copy(&from, &to).map(|_| to));
+        match to {
+            Ok(to) => files.push(to.to_string_lossy().into_owned()),
+            Err(e) => {
+                tracing::warn!(plugin = %id.0, "a compute result could not be copied: {e}");
+                let _ = std::fs::remove_dir_all(&dest);
+                return Err(err(code::INTERNAL_ERROR, CANNOT));
+            }
+        }
+    }
+    let mut out = json!({ "files": files });
+    if !text.is_empty() {
+        out["text"] = Value::String(text);
+    }
+    Ok(out)
 }
 
 async fn attachments(

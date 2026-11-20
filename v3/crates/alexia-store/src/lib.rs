@@ -2,6 +2,7 @@
 //! One SQLite file: sessions, messages, settings, kv, ledger, plugin namespaces; secrets; the v2 importer.
 
 mod db;
+pub mod encrypt;
 mod error;
 pub mod import;
 mod layout;

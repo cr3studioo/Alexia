@@ -17,11 +17,11 @@ use crate::conn::{Conn, Incoming};
 use crate::jsonrpc::{code, RpcError};
 use crate::manifest::{Lifetime, Manifest};
 use crate::process::{self, Proc, StderrLog};
-use crate::supervise::{self, Busy, BusyGuard, CrashLog, Verdict, Watch};
+use crate::supervise::{self, Busy, BusyGuard, CrashLog, Stamp, Verdict, Watch};
 use crate::types::{self, CallToolParams, CallToolResult, Implementation, InitializeParams};
 use crate::{
     Answers, CallCtx, CallError, Error, EventSink, HostConfig, HostedTool, PluginDir, PluginEvent,
-    PluginId, PluginState, PluginStatus, StopReason, Upcalls, APP_VERSION,
+    PluginId, PluginState, PluginStatus, ProgressSink, StopReason, Upcalls, APP_VERSION,
 };
 
 /// Cheap to clone: everything lives behind one `Arc`.
@@ -43,6 +43,8 @@ struct Inner {
 
 struct Slot {
     dir: PluginDir,
+    /// What the folder looked like when `dir.manifest` was read; a difference is a reload.
+    stamp: Stamp,
     enabled: bool,
     state: PluginState,
     sentence: Option<String>,
@@ -141,8 +143,21 @@ impl McpHost {
         method: &str,
         params: Value,
     ) -> Result<Value, RpcError> {
+        self.serve_ctx_for_test(id, method, params, CallCtx::default())
+            .await
+    }
+
+    /// Test hook: as `serve_for_test`, with the plugin's cancel token and progress sink.
+    #[doc(hidden)]
+    pub async fn serve_ctx_for_test(
+        &self,
+        id: &PluginId,
+        method: &str,
+        params: Value,
+        ctx: CallCtx,
+    ) -> Result<Value, RpcError> {
         match AlexiaCall::parse(method, Some(params))? {
-            Some(call) => crate::serve::serve(self, id, call).await,
+            Some(call) => crate::serve::serve(self, id, call, ctx).await,
             None => Err(not_alexia(method)),
         }
     }
@@ -190,6 +205,7 @@ impl McpHost {
         for (id, dir) in found {
             let on = enabled.contains(&id);
             let mut slot = Slot {
+                stamp: Stamp::of(&dir.path, &dir.manifest.entry),
                 enabled: on,
                 state: PluginState::Stopped,
                 sentence: None,
@@ -262,6 +278,16 @@ impl McpHost {
             .collect()
     }
 
+    /// Every loaded plugin that is enabled and not refused, by id: its folder and manifest.
+    /// Reads what `start`/`reload` loaded; spawns nothing.
+    pub fn manifests(&self) -> Vec<PluginDir> {
+        lock(&self.inner.plugins)
+            .values()
+            .filter(|s| s.enabled && s.state != PluginState::Refused)
+            .map(|s| s.dir.clone())
+            .collect()
+    }
+
     /// Persisting `enabled` is the hub's job, not the host's.
     pub async fn set_enabled(&self, id: &PluginId, on: bool) -> Result<(), Error> {
         let (dir, refused) = {
@@ -326,13 +352,168 @@ impl McpHost {
             .filter_map(|(id, tools)| tools.map(|t| (id, t)))
             .collect();
         all.sort_by(|a, b| a.0.cmp(&b.0));
-        all.into_iter().flat_map(|(_, t)| t).collect()
+        // v2's list (`servers.ts`): small, so read fresh each time rather than cached with the tools.
+        // Fail closed: a list that cannot be read or understood leaves every plugin unreviewed.
+        let unreviewed: Option<Vec<String>> = match self.inner.store.kv_get("_core", "unreviewed") {
+            Ok(None) => Some(vec![]),
+            Ok(Some(v)) => match serde_json::from_value(v) {
+                Ok(list) => Some(list),
+                Err(e) => {
+                    tracing::warn!(
+                        "the unreviewed list is malformed; every plugin is unreviewed: {e}"
+                    );
+                    None
+                }
+            },
+            Err(e) => {
+                tracing::warn!(
+                    "the unreviewed list could not be read; every plugin is unreviewed: {e}"
+                );
+                None
+            }
+        };
+        let mut tools: Vec<HostedTool> = all.into_iter().flat_map(|(_, t)| t).collect();
+        for t in &mut tools {
+            t.reviewed = unreviewed
+                .as_ref()
+                .is_some_and(|u| !u.contains(&t.plugin.0));
+        }
+        tools
+    }
+
+    /// EX-12, P2-23: re-read the plugin's folder; let in-flight calls finish; the next call
+    /// spawns the new version (a resident plugin is respawned at once). Emits `ToolsChanged`.
+    /// A manifest that does not load leaves the old version running and is `Err(Refused)`
+    /// with the same sentence in the plugin's status; no `Refused` event.
+    pub async fn reload(&self, id: &PluginId) -> Result<(), Error> {
+        let spawn = lock(&self.inner.plugins)
+            .get(id)
+            .map(|s| s.spawn.clone())
+            .ok_or_else(|| Error::UnknownPlugin(id.clone()))?;
+        // The spawn lock: a spawn under way finishes first, and after the claim below every
+        // later `ensure_running` sees `Reloading` and waits.
+        let (dir, stamp, busy) = {
+            let _g = spawn.lock().await;
+            let mut plugins = lock(&self.inner.plugins);
+            let slot = plugins
+                .get_mut(id)
+                .ok_or_else(|| Error::UnknownPlugin(id.clone()))?;
+            if slot.state == PluginState::Reloading {
+                return Ok(()); // someone else is on it
+            }
+            let path = slot.dir.path.clone();
+            // Stamped before reading, so an edit in between is seen by the next scan.
+            let stamp = Stamp::of(&path, &slot.dir.manifest.entry);
+            match self.read_new(id, &path, slot.enabled) {
+                Err(sentence) => {
+                    slot.stamp = stamp;
+                    slot.sentence = Some(sentence.clone());
+                    return Err(Error::Refused(sentence));
+                }
+                Ok(dir) => {
+                    slot.state = PluginState::Reloading;
+                    let busy = slot.running.as_ref().map(|r| Arc::clone(&r.busy));
+                    (dir, stamp, busy)
+                }
+            }
+        };
+        // In-flight calls run to completion (each is bounded by `call_ms`).
+        let deadline = Instant::now() + Duration::from_millis(self.inner.cfg.timings.call_ms);
+        while busy
+            .as_ref()
+            .is_some_and(|b| b.idle_for().is_none() && Instant::now() < deadline)
+        {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        self.stop_with(id, StopReason::Disabled).await;
+        let respawn = {
+            let mut plugins = lock(&self.inner.plugins);
+            let Some(slot) = plugins.get_mut(id) else {
+                return Ok(()); // removed meanwhile
+            };
+            let respawn = slot.enabled && dir.manifest.lifetime() == Lifetime::Resident;
+            slot.dir = dir;
+            slot.stamp = stamp;
+            slot.state = PluginState::Stopped;
+            slot.sentence = None;
+            // A new version gets a fresh tally; this was not a crash.
+            slot.crashes.clear();
+            slot.drop_tools();
+            respawn
+        };
+        self.emit(PluginEvent::Loaded { plugin: id.clone() });
+        self.emit(PluginEvent::ToolsChanged { plugin: id.clone() });
+        if respawn {
+            self.after_crash(id, AfterCrash::Respawn);
+        }
+        Ok(())
+    }
+
+    /// The folder's manifest as it is now, with start's checks and the tables made. Err is the
+    /// sentence; nothing has been stopped.
+    fn read_new(
+        &self,
+        id: &PluginId,
+        path: &std::path::Path,
+        enabled: bool,
+    ) -> Result<PluginDir, String> {
+        let json = std::fs::read_to_string(path.join("plugin.json")).map_err(|_| {
+            "This plugin's plugin.json can't be read any more; the old version is still running."
+                .to_string()
+        })?;
+        let manifest = Manifest::parse(&json).map_err(|e| e.sentence)?;
+        if manifest.id != id.0 {
+            return Err(format!(
+                "The new manifest calls the plugin “{}”; the folder and the id must match.",
+                manifest.id
+            ));
+        }
+        manifest.compatible()?;
+        let dir = PluginDir {
+            path: path.to_path_buf(),
+            manifest,
+        };
+        if enabled {
+            self.create_tables(&dir)?;
+        }
+        Ok(dir)
+    }
+
+    /// True when the plugin's folder differs from what was loaded (and no reload is under way).
+    fn changed(&self, id: &PluginId) -> bool {
+        let Some((path, entry, stamp)) = lock(&self.inner.plugins).get(id).and_then(|s| {
+            (s.state != PluginState::Reloading).then(|| {
+                (
+                    s.dir.path.clone(),
+                    s.dir.manifest.entry.clone(),
+                    s.stamp.clone(),
+                )
+            })
+        }) else {
+            return false;
+        };
+        Stamp::of(&path, &entry) != stamp
+    }
+
+    /// The watcher's scan: a plain fn so the watcher's future does not contain `reload`'s.
+    pub(crate) fn reload_if_changed(&self, id: &PluginId) {
+        if self.changed(id) {
+            let (host, id) = (self.clone(), id.clone());
+            tokio::spawn(async move {
+                if let Err(e) = host.reload(&id).await {
+                    tracing::warn!(plugin = %id.0, "reload: {e}");
+                }
+            });
+        }
     }
 
     async fn plugin_tools(&self, id: &PluginId) -> Option<Vec<HostedTool>> {
         if self.vanished(id) {
             self.vanish(id).await;
             return None;
+        }
+        if self.changed(id) {
+            let _ = self.reload(id).await;
         }
         if let Some(tools) = lock(&self.inner.plugins).get(id)?.tools.clone() {
             return Some(tools);
@@ -408,6 +589,9 @@ impl McpHost {
             self.vanish(plugin).await;
             return Err(CallError::Gone);
         }
+        if self.changed(plugin) {
+            let _ = self.reload(plugin).await;
+        }
         let (conn, _busy) = self.ensure_running(plugin).await.map_err(off)?;
 
         let mut meta = Map::new();
@@ -447,6 +631,18 @@ impl McpHost {
         args: Map<String, Value>,
         ctx: CallCtx,
     ) -> Result<CallToolResult, CallError> {
+        self.call_capability_as(None, cap, args, ctx).await
+    }
+
+    /// `asker` is the plugin that sent the request, if one did; core's own callers have none
+    /// and `host_call` then sees an empty id.
+    pub(crate) async fn call_capability_as(
+        &self,
+        asker: Option<&PluginId>,
+        cap: &str,
+        args: Map<String, Value>,
+        ctx: CallCtx,
+    ) -> Result<CallToolResult, CallError> {
         let none = || CallError::Off {
             sentence: format!("Nothing installed and switched on can do {cap}."),
         };
@@ -481,17 +677,84 @@ impl McpHost {
                     e => e,
                 });
         }
+        // No plugin: core may answer it itself.
+        let up = self.upcalls();
+        let nobody = PluginId(String::new());
+        match up
+            .host_call(asker.unwrap_or(&nobody), cap, args, ctx.cancel)
+            .await
+        {
+            Some(Ok(r)) => Ok(r),
+            Some(Err(e)) => Err(CallError::Rpc(e)),
+            None => Err(none()),
+        }
+    }
+
+    /// v2 `Plugins.computeCall` (local branch): the enabled plugin whose manifest declares the
+    /// operation `cap` runs its hidden tool bound to it (`_meta["alexia/compute"].op`).
+    /// Returns the provider with its result, so the caller can tell where its files are.
+    pub(crate) async fn compute_call(
+        &self,
+        cap: &str,
+        args: Map<String, Value>,
+        mut ctx: CallCtx,
+    ) -> Result<(PluginId, CallToolResult), CallError> {
+        let none = || CallError::Off {
+            sentence: format!("Nothing installed and switched on can do {cap}."),
+        };
+        let candidates: Vec<PluginId> = lock(&self.inner.plugins)
+            .iter()
+            .filter(|(_, s)| {
+                s.enabled
+                    && !matches!(s.state, PluginState::Refused | PluginState::Unhealthy)
+                    && s.dir
+                        .manifest
+                        .compute
+                        .as_ref()
+                        .is_some_and(|c| c.operations.iter().any(|o| o.cap == cap))
+            })
+            .map(|(id, _)| id.clone())
+            .collect();
+        for id in candidates {
+            let Some(tools) = self.plugin_tools(&id).await else {
+                continue;
+            };
+            let Some(tool) = tools.into_iter().find(|t| {
+                t.tool
+                    .meta
+                    .as_ref()
+                    .and_then(|m| m.get("alexia/compute"))
+                    .and_then(|b| b.get("op"))
+                    .and_then(Value::as_str)
+                    == Some(cap)
+            }) else {
+                continue;
+            };
+            ctx.meta
+                .insert("alexia/compute".into(), json!({ "op": cap }));
+            let within = Duration::from_millis(self.inner.cfg.timings.capability_ms);
+            return self
+                .call_tool_within(&id, &tool.tool.name, args, ctx, within)
+                .await
+                .map(|r| (id, r))
+                .map_err(|e| match e {
+                    CallError::Off { .. } => none(),
+                    e => e,
+                });
+        }
         Err(none())
     }
 
     /// From manifests' `provides[]` only, starting nothing. In P0 every plugin is this hub's
     /// own, so `here` is `answers`.
     pub fn answers(&self, cap: &str) -> Answers {
-        let found = lock(&self.inner.plugins).values().any(|s| {
+        let by_plugin = lock(&self.inner.plugins).values().any(|s| {
             s.enabled
                 && s.state != PluginState::Refused
                 && s.dir.manifest.provides.iter().any(|p| p == cap)
         });
+        // The plugins lock is released above: core's `host_caps` may call back into the host.
+        let found = by_plugin || self.upcalls().host_caps().iter().any(|c| c == cap);
         Answers {
             answers: found,
             here: found,
@@ -649,8 +912,24 @@ impl McpHost {
             .get(id)
             .map(|s| s.spawn.clone())
             .ok_or_else(|| UNKNOWN.to_string())?;
+        let began = Instant::now();
         loop {
             let guard = spawn.lock().await;
+            // `reload` sets `Reloading` only under this spawn lock, so it cannot change below.
+            let updating = lock(&self.inner.plugins)
+                .get(id)
+                .filter(|s| s.state == PluginState::Reloading)
+                .map(|s| s.dir.manifest.name.clone());
+            if let Some(name) = updating {
+                // New calls wait for the swap, but not longer than a call may take.
+                if began.elapsed() >= Duration::from_millis(self.inner.cfg.timings.call_ms) {
+                    return Err(format!("{name} is being updated."));
+                }
+                drop(guard);
+                // ponytail: polls; a Notify if reloads ever get long or frequent.
+                tokio::time::sleep(Duration::from_millis(10)).await;
+                continue;
+            }
             let (dir, dead, wait) = {
                 let mut plugins = lock(&self.inner.plugins);
                 let slot = plugins.get_mut(id).ok_or_else(|| UNKNOWN.to_string())?;
@@ -1013,6 +1292,8 @@ fn hosted(id: &PluginId, tool: types::Tool) -> HostedTool {
         tool,
         provides,
         hidden,
+        // Only `tools()`, having read `_core.unreviewed`, may say otherwise.
+        reviewed: false,
     }
 }
 
@@ -1024,7 +1305,13 @@ struct Handler {
 
 #[async_trait::async_trait]
 impl Incoming for Handler {
-    async fn request(&self, method: String, params: Option<Value>) -> Result<Value, RpcError> {
+    async fn request(
+        &self,
+        method: String,
+        params: Option<Value>,
+        cancel: CancellationToken,
+        progress: Option<ProgressSink>,
+    ) -> Result<Value, RpcError> {
         let Some(inner) = self.host.upgrade() else {
             return Err(RpcError::new(
                 code::INTERNAL_ERROR,
@@ -1034,7 +1321,14 @@ impl Incoming for Handler {
         if method.starts_with("alexia/") {
             let host = McpHost { inner };
             return match AlexiaCall::parse(&method, params)? {
-                Some(call) => crate::serve::serve(&host, &self.id, call).await,
+                Some(call) => {
+                    let ctx = CallCtx {
+                        cancel,
+                        progress,
+                        ..CallCtx::default()
+                    };
+                    crate::serve::serve(&host, &self.id, call, ctx).await
+                }
                 None => Err(not_alexia(&method)),
             };
         }
@@ -1045,7 +1339,7 @@ impl Incoming for Handler {
             "sampling/createMessage" => {
                 let p = serde_json::from_value(params.unwrap_or(Value::Null))
                     .map_err(|e| RpcError::new(code::INVALID_PARAMS, e.to_string()))?;
-                up.sample(&self.id, p, None, CancellationToken::new()).await
+                up.sample(&self.id, p, progress, cancel).await
             }
             "elicitation/create" => up.elicit(&self.id, params.unwrap_or(Value::Null)).await,
             _ => Err(RpcError::method_not_found()),
@@ -1065,5 +1359,19 @@ impl Incoming for Handler {
         (inner.events)(PluginEvent::ToolsChanged {
             plugin: self.id.clone(),
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hosted_tool_unreviewed_until_list_read() {
+        let tool: types::Tool =
+            serde_json::from_value(json!({"name": "t", "inputSchema": {"type": "object"}}))
+                .unwrap();
+        let t = hosted(&PluginId("a".into()), tool);
+        assert!(!t.reviewed, "a tool is unreviewed until the list was read");
     }
 }

@@ -110,7 +110,7 @@ pub fn import_v2(store: &Store, v2_root: &Path, v3: &Layout) -> Result<ImportRep
     let mut skipped = Vec::new();
     let (import_id, mut report) = {
         let mut conn = store.conn();
-        conn.execute("ATTACH DATABASE ? AS v2", [ro_uri(&db)?])?;
+        conn.execute("ATTACH DATABASE ? AS v2 KEY ''", [ro_uri(&db)?])?;
         let out = copy_db(&mut conn, v2_root, v2_schema);
         let detached = conn.execute_batch("DETACH DATABASE v2");
         let out = out?;

@@ -99,6 +99,26 @@ Migration 4 (V3-3) keeps vectors and the life graph.
 | 11 | `Media` has no cancel token | P2-08 |
 | 12 | Code ahead of INTERFACES.md; duplicate helpers | P2-01 lists every public item in §1.2/§2 and adds `alexia_core::ms_since`; P2-05 and P2-06 replace `router.rs` `elapsed_ms` and `gateway.rs` `ms_since` with it; the bridge duplicate (`bridge.rs:333`) goes with the bridge (P2-38) |
 
+## Phase review 4, finding by finding
+
+Planned 2026-11-20 from `v3/ops/phase-review-4.md`. Specs of tasks already merged or running are
+not changed; their files get new tasks (P2-45 to P2-49).
+
+| # | Finding | Covered by |
+|---|---|---|
+| 1 | Resume collides with the surviving `live_runs` row; step count restarts | No store change: `Trace::resume(.., steps_done)` uses `live_touch`, never `live_begin` (P2-19); `Task.steps_done` and the resume branch (P2-20); P2-26 sets `steps_done`. INTERFACES §2.3 written |
+| 2 | `AgentParts` has no source of plugin manifests | `McpHost::manifests()` (P2-45, new); `AgentParts.host` + `Agent::host()` (P2-20, now depends on P2-45); P2-25 reads it; P2-38 loads plugin skills from it. INTERFACES §2.2/§2.3 written |
+| 3 | `scope()` fails open on a kv read error | P2-46 (new) |
+| 4 | Unannotated destructive tool treated as safe | P2-46 |
+| 5 | `paths_in` misses `file://`, `~`, `%VAR%` | P2-46 |
+| 6 | compute/capability calls drop the plugin's cancel and progress | P2-47 (new; `Incoming::request` gains both, sampling too). INTERFACES §2.2 written |
+| 7 | P2-38 too big for sonnet; construction order unwritten | P2-38 (wiring, bridge delete, opus) and P2-48 (CLI verbs, opus, new); INTERFACES §2.6 has the order, steps 1 to 11 |
+| 8 | `hosted()` defaults `reviewed: true` | P2-47 |
+| 9 | `trim::{floor, summary, collapse}` public | P2-49 (new) |
+| 10 | Duplicated helpers | telegram `now_ms`: P2-49. `serve.rs` vs `permissions` file-URI/containment: kept two on purpose (different rules, crate direction), comment by P2-47. `permissions.rs` `home()`: kept (sharing needs the store's `lib.rs`, P2-37's now), noted in P2-46 |
+| 11 | Agent constructors `todo!()` block follow-on tests | P2-20 step 0 fills `new`/`store`/`host`/`set_local_jobs`/`local_jobs` (OnceLock) first |
+| 12 | telegram latency test flaky under load | Already P2-43; no change |
+
 ## Order of work
 
 ```
@@ -122,8 +142,13 @@ P2-01 ─┬─ P2-31 llama.cpp ─┐
 P2-17 ─┬─ P2-35 subscriptions     P2-02 + P2-03 + P2-10 ── P2-37 encrypted store
        └─ P2-36 compare
 cleanups, independent: P2-09 hub dead code, P2-10 secrets, P2-11 channels exception (+P2-01)
+review 4: P2-23 ── P2-45 manifests ─┬─ P2-20 (above)     P2-42 ── P2-46 permissions fail closed
+                                    └─ P2-47 cancel/progress, reviewed ── P2-24 wasm
+          P2-49 trim/now_ms cleanup, independent
 everything ── P2-38 hub wiring, bridge deleted ─┬─ P2-39 e2e ──────┐
-                                                └─ P2-40 v2 plugins ┴─ P2-41 20 real tasks (owner)
+                                                ├─ P2-40 v2 plugins ┼─ P2-41 20 real tasks (owner)
+                                                └─ P2-48 CLI verbs ─┘
+
 ```
 
 P2-01 and P2-02 create every new module as a stub and add every new dependency, so no later
@@ -134,7 +159,8 @@ INTERFACES.md). P2-03, P2-09 and P2-10 can start at once.
 
 Shared files and the order they force: `openai.rs` P2-04 → P2-17; `router.rs`/`catalog.rs`
 P2-05 → P2-17; `gateway.rs` P2-06 → P2-07 → P2-08; `ask.rs` P2-06 → P2-29; `host.rs` P2-02 →
-P2-22 → P2-23 → P2-24; `local.rs` P2-31 → P2-34; `upcalls.rs` P2-21 → P2-34; store `secrets.rs`
+P2-22 → P2-23 → P2-45 → P2-47 → P2-24; `serve.rs` P2-22 → P2-44 → P2-47; `permissions.rs` P2-12 →
+P2-42 → P2-46; hub `main.rs`/`tests/cli_p2.rs` P2-38 → P2-48; `local.rs` P2-31 → P2-34; `upcalls.rs` P2-21 → P2-34; store `secrets.rs`
 P2-10 only; store `db.rs` P2-03 → P2-37; hub `main.rs` P2-10 → P2-38; `invariants.mjs` P2-11 →
 P2-38. Every Turn literal in core, gateway and hub tests is touched by P2-07 only.
 
@@ -168,12 +194,12 @@ Crate paths are under `v3/crates/`.
 | P2-17 | Router for task steps: model per job, $0 cap, catalog news | opus | P2-04, P2-05, P2-14 | `alexia-core/{src/router.rs, src/catalog.rs, tests/router_steps.rs}` |
 | P2-18 | Tooling over the MCP host | opus | P2-02 | `alexia-core/{src/tools.rs, tests/tools.rs}` |
 | P2-19 | Trace, runs and the audit log | opus | P2-01, P2-03, P2-14 | `alexia-core/{src/trace.rs, tests/trace.rs}` |
-| P2-20 | The agent loop | opus | P2-07, P2-12, P2-13, P2-14, P2-15, P2-16, P2-17, P2-18, P2-19 | `alexia-core/{src/agent.rs, tests/agent.rs}` |
+| P2-20 | The agent loop | opus | P2-07, P2-12, P2-13, P2-14, P2-15, P2-16, P2-17, P2-18, P2-19, P2-45 | `alexia-core/{src/agent.rs, tests/agent.rs}` |
 | P2-21 | Upcalls: sampling, tasks for plugins, elicit, roots, attachments | opus | P2-20, P2-02 | `alexia-core/{src/upcalls.rs, tests/upcalls.rs}` |
 | P2-22 | MCP: compute/run locally, host-answered capabilities | opus | P2-02 | `alexia-mcp/{src/serve.rs, src/host.rs, src/bin/mcp-fixture.rs, tests/compute.rs}` |
 | P2-23 | Hot reload of plugins | opus | P2-22 | `alexia-mcp/{src/host.rs, src/supervise.rs, tests/reload.rs}` |
-| P2-24 | WASM plugins in a capability sandbox | opus | P2-23 | `alexia-mcp/{src/wasm.rs, src/host.rs, fixtures/wasm-hello/**, tests/fixtures/wasm-hello.wasm, tests/wasm.rs}` |
-| P2-25 | Commands | opus | P2-20 | `alexia-core/{src/commands.rs, tests/commands.rs}` |
+| P2-24 | WASM plugins in a capability sandbox | opus | P2-23, P2-47 | `alexia-mcp/{src/wasm.rs, src/host.rs, fixtures/wasm-hello/**, tests/fixtures/wasm-hello.wasm, tests/wasm.rs}` |
+| P2-25 | Commands | opus | P2-20, P2-45 | `alexia-core/{src/commands.rs, tests/commands.rs}` |
 | P2-26 | Resume after restart; jobs that run for days | opus | P2-20 | `alexia-core/{src/resume.rs, tests/resume.rs}` |
 | P2-27 | Parallel helpers | opus | P2-20 | `alexia-core/{src/helpers.rs, tests/helpers.rs}` |
 | P2-28 | Undo | opus | P2-20 | `alexia-core/{src/undo.rs, tests/undo.rs}` |
@@ -186,10 +212,18 @@ Crate paths are under `v3/crates/`.
 | P2-35 | Subscriptions through their official CLIs | opus | P2-17 | `alexia-core/{src/subscription.rs, tests/subscription.rs}` |
 | P2-36 | Compare two models | sonnet | P2-17 | `alexia-core/{src/compare.rs, tests/compare.rs}` |
 | P2-37 | Encrypted database at rest | opus | P2-02, P2-03, P2-10 | `v3/Cargo.toml`, `v3/Cargo.lock`, `alexia-store/{Cargo.toml, src/db.rs, src/encrypt.rs, src/lib.rs, src/import.rs, tests/encrypt.rs}` |
-| P2-38 | Hub wiring: Agent is the brain, bridge deleted, P2 CLI | sonnet | P2-08..P2-11, P2-20..P2-37 | `alexia-hub/{Cargo.toml, src/main.rs, src/bridge.rs (delete), src/media.rs, tests/cli_p2.rs}`, `alexia-gateway/src/gateway.rs` (delete P2-06's shims), `v3/Cargo.lock`, `v3/ci/invariants.mjs` |
+| P2-38 | Hub wiring: Agent is the brain, bridge deleted | opus | P2-08..P2-11, P2-20..P2-37, P2-42, P2-44, P2-45, P2-46, P2-47 | `alexia-hub/{Cargo.toml, src/main.rs, src/bridge.rs (delete), src/media.rs, tests/cli_p2.rs}`, `alexia-gateway/src/gateway.rs` (delete P2-06's shims), `v3/Cargo.lock`, `v3/ci/invariants.mjs` |
 | P2-39 | End-to-end: the agent on the real binary | sonnet | P2-38 | `alexia-hub/tests/{agent_e2e.rs, telegram_e2e.rs, common/mod.rs}` |
 | P2-40 | Every v2 plugin on the Rust host | sonnet | P2-38 | `alexia-hub/tests/v2_plugins.rs` |
-| P2-41 | Twenty real tasks on the PC | sonnet | P2-39, P2-40 | `v3/ops/reports/P2-tasks.md` |
+| P2-41 | Twenty real tasks on the PC | sonnet | P2-39, P2-40, P2-48 | `v3/ops/reports/P2-tasks.md` |
+| P2-42 | Permissions fail closed: trailing dots, bad boundary entries | sonnet | P2-12 | `alexia-core/{src/permissions.rs, tests/permissions.rs}` |
+| P2-43 | telegram_e2e ack check survives a loaded machine | sonnet | none | `alexia-hub/tests/telegram_e2e.rs` |
+| P2-44 | compute/run: checked path used; copies no collide/leak | sonnet | P2-22 | `alexia-mcp/{src/serve.rs, tests/compute.rs}` |
+| P2-45 | McpHost::manifests, the agent's source of plugin commands and skills | sonnet | P2-23 | `alexia-mcp/{src/host.rs, tests/manifests.rs}` |
+| P2-46 | Permissions fail closed: kv read errors, unannotated deletes, ~ and file:// paths | opus | P2-42 | `alexia-core/{src/permissions.rs, tests/permissions.rs}` |
+| P2-47 | MCP: plugin requests keep their cancel and progress; tools unreviewed until read | opus | P2-45 | `alexia-mcp/{src/conn.rs, src/host.rs, src/serve.rs, src/bin/mcp-fixture.rs, tests/conn.rs, tests/compute.rs}` |
+| P2-48 | Hub: the P2 CLI verbs | opus | P2-38 | `alexia-hub/{src/main.rs, tests/cli_p2.rs}` |
+| P2-49 | Small cleanups: trim's helpers private, one now_ms | sonnet | none | `alexia-core/{src/trim.rs, tests/trim.rs}`, `alexia-gateway/src/channels/telegram/mod.rs` |
 
 ## Owner needs
 
@@ -255,6 +289,11 @@ commit. The task named after each implements it.
     account on purpose, to import it once (review 6).
 11. (P2-02) §2.2: `Upcalls::host_call` (default: not mine), `HostedTool.reviewed`,
     `McpHost::reload`, `PluginState::Reloading`; §3.2 `entry.run == "wasm"`.
+12. (review-4 planner, already written) §2.2 `McpHost::manifests` (P2-45), `conn::Incoming::request`
+    with cancel and progress, `reviewed` built false (P2-47); §2.3 `Trace::resume`, `Task.steps_done`,
+    `AgentParts.host`, `Agent::host`, constructors first (P2-19, P2-20), `permissions` fail-closed
+    behaviour (P2-46); §2.6 the construction order in eleven steps (P2-38).
+
 
 ## Risky or unclear (decided here, owner may overrule)
 

@@ -547,7 +547,7 @@ pub struct HostConfig {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
-pub enum PluginState { Stopped, Running, Unhealthy, Refused }
+pub enum PluginState { Stopped, Running, Unhealthy, Refused, Reloading /* P2-23 */ }
 
 #[derive(Clone, Debug, Serialize)]
 pub struct PluginStatus { pub id: PluginId, pub name: String, pub version: String, pub enabled: bool,
@@ -556,9 +556,21 @@ pub struct PluginStatus { pub id: PluginId, pub name: String, pub version: Strin
 /// A tool as the host knows it. `provides` is read off `_meta["alexia/provides"]`;
 /// `hidden` is true when the tool carries `alexia/compute` or `alexia/editor` (never shown to a model).
 #[derive(Clone, Debug)]
-pub struct HostedTool { pub plugin: PluginId, pub tool: types::Tool, pub provides: Vec<String>, pub hidden: bool }
+pub struct HostedTool { pub plugin: PluginId, pub tool: types::Tool, pub provides: Vec<String>, pub hidden: bool,
+                        /// false when kv `_core`/`unreviewed` (v2's list, a JSON array of plugin ids) holds the plugin id.
+                        /// (P2-47, review 4 #8) Built false; only a successful read of that list sets it true.
+                        pub reviewed: bool }
 
 pub type ProgressSink = tokio::sync::mpsc::Sender<types::ProgressParams>;
+
+/// (P2-47, review 4 #6) A plugin's own request carries its cancel token (fired by the plugin's
+/// `notifications/cancelled` or the connection closing) and, when its params carry
+/// `_meta.progressToken`, a sink whose frames go back to the plugin as `notifications/progress`.
+/// `serve` puts both into the `CallCtx` of `alexia/capability/call` and `alexia/compute/run`,
+/// and `sampling/createMessage` passes them to `Upcalls::sample`.
+/// conn::Incoming: async fn request(&self, method: String, params: Option<Value>,
+///                                  cancel: CancellationToken, progress: Option<ProgressSink>) -> Result<Value, RpcError>;
+
 
 #[derive(Clone, Default)]
 pub struct CallCtx {
@@ -601,6 +613,12 @@ pub trait Upcalls: Send + Sync {
     async fn attachments(&self, plugin: &PluginId, call: alexia::AttachmentsCall) -> Result<serde_json::Value, jsonrpc::RpcError> {
         let _ = (plugin, call); Err(jsonrpc::RpcError::method_not_found())
     }
+    /// Capabilities core answers itself (P2-34: `vision.describe`, `text.embed`). Default: none.
+    /// `McpHost::answers(cap)` also counts these.
+    fn host_caps(&self) -> Vec<String> { Vec::new() }
+    /// `alexia/capability/call` for a cap no enabled plugin provides. None = not mine (-32050).
+    async fn host_call(&self, plugin: &PluginId, cap: &str, args: serde_json::Map<String, serde_json::Value>, cancel: CancellationToken)
+        -> Option<Result<types::CallToolResult, jsonrpc::RpcError>> { let _ = (plugin, cap, args, cancel); None }
 }
 pub struct HostFacts { pub display_name: String, pub privacy_mode: alexia::PrivacyMode, pub locale: String }
 /// Offers `{roots:{}}` only; `sample`/`elicit` answer -32021; roots empty.
@@ -620,6 +638,9 @@ pub enum PluginEvent {
 #[derive(Clone, Copy, Debug)] pub enum StopReason { Idle, Disabled, Shutdown, Heartbeat }
 pub type EventSink = std::sync::Arc<dyn Fn(PluginEvent) + Send + Sync>;
 
+/// (P2-24) `entry.run == "wasm"`: an MCP server compiled to wasm32-wasip1, run in-process.
+pub mod wasm { pub struct WasmPlugin { /* ... */ } }
+
 pub struct McpHost { /* Arc inside; Clone is cheap */ }
 impl Clone for McpHost { /* ... */ }
 
@@ -635,6 +656,9 @@ impl McpHost {
     /// that disappears is `unload`ed (its process killed, its tools dropped, `Removed` emitted).
     pub async fn start(&self, enabled: &[PluginId]) -> Result<(), Error>;
     pub fn plugins(&self) -> Vec<PluginStatus>;
+    /// (P2-45, review 4 #2) Every loaded plugin that is enabled and not refused, by id: its folder
+    /// and manifest (commands, skills folders). Reads what `start`/`reload` loaded; spawns nothing.
+    pub fn manifests(&self) -> Vec<PluginDir>;
     pub async fn set_enabled(&self, id: &PluginId, on: bool) -> Result<(), Error>;
     /// Every enabled plugin's tools, spawning lazily as needed; cached until `ToolsChanged` or exit.
     pub async fn tools(&self) -> Vec<HostedTool>;
@@ -650,6 +674,9 @@ impl McpHost {
     pub async fn conversation_ended(&self);
     /// Stop now (D213: a game started). Not a crash; the next call respawns.
     pub async fn stop(&self, id: &PluginId);
+    /// (P2-23, EX-12) Re-read the plugin's folder; in-flight calls finish; the next call spawns
+    /// the new version. Emits `ToolsChanged`.
+    pub async fn reload(&self, id: &PluginId) -> Result<(), Error>;
     pub fn pid(&self, id: &PluginId) -> Option<u32>;
     /// Last 500 stderr lines, tagged and secret-redacted. Never on the bus.
     pub fn log(&self, id: &PluginId) -> Vec<String>;
@@ -1017,12 +1044,17 @@ pub mod permissions {   // P2-12
     pub fn within(parent: &Path, path: &Path) -> bool;
     /// Absolute paths an argument object names (v2 `pathsIn`).
     pub fn paths_in(args: &Map<String, Value>) -> Vec<PathBuf>;
+    /// (P2-46, review 4 #5) Also decodes `file://` URIs and expands a leading `~`, `$HOME`/`$VAR`
+    /// and `%VAR%` before deciding a string is an absolute path.
     /// "don't delete anything" → a Boundary; None if the sentence is not one.
     pub fn heard(said: &str, at: Ms) -> Option<Boundary>;
     pub fn lifts(said: &str) -> bool;
     pub fn boundary_ack(b: &Boundary) -> String;
     /// From the store: `_core.mode` (v2's kebab names), `_core.scope` {roots, everywhere},
-    /// `_core.boundaries`. Missing → AskRisky, no roots.
+    /// `_core.boundaries`. Missing → AskRisky, no roots. (P2-46, review 4 #3) A kv read error →
+    /// closed: AskEveryTime plus a synthetic `Blocks::Everything` boundary, and a warning.
+    /// (P2-46, review 4 #4) Destructive means not read-only and `destructiveHint` not
+    /// `Some(false)` (MCP's default is true); v2 read a missing hint as safe, v3 does not.
     pub fn scope(store: &Store, data_dir: &Path) -> Scope;
     pub fn save_boundaries(store: &Store, b: &[Boundary]) -> Result<()>;
     pub fn roots_of(scope: &Scope) -> Vec<alexia_mcp::types::Root>;
@@ -1099,6 +1131,12 @@ pub mod trace {   // P2-19, TR-08, AC-12
     impl Trace {
         pub fn begin(store: Arc<Store>, bus: Bus, run: RunId, session: SessionId, origin: Origin,
                      background: bool, parent: Option<RunId>) -> Result<Trace>;
+        /// (review 4 #1, P2-19; used by P2-20 for P2-26) A run whose `live_runs` row survived a
+        /// restart: no `live_begin` (the row is still there; `live_begin` stays a plain INSERT),
+        /// `live_touch(run, steps_done, now)`, `RunStarted` again, the note "Resumed after a
+        /// restart at step <n>.", and step numbers (trace and audit) continue from `steps_done`.
+        pub fn resume(store: Arc<Store>, bus: Bus, run: RunId, session: SessionId, origin: Origin,
+                      background: bool, parent: Option<RunId>, steps_done: u32) -> Result<Trace>;
         pub fn phase(&self, p: Phase);
         pub fn model(&self, asked: &str, answered: &str, first_byte_ms: Option<u32>);
         pub fn note(&self, line: &str);
@@ -1116,14 +1154,25 @@ pub mod trace {   // P2-19, TR-08, AC-12
 pub mod agent {   // P2-20
     pub struct AgentParts { pub router: Arc<Router>, pub tools: Arc<dyn Tooling>, pub store: Arc<Store>,
                             pub bus: Bus, pub ask: Arc<dyn Ask>, pub checker: Arc<Checker>,
-                            pub caps: Arc<dyn chat::Caps>, pub layout: Layout, pub limits: Limits }
+                            pub caps: Arc<dyn chat::Caps>, pub layout: Layout, pub limits: Limits,
+                            /// (review 4 #2) The plugin host: `manifests()` for plugin commands (P2-25),
+                            /// `conversation_ended` for `/new`, `plugins()` for `/status`. Tests build one
+                            /// over a temp plugin folder; `start` spawns only resident plugins.
+                            pub host: McpHost }
     pub struct Task { pub session: SessionId, pub origin: Origin,
                       /// The conversation to continue, ending with the new user turn (already stored).
                       pub messages: Vec<(Role, MessageBody)>, pub standing: Vec<String>,
                       pub background: bool, pub plugin: Option<PluginId>, pub run: Option<RunId>,
                       pub parent: Option<RunId>, pub max_steps: Option<u32>,
                       /// Added by P2-20 (P2-07 makes `Steer`); not in P2-01's stub.
-                      pub steer: Steer }
+                      pub steer: Steer,
+                      /// (review 4 #1, added by P2-20) Some(n): resuming `run` (Some), whose `live_runs`
+                      /// row still exists, with n steps already finished (P2-26): the loop calls
+                      /// `Trace::resume` and counts from n; `max_steps` (or the lane's ceiling) bounds
+                      /// the total, n included. None: a new run, `Trace::begin`.
+                      pub steps_done: Option<u32> }
+    /// (review 4 #11) P2-20 fills `new`, `store`, `host`, `set_local_jobs` and `local_jobs` first
+    /// (`OnceLock<Arc<LocalJobs>>`; a second set is ignored), so tasks after it can build an Agent.
     pub struct Agent { /* parts, OnceLock<Arc<LocalJobs>> */ }
     impl Agent {
         pub fn new(parts: AgentParts) -> Arc<Agent>;
@@ -1131,6 +1180,7 @@ pub mod agent {   // P2-20
         /// `local::see_before_cloud(self.local_jobs(), ..)` before every cloud step.
         pub async fn run(&self, task: Task, draft: DraftSink, cancel: CancellationToken) -> Result<RunResult, BrainError>;
         pub fn store(&self) -> &Arc<Store>;
+        pub fn host(&self) -> &McpHost;
         /// Set once by the hub (P2-38); None until then.
         pub fn set_local_jobs(&self, jobs: Arc<local::LocalJobs>);
         pub fn local_jobs(&self) -> Option<&local::LocalJobs>;
@@ -1476,18 +1526,31 @@ alexia-hub scope add|remove|list <folder>  (V3-2) TR-01 folders
 alexia-hub encrypt                         (V3-2) TR-09 (refuses while the hub runs)
 ```
 
-(V3-2) Wiring in `run`, in this order (P2-38): `Store::open(layout.db())` → `Bus::new(1024)` →
-`McpHost::new(.., Arc::new(NoUpcalls), sink)` where `sink` publishes `Event::Plugin` → providers,
-`Catalog`, `Router` → `ChannelSet` → `Asker::new(channels, store, bus)` → `Agent::new(AgentParts {
-tools: McpTooling with skills, schedules, helpers, undo, ask: asker, .. })` →
-`host.set_upcalls(agent.clone())` → `Lanes::new(FastChat, Agent)` as the `Brain` →
-`Gateway::with_channels(.., channels)` → `Scheduler` → `resume::resume_all` → `gpu::Watch` (steps
-aside: `Runtime::stop_all`, `LocalJobs::set_paused`, `McpHost::stop` for GPU pids) → catalog news
-as one `Say`. Each `run` is a tokio task under one root `CancellationToken`.
+(V3-2) Wiring in `run`, in this order (P2-38; review 4 #7). Each arrow is a statement in `main.rs`:
+
+1. `Store::open(layout.db())` → `Bus::new(1024)`.
+2. `host = McpHost::new(cfg, store, Arc::new(NoUpcalls), sink)`, `sink` publishing `Event::Plugin`.
+   Not started yet: a plugin spawned now would get `NoUpcalls`' offers in its `initialize`.
+3. Providers → `Catalog` → `Router` → `ChannelSet` → `asker = Asker::new(channels.clone(), store, bus)`
+   → `checker = Checker::new(None)`.
+4. `tooling = Arc::new(McpTooling::new(host.clone(), vec![/* the Scheduler's builtins */]))`.
+5. `agent = Agent::new(AgentParts { tools: tooling.clone(), host: host.clone(), ask: asker, checker, .. })`.
+6. `tooling.add_builtin(Helpers::new(&agent))`, `tooling.add_builtin(UndoTool::new(&agent))`
+   (both hold `Weak<Agent>`, so they come after it).
+7. `host.set_upcalls(agent.clone())`, then `host.start(&enabled).await`.
+8. `Skills::load` over `layout.skills()` plus, for each `host.manifests()` entry, `path.join(f)` for
+   every `f` in its manifest's `skills` → `tooling.add_builtin(skills)`; each `Problem` logged.
+9. `Runtime` → `LocalJobs` → `agent.set_local_jobs(jobs)`; `checker.set_model(..)` once P2-34's
+   checker model is installed.
+10. `Lanes::new(FastChat, agent)` as the `Brain` → `Gateway::with_channels(.., channels)`.
+11. `Scheduler` → `resume::resume_all(agent, ..)` → `gpu::Watch` (steps aside:
+    `Runtime::stop_all`, `LocalJobs::set_paused`, `McpHost::stop` for GPU pids) → catalog news as
+    one `Say`. Each long-running piece is a tokio task under one root `CancellationToken`.
 
 The Ask seam (review 2): the asker is built on the `ChannelSet` before the agent, and the agent
-before the gateway, so nothing is set after construction except `host.set_upcalls` and
-`Agent::set_local_jobs`.
+before the gateway, so nothing is set after construction except `host.set_upcalls`,
+`McpTooling::add_builtin`, `Agent::set_local_jobs` and `Checker::set_model`.
+
 
 (V3-2) `V2Bridge` and `V2Config` are gone with `bridge.rs` (P2-38): the hub never starts or calls
 v2 core, and reads no `ALEXIA_V2_*` variable (§7 check 11).
@@ -1570,7 +1633,7 @@ impl RpcError { pub fn new(code: i32, message: impl Into<String>) -> Self; pub f
 
 | | |
 |---|---|
-| command | `entry.run`; `"node"` → `HostConfig::node`. Otherwise and for every arg naming a file in the plugin folder: made absolute against the folder. |
+| command | `entry.run`; `"node"` → `HostConfig::node`; `"wasm"` → no process: `args[0]` is the `.wasm` path relative to the plugin folder, run in-process (P2-24, `wasm::WasmPlugin`). Otherwise and for every arg naming a file in the plugin folder: made absolute against the folder. |
 | cwd | `layout.own_dir(id)`, created before spawn, **never the plugin folder** (Windows can't delete a running process's cwd). |
 | env | Only: `APPDATA HOMEDRIVE HOMEPATH LOCALAPPDATA PATH PATHEXT PROCESSOR_ARCHITECTURE PROGRAMFILES SYSTEMDRIVE SYSTEMROOT TEMP TMP USERNAME USERPROFILE` (what v2's MCP SDK passes on Windows), plus `ALEXIA_PLUGIN_DIR=<plugin folder>`. |
 | Windows | `CREATE_NO_WINDOW`; assigned to a Job Object with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, so a plugin's own children die with it and with the hub. |

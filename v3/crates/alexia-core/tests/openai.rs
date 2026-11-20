@@ -211,42 +211,6 @@ async fn system_goes_first_and_images_map() {
 }
 
 #[tokio::test]
-async fn tool_turns_are_left_out_without_tools() {
-    let (base, body) = fake(SSE, vec![(0, "data: [DONE]\n\n".into())]).await;
-    let call = |id: &str| json!([{"id": id, "name": "find", "arguments": "{}"}]);
-    let with = |content: &str, calls: Option<Value>, call_id: Option<&str>| -> MessageBody {
-        serde_json::from_value(json!({"content": content, "calls": calls, "call_id": call_id}))
-            .unwrap()
-    };
-    let req = ChatRequest {
-        messages: vec![
-            (Role::User, text("find it")),
-            (Role::Assistant, with("", Some(call("c1")), None)),
-            (Role::Tool, with("found", None, Some("c1"))),
-            (Role::Assistant, with("Here it is", Some(call("c2")), None)),
-            (Role::User, text("thanks")),
-        ],
-        system: None,
-        tools: vec![],
-        max_tokens: None,
-    };
-    run(&provider(&base), &req).await.1.unwrap();
-    let body = body.await.unwrap();
-    assert_eq!(
-        body["messages"],
-        json!([
-            {"role": "user", "content": "find it"},
-            {"role": "assistant", "content": "Here it is"},
-            {"role": "user", "content": "thanks"}
-        ])
-    );
-    let sent = body.to_string();
-    for banned in ["\"tool\"", "tool_calls", "tool_call_id"] {
-        assert!(!sent.contains(banned), "{banned} in {sent}");
-    }
-}
-
-#[tokio::test]
 async fn status_429_is_busy_with_retry_after() {
     let (base, _) = fake(
         "HTTP/1.1 429 Too Many Requests\r\nretry-after: 3\r\ncontent-length: 0\r\nconnection: close\r\n\r\n",
@@ -441,21 +405,6 @@ async fn cancel_stops_reading() {
 }
 
 #[tokio::test]
-async fn tools_are_refused_on_this_path() {
-    let mut req = hello();
-    req.tools =
-        vec![
-            serde_json::from_value(json!({"name": "t", "inputSchema": {"type": "object"}}))
-                .unwrap(),
-        ];
-    let (_, done) = run(&provider("http://127.0.0.1:9"), &req).await;
-    assert!(
-        matches!(&done, Err(ProviderError::Other(m)) if m == "tools are not sent on this path"),
-        "{done:?}"
-    );
-}
-
-#[tokio::test]
 async fn models_mark_free_rows() {
     let list = json!({"data": [
         {"id": "a:free"},
@@ -585,4 +534,228 @@ fn keys_use_v2_names() {
     alexia_store::secrets::set("_core", "provider_groq", &key).unwrap();
     assert!(groq().usable());
     assert_eq!(free::key_for(groq().row()), Some(key));
+}
+
+// ---- P2-04: tools on the wire ----
+
+fn tool(name: &str) -> alexia_mcp::types::Tool {
+    serde_json::from_value(json!({
+        "name": name,
+        "description": "does it",
+        "inputSchema": {"type": "object", "properties": {"q": {"type": "string"}}}
+    }))
+    .unwrap()
+}
+
+fn tool_frame(calls: Value) -> String {
+    format!(
+        "data: {}\n\n",
+        json!({"choices": [{"delta": {"tool_calls": calls}, "finish_reason": null}]})
+    )
+}
+
+const DONE: &str = "data: [DONE]\n\n";
+
+fn with_tools(names: &[&str], messages: Vec<(Role, MessageBody)>) -> ChatRequest {
+    ChatRequest {
+        messages,
+        system: None,
+        tools: names.iter().map(|n| tool(n)).collect(),
+        max_tokens: None,
+    }
+}
+
+fn body_of(v: Value) -> MessageBody {
+    serde_json::from_value(v).unwrap()
+}
+
+#[tokio::test]
+async fn tools_are_sent() {
+    let call = tool_frame(
+        json!([{"index": 0, "id": "c1", "function": {"name": "schedule_add", "arguments": "{\"q\":\"x\"}"}}]),
+    );
+    let (base, body) = fake(SSE, vec![(0, call), (0, DONE.into())]).await;
+    let req = with_tools(&["schedule.add"], vec![(Role::User, text("go"))]);
+    let (chunks, done) = run(&provider(&base), &req).await;
+    done.unwrap();
+    let body = body.await.unwrap();
+    assert_eq!(
+        body["tools"],
+        json!([{"type": "function", "function": {
+            "name": "schedule_add",
+            "description": "does it",
+            "parameters": {"type": "object", "properties": {"q": {"type": "string"}}}
+        }}])
+    );
+    // Mapped back to the core name on the way in.
+    assert_eq!(
+        chunks,
+        vec![ChatChunk::ToolCall(alexia_store::ToolCall {
+            id: "c1".into(),
+            name: "schedule.add".into(),
+            arguments: "{\"q\":\"x\"}".into()
+        })]
+    );
+}
+
+#[tokio::test]
+async fn assistant_calls_and_tool_results_on_the_wire() {
+    let (base, body) = fake(SSE, vec![(0, DONE.into())]).await;
+    let req = with_tools(
+        &["schedule.add"],
+        vec![
+            (Role::User, text("find it")),
+            (
+                Role::Assistant,
+                body_of(json!({"content": "", "calls": [
+                    {"id": "c1", "name": "schedule.add", "arguments": ""}
+                ]})),
+            ),
+            (
+                Role::Tool,
+                body_of(json!({"content": "found", "callId": "c1"})),
+            ),
+            (Role::User, text("thanks")),
+        ],
+    );
+    run(&provider(&base), &req).await.1.unwrap();
+    assert_eq!(
+        body.await.unwrap()["messages"],
+        json!([
+            {"role": "user", "content": "find it"},
+            {"role": "assistant", "content": "", "tool_calls": [
+                {"id": "c1", "type": "function",
+                 "function": {"name": "schedule_add", "arguments": "{}"}}
+            ]},
+            {"role": "tool", "tool_call_id": "c1", "content": "found"},
+            {"role": "user", "content": "thanks"}
+        ])
+    );
+}
+
+#[tokio::test]
+async fn streamed_tool_call_assembled() {
+    let (base, _) = fake(
+        SSE,
+        vec![
+            (0, tool_frame(json!([{"index": 0, "id": "a", "function": {"name": "one", "arguments": ""}}]))),
+            (0, tool_frame(json!([{"index": 1, "id": "b", "function": {"name": "two"}}]))),
+            (0, tool_frame(json!([{"index": 0, "function": {"arguments": "{\"x\""}}]))),
+            (0, tool_frame(json!([{"index": 1, "function": {"arguments": "{\"y\""}}]))),
+            (0, tool_frame(json!([{"index": 0, "function": {"arguments": ":"}}, {"index": 1, "function": {"arguments": ":2}"}}]))),
+            (0, tool_frame(json!([{"index": 0, "function": {"arguments": "1}"}}]))),
+            (0, DONE.into()),
+        ],
+    )
+    .await;
+    let (chunks, done) = run(
+        &provider(&base),
+        &with_tools(&["one", "two"], vec![(Role::User, text("go"))]),
+    )
+    .await;
+    done.unwrap();
+    let got: Vec<_> = chunks
+        .into_iter()
+        .map(|c| match c {
+            ChatChunk::ToolCall(t) => (t.id, t.name, t.arguments),
+            other => panic!("{other:?}"),
+        })
+        .collect();
+    assert_eq!(
+        got,
+        vec![
+            ("a".into(), "one".into(), "{\"x\":1}".into()),
+            ("b".into(), "two".into(), "{\"y\":2}".into())
+        ]
+    );
+}
+
+#[tokio::test]
+async fn text_and_tool_call_in_one_answer() {
+    let finish = format!(
+        "data: {}\n\n",
+        json!({"choices": [{"delta": {}, "finish_reason": "tool_calls"}]})
+    );
+    let (base, _) = fake(
+        SSE,
+        vec![
+            (0, delta("content", "Looking. ")),
+            (0, tool_frame(json!([{"index": 0, "id": "c", "function": {"name": "unknown_tool", "arguments": ""}}]))),
+            (0, finish),
+            (0, DONE.into()),
+        ],
+    )
+    .await;
+    let (chunks, done) = run(
+        &provider(&base),
+        &with_tools(&["one"], vec![(Role::User, text("go"))]),
+    )
+    .await;
+    done.unwrap();
+    // An unknown wire name is passed through unchanged; empty arguments become `{}`.
+    assert_eq!(
+        chunks,
+        vec![
+            ChatChunk::Text("Looking. ".into()),
+            ChatChunk::ToolCall(alexia_store::ToolCall {
+                id: "c".into(),
+                name: "unknown_tool".into(),
+                arguments: "{}".into()
+            })
+        ]
+    );
+}
+
+#[tokio::test]
+async fn long_names_do_not_collide() {
+    let a = format!("{}a", "x".repeat(80));
+    let b = format!("{}b", "x".repeat(80));
+    let (base, body) = fake(SSE, vec![(0, DONE.into())]).await;
+    let req = with_tools(&[&a, &b, "p.q", "p_q"], vec![(Role::User, text("go"))]);
+    run(&provider(&base), &req).await.1.unwrap();
+    let body = body.await.unwrap();
+    let names: Vec<String> = body["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["function"]["name"].as_str().unwrap().to_owned())
+        .collect();
+    let mut unique = names.clone();
+    unique.sort();
+    unique.dedup();
+    assert_eq!(unique.len(), 4, "{names:?}");
+    for n in &names {
+        assert!(
+            (1..=64).contains(&n.len())
+                && n.chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-'),
+            "{n}"
+        );
+    }
+    assert_eq!(names[2], "p_q");
+}
+
+#[tokio::test]
+async fn orphan_tool_result_becomes_a_note() {
+    let (base, body) = fake(SSE, vec![(0, DONE.into())]).await;
+    let req = with_tools(
+        &["one"],
+        vec![
+            (Role::User, text("go")),
+            (
+                Role::Tool,
+                body_of(json!({"content": "lonely", "callId": "nope"})),
+            ),
+        ],
+    );
+    run(&provider(&base), &req).await.1.unwrap();
+    let body = body.await.unwrap();
+    assert_eq!(
+        body["messages"],
+        json!([
+            {"role": "user", "content": "go"},
+            {"role": "user", "content": "A tool answered: lonely"}
+        ])
+    );
+    assert!(!body.to_string().contains("tool_call_id"));
 }

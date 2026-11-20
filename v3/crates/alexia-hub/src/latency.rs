@@ -124,12 +124,12 @@ fn check(views: &[TurnView], last: u32) -> Vec<String> {
             views.len()
         ));
     }
+    let mut acks: Vec<(i64, &str)> = Vec::new();
     for v in views {
         let id = short_id(&v.turn);
         match v.ack_ms {
             None => f.push(format!("turn {id}: no ack")),
-            Some(a) if a >= 300 => f.push(format!("turn {id}: ack took {a} ms (limit 300)")),
-            _ => {}
+            Some(a) => acks.push((a, id)),
         }
         if v.lane == "chat" && v.stages.iter().any(|s| s.0 == "bridge") {
             f.push(format!("turn {id}: chat turn went through the bridge"));
@@ -138,6 +138,21 @@ fn check(views: &[TurnView], last: u32) -> Vec<String> {
             f.push(format!(
                 "turn {id}: {} ms of {} ms unaccounted",
                 v.unaccounted_ms, v.total_ms
+            ));
+        }
+    }
+    acks.sort_unstable();
+    if let Some(&(p95, _)) = acks.get((acks.len() * 95).div_ceil(100).saturating_sub(1)) {
+        if p95 >= 300 {
+            let slow: Vec<String> = acks
+                .iter()
+                .rev()
+                .take(5)
+                .map(|(a, id)| format!("{id} {a} ms"))
+                .collect();
+            f.push(format!(
+                "p95 of ack times was {p95} ms (limit 300); slowest: {}",
+                slow.join(", ")
             ));
         }
     }
@@ -478,9 +493,36 @@ mod tests {
 
     #[test]
     fn check_fails_slow_ack() {
-        let mut rows = good("t:a", 0);
-        rows[0].ms = 300;
-        assert_eq!(check_n(rows, 1).len(), 1);
+        // most turns slow: p95 >= 300 ms fails and names the slowest turns
+        let mut rows = Vec::new();
+        for i in 0..20 {
+            rows.extend(good(&format!("t:{i}"), i * 10_000));
+        }
+        for r in rows.iter_mut().filter(|r| r.name == "ack").take(15) {
+            r.ms = 300;
+        }
+        let f = check_n(rows, 20);
+        assert_eq!(f.len(), 1);
+        assert!(f[0].contains("p95") && f[0].contains("300 ms"), "{f:?}");
+    }
+
+    #[test]
+    fn check_passes_one_slow_ack_in_twenty() {
+        let mut rows = Vec::new();
+        for i in 0..20 {
+            rows.extend(good(&format!("t:{i}"), i * 10_000));
+        }
+        rows.iter_mut().find(|r| r.name == "ack").unwrap().ms = 5000;
+        assert!(check_n(rows, 20).is_empty());
+    }
+
+    #[test]
+    fn check_still_fails_missing_ack() {
+        let rows: Vec<SpanRow> = good("t:a", 0)
+            .into_iter()
+            .filter(|r| r.name != "ack")
+            .collect();
+        assert!(check_n(rows, 1).iter().any(|l| l.contains("no ack")));
     }
 
     #[test]
@@ -557,7 +599,9 @@ mod tests {
             r("t:a", at, "chat", "ack", 0, 400),
             r("t:a", at, "chat", "deliver", 0, 1000),
         ]);
-        assert!(check(&v, 1).iter().any(|l| l.contains("ack took 400 ms")));
+        assert!(check(&v, 1)
+            .iter()
+            .any(|l| l.contains("p95 of ack times was 400 ms")));
     }
 
     struct OneMsg(std::sync::Mutex<bool>);

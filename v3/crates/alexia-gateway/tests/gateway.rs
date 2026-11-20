@@ -15,8 +15,8 @@ use alexia_core::{
     Span, Turn,
 };
 use alexia_gateway::{
-    Channel, ChatRef, Error, Gateway, GatewayConfig, InFile, InKind, Inbound, Media, MsgRef,
-    Outbound, Result,
+    Channel, ChannelSet, ChatRef, Error, Gateway, GatewayConfig, InFile, InKind, Inbound, Media,
+    MsgRef, Outbound, Result,
 };
 use alexia_store::{Content, Store};
 use tokio::sync::mpsc;
@@ -319,14 +319,16 @@ fn start_with(cfg: GatewayConfig, scripts: Vec<Script>, store: Arc<Store>) -> H 
         ..FakeBrain::default()
     });
     let bus = Bus::new(256);
-    let mut gw = Gateway::new(
+    let channels = ChannelSet::new();
+    channels.add(ch.clone());
+    let gw = Gateway::with_channels(
         cfg,
         store.clone(),
         bus.clone(),
         brain.clone(),
         Arc::new(FakeMedia),
+        channels,
     );
-    gw.add(ch.clone());
     let cancel = CancellationToken::new();
     let run = tokio::spawn(gw.run(cancel.clone()));
     H {

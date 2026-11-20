@@ -17,7 +17,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use alexia_core::Budget;
-use alexia_store::{Content, Ms, Part, Store};
+use alexia_store::{now_ms, Content, Ms, Part, Store};
 use base64::Engine;
 use serde_json::json;
 use tokio::sync::oneshot;
@@ -89,13 +89,6 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-fn now_ms() -> Ms {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as Ms)
-        .unwrap_or(0)
-}
-
 /// ponytail: std's per-process-seeded SipHash over the clock, enough for a six-digit code and a
 /// draft id; take a CSPRNG crate if anything here ever needs real randomness.
 fn random() -> u64 {
@@ -113,6 +106,11 @@ fn new_code() -> String {
 /// v2 `draftId()`: 1 ..= 2^31 - 1.
 fn draft_id() -> i64 {
     1 + (random() % ((1 << 31) - 1)) as i64
+}
+
+/// (channel name, code) for `alexia-hub pair`.
+pub(crate) fn pairing_entry(store: &Store) -> Result<(&'static str, String)> {
+    Ok(("telegram", pairing_code(store)?))
 }
 
 /// The six-digit code, created on first use and kept in kv `_core/telegram_pairing_code`.
