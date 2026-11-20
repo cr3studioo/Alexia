@@ -114,7 +114,7 @@ fn risky_runs_read_only() {
 fn question_uses_plain_words_never_a_tool_id() {
     let click = CallAsk {
         words: "click on your screen",
-        ..ask("computer__click", None, vec![])
+        ..ask("demo__click", None, vec![])
     };
     assert_eq!(
         rule(&click, &base()),
@@ -124,7 +124,7 @@ fn question_uses_plain_words_never_a_tool_id() {
     );
     let every = scope_with(|s| s.mode = PermissionMode::AskEveryTime);
     assert_eq!(
-        rule(&ask("computer__click", None, vec![]), &every),
+        rule(&ask("demo__click", None, vec![]), &every),
         Ruling::Ask("Alexia wants to click. Allow it?".into())
     );
     // "Lists every…" fits after "Alexia wants to" with its s taken off.
@@ -374,6 +374,35 @@ fn outside_scope_asks() {
         rule(&elsewhere, &scope_with(|s| s.everywhere = true)),
         Ruling::Run
     );
+}
+
+#[test]
+fn empty_root_does_not_widen_scope() {
+    let r = ann(true, false);
+    let elsewhere = ask(
+        "notes__read",
+        Some(&r),
+        vec![home().join("Desktop").join("taxes.pdf")],
+    );
+    // Set directly on the Scope: `within` itself must refuse an empty parent.
+    let direct = scope_with(|s| s.roots.push(PathBuf::new()));
+    assert!(is_ask(&rule(&elsewhere, &direct)));
+    assert!(!within(Path::new(""), &home()));
+
+    // Read from v2 kv: empty and blank roots are dropped.
+    let store = Store::open_in_memory().unwrap();
+    store
+        .kv_set(
+            "_core",
+            "scope",
+            &json!({ "roots": ["", "   ", work().to_string_lossy()] }),
+        )
+        .unwrap();
+    let saved = scope(&store, &data_dir());
+    assert_eq!(saved.roots, vec![work()]);
+    assert!(is_ask(&rule(&elsewhere, &saved)));
+    let inside = ask("notes__read", Some(&r), vec![work().join("a.txt")]);
+    assert_eq!(rule(&inside, &saved), Ruling::Run);
 }
 
 #[test]

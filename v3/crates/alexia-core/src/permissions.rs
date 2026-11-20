@@ -137,7 +137,7 @@ fn as_verb(words: &str) -> String {
     }
 }
 
-/// v2 `plainly`: a tool id with its seams taken out, `computer__click` reads "click".
+/// v2 `plainly`: a tool id with its seams taken out, `demo__click` reads "click".
 fn plainly(tool: &str) -> String {
     let name = tool.split_once("__").map_or(tool, |(_, n)| n);
     name.split(['_', '.'])
@@ -219,7 +219,8 @@ pub fn within(parent: &Path, path: &Path) -> bool {
         return false;
     };
     let (from, to) = (key(&from), key(&to));
-    to.len() >= from.len() && to[..from.len()] == from[..]
+    // An empty parent would be a prefix of everything: it holds nothing.
+    !from.is_empty() && to.len() >= from.len() && to[..from.len()] == from[..]
 }
 
 /// Segments to compare. Windows paths are case-insensitive.
@@ -418,6 +419,8 @@ pub fn scope(store: &Store, data_dir: &Path) -> Scope {
         .map(|a| {
             a.iter()
                 .filter_map(Value::as_str)
+                // v2 can save an empty root; it must not widen the scope to everywhere.
+                .filter(|r| !r.trim().is_empty())
                 .map(PathBuf::from)
                 .collect()
         })
@@ -495,7 +498,7 @@ mod tests {
 
     #[test]
     fn plainly_takes_the_seams_out() {
-        assert_eq!(plainly("computer__click"), "click");
+        assert_eq!(plainly("demo__click"), "click");
         assert_eq!(plainly("notes__read_all.v2"), "read all v2");
         assert_eq!(plainly("plain"), "plain");
     }
