@@ -263,3 +263,6 @@
 2026-11-20 P2-23 approve, merged locally. Watch in P2-40: supervise.rs:106 stamps arg '.' (node .) -> plugin writing into its install root reloads every heartbeat. Minor: create_tables under plugins mutex during reload.
 2026-11-20 P2-43 fix done (3 busy runs pass); review 2 dispatched. Dispatched P2-11 sonnet.
 2026-11-20 Phase review 4 done (12 findings, v3/ops/phase-review-4.md): 2 high (resume/live_begin collides, AgentParts has no manifests), 3 medium permission fail-opens, compute CallCtx drops cancel, P2-38 too big for sonnet, lows. Sent to planner.
+2026-11-20 Dispatched planner (opus) on branch cr3studioo/v3-plan-rv4 for review-4 findings ctx_1e164e170e20.
+2026-11-20 P2-23 gate ok (50/50, no flake), pushed. P2-24 ready.
+2026-11-20 P2-18 build done (attachmentInputs no store; stagesOf not ported); review dispatched. P2-43 review 2: changes (turn-line assert missing, report claimed it). Fixer opus try 3 ctx_02a084e13359.
