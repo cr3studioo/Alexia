@@ -17,6 +17,7 @@ mod process;
 mod serve;
 mod supervise;
 pub mod types;
+pub mod wasm;
 
 /// Crate-private pieces, re-exported only so `tests/conn.rs` can drive them.
 #[doc(hidden)]
@@ -104,6 +105,8 @@ pub enum PluginState {
     Running,
     Unhealthy,
     Refused,
+    /// P2-23: the plugin's folder is being re-read.
+    Reloading,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -125,6 +128,8 @@ pub struct HostedTool {
     pub tool: types::Tool,
     pub provides: Vec<String>,
     pub hidden: bool,
+    /// false when kv `_core`/`unreviewed` (v2's list) holds the plugin id.
+    pub reviewed: bool,
 }
 
 pub type ProgressSink = tokio::sync::mpsc::Sender<types::ProgressParams>;
@@ -193,6 +198,21 @@ pub trait Upcalls: Send + Sync {
     ) -> std::result::Result<serde_json::Value, jsonrpc::RpcError> {
         let _ = (plugin, call);
         Err(jsonrpc::RpcError::method_not_found())
+    }
+    /// Capabilities core answers itself (P2-34: `vision.describe`, `text.embed`). Default: none.
+    fn host_caps(&self) -> Vec<String> {
+        Vec::new()
+    }
+    /// `alexia/capability/call` for a cap no enabled plugin provides. None = not mine (-32050).
+    async fn host_call(
+        &self,
+        plugin: &PluginId,
+        cap: &str,
+        args: serde_json::Map<String, serde_json::Value>,
+        cancel: CancellationToken,
+    ) -> Option<std::result::Result<types::CallToolResult, jsonrpc::RpcError>> {
+        let _ = (plugin, cap, args, cancel);
+        None
     }
 }
 
