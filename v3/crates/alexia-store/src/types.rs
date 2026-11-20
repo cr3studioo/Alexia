@@ -285,3 +285,74 @@ pub fn is_ident(s: &str) -> bool {
     b.next().is_some_and(|c| c.is_ascii_lowercase())
         && b.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'_')
 }
+
+// ---- migration 3: audit, live runs, approvals, jobs. JSON columns are opaque text here. ----
+
+/// One tool call in the audit log (TR-08). `args` and `result` are redacted by the caller
+/// (P2-19); the store never redacts. `session` has no FK, so the row outlives its conversation.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AuditRow {
+    /// Ignored on insert.
+    pub id: i64,
+    pub at: Ms,
+    pub run: String,
+    pub session: Option<SessionId>,
+    /// JSON Origin.
+    pub origin: String,
+    pub step: u32,
+    pub tool: String,
+    pub plugin: Option<String>,
+    /// JSON, already redacted.
+    pub args: String,
+    /// `run` | `ask` | `blocked` | `checker`.
+    pub gate: String,
+    /// `ran` | `approved` | `denied` | `blocked` | `unanswered`.
+    pub decision: String,
+    pub why: Option<String>,
+    pub ok: Option<bool>,
+    /// Already redacted, at most 2000 chars.
+    pub result: Option<String>,
+    /// JSON UndoCall.
+    pub undo: Option<String>,
+    pub undone_at: Option<Ms>,
+}
+
+/// A run in flight, kept so it can be resumed after a restart.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LiveRunRow {
+    pub run: String,
+    pub session: SessionId,
+    pub origin: String,
+    pub started_at: Ms,
+    pub touched_at: Ms,
+    pub steps: u32,
+    pub background: bool,
+    pub parent: Option<String>,
+}
+
+/// One question in the approvals inbox. `answer` is `None` until answered; the first answer wins.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ApprovalRow {
+    pub id: i64,
+    pub run: String,
+    pub origin: String,
+    pub text: String,
+    pub detail: Option<String>,
+    pub asked_at: Ms,
+    pub answered_at: Option<Ms>,
+    pub answer: Option<bool>,
+    pub via: Option<String>,
+}
+
+/// A scheduled job. `trigger` is JSON Trigger text.
+#[derive(Clone, Debug, PartialEq)]
+pub struct JobRow {
+    pub id: i64,
+    pub trigger: String,
+    pub prompt: String,
+    pub urgency: String,
+    pub origin: String,
+    pub created_at: Ms,
+    pub next_at: Option<Ms>,
+    pub cancelled_at: Option<Ms>,
+}

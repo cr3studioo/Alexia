@@ -149,4 +149,67 @@ CREATE TABLE spans (
 CREATE INDEX spans_at ON spans (at);
 CREATE INDEX spans_turn ON spans (turn);
 "#,
+    // 3 — audit log (TR-08), live runs, approvals inbox, scheduled jobs (AC-08..12, SP-13).
+    r#"
+-- one row per tool call. args and result arrive redacted; the store never redacts.
+CREATE TABLE audit (
+  id         INTEGER PRIMARY KEY,
+  at         INTEGER NOT NULL,
+  run_id     TEXT NOT NULL,
+  session_id INTEGER,             -- no FK: the log outlives a deleted conversation
+  origin     TEXT NOT NULL,       -- JSON Origin
+  step       INTEGER NOT NULL,
+  tool       TEXT NOT NULL,
+  plugin     TEXT,
+  args       TEXT NOT NULL,       -- JSON, redacted before it gets here
+  gate       TEXT NOT NULL,       -- 'run' | 'ask' | 'blocked' | 'checker'
+  decision   TEXT NOT NULL,       -- 'ran' | 'approved' | 'denied' | 'blocked' | 'unanswered'
+  why        TEXT,
+  ok         INTEGER,
+  result     TEXT,                -- redacted, at most 2000 chars
+  undo       TEXT,                -- JSON UndoCall or NULL
+  undone_at  INTEGER
+);
+CREATE INDEX audit_run ON audit (run_id);
+CREATE INDEX audit_at ON audit (at);
+CREATE TABLE live_runs (
+  run_id     TEXT PRIMARY KEY,
+  session_id INTEGER NOT NULL REFERENCES sessions (id) ON DELETE CASCADE,
+  origin     TEXT NOT NULL,
+  started_at INTEGER NOT NULL,
+  touched_at INTEGER NOT NULL,
+  steps      INTEGER NOT NULL,
+  background INTEGER NOT NULL,
+  parent     TEXT
+);
+CREATE TABLE approvals (
+  id          INTEGER PRIMARY KEY,
+  run_id      TEXT NOT NULL,
+  origin      TEXT NOT NULL,
+  text        TEXT NOT NULL,
+  detail      TEXT,
+  asked_at    INTEGER NOT NULL,
+  answered_at INTEGER,
+  answer      INTEGER,
+  via         TEXT
+);
+CREATE INDEX approvals_open ON approvals (answered_at);
+CREATE TABLE jobs (
+  id           INTEGER PRIMARY KEY,
+  trigger      TEXT NOT NULL,     -- JSON Trigger
+  prompt       TEXT NOT NULL,
+  urgency      TEXT NOT NULL,
+  origin       TEXT NOT NULL,
+  created_at   INTEGER NOT NULL,
+  next_at      INTEGER,
+  cancelled_at INTEGER
+);
+CREATE TABLE job_runs (
+  id      INTEGER PRIMARY KEY,
+  job_id  INTEGER NOT NULL REFERENCES jobs (id) ON DELETE CASCADE,
+  at      INTEGER NOT NULL,
+  run_id  TEXT,
+  outcome TEXT NOT NULL
+);
+"#,
 ];
