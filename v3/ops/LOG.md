@@ -208,3 +208,5 @@
 2026-11-19 P1-18 failed try 1: e2e test written, passes 3/5; found bridge save has no span (~385 ms unaccounted) and slow commits. CEO wrote P1-35 (span + synchronous=NORMAL); dispatched opus ctx_cb2564601b09. P1-18 retry reuses its branch after P1-35.
 2026-11-19 Merged P1-35 (approve, gate ok, pushed). Dispatched P1-18 try 2 (sonnet, same worktree, merge v3 then 5 runs) ctx_9062b5b316f7.
 2026-11-19 Merged P1-18 (approve, gate ok, 5/5 e2e, pushed). Review follow-ups: e2e token-leak check only sees last 40 stderr lines; steered turn ack not recorded; concurrent-load ack only lightly covered.
+2026-11-19 P1 merged except P1-33 (owner). Dispatched P1 phase review ctx_6772eae954c5 and P2 planner ctx_732f7934566f.
+2026-11-20 P1 phase review done (12 findings, v3/ops/phase-review-3.md): 2 high P2 seams (router not tool/vision aware; Agent/Gateway Ask cycle), steering by cancel, no tools on wire, dead code, secret set echoes unknown key, others low. Sent to P2 planner.
