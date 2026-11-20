@@ -213,3 +213,5 @@
 2026-11-20 Owner: do everything yourself. CEO ran secret import-v2 (9 copied: 6 providers, telegram token, hello, voice). Imported v2 data from %LOCALAPPDATA%\Alexia: DB (24 sessions, 370 messages) + files; media plugin's 46 GB hard-linked, not copied (first plain import was filling the disk, stopped). v2 db backup in C:\dev\Alexia-wt\v2-db-backup-20261120.
 2026-11-20 Hub running detached (pid 7428) with real bot: ALEXIA_PLUGINS_DIR=C:\dev\Alexia-wt\hub-plugins (base2 plugins minus telegram/crasher/vanisher, junction/hardlink mirror), ALEXIA_V2_ROOT=C:\dev\Alexia-wt\base2. Waiting for owner to send pairing code. Logs C:\dev\Alexia-wt\hub-*.log.
 2026-11-20 Finding for follow-up: importer copies plugin files with fs::copy (46 GB media models); should hard-link on same volume or skip large model dirs.
+2026-11-20 Merged plan P2 (41 tasks; all 12 phase-review findings covered). A-13 notice: P2 owner needs decided with defaults. Dispatched P2-01 (opus) ctx_1caa79a5d640, P2-03 (opus) ctx_4de98296dd61, P2-09 (sonnet) ctx_fcaa99248657.
+2026-11-20 Handoff CEO #11 -> #12.

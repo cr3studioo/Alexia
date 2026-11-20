@@ -1,21 +1,23 @@
 # STATE
 
-CEO: #11 next (chat CEO, A-08). CEO #10 handed off at a clean point (no approved branch unmerged).
-Orca run: run_7a40b198ac83 (bind with run-use). Helpers in C:\dev\Alexia-wt: wait.sh (background; prints the first non-heartbeat message), msgs.py, template.sh (source; `start <id> <phase> <model> [extra rule]`), rv.sh (source; `rv <id> <phase>` dispatches the standard opus review), gate.sh (integration gate on the main checkout: prints GATE OK or the failures). Fix rounds: write a file like fix2-P1-10.txt and dispatch with --spec "$(cat file)" in the task worktree.
-P0: all 26 merged.
-P1: 26 of 31 merged (P1-01..P1-17, P1-19..P1-25, P1-27, P1-31).
-Live Orca workers (wait for worker_done):
-- P1-26 build (opus, try 1) ctx_63927afdb362: documents reach the task lane, no empty assistant turns, bounded prompt fetches.
-- P1-28 build (sonnet, try 1) ctx_d2d475534832: telegram stays inside the gateway (invariants.mjs check), one base64.
-Todo: P1-29 (opus) and P1-30 (sonnet), both after P1-28, they don't share files, so run them together. P1-18 (sonnet) after P1-26 and needs A-09.
-Critical path: P1-26 -> P1-18 (needs owner A-09) -> P1 done -> phase review -> plan P2 (V3-2 Core in Rust).
-Follow-ups not specced yet: P1-17 review minors (see LOG 2026-11-19: main.rs:269/274 early return skips clean stop; main.rs:315 Ctrl+C window; main.rs:405 non-UTF-8 args; main.rs:306 prune). P1-31 nit: unanswered() sits between rule()'s JSDoc and rule() in packages/core/src/agent.ts:1004.
-Merges since the last phase review: 8 (P1-23, P1-10, P1-27, P1-25, P1-31, P1-17 + 2 plan merges not counted).
-Open owner asks: A-09 (test bot, free provider key names, OK to race two providers): no reply; Telegram reminder sent 2026-11-19. Only P1-18 waits on it. A-10 is a notice.
-Telegram: vars set (user env; read via PowerShell GetEnvironmentVariable User). getUpdates empty at handoff; no update_id processed yet.
-pnpm check: the main checkout has no node_modules. Run it in C:\dev\Alexia-wt\base2: git checkout -q --detach <merge sha>, pnpm check. Known failures: compute-connect 'a paused request reader stalls uploads too' (always). Load flakes that pass alone: compute-acceptance, provider.test, noticing.test, compute-plugins cancel, plugins/media ComfyUI and models.test.js bytes=.
-Rust load flakes: fixed by P0-26 (conn.rs) and P1-27 (supervise.rs). If gate.sh fails on an alexia-mcp test, rerun once.
-CI: .github/workflows/v3.yml runs on pushes to cr3studioo/v3 and cr3studioo/v3-*. node v3/ci/invariants.mjs (run from repo root) is part of gate.sh.
-v2 conformance test: --features v2-conformance, run in base2 with ALEXIA_V2_PLUGINS=C:\dev\Alexia-wt\base2\plugins.
-Every builder prompt: no fake credentials in any key shape; generous timing bounds; no hard-coded absolute paths in src/.
-Leftover folders base\ and plan-P1\ in C:\dev\Alexia-wt are locked non-worktrees; delete when free.
+CEO: #12 next (chat CEO, A-08). CEO #11 handed off 2026-11-20 with P2's first batch running.
+Orca run: run_7a40b198ac83 (bind with run-use). Helpers in C:\dev\Alexia-wt: wait.sh (background; prints the first non-heartbeat message, acks heartbeats), msgs.py, template.sh (source; `start <id> <phase> <model> [extra rule]`), rv.sh (source; `rv <id> <phase>`), gate.sh (integration gate on the main checkout: GATE OK or failures). Retry in the same worktree: write a file (see fix-P1-18.txt) and worker-start with --spec "$(cat file)". Set PYTHONIOENCODING=utf-8 before msgs.py/terminal reads (non-ASCII crashes cp1252).
+P0: 26/26 merged. P1: 34/35 merged; only P1-33 (by-hand 50 real messages) left.
+P2: planned (v3/specs/P2/PHASE.md, 41 tasks). Running:
+- P2-01 (opus) ctx_1caa79a5d640: core P2 types, module stubs, INTERFACES.md. Unblocks almost everything.
+- P2-03 (opus) ctx_4de98296dd61: store migration 3.
+- P2-09 (sonnet) ctx_fcaa99248657: hub dead code.
+Ready next: P2-10 (opus, no deps). After P2-01: P2-02, 04, 05, 06, 11..16, 30..33.
+Max 2 opus builders per batch; nearly all P2 tasks are opus, so batches are 2 opus + sonnet ones.
+
+P1-33 (the real run): the hub runs DETACHED on this PC with the real Alexia bot (started by CEO #11, PID in LOG; check with Get-Process alexia-hub). Env: ALEXIA_PLUGINS_DIR=C:\dev\Alexia-wt\hub-plugins (base2 plugins minus telegram/crasher/vanisher, mirrored with junctions/hardlinks because the scanner ignores junction dirs), ALEXIA_V2_ROOT=C:\dev\Alexia-wt\base2. Logs: C:\dev\Alexia-wt\hub-out.log / hub-err.log. Data: %LOCALAPPDATA%\AlexiaHub (v2 imported: 24 sessions, 370 messages; media's 46 GB hard-linked). Keys: secret import-v2 done (9 copied).
+Waiting on the owner to send the pairing code (in hub-out.log) to the bot from their Telegram, then use it for 50 messages. Then run `alexia-hub latency --last 50 --check --html latency.html` (same env) and dispatch P1-33 (or write the report via a sonnet worker). Don't rebuild target/release while the hub runs from it (exe locked); stop it first if needed and restart with the same env.
+If hub-err.log shows "Another program is reading this bot", v2 on the Mac still has its Telegram plugin on: tell the owner.
+
+Owner standing rule (A-12): do every by-hand step on this PC yourself; ask only for what physically needs the owner (their Telegram account). A-13: P2 owner needs decided with defaults (subscriptions OFF; don't encrypt DB until owner says how to back up the key).
+Open owner asks: none blocking. Telegram ops bot: vars set (read via PowerShell GetEnvironmentVariable User); getUpdates was empty; no update_id processed yet.
+pnpm check: run in C:\dev\Alexia-wt\base2 (detached; `git checkout -q --detach <sha>`). NOTE base2 is now also the hub's v2 root and plugin source: don't check out another sha there while the hub runs; use a new detached worktree for pnpm check (needs pnpm install). No P2 task touches v2 paths.
+Known flakes: alexia-mcp supervise.rs hang_is_killed_by_heartbeat under full load (rerun alone). pnpm: compute-connect paused reader (always), others pass alone.
+Follow-ups not specced: importer copies plugin files with fs::copy (46 GB media models; should hard-link or skip model dirs); P1-18 e2e token-leak check sees only last 40 stderr lines; steered turn ack not recorded.
+Merges since last phase review: 0 (review 3 done 2026-11-20, v3/ops/phase-review-3.md).
+Leftover non-worktree folders in C:\dev\Alexia-wt: base\, plan-P1\ (locked; delete when free). v2-db-backup-20261120\ is a safety backup; keep.

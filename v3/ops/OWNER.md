@@ -93,3 +93,18 @@ $env:ALEXIA_PLUGINS_DIR = "C:\dev\Alexia\plugins"
 **How:** In PowerShell: `C:\dev\Alexia\v3\target\release\alexia-hub.exe secret import-v2`. It prints only key names (copied / already there / not found), never a value, and leaves v2 untouched. Paste the printed names back here or in the chat if you like.
 **Until then:** The automated speed test (P1-18) keeps going; only the real 50-message run (P1-33) waits.
 **Answer:** (chat, 2026-11-20) "Do everything yourself, do the import also." Standing rule from now on: the CEO runs by-hand steps on this PC itself and asks the owner only for what physically needs them (e.g. sending a message from their own Telegram account).
+
+## A-13 · 2026-11-20 · notice (decided by CEO per A-12 standing rule; owner may override)
+**What I need:** Nothing now. Phase 2's "Owner needs" (v3/specs/P2/PHASE.md) decided with defaults:
+- TR-06 pulled in (bootstrap default: yes to the parked features).
+- MO-05 subscriptions: built but OFF. Turning one on (e.g. your Claude Code plan) is your call later, because of D212.
+- Checker: a small local model as an on-demand GPU job, unloaded when idle and for games (not chat, D213).
+- SP-17 speculative decoding: only for local non-chat jobs.
+- TR-09 database encryption: the command gets built; the CEO will not encrypt your database until you say how to back up the key.
+- Scope folders, game folders, llama.cpp download (~650 MB): the CEO sets these up on the PC when the tasks land.
+- P2-41's 20 real tasks: you just use Alexia; the CEO reads the results.
+**Why:** You asked the CEO to do everything itself.
+**How:** Write under Answer only if you disagree with one.
+**Until then:** Nothing waits.
+**Answer:**
+
