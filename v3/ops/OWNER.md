@@ -116,3 +116,14 @@ $env:ALEXIA_PLUGINS_DIR = "C:\dev\Alexia\plugins"
 ## A-15 · 2026-11-20 · answered
 **What I need:** (CEO offer in chat) Build P2 with Sonnet to save usage, keep Opus for reviews and the core pieces.
 **Answer:** "yes cheaper". P2 builders are Sonnet except P2-12 permissions, P2-13 checker, P2-20 agent loop, P2-37 encryption (and P2-01/03, already running on Opus). Reviews stay Opus. Board Model column is the authority over a spec's Model line.
+
+## A-16 · 2026-11-20 · answered
+**What I need:** A yes or no: may I install Strawberry Perl on this PC (`winget install StrawberryPerl.StrawberryPerl`)?
+**Why:** The database encryption task (P2-37) uses a library that needs a full Windows Perl to build; this PC has only Git's cut-down Perl. Once that library is in, every v3 build needs Perl.
+**How:** Answer yes/no here, in chat, or on Telegram ("A-16 yes"). With yes, the CEO runs the winget command itself. With no, the CEO keeps a portable Perl inside C:\dev\Alexia-wt\tools (no system install) and points builds at it.
+**Until then:** The builder uses the portable Perl in C:\dev\Alexia-wt\tools; nothing waits. Encryption stays off by default either way (A-13).
+**Answer:** (Telegram, 2026-11-20) "A-16 yes". CEO ran winget install: it ended with 1602 (cancelled), most likely the Windows admin prompt went unanswered. Builder uses the portable Perl meanwhile.
+
+## A-17 · 2026-11-20 · answered (standing rule)
+**What I need:** (owner, in chat) A Telegram message every time something finishes, with progress, e.g. "Phase 2 finished, 25% done".
+**Answer:** Standing rule. The CEO sends one short Telegram line after every merge and phase end: what merged, phase count, overall %. Overall % = (phases done + fraction of the current phase merged) / 8. This overrides the "one message per round" limit in CEO.md §9 for progress lines only.

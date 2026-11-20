@@ -72,7 +72,7 @@
 | P2-08 | Media takes a cancel token | P2 | sonnet | P2-07 | alexia-gateway/{src/channel.rs, src/voice.rs, src/gateway.rs, tests/ask_voice.rs}, alex... | todo | 0 | | |
 | P2-09 | Hub: dead code and stale allow(dead_code) | P2 | sonnet | none | alexia-hub/src/{latency.rs, watchdog.rs} | merged | 1 | cr3studioo/v3-P2-09 | stale comments watchdog.rs:2,4 |
 | P2-10 | Secrets: no echo, read errors kept, in-memory only for tests | P2 | sonnet | none | alexia-store/{src/secrets.rs, tests/secrets.rs, tests/v2_secrets.rs}, alexia-hub/{src/m... | merged | 1 | cr3studioo/v3-P2-10 | |
-| P2-11 | Channels exception narrowed to service names | P2 | sonnet | P2-01 | v3/ci/invariants.mjs, alexia-gateway/src/channels/mod.rs | review | 2 | cr3studioo/v3-P2-11 | review 2 |
+| P2-11 | Channels exception narrowed to service names | P2 | sonnet | P2-01 | v3/ci/invariants.mjs, alexia-gateway/src/channels/mod.rs | merged | 2 | cr3studioo/v3-P2-11 | INTERFACES.md row needs bot-api marker |
 | P2-12 | Permission modes, scope, never-touch, spoken boundaries | P2 | opus | P2-01 | alexia-core/{src/permissions.rs, tests/permissions.rs} | merged | 3 | cr3studioo/v3-P2-12 | follow-up P2-42 |
 | P2-13 | The safety checker | P2 | opus | P2-01 | alexia-core/{src/checker.rs, tests/checker.rs} | review | 1 | cr3studioo/v3-P2-13 | waits P2-14 merge, then merge v3 in, review |
 | P2-14 | Redaction before cloud | P2 | sonnet | P2-01 | alexia-core/{src/redact.rs, tests/redact.rs} | running | 2 | cr3studioo/v3-P2-14 | fix ctx_e3075fb03a51: location args, 2nd postcode |
@@ -98,17 +98,17 @@
 | P2-34 | Local vision, local embeddings, the local checker model | P2 | sonnet | P2-31, P2-32, P2-33, P2-21 | alexia-core/{src/local.rs, src/upcalls.rs, tests/local_jobs.rs} | todo | 0 | | |
 | P2-35 | Subscriptions through their official CLIs | P2 | sonnet | P2-17 | alexia-core/{src/subscription.rs, tests/subscription.rs} | todo | 0 | | |
 | P2-36 | Compare two models | P2 | sonnet | P2-17 | alexia-core/{src/compare.rs, tests/compare.rs} | todo | 0 | | |
-| P2-37 | Encrypted database at rest | P2 | opus | P2-02, P2-03, P2-10 | v3/Cargo.toml, v3/Cargo.lock, alexia-store/{Cargo.toml, src/db.rs, src/encrypt.rs, src/... | ready | 0 | | |
+| P2-37 | Encrypted database at rest | P2 | opus | P2-02, P2-03, P2-10 | v3/Cargo.toml, v3/Cargo.lock, alexia-store/{Cargo.toml, src/db.rs, src/encrypt.rs, src/... | running | 1 | cr3studioo/v3-P2-37 | ctx_2b59bd59af5b; encryption off by default |
 | P2-38 | Hub wiring: Agent is the brain, bridge deleted | P2 | opus | P2-08..P2-11, P2-20..P2-37, P2-42, P2-44, P2-45, P2-46, P2-47, P2-50 | alexia-hub/{Cargo.toml, src/main.rs, src/bridge.rs (delete), src/media.rs, tests/cli_p2... | todo | 0 | | |
 | P2-39 | End-to-end: the agent on the real binary | P2 | sonnet | P2-38, P2-43 | alexia-hub/tests/{agent_e2e.rs, telegram_e2e.rs, common/mod.rs} | todo | 0 | | |
 | P2-40 | Every v2 plugin on the Rust host | P2 | sonnet | P2-38 | alexia-hub/tests/v2_plugins.rs | todo | 0 | | |
 | P2-41 | Twenty real tasks on the PC | P2 | sonnet | P2-39, P2-40, P2-48 | v3/ops/reports/P2-tasks.md | todo | 0 | | |
 | P2-42 | Permissions fail closed: trailing dots, bad boundary entries | P2 | sonnet | P2-12 | alexia-core/{src/permissions.rs, tests/permissions.rs} | merged | 1 | cr3studioo/v3-P2-42 | |
-| P2-43 | telegram_e2e ack check survives a loaded machine | P2 | sonnet | none | alexia-hub/{tests/telegram_e2e.rs, src/latency.rs} | running | 3 | cr3studioo/v3-P2-43 | spec change 2 ctx_9724002b9b9e |
+| P2-43 | telegram_e2e ack check survives a loaded machine | P2 | sonnet | none | alexia-hub/{tests/telegram_e2e.rs, src/latency.rs} | merged | 3 | cr3studioo/v3-P2-43 | |
 | P2-44 | compute/run: checked path used; copies no collide/leak | P2 | sonnet | P2-22 | alexia-mcp/{src/serve.rs, tests/compute.rs} | merged | 1 | cr3studioo/v3-P2-44 | |
-| P2-45 | McpHost::manifests, the agent's source of plugin commands and skills | P2 | sonnet | P2-23 | alexia-mcp/{src/host.rs, tests/manifests.rs} | ready | 0 | | review4 #2 |
-| P2-46 | Permissions fail closed: kv read errors, unannotated deletes, ~ and file:// paths | P2 | opus | P2-42 | alexia-core/{src/permissions.rs, tests/permissions.rs} | running | 1 | cr3studioo/v3-P2-46 | ctx_a40171e72010 |
-| P2-47 | MCP: plugin requests keep cancel and progress; tools unreviewed until read | P2 | opus | P2-45 | alexia-mcp/{src/conn.rs, src/host.rs, src/serve.rs, src/bin/mcp-fixture.rs, tests/conn.rs, tests/compute.rs} | todo | 0 | | review4 #6,#8,#10 |
+| P2-45 | McpHost::manifests, the agent's source of plugin commands and skills | P2 | sonnet | P2-23 | alexia-mcp/{src/host.rs, tests/manifests.rs} | merged | 1 | cr3studioo/v3-P2-45 | |
+| P2-46 | Permissions fail closed: kv read errors, unannotated deletes, ~ and file:// paths | P2 | opus | P2-42 | alexia-core/{src/permissions.rs, tests/permissions.rs} | merged | 1 | cr3studioo/v3-P2-46 | FILE:// uppercase follow-up |
+| P2-47 | MCP: plugin requests keep cancel and progress; tools unreviewed until read | P2 | opus | P2-45 | alexia-mcp/{src/conn.rs, src/host.rs, src/serve.rs, src/bin/mcp-fixture.rs, tests/conn.rs, tests/compute.rs} | ready | 0 | | review4 #6,#8,#10 |
 | P2-48 | Hub: the P2 CLI verbs | P2 | opus | P2-38 | alexia-hub/{src/main.rs, tests/cli_p2.rs} | todo | 0 | | review4 #7 split |
 | P2-49 | Small cleanups: trim's helpers private, one now_ms | P2 | sonnet | none | alexia-core/{src/trim.rs, tests/trim.rs}, alexia-gateway/src/channels/telegram/mod.rs | ready | 0 | | review4 #9,#10 |
-| P2-50 | Tooling: no UNC paths from file URIs; call() applies list() limits | P2 | sonnet | P2-18 | alexia-core/{src/tools.rs, tests/tools.rs} | ready | 0 | | security: SMB credential leak |
+| P2-50 | Tooling: no UNC paths from file URIs; call() applies list() limits | P2 | sonnet | P2-18 | alexia-core/{src/tools.rs, tests/tools.rs} | merged | 1 | cr3studioo/v3-P2-50 | |

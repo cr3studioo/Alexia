@@ -279,3 +279,11 @@
 2026-11-20 P2-11 fix done (telegram::pairing_entry; bot api term marker); review 2 dispatched. New flake seen: alexia-mcp conn::out_of_order_answers under load.
 2026-11-20 P2-18 gate: only telegram flake (P2-43), 50 other suites ok, invariants ok; pushed.
 2026-11-20 Handoff CEO #12 -> #13.
+- 2026-11-20 CEO #13 took over; P2-46 built -> review ctx_e55211c75453; P2-50 dispatched (sonnet) ctx_e9b99a6580d4
+- 2026-11-20 P2-50 built -> review ctx_6c0642d0e3fe
+- 2026-11-20 P2-43 built -> review ctx_70e308692420; P2-45 dispatched (sonnet) ctx_ed6395b931c3
+- 2026-11-20 Merged P2-46 (gate OK, pushed). P2-11 approved, merged, gating
+- 2026-11-20 P2-50, P2-43 approved. P2-45 built -> review ctx_fd317603dda8. P2-37 dispatched (opus) ctx_2b59bd59af5b
+- 2026-11-20 Merged P2-11 (gate OK, pushed). P2-50+P2-43 merged together (disjoint files), one gate
+- 2026-11-20 Merged P2-50, P2-43 (gate OK, pushed). A-16 answered yes on Telegram (update 363458139)
+- 2026-11-20 Merged P2-45 (gate OK, pushed); P2-47 ready
