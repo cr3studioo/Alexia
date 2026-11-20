@@ -245,3 +245,7 @@
 2026-11-20 P2-12 gate ok, pushed. P2-42 ready.
 2026-11-20 P2-15 approve (review 2), merged locally, gate running. Note for P2-20: collapse keys by call id (trim.rs:245); the agent loop must give tool calls unique ids per run.
 2026-11-20 P2-15 gate: telegram_e2e fifty_messages ack failed under load, passed alone; pushed. Filed P2-43 (sonnet): ack check by p95<300 and max<2000. Added to P2-39 deps.
+2026-11-20 P2-22 build done (both host.rs findings fixed; note: core-originated capability calls get empty PluginId). Review dispatched. Dispatched P2-42 sonnet.
+2026-11-20 P2-22 approve, merged locally, gate running. Filed P2-44 (sonnet): serve.rs TOCTOU path, same-name copies, partial dir cleanup; added to P2-38 deps.
+2026-11-20 P2-42 build done; review dispatched. Dispatched P2-43 sonnet.
+2026-11-20 P2-22 gate ok, pushed. P2-23, P2-44 ready.
