@@ -58,5 +58,5 @@ pub fn pairing_codes(store: &Store) -> Result<Vec<(&'static str, String)>> {
     if telegram_token().is_none() || !telegram::owners(store)?.is_empty() {
         return Ok(Vec::new());
     }
-    Ok(vec![(stringify!(telegram), telegram::pairing_code(store)?)])
+    Ok(vec![telegram::pairing_entry(store)?])
 }

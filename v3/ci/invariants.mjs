@@ -35,6 +35,9 @@ const ALLOWED = {
 const CHANNELS = 'v3/crates/alexia-gateway/src/channels/'
 /** Marks a line in channels/ that names a plugin because it reads v2 data (INTERFACES.md §8.9). */
 const V2_IMPORT = '// invariant: v2 import'
+/** Marks a line under channels/telegram/ that uses a Bot API term which is also a plugin id. */
+const BOT_API = '// invariant: bot api term'
+const TELEGRAM = `${CHANNELS}telegram/`
 
 const isComment = (line) => line.trim().startsWith('//')
 const escape = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -50,6 +53,7 @@ export function pluginHits(path, text, ids) {
     const at = `${path}:${i + 1}`
     if (/plugins[\\/]/.test(line)) out.push(`${at}: names the plugins/ folder`)
     if (path.startsWith(CHANNELS) && line.includes(V2_IMPORT)) return
+    if (path.startsWith(TELEGRAM) && line.includes(BOT_API)) return
     for (const id of ids) {
       if (id === svc) continue
       const re = new RegExp(`['"\`]${escape(id)}['"\`]|plugins[\\\\/]${escape(id)}\\b`)
@@ -154,10 +158,13 @@ function selfTest() {
   const hub = 'v3/crates/alexia-hub/src/main.rs'
   const mod = `${CHANNELS}mod.rs`
   const naming = 'let x = "telegram";'
+  const src0 = 'v3/crates/alexia-core/src/x.rs'
   expect('a plugin named in channels/mod.rs without the marker', pluginHits(mod, naming, ['telegram']))
   ok('a plugin named in channels/mod.rs with the marker', pluginHits(mod, `${naming} ${V2_IMPORT}`, ['telegram']))
   ok('telegram named in channels/telegram/', pluginHits(`${CHANNELS}telegram/api.rs`, naming, ['telegram']))
-  ok('Bot API field name marked in channels/telegram/', pluginHits(`${CHANNELS}telegram/api.rs`, `.part("voice", v); ${V2_IMPORT}`, ['telegram', 'voice']))
+  ok('a Bot API term marked in channels/telegram/', pluginHits(`${TELEGRAM}api.rs`, `.part("voice", v); ${BOT_API}`, ['telegram', 'voice']))
+  expect('a Bot API term marker outside channels/telegram/', pluginHits(mod, `.part("voice", v); ${BOT_API}`, ['telegram', 'voice']))
+  expect('a Bot API term marker in another crate', pluginHits(src0, `.part("voice", v); ${BOT_API}`, ['voice']))
   expect('voice named in channels/telegram/', pluginHits(`${CHANNELS}telegram/api.rs`, 'let x = "voice";', ['telegram', 'voice']))
   expect('the hub reaching the telegram api', channelHits(hub, 'use alexia_gateway::channels::telegram::api::Api;'))
   expect(
