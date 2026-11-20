@@ -215,6 +215,9 @@ fn announce_gap(tracker: &TaskTracker, root: &CancellationToken, bus: Bus, text:
 }
 
 async fn run() -> Res<()> {
+    if secrets::in_memory() {
+        eprintln!("Secrets are in memory (ALEXIA_SECRETS_IN_MEMORY is set): nothing is read from or saved to the keychain.");
+    }
     let layout = Layout::new(data_dir());
     let hub = boot(&layout).await?;
     let root = CancellationToken::new();
@@ -389,16 +392,21 @@ fn known_key(key: &str) -> Res<()> {
     if keys.iter().any(|k| k == key) {
         return Ok(());
     }
-    Err(format!(
-        "'{key}' is not a known key. Known keys: {}",
-        keys.join(", ")
-    )
-    .into())
+    Err(format!("That is not a known key. Known keys: {}", keys.join(", ")).into())
+}
+
+/// With the in-memory backend on, a `set` or `clear` would be lost when this process exits.
+fn refuse_in_memory() -> Res<()> {
+    if secrets::in_memory() {
+        return Err("Secrets are in memory for tests, so nothing would be saved. Unset ALEXIA_SECRETS_IN_MEMORY.".into());
+    }
+    Ok(())
 }
 
 fn secret_set(key: &str) -> Res<()> {
     use std::io::IsTerminal;
     known_key(key)?;
+    refuse_in_memory()?;
     let value = if std::io::stdin().is_terminal() {
         rpassword::prompt_password("Paste the value (it won't be shown): ")?
     } else {
@@ -417,6 +425,7 @@ fn secret_set(key: &str) -> Res<()> {
 
 fn secret_clear(key: &str) -> Res<()> {
     known_key(key)?;
+    refuse_in_memory()?;
     secrets::delete("_core", key)?;
     println!("Cleared.");
     Ok(())
