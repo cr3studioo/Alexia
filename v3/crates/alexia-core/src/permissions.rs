@@ -14,7 +14,7 @@ use std::sync::LazyLock;
 use alexia_mcp::types::{Root, ToolAnnotations};
 use alexia_store::{Ms, Store};
 use regex::Regex;
-use serde_json::{Map, Value, json};
+use serde_json::{json, Map, Value};
 
 use crate::{Blocks, Boundary, PermissionMode, Result, Ruling, Scope};
 
@@ -102,7 +102,10 @@ fn read_only(ask: &CallAsk) -> bool {
 
 /// v2 `isDestructive`. `reviewed == false` is destructive whatever the annotations say.
 fn is_destructive(ask: &CallAsk) -> bool {
-    !ask.reviewed || ask.annotations.is_some_and(|a| a.destructive_hint == Some(true))
+    !ask.reviewed
+        || ask
+            .annotations
+            .is_some_and(|a| a.destructive_hint == Some(true))
 }
 
 /// v2 `asVerb`: "Deletes something" read as "delete something", so it fits after "Alexia wants to".

@@ -5,13 +5,13 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use alexia_core::permissions::{
-    CallAsk, boundary_ack, heard, lifts, never_touch, paths_in, roots_of, rule, save_boundaries,
-    scope, within,
+    boundary_ack, heard, lifts, never_touch, paths_in, roots_of, rule, save_boundaries, scope,
+    within, CallAsk,
 };
 use alexia_core::{Blocks, Boundary, PermissionMode, Ruling, Scope};
 use alexia_mcp::types::ToolAnnotations;
 use alexia_store::Store;
-use serde_json::{Map, Value, json};
+use serde_json::{json, Map, Value};
 
 fn home() -> PathBuf {
     let var = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
@@ -118,7 +118,9 @@ fn question_uses_plain_words_never_a_tool_id() {
     };
     assert_eq!(
         rule(&click, &base()),
-        Ruling::Ask("Alexia wants to click on your screen. This may change something. Allow it?".into())
+        Ruling::Ask(
+            "Alexia wants to click on your screen. This may change something. Allow it?".into()
+        )
     );
     let every = scope_with(|s| s.mode = PermissionMode::AskEveryTime);
     assert_eq!(
@@ -148,7 +150,10 @@ fn each_mode_does_what_its_sentence_says() {
         rule(&writing, &mode(PermissionMode::WatchAndWarn)),
         Ruling::Run
     );
-    assert_eq!(rule(&writing, &mode(PermissionMode::FullTrust)), Ruling::Run);
+    assert_eq!(
+        rule(&writing, &mode(PermissionMode::FullTrust)),
+        Ruling::Run
+    );
 }
 
 #[test]
@@ -201,7 +206,10 @@ fn list_is_built_from_this_machine() {
 #[test]
 fn sibling_with_shared_prefix_is_not_inside() {
     assert!(!within(&home().join("work"), &home().join("work-notes")));
-    assert!(within(&home().join("work"), &home().join("work").join("notes")));
+    assert!(within(
+        &home().join("work"),
+        &home().join("work").join("notes")
+    ));
     assert!(within(&work(), &work()));
 }
 
@@ -225,7 +233,10 @@ fn dotdot_cannot_escape() {
         s.mode = PermissionMode::FullTrust;
         s.everywhere = true;
     });
-    assert!(is_blocked(&rule(&ask("files__read", Some(&r), vec![deeper]), &s)));
+    assert!(is_blocked(&rule(
+        &ask("files__read", Some(&r), vec![deeper]),
+        &s
+    )));
     // `..` that stays inside is still inside.
     assert!(within(&work(), &work().join("a").join("..").join("b")));
 }
@@ -268,8 +279,14 @@ fn symlink_out_of_a_root_is_outside() {
 
     let s = scope_with(|s| s.roots = vec![root.clone()]);
     let r = ann(true, false);
-    let ruling = rule(&ask("files__read", Some(&r), vec![link.join("file.txt")]), &s);
-    assert!(why(&ruling).contains("outside the folders you chose"), "{ruling:?}");
+    let ruling = rule(
+        &ask("files__read", Some(&r), vec![link.join("file.txt")]),
+        &s,
+    );
+    assert!(
+        why(&ruling).contains("outside the folders you chose"),
+        "{ruling:?}"
+    );
 }
 
 #[test]
@@ -365,7 +382,10 @@ fn lifting_is_heard_and_ordinary_sentences_are_not_boundaries() {
     assert!(heard("what did you delete yesterday", 0).is_none());
     assert!(heard("summarise my notes", 0).is_none());
     assert!(!lifts("what did you change"));
-    assert_eq!(heard("  dont remove files ", 0).unwrap().said, "dont remove files");
+    assert_eq!(
+        heard("  dont remove files ", 0).unwrap().said,
+        "dont remove files"
+    );
 }
 
 #[test]
