@@ -18,3 +18,5 @@ thiserror.workspace = true
 rusqlite.workspace = true
 # SP-15: vector search in the same file. Compiles the C source into the binary.
 sqlite-vec = "0.1.6"
+# TR-09: the database key. std has no CSPRNG; this is the OS RNG (already in the lock file).
+getrandom = "0.2"

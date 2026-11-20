@@ -8,6 +8,7 @@ use std::time::Duration;
 use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::migrations::{APPLICATION_ID, MIGRATIONS};
+use crate::{encrypt, secrets};
 use crate::{
     now_ms, ApprovalRow, AuditRow, Error, JobRow, LiveRunRow, Message, MessageBody, MessageId, Ms,
     Result, Role, Session, SessionId, SpanRow, Try, TryRow, Usage,
@@ -101,12 +102,50 @@ fn parse_role(s: &str) -> Result<Role> {
 
 impl Store {
     /// Opens (creating if needed) the database at `path` and brings it to this build's schema.
+    /// An encrypted file, or a new one while a key is stored, is keyed with
+    /// `secrets::get("_core", "store_key")`; an existing plain file opens as it is.
     pub fn open(path: &Path) -> Result<Store> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
         vec_ext::register();
-        Self::init(Connection::open(path)?, true)
+        let encrypted = Self::is_encrypted(path)?;
+        let key = if encrypted || !path.exists() {
+            secrets::get(encrypt::OWNER, encrypt::KEY)?
+        } else {
+            None
+        };
+        const MISSING: &str = "The database is encrypted and its key is missing or wrong.";
+        let conn = Connection::open(path)?;
+        match key {
+            Some(hex) => {
+                let raw = encrypt::raw_key(&hex).ok_or_else(|| Error::Refused(MISSING.into()))?;
+                conn.pragma_update(None, "key", raw)?;
+            }
+            None if encrypted => return Err(Error::Refused(MISSING.into())),
+            None => {}
+        }
+        Self::init(conn, true).map_err(|e| match e {
+            Error::Sqlite(ref s)
+                if s.sqlite_error_code() == Some(rusqlite::ErrorCode::NotADatabase) =>
+            {
+                Error::Refused(MISSING.into())
+            }
+            e => e,
+        })
+    }
+
+    /// True when `path` exists and does not start with SQLite's plain header: SQLCipher
+    /// encrypts the whole file, header included. A missing or empty file, or a name that is not
+    /// a file at all (`:memory:`), is not encrypted.
+    pub fn is_encrypted(path: &Path) -> Result<bool> {
+        use std::io::Read;
+        if !path.is_file() {
+            return Ok(false);
+        }
+        let mut head = [0u8; 16];
+        let n = std::fs::File::open(path)?.take(16).read(&mut head)?;
+        Ok(n > 0 && head[..n] != b"SQLite format 3\0"[..n])
     }
 
     pub fn open_in_memory() -> Result<Store> {
