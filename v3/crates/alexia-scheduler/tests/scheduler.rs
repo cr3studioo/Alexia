@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 use std::fmt;
+use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -7,7 +8,7 @@ use alexia_core::{
     Brain, BrainError, Bus, DraftSink, Event, JobId, Lane, Origin, Reply, RunId, ToolCtx, Turn,
     Urgency,
 };
-use alexia_scheduler::{next_after, next_after_in, Scheduler, Trigger};
+use alexia_scheduler::{next_after, next_after_in, Clock, Scheduler, Trigger};
 use alexia_store::{now_ms, Ms, Store};
 use chrono::{FixedOffset, LocalResult, NaiveDate, NaiveDateTime, Offset, TimeZone, Timelike, Utc};
 use serde_json::{json, Map, Value};
@@ -250,10 +251,22 @@ fn telegram() -> Origin {
     }
 }
 
+/// Wall time at the call plus tokio's (paused-able) elapsed time, so virtual sleeps move it.
+fn paused_clock() -> Clock {
+    let (wall, at) = (now_ms(), tokio::time::Instant::now());
+    Box::new(move || wall + at.elapsed().as_millis() as Ms)
+}
+
 fn setup(brain: Arc<FakeBrain>) -> (Arc<Store>, Bus, Arc<Scheduler>) {
     let store = Arc::new(Store::open_in_memory().unwrap());
     let bus = Bus::new(64);
-    let sched = Scheduler::new(store.clone(), bus.clone(), brain);
+    let sched = Scheduler::with_parts(
+        store.clone(),
+        bus.clone(),
+        brain,
+        paused_clock(),
+        Box::new(Store::jobs),
+    );
     (store, bus, sched)
 }
 
@@ -450,7 +463,13 @@ async fn survives_restart() {
     drop(first);
 
     // A new Scheduler on the same store: the jobs are rows.
-    let second = Scheduler::new(store.clone(), bus.clone(), brain.clone());
+    let second = Scheduler::with_parts(
+        store.clone(),
+        bus.clone(),
+        brain.clone(),
+        paused_clock(),
+        Box::new(Store::jobs),
+    );
     assert_eq!(second.jobs().unwrap(), before);
     assert_eq!(before[1].id, w);
     assert_eq!(before[1].trigger, weekly);
@@ -619,4 +638,178 @@ fn tools_have_annotations() {
     assert_eq!(ro("schedule.list"), Some(true));
     assert_eq!(ro("schedule.cancel"), Some(false));
     assert_eq!(specs[0].params["required"], json!(["kind", "prompt"]));
+}
+
+#[test]
+fn every_with_far_negative_from_does_not_overflow() {
+    let tz = FixedOffset::east_opt(0).unwrap();
+    for p in [1u64, 1_000] {
+        let t = Trigger::Every {
+            period_ms: p,
+            from: i64::MIN,
+        };
+        // Used to panic (debug) or wrap on `now - from`.
+        let _ = next_after_in(&t, 0, &tz);
+    }
+    let t = Trigger::Every {
+        period_ms: 1,
+        from: i64::MIN,
+    };
+    assert_eq!(next_after_in(&t, i64::MAX, &tz), None);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_jumped_wall_clock_is_seen() {
+    let brain = Arc::new(FakeBrain::default());
+    let store = Arc::new(Store::open_in_memory().unwrap());
+    let bus = Bus::new(64);
+    let start = now_ms();
+    let wall = Arc::new(AtomicI64::new(start));
+    let w = wall.clone();
+    let sched = Scheduler::with_parts(
+        store,
+        bus.clone(),
+        brain.clone(),
+        Box::new(move || w.load(Ordering::SeqCst)),
+        Box::new(Store::jobs),
+    );
+    let mut rx = bus.subscribe();
+    sched
+        .add(
+            Trigger::At {
+                at: start + 5 * HOUR,
+            },
+            "late",
+            Urgency::Normal,
+            telegram(),
+        )
+        .unwrap();
+    let cancel = CancellationToken::new();
+    let run = tokio::spawn(sched.clone().run(cancel.clone()));
+    // Wall time frozen: five idle virtual minutes fire nothing.
+    tokio::time::sleep(Duration::from_secs(300)).await;
+    assert_eq!(brain.count(), 0);
+    // The machine slept: the wall clock jumps past the due time; the next recheck sees it.
+    wall.store(start + 6 * HOUR, Ordering::SeqCst);
+    next_say(&mut rx, Duration::from_secs(600))
+        .await
+        .expect("fires after the jump");
+    cancel.cancel();
+    run.await.unwrap().unwrap();
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_failed_job_read_is_retried() {
+    let brain = Arc::new(FakeBrain::default());
+    let store = Arc::new(Store::open_in_memory().unwrap());
+    let bus = Bus::new(64);
+    let reads = Arc::new(AtomicUsize::new(0));
+    let r = reads.clone();
+    let sched = Scheduler::with_parts(
+        store,
+        bus.clone(),
+        brain.clone(),
+        paused_clock(),
+        Box::new(move |s: &Store| {
+            if r.fetch_add(1, Ordering::SeqCst) == 0 {
+                Err(alexia_store::Error::Invalid("disk hiccup".into()))
+            } else {
+                s.jobs()
+            }
+        }),
+    );
+    // add() does not read; the run loop's very first read is the one that fails.
+    sched
+        .add(
+            Trigger::At { at: now_ms() + MIN },
+            "x",
+            Urgency::Normal,
+            telegram(),
+        )
+        .unwrap();
+    let mut rx = bus.subscribe();
+    let cancel = CancellationToken::new();
+    let run = tokio::spawn(sched.clone().run(cancel.clone()));
+    next_say(&mut rx, Duration::from_secs(600))
+        .await
+        .expect("fires after the failed read");
+    assert!(reads.load(Ordering::SeqCst) >= 2);
+    cancel.cancel();
+    // run() ends Ok, not with the read error.
+    run.await.unwrap().unwrap();
+}
+
+/// A brain whose turn calls schedule.add through the scheduler's tools, as a scheduled run does.
+struct AddingBrain {
+    sched: Mutex<Option<Arc<Scheduler>>>,
+    outcome: Mutex<Option<(bool, String)>>,
+}
+#[async_trait::async_trait]
+impl Brain for AddingBrain {
+    async fn reply(
+        &self,
+        turn: Turn,
+        _: DraftSink,
+        _: CancellationToken,
+    ) -> Result<Reply, BrainError> {
+        let sched = self.sched.lock().unwrap().clone().unwrap();
+        let out = sched
+            .tools()
+            .call(
+                "schedule.add",
+                &args(json!({"kind": "every", "every_minutes": 30, "prompt": "again"})),
+                &ctx(turn.origin),
+            )
+            .await
+            .unwrap();
+        *self.outcome.lock().unwrap() = Some((out.ok, out.text));
+        Ok(Reply {
+            text: "done".into(),
+            files: vec![],
+            lane: Lane::Task,
+            model: None,
+            spans: vec![],
+        })
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_one_shot_can_schedule_from_its_own_turn() {
+    let brain = Arc::new(AddingBrain {
+        sched: Mutex::new(None),
+        outcome: Mutex::new(None),
+    });
+    let store = Arc::new(Store::open_in_memory().unwrap());
+    let bus = Bus::new(64);
+    let sched = Scheduler::with_parts(
+        store,
+        bus.clone(),
+        brain.clone(),
+        paused_clock(),
+        Box::new(Store::jobs),
+    );
+    *brain.sched.lock().unwrap() = Some(sched.clone());
+    sched
+        .add(
+            Trigger::At { at: now_ms() + MIN },
+            "once",
+            Urgency::Normal,
+            telegram(),
+        )
+        .unwrap();
+    let mut rx = bus.subscribe();
+    let cancel = CancellationToken::new();
+    let run = tokio::spawn(sched.clone().run(cancel.clone()));
+    next_say(&mut rx, Duration::from_secs(600))
+        .await
+        .expect("a Say");
+    let (ok, text) = brain.outcome.lock().unwrap().clone().unwrap();
+    assert!(ok, "{text}");
+    // The one-shot is gone; the job it made remains, in the same chat.
+    let jobs = sched.jobs().unwrap();
+    assert_eq!(jobs.len(), 1);
+    assert_eq!(jobs[0].prompt, "again");
+    assert_eq!(jobs[0].origin, telegram());
+    cancel.cancel();
+    run.await.unwrap().unwrap();
 }

@@ -16,7 +16,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use tokio::sync::Notify;
 use tokio::task::JoinSet;
-use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
 pub use alexia_core::{Error, Result, Urgency};
@@ -73,7 +72,7 @@ pub fn next_after_in<Tz: TimeZone>(trigger: &Trigger, now: Ms, tz: &Tz) -> Optio
             if now < from {
                 return Some(from);
             }
-            let k = (now - from) / p + 1;
+            let k = (now.saturating_sub(from) / p).checked_add(1)?;
             from.checked_add(k.checked_mul(p)?)
         }
         Trigger::Daily { hour, minute } => first_wall_time(tz, now, hour, minute, |_| true),
@@ -123,25 +122,42 @@ pub struct Scheduler {
     bus: Bus,
     brain: Arc<dyn Brain>,
     wake: Notify,
-    /// The wall clock at construction and the tokio instant it was read at. Time since then is
-    /// tokio's, so a paused test clock moves the scheduler's clock too.
-    epoch: (Ms, Instant),
+    clock: Clock,
+    read_jobs: ReadJobs,
 }
+
+/// Wall clock in epoch ms. Production uses `now_ms` (so it follows system sleep and clock
+/// changes); tests inject their own.
+pub type Clock = Box<dyn Fn() -> Ms + Send + Sync>;
+/// How job rows are read; tests inject a source that fails.
+pub type ReadJobs =
+    Box<dyn Fn(&Store) -> std::result::Result<Vec<JobRow>, StoreError> + Send + Sync>;
 
 impl Scheduler {
     pub fn new(store: Arc<Store>, bus: Bus, brain: Arc<dyn Brain>) -> Arc<Scheduler> {
+        Self::with_parts(store, bus, brain, Box::new(now_ms), Box::new(Store::jobs))
+    }
+
+    /// `new` with an injected clock and job reader (for tests).
+    pub fn with_parts(
+        store: Arc<Store>,
+        bus: Bus,
+        brain: Arc<dyn Brain>,
+        clock: Clock,
+        read_jobs: ReadJobs,
+    ) -> Arc<Scheduler> {
         Arc::new(Scheduler {
             store,
             bus,
             brain,
             wake: Notify::new(),
-            epoch: (now_ms(), Instant::now()),
+            clock,
+            read_jobs,
         })
     }
 
     fn now(&self) -> Ms {
-        let (wall, at) = self.epoch;
-        wall.saturating_add(Ms::try_from(at.elapsed().as_millis()).unwrap_or(Ms::MAX))
+        (self.clock)()
     }
 
     pub fn add(
@@ -181,9 +197,7 @@ impl Scheduler {
     }
 
     pub fn jobs(&self) -> Result<Vec<Job>> {
-        Ok(self
-            .store
-            .jobs()?
+        Ok((self.read_jobs)(&self.store)?
             .into_iter()
             .filter_map(|row| {
                 let id = row.id;
@@ -204,7 +218,11 @@ impl Scheduler {
             let now = self.now();
             let jobs = match self.jobs() {
                 Ok(j) => j,
-                Err(e) => break Err(e),
+                Err(e) => {
+                    // One failed read must not stop scheduling: look again next time.
+                    tracing::warn!("could not read the scheduled jobs; retrying: {e}");
+                    Vec::new()
+                }
             };
             let mut wait = RECHECK;
             for job in jobs {
@@ -239,15 +257,9 @@ impl Scheduler {
         firing: &mut JoinSet<()>,
     ) {
         let next = next_after(&job.trigger, now);
-        let moved = self.store.job_set_next(job.id.0, next).and_then(|()| {
-            // A one-shot is finished: drop it from the list.
-            if next.is_none() {
-                self.store.job_cancel(job.id.0, now).map(|_| ())
-            } else {
-                Ok(())
-            }
-        });
-        if let Err(e) = moved {
+        // A one-shot (next None) stays listed until its turn ends, so the turn can still look
+        // its job up (`answer_origin`); `fire` cancels it then. The loop skips next_at None.
+        if let Err(e) = self.store.job_set_next(job.id.0, next) {
             tracing::warn!(job = job.id.0, "could not move the job's next time: {e}");
             return;
         }
@@ -287,6 +299,12 @@ impl Scheduler {
         if let Err(e) = self.store.job_ran(job.id.0, self.now(), None, &note) {
             tracing::warn!(job = job.id.0, "could not record the run: {e}");
         }
+        if matches!(job.trigger, Trigger::At { .. }) {
+            // A one-shot is finished: drop it from the list.
+            if let Err(e) = self.store.job_cancel(job.id.0, self.now()) {
+                tracing::warn!(job = job.id.0, "could not finish the one-shot: {e}");
+            }
+        }
         if !text.trim().is_empty() {
             self.bus.publish(Event::Say {
                 at: self.now(),
@@ -301,6 +319,7 @@ impl Scheduler {
     fn session_of(&self, origin: &Origin) -> Result<SessionId> {
         Ok(match origin {
             Origin::Channel { channel, chat } => self.store.channel_session(channel, chat)?,
+            // The job row records only `Desktop`, not which chat, so use the one shared desktop session.
             Origin::Desktop => self.store.channel_session("desktop", "main")?,
             Origin::Scheduler { .. } => return Err(invalid("A job needs a chat to answer in.")),
         })
