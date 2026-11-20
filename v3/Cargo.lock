@@ -126,6 +126,13 @@ version = "3.0.0"
 dependencies = [
  "alexia-core",
  "alexia-store",
+ "async-trait",
+ "chrono",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-util",
+ "tracing",
 ]
 
 [[package]]
