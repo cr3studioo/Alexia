@@ -72,7 +72,7 @@
 | P2-08 | Media takes a cancel token | P2 | sonnet | P2-07 | alexia-gateway/{src/channel.rs, src/voice.rs, src/gateway.rs, tests/ask_voice.rs}, alex... | todo | 0 | | |
 | P2-09 | Hub: dead code and stale allow(dead_code) | P2 | sonnet | none | alexia-hub/src/{latency.rs, watchdog.rs} | merged | 1 | cr3studioo/v3-P2-09 | stale comments watchdog.rs:2,4 |
 | P2-10 | Secrets: no echo, read errors kept, in-memory only for tests | P2 | sonnet | none | alexia-store/{src/secrets.rs, tests/secrets.rs, tests/v2_secrets.rs}, alexia-hub/{src/m... | merged | 1 | cr3studioo/v3-P2-10 | |
-| P2-11 | Channels exception narrowed to service names | P2 | sonnet | P2-01 | v3/ci/invariants.mjs, alexia-gateway/src/channels/mod.rs | ready | 0 | | |
+| P2-11 | Channels exception narrowed to service names | P2 | sonnet | P2-01 | v3/ci/invariants.mjs, alexia-gateway/src/channels/mod.rs | running | 1 | cr3studioo/v3-P2-11 | ctx_3813ac4932b4 |
 | P2-12 | Permission modes, scope, never-touch, spoken boundaries | P2 | opus | P2-01 | alexia-core/{src/permissions.rs, tests/permissions.rs} | merged | 3 | cr3studioo/v3-P2-12 | follow-up P2-42 |
 | P2-13 | The safety checker | P2 | opus | P2-01 | alexia-core/{src/checker.rs, tests/checker.rs} | review | 1 | cr3studioo/v3-P2-13 | waits P2-14 merge, then merge v3 in, review |
 | P2-14 | Redaction before cloud | P2 | sonnet | P2-01 | alexia-core/{src/redact.rs, tests/redact.rs} | running | 2 | cr3studioo/v3-P2-14 | fix ctx_e3075fb03a51: location args, 2nd postcode |
@@ -104,5 +104,5 @@
 | P2-40 | Every v2 plugin on the Rust host | P2 | sonnet | P2-38 | alexia-hub/tests/v2_plugins.rs | todo | 0 | | |
 | P2-41 | Twenty real tasks on the PC | P2 | sonnet | P2-39, P2-40 | v3/ops/reports/P2-tasks.md | todo | 0 | | |
 | P2-42 | Permissions fail closed: trailing dots, bad boundary entries | P2 | sonnet | P2-12 | alexia-core/{src/permissions.rs, tests/permissions.rs} | merged | 1 | cr3studioo/v3-P2-42 | |
-| P2-43 | telegram_e2e ack check survives a loaded machine | P2 | sonnet | none | alexia-hub/tests/telegram_e2e.rs | running | 2 | cr3studioo/v3-P2-43 | spec fixed; ctx_5ee1ec56143c |
+| P2-43 | telegram_e2e ack check survives a loaded machine | P2 | sonnet | none | alexia-hub/tests/telegram_e2e.rs | review | 2 | cr3studioo/v3-P2-43 | review 2 |
 | P2-44 | compute/run: checked path used; copies no collide/leak | P2 | sonnet | P2-22 | alexia-mcp/{src/serve.rs, tests/compute.rs} | merged | 1 | cr3studioo/v3-P2-44 | |
