@@ -333,3 +333,12 @@
 - 2026-11-20 P2-33 approved (review 2); merge queue. Follow-ups: hash_file blocks tokio; \?\ paths to llama-server
 - 2026-11-20 Merged P2-30, P2-13, P2-32 (gate OK 60 suites, pushed). P2-33 merged, gating
 - 2026-11-20 Merged P2-33 (gate OK 61, pushed)
+- 2026-11-20 P2-07 approved (review 2), merged, gating. Follow-ups: file msg ordering after steers; tests use fixed 1 s waits
+- 2026-11-20 P2-07 merge gate: clippy fail, alexia-scheduler Turn missing steer (semantic conflict with P2-30). Merge undone (unpushed). Sonnet fixer in P2-07 worktree
+- 2026-11-20 P2-19 built -> review
+- 2026-11-20 P2-19 review: changes (resumed step numbers collide; resume w/o live row). Fix round
+- 2026-11-20 P2-19 fix done -> review 2
+- 2026-11-20 P2-19 approved (review 2), merged, gating
+- 2026-11-20 P2-07 integration fix done (Steer::none in scheduler); no re-review (one-line, approved branch); merge after P2-19 gate
+- 2026-11-20 Merged P2-19 (gate OK 62, pushed). P2-07 merged again, gating
+- 2026-11-20 Merged P2-07 (gate OK 62, pushed). P2-08 dispatched (sonnet) ctx_f7b06ec7596f. CEO #13 hands off

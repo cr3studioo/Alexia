@@ -1,33 +1,29 @@
 # STATE
 
-CEO: #13 (chat CEO, A-08), since 2026-11-20 ~12:00 UTC.
-Orca run: run_7a40b198ac83 (bind with run-use). Helpers in C:\dev\Alexia-wt: wait.sh (run in background; prints the first non-heartbeat message, acks heartbeats; run ONE at a time), msgs.py, template.sh (source; `start <id> <phase> <model> [extra rule]`, `mk` builds a builder prompt), rv.sh (source; `rv <id> <phase>`), gate.sh (integration gate; stops at first failing test binary, so on a telegram flake rerun with `cargo test --workspace --no-fail-fast`). Fix round in same worktree: write a file (fix-*.txt) and worker-start with --spec "$(cat file)". PYTHONIOENCODING=utf-8 for msgs.py and terminal reads.
+CEO: #14 next (chat CEO, A-08). CEO #13 handed off 2026-11-20 evening with P2 mid-flight.
+Orca run: run_7a40b198ac83 (bind with run-use). Helpers in C:\dev\Alexia-wt:
+- wait.sh (run in background, ONE at a time; prints the first non-heartbeat message, acks heartbeats)
+- msgs.py, esc.py (`python esc.py <dispatchId>` = latest question/escalation msg id, for `orchestration reply --id`)
+- template.sh (source; `start <id> <phase> <model> [extra rule]`, `mk` builds a builder prompt; sets OPENSSL_SRC_PERL + low CARGO_BUILD_JOBS)
+- rv.sh (source; `rv <id> <phase>`), gate.sh (integration gate; run as `CARGO_BUILD_JOBS=3 bash gate.sh`), tg.sh (source; `tg 'text'`)
+- Fix round in same worktree: write fix-<id>.txt (no double quotes), worker-start with --spec "$(cat file)".
 
-P0 26/26, P1 35/35 merged (P1 done; owner waived the 50-message run, A-14).
-P2: 50 tasks. 17 merged: P2-01, 02, 03, 09, 10, 11, 12, 15, 18, 22, 23, 42, 43, 44, 45, 46, 50.
-Running (dispatch id in BOARD Note):
-- P2-04 tools on wire, P2-05 router, P2-16 prompt (sonnet; slow)
-- P2-14 fix try 2 (redact: location keys in tool args, 2nd postcode)
-- P2-37 (opus) encryption; uses portable Strawberry Perl in C:\dev\Alexia-wt	ools via OPENSSL_SRC_PERL (A-16). Its report names the env var; gate.sh must export it once P2-37 merges (or the system Perl if the owner finishes the winget install).
-In review: P2-06 (asker; review running many hours, alive).
-P2-13 (checker) built, waits: after P2-14 merges, `git -C C:/dev/Alexia-wt/P2-13 merge cr3studioo/v3`, run its tests, then `rv P2-13 P2`.
-Ready: P2-47 (opus), P2-49, P2-30, 31, 32, 33 (sonnet). P2-30 touches Cargo.lock like P2-37: don't run both.
-A-15: P2 builders sonnet except P2-12, 13, 20, 37, 38, 46, 47, 48 (opus). BOARD Model column overrides spec Model line. Reviews opus. Max 2 opus builders at once.
-A-17: Telegram progress line after every merge (source C:\dev\Alexia-wt	g.sh; tg 'text'). Overall % = (phases done + P-fraction)/8.
-Follow-ups to file: permissions.rs:332 'FILE://' uppercase scheme skips never-touch (P2-46 review); INTERFACES.md §8 item 1 lacks the '// invariant: bot api term' exception (P2-11 review).
-Keep builders <= 5: each worker runs cargo test --workspace (15+ min under load) and load causes flakes.
-Notes to pass to builders when dispatching:
-- P2-17: redact_request has no known-secrets param; builder must pass keychain values.
-- P2-20: tool calls need unique ids per run (trim collapses by call id); fills Agent constructors first (spec).
-- P2-21: picture attachments (alexia/attachmentInputs) still refused in tools.rs; check P2-21 covers it, else file a task.
-- P2-40: watch compute workers getting verbatim \?\ paths, and plugins run as `node .` reloading every heartbeat (supervise.rs:106).
+P0 26/26, P1 35/35 merged. P2: 50 tasks, 33 merged.
+Running: P2-17 router for task steps (sonnet, ctx_c4932a2b7e3b), P2-08 media cancel token (sonnet, ctx_f7b06ec7596f).
+Nothing in review. Nothing ready: next unlocks are P2-20 (opus, agent loop; needs P2-17), P2-29 (needs P2-08), P2-35/36 (need P2-17), P2-34 (needs P2-21).
+A-15: P2 builders sonnet except P2-12, 13, 20, 37, 38, 46, 47, 48 (opus). BOARD Model column overrides spec. Reviews opus. Max 2 opus builders.
 
-P1-33 hub: still running detached on this PC with the real Alexia bot (paired by owner 2026-11-20 00:49). Owner uses it.
-Hub env: ALEXIA_PLUGINS_DIR=C:\dev\Alexia-wt\hub-plugins (base2 plugins minus telegram/crasher/vanisher, junction/hardlink mirror), ALEXIA_V2_ROOT=C:\dev\Alexia-wt\base2. Logs C:\dev\Alexia-wt\hub-out.log / hub-err.log. Data %LOCALAPPDATA%\AlexiaHub. Runs from v3\target\release (exe locked: stop it before a release build, restart with the same env). base2 worktree is its v2 root and plugin source: don't move base2's HEAD while it runs. Latency: `alexia-hub latency --last 50 --check` (same env).
-If hub-err.log shows "Another program is reading this bot", v2 on the Mac still has its Telegram plugin on: tell the owner.
+MACHINE LIMITS (most important):
+- Disk C: 931 GB, ~25-35 GB free; the owner's own data fills the rest. Each worktree target/ is 8-14 GB. Delete <wt>/v3/target as soon as a task is approved (rm -rf). Check `df -h /c` each round. A full disk gives os error 112 in link.exe.
+- RAM 16 GB: max 4 builders. Workers' runs get killed for low memory; tell them: commit first, rerun with CARGO_BUILD_JOBS=1, retry 3x with 5 min waits. Per-crate checks are acceptable for builders; reviewers and gate.sh run the workspace.
+- SQLCipher build needs full Perl: OPENSSL_SRC_PERL=C:/dev/Alexia-wt/tools/strawberry-perl/perl/bin/perl.exe (portable; gate/rv/template set it). Owner said yes to winget Strawberry Perl (A-16) but the install got 1602 (admin prompt unanswered).
+- Orca can show frozen "active" terminals for workers that died (seen after an Orca restart). Proof of death: no matching claude.exe (Get-CimInstance Win32_Process, CommandLine 'claude'). Then worker-stop and restart in the same worktree with a resume note (no try counted).
 
-Owner standing rules: A-12 do every by-hand step yourself; A-13 subscriptions OFF, DB not encrypted until owner says how the key is backed up (P2-37 must keep encryption off by default); A-14 50-msg run waived; A-15 cheaper builds.
-Open owner asks: none (A-16 answered yes; winget install got 1602, admin prompt unanswered). Telegram ops bot: last update_id processed 363458139.
-Known flakes: alexia-hub telegram_e2e fifty_messages (P2-43 fixes); alexia-mcp conn::out_of_order_answers and supervise hang_is_killed_by_heartbeat under load (rerun alone).
-Merges since last phase review: 7 (review 4 done, v3/ops/phase-review-4.md). Next review after 10.
-Leftover non-worktree folders in C:\dev\Alexia-wt: base\, plan-P1\ (locked; delete when free). v2-db-backup-20261120\ is a safety backup; keep.
+Owner standing rules: A-12 do every by-hand step yourself; A-13 subscriptions OFF, DB not encrypted until owner says how the key is backed up; A-14 50-msg run waived; A-15 cheaper builds; A-17 Telegram progress line after every merge (`tg`), overall % = (phases done + P2 fraction)/8.
+Open owner asks: none. Telegram ops bot: last update_id processed 363458139.
+Known flakes: alexia-hub telegram_e2e fifty_messages (load); alexia-mcp conn plugin_cancel_reaches_incoming (failed once with a 10 s wait, passes alone: maybe a real race, filed below); supervise hang_is_killed_by_heartbeat. On a gate test failure, rerun `cargo test --workspace --no-fail-fast` (with OPENSSL_SRC_PERL) and push if only a known flake failed.
+Merges since last phase review: 23 (review 4 done). A whole-phase review is overdue: do it next (§8).
+
+P1-33 hub: still running on this PC (pid from 01:46 2026-11-20) with the real Alexia bot. Env: ALEXIA_PLUGINS_DIR=C:\dev\Alexia-wt\hub-plugins, ALEXIA_V2_ROOT=C:\dev\Alexia-wt\base2. Runs from v3\target\release (exe locked). Don't move base2's HEAD.
+
+Follow-ups to file as tasks (from reviews this run): see HANDOFF.md.
