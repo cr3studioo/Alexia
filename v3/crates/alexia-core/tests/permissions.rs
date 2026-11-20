@@ -289,6 +289,73 @@ fn symlink_out_of_a_root_is_outside() {
     );
 }
 
+/// A folder link at `link` to `target`, which need not exist: a junction on Windows (no
+/// privilege needed), a symlink on Unix.
+fn dir_link(link: &Path, target: &Path) {
+    #[cfg(windows)]
+    {
+        let out = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(link)
+            .arg(target)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "mklink /J failed: {out:?}");
+    }
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(target, link).unwrap();
+}
+
+#[test]
+fn dangling_link_out_of_a_root_is_outside() {
+    let root = temp().join("root");
+    std::fs::create_dir_all(&root).unwrap();
+    let away = temp();
+    let gone = away.join("gone");
+    std::fs::create_dir_all(&gone).unwrap();
+    let link = root.join("link");
+    dir_link(&link, &gone);
+    std::fs::remove_dir(&gone).unwrap();
+    assert!(std::fs::canonicalize(&link).is_err(), "link should dangle");
+
+    assert!(!within(&root, &link));
+    assert!(!within(&root, &link.join("new.txt")));
+    assert!(within(&away, &link.join("new.txt")));
+
+    // A dangling link into a never-touch folder is never-touch.
+    let data = temp();
+    let link2 = root.join("into-data");
+    dir_link(&link2, &data.join("not-yet"));
+    assert!(std::fs::canonicalize(&link2).is_err(), "link should dangle");
+    assert!(never_touch(&link2.join("alexia.db"), &data));
+    assert!(never_touch(&link2, &data));
+
+    // And into the system folder, which this test cannot create things in.
+    let system = if cfg!(windows) {
+        PathBuf::from(std::env::var_os("SystemRoot").expect("SystemRoot")).join("System32")
+    } else {
+        Path::new(std::path::MAIN_SEPARATOR_STR).join("etc")
+    };
+    let link3 = root.join("into-system");
+    dir_link(
+        &link3,
+        &system.join(format!("alexia-gone-{}", std::process::id())),
+    );
+    assert!(std::fs::canonicalize(&link3).is_err(), "link should dangle");
+    assert!(never_touch(&link3.join("new.dll"), &data));
+    assert!(!within(&root, &link3.join("new.dll")));
+}
+
+#[test]
+fn link_loop_is_outside_and_never_touch() {
+    let root = temp();
+    let (a, b) = (root.join("a"), root.join("b"));
+    dir_link(&a, &b);
+    dir_link(&b, &a);
+    assert!(!within(&root, &a.join("x")));
+    assert!(never_touch(&a.join("x"), &temp()));
+}
+
 #[test]
 fn outside_scope_asks() {
     let r = ann(true, false);

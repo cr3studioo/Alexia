@@ -200,9 +200,11 @@ pub fn never_touch_list(data_dir: &Path) -> Vec<PathBuf> {
 
 /// v2 `neverTouch`: inside one of the forbidden trees, `..` and symlinks resolved first.
 pub fn never_touch(path: &Path, data_dir: &Path) -> bool {
-    never_touch_list(data_dir)
-        .iter()
-        .any(|forbidden| within(forbidden, path))
+    // A path whose links cannot be followed (a loop) is refused, not guessed at.
+    resolved(path).is_none()
+        || never_touch_list(data_dir)
+            .iter()
+            .any(|forbidden| within(forbidden, path))
 }
 
 fn in_scope(path: &Path, scope: &Scope) -> bool {
@@ -213,8 +215,10 @@ fn in_scope(path: &Path, scope: &Scope) -> bool {
 /// Canonicalised where the path exists (so a symlink out of a root counts as outside),
 /// lexically normalised where it does not; case-insensitive on Windows.
 pub fn within(parent: &Path, path: &Path) -> bool {
-    let from = key(&resolved(parent));
-    let to = key(&resolved(path));
+    let (Some(from), Some(to)) = (resolved(parent), resolved(path)) else {
+        return false;
+    };
+    let (from, to) = (key(&from), key(&to));
     to.len() >= from.len() && to[..from.len()] == from[..]
 }
 
@@ -233,30 +237,46 @@ fn key(p: &Path) -> Vec<String> {
 }
 
 /// The real place a path names: the deepest existing ancestor canonicalised (the OS follows
-/// symlinks and `..` there), then the part that does not exist yet folded on top.
-fn resolved(p: &Path) -> PathBuf {
-    let abs = std::path::absolute(p).unwrap_or_else(|_| p.to_path_buf());
-    let mut head = abs.as_path();
-    let mut tail: Vec<OsString> = Vec::new();
-    loop {
-        if let Ok(real) = std::fs::canonicalize(head) {
-            let mut out = unverbatim(real);
-            out.extend(tail.iter().rev());
-            return fold(&out);
-        }
-        match (head.parent(), head.file_name()) {
-            (Some(up), Some(name)) => {
-                tail.push(name.to_os_string());
-                head = up;
+/// symlinks and `..` there), then the part that does not exist yet folded on top. A dangling
+/// symlink or junction is never folded by its name: its target is read and resolving carries on
+/// from there. `None` when links loop.
+fn resolved(p: &Path) -> Option<PathBuf> {
+    let mut abs = std::path::absolute(p).unwrap_or_else(|_| p.to_path_buf());
+    // ponytail: hop cap like the OS's ELOOP limit; a deeper chain is treated as a loop.
+    'hop: for _ in 0..40 {
+        let mut head = abs.as_path();
+        let mut tail: Vec<OsString> = Vec::new();
+        loop {
+            if let Ok(real) = std::fs::canonicalize(head) {
+                let mut out = unverbatim(real);
+                out.extend(tail.iter().rev());
+                return Some(fold(&out));
             }
-            // `..` as the last segment has no file name: take it off and keep it.
-            (Some(up), None) if head.ends_with("..") => {
-                tail.push("..".into());
-                head = up;
+            let is_link = std::fs::symlink_metadata(head).is_ok_and(|m| m.file_type().is_symlink());
+            if is_link {
+                let target = std::fs::read_link(head).ok()?;
+                // A relative target is relative to the link's folder.
+                let base = head.parent().unwrap_or(head);
+                let mut next = unverbatim(base.join(target));
+                next.extend(tail.iter().rev());
+                abs = next;
+                continue 'hop;
             }
-            _ => return fold(&abs),
+            match (head.parent(), head.file_name()) {
+                (Some(up), Some(name)) => {
+                    tail.push(name.to_os_string());
+                    head = up;
+                }
+                // `..` as the last segment has no file name: take it off and keep it.
+                (Some(up), None) if head.ends_with("..") => {
+                    tail.push("..".into());
+                    head = up;
+                }
+                _ => return Some(fold(&abs)),
+            }
         }
     }
+    None
 }
 
 /// `.` and `..` folded away lexically; `..` never climbs above the root.
