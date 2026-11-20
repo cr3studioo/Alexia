@@ -266,3 +266,5 @@
 2026-11-20 Dispatched planner (opus) on branch cr3studioo/v3-plan-rv4 for review-4 findings ctx_1e164e170e20.
 2026-11-20 P2-23 gate ok (50/50, no flake), pushed. P2-24 ready.
 2026-11-20 P2-18 build done (attachmentInputs no store; stagesOf not ported); review dispatched. P2-43 review 2: changes (turn-line assert missing, report claimed it). Fixer opus try 3 ctx_02a084e13359.
+2026-11-20 P2-11 blocked: 2 existing hits (mod.rs:61 telegram, api.rs:309 voice = Bot API field). Decision: fix mod.rs per rule; api.rs const + marker, allowed 1 line. Spec gap, no try. Continued ctx_9ced06271b68.
+2026-11-20 Merged plan after review 4 (c0a9cd9): new P2-45..49; P2-19/20/24/25/26/38/41 specs changed; P2-38 now opus (wiring only), CLI verbs -> P2-48; P2-24 back to todo (waits P2-47). P2-46: unannotated non-read-only tools count destructive (deliberate v2 split).
