@@ -18,7 +18,7 @@ fn plugin(dir: &Path, id: &str) {
     let m = json!({
         "manifest_version": 1, "id": id, "name": format!("Plugin {id}"),
         "summary": "A plugin that exists for tests.", "version": "0.1.0",
-        "license": "AGPL-3.0-only", "entry": { "run": exe, "args": [] },
+        "license": "AGPL-3.0-only", "entry": { "run": exe, "args": ["greet"] },
         "alexia_protocol": 2, "mcp_protocol": "2025-11-25"
     });
     std::fs::write(path.join("plugin.json"), m.to_string()).unwrap();
