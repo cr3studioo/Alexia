@@ -243,3 +243,5 @@
 2026-11-20 P2-12 fixer done (empty roots dropped, demo__click); review 3 dispatched. P2-15 fix try 2 dispatched sonnet ctx_c0f54b3bae47.
 2026-11-20 Merged P2-12 locally (approve on review 3; gate running). Filed P2-42 (sonnet): fail-closed for Windows trailing dot/space segments and per-element boundary parse; added to P2-38 deps. P2-15 fix done; review 2 dispatched.
 2026-11-20 P2-12 gate ok, pushed. P2-42 ready.
+2026-11-20 P2-15 approve (review 2), merged locally, gate running. Note for P2-20: collapse keys by call id (trim.rs:245); the agent loop must give tool calls unique ids per run.
+2026-11-20 P2-15 gate: telegram_e2e fifty_messages ack failed under load, passed alone; pushed. Filed P2-43 (sonnet): ack check by p95<300 and max<2000. Added to P2-39 deps.
