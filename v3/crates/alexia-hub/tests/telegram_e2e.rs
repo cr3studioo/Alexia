@@ -777,7 +777,17 @@ async fn fifty_messages_ack_under_300ms_and_chat_skips_v2() {
         String::from_utf8_lossy(&o.stdout),
         String::from_utf8_lossy(&o.stderr)
     );
-    assert_eq!(o.status.code(), Some(0), "latency --check failed:\n{said}");
+    assert_eq!(o.status.code(), Some(0), "latency failed:\n{said}");
+    // One line per turn: "<utc>  <lane>  total <s>  ack <ms>  <top3>" (latency.rs `table`).
+    let stdout = String::from_utf8_lossy(&o.stdout);
+    let turn_lines = stdout
+        .lines()
+        .filter(|l| l.contains(" total ") && l.contains("  ack "))
+        .count();
+    assert_eq!(
+        turn_lines as u64, recorded as u64,
+        "latency turn lines:\n{said}"
+    );
     assert!(
         std::fs::metadata(&html).is_ok_and(|m| m.len() > 0),
         "latency --html wrote nothing:\n{said}"
