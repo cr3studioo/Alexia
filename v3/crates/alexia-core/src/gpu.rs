@@ -329,8 +329,10 @@ fn launcher_dirs() -> Vec<PathBuf> {
             .unwrap_or_default();
         out.extend(steam_dirs(&steam, &vdf));
     }
-    let data = std::env::var_os("ProgramData").unwrap_or_else(|| "C:\\ProgramData".into());
-    let manifests = Path::new(&data).join("Epic\\EpicGamesLauncher\\Data\\Manifests");
+    let Some(data) = std::env::var_os("ProgramData") else {
+        return out;
+    };
+    let manifests = Path::new(&data).join(r"Epic\EpicGamesLauncher\Data\Manifests");
     if let Ok(rd) = std::fs::read_dir(manifests) {
         for e in rd.flatten() {
             if e.path().extension().is_some_and(|x| x == "item") {
