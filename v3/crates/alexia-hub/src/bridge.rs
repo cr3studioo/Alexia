@@ -849,6 +849,7 @@ mod tests {
             content: Content::Text(text.into()),
             files: Vec::new(),
             received_at: alexia_store::now_ms(),
+            steer: alexia_core::Steer::none(),
         }
     }
 

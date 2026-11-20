@@ -145,6 +145,7 @@ fn turn(s: &str) -> Turn {
         content: text(s),
         files: Vec::new(),
         received_at: 0,
+        steer: alexia_core::Steer::none(),
     }
 }
 
