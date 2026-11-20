@@ -102,11 +102,11 @@ fn risky_runs_read_only() {
     let asked = rule(&writing, &base());
     assert!(is_ask(&asked));
     assert!(why(&asked).contains("change or delete"));
-    // Silence is not a claim of safety.
+    // Silence is not a claim of safety: with no annotations MCP's destructiveHint is true.
     let silent = ask("notes__poke", None, vec![]);
     assert_eq!(
         rule(&silent, &base()),
-        Ruling::Ask("Alexia wants to poke. This may change something. Allow it?".into())
+        Ruling::Ask("Alexia wants to poke. This may change or delete something. Allow it?".into())
     );
 }
 
@@ -119,7 +119,8 @@ fn question_uses_plain_words_never_a_tool_id() {
     assert_eq!(
         rule(&click, &base()),
         Ruling::Ask(
-            "Alexia wants to click on your screen. This may change something. Allow it?".into()
+            "Alexia wants to click on your screen. This may change or delete something. Allow it?"
+                .into()
         )
     );
     let every = scope_with(|s| s.mode = PermissionMode::AskEveryTime);
@@ -593,4 +594,174 @@ fn one_bad_boundary_keeps_the_rest() {
     let w = ann(false, true);
     let writing = ask("notes__write", Some(&w), vec![]);
     assert!(is_blocked(&rule(&writing, &s)));
+}
+
+// ---- P2-46: fail closed ----
+
+fn dont_delete() -> Scope {
+    scope_with(|s| {
+        s.mode = PermissionMode::FullTrust;
+        s.everywhere = true;
+        s.boundaries = vec![heard("don't delete anything", 0).unwrap()];
+    })
+}
+
+/// A store whose `kv` table is gone, so every kv read errors.
+fn broken_store() -> Store {
+    let store = Store::open_in_memory().unwrap();
+    store
+        .kv_set(
+            "_core",
+            "scope",
+            &json!({ "mode": "full-trust", "everywhere": true }),
+        )
+        .unwrap();
+    store
+        .transaction(|tx| {
+            tx.execute_batch("DROP TABLE kv")?;
+            Ok(())
+        })
+        .unwrap();
+    assert!(
+        store.kv_get("_core", "scope").is_err(),
+        "kv read should fail"
+    );
+    store
+}
+
+#[test]
+fn kv_error_gives_closed_scope() {
+    let s = scope(&broken_store(), &data_dir());
+    assert_eq!(s.mode, PermissionMode::AskEveryTime);
+    assert!(s.roots.is_empty() && !s.everywhere);
+    assert_eq!(s.boundaries.len(), 1);
+    assert_eq!(s.boundaries[0].blocks, Blocks::Everything);
+    assert_eq!(s.data_dir, data_dir());
+}
+
+#[test]
+fn closed_scope_blocks_everything() {
+    let s = scope(&broken_store(), &data_dir());
+    let r = ann(true, false);
+    for call in [
+        ask("notes__read", Some(&r), vec![]),
+        ask("files__delete", None, vec![]),
+    ] {
+        let ruling = rule(&call, &s);
+        assert!(is_blocked(&ruling), "{ruling:?}");
+        assert!(why(&ruling).contains("could not read your permissions"));
+    }
+    // A path is outside the (empty) scope, which is checked first: asked, never run.
+    let pathed = ask("notes__read", Some(&r), vec![work().join("a.txt")]);
+    assert!(is_ask(&rule(&pathed, &s)));
+}
+
+#[test]
+fn unannotated_delete_blocked_by_boundary() {
+    let delete = ask("files__delete", None, vec![work().join("a.txt")]);
+    assert!(is_blocked(&rule(&delete, &dont_delete())));
+    // Annotations that say nothing about destruction are silence too.
+    let blank: ToolAnnotations = serde_json::from_value(json!({})).unwrap();
+    let delete = ask("files__delete", Some(&blank), vec![]);
+    assert!(is_blocked(&rule(&delete, &dont_delete())));
+}
+
+#[test]
+fn destructive_hint_false_runs() {
+    let safe: ToolAnnotations =
+        serde_json::from_value(json!({ "destructiveHint": false })).unwrap();
+    let call = ask("notes__append", Some(&safe), vec![work().join("a.txt")]);
+    assert_eq!(rule(&call, &dont_delete()), Ruling::Run);
+    assert_eq!(
+        rule(&call, &base()),
+        Ruling::Ask("Alexia wants to append. This may change something. Allow it?".into())
+    );
+}
+
+#[test]
+fn read_only_hint_not_destructive() {
+    let r: ToolAnnotations = serde_json::from_value(json!({ "readOnlyHint": true })).unwrap();
+    let call = ask("notes__read", Some(&r), vec![work().join("a.txt")]);
+    assert_eq!(rule(&call, &dont_delete()), Ruling::Run);
+    assert_eq!(rule(&call, &base()), Ruling::Run);
+}
+
+fn args(v: Value) -> Map<String, Value> {
+    serde_json::from_value(v).unwrap()
+}
+
+/// `C:\Users\me` → `file:///C:/Users/me`, `/home/me` → `file:///home/me`.
+fn uri_of(p: &Path) -> String {
+    let slashed = p.to_string_lossy().replace('\\', "/");
+    let slashed = slashed.trim_start_matches('/');
+    format!("file:///{slashed}")
+}
+
+#[test]
+fn file_uri_meets_never_touch() {
+    let base_uri = uri_of(&home());
+    let keys = home().join(".ssh").join("id_rsa");
+    let r = ann(true, false);
+    for uri in [
+        format!("{base_uri}/.ssh/id_rsa"),
+        // `%2E` is `.`: decoded before the check.
+        format!("{base_uri}/%2Essh/id_rsa"),
+        format!("file://localhost{}", &base_uri["file://".len()..]) + "/.ssh/id_rsa",
+    ] {
+        let found = paths_in(&args(json!({ "path": uri })));
+        assert_eq!(found.len(), 1, "{uri}: {found:?}");
+        assert!(within(&keys, &found[0]), "{uri} → {found:?}");
+        let ruling = rule(&ask("files__read", Some(&r), found), &dont_delete());
+        assert!(
+            why(&ruling).contains("never-touch list"),
+            "{uri}: {ruling:?}"
+        );
+    }
+    // Another machine's file is not a path here.
+    assert!(paths_in(&args(json!({ "u": "file://server/share/x" }))).is_empty());
+}
+
+#[test]
+fn tilde_path_meets_never_touch() {
+    let r = ann(true, false);
+    for p in ["~/.ssh/id_rsa", r"~\.ssh\id_rsa"] {
+        let found = paths_in(&args(json!({ "path": p })));
+        if cfg!(windows) || p.starts_with("~/") {
+            assert_eq!(found.len(), 1, "{p}: {found:?}");
+            let ruling = rule(&ask("files__read", Some(&r), found), &dont_delete());
+            assert!(why(&ruling).contains("never-touch list"), "{p}: {ruling:?}");
+        }
+    }
+    // `~user` is someone else's home: not expanded, so not absolute.
+    assert!(paths_in(&args(json!({ "path": "~bob/x" }))).is_empty());
+}
+
+#[test]
+fn env_var_path_meets_scope() {
+    let (var, written) = if cfg!(windows) {
+        ("APPDATA", r"%APPDATA%\notes\a.txt")
+    } else {
+        ("HOME", "$HOME/notes/a.txt")
+    };
+    let value = PathBuf::from(std::env::var_os(var).expect(var));
+    let r = ann(true, false);
+    let found = paths_in(&args(json!({ "path": written })));
+    assert_eq!(found, vec![value.join("notes").join("a.txt")]);
+    // Outside the chosen folder: asked, not run.
+    let ruling = rule(&ask("notes__read", Some(&r), found.clone()), &base());
+    assert!(
+        why(&ruling).contains("outside the folders you chose"),
+        "{ruling:?}"
+    );
+    // Inside it: runs.
+    let inside = scope_with(|s| s.roots = vec![value.clone()]);
+    assert_eq!(
+        rule(&ask("notes__read", Some(&r), found), &inside),
+        Ruling::Run
+    );
+    // `${VAR}` too, and an unset variable stays as written, so it is not a path.
+    let braced = format!("${{{var}}}/notes/a.txt");
+    assert_eq!(paths_in(&args(json!({ "p": braced }))).len(), 1);
+    assert!(paths_in(&args(json!({ "p": "$ALEXIA_SURELY_UNSET_VAR/x" }))).is_empty());
+    assert!(paths_in(&args(json!({ "p": "%ALEXIA_SURELY_UNSET_VAR%/x" }))).is_empty());
 }

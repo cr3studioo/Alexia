@@ -101,11 +101,14 @@ fn read_only(ask: &CallAsk) -> bool {
 }
 
 /// v2 `isDestructive`. `reviewed == false` is destructive whatever the annotations say.
+///
+/// Deliberately not v2's code: v2 read a missing `destructiveHint` as safe, although its own
+/// comment says "and so does not knowing" and MCP's default for the hint is true. Here only a
+/// read-only call or an explicit `destructiveHint: false` is not destructive, so a spoken
+/// "don't delete anything" stops a delete tool that carries no annotations.
 fn is_destructive(ask: &CallAsk) -> bool {
     !ask.reviewed
-        || ask
-            .annotations
-            .is_some_and(|a| a.destructive_hint == Some(true))
+        || (!read_only(ask) && ask.annotations.and_then(|a| a.destructive_hint) != Some(false))
 }
 
 /// v2 `asVerb`: "Deletes something" read as "delete something", so it fits after "Alexia wants to".
@@ -322,6 +325,77 @@ fn looks_absolute(s: &str) -> bool {
     p.is_absolute() || p.has_root()
 }
 
+/// A path as the OS would see it once a shell or URI parser had been at it: `file://` decoded,
+/// a leading `~` made home, a leading `$VAR`, `${VAR}` or `%VAR%` expanded. An unset variable
+/// is left as written. `None` for a `file://` URI on another host: not a path on this machine.
+fn normalised(s: &str) -> Option<String> {
+    if let Some(rest) = s.strip_prefix("file://") {
+        let (host, path) = rest.split_at(rest.find('/').unwrap_or(rest.len()));
+        if !host.is_empty() && !host.eq_ignore_ascii_case("localhost") {
+            return None;
+        }
+        let path = percent_decoded(path);
+        // `/C:/x` is `C:\x` on Windows.
+        let b = path.as_bytes();
+        if cfg!(windows)
+            && b.len() >= 3
+            && b[0] == b'/'
+            && b[1].is_ascii_alphabetic()
+            && b[2] == b':'
+        {
+            return Some(path[1..].replace('/', "\\"));
+        }
+        return Some(path);
+    }
+    if s == "~" || s.starts_with("~/") || s.starts_with("~\\") {
+        return Some(format!("{}{}", home().display(), &s[1..]));
+    }
+    let (name, rest) = if let Some(r) = s.strip_prefix("${") {
+        r.split_once('}')?
+    } else if let Some(r) = s.strip_prefix('$') {
+        r.split_at(
+            r.find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+                .unwrap_or(r.len()),
+        )
+    } else if let Some(r) = s.strip_prefix('%') {
+        r.split_once('%')?
+    } else {
+        return Some(s.to_string());
+    };
+    // `var_os` may panic on an empty name or one with `=` or NUL in it.
+    let usable = !name.is_empty() && !name.contains(['=', '\0']);
+    Some(match usable.then(|| env_path(name)).flatten() {
+        Some(value) => format!("{}{rest}", value.display()),
+        None => s.to_string(),
+    })
+}
+
+/// `%2E` → `.`; a broken escape is kept as written.
+fn percent_decoded(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        let hex = b
+            .get(i + 1..i + 3)
+            .and_then(|h| std::str::from_utf8(h).ok());
+        match hex
+            .filter(|_| b[i] == b'%')
+            .and_then(|h| u8::from_str_radix(h, 16).ok())
+        {
+            Some(byte) => {
+                out.push(byte);
+                i += 3;
+            }
+            None => {
+                out.push(b[i]);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
 /// Absolute paths an argument object names (v2 `pathsIn`). Absolute only: a relative path
 /// cannot be resolved to a real place from out here (D58), so this is a filter, not a sandbox.
 pub fn paths_in(args: &Map<String, Value>) -> Vec<PathBuf> {
@@ -330,7 +404,11 @@ pub fn paths_in(args: &Map<String, Value>) -> Vec<PathBuf> {
             return;
         }
         match value {
-            Value::String(s) if looks_absolute(s) => found.push(PathBuf::from(s)),
+            Value::String(s) => {
+                if let Some(p) = normalised(s).filter(|p| looks_absolute(p)) {
+                    found.push(PathBuf::from(p));
+                }
+            }
             Value::Array(items) => items.iter().for_each(|v| walk(v, depth + 1, found)),
             Value::Object(map) => map.values().for_each(|v| walk(v, depth + 1, found)),
             _ => {}
@@ -414,10 +492,21 @@ fn mode_of(name: &str) -> Option<PermissionMode> {
 /// v2 keeps the permission mode inside `_core.scope` (serve.ts `scope()`); its `_core.mode`
 /// holds the compute mode (`combined`, `local`). Both are read: `scope.mode` first, then
 /// `_core.mode` only when it is one of the four permission names.
+///
+/// Absent is not unreadable: a store error on any of the three keys gives [`closed_scope`],
+/// so a read failure never makes a spoken boundary disappear.
 pub fn scope(store: &Store, data_dir: &Path) -> Scope {
-    let get = |key: &str| store.kv_get(NS, key).ok().flatten();
-    let saved = get("scope").unwrap_or(Value::Null);
-    let mode = [saved.get("mode").cloned(), get("mode")]
+    let read = |key: &'static str| store.kv_get(NS, key).map_err(|_| key);
+    let (saved, mode_saved, boundaries) = match (read("scope"), read("mode"), read("boundaries")) {
+        (Ok(s), Ok(m), Ok(b)) => (s, m, b),
+        (Err(key), _, _) | (_, Err(key), _) | (_, _, Err(key)) => {
+            // The key only: a value could hold a path or a sentence the owner said.
+            tracing::warn!("_core.{key} could not be read; Alexia asks before everything");
+            return closed_scope(data_dir);
+        }
+    };
+    let saved = saved.unwrap_or(Value::Null);
+    let mode = [saved.get("mode").cloned(), mode_saved]
         .into_iter()
         .flatten()
         .find_map(|v| v.as_str().and_then(mode_of))
@@ -434,7 +523,7 @@ pub fn scope(store: &Store, data_dir: &Path) -> Scope {
                 .collect()
         })
         .unwrap_or_default();
-    let boundaries = match get("boundaries") {
+    let boundaries = match boundaries {
         None | Some(Value::Null) => Vec::new(),
         Some(Value::Array(items)) => items
             .into_iter()
@@ -457,6 +546,22 @@ pub fn scope(store: &Store, data_dir: &Path) -> Scope {
         roots,
         everywhere: saved.get("everywhere") == Some(&Value::Bool(true)),
         boundaries,
+        data_dir: data_dir.to_path_buf(),
+    }
+}
+
+/// What [`scope`] gives when the store cannot be read: ask every time, no folders, and one
+/// boundary that blocks everything until the permissions can be read again.
+fn closed_scope(data_dir: &Path) -> Scope {
+    Scope {
+        mode: PermissionMode::AskEveryTime,
+        roots: Vec::new(),
+        everywhere: false,
+        boundaries: vec![Boundary {
+            said: "Alexia could not read your permissions, so it asks before everything.".into(),
+            blocks: Blocks::Everything,
+            at: 0,
+        }],
         data_dir: data_dir.to_path_buf(),
     }
 }
