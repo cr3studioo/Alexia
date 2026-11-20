@@ -342,3 +342,4 @@
 - 2026-11-20 P2-07 integration fix done (Steer::none in scheduler); no re-review (one-line, approved branch); merge after P2-19 gate
 - 2026-11-20 Merged P2-19 (gate OK 62, pushed). P2-07 merged again, gating
 - 2026-11-20 Merged P2-07 (gate OK 62, pushed). P2-08 dispatched (sonnet) ctx_f7b06ec7596f. CEO #13 hands off
+- 2026-11-20 P2-08: allowed signature-only edits in gateway tests/gateway.rs, tests/types.rs, hub src/latency.rs (Media fakes)
