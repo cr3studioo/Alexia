@@ -230,19 +230,24 @@ fn wire_messages(messages: &[(Role, MessageBody)], names: &[(String, String)]) -
     let mut out = Vec::with_capacity(messages.len());
     for (at, (role, body)) in messages.iter().enumerate() {
         let mut content = content_value(&body.content);
+        if *role != Role::Tool {
+            seen.clear(); // a result only answers the call run right before it
+        }
         out.push(match role {
             Role::System => json!({"role": "system", "content": content}),
             Role::User => json!({"role": "user", "content": content}),
             Role::Assistant => {
-                // A call no later tool turn answers is not sent: a strict provider refuses it.
+                // A call the tool turns right after it do not answer is not sent: a strict
+                // provider refuses it.
                 let answered = |id: &str| {
                     messages[at + 1..]
                         .iter()
-                        .any(|(r, b)| *r == Role::Tool && b.call_id.as_deref() == Some(id))
+                        .take_while(|(r, _)| *r == Role::Tool)
+                        .any(|(_, b)| b.call_id.as_deref() == Some(id))
                 };
                 let all = body.calls.as_deref().unwrap_or_default();
                 let kept: Vec<_> = all.iter().filter(|c| answered(&c.id)).collect();
-                if kept.is_empty() && !all.is_empty() && plain(&body.content).is_empty() {
+                if kept.is_empty() && !all.is_empty() && plain(&body.content).trim().is_empty() {
                     let names: Vec<_> = all.iter().map(|c| c.name.as_str()).collect();
                     content = json!(format!("I called {} and got no answer.", names.join(", ")));
                 }

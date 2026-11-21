@@ -839,6 +839,75 @@ async fn unanswered_only_call_becomes_text() {
     );
 }
 
+#[tokio::test]
+async fn blank_content_with_unanswered_calls_gets_note() {
+    let sent = sent_messages(vec![
+        (Role::User, text("go")),
+        (
+            Role::Assistant,
+            body_of(json!({"content": "  \n", "calls": [call("c1", "one")]})),
+        ),
+        (Role::User, text("well?")),
+    ])
+    .await;
+    assert_eq!(
+        sent[1],
+        json!({"role": "assistant", "content": "I called one and got no answer."})
+    );
+}
+
+#[tokio::test]
+async fn late_tool_result_is_a_note() {
+    let sent = sent_messages(vec![
+        (Role::User, text("go")),
+        (
+            Role::Assistant,
+            body_of(json!({"content": "working", "calls": [call("a", "one")]})),
+        ),
+        (Role::User, text("well?")),
+        (
+            Role::Tool,
+            body_of(json!({"content": "late", "callId": "a"})),
+        ),
+    ])
+    .await;
+    assert_eq!(
+        sent,
+        json!([
+            {"role": "user", "content": "go"},
+            {"role": "assistant", "content": "working"},
+            {"role": "user", "content": "well?"},
+            {"role": "user", "content": "A tool answered: late"}
+        ])
+    );
+}
+
+#[tokio::test]
+async fn tool_turns_right_after_are_answered() {
+    let sent = sent_messages(vec![
+        (Role::User, text("go")),
+        (
+            Role::Assistant,
+            body_of(json!({"content": "", "calls": [call("a", "one"), call("b", "two")]})),
+        ),
+        (Role::Tool, body_of(json!({"content": "ra", "callId": "a"}))),
+        (Role::Tool, body_of(json!({"content": "rb", "callId": "b"}))),
+    ])
+    .await;
+    assert_eq!(
+        sent,
+        json!([
+            {"role": "user", "content": "go"},
+            {"role": "assistant", "content": "", "tool_calls": [
+                {"id": "a", "type": "function", "function": {"name": "one", "arguments": "{}"}},
+                {"id": "b", "type": "function", "function": {"name": "two", "arguments": "{}"}}
+            ]},
+            {"role": "tool", "tool_call_id": "a", "content": "ra"},
+            {"role": "tool", "tool_call_id": "b", "content": "rb"}
+        ])
+    );
+}
+
 async fn streamed(frames: Vec<String>) -> Vec<(String, String, String)> {
     let mut steps: Vec<_> = frames.into_iter().map(|f| (0, f)).collect();
     steps.push((0, DONE.into()));
