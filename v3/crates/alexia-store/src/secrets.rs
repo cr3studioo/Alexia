@@ -132,7 +132,7 @@ impl V2Vault {
     /// messages can quote the value.
     pub fn parse(blob: &[u8]) -> Result<V2Vault> {
         let bad = || Error::Refused(V2_SHAPE.into());
-        if blob.len() % 2 != 0 {
+        if !blob.len().is_multiple_of(2) {
             return Err(bad());
         }
         let mut units: Vec<u16> = blob
