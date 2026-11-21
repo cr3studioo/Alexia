@@ -262,6 +262,13 @@ Crate paths are under `v3/crates/`.
 | P2-62 | New plugins start unreviewed; the GPU watcher hands the hub what it needs | opus | P2-55, P2-57 | `alexia-mcp/{src/host.rs, src/supervise.rs, tests/hold.rs}`, `alexia-core/{src/gpu.rs, tests/gpu.rs}` |
 | P2-63 | One redaction of secrets, in alexia-mcp | opus | P2-38, P2-61 | `alexia-mcp/{Cargo.toml, src/redact.rs, src/process.rs, src/lib.rs, tests/conn.rs, tests/redact.rs}`, `v3/Cargo.lock`, `alexia-core/{src/redact.rs, tests/redact.rs}` |
 | P2-64 | After the wiring: one Job Object, scheduled approvals in their own chat, a stricter plugin-name check | sonnet | P2-38, P2-63 | `alexia-mcp/src/lib.rs`, `alexia-core/src/local.rs`, `alexia-gateway/{src/ask.rs, tests/approvals.rs}`, `v3/ci/invariants.mjs`, `// invariant:` comments on flagged lines |
+| P2-65 | Store: test folders cleaned up, a keychain probe per process, a plain leftover kept until its key proves right | opus | P2-54 | `alexia-store/{tests/scratch/mod.rs, tests/channels.rs, tests/import.rs, tests/store.rs, tests/p2.rs, tests/encrypt.rs, src/secrets.rs, src/encrypt.rs}` |
+| P2-66 | MCP: test folders cleaned up | sonnet | P2-55, P2-61 | `alexia-mcp/tests/{scratch/mod.rs, alexia_layer.rs, compute.rs, host.rs, manifest.rs, manifests.rs, purge.rs, reload.rs, supervise.rs, types_p2.rs, wasm.rs}` |
+| P2-67 | Core: test folders cleaned up; the registry export file is unique per call | opus | P2-61, P2-62 | `alexia-core/{tests/scratch/mod.rs, tests/catalog.rs, tests/chat.rs, tests/hf.rs, tests/local.rs, tests/permissions.rs, tests/prompt.rs, tests/tools.rs, src/gpu.rs, tests/gpu.rs}` |
+| P2-68 | Router: notes per run, keychain keys cached, unreadable pins said out loud | opus | P2-20 | `alexia-core/{src/router.rs, tests/router_steps.rs, src/agent.rs}` |
+| P2-69 | OpenAI wire: blank assistant text is empty; a call is answered only by the tool turns right after it | sonnet | none | `alexia-core/{src/openai.rs, tests/openai.rs}` |
+| P2-70 | Gateway: a question that could not be sent is not a denial; test folders cleaned up | opus | P2-58, P2-64 | `alexia-gateway/{src/ask.rs, tests/approvals.rs, tests/scratch/mod.rs, tests/gateway.rs, tests/telegram_channel.rs}` |
+| P2-71 | Hub and MCP conn tests: test folders cleaned up | sonnet | P2-39, P2-48, P2-63, P2-66 | `alexia-hub/{tests/scratch/mod.rs or tests/common/mod.rs, tests/cli.rs, tests/cli_p1.rs, tests/cli_p2.rs, tests/telegram_e2e.rs, tests/agent_e2e.rs, src/media.rs}`, `alexia-mcp/tests/conn.rs` |
 
 ## Owner needs
 
