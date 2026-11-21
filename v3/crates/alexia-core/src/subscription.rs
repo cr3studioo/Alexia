@@ -203,6 +203,10 @@ const ENV_KEEP: &[&str] = &[
     // Scratch space.
     "TEMP",
     "TMP",
+    "TMPDIR",
+    // The macOS keychain lookup (Claude Code) is keyed on USER; LANG keeps CLI output stable.
+    "USER",
+    "LANG",
     // Home and app data: where the CLI keeps its own sign-in.
     "USERPROFILE",
     "HOMEDRIVE",
@@ -281,7 +285,7 @@ fn prompt_text(req: &ChatRequest) -> String {
 /// `429` / `401` only as an HTTP status marker, never a bare number in prose or a path.
 static STATUS: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
-        r#"(?i)(?:status(?:\s+code)?|http(?:/[\d.]+)?|error|code)\s*[:=]?\s*(429|401)|"status(?:_?code)?"\s*:\s*"?(429|401)"#,
+        r#"(?i)\b(?:status(?:\s+code)?|http(?:/[\d.]+)?|error)\s*[:=]?\s*(429|401)\b|"status(?:_?code)?"\s*:\s*"?(429|401)\b"#,
     )
     .expect("valid regex")
 });
@@ -555,6 +559,7 @@ mod tests {
             "unexpected status 429",
             r#"{"status":429,"message":"slow down"}"#,
             "error: 429",
+            "Error: 429 Too",
         ] {
             assert!(busy(t), "{t}");
         }
@@ -566,6 +571,12 @@ mod tests {
             "C:/data/429/out.txt",
             "my 401k plan",
             "line 401 of x",
+            "status 4290",
+            "Error: 4290 files skipped",
+            "error 4011 rows",
+            "barcode 429",
+            "exit code 401",
+            "xstatus 429",
         ] {
             assert!(classify(t, Cli::Codex).is_none(), "{t}");
         }
