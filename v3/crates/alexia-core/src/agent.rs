@@ -2,9 +2,9 @@
 //! The agent loop (SP-01). Stub: P2-20 fills it.
 #![allow(unused_variables)] // stub: the filling task removes this
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
-use alexia_mcp::PluginId;
+use alexia_mcp::{McpHost, PluginId};
 use alexia_store::{Layout, MessageBody, Role, SessionId, Store};
 use tokio_util::sync::CancellationToken;
 
@@ -12,7 +12,7 @@ use crate::checker::Checker;
 use crate::router::Router;
 use crate::{
     chat, local, Ask, Brain, BrainError, Bus, DraftSink, Limits, Origin, Reply, RunId, RunResult,
-    Tooling, Turn,
+    Steer, Tooling, Turn,
 };
 
 pub struct AgentParts {
@@ -25,9 +25,11 @@ pub struct AgentParts {
     pub caps: Arc<dyn chat::Caps>,
     pub layout: Layout,
     pub limits: Limits,
+    /// (review 4 #2) manifests() for commands, conversation_ended, plugins()
+    pub host: McpHost,
 }
 
-/// One run to do. `steer: Steer` joins these fields with P2-20, once P2-07 has made `Steer`.
+/// One run to do.
 pub struct Task {
     pub session: SessionId,
     pub origin: Origin,
@@ -39,15 +41,22 @@ pub struct Task {
     pub run: Option<RunId>,
     pub parent: Option<RunId>,
     pub max_steps: Option<u32>,
+    pub steer: Steer,
+    /// (review 4 #1) Some(n): resuming `run` with n steps done (P2-26). None: new run.
+    pub steps_done: Option<u32>,
 }
 
 pub struct Agent {
-    _todo: (),
+    parts: AgentParts,
+    local_jobs: OnceLock<Arc<local::LocalJobs>>,
 }
 
 impl Agent {
     pub fn new(parts: AgentParts) -> Arc<Agent> {
-        todo!("P2-20")
+        Arc::new(Agent {
+            parts,
+            local_jobs: OnceLock::new(),
+        })
     }
 
     /// The loop. Appends every message it adds to `task.session`.
@@ -61,16 +70,22 @@ impl Agent {
     }
 
     pub fn store(&self) -> &Arc<Store> {
-        todo!("P2-20")
+        &self.parts.store
     }
 
-    /// Set once by the hub (P2-38); None until then.
+    pub fn host(&self) -> &McpHost {
+        &self.parts.host
+    }
+
+    /// Set once by the hub (P2-38); None until then. A second set is ignored.
     pub fn set_local_jobs(&self, jobs: Arc<local::LocalJobs>) {
-        todo!("P2-20")
+        if self.local_jobs.set(jobs).is_err() {
+            tracing::warn!("local jobs were already set; the second set is ignored");
+        }
     }
 
     pub fn local_jobs(&self) -> Option<&local::LocalJobs> {
-        todo!("P2-20")
+        self.local_jobs.get().map(|j| &**j)
     }
 }
 
