@@ -14,11 +14,28 @@ use serde_json::{json, Map, Value};
 
 const FIXTURE: &str = env!("CARGO_BIN_EXE_mcp-fixture");
 
-fn root(tag: &str) -> PathBuf {
+/// A test's temp folder, removed when the test ends: each holds a copy of the fixture, and
+/// runs in a loop would otherwise fill the disk.
+struct Root(PathBuf);
+
+impl std::ops::Deref for Root {
+    type Target = Path;
+    fn deref(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for Root {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+fn root(tag: &str) -> Root {
     let root = std::env::temp_dir().join(format!("alexia-hold-{tag}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();
-    root
+    Root(root)
 }
 
 /// `<root>/ext/<id>/plugin.json`, a lazy `greet` fixture providing `demo.greet`.
@@ -63,7 +80,12 @@ impl Fx {
             layout: Layout::new(root.join("data")),
             plugin_dirs: vec![root.join("ext")],
             node: PathBuf::from("node"),
-            timings: Timings::default(),
+            // A cold start of two fresh fixture copies on a loaded Windows machine can take
+            // longer than the 10 s default to answer `initialize`.
+            timings: Timings {
+                start_ms: 60_000,
+                ..Timings::default()
+            },
         };
         let host = McpHost::new(cfg, store.clone(), Arc::new(NoUpcalls), sink);
         let ids: Vec<PluginId> = on.iter().map(|s| id(s)).collect();
@@ -97,12 +119,16 @@ fn store() -> Arc<Store> {
 }
 
 /// Each plugin's tools with whether they are reviewed; every plugin must list some.
-fn reviewed(tools: &[HostedTool], plugins: &[&str]) -> Vec<bool> {
+fn reviewed(host: &McpHost, tools: &[HostedTool], plugins: &[&str]) -> Vec<bool> {
     plugins
         .iter()
         .map(|p| {
             let mine: Vec<_> = tools.iter().filter(|t| t.plugin.0 == *p).collect();
-            assert!(!mine.is_empty(), "{p} listed no tools");
+            assert!(
+                !mine.is_empty(),
+                "{p} listed no tools: {:?}",
+                host.plugins()
+            );
             assert!(mine.iter().all(|t| t.reviewed == mine[0].reviewed), "{p}");
             mine[0].reviewed
         })
@@ -126,7 +152,7 @@ async fn first_scan_trusts_installed() {
     let store = store();
     let fx = Fx::start(&r, &store, &["a", "b"]).await;
     let tools = fx.host.tools().await;
-    assert_eq!(reviewed(&tools, &["a", "b"]), [true, true]);
+    assert_eq!(reviewed(&fx.host, &tools, &["a", "b"]), [true, true]);
     assert_eq!(
         store.kv_get("_core", "known_plugins").unwrap(),
         Some(json!(["a", "b"]))
@@ -146,7 +172,7 @@ async fn new_plugin_after_first_scan_unreviewed() {
     plugin(&r, "b");
     let fx = Fx::start(&r, &store, &["a", "b"]).await;
     let tools = fx.host.tools().await;
-    assert_eq!(reviewed(&tools, &["a", "b"]), [true, false]);
+    assert_eq!(reviewed(&fx.host, &tools, &["a", "b"]), [true, false]);
     assert_eq!(
         store.kv_get("_core", "unreviewed").unwrap(),
         Some(json!(["b"]))
@@ -163,7 +189,7 @@ async fn new_plugin_after_first_scan_unreviewed() {
         Some(json!(["b"]))
     );
     let tools = fx.host.tools().await;
-    assert_eq!(reviewed(&tools, &["a", "b"]), [true, false]);
+    assert_eq!(reviewed(&fx.host, &tools, &["a", "b"]), [true, false]);
     fx.host.shutdown().await;
 }
 
@@ -174,16 +200,16 @@ async fn set_reviewed_clears_it() {
     let store = store();
     store.kv_set("_core", "known_plugins", &json!([])).unwrap();
     let fx = Fx::start(&r, &store, &["a"]).await;
-    assert_eq!(reviewed(&fx.host.tools().await, &["a"]), [false]);
+    assert_eq!(reviewed(&fx.host, &fx.host.tools().await, &["a"]), [false]);
     fx.host.set_reviewed(&id("a"), true).unwrap();
-    assert_eq!(reviewed(&fx.host.tools().await, &["a"]), [true]);
+    assert_eq!(reviewed(&fx.host, &fx.host.tools().await, &["a"]), [true]);
     assert_eq!(
         store.kv_get("_core", "unreviewed").unwrap(),
         Some(json!([]))
     );
     fx.host.set_reviewed(&id("a"), false).unwrap();
     fx.host.set_reviewed(&id("a"), false).unwrap();
-    assert_eq!(reviewed(&fx.host.tools().await, &["a"]), [false]);
+    assert_eq!(reviewed(&fx.host, &fx.host.tools().await, &["a"]), [false]);
     assert_eq!(
         store.kv_get("_core", "unreviewed").unwrap(),
         Some(json!(["a"]))
@@ -210,7 +236,7 @@ async fn malformed_known_list_everyone_unreviewed() {
     store.kv_set("_core", "known_plugins", &bad).unwrap();
     let fx = Fx::start(&r, &store, &["a", "b"]).await;
     let tools = fx.host.tools().await;
-    assert_eq!(reviewed(&tools, &["a", "b"]), [false, false]);
+    assert_eq!(reviewed(&fx.host, &tools, &["a", "b"]), [false, false]);
     // Nothing was written over it.
     assert_eq!(store.kv_get("_core", "known_plugins").unwrap(), Some(bad));
     assert_eq!(store.kv_get("_core", "unreviewed").unwrap(), None);
