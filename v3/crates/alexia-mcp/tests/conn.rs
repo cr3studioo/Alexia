@@ -483,3 +483,40 @@ async fn not_json_is_redacted_before_it_is_cut() {
     drop(conn);
     stop(proc, Duration::from_secs(2)).await;
 }
+
+#[cfg(unix)]
+type Owned = std::os::fd::OwnedFd;
+#[cfg(windows)]
+type Owned = std::os::windows::io::OwnedHandle;
+
+/// A request and its cancel in one write: the reader handles both lines before the request's
+/// task is first polled, so the token has already fired when the handler would start.
+#[tokio::test]
+async fn cancel_before_first_poll_reaches_incoming() {
+    use std::io::Write;
+    use tokio::process::{ChildStdin, ChildStdout};
+    for round in 0..200 {
+        // (our writer → Conn's stdout) and (Conn's stdin → a reader we keep open).
+        let (out_r, mut out_w) = std::io::pipe().unwrap();
+        let (_in_r, in_w) = std::io::pipe().unwrap();
+        let stdout = ChildStdout::from_std(Owned::from(out_r).into()).unwrap();
+        let stdin = ChildStdin::from_std(Owned::from(in_w).into()).unwrap();
+        let incoming = Arc::new(Recorder::default());
+        let conn = Conn::start(stdin, stdout, Default::default(), incoming.clone());
+        let both = concat!(
+            r#"{"jsonrpc":"2.0","id":7,"method":"test/wait"}"#,
+            "\n",
+            r#"{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":7}}"#,
+            "\n"
+        );
+        out_w.write_all(both.as_bytes()).unwrap();
+        let seen = Arc::clone(&incoming.cancel_seen);
+        assert!(
+            eventually(|| seen.load(Ordering::SeqCst)).await,
+            "round {round}: the handler never saw its cancel"
+        );
+        assert_eq!(*incoming.asked.lock().unwrap(), vec!["test/wait".to_string()]);
+        drop(out_w);
+        drop(conn);
+    }
+}
