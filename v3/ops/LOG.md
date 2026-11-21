@@ -376,3 +376,4 @@
 2026-11-21 P2-52 approved (follow-up: credential manager test uses fixed real entry _v3test.probe, races across worktrees). Merge with P2-59 after P2-29 gate
 2026-11-21 Dispatched P2-61 (opus) ctx_69455708b062
 2026-11-21 Merged P2-29 (gate OK 64, pushed). P2-59 + P2-52 merged together, gating
+2026-11-21 Merged P2-59 + P2-52 (gate OK 64, pushed). P2-20 (agent loop) ready
