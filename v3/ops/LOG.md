@@ -430,3 +430,6 @@
 2026-11-21 P2-60 approved. Merge queued with P2-36 after P2-55 gate
 2026-11-21 Merged P2-55 (gate OK 67, pushed). P2-62, P2-66 ready
 2026-11-21 Dispatched P2-62 (opus) ctx_37122fa7745b, P2-27 (sonnet) ctx_32805e9d943e. P2-36 + P2-60 merged together, gating
+2026-11-21 P2-26 built -> review (added: closes stale pending approvals)
+2026-11-21 P2-65 approved. Merge after P2-36/60 gate
+2026-11-21 Merged P2-36 + P2-60 (gate OK 68, pushed). P2-25 ready
