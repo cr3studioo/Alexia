@@ -8,7 +8,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
 use alexia_store::{now_ms, Ms};
@@ -50,6 +50,8 @@ pub struct Catalog {
     /// Each provider's last `models()` answer: true = it answered, false = it has no key or its
     /// key was refused. Absent = not asked yet, or down. Decides whether its seed is offered.
     answered: RwLock<HashMap<String, bool>>,
+    /// Models the last refresh saw for the first time, until `news` hands them out.
+    news: Mutex<Vec<Candidate>>,
 }
 
 impl Catalog {
@@ -68,6 +70,7 @@ impl Catalog {
             cache,
             fetched: RwLock::new(fetched),
             answered: RwLock::default(),
+            news: Mutex::default(),
         }
     }
 
@@ -124,6 +127,27 @@ impl Catalog {
                 answered.insert(provider.id().into(), state);
             }
         }
+        {
+            // MO-11: a model in a fresh list that the last list (or cache) did not hold. A
+            // provider with nothing before it has no "before", so it reports nothing yet.
+            let old = self.fetched.read().unwrap_or_else(|e| e.into_inner());
+            let mut news = self.news.lock().unwrap_or_else(|e| e.into_inner());
+            for (provider, answer) in self.providers.iter().zip(&answers) {
+                let Some(Answer::List(list)) = answer else {
+                    continue;
+                };
+                let id = provider.id();
+                if !old.iter().any(|c| c.provider == id) {
+                    continue;
+                }
+                for c in list {
+                    let known = |x: &Candidate| x.provider == c.provider && x.model == c.model;
+                    if !old.iter().any(known) && !news.iter().any(known) {
+                        news.push(c.clone());
+                    }
+                }
+            }
+        }
         if let Err(e) = self.write(&next) {
             tracing::warn!("the model catalog cache could not be written: {e}");
         }
@@ -171,6 +195,16 @@ impl Catalog {
             );
         }
         out
+    }
+
+    /// Models seen for the first time by the last refresh, once; then empty until the next new ones.
+    pub fn news(&self) -> Vec<Candidate> {
+        std::mem::take(&mut *self.news.lock().unwrap_or_else(|e| e.into_inner()))
+    }
+
+    /// Every ladder row (the router reads each one's stored key).
+    pub fn rows(&self) -> &[FreeRow] {
+        &self.rows
     }
 
     /// The ladder row for a provider id (the router reads `rpm`/`rpd` from it).
