@@ -215,6 +215,8 @@ fn dst_spring_forward() {
 struct FakeBrain {
     turns: Mutex<Vec<Turn>>,
     fail: bool,
+    /// Ends every turn `Cancelled` on its own, as a run stopped by itself does.
+    stop: bool,
 }
 impl FakeBrain {
     fn count(&self) -> usize {
@@ -233,6 +235,9 @@ impl Brain for FakeBrain {
         self.turns.lock().unwrap().push(turn);
         if self.fail {
             return Err(BrainError::Unavailable("no model is up".into()));
+        }
+        if self.stop {
+            return Err(BrainError::Cancelled);
         }
         Ok(Reply {
             text,
@@ -1060,4 +1065,53 @@ fn brain_holding_tools_is_no_cycle() {
         weak_brain.upgrade().is_none(),
         "brain leaked through a cycle"
     );
+}
+
+#[test]
+fn slash_prompt_refused() {
+    let (_, _, sched) = setup(Arc::new(FakeBrain::default()));
+    for prompt in ["/approve 1", "  /undo"] {
+        let r = sched.add(
+            Trigger::At {
+                at: now_ms() + HOUR,
+            },
+            prompt,
+            Urgency::Normal,
+            telegram(),
+        );
+        let e = r.expect_err(prompt).to_string();
+        assert!(e.contains("not a command"), "{prompt}: {e}");
+    }
+    assert!(sched.jobs().unwrap().is_empty(), "no job row");
+}
+
+#[tokio::test(start_paused = true)]
+async fn stopped_run_finishes_one_shot() {
+    let brain = Arc::new(FakeBrain {
+        stop: true,
+        ..Default::default()
+    });
+    let (_, _, sched) = setup(brain.clone());
+    sched
+        .add(
+            Trigger::At { at: now_ms() + MIN },
+            "once",
+            Urgency::Normal,
+            telegram(),
+        )
+        .unwrap();
+    let cancel = CancellationToken::new();
+    let run = tokio::spawn(sched.clone().run(cancel.clone()));
+    tokio::time::timeout(Duration::from_secs(3600), async {
+        while !(brain.count() == 1 && sched.jobs().unwrap().is_empty()) {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the stopped one-shot is finished, not kept");
+    // It does not fire again.
+    tokio::time::sleep(Duration::from_secs(3600)).await;
+    assert_eq!(brain.count(), 1);
+    cancel.cancel();
+    run.await.unwrap().unwrap();
 }

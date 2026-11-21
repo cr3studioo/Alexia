@@ -176,6 +176,11 @@ impl Scheduler {
         if prompt.trim().is_empty() {
             return Err(invalid("A job needs something to do."));
         }
+        if prompt.trim_start().starts_with('/') {
+            return Err(invalid(
+                "A job's prompt is an instruction, not a command: write what Alexia should do.",
+            ));
+        }
         let now = self.now();
         let next = next_after(&trigger, now).ok_or_else(|| {
             invalid("That schedule never fires: the time is past or the hour, minute or weekday is out of range.")
@@ -315,11 +320,13 @@ impl Scheduler {
                 // Nobody watches a scheduled turn being drafted.
                 let (tx, mut rx) = tokio::sync::mpsc::channel(16);
                 tokio::spawn(async move { while rx.recv().await.is_some() {} });
-                self.brain.reply(turn, tx, cancel).await
+                self.brain.reply(turn, tx, cancel.clone()).await
             }
             Err(e) => Err(BrainError::Other(e)),
         };
-        let stopped = matches!(outcome, Err(BrainError::Cancelled));
+        // Kept only when shutdown (this token) cut the turn short; a run stopped by itself also
+        // ends `Cancelled` while the token is live, and that one-shot is finished.
+        let stopped = matches!(outcome, Err(BrainError::Cancelled)) && cancel.is_cancelled();
         let (text, note) = match outcome {
             Ok(reply) => (reply.text, "ok".to_string()),
             Err(BrainError::Cancelled) => (String::new(), "stopped".to_string()),
