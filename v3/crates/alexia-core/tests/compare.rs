@@ -228,6 +228,8 @@ async fn one_fails_other_shown() {
         .unwrap();
     assert_eq!(c.a.0, "big-70b");
     assert!(c.a.1.contains("no answer"));
+    assert!(c.a_failed && !c.b_failed);
+    assert!(present(&c).contains("(no answer:"));
     assert_eq!(c.b, ("mid-30b".to_string(), "still here".to_string()));
     assert!(w
         .store
@@ -247,6 +249,18 @@ async fn one_fails_other_shown() {
             .await
             .is_err()
     );
+}
+
+#[tokio::test]
+async fn requests_counted() {
+    let w = two().await;
+    compare(&w.router, &request("q"), CancellationToken::new())
+        .await
+        .unwrap();
+    let now = alexia_store::now_ms();
+    for p in ["p1", "p2"] {
+        assert_eq!(w.store.request_count(p, "day", now).unwrap(), 1, "{p}");
+    }
 }
 
 #[tokio::test]
@@ -272,6 +286,8 @@ fn present_labels_models() {
     let c = Compared {
         a: ("big-70b".into(), "first".into()),
         b: ("mid-30b".into(), "second".into()),
+        a_failed: false,
+        b_failed: false,
     };
     let s = present(&c);
     let a = s.find("**A** (big-70b)").unwrap();

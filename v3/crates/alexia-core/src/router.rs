@@ -714,6 +714,13 @@ impl Router {
         }
     }
 
+    /// Count one request toward the provider's rpm/rpd.
+    pub(crate) fn record_request(&self, provider: &str) {
+        if let Err(e) = self.store.record_request(provider, now_ms()) {
+            tracing::warn!("the router could not count a request: {e}");
+        }
+    }
+
     pub(crate) fn record_try(&self, c: &Candidate, outcome: &str, waited_ms: Option<u32>) {
         let t = Try {
             at: now_ms(),
@@ -750,9 +757,7 @@ impl Race<'_> {
         let Some(provider) = router.provider(&candidate.provider) else {
             return;
         };
-        if let Err(e) = router.store.record_request(&candidate.provider, now_ms()) {
-            tracing::warn!("the router could not count a request: {e}");
-        }
+        router.record_request(&candidate.provider);
 
         let token = self.cancel.child_token();
         let (tx, mut rx) = mpsc::channel(64);
@@ -848,7 +853,7 @@ impl Score {
 }
 
 /// v2's outcome strings for a failed try.
-fn outcome(e: &ProviderError) -> &'static str {
+pub(crate) fn outcome(e: &ProviderError) -> &'static str {
     match e {
         ProviderError::Busy { .. } => "busy",
         ProviderError::NeedsKey | ProviderError::Refused(_) => "refused",

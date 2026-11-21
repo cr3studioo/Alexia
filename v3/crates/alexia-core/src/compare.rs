@@ -10,13 +10,15 @@ use tokio_util::sync::CancellationToken;
 
 use crate::catalog::Candidate;
 use crate::redact::redact_request_known;
-use crate::router::{Needs, Router};
+use crate::router::{outcome, Needs, Router};
 use crate::{ms_since, ChatChunk, ChatRequest, ProviderError};
 
 pub struct Compared {
-    /// (model, text)
+    /// (model, text). When `a_failed` the text is a "(no answer: ...)" note, not an answer.
     pub a: (String, String),
     pub b: (String, String),
+    pub a_failed: bool,
+    pub b_failed: bool,
 }
 
 /// One candidate's full answer, recorded in the router's tries like a race entry.
@@ -35,6 +37,7 @@ async fn ask(
     } else {
         redact_request_known(req, &router.known_secrets()).0
     };
+    router.record_request(&c.provider);
     let (tx, mut rx) = mpsc::channel(64);
     let started = Instant::now();
     let chat = provider.chat(&req, &c.model, tx, cancel);
@@ -56,12 +59,7 @@ async fn ask(
             Ok(text)
         }
         Err(e) => {
-            let outcome = match &e {
-                ProviderError::Busy { .. } => "busy",
-                ProviderError::NeedsKey | ProviderError::Refused(_) => "refused",
-                _ => "unreachable",
-            };
-            router.record_try(c, outcome, Some(ms));
+            router.record_try(c, outcome(&e), Some(ms));
             Err(e)
         }
     }
@@ -92,23 +90,22 @@ pub async fn compare(
     if cancel.is_cancelled() {
         return Err(ProviderError::Cancelled);
     }
-    let show = |c: &Candidate, r: Result<String, ProviderError>| match r {
-        Ok(text) => Ok((c.model.clone(), text)),
-        Err(e) => Err((c.model.clone(), e)),
+    let (ra, rb) = match (ra, rb) {
+        (Err(e), Err(_)) => return Err(e),
+        both => both,
     };
-    match (show(first, ra), show(second, rb)) {
-        (Err((_, e)), Err(_)) => Err(e),
-        (a, b) => {
-            // One failed: its slot says so, the other answer is still shown.
-            let fill = |x: Result<(String, String), (String, ProviderError)>| {
-                x.unwrap_or_else(|(m, e)| (m, format!("(no answer: {e})")))
-            };
-            Ok(Compared {
-                a: fill(a),
-                b: fill(b),
-            })
-        }
-    }
+    // One failed: its slot says so, the other answer is still shown.
+    let fill = |c: &Candidate, r: Result<String, ProviderError>| match r {
+        Ok(text) => ((c.model.clone(), text), false),
+        Err(e) => ((c.model.clone(), format!("(no answer: {e})")), true),
+    };
+    let ((a, a_failed), (b, b_failed)) = (fill(first, ra), fill(second, rb));
+    Ok(Compared {
+        a,
+        b,
+        a_failed,
+        b_failed,
+    })
 }
 
 /// The reply text with both answers and the question "Keep A or B?"
