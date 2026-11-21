@@ -119,6 +119,27 @@ not changed; their files get new tasks (P2-45 to P2-49).
 | 11 | Agent constructors `todo!()` block follow-on tests | P2-20 step 0 fills `new`/`store`/`host`/`set_local_jobs`/`local_jobs` (OnceLock) first |
 | 12 | telegram latency test flaky under load | Already P2-43; no change |
 
+## Phase review 5, finding by finding
+
+Planned 2026-11-21 from `v3/ops/phase-review-5.md`. All 11 findings were checked against the
+code and are real; none dropped. Specs of running tasks (P2-08, P2-17) are not changed. INTERFACES
+§2.2, §2.3 (`Router::hedged`, `gpu`), §2.5 and §2.6 are written by this planner, so no new task
+edits INTERFACES.md (P2-51 and P2-54 do).
+
+| # | Finding | Covered by |
+|---|---|---|
+| 1 | Chat lane `Router::hedged` sends unredacted requests to cloud | P2-59 (redact inside the race, non-local only; after P2-17); P2-20 depends on it |
+| 2 | Scheduler/Agent wiring cycle in §2.6 step 4 | §2.6 amended: step 4 `McpTooling::new(host, vec![])`, step 6 builds the scheduler and adds its tools; P2-60 `ScheduleTools` holds `Weak<Scheduler>`; P2-38 depends on it |
+| 3 | compute/run canonicalizes UNC paths before the roots check | P2-61 |
+| 4 | Three `file://` decoders | P2-61 (`alexia_mcp::file_uri_path`, `is_network_path`) |
+| 5 | A plugin's undo can target another plugin or a builtin | P2-61 (same file as #4, `tools.rs`) |
+| 6 | `reviewed` fail-open for new plugins | P2-62 (`_core.known_plugins`, `McpHost::set_reviewed`) |
+| 7 | `gpu::Watch` sync callbacks, no process list; held plugins respawn | P2-62 (`GpuEvent` over mpsc, `McpHost::hold`/`release`); P2-38 depends on it |
+| 8 | Two ports of v2 `redactSecrets` | P2-63 (regex rows move to alexia-mcp; after P2-38 because of `Cargo.lock`) |
+| 9 | Second Job Object FFI in core | P2-64 (`pub use job::Job`; after P2-34 via P2-38) |
+| 10 | Scheduled approvals go to the primary chat | P2-64 (`ask.rs` reads the job's stored origin; after P2-29 via P2-38) |
+| 11 | invariants check 1 misses ids inside strings | P2-64 (narrow rule: hyphenated or `:`/`/`/`__`-prefixed ids; after P2-38) |
+
 ## Order of work
 
 ```
@@ -145,6 +166,9 @@ cleanups, independent: P2-09 hub dead code, P2-10 secrets, P2-11 channels except
 review 4: P2-23 ── P2-45 manifests ─┬─ P2-20 (above)     P2-42 ── P2-46 permissions fail closed
                                     └─ P2-47 cancel/progress, reviewed ── P2-24 wasm
           P2-49 trim/now_ms cleanup, independent
+review 5: P2-17 ── P2-59 hedged redacts ── P2-20     P2-56 ── P2-60 Weak scheduler ── P2-38
+          P2-51 ── P2-61 file URIs, undo ─┐          P2-55 + P2-57 ── P2-62 reviewed, GPU hold ── P2-38
+          P2-38 ──────────────────────────┴─ P2-63 one redaction ── P2-64 Job, scheduled ask, check 1
 everything ── P2-38 hub wiring, bridge deleted ─┬─ P2-39 e2e ──────┐
                                                 ├─ P2-40 v2 plugins ┼─ P2-41 20 real tasks (owner)
                                                 └─ P2-48 CLI verbs ─┘
@@ -194,7 +218,7 @@ Crate paths are under `v3/crates/`.
 | P2-17 | Router for task steps: model per job, $0 cap, catalog news | opus | P2-04, P2-05, P2-14 | `alexia-core/{src/router.rs, src/catalog.rs, tests/router_steps.rs}` |
 | P2-18 | Tooling over the MCP host | opus | P2-02 | `alexia-core/{src/tools.rs, tests/tools.rs}` |
 | P2-19 | Trace, runs and the audit log | opus | P2-01, P2-03, P2-14 | `alexia-core/{src/trace.rs, tests/trace.rs}` |
-| P2-20 | The agent loop | opus | P2-07, P2-12, P2-13, P2-14, P2-15, P2-16, P2-17, P2-18, P2-19, P2-45 | `alexia-core/{src/agent.rs, tests/agent.rs}` |
+| P2-20 | The agent loop | opus | P2-07, P2-12, P2-13, P2-14, P2-15, P2-16, P2-17, P2-18, P2-19, P2-45, P2-59 | `alexia-core/{src/agent.rs, tests/agent.rs}` |
 | P2-21 | Upcalls: sampling, tasks for plugins, elicit, roots, attachments | opus | P2-20, P2-02 | `alexia-core/{src/upcalls.rs, tests/upcalls.rs}` |
 | P2-22 | MCP: compute/run locally, host-answered capabilities | opus | P2-02 | `alexia-mcp/{src/serve.rs, src/host.rs, src/bin/mcp-fixture.rs, tests/compute.rs}` |
 | P2-23 | Hot reload of plugins | opus | P2-22 | `alexia-mcp/{src/host.rs, src/supervise.rs, tests/reload.rs}` |
@@ -212,7 +236,7 @@ Crate paths are under `v3/crates/`.
 | P2-35 | Subscriptions through their official CLIs | opus | P2-17 | `alexia-core/{src/subscription.rs, tests/subscription.rs}` |
 | P2-36 | Compare two models | sonnet | P2-17 | `alexia-core/{src/compare.rs, tests/compare.rs}` |
 | P2-37 | Encrypted database at rest | opus | P2-02, P2-03, P2-10 | `v3/Cargo.toml`, `v3/Cargo.lock`, `alexia-store/{Cargo.toml, src/db.rs, src/encrypt.rs, src/lib.rs, src/import.rs, tests/encrypt.rs}` |
-| P2-38 | Hub wiring: Agent is the brain, bridge deleted | opus | P2-08..P2-11, P2-20..P2-37, P2-42, P2-44, P2-45, P2-46, P2-47 | `alexia-hub/{Cargo.toml, src/main.rs, src/bridge.rs (delete), src/media.rs, tests/cli_p2.rs}`, `alexia-gateway/src/gateway.rs` (delete P2-06's shims), `v3/Cargo.lock`, `v3/ci/invariants.mjs` |
+| P2-38 | Hub wiring: Agent is the brain, bridge deleted | opus | P2-08..P2-11, P2-20..P2-37, P2-42, P2-44, P2-45, P2-46, P2-47, P2-50, P2-60, P2-62 | `alexia-hub/{Cargo.toml, src/main.rs, src/bridge.rs (delete), src/media.rs, tests/cli_p2.rs}`, `alexia-gateway/src/gateway.rs` (delete P2-06's shims), `v3/Cargo.lock`, `v3/ci/invariants.mjs` |
 | P2-39 | End-to-end: the agent on the real binary | sonnet | P2-38 | `alexia-hub/tests/{agent_e2e.rs, telegram_e2e.rs, common/mod.rs}` |
 | P2-40 | Every v2 plugin on the Rust host | sonnet | P2-38 | `alexia-hub/tests/v2_plugins.rs` |
 | P2-41 | Twenty real tasks on the PC | sonnet | P2-39, P2-40, P2-48 | `v3/ops/reports/P2-tasks.md` |
@@ -232,6 +256,12 @@ Crate paths are under `v3/crates/`.
 | P2-56 | Scheduler: a cut-short one-shot survives shutdown; Every never overlaps itself | opus | none | `alexia-scheduler/{src/lib.rs, tests/scheduler.rs}` |
 | P2-57 | Local models: hashing off the runtime, cache repair, plain paths; GPU parsing and games | sonnet | none | `alexia-core/{src/hf.rs, tests/hf.rs, src/gpu.rs, tests/gpu.rs}` |
 | P2-58 | Gateway: a waiting file message is not overtaken by steers; tests wait for events | sonnet | P2-38 | `alexia-gateway/{src/gateway.rs, tests/gateway.rs}` |
+| P2-59 | Chat lane redacted: Router::hedged redacts every cloud request | opus | P2-17 | `alexia-core/{src/router.rs, tests/router.rs, tests/router_steps.rs, tests/chat.rs}` |
+| P2-60 | Scheduler tools hold a Weak<Scheduler>; no wiring cycle | opus | P2-56 | `alexia-scheduler/{src/lib.rs, tests/scheduler.rs}` |
+| P2-61 | One file URI decoder; compute/run never opens a network path; undo stays in its plugin | opus | P2-51 | `alexia-mcp/{src/uri.rs, src/lib.rs, src/serve.rs, tests/compute.rs, tests/uri.rs}`, `alexia-core/{src/permissions.rs, tests/permissions.rs, src/tools.rs, tests/tools.rs}` |
+| P2-62 | New plugins start unreviewed; the GPU watcher hands the hub what it needs | opus | P2-55, P2-57 | `alexia-mcp/{src/host.rs, src/supervise.rs, tests/hold.rs}`, `alexia-core/{src/gpu.rs, tests/gpu.rs}` |
+| P2-63 | One redaction of secrets, in alexia-mcp | opus | P2-38, P2-61 | `alexia-mcp/{Cargo.toml, src/redact.rs, src/process.rs, src/lib.rs, tests/conn.rs, tests/redact.rs}`, `v3/Cargo.lock`, `alexia-core/{src/redact.rs, tests/redact.rs}` |
+| P2-64 | After the wiring: one Job Object, scheduled approvals in their own chat, a stricter plugin-name check | sonnet | P2-38, P2-63 | `alexia-mcp/src/lib.rs`, `alexia-core/src/local.rs`, `alexia-gateway/{src/ask.rs, tests/approvals.rs}`, `v3/ci/invariants.mjs`, `// invariant:` comments on flagged lines |
 
 ## Owner needs
 
@@ -301,6 +331,11 @@ commit. The task named after each implements it.
     with cancel and progress, `reviewed` built false (P2-47); §2.3 `Trace::resume`, `Task.steps_done`,
     `AgentParts.host`, `Agent::host`, constructors first (P2-19, P2-20), `permissions` fail-closed
     behaviour (P2-46); §2.6 the construction order in eleven steps (P2-38).
+13. (review-5 planner, already written) §2.2 `file_uri_path`, `is_network_path` (P2-61),
+    `redact_secrets`, `redact`, `is_secret_key` (P2-63), `pub use job::Job` (P2-64), `reviewed`
+    for new plugins, `McpHost::{hold, release, set_reviewed}` (P2-62); §2.3 `Router::hedged`
+    redacts (P2-59), `gpu::GpuEvent` and `Watch::run` (P2-62); §2.5 `ScheduleTools` holds a
+    `Weak` (P2-60); §2.6 steps 4, 6 and 11 without the scheduler cycle (P2-38).
 
 
 ## Risky or unclear (decided here, owner may overrule)
