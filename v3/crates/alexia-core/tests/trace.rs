@@ -360,7 +360,7 @@ fn resumed_steps_get_distinct_numbers_and_bodies() {
 }
 
 #[test]
-fn resume_without_live_row_is_an_error() {
+fn resume_without_live_row_refused() {
     let (store, bus, session) = setup();
     let r = Trace::resume(
         store.clone(),
@@ -372,6 +372,59 @@ fn resume_without_live_row_is_an_error() {
         None,
         2,
     );
-    assert!(r.is_err());
+    match r {
+        Err(alexia_core::Error::Store(alexia_store::Error::Refused(s))) => {
+            assert_eq!(s, "Run ghost has no live row to resume.")
+        }
+        Err(e) => panic!("expected a refusal, got {e:?}"),
+        Ok(_) => panic!("expected a refusal, got Ok"),
+    }
     assert_eq!(live(&store), 0);
+}
+
+#[test]
+fn resumed_run_keeps_its_start() {
+    let (store, bus, session) = setup();
+    // The run began long before this process: its live row survived a restart.
+    // An hour ago: recent enough that `end` keeps the run (30 days).
+    let started: Ms = alexia_store::now_ms() - 3_600_000;
+    store
+        .live_begin(&alexia_store::LiveRunRow {
+            run: "r10".into(),
+            session,
+            origin: "\"desktop\"".into(),
+            started_at: started,
+            touched_at: started,
+            steps: 1,
+            background: false,
+            parent: None,
+        })
+        .unwrap();
+    let t = Trace::resume(
+        store.clone(),
+        bus.clone(),
+        RunId("r10".into()),
+        session,
+        Origin::Desktop,
+        false,
+        None,
+        1,
+    )
+    .unwrap();
+    let row = &store.live_runs().unwrap()[0];
+    assert_eq!(row.started_at, started, "the live row keeps its start");
+    assert!(row.touched_at > started, "the touch is the resume time");
+    t.end(&RunEnd::Answered).unwrap();
+
+    let body = store.run_body("r10").unwrap().unwrap();
+    assert_eq!(body["at"].as_i64(), Some(started));
+    let runs = store.runs(10).unwrap();
+    assert_eq!(runs[0].1, started);
+    // The resume note is dated when it was written, not when the run began.
+    let note_at = body["notes"][0]["at"].as_i64().unwrap();
+    assert!(note_at > started);
+    assert_eq!(
+        body["notes"][0]["text"],
+        "Resumed after a restart at step 1."
+    );
 }

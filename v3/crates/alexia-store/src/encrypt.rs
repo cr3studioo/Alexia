@@ -31,9 +31,48 @@ fn with_suffix(path: &Path, suffix: &str) -> PathBuf {
     PathBuf::from(s)
 }
 
-/// Generate a key, store it, `sqlcipher_export` into `alexia.db.enc`, verify every table's row
-/// count, swap atomically, overwrite then delete the plain file and its -wal/-shm. Refuses if the
-/// hub is running (the file is locked) or the key already exists.
+/// What the marker says. No key material: only that a key belongs to this database.
+const MARKER_TEXT: &str = "This Alexia database is meant to be encrypted. Its key is in the \
+                           keychain: service alexia, account _core.store_key.\n";
+
+/// `alexia.db.keyed`: "this database is meant to be encrypted". `encrypt` writes it before it
+/// stores the key, so a stored key always has a marker beside the database it is for.
+pub(crate) fn marker(path: &Path) -> PathBuf {
+    with_suffix(path, ".keyed")
+}
+
+/// Writes the marker and fsyncs it.
+fn write_marker(path: &Path) -> Result<()> {
+    let mut f = fs::File::create(marker(path))?;
+    f.write_all(MARKER_TEXT.as_bytes())?;
+    f.sync_all()?;
+    Ok(())
+}
+
+/// `alexia.db.plain` is the whole plain database when `encrypt` stopped after the swap and before
+/// the shred. Shreds it and its -wal/-shm, naming the file (never its content) in one warning;
+/// true when there was one. Only for an encrypted `path`: then the leftover is not the database.
+pub(crate) fn shred_plain_leftover(path: &Path) -> bool {
+    let plain = with_suffix(path, ".plain");
+    if !plain.exists() {
+        return false;
+    }
+    tracing::warn!(
+        file = %plain.display(),
+        "an interrupted encryption left a plain copy of the database; shredding it"
+    );
+    shred(&plain);
+    for side in ["-wal", "-shm"] {
+        shred(&with_suffix(&plain, side));
+    }
+    true
+}
+
+/// Write the marker, generate a key, store it, `sqlcipher_export` into `alexia.db.enc`, verify
+/// every table's row count, swap atomically, overwrite then delete the plain file and its
+/// -wal/-shm. Refuses if the hub is running (the file is locked) or a key is already stored
+/// without the marker. A stored key with the marker is an `encrypt` that was cut short: this
+/// finishes it with that key.
 ///
 /// The overwrite is best effort: on an SSD (wear levelling) or a copy-on-write or journaling file
 /// system the old plain blocks can survive on the disk. It makes the plain data unreadable
@@ -43,33 +82,55 @@ pub fn encrypt(path: &Path) -> Result<()> {
         return Err(refused("There is no database to encrypt."));
     }
     if Store::is_encrypted(path)? {
+        shred_plain_leftover(path);
         return Err(refused("The database is already encrypted."));
     }
-    if secrets::get(OWNER, KEY)?.is_some() {
-        return Err(refused(
-            "A database key already exists, so the database was not encrypted again.",
-        ));
+    const EXISTS: &str = "A database key already exists, so the database was not encrypted again.";
+    let stored = secrets::get(OWNER, KEY)?;
+    let resume = stored.is_some() && marker(path).is_file();
+    if stored.is_some() && !resume {
+        return Err(refused(EXISTS));
     }
     let enc = with_suffix(path, ".enc");
     let plain = with_suffix(path, ".plain");
+    // The database is plain here, so a `.plain` is at most a second name for it (the cut came
+    // between the hard link and the swap): remove, never shred.
     for leftover in [&enc, &plain] {
         if leftover.exists() {
             fs::remove_file(leftover)?;
         }
     }
 
-    // std has no CSPRNG; getrandom is the OS RNG.
-    let mut bytes = [0u8; 32];
-    getrandom::getrandom(&mut bytes)
-        .map_err(|_| refused("The system's random number generator failed."))?;
-    let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
-    secrets::set(OWNER, KEY, &hex)?;
+    let hex = match stored {
+        // A resume: the key the cut-short `encrypt` stored.
+        Some(hex) if raw_key(&hex).is_some() => hex,
+        Some(_) => return Err(refused(EXISTS)),
+        None => {
+            // std has no CSPRNG; getrandom is the OS RNG.
+            let mut bytes = [0u8; 32];
+            getrandom::getrandom(&mut bytes)
+                .map_err(|_| refused("The system's random number generator failed."))?;
+            let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+            // The marker first: a crash after it leaves a key that `encrypt` can finish with.
+            write_marker(path)?;
+            if let Err(e) = secrets::set(OWNER, KEY, &hex) {
+                let _ = fs::remove_file(marker(path));
+                return Err(e);
+            }
+            hex
+        }
+    };
 
     if let Err(e) = export_and_swap(path, &enc, &plain, &hex) {
-        // Nothing was swapped: the plain file is still the database, so the key must go.
+        // Nothing was swapped: the plain file is still the database. A key this call made goes,
+        // and its marker after it (a marker alone is harmless, a key alone is not). On a resume
+        // the key was the owner's before this call, so both stay.
         let _ = fs::remove_file(&enc);
         let _ = fs::remove_file(&plain);
-        let _ = secrets::delete(OWNER, KEY);
+        if !resume {
+            let _ = secrets::delete(OWNER, KEY);
+            let _ = fs::remove_file(marker(path));
+        }
         return Err(e);
     }
     shred(&plain);
@@ -96,7 +157,7 @@ fn export_and_swap(path: &Path, enc: &Path, plain: &Path, hex: &str) -> Result<(
                 _ => e.into(),
             });
         }
-        let raw = raw_key(hex).expect("a generated key is 64 hex digits");
+        let raw = raw_key(hex).expect("the key was checked to be 64 hex digits");
         conn.execute(
             "ATTACH DATABASE ?1 AS enc KEY ?2",
             [enc.to_string_lossy().as_ref(), raw.as_str()],
@@ -137,7 +198,7 @@ fn export_and_swap(path: &Path, enc: &Path, plain: &Path, hex: &str) -> Result<(
 }
 
 /// Overwrite with zeros, flush, delete. Best effort; a missing file is fine.
-fn shred(path: &Path) {
+pub(crate) fn shred(path: &Path) {
     let Ok(len) = fs::metadata(path).map(|m| m.len()) else {
         return;
     };

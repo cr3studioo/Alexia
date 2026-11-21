@@ -340,7 +340,7 @@ impl Store {
     pub fn last_undoable(&self, session: SessionId) -> Result<Option<AuditRow>>;
     pub fn mark_undone(&self, id: i64, at: Ms) -> Result<()>;
     pub fn live_begin(&self, row: &LiveRunRow) -> Result<()>;
-    pub fn live_touch(&self, run: &str, steps: u32, at: Ms) -> Result<()>;
+    pub fn live_touch(&self, run: &str, steps: u32, at: Ms) -> Result<bool>; // true when a row matched
     pub fn live_end(&self, run: &str) -> Result<()>;
     pub fn live_runs(&self) -> Result<Vec<LiveRunRow>>;           // oldest first
     pub fn approval_open(&self, run: &str, origin: &str, text: &str, detail: Option<&str>, at: Ms) -> Result<i64>;
