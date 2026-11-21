@@ -1,16 +1,70 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! Compare two models on one question (MO-10). Stub: P2-36 fills it.
-#![allow(unused_variables)] // stub: the filling task removes this
+//! Compare two models on one question (MO-10). Producing and presenting only: keeping one
+//! answer is `commands.rs`'s job (it asks A/B through the agent's asker).
 
+use std::time::Instant;
+
+use alexia_store::now_ms;
+use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-use crate::router::Router;
-use crate::{ChatRequest, ProviderError};
+use crate::catalog::Candidate;
+use crate::redact::redact_request_known;
+use crate::router::{Needs, Router};
+use crate::{ms_since, ChatChunk, ChatRequest, ProviderError};
 
 pub struct Compared {
     /// (model, text)
     pub a: (String, String),
     pub b: (String, String),
+}
+
+/// One candidate's full answer, recorded in the router's tries like a race entry.
+async fn ask(
+    router: &Router,
+    c: &Candidate,
+    req: &ChatRequest,
+    cancel: CancellationToken,
+) -> Result<String, ProviderError> {
+    let provider = router
+        .provider(&c.provider)
+        .ok_or_else(|| ProviderError::Other(format!("{} is not available", c.provider)))?;
+    // TR-04: a cloud model gets the redacted copy, a local one the request as is.
+    let req = if router.is_local(&c.provider) {
+        req.clone()
+    } else {
+        redact_request_known(req, &router.known_secrets()).0
+    };
+    let (tx, mut rx) = mpsc::channel(64);
+    let started = Instant::now();
+    let chat = provider.chat(&req, &c.model, tx, cancel);
+    let collect = async {
+        let mut text = String::new();
+        while let Some(chunk) = rx.recv().await {
+            if let ChatChunk::Text(t) = chunk {
+                text.push_str(&t);
+            }
+        }
+        text
+    };
+    // `chat` drops its sender when it returns, which ends `collect`.
+    let (result, text) = tokio::join!(chat, collect);
+    let ms = ms_since(started);
+    match result {
+        Ok(_) => {
+            router.record_try(c, "ok", Some(ms));
+            Ok(text)
+        }
+        Err(e) => {
+            let outcome = match &e {
+                ProviderError::Busy { .. } => "busy",
+                ProviderError::NeedsKey | ProviderError::Refused(_) => "refused",
+                _ => "unreachable",
+            };
+            router.record_try(c, outcome, Some(ms));
+            Err(e)
+        }
+    }
 }
 
 /// Two different providers, run fully in parallel (not a hedge: both finish).
@@ -19,10 +73,51 @@ pub async fn compare(
     req: &ChatRequest,
     cancel: CancellationToken,
 ) -> Result<Compared, ProviderError> {
-    todo!("P2-36")
+    let list = router.ranked_for(now_ms(), &Needs::of(req));
+    let Some(first) = list.first() else {
+        return Err(ProviderError::Other(
+            "No free model can answer right now.".into(),
+        ));
+    };
+    let Some(second) = list.iter().find(|c| c.provider != first.provider) else {
+        return Err(ProviderError::Other(
+            "Comparing needs free models from two different providers, and only one can answer right now."
+                .into(),
+        ));
+    };
+    let (ra, rb) = tokio::join!(
+        ask(router, first, req, cancel.clone()),
+        ask(router, second, req, cancel.clone())
+    );
+    if cancel.is_cancelled() {
+        return Err(ProviderError::Cancelled);
+    }
+    let show = |c: &Candidate, r: Result<String, ProviderError>| match r {
+        Ok(text) => Ok((c.model.clone(), text)),
+        Err(e) => Err((c.model.clone(), e)),
+    };
+    match (show(first, ra), show(second, rb)) {
+        (Err((_, e)), Err(_)) => Err(e),
+        (a, b) => {
+            // One failed: its slot says so, the other answer is still shown.
+            let fill = |x: Result<(String, String), (String, ProviderError)>| {
+                x.unwrap_or_else(|(m, e)| (m, format!("(no answer: {e})")))
+            };
+            Ok(Compared {
+                a: fill(a),
+                b: fill(b),
+            })
+        }
+    }
 }
 
 /// The reply text with both answers and the question "Keep A or B?"
 pub fn present(c: &Compared) -> String {
-    todo!("P2-36")
+    format!(
+        "**A** ({})\n{}\n\n**B** ({})\n{}\n\nKeep A or B?",
+        c.a.0,
+        c.a.1.trim(),
+        c.b.0,
+        c.b.1.trim()
+    )
 }

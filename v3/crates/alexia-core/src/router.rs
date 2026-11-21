@@ -667,11 +667,11 @@ impl Router {
             .push(text);
     }
 
-    fn provider(&self, id: &str) -> Option<Arc<dyn Provider>> {
+    pub(crate) fn provider(&self, id: &str) -> Option<Arc<dyn Provider>> {
         read(&self.providers).get(id).cloned()
     }
 
-    fn is_local(&self, id: &str) -> bool {
+    pub(crate) fn is_local(&self, id: &str) -> bool {
         read(&self.local).contains(id)
     }
 
@@ -682,7 +682,7 @@ impl Router {
     }
 
     /// Keys in the keychain, so they are never sent in a message (P2-14).
-    fn known_secrets(&self) -> Vec<String> {
+    pub(crate) fn known_secrets(&self) -> Vec<String> {
         self.catalog
             .rows()
             .iter()
@@ -714,7 +714,7 @@ impl Router {
         }
     }
 
-    fn record_try(&self, c: &Candidate, outcome: &str, waited_ms: Option<u32>) {
+    pub(crate) fn record_try(&self, c: &Candidate, outcome: &str, waited_ms: Option<u32>) {
         let t = Try {
             at: now_ms(),
             provider: c.provider.clone(),
