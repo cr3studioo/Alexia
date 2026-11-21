@@ -654,10 +654,10 @@ mod tests {
 
     #[async_trait::async_trait]
     impl Media for NoMedia {
-        async fn transcribe(&self, _: &InFile) -> GwResult<Option<String>> {
+        async fn transcribe(&self, _: &InFile, _: CancellationToken) -> GwResult<Option<String>> {
             Ok(None)
         }
-        async fn speak(&self, _: &str) -> GwResult<Option<OutFile>> {
+        async fn speak(&self, _: &str, _: CancellationToken) -> GwResult<Option<OutFile>> {
             Ok(None)
         }
     }

@@ -68,8 +68,8 @@ pub trait Channel: Send + Sync {
 /// (`voice.transcribe`, `voice.render`); tests use a fake. `None` = nothing installed can do it.
 #[async_trait::async_trait]
 pub trait Media: Send + Sync {
-    async fn transcribe(&self, file: &InFile) -> Result<Option<String>>;
-    async fn speak(&self, text: &str) -> Result<Option<OutFile>>;
+    async fn transcribe(&self, file: &InFile, cancel: CancellationToken) -> Result<Option<String>>;
+    async fn speak(&self, text: &str, cancel: CancellationToken) -> Result<Option<OutFile>>;
 }
 
 #[derive(Clone, Debug)]

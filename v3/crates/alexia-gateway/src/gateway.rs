@@ -814,8 +814,14 @@ impl TurnCtx {
         let hear_t = Instant::now();
         let inbound = tokio::select! {
             _ = self.cancel.cancelled() => return TurnEnd::Cancelled { drafted: String::new() },
-            i = voice::hear(&*g.media, self.inbound.clone()) => i,
+            i = voice::hear(&*g.media, self.inbound.clone(), &self.cancel) => i,
         };
+        // Both branches can be ready at once (media returns `Cancelled` as the token fires).
+        if self.cancel.is_cancelled() {
+            return TurnEnd::Cancelled {
+                drafted: String::new(),
+            };
+        }
         if voiced {
             spans.push(Span {
                 name: "hear",
@@ -905,12 +911,17 @@ impl TurnCtx {
         };
         if voice::wants_voice(&g.store, &inbound) {
             let t = Instant::now();
-            let note = voice::speak(&*g.media, &reply.text).await;
+            let note = voice::speak(&*g.media, &reply.text, &self.cancel).await;
             spans.push(Span {
                 name: "speak",
                 start: off(t),
                 ms: ms_since(t.into_std()),
             });
+            if self.cancel.is_cancelled() {
+                return TurnEnd::Cancelled {
+                    drafted: reply.text,
+                };
+            }
             if let Some(note) = note {
                 out.files.push(note);
                 out.voice = true;
@@ -1223,10 +1234,14 @@ mod tests {
 
     #[async_trait::async_trait]
     impl Media for Quiet {
-        async fn transcribe(&self, _: &InFile) -> Result<Option<String>> {
+        async fn transcribe(&self, _: &InFile, _: CancellationToken) -> Result<Option<String>> {
             Ok(None)
         }
-        async fn speak(&self, _: &str) -> Result<Option<alexia_core::OutFile>> {
+        async fn speak(
+            &self,
+            _: &str,
+            _: CancellationToken,
+        ) -> Result<Option<alexia_core::OutFile>> {
             Ok(None)
         }
     }

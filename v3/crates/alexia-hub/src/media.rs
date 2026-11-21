@@ -7,8 +7,8 @@ use std::sync::Arc;
 
 use alexia_core::chat::Caps;
 use alexia_core::OutFile;
-use alexia_gateway::{InFile, Media, Result};
-use alexia_mcp::{CallCtx, McpHost};
+use alexia_gateway::{Error, InFile, Media, Result};
+use alexia_mcp::{CallCtx, CallError, McpHost};
 use base64::Engine;
 use serde_json::{json, Value};
 use tokio_util::sync::CancellationToken;
@@ -46,7 +46,7 @@ fn ogg_bytes(content: &[Value]) -> Option<Vec<u8>> {
 
 #[async_trait::async_trait]
 impl Media for McpMedia {
-    async fn transcribe(&self, file: &InFile) -> Result<Option<String>> {
+    async fn transcribe(&self, file: &InFile, cancel: CancellationToken) -> Result<Option<String>> {
         if !self.caps.answers("voice.transcribe") {
             return Ok(None);
         }
@@ -54,15 +54,18 @@ impl Media for McpMedia {
         args.insert("file".into(), json!(file.path.to_string_lossy()));
         let text = self
             .caps
-            .call("voice.transcribe", args, CancellationToken::new())
+            .call("voice.transcribe", args, cancel.clone())
             .await;
+        if cancel.is_cancelled() {
+            return Err(Error::Cancelled);
+        }
         if text.is_none() {
             tracing::warn!("voice.transcribe gave no text");
         }
         Ok(text)
     }
 
-    async fn speak(&self, text: &str) -> Result<Option<OutFile>> {
+    async fn speak(&self, text: &str, cancel: CancellationToken) -> Result<Option<OutFile>> {
         if !self.host.answers(RENDER).answers {
             return Ok(None);
         }
@@ -70,7 +73,14 @@ impl Media for McpMedia {
         args.insert("text".into(), json!(text));
         let result = match self
             .host
-            .call_capability(RENDER, args, CallCtx::default())
+            .call_capability(
+                RENDER,
+                args,
+                CallCtx {
+                    cancel,
+                    ..CallCtx::default()
+                },
+            )
             .await
         {
             Ok(r) if r.is_error != Some(true) => r,
@@ -78,6 +88,7 @@ impl Media for McpMedia {
                 tracing::warn!("voice.render reported an error");
                 return Ok(None);
             }
+            Err(CallError::Cancelled) => return Err(Error::Cancelled),
             Err(e) => {
                 tracing::warn!("voice.render failed: {e}");
                 return Ok(None);
@@ -161,15 +172,27 @@ mod tests {
     #[tokio::test]
     async fn transcribe_without_capability_is_none() {
         let m = media("none", FakeCaps(None));
-        assert_eq!(m.transcribe(&file()).await.unwrap(), None);
-        assert!(m.speak("hi").await.unwrap().is_none());
+        assert_eq!(
+            m.transcribe(&file(), CancellationToken::new())
+                .await
+                .unwrap(),
+            None
+        );
+        assert!(m
+            .speak("hi", CancellationToken::new())
+            .await
+            .unwrap()
+            .is_none());
     }
 
     #[tokio::test]
     async fn transcribe_returns_the_text() {
         let m = media("text", FakeCaps(Some("hello there")));
         assert_eq!(
-            m.transcribe(&file()).await.unwrap().as_deref(),
+            m.transcribe(&file(), CancellationToken::new())
+                .await
+                .unwrap()
+                .as_deref(),
             Some("hello there")
         );
     }
