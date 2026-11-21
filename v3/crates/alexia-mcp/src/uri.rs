@@ -35,16 +35,16 @@ pub fn file_uri_path(uri: &str) -> Option<PathBuf> {
     Some(PathBuf::from(path))
 }
 
-/// A network share: two leading separators in any mix of `/` and `\`, or `\\?\UNC\`. Opening
-/// or stat'ing one makes Windows talk SMB to that host, so it must be refused before any
+/// A network share: two leading separators in any mix of `/` and `\` (this covers `\\?\UNC\`
+/// and `\\.\UNC\`), or the NT object prefix `\??\` with either separator. `\??\UNC\host\share`
+/// reaches SMB too, and `\??\C:\x` is a raw NT path, so every `\??\` is refused. Opening or
+/// stat'ing a share makes Windows talk SMB to that host, so it must be refused before any
 /// filesystem call.
 pub fn is_network_path(path: &str) -> bool {
     let sep = |c: u8| c == b'/' || c == b'\\';
     let b = path.as_bytes();
     (b.len() > 1 && sep(b[0]) && sep(b[1]))
-        || path
-            .get(..8)
-            .is_some_and(|p| p.eq_ignore_ascii_case(r"\\?\UNC\"))
+        || (b.len() > 3 && sep(b[0]) && b[1] == b'?' && b[2] == b'?' && sep(b[3]))
 }
 
 /// `%2E` → `.`; a broken escape is kept as written.

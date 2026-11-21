@@ -581,6 +581,10 @@ async fn input_unc_path_refused_before_fs() {
         "//127.0.0.1/x/y",
         r"\\192.0.2.1\x\y",
         r"\/192.0.2.1/x/y",
+        r"\??\UNC\192.0.2.1\x\y",
+        r"\??\unc\192.0.2.1\x\y",
+        "/??/UNC/192.0.2.1/x/y",
+        r"\??\C:\Windows",
     ] {
         let params = json!({"cap": "demo.compute", "inputs": [input("s", Path::new(path))]});
         let started = Instant::now();

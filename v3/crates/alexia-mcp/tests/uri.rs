@@ -78,4 +78,12 @@ fn unc_detected_all_separators() {
 fn unc_long_prefix_detected() {
     assert!(is_network_path(r"\\?\UNC\srv\x"));
     assert!(is_network_path(r"\\?\unc\srv\x"));
+    assert!(is_network_path(r"\??\UNC\srv\x"));
+    assert!(is_network_path(r"\??\unc\srv\x"));
+    assert!(is_network_path(r"\??\C:\Windows"));
+    assert!(is_network_path("/??/UNC/srv/x"));
+    assert!(is_network_path(r"\??/UNC/srv/x"));
+    assert!(is_network_path(r"/??\UNC\srv\x"));
+    assert!(!is_network_path(r"C:\??\x"));
+    assert!(!is_network_path(r"\?x"));
 }
