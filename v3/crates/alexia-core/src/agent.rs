@@ -945,6 +945,11 @@ impl Agent {
         &self.parts.host
     }
 
+    /// The parts the agent was built from. Read-only.
+    pub fn parts(&self) -> &AgentParts {
+        &self.parts
+    }
+
     /// Set once by the hub (P2-38); None until then. A second set is ignored.
     pub fn set_local_jobs(&self, jobs: Arc<local::LocalJobs>) {
         if self.local_jobs.set(jobs).is_err() {

@@ -348,6 +348,16 @@ fn body(content: &str) -> MessageBody {
 }
 
 #[tokio::test]
+async fn parts_exposes_what_agent_was_built_from() {
+    let mut s = Setup::new(Arc::new(|_, _| Vec::new()));
+    s.limits.max_steps = 7;
+    let w = world(s).await;
+    assert!(Arc::ptr_eq(&w.agent.parts().store, w.agent.store()));
+    assert_eq!(w.agent.parts().limits.max_steps, 7);
+    w.host.shutdown().await;
+}
+
+#[tokio::test]
 async fn agent_builds_without_running() {
     let w = world(Setup::new(Arc::new(|_, _| Vec::new()))).await;
     assert!(Arc::ptr_eq(w.agent.store(), &w.store));
