@@ -243,3 +243,81 @@ fn broken_skill_is_a_problem() {
     assert!(listed.contains("- good: Fine.") && listed.contains("- dup-a:"));
     assert!(!listed.contains("Again."));
 }
+
+/// A file symlink, or `false` (with a note) where this machine will not make one: Windows
+/// without developer mode.
+fn file_link(link: &Path, target: &Path) -> bool {
+    #[cfg(windows)]
+    let made = std::os::windows::fs::symlink_file(target, link);
+    #[cfg(unix)]
+    let made = std::os::unix::fs::symlink(target, link);
+    match made {
+        Ok(()) => true,
+        Err(e) => {
+            println!("skipping the symlink case: cannot create a link here ({e})");
+            false
+        }
+    }
+}
+
+async fn read_file(skills: &Skills, file: &str) -> alexia_core::ToolOutcome {
+    skills
+        .call(
+            "skill",
+            &args(json!({"name": "alpha", "file": file})),
+            &ctx(),
+        )
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn skill_read_refuses_when_canonicalize_fails() {
+    // A dangling link in the skill folder: its real place cannot be worked out.
+    let root = tmp("dangling");
+    let dir = skill(&root, "alpha", "name: alpha\ndescription: A.", "body");
+    let (skills, _) = Skills::load(std::slice::from_ref(&root));
+    if file_link(&dir.join("gone.txt"), &root.join("never-there.txt")) {
+        let r = read_file(&skills, "gone.txt").await;
+        assert!(!r.ok);
+        assert!(r.text.contains("outside alpha"), "{}", r.text);
+    }
+
+    // The skill folder removed after loading: nothing can be checked, so nothing is read.
+    let root = tmp("removed");
+    let dir = skill(&root, "alpha", "name: alpha\ndescription: A.", "body");
+    fs::write(dir.join("notes.md"), "NOTES").unwrap();
+    let (skills, _) = Skills::load(std::slice::from_ref(&root));
+    fs::remove_dir_all(&dir).unwrap();
+    for file in ["notes.md", "missing.md"] {
+        let r = read_file(&skills, file).await;
+        assert!(!r.ok, "{file}");
+        assert!(r.text.contains("outside alpha"), "{file}: {}", r.text);
+    }
+}
+
+#[tokio::test]
+async fn skill_read_reads_the_checked_path() {
+    let root = tmp("checked");
+    let dir = skill(&root, "alpha", "name: alpha\ndescription: A.", "body");
+    fs::create_dir_all(dir.join("sub")).unwrap();
+    fs::write(dir.join("sub").join("real.md"), "REAL").unwrap();
+    let (skills, _) = Skills::load(std::slice::from_ref(&root));
+    for file in ["sub/real.md", "./sub/./real.md"] {
+        let r = read_file(&skills, file).await;
+        assert!(r.ok, "{file}: {}", r.text);
+        assert_eq!(r.text, "REAL");
+    }
+    // A link inside the skill reads what it resolves to, the path that was checked.
+    if file_link(&dir.join("alias.md"), &dir.join("sub").join("real.md")) {
+        let r = read_file(&skills, "alias.md").await;
+        assert!(r.ok, "{}", r.text);
+        assert_eq!(r.text, "REAL");
+    }
+    // The skill's own SKILL.md, through the same checked read.
+    let r = skills
+        .call("skill", &args(json!({"name": "alpha"})), &ctx())
+        .await
+        .unwrap();
+    assert_eq!(r.text, "body");
+}
