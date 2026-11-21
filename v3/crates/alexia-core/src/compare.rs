@@ -40,7 +40,7 @@ async fn ask(
     router.record_request(&c.provider);
     let (tx, mut rx) = mpsc::channel(64);
     let started = Instant::now();
-    let chat = provider.chat(&req, &c.model, tx, cancel);
+    let chat = provider.chat(&req, &c.model, tx, cancel.clone());
     // The first chunk's time, as the race records it: the score reads it as time to first byte.
     let collect = async {
         let (mut text, mut first) = (String::new(), None);
@@ -62,7 +62,10 @@ async fn ask(
             Ok(text)
         }
         Err(e) => {
-            router.record_try(c, outcome(&e), Some(total));
+            // A cancel is the owner's, not the provider's: no try, as the race does.
+            if !matches!(e, ProviderError::Cancelled) && !cancel.is_cancelled() {
+                router.record_try(c, outcome(&e), Some(total));
+            }
             Err(e)
         }
     }

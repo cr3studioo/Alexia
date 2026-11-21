@@ -47,7 +47,7 @@ impl Provider for Fake {
         req: &ChatRequest,
         model: &str,
         out: mpsc::Sender<ChatChunk>,
-        _cancel: CancellationToken,
+        cancel: CancellationToken,
     ) -> Result<ChatDone, ProviderError> {
         let text: Vec<String> = req
             .messages
@@ -61,6 +61,11 @@ impl Provider for Fake {
             .lock()
             .unwrap()
             .push((model.into(), text.join("\n")));
+        // A "hang" model waits for the owner to cancel.
+        if model.contains("hang") {
+            cancel.cancelled().await;
+            return Err(ProviderError::Cancelled);
+        }
         match self.answers[model] {
             Some(a) => {
                 for word in a.split_inclusive(' ') {
@@ -388,4 +393,22 @@ async fn usage_recorded_for_both() {
             ("p2".into(), "mid-30b".into(), 3, 5)
         ]
     );
+}
+
+#[tokio::test]
+async fn cancel_records_no_try() {
+    let w = world(vec![
+        ("p1", vec![("hang-70b", Some("x"))]),
+        ("p2", vec![("hang-30b", Some("y"))]),
+    ])
+    .await;
+    let cancel = CancellationToken::new();
+    let c2 = cancel.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        c2.cancel();
+    });
+    let r = compare(&w.router, &request("q"), cancel).await;
+    assert!(matches!(r, Err(ProviderError::Cancelled)));
+    assert!(w.store.tries_since(0).unwrap().is_empty());
 }
