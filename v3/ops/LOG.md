@@ -349,3 +349,11 @@
 2026-11-21 Merged plan P2-51..58 (follow-ups). Dropped: scheduler Desktop origin (no Desktop turns yet). P2-54 adds alexia.db.keyed marker (encryption stays off per A-13)
 2026-11-21 Dispatched review-5 planner (opus) ctx_f1a7dd13a2a7; P2-51 (opus) ctx_32aa086e89a4, P2-53 (sonnet) ctx_933217f350f0 sharing CARGO_TARGET_DIR tgt-shared (disk 25 GB)
 2026-11-21 Merged plan P2-59..64 (review 5). INTERFACES 2.2/2.3/2.5/2.6 fixed in the plan commit. P2-20 now waits P2-59; P2-38 waits P2-50 (merged), P2-60, P2-62. Deleted main checkout v3/target/debug/incremental (21 GB; disk was 9.7 GB free)
+2026-11-21 P2-17 and P2-08 had been idle since 22:39 / 02:45, asking whether to rerun checks after a low-memory kill. Told both: rerun one at a time with JOBS=1, per-crate ok, then report
+2026-11-21 P2-17 built -> review (opus) ctx_4373fa3d6c7f. Concern: news diffs cache not seen table
+2026-11-21 gate.sh: CARGO_INCREMENTAL=0 (incremental dir had grown to 21 GB). Disk 13 GB free
+2026-11-21 P2-08 built -> review (opus)
+2026-11-21 P2-53 built -> review (opus, shared target)
+2026-11-21 P2-53 built -> review (opus, shared target)
+2026-11-21 P2-17 approved (minor: shared take_notes queue, known_secrets reads keychain per row sync, unknown pin dropped silently -> P2-59 notes). Merged, gating
+2026-11-21 Merged P2-17 (gate OK 63, pushed). P2-59 now ready. P2-08 approved
