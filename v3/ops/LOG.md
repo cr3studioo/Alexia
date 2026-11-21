@@ -465,3 +465,12 @@
 2026-11-21 P2-28 built -> review ctx_d1925af6c275 (concern: tools.rs tests failed once under load)
 2026-11-21 Dispatched P2-74 (opus) ctx_312e245d460a
 2026-11-21 P2-25 gate OK (70 suites), pushed
+2026-11-21 P2-27 approved (nits: is_helper fails open helpers.rs:45; U+2063 title mark). P2-62 approved (nit: compute_call no held check; telegram_e2e latency flaky under load). Merged both, gating
+2026-11-21 P2-68 built -> review ctx_4f630fe263f5
+2026-11-21 Dispatched P2-79 (opus) ctx_bebf7417e8d8, P2-80 (sonnet) ctx_db80cff90dbd
+2026-11-21 P2-28 approved (minor: double-undo race undo.rs:134; background:false hardcoded :125; audit 'ran' vs 'run'). Merge after current gate
+2026-11-21 P2-66 built -> review ctx_c3d774c66101 (workspace test not run)
+2026-11-21 P2-74 test killed for low memory; told retry JOBS=1
+2026-11-21 P2-21 fix done (Exif guard + 2 tests) -> review ctx_c36fc6a2f66a (concern: tools.rs unc_file_uris_are_not_written fails locally)
+2026-11-21 P2-68 approved (minor: JoinError caches empty keys 60s router.rs:709 - fails open, follow-up; compare.rs sync known_secrets). Merge after current gate
+2026-11-21 P2-27 + P2-62 gate OK (72 suites), pushed
