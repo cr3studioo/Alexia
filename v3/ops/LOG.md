@@ -484,3 +484,5 @@
 2026-11-21 P2-28 + P2-68 gate OK on rerun (73 suites --no-fail-fast, telegram_e2e alone 2/2, invariants), pushed
 2026-11-21 P2-79 fix done (regex had literal backspaces; USER/TMPDIR/LANG kept) -> review ctx_59afcd1ae578
 2026-11-21 P2-21 + P2-66 + P2-80 gate OK (74 suites), pushed
+2026-11-21 P2-79 approved (USER/TMPDIR/LANG kept; check: Windows env_clear drops USERNAME/SystemDrive/ProgramFiles - try real claude/codex on PC before enabling a subscription). Merged, gating
+2026-11-21 P2-79 gate OK (74 suites), pushed
