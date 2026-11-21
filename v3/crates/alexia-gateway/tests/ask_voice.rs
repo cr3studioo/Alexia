@@ -386,7 +386,7 @@ async fn approval_appears_in_the_turns_chat_and_yes_is_true() {
     assert_eq!(out.text, "yes", "the brain did not see the approval");
     assert_eq!(
         h.ch.asks(),
-        vec![("chat-a".to_string(), "Buy it?\n\n£12".to_string())]
+        vec![("chat-a".to_string(), "Buy it?\n\n£12 (#1)".to_string())]
     );
     h.stop().await;
 }
@@ -467,7 +467,10 @@ async fn scheduled_job_asks_in_the_primary_chat() {
     );
     assert_eq!(
         h.ch.asks(),
-        vec![("chat-p".to_string(), "Delete the old backups?".to_string())]
+        vec![(
+            "chat-p".to_string(),
+            "Delete the old backups? (#1)".to_string()
+        )]
     );
     h.stop().await;
 
@@ -591,8 +594,8 @@ async fn asker_before_gateway() {
             "7".to_string(),
             "Buy it?
 
-£12"
-            .to_string()
+£12 (#1)"
+                .to_string()
         )]
     );
     h.stop().await;
