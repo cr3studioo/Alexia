@@ -601,7 +601,10 @@ impl Router {
         };
         let (result, kinds) = self.race(req, queue, budget, out, cancel, attr).await;
         if !kinds.is_empty() {
-            self.note(&ask.run, format!("Removed {} before sending.", kinds.join(", ")));
+            self.note(
+                &ask.run,
+                format!("Removed {} before sending.", kinds.join(", ")),
+            );
         }
         result
     }

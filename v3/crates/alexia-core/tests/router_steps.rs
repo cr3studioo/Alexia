@@ -331,7 +331,10 @@ async fn step_redacts_once_and_keeps_note() {
     let seen = w.asked.lock().unwrap()[0].1.clone();
     assert_eq!(seen, "use [redacted] now");
     // The race reported what it removed, so the note names the kind once.
-    assert_eq!(w.router.take_notes(None), ["Removed api key before sending."]);
+    assert_eq!(
+        w.router.take_notes(None),
+        ["Removed api key before sending."]
+    );
 }
 
 fn local_provider(w: &World, models: Vec<ModelInfo>) -> Arc<Fake> {
@@ -539,13 +542,25 @@ async fn keys_read_once_per_minute() {
     std::env::set_var(&var, old);
     let w = world_as("keyed", in_ten_models(), 0.0).await;
     let text = format!("one {old} two {new}");
-    step(&w, &request(&text), &ask_for(Job::Step)).await.unwrap();
+    step(&w, &request(&text), &ask_for(Job::Step))
+        .await
+        .unwrap();
     std::env::set_var(&var, new);
-    step(&w, &request(&text), &ask_for(Job::Step)).await.unwrap();
+    step(&w, &request(&text), &ask_for(Job::Step))
+        .await
+        .unwrap();
     tokio::time::advance(std::time::Duration::from_secs(61)).await;
-    step(&w, &request(&text), &ask_for(Job::Step)).await.unwrap();
+    step(&w, &request(&text), &ask_for(Job::Step))
+        .await
+        .unwrap();
     std::env::remove_var(&var);
-    let seen: Vec<String> = w.asked.lock().unwrap().iter().map(|(_, t)| t.clone()).collect();
+    let seen: Vec<String> = w
+        .asked
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|(_, t)| t.clone())
+        .collect();
     assert_eq!(
         seen,
         [
