@@ -386,3 +386,4 @@
 2026-11-21 CEO #14 hands off (P2 41/64 merged)
 2026-11-21 CEO #15 launched (orca chat, ok)
 2026-11-21 CEO #15 started. 5 workers live. Cleaned 5263 old temp dirs (60 GB free). Dispatched follow-up planner 6 (opus, plan-fu6) ctx_bc106177ab6e
+2026-11-21 Merged plan P2-65..71 (follow-ups 6). Dropped: Approved-here edit (Telegram edits already), Event::Answered (P2-25 owns). P2-69 ready
