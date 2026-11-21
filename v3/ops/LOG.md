@@ -393,3 +393,6 @@
 2026-11-21 P2-36 built -> review ctx_c038d444dc61 (concern: compare does not bump provider request counter)
 2026-11-21 Merged P2-54 (gate OK 64, pushed). P2-65 ready
 2026-11-21 P2-61 built -> review ctx_b8d038353b2e (2 new tests also pass on old code). Dispatched P2-56 (opus) ctx_679da448128e
+2026-11-21 Disk 29 GB free: deleted tgt-shared (unused) + 212 temp dirs -> 48 GB
+2026-11-21 P2-61 review: changes (is_network_path misses \??\UNC prefix, NTLM leak via compute inputs). Fix round queued for next opus slot (fix-P2-61.txt)
+2026-11-21 P2-35 approved. Follow-ups: subscription.rs:422 read error ends loop then wait() ignores cancel/deadline (hang); stderr reader stops at 64 KiB but keeps pipe open; classify matches bare 401/429 substrings. Merged, gating
