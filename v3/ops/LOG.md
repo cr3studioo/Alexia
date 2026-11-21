@@ -482,3 +482,5 @@
 2026-11-21 P2-80 review: changes = unused SessionId import only; coordinator removed it (behaviour approved). Follow-ups: INTERFACES.md:1261 answer_dangling signature; shared dangling call names older run. Merge after gate (clippy checks the fix)
 2026-11-21 P2-79 review: changes (STATUS regex no word boundaries; status_markers_only fails; check USER in ENV_KEEP on macOS). Fix round (sonnet) ctx_d52e1e528da0
 2026-11-21 P2-28 + P2-68 gate OK on rerun (73 suites --no-fail-fast, telegram_e2e alone 2/2, invariants), pushed
+2026-11-21 P2-79 fix done (regex had literal backspaces; USER/TMPDIR/LANG kept) -> review ctx_59afcd1ae578
+2026-11-21 P2-21 + P2-66 + P2-80 gate OK (74 suites), pushed
