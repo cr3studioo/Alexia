@@ -105,9 +105,11 @@ struct Fx {
     host: McpHost,
     store: Arc<Store>,
     layout: Layout,
+    /// Last field: dropped after the host has killed its plugins.
+    _root: Scratch,
 }
 
-async fn start(root: &Path, enabled: &[&str], up: Arc<dyn Upcalls>) -> Fx {
+async fn start(root: Scratch, enabled: &[&str], up: Arc<dyn Upcalls>) -> Fx {
     std::env::set_var(secrets::MEMORY_BACKEND_ENV, "1");
     let store = Arc::new(Store::open_in_memory().unwrap());
     let sink: EventSink = Arc::new(|_| {});
@@ -124,6 +126,7 @@ async fn start(root: &Path, enabled: &[&str], up: Arc<dyn Upcalls>) -> Fx {
         host,
         store,
         layout: Layout::new(root.join("data")),
+        _root: root,
     }
 }
 
@@ -149,7 +152,7 @@ async fn compute_fx(tag: &str) -> Fx {
     );
     plugin(&ext, "asker", "greet", requires("demo.compute"));
     plugin(&ext, "stranger", "greet", json!({}));
-    start(&root, &["worker", "asker", "stranger"], Arc::new(NoUpcalls)).await
+    start(root, &["worker", "asker", "stranger"], Arc::new(NoUpcalls)).await
 }
 
 fn input(name: &str, path: &Path) -> Value {
@@ -214,7 +217,7 @@ async fn compute_undeclared_refused() {
         "greet",
         requires("demo.compute"),
     );
-    let lone = start(&root, &["lonely"], Arc::new(NoUpcalls)).await;
+    let lone = start(root, &["lonely"], Arc::new(NoUpcalls)).await;
     let e = serve(
         &lone,
         "lonely",
@@ -232,7 +235,8 @@ async fn input_outside_refused() {
     let fx = compute_fx("outside").await;
     let own = fx.layout.own_dir("asker");
     std::fs::create_dir_all(&own).unwrap();
-    let elsewhere = root("outside-file").join("secret.txt");
+    let outside = root("outside-file");
+    let elsewhere = outside.join("secret.txt");
     std::fs::write(&elsewhere, "no").unwrap();
     let run = |path: PathBuf| {
         let params = json!({"cap": "demo.compute", "inputs": [input("s", &path)]});
@@ -266,7 +270,7 @@ async fn input_outside_refused() {
 async fn host_call_used_when_no_plugin() {
     let dir = root("hostcall");
     plugin(&dir.join("ext"), "asker", "greet", requires("demo.core"));
-    let fx = start(&dir, &["asker"], Arc::new(Core)).await;
+    let fx = start(dir, &["asker"], Arc::new(Core)).await;
     let out = serve(
         &fx,
         "asker",
@@ -284,7 +288,7 @@ async fn host_call_used_when_no_plugin() {
         "greet",
         requires("demo.nothing"),
     );
-    let bare = start(&dir2, &["asker"], Arc::new(NoUpcalls)).await;
+    let bare = start(dir2, &["asker"], Arc::new(NoUpcalls)).await;
     let e = serve(
         &bare,
         "asker",
@@ -308,7 +312,7 @@ async fn plugin_wins_over_host() {
         json!({"provides": ["demo.greet"]}),
     );
     plugin(&ext, "asker", "greet", requires("demo.greet"));
-    let fx = start(&root, &["greeter", "asker"], Arc::new(Core)).await;
+    let fx = start(root, &["greeter", "asker"], Arc::new(Core)).await;
     let params = json!({"cap": "demo.greet", "arguments": {"who": "Sam"}});
     let out = serve(&fx, "asker", "alexia/capability/call", params)
         .await
@@ -321,7 +325,7 @@ async fn plugin_wins_over_host() {
 async fn answers_counts_host_caps() {
     let root = root("answers");
     plugin(&root.join("ext"), "asker", "greet", json!({}));
-    let fx = start(&root, &["asker"], Arc::new(Core)).await;
+    let fx = start(root, &["asker"], Arc::new(Core)).await;
     assert!(fx.host.answers("demo.core").answers);
     assert!(!fx.host.answers("demo.nothing").answers);
     let out = serve(&fx, "asker", "alexia/answers", json!({"cap": "demo.core"}))
@@ -336,7 +340,7 @@ async fn unreadable_reviewed_list_fails_closed() {
     let ext = root.join("ext");
     plugin(&ext, "a", "greet", json!({}));
     plugin(&ext, "b", "greet", json!({}));
-    let fx = start(&root, &["a", "b"], Arc::new(NoUpcalls)).await;
+    let fx = start(root, &["a", "b"], Arc::new(NoUpcalls)).await;
     // Nothing recorded: everyone is reviewed.
     let tools = fx.host.tools().await;
     assert!(!tools.is_empty() && tools.iter().all(|t| t.reviewed));
@@ -416,7 +420,7 @@ async fn node_worker_fx(tag: &str) -> Fx {
     );
     std::fs::write(ext.join("worker").join("worker.js"), WORKER_JS).unwrap();
     plugin(&ext, "asker", "greet", requires("demo.compute"));
-    start(&root, &["worker", "asker"], Arc::new(NoUpcalls)).await
+    start(root, &["worker", "asker"], Arc::new(NoUpcalls)).await
 }
 
 fn compute_params(mode: &str, inputs: Vec<Value>) -> Value {
