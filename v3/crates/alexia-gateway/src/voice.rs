@@ -4,6 +4,8 @@
 use alexia_core::OutFile;
 use alexia_store::{Content, Part, Store};
 
+use tokio_util::sync::CancellationToken;
+
 use crate::{Inbound, Media};
 
 const DEAF: &str =
@@ -30,9 +32,13 @@ fn append(content: &mut Content, text: &str) {
 
 /// Turns voice notes in `inbound.files` into text appended to `content`, as if typed. The audio
 /// files stay in `files` so `wants_voice` can see them.
-pub(crate) async fn hear(media: &dyn Media, mut inbound: Inbound) -> Inbound {
+pub(crate) async fn hear(
+    media: &dyn Media,
+    mut inbound: Inbound,
+    cancel: &CancellationToken,
+) -> Inbound {
     for file in inbound.files.iter().filter(|f| is_audio(&f.mime)) {
-        let text = match media.transcribe(file).await {
+        let text = match media.transcribe(file, cancel.child_token()).await {
             Ok(Some(t)) => t,
             Ok(None) => DEAF.to_string(),
             Err(e) => {
@@ -66,11 +72,15 @@ pub(crate) fn wants_voice(store: &Store, inbound: &Inbound) -> bool {
 }
 
 /// The reply as an `audio/ogg` voice note, or `None` (then text is sent).
-pub(crate) async fn speak(media: &dyn Media, text: &str) -> Option<OutFile> {
+pub(crate) async fn speak(
+    media: &dyn Media,
+    text: &str,
+    cancel: &CancellationToken,
+) -> Option<OutFile> {
     if text.chars().count() > SPEAK_MAX_CHARS {
         return None;
     }
-    match media.speak(text).await {
+    match media.speak(text, cancel.child_token()).await {
         Ok(Some(f)) if f.mime == "audio/ogg" => Some(f),
         Ok(Some(f)) => {
             tracing::warn!(mime = %f.mime, "voice: speech is not audio/ogg; sending text");

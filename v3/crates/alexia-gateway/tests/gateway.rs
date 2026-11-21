@@ -164,10 +164,10 @@ struct FakeMedia;
 
 #[async_trait::async_trait]
 impl Media for FakeMedia {
-    async fn transcribe(&self, _file: &InFile) -> Result<Option<String>> {
+    async fn transcribe(&self, _file: &InFile, _: CancellationToken) -> Result<Option<String>> {
         Ok(None)
     }
-    async fn speak(&self, _text: &str) -> Result<Option<OutFile>> {
+    async fn speak(&self, _text: &str, _: CancellationToken) -> Result<Option<OutFile>> {
         Ok(None)
     }
 }

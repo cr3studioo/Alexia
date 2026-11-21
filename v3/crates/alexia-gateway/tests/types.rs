@@ -71,10 +71,10 @@ struct FakeMedia;
 
 #[async_trait::async_trait]
 impl Media for FakeMedia {
-    async fn transcribe(&self, _file: &InFile) -> Result<Option<String>> {
+    async fn transcribe(&self, _file: &InFile, _: CancellationToken) -> Result<Option<String>> {
         Ok(Some("hello".into()))
     }
-    async fn speak(&self, _text: &str) -> Result<Option<OutFile>> {
+    async fn speak(&self, _text: &str, _: CancellationToken) -> Result<Option<OutFile>> {
         Ok(None)
     }
 }
@@ -135,10 +135,18 @@ async fn media_is_object_safe() {
         path: PathBuf::from("note.ogg"),
     };
     assert_eq!(
-        media.transcribe(&file).await.unwrap().as_deref(),
+        media
+            .transcribe(&file, CancellationToken::new())
+            .await
+            .unwrap()
+            .as_deref(),
         Some("hello")
     );
-    assert!(media.speak("hello").await.unwrap().is_none());
+    assert!(media
+        .speak("hello", CancellationToken::new())
+        .await
+        .unwrap()
+        .is_none());
 }
 
 #[test]

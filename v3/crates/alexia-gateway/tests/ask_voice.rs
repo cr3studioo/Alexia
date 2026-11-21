@@ -111,6 +111,10 @@ impl Channel for FakeChannel {
 struct FakeMedia {
     heard: Option<&'static str>,
     spoke: Mutex<Vec<String>>,
+    /// Transcription waits for its token instead of answering.
+    slow: bool,
+    started: std::sync::atomic::AtomicBool,
+    cancelled: std::sync::atomic::AtomicBool,
 }
 
 fn ogg() -> OutFile {
@@ -123,10 +127,30 @@ fn ogg() -> OutFile {
 
 #[async_trait::async_trait]
 impl Media for FakeMedia {
-    async fn transcribe(&self, _file: &InFile) -> Result<Option<String>> {
+    async fn transcribe(
+        &self,
+        _file: &InFile,
+        cancel: CancellationToken,
+    ) -> Result<Option<String>> {
+        use std::sync::atomic::Ordering::SeqCst;
+        if self.slow {
+            self.started.store(true, SeqCst);
+            // The gateway may drop this future the moment Stop lands; the guard still sees it.
+            struct Seen<'a>(&'a std::sync::atomic::AtomicBool, &'a CancellationToken);
+            impl Drop for Seen<'_> {
+                fn drop(&mut self) {
+                    if self.1.is_cancelled() {
+                        self.0.store(true, SeqCst);
+                    }
+                }
+            }
+            let _seen = Seen(&self.cancelled, &cancel);
+            cancel.cancelled().await;
+            return Err(Error::Cancelled);
+        }
         Ok(self.heard.map(str::to_string))
     }
-    async fn speak(&self, text: &str) -> Result<Option<OutFile>> {
+    async fn speak(&self, text: &str, _: CancellationToken) -> Result<Option<OutFile>> {
         self.spoke.lock().unwrap().push(text.to_string());
         Ok(Some(ogg()))
     }
@@ -198,6 +222,7 @@ struct Setup {
     voice_replies: Option<&'static str>,
     /// A primary chat on the "fake" channel, set before the gateway starts.
     primary: Option<&'static str>,
+    slow_media: bool,
 }
 
 impl Default for Setup {
@@ -209,6 +234,7 @@ impl Default for Setup {
             heard: Some("hello"),
             voice_replies: None,
             primary: None,
+            slow_media: false,
         }
     }
 }
@@ -234,6 +260,9 @@ fn start(s: Setup) -> H {
     let media = Arc::new(FakeMedia {
         heard: s.heard,
         spoke: Mutex::new(Vec::new()),
+        slow: s.slow_media,
+        started: Default::default(),
+        cancelled: Default::default(),
     });
     let brain = Arc::new(FakeBrain {
         asker: OnceLock::new(),
@@ -565,6 +594,36 @@ async fn asker_before_gateway() {
 £12"
             .to_string()
         )]
+    );
+    h.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn cancel_ends_a_slow_transcription() {
+    use std::sync::atomic::Ordering::SeqCst;
+    let h = start(Setup {
+        slow_media: true,
+        ..Setup::default()
+    });
+    h.push(voice_note("v"));
+    let end = Instant::now() + Duration::from_secs(30);
+    while !h.media.started.load(SeqCst) {
+        assert!(Instant::now() < end, "transcription never started");
+        sleep(Duration::from_millis(5)).await;
+    }
+    h.push(Inbound {
+        kind: InKind::Stop,
+        ..msg("v", "")
+    });
+    while !h.media.cancelled.load(SeqCst) {
+        assert!(Instant::now() < end, "Stop did not reach the transcription");
+        sleep(Duration::from_millis(5)).await;
+    }
+    sleep(Duration::from_millis(200)).await;
+    assert!(
+        h.turn_texts().is_empty(),
+        "a turn reached the brain: {:?}",
+        h.turn_texts()
     );
     h.stop().await;
 }
