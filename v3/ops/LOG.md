@@ -447,3 +447,12 @@
 2026-11-21 P2-27 built -> review ctx_9e1b0362d64c (helper tool list unfiltered; depth enforced at call time)
 2026-11-21 Dispatched P2-66 (sonnet) ctx_acb5dec59923
 2026-11-21 Merged plan-fu7: P2-73..82 (10 tasks; P2-70, P2-38 amended; P2-38 now needs P2-73, P2-74). P2-74, P2-79, P2-80 ready
+2026-11-21 P2-62 review: changes (hold test flaky 1/18 under load). Fix round (opus) ctx_5bb612ef6649
+2026-11-21 P2-21 built -> review ctx_12eab0e24acc (concern: tools.rs unc_file_uris_are_not_written fails on this PC)
+2026-11-21 P2-28 killed by low RAM; told rerun JOBS=1 with retries
+2026-11-21 P2-25 review: changes (slash-space parse panics on UTF-8; /status Debug mode). Fix (sonnet) ctx_89e3f7e88128
+2026-11-21 P2-27 review: changes (depth from memory not store; id collisions after restart; cleanup gaps; deletes user 'Helper:' sessions). Fix queued (RAM)
+2026-11-21 P2-68 killed by low RAM; told rerun JOBS=1
+2026-11-21 Disk hit 0 MB (P2-25 fix blocked, P2-21 reviewer could not link). Removed merged worktrees P2-20/26/65, phase-rv6, 123 temp dirs: 41 GB free
+2026-11-21 P2-21 review: no bugs found (verdict message lost to disk-full; notes: Job::Chat for plain sampling, chat:<plugin> key per v2, plugin task origin = primary chat). Workspace test left to gate. Merged locally, gating
+2026-11-21 P2-21 real verdict arrived: changes (Exif slice panic upcalls.rs:1539). Local merge undone (reset --keep, never pushed). Fix queued
