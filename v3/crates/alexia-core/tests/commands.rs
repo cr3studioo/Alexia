@@ -509,3 +509,34 @@ async fn compare_keeps_the_side_that_answered() {
     assert_eq!(desk(&w, "/compare again").await, "Kept neither answer.");
     w.host.shutdown().await;
 }
+
+#[tokio::test]
+async fn odd_spacing_and_multibyte_do_not_panic() {
+    let w = world(&[], vec![], true).await;
+    // A slash, a space, then a multibyte word: used to slice inside a character.
+    let said = desk(&w, "/ ž").await;
+    assert!(said.contains("There is no /ž"), "{said}");
+    let said = desk(&w, "/žluťoučký kůň").await;
+    assert!(said.contains("There is no /žluťoučký"), "{said}");
+    let said = desk(&w, "//   ž  x").await;
+    assert!(said.contains("There is no /ž"), "{said}");
+    // A slash, a space, then a command: the word is `approve`, the rest is `<id>`.
+    let id = open_approval(&w);
+    let said = desk(&w, &format!("/ approve {id}")).await;
+    assert!(said.contains("Approved"), "{said}");
+    assert_eq!(w.store.approval(id).unwrap().unwrap().answer, Some(true));
+    // Only a slash is an unknown empty word, not a crash.
+    assert!(desk(&w, "/").await.contains("There is no /"));
+    w.host.shutdown().await;
+}
+
+#[tokio::test]
+async fn status_names_the_mode_in_words() {
+    let w = world(&[], vec![], true).await;
+    let said = desk(&w, "/status").await;
+    for debug in ["AskEveryTime", "AskRisky", "WatchAndWarn", "FullTrust"] {
+        assert!(!said.contains(debug), "{said}");
+    }
+    assert!(said.contains(" · "), "{said}");
+    w.host.shutdown().await;
+}

@@ -17,8 +17,8 @@ use tokio_util::sync::CancellationToken;
 use crate::agent::Agent;
 use crate::bus::Event;
 use crate::{
-    compare, permissions, tools, trace, undo, BrainError, ChatRequest, Lane, Origin, ProviderError,
-    Question, Reply, RunId, Span, ToolCtx, Turn,
+    compare, permissions, tools, trace, undo, BrainError, ChatRequest, Lane, Origin,
+    PermissionMode, ProviderError, Question, Reply, RunId, Span, ToolCtx, Turn,
 };
 
 pub struct CommandInfo {
@@ -182,9 +182,10 @@ async fn answer(
     cancel: &CancellationToken,
 ) -> Result<(String, Option<String>), BrainError> {
     let said = turn.content.text();
-    let typed = said.trim().trim_start_matches('/');
-    let word = typed.split_whitespace().next().unwrap_or("");
-    let rest = typed[word.len()..].trim();
+    let typed = said.trim().trim_start_matches('/').trim_start();
+    let (word, rest) = typed
+        .split_once(char::is_whitespace)
+        .map_or((typed, ""), |(w, r)| (w, r.trim()));
     let p = agent.parts();
 
     let text = match word {
@@ -262,7 +263,12 @@ async fn new_chat(agent: &Agent, turn: &Turn) -> Result<String, BrainError> {
 fn status(agent: &Agent) -> Result<String, BrainError> {
     let p = agent.parts();
     let scope = permissions::scope(&p.store, &p.layout.root);
-    let mode = format!("{:?}", scope.mode);
+    let mode = match scope.mode {
+        PermissionMode::AskEveryTime => "ask every time",
+        PermissionMode::AskRisky => "ask when risky",
+        PermissionMode::WatchAndWarn => "watch and warn",
+        PermissionMode::FullTrust => "full trust",
+    };
     let plugins = agent
         .host()
         .plugins()
