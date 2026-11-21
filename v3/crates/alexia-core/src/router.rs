@@ -135,10 +135,10 @@ pub struct StepAsk {
 
 /// Who a race's usage row is for.
 #[derive(Default)]
-struct Attribution {
-    plugin: Option<String>,
-    run: Option<RunId>,
-    session: Option<SessionId>,
+pub(crate) struct Attribution {
+    pub(crate) plugin: Option<String>,
+    pub(crate) run: Option<RunId>,
+    pub(crate) session: Option<SessionId>,
 }
 
 /// How a job orders the free list (v2 `shapeOf`, free half).
@@ -464,28 +464,7 @@ impl Router {
 
         match result {
             Ok(mut done) => {
-                if done.cost > 0.0 {
-                    // MO-12: it charged. The agent turns the row into a warning line.
-                    self.record_try(&candidate, "charged", Some(first_ms));
-                    self.set_aside(&candidate, now);
-                } else {
-                    self.record_try(&candidate, "ok", Some(first_ms));
-                }
-                if let Err(e) = self.store.record_usage(&Usage {
-                    at: now_ms(),
-                    session: attr.session,
-                    plugin: attr.plugin,
-                    model: done.model.clone(),
-                    asked: None,
-                    provider: done.provider.clone(),
-                    tokens_in: done.tokens_in,
-                    tokens_out: done.tokens_out,
-                    cost: done.cost,
-                    run_id: attr.run.map(|r| r.0),
-                    writing_ms: Some(i64::from(total_ms.saturating_sub(first_ms))),
-                }) {
-                    tracing::warn!("the router could not record usage: {e}");
-                }
+                self.record_answer(&candidate, &done, first_ms, total_ms, now, &attr);
                 done.first_byte_ms = Some(first_ms);
                 Ok(done)
             }
@@ -667,11 +646,11 @@ impl Router {
             .push(text);
     }
 
-    fn provider(&self, id: &str) -> Option<Arc<dyn Provider>> {
+    pub(crate) fn provider(&self, id: &str) -> Option<Arc<dyn Provider>> {
         read(&self.providers).get(id).cloned()
     }
 
-    fn is_local(&self, id: &str) -> bool {
+    pub(crate) fn is_local(&self, id: &str) -> bool {
         read(&self.local).contains(id)
     }
 
@@ -682,7 +661,7 @@ impl Router {
     }
 
     /// Keys in the keychain, so they are never sent in a message (P2-14).
-    fn known_secrets(&self) -> Vec<String> {
+    pub(crate) fn known_secrets(&self) -> Vec<String> {
         self.catalog
             .rows()
             .iter()
@@ -714,7 +693,48 @@ impl Router {
         }
     }
 
-    fn record_try(&self, c: &Candidate, outcome: &str, waited_ms: Option<u32>) {
+    /// Count one request toward the provider's rpm/rpd.
+    pub(crate) fn record_request(&self, provider: &str) {
+        if let Err(e) = self.store.record_request(provider, now_ms()) {
+            tracing::warn!("the router could not count a request: {e}");
+        }
+    }
+
+    /// A finished answer: the try (MO-12: a charged one is set aside) and its usage row.
+    pub(crate) fn record_answer(
+        &self,
+        c: &Candidate,
+        done: &ChatDone,
+        first_ms: u32,
+        total_ms: u32,
+        now: Ms,
+        attr: &Attribution,
+    ) {
+        if done.cost > 0.0 {
+            // MO-12: it charged. The agent turns the row into a warning line.
+            self.record_try(c, "charged", Some(first_ms));
+            self.set_aside(c, now);
+        } else {
+            self.record_try(c, "ok", Some(first_ms));
+        }
+        if let Err(e) = self.store.record_usage(&Usage {
+            at: now_ms(),
+            session: attr.session,
+            plugin: attr.plugin.clone(),
+            model: done.model.clone(),
+            asked: None,
+            provider: done.provider.clone(),
+            tokens_in: done.tokens_in,
+            tokens_out: done.tokens_out,
+            cost: done.cost,
+            run_id: attr.run.as_ref().map(|r| r.0.clone()),
+            writing_ms: Some(i64::from(total_ms.saturating_sub(first_ms))),
+        }) {
+            tracing::warn!("the router could not record usage: {e}");
+        }
+    }
+
+    pub(crate) fn record_try(&self, c: &Candidate, outcome: &str, waited_ms: Option<u32>) {
         let t = Try {
             at: now_ms(),
             provider: c.provider.clone(),
@@ -750,9 +770,7 @@ impl Race<'_> {
         let Some(provider) = router.provider(&candidate.provider) else {
             return;
         };
-        if let Err(e) = router.store.record_request(&candidate.provider, now_ms()) {
-            tracing::warn!("the router could not count a request: {e}");
-        }
+        router.record_request(&candidate.provider);
 
         let token = self.cancel.child_token();
         let (tx, mut rx) = mpsc::channel(64);
@@ -848,7 +866,7 @@ impl Score {
 }
 
 /// v2's outcome strings for a failed try.
-fn outcome(e: &ProviderError) -> &'static str {
+pub(crate) fn outcome(e: &ProviderError) -> &'static str {
     match e {
         ProviderError::Busy { .. } => "busy",
         ProviderError::NeedsKey | ProviderError::Refused(_) => "refused",
