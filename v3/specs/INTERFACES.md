@@ -100,7 +100,7 @@ members = ["crates/*"]
 [workspace.package]
 version = "3.0.0"
 edition = "2021"
-rust-version = "1.85"
+rust-version = "1.87"     # (P2-52) wasmtime 34 needs it
 license = "AGPL-3.0-only"
 publish = false
 
@@ -112,7 +112,7 @@ serde_json = "1"
 thiserror = "2"
 async-trait = "0.1"
 tracing = "0.1"
-rusqlite = { version = "0.37", features = ["bundled"] }
+rusqlite = { version = "0.37", features = ["bundled-sqlcipher-vendored-openssl"] }   # (P2-37) TR-09: SQLCipher
 keyring = "4.2"          # same family as connect/
 # (V3-1) `multipart`: voice notes and files go to the Bot API as multipart/form-data.
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream", "multipart"] }
@@ -126,6 +126,12 @@ chrono = { version = "0.4", default-features = false, features = ["clock"] }  # 
 [workspace.lints.rust]
 unsafe_code = "deny"     # alexia-mcp's Job Object code opts out with a module-level allow (the only one, P2-64)
 ```
+
+Crate-level dependencies that are not in the workspace table (refreshed by the review-6 planner
+from each `Cargo.toml`): `alexia-mcp` has `wasmtime` and `wasmtime-wasi` 34.0.2 (`cranelift`,
+`async`; `preview1`, P2-24) and `windows-sys` 0.61 (Job Objects, P0-10); `alexia-store` has
+`getrandom` 0.2 (the database key, P2-37); `alexia-hub` has `rpassword` 7 (`secret set` without
+echo, P2-10) and `tracing-subscriber` 0.3 (`fmt`, `std`).
 
 Versions are the floor the first task builds with; the first task records what `cargo` actually
 resolved in `Cargo.lock`, which is committed. A new external dependency needs a line in the task
@@ -1357,9 +1363,13 @@ pub mod subscription {   // P2-35, MO-05: only through the vendor's own signed-i
     impl Provider for SubscriptionCli { /* ... */ }
 }
 pub mod compare {   // P2-36, MO-10
-    pub struct Compared { pub a: (String /* model */, String /* text */), pub b: (String, String) }
-    /// Two different providers, run fully in parallel (not a hedge: both finish).
-    pub async fn compare(router: &Router, req: &ChatRequest, cancel: CancellationToken) -> Result<Compared, ProviderError>;
+    pub struct Compared { pub a: (String /* model */, String /* text */), pub b: (String, String),
+                          pub a_failed: bool, pub b_failed: bool,
+                          /// (review 6, P2-77) "Removed … before sending." lines, as the race words them.
+                          pub notes: Vec<String> }
+    /// Two different providers, run fully in parallel (not a hedge: both finish). Stops on
+    /// `cancel` even if a provider does not; usage rows carry `session` (P2-77).
+    pub async fn compare(router: &Router, req: &ChatRequest, session: Option<SessionId>, cancel: CancellationToken) -> Result<Compared, ProviderError>;
     /// The reply text with both answers and the question "Keep A or B?"
     pub fn present(c: &Compared) -> String;
 }
@@ -1580,8 +1590,9 @@ alexia-hub encrypt                         (V3-2) TR-09 (refuses while the hub r
 1. `Store::open(layout.db())` → `Bus::new(1024)`.
 2. `host = McpHost::new(cfg, store, Arc::new(NoUpcalls), sink)`, `sink` publishing `Event::Plugin`.
    Not started yet: a plugin spawned now would get `NoUpcalls`' offers in its `initialize`.
-3. Providers → `Catalog` → `Router` → `ChannelSet` → `asker = Asker::new(channels.clone(), store, bus)`
-   → `checker = Checker::new(None)`.
+3. Providers → `Catalog` → `Router` → for each `SubscriptionCli::find(cli)` whose `check()` passes,
+   `router.set_provider(Arc::new(cli), false)` (review 6 #10, MO-05) → `ChannelSet` →
+   `asker = Asker::new(channels.clone(), store, bus)` → `checker = Checker::new(None)`.
 4. `tooling = Arc::new(McpTooling::new(host.clone(), vec![]))`. (Review 5 #2: the scheduler's
    builtins cannot go here; `Scheduler::new` needs the Agent, which does not exist yet.)
 5. `agent = Agent::new(AgentParts { tools: tooling.clone(), host: host.clone(), ask: asker, checker, .. })`.
@@ -1966,8 +1977,9 @@ pub enum Event {
     Acked { at: Ms, origin: Origin, ms: u32 },
     /// A reply was delivered. `spans` feed the latency dashboard.
     Delivered { at: Ms, origin: Origin, session: SessionId, lane: Lane, spans: Vec<Span> },
-    /// Something to tell the owner unprompted. The gateway delivers it to the primary chat.
-    Say { at: Ms, text: String, urgency: Urgency, job: Option<JobId> },
+    /// Something to tell the owner unprompted. (review 6, P2-81) To `to`'s channel and chat when
+    /// it names a configured channel; otherwise each channel's primary chat. `files` go with it.
+    Say { at: Ms, text: String, urgency: Urgency, job: Option<JobId>, to: Option<Origin>, files: Vec<OutFile> },
 
     // ---- core ----
     RunStarted { at: Ms, run: RunId, session: SessionId, origin: Origin },
