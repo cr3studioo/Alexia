@@ -765,3 +765,55 @@ fn env_var_path_meets_scope() {
     assert!(paths_in(&args(json!({ "p": "$ALEXIA_SURELY_UNSET_VAR/x" }))).is_empty());
     assert!(paths_in(&args(json!({ "p": "%ALEXIA_SURELY_UNSET_VAR%/x" }))).is_empty());
 }
+
+/// Every URI must land on the key file and be blocked as never-touch.
+fn assert_uris_meet_never_touch(uris: &[String]) {
+    let keys = home().join(".ssh").join("id_rsa");
+    let r = ann(true, false);
+    for uri in uris {
+        let found = paths_in(&args(json!({ "path": uri })));
+        assert_eq!(found.len(), 1, "{uri}: {found:?}");
+        assert!(within(&keys, &found[0]), "{uri} → {found:?}");
+        let ruling = rule(&ask("files__read", Some(&r), found), &dont_delete());
+        assert!(
+            why(&ruling).contains("never-touch list"),
+            "{uri}: {ruling:?}"
+        );
+    }
+}
+
+#[test]
+fn upper_case_file_uri_meets_never_touch() {
+    let rest = &uri_of(&home())["file:".len()..];
+    assert_uris_meet_never_touch(&[
+        format!("FILE:{rest}/.ssh/id_rsa"),
+        format!("File:{rest}/.ssh/id_rsa"),
+        format!("FILE://LOCALHOST{}/.ssh/id_rsa", &rest["//".len()..]),
+    ]);
+    // Another host stays another host, whatever the case.
+    assert!(paths_in(&args(json!({ "u": "FILE://server/share/x" }))).is_empty());
+}
+
+#[test]
+fn one_slash_file_uri_meets_never_touch() {
+    // `file:///C:/x` → `file:/C:/x`; `file:///home/x` → `file:/home/x` (RFC 8089).
+    let rest = &uri_of(&home())["file://".len()..];
+    assert_uris_meet_never_touch(&[
+        format!("file:{rest}/.ssh/id_rsa"),
+        format!("FILE:{rest}/%2Essh/id_rsa"),
+    ]);
+}
+
+#[test]
+fn unclosed_var_absolute_path_still_checked() {
+    let r = ann(true, false);
+    // `C:\Users\x\.ssh\${oops`: the `${` is never closed.
+    let written = home().join(".ssh").join("${oops").display().to_string();
+    let found = paths_in(&args(json!({ "path": written })));
+    assert_eq!(found.len(), 1, "{written}: {found:?}");
+    let ruling = rule(&ask("files__read", Some(&r), found), &dont_delete());
+    assert!(why(&ruling).contains("never-touch list"), "{ruling:?}");
+    // Unclosed at the start: kept as written, so still not absolute and not a path.
+    assert!(paths_in(&args(json!({ "p": "${oops/x" }))).is_empty());
+    assert!(paths_in(&args(json!({ "p": "%oops/x" }))).is_empty());
+}

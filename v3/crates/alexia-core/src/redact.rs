@@ -48,6 +48,10 @@ fn rule(kind: &'static str, pattern: &str, keep: Keep) -> Rule {
     }
 }
 
+/// The words that make a name a secret's name: the "env assignment" row, and `SECRET_KEY` for
+/// the same reading of a parsed JSON key, are both built from this one list.
+const SECRET_WORDS: &str = "api[_-]?key|secret|token|password|passwd|bearer|credential";
+
 /// v2 `SECRETS`: credential shapes.
 static SECRETS: LazyLock<Vec<Rule>> = LazyLock::new(|| {
     vec![
@@ -86,7 +90,9 @@ static SECRETS: LazyLock<Vec<Rule>> = LazyLock::new(|| {
         // sit in the middle (AWS_SECRET_ACCESS_KEY=...). Over-matching is the safe direction.
         rule(
             "env assignment",
-            r#"(?i)[A-Za-z0-9_.-]*(?:api[_-]?key|secret|token|password|passwd|bearer|credential)[A-Za-z0-9_.-]*\s*[:=]\s*["']?[A-Za-z0-9_\-./+]{12,}"#,
+            &format!(
+                r#"(?i)[A-Za-z0-9_.-]*(?:{SECRET_WORDS})[A-Za-z0-9_.-]*\s*[:=]\s*["']?[A-Za-z0-9_\-./+]{{12,}}"#
+            ),
             Keep::Nothing,
         ),
         // A URL carrying credentials: scheme://user:password@host. (TR-04; not a v2 row.)
@@ -215,6 +221,11 @@ static LOCATION_KEY: LazyLock<Regex> = LazyLock::new(|| {
         .expect("location key pattern")
 });
 
+/// The parsed-JSON reading of the "env assignment" row, as `LOCATION_KEY` is of "location
+/// field": a key naming a secret anywhere in it. v2 matched `"password":"…"` in raw text.
+static SECRET_KEY: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(&format!("(?i)(?:{SECRET_WORDS})")).expect("secret key pattern"));
+
 /// A number pair that the "gps" rule would match as `a,b` text, as v2 saw it in the raw JSON.
 fn is_coord_pair(a: &Value, b: &Value) -> bool {
     static GPS: LazyLock<&'static Rule> = LazyLock::new(|| {
@@ -265,6 +276,12 @@ fn walk(v: &Value, known: &[String], kinds: &mut Vec<String>) -> Value {
                         kinds.push("location field".to_string());
                         (k.clone(), Value::String(PLACEHOLDER.to_string()))
                     }
+                    // Same length floor as the row: shorter strings, numbers and booleans are
+                    // walked as usual, and so are arrays and objects under such a key.
+                    Value::String(s) if s.chars().count() >= 12 && SECRET_KEY.is_match(k) => {
+                        kinds.push("secret field".to_string());
+                        (k.clone(), Value::String(PLACEHOLDER.to_string()))
+                    }
                     _ => (k.clone(), walk(x, known, kinds)),
                 })
                 .collect(),
@@ -273,7 +290,8 @@ fn walk(v: &Value, known: &[String], kinds: &mut Vec<String>) -> Value {
     }
 }
 
-/// Every string leaf through `redact_text`; location-keyed values and coordinate pairs whole.
+/// Every string leaf through `redact_text`; location-keyed values, a secret-named key's string
+/// value of 12 or more characters, and coordinate pairs whole.
 pub fn redact_json(v: &Value) -> Value {
     walk(v, &[], &mut Vec::new())
 }

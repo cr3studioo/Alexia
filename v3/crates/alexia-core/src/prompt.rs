@@ -206,13 +206,16 @@ impl Skills {
                 skill.dir.join(rel)
             }
         };
-        // Symlinks can still lead out; compare real paths.
-        if let (Ok(real), Ok(root)) = (fs::canonicalize(&path), fs::canonicalize(&skill.dir)) {
-            if !real.starts_with(&root) || real == root {
-                return outside();
-            }
+        // Symlinks can still lead out; compare real paths. A path whose real place cannot be
+        // worked out (dangling link, folder gone) is refused, and the read is of the checked
+        // real path, so nothing can be swapped in between.
+        let (Ok(real), Ok(root)) = (fs::canonicalize(&path), fs::canonicalize(&skill.dir)) else {
+            return outside();
+        };
+        if !real.starts_with(&root) || real == root {
+            return outside();
         }
-        match fs::read_to_string(&path) {
+        match fs::read_to_string(&real) {
             Ok(raw) => ToolOutcome {
                 text: if file.is_none() {
                     split(&raw).1.trim().to_string()
