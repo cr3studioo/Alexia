@@ -3,6 +3,8 @@
 //! of them switch a plugin off, hangs are killed, idle lazy plugins stop, a deleted folder
 //! takes its plugin's tools with it (INTERFACES.md §7, invariants 3 and 4).
 
+mod scratch;
+use scratch::Scratch;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -19,11 +21,8 @@ const HEARTBEAT_MS: u64 = 500;
 const IDLE_MS: u64 = 1_000;
 const BACKOFF_MS: u64 = 50;
 
-fn root(tag: &str) -> PathBuf {
-    let root = std::env::temp_dir().join(format!("alexia-sup-{tag}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
-    std::fs::create_dir_all(&root).unwrap();
-    root
+fn root(tag: &str) -> Scratch {
+    Scratch::new(tag)
 }
 
 /// `<root>/ext/<id>/plugin.json`. The fixture lives in `<root>/bin`, outside the plugin
