@@ -133,4 +133,4 @@
 | P2-69 | OpenAI wire: blank text empty; answered by next tool turns | P2 | sonnet | none | alexia-core/{src/openai.rs, tests/openai.rs} | merged | 1 | cr3studioo/v3-P2-69 | |
 | P2-70 | Gateway: unsent question not a denial; test dirs cleaned | P2 | opus | P2-58, P2-64 | alexia-gateway/{src/ask.rs, tests/*} | todo | 0 | | follow-ups 6 |
 | P2-71 | Hub and MCP conn tests: test folders cleaned up | P2 | sonnet | P2-39, P2-48, P2-63, P2-66 | alexia-hub/{tests/*, src/media.rs}, alexia-mcp/tests/conn.rs | todo | 0 | | follow-ups 6 |
-| P2-72 | Agent exposes its parts | P2 | sonnet | P2-20 | alexia-core/{src/agent.rs, tests/agent.rs} | running | 1 | cr3studioo/v3-P2-72 | ctx_42414684478a |
+| P2-72 | Agent exposes its parts | P2 | sonnet | P2-20 | alexia-core/{src/agent.rs, tests/agent.rs} | review | 1 | cr3studioo/v3-P2-72 | rv ctx_fa0b80d4315c |

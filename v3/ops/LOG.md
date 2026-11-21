@@ -419,3 +419,5 @@
 2026-11-21 P2-36 fix 4 done (cancel records no try) -> review 4
 2026-11-21 P2-55 built -> review (WasmPlugin::spawn now async)
 2026-11-21 Dispatched P2-65 (opus)
+2026-11-21 P2-72 built -> review
+2026-11-21 P2-72 approved. Merged, gating
