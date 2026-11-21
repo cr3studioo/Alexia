@@ -346,3 +346,4 @@
 2026-11-20 CEO #14 started. P2-08, P2-17 still live (claude/cargo running). Dispatched phase review 5 (opus, detached phase-rv5, read-only no cargo) ctx_6c41bfd00eab and follow-up planner (opus, plan-fu5) ctx_db81bbc1b192
 2026-11-21 02:32 No worker progress 23:39-02:31 (likely usage-limit pause); P2-08 writing again. Waiting
 2026-11-21 Phase review 5 done (11 findings, v3/ops/phase-review-5.md): 2 high (chat lane hedged() unredacted to cloud; scheduler/agent wiring cycle in INTERFACES 2.6 step 4), medium: compute/run UNC, 3 file:// decoders, cross-plugin undo, reviewed fail-open, gpu Watch callbacks, 2 redact ports. Planner after plan-fu5
+2026-11-21 Merged plan P2-51..58 (follow-ups). Dropped: scheduler Desktop origin (no Desktop turns yet). P2-54 adds alexia.db.keyed marker (encryption stays off per A-13)
