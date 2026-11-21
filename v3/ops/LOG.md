@@ -361,3 +361,7 @@
 2026-11-21 P2-51 built -> review (opus, own target: shared target can mix worktrees' uplifted artifacts; reviewers use own target from now)
 2026-11-21 P2-52 failed: spec too narrow (msrv lint in alexia-store secrets.rs). Spec widened to mechanical msrv lint fixes in v3/crates; restarted same worktree (no try counted)
 2026-11-21 Merged P2-08 (gate OK 63, pushed). P2-29 ready (held: RAM, 2 builders + 2 reviewers running)
+2026-11-21 P2-53 approved (minor: whitespace-only content not empty; answered counts any later Tool turn). Merged, gating
+2026-11-21 Dispatched P2-29 (sonnet, own target) ctx_fbfeef8c3b31
+2026-11-21 P2-29: allowed 3 assertion edits in gateway tests/ask_voice.rs (id suffix)
+2026-11-21 Merged P2-53 (gate OK 63, pushed)
