@@ -1028,7 +1028,7 @@ mod tests {
     fn struggle_signals() {
         let a = step("look", serde_json::json!({"q": 1}), Some(("x", true)));
         let b = step("look", serde_json::json!({"q": 2}), Some(("y", true)));
-        assert_eq!(struggling(&[a.clone()], 0, 24), None);
+        assert_eq!(struggling(std::slice::from_ref(&a), 0, 24), None);
         assert_eq!(
             struggling(&[a.clone(), a.clone()], 0, 24),
             Some(Struggle::Looping)

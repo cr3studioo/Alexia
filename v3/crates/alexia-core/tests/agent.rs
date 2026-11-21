@@ -110,16 +110,18 @@ impl Provider for Flagger {
     }
 }
 
+type Calls = Arc<Mutex<Vec<(String, Map<String, Value>)>>>;
+type OnList = Box<dyn FnMut(&mut Vec<ToolSpec>) + Send>;
 type Behave = Arc<dyn Fn(&str, &Map<String, Value>) -> (ToolOutcome, u64) + Send + Sync>;
 
 struct FakeTools {
     specs: Mutex<Vec<ToolSpec>>,
     /// (name, args) of every call that ran, in the order they started.
-    ran: Arc<Mutex<Vec<(String, Map<String, Value>)>>>,
+    ran: Calls,
     /// Outcome and how long to take, in ms.
     behave: Behave,
     /// Run after each `list`: lets a test change the tools between steps.
-    on_list: Mutex<Option<Box<dyn FnMut(&mut Vec<ToolSpec>) + Send>>>,
+    on_list: Mutex<Option<OnList>>,
     /// Set: every call waits here for the others, so calls run one at a time never meet.
     barrier: Option<Arc<tokio::sync::Barrier>>,
 }
@@ -209,7 +211,7 @@ struct World {
     store: Arc<Store>,
     session: SessionId,
     asked: Arc<Mutex<Vec<(String, ChatRequest)>>>,
-    ran: Arc<Mutex<Vec<(String, Map<String, Value>)>>>,
+    ran: Calls,
     questions: Arc<Mutex<Vec<String>>>,
     tools: Arc<FakeTools>,
     host: McpHost,
@@ -551,7 +553,7 @@ async fn one_tool_then_answer() {
         [Role::User, Role::Assistant, Role::Tool, Role::Assistant]
     );
     // The second model turn saw the result.
-    let asked = w.asked.lock().unwrap();
+    let asked = w.asked.lock().unwrap().clone();
     assert!(said(&asked.last().unwrap().1).contains("look done"));
     assert!(matches!(
         frames.first(),
@@ -570,7 +572,6 @@ async fn one_tool_then_answer() {
     assert!(frames
         .iter()
         .any(|f| matches!(f, DraftFrame::Delta(d) if d == "Found it.")));
-    drop(asked);
     w.host.shutdown().await;
 }
 
@@ -619,10 +620,9 @@ async fn refusal_is_an_outcome() {
     assert!(!o.ok);
     assert!(o.text.contains("never-touch"), "{}", o.text);
     // The model planned around it: its next turn was given the reason.
-    let asked = w.asked.lock().unwrap();
+    let asked = w.asked.lock().unwrap().clone();
     assert_eq!(asked.len(), 2);
     assert!(said(&asked[1].1).contains("never-touch"));
-    drop(asked);
     w.host.shutdown().await;
 }
 
@@ -768,7 +768,7 @@ async fn looping_escalates_once() {
         .filter(|m| m.role == Role::Assistant)
         .map(|m| m.model.unwrap())
         .collect();
-    let asked = w.asked.lock().unwrap();
+    let asked = w.asked.lock().unwrap().clone();
     let third: Vec<&str> = asked
         .iter()
         .filter(|(_, req)| turn_of(req) == 2)
@@ -779,7 +779,6 @@ async fn looping_escalates_once() {
         third.iter().all(|m| *m != answered[1]),
         "{third:?} vs {answered:?}"
     );
-    drop(asked);
     w.host.shutdown().await;
 }
 
@@ -825,11 +824,10 @@ async fn vanished_tool_replans() {
     let o = r.steps[1].outcome.as_ref().unwrap();
     assert!(!o.ok);
     assert!(o.text.contains("not available any more"), "{}", o.text);
-    let asked = w.asked.lock().unwrap();
+    let asked = w.asked.lock().unwrap().clone();
     assert_eq!(asked.len(), 3);
     assert!(asked[1].1.tools.iter().all(|t| t.name != "gone"));
     assert!(said(&asked[2].1).contains("not available any more"));
-    drop(asked);
     w.host.shutdown().await;
 }
 
