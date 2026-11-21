@@ -759,3 +759,131 @@ async fn orphan_tool_result_becomes_a_note() {
     );
     assert!(!body.to_string().contains("tool_call_id"));
 }
+
+// ---- P2-53: unanswered calls, odd delta shapes, nameless calls ----
+
+fn call(id: &str, name: &str) -> Value {
+    json!({"id": id, "name": name, "arguments": "{}"})
+}
+
+async fn sent_messages(messages: Vec<(Role, MessageBody)>) -> Value {
+    let (base, body) = fake(SSE, vec![(0, DONE.into())]).await;
+    run(&provider(&base), &with_tools(&["one", "two"], messages))
+        .await
+        .1
+        .unwrap();
+    body.await.unwrap()["messages"].clone()
+}
+
+#[tokio::test]
+async fn unanswered_call_not_sent() {
+    let sent = sent_messages(vec![
+        (Role::User, text("go")),
+        (
+            Role::Assistant,
+            body_of(json!({"content": "working", "calls": [call("c1", "one")]})),
+        ),
+        (Role::User, text("well?")),
+    ])
+    .await;
+    assert_eq!(
+        sent,
+        json!([
+            {"role": "user", "content": "go"},
+            {"role": "assistant", "content": "working"},
+            {"role": "user", "content": "well?"}
+        ])
+    );
+}
+
+#[tokio::test]
+async fn partly_answered_turn_keeps_answered_calls() {
+    let sent = sent_messages(vec![
+        (Role::User, text("go")),
+        (
+            Role::Assistant,
+            body_of(json!({"content": "", "calls": [call("c1", "one"), call("c2", "two")]})),
+        ),
+        (
+            Role::Tool,
+            body_of(json!({"content": "r2", "callId": "c2"})),
+        ),
+    ])
+    .await;
+    assert_eq!(
+        sent,
+        json!([
+            {"role": "user", "content": "go"},
+            {"role": "assistant", "content": "", "tool_calls": [
+                {"id": "c2", "type": "function", "function": {"name": "two", "arguments": "{}"}}
+            ]},
+            {"role": "tool", "tool_call_id": "c2", "content": "r2"}
+        ])
+    );
+}
+
+#[tokio::test]
+async fn unanswered_only_call_becomes_text() {
+    let sent = sent_messages(vec![
+        (Role::User, text("go")),
+        (
+            Role::Assistant,
+            body_of(json!({"content": "", "calls": [call("c1", "one"), call("c2", "two")]})),
+        ),
+        (Role::User, text("well?")),
+    ])
+    .await;
+    assert_eq!(
+        sent[1],
+        json!({"role": "assistant", "content": "I called one, two and got no answer."})
+    );
+}
+
+async fn streamed(frames: Vec<String>) -> Vec<(String, String, String)> {
+    let mut steps: Vec<_> = frames.into_iter().map(|f| (0, f)).collect();
+    steps.push((0, DONE.into()));
+    let (base, _) = fake(SSE, steps).await;
+    let (chunks, done) = run(
+        &provider(&base),
+        &with_tools(&["one"], vec![(Role::User, text("go"))]),
+    )
+    .await;
+    done.unwrap();
+    chunks
+        .into_iter()
+        .map(|c| match c {
+            ChatChunk::ToolCall(t) => (t.id, t.name, t.arguments),
+            other => panic!("{other:?}"),
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn delta_tool_calls_object_read() {
+    let got = streamed(vec![tool_frame(
+        json!({"index": 0, "id": "a", "function": {"name": "one", "arguments": "{\"x\":1}"}}),
+    )])
+    .await;
+    assert_eq!(got, vec![("a".into(), "one".into(), "{\"x\":1}".into())]);
+}
+
+#[tokio::test]
+async fn nameless_streamed_call_reported() {
+    let got = streamed(vec![tool_frame(
+        json!([{"index": 0, "id": "a", "function": {"arguments": "{\"x\":1}"}}]),
+    )])
+    .await;
+    assert_eq!(
+        got,
+        vec![("a".into(), "unnamed_tool".into(), "{\"x\":1}".into())]
+    );
+}
+
+#[tokio::test]
+async fn empty_piece_still_skipped() {
+    let got = streamed(vec![tool_frame(
+        json!([{"index": 0, "id": "a", "function": {"arguments": ""}}]),
+    )])
+    .await;
+    assert!(got.is_empty());
+}

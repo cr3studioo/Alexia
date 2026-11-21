@@ -228,16 +228,28 @@ fn wire_messages(messages: &[(Role, MessageBody)], names: &[(String, String)]) -
     };
     let mut seen: Vec<&str> = Vec::new();
     let mut out = Vec::with_capacity(messages.len());
-    for (role, body) in messages {
-        let content = content_value(&body.content);
+    for (at, (role, body)) in messages.iter().enumerate() {
+        let mut content = content_value(&body.content);
         out.push(match role {
             Role::System => json!({"role": "system", "content": content}),
             Role::User => json!({"role": "user", "content": content}),
             Role::Assistant => {
+                // A call no later tool turn answers is not sent: a strict provider refuses it.
+                let answered = |id: &str| {
+                    messages[at + 1..]
+                        .iter()
+                        .any(|(r, b)| *r == Role::Tool && b.call_id.as_deref() == Some(id))
+                };
+                let all = body.calls.as_deref().unwrap_or_default();
+                let kept: Vec<_> = all.iter().filter(|c| answered(&c.id)).collect();
+                if kept.is_empty() && !all.is_empty() && plain(&body.content).is_empty() {
+                    let names: Vec<_> = all.iter().map(|c| c.name.as_str()).collect();
+                    content = json!(format!("I called {} and got no answer.", names.join(", ")));
+                }
                 let mut m = json!({"role": "assistant", "content": content});
-                if let Some(calls) = body.calls.as_ref().filter(|c| !c.is_empty()) {
-                    seen.extend(calls.iter().map(|c| c.id.as_str()));
-                    m["tool_calls"] = calls
+                if !kept.is_empty() {
+                    seen.extend(kept.iter().map(|c| c.id.as_str()));
+                    m["tool_calls"] = kept
                         .iter()
                         .map(|c| {
                             json!({
@@ -518,7 +530,16 @@ impl Provider for OpenAiCompat {
                     emit(&out, &cancel, chunk).await?;
                 }
                 // Keyed by index: id and name arrive once, arguments in fragments.
-                if let Some(calls) = delta["tool_calls"].as_array() {
+                let one;
+                let calls = match &delta["tool_calls"] {
+                    Value::Array(a) => Some(a.as_slice()),
+                    obj @ Value::Object(_) => {
+                        one = [obj.clone()];
+                        Some(one.as_slice())
+                    }
+                    _ => None,
+                };
+                if let Some(calls) = calls {
                     for (n, call) in calls.iter().enumerate() {
                         first_byte_ms.get_or_insert(sent.elapsed().as_millis() as u32);
                         let at = pieces
@@ -547,8 +568,14 @@ impl Provider for OpenAiCompat {
             )));
         }
         for (index, p) in pieces {
+            let mut p = p;
             if p.name.is_empty() {
-                continue;
+                if p.arguments.is_empty() {
+                    continue;
+                }
+                // The loop's unknown-tool path tells the model; never log the arguments.
+                tracing::warn!(provider = %self.row.id, index, "streamed tool call has no name");
+                p.name = "unnamed_tool".to_owned();
             }
             // An unknown wire name goes through unchanged: the loop reports an unknown tool.
             let name = names
