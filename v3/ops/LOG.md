@@ -400,3 +400,7 @@
 2026-11-21 P2-36 review: changes (compare not counted toward rpm/rpd; duplicate outcome(); failed side unmarked). Fix round (sonnet) ctx_69eba7a830dc
 2026-11-21 Merged P2-35 (gate OK 65, pushed)
 2026-11-21 P2-20 approved. Follow-ups: stop mid-gate leaves gated calls as steps with no outcome/audit (agent.rs:577-596); trace.model asked==answered (:546); router non-cancel Err after Deltas sends no Restart and stores nothing (:534). Merged, gating
+2026-11-21 P2-36 fix done -> review ctx_722da8f5817d. P2-25 spec note: refuse keeping a failed compare side
+2026-11-21 P2-61 fix done (refuses leading \??\) -> review ctx_a48832f356cf. P2-55 (opus) waits for the P2-20 gate (memory)
+2026-11-21 P2-69 built -> review ctx_212c3a5df15f
+2026-11-21 Merged P2-20 agent loop (gate OK 66, pushed)

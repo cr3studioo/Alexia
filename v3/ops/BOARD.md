@@ -81,15 +81,15 @@
 | P2-17 | Router for task steps: model per job, $0 cap, catalog news | P2 | sonnet | P2-04, P2-05, P2-14 | alexia-core/{src/router.rs, src/catalog.rs, tests/router_steps.rs} | merged | 1 | cr3studioo/v3-P2-17 | ctx_c4932a2b7e3b |
 | P2-18 | Tooling over the MCP host | P2 | sonnet | P2-02 | alexia-core/{src/tools.rs, tests/tools.rs} | merged | 2 | cr3studioo/v3-P2-18 | follow-up P2-50 |
 | P2-19 | Trace, runs and the audit log | P2 | sonnet | P2-01, P2-03, P2-14 | alexia-core/{src/trace.rs, tests/trace.rs} | merged | 2 | cr3studioo/v3-P2-19 | |
-| P2-20 | The agent loop | P2 | opus | P2-07, P2-12, P2-13, P2-14, P2-15, P2-16, P2-17, P2-18, P2-19, P2-45, P2-59 | alexia-core/{src/agent.rs, tests/agent.rs} | review | 1 | cr3studioo/v3-P2-20 | rv ctx_937af5817cad |
-| P2-21 | Upcalls: sampling, tasks for plugins, elicit, roots, attachm | P2 | sonnet | P2-20, P2-02 | alexia-core/{src/upcalls.rs, tests/upcalls.rs} | todo | 0 | | |
+| P2-20 | The agent loop | P2 | opus | P2-07, P2-12, P2-13, P2-14, P2-15, P2-16, P2-17, P2-18, P2-19, P2-45, P2-59 | alexia-core/{src/agent.rs, tests/agent.rs} | merged | 1 | cr3studioo/v3-P2-20 | |
+| P2-21 | Upcalls: sampling, tasks for plugins, elicit, roots, attachm | P2 | sonnet | P2-20, P2-02 | alexia-core/{src/upcalls.rs, tests/upcalls.rs} | ready | 0 | | |
 | P2-22 | MCP: compute/run locally, host-answered capabilities | P2 | sonnet | P2-02 | alexia-mcp/{src/serve.rs, src/host.rs, src/bin/mcp-fixture.rs, tests/compute.rs} | merged | 1 | cr3studioo/v3-P2-22 | follow-up P2-44 |
 | P2-23 | Hot reload of plugins | P2 | sonnet | P2-22 | alexia-mcp/{src/host.rs, src/supervise.rs, tests/reload.rs} | merged | 1 | cr3studioo/v3-P2-23 | |
 | P2-24 | WASM plugins in a capability sandbox | P2 | sonnet | P2-23, P2-47 | alexia-mcp/{src/wasm.rs, src/host.rs, fixtures/wasm-hello/**, tests/fixtures/wasm-hello... | merged | 1 | cr3studioo/v3-P2-24 | rust-version 1.87 follow-up |
-| P2-25 | Commands | P2 | sonnet | P2-20, P2-45 | alexia-core/{src/commands.rs, tests/commands.rs} | todo | 0 | | |
-| P2-26 | Resume after restart; jobs that run for days | P2 | sonnet | P2-20 | alexia-core/{src/resume.rs, tests/resume.rs} | todo | 0 | | |
-| P2-27 | Parallel helpers | P2 | sonnet | P2-20 | alexia-core/{src/helpers.rs, tests/helpers.rs} | todo | 0 | | |
-| P2-28 | Undo | P2 | sonnet | P2-20 | alexia-core/{src/undo.rs, tests/undo.rs} | todo | 0 | | |
+| P2-25 | Commands | P2 | sonnet | P2-20, P2-45 | alexia-core/{src/commands.rs, tests/commands.rs} | ready | 0 | | |
+| P2-26 | Resume after restart; jobs that run for days | P2 | sonnet | P2-20 | alexia-core/{src/resume.rs, tests/resume.rs} | ready | 0 | | |
+| P2-27 | Parallel helpers | P2 | sonnet | P2-20 | alexia-core/{src/helpers.rs, tests/helpers.rs} | ready | 0 | | |
+| P2-28 | Undo | P2 | sonnet | P2-20 | alexia-core/{src/undo.rs, tests/undo.rs} | ready | 0 | | |
 | P2-29 | Approvals inbox | P2 | sonnet | P2-03, P2-06, P2-08 | alexia-gateway/{src/ask.rs, tests/approvals.rs} | merged | 1 | cr3studioo/v3-P2-29 | ctx_fbfeef8c3b31 |
 | P2-30 | Scheduled jobs | P2 | sonnet | P2-01, P2-03 | alexia-scheduler/{Cargo.toml, src/lib.rs, tests/scheduler.rs}, v3/Cargo.lock | merged | 2 | cr3studioo/v3-P2-30 | |
 | P2-31 | Managed llama.cpp, speculative decoding | P2 | sonnet | P2-01 | alexia-core/{src/local.rs, tests/local.rs} | merged | 3 | cr3studioo/v3-P2-31 | |
@@ -97,7 +97,7 @@
 | P2-33 | Hugging Face import and GGUF split files | P2 | sonnet | P2-01 | alexia-core/{src/hf.rs, tests/hf.rs} | merged | 2 | cr3studioo/v3-P2-33 | |
 | P2-34 | Local vision, local embeddings, the local checker model | P2 | sonnet | P2-31, P2-32, P2-33, P2-21 | alexia-core/{src/local.rs, src/upcalls.rs, tests/local_jobs.rs} | todo | 0 | | |
 | P2-35 | Subscriptions through their official CLIs | P2 | sonnet | P2-17 | alexia-core/{src/subscription.rs, tests/subscription.rs} | merged | 1 | cr3studioo/v3-P2-35 | |
-| P2-36 | Compare two models | P2 | sonnet | P2-17 | alexia-core/{src/compare.rs, tests/compare.rs} | running | 2 | cr3studioo/v3-P2-36 | fix ctx_69eba7a830dc |
+| P2-36 | Compare two models | P2 | sonnet | P2-17 | alexia-core/{src/compare.rs, tests/compare.rs} | review | 2 | cr3studioo/v3-P2-36 | rv ctx_722da8f5817d |
 | P2-37 | Encrypted database at rest | P2 | opus | P2-02, P2-03, P2-10 | v3/Cargo.toml, v3/Cargo.lock, alexia-store/{Cargo.toml, src/db.rs, src/encrypt.rs, src/... | merged | 1 | cr3studioo/v3-P2-37 | crash-recovery follow-up (review) |
 | P2-38 | Hub wiring: Agent is the brain, bridge deleted | P2 | opus | P2-08..P2-11, P2-20..P2-37, P2-42, P2-44, P2-45, P2-46, P2-47, P2-50, P2-60, P2-62 | alexia-hub/{Cargo.toml, src/main.rs, src/bridge.rs (delete), src/media.rs, tests/cli_p2... | todo | 0 | | |
 | P2-39 | End-to-end: the agent on the real binary | P2 | sonnet | P2-38, P2-43 | alexia-hub/tests/{agent_e2e.rs, telegram_e2e.rs, common/mod.rs} | todo | 0 | | |
@@ -117,19 +117,19 @@
 | P2-53 | OpenAI wire: unanswered calls, odd deltas, nameless calls | P2 | sonnet | none | alexia-core/{src/openai.rs, tests/openai.rs} | merged | 1 | cr3studioo/v3-P2-53 | ctx_933217f350f0 |
 | P2-54 | Store: encryption crash-safe, no keychain in tests; resume start | P2 | opus | P2-51 | alexia-store/{encrypt,db,tests}, alexia-core/{trace}+tests, INTERFACES.md | merged | 1 | cr3studioo/v3-P2-54 | |
 | P2-55 | MCP: early cancel reaches request; WASM compile off runtime | P2 | opus | P2-52 | alexia-mcp/{conn,wasm,host}+tests | ready | 0 | | follow-ups |
-| P2-56 | Scheduler: one-shot survives shutdown; Every no overlap | P2 | opus | none | alexia-scheduler/{src/lib.rs, tests/scheduler.rs} | running | 1 | cr3studioo/v3-P2-56 | ctx_679da448128e |
+| P2-56 | Scheduler: one-shot survives shutdown; Every no overlap | P2 | opus | none | alexia-scheduler/{src/lib.rs, tests/scheduler.rs} | review | 1 | cr3studioo/v3-P2-56 | REVIEW |
 | P2-57 | Local models: hf hashing/cache/paths; GPU parsing | P2 | sonnet | none | alexia-core/{hf,gpu}+tests | merged | 1 | cr3studioo/v3-P2-57 | ctx_905ac878e85b |
 | P2-58 | Gateway: file message not overtaken by steers | P2 | sonnet | P2-38 | alexia-gateway/{src/gateway.rs, tests/gateway.rs} | todo | 0 | | follow-ups |
 | P2-59 | Chat lane redacted: hedged redacts every cloud request | P2 | opus | P2-17 | alexia-core/{router.rs, tests/router.rs, router_steps.rs, chat.rs} | merged | 1 | cr3studioo/v3-P2-59 | ctx_ede66379757c |
 | P2-60 | Scheduler tools hold Weak<Scheduler>; no wiring cycle | P2 | opus | P2-56 | alexia-scheduler/{src/lib.rs, tests/scheduler.rs} | todo | 0 | | review 5 |
-| P2-61 | One file URI decoder; no network paths; undo stays in plugin | P2 | opus | P2-51 | alexia-mcp/{uri,lib,serve}+tests, alexia-core/{permissions,tools}+tests | running | 2 | cr3studioo/v3-P2-61 | fix ctx_c6bb9e3f4826 |
+| P2-61 | One file URI decoder; no network paths; undo stays in plugin | P2 | opus | P2-51 | alexia-mcp/{uri,lib,serve}+tests, alexia-core/{permissions,tools}+tests | review | 2 | cr3studioo/v3-P2-61 | rv ctx_a48832f356cf |
 | P2-62 | New plugins unreviewed; GPU watcher hands hub what it needs | P2 | opus | P2-55, P2-57 | alexia-mcp/{host,supervise,tests/hold.rs}, alexia-core/{gpu}+tests | todo | 0 | | review 5 |
 | P2-63 | One redaction of secrets, in alexia-mcp | P2 | opus | P2-38, P2-61 | alexia-mcp/{Cargo.toml,redact,process,lib}+tests, Cargo.lock, alexia-core/redact | todo | 0 | | review 5 |
 | P2-64 | One Job Object, scheduled approvals own chat, stricter name check | P2 | sonnet | P2-38, P2-63 | alexia-mcp/lib.rs, alexia-core/local.rs, gateway/{ask.rs,approvals}, ci/invariants.mjs | todo | 0 | | review 5 |
 | P2-65 | Store: test dirs cleaned, keychain probe per process, plain kept | P2 | opus | P2-54 | alexia-store/{tests/*, src/secrets.rs, src/encrypt.rs} | ready | 0 | | follow-ups 6 |
 | P2-66 | MCP: test folders cleaned up | P2 | sonnet | P2-55, P2-61 | alexia-mcp/tests/{scratch,alexia_layer,compute,host,manifest(s),purge,reload,supervise,types_p2,wasm}.rs | todo | 0 | | follow-ups 6 |
 | P2-67 | Core: test dirs cleaned; registry export unique per call | P2 | opus | P2-61, P2-62 | alexia-core/{tests/*, src/gpu.rs} | todo | 0 | | follow-ups 6 |
-| P2-68 | Router: notes per run, keychain cached, bad pins said | P2 | opus | P2-20 | alexia-core/{src/router.rs, tests/router_steps.rs, src/agent.rs} | todo | 0 | | follow-ups 6 |
-| P2-69 | OpenAI wire: blank text empty; answered by next tool turns | P2 | sonnet | none | alexia-core/{src/openai.rs, tests/openai.rs} | running | 1 | cr3studioo/v3-P2-69 | ctx_476a57b0dcc9 |
+| P2-68 | Router: notes per run, keychain cached, bad pins said | P2 | opus | P2-20 | alexia-core/{src/router.rs, tests/router_steps.rs, src/agent.rs} | ready | 0 | | follow-ups 6 |
+| P2-69 | OpenAI wire: blank text empty; answered by next tool turns | P2 | sonnet | none | alexia-core/{src/openai.rs, tests/openai.rs} | review | 1 | cr3studioo/v3-P2-69 | rv ctx_212c3a5df15f |
 | P2-70 | Gateway: unsent question not a denial; test dirs cleaned | P2 | opus | P2-58, P2-64 | alexia-gateway/{src/ask.rs, tests/*} | todo | 0 | | follow-ups 6 |
 | P2-71 | Hub and MCP conn tests: test folders cleaned up | P2 | sonnet | P2-39, P2-48, P2-63, P2-66 | alexia-hub/{tests/*, src/media.rs}, alexia-mcp/tests/conn.rs | todo | 0 | | follow-ups 6 |
