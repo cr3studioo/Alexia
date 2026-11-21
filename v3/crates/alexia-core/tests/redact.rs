@@ -362,3 +362,61 @@ fn known_secret_across_whole_request() {
         Some(format!("use {secret}").as_str())
     );
 }
+
+#[test]
+fn secret_named_key_redacted() {
+    let value = "plainvalue1234567890";
+    for (v, want) in [
+        (
+            json!({"password":"hunter2hunter2"}),
+            json!({"password":"[redacted]"}),
+        ),
+        (
+            json!({"OPENAI_API_KEY": value, "model":"gpt"}),
+            json!({"OPENAI_API_KEY":"[redacted]","model":"gpt"}),
+        ),
+        (
+            json!({"auth":{"Refresh-Token": value}}),
+            json!({"auth":{"Refresh-Token":"[redacted]"}}),
+        ),
+        // Under a secret key, arrays and objects are walked, not replaced.
+        (
+            json!({"tokens":[value, {"n": 1}]}),
+            json!({"tokens":[value, {"n": 1}]}),
+        ),
+    ] {
+        assert_eq!(redact_json(&v), want, "{v}");
+    }
+}
+
+#[test]
+fn secret_named_key_short_value_kept() {
+    for v in [
+        json!({"token": 5}),
+        json!({"password":"x"}),
+        json!({"secret": true, "api_key": null}),
+        json!({"password":"elevenchars"}),
+    ] {
+        assert_eq!(redact_json(&v), v, "{v}");
+    }
+}
+
+#[test]
+fn secret_named_key_in_tool_arguments_redacted() {
+    let (out, k) = redact_request(&one_call(
+        r#"{"user":"me","db_password":"hunter2hunter2","port":5432}"#.into(),
+    ));
+    assert_eq!(
+        first_args(&out),
+        json!({"user":"me","db_password":"[redacted]","port":5432})
+    );
+    assert_eq!(k, kinds(&["secret field"]));
+    // Nothing secret-named: the arguments go through byte for byte.
+    let plain = r#"{"user":"me",  "port":5432}"#;
+    let (out, k) = redact_request(&one_call(plain.into()));
+    assert_eq!(
+        out.messages[0].1.calls.as_ref().unwrap()[0].arguments,
+        plain
+    );
+    assert!(k.is_empty());
+}
