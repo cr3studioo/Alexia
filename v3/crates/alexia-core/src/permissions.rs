@@ -331,31 +331,11 @@ fn looks_absolute(s: &str) -> bool {
 /// is still checked. The scheme is matched in any case, and RFC 8089's one-slash `file:/x` is a
 /// local path. `None` only for a `file://` URI on another host: not a path on this machine.
 fn normalised(s: &str) -> Option<String> {
-    let uri = s
-        .get(..5)
-        .filter(|scheme| scheme.eq_ignore_ascii_case("file:"))
-        .map(|_| &s[5..])
-        .filter(|rest| rest.starts_with('/'));
-    if let Some(rest) = uri {
-        let (host, path) = match rest.strip_prefix("//") {
-            Some(r) => r.split_at(r.find('/').unwrap_or(r.len())),
-            None => ("", rest),
-        };
-        if !host.is_empty() && !host.eq_ignore_ascii_case("localhost") {
-            return None;
-        }
-        let path = percent_decoded(path);
-        // `/C:/x` is `C:\x` on Windows.
-        let b = path.as_bytes();
-        if cfg!(windows)
-            && b.len() >= 3
-            && b[0] == b'/'
-            && b[1].is_ascii_alphabetic()
-            && b[2] == b':'
-        {
-            return Some(path[1..].replace('/', "\\"));
-        }
-        return Some(path);
+    if s.get(..5)
+        .is_some_and(|scheme| scheme.eq_ignore_ascii_case("file:"))
+    {
+        // A UNC or drive-relative result still looks absolute, so it is judged, never skipped.
+        return alexia_mcp::file_uri_path(s).map(|p| p.to_string_lossy().into_owned());
     }
     if s == "~" || s.starts_with("~/") || s.starts_with("~\\") {
         return Some(format!("{}{}", home().display(), &s[1..]));
@@ -383,32 +363,6 @@ fn normalised(s: &str) -> Option<String> {
         Some(value) => format!("{}{rest}", value.display()),
         None => s.to_string(),
     })
-}
-
-/// `%2E` → `.`; a broken escape is kept as written.
-fn percent_decoded(s: &str) -> String {
-    let b = s.as_bytes();
-    let mut out = Vec::with_capacity(b.len());
-    let mut i = 0;
-    while i < b.len() {
-        let hex = b
-            .get(i + 1..i + 3)
-            .and_then(|h| std::str::from_utf8(h).ok());
-        match hex
-            .filter(|_| b[i] == b'%')
-            .and_then(|h| u8::from_str_radix(h, 16).ok())
-        {
-            Some(byte) => {
-                out.push(byte);
-                i += 3;
-            }
-            None => {
-                out.push(b[i]);
-                i += 1;
-            }
-        }
-    }
-    String::from_utf8_lossy(&out).into_owned()
 }
 
 /// Absolute paths an argument object names (v2 `pathsIn`). Absolute only: a relative path

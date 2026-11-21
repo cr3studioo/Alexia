@@ -90,7 +90,8 @@ async fn boot(root: PathBuf, ext: PathBuf, ids: Vec<&str>) -> Env {
 
 /// A plugin that is a node script, for what the fixture cannot show: it appends every
 /// `notifications/cancelled` it receives to `cancelled.log` beside it, and its `set` answers
-/// with an un-namespaced `alexia/undo`.
+/// with an un-namespaced `alexia/undo`; `set_other` and `set_note` name another plugin's tool
+/// and the `Note` builtin as their undo.
 const NODE_PLUGIN: &str = r#"
 const fs = require('fs'), path = require('path');
 const log = path.join(__dirname, 'cancelled.log');
@@ -102,10 +103,12 @@ require('readline').createInterface({ input: process.stdin }).on('line', (line) 
   if (m.method === 'notifications/cancelled') { fs.appendFileSync(log, JSON.stringify(m.params) + '\n'); return; }
   if (m.id === undefined) return;
   if (m.method === 'initialize') send({ id: m.id, result: { protocolVersion: m.params.protocolVersion, serverInfo: { name: 'n', version: '0' }, capabilities: { tools: {} } } });
-  else if (m.method === 'tools/list') send({ id: m.id, result: { tools: ['slow', 'set', 'unset', 'set_hid', 'hid'].map((name) => ({ name, inputSchema: obj, ...(name === 'hid' ? { _meta: { 'alexia/compute': {} } } : {}) })) } });
+  else if (m.method === 'tools/list') send({ id: m.id, result: { tools: ['slow', 'set', 'unset', 'set_hid', 'hid', 'set_other', 'set_note'].map((name) => ({ name, inputSchema: obj, ...(name === 'hid' ? { _meta: { 'alexia/compute': {} } } : {}) })) } });
   else if (m.method === 'tools/call') {
     const n = m.params.name;
     if (n === 'set') send({ id: m.id, result: text('set k', { 'alexia/undo': { tool: 'unset', arguments: { key: 'k' }, summary: 'set k' } }) });
+    else if (n === 'set_other') send({ id: m.id, result: text('set o', { 'alexia/undo': { tool: 'other__unset', arguments: {}, summary: 'set o' } }) });
+    else if (n === 'set_note') send({ id: m.id, result: text('set n', { 'alexia/undo': { tool: 'note_down', arguments: {}, summary: 'set n' } }) });
     else if (n === 'set_hid') send({ id: m.id, result: text('set h', { 'alexia/undo': { tool: 'hid', arguments: {}, summary: 'set h' } }) });
     else if (n === 'unset') send({ id: m.id, result: text('unset k') });
     // `slow` never answers: only a cancel ends it.
@@ -115,20 +118,27 @@ require('readline').createInterface({ input: process.stdin }).on('line', (line) 
 
 /// A host with one node plugin running [`NODE_PLUGIN`].
 async fn node_env(tag: &str, id: &str) -> Env {
+    node_envs(tag, &[id]).await
+}
+
+/// A host with one node plugin per id, each running [`NODE_PLUGIN`].
+async fn node_envs(tag: &str, ids: &[&str]) -> Env {
     let root = std::env::temp_dir().join(format!("alexia-tools-{tag}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     let ext = root.join("ext");
-    let dir = ext.join(id);
-    std::fs::create_dir_all(&dir).unwrap();
-    std::fs::write(dir.join("plugin.js"), NODE_PLUGIN).unwrap();
-    let m = json!({
-        "manifest_version": 1, "id": id, "name": format!("Plugin {id}"),
-        "summary": "A plugin that exists for tests.", "version": "0.1.0",
-        "license": "AGPL-3.0-only", "entry": { "run": "node", "args": ["plugin.js"] },
-        "alexia_protocol": 2, "mcp_protocol": "2025-11-25"
-    });
-    std::fs::write(dir.join("plugin.json"), m.to_string()).unwrap();
-    boot(root, ext, vec![id]).await
+    for id in ids {
+        let dir = ext.join(id);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("plugin.js"), NODE_PLUGIN).unwrap();
+        let m = json!({
+            "manifest_version": 1, "id": id, "name": format!("Plugin {id}"),
+            "summary": "A plugin that exists for tests.", "version": "0.1.0",
+            "license": "AGPL-3.0-only", "entry": { "run": "node", "args": ["plugin.js"] },
+            "alexia_protocol": 2, "mcp_protocol": "2025-11-25"
+        });
+        std::fs::write(dir.join("plugin.json"), m.to_string()).unwrap();
+    }
+    boot(root, ext, ids.to_vec()).await
 }
 
 fn ctx() -> ToolCtx {
@@ -554,4 +564,48 @@ fn tool_words_is_the_first_clause() {
     assert_eq!(tool_words("a__open_the.thing", None), "open the thing");
     let long = format!("{} words.", "long ".repeat(20));
     assert_eq!(tool_words("a__do_it", Some(&long)), "do it");
+}
+
+#[tokio::test]
+async fn undo_naming_other_plugin_dropped() {
+    let e = node_envs("undo-other", &["undoer", "other"]).await;
+    let tooling = McpTooling::new(e.host.clone(), vec![]);
+    // `other__unset` is a real, callable tool, but not the returning plugin's own.
+    assert!(tooling.call("other__unset", Map::new(), ctx()).await.ok);
+    let out = tooling.call("undoer__set_other", Map::new(), ctx()).await;
+    assert!(out.ok, "{}", out.text);
+    assert!(
+        out.undo.is_none(),
+        "undo into another plugin: {:?}",
+        out.undo
+    );
+    e.done().await;
+}
+
+#[tokio::test]
+async fn undo_naming_builtin_dropped() {
+    let e = node_env("undo-builtin", "undoer").await;
+    let tooling = McpTooling::new(e.host.clone(), vec![Arc::new(Note)]);
+    let out = tooling.call("undoer__set_note", Map::new(), ctx()).await;
+    assert!(out.ok, "{}", out.text);
+    assert!(out.undo.is_none(), "undo into a builtin: {:?}", out.undo);
+    e.done().await;
+}
+
+#[tokio::test]
+async fn undo_bare_name_namespaced_to_caller() {
+    // Both plugins have `unset`: the bare name is the caller's, never the other one's.
+    let e = node_envs("undo-bare", &["other", "undoer"]).await;
+    let tooling = McpTooling::new(e.host.clone(), vec![Arc::new(Note)]);
+    for caller in ["undoer", "other"] {
+        let out = tooling
+            .call(&format!("{caller}__set"), Map::new(), ctx())
+            .await;
+        assert!(out.ok, "{}", out.text);
+        assert_eq!(
+            out.undo.expect("undo read").tool,
+            format!("{caller}__unset")
+        );
+    }
+    e.done().await;
 }

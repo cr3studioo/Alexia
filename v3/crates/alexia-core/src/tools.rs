@@ -198,16 +198,17 @@ impl Tooling for McpTooling {
                 let mut out = outcome_of(&r);
                 // The plugin names its own tools; the model, and so `call`, knows them by
                 // `<plugin>__<tool>`.
+                // An undo is always the returning plugin's own tool: a target that names another
+                // plugin's tool or a core builtin would let one plugin plant a call to it.
                 if let Some(u) = out.undo.as_mut() {
-                    let own = self
+                    let builtin = self
                         .builtins()
                         .iter()
                         .any(|b| b.specs().iter().any(|s| s.name == u.tool));
-                    let namespaced_already = u
-                        .tool
-                        .split_once(SEPARATOR)
-                        .is_some_and(|(p, _)| self.host.plugins().iter().any(|i| i.id.0 == p));
-                    if !own && !namespaced_already {
+                    if builtin || u.tool.contains(SEPARATOR) {
+                        tracing::warn!(plugin = %plugin.0, target = %u.tool, "undo naming a tool not its own dropped");
+                        out.undo = None;
+                    } else {
                         u.tool = namespaced(&plugin, &u.tool);
                     }
                 }
@@ -235,52 +236,21 @@ pub fn namespaced(plugin: &PluginId, tool: &str) -> String {
     format!("{}{SEPARATOR}{tool}", plugin.0)
 }
 
-/// `file:///C:/a%20b` or `file:///a/b` to a path; None for any other kind of link.
+/// A `resource_link` URI to a path on this machine, through the shared decoder. A network
+/// share is refused (stat'ing one makes Windows talk SMB to that server), and on Windows only a
+/// drive-letter path is local: `/x` or `\x` would be drive-relative.
 fn file_uri_path(uri: &str) -> Option<PathBuf> {
-    let rest = uri.strip_prefix("file://")?;
-    // Only this machine: an empty host or `localhost`, never `file://srv/share/x`.
-    let rest = if rest.starts_with('/') {
-        rest
-    } else {
-        rest.strip_prefix("localhost")
-            .filter(|r| r.starts_with('/'))?
-    };
-    let raw = rest.as_bytes();
-    let mut out = Vec::with_capacity(raw.len());
-    let mut i = 0;
-    while i < raw.len() {
-        let hex = raw
-            .get(i + 1..i + 3)
-            .and_then(|h| std::str::from_utf8(h).ok())
-            .and_then(|h| u8::from_str_radix(h, 16).ok());
-        match (raw[i], hex) {
-            (b'%', Some(b)) => {
-                out.push(b);
-                i += 3;
-            }
-            (c, _) => {
-                out.push(c);
-                i += 1;
-            }
-        }
-    }
-    let path = String::from_utf8_lossy(&out).into_owned();
-    let b = path.as_bytes();
-    let sep = |c: u8| c == b'/' || c == b'\\';
-    // Two leading separators (or `\\?\UNC\`) name a network share: stat'ing one makes
-    // Windows talk SMB to that server. Never a local path, so never touched.
-    if (b.len() > 1 && sep(b[0]) && sep(b[1])) || path.starts_with(r"\\?\UNC\") {
+    let path = alexia_mcp::file_uri_path(uri)?;
+    let s = path.to_string_lossy();
+    if alexia_mcp::is_network_path(&s) {
         return None;
     }
-    // `/C:/...` is a Windows drive path.
-    if b.len() > 2 && b[0] == b'/' && b[1].is_ascii_alphabetic() && b[2] == b':' {
-        return Some(PathBuf::from(&path[1..]));
-    }
-    // On Windows only a drive-letter path is local; `/x` or `\x` would be drive-relative.
-    if cfg!(windows) {
+    let b = s.as_bytes();
+    let drive = b.len() > 1 && b[0].is_ascii_alphabetic() && b[1] == b':';
+    if cfg!(windows) && !drive {
         return None;
     }
-    Some(PathBuf::from(path))
+    Some(path)
 }
 
 /// v2 `mimeOf`: from the name alone.

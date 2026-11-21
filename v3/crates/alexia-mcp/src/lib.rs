@@ -17,6 +17,7 @@ mod process;
 mod serve;
 mod supervise;
 pub mod types;
+mod uri;
 pub mod wasm;
 
 /// Crate-private pieces, re-exported only so `tests/conn.rs` can drive them.
@@ -32,6 +33,7 @@ pub use error::{Error, Result};
 pub use host::McpHost;
 pub use manifest::{discover, Manifest, ManifestError, PluginDir};
 pub use process::redact;
+pub use uri::{file_uri_path, is_network_path};
 
 /// A plugin's id as read from its manifest. Opaque to everything above this crate: core may
 /// hold one at runtime (to route a tool call back) and must never compare it to a literal.

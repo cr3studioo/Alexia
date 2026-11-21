@@ -817,3 +817,17 @@ fn unclosed_var_absolute_path_still_checked() {
     assert!(paths_in(&args(json!({ "p": "${oops/x" }))).is_empty());
     assert!(paths_in(&args(json!({ "p": "%oops/x" }))).is_empty());
 }
+
+#[test]
+fn unc_file_uri_judged_not_skipped() {
+    // An empty host, then a UNC path: decoded as `//srv/share/x`, which looks absolute, so the
+    // gate judges it (out of scope, asked) rather than dropping it as not-a-path.
+    let found = paths_in(&args(json!({ "path": "file:////srv/share/x" })));
+    assert_eq!(found.len(), 1, "{found:?}");
+    let r = ann(true, false);
+    let ruling = rule(&ask("files__read", Some(&r), found), &base());
+    assert!(
+        why(&ruling).contains("outside the folders you chose"),
+        "{ruling:?}"
+    );
+}
