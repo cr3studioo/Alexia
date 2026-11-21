@@ -442,3 +442,8 @@
 2026-11-21 CEO #16 starts. Dispatched P2-68 (opus) ctx_a7a9ab93d6e9
 2026-11-21 P2-25 built -> review ctx_84e1804642fb (concern: /undo untested until P2-28)
 2026-11-21 Dispatched P2-28 (sonnet) ctx_b1f62b792d3a
+2026-11-21 Phase review 6 done: 12 findings (2 high: '/' turns from any origin reach commands; Agent::reply drops turn.files). Planner plan-fu7 (opus) ctx_27a427f23ca2 for them + approval follow-ups
+2026-11-21 P2-68 allowed tokio test-util dev-dep in alexia-core/Cargo.toml
+2026-11-21 P2-27 built -> review ctx_9e1b0362d64c (helper tool list unfiltered; depth enforced at call time)
+2026-11-21 Dispatched P2-66 (sonnet) ctx_acb5dec59923
+2026-11-21 Merged plan-fu7: P2-73..82 (10 tasks; P2-70, P2-38 amended; P2-38 now needs P2-73, P2-74). P2-74, P2-79, P2-80 ready
