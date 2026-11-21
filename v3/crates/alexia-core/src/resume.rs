@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use alexia_store::{now_ms, AuditRow, Content, LiveRunRow, MessageBody, Role, SessionId, Store};
+use alexia_store::{now_ms, AuditRow, Content, LiveRunRow, MessageBody, Role, Store};
 use serde_json::Map;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
