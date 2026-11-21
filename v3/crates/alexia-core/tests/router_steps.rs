@@ -316,6 +316,19 @@ async fn cloud_request_redacted() {
     assert!(!notes[0].contains(&key));
 }
 
+#[tokio::test]
+async fn step_redacts_once_and_keeps_note() {
+    let w = world(in_ten_models(), 0.0).await;
+    let key = format!("{}{}", "sk-or-v1-", "9f2a8c7b6d5e4f3a2b1c0d9e");
+    step(&w, &request(&format!("use {key} now")), &ask_for(Job::Step))
+        .await
+        .unwrap();
+    let seen = w.asked.lock().unwrap()[0].1.clone();
+    assert_eq!(seen, "use [redacted] now");
+    // The race reported what it removed, so the note names the kind once.
+    assert_eq!(w.router.take_notes(), ["Removed api key before sending."]);
+}
+
 fn local_provider(w: &World, models: Vec<ModelInfo>) -> Arc<Fake> {
     let l = fake("local:gemma", models, 0.0, &w.asked);
     w.router.set_provider(l.clone(), true);

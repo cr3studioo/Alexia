@@ -193,7 +193,7 @@ struct Slot {
 struct Race<'a> {
     router: &'a Router,
     req: Arc<ChatRequest>,
-    /// What a non-local provider gets (redacted for `step`).
+    /// What a non-local provider gets: `req` redacted.
     cloud: Arc<ChatRequest>,
     queue: Vec<Candidate>,
     slots: Vec<Slot>,
@@ -321,23 +321,41 @@ impl Router {
                 return Err(ProviderError::Other(needs.unmet(&all).into()));
             }
         }
-        let req = Arc::new(req.clone());
-        self.race(
-            req.clone(),
-            req,
-            queue,
-            budget,
-            out,
-            cancel,
-            Attribution::default(),
-        )
-        .await
+        self.race(req, queue, budget, out, cancel, Attribution::default())
+            .await
+            .0
     }
 
-    /// The race itself, shared by `hedged` and `step`: `queue` in order, `req` for local
-    /// providers and `cloud` for the rest.
-    #[allow(clippy::too_many_arguments)]
+    /// The race itself, shared by `hedged` and `step`: `queue` in order. TR-04: every non-local
+    /// candidate gets one redacted copy of `req` (built once per call), a local one gets `req`.
+    /// Also returns the kinds removed, for `step`'s note.
     async fn race(
+        &self,
+        req: &ChatRequest,
+        queue: Vec<Candidate>,
+        budget: Budget,
+        out: mpsc::Sender<ChatChunk>,
+        cancel: CancellationToken,
+        attr: Attribution,
+    ) -> (Result<ChatDone, ProviderError>, Vec<String>) {
+        let req = Arc::new(req.clone());
+        let (cloud, kinds) = if queue.iter().any(|c| !self.is_local(&c.provider)) {
+            let (cloud, kinds) = redact_request_known(&req, &self.known_secrets());
+            if !kinds.is_empty() {
+                tracing::debug!(?kinds, "redacted before sending to cloud");
+            }
+            (Arc::new(cloud), kinds)
+        } else {
+            (req.clone(), Vec::new())
+        };
+        let result = self
+            .run_race(req, cloud, queue, budget, out, cancel, attr)
+            .await;
+        (result, kinds)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn run_race(
         &self,
         req: Arc<ChatRequest>,
         cloud: Arc<ChatRequest>,
@@ -582,30 +600,16 @@ impl Router {
             return Err(ProviderError::Other(NO_FREE.into()));
         }
 
-        let cloud = if queue.iter().any(|c| !self.is_local(&c.provider)) {
-            let (cloud, kinds) = redact_request_known(req, &self.known_secrets());
-            if !kinds.is_empty() {
-                self.note(format!("Removed {} before sending.", kinds.join(", ")));
-            }
-            cloud
-        } else {
-            req.clone()
-        };
         let attr = Attribution {
             plugin: ask.plugin.clone(),
             run: ask.run.clone(),
             session: ask.session,
         };
-        self.race(
-            Arc::new(req.clone()),
-            Arc::new(cloud),
-            queue,
-            budget,
-            out,
-            cancel,
-            attr,
-        )
-        .await
+        let (result, kinds) = self.race(req, queue, budget, out, cancel, attr).await;
+        if !kinds.is_empty() {
+            self.note(format!("Removed {} before sending.", kinds.join(", ")));
+        }
+        result
     }
 
     /// Providers added at run time (local runtime, subscriptions). Replaces one with the same id.
