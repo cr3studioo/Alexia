@@ -2,7 +2,7 @@
 //! The GPU: what fits (MO-02), the load cap (MO-08), stepping aside for games (MO-09).
 //!
 //! Ports v2 `fit.ts` (weights + KV cache + overhead) and `nvidia.ts` (asking `nvidia-smi`). This
-//! module only detects a game; the hub wires `step_aside` to stop what Alexia runs on the GPU.
+//! module only detects a game; the hub turns `GpuEvent::StepAside` into stopping what Alexia runs on the GPU.
 
 use std::future::Future;
 use std::path::{Path, PathBuf};
@@ -15,6 +15,7 @@ use std::time::Duration;
 use alexia_store::Store;
 use regex::Regex;
 use tokio::process::Command;
+use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 const GIB: u64 = 1024 * 1024 * 1024;
@@ -458,6 +459,17 @@ const QUIET_POLLS: u32 = 3;
 
 type Source = Arc<dyn Fn() -> Pin<Box<dyn Future<Output = Vec<GpuProc>> + Send>> + Send + Sync>;
 
+/// What the watcher tells the hub; the hub does the async work (`Runtime::stop_all`,
+/// `McpHost::hold`, `LocalJobs::set_paused`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GpuEvent {
+    /// A game started. `procs` is the GPU process list the decision was made on, so the hub
+    /// finds the plugins on the GPU (`McpHost::pid`) without running nvidia-smi again.
+    StepAside { procs: Vec<GpuProc> },
+    /// The game ended (three quiet polls in a row).
+    GameOver,
+}
+
 pub struct Watch {
     store: Arc<Store>,
     ours: Arc<dyn Fn() -> Vec<u32> + Send + Sync>,
@@ -466,7 +478,7 @@ pub struct Watch {
 }
 
 impl Watch {
-    /// Polls every 5 s; on a game starting calls `step_aside` once; `game_over` once when it ends.
+    /// Polls every 5 s; sends `StepAside` once when a game starts, `GameOver` once when it ends.
     pub fn new(store: Arc<Store>, ours: Arc<dyn Fn() -> Vec<u32> + Send + Sync>) -> Watch {
         Watch {
             store,
@@ -484,18 +496,15 @@ impl Watch {
         self
     }
 
-    /// Runs until `cancel`. Nothing restarts after a game: `game_over` only reports it.
-    pub async fn run(
-        self,
-        cancel: CancellationToken,
-        step_aside: impl Fn() + Send,
-        game_over: impl Fn() + Send,
-    ) {
+    /// Runs until `cancel`, or until `events` has no receiver. `StepAside` carries the process
+    /// list the decision was made on; nothing restarts after a game: `GameOver` only reports it.
+    pub async fn run(self, cancel: CancellationToken, events: mpsc::Sender<GpuEvent>) {
         let mut playing = false;
         let mut quiet = 0;
         loop {
             let procs = tokio::select! {
                 () = cancel.cancelled() => return,
+                () = events.closed() => return,
                 p = (self.source)() => p,
             };
             let store = self.store.clone();
@@ -505,15 +514,24 @@ impl Watch {
             let ours = (self.ours)();
             let now = procs.iter().any(|p| is_game(p, &dirs, &ours));
             quiet = if now { 0 } else { quiet + 1 };
-            if now && !playing {
-                step_aside();
+            let event = if now && !playing {
                 playing = true;
+                Some(GpuEvent::StepAside { procs })
             } else if playing && quiet >= QUIET_POLLS {
-                game_over();
                 playing = false;
+                Some(GpuEvent::GameOver)
+            } else {
+                None
+            };
+            if let Some(event) = event {
+                tokio::select! {
+                    () = cancel.cancelled() => return,
+                    sent = events.send(event) => if sent.is_err() { return },
+                }
             }
             tokio::select! {
                 () = cancel.cancelled() => return,
+                () = events.closed() => return,
                 () = tokio::time::sleep(self.every) => {}
             }
         }
