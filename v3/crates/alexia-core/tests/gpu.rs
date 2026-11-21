@@ -12,10 +12,11 @@ use std::time::{Duration, Instant};
 
 use alexia_core::gpu::{
     decode_reg, epic_dir, fit, headroom_mb, is_game, parse_compute_csv, parse_machine_csv,
-    parse_xml_processes, reg_string, steam_dirs, GpuProc, Machine, Verdict, Watch,
+    parse_xml_processes, reg_string, steam_dirs, GpuEvent, GpuProc, Machine, Verdict, Watch,
 };
 use alexia_store::Store;
 use serde_json::json;
+use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 const MIB: u64 = 1024 * 1024;
@@ -270,20 +271,19 @@ async fn watch_steps_aside_once_and_returns() {
     let watch = Watch::new(store, ours).with_source(source, Duration::from_millis(20));
     let (aside, over) = (Arc::new(AtomicU32::new(0)), Arc::new(AtomicU32::new(0)));
     let cancel = CancellationToken::new();
-    let task = tokio::spawn({
-        let (a, o, c) = (aside.clone(), over.clone(), cancel.clone());
+    let (tx, mut rx) = mpsc::channel(8);
+    let task = tokio::spawn(watch.run(cancel.clone(), tx));
+    tokio::spawn({
+        let (a, o) = (aside.clone(), over.clone());
         async move {
-            watch
-                .run(
-                    c,
-                    move || {
-                        a.fetch_add(1, Ordering::SeqCst);
-                    },
-                    move || {
-                        o.fetch_add(1, Ordering::SeqCst);
-                    },
-                )
-                .await;
+            while let Some(e) = rx.recv().await {
+                let n = if matches!(e, GpuEvent::StepAside { .. }) {
+                    &a
+                } else {
+                    &o
+                };
+                n.fetch_add(1, Ordering::SeqCst);
+            }
         }
     });
     let counts = || (aside.load(Ordering::SeqCst), over.load(Ordering::SeqCst));
@@ -366,9 +366,20 @@ async fn run_script(script: &[bool], polls: u32) -> (Vec<u32>, u32, u32) {
     let (aside, over) = (Arc::new(AtomicU32::new(0)), Arc::new(AtomicU32::new(0)));
     let seen = Arc::new(Mutex::new(Vec::new()));
     let script = script.to_vec();
+    let (tx, rx) = mpsc::channel(8);
+    let rx = Arc::new(Mutex::new(rx));
     let source = {
-        let (seen, over) = (seen.clone(), over.clone());
+        let (seen, aside, over) = (seen.clone(), aside.clone(), over.clone());
         Arc::new(move || {
+            // An event is sent before the poll that follows it, so it is already here.
+            while let Ok(e) = rx.lock().unwrap().try_recv() {
+                let n = if matches!(e, GpuEvent::StepAside { .. }) {
+                    &aside
+                } else {
+                    &over
+                };
+                n.fetch_add(1, Ordering::SeqCst);
+            }
             let mut seen = seen.lock().unwrap();
             let n = seen.len();
             seen.push(over.load(Ordering::SeqCst));
@@ -384,22 +395,7 @@ async fn run_script(script: &[bool], polls: u32) -> (Vec<u32>, u32, u32) {
     let ours: Arc<dyn Fn() -> Vec<u32> + Send + Sync> = Arc::new(Vec::new);
     let watch = Watch::new(store, ours).with_source(source, Duration::from_millis(20));
     let cancel = CancellationToken::new();
-    let task = tokio::spawn({
-        let (a, o, c) = (aside.clone(), over.clone(), cancel.clone());
-        async move {
-            watch
-                .run(
-                    c,
-                    move || {
-                        a.fetch_add(1, Ordering::SeqCst);
-                    },
-                    move || {
-                        o.fetch_add(1, Ordering::SeqCst);
-                    },
-                )
-                .await;
-        }
-    });
+    let task = tokio::spawn(watch.run(cancel.clone(), tx));
     until("polls", || seen.lock().unwrap().len() as u32 >= polls).await;
     let counts = (aside.load(Ordering::SeqCst), over.load(Ordering::SeqCst));
     cancel.cancel();
@@ -425,4 +421,83 @@ async fn one_missed_poll_does_not_flap() {
     // one miss, then two misses in a row, with the game back each time; then it stays
     let (seen, aside, over) = run_script(&[true, false, true, false, false, true], 10).await;
     assert_eq!((aside, over), (1, 0), "{seen:?}");
+}
+
+/// A watcher over a list the test changes, sending into a channel the test reads.
+fn watcher(list: &Arc<Mutex<Vec<GpuProc>>>) -> Watch {
+    let store = Arc::new(Store::open_in_memory().unwrap());
+    store
+        .set_setting("_core", "gpu.games", &json!(["C:/Games"]))
+        .unwrap();
+    let list = list.clone();
+    let source = Arc::new(move || {
+        let now = list.lock().unwrap().clone();
+        Box::pin(async move { now }) as Pin<Box<dyn Future<Output = Vec<GpuProc>> + Send>>
+    });
+    let ours: Arc<dyn Fn() -> Vec<u32> + Send + Sync> = Arc::new(|| vec![99]);
+    Watch::new(store, ours).with_source(source, Duration::from_millis(20))
+}
+
+async fn next(rx: &mut mpsc::Receiver<GpuEvent>) -> GpuEvent {
+    tokio::time::timeout(Duration::from_secs(30), rx.recv())
+        .await
+        .expect("an event within 30 s")
+        .expect("the watcher is still running")
+}
+
+#[tokio::test]
+async fn step_aside_event_carries_procs() {
+    let game = proc(5, "C:/Games/Hades/Hades.exe", true);
+    let ours = proc(99, "C:/Games/ours/llama.exe", true);
+    let plugin = proc(42, "C:/alexia/plugin.exe", false);
+    let list = Arc::new(Mutex::new(vec![game.clone(), ours.clone(), plugin.clone()]));
+    let (tx, mut rx) = mpsc::channel(8);
+    let cancel = CancellationToken::new();
+    let task = tokio::spawn(watcher(&list).run(cancel.clone(), tx));
+    // The whole list it decided on, ours and the non-game ones included.
+    assert_eq!(
+        next(&mut rx).await,
+        GpuEvent::StepAside {
+            procs: vec![game, ours, plugin]
+        }
+    );
+    cancel.cancel();
+    tokio::time::timeout(Duration::from_secs(30), task)
+        .await
+        .unwrap()
+        .unwrap();
+}
+
+#[tokio::test]
+async fn game_over_event_once() {
+    let list = Arc::new(Mutex::new(vec![proc(5, "C:/Games/Hades/Hades.exe", true)]));
+    let (tx, mut rx) = mpsc::channel(8);
+    let cancel = CancellationToken::new();
+    let task = tokio::spawn(watcher(&list).run(cancel.clone(), tx));
+    assert!(matches!(next(&mut rx).await, GpuEvent::StepAside { .. }));
+    list.lock().unwrap().clear();
+    assert_eq!(next(&mut rx).await, GpuEvent::GameOver);
+    // Many quiet polls later, nothing more.
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert!(rx.try_recv().is_err(), "one GameOver only");
+    cancel.cancel();
+    tokio::time::timeout(Duration::from_secs(30), task)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(rx.recv().await.is_none(), "nothing after the end either");
+}
+
+#[tokio::test]
+async fn closed_receiver_ends_run() {
+    // No game ever: the watcher has nothing to send, and must still notice the receiver went.
+    let list = Arc::new(Mutex::new(Vec::new()));
+    let (tx, rx) = mpsc::channel(8);
+    let task = tokio::spawn(watcher(&list).run(CancellationToken::new(), tx));
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    drop(rx);
+    tokio::time::timeout(Duration::from_secs(30), task)
+        .await
+        .expect("run ends once nobody listens")
+        .unwrap();
 }

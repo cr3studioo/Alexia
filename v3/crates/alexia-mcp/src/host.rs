@@ -42,6 +42,11 @@ struct Inner {
     plugins: Mutex<BTreeMap<PluginId, Slot>>,
     /// Cancelled by `shutdown`: nothing spawns after it.
     closing: CancellationToken,
+    /// (P2-62) Stopped while a game runs: nothing in here spawns until `release`. Read with
+    /// `plugins` locked (taken after it), where `ensure_running` decides to spawn.
+    held: Mutex<HashSet<PluginId>>,
+    /// Serializes the read-modify-writes of `_core.unreviewed` and `_core.known_plugins`.
+    lists: Mutex<()>,
 }
 
 struct Slot {
@@ -95,6 +100,14 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 }
 
 const UNKNOWN: &str = "No plugin with that id is installed.";
+/// kv `_core` keys: v2's list of plugins whose own word is not believed, and every plugin id
+/// this host has seen (P2-62).
+const UNREVIEWED: &str = "unreviewed";
+const KNOWN: &str = "known_plugins";
+
+fn paused(name: &str) -> String {
+    format!("{name} is paused while a game runs.")
+}
 
 impl McpHost {
     pub fn new(
@@ -111,6 +124,8 @@ impl McpHost {
                 events,
                 plugins: Mutex::default(),
                 closing: CancellationToken::new(),
+                held: Mutex::default(),
+                lists: Mutex::default(),
             }),
         }
     }
@@ -203,6 +218,7 @@ impl McpHost {
         std::fs::create_dir_all(layout.cache())?;
         let enabled: HashSet<&PluginId> = enabled.iter().collect();
         let found = Self::scan(&self.inner.cfg.plugin_dirs);
+        self.learn(found.keys());
 
         let mut resident = vec![];
         for (id, dir) in found {
@@ -357,7 +373,7 @@ impl McpHost {
         all.sort_by(|a, b| a.0.cmp(&b.0));
         // v2's list (`servers.ts`): small, so read fresh each time rather than cached with the tools.
         // Fail closed: a list that cannot be read or understood leaves every plugin unreviewed.
-        let unreviewed: Option<Vec<String>> = match self.inner.store.kv_get("_core", "unreviewed") {
+        let unreviewed: Option<Vec<String>> = match self.inner.store.kv_get("_core", UNREVIEWED) {
             Ok(None) => Some(vec![]),
             Ok(Some(v)) => match serde_json::from_value(v) {
                 Ok(list) => Some(list),
@@ -375,6 +391,13 @@ impl McpHost {
                 None
             }
         };
+        // An unreadable or malformed known list is the same: who is new can't be told.
+        let known_ok = match self.inner.store.kv_get("_core", KNOWN) {
+            Ok(None) => true,
+            Ok(Some(v)) => serde_json::from_value::<Vec<String>>(v).is_ok(),
+            Err(_) => false,
+        };
+        let unreviewed = unreviewed.filter(|_| known_ok);
         let mut tools: Vec<HostedTool> = all.into_iter().flat_map(|(_, t)| t).collect();
         for t in &mut tools {
             t.reviewed = unreviewed
@@ -659,7 +682,13 @@ impl McpHost {
             .map(|(id, _)| id.clone())
             .collect();
         // BTreeMap: already in plugin id order, which breaks ties.
+        let mut held = None;
         for id in candidates {
+            // Held for a game: another provider, or core, may still answer.
+            if lock(&self.inner.held).contains(&id) {
+                held = held.or_else(|| self.manifest(&id).map(|m| paused(&m.name)));
+                continue;
+            }
             // The manifest is the promise; the binding is on a running tool (v2 `#binding`).
             let Some(tools) = self.plugin_tools(&id).await else {
                 continue;
@@ -689,7 +718,7 @@ impl McpHost {
         {
             Some(Ok(r)) => Ok(r),
             Some(Err(e)) => Err(CallError::Rpc(e)),
-            None => Err(none()),
+            None => Err(held.map_or_else(none, |sentence| CallError::Off { sentence })),
         }
     }
 
@@ -794,6 +823,95 @@ impl McpHost {
     /// Stop now (D213). Not a crash: the next call respawns.
     pub async fn stop(&self, id: &PluginId) {
         self.stop_with(id, StopReason::Shutdown).await;
+    }
+
+    /// (P2-62, D213) Stop these plugins and keep them stopped until `release`: a call to one is
+    /// `Off` ("<name> is paused while a game runs.") and supervision does not respawn it.
+    pub async fn hold(&self, ids: &[PluginId]) {
+        // Recorded first: from here on `ensure_running` refuses, so after each stop below
+        // (which waits out a spawn under way) nothing brings the process back.
+        lock(&self.inner.held).extend(ids.iter().cloned());
+        for id in ids {
+            self.stop(id).await;
+        }
+    }
+
+    /// The game is over: the next call spawns as usual.
+    pub fn release(&self) {
+        lock(&self.inner.held).clear();
+    }
+
+    /// (P2-62) The owner's word on a plugin: `false` adds it to `_core.unreviewed`, `true`
+    /// takes it out. A list that cannot be read or understood is an error, not overwritten.
+    pub fn set_reviewed(&self, id: &PluginId, reviewed: bool) -> Result<(), Error> {
+        let _g = lock(&self.inner.lists);
+        let store = &self.inner.store;
+        let mut list: Vec<String> = match store.kv_get("_core", UNREVIEWED)? {
+            None => vec![],
+            Some(v) => serde_json::from_value(v).map_err(alexia_store::Error::from)?,
+        };
+        list.retain(|p| p != &id.0);
+        if !reviewed {
+            list.push(id.0.clone());
+        }
+        store.kv_set("_core", UNREVIEWED, &json!(list))?;
+        Ok(())
+    }
+
+    /// (P2-62, review 5 #6) Fail closed for plugins this host has not seen before: each id
+    /// missing from `_core.known_plugins` goes into `_core.unreviewed`, then into the known
+    /// list. The first scan ever (no known list) trusts what is installed, as v2's bundled set
+    /// was. A list that can't be read or understood is left alone; `tools()` then treats
+    /// everyone as unreviewed.
+    fn learn<'a>(&self, ids: impl Iterator<Item = &'a PluginId>) {
+        let ids: Vec<String> = ids.map(|i| i.0.clone()).collect();
+        let _g = lock(&self.inner.lists);
+        let store = &self.inner.store;
+        let read = |key: &str| -> Result<Option<Vec<String>>, String> {
+            match store.kv_get("_core", key) {
+                Ok(None) => Ok(None),
+                Ok(Some(v)) => serde_json::from_value(v)
+                    .map(Some)
+                    .map_err(|e| e.to_string()),
+                Err(e) => Err(e.to_string()),
+            }
+        };
+        let warn = |e: String| {
+            tracing::warn!("the plugin lists could not be read; new plugins stay unreviewed: {e}");
+        };
+        let known = match read(KNOWN) {
+            Ok(Some(known)) => known,
+            Ok(None) => {
+                if let Err(e) = store.kv_set("_core", KNOWN, &json!(ids)) {
+                    tracing::warn!("the known plugin list could not be written: {e}");
+                }
+                return;
+            }
+            Err(e) => return warn(e),
+        };
+        let new: Vec<String> = ids.into_iter().filter(|i| !known.contains(i)).collect();
+        if new.is_empty() {
+            return;
+        }
+        let mut unreviewed = match read(UNREVIEWED) {
+            Ok(list) => list.unwrap_or_default(),
+            Err(e) => return warn(e),
+        };
+        for i in &new {
+            if !unreviewed.contains(i) {
+                unreviewed.push(i.clone());
+            }
+        }
+        // No kv transaction here: unreviewed first, so a failure in between leaves the new
+        // plugin unreviewed and still unknown (the next scan adds it again, once).
+        if let Err(e) = store.kv_set("_core", UNREVIEWED, &json!(unreviewed)) {
+            tracing::warn!("the unreviewed list could not be written: {e}");
+            return;
+        }
+        let known: Vec<String> = known.into_iter().chain(new).collect();
+        if let Err(e) = store.kv_set("_core", KNOWN, &json!(known)) {
+            tracing::warn!("the known plugin list could not be written: {e}");
+        }
     }
 
     pub fn pid(&self, id: &PluginId) -> Option<u32> {
@@ -944,6 +1062,11 @@ impl McpHost {
                 }
                 if self.inner.closing.is_cancelled() {
                     return Err(format!("{} is stopping.", slot.dir.manifest.name));
+                }
+                // Under the plugins lock and the spawn lock: `hold` records, then stops under
+                // the spawn lock, so a call that got past this one is stopped by it.
+                if lock(&self.inner.held).contains(id) {
+                    return Err(paused(&slot.dir.manifest.name));
                 }
                 match &slot.running {
                     Some(r) if !r.conn.closed().is_cancelled() => {
