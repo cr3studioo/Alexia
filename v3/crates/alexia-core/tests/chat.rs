@@ -611,3 +611,27 @@ async fn spans_are_offsets_from_the_turn() {
         reply.spans
     );
 }
+
+#[tokio::test]
+async fn fast_chat_history_redacted() {
+    let w = world(text(&["Noted."]), Arc::new(memory(0))).await;
+    let key = format!("{}{}", "sk-or-v1-", "9f2a8c7b6d5e4f3a2b1c0d9e");
+    say(&w, &format!("my key is {key}")).await.0.unwrap();
+    say(&w, "what next?").await.0.unwrap();
+
+    // The second turn carries the first as history; neither request held the key.
+    let reqs = requests(&w);
+    assert_eq!(reqs.len(), 2);
+    for req in &reqs {
+        let sent = serde_json::to_string(&(&req.system, &req.messages)).unwrap();
+        assert!(!sent.contains(&key), "the key left the machine: {sent}");
+    }
+    let earlier = &reqs[1].messages[0].1.content;
+    assert_eq!(content_text(earlier), "my key is [redacted]");
+    // What is stored stays as said.
+    let history = w.store.history(w.session, None).unwrap();
+    assert_eq!(
+        content_text(&history[0].body.content),
+        format!("my key is {key}")
+    );
+}

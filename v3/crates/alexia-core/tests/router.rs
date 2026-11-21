@@ -66,6 +66,8 @@ struct Log {
     started: Mutex<Vec<(String, Instant)>>,
     /// Models whose cancel token fired.
     cancelled: Mutex<Vec<String>>,
+    /// (model, the system prompt and every text turn it was sent, joined by newlines).
+    asked: Mutex<Vec<(String, String)>>,
 }
 
 impl Log {
@@ -76,6 +78,10 @@ impl Log {
     fn started_at(&self, model: &str) -> Option<Instant> {
         let started = self.started.lock().unwrap();
         started.iter().find(|(m, _)| m == model).map(|(_, at)| *at)
+    }
+    fn text_for(&self, model: &str) -> String {
+        let asked = self.asked.lock().unwrap();
+        asked.iter().find(|(m, _)| m == model).unwrap().1.clone()
     }
     fn was_cancelled(&self, model: &str) -> bool {
         self.cancelled.lock().unwrap().iter().any(|m| m == model)
@@ -99,11 +105,23 @@ impl Provider for Fake {
     }
     async fn chat(
         &self,
-        _: &ChatRequest,
+        req: &ChatRequest,
         model: &str,
         out: mpsc::Sender<ChatChunk>,
         cancel: CancellationToken,
     ) -> Result<ChatDone, ProviderError> {
+        let mut text: Vec<String> = req.system.iter().cloned().collect();
+        text.extend(req.messages.iter().filter_map(|(_, b)| match &b.content {
+            Content::Text(t) => Some(t.clone()),
+            _ => None,
+        }));
+        self.log.asked.lock().unwrap().push((
+            model.into(),
+            text.join(
+                "
+",
+            ),
+        ));
         self.log
             .started
             .lock()
@@ -834,4 +852,95 @@ async fn empty_after_filter_says_why() {
         other => panic!("{other:?}"),
     }
     assert!(w.log.started().is_empty());
+}
+
+fn secret_key() -> String {
+    format!("{}{}", "sk-or-v1-", "9f2a8c7b6d5e4f3a2b1c0d9e")
+}
+
+/// A key in the system prompt, an earlier turn and the new turn.
+fn keyed_request() -> ChatRequest {
+    let key = secret_key();
+    ChatRequest {
+        messages: vec![
+            text_turn(&format!("earlier {key}")),
+            (Role::Assistant, body(Content::Text("noted".into()))),
+            text_turn(&format!("now {key}")),
+        ],
+        system: Some(format!("profile {key}")),
+        tools: Vec::new(),
+        max_tokens: None,
+    }
+}
+
+async fn ask_with(w: &World, req: &ChatRequest, b: Budget) -> ChatDone {
+    let (tx, _rx) = mpsc::channel(64);
+    w.router
+        .hedged(req, b, tx, CancellationToken::new())
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn hedged_redacts_for_cloud() {
+    let w = world(&[("x", vec![("a-70b", says(0, "ok"))])], rows(&["x"]), true).await;
+    ask_with(&w, &keyed_request(), budget(30_000)).await;
+    let seen = w.log.text_for("a-70b");
+    assert!(
+        !seen.contains(&secret_key()),
+        "the key left the machine: {seen}"
+    );
+    assert_eq!(
+        seen,
+        "profile [redacted]
+earlier [redacted]
+noted
+now [redacted]"
+    );
+}
+
+#[tokio::test]
+async fn hedged_local_gets_request_unchanged() {
+    let w = world(&[("x", vec![("a-70b", says(0, "ok"))])], rows(&["x"]), true).await;
+    // The same provider, now registered as running on this machine.
+    let local = Fake {
+        id: "x".into(),
+        models: vec![info("a-70b", true)],
+        scripts: HashMap::from([("a-70b".to_owned(), says(0, "ok"))]),
+        log: w.log.clone(),
+    };
+    w.router.set_provider(Arc::new(local), true);
+    ask_with(&w, &keyed_request(), budget(30_000)).await;
+    let key = secret_key();
+    assert_eq!(
+        w.log.text_for("a-70b"),
+        format!(
+            "profile {key}
+earlier {key}
+noted
+now {key}"
+        )
+    );
+}
+
+#[tokio::test]
+async fn hedged_hedge_candidates_redacted_too() {
+    let w = world(
+        &[
+            ("x", vec![("a-70b", silent())]),
+            ("y", vec![("b-30b", silent())]),
+            ("z", vec![("c-8b", says(0, "third"))]),
+        ],
+        rows(&["x", "y", "z"]),
+        true,
+    )
+    .await;
+    let done = ask_with(&w, &keyed_request(), budget(500)).await;
+    assert_eq!(done.model, "c-8b");
+    assert_eq!(w.log.started(), vec!["a-70b", "b-30b", "c-8b"]);
+    for model in ["a-70b", "b-30b", "c-8b"] {
+        let seen = w.log.text_for(model);
+        assert!(!seen.contains(&secret_key()), "{model} got the key: {seen}");
+        assert_eq!(seen.matches("[redacted]").count(), 3, "{model}: {seen}");
+    }
 }
