@@ -415,3 +415,7 @@
 2026-11-21 Merged P2-56 + P2-69 (gate OK 67, pushed). P2-60 ready
 2026-11-21 Dispatched P2-60 (opus) ctx_03c3eb508a71
 2026-11-21 P2-36 review 3: changes. CEO decision: widened spec (router.rs helpers, a_failed/b_failed) instead of blocked-owner, since 2 of 3 reasons were spec scope; one small bug left (cancel recorded as unreachable) -> fix 4 (sonnet) ctx_4a0acb7258fb
+2026-11-21 Builder prompt: per-crate cargo test instead of --workspace (4 builders killed for memory); reviewers still run the workspace
+2026-11-21 P2-36 fix 4 done (cancel records no try) -> review 4
+2026-11-21 P2-55 built -> review (WasmPlugin::spawn now async)
+2026-11-21 Dispatched P2-65 (opus)
