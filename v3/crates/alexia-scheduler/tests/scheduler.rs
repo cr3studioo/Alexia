@@ -981,7 +981,11 @@ async fn every_does_not_overlap_itself() {
     let run = tokio::spawn(sched.clone().run(cancel.clone()));
     // Three slow turns take ~900 ms of virtual time: ~18 due times pass meanwhile.
     until_asked(&brain, 3).await;
-    assert_eq!(brain.most.load(Ordering::SeqCst), 1, "never two turns at once");
+    assert_eq!(
+        brain.most.load(Ordering::SeqCst),
+        1,
+        "never two turns at once"
+    );
     cancel.cancel();
     run.await.unwrap().unwrap();
 }

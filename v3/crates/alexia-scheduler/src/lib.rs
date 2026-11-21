@@ -234,7 +234,9 @@ impl Scheduler {
             };
             let mut wait = RECHECK;
             for job in jobs {
-                let Some(mut next) = job.next_at else { continue };
+                let Some(mut next) = job.next_at else {
+                    continue;
+                };
                 if next <= now {
                     // Wake for its next due time too, even while this turn still runs.
                     match self.start(job, now, &cancel, &mut firing, &mut busy) {
