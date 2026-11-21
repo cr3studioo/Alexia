@@ -813,3 +813,179 @@ async fn a_one_shot_can_schedule_from_its_own_turn() {
     cancel.cancel();
     run.await.unwrap().unwrap();
 }
+
+/// A brain whose turn takes `delay` (or, with None, waits until it is cancelled), counting how
+/// many turns it was asked for and the most it ever had in flight at once.
+#[derive(Default)]
+struct SlowBrain {
+    delay: Option<Duration>,
+    asked: AtomicUsize,
+    in_flight: AtomicUsize,
+    most: AtomicUsize,
+}
+#[async_trait::async_trait]
+impl Brain for SlowBrain {
+    async fn reply(
+        &self,
+        _: Turn,
+        _: DraftSink,
+        cancel: CancellationToken,
+    ) -> Result<Reply, BrainError> {
+        self.asked.fetch_add(1, Ordering::SeqCst);
+        let now = self.in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+        self.most.fetch_max(now, Ordering::SeqCst);
+        let work = async {
+            match self.delay {
+                Some(d) => tokio::time::sleep(d).await,
+                None => std::future::pending().await,
+            }
+        };
+        let done = tokio::select! {
+            () = cancel.cancelled() => false,
+            () = work => true,
+        };
+        self.in_flight.fetch_sub(1, Ordering::SeqCst);
+        if !done {
+            return Err(BrainError::Cancelled);
+        }
+        Ok(Reply {
+            text: "slow answer".into(),
+            files: vec![],
+            lane: Lane::Task,
+            model: None,
+            spans: vec![],
+        })
+    }
+}
+
+/// One time base per test, so a restarted Scheduler's clock carries on from the first one's
+/// (`paused_clock` restarts from the real wall time).
+type Base = (Ms, tokio::time::Instant);
+fn base() -> Base {
+    (now_ms(), tokio::time::Instant::now())
+}
+
+fn sched_on(store: &Arc<Store>, brain: &Arc<SlowBrain>, (wall, at): Base) -> Arc<Scheduler> {
+    Scheduler::with_parts(
+        store.clone(),
+        Bus::new(64),
+        brain.clone(),
+        Box::new(move || wall + at.elapsed().as_millis() as Ms),
+        Box::new(Store::jobs),
+    )
+}
+
+/// Lets virtual time run until `brain` has been asked `n` times (bounded).
+async fn until_asked(brain: &SlowBrain, n: usize) {
+    tokio::time::timeout(Duration::from_secs(3600), async {
+        while brain.asked.load(Ordering::SeqCst) < n {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("the brain was asked {n} times"));
+}
+
+#[tokio::test(start_paused = true)]
+async fn one_shot_cut_short_at_shutdown_fires_after_restart() {
+    let brain = Arc::new(SlowBrain::default());
+    let store = Arc::new(Store::open_in_memory().unwrap());
+    let t0 = base();
+    let first = sched_on(&store, &brain, t0);
+    let id = first
+        .add(
+            Trigger::At { at: t0.0 + MIN },
+            "once",
+            Urgency::Normal,
+            telegram(),
+        )
+        .unwrap();
+    let cancel = CancellationToken::new();
+    let run = tokio::spawn(first.clone().run(cancel.clone()));
+    until_asked(&brain, 1).await;
+    // The hub shuts down mid-turn; shutdown itself does not start the job again.
+    cancel.cancel();
+    run.await.unwrap().unwrap();
+    assert_eq!(brain.asked.load(Ordering::SeqCst), 1);
+    let left = first.jobs().unwrap();
+    drop(first);
+    assert_eq!(left.len(), 1, "the one-shot is still listed");
+    assert_eq!(left[0].id, id);
+    assert!(left[0].next_at.is_some(), "and due again");
+
+    // Next start: it fires once, as a time missed while off does.
+    let second = sched_on(&store, &brain, t0);
+    let cancel = CancellationToken::new();
+    let run = tokio::spawn(second.clone().run(cancel.clone()));
+    until_asked(&brain, 2).await;
+    tokio::time::sleep(Duration::from_secs(600)).await;
+    assert_eq!(brain.asked.load(Ordering::SeqCst), 2);
+    cancel.cancel();
+    run.await.unwrap().unwrap();
+}
+
+#[tokio::test(start_paused = true)]
+async fn one_shot_cancelled_by_owner_while_running_stays_cancelled() {
+    let brain = Arc::new(SlowBrain::default());
+    let store = Arc::new(Store::open_in_memory().unwrap());
+    let t0 = base();
+    let first = sched_on(&store, &brain, t0);
+    let id = first
+        .add(
+            Trigger::At { at: t0.0 + MIN },
+            "once",
+            Urgency::Normal,
+            telegram(),
+        )
+        .unwrap();
+    let cancel = CancellationToken::new();
+    let run = tokio::spawn(first.clone().run(cancel.clone()));
+    until_asked(&brain, 1).await;
+    // schedule.cancel while the turn runs, then shutdown cuts the turn short.
+    assert!(first.cancel(id).unwrap());
+    cancel.cancel();
+    run.await.unwrap().unwrap();
+    assert!(first.jobs().unwrap().is_empty(), "the owner's cancel wins");
+    assert!(!first.cancel(id).unwrap(), "still cancelled");
+
+    let second = sched_on(&store, &brain, t0);
+    let cancel = CancellationToken::new();
+    let run = tokio::spawn(second.clone().run(cancel.clone()));
+    tokio::time::sleep(Duration::from_secs(600)).await;
+    assert_eq!(brain.asked.load(Ordering::SeqCst), 1, "never asked again");
+    cancel.cancel();
+    run.await.unwrap().unwrap();
+}
+
+#[tokio::test(start_paused = true)]
+async fn every_does_not_overlap_itself() {
+    let brain = Arc::new(SlowBrain {
+        delay: Some(Duration::from_millis(300)),
+        ..Default::default()
+    });
+    let store = Arc::new(Store::open_in_memory().unwrap());
+    let t0 = base();
+    let sched = sched_on(&store, &brain, t0);
+    sched
+        .add(
+            Trigger::Every {
+                period_ms: 50,
+                from: t0.0 + 50,
+            },
+            "tick",
+            Urgency::Normal,
+            telegram(),
+        )
+        .unwrap();
+    let cancel = CancellationToken::new();
+    let run = tokio::spawn(sched.clone().run(cancel.clone()));
+    // Three slow turns take ~900 ms of virtual time: ~18 due times pass meanwhile.
+    until_asked(&brain, 3).await;
+    assert_eq!(
+        brain.most.load(Ordering::SeqCst),
+        1,
+        "never two turns at once"
+    );
+    cancel.cancel();
+    run.await.unwrap().unwrap();
+}
