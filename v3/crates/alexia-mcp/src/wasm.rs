@@ -103,23 +103,24 @@ pub struct WasmPlugin {
 impl WasmPlugin {
     /// Compile and instantiate `module` and run its `_start` on its own thread. Must be called
     /// inside a tokio runtime. `own_dir` is preopened as `/data`; pass it only when the plugin
-    /// declared `fs.own_dir`. Blocks for at most `limits.start_ms` while the module compiles.
-    pub fn spawn(
+    /// declared `fs.own_dir`. Waits (async; the compile is on that thread) for at most
+    /// `limits.start_ms` while the module compiles.
+    pub async fn spawn(
         module: &Path,
         own_dir: Option<&Path>,
         limits: Limits,
     ) -> Result<WasmPlugin, Error> {
-        spawn_as(module, own_dir, limits, "plugin")
+        spawn_as(module, own_dir, limits, "plugin").await
     }
 
     /// `spawn` with the guest's `argv[0]`: the plugin id.
-    pub fn spawn_as(
+    pub async fn spawn_as(
         module: &Path,
         own_dir: Option<&Path>,
         limits: Limits,
         id: &str,
     ) -> Result<WasmPlugin, Error> {
-        spawn_as(module, own_dir, limits, id)
+        spawn_as(module, own_dir, limits, id).await
     }
 
     /// Stop the guest: it traps at its next epoch check.
@@ -162,7 +163,6 @@ fn io_err(e: impl std::fmt::Display) -> Error {
 }
 
 /// Two OS pipes: (host stdin, guest stdout) and (guest stdin, host stdout).
-#[allow(clippy::incompatible_msrv)] // std::io::pipe is 1.87; there is no 1.85 std pipe.
 fn pipes() -> io::Result<(ChildStdin, ChildStdout, ChildStdin, ChildStdout)> {
     let (ar, aw) = std::io::pipe()?;
     let (br, bw) = std::io::pipe()?;
@@ -171,7 +171,18 @@ fn pipes() -> io::Result<(ChildStdin, ChildStdout, ChildStdin, ChildStdout)> {
     Ok((writer(aw)?, reader(br)?, writer(bw)?, reader(ar)?))
 }
 
-fn spawn_as(
+thread_local! {
+    static START_DELAY: std::cell::Cell<Duration> = const { std::cell::Cell::new(Duration::ZERO) };
+}
+
+/// Tests only: every spawn from this thread sleeps `delay` on its compile thread first, to
+/// stand in for a slow compile.
+#[doc(hidden)]
+pub fn set_start_delay(delay: Duration) {
+    START_DELAY.set(delay);
+}
+
+async fn spawn_as(
     module: &Path,
     own_dir: Option<&Path>,
     limits: Limits,
@@ -208,13 +219,15 @@ fn spawn_as(
 
     let killed = Arc::new(AtomicBool::new(false));
     let (done_tx, done_rx) = tokio::sync::oneshot::channel();
-    let (ready_tx, ready_rx) = mpsc::channel::<Result<(), String>>();
+    let (ready_tx, ready_rx) = tokio::sync::oneshot::channel::<Result<(), String>>();
+    let delay = START_DELAY.get();
     let thread = {
         let (engine, killed, module) = (engine.clone(), Arc::clone(&killed), module.to_path_buf());
         move || {
             let started = |r: Result<(), String>| {
                 let _ = ready_tx.send(r);
             };
+            std::thread::sleep(delay);
             let mut store = Store::new(&engine, data);
             store.limiter(|d| &mut d.limits);
             let boot = (|| -> wasmtime::Result<(Linker<Data>, Module)> {
@@ -271,9 +284,12 @@ fn spawn_as(
     std::thread::Builder::new()
         .name(format!("wasm-{id}"))
         .spawn(thread)?;
-    match ready_rx.recv_timeout(Duration::from_millis(limits.start_ms)) {
-        Ok(Ok(())) => {}
-        Ok(Err(e)) => return Err(io_err(e)),
+    // Async: the compile runs on its own thread, so no runtime worker waits on it.
+    match tokio::time::timeout(Duration::from_millis(limits.start_ms), ready_rx).await {
+        Ok(Ok(Ok(()))) => {}
+        Ok(Ok(Err(e))) => return Err(io_err(e)),
+        // The thread ended without a word: it panicked.
+        Ok(Err(_)) => return Err(io_err("the module failed to start")),
         Err(_) => {
             engine.increment_epoch();
             killed.store(true, Ordering::Release);

@@ -993,7 +993,7 @@ impl McpHost {
             })
             .collect();
         let cfg = &self.inner.cfg;
-        let (proc, stdin, stdout, log) = match start_guest(&dir, cfg, secrets) {
+        let (proc, stdin, stdout, log) = match start_guest(&dir, cfg, secrets).await {
             Ok(g) => g,
             Err((e, log)) => return Err(self.failed(id, fail(&e), log)),
         };
@@ -1386,7 +1386,7 @@ type Started = (Guest, ChildStdin, ChildStdout, StderrLog);
 
 /// Starts the plugin's process or wasm instance and takes its stdio. An error comes with
 /// the log to keep, if there is one.
-fn start_guest(
+async fn start_guest(
     dir: &PluginDir,
     cfg: &crate::HostConfig,
     secrets: Vec<String>,
@@ -1416,6 +1416,7 @@ fn start_guest(
             ..Limits::default()
         };
         let mut wasm = WasmPlugin::spawn_as(&dir.path.join(rel), own.as_deref(), limits, id)
+            .await
             .map_err(|e| (e.to_string(), None))?;
         let (stdin, stdout) = wasm.take_stdio().expect("fresh instance has its pipes");
         return Ok((Guest::Wasm(wasm), stdin, stdout, StderrLog::new(secrets)));

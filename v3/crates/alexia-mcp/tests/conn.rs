@@ -515,7 +515,10 @@ async fn cancel_before_first_poll_reaches_incoming() {
             eventually(|| seen.load(Ordering::SeqCst)).await,
             "round {round}: the handler never saw its cancel"
         );
-        assert_eq!(*incoming.asked.lock().unwrap(), vec!["test/wait".to_string()]);
+        assert_eq!(
+            *incoming.asked.lock().unwrap(),
+            vec!["test/wait".to_string()]
+        );
         drop(out_w);
         drop(conn);
     }
