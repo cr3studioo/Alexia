@@ -423,3 +423,4 @@
 2026-11-21 P2-72 approved. Merged, gating
 2026-11-21 Merged P2-72 (gate OK 67, pushed). P2-21, 26, 27, 28 ready
 2026-11-21 Dispatched P2-21 (sonnet) ctx_002ecff84905, P2-26 (sonnet) ctx_25eeb39f949d
+2026-11-21 P2-55 approved (minor: dropped spawn_as future never sets killed, wasm.rs:288). Merged, gating
