@@ -82,7 +82,14 @@ pub fn encrypt(path: &Path) -> Result<()> {
         return Err(refused("There is no database to encrypt."));
     }
     if Store::is_encrypted(path)? {
-        shred_plain_leftover(path);
+        // Only the key opening the database proves the leftover is not the owner's only readable
+        // copy; `open` shreds it itself then.
+        if Store::open(path).is_err() && with_suffix(path, ".plain").exists() {
+            tracing::warn!(
+                file = %with_suffix(path, ".plain").display(),
+                "kept the plain copy of the database: its key is missing or wrong"
+            );
+        }
         return Err(refused("The database is already encrypted."));
     }
     const EXISTS: &str = "A database key already exists, so the database was not encrypted again.";

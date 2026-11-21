@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! TR-09: SQLCipher at rest. Every test holds `LOCK`: the key lives in one process-wide
 //! in-memory keychain, and a stored key changes how every new store opens.
+mod scratch;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
@@ -8,21 +10,19 @@ use std::sync::{Mutex, MutexGuard};
 use alexia_store::import::import_v2;
 use alexia_store::*;
 use rusqlite::Connection;
+use scratch::Scratch;
 
 static LOCK: Mutex<()> = Mutex::new(());
 const MARKER: &str = "zebra-marker-7f3a-plaintext-canary";
 const MISSING: &str = "The database is encrypted and its key is missing or wrong.";
 
-/// The lock, the in-memory keychain, no stored key, and a fresh empty folder.
-fn setup(name: &str) -> (MutexGuard<'static, ()>, PathBuf) {
+/// The lock, the in-memory keychain, no stored key, and a fresh empty folder removed on drop.
+fn setup(name: &str) -> (MutexGuard<'static, ()>, Scratch) {
     let guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
     std::env::set_var(secrets::MEMORY_BACKEND_ENV, "1");
     std::env::remove_var(secrets::env_name("_core", "store_key"));
     secrets::delete("_core", "store_key").unwrap();
-    let dir = std::env::temp_dir().join(format!("alexia-encrypt-{}-{name}", std::process::id()));
-    let _ = fs::remove_dir_all(&dir);
-    fs::create_dir_all(&dir).unwrap();
-    (guard, dir)
+    (guard, Scratch::new(&format!("encrypt-{name}")))
 }
 
 /// A plain store with a session, a marker message, a kv entry and a plugin table row.
@@ -95,7 +95,7 @@ fn plain_bytes_absent_after() {
     plain_store(&db);
     assert!(contains(&fs::read(&db).unwrap(), MARKER), "fixture check");
     encrypt::encrypt(&db).unwrap();
-    for entry in fs::read_dir(&dir).unwrap() {
+    for entry in fs::read_dir(&*dir).unwrap() {
         let path = entry.unwrap().path();
         assert!(
             !contains(&fs::read(&path).unwrap(), MARKER),
@@ -106,7 +106,7 @@ fn plain_bytes_absent_after() {
     // Writing through the encrypted store keeps the marker out too (-wal included).
     let store = Store::open(&db).unwrap();
     store.create_session(Some(MARKER)).unwrap();
-    for entry in fs::read_dir(&dir).unwrap() {
+    for entry in fs::read_dir(&*dir).unwrap() {
         let path = entry.unwrap().path();
         assert!(
             !contains(&fs::read(&path).unwrap(), MARKER),
@@ -303,7 +303,7 @@ fn plain_leftover_shredded_on_open() {
     assert_eq!(store.sessions().unwrap().len(), 1);
     assert!(!leftover(&db).exists());
     assert!(!wal.exists());
-    for entry in fs::read_dir(&dir).unwrap() {
+    for entry in fs::read_dir(&*dir).unwrap() {
         let path = entry.unwrap().path();
         assert!(
             !contains(&fs::read(&path).unwrap(), MARKER),
@@ -342,6 +342,25 @@ fn plain_leftover_shredded_when_encrypt_refuses() {
         "The database is already encrypted."
     );
     assert!(!leftover(&db).exists());
+}
+
+#[test]
+fn plain_leftover_kept_when_encrypt_refuses_without_key() {
+    let (_g, dir) = setup("leftover-encrypt-nokey");
+    let db = dir.join("alexia.db");
+    plain_store(&db);
+    let plain_bytes = fs::read(&db).unwrap();
+    encrypt::encrypt(&db).unwrap();
+    fs::write(leftover(&db), &plain_bytes).unwrap();
+    secrets::delete("_core", "store_key").unwrap();
+    assert_eq!(
+        refusal(encrypt::encrypt(&db)),
+        "The database is already encrypted."
+    );
+    assert!(
+        leftover(&db).exists(),
+        "the only readable copy is not shredded"
+    );
 }
 
 /// Puts the memory backend back and clears the key override, even when the test panics.

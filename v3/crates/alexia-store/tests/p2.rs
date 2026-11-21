@@ -1,16 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! Migration 3: the run trace, audit log, live runs, approvals and jobs.
-use std::path::PathBuf;
+mod scratch;
 
 use alexia_store::*;
 use rusqlite::Connection;
+use scratch::Scratch;
 use serde_json::json;
 
-/// A fresh, empty folder per test under the system temp dir.
-fn temp(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("alexia-p2-{}-{name}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    dir
+/// A fresh, empty folder per test, removed when the test ends.
+fn temp(name: &str) -> Scratch {
+    Scratch::new(&format!("p2-{name}"))
 }
 
 fn user_version(s: &Store) -> i64 {
@@ -54,7 +53,8 @@ fn live(run: &str, session: SessionId, started_at: Ms) -> LiveRunRow {
 
 #[test]
 fn upgrade_from_2_keeps_rows() {
-    let db = temp("upgrade").join("alexia.db");
+    let dir = temp("upgrade");
+    let db = dir.join("alexia.db");
     // A real version-2 file: today's schema with migration 3 taken back off.
     let (session, chat) = {
         let s = Store::open(&db).unwrap();

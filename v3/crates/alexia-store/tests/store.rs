@@ -1,15 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-use std::path::PathBuf;
+mod scratch;
 
 use alexia_store::*;
 use rusqlite::Connection;
+use scratch::Scratch;
 use serde_json::json;
 
-/// A fresh, empty folder per test under the system temp dir.
-fn temp(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("alexia-store-{}-{name}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    dir
+/// A fresh, empty folder per test, removed when the test ends.
+fn temp(name: &str) -> Scratch {
+    Scratch::new(&format!("store-{name}"))
 }
 
 fn pragma_i64(conn: &Connection, name: &str) -> i64 {
@@ -38,7 +37,8 @@ const TABLES: &[&str] = &[
 
 #[test]
 fn open_creates_file_and_migrates() {
-    let db = temp("creates").join("nested").join("alexia.db");
+    let dir = temp("creates");
+    let db = dir.join("nested").join("alexia.db");
     let store = Store::open(&db).unwrap();
     assert!(db.exists());
     store
@@ -61,8 +61,21 @@ fn open_creates_file_and_migrates() {
 }
 
 #[test]
+fn scratch_removed_on_drop() {
+    let dir = temp("drop");
+    let path = dir.to_path_buf();
+    std::fs::write(dir.join("note.txt"), "x").unwrap();
+    let store = Store::open(&dir.join("alexia.db")).unwrap();
+    store.create_session(Some("held")).unwrap();
+    drop(store);
+    drop(dir);
+    assert!(!path.exists());
+}
+
+#[test]
 fn reopen_is_idempotent() {
-    let db = temp("reopen").join("alexia.db");
+    let dir = temp("reopen");
+    let db = dir.join("alexia.db");
     drop(Store::open(&db).unwrap());
     let store = Store::open(&db).unwrap();
     let v = store
@@ -73,7 +86,8 @@ fn reopen_is_idempotent() {
 
 #[test]
 fn refuses_newer_schema() {
-    let db = temp("newer").join("alexia.db");
+    let dir = temp("newer");
+    let db = dir.join("alexia.db");
     drop(Store::open(&db).unwrap());
     Connection::open(&db)
         .unwrap()
@@ -85,7 +99,6 @@ fn refuses_newer_schema() {
 #[test]
 fn refuses_foreign_file() {
     let dir = temp("foreign");
-    std::fs::create_dir_all(&dir).unwrap();
     let db = dir.join("alexia.db");
     {
         let conn = Connection::open(&db).unwrap();

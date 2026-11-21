@@ -363,7 +363,8 @@ mod os {
         /// keychain backend directly.
         #[test]
         fn windows_credential_manager_round_trip() {
-            let account = "_v3test.probe";
+            // Per process: two worktrees testing at once must not share the entry.
+            let account = &format!("_v3test.probe.{}", std::process::id());
             super::delete(account).unwrap();
             assert_eq!(super::get(account).unwrap(), None);
             super::set(account, "not-a-secret").unwrap();
