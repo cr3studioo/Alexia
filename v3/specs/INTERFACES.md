@@ -124,7 +124,7 @@ zip = { version = "2", default-features = false, features = ["deflate"] }   # ll
 chrono = { version = "0.4", default-features = false, features = ["clock"] }  # local wall-clock time: schedules, `today`
 
 [workspace.lints.rust]
-unsafe_code = "deny"     # alexia-mcp's Job Object code opts out with a module-level allow
+unsafe_code = "deny"     # alexia-mcp's Job Object code opts out with a module-level allow (the only one, P2-64)
 ```
 
 Versions are the floor the first task builds with; the first task records what `cargo` actually
@@ -441,6 +441,29 @@ pub mod types   { /* MCP shapes, §3.3 */ }
 pub mod alexia  { /* the alexia/* layer, §3.4 */ }
 pub mod manifest;
 
+/// (P2-61, review 5 #3/#4) The one `file://` decoder; permissions, core tooling and compute/run
+/// all use it, so the gate judges the path the acting code opens. Local only: an empty host or
+/// `localhost`, scheme matched case-insensitively, the one-slash form `file:/C:/x` accepted,
+/// percent-decoded, `/C:/x` read as `C:/x`. `None` only for another scheme or another host.
+/// A UNC result (`file:////srv/x`) or a drive-relative `/x` is returned as decoded: the
+/// permission gate still judges it, and code that opens files refuses it (`is_network_path`;
+/// core tooling also refuses drive-relative). Pure: never touches the filesystem.
+pub fn file_uri_path(uri: &str) -> Option<std::path::PathBuf>;
+/// (P2-61) True for `\\host\share`, `//host/share` and `\\?\UNC\...`: a path that must never be
+/// stat'ed or opened (Windows would talk SMB to that host).
+pub fn is_network_path(path: &str) -> bool;
+/// (P2-63, review 5 #8) v2 `redactSecrets`, the one implementation: secret values first (longest
+/// first), then credential shapes, each replaced by `[redacted]`, with the kinds found.
+/// `redact` is this without kinds. `core::redact::redact_secrets` calls it.
+pub fn redact_secrets(text: &str, secrets: &[String]) -> (String, Vec<String>);
+pub fn redact(line: &str, secrets: &[String]) -> String;
+/// (P2-63) A JSON key that names a secret (the env-assignment row's keywords); core's
+/// `redact_json` replaces such a key's long string value whole (P2-51).
+pub fn is_secret_key(key: &str) -> bool;
+/// (P2-64, review 5 #9) The Windows Job Object with KILL_ON_JOB_CLOSE (a no-op elsewhere), the
+/// only unsafe code in the workspace; core's managed llama.cpp reuses it.
+pub use job::Job;
+
 // ---- manifest (plugin.json, manifest_version 1; manifest.md is normative) ----
 
 pub const ALEXIA_PROTOCOL_MIN: u32 = 2;
@@ -559,6 +582,10 @@ pub struct PluginStatus { pub id: PluginId, pub name: String, pub version: Strin
 pub struct HostedTool { pub plugin: PluginId, pub tool: types::Tool, pub provides: Vec<String>, pub hidden: bool,
                         /// false when kv `_core`/`unreviewed` (v2's list, a JSON array of plugin ids) holds the plugin id.
                         /// (P2-47, review 4 #8) Built false; only a successful read of that list sets it true.
+                        /// (P2-62, review 5 #6) Fail closed for new plugins: a scan that finds an id not in
+                        /// kv `_core`/`known_plugins` adds it to `_core.unreviewed` and to `known_plugins`.
+                        /// The first scan ever (no `known_plugins` yet) records what is installed as known
+                        /// and leaves it reviewed, as v2's bundled set was. `McpHost::set_reviewed` changes it.
                         pub reviewed: bool }
 
 pub type ProgressSink = tokio::sync::mpsc::Sender<types::ProgressParams>;
@@ -674,6 +701,12 @@ impl McpHost {
     pub async fn conversation_ended(&self);
     /// Stop now (D213: a game started). Not a crash; the next call respawns.
     pub async fn stop(&self, id: &PluginId);
+    /// (P2-62, review 5 #7) Stop these plugins and keep them stopped: until `release`, a call to
+    /// one is `CallError::Off` ("<name> is paused while a game runs.") instead of a respawn.
+    pub async fn hold(&self, ids: &[PluginId]);
+    pub fn release(&self);
+    /// (P2-62) The owner's word on a plugin: adds it to or removes it from `_core.unreviewed`.
+    pub fn set_reviewed(&self, id: &PluginId, reviewed: bool) -> Result<(), Error>;
     /// (P2-23, EX-12) Re-read the plugin's folder; in-flight calls finish; the next call spawns
     /// the new version. Emits `ToolsChanged`.
     pub async fn reload(&self, id: &PluginId) -> Result<(), Error>;
@@ -906,6 +939,8 @@ impl Router {
     /// wins and the other is cancelled. Each time `budget.first_byte_ms` passes with no first
     /// chunk, one more candidate starts (at most 4 running). Records every try in `tries`.
     /// (V3-1) `budget` is the new third argument.
+    /// (P2-59, review 5 #1, TR-04) A non-local candidate gets `redact::redact_request(req)`, never
+    /// `req` itself; a local one gets `req` as it is. So the chat lane, `step` and compare all redact.
     pub async fn hedged(&self, req: &ChatRequest, budget: Budget, out: tokio::sync::mpsc::Sender<ChatChunk>,
                         cancel: CancellationToken) -> Result<ChatDone, ProviderError>;
     /// (V3-1) The ranked list `hedged` would use now, for the dashboard and tests.
@@ -1278,10 +1313,14 @@ pub mod gpu {   // P2-32, MO-02, MO-08, MO-09
     pub fn game_dirs(store: &Store) -> Vec<PathBuf>;
     pub fn is_game(p: &GpuProc, dirs: &[PathBuf], ours: &[u32]) -> bool;
     pub struct Watch { /* ... */ }
+    /// (P2-62, review 5 #7) `procs` is the GPU process list the decision was made on, so the hub
+    /// finds the plugins on the GPU (`McpHost::pid`) without running nvidia-smi again.
+    pub enum GpuEvent { StepAside { procs: Vec<GpuProc> }, GameOver }
     impl Watch {
-        /// Polls every 5 s; on a game starting calls `step_aside` once; `game_over` once when it ends.
+        /// Polls every 5 s; sends `StepAside` once when a game starts, `GameOver` once when it
+        /// ends. The receiver does the async work (`Runtime::stop_all`, `McpHost::hold`, ...).
         pub fn new(store: Arc<Store>, ours: Arc<dyn Fn() -> Vec<u32> + Send + Sync>) -> Watch;
-        pub async fn run(self, cancel: CancellationToken, step_aside: impl Fn() + Send, game_over: impl Fn() + Send);
+        pub async fn run(self, cancel: CancellationToken, events: mpsc::Sender<GpuEvent>);
     }
     pub fn headroom_mb(store: &Store) -> u32;   // `_core.gpu.headroom_mb`, default 1536
 }
@@ -1469,6 +1508,7 @@ pub struct Job { pub id: JobId, pub trigger: Trigger, pub prompt: String, pub ur
 
 pub struct Scheduler { /* store, bus, brain */ }
 impl Scheduler {
+    /// `brain` is the Agent (§2.6 step 6): a scheduled prompt needs tools.
     pub fn new(store: Arc<Store>, bus: Bus, brain: Arc<dyn Brain>) -> Arc<Scheduler>;
     pub fn add(&self, trigger: Trigger, prompt: &str, urgency: Urgency, origin: Origin) -> Result<JobId>;
     pub fn cancel(&self, id: JobId) -> Result<bool>;
@@ -1477,7 +1517,10 @@ impl Scheduler {
     /// the brain (`Origin::Scheduler`), publishes `Event::Say` with the reply, sets next_at.
     pub async fn run(self: Arc<Self>, cancel: CancellationToken) -> Result<()>;
     /// The builtin tools `schedule.add` (its result carries the undo `schedule.cancel {id}`),
-    /// `schedule.list`, `schedule.cancel`, for the agent's Tooling.
+    /// `schedule.list`, `schedule.cancel`, for the agent's Tooling. (P2-60, review 5 #2) Holds a
+    /// `Weak<Scheduler>`, as Helpers and UndoTool hold `Weak<Agent>`, so Agent → tooling →
+    /// ScheduleTools → Scheduler → Agent is no strong cycle. A call after the scheduler is gone
+    /// is a tool error: "Scheduled jobs are not running."
     pub fn tools(self: &Arc<Self>) -> Arc<dyn Builtin>;
 }
 /// Next fire time after `now` in local time (chrono `Local`), DST-safe.
@@ -1533,23 +1576,29 @@ alexia-hub encrypt                         (V3-2) TR-09 (refuses while the hub r
    Not started yet: a plugin spawned now would get `NoUpcalls`' offers in its `initialize`.
 3. Providers → `Catalog` → `Router` → `ChannelSet` → `asker = Asker::new(channels.clone(), store, bus)`
    → `checker = Checker::new(None)`.
-4. `tooling = Arc::new(McpTooling::new(host.clone(), vec![/* the Scheduler's builtins */]))`.
+4. `tooling = Arc::new(McpTooling::new(host.clone(), vec![]))`. (Review 5 #2: the scheduler's
+   builtins cannot go here; `Scheduler::new` needs the Agent, which does not exist yet.)
 5. `agent = Agent::new(AgentParts { tools: tooling.clone(), host: host.clone(), ask: asker, checker, .. })`.
 6. `tooling.add_builtin(Helpers::new(&agent))`, `tooling.add_builtin(UndoTool::new(&agent))`
-   (both hold `Weak<Agent>`, so they come after it).
+   (both hold `Weak<Agent>`, so they come after it), then
+   `scheduler = Scheduler::new(store.clone(), bus.clone(), agent.clone())` →
+   `tooling.add_builtin(scheduler.tools())` (holds `Weak<Scheduler>`, P2-60). Built here, before
+   any turn can arrive, so every turn sees `schedule.*`; its loop starts in step 11.
 7. `host.set_upcalls(agent.clone())`, then `host.start(&enabled).await`.
 8. `Skills::load` over `layout.skills()` plus, for each `host.manifests()` entry, `path.join(f)` for
    every `f` in its manifest's `skills` → `tooling.add_builtin(skills)`; each `Problem` logged.
 9. `Runtime` → `LocalJobs` → `agent.set_local_jobs(jobs)`; `checker.set_model(..)` once P2-34's
    checker model is installed.
 10. `Lanes::new(FastChat, agent)` as the `Brain` → `Gateway::with_channels(.., channels)`.
-11. `Scheduler` → `resume::resume_all(agent, ..)` → `gpu::Watch` (steps aside:
-    `Runtime::stop_all`, `LocalJobs::set_paused`, `McpHost::stop` for GPU pids) → catalog news as
-    one `Say`. Each long-running piece is a tokio task under one root `CancellationToken`.
+11. `scheduler.run(..)` → `resume::resume_all(agent, ..)` → `gpu::Watch` with an mpsc receiver
+    (P2-62): on `StepAside { procs }`, `LocalJobs::set_paused(true)`, `Runtime::stop_all().await`
+    and `McpHost::hold(..)` for every plugin whose `pid` is in `procs`; on `GameOver`,
+    `McpHost::release()` and `set_paused(false)` → catalog news as one `Say`. Each long-running piece is a tokio task under one root `CancellationToken`.
 
 The Ask seam (review 2): the asker is built on the `ChannelSet` before the agent, and the agent
 before the gateway, so nothing is set after construction except `host.set_upcalls`,
-`McpTooling::add_builtin`, `Agent::set_local_jobs` and `Checker::set_model`.
+`McpTooling::add_builtin`, `Agent::set_local_jobs` and `Checker::set_model`. The only
+back-references (Helpers, UndoTool → Agent; ScheduleTools → Scheduler) are `Weak`.
 
 
 (V3-2) `V2Bridge` and `V2Config` are gone with `bridge.rs` (P2-38): the hub never starts or calls
