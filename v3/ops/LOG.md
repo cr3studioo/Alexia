@@ -357,3 +357,7 @@
 2026-11-21 P2-53 built -> review (opus, shared target)
 2026-11-21 P2-17 approved (minor: shared take_notes queue, known_secrets reads keychain per row sync, unknown pin dropped silently -> P2-59 notes). Merged, gating
 2026-11-21 Merged P2-17 (gate OK 63, pushed). P2-59 now ready. P2-08 approved
+2026-11-21 Deleted 39789 leftover alexia-* test temp dirs in %TEMP% (~80 GB; tests do not clean up -> follow-up task). Disk 90 GB free. P2-08 merged, gating. Dispatched P2-59 (opus) ctx_ede66379757c, P2-52 (sonnet) ctx_c2bdcdb7adbf, shared target
+2026-11-21 P2-51 built -> review (opus, own target: shared target can mix worktrees' uplifted artifacts; reviewers use own target from now)
+2026-11-21 P2-52 failed: spec too narrow (msrv lint in alexia-store secrets.rs). Spec widened to mechanical msrv lint fixes in v3/crates; restarted same worktree (no try counted)
+2026-11-21 Merged P2-08 (gate OK 63, pushed). P2-29 ready (held: RAM, 2 builders + 2 reviewers running)
