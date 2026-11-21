@@ -384,7 +384,14 @@ async fn dangling_answered() {
     w.store
         .append(s, Role::Tool, None, &tool_result("a", "look done"))
         .unwrap();
-    let n = answer_dangling(&w.store, s, "not run: Alexia restarted before it finished").unwrap();
+    live_row(&w, "d1", 0, false, 1000);
+    let row = w.store.live_runs().unwrap().remove(0);
+    let n = answer_dangling(
+        &w.store,
+        &row,
+        "not run: Alexia restarted before it finished",
+    )
+    .unwrap();
     assert_eq!(n, 2);
     let tools = tool_rows(&w);
     assert_eq!(tools.len(), 3);
@@ -396,7 +403,7 @@ async fn dangling_answered() {
     assert!(audit.iter().all(|a| a.decision == "unanswered"));
     // Nothing ran, and a second pass has nothing left to answer.
     assert_eq!(ran(&w), 0);
-    assert_eq!(answer_dangling(&w.store, s, "again").unwrap(), 0);
+    assert_eq!(answer_dangling(&w.store, &row, "again").unwrap(), 0);
     assert_eq!(tool_rows(&w).len(), 3);
     w.host.shutdown().await;
 }
@@ -528,5 +535,108 @@ async fn resume_does_not_reinsert_live_row() {
         .expect("the resumed run finished");
     assert!(w.store.live_runs().unwrap().is_empty());
     assert_eq!(ran(&w), 2);
+    w.host.shutdown().await;
+}
+
+fn live_row_at(w: &World, run: &str, started_ago: i64, touched_ago: i64) {
+    let now = alexia_store::now_ms();
+    w.store
+        .live_begin(&LiveRunRow {
+            run: run.into(),
+            session: w.session,
+            origin: serde_json::to_string(&Origin::Desktop).unwrap(),
+            started_at: now - started_ago,
+            touched_at: now - touched_ago,
+            steps: 2,
+            background: true,
+            parent: None,
+        })
+        .unwrap();
+}
+
+const HOUR: i64 = 3600 * 1000;
+const DAY: i64 = 24 * HOUR;
+
+#[tokio::test]
+async fn old_run_that_moved_lately_resumes() {
+    let w = world(four_steps(), Limits::default(), 0).await;
+    w.store
+        .append(w.session, Role::User, None, &body("look"))
+        .unwrap();
+    live_row_at(&w, "long", 10 * DAY, HOUR);
+    assert_eq!(resume(&w).await, 1);
+    assert!(w.store.live_runs().unwrap().is_empty());
+    assert!(*w.model_calls.lock().unwrap() > 0);
+    w.host.shutdown().await;
+}
+
+#[tokio::test]
+async fn stale_run_is_ended() {
+    let w = world(four_steps(), Limits::default(), 0).await;
+    w.store
+        .append(w.session, Role::User, None, &body("look"))
+        .unwrap();
+    live_row_at(&w, "stale", 10 * DAY, 8 * DAY);
+    assert_eq!(resume(&w).await, 0);
+    assert_eq!(*w.model_calls.lock().unwrap(), 0);
+    assert!(w.store.live_runs().unwrap().is_empty());
+    let saved = w
+        .store
+        .run_body("stale")
+        .unwrap()
+        .expect("the run was saved");
+    assert!(
+        saved
+            .to_string()
+            .contains("had not moved for more than 7 days"),
+        "{saved}"
+    );
+    w.host.shutdown().await;
+}
+
+#[tokio::test]
+async fn ended_run_closes_its_questions() {
+    let w = world(four_steps(), Limits::default(), 0).await;
+    // A run that is ended at boot (its origin cannot be read; a gone session deletes the row).
+    w.store
+        .live_begin(&LiveRunRow {
+            run: "gone".into(),
+            session: w.session,
+            origin: "garbage".into(),
+            started_at: alexia_store::now_ms(),
+            touched_at: alexia_store::now_ms(),
+            steps: 0,
+            background: false,
+            parent: None,
+        })
+        .unwrap();
+    let q = w
+        .store
+        .approval_open("gone", "{}", "Run wipe?", None, alexia_store::now_ms())
+        .unwrap();
+    assert_eq!(resume(&w).await, 0);
+    let a = w.store.approval(q).unwrap().unwrap();
+    assert!(a.answered_at.is_some());
+    assert_eq!(a.answer, Some(false));
+    assert_eq!(a.via.as_deref(), Some("restart"));
+    w.host.shutdown().await;
+}
+
+#[tokio::test]
+async fn audit_names_its_own_run() {
+    let w = world(four_steps(), Limits::default(), 0).await;
+    let s = w.session;
+    w.store.append(s, Role::User, None, &body("go")).unwrap();
+    w.store
+        .append(s, Role::Assistant, None, &tool_calls(&[("a", "wipe")]))
+        .unwrap();
+    live_row_at(&w, "first", 2 * HOUR, HOUR);
+    live_row_at(&w, "second", HOUR, HOUR);
+    let rows = w.store.live_runs().unwrap();
+    let second = rows.iter().find(|r| r.run == "second").unwrap();
+    assert_eq!(answer_dangling(&w.store, second, "no").unwrap(), 1);
+    let audit = w.store.audit_search("", 10).unwrap();
+    assert_eq!(audit.len(), 1);
+    assert_eq!(audit[0].run, "second");
     w.host.shutdown().await;
 }

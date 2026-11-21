@@ -44,8 +44,8 @@ pub async fn resume_all(
             .sessions()
             .map(|s| s.iter().any(|s| s.id == row.session))
             .unwrap_or(false);
-        let note = if now_ms() - row.started_at > MAX_AGE_MS {
-            Some("Not picked up after the restart: the run was more than 7 days old.")
+        let note = if now_ms() - row.touched_at > MAX_AGE_MS {
+            Some("Not picked up after the restart: it had not moved for more than 7 days.")
         } else if !alive {
             Some("Not picked up after the restart: its conversation is gone.")
         } else if origin.is_err() {
@@ -90,6 +90,24 @@ fn end_with(agent: &Agent, row: &LiveRunRow, origin: Origin, note: &str) {
         // Never leave a row that would be tried again at every start.
         let _ = p.store.live_end(&row.run);
     }
+    close_questions(&p.store, row);
+}
+
+/// The question that was waiting went with the old process, and the step it guarded never ran.
+/// Close it; the model asks again if it still wants the step. A store error is logged only.
+fn close_questions(store: &Store, row: &LiveRunRow) {
+    let open = match store.approvals_pending() {
+        Ok(a) => a,
+        Err(e) => {
+            tracing::warn!(run = row.run, "could not list the open questions: {e}");
+            return;
+        }
+    };
+    for a in open.into_iter().filter(|a| a.run == row.run) {
+        if let Err(e) = store.approval_answer(a.id, false, "restart", now_ms()) {
+            tracing::warn!(run = row.run, "could not close a question: {e}");
+        }
+    }
 }
 
 fn start(
@@ -100,16 +118,8 @@ fn start(
     origin: Origin,
 ) -> Result<()> {
     let store = agent.store().clone();
-    answer_dangling(&store, row.session, RESTARTED)?;
-    // The question that was waiting went with the old process, and the step it guarded never
-    // ran. Close it; the model asks again if it still wants the step.
-    for a in store
-        .approvals_pending()?
-        .into_iter()
-        .filter(|a| a.run == row.run)
-    {
-        store.approval_answer(a.id, false, "restart", now_ms())?;
-    }
+    answer_dangling(&store, row, RESTARTED)?;
+    close_questions(&store, row);
     let messages: Vec<_> = store
         .history(row.session, None)?
         .into_iter()
@@ -169,8 +179,10 @@ fn start(
 
 /// The dangling-call fix on its own (v2 P1-24 / P1-31 rule). Every call of the last assistant
 /// turn that has no answer gets a tool row saying `why` and an audit row `unanswered`; nothing
-/// is run. Returns how many were answered.
-pub fn answer_dangling(store: &Store, session: SessionId, why: &str) -> Result<u32> {
+/// is run; the audit rows name `row`'s run. Returns how many were answered.
+pub fn answer_dangling(store: &Store, row: &LiveRunRow, why: &str) -> Result<u32> {
+    let session = row.session;
+    let live = Some(row);
     let history = store.history(session, None)?;
     let Some(at) = history
         .iter()
@@ -183,10 +195,6 @@ pub fn answer_dangling(store: &Store, session: SessionId, why: &str) -> Result<u
         .filter(|m| m.role == Role::Tool)
         .filter_map(|m| m.body.call_id.as_deref())
         .collect();
-    let live = store
-        .live_runs()?
-        .into_iter()
-        .find(|r| r.session == session);
     let mut n = 0;
     for call in history[at].body.calls.iter().flatten() {
         if answered.contains(&call.id.as_str()) {
@@ -207,10 +215,10 @@ pub fn answer_dangling(store: &Store, session: SessionId, why: &str) -> Result<u
         store.audit(&AuditRow {
             id: 0,
             at: now_ms(),
-            run: live.as_ref().map(|r| r.run.clone()).unwrap_or_default(),
+            run: live.map(|r| r.run.clone()).unwrap_or_default(),
             session: Some(session),
-            origin: live.as_ref().map(|r| r.origin.clone()).unwrap_or_default(),
-            step: live.as_ref().map_or(0, |r| r.steps + 1 + n),
+            origin: live.map(|r| r.origin.clone()).unwrap_or_default(),
+            step: live.map_or(0, |r| r.steps + 1 + n),
             tool: call.name.chars().take(200).collect(),
             plugin: None,
             args: redact_text(&call.arguments).0.chars().take(2000).collect(),
