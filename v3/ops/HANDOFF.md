@@ -1,42 +1,35 @@
-# Handoff · 2026-11-20 evening · CEO #13 → CEO #14
+# Handoff · 2026-11-21 morning · CEO #14 → CEO #15
 
 ## Where we are
-P0, P1 done. P2: 50 tasks; merged 33 / running 2 (P2-17, P2-08) / review 0 / ready 0 / todo 15 / failed 0 / blocked-owner 0. Overall ~33%.
+P0, P1 done. P2: 64 tasks; merged 41 / running 4 (P2-20, P2-61, P2-36, P2-35) / review 1 (P2-54) / ready 2 (P2-55, P2-56) / todo 17 / failed 0 / blocked-owner 0. Overall ~33%.
 
 ## What I'd do next
-1. `orca orchestration run-use --id run_7a40b198ac83`, then `bash C:/dev/Alexia-wt/wait.sh` in the background. P2-17 and P2-08 are live; leave them.
-2. While they build: hire a Reviewer for the whole-phase review (23 merges since review 4, §8), and a Planner to turn the follow-ups below into P2-51.. task specs. Run them in the main checkout one at a time (disk/RAM).
-3. When P2-17 merges: P2-20 (opus, the agent loop) is the critical path; then P2-35, P2-36. When P2-08 merges: P2-29.
-4. Delete each approved worktree's v3/target right away; keep builders <= 4.
+1. `orca orchestration run-use --id run_7a40b198ac83`, check no wait.sh is running, then `bash C:/dev/Alexia-wt/wait.sh` in the background. Leave the 4 live builders and the P2-54 reviewer alone.
+2. P2-54 verdict: approve -> merge + gate. When an opus builder finishes (P2-61 or P2-20), start P2-56 then P2-55 (opus).
+3. When P2-20 merges: P2-21, 25, 26, 27, 28 (sonnet, disjoint files), max 4 builders.
+4. Hire a planner for the follow-ups below (P2-65..). Next whole-phase review at ~10 merges after review 5 (9 so far): due after P2-54.
 
 ## Watch out for
-- Disk and RAM are the bottleneck, not usage. See STATE.md "MACHINE LIMITS".
-- Branches cut before another merge can break at integration (P2-07 vs P2-30: new Turn field). Gate catches it; undo the unpushed merge with `git reset --hard <merge>^1` (stash the books first; `git stash` moves ORIG_HEAD, so don't use ORIG_HEAD after a stash). Then a small fixer merges v3 into the branch.
-- Combining several approved, disjoint branches into one gate saves a 30-60 min gate each; it worked 4 times.
-- Orca showed dead workers as live for 15 h; check claude.exe processes when a worker is silent for hours.
-- The owner relays "You have N orchestration messages" constantly; one-line answers.
+- Disk: tests leak alexia-* temp dirs in %TEMP% (~80 GB found). Clean old ones each few rounds (STATE.md has the command). Check `df -h /c` each round.
+- Workers that hit a low-memory kill sometimes stop and ask "rerun?" in their terminal instead of messaging: P2-17 sat 4 h. Peek with `tread <dispatchId>` when silent >30 min.
+- Specs too narrow on test fakes / visibility: builders escalate (P2-29 ask_voice.rs, P2-36 router.rs pub(crate), P2-52 msrv lint). Allow minimal edits when no running task owns the file.
+- The shared CARGO_TARGET_DIR experiment mixed artifacts between worktrees; don't reuse it.
+- Two wait.sh copies by mistake split the deliveries: one at a time.
 
 ## Follow-ups from reviews (file as tasks)
-- permissions.rs:332 'FILE://' uppercase / 'file:/' skip never-touch (P2-46)
-- INTERFACES.md: add '// invariant: bot api term' exception (P2-11); IBAN/card/OTP row at :1053 doesn't match v2 (P2-14)
-- encrypt.rs crash recovery: key stored but db plain; leftover alexia.db.plain never removed; Store::open hits real keychain in tests (P2-37)
-- openai.rs: unanswered assistant tool_call still sent; non-array delta.tool_calls ignored; nameless streamed call dropped (P2-04)
-- alexia-mcp conn plugin_cancel_reaches_incoming flake (possible race)
-- rust-version 1.85 -> 1.87 (std::io::pipe, P2-24); wasm spawn blocks a tokio worker during compile
-- scheduler: cut-short one-shot lost at shutdown; Every can overlap itself; desktop origin session (P2-30)
-- hf.rs: hash_file blocks tokio; damaged cache dir never repaired; \?\ paths to llama-server (P2-33)
-- gpu.rs: XML entities, OEM codepage in reg output, flapping game_over, comma split (P2-32)
-- gateway: file message ordering after steers; tests wait fixed 1 s (P2-07)
-- redact: secret-named JSON keys with unrecognisable values pass (P2-14)
-- prompt.rs:210 symlink check fails open on canonicalize error (P2-16)
-- trace: resumed run's 'at' is resume time (P2-19); resume check-then-update window
+- tests leak alexia-* temp dirs in %TEMP% (all crates; use tempfile that cleans up)
+- alexia-store windows_credential_manager_round_trip: per-process account name, not the fixed _v3test.probe (P2-52)
+- router: FastChat reads keychain per catalog row each turn (known_secrets sync on async) -> cache; take_notes queue shared across concurrent steps; unknown pin dropped silently (P2-17, P2-59)
+- gateway ask.rs: no 'Approved here' edit (Channel::ask returns no MsgRef); ch.ask error recorded as deny (ask.rs:163); nothing publishes Event::Answered for /approve,/deny yet: check P2-25/P2-38 own it (P2-29)
+- openai.rs: whitespace-only assistant content not empty; 'answered' counts any later Tool turn (P2-53)
+- gpu.rs: reg_export temp name per-PID only (P2-57)
+- P2-54 concern: .plain leftover shredded only after key proves right (see its report)
 
 ## Open owner asks
-- none (A-16 answered yes; A-17 progress lines standing rule)
+- none
 
 ## Decisions I made (also in LOG.md)
-- Portable Strawberry Perl in C:\dev\Alexia-wt\tools for SQLCipher; all prompts and gate set OPENSSL_SRC_PERL.
-- P2-24 may change alexia-mcp/Cargo.toml (wasmtime-wasi preview1) and Cargo.lock.
-- Accepted P2-31's real-time idle test (no tokio test-util); accepted per-crate checks for builders under low memory.
-- Max 4 builders (RAM); delete approved worktrees' target/ (disk).
-- P2-07 integration fix merged without a second full review (one line, gate verified).
+- Phase review 5 -> P2-59..64; P2-20 waits P2-59, P2-38 waits P2-60, P2-62.
+- gate.sh CARGO_INCREMENTAL=0; deleted main incremental dir and %TEMP% test leftovers.
+- P2-52 spec widened to msrv lint fixes; P2-29 ask_voice.rs assertions; P2-36 router.rs pub(crate) only.
+- P2-59 merged on a code-approve whose own checks were killed: the gate was its verification (passed).
