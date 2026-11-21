@@ -404,3 +404,4 @@
 2026-11-21 P2-61 fix done (refuses leading \??\) -> review ctx_a48832f356cf. P2-55 (opus) waits for the P2-20 gate (memory)
 2026-11-21 P2-69 built -> review ctx_212c3a5df15f
 2026-11-21 Merged P2-20 agent loop (gate OK 66, pushed)
+2026-11-21 P2-56 built -> review ctx_b0e27779427d (owner-cancel test weak, Store::jobs hides cancelled). Dispatched P2-55 (opus) ctx_cbab1ce52fc7, P2-25 (sonnet) ctx_b3f946c1d84a. Holding P2-21/26/27/28 (4 reviewers, RAM); P2-68 waits P2-36 (router.rs)
