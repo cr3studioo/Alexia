@@ -102,19 +102,31 @@ fn parse_role(s: &str) -> Result<Role> {
 
 impl Store {
     /// Opens (creating if needed) the database at `path` and brings it to this build's schema.
-    /// An encrypted file, or a new one while a key is stored, is keyed with
-    /// `secrets::get("_core", "store_key")`; an existing plain file opens as it is.
+    /// An encrypted file, or a new one beside an `alexia.db.keyed` marker, is keyed with
+    /// `secrets::get("_core", "store_key")`. A new file without the marker is plain and reads no
+    /// keychain; an existing plain file opens as it is. Once an encrypted file has opened, an
+    /// `alexia.db.plain` an interrupted `encrypt` left beside it is shredded.
     pub fn open(path: &Path) -> Result<Store> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
         vec_ext::register();
         let encrypted = Self::is_encrypted(path)?;
-        let key = if encrypted || !path.exists() {
+        let keyed = encrypt::marker(path).is_file();
+        let key = if encrypted || (keyed && !path.exists()) {
             secrets::get(encrypt::OWNER, encrypt::KEY)?
         } else {
             None
         };
+        if !encrypted
+            && keyed
+            && path.is_file()
+            && matches!(secrets::get(encrypt::OWNER, encrypt::KEY), Ok(Some(_)))
+        {
+            tracing::warn!(
+                "encryption of the database did not finish; `alexia-hub encrypt` will finish it"
+            );
+        }
         const MISSING: &str = "The database is encrypted and its key is missing or wrong.";
         let conn = Connection::open(path)?;
         match key {
@@ -125,14 +137,20 @@ impl Store {
             None if encrypted => return Err(Error::Refused(MISSING.into())),
             None => {}
         }
-        Self::init(conn, true).map_err(|e| match e {
+        let store = Self::init(conn, true).map_err(|e| match e {
             Error::Sqlite(ref s)
                 if s.sqlite_error_code() == Some(rusqlite::ErrorCode::NotADatabase) =>
             {
                 Error::Refused(MISSING.into())
             }
             e => e,
-        })
+        })?;
+        // After the key proved right: while it is missing, the leftover may be the owner's only
+        // readable copy.
+        if encrypted {
+            encrypt::shred_plain_leftover(path);
+        }
+        Ok(store)
     }
 
     /// True when `path` exists and does not start with SQLite's plain header: SQLCipher
@@ -797,12 +815,13 @@ impl Store {
         Ok(())
     }
 
-    pub fn live_touch(&self, run: &str, steps: u32, at: Ms) -> Result<()> {
-        self.conn().execute(
+    /// True when a row matched: the check and the update are one statement.
+    pub fn live_touch(&self, run: &str, steps: u32, at: Ms) -> Result<bool> {
+        let changed = self.conn().execute(
             "UPDATE live_runs SET steps = ?, touched_at = ? WHERE run_id = ?",
             params![steps, at, run],
         )?;
-        Ok(())
+        Ok(changed == 1)
     }
 
     pub fn live_end(&self, run: &str) -> Result<()> {

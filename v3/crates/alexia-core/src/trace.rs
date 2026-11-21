@@ -94,7 +94,7 @@ impl Trace {
             background,
             parent: parent.map(|p| p.0),
         })?;
-        Ok(Self::open(store, bus, run, session, origin, 0, None))
+        Ok(Self::open(store, bus, run, session, origin, at, 0, None))
     }
 
     /// (review 4 #1) The `live_runs` row survived a restart, so `live_begin` (a plain INSERT)
@@ -111,15 +111,20 @@ impl Trace {
         steps_done: u32,
     ) -> Result<Trace> {
         // `_background` and `_parent` are already on the surviving row.
-        // `live_touch` is a plain UPDATE that matches nothing without error, so look first.
-        if !store.live_runs()?.iter().any(|r| r.run == run.0) {
+        // One statement checks and touches: no window between "is it there" and the update.
+        if !store.live_touch(&run.0, steps_done, now_ms())? {
             return Err(alexia_store::Error::Refused(format!(
                 "Run {} has no live row to resume.",
                 run.0
             ))
             .into());
         }
-        store.live_touch(&run.0, steps_done, now_ms())?;
+        // A read after the touch: the run keeps the start it had before the restart.
+        let started = store
+            .live_runs()?
+            .into_iter()
+            .find(|r| r.run == run.0)
+            .map_or_else(now_ms, |r| r.started_at);
         let note = format!("Resumed after a restart at step {steps_done}.");
         Ok(Self::open(
             store,
@@ -127,22 +132,27 @@ impl Trace {
             run,
             session,
             origin,
+            started,
             steps_done,
             Some(note),
         ))
     }
 
+    /// `started` is the run's start: now for a new run, the live row's `started_at` on resume.
+    #[allow(clippy::too_many_arguments)]
     fn open(
         store: Arc<Store>,
         bus: Bus,
         run: RunId,
         session: SessionId,
         origin: Origin,
+        started: Ms,
         base: u32,
         note: Option<String>,
     ) -> Trace {
         let at = now_ms();
-        let mut body = json!({ "id": run.0, "at": at, "steps": [], "phases": [], "notes": [] });
+        let mut body =
+            json!({ "id": run.0, "at": started, "steps": [], "phases": [], "notes": [] });
         if let Some(n) = note {
             arr(&mut body, "notes").push(json!({ "at": at, "text": n }));
         }

@@ -206,7 +206,7 @@ fn live_runs_round_trip() {
     b.parent = Some("a".into());
     s.live_begin(&b).unwrap();
     s.live_begin(&live("a", id, 10)).unwrap();
-    s.live_touch("a", 3, 15).unwrap();
+    assert!(s.live_touch("a", 3, 15).unwrap());
 
     let got = s.live_runs().unwrap();
     let mut a = live("a", id, 10);
@@ -217,6 +217,19 @@ fn live_runs_round_trip() {
     assert_eq!(s.live_runs().unwrap().len(), 1);
     // A live run must belong to a real session.
     assert!(s.live_begin(&live("c", SessionId(9999), 1)).is_err());
+}
+
+#[test]
+fn live_touch_reports_no_row() {
+    let s = Store::open_in_memory().unwrap();
+    let id = s.create_session(None).unwrap();
+    assert!(!s.live_touch("ghost", 1, 5).unwrap());
+    s.live_begin(&live("a", id, 10)).unwrap();
+    assert!(!s.live_touch("ghost", 1, 5).unwrap());
+    assert!(s.live_touch("a", 2, 12).unwrap());
+    s.live_end("a").unwrap();
+    assert!(!s.live_touch("a", 3, 15).unwrap());
+    assert!(s.live_runs().unwrap().is_empty());
 }
 
 #[test]
