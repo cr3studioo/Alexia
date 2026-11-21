@@ -406,3 +406,4 @@
 2026-11-21 Merged P2-20 agent loop (gate OK 66, pushed)
 2026-11-21 P2-56 built -> review ctx_b0e27779427d (owner-cancel test weak, Store::jobs hides cancelled). Dispatched P2-55 (opus) ctx_cbab1ce52fc7, P2-25 (sonnet) ctx_b3f946c1d84a. Holding P2-21/26/27/28 (4 reviewers, RAM); P2-68 waits P2-36 (router.rs)
 2026-11-21 P2-61 approved (follow-up: inside() canonicalizes local symlink to UNC, serve.rs:212). Merged, gating. P2-36 review 2: changes (cost ignored so paid model not set aside; waited_ms total not first byte; no record_usage) -> Fixer (opus)
+2026-11-21 P2-25 failed: spec gap (Agent parts private, compare flags unmerged). New P2-72 Agent::parts() (sonnet); P2-21/25/26/27/28 now depend on it, P2-25 also on P2-36. Not counted as a builder fault
