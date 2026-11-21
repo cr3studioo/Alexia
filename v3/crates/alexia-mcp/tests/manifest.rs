@@ -2,7 +2,8 @@
 //! plugin.json: parsing, v2's cross-field rules, compatibility, discovery. Manifests are inline;
 //! nothing here reads `plugins/`.
 
-use std::path::PathBuf;
+mod scratch;
+use scratch::Scratch;
 
 use alexia_mcp::manifest::Lifetime;
 use alexia_mcp::{discover, Manifest};
@@ -295,42 +296,23 @@ fn password_keys_lists_password_settings() {
     assert!(parse(&base()).unwrap().password_keys().is_empty());
 }
 
-/// A fresh empty directory under the system temp dir, removed on drop.
-struct Scratch(PathBuf);
-
-impl Scratch {
-    fn new(tag: &str) -> Scratch {
-        let dir =
-            std::env::temp_dir().join(format!("alexia-manifest-{tag}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        Scratch(dir)
-    }
-}
-
-impl Drop for Scratch {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
-
 #[test]
 fn discover_reports_failures_without_stopping() {
     let s = Scratch::new("discover");
-    let good = s.0.join("two-words");
+    let good = s.join("two-words");
     std::fs::create_dir(&good).unwrap();
     let manifest = with(json!({ "id": "two-words", "name": "Two Words" }));
     std::fs::write(good.join("plugin.json"), manifest.to_string()).unwrap();
 
-    let bad = s.0.join("broken");
+    let bad = s.join("broken");
     std::fs::create_dir(&bad).unwrap();
     let manifest = with(json!({ "id": "broken", "tols": [] }));
     std::fs::write(bad.join("plugin.json"), manifest.to_string()).unwrap();
 
-    std::fs::create_dir(s.0.join("not-a-plugin")).unwrap();
-    std::fs::write(s.0.join("stray.json"), "{}").unwrap();
+    std::fs::create_dir(s.join("not-a-plugin")).unwrap();
+    std::fs::write(s.join("stray.json"), "{}").unwrap();
 
-    let found = discover(&s.0);
+    let found = discover(&s);
     assert_eq!(found.len(), 2, "{found:?}");
     let (path, e) = found[0].as_ref().unwrap_err();
     assert_eq!(path, &bad);
@@ -346,11 +328,11 @@ fn discover_reports_failures_without_stopping() {
 #[test]
 fn discover_refuses_an_id_that_is_not_its_folder() {
     let s = Scratch::new("mismatch");
-    let dir = s.0.join("sample");
+    let dir = s.join("sample");
     std::fs::create_dir(&dir).unwrap();
     let manifest = with(json!({ "id": "other", "storage": { "namespace": "other" } }));
     std::fs::write(dir.join("plugin.json"), manifest.to_string()).unwrap();
-    let found = discover(&s.0);
+    let found = discover(&s);
     let (_, e) = found[0].as_ref().unwrap_err();
     assert!(e.sentence.contains("calls it “other”"), "{e}");
 }
@@ -358,7 +340,7 @@ fn discover_refuses_an_id_that_is_not_its_folder() {
 #[test]
 fn discover_missing_dir_is_empty() {
     let s = Scratch::new("missing");
-    assert!(discover(&s.0.join("nowhere")).is_empty());
+    assert!(discover(&s.join("nowhere")).is_empty());
 }
 
 #[test]

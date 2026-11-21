@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! P2-02 shapes: host caps default, `HostedTool.reviewed`.
 
+mod scratch;
+use scratch::Scratch;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -31,8 +33,7 @@ fn no_upcalls_has_no_host_caps() {
 
 #[tokio::test]
 async fn unreviewed_list_marks_tools() {
-    let root: PathBuf = std::env::temp_dir().join(format!("alexia-p2-02-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
+    let root = Scratch::new("p2-02");
     let plugins = root.join("plugins");
     for id in ["alpha", "beta"] {
         plugin(&plugins, id);
@@ -61,5 +62,4 @@ async fn unreviewed_list_marks_tools() {
         );
     }
     host.shutdown().await;
-    let _ = std::fs::remove_dir_all(&root);
 }

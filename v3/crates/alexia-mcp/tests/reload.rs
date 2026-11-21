@@ -2,6 +2,8 @@
 //! Hot reload (EX-12, P2-23): a changed manifest is re-read without a hub restart, in-flight
 //! calls finish first, a bad manifest keeps the old version, and a reload is not a crash.
 
+mod scratch;
+use scratch::Scratch;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -15,11 +17,8 @@ use serde_json::{json, Map, Value};
 
 const FIXTURE: &str = env!("CARGO_BIN_EXE_mcp-fixture");
 
-fn root(tag: &str) -> PathBuf {
-    let root = std::env::temp_dir().join(format!("alexia-reload-{tag}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
-    std::fs::create_dir_all(&root).unwrap();
-    root
+fn root(tag: &str) -> Scratch {
+    Scratch::new(tag)
 }
 
 /// Writes `<root>/ext/<id>/plugin.json` running the fixture in `mode`, at `version`.

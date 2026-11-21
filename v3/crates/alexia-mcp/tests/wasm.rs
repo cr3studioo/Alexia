@@ -2,6 +2,8 @@
 //! `"run": "wasm"` (P2-24): a plugin in the in-process sandbox behaves like a process plugin
 //! to the host, and gets only what it declared.
 
+mod scratch;
+use scratch::Scratch;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -20,11 +22,8 @@ const WASM: &str = concat!(
 );
 const README: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/wasm-hello/README.md");
 
-fn root(tag: &str) -> PathBuf {
-    let root = std::env::temp_dir().join(format!("alexia-wasm-{tag}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
-    std::fs::create_dir_all(&root).unwrap();
-    root
+fn root(tag: &str) -> Scratch {
+    Scratch::new(tag)
 }
 
 fn manifest(id: &str, entry: Value, extra: Value) -> Value {

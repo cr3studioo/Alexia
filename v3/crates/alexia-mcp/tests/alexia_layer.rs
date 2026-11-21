@@ -2,6 +2,8 @@
 //! The `alexia/*` layer (P0-13) against the `mcp-fixture` binary: settings, storage, kv,
 //! capability calls, `answers`, host info and the two notifications.
 
+mod scratch;
+use scratch::Scratch;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -16,11 +18,8 @@ use serde_json::{json, Map, Value};
 
 const FIXTURE: &str = env!("CARGO_BIN_EXE_mcp-fixture");
 
-fn root(tag: &str) -> PathBuf {
-    let root = std::env::temp_dir().join(format!("alexia-layer-{tag}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
-    std::fs::create_dir_all(&root).unwrap();
-    root
+fn root(tag: &str) -> Scratch {
+    Scratch::new(tag)
 }
 
 /// `<dir>/<id>/plugin.json` running the fixture in `mode`, with `extra` manifest fields.

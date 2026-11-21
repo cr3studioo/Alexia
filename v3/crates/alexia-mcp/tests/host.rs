@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! `McpHost` against the `mcp-fixture` binary in temp plugin folders.
 
+mod scratch;
+use scratch::Scratch;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -16,11 +18,8 @@ const FIXTURE: &str = env!("CARGO_BIN_EXE_mcp-fixture");
 /// Large on purpose: a clean stop must not wait for it.
 const GRACE_MS: u64 = 8_000;
 
-fn root(tag: &str) -> PathBuf {
-    let root = std::env::temp_dir().join(format!("alexia-host-{tag}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
-    std::fs::create_dir_all(&root).unwrap();
-    root
+fn root(tag: &str) -> Scratch {
+    Scratch::new(tag)
 }
 
 /// `<dir>/<id>/plugin.json` running the fixture (copied in: `entry.run` is folder-relative).
@@ -424,4 +423,22 @@ async fn set_enabled_switches_on_and_off() {
         }
     )));
     assert!(fx.host.set_enabled(&id("nobody"), true).await.is_err());
+}
+
+#[tokio::test]
+async fn scratch_removed_after_host_dropped() {
+    let r = root("dropped");
+    let path = r.to_path_buf();
+    plugin(&r.join("ext"), "greet", &["greet"], json!({}));
+    let fx = host(&r, vec![r.join("ext")]);
+    fx.host.start(&[id("greet")]).await.unwrap();
+    fx.host.tools().await;
+    assert!(
+        fx.host.pid(&id("greet")).is_some(),
+        "the fixture runs from the folder"
+    );
+    fx.host.shutdown().await;
+    drop(fx);
+    drop(r);
+    assert!(!path.exists(), "{} was left behind", path.display());
 }

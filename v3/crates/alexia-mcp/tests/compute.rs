@@ -2,6 +2,8 @@
 //! P2-22: `alexia/compute/run` on this machine, and capability calls that fall through to the
 //! host, against the `mcp-fixture` binary.
 
+mod scratch;
+use scratch::Scratch;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -23,11 +25,8 @@ const NOT_AVAILABLE: i32 = -32050;
 const NOT_PERMITTED: i32 = -32051;
 const INVALID_PARAMS: i32 = -32602;
 
-fn root(tag: &str) -> PathBuf {
-    let root = std::env::temp_dir().join(format!("alexia-compute-{tag}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
-    std::fs::create_dir_all(&root).unwrap();
-    root
+fn root(tag: &str) -> Scratch {
+    Scratch::new(tag)
 }
 
 fn plugin(dir: &Path, id: &str, mode: &str, extra: Value) {

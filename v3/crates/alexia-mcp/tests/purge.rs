@@ -2,6 +2,8 @@
 //! Invariant check 5: purging a plugin leaves no residue, in the database, the keychain or
 //! the data folder.
 
+mod scratch;
+use scratch::Scratch;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -104,8 +106,7 @@ fn args(v: Value) -> Map<String, Value> {
 #[tokio::test]
 async fn purge_leaves_no_residue() {
     std::env::set_var(secrets::MEMORY_BACKEND_ENV, "1");
-    let root = std::env::temp_dir().join(format!("alexia-purge-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
+    let root = Scratch::new("purge");
     plugin(&root.join("ext"));
     let data = root.join("data");
     let store = Arc::new(Store::open_in_memory().unwrap());
@@ -171,8 +172,7 @@ async fn purge_leaves_no_residue() {
 #[tokio::test]
 async fn purge_disables_before_deleting() {
     std::env::set_var(secrets::MEMORY_BACKEND_ENV, "1");
-    let root = std::env::temp_dir().join(format!("alexia-purge-off-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
+    let root = Scratch::new("purge-off");
     plugin(&root.join("ext"));
     let layout = Layout::new(root.join("data"));
     let cfg = HostConfig {
@@ -239,8 +239,7 @@ fn purge_continues_after_a_secret_fails() {
 #[tokio::test]
 async fn purge_removes_cache_dir_when_data_dir_fails() {
     std::env::set_var(secrets::MEMORY_BACKEND_ENV, "1");
-    let root = std::env::temp_dir().join(format!("alexia-purge-fail-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
+    let root = Scratch::new("purge-fail");
     plugin(&root.join("ext"));
     let layout = Layout::new(root.join("data"));
     let cfg = HostConfig {
@@ -269,5 +268,4 @@ async fn purge_removes_cache_dir_when_data_dir_fails() {
     assert!(r.is_err(), "the data dir failure is returned");
     assert!(!cache.exists(), "the cache dir is removed anyway");
     host.shutdown().await;
-    let _ = std::fs::remove_dir_all(&root);
 }

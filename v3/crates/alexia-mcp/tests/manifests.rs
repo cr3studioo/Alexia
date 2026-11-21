@@ -2,6 +2,8 @@
 //! `McpHost::manifests` (P2-45): the enabled, non-refused plugins' folder and manifest,
 //! read from what `start`/`reload` loaded. Nothing is spawned.
 
+mod scratch;
+use scratch::Scratch;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -9,11 +11,8 @@ use alexia_mcp::{HostConfig, McpHost, NoUpcalls, PluginId, Timings};
 use alexia_store::{Layout, Store};
 use serde_json::{json, Value};
 
-fn root(tag: &str) -> PathBuf {
-    let root = std::env::temp_dir().join(format!("alexia-manifests-{tag}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
-    std::fs::create_dir_all(&root).unwrap();
-    root
+fn root(tag: &str) -> Scratch {
+    Scratch::new(tag)
 }
 
 /// Writes `<root>/ext/<id>/plugin.json`: a non-resident plugin, so nothing ever spawns.
