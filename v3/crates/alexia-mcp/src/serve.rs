@@ -199,50 +199,22 @@ fn rpc_of(e: CallError) -> RpcError {
     }
 }
 
-/// `path` resolved (symlinks, `..`) and required to sit inside one of `roots`.
-/// Not `alexia_core::permissions::{within, file_uri}` on purpose: core depends on this crate,
-/// not the other way round, and compute checks a plugin's own folder, not the owner's scope.
+/// `path` resolved (symlinks, `..`) and required to sit inside one of `roots`. A network
+/// path is refused before any filesystem call: stat'ing `\host\x` makes Windows talk SMB to
+/// that host. The URI decoder is shared (`crate::file_uri_path`, the one core's gate uses), but
+/// this containment check stays compute's own: it checks a plugin's own folder, not the owner's
+/// scope, and core depends on this crate, not the other way round.
 fn inside(path: &str, roots: &[std::path::PathBuf]) -> Option<std::path::PathBuf> {
+    if crate::is_network_path(path) {
+        return None;
+    }
     let real = std::fs::canonicalize(path).ok()?;
     roots
         .iter()
+        .filter(|r| !crate::is_network_path(&r.to_string_lossy()))
         .filter_map(|r| std::fs::canonicalize(r).ok())
         .any(|r| real.starts_with(r))
         .then_some(real)
-}
-
-fn percent_decode(s: &str) -> String {
-    let b = s.as_bytes();
-    let mut out = Vec::with_capacity(b.len());
-    let mut i = 0;
-    while i < b.len() {
-        let hex = b
-            .get(i + 1..i + 3)
-            .and_then(|h| std::str::from_utf8(h).ok())
-            .and_then(|h| u8::from_str_radix(h, 16).ok());
-        match (b[i], hex) {
-            (b'%', Some(v)) => {
-                out.push(v);
-                i += 3;
-            }
-            (c, _) => {
-                out.push(c);
-                i += 1;
-            }
-        }
-    }
-    String::from_utf8_lossy(&out).into_owned()
-}
-
-/// `file:///C:/a%20b` or `file:///a/b` to a path; None for any other kind of link.
-fn file_uri_path(uri: &str) -> Option<String> {
-    let rest = percent_decode(uri.strip_prefix("file://")?);
-    let b = rest.as_bytes();
-    // `/C:/...` is a Windows drive path.
-    if b.len() > 2 && b[0] == b'/' && b[2] == b':' {
-        return Some(rest[1..].to_string());
-    }
-    Some(rest)
 }
 
 /// `dir/<name of from>`, or `name-2.ext`, `name-3.ext`... when that is already taken.
@@ -328,8 +300,8 @@ async fn compute(
     for b in blocks("resource_link") {
         let from = b["uri"]
             .as_str()
-            .and_then(file_uri_path)
-            .and_then(|f| inside(&f, &theirs));
+            .and_then(crate::file_uri_path)
+            .and_then(|f| inside(&f.to_string_lossy(), &theirs));
         let Some(from) = from else {
             let _ = std::fs::remove_dir_all(&dest);
             return Err(err(

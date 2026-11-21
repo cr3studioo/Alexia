@@ -357,7 +357,8 @@ async fn unreadable_reviewed_list_fails_closed() {
 
 /// A Node worker (the fixture binary can't report the paths it was given or return custom
 /// links). It records `arguments.inputs` to `seen.json` in its own folder, then answers by
-/// `arguments.mode`: `twins` links two same-named files, `half` links one real and one missing.
+/// `arguments.mode`: `twins` links two same-named files, `half` links one real and one missing,
+/// `host` links its own file under another host's URI, `unc` links a network share.
 const WORKER_JS: &str = r#"
 const fs = require('fs'), path = require('path');
 const send = (m) => process.stdout.write(JSON.stringify(m) + '\n');
@@ -386,6 +387,14 @@ require('readline').createInterface({ input: process.stdin }).on('line', (line) 
       content.push(link(put('a', 'out.png', 'first')), link(put('b', 'out.png', 'second')));
     } else if (args.mode === 'half') {
       content.push(link(put('a', 'ok.png', 'ok')), link(path.resolve('gone.png')));
+    } else if (args.mode === 'host') {
+      // A real file of its own, behind a URI whose host is not this machine: on Windows
+      // `file://C:/...` (host `C:`), elsewhere `file://evil/...`.
+      const p = put('a', 'out.png', 'x').split(path.sep).join('/');
+      content.push({ type: 'resource_link', uri: 'file://' + (process.platform === 'win32' ? p : 'evil' + p), name: 'out.png' });
+    } else if (args.mode === 'unc') {
+      // TEST-NET-1: nothing answers, so an SMB attempt would hang for its whole timeout.
+      content.push({ type: 'resource_link', uri: 'file:////192.0.2.1/share/out.png', name: 'out.png' });
     }
     return reply({ content });
   }
@@ -559,5 +568,71 @@ async fn compute_progress_reaches_caller() {
     assert_eq!(seen[1].progress, 2.0);
     assert_eq!(seen[1].total, Some(2.0));
     assert!(matches!(seen[0].progress_token, ProgressToken::Num(_)));
+    fx.host.shutdown().await;
+}
+
+#[tokio::test]
+async fn input_unc_path_refused_before_fs() {
+    let fx = compute_fx("unc-input").await;
+    std::fs::create_dir_all(fx.layout.own_dir("asker")).unwrap();
+    // 192.0.2.1 is TEST-NET-1: an SMB attempt there would hang for its whole timeout.
+    for path in [
+        r"\127.0.0.1\x\y",
+        "//127.0.0.1/x/y",
+        r"\192.0.2.1\x\y",
+        r"\/192.0.2.1/x/y",
+    ] {
+        let params = json!({"cap": "demo.compute", "inputs": [input("s", Path::new(path))]});
+        let started = Instant::now();
+        let e = serve(&fx, "asker", "alexia/compute/run", params)
+            .await
+            .unwrap_err();
+        assert_eq!(e.code, INVALID_PARAMS, "{path}");
+        assert!(
+            e.message.contains("not in this plugin's own folder"),
+            "{path}: {}",
+            e.message
+        );
+        // A pure check, no process spawned: far under any SMB timeout.
+        if cfg!(windows) {
+            assert!(started.elapsed() < Duration::from_secs(10), "{path}");
+        }
+    }
+    fx.host.shutdown().await;
+}
+
+#[tokio::test]
+async fn resource_link_other_host_refused() {
+    let fx = node_worker_fx("link-host").await;
+    let e = serve(
+        &fx,
+        "asker",
+        "alexia/compute/run",
+        compute_params("host", vec![]),
+    )
+    .await
+    .unwrap_err();
+    assert!(e.message.contains("does not own"), "{}", e.message);
+    assert!(compute_dirs(&fx.layout.own_dir("asker")).is_empty());
+    fx.host.shutdown().await;
+}
+
+#[tokio::test]
+async fn resource_link_unc_refused() {
+    let fx = node_worker_fx("link-unc").await;
+    let started = Instant::now();
+    let e = serve(
+        &fx,
+        "asker",
+        "alexia/compute/run",
+        compute_params("unc", vec![]),
+    )
+    .await
+    .unwrap_err();
+    assert!(e.message.contains("does not own"), "{}", e.message);
+    // One call to a running worker; an SMB attempt to TEST-NET would take far longer.
+    if cfg!(windows) {
+        assert!(started.elapsed() < Duration::from_secs(15));
+    }
     fx.host.shutdown().await;
 }
