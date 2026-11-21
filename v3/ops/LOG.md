@@ -413,3 +413,5 @@
 2026-11-21 Merged P2-61 (gate OK 67, pushed)
 2026-11-21 Dispatched P2-72 (sonnet) ctx_42414684478a. P2-56 + P2-69 merged together, gating
 2026-11-21 Merged P2-56 + P2-69 (gate OK 67, pushed). P2-60 ready
+2026-11-21 Dispatched P2-60 (opus) ctx_03c3eb508a71
+2026-11-21 P2-36 review 3: changes. CEO decision: widened spec (router.rs helpers, a_failed/b_failed) instead of blocked-owner, since 2 of 3 reasons were spec scope; one small bug left (cancel recorded as unreachable) -> fix 4 (sonnet) ctx_4a0acb7258fb
