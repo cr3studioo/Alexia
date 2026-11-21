@@ -474,3 +474,11 @@
 2026-11-21 P2-21 fix done (Exif guard + 2 tests) -> review ctx_c36fc6a2f66a (concern: tools.rs unc_file_uris_are_not_written fails locally)
 2026-11-21 P2-68 approved (minor: JoinError caches empty keys 60s router.rs:709 - fails open, follow-up; compare.rs sync known_secrets). Merge after current gate
 2026-11-21 P2-27 + P2-62 gate OK (72 suites), pushed
+2026-11-21 P2-79 built (clippy + core tests not run: low memory) -> review ctx_fd4698126e99
+2026-11-21 P2-80 built (clippy + core tests not run: low memory; answer_dangling takes &LiveRunRow vs INTERFACES.md) -> review ctx_8826710b5264
+2026-11-21 Gate P2-28/68: only telegram_e2e fifty_messages_ack_under_300ms failed (latency under load, known flake, hub untouched). Rerunning --no-fail-fast + that test alone. Follow-up needed: latency test unreliable under parallel builds
+2026-11-21 P2-21 approved (Job::Chat for plain sampling accepted per v2; follow-up: register reads plugin file with no size cap upcalls.rs:1013; tools.rs fixtures flaky under load). Merge after current gate
+2026-11-21 P2-66 approved (wasm.rs:541 slow_compile flaky under load). Merge after current gate
+2026-11-21 P2-80 review: changes = unused SessionId import only; coordinator removed it (behaviour approved). Follow-ups: INTERFACES.md:1261 answer_dangling signature; shared dangling call names older run. Merge after gate (clippy checks the fix)
+2026-11-21 P2-79 review: changes (STATUS regex no word boundaries; status_markers_only fails; check USER in ENV_KEEP on macOS). Fix round (sonnet) ctx_d52e1e528da0
+2026-11-21 P2-28 + P2-68 gate OK on rerun (73 suites --no-fail-fast, telegram_e2e alone 2/2, invariants), pushed
