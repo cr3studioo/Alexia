@@ -327,10 +327,20 @@ fn looks_absolute(s: &str) -> bool {
 
 /// A path as the OS would see it once a shell or URI parser had been at it: `file://` decoded,
 /// a leading `~` made home, a leading `$VAR`, `${VAR}` or `%VAR%` expanded. An unset variable
-/// is left as written. `None` for a `file://` URI on another host: not a path on this machine.
+/// is left as written, and so is an unclosed `${` or `%`: never dropped, so an absolute string
+/// is still checked. The scheme is matched in any case, and RFC 8089's one-slash `file:/x` is a
+/// local path. `None` only for a `file://` URI on another host: not a path on this machine.
 fn normalised(s: &str) -> Option<String> {
-    if let Some(rest) = s.strip_prefix("file://") {
-        let (host, path) = rest.split_at(rest.find('/').unwrap_or(rest.len()));
+    let uri = s
+        .get(..5)
+        .filter(|scheme| scheme.eq_ignore_ascii_case("file:"))
+        .map(|_| &s[5..])
+        .filter(|rest| rest.starts_with('/'));
+    if let Some(rest) = uri {
+        let (host, path) = match rest.strip_prefix("//") {
+            Some(r) => r.split_at(r.find('/').unwrap_or(r.len())),
+            None => ("", rest),
+        };
         if !host.is_empty() && !host.eq_ignore_ascii_case("localhost") {
             return None;
         }
@@ -350,16 +360,21 @@ fn normalised(s: &str) -> Option<String> {
     if s == "~" || s.starts_with("~/") || s.starts_with("~\\") {
         return Some(format!("{}{}", home().display(), &s[1..]));
     }
-    let (name, rest) = if let Some(r) = s.strip_prefix("${") {
-        r.split_once('}')?
+    let var = if let Some(r) = s.strip_prefix("${") {
+        r.split_once('}')
     } else if let Some(r) = s.strip_prefix('$') {
-        r.split_at(
-            r.find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
-                .unwrap_or(r.len()),
+        Some(
+            r.split_at(
+                r.find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+                    .unwrap_or(r.len()),
+            ),
         )
     } else if let Some(r) = s.strip_prefix('%') {
-        r.split_once('%')?
+        r.split_once('%')
     } else {
+        None
+    };
+    let Some((name, rest)) = var else {
         return Some(s.to_string());
     };
     // `var_os` may panic on an empty name or one with `=` or NUL in it.
@@ -614,6 +629,13 @@ fn file_uri(abs: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unclosed_var_is_kept_as_written() {
+        for s in ["${oops/x", "%oops/x", r"C:\Users\x\.ssh\${oops"] {
+            assert_eq!(normalised(s).as_deref(), Some(s));
+        }
+    }
 
     #[test]
     fn as_verb_drops_the_s() {
