@@ -3,6 +3,7 @@
 //! turn through the brain (`Origin::Scheduler`) and says the answer with `Event::Say`.
 //! Watches and quiet hours are V3-3.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -214,7 +215,14 @@ impl Scheduler {
     /// next_at. A job whose time passed while the hub was off fires once, at start.
     pub async fn run(self: Arc<Self>, cancel: CancellationToken) -> Result<()> {
         let mut firing = JoinSet::new();
+        // Which job each in-flight turn belongs to, so a job never has two turns at once.
+        let mut busy: HashMap<tokio::task::Id, JobId> = HashMap::new();
         let result = loop {
+            // `select!` may reap a turn that shutdown just stopped before it sees `cancel`; a
+            // stopped one-shot is due again then, and must wait for the next start.
+            if cancel.is_cancelled() {
+                break Ok(());
+            }
             let now = self.now();
             let jobs = match self.jobs() {
                 Ok(j) => j,
@@ -228,7 +236,7 @@ impl Scheduler {
             for job in jobs {
                 let Some(next) = job.next_at else { continue };
                 if next <= now {
-                    self.start(job, now, &cancel, &mut firing);
+                    self.start(job, now, &cancel, &mut firing, &mut busy);
                 } else {
                     let ms = u64::try_from(next - now).unwrap_or(u64::MAX);
                     wait = wait.min(Duration::from_millis(ms));
@@ -239,7 +247,9 @@ impl Scheduler {
                 () = self.wake.notified() => {}
                 () = tokio::time::sleep(wait) => {}
                 // Reap finished turns as they go so the set stays small.
-                Some(_) = firing.join_next(), if !firing.is_empty() => {}
+                Some(done) = firing.join_next_with_id(), if !firing.is_empty() => {
+                    busy.remove(&done.map_or_else(|e| e.id(), |(id, ())| id));
+                }
             }
         };
         // `cancel` stops in-flight turns (they hold child tokens); wait for them to record it.
@@ -248,24 +258,36 @@ impl Scheduler {
         result
     }
 
-    /// Moves `next_at` on first (so the job cannot fire twice), then runs the turn.
+    /// Moves `next_at` on first (so the job cannot fire twice), then runs the turn, unless the
+    /// job's previous turn is still running: then this due time is skipped.
     fn start(
         self: &Arc<Self>,
         job: Job,
         now: Ms,
         cancel: &CancellationToken,
         firing: &mut JoinSet<()>,
+        busy: &mut HashMap<tokio::task::Id, JobId>,
     ) {
         let next = next_after(&job.trigger, now);
         // A one-shot (next None) stays listed until its turn ends, so the turn can still look
-        // its job up (`answer_origin`); `fire` cancels it then. The loop skips next_at None.
+        // its job up (`answer_origin`); `fire` cancels it then, or, when shutdown cut the turn
+        // short, puts its time back so the next start fires it once. The loop skips next_at None.
         if let Err(e) = self.store.job_set_next(job.id.0, next) {
             tracing::warn!(job = job.id.0, "could not move the job's next time: {e}");
             return;
         }
+        if busy.values().any(|j| *j == job.id) {
+            tracing::info!(
+                job = job.id.0,
+                "scheduled job is still running; this due time is skipped"
+            );
+            return;
+        }
         let me = Arc::clone(self);
         let token = cancel.child_token();
-        firing.spawn(async move { me.fire(job, token).await });
+        let id = job.id;
+        let task = firing.spawn(async move { me.fire(job, token).await });
+        busy.insert(task.id(), id);
     }
 
     async fn fire(&self, job: Job, cancel: CancellationToken) {
@@ -288,6 +310,7 @@ impl Scheduler {
             }
             Err(e) => Err(BrainError::Other(e)),
         };
+        let stopped = matches!(outcome, Err(BrainError::Cancelled));
         let (text, note) = match outcome {
             Ok(reply) => (reply.text, "ok".to_string()),
             Err(BrainError::Cancelled) => (String::new(), "stopped".to_string()),
@@ -300,9 +323,22 @@ impl Scheduler {
         if let Err(e) = self.store.job_ran(job.id.0, self.now(), None, &note) {
             tracing::warn!(job = job.id.0, "could not record the run: {e}");
         }
-        if matches!(job.trigger, Trigger::At { .. }) {
-            // A one-shot is finished: drop it from the list.
-            if let Err(e) = self.store.job_cancel(job.id.0, self.now()) {
+        if let Trigger::At { at } = job.trigger {
+            if stopped {
+                // Shutdown cut the turn short: due again (overdue) at the next start, unless the
+                // owner cancelled it meanwhile (cancelled rows are not listed).
+                let restored = self.store.jobs().and_then(|rows| {
+                    if rows.iter().any(|r| r.id == job.id.0) {
+                        self.store.job_set_next(job.id.0, Some(at))
+                    } else {
+                        Ok(())
+                    }
+                });
+                if let Err(e) = restored {
+                    tracing::warn!(job = job.id.0, "could not keep the stopped one-shot: {e}");
+                }
+            } else if let Err(e) = self.store.job_cancel(job.id.0, self.now()) {
+                // A one-shot is finished: drop it from the list.
                 tracing::warn!(job = job.id.0, "could not finish the one-shot: {e}");
             }
         }
