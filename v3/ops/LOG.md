@@ -399,3 +399,4 @@
 2026-11-21 P2-20 agent loop built -> review ctx_937af5817cad (concern: commands lane test accepts P2-25 todo panic; ceiling stores a short sentence). P2-61 fix round (opus) ctx_c6bb9e3f4826
 2026-11-21 P2-36 review: changes (compare not counted toward rpm/rpd; duplicate outcome(); failed side unmarked). Fix round (sonnet) ctx_69eba7a830dc
 2026-11-21 Merged P2-35 (gate OK 65, pushed)
+2026-11-21 P2-20 approved. Follow-ups: stop mid-gate leaves gated calls as steps with no outcome/audit (agent.rs:577-596); trace.model asked==answered (:546); router non-cancel Err after Deltas sends no Restart and stores nothing (:534). Merged, gating
