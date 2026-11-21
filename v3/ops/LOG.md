@@ -411,3 +411,5 @@
 2026-11-21 P2-69 approved. Merge with P2-56 after P2-61 gate
 2026-11-21 P2-36 fixer done (record_answer shared with race) -> review. Concern: compare usage rows lack session/run attribution
 2026-11-21 Merged P2-61 (gate OK 67, pushed)
+2026-11-21 Dispatched P2-72 (sonnet) ctx_42414684478a. P2-56 + P2-69 merged together, gating
+2026-11-21 Merged P2-56 + P2-69 (gate OK 67, pushed). P2-60 ready
