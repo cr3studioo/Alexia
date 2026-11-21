@@ -358,18 +358,23 @@ async fn three_helpers_run_concurrently() {
         .filter_map(|s| s.title)
         .collect();
     for g in ["alpha", "beta", "gamma"] {
-        assert!(titled.contains(&format!("Helper: {g}")), "{titled:?}");
+        assert!(
+            titled.iter().any(|t| t.ends_with(&format!("Helper: {g}"))),
+            "{titled:?}"
+        );
     }
     let runs = w.store.runs(10).unwrap();
     assert_eq!(runs.len(), 3);
     // While they ran, each had a live row naming the parent (the row goes when a run ends).
     let live = w.tools.live.lock().unwrap().clone();
-    for id in ["parent.h0", "parent.h1", "parent.h2"] {
-        assert!(
-            live.contains(&(id.to_owned(), Some("parent".to_owned()))),
-            "{live:?}"
-        );
-    }
+    let mut ids: Vec<&String> = live
+        .iter()
+        .filter(|(id, parent)| id.starts_with("parent.h") && parent.as_deref() == Some("parent"))
+        .map(|(id, _)| id)
+        .collect();
+    ids.sort();
+    ids.dedup();
+    assert_eq!(ids.len(), 3, "{live:?}");
     w.host.shutdown().await;
 }
 
@@ -498,5 +503,118 @@ async fn other_tools_are_not_mine() {
     let c = desktop();
     assert!(w.helpers.call("look", &Map::new(), &c).await.is_none());
     assert_eq!(w.helpers.specs()[0].name, "helpers.run");
+    w.host.shutdown().await;
+}
+
+fn live_row(
+    run: &str,
+    session: alexia_store::SessionId,
+    parent: Option<&str>,
+) -> alexia_store::LiveRunRow {
+    alexia_store::LiveRunRow {
+        run: run.into(),
+        session,
+        origin: serde_json::to_string(&Origin::Desktop).unwrap(),
+        started_at: 1,
+        touched_at: 1,
+        steps: 0,
+        background: false,
+        parent: parent.map(String::from),
+    }
+}
+
+#[tokio::test]
+async fn depth_is_read_from_the_store_after_a_restart() {
+    // A helper resumed after a restart is in no memory set: only its live row says it is one.
+    let w = world(Arc::new(|_| say("hi")), false, None).await;
+    let s = w.store.create_session(Some("old helper")).unwrap();
+    w.store
+        .live_begin(&live_row("old.h-1-0", s, Some("old")))
+        .unwrap();
+    let c = ctx(Origin::Desktop, CancellationToken::new());
+    let c = ToolCtx {
+        run: RunId("old.h-1-0".into()),
+        ..c
+    };
+    let r = run(&w, &["nest"], c).await;
+    assert!(!r.ok);
+    assert_eq!(r.text, "Helpers cannot start helpers.");
+    assert!(w.asked.lock().unwrap().is_empty());
+    // A top-level run with a live row (no parent) may start helpers.
+    w.store.live_begin(&live_row("top", s, None)).unwrap();
+    let c = ToolCtx {
+        run: RunId("top".into()),
+        ..desktop()
+    };
+    let r = run(&w, &["fine"], c).await;
+    assert!(r.ok, "{}", r.text);
+    w.host.shutdown().await;
+}
+
+#[tokio::test]
+async fn ids_do_not_collide_with_rows_from_before_a_restart() {
+    // Rows left by an earlier process under the old `<parent>.h<n>` ids.
+    let w = world(Arc::new(|_| say("fine")), false, None).await;
+    let s = w.store.create_session(Some("left over")).unwrap();
+    for n in 0..4 {
+        w.store
+            .live_begin(&live_row(&format!("parent.h{n}"), s, Some("parent")))
+            .unwrap();
+    }
+    let r = run(&w, &["a", "b", "c"], desktop()).await;
+    assert!(r.ok, "{}", r.text);
+    assert_eq!(
+        r.text,
+        "Helper 1 (a): fine\n\nHelper 2 (b): fine\n\nHelper 3 (c): fine"
+    );
+    w.host.shutdown().await;
+}
+
+#[tokio::test]
+async fn two_calls_in_one_step_do_not_clear_each_other() {
+    // Call A's helper waits at `look` for the test. Call B, same parent run, finishes first.
+    // A's helper must still count as a helper afterwards.
+    let w = world(
+        Arc::new(|req| {
+            if !heard(req).contains("slow") {
+                return say("fine");
+            }
+            match tool_said(req).as_deref() {
+                None => Ok(vec![call("look")]),
+                Some("met") => Ok(vec![call("helpers.run")]),
+                Some(t) => say(&format!("then: {t}")),
+            }
+        }),
+        false,
+        Some(2),
+    )
+    .await;
+    let h = w.helpers.clone();
+    let a = tokio::spawn(async move {
+        h.call("helpers.run", &tasks(&["slow"]), &desktop())
+            .await
+            .unwrap()
+    });
+    // Wait until A's helper is at `look` (its run is live), then run B to the end.
+    for _ in 0..600 {
+        if !w.store.live_runs().unwrap().is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let b = run(&w, &["quick"], desktop()).await;
+    assert_eq!(b.text, "Helper 1 (quick): fine");
+    let gate = w.tools.barrier.clone().unwrap();
+    tokio::time::timeout(Duration::from_secs(30), gate.wait())
+        .await
+        .expect("A's helper reached look");
+    let a = tokio::time::timeout(Duration::from_secs(60), a)
+        .await
+        .expect("A finished")
+        .unwrap();
+    assert_eq!(
+        a.text,
+        "Helper 1 (slow): then: Helpers cannot start helpers."
+    );
     w.host.shutdown().await;
 }
