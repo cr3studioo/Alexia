@@ -605,7 +605,13 @@ fn import_file_copies_with_split_and_projector() {
     let layout = Layout::new(temp("home"));
 
     let r = import_file(&a, &layout, false).unwrap();
-    assert_eq!(r.path, std::fs::canonicalize(&a).unwrap());
+    // a plain path: Windows' verbatim prefix is not passed on
+    let want = std::fs::canonicalize(&a).unwrap();
+    let want = want.to_string_lossy();
+    assert_eq!(
+        r.path.to_string_lossy(),
+        want.strip_prefix(r"\\?\").unwrap_or(&want)
+    );
     assert!(r.mmproj.is_some());
 
     let c = import_file(&a, &layout, true).unwrap();
@@ -685,4 +691,97 @@ fn installed_round_trip() {
     assert_eq!(hf::installed(&store), vec![m]);
     std::fs::remove_file(&p).unwrap();
     assert!(hf::installed(&store).is_empty());
+}
+
+#[cfg(windows)]
+#[test]
+fn import_file_path_not_verbatim() {
+    let d = temp("plain");
+    let a = d.join("m.gguf");
+    std::fs::write(&a, llama(None, 10)).unwrap();
+    std::fs::write(d.join("mmproj-f16.gguf"), mmproj()).unwrap();
+    let r = import_file(&a, &Layout::new(temp("home")), false).unwrap();
+    let mm = r.mmproj.unwrap();
+    for p in [r.path, mm] {
+        assert!(!p.to_string_lossy().starts_with(r"\\?\"), "{p:?}");
+        assert!(p.is_file());
+    }
+}
+
+async fn import_q4(base: &str, layout: &Layout) -> Result<hf::Installed, HfError> {
+    import_repo_at(
+        base,
+        "o/m",
+        "Q4_K_M",
+        layout,
+        &client(),
+        None,
+        CancellationToken::new(),
+        None,
+    )
+    .await
+}
+
+fn q4_dir(layout: &Layout) -> PathBuf {
+    layout.cache().join("models").join("o/m").join("Q4_K_M")
+}
+
+#[tokio::test]
+async fn directory_in_place_of_model_redownloaded() {
+    let h = hub(false, false);
+    let base = serve(h.clone()).await;
+    let layout = Layout::new(temp("dirmodel"));
+    let dir = q4_dir(&layout);
+    // a folder where the model file belongs, and another where a .part belongs
+    std::fs::create_dir_all(dir.join("m-Q4_K_M.gguf").join("inner")).unwrap();
+    std::fs::create_dir_all(dir.join("mmproj-F16.gguf.part")).unwrap();
+    let done = import_q4(&base, &layout).await.unwrap();
+    assert!(done.path.is_file());
+    assert_eq!(std::fs::read(&done.path).unwrap(), h.files[0].1);
+    assert!(done.mmproj.unwrap().is_file());
+}
+
+#[tokio::test]
+async fn file_in_place_of_cache_dir_repaired() {
+    let h = hub(false, false);
+    let base = serve(h.clone()).await;
+    let layout = Layout::new(temp("filedir"));
+    let models = layout.cache().join("models").join("o");
+    std::fs::create_dir_all(&models).unwrap();
+    std::fs::write(models.join("m"), b"in the way").unwrap();
+    let done = import_q4(&base, &layout).await.unwrap();
+    assert_eq!(std::fs::read(&done.path).unwrap(), h.files[0].1);
+}
+
+/// Hashing a big existing file must not hold the only runtime thread.
+#[tokio::test]
+async fn hash_runs_off_the_runtime() {
+    let h = hub(false, false);
+    let base = serve(h.clone()).await;
+    let layout = Layout::new(temp("bigmodel"));
+    let dir = q4_dir(&layout);
+    std::fs::create_dir_all(&dir).unwrap();
+    // 256 MiB of zeros (sparse where the file system allows), the wrong size: hashed, then replaced
+    let big = std::fs::File::create(dir.join("m-Q4_K_M.gguf")).unwrap();
+    big.set_len(256 << 20).unwrap();
+    drop(big);
+    let ticks = Arc::new(AtomicU32::new(0));
+    let ticker = tokio::spawn({
+        let ticks = ticks.clone();
+        async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+                ticks.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+    });
+    let started = std::time::Instant::now();
+    let done = import_q4(&base, &layout).await.unwrap();
+    let took = started.elapsed();
+    ticker.abort();
+    assert_eq!(std::fs::read(&done.path).unwrap(), h.files[0].1);
+    // While a thread hashed, the runtime kept ticking: at least one tick per 100 ms (Windows
+    // timers are coarse, ~15 ms). A blocked runtime manages a handful in total.
+    let ticks = u128::from(ticks.load(Ordering::SeqCst));
+    assert!(ticks * 100 >= took.as_millis(), "{ticks} ticks in {took:?}");
 }

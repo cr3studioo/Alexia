@@ -11,8 +11,8 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use alexia_core::gpu::{
-    epic_dir, fit, headroom_mb, is_game, parse_compute_csv, parse_machine_csv, parse_xml_processes,
-    steam_dirs, GpuProc, Machine, Verdict, Watch,
+    decode_reg, epic_dir, fit, headroom_mb, is_game, parse_compute_csv, parse_machine_csv,
+    parse_xml_processes, reg_string, steam_dirs, GpuProc, Machine, Verdict, Watch,
 };
 use alexia_store::Store;
 use serde_json::json;
@@ -318,4 +318,111 @@ async fn watch_steps_aside_once_and_returns() {
         .await
         .unwrap()
         .unwrap();
+}
+
+#[test]
+fn compute_csv_comma_in_path() {
+    let got = parse_compute_csv("77, C:\\Games\\Foo, Bar\\game.exe, 2048\n");
+    assert_eq!(got.len(), 1);
+    assert_eq!(got[0].pid, 77);
+    assert_eq!(got[0].exe, PathBuf::from("C:\\Games\\Foo, Bar\\game.exe"));
+    assert_eq!(got[0].mb, 2048);
+}
+
+#[test]
+fn xml_entities_decoded() {
+    let xml = "<process_info><pid>9</pid><type>C+G</type>\
+<process_name>C:\\Games\\A&amp;B\\g&#97;me&#x2e;exe &lt;&quot;x&quot;&apos;&gt; &bogus;</process_name>\
+<used_memory>N/A</used_memory></process_info>";
+    let got = parse_xml_processes(xml);
+    assert_eq!(
+        got[0].exe,
+        PathBuf::from("C:\\Games\\A&B\\game.exe <\"x\"'> &bogus;")
+    );
+    assert!(is_game(&got[0], &[PathBuf::from("C:\\Games\\A&B")], &[]));
+}
+
+#[test]
+fn reg_export_utf16_parsed() {
+    let reg = "Windows Registry Editor Version 5.00\r\n\r\n[HKEY_CURRENT_USER\\Software\\Valve\\Steam]\r\n\
+\"SteamExe\"=\"c:\\\\steam\\\\steam.exe\"\r\n\"SteamPath\"=\"D:\\\\Hry\\\\Čeština\"\r\n";
+    let mut bytes = vec![0xff, 0xfe];
+    bytes.extend(reg.encode_utf16().flat_map(u16::to_le_bytes));
+    let text = decode_reg(&bytes);
+    assert_eq!(
+        reg_string(&text, "SteamPath").as_deref(),
+        Some("D:\\Hry\\Čeština")
+    );
+    assert_eq!(reg_string(&text, "Missing"), None);
+}
+
+/// A watcher over a scripted game/no-game list (the last entry repeats). Returns the over-count
+/// seen at the start of each poll, then the step-aside and game-over counts, once `polls` ran.
+async fn run_script(script: &[bool], polls: u32) -> (Vec<u32>, u32, u32) {
+    let store = Arc::new(Store::open_in_memory().unwrap());
+    store
+        .set_setting("_core", "gpu.games", &json!(["C:\\Games"]))
+        .unwrap();
+    let (aside, over) = (Arc::new(AtomicU32::new(0)), Arc::new(AtomicU32::new(0)));
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let script = script.to_vec();
+    let source = {
+        let (seen, over) = (seen.clone(), over.clone());
+        Arc::new(move || {
+            let mut seen = seen.lock().unwrap();
+            let n = seen.len();
+            seen.push(over.load(Ordering::SeqCst));
+            let game = script[n.min(script.len() - 1)];
+            let list = if game {
+                vec![proc(5, "C:\\Games\\Hades\\Hades.exe", true)]
+            } else {
+                Vec::new()
+            };
+            Box::pin(async move { list }) as Pin<Box<dyn Future<Output = Vec<GpuProc>> + Send>>
+        })
+    };
+    let ours: Arc<dyn Fn() -> Vec<u32> + Send + Sync> = Arc::new(Vec::new);
+    let watch = Watch::new(store, ours).with_source(source, Duration::from_millis(20));
+    let cancel = CancellationToken::new();
+    let task = tokio::spawn({
+        let (a, o, c) = (aside.clone(), over.clone(), cancel.clone());
+        async move {
+            watch
+                .run(
+                    c,
+                    move || {
+                        a.fetch_add(1, Ordering::SeqCst);
+                    },
+                    move || {
+                        o.fetch_add(1, Ordering::SeqCst);
+                    },
+                )
+                .await;
+        }
+    });
+    until("polls", || seen.lock().unwrap().len() as u32 >= polls).await;
+    let counts = (aside.load(Ordering::SeqCst), over.load(Ordering::SeqCst));
+    cancel.cancel();
+    tokio::time::timeout(Duration::from_secs(30), task)
+        .await
+        .unwrap()
+        .unwrap();
+    let seen = seen.lock().unwrap().clone();
+    (seen, counts.0, counts.1)
+}
+
+#[tokio::test]
+async fn game_over_needs_three_quiet_polls() {
+    // poll 0: game; polls 1-3: quiet. The over-count seen at the start of poll n is what the
+    // polls before it produced.
+    let (seen, aside, _) = run_script(&[true, false], 6).await;
+    assert_eq!(&seen[..5], [0, 0, 0, 0, 1], "{seen:?}");
+    assert_eq!(aside, 1);
+}
+
+#[tokio::test]
+async fn one_missed_poll_does_not_flap() {
+    // one miss, then two misses in a row, with the game back each time; then it stays
+    let (seen, aside, over) = run_script(&[true, false, true, false, false, true], 10).await;
+    assert_eq!((aside, over), (1, 0), "{seen:?}");
 }
