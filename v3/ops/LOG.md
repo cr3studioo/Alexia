@@ -392,3 +392,4 @@
 2026-11-21 P2-35 built -> review ctx_8c0ff512cd7d. Concern: real CLI event shapes unverified, owner should try once. Dispatched P2-69 (sonnet) ctx_476a57b0dcc9
 2026-11-21 P2-36 built -> review ctx_c038d444dc61 (concern: compare does not bump provider request counter)
 2026-11-21 Merged P2-54 (gate OK 64, pushed). P2-65 ready
+2026-11-21 P2-61 built -> review ctx_b8d038353b2e (2 new tests also pass on old code). Dispatched P2-56 (opus) ctx_679da448128e
