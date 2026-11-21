@@ -140,6 +140,42 @@ edits INTERFACES.md (P2-51 and P2-54 do).
 | 10 | Scheduled approvals go to the primary chat | P2-64 (`ask.rs` reads the job's stored origin; after P2-29 via P2-38) |
 | 11 | invariants check 1 misses ids inside strings | P2-64 (narrow rule: hyphenated or `:`/`/`/`__`-prefixed ids; after P2-38) |
 
+## Phase review 6, finding by finding
+
+Planned 2026-11-21 from `phase-review-6.md` and the approval follow-ups of P2-20, P2-26, P2-35,
+P2-36, P2-55, P2-56 and P2-61. Every item was checked against the code; all are real. Specs of
+running or in-review tasks (P2-21, P2-25, P2-27, P2-28, P2-62, P2-68) are not changed. The two
+high findings are fixed before P2-38 (P2-38 depends on P2-73 and P2-74). INTERFACES §1.2, §2.3
+(`Say`, `compare`) and §2.6 step 3 are written by this planner.
+
+| # | Finding | Covered by |
+|---|---|---|
+| 1 (high) | Slash commands run from any origin; a scheduled `/approve` answers approvals | P2-73 (`reply` and `commands::run` take commands only from `Origin::Channel`), P2-74 (`Scheduler::add` refuses `/` prompts) |
+| 2 (high) | `Agent::reply` drops `turn.files`; after P2-38 photos and documents are ignored | P2-73 |
+| 3 | `Asker::target` is `None` for Desktop: P2-21 tasks and Desktop jobs auto-deny | **P2-70 amended** (owns `ask.rs`) |
+| 4 | The gate is private to `Run`; undo and commands re-implement it | P2-76 |
+| 5 | `Task` has no tool filter; helpers can start helpers | P2-75 (a child run is offered no `helpers.run`; no new `Task` field) |
+| 6 | Local job's pin loop queues cloud and subscription pins | P2-77 |
+| 7 | `produced()` sends any `file://` link: sandbox escape, `alexia.db` leak | P2-78 |
+| 8 | `Event::Say` has no origin and no files | P2-81 (after P2-26, which is merged: resume's `Say` is moved to its origin there) |
+| 9 | Subscription CLIs inherit the hub's env; Codex shell reads anywhere | P2-79 |
+| 10 | P2-38 never registers subscription providers | **P2-38 amended** (step 2a; §2.6 step 3 written) |
+| 11 | Scheduled jobs run as foreground | P2-73 |
+| 12 | `"subscription:claude-code"` slips past check 1; §1.2 stale | The check: already **P2-64** (step 4 flags it, step 5 marks or fixes the line), dropped here. §1.2: refreshed by this planner |
+| P2-20 | Stop mid-gate leaves steps without outcome/audit; trace asked == answered; error after text sends no Restart | P2-75 |
+| P2-26 | Age from `started_at`; `end_with` leaves approvals pending; audit picks the first live run | P2-80 |
+| P2-35 | Read error then `wait()` hangs; stderr pipe stalls past 64 KiB; bare 401/429 matched | P2-79 |
+| P2-36 | Compare ignores cancel, drops redaction notes, unattributed usage | P2-77 |
+| P2-55 | Dropped `spawn_as` future never sets `killed` | P2-82 |
+| P2-56 | Any `Cancelled` from the brain treated as shutdown (`alexia-scheduler/src/lib.rs:322`; the list said alexia-mcp) | P2-74 |
+| P2-61 | `inside()` canonicalizes a local link to a UNC path (SMB contact) | P2-82 |
+
+Shared files and the order they force: `agent.rs` P2-68 → P2-73 → P2-75 → P2-76; `commands.rs`
+P2-25 → P2-73 → P2-77 → P2-76; `router.rs` P2-68 → P2-77; `resume.rs` P2-80 → P2-81; scheduler
+`lib.rs` P2-74 → P2-81; `tests/tools.rs` P2-67 → P2-78; `tests/wasm.rs`/`tests/compute.rs` P2-66 →
+P2-82; `tests/gateway.rs` P2-70 → P2-81; hub `main.rs` P2-48 → P2-81. Can start at once: P2-74,
+P2-79, P2-80.
+
 ## Order of work
 
 ```
@@ -169,6 +205,12 @@ review 4: P2-23 ── P2-45 manifests ─┬─ P2-20 (above)     P2-42 ── 
 review 5: P2-17 ── P2-59 hedged redacts ── P2-20     P2-56 ── P2-60 Weak scheduler ── P2-38
           P2-51 ── P2-61 file URIs, undo ─┐          P2-55 + P2-57 ── P2-62 reviewed, GPU hold ── P2-38
           P2-38 ──────────────────────────┴─ P2-63 one redaction ── P2-64 Job, scheduled ask, check 1
+review 6: P2-21 + P2-25 + P2-68 ── P2-73 commands, files ─┬─ P2-38 (with P2-74 scheduler, independent)
+                                                          ├─ P2-75 loop edges (+P2-27) ─┐
+                                                          └─ P2-77 local pins, compare ─┴─ P2-76 one gate (+P2-28)
+          P2-67 ── P2-78 file links     P2-66 ── P2-82 wasm drop, links     P2-79 subscriptions
+          P2-80 resume ─┐
+          P2-74 ────────┼─ P2-81 Say to its chat (+P2-48, P2-70)
 everything ── P2-38 hub wiring, bridge deleted ─┬─ P2-39 e2e ──────┐
                                                 ├─ P2-40 v2 plugins ┼─ P2-41 20 real tasks (owner)
                                                 └─ P2-48 CLI verbs ─┘
@@ -236,7 +278,7 @@ Crate paths are under `v3/crates/`.
 | P2-35 | Subscriptions through their official CLIs | opus | P2-17 | `alexia-core/{src/subscription.rs, tests/subscription.rs}` |
 | P2-36 | Compare two models | sonnet | P2-17 | `alexia-core/{src/compare.rs, tests/compare.rs}` |
 | P2-37 | Encrypted database at rest | opus | P2-02, P2-03, P2-10 | `v3/Cargo.toml`, `v3/Cargo.lock`, `alexia-store/{Cargo.toml, src/db.rs, src/encrypt.rs, src/lib.rs, src/import.rs, tests/encrypt.rs}` |
-| P2-38 | Hub wiring: Agent is the brain, bridge deleted | opus | P2-08..P2-11, P2-20..P2-37, P2-42, P2-44, P2-45, P2-46, P2-47, P2-50, P2-60, P2-62 | `alexia-hub/{Cargo.toml, src/main.rs, src/bridge.rs (delete), src/media.rs, tests/cli_p2.rs}`, `alexia-gateway/src/gateway.rs` (delete P2-06's shims), `v3/Cargo.lock`, `v3/ci/invariants.mjs` |
+| P2-38 | Hub wiring: Agent is the brain, bridge deleted | opus | P2-08..P2-11, P2-20..P2-37, P2-42, P2-44, P2-45, P2-46, P2-47, P2-50, P2-60, P2-62, P2-73, P2-74 | `alexia-hub/{Cargo.toml, src/main.rs, src/bridge.rs (delete), src/media.rs, tests/cli_p2.rs}`, `alexia-gateway/src/gateway.rs` (delete P2-06's shims), `v3/Cargo.lock`, `v3/ci/invariants.mjs` |
 | P2-39 | End-to-end: the agent on the real binary | sonnet | P2-38 | `alexia-hub/tests/{agent_e2e.rs, telegram_e2e.rs, common/mod.rs}` |
 | P2-40 | Every v2 plugin on the Rust host | sonnet | P2-38 | `alexia-hub/tests/v2_plugins.rs` |
 | P2-41 | Twenty real tasks on the PC | sonnet | P2-39, P2-40, P2-48 | `v3/ops/reports/P2-tasks.md` |
@@ -267,8 +309,18 @@ Crate paths are under `v3/crates/`.
 | P2-67 | Core: test folders cleaned up; the registry export file is unique per call | opus | P2-61, P2-62 | `alexia-core/{tests/scratch/mod.rs, tests/catalog.rs, tests/chat.rs, tests/hf.rs, tests/local.rs, tests/permissions.rs, tests/prompt.rs, tests/tools.rs, src/gpu.rs, tests/gpu.rs}` |
 | P2-68 | Router: notes per run, keychain keys cached, unreadable pins said out loud | opus | P2-20 | `alexia-core/{src/router.rs, tests/router_steps.rs, src/agent.rs}` |
 | P2-69 | OpenAI wire: blank assistant text is empty; a call is answered only by the tool turns right after it | sonnet | none | `alexia-core/{src/openai.rs, tests/openai.rs}` |
-| P2-70 | Gateway: a question that could not be sent is not a denial; test folders cleaned up | opus | P2-58, P2-64 | `alexia-gateway/{src/ask.rs, tests/approvals.rs, tests/scratch/mod.rs, tests/gateway.rs, tests/telegram_channel.rs}` |
+| P2-70 | Gateway: a question that could not be sent is not a denial; Desktop runs ask the primary chat; test folders cleaned up | opus | P2-58, P2-64 | `alexia-gateway/{src/ask.rs, tests/approvals.rs, tests/scratch/mod.rs, tests/gateway.rs, tests/telegram_channel.rs}` |
 | P2-71 | Hub and MCP conn tests: test folders cleaned up | sonnet | P2-39, P2-48, P2-63, P2-66 | `alexia-hub/{tests/scratch/mod.rs or tests/common/mod.rs, tests/cli.rs, tests/cli_p1.rs, tests/cli_p2.rs, tests/telegram_e2e.rs, tests/agent_e2e.rs, src/media.rs}`, `alexia-mcp/tests/conn.rs` |
+| P2-73 | Agent: slash commands only from the owner's chat; attached files are read; scheduled runs are background | opus | P2-21, P2-25, P2-68 | `alexia-core/{src/agent.rs, tests/agent.rs, src/commands.rs, tests/commands.rs}` |
+| P2-74 | Scheduler: no slash-command prompts; only a shutdown keeps a stopped one-shot | opus | none | `alexia-scheduler/{src/lib.rs, tests/scheduler.rs}` |
+| P2-75 | Agent loop edges: a stop mid-gate is recorded, the asked model is kept, a failed answer is not lost, helpers cannot start helpers | opus | P2-73, P2-27 | `alexia-core/{src/agent.rs, tests/agent.rs}` |
+| P2-76 | One permission gate: undo and plugin commands go through the agent's gate | opus | P2-75, P2-77, P2-25, P2-28 | `alexia-core/{src/agent.rs, tests/agent.rs, src/undo.rs, tests/undo.rs, src/commands.rs, tests/commands.rs}` |
+| P2-77 | Router: a local job never leaves the computer; compare redacts with notes, stops on cancel, counts its usage | opus | P2-68, P2-73 | `alexia-core/{src/router.rs, tests/router_steps.rs, src/compare.rs, tests/compare.rs, src/commands.rs (the compare call)}` |
+| P2-78 | Tooling: a plugin's file link is sent only from where the plugin may write | opus | P2-67 | `alexia-core/{src/tools.rs, tests/tools.rs}` |
+| P2-79 | Subscriptions: a clean environment, no Codex shell on tool output, no hang, exact error reading | opus | none | `alexia-core/{src/subscription.rs, tests/subscription.rs}` |
+| P2-80 | Resume: a live job's age counts from its last step; every ending closes its questions; audit rows name their own run | sonnet | none | `alexia-core/{src/resume.rs, tests/resume.rs}` |
+| P2-81 | Say goes to its run's chat and carries the run's files | sonnet | P2-48, P2-70, P2-74, P2-80 | `alexia-core/{src/bus.rs, src/resume.rs, tests/resume.rs}`, `alexia-scheduler/{src/lib.rs, tests/scheduler.rs}`, `alexia-gateway/{src/gateway.rs, tests/gateway.rs}`, `alexia-hub/src/main.rs` (Say literals) |
+| P2-82 | MCP: a WASM start that is given up on stops the module; compute never follows a link to a network path | opus | P2-66 | `alexia-mcp/{src/wasm.rs, tests/wasm.rs, src/serve.rs, tests/compute.rs}` |
 
 ## Owner needs
 
