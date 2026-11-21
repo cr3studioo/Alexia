@@ -421,3 +421,4 @@
 2026-11-21 Dispatched P2-65 (opus)
 2026-11-21 P2-72 built -> review
 2026-11-21 P2-72 approved. Merged, gating
+2026-11-21 Merged P2-72 (gate OK 67, pushed). P2-21, 26, 27, 28 ready
