@@ -959,6 +959,9 @@ impl Router {
     pub fn remove_provider(&self, id: &str);
     pub fn pins(&self) -> BTreeMap<String, Vec<String>>;
     pub fn set_pins(&self, job: Job, models: Vec<String>) -> Result<()>;
+    /// (V3-2, P2-17; per run since P2-68) The notes `step` left for `run` (a pin skipped,
+    /// secrets removed), once. Another run's notes are never returned.
+    pub fn take_notes(&self, run: Option<&RunId>) -> Vec<String>;
 }
 /// (V3-2, P2-17)
 pub struct StepAsk { pub job: Job, pub avoid: Vec<String> /* "provider\nmodel" */,
