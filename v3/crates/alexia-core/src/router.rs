@@ -117,8 +117,10 @@ pub struct Router {
     runtime: RwLock<HashSet<String>>,
     /// Ids of the providers that run on this machine (D213).
     local: RwLock<HashSet<String>>,
-    /// Sentences for the agent to show, taken by `take_notes`.
-    notes: Mutex<Vec<String>>,
+    /// Sentences for the agent to show, per run, taken by `take_notes`.
+    notes: Mutex<HashMap<Option<RunId>, Vec<String>>>,
+    /// The keychain keys and when they were read, for `KEYS_FRESH`.
+    keys: Mutex<Option<(Instant, Arc<Vec<String>>)>>,
     catalog: Arc<Catalog>,
     store: Arc<Store>,
 }
@@ -160,6 +162,18 @@ impl Shape {
             _ => Shape::Chat,
         }
     }
+}
+
+/// How long `race` trusts the keys it read. A key the owner adds meanwhile is still caught by
+/// the generic patterns of `redact_request` until the next read.
+const KEYS_FRESH: Duration = Duration::from_secs(60);
+
+fn read_keys(catalog: &Catalog) -> Vec<String> {
+    catalog
+        .rows()
+        .iter()
+        .filter_map(crate::free::key_for)
+        .collect()
 }
 
 fn key(c: &Candidate) -> String {
@@ -216,6 +230,7 @@ impl Router {
             runtime: RwLock::default(),
             local: RwLock::default(),
             notes: Mutex::default(),
+            keys: Mutex::default(),
             catalog,
             store,
         }
@@ -340,7 +355,7 @@ impl Router {
     ) -> (Result<ChatDone, ProviderError>, Vec<String>) {
         let req = Arc::new(req.clone());
         let (cloud, kinds) = if queue.iter().any(|c| !self.is_local(&c.provider)) {
-            let (cloud, kinds) = redact_request_known(&req, &self.known_secrets());
+            let (cloud, kinds) = redact_request_known(&req, &self.keys().await);
             if !kinds.is_empty() {
                 tracing::debug!(?kinds, "redacted before sending to cloud");
             }
@@ -559,7 +574,7 @@ impl Router {
                     continue;
                 }
             };
-            self.note(format!("Skipped the pinned model {pin}: {why}."));
+            self.note(&ask.run, format!("Skipped the pinned model {pin}: {why}."));
         }
         if local_job {
             for c in runtime.iter().filter(|c| self.is_local(&c.provider)) {
@@ -586,7 +601,7 @@ impl Router {
         };
         let (result, kinds) = self.race(req, queue, budget, out, cancel, attr).await;
         if !kinds.is_empty() {
-            self.note(format!("Removed {} before sending.", kinds.join(", ")));
+            self.note(&ask.run, format!("Removed {} before sending.", kinds.join(", ")));
         }
         result
     }
@@ -613,7 +628,10 @@ impl Router {
     /// The owner's pins: job name → `"<provider>/<model>"`, `"subscription:<cli>"` or `"local:<id>"`.
     pub fn pins(&self) -> BTreeMap<String, Vec<String>> {
         match self.store.kv_get("_core", "models") {
-            Ok(Some(v)) => serde_json::from_value(v).unwrap_or_default(),
+            Ok(Some(v)) => serde_json::from_value(v).unwrap_or_else(|_| {
+                tracing::warn!("the router could not read the pinned models, so they are ignored");
+                BTreeMap::new()
+            }),
             Ok(None) => BTreeMap::new(),
             Err(e) => {
                 tracing::warn!("the router could not read its pins: {e}");
@@ -634,15 +652,21 @@ impl Router {
         Ok(())
     }
 
-    /// The notes `step` left (a pin skipped, secrets removed), once.
-    pub fn take_notes(&self) -> Vec<String> {
-        std::mem::take(&mut *self.notes.lock().unwrap_or_else(|e| e.into_inner()))
-    }
-
-    fn note(&self, text: String) {
+    /// The notes `step` left for `run` (a pin skipped, secrets removed), once.
+    pub fn take_notes(&self, run: Option<&RunId>) -> Vec<String> {
         self.notes
             .lock()
             .unwrap_or_else(|e| e.into_inner())
+            .remove(&run.cloned())
+            .unwrap_or_default()
+    }
+
+    fn note(&self, run: &Option<RunId>, text: String) {
+        self.notes
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .entry(run.clone())
+            .or_default()
             .push(text);
     }
 
@@ -660,13 +684,29 @@ impl Router {
         ids
     }
 
-    /// Keys in the keychain, so they are never sent in a message (P2-14).
+    /// Keys in the keychain, so they are never sent in a message (P2-14). Read now, on this
+    /// thread; `compare` uses it.
     pub(crate) fn known_secrets(&self) -> Vec<String> {
-        self.catalog
-            .rows()
-            .iter()
-            .filter_map(crate::free::key_for)
-            .collect()
+        read_keys(&self.catalog)
+    }
+
+    /// `known_secrets` for `race`: at most one keychain read per `KEYS_FRESH`, off the async
+    /// workers. Two racing misses may both read.
+    async fn keys(&self) -> Arc<Vec<String>> {
+        let lock = || self.keys.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((at, keys)) = lock().as_ref() {
+            if at.elapsed() < KEYS_FRESH {
+                return keys.clone();
+            }
+        }
+        let catalog = self.catalog.clone();
+        let keys = Arc::new(
+            tokio::task::spawn_blocking(move || read_keys(&catalog))
+                .await
+                .unwrap_or_default(),
+        );
+        *lock() = Some((Instant::now(), keys.clone()));
+        keys
     }
 
     /// `"provider\nmodel"` of every model set aside and not yet forgiven.

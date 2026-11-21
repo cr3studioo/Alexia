@@ -24,3 +24,6 @@ regex.workspace = true      # redaction patterns: v2's are regexes (P2-14)
 sha2.workspace = true       # download digests: llama.cpp runtime, models (P2-31, P2-33)
 zip.workspace = true        # llama.cpp's Windows release is a zip (P2-31)
 chrono.workspace = true     # local wall-clock date for the prompt's `today` (P2-16)
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] } # paused time in router_steps (P2-68)

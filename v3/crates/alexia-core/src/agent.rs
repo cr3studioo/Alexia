@@ -506,7 +506,7 @@ impl Run<'_> {
                 p.router.step(&req, &ask, STEP_BUDGET, tx, cancel.clone()),
                 relay(rx, self.draft, self.trace),
             );
-            for n in p.router.take_notes() {
+            for n in p.router.take_notes(Some(&self.run)) {
                 self.note(&n);
             }
             let done = match result {
