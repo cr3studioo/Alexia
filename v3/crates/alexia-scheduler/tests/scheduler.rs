@@ -5,8 +5,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use alexia_core::{
-    Brain, BrainError, Bus, DraftSink, Event, JobId, Lane, Origin, Reply, RunId, ToolCtx, Turn,
-    Urgency,
+    Brain, BrainError, Builtin, Bus, DraftSink, Event, JobId, Lane, Origin, Reply, RunId, ToolCtx,
+    Turn, Urgency,
 };
 use alexia_scheduler::{next_after, next_after_in, Clock, Scheduler, Trigger};
 use alexia_store::{now_ms, Ms, Store};
@@ -988,4 +988,76 @@ async fn every_does_not_overlap_itself() {
     );
     cancel.cancel();
     run.await.unwrap().unwrap();
+}
+
+// ---- the tools hold the scheduler weakly (no Agent -> tools -> Scheduler -> Agent cycle) ----
+
+#[test]
+fn schedule_tools_do_not_keep_scheduler_alive() {
+    let (_, _, sched) = setup(Arc::new(FakeBrain::default()));
+    let tools = sched.tools();
+    let weak = Arc::downgrade(&sched);
+    drop(sched);
+    assert!(
+        weak.upgrade().is_none(),
+        "the tools kept the scheduler alive"
+    );
+    // specs need no scheduler.
+    let names: Vec<_> = tools.specs().into_iter().map(|s| s.name).collect();
+    assert_eq!(names, ["schedule.add", "schedule.list", "schedule.cancel"]);
+}
+
+#[tokio::test]
+async fn schedule_tools_after_drop_say_not_running() {
+    let (_, _, sched) = setup(Arc::new(FakeBrain::default()));
+    let tools = sched.tools();
+    drop(sched);
+    let c = ctx(telegram());
+    for (name, a) in [
+        (
+            "schedule.add",
+            json!({"kind": "every", "every_minutes": 5, "prompt": "ping"}),
+        ),
+        ("schedule.list", json!({})),
+        ("schedule.cancel", json!({"id": 1})),
+    ] {
+        let out = tools.call(name, &args(a), &c).await.unwrap();
+        assert!(!out.ok && out.undo.is_none(), "{name}: {}", out.text);
+        assert_eq!(out.text, "Scheduled jobs are not running.", "{name}");
+    }
+    assert!(tools.call("other.thing", &Map::new(), &c).await.is_none());
+}
+
+/// A brain that, like the Agent, owns the scheduler's tools.
+#[derive(Default)]
+struct HoldingBrain {
+    tools: Mutex<Option<Arc<dyn Builtin>>>,
+}
+#[async_trait::async_trait]
+impl Brain for HoldingBrain {
+    async fn reply(
+        &self,
+        _: Turn,
+        _: DraftSink,
+        _: CancellationToken,
+    ) -> Result<Reply, BrainError> {
+        Err(BrainError::Unavailable("not used".into()))
+    }
+}
+
+#[test]
+fn brain_holding_tools_is_no_cycle() {
+    let brain = Arc::new(HoldingBrain::default());
+    let store = Arc::new(Store::open_in_memory().unwrap());
+    let sched = Scheduler::new(store, Bus::new(8), brain.clone());
+    *brain.tools.lock().unwrap() = Some(sched.tools());
+    let weak = Arc::downgrade(&sched);
+    let weak_brain = Arc::downgrade(&brain);
+    drop(sched);
+    drop(brain);
+    assert!(weak.upgrade().is_none(), "scheduler leaked through a cycle");
+    assert!(
+        weak_brain.upgrade().is_none(),
+        "brain leaked through a cycle"
+    );
 }
