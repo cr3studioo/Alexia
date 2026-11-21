@@ -272,7 +272,13 @@ fn on_line(s: &Arc<Shared>, log: &StderrLog, incoming: &Arc<dyn Incoming>, line:
             let (s, incoming) = (Arc::clone(s), Arc::clone(incoming));
             tokio::spawn(async move {
                 let request = incoming.request(r.method, r.params, token.clone(), progress);
+                // Biased, request first: a cancel read in the same chunk as its request has
+                // already fired the token before this task runs. Unbiased, `select!` could pick
+                // the cancel and drop `request` unpolled, so the handler never saw its token.
+                // A handler that never yields still lets a cancel through: after its
+                // `Pending`, the next poll checks the token.
                 tokio::select! {
+                    biased;
                     out = request => {
                         let outcome = match out {
                             Ok(v) => Outcome::Result(v),

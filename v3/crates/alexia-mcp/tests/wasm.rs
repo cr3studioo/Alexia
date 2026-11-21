@@ -515,3 +515,36 @@ async fn same_events_as_process_plugin() {
     assert_eq!(wasm_bad, proc_bad);
     assert!(wasm_bad.contains(&"crashed".to_string()));
 }
+
+/// The compile waits off the runtime: a 10 ms ticker on the same current-thread runtime keeps
+/// ticking while a slow compile (the delay hook stands in for one) is in progress. A blocking
+/// wait would leave one gap at least as long as the delay.
+#[tokio::test]
+async fn slow_compile_does_not_block_runtime() {
+    use alexia_mcp::wasm::{set_start_delay, Limits, WasmPlugin};
+    let delay = Duration::from_millis(3_000);
+    set_start_delay(delay);
+    let longest = std::cell::Cell::new(Duration::ZERO);
+    let ticker = async {
+        let mut every = tokio::time::interval(Duration::from_millis(10));
+        let mut last = Instant::now();
+        loop {
+            every.tick().await;
+            longest.set(longest.get().max(last.elapsed()));
+            last = Instant::now();
+        }
+    };
+    let spawned = tokio::select! {
+        p = WasmPlugin::spawn(Path::new(WASM), None, Limits::default()) => p,
+        _ = ticker => unreachable!(),
+    };
+    set_start_delay(Duration::ZERO);
+    let plugin = spawned.unwrap();
+    // Gaps are ~10 ms; a loaded machine stays well under the 3 s a blocked runtime would show.
+    assert!(
+        longest.get() < delay / 2,
+        "the runtime stalled for {:?} during the compile",
+        longest.get()
+    );
+    plugin.kill();
+}
