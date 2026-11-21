@@ -456,3 +456,12 @@
 2026-11-21 Disk hit 0 MB (P2-25 fix blocked, P2-21 reviewer could not link). Removed merged worktrees P2-20/26/65, phase-rv6, 123 temp dirs: 41 GB free
 2026-11-21 P2-21 review: no bugs found (verdict message lost to disk-full; notes: Job::Chat for plain sampling, chat:<plugin> key per v2, plugin task origin = primary chat). Workspace test left to gate. Merged locally, gating
 2026-11-21 P2-21 real verdict arrived: changes (Exif slice panic upcalls.rs:1539). Local merge undone (reset --keep, never pushed). Fix queued
+2026-11-21 P2-25 fix done -> review ctx_bbf5c425e6fb
+2026-11-21 P2-27 fix round (sonnet) ctx_8f17c165b20f
+2026-11-21 P2-62 fix done (start_ms deadline under load; 20/20) -> review ctx_90377d5d51dd
+2026-11-21 P2-27 fix done -> review ctx_fa903cc6b29b
+2026-11-21 P2-21 fix round (sonnet) ctx_548dc1f0dba8
+2026-11-21 P2-25 approved (/undo panics until P2-28; /status raw SQL spend). Merged, gating
+2026-11-21 P2-28 built -> review ctx_d1925af6c275 (concern: tools.rs tests failed once under load)
+2026-11-21 Dispatched P2-74 (opus) ctx_312e245d460a
+2026-11-21 P2-25 gate OK (70 suites), pushed
