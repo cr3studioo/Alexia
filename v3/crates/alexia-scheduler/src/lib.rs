@@ -234,13 +234,16 @@ impl Scheduler {
             };
             let mut wait = RECHECK;
             for job in jobs {
-                let Some(next) = job.next_at else { continue };
+                let Some(mut next) = job.next_at else { continue };
                 if next <= now {
-                    self.start(job, now, &cancel, &mut firing, &mut busy);
-                } else {
-                    let ms = u64::try_from(next - now).unwrap_or(u64::MAX);
-                    wait = wait.min(Duration::from_millis(ms));
+                    // Wake for its next due time too, even while this turn still runs.
+                    match self.start(job, now, &cancel, &mut firing, &mut busy) {
+                        Some(n) => next = n,
+                        None => continue,
+                    }
                 }
+                let ms = u64::try_from(next - now).unwrap_or(u64::MAX);
+                wait = wait.min(Duration::from_millis(ms));
             }
             tokio::select! {
                 () = cancel.cancelled() => break Ok(()),
@@ -259,7 +262,8 @@ impl Scheduler {
     }
 
     /// Moves `next_at` on first (so the job cannot fire twice), then runs the turn, unless the
-    /// job's previous turn is still running: then this due time is skipped.
+    /// job's previous turn is still running: then this due time is skipped. Returns the new
+    /// next time, if any.
     fn start(
         self: &Arc<Self>,
         job: Job,
@@ -267,27 +271,28 @@ impl Scheduler {
         cancel: &CancellationToken,
         firing: &mut JoinSet<()>,
         busy: &mut HashMap<tokio::task::Id, JobId>,
-    ) {
+    ) -> Option<Ms> {
         let next = next_after(&job.trigger, now);
         // A one-shot (next None) stays listed until its turn ends, so the turn can still look
         // its job up (`answer_origin`); `fire` cancels it then, or, when shutdown cut the turn
         // short, puts its time back so the next start fires it once. The loop skips next_at None.
         if let Err(e) = self.store.job_set_next(job.id.0, next) {
             tracing::warn!(job = job.id.0, "could not move the job's next time: {e}");
-            return;
+            return None;
         }
         if busy.values().any(|j| *j == job.id) {
             tracing::info!(
                 job = job.id.0,
                 "scheduled job is still running; this due time is skipped"
             );
-            return;
+            return next;
         }
         let me = Arc::clone(self);
         let token = cancel.child_token();
         let id = job.id;
         let task = firing.spawn(async move { me.fire(job, token).await });
         busy.insert(task.id(), id);
+        next
     }
 
     async fn fire(&self, job: Job, cancel: CancellationToken) {
