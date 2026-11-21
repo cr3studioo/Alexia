@@ -365,3 +365,7 @@
 2026-11-21 Dispatched P2-29 (sonnet, own target) ctx_fbfeef8c3b31
 2026-11-21 P2-29: allowed 3 assertion edits in gateway tests/ask_voice.rs (id suffix)
 2026-11-21 Merged P2-53 (gate OK 63, pushed)
+2026-11-21 P2-51 approved. Merged, gating
+2026-11-21 Dispatched P2-57 (sonnet) ctx_905ac878e85b
+2026-11-21 P2-59, P2-52 built -> review. P2-59 review (opus) dispatched; P2-52 review after gate (RAM). P2-52 concern: credential manager round-trip test flaked once (parallel race on real entry)
+2026-11-21 Merged P2-51 (gate OK 63, pushed). P2-54, P2-61 ready
