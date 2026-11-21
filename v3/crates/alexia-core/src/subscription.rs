@@ -10,13 +10,23 @@
 //!   --permission-prompts none` (prompt on stdin)
 //! - `codex exec --json --sandbox read-only --skip-git-repo-check --ephemeral -C <dir> -`
 //!   (`-` reads the prompt from stdin)
+//!
+//! Codex's read-only sandbox still lets its agent run shell reads anywhere on disk. `codex-cli
+//! 0.160.0` has `--disable shell_tool` / `--disable unified_exec`, but browser, computer-use, apps
+//! and MCP tools stay, so no one switch is proven to leave it toolless: Codex refuses any request
+//! that carries tool output instead (prompt injection would bypass the gate and never-touch list).
+//!
+//! Both CLIs start with an empty environment plus `ENV_KEEP` and their own config variable, so
+//! `ALEXIA_SECRET_*` overrides and provider keys never reach their agents.
 
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::LazyLock;
 use std::time::{Duration, Instant};
 
 use alexia_store::Role;
+use regex::Regex;
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
@@ -54,6 +64,13 @@ impl Cli {
         match self {
             Cli::ClaudeCode => "subscription:claude-code",
             Cli::Codex => "subscription:codex",
+        }
+    }
+    /// The CLI's own config folder variable, passed through when set.
+    fn config_env(self) -> &'static str {
+        match self {
+            Cli::ClaudeCode => "CLAUDE_CONFIG_DIR",
+            Cli::Codex => "CODEX_HOME",
         }
     }
     /// The no-op sign-in check: exits non-zero when the CLI is not signed in.
@@ -114,7 +131,7 @@ impl SubscriptionCli {
     /// Runs a short command; `(exit ok, stdout)`. Stdin closed, no window.
     async fn run_quick(&self, args: &[&str]) -> Result<(bool, String), String> {
         let name = self.cli.name();
-        let mut cmd = Command::new(&self.exe);
+        let mut cmd = self.base_command();
         cmd.args(args)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
@@ -132,8 +149,20 @@ impl SubscriptionCli {
         }
     }
 
-    fn command(&self, model: &str, dir: &Path) -> Command {
+    /// The exe with only `ENV_KEEP` and the CLI's config variable from the hub's environment.
+    fn base_command(&self) -> Command {
         let mut cmd = Command::new(&self.exe);
+        cmd.env_clear();
+        for k in ENV_KEEP.iter().copied().chain([self.cli.config_env()]) {
+            if let Some(v) = std::env::var_os(k) {
+                cmd.env(k, v);
+            }
+        }
+        cmd
+    }
+
+    fn command(&self, model: &str, dir: &Path) -> Command {
+        let mut cmd = self.base_command();
         match self.cli {
             Cli::ClaudeCode => {
                 cmd.args(["-p", "--output-format", "stream-json", "--verbose"])
@@ -161,6 +190,38 @@ impl SubscriptionCli {
         no_window(&mut cmd);
         cmd
     }
+}
+
+/// The only hub variables a CLI sees (plus its own config variable, `Cli::config_env`).
+const ENV_KEEP: &[&str] = &[
+    // Finding programs; Windows needs these to start anything at all.
+    "PATH",
+    "PATHEXT",
+    "SYSTEMROOT",
+    "WINDIR",
+    "COMSPEC",
+    // Scratch space.
+    "TEMP",
+    "TMP",
+    "TMPDIR",
+    // The macOS keychain lookup (Claude Code) is keyed on USER; LANG keeps CLI output stable.
+    "USER",
+    "LANG",
+    // Home and app data: where the CLI keeps its own sign-in.
+    "USERPROFILE",
+    "HOMEDRIVE",
+    "HOMEPATH",
+    "HOME",
+    "APPDATA",
+    "LOCALAPPDATA",
+    "PROGRAMDATA",
+];
+
+/// A tool turn, a tool call or a tool result anywhere in the request.
+fn has_tool_output(req: &ChatRequest) -> bool {
+    req.messages
+        .iter()
+        .any(|(r, b)| *r == Role::Tool || b.calls.is_some() || b.call_id.is_some())
 }
 
 fn no_window(cmd: &mut Command) {
@@ -221,19 +282,32 @@ fn prompt_text(req: &ChatRequest) -> String {
     out
 }
 
+/// `429` / `401` only as an HTTP status marker, never a bare number in prose or a path.
+static STATUS: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r#"(?i)\b(?:status(?:\s+code)?|http(?:/[\d.]+)?|error)\s*[:=]?\s*(429|401)\b|"status(?:_?code)?"\s*:\s*"?(429|401)\b"#,
+    )
+    .expect("valid regex")
+});
+
 /// A rate-limit or sign-in message from the CLI, as the error it means.
 fn classify(text: &str, cli: Cli) -> Option<ProviderError> {
     let t = text.to_lowercase();
+    let status = STATUS
+        .captures_iter(&t)
+        .filter_map(|c| c.get(1).or(c.get(2)))
+        .map(|m| m.as_str().to_string())
+        .collect::<Vec<_>>();
     if [
         "rate limit",
         "rate-limit",
         "usage limit",
         "limit reached",
         "too many requests",
-        "429",
     ]
     .iter()
     .any(|k| t.contains(k))
+        || status.iter().any(|s| s == "429")
     {
         return Some(ProviderError::Busy {
             retry_after_ms: None,
@@ -246,10 +320,10 @@ fn classify(text: &str, cli: Cli) -> Option<ProviderError> {
         "please log in",
         "invalid api key",
         "unauthorized",
-        "401",
     ]
     .iter()
     .any(|k| t.contains(k))
+        || status.iter().any(|s| s == "401")
     {
         return Some(ProviderError::Refused(format!(
             "{} is not signed in. Sign in with the CLI itself and try again.",
@@ -372,6 +446,11 @@ impl Provider for SubscriptionCli {
         cancel: CancellationToken,
     ) -> Result<ChatDone, ProviderError> {
         let cli = self.cli;
+        if cli == Cli::Codex && has_tool_output(req) {
+            return Err(ProviderError::Other(
+                "Codex is not used on steps that carry tool output.".into(),
+            ));
+        }
         let dir = WorkDir::new().map_err(|e| ProviderError::Other(e.to_string()))?;
         let prompt = prompt_text(req);
         let mut child = self.command(model, &dir.0).spawn().map_err(|e| {
@@ -385,10 +464,12 @@ impl Provider for SubscriptionCli {
             });
         }
         let mut stderr = child.stderr.take().expect("piped");
+        // Read to the end so a chatty CLI never blocks on a full pipe; keep the first 64 KiB.
         let err_task = tokio::spawn(async move {
-            let mut s = String::new();
-            let _ = (&mut stderr).take(64 * 1024).read_to_string(&mut s).await;
-            s
+            let mut s = Vec::new();
+            let _ = (&mut stderr).take(64 * 1024).read_to_end(&mut s).await;
+            let _ = tokio::io::copy(&mut stderr, &mut tokio::io::sink()).await;
+            String::from_utf8_lossy(&s).into_owned()
         });
         let mut lines = BufReader::new(child.stdout.take().expect("piped")).lines();
 
@@ -423,11 +504,19 @@ impl Provider for SubscriptionCli {
                 },
             }
         }
-        let status = child
-            .wait()
-            .await
-            .map_err(|e| ProviderError::Other(e.to_string()))?;
-        let stderr = err_task.await.unwrap_or_default();
+        // Stdout ended (or failed); the child may still run, so cancel and the deadline still hold.
+        let (status, stderr) = tokio::select! {
+            _ = cancel.cancelled() => {
+                kill(&mut child).await;
+                return Err(ProviderError::Cancelled);
+            }
+            _ = &mut deadline => {
+                kill(&mut child).await;
+                return Err(ProviderError::Other(format!("{} took too long.", cli.name())));
+            }
+            r = async { (child.wait().await, err_task.await.unwrap_or_default()) } => r,
+        };
+        let status = status.map_err(|e| ProviderError::Other(e.to_string()))?;
 
         if let Some(e) = &seen.error {
             return Err(classify(e, cli)
@@ -454,5 +543,42 @@ impl Provider for SubscriptionCli {
             cost: 0.0, // the plan is already paid
             first_byte_ms,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn status_markers_only() {
+        let busy = |t| matches!(classify(t, Cli::Codex), Some(ProviderError::Busy { .. }));
+        let signed_out = |t| matches!(classify(t, Cli::Codex), Some(ProviderError::Refused(_)));
+        for t in [
+            "HTTP 429",
+            "unexpected status 429",
+            r#"{"status":429,"message":"slow down"}"#,
+            "error: 429",
+            "Error: 429 Too",
+        ] {
+            assert!(busy(t), "{t}");
+        }
+        for t in ["status 401", "HTTP/1.1 401", r#"{"status": 401}"#] {
+            assert!(signed_out(t), "{t}");
+        }
+        for t in [
+            "read 4290 files",
+            "C:/data/429/out.txt",
+            "my 401k plan",
+            "line 401 of x",
+            "status 4290",
+            "Error: 4290 files skipped",
+            "error 4011 rows",
+            "barcode 429",
+            "exit code 401",
+            "xstatus 429",
+        ] {
+            assert!(classify(t, Cli::Codex).is_none(), "{t}");
+        }
     }
 }
