@@ -220,16 +220,57 @@ fn exe_of(s: &str) -> PathBuf {
 pub fn parse_compute_csv(text: &str) -> Vec<GpuProc> {
     text.lines()
         .filter_map(|l| {
-            let mut f = l.splitn(3, ',');
-            let pid = f.next()?.trim().parse().ok()?;
+            // pid is the first field and memory the last; the name between may hold commas.
+            let (pid, rest) = l.split_once(',')?;
+            let mut f = rest.rsplitn(2, ',');
+            let mb = mb_of(f.next()?);
             Some(GpuProc {
-                pid,
+                pid: pid.trim().parse().ok()?,
                 exe: exe_of(f.next()?),
                 graphics: false,
-                mb: mb_of(f.next()?),
+                mb,
             })
         })
         .collect()
+}
+
+/// Decode `&amp; &lt; &gt; &quot; &apos;` and numeric `&#N;` / `&#xH;`; anything else stays as is.
+fn xml_unescape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(i) = rest.find('&') {
+        out.push_str(&rest[..i]);
+        rest = &rest[i..];
+        let decoded = rest.find(';').filter(|&e| e <= 10).and_then(|e| {
+            let c = match &rest[1..e] {
+                "amp" => '&',
+                "lt" => '<',
+                "gt" => '>',
+                "quot" => '"',
+                "apos" => '\'',
+                n => {
+                    let n = n.strip_prefix('#')?;
+                    let v = match n.strip_prefix(['x', 'X']) {
+                        Some(h) => u32::from_str_radix(h, 16),
+                        None => n.parse(),
+                    };
+                    char::from_u32(v.ok()?)?
+                }
+            };
+            Some((c, e + 1))
+        });
+        match decoded {
+            Some((c, n)) => {
+                out.push(c);
+                rest = &rest[n..];
+            }
+            None => {
+                out.push('&');
+                rest = &rest[1..];
+            }
+        }
+    }
+    out + rest
 }
 
 /// `nvidia-smi -q -x`: every `<process_info>`; a `<type>` containing `G` is a graphics process
@@ -242,7 +283,7 @@ pub fn parse_xml_processes(xml: &str) -> Vec<GpuProc> {
         let open = format!("<{name}>");
         let start = body.find(&open)? + open.len();
         let end = body[start..].find(&format!("</{name}>"))? + start;
-        Some(body[start..end].trim().to_string())
+        Some(xml_unescape(body[start..end].trim()))
     };
     block
         .captures_iter(xml)
@@ -281,16 +322,57 @@ pub async fn processes() -> Vec<GpuProc> {
     all
 }
 
+/// A `.reg` file as `reg export` writes it: UTF-16LE, usually with a BOM.
+#[doc(hidden)]
+pub fn decode_reg(bytes: &[u8]) -> String {
+    let units: Vec<u16> = bytes
+        .chunks_exact(2)
+        .map(|c| u16::from_le_bytes([c[0], c[1]]))
+        .collect();
+    String::from_utf16_lossy(&units)
+        .trim_start_matches('\u{feff}')
+        .to_string()
+}
+
+/// The string value `name` from `.reg` text: `"name"="C:\\Games"` -> `C:\Games`.
+#[doc(hidden)]
+pub fn reg_string(text: &str, name: &str) -> Option<String> {
+    let head = format!("\"{name}\"=\"");
+    let v = text
+        .lines()
+        .find_map(|l| l.trim().strip_prefix(&head))?
+        .strip_suffix('"')?;
+    let mut out = String::new();
+    let mut it = v.chars();
+    while let Some(c) = it.next() {
+        out.push(if c == '\\' { it.next()? } else { c });
+    }
+    Some(out)
+}
+
+/// `reg export` into a temp file (UTF-16, so a non-ASCII path survives; `reg query` speaks the
+/// OEM code page).
 #[cfg(windows)]
-fn reg_query(args: &[&str]) -> String {
+fn reg_export(key: &str) -> String {
     use std::os::windows::process::CommandExt;
-    std::process::Command::new("reg")
-        .arg("query")
-        .args(args)
+    let file = std::env::temp_dir().join(format!("alexia-reg-{}.reg", std::process::id()));
+    let ok = std::process::Command::new("reg")
+        .arg("export")
+        .arg(key)
+        .arg(&file)
+        .arg("/y")
         .creation_flags(NO_WINDOW)
         .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
-        .unwrap_or_default()
+        .is_ok_and(|o| o.status.success());
+    let text = if ok {
+        std::fs::read(&file)
+            .map(|b| decode_reg(&b))
+            .unwrap_or_default()
+    } else {
+        String::new()
+    };
+    let _ = std::fs::remove_file(&file);
+    text
 }
 
 /// The Steam folder's own `steamapps\common` plus every `"path"` in `libraryfolders.vdf`.
@@ -318,12 +400,8 @@ pub fn epic_dir(item: &str) -> Option<PathBuf> {
 #[cfg(windows)]
 fn launcher_dirs() -> Vec<PathBuf> {
     let mut out = Vec::new();
-    let reg = reg_query(&["HKCU\\Software\\Valve\\Steam", "/v", "SteamPath"]);
-    let steam = reg
-        .lines()
-        .find(|l| l.contains("SteamPath"))
-        .and_then(|l| l.split("REG_SZ").nth(1))
-        .map(|p| PathBuf::from(p.trim()));
+    let reg = reg_export("HKCU\\Software\\Valve\\Steam");
+    let steam = reg_string(&reg, "SteamPath").map(PathBuf::from);
     if let Some(steam) = steam {
         let vdf = std::fs::read_to_string(steam.join("steamapps").join("libraryfolders.vdf"))
             .unwrap_or_default();
@@ -374,6 +452,10 @@ pub fn is_game(p: &GpuProc, dirs: &[PathBuf], ours: &[u32]) -> bool {
     p.graphics && !ours.contains(&p.pid) && dirs.iter().any(|d| under(&p.exe, d))
 }
 
+/// Polls in a row with no game before `game_over`: one missed poll, or one failed `nvidia-smi`,
+/// must not make a running game look finished.
+const QUIET_POLLS: u32 = 3;
+
 type Source = Arc<dyn Fn() -> Pin<Box<dyn Future<Output = Vec<GpuProc>> + Send>> + Send + Sync>;
 
 pub struct Watch {
@@ -410,6 +492,7 @@ impl Watch {
         game_over: impl Fn() + Send,
     ) {
         let mut playing = false;
+        let mut quiet = 0;
         loop {
             let procs = tokio::select! {
                 () = cancel.cancelled() => return,
@@ -421,12 +504,14 @@ impl Watch {
                 .unwrap_or_default();
             let ours = (self.ours)();
             let now = procs.iter().any(|p| is_game(p, &dirs, &ours));
+            quiet = if now { 0 } else { quiet + 1 };
             if now && !playing {
                 step_aside();
-            } else if !now && playing {
+                playing = true;
+            } else if playing && quiet >= QUIET_POLLS {
                 game_over();
+                playing = false;
             }
-            playing = now;
             tokio::select! {
                 () = cancel.cancelled() => return,
                 () = tokio::time::sleep(self.every) => {}

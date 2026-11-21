@@ -867,6 +867,37 @@ fn hash_file(path: &Path, upto: Option<u64>) -> std::io::Result<Sha256> {
     Ok(h)
 }
 
+/// `hash_file` on a blocking thread, so a multi-GB read does not stall a tokio worker. A hash in
+/// flight is allowed to finish; `cancel` is checked before and after. The inner `Err` is the
+/// I/O error from reading the file, kept apart so `fetch` can repair the entry.
+async fn hash_blocking(
+    path: &Path,
+    upto: Option<u64>,
+    cancel: &CancellationToken,
+) -> Result<std::io::Result<Sha256>, HfError> {
+    if cancel.is_cancelled() {
+        return Err(HfError::Cancelled);
+    }
+    let p = path.to_owned();
+    let r = tokio::task::spawn_blocking(move || hash_file(&p, upto))
+        .await
+        .map_err(|e| HfError::Io(e.to_string()))?;
+    if cancel.is_cancelled() {
+        return Err(HfError::Cancelled);
+    }
+    Ok(r)
+}
+
+/// Remove whatever sits at `p`: a directory with its contents, or a file.
+fn clear(p: &Path, is_dir: bool) -> Result<(), HfError> {
+    if is_dir {
+        std::fs::remove_dir_all(p)
+    } else {
+        std::fs::remove_file(p)
+    }
+    .map_err(io)
+}
+
 struct Progress<'a> {
     tx: Option<&'a mpsc::Sender<u8>>,
     total: u64,
@@ -901,28 +932,35 @@ async fn fetch(
 ) -> Result<(), HfError> {
     let part = PathBuf::from(format!("{}.part", dest.display()));
     if let Ok(m) = std::fs::metadata(dest) {
-        // A finished file is reused only if it is still the right bytes.
-        let hash = hash_file(dest, None).map_err(io)?;
-        if m.len() == f.bytes
-            && f.sha256
-                .as_deref()
-                .is_none_or(|s| s == hex(hash.finalize()))
-        {
-            prog.add(f.bytes).await;
-            return Ok(());
+        // A finished file is reused only if it is still the right bytes. A directory, or a file
+        // that cannot be read, is damage: it is cleared and downloaded again.
+        if m.is_file() {
+            if let Ok(hash) = hash_blocking(dest, None, cancel).await? {
+                if m.len() == f.bytes
+                    && f.sha256
+                        .as_deref()
+                        .is_none_or(|s| s == hex(hash.finalize()))
+                {
+                    prog.add(f.bytes).await;
+                    return Ok(());
+                }
+            }
         }
-        std::fs::remove_file(dest).map_err(io)?;
+        clear(dest, m.is_dir())?;
     }
-    let mut have = std::fs::metadata(&part).map_or(0, |m| m.len());
-    if have > f.bytes {
-        std::fs::remove_file(&part).map_err(io)?;
-        have = 0;
+    let mut have = 0;
+    let mut hasher = Sha256::new();
+    if let Ok(m) = std::fs::metadata(&part) {
+        if m.is_file() && m.len() <= f.bytes && m.len() > 0 {
+            if let Ok(h) = hash_blocking(&part, Some(m.len()), cancel).await? {
+                have = m.len();
+                hasher = h;
+            }
+        }
+        if have == 0 {
+            clear(&part, m.is_dir())?;
+        }
     }
-    let mut hasher = if have > 0 {
-        hash_file(&part, Some(have)).map_err(io)?
-    } else {
-        Sha256::new()
-    };
     if have < f.bytes {
         let mut req = get(client, url, token);
         if have > 0 {
@@ -1021,7 +1059,12 @@ pub async fn import_repo_at(
     };
     let plan = plan_for(commit, rows, quant)?;
     let dir = layout.cache().join("models").join(repo).join(&plan.quant);
-    std::fs::create_dir_all(&dir).map_err(io)?;
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        // A file where a folder should be: remove it once and try again.
+        let blocker = dir.ancestors().find(|a| a.is_file()).ok_or_else(|| io(e))?;
+        std::fs::remove_file(blocker).map_err(io)?;
+        std::fs::create_dir_all(&dir).map_err(io)?;
+    }
     let all: Vec<&File> = plan.files.iter().chain(plan.mmproj.as_ref()).collect();
     let mut prog = Progress {
         tx: progress.as_ref(),
@@ -1106,10 +1149,25 @@ fn sibling_mmproj(dir: &Path) -> Option<PathBuf> {
         .find(|p| read_gguf(p).is_ok_and(|m| m.vision_projector))
 }
 
+/// Windows' `canonicalize` gives `\\?\C:\x`, which some llama-server builds reject. Twin of the
+/// private `unverbatim` in `permissions.rs`.
+fn unverbatim(p: PathBuf) -> PathBuf {
+    let s = p.to_string_lossy();
+    if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
+        PathBuf::from(format!(r"\\{rest}"))
+    } else if let Some(rest) = s.strip_prefix(r"\\?\") {
+        PathBuf::from(rest)
+    } else {
+        p
+    }
+}
+
 /// Bring a GGUF (all its split parts) from disk into the hub. `copy` puts a verified copy under
 /// `cache/models/local/<hash>/`; otherwise the file is used where it lies.
 pub fn import_file(path: &Path, layout: &Layout, copy: bool) -> Result<Installed, HfError> {
-    let src = std::fs::canonicalize(path).map_err(io)?;
+    let canon = std::fs::canonicalize(path).map_err(io)?;
+    let id_src = canon.to_string_lossy().into_owned();
+    let src = unverbatim(canon);
     let meta = read_gguf(&src)?;
     if meta.vision_projector {
         return Err(HfError::Invalid(
@@ -1118,7 +1176,7 @@ pub fn import_file(path: &Path, layout: &Layout, copy: bool) -> Result<Installed
     }
     let mmproj = src.parent().and_then(sibling_mmproj);
     if !copy {
-        let id = hex(Sha256::digest(src.to_string_lossy().as_bytes()));
+        let id = hex(Sha256::digest(id_src.as_bytes()));
         return Ok(Installed {
             id: format!("local/{}", &id[..16]),
             path: meta.parts[0].clone(),
