@@ -387,3 +387,8 @@
 2026-11-21 CEO #15 launched (orca chat, ok)
 2026-11-21 CEO #15 started. 5 workers live. Cleaned 5263 old temp dirs (60 GB free). Dispatched follow-up planner 6 (opus, plan-fu6) ctx_bc106177ab6e
 2026-11-21 Merged plan P2-65..71 (follow-ups 6). Dropped: Approved-here edit (Telegram edits already), Event::Answered (P2-25 owns). P2-69 ready
+2026-11-21 P2-54 approved, merged locally, gating
+2026-11-21 P2-36 escalated (workspace test run killed, low memory); told to run alexia-core only and report
+2026-11-21 P2-35 built -> review ctx_8c0ff512cd7d. Concern: real CLI event shapes unverified, owner should try once. Dispatched P2-69 (sonnet) ctx_476a57b0dcc9
+2026-11-21 P2-36 built -> review ctx_c038d444dc61 (concern: compare does not bump provider request counter)
+2026-11-21 Merged P2-54 (gate OK 64, pushed). P2-65 ready
