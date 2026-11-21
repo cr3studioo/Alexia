@@ -4,7 +4,7 @@
 //! Watches and quiet hours are V3-3.
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 use std::time::Duration;
 
 use alexia_core::{
@@ -135,6 +135,8 @@ pub type ReadJobs =
     Box<dyn Fn(&Store) -> std::result::Result<Vec<JobRow>, StoreError> + Send + Sync>;
 
 impl Scheduler {
+    /// `brain` is the Agent (INTERFACES §2.6 step 6). The Agent reaches back to the scheduler
+    /// only through [`Scheduler::tools`], which holds a `Weak`, so the two never form a cycle.
     pub fn new(store: Arc<Store>, bus: Bus, brain: Arc<dyn Brain>) -> Arc<Scheduler> {
         Self::with_parts(store, bus, brain, Box::new(now_ms), Box::new(Store::jobs))
     }
@@ -371,7 +373,7 @@ impl Scheduler {
 
     /// The builtin tools, for the agent's Tooling.
     pub fn tools(self: &Arc<Self>) -> Arc<dyn Builtin> {
-        Arc::new(ScheduleTools(Arc::clone(self)))
+        Arc::new(ScheduleTools(Arc::downgrade(self)))
     }
 }
 
@@ -406,7 +408,9 @@ fn job_of(row: JobRow) -> Option<Job> {
 
 // ---- the tools ----
 
-struct ScheduleTools(Arc<Scheduler>);
+/// Holds the scheduler weakly: the brain (the Agent) owns these tools through its Tooling, and
+/// the scheduler owns the brain, so a strong ref here would be a cycle that never drops.
+struct ScheduleTools(Weak<Scheduler>);
 
 fn outcome(text: impl Into<String>, ok: bool, undo: Option<UndoCall>) -> ToolOutcome {
     ToolOutcome {
@@ -579,10 +583,9 @@ fn spec(
 impl ScheduleTools {
     /// Where a job made from this run answers: the run's chat, or for a run that is itself a
     /// scheduled job, that job's chat.
-    fn answer_origin(&self, ctx: &ToolCtx) -> Option<Origin> {
+    fn answer_origin(s: &Scheduler, ctx: &ToolCtx) -> Option<Origin> {
         match &ctx.origin {
-            Origin::Scheduler { job } => self
-                .0
+            Origin::Scheduler { job } => s
                 .jobs()
                 .ok()?
                 .into_iter()
@@ -592,8 +595,8 @@ impl ScheduleTools {
         }
     }
 
-    fn add(&self, args: &Map<String, Value>, ctx: &ToolCtx) -> ToolOutcome {
-        let trigger = match trigger_of(args, self.0.now()) {
+    fn add(s: &Scheduler, args: &Map<String, Value>, ctx: &ToolCtx) -> ToolOutcome {
+        let trigger = match trigger_of(args, s.now()) {
             Ok(t) => t,
             Err(e) => return outcome(e, false, None),
         };
@@ -617,13 +620,12 @@ impl ScheduleTools {
                 }
             },
         };
-        let Some(origin) = self.answer_origin(ctx) else {
+        let Some(origin) = Self::answer_origin(s, ctx) else {
             return outcome("I can't tell which chat this job belongs to.", false, None);
         };
-        match self.0.add(trigger.clone(), prompt, urgency, origin) {
+        match s.add(trigger.clone(), prompt, urgency, origin) {
             Ok(id) => {
-                let next = self
-                    .0
+                let next = s
                     .jobs()
                     .ok()
                     .and_then(|j| j.into_iter().find(|j| j.id == id))
@@ -643,8 +645,8 @@ impl ScheduleTools {
         }
     }
 
-    fn list(&self) -> ToolOutcome {
-        match self.0.jobs() {
+    fn list(s: &Scheduler) -> ToolOutcome {
+        match s.jobs() {
             Err(e) => outcome(e.to_string(), false, None),
             Ok(jobs) if jobs.is_empty() => outcome("No scheduled jobs.", true, None),
             Ok(jobs) => outcome(
@@ -669,7 +671,7 @@ impl ScheduleTools {
         }
     }
 
-    fn cancel(&self, args: &Map<String, Value>) -> ToolOutcome {
+    fn cancel(s: &Scheduler, args: &Map<String, Value>) -> ToolOutcome {
         let Some(id) = args.get("id").and_then(Value::as_i64) else {
             return outcome(
                 "`id` is required: the job number from schedule.list.",
@@ -677,7 +679,7 @@ impl ScheduleTools {
                 None,
             );
         };
-        match self.0.cancel(JobId(id)) {
+        match s.cancel(JobId(id)) {
             Ok(true) => outcome(format!("Cancelled scheduled job {id}."), true, None),
             Ok(false) => outcome(
                 format!("There is no active scheduled job {id}."),
@@ -747,11 +749,16 @@ impl Builtin for ScheduleTools {
         args: &Map<String, Value>,
         ctx: &ToolCtx,
     ) -> Option<ToolOutcome> {
+        if !matches!(name, "schedule.add" | "schedule.list" | "schedule.cancel") {
+            return None;
+        }
+        let Some(s) = self.0.upgrade() else {
+            return Some(outcome("Scheduled jobs are not running.", false, None));
+        };
         Some(match name {
-            "schedule.add" => self.add(args, ctx),
-            "schedule.list" => self.list(),
-            "schedule.cancel" => self.cancel(args),
-            _ => return None,
+            "schedule.add" => Self::add(&s, args, ctx),
+            "schedule.list" => Self::list(&s),
+            _ => Self::cancel(&s, args),
         })
     }
 }
