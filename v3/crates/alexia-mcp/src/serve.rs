@@ -200,7 +200,7 @@ fn rpc_of(e: CallError) -> RpcError {
 }
 
 /// `path` resolved (symlinks, `..`) and required to sit inside one of `roots`. A network
-/// path is refused before any filesystem call: stat'ing `\host\x` makes Windows talk SMB to
+/// path is refused before any filesystem call: stat'ing `\\host\x` makes Windows talk SMB to
 /// that host. The URI decoder is shared (`crate::file_uri_path`, the one core's gate uses), but
 /// this containment check stays compute's own: it checks a plugin's own folder, not the owner's
 /// scope, and core depends on this crate, not the other way round.

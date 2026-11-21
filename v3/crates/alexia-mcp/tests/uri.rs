@@ -66,7 +66,7 @@ fn percent_broken_escape_kept() {
 
 #[test]
 fn unc_detected_all_separators() {
-    for p in [r"\srv\x", "//srv/x", r"\/srv/x", r"/\srv\x"] {
+    for p in [r"\\srv\x", "//srv/x", r"\/srv/x", r"/\srv\x"] {
         assert!(is_network_path(p), "{p}");
     }
     for p in [r"C:\x", "/x", r"\x", "x", "", "/"] {
@@ -76,6 +76,6 @@ fn unc_detected_all_separators() {
 
 #[test]
 fn unc_long_prefix_detected() {
-    assert!(is_network_path(r"\?\UNC\srv\x"));
-    assert!(is_network_path(r"\?\unc\srv\x"));
+    assert!(is_network_path(r"\\?\UNC\srv\x"));
+    assert!(is_network_path(r"\\?\unc\srv\x"));
 }

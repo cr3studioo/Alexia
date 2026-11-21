@@ -577,9 +577,9 @@ async fn input_unc_path_refused_before_fs() {
     std::fs::create_dir_all(fx.layout.own_dir("asker")).unwrap();
     // 192.0.2.1 is TEST-NET-1: an SMB attempt there would hang for its whole timeout.
     for path in [
-        r"\127.0.0.1\x\y",
+        r"\\127.0.0.1\x\y",
         "//127.0.0.1/x/y",
-        r"\192.0.2.1\x\y",
+        r"\\192.0.2.1\x\y",
         r"\/192.0.2.1/x/y",
     ] {
         let params = json!({"cap": "demo.compute", "inputs": [input("s", Path::new(path))]});
