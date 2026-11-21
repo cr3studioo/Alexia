@@ -1536,7 +1536,8 @@ fn jpeg(b: &[u8]) -> Result<Inspected, String> {
             height = be16(b, at + 5);
             width = be16(b, at + 7);
         }
-        if marker == 0xe1 && b.len() >= at + 10 && &b[at + 4..at + 8] == b"Exif" {
+        // `end >= at + 10`: an APP1 whose length is 6 or 7 ends before the TIFF block starts.
+        if marker == 0xe1 && end >= at + 10 && &b[at + 4..at + 8] == b"Exif" {
             if let Some(turned) = orientation(&b[at + 10..end]) {
                 if turned != 1 {
                     return Err("This JPEG is stored sideways. Attach it again from the editor, which turns it upright first.".into());
@@ -1631,4 +1632,48 @@ fn webp(b: &[u8]) -> Result<Inspected, String> {
         height,
         bytes: out,
     })
+}
+
+#[cfg(test)]
+mod jpeg_tests {
+    use super::inspect;
+
+    /// SOI, an APP1 "Exif" segment of the given declared length, a 2x2 SOF0 and a scan start.
+    fn jpeg_with_app1(length: u16, body: &[u8]) -> Vec<u8> {
+        let mut b = vec![0xff, 0xd8, 0xff, 0xe1];
+        b.extend_from_slice(&length.to_be_bytes());
+        b.extend_from_slice(body);
+        b.extend_from_slice(&[
+            0xff, 0xc0, 0x00, 0x0b, 0x08, 0x00, 0x02, 0x00, 0x02, 0x01, 0x01, 0x11, 0x00,
+        ]);
+        b.extend_from_slice(&[0xff, 0xda, 0x00, 0x02, 0xff, 0xd9]);
+        b
+    }
+
+    #[test]
+    fn short_exif_segments_do_not_panic() {
+        // Length 6 and 7 hold only 4 and 5 bytes after the length field: "Exif" and at most one
+        // more. The TIFF block would start past the segment's end.
+        for (length, body) in [(6u16, &b"Exif"[..]), (7, b"Exif\0")] {
+            let out =
+                inspect(&jpeg_with_app1(length, body)).expect("a short Exif block is skipped");
+            assert_eq!((out.width, out.height), (2, 2));
+        }
+        // Shorter than the "Exif" tag itself: also fine.
+        assert!(inspect(&jpeg_with_app1(3, b"E")).is_ok());
+    }
+
+    #[test]
+    fn sideways_exif_is_still_refused() {
+        // Big-endian TIFF, one entry: orientation (0x0112) = 6.
+        let tiff = [
+            b'M', b'M', 0, 42, 0, 0, 0, 8, 0, 1, 0x01, 0x12, 0, 3, 0, 0, 0, 1, 0, 6, 0, 0, 0, 0,
+        ];
+        let mut body = b"Exif\0\0".to_vec();
+        body.extend_from_slice(&tiff);
+        let err = inspect(&jpeg_with_app1(body.len() as u16 + 2, &body))
+            .err()
+            .expect("refused");
+        assert!(err.contains("sideways"), "{err}");
+    }
 }
