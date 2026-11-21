@@ -86,7 +86,7 @@
 | P2-22 | MCP: compute/run locally, host-answered capabilities | P2 | sonnet | P2-02 | alexia-mcp/{src/serve.rs, src/host.rs, src/bin/mcp-fixture.rs, tests/compute.rs} | merged | 1 | cr3studioo/v3-P2-22 | follow-up P2-44 |
 | P2-23 | Hot reload of plugins | P2 | sonnet | P2-22 | alexia-mcp/{src/host.rs, src/supervise.rs, tests/reload.rs} | merged | 1 | cr3studioo/v3-P2-23 | |
 | P2-24 | WASM plugins in a capability sandbox | P2 | sonnet | P2-23, P2-47 | alexia-mcp/{src/wasm.rs, src/host.rs, fixtures/wasm-hello/**, tests/fixtures/wasm-hello... | merged | 1 | cr3studioo/v3-P2-24 | rust-version 1.87 follow-up |
-| P2-25 | Commands | P2 | sonnet | P2-20, P2-45, P2-72, P2-36 | alexia-core/{src/commands.rs, tests/commands.rs} | ready | 1 | | |
+| P2-25 | Commands | P2 | sonnet | P2-20, P2-45, P2-72, P2-36 | alexia-core/{src/commands.rs, tests/commands.rs} | running | 2 | cr3studioo/v3-P2-25 | ctx_9055f584d551 |
 | P2-26 | Resume after restart; jobs that run for days | P2 | sonnet | P2-20, P2-72 | alexia-core/{src/resume.rs, tests/resume.rs} | review | 1 | cr3studioo/v3-P2-26 | rv ctx_e13877e69f6d |
 | P2-27 | Parallel helpers | P2 | sonnet | P2-20, P2-72 | alexia-core/{src/helpers.rs, tests/helpers.rs} | running | 1 | cr3studioo/v3-P2-27 | ctx_32805e9d943e |
 | P2-28 | Undo | P2 | sonnet | P2-20, P2-72 | alexia-core/{src/undo.rs, tests/undo.rs} | ready | 0 | | |

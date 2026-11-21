@@ -433,3 +433,4 @@
 2026-11-21 P2-26 built -> review (added: closes stale pending approvals)
 2026-11-21 P2-65 approved. Merge after P2-36/60 gate
 2026-11-21 Merged P2-36 + P2-60 (gate OK 68, pushed). P2-25 ready
+2026-11-21 Dispatched P2-25 (sonnet, try 2) ctx_9055f584d551. P2-65 merged, gating
