@@ -129,6 +129,11 @@ impl World {
 
 /// Providers "p" (cost `cost`) listing `models`; the catalog is refreshed once.
 async fn world(models: Vec<ModelInfo>, cost: f64) -> World {
+    world_as("p", models, cost).await
+}
+
+/// `world` with the provider called `id`.
+async fn world_as(id: &str, models: Vec<ModelInfo>, cost: f64) -> World {
     static N: AtomicU64 = AtomicU64::new(0);
     let cache = std::env::temp_dir().join(format!(
         "alexia-steps-test-{}-{}.json",
@@ -136,8 +141,8 @@ async fn world(models: Vec<ModelInfo>, cost: f64) -> World {
         N.fetch_add(1, Ordering::Relaxed)
     ));
     let asked = Arc::new(Mutex::new(Vec::new()));
-    let p: Arc<dyn Provider> = fake("p", models, cost, &asked);
-    let catalog = Arc::new(Catalog::new(vec![p.clone()], vec![row("p")], cache.clone()));
+    let p: Arc<dyn Provider> = fake(id, models, cost, &asked);
+    let catalog = Arc::new(Catalog::new(vec![p.clone()], vec![row(id)], cache.clone()));
     catalog.refresh().await;
     let store = Arc::new(Store::open_in_memory().unwrap());
     World {
@@ -215,7 +220,7 @@ async fn pin_first() {
         .await
         .unwrap();
     assert_eq!(done.model, "small-8b");
-    assert!(w.router.take_notes().is_empty());
+    assert!(w.router.take_notes(None).is_empty());
 }
 
 #[tokio::test]
@@ -229,11 +234,11 @@ async fn unusable_pin_skipped_with_note() {
         .unwrap();
     // Replaced by the free list, never by anything else.
     assert_eq!(done.model, "big-70b");
-    let notes = w.router.take_notes();
+    let notes = w.router.take_notes(None);
     assert_eq!(notes.len(), 1, "{notes:?}");
     assert!(notes[0].contains("p/not-listed-405b"), "{notes:?}");
     assert!(
-        w.router.take_notes().is_empty(),
+        w.router.take_notes(None).is_empty(),
         "notes are handed out once"
     );
 }
@@ -259,7 +264,7 @@ async fn paid_never_asked() {
         .unwrap();
     assert_eq!(done.model, "free-8b");
     assert_eq!(w.asked_models(), ["free-8b"]);
-    assert_eq!(w.router.take_notes().len(), 2);
+    assert_eq!(w.router.take_notes(None).len(), 2);
 }
 
 #[tokio::test]
@@ -310,7 +315,7 @@ async fn cloud_request_redacted() {
     let seen = w.asked.lock().unwrap()[0].1.clone();
     assert!(!seen.contains(&key), "the key left the machine: {seen}");
     assert!(seen.contains("my key is"));
-    let notes = w.router.take_notes();
+    let notes = w.router.take_notes(None);
     assert_eq!(notes.len(), 1, "{notes:?}");
     assert!(notes[0].starts_with("Removed "), "{notes:?}");
     assert!(!notes[0].contains(&key));
@@ -326,7 +331,10 @@ async fn step_redacts_once_and_keeps_note() {
     let seen = w.asked.lock().unwrap()[0].1.clone();
     assert_eq!(seen, "use [redacted] now");
     // The race reported what it removed, so the note names the kind once.
-    assert_eq!(w.router.take_notes(), ["Removed api key before sending."]);
+    assert_eq!(
+        w.router.take_notes(None),
+        ["Removed api key before sending."]
+    );
 }
 
 fn local_provider(w: &World, models: Vec<ModelInfo>) -> Arc<Fake> {
@@ -348,7 +356,7 @@ async fn local_never_for_plan_or_step() {
     }
     assert!(!w.asked_models().contains(&"gemma".to_string()));
     // The plan pin was skipped with a note; the others had no pin to skip.
-    assert_eq!(w.router.take_notes().len(), 1);
+    assert_eq!(w.router.take_notes(None).len(), 1);
 }
 
 #[tokio::test]
@@ -370,7 +378,7 @@ async fn local_ok_for_check() {
         .unwrap()
         .iter()
         .all(|(_, t)| t.contains(&secret)));
-    assert!(w.router.take_notes().is_empty());
+    assert!(w.router.take_notes(None).is_empty());
     // A Local job never falls back to the cloud.
     w.router.remove_provider("local:gemma");
     assert!(step(&w, &request("x"), &ask_for(Job::Local)).await.is_err());
@@ -466,5 +474,100 @@ async fn usage_attributed_to_plugin() {
     assert_eq!(
         rows,
         vec![(Some("notes".into()), Some("run-7".into()), Some(session.0))]
+    );
+}
+
+#[tokio::test]
+async fn notes_stay_with_their_run() {
+    let w = world(in_ten_models(), 0.0).await;
+    w.router
+        .set_pins(Job::Plan, vec!["p/not-listed-405b".into()])
+        .unwrap();
+    let (a, b) = (RunId("run-a".into()), RunId("run-b".into()));
+    for run in [&a, &b] {
+        let mut ask = ask_for(Job::Plan);
+        ask.run = Some(run.clone());
+        step(&w, &request("plan it"), &ask).await.unwrap();
+    }
+    let skipped = "Skipped the pinned model p/not-listed-405b: \
+                   it is not free, has no key or is not available.";
+    assert_eq!(w.router.take_notes(Some(&a)), [skipped]);
+    assert_eq!(w.router.take_notes(Some(&b)), [skipped]);
+    assert!(w.router.take_notes(Some(&a)).is_empty());
+    assert!(w.router.take_notes(None).is_empty());
+}
+
+/// Counts WARN events while it is the default subscriber.
+struct Warns(Arc<AtomicU64>);
+
+impl tracing::Subscriber for Warns {
+    fn enabled(&self, _: &tracing::Metadata<'_>) -> bool {
+        true
+    }
+    fn new_span(&self, _: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+        tracing::span::Id::from_u64(1)
+    }
+    fn record(&self, _: &tracing::span::Id, _: &tracing::span::Record<'_>) {}
+    fn record_follows_from(&self, _: &tracing::span::Id, _: &tracing::span::Id) {}
+    fn event(&self, e: &tracing::Event<'_>) {
+        if *e.metadata().level() == tracing::Level::WARN {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+    fn enter(&self, _: &tracing::span::Id) {}
+    fn exit(&self, _: &tracing::span::Id) {}
+}
+
+#[tokio::test]
+async fn unreadable_pins_warned() {
+    let w = world(in_ten_models(), 0.0).await;
+    w.store
+        .kv_set("_core", "models", &serde_json::json!("oops"))
+        .unwrap();
+    let warns = Arc::new(AtomicU64::new(0));
+    let pins = tracing::subscriber::with_default(Warns(warns.clone()), || w.router.pins());
+    assert!(pins.is_empty(), "{pins:?}");
+    assert_eq!(warns.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        w.store.kv_get("_core", "models").unwrap(),
+        Some(serde_json::json!("oops"))
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn keys_read_once_per_minute() {
+    // Only this test's provider is "keyed", so its key override touches no other test.
+    let var = alexia_store::secrets::env_name("_core", "provider_keyed");
+    let (old, new) = ("velvetottermarble", "quietlanternpebble");
+    std::env::set_var(&var, old);
+    let w = world_as("keyed", in_ten_models(), 0.0).await;
+    let text = format!("one {old} two {new}");
+    step(&w, &request(&text), &ask_for(Job::Step))
+        .await
+        .unwrap();
+    std::env::set_var(&var, new);
+    step(&w, &request(&text), &ask_for(Job::Step))
+        .await
+        .unwrap();
+    tokio::time::advance(std::time::Duration::from_secs(61)).await;
+    step(&w, &request(&text), &ask_for(Job::Step))
+        .await
+        .unwrap();
+    std::env::remove_var(&var);
+    let seen: Vec<String> = w
+        .asked
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|(_, t)| t.clone())
+        .collect();
+    assert_eq!(
+        seen,
+        [
+            format!("one [redacted] two {new}"),
+            // Still the first read: the cache, not the keychain.
+            format!("one [redacted] two {new}"),
+            format!("one {old} two [redacted]"),
+        ]
     );
 }
