@@ -348,3 +348,4 @@
 2026-11-21 Phase review 5 done (11 findings, v3/ops/phase-review-5.md): 2 high (chat lane hedged() unredacted to cloud; scheduler/agent wiring cycle in INTERFACES 2.6 step 4), medium: compute/run UNC, 3 file:// decoders, cross-plugin undo, reviewed fail-open, gpu Watch callbacks, 2 redact ports. Planner after plan-fu5
 2026-11-21 Merged plan P2-51..58 (follow-ups). Dropped: scheduler Desktop origin (no Desktop turns yet). P2-54 adds alexia.db.keyed marker (encryption stays off per A-13)
 2026-11-21 Dispatched review-5 planner (opus) ctx_f1a7dd13a2a7; P2-51 (opus) ctx_32aa086e89a4, P2-53 (sonnet) ctx_933217f350f0 sharing CARGO_TARGET_DIR tgt-shared (disk 25 GB)
+2026-11-21 Merged plan P2-59..64 (review 5). INTERFACES 2.2/2.3/2.5/2.6 fixed in the plan commit. P2-20 now waits P2-59; P2-38 waits P2-50 (merged), P2-60, P2-62. Deleted main checkout v3/target/debug/incremental (21 GB; disk was 9.7 GB free)
