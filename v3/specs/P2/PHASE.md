@@ -224,6 +224,14 @@ Crate paths are under `v3/crates/`.
 | P2-47 | MCP: plugin requests keep their cancel and progress; tools unreviewed until read | opus | P2-45 | `alexia-mcp/{src/conn.rs, src/host.rs, src/serve.rs, src/bin/mcp-fixture.rs, tests/conn.rs, tests/compute.rs}` |
 | P2-48 | Hub: the P2 CLI verbs | opus | P2-38 | `alexia-hub/{src/main.rs, tests/cli_p2.rs}` |
 | P2-49 | Small cleanups: trim's helpers private, one now_ms | sonnet | none | `alexia-core/{src/trim.rs, tests/trim.rs}`, `alexia-gateway/src/channels/telegram/mod.rs` |
+| P2-51 | Core safety edges: odd file URIs, skill symlinks, secret-named JSON keys | opus | none | `alexia-core/{src/permissions.rs, tests/permissions.rs, src/prompt.rs, tests/prompt.rs, src/redact.rs, tests/redact.rs}`, `v3/specs/INTERFACES.md` |
+| P2-52 | rust-version 1.87 | sonnet | none | `v3/Cargo.toml` |
+| P2-53 | OpenAI wire: unanswered calls, odd delta shapes, nameless calls | sonnet | none | `alexia-core/{src/openai.rs, tests/openai.rs}` |
+| P2-54 | Store: encryption survives a crash, no keychain in tests; resumed runs keep their start | opus | P2-51 | `alexia-store/{src/encrypt.rs, src/db.rs, tests/encrypt.rs, tests/p2.rs}`, `alexia-core/{src/trace.rs, tests/trace.rs}`, `v3/specs/INTERFACES.md` |
+| P2-55 | MCP: a cancel that beats its request still reaches it; WASM compiles off the runtime | opus | P2-52 | `alexia-mcp/{src/conn.rs, tests/conn.rs, src/wasm.rs, src/host.rs, tests/wasm.rs}` |
+| P2-56 | Scheduler: a cut-short one-shot survives shutdown; Every never overlaps itself | opus | none | `alexia-scheduler/{src/lib.rs, tests/scheduler.rs}` |
+| P2-57 | Local models: hashing off the runtime, cache repair, plain paths; GPU parsing and games | sonnet | none | `alexia-core/{src/hf.rs, tests/hf.rs, src/gpu.rs, tests/gpu.rs}` |
+| P2-58 | Gateway: a waiting file message is not overtaken by steers; tests wait for events | sonnet | P2-38 | `alexia-gateway/{src/gateway.rs, tests/gateway.rs}` |
 
 ## Owner needs
 
