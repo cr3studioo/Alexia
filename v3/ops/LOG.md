@@ -424,3 +424,8 @@
 2026-11-21 Merged P2-72 (gate OK 67, pushed). P2-21, 26, 27, 28 ready
 2026-11-21 Dispatched P2-21 (sonnet) ctx_002ecff84905, P2-26 (sonnet) ctx_25eeb39f949d
 2026-11-21 P2-55 approved (minor: dropped spawn_as future never sets killed, wasm.rs:288). Merged, gating
+2026-11-21 P2-36 approved (review 4). Follow-ups: ask() no select! on cancel; redaction notes dropped; usage rows unattributed. New flake: alexia-core local.rs idle_stops_after_10_min. Merge after P2-55 gate
+2026-11-21 P2-60 built -> review
+2026-11-21 P2-65 built -> review (concern: already-encrypted branch opens/migrates the store to prove the key)
+2026-11-21 P2-60 approved. Merge queued with P2-36 after P2-55 gate
+2026-11-21 Merged P2-55 (gate OK 67, pushed). P2-62, P2-66 ready
