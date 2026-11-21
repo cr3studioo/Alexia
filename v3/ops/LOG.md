@@ -369,3 +369,10 @@
 2026-11-21 Dispatched P2-57 (sonnet) ctx_905ac878e85b
 2026-11-21 P2-59, P2-52 built -> review. P2-59 review (opus) dispatched; P2-52 review after gate (RAM). P2-52 concern: credential manager round-trip test flaked once (parallel race on real entry)
 2026-11-21 Merged P2-51 (gate OK 63, pushed). P2-54, P2-61 ready
+2026-11-21 P2-29 built -> review (opus). Concern: no 'Approved here' edit in asking chat (ask returns no MsgRef)
+2026-11-21 P2-29 approved. Follow-ups: no 'Approved here' edit (Channel::ask returns no MsgRef); ch.ask error recorded as deny (ask.rs:163); nothing publishes Event::Answered for /approve,/deny yet (check P2-25/P2-38 own it). Merged, gating
+2026-11-21 Dispatched P2-54 (opus) ctx_4e0ba76f4083
+2026-11-21 P2-59 review: code approve, checks killed (low memory). Merge after P2-29 gate; the gate is its verification. Follow-up: FastChat now reads keychain per catalog row on each turn (cache it)
+2026-11-21 P2-52 approved (follow-up: credential manager test uses fixed real entry _v3test.probe, races across worktrees). Merge with P2-59 after P2-29 gate
+2026-11-21 Dispatched P2-61 (opus) ctx_69455708b062
+2026-11-21 Merged P2-29 (gate OK 64, pushed). P2-59 + P2-52 merged together, gating
