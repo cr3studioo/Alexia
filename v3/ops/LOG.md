@@ -436,3 +436,5 @@
 2026-11-21 Dispatched P2-25 (sonnet, try 2) ctx_9055f584d551. P2-65 merged, gating
 2026-11-21 P2-26 approved. Follow-ups: age from started_at ends week-old live jobs (resume.rs:47, use touched_at; AC-08); end_with paths leave approvals pending (:60,68); audit picks first live run per session (:189). Merge after P2-65 gate
 2026-11-21 Merged P2-65 (gate OK 68, pushed)
+2026-11-21 Phase review 6 (opus, read-only, phase-rv6) ctx_7646419eb0d4 dispatched. P2-26 merged, gating
+2026-11-21 Merged P2-26 (gate OK 69, pushed). P2-62 built -> review ctx_80e682e366e7 (host learns plugin ids only at start)

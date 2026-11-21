@@ -87,7 +87,7 @@
 | P2-23 | Hot reload of plugins | P2 | sonnet | P2-22 | alexia-mcp/{src/host.rs, src/supervise.rs, tests/reload.rs} | merged | 1 | cr3studioo/v3-P2-23 | |
 | P2-24 | WASM plugins in a capability sandbox | P2 | sonnet | P2-23, P2-47 | alexia-mcp/{src/wasm.rs, src/host.rs, fixtures/wasm-hello/**, tests/fixtures/wasm-hello... | merged | 1 | cr3studioo/v3-P2-24 | rust-version 1.87 follow-up |
 | P2-25 | Commands | P2 | sonnet | P2-20, P2-45, P2-72, P2-36 | alexia-core/{src/commands.rs, tests/commands.rs} | running | 2 | cr3studioo/v3-P2-25 | ctx_9055f584d551 |
-| P2-26 | Resume after restart; jobs that run for days | P2 | sonnet | P2-20, P2-72 | alexia-core/{src/resume.rs, tests/resume.rs} | review | 1 | cr3studioo/v3-P2-26 | approved, merge queued |
+| P2-26 | Resume after restart; jobs that run for days | P2 | sonnet | P2-20, P2-72 | alexia-core/{src/resume.rs, tests/resume.rs} | merged | 1 | cr3studioo/v3-P2-26 | |
 | P2-27 | Parallel helpers | P2 | sonnet | P2-20, P2-72 | alexia-core/{src/helpers.rs, tests/helpers.rs} | running | 1 | cr3studioo/v3-P2-27 | ctx_32805e9d943e |
 | P2-28 | Undo | P2 | sonnet | P2-20, P2-72 | alexia-core/{src/undo.rs, tests/undo.rs} | ready | 0 | | |
 | P2-29 | Approvals inbox | P2 | sonnet | P2-03, P2-06, P2-08 | alexia-gateway/{src/ask.rs, tests/approvals.rs} | merged | 1 | cr3studioo/v3-P2-29 | ctx_fbfeef8c3b31 |
@@ -123,7 +123,7 @@
 | P2-59 | Chat lane redacted: hedged redacts every cloud request | P2 | opus | P2-17 | alexia-core/{router.rs, tests/router.rs, router_steps.rs, chat.rs} | merged | 1 | cr3studioo/v3-P2-59 | ctx_ede66379757c |
 | P2-60 | Scheduler tools hold Weak<Scheduler>; no wiring cycle | P2 | opus | P2-56 | alexia-scheduler/{src/lib.rs, tests/scheduler.rs} | merged | 1 | cr3studioo/v3-P2-60 | |
 | P2-61 | One file URI decoder; no network paths; undo stays in plugin | P2 | opus | P2-51 | alexia-mcp/{uri,lib,serve}+tests, alexia-core/{permissions,tools}+tests | merged | 2 | cr3studioo/v3-P2-61 | |
-| P2-62 | New plugins unreviewed; GPU watcher hands hub what it needs | P2 | opus | P2-55, P2-57 | alexia-mcp/{host,supervise,tests/hold.rs}, alexia-core/{gpu}+tests | running | 1 | cr3studioo/v3-P2-62 | ctx_37122fa7745b |
+| P2-62 | New plugins unreviewed; GPU watcher hands hub what it needs | P2 | opus | P2-55, P2-57 | alexia-mcp/{host,supervise,tests/hold.rs}, alexia-core/{gpu}+tests | review | 1 | cr3studioo/v3-P2-62 | rv ctx_80e682e366e7 |
 | P2-63 | One redaction of secrets, in alexia-mcp | P2 | opus | P2-38, P2-61 | alexia-mcp/{Cargo.toml,redact,process,lib}+tests, Cargo.lock, alexia-core/redact | todo | 0 | | review 5 |
 | P2-64 | One Job Object, scheduled approvals own chat, stricter name check | P2 | sonnet | P2-38, P2-63 | alexia-mcp/lib.rs, alexia-core/local.rs, gateway/{ask.rs,approvals}, ci/invariants.mjs | todo | 0 | | review 5 |
 | P2-65 | Store: test dirs cleaned, keychain probe per process, plain kept | P2 | opus | P2-54 | alexia-store/{tests/*, src/secrets.rs, src/encrypt.rs} | merged | 1 | cr3studioo/v3-P2-65 | |
