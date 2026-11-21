@@ -1083,11 +1083,14 @@ pub mod redact {   // P2-14, TR-04
     pub const PLACEHOLDER: &str = "[redacted]";
     /// Secret-shaped strings only (keys, tokens, private keys, URLs with credentials).
     pub fn redact_secrets(text: &str) -> (String, Vec<String>);
-    /// Secrets plus v2's personal patterns (card numbers, IBANs, one-time codes …), as v2 `redactText`.
+    /// Secrets plus where he is (GPS, postcodes, streets, map links, location fields), as v2
+    /// `redactText`: secrets and locations only, on purpose; no card, IBAN or one-time-code rows.
     pub fn redact_text(text: &str) -> (String, Vec<String>);
     /// Every text part of every message and the system prompt; images untouched. `kinds` deduped.
     pub fn redact_request(req: &ChatRequest) -> (ChatRequest, Vec<String>);
-    pub fn redact_json(v: &Value) -> Value;      // every string leaf through redact_text
+    /// Every string leaf through redact_text; a location-named key's value, a secret-named key's
+    /// (`password`, `api_key`, `token` …) string value of 12+ characters, and coordinate pairs go whole.
+    pub fn redact_json(v: &Value) -> Value;
     pub fn summarise(kinds: &[String]) -> String;
 }
 pub mod trim {   // P2-15
@@ -2229,7 +2232,7 @@ Run in CI on `windows-latest`, every push to `cr3studioo/v3` and every task bran
 
 | # | Check | How |
 |---|---|---|
-| 1 | **no crate names a plugin** | For every folder name under `plugins/`, grep `v3/crates/*/src` (word boundary, case-insensitive). Fails on any hit, except (V3-2, P2-11, narrowed) in `crates/alexia-gateway/src/channels/<svc>/` when the name equals `<svc>`, the service the file speaks to, or on a line marked `// invariant: v2 import` (§8 items 1 and 9). Also fails on any path containing `plugins/` or `plugins\` in v3 source. |
+| 1 | **no crate names a plugin** | For every folder name under `plugins/`, grep `v3/crates/*/src` (word boundary, case-insensitive). Fails on any hit, except (V3-2, P2-11, narrowed) in `crates/alexia-gateway/src/channels/<svc>/` when the name equals `<svc>`, the service the file speaks to, or on a line marked `// invariant: v2 import` (§8 items 1 and 9), or on a line under `crates/alexia-gateway/src/channels/telegram/` marked `// invariant: bot api term` that uses a Bot API word which is also a plugin id (`voice`). Also fails on any path containing `plugins/` or `plugins\` in v3 source. |
 | 1b | **channels stay inside the gateway** (V3-1, P1-28) | `node v3/ci/invariants.mjs`: any `.rs` file outside `crates/alexia-gateway/` naming a `channels::<module>` path other than `channels::{secret_keys, configured, pairing_codes, v2_secret_names}` fails, so no other crate reaches a channel adapter (`channels::telegram` is `pub` only for the gateway's own tests). |
 | 2 | **boots with no plugins** | `cargo test --workspace` with `ALEXIA_PLUGINS_DIR` pointing at an empty temp folder and `plugins/` renamed away. Host tests use the fixture below, never `plugins/`. |
 | 3 | **crasher contained** | fixture exits, hangs, floods stdout with junk; the host stays up, backs off, marks it `Unhealthy` after 3 crashes in 60 s. |
