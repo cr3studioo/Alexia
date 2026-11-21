@@ -377,3 +377,9 @@
 2026-11-21 Dispatched P2-61 (opus) ctx_69455708b062
 2026-11-21 Merged P2-29 (gate OK 64, pushed). P2-59 + P2-52 merged together, gating
 2026-11-21 Merged P2-59 + P2-52 (gate OK 64, pushed). P2-20 (agent loop) ready
+2026-11-21 P2-57 built -> review. Dispatched P2-36 (sonnet) ctx_3160443697f5. P2-20 waits for an opus slot (P2-54, P2-61 running)
+2026-11-21 P2-36: allowed pub(crate) visibility-only edits in router.rs
+2026-11-21 P2-57 approved. Merged, gating
+2026-11-21 Dispatched P2-35 (sonnet) ctx_afb10259da19
+2026-11-21 P2-54 built -> review. Dispatched P2-20 agent loop (opus) ctx_446639742e4b
+2026-11-21 Merged P2-57 (gate OK 64, pushed)
