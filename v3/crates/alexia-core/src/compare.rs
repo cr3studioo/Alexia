@@ -10,7 +10,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::catalog::Candidate;
 use crate::redact::redact_request_known;
-use crate::router::{outcome, Needs, Router};
+use crate::router::{outcome, Attribution, Needs, Router};
 use crate::{ms_since, ChatChunk, ChatRequest, ProviderError};
 
 pub struct Compared {
@@ -41,25 +41,28 @@ async fn ask(
     let (tx, mut rx) = mpsc::channel(64);
     let started = Instant::now();
     let chat = provider.chat(&req, &c.model, tx, cancel);
+    // The first chunk's time, as the race records it: the score reads it as time to first byte.
     let collect = async {
-        let mut text = String::new();
+        let (mut text, mut first) = (String::new(), None);
         while let Some(chunk) = rx.recv().await {
+            first.get_or_insert_with(|| ms_since(started));
             if let ChatChunk::Text(t) = chunk {
                 text.push_str(&t);
             }
         }
-        text
+        (text, first)
     };
     // `chat` drops its sender when it returns, which ends `collect`.
-    let (result, text) = tokio::join!(chat, collect);
-    let ms = ms_since(started);
+    let (result, (text, first)) = tokio::join!(chat, collect);
+    let total = ms_since(started);
+    let first = first.unwrap_or(total);
     match result {
-        Ok(_) => {
-            router.record_try(c, "ok", Some(ms));
+        Ok(done) => {
+            router.record_answer(c, &done, first, total, now_ms(), &Attribution::default());
             Ok(text)
         }
         Err(e) => {
-            router.record_try(c, outcome(&e), Some(ms));
+            router.record_try(c, outcome(&e), Some(total));
             Err(e)
         }
     }

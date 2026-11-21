@@ -135,10 +135,10 @@ pub struct StepAsk {
 
 /// Who a race's usage row is for.
 #[derive(Default)]
-struct Attribution {
-    plugin: Option<String>,
-    run: Option<RunId>,
-    session: Option<SessionId>,
+pub(crate) struct Attribution {
+    pub(crate) plugin: Option<String>,
+    pub(crate) run: Option<RunId>,
+    pub(crate) session: Option<SessionId>,
 }
 
 /// How a job orders the free list (v2 `shapeOf`, free half).
@@ -464,28 +464,7 @@ impl Router {
 
         match result {
             Ok(mut done) => {
-                if done.cost > 0.0 {
-                    // MO-12: it charged. The agent turns the row into a warning line.
-                    self.record_try(&candidate, "charged", Some(first_ms));
-                    self.set_aside(&candidate, now);
-                } else {
-                    self.record_try(&candidate, "ok", Some(first_ms));
-                }
-                if let Err(e) = self.store.record_usage(&Usage {
-                    at: now_ms(),
-                    session: attr.session,
-                    plugin: attr.plugin,
-                    model: done.model.clone(),
-                    asked: None,
-                    provider: done.provider.clone(),
-                    tokens_in: done.tokens_in,
-                    tokens_out: done.tokens_out,
-                    cost: done.cost,
-                    run_id: attr.run.map(|r| r.0),
-                    writing_ms: Some(i64::from(total_ms.saturating_sub(first_ms))),
-                }) {
-                    tracing::warn!("the router could not record usage: {e}");
-                }
+                self.record_answer(&candidate, &done, first_ms, total_ms, now, &attr);
                 done.first_byte_ms = Some(first_ms);
                 Ok(done)
             }
@@ -718,6 +697,40 @@ impl Router {
     pub(crate) fn record_request(&self, provider: &str) {
         if let Err(e) = self.store.record_request(provider, now_ms()) {
             tracing::warn!("the router could not count a request: {e}");
+        }
+    }
+
+    /// A finished answer: the try (MO-12: a charged one is set aside) and its usage row.
+    pub(crate) fn record_answer(
+        &self,
+        c: &Candidate,
+        done: &ChatDone,
+        first_ms: u32,
+        total_ms: u32,
+        now: Ms,
+        attr: &Attribution,
+    ) {
+        if done.cost > 0.0 {
+            // MO-12: it charged. The agent turns the row into a warning line.
+            self.record_try(c, "charged", Some(first_ms));
+            self.set_aside(c, now);
+        } else {
+            self.record_try(c, "ok", Some(first_ms));
+        }
+        if let Err(e) = self.store.record_usage(&Usage {
+            at: now_ms(),
+            session: attr.session,
+            plugin: attr.plugin.clone(),
+            model: done.model.clone(),
+            asked: None,
+            provider: done.provider.clone(),
+            tokens_in: done.tokens_in,
+            tokens_out: done.tokens_out,
+            cost: done.cost,
+            run_id: attr.run.as_ref().map(|r| r.0.clone()),
+            writing_ms: Some(i64::from(total_ms.saturating_sub(first_ms))),
+        }) {
+            tracing::warn!("the router could not record usage: {e}");
         }
     }
 

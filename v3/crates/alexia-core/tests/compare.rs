@@ -66,12 +66,17 @@ impl Provider for Fake {
                 for word in a.split_inclusive(' ') {
                     let _ = out.send(ChatChunk::Text(word.into())).await;
                 }
+                // A "slow" model keeps writing after its first chunk.
+                if model.contains("slow") {
+                    tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+                }
                 Ok(ChatDone {
                     model: model.into(),
                     provider: self.id.clone(),
-                    tokens_in: 1,
-                    tokens_out: 1,
-                    cost: 0.0,
+                    tokens_in: 3,
+                    tokens_out: 5,
+                    // A "paid" model charges.
+                    cost: if model.contains("paid") { 0.01 } else { 0.0 },
                     first_byte_ms: None,
                 })
             }
@@ -295,4 +300,92 @@ fn present_labels_models() {
     let (first, second) = (s.find("first").unwrap(), s.find("second").unwrap());
     assert!(a < first && first < b && b < second);
     assert!(s.ends_with("Keep A or B?"));
+}
+
+#[tokio::test]
+async fn charged_side_set_aside() {
+    let w = world(vec![
+        ("p1", vec![("paid-70b", Some("costly"))]),
+        ("p2", vec![("mid-30b", Some("free"))]),
+    ])
+    .await;
+    let c = compare(&w.router, &request("q"), CancellationToken::new())
+        .await
+        .unwrap();
+    assert_eq!(c.a.1, "costly");
+    let tries = w.store.tries_since(0).unwrap();
+    let of = |m: &str| tries.iter().find(|t| t.model == m).unwrap().outcome.clone();
+    assert_eq!(of("paid-70b"), "charged");
+    assert_eq!(of("mid-30b"), "ok");
+    let aside = w.store.kv_get("_core", "aside").unwrap().unwrap();
+    assert!(
+        aside
+            .get(
+                "p1
+paid-70b"
+            )
+            .is_some(),
+        "{aside}"
+    );
+    assert!(
+        aside
+            .get(
+                "p2
+mid-30b"
+            )
+            .is_none(),
+        "{aside}"
+    );
+}
+
+#[tokio::test]
+async fn waited_is_first_chunk() {
+    let w = world(vec![
+        ("p1", vec![("slow-70b", Some("takes a while"))]),
+        ("p2", vec![("mid-30b", Some("quick"))]),
+    ])
+    .await;
+    compare(&w.router, &request("q"), CancellationToken::new())
+        .await
+        .unwrap();
+    let tries = w.store.tries_since(0).unwrap();
+    let slow = tries.iter().find(|t| t.model == "slow-70b").unwrap();
+    assert!(slow.waited_ms.unwrap() < 300, "{:?}", slow.waited_ms);
+    let writing: i64 = w
+        .store
+        .transaction(|tx| {
+            Ok(tx.query_row(
+                "SELECT writing FROM usage WHERE model = 'slow-70b'",
+                [],
+                |r| r.get(0),
+            )?)
+        })
+        .unwrap();
+    assert!(writing >= 300, "{writing}");
+}
+
+#[tokio::test]
+async fn usage_recorded_for_both() {
+    let w = two().await;
+    compare(&w.router, &request("q"), CancellationToken::new())
+        .await
+        .unwrap();
+    let mut rows: Vec<(String, String, i64, i64)> = w
+        .store
+        .transaction(|tx| {
+            let mut st = tx.prepare("SELECT provider, model, tokens_in, tokens_out FROM usage")?;
+            let rows = st
+                .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(rows)
+        })
+        .unwrap();
+    rows.sort();
+    assert_eq!(
+        rows,
+        vec![
+            ("p1".into(), "big-70b".into(), 3, 5),
+            ("p2".into(), "mid-30b".into(), 3, 5)
+        ]
+    );
 }
