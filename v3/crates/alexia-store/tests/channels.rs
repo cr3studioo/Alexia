@@ -1,15 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! Migration 2: channel chats, spans, and the router's read-back of tries and request counts.
-use std::path::{Path, PathBuf};
+mod scratch;
+
+use std::path::Path;
 
 use alexia_store::*;
 use rusqlite::Connection;
+use scratch::Scratch;
 
-/// A fresh, empty folder per test under the system temp dir.
-fn temp(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("alexia-channels-{}-{name}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    dir
+/// A fresh, empty folder per test, removed when the test ends.
+fn temp(name: &str) -> Scratch {
+    Scratch::new(&format!("channels-{name}"))
 }
 
 fn user_version(s: &Store) -> i64 {
@@ -72,7 +73,8 @@ fn migration_2_applies() {
 
 #[test]
 fn upgrade_from_1() {
-    let db = temp("upgrade").join("alexia.db");
+    let dir = temp("upgrade");
+    let db = dir.join("alexia.db");
     // A real v1 file: migration 1's schema, with migrations 2 and 3 taken back off.
     {
         let s = Store::open(&db).unwrap();
@@ -294,7 +296,8 @@ fn env_secret_wins() {
 
 #[test]
 fn negative_user_version_is_refused() {
-    let db = temp("negative").join("alexia.db");
+    let dir = temp("negative");
+    let db = dir.join("alexia.db");
     drop(Store::open(&db).unwrap());
     Connection::open(&db)
         .unwrap()

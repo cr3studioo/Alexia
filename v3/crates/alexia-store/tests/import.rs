@@ -1,21 +1,21 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! The v2 importer, against v2 files built from the fixture of v2's own migrations.
+mod scratch;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use alexia_store::import::{import_v2, import_v2_files, ImportReport};
 use alexia_store::*;
 use rusqlite::Connection;
+use scratch::Scratch;
 use serde_json::json;
 
 const V2_MIGRATIONS: &str = include_str!("fixtures/v2_migrations.sql");
 
-/// A fresh, empty folder per test under the system temp dir.
-fn temp(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("alexia-import-{}-{name}", std::process::id()));
-    let _ = fs::remove_dir_all(&dir);
-    fs::create_dir_all(&dir).unwrap();
-    dir
+/// A fresh, empty folder per test, removed when the test ends.
+fn temp(name: &str) -> Scratch {
+    Scratch::new(&format!("import-{name}"))
 }
 
 /// v2's schema up to and including migration `upto`, as v2 opens it (WAL).
