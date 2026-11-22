@@ -27,6 +27,10 @@ Do not rebuild target\release while it runs: the exe is locked.
 - Checker provider goes stale after the local model's idle stop (main.rs:338).
 
 ## Watch out for
+- NEW (CEO #17, owner): two Claude accounts, CEO.md §16 / A-18. Start every CEO and worker with
+  c1/c2 in an Orca terminal on the account `usage.ps1` names. On 2026-11-22, c1 (vaclavnejedly6)
+  was at ~97% weekly (resets ~2026-11-27) and c2 (cr3.studioo) was fresh. The Orca app's own
+  account picker is set to c1. run_8e442f10629d was CEO #17's throwaway account test; ignore it.
 - RAM: more than ~4 compiling agents kill builds. Gate uses --no-fail-fast; build bins first
   (`cargo build --workspace --bins`) or v2_plugins tests fail.
 - Load-flaky: wasm.rs:541. telegram_e2e now has a 1500 ms soft bound (CEO-approved).

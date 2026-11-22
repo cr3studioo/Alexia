@@ -475,8 +475,11 @@ the chat.
 
 ## 10. Usage limits
 
-All workers and you share one usage limit. Spend it well:
+The owner has **two Claude subscriptions** (c1 and c2). Use both: §16 says how to check what's
+left and which account every CEO and worker starts on. Spend it well:
 
+- Before every batch and before every handoff, run the usage check in §16 and start on the
+  account it names.
 - Sonnet for everything the spec template allows. At most 2 Opus builders per batch.
 - Builders get their spec and nothing else. You don't paste code into prompts.
 - If a worker hits a usage or rate limit:
@@ -543,14 +546,19 @@ whichever comes first.
    - <one line each>
    ```
 3. Commit "Handoff CEO #<n>" on `cr3studioo/v3` and push.
-4. Start your successor as a new Orca chat in the main checkout (Bash tool, single quotes):
+4. Start your successor in a new Orca terminal in the main checkout, on the account the usage
+   check names (§16). Bash tool, single quotes outside, double quotes around the prompt:
    ```bash
-   orca agent launch --agent claude --worktree 'path:C:/dev/Alexia' --surface chat \
-     --model opus --focus --json \
-     --prompt 'You are CEO #<n+1> of the Alexia v3 build. Read v3/ops/CEO.md in full and act as the CEO it describes. You are a successor: skip section 6 (First run) and begin at section 7 (Every run).'
+   powershell -NoProfile -File 'C:\Users\vacla\.claude-usage\usage.ps1'   # last line: "Use next: cX"
+   orca terminal create --worktree 'path:C:/dev/Alexia' --title 'CEO #<n+1>' --focus --json \
+     --command 'cX; claude --dangerously-skip-permissions --model opus "You are CEO #<n+1> of the Alexia v3 build. Read v3/ops/CEO.md in full and act as the CEO it describes. You are a successor: skip section 6 (First run) and begin at section 7 (Every run)."'
    ```
-   Check the reply says `"ok": true`. If the launch fails, tell the owner in your chat and on
-   Telegram, and don't stop until a successor is running or the owner answers.
+   Replace `cX` with `c1` or `c2`. If both accounts are full, put `Start-Sleep -Seconds <secs until
+   the earliest reset + 300>; ` in front of `cX` (§16). Don't use `orca agent launch --agent
+   claude`: it always runs on the account picked in the Orca app, not the one you chose.
+   Check the reply says `"ok": true`, then `orca terminal read --terminal <handle> --screen`
+   shows Claude starting. If the launch fails, tell the owner in your chat and on Telegram, and
+   don't stop until a successor is running or the owner answers.
 5. Say in your chat, in one line, that CEO #<n+1> has taken over, print `ALEXIA-CEO: HANDOFF`,
    and stop. Don't do any more work after that.
 
@@ -601,9 +609,14 @@ orca status --json                      # runtime must be ready; if not: orca op
 # One Run per CEO run. Record its id in STATE.md. A successor can re-bind an old one with run-use.
 orca orchestration run-create --objective 'Alexia v3: CEO #<n>' --json
 # One worker. The worktree must already exist (git worktree add, §7.2).
+# Workers run on the account the usage check names (§16), so start Claude yourself in an Orca
+# terminal and hand that terminal to worker-start. Replace cX with c1 or c2.
+orca terminal create --worktree 'path:C:/dev/Alexia-wt/<id>' --title '<id> build' --json \
+  --command 'cX; claude --dangerously-skip-permissions --model sonnet'   # or opus; note handle
+orca terminal wait --terminal <handle> --for tui-idle --timeout-ms 90000 --json
 orca orchestration worker-start --run <run_id> --task-title '<id> build' \
   --spec '<builder prompt, §7.3>' --worktree 'path:C:/dev/Alexia-wt/<id>' \
-  --agent claude --model sonnet --json   # or --model opus; record dispatchId
+  --terminal <handle> --json             # no --agent/--model with --terminal; record dispatchId
 # Wait. Repeat until every Dispatch of the batch has settled. A timeout is not a failure.
 orca orchestration check --run <run_id> --wait --types 'worker_done,escalation,question' --timeout-ms 900000 --json
 # For each message: answer questions (orchestration reply --id <msg> --body '...').
@@ -619,6 +632,49 @@ orca orchestration worker-list --run <run_id> --json                 # after 3 e
   `unverifiable` or a missing worker is not a failure: wait or inspect with `worker-show`.
   Stop or retry only with proof the worker exited (see the skill's
   recovery-and-cleanup reference).
-- Release every settled worker. Remove the git worktree yourself after merge (§8), then
+- Release every settled worker, then close its terminal (`orca terminal close --terminal
+  <handle>`) if it is still open. Remove the git worktree yourself after merge (§8), then
   `git worktree prune`.
-- Usage limits (§10, and A-06 in OWNER.md): if a worker dies from a limit, treat it as in §10.
+- Usage limits (§10, §16, and A-06 in OWNER.md): if a worker dies from a limit, treat it as in §10.
+
+---
+
+## 16. Two Claude accounts (owner's decision, A-18)
+
+The owner pays for two Claude subscriptions so the build gets twice the usage. Every CEO and
+every worker runs on one of them. You pick which, at every batch and every handoff.
+
+| Name | Account | Claude config folder | Start Claude on it |
+| ---- | ------- | -------------------- | ------------------ |
+| c1 | vaclavnejedly6@icloud.com | `C:\Users\vacla\.claude` | `c1; claude --dangerously-skip-permissions` |
+| c2 | cr3.studioo@gmail.com | `C:\Users\vacla\.claude-backup` | `c2; claude --dangerously-skip-permissions` |
+
+`c1` and `c2` are PowerShell functions in the owner's profile. They only set or clear
+`CLAUDE_CONFIG_DIR`, so they work in any PowerShell terminal, including the ones
+`orca terminal create` opens. They don't work in the Bash tool.
+
+**What's left.** Run `powershell -NoProfile -File 'C:\Users\vacla\.claude-usage\usage.ps1'`
+(add `-Json` to parse it). It shows each account's 5-hour and weekly use, their reset times, when
+the numbers were last updated, and a last line `Use next: cX (why)`. The numbers come from the
+status line (`C:\Users\vacla\.claude-usage\statusline.js`, set in both config folders), which
+writes `c1.json` / `c2.json` while any session on that account is running. Your own account is
+always fresh. The other one is only as fresh as its last session, but a reset time in the past
+counts as 0%. Also `c1` follows whatever account is logged in to `~\.claude`, which the Orca
+account picker can change: trust the `email` column, not the name.
+
+**When to switch** (owner's rule): leave an account when it reaches **95% of the 5-hour limit**
+or **98% of the weekly limit**. Otherwise stay where you are.
+
+- **Before each batch:** run the check. Start every worker of the batch on `Use next`. If an
+  account will cross the line partway through a batch, split the batch across both accounts.
+- **Your own account:** when your account crosses the line, finish the round you're in and
+  hand off (§12) to a successor on the other account, even before 6 rounds.
+- **Both full:** don't send the A-06 message for a single account. Commit and push the books,
+  send one Telegram line ("Both Claude accounts are full. Build resumes at <time>."), and hand
+  off to a successor whose terminal command starts with `Start-Sleep -Seconds <secs>; ` so
+  that Claude starts 5 minutes after the earliest reset (the PC is on 24/7). Then stop.
+- **Never** use `orca agent launch --agent claude` or `worker-start --agent claude` for CEOs or
+  workers. They run on the account picked in the Orca app's account settings, not the one you
+  chose. Start Claude in an Orca terminal yourself (§12 step 4, §15). This was tested on
+  2026-11-22 (CEO #17): a Sonnet worker started with `c2` in an Orca terminal took a
+  `worker-start --terminal` dispatch and sent `worker_done` as normal.

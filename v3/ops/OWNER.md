@@ -127,3 +127,7 @@ $env:ALEXIA_PLUGINS_DIR = "C:\dev\Alexia\plugins"
 ## A-17 · 2026-11-20 · answered (standing rule)
 **What I need:** (owner, in chat) A Telegram message every time something finishes, with progress, e.g. "Phase 2 finished, 25% done".
 **Answer:** Standing rule. The CEO sends one short Telegram line after every merge and phase end: what merged, phase count, overall %. Overall % = (phases done + fraction of the current phase merged) / 8. This overrides the "one message per round" limit in CEO.md §9 for progress lines only.
+
+## A-18 · 2026-11-22 · answered (standing rule)
+**What I need:** (owner, in chat with CEO #17) Use both Claude subscriptions: c1 = vaclavnejedly6@icloud.com (`C:\Users\vacla\.claude`), c2 = cr3.studioo@gmail.com (`C:\Users\vacla\.claude-backup`).
+**Answer:** Standing rule, details in CEO.md §16. Every CEO and every worker starts on the account `C:\Users\vacla\.claude-usage\usage.ps1` names. Leave an account at 95% of the 5-hour limit or 98% of the week. CEO and workers both switch. When both are full, the CEO sends one Telegram line and schedules its successor to start 5 minutes after the earliest reset (the PC is on 24/7); the A-06 "banked reset" message is sent only then. CEOs and workers are started with `c1`/`c2` in an Orca terminal, not `orca agent launch --agent claude`, which uses the account picked in the Orca app. CEO #17 installed the usage status line in both config folders.
