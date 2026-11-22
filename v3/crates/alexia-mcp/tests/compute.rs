@@ -645,8 +645,9 @@ async fn resource_link_unc_refused() {
 }
 
 /// P2-82: a link inside a root whose target is a network path is refused before anything
-/// follows it. 192.0.2.1 is TEST-NET-1 (never routed), so following the link costs Windows its
-/// SMB connect timeout (about 20 s); the refusal must come well before that.
+/// follows it. The target is on a TEST-NET range (never routed), so following the link costs
+/// Windows its SMB connect timeout (about 20 s); the refusal must come well before that.
+/// Windows remembers a host that just failed, so each run picks a fresh address.
 #[cfg(windows)]
 #[tokio::test]
 async fn link_to_network_path_refused() {
@@ -654,8 +655,16 @@ async fn link_to_network_path_refused() {
     let own = fx.layout.own_dir("asker");
     std::fs::create_dir_all(&own).unwrap();
     let link = own.join("share");
-    if let Err(e) = std::os::windows::fs::symlink_dir(r"\192.0.2.1\nonexistent", &link) {
-        eprintln!("SKIPPED link_to_network_path_refused: this process may not create symlinks ({e})");
+    let n = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .subsec_nanos() as usize;
+    let net = ["192.0.2", "198.51.100", "203.0.113"][n % 3];
+    let target = format!(r"\\{net}.{}\nonexistent", 1 + n / 3 % 254);
+    if let Err(e) = std::os::windows::fs::symlink_dir(&target, &link) {
+        eprintln!(
+            "SKIPPED link_to_network_path_refused: this process may not create symlinks ({e})"
+        );
         fx.host.shutdown().await;
         return;
     }
