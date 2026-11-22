@@ -511,3 +511,7 @@
 2026-11-22 P2-40 approved (76 suites; v2 conformance 6/6, 15 plugins running). Merge after P2-48 gate
 2026-11-22 P2-48 gate OK (76 suites), pushed
 2026-11-22 P2-40 gate OK (76 suites), pushed
+2026-11-22 P2-39 built (7 e2e scenarios; telegram_e2e back with 1500 ms soft bound; concern: resume Say lost if resume_all runs before gateway subscribes) -> review ctx_ca9076a694aa
+2026-11-22 P2-39 review: told reviewer latency loosening was a CEO instruction (approved deviation)
+2026-11-22 P2-39 approved (latency loosening = CEO-approved). Candidate fix for P2-41 list: resume_all publishes 'Picking up' before gateway subscribes (lost message). LATER: mcp fixture lacks undo summary. Merged, gating
+2026-11-22 P2-39 gate OK (77 suites), pushed. All P2 build tasks merged. P2-41 blocked-owner: owner runs 20 Telegram tasks on the new core (release build 14:52, Desktop\Alexia.cmd; all v2 keys already in v3)
