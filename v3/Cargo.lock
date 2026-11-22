@@ -103,6 +103,7 @@ dependencies = [
 name = "alexia-hub"
 version = "3.0.0"
 dependencies = [
+ "alexia-api",
  "alexia-core",
  "alexia-gateway",
  "alexia-mcp",

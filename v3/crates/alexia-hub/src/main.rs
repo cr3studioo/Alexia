@@ -14,6 +14,7 @@ use std::process::ExitCode;
 use std::sync::Arc;
 use std::time::Duration;
 
+use alexia_api::{Api, ApiParts};
 use alexia_core::agent::{Agent, AgentParts};
 use alexia_core::catalog::Catalog;
 use alexia_core::chat::{Caps, FastChat};
@@ -28,7 +29,7 @@ use alexia_core::router::Router;
 use alexia_core::subscription::{Cli, SubscriptionCli};
 use alexia_core::tools::McpTooling;
 use alexia_core::undo::UndoTool;
-use alexia_core::{free, hf, resume, trace, Budget, Job, Limits, Provider, Urgency};
+use alexia_core::{free, hf, resume, trace, Brain, Budget, Job, Limits, Provider, Urgency};
 use alexia_core::{Bus, Event};
 use alexia_gateway::{channels, Asker, ChannelSet, Gateway, GatewayConfig};
 use alexia_mcp::{EventSink, HostConfig, McpHost, NoUpcalls, PluginId, PluginState, Timings};
@@ -252,6 +253,8 @@ async fn run() -> Res<()> {
         eprintln!("Secrets are in memory (ALEXIA_SECRETS_IN_MEMORY is set): nothing is read from or saved to the keychain.");
     }
     let layout = Layout::new(data_dir());
+    // Before step 1: one hub per PC (D-P2D-3). Held until the process ends.
+    let _lock = hub_lock(&layout.root)?;
     // §2.6 steps 1 and 2: store → bus → host with `NoUpcalls`, not started yet.
     let (hub, enabled) = open(&layout)?;
     let root = CancellationToken::new();
@@ -276,6 +279,8 @@ async fn run() -> Res<()> {
     let result = serve(&hub, &enabled, &layout, &root, &tracker).await;
     // Every exit after `open` ends here, so plugin children stop and the next boot sees a clean stop.
     root.cancel();
+    // The window's address goes with the server (step 12); an app reading it now starts a new hub.
+    let _ = std::fs::remove_file(window_json(&layout));
     tracker.close();
     // The heartbeat must be done before `clean_stop`, or a late tick looks like a crash.
     if tokio::time::timeout(Duration::from_secs(5), tracker.wait())
@@ -291,7 +296,72 @@ async fn run() -> Res<()> {
     result
 }
 
-/// INTERFACES §2.6 steps 3 to 11, in that order (steps 1 and 2 are `open`).
+/// What a second `alexia-hub run` says (D-P2D-3).
+const ANOTHER_HUB: &str = "Another Alexia hub is already running on this computer.";
+
+/// `<data>/hub.lock`, opened so no other process can open it while this one runs. On Windows
+/// `share_mode(0)` makes a second open fail with a sharing violation (error 32). Off Windows
+/// the handle is kept and a failure is ignored.
+fn hub_lock(root: &Path) -> Res<Option<std::fs::File>> {
+    let path = root.join("hub.lock");
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true).write(true).create(true).truncate(false);
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        const ERROR_SHARING_VIOLATION: i32 = 32;
+        std::fs::create_dir_all(root)?;
+        options.share_mode(0);
+        match options.open(&path) {
+            Ok(f) => Ok(Some(f)),
+            Err(e) if e.raw_os_error() == Some(ERROR_SHARING_VIOLATION) => Err(ANOTHER_HUB.into()),
+            Err(e) => Err(format!("The hub's lock file could not be opened: {e}").into()),
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = std::fs::create_dir_all(root);
+        Ok(options.open(&path).ok())
+    }
+}
+
+fn window_json(layout: &Layout) -> PathBuf {
+    layout.root.join("window.json")
+}
+
+/// `ALEXIA_WINDOW_PORT`, else 0 (any free port).
+fn window_port() -> Res<u16> {
+    match std::env::var("ALEXIA_WINDOW_PORT") {
+        Ok(p) if !p.trim().is_empty() => p
+            .trim()
+            .parse()
+            .map_err(|_| "ALEXIA_WINDOW_PORT is not a port number (0 to 65535).".into()),
+        _ => Ok(0),
+    }
+}
+
+/// `ALEXIA_UI_DIR` when it is an absolute folder path; else None (the page then says so).
+fn ui_dir() -> Option<PathBuf> {
+    let dir = PathBuf::from(std::env::var_os("ALEXIA_UI_DIR")?);
+    if dir.is_absolute() {
+        Some(dir)
+    } else {
+        tracing::warn!("ALEXIA_UI_DIR is not an absolute path; the window's files are not served");
+        None
+    }
+}
+
+/// `{"port":..,"pid":..}`, written to `.tmp` and renamed so a reader never sees half of it.
+/// The token is not in it.
+fn write_window_json(layout: &Layout, port: u16) -> std::io::Result<()> {
+    let path = window_json(layout);
+    let tmp = path.with_extension("json.tmp");
+    let body = serde_json::json!({ "port": port, "pid": std::process::id() });
+    std::fs::write(&tmp, body.to_string())?;
+    std::fs::rename(&tmp, &path)
+}
+
+/// INTERFACES §2.6 steps 3 to 12, in that order (steps 1 and 2 are `open`).
 async fn serve(
     hub: &Hub,
     enabled: &[PluginId],
@@ -333,7 +403,7 @@ async fn serve(
         tools: tooling.clone(),
         store: store.clone(),
         bus: bus.clone(),
-        ask: asker,
+        ask: asker.clone(),
         checker: checker.clone(),
         caps: caps.clone(),
         layout: Layout::new(layout.root.clone()),
@@ -360,7 +430,8 @@ async fn serve(
     for p in problems {
         tracing::warn!(folder = %p.dir.display(), "a skill was not loaded: {}", p.why);
     }
-    tooling.add_builtin(Arc::new(skills));
+    let skills = Arc::new(skills);
+    tooling.add_builtin(skills.clone());
 
     // 9. Local models.
     let runtime = Runtime::new(Layout::new(layout.root.clone()), reqwest::Client::new());
@@ -382,12 +453,13 @@ async fn serve(
 
     // 10. Chat to the fast lane, the rest to the agent.
     let fast_chat = Arc::new(FastChat::new(
-        router,
+        router.clone(),
         caps.clone(),
         store.clone(),
         Budget::CHAT,
     ));
     let lanes = Arc::new(Lanes::new(fast_chat.clone(), agent.clone()));
+    let brain: Arc<dyn Brain> = lanes.clone();
     let media = Arc::new(media::McpMedia {
         caps,
         host: host.clone(),
@@ -405,7 +477,7 @@ async fn serve(
         bus.clone(),
         lanes,
         media,
-        channels,
+        channels.clone(),
     );
     for (channel, code) in channels::pairing_codes(&store)? {
         println!("Send {code} to the {channel} bot to pair it.");
@@ -433,7 +505,7 @@ async fn serve(
 
     // 11. Scheduler → resumed runs → GPU watch → catalog news.
     {
-        let c = root.child_token();
+        let (c, scheduler) = (root.child_token(), scheduler.clone());
         tracker.spawn(async move {
             if let Err(e) = scheduler.run(c).await {
                 tracing::error!("the scheduler stopped: {e}");
@@ -444,7 +516,14 @@ async fn serve(
     if resumed > 0 {
         tracing::info!("{resumed} unfinished runs picked up again");
     }
-    watch_gpu(tracker, root, &store, host, runtime, jobs);
+    watch_gpu(
+        tracker,
+        root,
+        &store,
+        host.clone(),
+        runtime.clone(),
+        jobs.clone(),
+    );
     {
         let (bus, catalog) = (bus.clone(), catalog.clone());
         every(tracker, root, Duration::from_secs(600), move || {
@@ -458,6 +537,39 @@ async fn serve(
             }
         });
     }
+
+    // 12. The window's API, on 127.0.0.1 only (D-P2D-2); its port in `window.json`.
+    let api = Api::new(ApiParts {
+        layout: Layout::new(layout.root.clone()),
+        store: store.clone(),
+        bus: bus.clone(),
+        host,
+        tooling,
+        agent,
+        brain,
+        router,
+        catalog,
+        scheduler,
+        asker,
+        channels,
+        skills,
+        runtime,
+        jobs,
+        ui_dir: ui_dir(),
+        app_version: env!("CARGO_PKG_VERSION").to_owned(),
+    })?;
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", window_port()?)).await?;
+    let port = listener.local_addr()?.port();
+    write_window_json(layout, port)?;
+    {
+        let c = root.child_token();
+        tracker.spawn(async move {
+            if let Err(e) = api.serve(listener, c).await {
+                tracing::error!("the window's server stopped: {e}");
+            }
+        });
+    }
+    println!("The window answers on 127.0.0.1:{port}.");
 
     tracker.spawn(watchdog::heartbeat(store.clone(), root.child_token()));
     let invalidate = fast_chat.clone();
