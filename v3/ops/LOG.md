@@ -499,3 +499,8 @@
 2026-11-22 P2-67 + P2-73 + P2-82 gate OK (74 suites), pushed
 2026-11-22 P2-34 approved. LATER: embed server registered as router provider (local.rs:1139); see_before_cloud ignores cancel (local.rs:1283); Check filter not instruct-only. For P2-38: hub must call set_local_jobs and Runtime::stop_all on game pause. Merged, gating
 2026-11-22 P2-34 gate OK (75 suites), pushed
+2026-11-22 Dispatched P2-38 (opus) ctx_22bcb6aa2302 with review notes
+2026-11-22 P2-38 asked for 3 one-line edits outside paths (brain.rs doc, latency.rs + gateway types.rs Gateway::new callers): yes, plus standing yes for spec-forced minimal edits
+2026-11-22 P2-38 built (telegram_e2e fifty_messages #[ignore = P2-39]; checker model may go stale after idle stop) -> review ctx_f4db99c3cbee
+2026-11-22 P2-38 approved. LATER: checker provider stale after idle stop (main.rs:338). Merged, gating
+2026-11-22 P2-38 gate OK (76 suites), pushed
