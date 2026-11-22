@@ -4,6 +4,7 @@
 //! so the paths reach the server exactly as typed (`/../x.js`, `//app.css`).
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use alexia_api::{Api, ApiParts};
@@ -53,12 +54,13 @@ impl Drop for World {
     }
 }
 
+/// A folder of its own per world: the tests run in parallel in one process, and some of them
+/// delete files from their UI folder.
 fn scratch(name: &str) -> PathBuf {
-    let n = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
+    static NEXT: AtomicUsize = AtomicUsize::new(0);
+    let n = NEXT.fetch_add(1, Ordering::Relaxed);
     let dir = std::env::temp_dir().join(format!("alexia-api-{name}-{}-{n}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     dir
 }
