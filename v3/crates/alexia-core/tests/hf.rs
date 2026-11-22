@@ -6,6 +6,9 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
+mod scratch;
+use scratch::Scratch;
+
 use alexia_core::hf::{
     self, group_rows, import_file, import_repo_at, quants_at, read_gguf, token_for, HfError,
 };
@@ -96,16 +99,8 @@ fn mmproj() -> Vec<u8> {
     gguf(&[("general.architecture", Kv::Str("clip"))], 64)
 }
 
-fn temp(name: &str) -> PathBuf {
-    static N: AtomicU32 = AtomicU32::new(0);
-    let d = std::env::temp_dir().join(format!(
-        "alexia-hf-{name}-{}-{}",
-        std::process::id(),
-        N.fetch_add(1, Ordering::SeqCst)
-    ));
-    let _ = std::fs::remove_dir_all(&d);
-    std::fs::create_dir_all(&d).unwrap();
-    d
+fn temp(name: &str) -> Scratch {
+    Scratch::new(&format!("hf-{name}"))
 }
 
 fn hex(b: &[u8]) -> String {
@@ -453,7 +448,8 @@ fn files_in(d: &Path) -> Vec<String> {
 async fn resume_after_cut() {
     let h = hub(true, false);
     let base = serve(h.clone()).await;
-    let layout = Layout::new(temp("resume"));
+    let dir_resume = temp("resume");
+    let layout = Layout::new(dir_resume.to_path_buf());
     let quants = quants_at(&base, "o/m", None, &client(), None)
         .await
         .unwrap();
@@ -529,7 +525,8 @@ async fn resume_after_cut() {
 #[tokio::test]
 async fn digest_mismatch_deleted() {
     let base = serve(hub(false, true)).await;
-    let layout = Layout::new(temp("digest"));
+    let dir_digest = temp("digest");
+    let layout = Layout::new(dir_digest.to_path_buf());
     let r = import_repo_at(
         &base,
         "o/m",
@@ -551,7 +548,8 @@ async fn digest_mismatch_deleted() {
 async fn token_only_to_hf() {
     let h = hub(false, false);
     let base = serve(h.clone()).await;
-    let layout = Layout::new(temp("token"));
+    let dir_token = temp("token");
+    let layout = Layout::new(dir_token.to_path_buf());
     let tok = concat!("hf_", "notarealtoken");
     import_repo_at(
         &base,
@@ -602,7 +600,8 @@ fn import_file_copies_with_split_and_projector() {
     std::fs::write(&a, llama(Some((0, 2)), 10)).unwrap();
     std::fs::write(&b, llama(Some((1, 2)), 20)).unwrap();
     std::fs::write(d.join("mmproj-f16.gguf"), mmproj()).unwrap();
-    let layout = Layout::new(temp("home"));
+    let dir_home = temp("home");
+    let layout = Layout::new(dir_home.to_path_buf());
 
     let r = import_file(&a, &layout, false).unwrap();
     // a plain path: Windows' verbatim prefix is not passed on
@@ -635,7 +634,8 @@ fn import_file_copies_with_split_and_projector() {
 #[test]
 fn concurrent_copy_imports_do_not_collide() {
     let d = temp("conc");
-    let layout = Arc::new(Layout::new(temp("conc-home")));
+    let dir_conc_home = temp("conc-home");
+    let layout = Arc::new(Layout::new(dir_conc_home.to_path_buf()));
     let srcs: Vec<PathBuf> = (0..4)
         .map(|i| {
             let p = d.join(format!("m{}.gguf", i % 2));
@@ -662,7 +662,8 @@ fn projector_added_later_is_copied() {
     let d = temp("late");
     let m = d.join("m.gguf");
     std::fs::write(&m, llama(None, 10)).unwrap();
-    let layout = Layout::new(temp("late-home"));
+    let dir_late_home = temp("late-home");
+    let layout = Layout::new(dir_late_home.to_path_buf());
     let first = import_file(&m, &layout, true).unwrap();
     assert!(first.mmproj.is_none());
 
@@ -680,7 +681,7 @@ fn projector_added_later_is_copied() {
 #[test]
 fn installed_round_trip() {
     let d = temp("kv");
-    let layout = Layout::new(d.clone());
+    let layout = Layout::new(d.to_path_buf());
     let p = d.join("m.gguf");
     std::fs::write(&p, llama(None, 8)).unwrap();
     let store = alexia_store::Store::open_in_memory().unwrap();
@@ -700,7 +701,8 @@ fn import_file_path_not_verbatim() {
     let a = d.join("m.gguf");
     std::fs::write(&a, llama(None, 10)).unwrap();
     std::fs::write(d.join("mmproj-f16.gguf"), mmproj()).unwrap();
-    let r = import_file(&a, &Layout::new(temp("home")), false).unwrap();
+    let dir_home = temp("home");
+    let r = import_file(&a, &Layout::new(dir_home.to_path_buf()), false).unwrap();
     let mm = r.mmproj.unwrap();
     for p in [r.path, mm] {
         assert!(!p.to_string_lossy().starts_with(r"\\?\"), "{p:?}");
@@ -730,7 +732,8 @@ fn q4_dir(layout: &Layout) -> PathBuf {
 async fn directory_in_place_of_model_redownloaded() {
     let h = hub(false, false);
     let base = serve(h.clone()).await;
-    let layout = Layout::new(temp("dirmodel"));
+    let dir_dirmodel = temp("dirmodel");
+    let layout = Layout::new(dir_dirmodel.to_path_buf());
     let dir = q4_dir(&layout);
     // a folder where the model file belongs, and another where a .part belongs
     std::fs::create_dir_all(dir.join("m-Q4_K_M.gguf").join("inner")).unwrap();
@@ -745,7 +748,8 @@ async fn directory_in_place_of_model_redownloaded() {
 async fn file_in_place_of_cache_dir_repaired() {
     let h = hub(false, false);
     let base = serve(h.clone()).await;
-    let layout = Layout::new(temp("filedir"));
+    let dir_filedir = temp("filedir");
+    let layout = Layout::new(dir_filedir.to_path_buf());
     let models = layout.cache().join("models").join("o");
     std::fs::create_dir_all(&models).unwrap();
     std::fs::write(models.join("m"), b"in the way").unwrap();
@@ -758,7 +762,8 @@ async fn file_in_place_of_cache_dir_repaired() {
 async fn hash_runs_off_the_runtime() {
     let h = hub(false, false);
     let base = serve(h.clone()).await;
-    let layout = Layout::new(temp("bigmodel"));
+    let dir_bigmodel = temp("bigmodel");
+    let layout = Layout::new(dir_bigmodel.to_path_buf());
     let dir = q4_dir(&layout);
     std::fs::create_dir_all(&dir).unwrap();
     // 256 MiB of zeros (sparse where the file system allows), the wrong size: hashed, then replaced

@@ -13,9 +13,11 @@
 use std::io::Write;
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
+
+mod scratch;
+use scratch::Scratch;
 
 use alexia_core::local::{LocalError, LocalModel, Runtime};
 use alexia_core::{ChatChunk, ChatRequest};
@@ -101,24 +103,32 @@ fn main() {
 }
 "##;
 
-static COUNTER: AtomicU32 = AtomicU32::new(0);
-
-fn scratch(name: &str) -> PathBuf {
-    let n = COUNTER.fetch_add(1, Ordering::SeqCst);
-    let dir = std::env::temp_dir().join(format!("alexia-local-{}-{name}-{n}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    dir
+fn scratch(name: &str) -> Scratch {
+    Scratch::new(&format!("local-{name}"))
 }
 
 /// Compiles the fake once and points `ALEXIA_LLAMA_SERVER` at it.
 fn fake_exe() -> &'static Path {
     static EXE: OnceLock<PathBuf> = OnceLock::new();
     EXE.get_or_init(|| {
-        let dir = scratch("fake");
-        let src = dir.join("fake.rs");
+        // In cargo's own temp folder, not %TEMP%: a static never drops, so a Scratch would leak.
+        // One exe per process; ones over a day old are removed (another run may be using newer).
+        let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("local-fake");
+        std::fs::create_dir_all(&dir).unwrap();
+        let day = Duration::from_secs(24 * 3600);
+        for old in std::fs::read_dir(&dir).unwrap().flatten() {
+            let stale = old
+                .metadata()
+                .and_then(|m| m.modified())
+                .is_ok_and(|t| t.elapsed().is_ok_and(|age| age > day));
+            if stale {
+                let _ = std::fs::remove_file(old.path());
+            }
+        }
+        let pid = std::process::id();
+        let src = dir.join(format!("fake-{pid}.rs"));
         std::fs::write(&src, FAKE).unwrap();
-        let exe = dir.join(if cfg!(windows) { "fake.exe" } else { "fake" });
+        let exe = dir.join(format!("fake-{pid}{}", std::env::consts::EXE_SUFFIX));
         let rustc = std::env::var("RUSTC").unwrap_or_else(|_| "rustc".into());
         let out = std::process::Command::new(rustc)
             .args(["--edition", "2021", "-O", "-o"])
@@ -136,27 +146,32 @@ fn fake_exe() -> &'static Path {
     })
 }
 
-fn runtime(timing: Option<(Duration, Duration, Duration)>) -> Arc<Runtime> {
+/// The runtime and its data folder; bind as `let (_data, rt)` so the folder drops last.
+fn runtime(timing: Option<(Duration, Duration, Duration)>) -> (Scratch, Arc<Runtime>) {
     fake_exe();
-    let layout = Layout::new(scratch("data"));
+    let data = scratch("data");
+    let layout = Layout::new(data.to_path_buf());
     let client = reqwest::Client::new();
-    match timing {
+    let rt = match timing {
         None => Runtime::new(layout, client),
         Some((idle, tick, backoff)) => Runtime::with_timing(layout, client, idle, tick, backoff),
-    }
+    };
+    (data, rt)
 }
 
-/// A model whose file lives in its own folder; the fake writes `args.txt` there.
-fn model(id: &str) -> LocalModel {
+/// A model whose file lives in its own folder; the fake writes `args.txt` there and runs in it,
+/// so bind the folder before the runtime.
+fn model(id: &str) -> (Scratch, LocalModel) {
     let dir = scratch(id);
-    LocalModel {
+    let m = LocalModel {
         id: id.into(),
         path: dir.join("model.gguf"),
         mmproj: None,
         draft: None,
         context: 4096,
         embedding: false,
-    }
+    };
+    (dir, m)
 }
 
 fn starts(m: &LocalModel) -> Vec<String> {
@@ -212,8 +227,8 @@ async fn until(what: &str, mut ok: impl FnMut() -> bool) {
 
 #[tokio::test]
 async fn serve_returns_working_provider() {
-    let rt = runtime(None);
-    let m = model("m1");
+    let (_m, m) = model("m1");
+    let (_data, rt) = runtime(None);
     let p = rt.serve(&m, 33).await.unwrap();
     assert_eq!(p.id(), "local:m1");
     assert!(says_hi(&p).await);
@@ -232,8 +247,8 @@ async fn serve_returns_working_provider() {
 
 #[tokio::test]
 async fn draft_flag_passed() {
-    let rt = runtime(None);
-    let mut m = model("with-draft");
+    let (_m, mut m) = model("with-draft");
+    let (_data, rt) = runtime(None);
     let draft = m.path.parent().unwrap().join("draft.gguf");
     m.draft = Some(draft.clone());
     rt.serve(&m, 17).await.unwrap();
@@ -248,8 +263,8 @@ async fn draft_flag_passed() {
 
 #[tokio::test]
 async fn stop_all_kills() {
-    let rt = runtime(None);
-    let (a, b) = (model("ka"), model("kb"));
+    let ((_a, a), (_b, b)) = (model("ka"), model("kb"));
+    let (_data, rt) = runtime(None);
     rt.serve(&a, 0).await.unwrap();
     rt.serve(&b, 0).await.unwrap();
     assert_eq!(rt.pids().len(), 2);
@@ -263,7 +278,8 @@ async fn stop_all_kills() {
 #[tokio::test]
 async fn idle_stops_after_10_min() {
     // Same rule as the real 10 minutes / 1 minute, shrunk: 3 s idle, checked every 200 ms.
-    let rt = runtime(Some((
+    let (_m, m) = model("idle");
+    let (_data, rt) = runtime(Some((
         Duration::from_secs(3),
         Duration::from_millis(200),
         Duration::from_millis(200),
@@ -273,7 +289,6 @@ async fn idle_stops_after_10_min() {
         let (rt, cancel) = (rt.clone(), cancel.clone());
         tokio::spawn(async move { rt.run(cancel).await })
     };
-    let m = model("idle");
     let p = rt.serve(&m, 0).await.unwrap();
     let port = rt.port("idle").unwrap();
     // Use keeps it alive well past the idle limit.
@@ -299,12 +314,12 @@ async fn idle_stops_after_10_min() {
 #[tokio::test]
 async fn crash_restarts_with_backoff() {
     let backoff = Duration::from_millis(600);
-    let rt = runtime(Some((
+    let (_m, m) = model("crashy");
+    let (_data, rt) = runtime(Some((
         Duration::from_secs(600),
         Duration::from_secs(60),
         backoff,
     )));
-    let m = model("crashy");
     let p = rt.serve(&m, 0).await.unwrap();
     let crash = m.path.parent().unwrap().join("crash");
 
@@ -397,7 +412,7 @@ fn entries(dir: &Path) -> usize {
 
 #[tokio::test]
 async fn bad_digest_refused() {
-    let rt = runtime(None);
+    let (_data, rt) = runtime(None);
     // A real zip, but not the bytes the digest names.
     let served = zip_of(&[("llama-server.exe", b"not what you asked for")]);
     let url = serve_bytes(served).await;
@@ -419,7 +434,7 @@ async fn bad_digest_refused() {
 
 #[tokio::test]
 async fn zip_slip_refused() {
-    let rt = runtime(None);
+    let (_data, rt) = runtime(None);
     let evil = zip_of(&[("llama-server.exe", b"fine"), ("../evil.txt", b"escaped")]);
     let url = serve_bytes(evil.clone()).await;
     let outer = scratch("slip");
@@ -459,8 +474,8 @@ async fn zip_slip_refused() {
 
 #[tokio::test]
 async fn stop_all_beats_a_server_mid_start() {
-    let rt = runtime(None);
-    let m = model("mid");
+    let (_m, m) = model("mid");
+    let (_data, rt) = runtime(None);
     let dir = m.path.parent().unwrap().to_owned();
     std::fs::write(dir.join("hold"), "x").unwrap(); // /health says "loading"
     let starting = {
@@ -490,7 +505,8 @@ async fn stop_all_beats_a_server_mid_start() {
 #[tokio::test]
 async fn long_chat_is_not_idled_out() {
     // Idle limit 2 s; the fake holds the reply for 5 s, so the chat outlives the limit.
-    let rt = runtime(Some((
+    let (_m, m) = model("long");
+    let (_data, rt) = runtime(Some((
         Duration::from_secs(2),
         Duration::from_millis(200),
         Duration::from_millis(200),
@@ -500,7 +516,6 @@ async fn long_chat_is_not_idled_out() {
         let (rt, cancel) = (rt.clone(), cancel.clone());
         tokio::spawn(async move { rt.run(cancel).await })
     };
-    let m = model("long");
     let p = rt.serve(&m, 0).await.unwrap();
     std::fs::write(m.path.parent().unwrap().join("slow"), "x").unwrap();
     assert!(says_hi(&p).await, "the chat was cut off mid-run");
@@ -514,8 +529,9 @@ async fn long_chat_is_not_idled_out() {
 #[tokio::test]
 async fn stop_all_during_a_health_check() {
     // stop_all lands while the /health GET that will say "ok" is in flight.
-    let rt = runtime(None);
-    let m = Arc::new(model("inflight"));
+    let (_m, m) = model("inflight");
+    let m = Arc::new(m);
+    let (_data, rt) = runtime(None);
     let dir = m.path.parent().unwrap().to_owned();
     std::fs::write(dir.join("slowhealth"), "x").unwrap();
     let task = {
@@ -532,8 +548,8 @@ async fn stop_all_during_a_health_check() {
 #[tokio::test]
 async fn child_env_is_clean() {
     std::env::set_var("ALEXIA_TEST_PROVIDER_API_KEY", "planted");
-    let rt = runtime(None);
-    let m = model("env");
+    let (_m, m) = model("env");
+    let (_data, rt) = runtime(None);
     rt.serve(&m, 0).await.unwrap();
     let env = std::fs::read_to_string(m.path.parent().unwrap().join("env.txt")).unwrap();
     let names: Vec<String> = env.lines().map(str::to_uppercase).collect();

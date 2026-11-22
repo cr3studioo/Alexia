@@ -2,7 +2,9 @@
 //! Ports `packages/core/test/permissions.test.ts`, plus the Windows-specific cases (P2-12).
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU32, Ordering};
+
+mod scratch;
+use scratch::Scratch;
 
 use alexia_core::permissions::{
     boundary_ack, heard, lifts, never_touch, paths_in, roots_of, rule, save_boundaries, scope,
@@ -72,17 +74,9 @@ fn is_blocked(r: &Ruling) -> bool {
     matches!(r, Ruling::Blocked(_))
 }
 
-/// A fresh, empty folder under the system temp dir.
-fn temp() -> PathBuf {
-    static N: AtomicU32 = AtomicU32::new(0);
-    let dir = std::env::temp_dir().join(format!(
-        "alexia-perm-{}-{}",
-        std::process::id(),
-        N.fetch_add(1, Ordering::SeqCst)
-    ));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    dir
+/// A fresh, empty folder under the system temp dir, removed on drop.
+fn temp() -> Scratch {
+    Scratch::new("perm")
 }
 
 const MODES: [PermissionMode; 4] = [
@@ -252,7 +246,8 @@ fn case_insensitive_on_windows() {
 
 #[test]
 fn symlink_out_of_a_root_is_outside() {
-    let root = temp().join("root");
+    let top = temp();
+    let root = top.join("root");
     let away = temp();
     std::fs::create_dir_all(&root).unwrap();
     let link = root.join("link");
@@ -262,7 +257,7 @@ fn symlink_out_of_a_root_is_outside() {
         let ok = std::process::Command::new("cmd")
             .args(["/C", "mklink", "/J"])
             .arg(&link)
-            .arg(&away)
+            .arg(&*away)
             .output()
             .unwrap()
             .status
@@ -309,7 +304,8 @@ fn dir_link(link: &Path, target: &Path) {
 
 #[test]
 fn dangling_link_out_of_a_root_is_outside() {
-    let root = temp().join("root");
+    let top = temp();
+    let root = top.join("root");
     std::fs::create_dir_all(&root).unwrap();
     let away = temp();
     let gone = away.join("gone");
@@ -354,7 +350,8 @@ fn link_loop_is_outside_and_never_touch() {
     dir_link(&a, &b);
     dir_link(&b, &a);
     assert!(!within(&root, &a.join("x")));
-    assert!(never_touch(&a.join("x"), &temp()));
+    let other = temp();
+    assert!(never_touch(&a.join("x"), &other));
 }
 
 #[test]

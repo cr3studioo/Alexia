@@ -4,6 +4,9 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+mod scratch;
+use scratch::Scratch;
+
 use alexia_core::prompt::{day_of, system, untrusted, About, Skills, GUARD};
 use alexia_core::{Builtin, Origin, RunId, ToolCtx, ToolSpec};
 use alexia_store::SessionId;
@@ -33,11 +36,11 @@ fn tool() -> ToolSpec {
     }
 }
 
-fn tmp(tag: &str) -> PathBuf {
-    let d = std::env::temp_dir().join(format!("alexia-p2-16-{tag}-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&d);
-    fs::create_dir_all(&d).unwrap();
-    d
+/// A fresh folder (removed when the `Scratch` drops) and its path.
+fn tmp(tag: &str) -> (Scratch, PathBuf) {
+    let d = Scratch::new(&format!("prompt-{tag}"));
+    let path = d.to_path_buf();
+    (d, path)
 }
 
 fn skill(root: &Path, folder: &str, front: &str, body: &str) -> PathBuf {
@@ -122,7 +125,7 @@ fn untrusted_cannot_close_itself() {
 
 #[tokio::test]
 async fn skill_tool_lists_descriptions() {
-    let root = tmp("list");
+    let (_root_dir, root) = tmp("list");
     skill(
         &root,
         "alpha",
@@ -183,7 +186,7 @@ async fn skill_tool_lists_descriptions() {
 
 #[tokio::test]
 async fn skill_file_outside_refused() {
-    let root = tmp("outside");
+    let (_root_dir, root) = tmp("outside");
     skill(&root, "alpha", "name: alpha\ndescription: A.", "body");
     fs::write(root.join("secret.txt"), "SECRET").unwrap();
     let (skills, _) = Skills::load(std::slice::from_ref(&root));
@@ -205,7 +208,7 @@ async fn skill_file_outside_refused() {
 
 #[test]
 fn broken_skill_is_a_problem() {
-    let root = tmp("broken");
+    let (_root_dir, root) = tmp("broken");
     skill(&root, "good", "name: good\ndescription: Fine.", "b");
     fs::create_dir_all(root.join("empty")).unwrap();
     skill(&root, "badname", "name: Bad_Name\ndescription: x", "b");
@@ -224,7 +227,7 @@ fn broken_skill_is_a_problem() {
         "\n---\nname: nofront\n---\n",
     )
     .unwrap();
-    let other = tmp("broken-2");
+    let (_other_dir, other) = tmp("broken-2");
     skill(&other, "good", "name: good\ndescription: Again.", "b");
 
     let (skills, problems) = Skills::load(&[root.clone(), other.clone()]);
@@ -274,7 +277,7 @@ async fn read_file(skills: &Skills, file: &str) -> alexia_core::ToolOutcome {
 #[tokio::test]
 async fn skill_read_refuses_when_canonicalize_fails() {
     // A dangling link in the skill folder: its real place cannot be worked out.
-    let root = tmp("dangling");
+    let (_root_dir, root) = tmp("dangling");
     let dir = skill(&root, "alpha", "name: alpha\ndescription: A.", "body");
     let (skills, _) = Skills::load(std::slice::from_ref(&root));
     if file_link(&dir.join("gone.txt"), &root.join("never-there.txt")) {
@@ -284,7 +287,7 @@ async fn skill_read_refuses_when_canonicalize_fails() {
     }
 
     // The skill folder removed after loading: nothing can be checked, so nothing is read.
-    let root = tmp("removed");
+    let (_root_dir, root) = tmp("removed");
     let dir = skill(&root, "alpha", "name: alpha\ndescription: A.", "body");
     fs::write(dir.join("notes.md"), "NOTES").unwrap();
     let (skills, _) = Skills::load(std::slice::from_ref(&root));
@@ -298,7 +301,7 @@ async fn skill_read_refuses_when_canonicalize_fails() {
 
 #[tokio::test]
 async fn skill_read_reads_the_checked_path() {
-    let root = tmp("checked");
+    let (_root_dir, root) = tmp("checked");
     let dir = skill(&root, "alpha", "name: alpha\ndescription: A.", "body");
     fs::create_dir_all(dir.join("sub")).unwrap();
     fs::write(dir.join("sub").join("real.md"), "REAL").unwrap();
