@@ -356,15 +356,31 @@ pub fn reg_string(text: &str, name: &str) -> Option<String> {
 #[cfg(windows)]
 fn reg_export(key: &str) -> String {
     use std::os::windows::process::CommandExt;
-    let file = std::env::temp_dir().join(format!("alexia-reg-{}.reg", std::process::id()));
-    let ok = std::process::Command::new("reg")
-        .arg("export")
-        .arg(key)
-        .arg(&file)
-        .arg("/y")
-        .creation_flags(NO_WINDOW)
-        .output()
-        .is_ok_and(|o| o.status.success());
+    use std::sync::atomic::{AtomicU64, Ordering};
+    // One file per call: two calls at once (two threads, two tests) must not share an export.
+    static N: AtomicU64 = AtomicU64::new(0);
+    // reg.exe itself fails now and then ("Unable to write to the file") when several run at
+    // once, even into different files: one at a time in this process, and a retry for others.
+    static ONE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _one = ONE.lock().unwrap_or_else(|e| e.into_inner());
+    let n = N.fetch_add(1, Ordering::Relaxed);
+    let file = std::env::temp_dir().join(format!("alexia-reg-{}-{n}.reg", std::process::id()));
+    let export = || {
+        std::process::Command::new("reg")
+            .arg("export")
+            .arg(key)
+            .arg(&file)
+            .arg("/y")
+            .creation_flags(NO_WINDOW)
+            .output()
+            .is_ok_and(|o| o.status.success())
+    };
+    let ok = (0..3).any(|i| {
+        if i > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        export()
+    });
     let text = if ok {
         std::fs::read(&file)
             .map(|b| decode_reg(&b))
