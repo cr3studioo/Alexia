@@ -5,7 +5,6 @@
 //! Ported from v2's `packages/core/src/llama.ts`: the pinned release and its digests, the
 //! `llama-server` arguments, `GET /health`, a free loopback port and a random API key per start.
 //! Never resolves "latest". llama-server listening on loopback is the child's port, not the hub's.
-#![allow(unused_variables)] // P2-34's `LocalJobs` stubs
 
 use std::collections::hash_map::RandomState;
 use std::collections::HashMap;
@@ -16,7 +15,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use alexia_store::{Layout, MessageBody, Role, Store};
+use alexia_store::{Content, Layout, MessageBody, Part, Role, Store};
 use sha2::{Digest, Sha256};
 use tokio::io::AsyncWriteExt;
 use tokio::process::{Child, Command};
@@ -27,6 +26,7 @@ use tokio_util::sync::CancellationToken;
 use crate::free::{Auth, FreeRow};
 use crate::openai::OpenAiCompat;
 use crate::router::Router;
+use crate::{gpu, hf};
 use crate::{ChatChunk, ChatDone, ChatRequest, Job, ModelInfo, Provider, ProviderError};
 
 /// Digests copied from the GitHub release API for tag b11146 (source commit
@@ -73,6 +73,7 @@ struct Spec {
 
 struct Server {
     port: u16,
+    key: String,
     pid: AtomicU32,
     used: Arc<Mutex<Instant>>,
     /// Chats in flight; the idle stopper never stops a server with one running.
@@ -381,12 +382,13 @@ impl Runtime {
             router: false,
         };
         let provider: Arc<dyn Provider> = Arc::new(Local {
-            inner: OpenAiCompat::new(row, Some(key), self.client.clone()),
+            inner: OpenAiCompat::new(row, Some(key.clone()), self.client.clone()),
             used: used.clone(),
             busy: busy.clone(),
         });
         let server = Arc::new(Server {
             port,
+            key,
             pid: AtomicU32::new(child.id().unwrap_or(0)),
             used,
             busy,
@@ -471,6 +473,58 @@ impl Runtime {
                 }
             }
         }
+    }
+
+    /// `POST /v1/embeddings` on the running server of `model_id` (llama-server `--embedding`).
+    /// One vector per text, in order. Counts as use, so the idle stopper leaves it be.
+    pub async fn embed(
+        &self,
+        model_id: &str,
+        texts: &[String],
+        cancel: &CancellationToken,
+    ) -> Result<Vec<Vec<f32>>, LocalError> {
+        let server = self
+            .servers
+            .lock()
+            .unwrap()
+            .get(model_id)
+            .cloned()
+            .ok_or_else(|| LocalError::Start("the model is not running".into()))?;
+        let _in_use = InUse::new(&server.busy);
+        *server.used.lock().unwrap() = Instant::now();
+        let bad = |e: &dyn std::fmt::Display| LocalError::Start(e.to_string());
+        let send = self
+            .client
+            .post(format!("http://127.0.0.1:{}/v1/embeddings", server.port))
+            .bearer_auth(&server.key)
+            .timeout(Duration::from_secs(120))
+            .json(&serde_json::json!({"model": model_id, "input": texts}))
+            .send();
+        let resp = tokio::select! {
+            r = send => r,
+            () = cancel.cancelled() => return Err(LocalError::Cancelled),
+        };
+        let body: serde_json::Value = resp
+            .map_err(|e| bad(&e.without_url()))?
+            .error_for_status()
+            .map_err(|e| bad(&e.without_url()))?
+            .json()
+            .await
+            .map_err(|e| bad(&e.without_url()))?;
+        *server.used.lock().unwrap() = Instant::now();
+        let mut rows: Vec<(u64, Vec<f32>)> = Vec::new();
+        for (at, row) in body["data"].as_array().into_iter().flatten().enumerate() {
+            let vector: Option<Vec<f32>> = row["embedding"]
+                .as_array()
+                .and_then(|v| v.iter().map(|x| x.as_f64().map(|f| f as f32)).collect());
+            let vector = vector.ok_or_else(|| bad(&"the model sent a malformed vector"))?;
+            rows.push((row["index"].as_u64().unwrap_or(at as u64), vector));
+        }
+        rows.sort_by_key(|r| r.0);
+        if rows.len() != texts.len() {
+            return Err(bad(&"the model sent the wrong number of vectors"));
+        }
+        Ok(rows.into_iter().map(|r| r.1).collect())
     }
 
     /// The port a model's server listens on (tests).
@@ -907,54 +961,333 @@ pub enum LocalError {
     NotReady,
 }
 
+/// Context sizes the three jobs run with (capped by what the model supports).
+const VISION_CTX: u32 = 8192;
+const CHECK_CTX: u32 = 8192;
+const EMBED_CTX: u32 = 2048;
+const DRAFT_CTX: u32 = 2048;
+const DESCRIBE: &str = "Describe this picture so someone who cannot see it understands it: what it shows, the layout, colours, people and objects. Then write \"Text in the picture:\" and copy every piece of text in it exactly as written (OCR). If there is no text, write \"Text in the picture: none\".";
+const BLIND: &str = "[A picture was here, but Alexia cannot look at pictures right now.]";
+
+fn is_embedding(arch: &str) -> bool {
+    arch.contains("bert") || arch.contains("embedding")
+}
+
+fn job_key(job: Job) -> &'static str {
+    match job {
+        Job::Vision => "vision",
+        Job::Check => "check",
+        _ => "local",
+    }
+}
+
+/// The three GPU jobs D213 allows besides chat: vision (MO-06), embeddings (MO-07, pinned under
+/// `Job::Local`) and the checker's model (TR-02). Each starts its model on demand through the
+/// `Runtime`, which stops it after 10 idle minutes; `set_paused` (a game is running) makes every
+/// method give up at once.
 pub struct LocalJobs {
-    _todo: (),
+    runtime: Arc<Runtime>,
+    store: Arc<Store>,
+    router: Arc<Router>,
+    paused: AtomicBool,
+    /// Image hash -> description, for this session.
+    seen: Mutex<HashMap<String, String>>,
+    /// Tests stand in for `nvidia-smi`.
+    machine: Mutex<Option<gpu::Machine>>,
 }
 
 impl LocalJobs {
     pub fn new(runtime: Arc<Runtime>, store: Arc<Store>, router: Arc<Router>) -> Arc<LocalJobs> {
-        todo!("P2-34")
+        Arc::new(LocalJobs {
+            runtime,
+            store,
+            router,
+            paused: AtomicBool::new(false),
+            seen: Mutex::new(HashMap::new()),
+            machine: Mutex::new(None),
+        })
+    }
+
+    /// Tests: use this machine instead of asking `nvidia-smi`.
+    #[doc(hidden)]
+    pub fn set_machine(&self, machine: gpu::Machine) {
+        *self.machine.lock().unwrap() = Some(machine);
+    }
+
+    fn is_paused(&self) -> bool {
+        self.paused.load(Ordering::SeqCst)
+    }
+
+    /// No NVIDIA GPU counts as no VRAM: nothing `Fits`, a model that must run runs from RAM.
+    async fn machine(&self) -> gpu::Machine {
+        let set = self.machine.lock().unwrap().clone();
+        if let Some(m) = set {
+            return m;
+        }
+        gpu::machine().await.unwrap_or(gpu::Machine {
+            vram_mb: 0,
+            free_mb: 0,
+            ram_mb: 0,
+            gpu: None,
+        })
+    }
+
+    /// Step 1: the owner's pin (`local:<id>` under the job's name) wins when it names an installed
+    /// model that can do the job; else vision takes the largest that fits (the smallest if none
+    /// does), embeddings the smallest that fits (else the smallest), the checker the smallest that
+    /// fits (else none).
+    async fn pick(&self, job: Job) -> Option<(LocalModel, u32)> {
+        let machine = self.machine().await;
+        let headroom = gpu::headroom_mb(&self.store);
+        let want = match job {
+            Job::Vision => VISION_CTX,
+            Job::Check => CHECK_CTX,
+            _ => EMBED_CTX,
+        };
+        let ctx_of = |i: &hf::Installed, want: u32| match i.meta.context {
+            0 => want,
+            c => c.min(want),
+        };
+        let fits = |i: &hf::Installed, m: &gpu::Machine, ctx: u32| {
+            gpu::fit(
+                m,
+                i.meta.bytes,
+                i.meta.layers,
+                i.meta.kv_bytes_per_token,
+                ctx,
+                headroom,
+            )
+        };
+        let mut all: Vec<hf::Installed> = hf::installed(&self.store)
+            .into_iter()
+            .filter(|i| !i.meta.vision_projector)
+            .filter(|i| match job {
+                Job::Vision => i.mmproj.is_some() && !is_embedding(&i.meta.arch),
+                Job::Check => !is_embedding(&i.meta.arch),
+                _ => is_embedding(&i.meta.arch),
+            })
+            .collect();
+        all.sort_by_key(|i| i.meta.bytes);
+        let pins = self.router.pins().remove(job_key(job)).unwrap_or_default();
+        let pinned = pins.iter().find_map(|p| {
+            let id = p.strip_prefix("local:")?;
+            all.iter().find(|i| i.id == id)
+        });
+        let ok =
+            |i: &hf::Installed| fits(i, &machine, ctx_of(i, want)).verdict == gpu::Verdict::Fits;
+        let chosen = match (pinned, job) {
+            (Some(p), _) => p,
+            (None, Job::Vision) => all.iter().rev().find(|i| ok(i)).or(all.first())?,
+            (None, Job::Check) => all.iter().find(|i| ok(i))?,
+            (None, _) => all.iter().find(|i| ok(i)).or(all.first())?,
+        };
+        let ctx = ctx_of(chosen, want);
+        let f = fits(chosen, &machine, ctx);
+        // SP-17: the checker gets a smaller model of its own family as the draft when what is
+        // left of the GPU holds it.
+        let draft = if job == Job::Check {
+            let left = gpu::Machine {
+                free_mb: machine.free_mb.saturating_sub(f.vram_mb),
+                ..machine.clone()
+            };
+            all.iter()
+                .filter(|d| {
+                    d.id != chosen.id
+                        && d.meta.arch == chosen.meta.arch
+                        && d.meta.bytes < chosen.meta.bytes
+                })
+                .find(|d| fits(d, &left, ctx_of(d, DRAFT_CTX)).verdict == gpu::Verdict::Fits)
+                .map(|d| d.path.clone())
+        } else {
+            None
+        };
+        let model = LocalModel {
+            id: chosen.id.clone(),
+            path: chosen.path.clone(),
+            mmproj: if job == Job::Vision {
+                chosen.mmproj.clone()
+            } else {
+                None
+            },
+            draft,
+            context: ctx,
+            embedding: job == Job::Local,
+        };
+        Some((model, f.gpu_layers))
+    }
+
+    /// The provider and the model id to ask it for.
+    async fn start(&self, job: Job) -> Option<(Arc<dyn Provider>, String)> {
+        // D213: none of the local jobs is chat.
+        if !matches!(job, Job::Vision | Job::Check | Job::Local) || self.is_paused() {
+            return None;
+        }
+        let (model, layers) = self.pick(job).await?;
+        let provider = match self.runtime.serve(&model, layers).await {
+            Ok(p) => p,
+            Err(e) => {
+                tracing::warn!(
+                    "a local {} job could not start its model: {e}",
+                    job_key(job)
+                );
+                return None;
+            }
+        };
+        if self.is_paused() {
+            return None;
+        }
+        self.router.set_provider(provider.clone(), true);
+        Some((provider, model.id))
     }
 
     /// Starts the model for the job if needed and registers it with the router (`set_provider`, local).
+    /// `None` for `Chat`, `Plan`, `Step` and `Code` (D213), when paused, or when no model is installed.
     pub async fn provider(&self, job: Job) -> Option<Arc<dyn Provider>> {
-        todo!("P2-34")
+        self.start(job).await.map(|s| s.0)
     }
 
+    /// A description of the picture plus the text in it (OCR). The same picture is described once.
     pub async fn describe(
         &self,
         image_data_url: &str,
         cancel: CancellationToken,
     ) -> Option<String> {
-        todo!("P2-34")
+        if self.is_paused() {
+            return None;
+        }
+        let hash: String = Sha256::digest(image_data_url.as_bytes())
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        if let Some(d) = self.seen.lock().unwrap().get(&hash) {
+            return Some(d.clone());
+        }
+        let (provider, id) = self.start(Job::Vision).await?;
+        let body = MessageBody {
+            content: Content::Parts(vec![
+                Part::Text {
+                    text: DESCRIBE.into(),
+                },
+                Part::Image {
+                    url: image_data_url.into(),
+                },
+            ]),
+            calls: None,
+            call_id: None,
+            provider: None,
+            notes: None,
+            bad: None,
+            stopped: None,
+            typed: None,
+            extra: serde_json::Map::new(),
+        };
+        let req = ChatRequest {
+            messages: vec![(Role::User, body)],
+            system: None,
+            tools: Vec::new(),
+            max_tokens: Some(1024),
+        };
+        let (tx, mut rx) = mpsc::channel(64);
+        let collect = async {
+            let mut text = String::new();
+            while let Some(chunk) = rx.recv().await {
+                if let ChatChunk::Text(t) = chunk {
+                    text.push_str(&t);
+                }
+            }
+            text
+        };
+        let (done, text) = tokio::join!(provider.chat(&req, &id, tx, cancel), collect);
+        if let Err(e) = done {
+            tracing::warn!("the local vision model could not describe a picture: {e}");
+            return None;
+        }
+        let text = text.trim().to_owned();
+        if text.is_empty() || self.is_paused() {
+            return None;
+        }
+        self.seen.lock().unwrap().insert(hash, text.clone());
+        Some(text)
     }
 
+    /// One vector per text, in order. `None` when paused, when no embedding model is installed or
+    /// when it fails.
     pub async fn embed(
         &self,
         texts: &[String],
         cancel: CancellationToken,
     ) -> Option<Vec<Vec<f32>>> {
-        todo!("P2-34")
+        if self.is_paused() {
+            return None;
+        }
+        let (_, id) = self.start(Job::Local).await?;
+        if texts.is_empty() {
+            return Some(Vec::new());
+        }
+        match self.runtime.embed(&id, texts, &cancel).await {
+            Ok(v) => Some(v),
+            Err(e) => {
+                tracing::warn!("the local embedding model failed: {e}");
+                None
+            }
+        }
     }
 
     /// For `Checker::set_model`.
     pub async fn checker_model(&self) -> Option<(Arc<dyn Provider>, String)> {
-        todo!("P2-34")
+        self.start(Job::Check).await
     }
 
     /// While true (a game is running) every method returns None at once.
     pub fn set_paused(&self, on: bool) {
-        todo!("P2-34")
+        self.paused.store(on, Ordering::SeqCst);
+    }
+
+    /// Whether a model for `job` (`Vision` or `Local` for embeddings) is installed, running or not.
+    pub(crate) fn can(&self, job: Job) -> bool {
+        hf::installed(&self.store).iter().any(|i| {
+            !i.meta.vision_projector
+                && match job {
+                    Job::Vision => i.mmproj.is_some() && !is_embedding(&i.meta.arch),
+                    _ => is_embedding(&i.meta.arch),
+                }
+        })
     }
 }
 
 /// Images described locally before a request goes to the cloud (MO-06). `None` (no local jobs
-/// wired) returns the messages unchanged. P2-34 fills the `Some` case; until then the messages
-/// are returned unchanged either way, so the agent can call this from the start.
+/// wired) returns the messages unchanged. With `_core.vision` = `"cloud"` the pictures stay in.
+/// Otherwise every picture becomes the local model's description and OCR text; with no local
+/// model (or a game running) it becomes a plain sentence saying so, so no picture leaves the PC.
 pub async fn see_before_cloud(
     jobs: Option<&LocalJobs>,
     messages: Vec<(Role, MessageBody)>,
 ) -> Vec<(Role, MessageBody)> {
-    let _ = jobs;
-    messages
+    let Some(jobs) = jobs else {
+        return messages;
+    };
+    let cloud = jobs
+        .store
+        .kv_get("_core", "vision")
+        .ok()
+        .flatten()
+        .is_some_and(|v| v == "cloud");
+    if cloud {
+        return messages;
+    }
+    let mut out = Vec::with_capacity(messages.len());
+    for (role, mut body) in messages {
+        if let Content::Parts(parts) = &mut body.content {
+            for part in parts.iter_mut() {
+                let Part::Image { url } = part else { continue };
+                let text = match jobs.describe(url, CancellationToken::new()).await {
+                    Some(d) => format!("[Picture: {d}]"),
+                    None => BLIND.to_owned(),
+                };
+                *part = Part::Text { text };
+            }
+        }
+        out.push((role, body));
+    }
+    out
 }
