@@ -205,7 +205,11 @@ fn rpc_of(e: CallError) -> RpcError {
 /// this containment check stays compute's own: it checks a plugin's own folder, not the owner's
 /// scope, and core depends on this crate, not the other way round.
 fn inside(path: &str, roots: &[std::path::PathBuf]) -> Option<std::path::PathBuf> {
-    if crate::is_network_path(path) || !links_stay_local(std::path::Path::new(path), &mut 0) {
+    let p = std::path::Path::new(path);
+    // Windows folds `..` in the text without checking the folder exists, so a path through a
+    // missing folder and back up would end the walk early and still reach a link. Refuse `..`.
+    let up = p.components().any(|c| c == std::path::Component::ParentDir);
+    if crate::is_network_path(path) || up || !links_stay_local(p, &mut 0) {
         return None;
     }
     // ponytail: a link created between the walk and the canonicalize is not covered; the

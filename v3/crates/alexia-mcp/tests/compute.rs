@@ -669,7 +669,8 @@ async fn link_to_network_path_refused() {
         return;
     }
     let t = Instant::now();
-    for path in [link.clone(), link.join("in.txt")] {
+    let around = own.join("nope").join("..").join("share").join("in.txt");
+    for path in [link.clone(), link.join("in.txt"), around] {
         let params = json!({"cap": "demo.compute", "inputs": [input("s", &path)]});
         let e = serve(&fx, "asker", "alexia/compute/run", params)
             .await
