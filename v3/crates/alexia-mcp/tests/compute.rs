@@ -643,3 +643,34 @@ async fn resource_link_unc_refused() {
     }
     fx.host.shutdown().await;
 }
+
+/// P2-82: a link inside a root whose target is a network path is refused before anything
+/// follows it. 192.0.2.1 is TEST-NET-1 (never routed), so following the link costs Windows its
+/// SMB connect timeout (about 20 s); the refusal must come well before that.
+#[cfg(windows)]
+#[tokio::test]
+async fn link_to_network_path_refused() {
+    let fx = compute_fx("netlink").await;
+    let own = fx.layout.own_dir("asker");
+    std::fs::create_dir_all(&own).unwrap();
+    let link = own.join("share");
+    if let Err(e) = std::os::windows::fs::symlink_dir(r"\192.0.2.1\nonexistent", &link) {
+        eprintln!("SKIPPED link_to_network_path_refused: this process may not create symlinks ({e})");
+        fx.host.shutdown().await;
+        return;
+    }
+    let t = Instant::now();
+    for path in [link.clone(), link.join("in.txt")] {
+        let params = json!({"cap": "demo.compute", "inputs": [input("s", &path)]});
+        let e = serve(&fx, "asker", "alexia/compute/run", params)
+            .await
+            .unwrap_err();
+        assert_eq!(e.code, INVALID_PARAMS, "{path:?}");
+    }
+    let took = t.elapsed();
+    assert!(
+        took < Duration::from_secs(10),
+        "took {took:?}: the link was followed to the network"
+    );
+    fx.host.shutdown().await;
+}
