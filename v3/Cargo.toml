@@ -25,6 +25,10 @@ regex = "1"                # core's redaction patterns
 sha2 = "0.10"              # core's download digests
 zip = { version = "2", default-features = false, features = ["deflate"] }   # llama.cpp's Windows release
 chrono = { version = "0.4", default-features = false, features = ["clock"] }   # local wall-clock time: schedules, `today`
+# (P2D-01) alexia-api: an HTTP/1 server with SSE for the window; std has none and hyper alone
+# means writing a router.
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "json", "query"] }
+tokio-stream = "0.1"       # (P2D-01) `ReceiverStream` for `axum::response::Sse`
 
 [workspace.lints.rust]
 unsafe_code = "deny"     # alexia-mcp's Job Object code opts out with a module-level allow
