@@ -341,7 +341,12 @@ async fn frames(mut rx: mpsc::Receiver<DraftFrame>, sink: Option<ProgressSink>, 
                 gap |= p == Phase::Tool && spoke;
                 let _ = sink.send(say(json!({ "phase": phase_name(p) }))).await;
             }
-            DraftFrame::Steerable => {}
+            // A plugin's conversation streams text and phases; steps, notes and questions
+            // are the window's.
+            DraftFrame::Steerable
+            | DraftFrame::Step(_)
+            | DraftFrame::Note(_)
+            | DraftFrame::Ask(_) => {}
         }
     }
 }

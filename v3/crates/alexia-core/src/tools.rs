@@ -2,26 +2,42 @@
 //! Tooling over the MCP host, plus core's builtins. Ports v2 `packages/core/src/tooling.ts`
 //! (`PluginTooling`, `outcomeOf`) and `trace.ts` `toolWords`.
 
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use alexia_mcp::types::{CallToolResult, ProgressParams};
 use alexia_mcp::{CallCtx, CallError, HostedTool, McpHost, PluginId};
+use alexia_store::SessionId;
 use serde_json::{Map, Value};
 
-use crate::{Builtin, Produced, ToolCtx, ToolOutcome, ToolSpec, Tooling, UndoCall};
+use crate::{Builtin, Produced, ToolCtx, ToolOutcome, ToolProgress, ToolSpec, Tooling, UndoCall};
 
 /// v2 `NAME_LIMIT`: a provider rejects a function name longer than this.
 const NAME_LIMIT: usize = 64;
 const SEPARATOR: &str = "__";
 /// v2 `FINAL_MAX`: the longest reply a tool may give the person itself.
 const FINAL_MAX: usize = 4000;
+/// v2 `STAGES_MAX`: past this many steps a pipeline is a texture, not a diagram.
+const STAGES_MAX: usize = 64;
+/// v2 `LABEL_MAX`: a label long enough to be a paragraph is not a label.
+const LABEL_MAX: usize = 80;
+/// Research runs kept at once (v2 `ResearchRuns`): the one quiet longest goes first.
+const RESEARCH_KEPT: usize = 50;
+/// The `_meta` keys a plugin puts on a progress notification (v2 `packages/protocol`).
+const PREVIEW_META: &str = "alexia/preview";
+const STAGES_META: &str = "alexia/stages";
+const PLAN_META: &str = "alexia/plan";
+const CONTROLS_META: &str = "alexia/controls";
+const RESEARCH_META: &str = "alexia/research";
 
 pub struct McpTooling {
     host: McpHost,
     builtins: Mutex<Vec<Arc<dyn Builtin>>>,
     /// What the last `list()` saw, so a call need not ask every plugin again.
     listed: Mutex<Vec<HostedTool>>,
+    /// The latest `alexia/research` snapshot per (plugin, session).
+    research: Mutex<Research>,
 }
 
 impl McpTooling {
@@ -30,7 +46,18 @@ impl McpTooling {
             host,
             builtins: Mutex::new(builtins),
             listed: Mutex::new(vec![]),
+            research: Mutex::default(),
         }
+    }
+
+    /// The latest `alexia/research` snapshot a plugin sent for this session (v2
+    /// `tooling.research.get`).
+    pub fn research(&self, plugin: &PluginId, session: SessionId) -> Option<Value> {
+        self.researching().get(&(plugin.clone(), session))
+    }
+
+    fn researching(&self) -> std::sync::MutexGuard<'_, Research> {
+        self.research.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     pub fn add_builtin(&self, b: Arc<dyn Builtin>) {
@@ -77,14 +104,393 @@ fn failed(text: impl Into<String>) -> ToolOutcome {
     }
 }
 
-/// One progress frame as a line a person reads.
-fn progress_line(p: &ProgressParams) -> String {
-    let line = match (&p.message, p.total) {
-        (Some(m), _) => m.clone(),
-        (None, Some(t)) => format!("{} of {}", p.progress, t),
-        (None, None) => p.progress.to_string(),
+/// An MCP progress notification as a `ToolProgress` (v2 `tooling.ts` `onprogress`), without
+/// `research`, which the call attaches from its own snapshot store.
+pub fn progress_of(p: &ProgressParams) -> ToolProgress {
+    let meta = p.meta.as_ref();
+    let get = |k: &str| meta.and_then(|m| m.get(k));
+    // The one field a plugin fills that ends up in an `img`: a `data:` picture or nothing,
+    // so it never names a path or a host.
+    let preview = get(PREVIEW_META)
+        .and_then(Value::as_str)
+        .filter(|s| s.starts_with("data:image/"))
+        .map(str::to_string);
+    let stages = get(STAGES_META).and_then(stages_of);
+    let plan = stages.is_some() && get(PLAN_META) == Some(&Value::Bool(true));
+    ToolProgress {
+        progress: p.progress,
+        total: p.total,
+        message: p.message.clone(),
+        preview,
+        stages,
+        plan,
+        controls: get(CONTROLS_META).and_then(controls_of),
+        research: None,
+    }
+}
+
+/// v2 `stagesOf`: the stages a plugin sent, or nothing. Anything malformed drops the whole
+/// strip: a pipeline with a step missing is a wrong picture.
+fn stages_of(said: &Value) -> Option<Value> {
+    let all = said.as_array().filter(|a| !a.is_empty())?;
+    let mut out = Vec::new();
+    for one in all.iter().take(STAGES_MAX) {
+        let one = one.as_object()?;
+        let state = one.get("state").and_then(Value::as_str)?;
+        if !matches!(state, "waiting" | "running" | "done" | "failed") {
+            return None;
+        }
+        let mut stage = Map::new();
+        stage.insert("state".into(), Value::String(state.into()));
+        for key in ["label", "detail"] {
+            if let Some(s) = one.get(key).and_then(Value::as_str) {
+                stage.insert(key.into(), Value::String(clip_utf16(s, LABEL_MAX)));
+            }
+        }
+        for key in ["progress", "total"] {
+            // serde_json has no NaN or infinity, so every number is finite.
+            if let Some(n) = one.get(key).filter(|v| v.is_number()) {
+                stage.insert(key.into(), n.clone());
+            }
+        }
+        out.push(Value::Object(stage));
+    }
+    Some(Value::Array(out))
+}
+
+/// v2 `controlsOf`: at most three buttons, each a widget-like key and a short label.
+fn controls_of(value: &Value) -> Option<Value> {
+    let key_ok = |k: &str| {
+        let mut cs = k.chars();
+        cs.next().is_some_and(|c| c.is_ascii_lowercase())
+            && k.len() <= 64
+            && cs.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
     };
-    line.replace(['\r', '\n'], " ")
+    let kept: Vec<Value> = value
+        .as_array()?
+        .iter()
+        .filter_map(|one| {
+            let key = one.get("key")?.as_str().filter(|k| key_ok(k))?;
+            let label = one.get("label")?.as_str()?.trim();
+            if label.is_empty() {
+                return None;
+            }
+            let mut c = Map::new();
+            c.insert("key".into(), Value::String(key.into()));
+            c.insert("label".into(), Value::String(clip_utf16(label, 24)));
+            Some(Value::Object(c))
+        })
+        .take(3)
+        .collect();
+    (!kept.is_empty()).then_some(Value::Array(kept))
+}
+
+/// JS `slice(0, max)`: at most `max` UTF-16 units, never splitting a character.
+fn clip_utf16(s: &str, max: usize) -> String {
+    let mut n = 0;
+    s.chars()
+        .take_while(|c| {
+            n += c.len_utf16();
+            n <= max
+        })
+        .collect()
+}
+
+/// How a call that reported research ended.
+#[derive(Clone, Copy)]
+enum Ending {
+    Complete,
+    Failed,
+    Cancelled,
+}
+
+type ResearchKey = (PluginId, SessionId);
+
+/// One kept research run: whose call sent it, and the snapshot.
+struct ResearchRun {
+    key: ResearchKey,
+    owner: u64,
+    snapshot: Map<String, Value>,
+}
+
+/// v2 `ResearchRuns`: the latest run per (plugin, session), owned by the call that sent it.
+/// Several calls to one plugin can be open at once; the newest call that has reported holds
+/// the snapshot, so an older call cannot take it back.
+#[derive(Default)]
+struct Research {
+    begun: u64,
+    /// The calls open per key, each by the order it began in.
+    open: HashMap<ResearchKey, HashSet<u64>>,
+    /// Least recently updated first.
+    runs: Vec<ResearchRun>,
+}
+
+impl Research {
+    fn begin(&mut self, key: &ResearchKey) -> u64 {
+        self.begun += 1;
+        self.open.entry(key.clone()).or_default().insert(self.begun);
+        self.begun
+    }
+
+    fn get(&self, key: &ResearchKey) -> Option<Value> {
+        self.runs
+            .iter()
+            .find(|r| &r.key == key)
+            .map(|r| Value::Object(r.snapshot.clone()))
+    }
+
+    fn accept(&mut self, key: &ResearchKey, owner: u64, raw: Option<&Value>) -> Option<Value> {
+        let open = self.open.get(key)?;
+        if !open.contains(&owner) {
+            return None;
+        }
+        let mut next = research_update(raw?, &key.1 .0.to_string())?;
+        let at = self.runs.iter().position(|r| &r.key == key);
+        if let Some(i) = at {
+            let before = &self.runs[i];
+            if before.owner != owner && open.contains(&before.owner) && before.owner > owner {
+                return None;
+            }
+            if before.owner == owner
+                && (next.get("runId") != before.snapshot.get("runId")
+                    || seq(&next) <= seq(&before.snapshot)
+                    || before.snapshot.get("completion").and_then(Value::as_str) != Some("running"))
+            {
+                return None;
+            }
+        }
+        recount(&mut next, false);
+        // Re-inserted at the end, so the cap drops the run that went quiet longest.
+        if let Some(i) = at {
+            self.runs.remove(i);
+        }
+        self.runs.push(ResearchRun {
+            key: key.clone(),
+            owner,
+            snapshot: next.clone(),
+        });
+        if self.runs.len() > RESEARCH_KEPT {
+            self.runs.remove(0);
+        }
+        Some(Value::Object(next))
+    }
+
+    /// The call is over. A run still marked running is settled by how the call ended: a tool
+    /// that returned its answer completed the research.
+    fn close(&mut self, key: &ResearchKey, owner: u64, ending: Ending) {
+        if let Some(open) = self.open.get_mut(key) {
+            open.remove(&owner);
+            if open.is_empty() {
+                self.open.remove(key);
+            }
+        }
+        let Some(run) = self
+            .runs
+            .iter_mut()
+            .find(|r| &r.key == key && r.owner == owner)
+        else {
+            return;
+        };
+        let run = &mut run.snapshot;
+        if run.get("completion").and_then(Value::as_str) != Some("running") {
+            return;
+        }
+        if let Some(Value::Array(sources)) = run.get_mut("sources") {
+            for s in sources.iter_mut().filter_map(Value::as_object_mut) {
+                if s.get("state").and_then(Value::as_str) == Some("fetching") {
+                    s.insert("state".into(), "unavailable".into());
+                    s.insert(
+                        "error".into(),
+                        "Research stopped before extraction completed.".into(),
+                    );
+                }
+            }
+        }
+        let (completion, gap) = match ending {
+            Ending::Complete => ("complete", None),
+            Ending::Failed => ("failed", Some("Worker stopped before completing research.")),
+            Ending::Cancelled => ("cancelled", Some("Research cancelled.")),
+        };
+        run.insert("sequence".into(), (seq(run) + 1).into());
+        run.insert("stage".into(), "finished".into());
+        run.insert("completion".into(), completion.into());
+        if let Some(Value::Array(gaps)) = run.get_mut("gaps") {
+            gaps.extend(gap.map(Value::from));
+            let extra = gaps.len().saturating_sub(20);
+            gaps.drain(..extra);
+        }
+        recount(run, true);
+    }
+}
+
+fn seq(s: &Map<String, Value>) -> u64 {
+    s.get("sequence").and_then(Value::as_u64).unwrap_or(0)
+}
+
+/// v2 sets `counters` from the sources itself; a settled run has nothing in progress.
+fn recount(s: &mut Map<String, Value>, settled: bool) {
+    let count = |state: &str| {
+        s.get("sources")
+            .and_then(Value::as_array)
+            .map_or(0, |a| a.iter().filter(|x| x["state"] == state).count())
+    };
+    let counters = serde_json::json!({
+        "read": count("complete"),
+        "inProgress": if settled { 0 } else { count("fetching") },
+        "failed": count("unavailable"),
+    });
+    s.insert("counters".into(), counters);
+}
+
+/// A string of `min..=max` UTF-16 units (zod `.min` / `.max`).
+fn text_ok(v: &Value, min: usize, max: usize) -> bool {
+    v.as_str()
+        .is_some_and(|s| (min..=max).contains(&s.encode_utf16().count()))
+}
+
+fn id_ok(v: &Value) -> bool {
+    text_ok(v, 1, 128)
+}
+
+fn one_of(v: &Value, allowed: &[&str]) -> bool {
+    v.as_str().is_some_and(|s| allowed.contains(&s))
+}
+
+fn non_negative(v: &Value) -> bool {
+    v.as_f64().is_some_and(|n| n >= 0.0)
+}
+
+/// An `http(s)` URL with a host and no user name or password (v2 `webUrl`).
+fn web_url_ok(v: &Value) -> bool {
+    let Some(s) = v.as_str().filter(|_| text_ok(v, 1, 4096)) else {
+        return false;
+    };
+    let lower = s.to_ascii_lowercase();
+    let Some(rest) = lower
+        .strip_prefix("https://")
+        .or_else(|| lower.strip_prefix("http://"))
+    else {
+        return false;
+    };
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    !authority.is_empty() && !authority.contains('@') && !s.contains(char::is_whitespace)
+}
+
+/// Copies `key` if `ok` accepts it. A key that is there and fails, or a required one that is
+/// missing, fails the whole snapshot.
+fn pick(
+    from: &Map<String, Value>,
+    into: &mut Map<String, Value>,
+    key: &str,
+    required: bool,
+    ok: impl Fn(&Value) -> bool,
+) -> Option<()> {
+    match from.get(key) {
+        Some(v) if ok(v) => {
+            into.insert(key.into(), v.clone());
+            Some(())
+        }
+        Some(_) => None,
+        None if required => None,
+        None => Some(()),
+    }
+}
+
+fn in_unit(b: &Value, k: &str) -> bool {
+    b.get(k)
+        .and_then(Value::as_f64)
+        .is_some_and(|n| (0.0..=1.0).contains(&n))
+}
+
+fn passage_of(v: &Value) -> Option<Value> {
+    let p = v.as_object()?;
+    let mut out = Map::new();
+    pick(p, &mut out, "id", true, id_ok)?;
+    pick(p, &mut out, "text", true, |v| text_ok(v, 1, 2500))?;
+    pick(p, &mut out, "box", false, |b| {
+        ["x", "y", "width", "height"].iter().all(|k| in_unit(b, k))
+    })?;
+    if let Some(b) = out.get_mut("box").and_then(Value::as_object_mut) {
+        b.retain(|k, _| matches!(k.as_str(), "x" | "y" | "width" | "height"));
+    }
+    Some(Value::Object(out))
+}
+
+fn source_of(v: &Value) -> Option<Value> {
+    let s = v.as_object()?;
+    let mut out = Map::new();
+    pick(s, &mut out, "id", true, id_ok)?;
+    pick(s, &mut out, "url", true, web_url_ok)?;
+    pick(s, &mut out, "title", true, |v| text_ok(v, 0, 1000))?;
+    pick(s, &mut out, "state", true, |v| {
+        one_of(v, &["fetching", "complete", "unavailable"])
+    })?;
+    pick(s, &mut out, "retrievedAt", false, |v| text_ok(v, 0, 64))?;
+    pick(s, &mut out, "error", false, |v| text_ok(v, 0, 1000))?;
+    pick(s, &mut out, "text", false, |v| text_ok(v, 0, 6000))?;
+    pick(s, &mut out, "preview", false, |v| text_ok(v, 0, 4096))?;
+    let passages = match s.get("passages") {
+        None => vec![],
+        Some(p) => {
+            let all = p.as_array().filter(|a| a.len() <= 6)?;
+            all.iter().map(passage_of).collect::<Option<Vec<_>>>()?
+        }
+    };
+    out.insert("passages".into(), Value::Array(passages));
+    Some(Value::Object(out))
+}
+
+/// v2 `ResearchUpdate.safeParse`, for this conversation only: a complete bounded snapshot with
+/// unknown keys dropped, or nothing. Source ids must be distinct.
+fn research_update(raw: &Value, conversation: &str) -> Option<Map<String, Value>> {
+    let r = raw.as_object()?;
+    let mut out = Map::new();
+    pick(r, &mut out, "runId", true, id_ok)?;
+    pick(r, &mut out, "conversationId", true, |v| {
+        id_ok(v) && v.as_str() == Some(conversation)
+    })?;
+    pick(r, &mut out, "sequence", true, |v| v.as_u64().is_some())?;
+    pick(r, &mut out, "topic", true, |v| text_ok(v, 1, 2000))?;
+    pick(r, &mut out, "startedAt", true, non_negative)?;
+    pick(r, &mut out, "elapsedMs", true, non_negative)?;
+    pick(r, &mut out, "stage", true, |v| {
+        one_of(v, &["searching", "reading", "writing", "finished"])
+    })?;
+    pick(r, &mut out, "currentSourceId", false, id_ok)?;
+    pick(r, &mut out, "counters", true, |c| {
+        ["read", "inProgress", "failed"]
+            .iter()
+            .all(|k| c.get(k).and_then(Value::as_u64).is_some())
+    })?;
+    pick(r, &mut out, "completion", true, |v| {
+        one_of(v, &["running", "complete", "failed", "cancelled"])
+    })?;
+    pick(r, &mut out, "report", false, |v| {
+        v.get("path").is_some_and(|p| text_ok(p, 0, 4096))
+            && v.get("name").is_some_and(|n| text_ok(n, 0, 255))
+    })?;
+    if let Some(report) = out.get_mut("report").and_then(Value::as_object_mut) {
+        report.retain(|k, _| k == "path" || k == "name");
+    }
+    let sources = r.get("sources")?.as_array().filter(|a| a.len() <= 12)?;
+    let sources = sources.iter().map(source_of).collect::<Option<Vec<_>>>()?;
+    let ids: HashSet<&str> = sources.iter().filter_map(|s| s["id"].as_str()).collect();
+    if ids.len() != sources.len() {
+        return None;
+    }
+    out.insert("sources".into(), Value::Array(sources));
+    let gaps = match r.get("gaps") {
+        None => vec![],
+        Some(g) => {
+            let all = g.as_array().filter(|a| a.len() <= 20)?;
+            if !all.iter().all(|x| text_ok(x, 0, 1000)) {
+                return None;
+            }
+            all.clone()
+        }
+    };
+    out.insert("gaps".into(), Value::Array(gaps));
+    Some(out)
 }
 
 #[async_trait::async_trait]
@@ -174,25 +580,37 @@ impl Tooling for McpTooling {
             ));
         }
 
+        let key: ResearchKey = (plugin.clone(), ctx.session);
+        let owner = self.researching().begin(&key);
         let (tx, mut rx) = tokio::sync::mpsc::channel::<ProgressParams>(64);
         let out = ctx.progress.clone();
-        let forward = tokio::spawn(async move {
+        let forward = async {
             while let Some(p) = rx.recv().await {
+                let mut progress = progress_of(&p);
+                let said = p.meta.as_ref().and_then(|m| m.get(RESEARCH_META));
+                progress.research = self.researching().accept(&key, owner, said);
                 if let Some(out) = &out {
-                    // Lossy on purpose: a slow reader drops a line rather than stall the call.
-                    let _ = out.try_send(progress_line(&p));
+                    // Lossy on purpose: a slow reader drops a frame rather than stall the call.
+                    let _ = out.try_send(progress);
                 }
             }
-        });
+        };
         let call_ctx = CallCtx {
             conversation: Some(ctx.session.0.to_string()),
             progress: ctx.progress.is_some().then_some(tx),
             cancel: ctx.cancel.clone(),
             meta: Map::new(),
         };
-        let result = self.host.call_tool(&plugin, tool, args, call_ctx).await;
-        // The host dropped its sender with the call, so the forwarder drains and ends.
-        let _ = forward.await;
+        // The host drops its sender with the call, so the forwarder drains and ends.
+        let (result, ()) =
+            tokio::join!(self.host.call_tool(&plugin, tool, args, call_ctx), forward);
+        let ending = match &result {
+            _ if ctx.cancel.is_cancelled() => Ending::Cancelled,
+            Ok(r) if r.is_error != Some(true) => Ending::Complete,
+            Err(CallError::Cancelled) => Ending::Cancelled,
+            _ => Ending::Failed,
+        };
+        self.researching().close(&key, owner, ending);
         match result {
             Ok(r) => {
                 let mut out = outcome_of(&r);

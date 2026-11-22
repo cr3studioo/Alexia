@@ -31,7 +31,7 @@ pub struct ToolSpec {
 }
 
 /// A file a tool call made.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Produced {
     pub name: String,
     pub path: PathBuf,
@@ -68,7 +68,45 @@ pub struct ToolCtx {
     pub origin: Origin,
     pub background: bool,
     pub cancel: CancellationToken,
-    pub progress: Option<mpsc::Sender<String>>,
+    /// Where the call's progress goes. Bounded, and sent to with `try_send`: a slow reader
+    /// loses an update rather than stall the tool.
+    pub progress: Option<mpsc::Sender<ToolProgress>>,
+}
+
+/// One progress report of a running call, with the detail a plugin put in its `_meta`
+/// (v2 `tooling.ts` `onprogress`). Each field was checked on the way in.
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolProgress {
+    pub progress: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    /// A `data:image/…` URL, never a path or a host.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub preview: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stages: Option<Value>,
+    /// The stages are a plan; only ever true with `stages`.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub plan: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub controls: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub research: Option<Value>,
+}
+
+impl ToolProgress {
+    /// The report as one line a person reads (what a chat shows).
+    pub fn line(&self) -> String {
+        let line = match (&self.message, self.total) {
+            (Some(m), _) => m.clone(),
+            (None, Some(t)) => format!("{} of {}", self.progress, t),
+            (None, None) => self.progress.to_string(),
+        };
+        line.replace(['\r', '\n'], " ")
+    }
 }
 
 /// What the loop may call. `McpTooling` (P2-18) and a test fake.

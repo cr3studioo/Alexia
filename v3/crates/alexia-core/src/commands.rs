@@ -116,6 +116,7 @@ fn via(origin: &Origin) -> String {
         Origin::Channel { channel, chat } => format!("{channel}:{chat}"),
         Origin::Desktop => "desktop".into(),
         Origin::Scheduler { job } => format!("scheduler:{job:?}"),
+        Origin::Window => "window".into(),
     }
 }
 
@@ -135,9 +136,10 @@ fn month_start() -> Ms {
 const OWNER_ONLY: &str = "Commands are only taken from your own chat.";
 
 /// (TR-01) A command that answers, undoes or runs something, typed from anywhere but the
-/// owner's chat (a scheduled prompt, a plugin's conversation). Read-only built-ins still answer.
+/// owner's chat or window (a scheduled prompt, a plugin's conversation). Read-only built-ins
+/// still answer.
 fn owner_only(agent: &Agent, turn: &Turn) -> bool {
-    if matches!(turn.origin, Origin::Channel { .. }) {
+    if matches!(turn.origin, Origin::Channel { .. } | Origin::Window) {
         return false;
     }
     let said = turn.content.text();

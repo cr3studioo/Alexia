@@ -69,6 +69,9 @@ pub enum Origin {
     Scheduler {
         job: JobId,
     },
+    /// The owner at the keyboard of Alexia's own window: its questions are asked there, and
+    /// its slash commands run.
+    Window,
 }
 
 /// Chat = the fast path: one model call, no tools, no loop.
