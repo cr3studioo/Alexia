@@ -18,7 +18,7 @@ use alexia_core::{
     ProviderError, Question, Steer, ToolCtx, ToolOutcome, ToolSpec, Tooling,
 };
 use alexia_mcp::{HostConfig, McpHost, NoUpcalls, Timings};
-use alexia_store::{Content, Layout, MessageBody, Role, SessionId, Store, ToolCall};
+use alexia_store::{Content, Layout, MessageBody, Part, Role, SessionId, Store, ToolCall};
 use serde_json::{json, Map, Value};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -74,7 +74,7 @@ fn info(id: &str) -> ModelInfo {
         context: 32_768,
         free: true,
         tools: true,
-        vision: false,
+        vision: true, // photos reach the model (P2-73)
     }
 }
 
@@ -504,7 +504,7 @@ fn notes(w: &World) -> Vec<String> {
         .collect()
 }
 
-use alexia_core::{Brain, Lane, Phase, RunEnd, RunId, RunResult, Turn};
+use alexia_core::{Brain, InFile, JobId, Lane, Phase, Reply, RunEnd, RunId, RunResult, Turn};
 
 #[tokio::test]
 async fn answers_without_tools() {
@@ -933,36 +933,173 @@ async fn every_call_audited() {
     w.host.shutdown().await;
 }
 
-#[tokio::test]
-async fn command_lane_goes_to_commands() {
-    let w = world(Setup::new(turns(vec![text("A model should not answer.")]))).await;
-    let (tx, _rx) = mpsc::channel(256);
-    let turn = Turn {
+fn turn_from(w: &World, origin: Origin, said: &str, files: Vec<InFile>) -> Turn {
+    Turn {
         session: w.session,
-        origin: Origin::Desktop,
-        content: Content::Text("/help".into()),
-        files: Vec::new(),
+        origin,
+        content: Content::Text(said.into()),
+        files,
         received_at: 0,
         steer: Steer::none(),
-    };
-    let agent = w.agent.clone();
-    let joined =
-        tokio::spawn(async move { agent.reply(turn, tx, CancellationToken::new()).await }).await;
-    match joined {
-        // `commands::run` is P2-25's; until it lands, reaching its stub is reaching it.
-        Err(e) => {
-            let e = e.into_panic();
-            let msg = e
-                .downcast_ref::<String>()
-                .cloned()
-                .or_else(|| e.downcast_ref::<&str>().map(|s| (*s).to_owned()))
-                .unwrap_or_default();
-            assert!(msg.contains("P2-25"), "{msg}");
-        }
-        Ok(reply) => assert_eq!(reply.unwrap().lane, Lane::Command),
     }
+}
+
+async fn reply(w: &World, turn: Turn) -> Reply {
+    let (tx, _rx) = mpsc::channel(256);
+    w.agent
+        .reply(turn, tx, CancellationToken::new())
+        .await
+        .unwrap()
+}
+
+fn telegram() -> Origin {
+    Origin::Channel {
+        channel: "telegram".into(),
+        chat: "9".into(),
+    }
+}
+
+/// Every part of the last request's last user message.
+fn last_user_parts(w: &World) -> Vec<Part> {
+    let asked = w.asked.lock().unwrap();
+    let (_, req) = asked.last().expect("the model was asked");
+    let (_, b) = req
+        .messages
+        .iter()
+        .rev()
+        .find(|(r, _)| *r == Role::User)
+        .unwrap();
+    match &b.content {
+        Content::Parts(p) => p.clone(),
+        Content::Text(t) => vec![Part::Text { text: t.clone() }],
+    }
+}
+
+#[tokio::test]
+async fn channel_slash_text_is_a_command() {
+    let w = world(Setup::new(turns(vec![text("A model should not answer.")]))).await;
+    let r = reply(&w, turn_from(&w, telegram(), "/help", Vec::new())).await;
+    assert_eq!(r.lane, Lane::Command);
+    assert!(r.text.contains("/approve"), "{}", r.text);
     assert!(w.asked.lock().unwrap().is_empty());
     assert!(w.store.live_runs().unwrap().is_empty());
+    w.host.shutdown().await;
+}
+
+#[tokio::test]
+async fn scheduled_slash_text_is_not_a_command() {
+    let w = world(Setup::new(turns(vec![text("Noted.")]))).await;
+    let id = w
+        .store
+        .approval_open("r1", "telegram:9", "Delete notes.txt?", None, 1)
+        .unwrap();
+    let job = Origin::Scheduler { job: JobId(1) };
+    let r = reply(
+        &w,
+        turn_from(&w, job, &format!("/approve {id}"), Vec::new()),
+    )
+    .await;
+    assert_eq!(r.lane, Lane::Task);
+    assert_eq!(r.text, "Noted.");
+    assert_eq!(w.store.approval(id).unwrap().unwrap().answer, None);
+    {
+        let asked = w.asked.lock().unwrap();
+        assert!(said(&asked[0].1).contains(&format!("/approve {id}")));
+    }
+    w.host.shutdown().await;
+}
+
+#[tokio::test]
+async fn scheduled_turn_runs_in_background() {
+    // Every model turn calls a tool; only the ceiling ends the run.
+    let looping = || {
+        let mut s = Setup::new(Arc::new(|req, _| {
+            let n = turn_of(req);
+            vec![call(&format!("c{n}"), "look", json!({ "q": n }))]
+        }));
+        s.limits.max_steps = 2;
+        s.limits.background_steps = 4;
+        s
+    };
+    let w = world(looping()).await;
+    let job = Origin::Scheduler { job: JobId(1) };
+    reply(&w, turn_from(&w, job, "check the news", Vec::new())).await;
+    // The ceiling is the background one: four steps ran, not the foreground two.
+    assert_eq!(ran(&w).len(), 4);
+    // A turn from the owner's window still stops at the foreground ceiling.
+    let w2 = world(looping()).await;
+    reply(
+        &w2,
+        turn_from(&w2, Origin::Desktop, "check the news", Vec::new()),
+    )
+    .await;
+    assert_eq!(ran(&w2).len(), 2);
+    w.host.shutdown().await;
+    w2.host.shutdown().await;
+}
+
+#[tokio::test]
+async fn photo_reaches_the_model_as_an_image() {
+    let w = world(Setup::new(turns(vec![text("A cat.")]))).await;
+    let photo = w.root.join("cat.png");
+    std::fs::write(&photo, [0x89, b'P', b'N', b'G', 13, 10, 26, 10]).unwrap();
+    let file = InFile {
+        name: "cat.png".into(),
+        mime: "image/png".into(),
+        path: photo,
+    };
+    reply(&w, turn_from(&w, telegram(), "what is this?", vec![file])).await;
+    let parts = last_user_parts(&w);
+    assert_eq!(
+        parts,
+        vec![
+            Part::Text {
+                text: "what is this?".into()
+            },
+            Part::Image {
+                url: "data:image/png;base64,iVBORw0KGgo=".into()
+            },
+        ]
+    );
+    // The stored turn holds the image, so a resumed run sees it after the file is gone.
+    let stored = rows(&w);
+    assert_eq!(stored[0].body.content, Content::Parts(parts));
+    w.host.shutdown().await;
+}
+
+#[tokio::test]
+async fn text_file_inlined_and_binary_named() {
+    let w = world(Setup::new(turns(vec![text("Read.")]))).await;
+    let notes = w.root.join("notes.txt");
+    std::fs::write(&notes, "buy milk").unwrap();
+    let blob = w.root.join("dump.bin");
+    std::fs::write(&blob, [0u8, 159, 146, 150]).unwrap();
+    let files = vec![
+        InFile {
+            name: "notes.txt".into(),
+            mime: "text/plain".into(),
+            path: notes,
+        },
+        InFile {
+            name: "dump.bin".into(),
+            mime: "application/octet-stream".into(),
+            path: blob,
+        },
+    ];
+    reply(&w, turn_from(&w, telegram(), "", files)).await;
+    let parts = last_user_parts(&w);
+    assert_eq!(
+        parts,
+        vec![
+            Part::Text {
+                text: "notes.txt:\nbuy milk".into()
+            },
+            Part::Text {
+                text: "(The owner attached dump.bin, application/octet-stream, which Alexia cannot read yet.)"
+                    .into()
+            },
+        ]
+    );
     w.host.shutdown().await;
 }
 

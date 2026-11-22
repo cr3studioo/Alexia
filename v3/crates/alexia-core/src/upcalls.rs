@@ -28,7 +28,7 @@ use crate::agent::{Agent, Task};
 use crate::catalog::Candidate;
 use crate::router::{Needs, StepAsk};
 use crate::{
-    free, permissions, Brain, Budget, ChatChunk, ChatDone, ChatRequest, DraftFrame, DraftSink, Job,
+    free, permissions, Budget, ChatChunk, ChatDone, ChatRequest, DraftFrame, DraftSink, Job,
     Origin, Phase, ProviderError, Question, RunEnd, RunId, Steer, Turn,
 };
 
@@ -472,11 +472,9 @@ impl Agent {
             received_at: now_ms(),
             steer: Steer::none(),
         };
-        let (tx, rx) = mpsc::channel(8);
-        let drain = tokio::spawn(frames(rx, None, STREAM_EVERY));
-        let reply = self.reply(turn, tx, cancel).await;
-        let _ = drain.await;
-        match reply {
+        // Straight to the command handler: `reply` would turn a non-owner `/…` into a full
+        // tool-using run that skips the Local-mode and tools checks below.
+        match crate::commands::run(self, &turn, cancel).await {
             Ok(r) => Ok(assistant(r.text, "", false)),
             Err(e) => Err(fail(e.to_string())),
         }
