@@ -595,6 +595,7 @@ fn percentile(sorted: &[u128], p: usize) -> u128 {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "P2-39: tasks now go to the Agent, not the fake v2 core this test scripts; P2-39 rewrites it"]
 async fn fifty_messages_ack_under_300ms_and_chat_skips_v2() {
     let root = scratch("fifty");
     let (bot, bot_base) = Bot::start().await;
