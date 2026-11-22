@@ -95,7 +95,7 @@
 | P2-31 | Managed llama.cpp, speculative decoding | P2 | sonnet | P2-01 | alexia-core/{src/local.rs, tests/local.rs} | merged | 3 | cr3studioo/v3-P2-31 | |
 | P2-32 | GPU: fit, load cap, steps aside for games | P2 | sonnet | P2-01 | alexia-core/{src/gpu.rs, tests/gpu.rs} | merged | 1 | cr3studioo/v3-P2-32 | |
 | P2-33 | Hugging Face import and GGUF split files | P2 | sonnet | P2-01 | alexia-core/{src/hf.rs, tests/hf.rs} | merged | 2 | cr3studioo/v3-P2-33 | |
-| P2-34 | Local vision, local embeddings, the local checker model | P2 | sonnet | P2-31, P2-32, P2-33, P2-21 | alexia-core/{src/local.rs, src/upcalls.rs, tests/local_jobs.rs} | todo | 0 | | |
+| P2-34 | Local vision, local embeddings, the local checker model | P2 | sonnet | P2-31, P2-32, P2-33, P2-21 | alexia-core/{src/local.rs, src/upcalls.rs, tests/local_jobs.rs} | running | 1 | cr3studioo/v3-P2-34 | ctx_1c1e88f34982 |
 | P2-35 | Subscriptions through their official CLIs | P2 | sonnet | P2-17 | alexia-core/{src/subscription.rs, tests/subscription.rs} | merged | 1 | cr3studioo/v3-P2-35 | |
 | P2-36 | Compare two models | P2 | sonnet | P2-17 | alexia-core/{src/compare.rs, tests/compare.rs} | merged | 4 | cr3studioo/v3-P2-36 | |
 | P2-37 | Encrypted database at rest | P2 | opus | P2-02, P2-03, P2-10 | v3/Cargo.toml, v3/Cargo.lock, alexia-store/{Cargo.toml, src/db.rs, src/encrypt.rs, src/... | merged | 1 | cr3studioo/v3-P2-37 | crash-recovery follow-up (review) |
@@ -119,28 +119,28 @@
 | P2-55 | MCP: early cancel reaches request; WASM compile off runtime | P2 | opus | P2-52 | alexia-mcp/{conn,wasm,host}+tests | merged | 1 | cr3studioo/v3-P2-55 | |
 | P2-56 | Scheduler: one-shot survives shutdown; Every no overlap | P2 | opus | none | alexia-scheduler/{src/lib.rs, tests/scheduler.rs} | merged | 1 | cr3studioo/v3-P2-56 | |
 | P2-57 | Local models: hf hashing/cache/paths; GPU parsing | P2 | sonnet | none | alexia-core/{hf,gpu}+tests | merged | 1 | cr3studioo/v3-P2-57 | ctx_905ac878e85b |
-| P2-58 | Gateway: file message not overtaken by steers | P2 | sonnet | P2-38 | alexia-gateway/{src/gateway.rs, tests/gateway.rs} | todo | 0 | | follow-ups |
+| P2-58 | Gateway: file message not overtaken by steers | P2 | sonnet | P2-38 | alexia-gateway/{src/gateway.rs, tests/gateway.rs} | deferred | 0 | | after P2 (CEO: finish faster) |
 | P2-59 | Chat lane redacted: hedged redacts every cloud request | P2 | opus | P2-17 | alexia-core/{router.rs, tests/router.rs, router_steps.rs, chat.rs} | merged | 1 | cr3studioo/v3-P2-59 | ctx_ede66379757c |
 | P2-60 | Scheduler tools hold Weak<Scheduler>; no wiring cycle | P2 | opus | P2-56 | alexia-scheduler/{src/lib.rs, tests/scheduler.rs} | merged | 1 | cr3studioo/v3-P2-60 | |
 | P2-61 | One file URI decoder; no network paths; undo stays in plugin | P2 | opus | P2-51 | alexia-mcp/{uri,lib,serve}+tests, alexia-core/{permissions,tools}+tests | merged | 2 | cr3studioo/v3-P2-61 | |
 | P2-62 | New plugins unreviewed; GPU watcher hands hub what it needs | P2 | opus | P2-55, P2-57 | alexia-mcp/{host,supervise,tests/hold.rs}, alexia-core/{gpu}+tests | merged | 2 | cr3studioo/v3-P2-62 | |
-| P2-63 | One redaction of secrets, in alexia-mcp | P2 | opus | P2-38, P2-61 | alexia-mcp/{Cargo.toml,redact,process,lib}+tests, Cargo.lock, alexia-core/redact | todo | 0 | | review 5 |
-| P2-64 | One Job Object, scheduled approvals own chat, stricter name check | P2 | sonnet | P2-38, P2-63 | alexia-mcp/lib.rs, alexia-core/local.rs, gateway/{ask.rs,approvals}, ci/invariants.mjs | todo | 0 | | review 5 |
+| P2-63 | One redaction of secrets, in alexia-mcp | P2 | opus | P2-38, P2-61 | alexia-mcp/{Cargo.toml,redact,process,lib}+tests, Cargo.lock, alexia-core/redact | deferred | 0 | | after P2 (CEO: finish faster) |
+| P2-64 | One Job Object, scheduled approvals own chat, stricter name check | P2 | sonnet | P2-38, P2-63 | alexia-mcp/lib.rs, alexia-core/local.rs, gateway/{ask.rs,approvals}, ci/invariants.mjs | deferred | 0 | | after P2 (CEO: finish faster) |
 | P2-65 | Store: test dirs cleaned, keychain probe per process, plain kept | P2 | opus | P2-54 | alexia-store/{tests/*, src/secrets.rs, src/encrypt.rs} | merged | 1 | cr3studioo/v3-P2-65 | |
 | P2-66 | MCP: test folders cleaned up | P2 | sonnet | P2-55, P2-61 | alexia-mcp/tests/{scratch,alexia_layer,compute,host,manifest(s),purge,reload,supervise,types_p2,wasm}.rs | merged | 1 | cr3studioo/v3-P2-66 | |
-| P2-67 | Core: test dirs cleaned; registry export unique per call | P2 | opus | P2-61, P2-62 | alexia-core/{tests/*, src/gpu.rs} | todo | 0 | | follow-ups 6 |
+| P2-67 | Core: test dirs cleaned; registry export unique per call | P2 | opus | P2-61, P2-62 | alexia-core/{tests/*, src/gpu.rs} | review | 1 | cr3studioo/v3-P2-67 | rv ctx_01047e9cbc53 |
 | P2-68 | Router: notes per run, keychain cached, bad pins said | P2 | opus | P2-20 | alexia-core/{src/router.rs, tests/router_steps.rs, src/agent.rs} | merged | 1 | cr3studioo/v3-P2-68 | |
 | P2-69 | OpenAI wire: blank text empty; answered by next tool turns | P2 | sonnet | none | alexia-core/{src/openai.rs, tests/openai.rs} | merged | 1 | cr3studioo/v3-P2-69 | |
-| P2-70 | Gateway: unsent question not a denial; test dirs cleaned | P2 | opus | P2-58, P2-64 | alexia-gateway/{src/ask.rs, tests/*} | todo | 0 | | follow-ups 6 |
-| P2-71 | Hub and MCP conn tests: test folders cleaned up | P2 | sonnet | P2-39, P2-48, P2-63, P2-66 | alexia-hub/{tests/*, src/media.rs}, alexia-mcp/tests/conn.rs | todo | 0 | | follow-ups 6 |
+| P2-70 | Gateway: unsent question not a denial; test dirs cleaned | P2 | opus | P2-58, P2-64 | alexia-gateway/{src/ask.rs, tests/*} | deferred | 0 | | after P2 (CEO: finish faster) |
+| P2-71 | Hub and MCP conn tests: test folders cleaned up | P2 | sonnet | P2-39, P2-48, P2-63, P2-66 | alexia-hub/{tests/*, src/media.rs}, alexia-mcp/tests/conn.rs | deferred | 0 | | after P2 (CEO: finish faster) |
 | P2-72 | Agent exposes its parts | P2 | sonnet | P2-20 | alexia-core/{src/agent.rs, tests/agent.rs} | merged | 1 | cr3studioo/v3-P2-72 | |
-| P2-73 | Agent: slash commands only from the owner's chat; attached f | P2 | opus | P2-21, P2-25, P2-68 | alexia-core/{src/agent.rs, tests/agent.rs, src/commands.rs, tests/commands.rs} | todo | 0 | | follow-ups 7 |
+| P2-73 | Agent: slash commands only from the owner's chat; attached f | P2 | opus | P2-21, P2-25, P2-68 | alexia-core/{src/agent.rs, tests/agent.rs, src/commands.rs, tests/commands.rs} | review | 1 | cr3studioo/v3-P2-73 | rv ctx_47140994efe3 |
 | P2-74 | Scheduler: no slash-command prompts; only a shutdown keeps a | P2 | opus | none | alexia-scheduler/{src/lib.rs, tests/scheduler.rs} | merged | 1 | cr3studioo/v3-P2-74 | |
-| P2-75 | Agent loop edges: a stop mid-gate is recorded, the asked mod | P2 | opus | P2-73, P2-27 | alexia-core/{src/agent.rs, tests/agent.rs} | todo | 0 | | follow-ups 7 |
-| P2-76 | One permission gate: undo and plugin commands go through the | P2 | opus | P2-75, P2-77, P2-25, P2-28 | alexia-core/{src/agent.rs, tests/agent.rs, src/undo.rs, tests/undo.rs, src/commands.rs, te | todo | 0 | | follow-ups 7 |
-| P2-77 | Router: a local job never leaves the computer; compare redac | P2 | opus | P2-68, P2-73 | alexia-core/{src/router.rs, tests/router_steps.rs, src/compare.rs, tests/compare.rs, src/c | todo | 0 | | follow-ups 7 |
-| P2-78 | Tooling: a plugin's file link is sent only from where the pl | P2 | opus | P2-67 | alexia-core/{src/tools.rs, tests/tools.rs} | todo | 0 | | follow-ups 7 |
+| P2-75 | Agent loop edges: a stop mid-gate is recorded, the asked mod | P2 | opus | P2-73, P2-27 | alexia-core/{src/agent.rs, tests/agent.rs} | deferred | 0 | | after P2 (CEO: finish faster) |
+| P2-76 | One permission gate: undo and plugin commands go through the | P2 | opus | P2-75, P2-77, P2-25, P2-28 | alexia-core/{src/agent.rs, tests/agent.rs, src/undo.rs, tests/undo.rs, src/commands.rs, te | deferred | 0 | | after P2 (CEO: finish faster) |
+| P2-77 | Router: a local job never leaves the computer; compare redac | P2 | opus | P2-68, P2-73 | alexia-core/{src/router.rs, tests/router_steps.rs, src/compare.rs, tests/compare.rs, src/c | deferred | 0 | | after P2 (CEO: finish faster) |
+| P2-78 | Tooling: a plugin's file link is sent only from where the pl | P2 | opus | P2-67 | alexia-core/{src/tools.rs, tests/tools.rs} | deferred | 0 | | after P2 (CEO: finish faster) |
 | P2-79 | Subscriptions: a clean environment, no Codex shell on tool o | P2 | opus | none | alexia-core/{src/subscription.rs, tests/subscription.rs} | merged | 2 | cr3studioo/v3-P2-79 | |
 | P2-80 | Resume: a live job's age counts from its last step; every en | P2 | sonnet | none | alexia-core/{src/resume.rs, tests/resume.rs} | merged | 1 | cr3studioo/v3-P2-80 | |
-| P2-81 | Say goes to its run's chat and carries the run's files | P2 | sonnet | P2-48, P2-70, P2-74, P2-80 | alexia-core/{src/bus.rs, src/resume.rs, tests/resume.rs}, alexia-scheduler/{src/lib.rs, te | todo | 0 | | follow-ups 7 |
-| P2-82 | MCP: a WASM start that is given up on stops the module; comp | P2 | opus | P2-66 | alexia-mcp/{src/wasm.rs, tests/wasm.rs, src/serve.rs, tests/compute.rs} | todo | 0 | | follow-ups 7 |
+| P2-81 | Say goes to its run's chat and carries the run's files | P2 | sonnet | P2-48, P2-70, P2-74, P2-80 | alexia-core/{src/bus.rs, src/resume.rs, tests/resume.rs}, alexia-scheduler/{src/lib.rs, te | deferred | 0 | | after P2 (CEO: finish faster) |
+| P2-82 | MCP: a WASM start that is given up on stops the module; comp | P2 | opus | P2-66 | alexia-mcp/{src/wasm.rs, tests/wasm.rs, src/serve.rs, tests/compute.rs} | review | 1 | cr3studioo/v3-P2-82 | approved after fix, merge after gate |

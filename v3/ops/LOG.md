@@ -490,3 +490,8 @@
 2026-11-22 P2-74 built (deviation: Cancelled && token cancelled) -> review ctx_2468a52c3d81
 2026-11-22 P2-74 approved (Cancelled && token deviation accepted). Merged, gating
 2026-11-22 P2-74 gate OK (74 suites), pushed. Batch done. Follow-ups to plan: load-flaky tests (telegram_e2e:786 latency, tools.rs fixtures, wasm.rs:541); router keys JoinError caches empty 60s (router.rs:709); upcalls register no size cap (upcalls.rs:1013); INTERFACES.md:1261 answer_dangling; undo double-run race (undo.rs:134); is_helper fails open (helpers.rs:45); manual: claude/codex start on Windows with env_clear
+2026-11-22 Dispatched next wave: P2-73:ctx_fdfc79895540 P2-67:ctx_521f3fd5970a P2-82:ctx_e0040157843a P2-34:ctx_1c1e88f34982
+2026-11-22 P2-67 built (invariants + 2nd core run killed low memory) -> review ctx_01047e9cbc53
+2026-11-22 P2-82 built (full alexia-mcp test killed low memory) -> review ctx_006dfcd58ac4
+2026-11-22 P2-73 built (workspace clippy killed low memory; desktop window no longer runs slash commands, per spec) -> review ctx_47140994efe3
+2026-11-22 CEO (owner: finish faster, P2 grew ~40 tasks): deferred 10 unstarted follow-ups (P2-58,63,64,70,71,75,76,77,78,81) to after P2 gate; CEO.md: no mid-phase reviews, scope control, one-line review fixes by CEO. P2-82 review changes (.. bypass to SMB) fixed by CEO 2154348, compute 16/16, clippy ok; approved, merge after gate

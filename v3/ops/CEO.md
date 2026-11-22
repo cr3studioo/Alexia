@@ -402,9 +402,16 @@ You merge one branch at a time, so `cr3studioo/v3` is always green.
 5. **Clean up:** `git worktree remove <repo>-wt\<id>` and delete the local task branch. Keep the
    remote task branch only if the owner asked for that in `OWNER.md`.
 
-**Every 10 merges, and at the end of each phase,** hire a Reviewer for a whole-phase review of
-`cr3studioo/v3`: invariant, crate boundaries, dead code, obvious duplication. File what they find
-as new tasks.
+**At the end of each phase only,** hire a Reviewer for a whole-phase review of `cr3studioo/v3`:
+invariant, crate boundaries, dead code, obvious duplication. No mid-phase reviews (owner,
+2026-11-22: P2 grew by ~40 follow-up tasks this way).
+
+**Scope control (owner, 2026-11-22).** A phase's task list is fixed once it is planned. A review
+finding becomes a new task in the current phase only if it is a security hole, data loss, a
+crash, or the phase's own spec not being met. Everything else (nits, flaky-under-load tests,
+cleanups, doc drift) goes on one line in `LOG.md` tagged `LATER` and is planned after the phase
+gate. A reviewer "changes" verdict that is a one-line fix is fixed by the CEO in the task's
+worktree, not with a fix round.
 
 ---
 
