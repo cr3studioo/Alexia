@@ -85,6 +85,7 @@ dependencies = [
  "alexia-store",
  "async-trait",
  "base64 0.22.1",
+ "chrono",
  "reqwest",
  "rpassword",
  "rusqlite",
