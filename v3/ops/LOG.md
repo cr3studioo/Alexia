@@ -510,3 +510,4 @@
 2026-11-22 P2-48 approved. LATER: encrypt under ALEXIA_SECRETS_IN_MEMORY only warns (main.rs:1012; key lost if var leaks into a real shell); edit_folders exact-string compare on Windows. Merged, gating
 2026-11-22 P2-40 approved (76 suites; v2 conformance 6/6, 15 plugins running). Merge after P2-48 gate
 2026-11-22 P2-48 gate OK (76 suites), pushed
+2026-11-22 P2-40 gate OK (76 suites), pushed
