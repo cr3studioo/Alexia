@@ -452,6 +452,24 @@ async fn command_in_sample_runs_command() {
 }
 
 #[tokio::test]
+async fn plugin_command_is_never_a_task() {
+    let w = world("p", vec!["big-70b"], false, Arc::new(|_, _| text("model"))).await;
+    // An owner-only command from a plugin is refused, not run as a tool-using turn.
+    let got = sample(&w, json!({ "messages": [say("/approve 1")] }))
+        .await
+        .unwrap();
+    assert_eq!(
+        reply_text(&got),
+        "Commands are only taken from your own chat."
+    );
+    // Read-only built-ins still answer, and neither asks a model.
+    sample(&w, json!({ "messages": [say("/help")] }))
+        .await
+        .unwrap();
+    assert!(models_asked(&w).is_empty());
+}
+
+#[tokio::test]
 async fn stream_progress_frames() {
     let w = world(
         "p",

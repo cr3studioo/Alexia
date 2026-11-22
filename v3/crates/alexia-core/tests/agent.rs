@@ -1002,9 +1002,10 @@ async fn scheduled_slash_text_is_not_a_command() {
     assert_eq!(r.lane, Lane::Task);
     assert_eq!(r.text, "Noted.");
     assert_eq!(w.store.approval(id).unwrap().unwrap().answer, None);
-    let asked = w.asked.lock().unwrap();
-    assert!(said(&asked[0].1).contains(&format!("/approve {id}")));
-    drop(asked);
+    {
+        let asked = w.asked.lock().unwrap();
+        assert!(said(&asked[0].1).contains(&format!("/approve {id}")));
+    }
     w.host.shutdown().await;
 }
 
