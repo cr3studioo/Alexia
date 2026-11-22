@@ -88,7 +88,6 @@ dependencies = [
  "reqwest",
  "rpassword",
  "rusqlite",
- "serde",
  "serde_json",
  "tokio",
  "tokio-util",

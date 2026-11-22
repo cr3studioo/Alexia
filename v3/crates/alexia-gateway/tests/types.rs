@@ -160,12 +160,13 @@ fn config_defaults() {
 #[tokio::test]
 async fn stub_gateway_stops_on_cancel() {
     let store = Arc::new(Store::open_in_memory().unwrap());
-    let mut gateway = Gateway::new(
+    let mut gateway = Gateway::with_channels(
         GatewayConfig::default(),
         store,
         Bus::new(16),
         Arc::new(NoBrain),
         Arc::new(FakeMedia),
+        alexia_gateway::ChannelSet::new(),
     );
     gateway.add(Arc::new(FakeChannel));
     let token = CancellationToken::new();

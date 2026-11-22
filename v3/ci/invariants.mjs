@@ -9,6 +9,8 @@
  *    configured, pairing_codes, v2_secret_names); scans `src/` and `tests/`.
  * 2. Internal dependency edges are exactly the allowed table; licence and SPDX headers.
  * 3. No hard-coded absolute paths in crate sources.
+ * 11. No v2 core (P2-38): no `V2Bridge`, `ALEXIA_V2_ROOT|URL|TOKEN` or `/api/chat` in any
+ *    crate's `src/`, comments included.
  *
  * Deliberate deviation from the spec (CEO-approved): lines whose trimmed text starts with `//`
  * (so `///` and `//!` too) are skipped by every check; and the path check (3) also skips test
@@ -94,6 +96,18 @@ export function pathHits(path, text) {
   return out
 }
 
+const V2_CORE = /V2Bridge|ALEXIA_V2_(?:ROOT|URL|TOKEN)\b|\/api\/chat/
+
+/** Hits for check 11: the hub never starts or calls v2 core (INTERFACES.md §2.6, §7). */
+export function v2Hits(path, text) {
+  const out = []
+  text.split('\n').forEach((line, i) => {
+    const m = line.match(V2_CORE)
+    if (m) out.push(`${path}:${i + 1}: names v2 core ("${m[0]}")`)
+  })
+  return out
+}
+
 /** Hits for check 2's graph half. `packages` is `cargo metadata`'s `packages`. */
 export function graphHits(packages) {
   const internal = new Set(packages.map((p) => p.name))
@@ -134,7 +148,7 @@ function run() {
       const text = readFileSync(f, 'utf8')
       hits.push(...spdxHits(path, text), ...channelHits(path, text))
       if (path.startsWith(`v3/crates/${c}/src/`)) {
-        hits.push(...pluginHits(path, text, ids), ...pathHits(path, text))
+        hits.push(...pluginHits(path, text, ids), ...pathHits(path, text), ...v2Hits(path, text))
       }
     }
   }
@@ -214,6 +228,14 @@ function selfTest() {
   expect('a plugin id after an out-of-line #[cfg(test)] mod tests;', pluginHits(src, '#[cfg(test)]\nmod tests;\nlet a = "voice";', ['voice']))
   ok('a path under tests/', pathHits('v3/crates/a/tests/t.rs', 'let p = "/home/x";'))
   ok('a relative path', pathHits(src, 'let p = "data/x";'))
+  expect('V2Bridge', v2Hits(hub, 'let b = V2Bridge::new(cfg);'))
+  expect('ALEXIA_V2_ROOT', v2Hits(hub, 'std::env::var("ALEXIA_V2_ROOT")'))
+  expect('ALEXIA_V2_URL', v2Hits(hub, 'std::env::var("ALEXIA_V2_URL")'))
+  expect('ALEXIA_V2_TOKEN', v2Hits(hub, 'std::env::var("ALEXIA_V2_TOKEN")'))
+  expect('/api/chat', v2Hits(hub, 'let u = format!("{base}/api/chat");'))
+  expect('V2Bridge in a doc comment', v2Hits(hub, '/// Implemented by the V2Bridge.'))
+  ok('the v2 importer', v2Hits(hub, 'import_v2(&store, v2, &layout)?;'))
+  ok('ALEXIA_V2_DATA_NAME', v2Hits(hub, 'std::env::var("ALEXIA_V2_DATA_NAME")'))
   return bad
 }
 
