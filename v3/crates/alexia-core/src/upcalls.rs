@@ -13,7 +13,8 @@ use std::time::Duration;
 use alexia_mcp::alexia::{AttachmentsCall, PrivacyMode};
 use alexia_mcp::jsonrpc::{code, RpcError};
 use alexia_mcp::types::{
-    ClientCapabilities, CreateMessageParams, Empty, ProgressParams, ProgressToken, Root,
+    CallToolResult, ClientCapabilities, CreateMessageParams, Empty, ProgressParams, ProgressToken,
+    Root,
 };
 use alexia_mcp::{HostFacts, PluginId, ProgressSink, Upcalls};
 use alexia_store::{now_ms, Content, MessageBody, Part, Role, SessionId, Store};
@@ -54,6 +55,8 @@ const BUSY: &str = "The free models are all busy right now. Try again in a minut
 const NO_FREE: &str = "No free model can answer right now.";
 const NEW_ALREADY: &str = "This is already a new chat — nothing has been said in it.";
 const NEW_STARTED: &str = "Started a new chat.";
+const NO_LOOK: &str = "Alexia cannot look at pictures right now: no local vision model is installed, or a game is using the GPU.";
+const NO_EMBED: &str = "Alexia cannot embed text right now: no local embedding model is installed, or a game is using the GPU.";
 
 fn fail(message: impl Into<String>) -> RpcError {
     RpcError::new(code::INTERNAL_ERROR, message)
@@ -824,6 +827,64 @@ impl Upcalls for Agent {
             display_name: text("display_name").unwrap_or_else(|| "Alexia".into()),
             privacy_mode: privacy(store),
             locale: text("locale").unwrap_or_else(|| "en-GB".into()),
+        }
+    }
+
+    /// MO-06, MO-07: what core answers itself, when a model for it is installed.
+    fn host_caps(&self) -> Vec<String> {
+        let Some(jobs) = self.local_jobs() else {
+            return Vec::new();
+        };
+        [(Job::Vision, "vision.describe"), (Job::Local, "text.embed")]
+            .into_iter()
+            .filter(|(job, _)| jobs.can(*job))
+            .map(|(_, cap)| cap.to_owned())
+            .collect()
+    }
+
+    /// `vision.describe` `{image: <data URL>}` → `{description}`; `text.embed` `{texts: [..]}` →
+    /// `{vectors: [[..]]}`. Both run on the local model, so nothing leaves this computer.
+    async fn host_call(
+        &self,
+        _plugin: &PluginId,
+        cap: &str,
+        args: Map<String, Value>,
+        cancel: CancellationToken,
+    ) -> Option<Result<CallToolResult, RpcError>> {
+        let jobs = self.local_jobs()?;
+        let answer = |out: Map<String, Value>| CallToolResult {
+            content: vec![json!({"type": "text", "text": Value::Object(out.clone()).to_string()})],
+            structured_content: Some(out),
+            is_error: None,
+            meta: None,
+        };
+        match cap {
+            "vision.describe" => {
+                let Some(image) = args.get("image").and_then(Value::as_str) else {
+                    return Some(Err(bad("vision.describe needs an `image` (a data: URL).")));
+                };
+                if !image.starts_with("data:image/") {
+                    return Some(Err(bad("The `image` must be a data:image/ URL.")));
+                }
+                Some(match jobs.describe(image, cancel).await {
+                    Some(d) => Ok(answer(Map::from_iter([("description".into(), json!(d))]))),
+                    None => Err(fail(NO_LOOK)),
+                })
+            }
+            "text.embed" => {
+                let texts: Option<Vec<String>> = args
+                    .get("texts")
+                    .and_then(Value::as_array)
+                    .and_then(|a| a.iter().map(|t| t.as_str().map(str::to_owned)).collect());
+                let Some(texts) = texts else {
+                    return Some(Err(bad("text.embed needs `texts`, a list of strings.")));
+                };
+                Some(match jobs.embed(&texts, cancel).await {
+                    Some(v) => Ok(answer(Map::from_iter([("vectors".into(), json!(v))]))),
+                    None => Err(fail(NO_EMBED)),
+                })
+            }
+            _ => None,
         }
     }
 
