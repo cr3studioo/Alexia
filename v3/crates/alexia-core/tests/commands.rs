@@ -414,15 +414,47 @@ async fn approve_twice_says_already() {
     let w = world(&[], vec![], true).await;
     let id = open_approval(&w);
     let s = w.store.create_session(None).unwrap();
-    say(&w, Origin::Desktop, s, &format!("/approve {id}")).await;
+    say(&w, telegram("9"), s, &format!("/approve {id}")).await;
     let mut bus = w.agent.parts().bus.subscribe();
-    let said = say(&w, Origin::Desktop, s, &format!("/deny {id}")).await;
+    let said = say(&w, telegram("9"), s, &format!("/deny {id}")).await;
     assert!(said.contains("already answered"), "{said}");
     // The first answer stands, and nothing more was published.
     assert_eq!(w.store.approval(id).unwrap().unwrap().answer, Some(true));
     assert!(bus.try_recv().is_err());
-    let none = say(&w, Origin::Desktop, s, "/approve 999").await;
+    let none = say(&w, telegram("9"), s, "/approve 999").await;
     assert!(none.contains("no waiting question #999"), "{none}");
+    w.host.shutdown().await;
+}
+
+#[tokio::test]
+async fn owner_commands_refused_from_desktop() {
+    let w = world(&[("alpha", &[("greet", "Say hello.")])], vec![], true).await;
+    let id = open_approval(&w);
+    let s = w.store.create_session(None).unwrap();
+    let refused = "Commands are only taken from your own chat.";
+    for typed in [
+        format!("/approve {id}"),
+        format!("/deny {id}"),
+        "/undo".into(),
+        "/greet hi".into(),
+        "/alpha.greet hi".into(),
+    ] {
+        assert_eq!(
+            say(&w, Origin::Desktop, s, &typed).await,
+            refused,
+            "{typed}"
+        );
+    }
+    let job = Origin::Scheduler {
+        job: alexia_core::JobId(1),
+    };
+    assert_eq!(say(&w, job, s, &format!("/approve {id}")).await, refused);
+    assert_eq!(w.store.approval(id).unwrap().unwrap().answer, None);
+    assert!(w.ran.lock().unwrap().is_empty(), "no plugin command ran");
+    // Read-only built-ins still answer.
+    assert!(say(&w, Origin::Desktop, s, "/help")
+        .await
+        .contains("/approve"));
     w.host.shutdown().await;
 }
 
@@ -452,9 +484,9 @@ async fn not_in_v3_yet_sentence() {
 async fn plugin_command_calls_its_tool() {
     let w = world(&[("alpha", &[("greet", "Say hello.")])], vec![], true).await;
     let s = w.store.create_session(None).unwrap();
-    let said = say(&w, Origin::Desktop, s, "/greet to the world").await;
+    let said = say(&w, telegram("9"), s, "/greet to the world").await;
     assert_eq!(said, "alpha__greet ran");
-    say(&w, Origin::Desktop, s, "/greet").await;
+    say(&w, telegram("9"), s, "/greet").await;
     {
         let ran = w.ran.lock().unwrap();
         assert_eq!(ran[0].0, "alpha__greet");

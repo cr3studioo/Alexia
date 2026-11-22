@@ -132,6 +132,23 @@ fn month_start() -> Ms {
         .map_or(0, |t| t.timestamp_millis())
 }
 
+const OWNER_ONLY: &str = "Commands are only taken from your own chat.";
+
+/// (TR-01) A command that answers, undoes or runs something, typed from anywhere but the
+/// owner's chat (a scheduled prompt, a plugin's conversation). Read-only built-ins still answer.
+fn owner_only(agent: &Agent, turn: &Turn) -> bool {
+    if matches!(turn.origin, Origin::Channel { .. }) {
+        return false;
+    }
+    let said = turn.content.text();
+    let word = said.trim().trim_start_matches('/').trim_start();
+    let word = word.split(char::is_whitespace).next().unwrap_or_default();
+    matches!(word, "approve" | "deny" | "undo")
+        || list(&manifests(agent))
+            .iter()
+            .any(|c| c.plugin.is_some() && (c.name == word || c.alias.as_deref() == Some(word)))
+}
+
 /// Called by `Agent::reply` for Lane::Command. Appends the turn and the answer to the session.
 pub async fn run(
     agent: &Agent,
@@ -143,7 +160,11 @@ pub async fn run(
     store
         .append(turn.session, Role::User, None, &body(turn.content.clone()))
         .map_err(other)?;
-    let (text, model) = answer(agent, turn, &cancel).await?;
+    let (text, model) = if owner_only(agent, turn) {
+        (OWNER_ONLY.to_owned(), None)
+    } else {
+        answer(agent, turn, &cancel).await?
+    };
     store
         .append(
             turn.session,

@@ -10,7 +10,9 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use alexia_mcp::{McpHost, PluginId};
-use alexia_store::{now_ms, Content, Layout, MessageBody, Ms, Role, SessionId, Store, ToolCall};
+use alexia_store::{
+    now_ms, Content, Layout, MessageBody, Ms, Part, Role, SessionId, Store, ToolCall,
+};
 use serde_json::{Map, Value};
 use tokio::sync::mpsc;
 use tokio::task::JoinSet;
@@ -962,7 +964,76 @@ impl Agent {
     }
 }
 
-/// Lane::Command → `commands::run`; else append the user turn, build a Task, `run`, map to Reply.
+/// The bridge's document limit (P2-38 deletes the bridge; this is its port).
+const MAX_DOCUMENT: u64 = 20 * 1024 * 1024;
+/// The most text a text-like file inlines into the turn.
+const MAX_TEXT_FILE: u64 = 200 * 1024;
+
+/// The turn's content with its files read in: images as data URLs, text-like files inlined,
+/// anything else named as unreadable. Stored as the user message, so a resumed run (P2-26)
+/// sees the same content after the gateway deleted the files.
+async fn attach(turn: &Turn) -> Content {
+    fn base64(bytes: &[u8]) -> String {
+        const ABC: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+        for c in bytes.chunks(3) {
+            let n = u32::from(c[0]) << 16
+                | u32::from(*c.get(1).unwrap_or(&0)) << 8
+                | u32::from(*c.get(2).unwrap_or(&0));
+            for i in 0..4 {
+                out.push(if i <= c.len() {
+                    char::from(ABC[(n >> (18 - 6 * i) & 63) as usize])
+                } else {
+                    '='
+                });
+            }
+        }
+        out
+    }
+    if turn.files.is_empty() {
+        return turn.content.clone();
+    }
+    let mut parts = match &turn.content {
+        Content::Text(t) if t.is_empty() => Vec::new(),
+        Content::Text(t) => vec![Part::Text { text: t.clone() }],
+        Content::Parts(p) => p.clone(),
+    };
+    for f in &turn.files {
+        let ext = f.path.extension().and_then(|e| e.to_str()).unwrap_or("");
+        let ext = ext.to_ascii_lowercase();
+        let image = f.mime.starts_with("image/");
+        let texty = f.mime.starts_with("text/")
+            || matches!(f.mime.as_str(), "application/json" | "application/xml")
+            || matches!(ext.as_str(), "md" | "csv");
+        let limit = if image { MAX_DOCUMENT } else { MAX_TEXT_FILE };
+        let size = tokio::fs::metadata(&f.path).await.map(|m| m.len()).ok();
+        let read = match size {
+            Some(n) if (image || texty) && n <= limit => tokio::fs::read(&f.path).await.ok(),
+            _ => None,
+        };
+        let part = match read {
+            Some(bytes) if image => Some(Part::Image {
+                url: format!("data:{};base64,{}", f.mime, base64(&bytes)),
+            }),
+            Some(bytes) => String::from_utf8(bytes).ok().map(|text| Part::Text {
+                text: format!("{}:\n{text}", f.name),
+            }),
+            None => None,
+        };
+        parts.push(part.unwrap_or_else(|| {
+            tracing::warn!(file = %f.name, mime = %f.mime, ?size, "an attached file is not read");
+            Part::Text {
+                text: format!(
+                    "(The owner attached {}, {}, which Alexia cannot read yet.)",
+                    f.name, f.mime
+                ),
+            }
+        }));
+    }
+    Content::Parts(parts)
+}
+
+/// Lane::Command (owner's chat only) → `commands::run`; else append the user turn, build a Task, `run`, map to Reply.
 #[async_trait::async_trait]
 impl Brain for Agent {
     async fn reply(
@@ -971,13 +1042,17 @@ impl Brain for Agent {
         draft: DraftSink,
         cancel: CancellationToken,
     ) -> Result<Reply, BrainError> {
-        if lane::lane(&turn.content) == Lane::Command {
+        // Only the owner's own chat can run a command; from anywhere else `/…` is text (TR-01).
+        if matches!(turn.origin, Origin::Channel { .. })
+            && lane::lane(&turn.content) == Lane::Command
+        {
             return commands::run(self, &turn, cancel).await;
         }
         let began = Instant::now();
         let store = &self.parts.store;
+        let content = attach(&turn).await;
         store
-            .append(turn.session, Role::User, None, &body(turn.content.clone()))
+            .append(turn.session, Role::User, None, &body(content))
             .map_err(other)?;
         let messages = store
             .history(turn.session, None)
@@ -990,7 +1065,7 @@ impl Brain for Agent {
             origin: turn.origin.clone(),
             messages,
             standing: Vec::new(),
-            background: false,
+            background: matches!(turn.origin, Origin::Scheduler { .. }),
             plugin: None,
             run: None,
             parent: None,
