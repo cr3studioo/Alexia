@@ -58,6 +58,7 @@ v3/
     alexia-core/             lib
     alexia-gateway/          lib
     alexia-scheduler/        lib
+    alexia-api/              lib  (P2D) the window's HTTP server
     alexia-hub/              bin  alexia-hub.exe
     alexia-limb/             bin  alexia-limb(.exe)
   specs/
@@ -77,17 +78,21 @@ Changing `connect/` itself needs a task spec that names it (CEO rule 4).
 | `alexia-core` | lib | The event bus, the agent loop, router and providers, permissions and rails. | `alexia-store`, `alexia-mcp` |
 | `alexia-gateway` | lib | Channels: instant ack, merging, drafts, delivery. | `alexia-store`, `alexia-core` |
 | `alexia-scheduler` | lib | The proactivity engine: triggers, watches, do-not-disturb. | `alexia-store`, `alexia-core` |
-| `alexia-hub` | bin | Wires everything together on the Windows PC; CLI; the v2 bridge (V3-1). | all five libs, `alexia-connect` |
+| `alexia-api` | lib | (P2D, D-P2D-1) The window's HTTP server: the gate, the static shell (`packages/ui`), one module per screen answering v2's `/api/*` shapes. | `alexia-store`, `alexia-mcp`, `alexia-core`, `alexia-gateway`, `alexia-scheduler` |
+| `alexia-hub` | bin | Wires everything together on the Windows PC; CLI; the v2 bridge (V3-1). | all six libs, `alexia-connect` |
 | `alexia-limb` | bin | The per-device process (Mac first): exposes the device to the hub as an MCP server over the mesh. | `alexia-mcp`, `alexia-connect` |
 
-The graph is a strict DAG: `store ← mcp ← core ← {gateway, scheduler} ← hub`. Nothing below
+The graph is a strict DAG: `store ← mcp ← core ← {gateway, scheduler} ← api ← hub` (P2D: `api`
+sits between the gateway/scheduler and the hub). Nothing below
 may depend on anything above. `gateway` and `scheduler` never depend on each other; they talk
 through the bus. A CI step (`cargo metadata` + a 20-line script) fails on any edge not in this
 table.
 
 **Not crates, on purpose.** The GPU job arbiter (D213) is a module of `alexia-core`
 (`alexia_core::gpu`, V3-6). The latency dashboard (SP-09) is a page the hub **writes** (`alexia-hub latency --html FILE`),
-not one it serves, so the hub opens no port (V3-1).
+not one it serves. (P2D, D-P2D-2, overruling V3-1's "the hub opens no port") The hub opens
+exactly one port, on `127.0.0.1` only, for the window (`alexia-api`, §2.8); never `0.0.0.0`,
+never `localhost`. Every `/api/*` call needs the per-run token and a `Host` starting `127.0.0.1`.
 The iOS app is `apps/ios`, outside the workspace (D215).
 
 ### 1.2 `v3/Cargo.toml`
@@ -122,6 +127,10 @@ regex = "1"                # redaction patterns: v2's are regexes (P2-14)
 sha2 = "0.10"              # download digests: llama.cpp runtime, models (P2-31, P2-33)
 zip = { version = "2", default-features = false, features = ["deflate"] }   # llama.cpp's Windows release is a zip
 chrono = { version = "0.4", default-features = false, features = ["clock"] }  # local wall-clock time: schedules, `today`
+# (P2D-01) alexia-api: an HTTP/1 server with SSE for the window; std has none, and hyper alone
+# means writing a router.
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "json", "query"] }
+tokio-stream = "0.1"       # (P2D-01) `ReceiverStream` for `axum::response::Sse` (/api/chat)
 
 [workspace.lints.rust]
 unsafe_code = "deny"     # alexia-mcp's Job Object code opts out with a module-level allow (the only one, P2-64)
@@ -1375,6 +1384,51 @@ pub mod compare {   // P2-36, MO-10
 }
 ```
 
+(P2D-03) The window's seam. Implemented by P2D-03; written here by P2D-01.
+
+```rust
+// alexia-core lib.rs
+pub enum Origin { Channel { channel: String, chat: String }, Desktop, Scheduler { job: JobId }, /* … existing … */ Window }
+// serde: {"kind":"window"}. Window sessions: the window picks its session itself (alexia-api);
+// the scheduler's session_of(Window) = store.channel_session("window", "main").
+
+// run.rs
+#[derive(Clone, Debug, Default, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolProgress {
+    pub progress: f64,
+    #[serde(skip_serializing_if = "Option::is_none")] pub total: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")] pub message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")] pub preview: Option<String>,   // data:image/* only
+    #[serde(skip_serializing_if = "Option::is_none")] pub stages: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")] pub plan: bool,             // only with stages
+    #[serde(skip_serializing_if = "Option::is_none")] pub controls: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")] pub research: Option<serde_json::Value>,
+}
+impl ToolProgress { pub fn line(&self) -> String; } // what progress_line returns today
+pub struct ToolCtx { /* … */ pub progress: Option<mpsc::Sender<ToolProgress>> }
+
+// brain.rs
+pub enum DraftFrame { Delta(String), Restart, Phase(Phase), Steerable, Step(StepFrame), Note(String), Ask(String) }
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct StepFrame {
+    pub n: u32,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")] pub args: Option<serde_json::Value>,      // on start
+    #[serde(skip_serializing_if = "Option::is_none")] pub progress: Option<ToolProgress>,       // while running
+    #[serde(skip_serializing_if = "Option::is_none")] pub outcome: Option<StepOutcomeFrame>,    // when done
+}
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct StepOutcomeFrame { pub text: String, pub ok: bool, pub files: Vec<Produced> } // the window adds ids
+// Ask(String): the question's sentence; the answer comes back through WindowQuestions.
+
+// tools.rs
+impl McpTooling {
+    /// The latest `alexia/research` snapshot a plugin sent for this session (v2 `tooling.research.get`).
+    pub fn research(&self, plugin: &PluginId, session: SessionId) -> Option<serde_json::Value>;
+}
+```
+
 ### 2.4 `alexia-gateway`
 
 The gateway is the one place core speaks to outside messaging services. A channel is an adapter
@@ -1458,6 +1512,25 @@ impl ChannelSet { pub fn new() -> ChannelSet; pub fn add(&self, c: Arc<dyn Chann
 pub struct Asker { /* channels, store, bus */ }
 impl Asker { pub fn new(channels: ChannelSet, store: Arc<Store>, bus: Bus) -> Arc<Asker>; }
 impl alexia_core::Ask for Asker { /* ... */ }
+
+/// (P2D-03) The window's questions: at most one open at a time (v2 `pending`).
+#[derive(Clone, Default)]
+pub struct WindowQuestions { /* Arc<Mutex<..>>: at most one open question, v2 `pending` */ }
+impl WindowQuestions {
+    pub fn attach(&self, run: RunId, frames: mpsc::Sender<DraftFrame>);  // the window's stream for that run
+    pub fn detach(&self, run: RunId);
+    pub fn attached(&self, run: RunId) -> bool;
+    pub async fn ask(&self, run: RunId, question: &str, cancel: &CancellationToken) -> Option<bool>; // sends DraftFrame::Ask, waits; None if detached or cancelled
+    pub fn answer(&self, allowed: bool) -> bool;   // /api/approve: true if a question was open
+    pub fn cancel_open(&self);                      // /api/stop: the open question answers false
+}
+impl Asker {
+    pub fn with_window(channels: ChannelSet, store: Arc<Store>, bus: Bus, window: WindowQuestions) -> Arc<Asker>;
+    pub fn window(&self) -> Option<WindowQuestions>;
+}
+// `Asker::new` is unchanged: no window.
+// Asker rule for `Origin::Window`: if `window.attached(run)` ask there (recorded in `approvals` like
+// any other, answered via `answer`); otherwise the primary chat, as Desktop does today.
 
 pub struct Gateway { /* ... */ }
 impl Gateway {
@@ -1558,7 +1631,9 @@ through the same `permissions::rule` and `Ask`, and anything outward-facing stil
 ### 2.6 `alexia-hub` (binary)
 
 ```
-alexia-hub run                     start everything; Ctrl+C or the tray's Quit stops it cleanly
+alexia-hub run                     start everything; Ctrl+C or the tray's Quit stops it cleanly.
+                                   (P2D) One per PC: a second one exits 1 with "Another Alexia hub
+                                   is already running on this computer."
 alexia-hub tools                   load plugins, print every enabled plugin's tools, exit (V3-0 done-when)
 alexia-hub import-v2 <v2-folder>   §6; prints the ImportReport
 alexia-hub plugins                 print PluginStatus for every plugin found
@@ -1611,6 +1686,21 @@ alexia-hub encrypt                         (V3-2) TR-09 (refuses while the hub r
     (P2-62): on `StepAside { procs }`, `LocalJobs::set_paused(true)`, `Runtime::stop_all().await`
     and `McpHost::hold(..)` for every plugin whose `pid` is in `procs`; on `GameOver`,
     `McpHost::release()` and `set_paused(false)` → catalog news as one `Say`. Each long-running piece is a tokio task under one root `CancellationToken`.
+12. (P2D-01) The window API: `ApiParts { .. }` → `Api::new(parts)` →
+    `tokio::net::TcpListener::bind(("127.0.0.1", port))`, `port` = `ALEXIA_WINDOW_PORT` (u16) or 0
+    → write `<data>/window.json` = `{"port":<bound port>,"pid":<process id>}` atomically (`.tmp`,
+    then rename) → `api.serve(listener, root.child_token())` under the tracker. `window.json` is
+    deleted on shutdown. The token is never written there, nor to a log.
+
+(P2D-01) Before step 1, `run` opens `<data>/hub.lock` and keeps it open for the life of the
+process. On Windows it is opened with `share_mode(0)`; a sharing violation (error 32) means
+another hub runs, and `run` exits 1 with `Another Alexia hub is already running on this
+computer.` Off Windows the handle is kept and a lock failure is ignored. The skills built in step
+8 are kept as an `Arc<Skills>` (`tooling.add_builtin(skills.clone())`) for the API.
+
+(P2D-01) Environment: `ALEXIA_WINDOW_PORT` (u16) the window port, else any free one;
+`ALEXIA_UI_DIR` the absolute folder holding `packages/ui`'s `index.html`, unset → the window's
+page answers 503 "The window's files were not found. Set ALEXIA_UI_DIR."
 
 The Ask seam (review 2): the asker is built on the `ChannelSet` before the agent, and the agent
 before the gateway, so nothing is set after construction except `host.set_upcalls`,
@@ -1631,6 +1721,100 @@ resolved exactly as for local plugins, and a limb going offline is a `Removed` e
 transport is specified in V3-4's phase plan; nothing in V3-0..3 depends on it.
 
 ---
+
+### 2.8 `alexia-api` (lib, P2D)
+
+The window's HTTP server (D-P2D-1, D-P2D-2). Deps: `alexia-store`, `alexia-mcp`, `alexia-core`,
+`alexia-gateway`, `alexia-scheduler`, `axum`, `tokio`, `tokio-stream`, `tokio-util`, `serde`,
+`serde_json`, `tracing`, `thiserror`, `base64`, `reqwest`, `sha2`, `zip`, `chrono` (all workspace).
+One module per screen, so the area tasks (P2D-04..P2D-11) never share a file.
+
+```rust
+// lib.rs
+pub struct ApiParts {
+    pub layout: alexia_store::Layout,
+    pub store: Arc<Store>,
+    pub bus: Bus,
+    pub host: McpHost,
+    pub tooling: Arc<McpTooling>,
+    pub agent: Arc<Agent>,
+    pub brain: Arc<dyn alexia_core::Brain>,      // the Lanes main.rs builds
+    pub router: Arc<Router>,
+    pub catalog: Arc<Catalog>,
+    pub scheduler: Arc<Scheduler>,
+    pub asker: Arc<Asker>,
+    pub channels: ChannelSet,
+    pub skills: Arc<Skills>,
+    pub runtime: Arc<Runtime>,                   // as Runtime::new returns it
+    pub jobs: Arc<LocalJobs>,                    // as LocalJobs::new returns it
+    pub ui_dir: Option<PathBuf>,                 // ALEXIA_UI_DIR, else None
+    pub app_version: String,                     // env!("CARGO_PKG_VERSION") of alexia-hub
+}
+
+pub struct Api {
+    pub parts: ApiParts,
+    token: String,                               // 32 random bytes, base64url, never logged
+    session: std::sync::Mutex<SessionId>,        // the open chat; kv `_core`/`window_session`
+    busy: std::sync::atomic::AtomicBool,         // a window answer is on its way (v2 `replying`)
+    pub(crate) state: state::StateState,
+    pub(crate) chat: chat::ChatState,
+    pub(crate) offers: offers::Offers,
+    pub(crate) plugins: plugins::PluginsState,
+    pub(crate) board: board::BoardState,
+    pub(crate) library: library::LibraryState,
+    pub(crate) local: local_models::LocalState,
+    pub(crate) compute: compute::ComputeState,
+    pub(crate) editor: editor::EditorState,
+    pub(crate) research: research::ResearchState,
+}
+impl Api {
+    pub fn new(parts: ApiParts) -> alexia_api::Result<Arc<Api>>; // reads or creates the window session
+    pub fn token(&self) -> &str;                                // tests only read it via the page
+    pub fn session(&self) -> SessionId;
+    pub fn set_session(&self, id: SessionId) -> Result<()>;     // writes kv
+    pub fn busy(&self) -> bool;
+    pub fn try_busy(&self) -> Option<BusyGuard>;                // None when already busy
+    pub async fn serve(self: Arc<Self>, listener: tokio::net::TcpListener, cancel: CancellationToken) -> Result<()>;
+}
+pub struct BusyGuard; // clears `busy` on drop
+#[derive(Debug, thiserror::Error)] pub enum Error { #[error(..)] Store(..), #[error(..)] Io(..) }
+pub type Result<T> = std::result::Result<T, Error>;
+
+// json.rs — v2's answer helpers, used by every module
+pub(crate) fn ok(v: serde_json::Value) -> axum::response::Response;            // 200 application/json
+pub(crate) fn with(status: u16, v: serde_json::Value) -> Response;
+pub(crate) fn said(status: u16, said: &str) -> Response;                       // {"ok":false,"said":said}
+pub(crate) fn empty(status: u16) -> Response;                                  // no body (v2's 404)
+
+// every area module, stubbed by P2D-01, filled by its task
+pub(crate) fn routes() -> axum::Router<Arc<Api>>;   // registers that area's INVENTORY paths+methods
+// cross-area functions, stubbed with v2's empty shapes:
+pub(crate) fn compute::state(api: &Api) -> serde_json::Value;          // /api/state `compute`  (P2D-10)
+pub(crate) fn editor::state(api: &Api) -> serde_json::Value;           // /api/state `editor`   (P2D-11)
+pub(crate) fn local_models::transition(api: &Api) -> serde_json::Value; // /api/state `modeTransition` (P2D-09)
+pub(crate) fn local_models::busy(api: &Api) -> bool;                   // blocks /api/chat (P2D-09)
+pub(crate) fn learned::offer(api: &Api, session: SessionId, task: &str, steps: usize, answer: &str) -> Option<serde_json::Value>; // `learn` frame body or None (P2D-07)
+pub(crate) fn offers::Offers::keep(&self, files: &[Produced]) -> Vec<serde_json::Value>; // P2D-05
+```
+
+Every stub handler answers `501 {"ok":false,"said":"This part of Alexia is not on the hub yet."}`.
+Each `*State` is `#[derive(Default)] pub(crate) struct XState {}` in its module, grown by its task.
+
+The request path, as v2's `serve.ts` 1842–1914:
+
+- **Static shell** (`statics.rs`, serve.ts 272–298, 1859–1872): v2's path table plus
+  `^/([a-z][a-z0-9-]*)\.js$` → `dist/src/<name>.js`, under `ApiParts.ui_dir`. `text/*` assets get
+  the first `__TOKEN__` replaced by the token; others are bytes. A missing file falls through to
+  the API rules. With `ui_dir: None`, `/` answers `503 text/plain "The window's files were not
+  found. Set ALEXIA_UI_DIR."`.
+- **Gate** (`gate.rs`), in this order, for every path not answered as a static asset:
+  1. `x-alexia-token` ≠ token, or `Host` not starting `127.0.0.1` → `403 text/plain "not for you"`.
+  2. Non-GET/HEAD body parsed as JSON; failure → `400 {"ok":false,"said":"That request body is not
+     JSON."}`; an empty body or a non-object is `{}`.
+  3. `guard.ts` `refuse(path, method, body)`, ported exactly (its `ROUTES` table and sentences);
+     a refusal answers `{"ok":false,"said":..,"confirm":true?}` with its status.
+  4. Dispatch; no match → `404`, empty body.
+  Body limit 64 MiB.
 
 ## 3. The plugin wire
 
