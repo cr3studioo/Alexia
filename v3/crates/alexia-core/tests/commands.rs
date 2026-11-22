@@ -258,6 +258,12 @@ async fn desk(w: &World, text: &str) -> String {
     say(w, Origin::Desktop, s, text).await
 }
 
+/// From the owner's chat, the only place an owner-only command is taken from (P2-73).
+async fn owner(w: &World, text: &str) -> String {
+    let s = w.store.create_session(None).unwrap();
+    say(w, telegram("9"), s, text).await
+}
+
 fn telegram(chat: &str) -> Origin {
     Origin::Channel {
         channel: "telegram".into(),
@@ -323,10 +329,10 @@ async fn collision_shadowed_alias_works() {
     // The bare word goes to the winner, the namespaced form to whoever asks for it.
     assert!(desk(&w, "/status").await.contains("this month"));
     assert!(w.ran.lock().unwrap().is_empty(), "/status must stay core's");
-    desk(&w, "/alpha.status").await;
-    desk(&w, "/ping").await;
-    desk(&w, "/beta.ping").await;
-    desk(&w, "/alpha.ping").await;
+    owner(&w, "/alpha.status").await;
+    owner(&w, "/ping").await;
+    owner(&w, "/beta.ping").await;
+    owner(&w, "/alpha.ping").await;
     let names: Vec<String> = w.ran.lock().unwrap().iter().map(|r| r.0.clone()).collect();
     assert_eq!(
         names,
@@ -554,7 +560,7 @@ async fn odd_spacing_and_multibyte_do_not_panic() {
     assert!(said.contains("There is no /ž"), "{said}");
     // A slash, a space, then a command: the word is `approve`, the rest is `<id>`.
     let id = open_approval(&w);
-    let said = desk(&w, &format!("/ approve {id}")).await;
+    let said = owner(&w, &format!("/ approve {id}")).await;
     assert!(said.contains("Approved"), "{said}");
     assert_eq!(w.store.approval(id).unwrap().unwrap().answer, Some(true));
     // Only a slash is an unknown empty word, not a crash.
