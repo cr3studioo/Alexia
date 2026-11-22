@@ -128,13 +128,13 @@
 | P2-64 | One Job Object, scheduled approvals own chat, stricter name check | P2 | sonnet | P2-38, P2-63 | alexia-mcp/lib.rs, alexia-core/local.rs, gateway/{ask.rs,approvals}, ci/invariants.mjs | deferred | 0 | | after P2 (CEO: finish faster) |
 | P2-65 | Store: test dirs cleaned, keychain probe per process, plain kept | P2 | opus | P2-54 | alexia-store/{tests/*, src/secrets.rs, src/encrypt.rs} | merged | 1 | cr3studioo/v3-P2-65 | |
 | P2-66 | MCP: test folders cleaned up | P2 | sonnet | P2-55, P2-61 | alexia-mcp/tests/{scratch,alexia_layer,compute,host,manifest(s),purge,reload,supervise,types_p2,wasm}.rs | merged | 1 | cr3studioo/v3-P2-66 | |
-| P2-67 | Core: test dirs cleaned; registry export unique per call | P2 | opus | P2-61, P2-62 | alexia-core/{tests/*, src/gpu.rs} | review | 1 | cr3studioo/v3-P2-67 | approved, gating |
+| P2-67 | Core: test dirs cleaned; registry export unique per call | P2 | opus | P2-61, P2-62 | alexia-core/{tests/*, src/gpu.rs} | merged | 1 | cr3studioo/v3-P2-67 | |
 | P2-68 | Router: notes per run, keychain cached, bad pins said | P2 | opus | P2-20 | alexia-core/{src/router.rs, tests/router_steps.rs, src/agent.rs} | merged | 1 | cr3studioo/v3-P2-68 | |
 | P2-69 | OpenAI wire: blank text empty; answered by next tool turns | P2 | sonnet | none | alexia-core/{src/openai.rs, tests/openai.rs} | merged | 1 | cr3studioo/v3-P2-69 | |
 | P2-70 | Gateway: unsent question not a denial; test dirs cleaned | P2 | opus | P2-58, P2-64 | alexia-gateway/{src/ask.rs, tests/*} | deferred | 0 | | after P2 (CEO: finish faster) |
 | P2-71 | Hub and MCP conn tests: test folders cleaned up | P2 | sonnet | P2-39, P2-48, P2-63, P2-66 | alexia-hub/{tests/*, src/media.rs}, alexia-mcp/tests/conn.rs | deferred | 0 | | after P2 (CEO: finish faster) |
 | P2-72 | Agent exposes its parts | P2 | sonnet | P2-20 | alexia-core/{src/agent.rs, tests/agent.rs} | merged | 1 | cr3studioo/v3-P2-72 | |
-| P2-73 | Agent: slash commands only from the owner's chat; attached f | P2 | opus | P2-21, P2-25, P2-68 | alexia-core/{src/agent.rs, tests/agent.rs, src/commands.rs, tests/commands.rs} | review | 1 | cr3studioo/v3-P2-73 | approved after CEO fix, gating |
+| P2-73 | Agent: slash commands only from the owner's chat; attached f | P2 | opus | P2-21, P2-25, P2-68 | alexia-core/{src/agent.rs, tests/agent.rs, src/commands.rs, tests/commands.rs} | merged | 1 | cr3studioo/v3-P2-73 | |
 | P2-74 | Scheduler: no slash-command prompts; only a shutdown keeps a | P2 | opus | none | alexia-scheduler/{src/lib.rs, tests/scheduler.rs} | merged | 1 | cr3studioo/v3-P2-74 | |
 | P2-75 | Agent loop edges: a stop mid-gate is recorded, the asked mod | P2 | opus | P2-73, P2-27 | alexia-core/{src/agent.rs, tests/agent.rs} | deferred | 0 | | after P2 (CEO: finish faster) |
 | P2-76 | One permission gate: undo and plugin commands go through the | P2 | opus | P2-75, P2-77, P2-25, P2-28 | alexia-core/{src/agent.rs, tests/agent.rs, src/undo.rs, tests/undo.rs, src/commands.rs, te | deferred | 0 | | after P2 (CEO: finish faster) |
@@ -143,4 +143,4 @@
 | P2-79 | Subscriptions: a clean environment, no Codex shell on tool o | P2 | opus | none | alexia-core/{src/subscription.rs, tests/subscription.rs} | merged | 2 | cr3studioo/v3-P2-79 | |
 | P2-80 | Resume: a live job's age counts from its last step; every en | P2 | sonnet | none | alexia-core/{src/resume.rs, tests/resume.rs} | merged | 1 | cr3studioo/v3-P2-80 | |
 | P2-81 | Say goes to its run's chat and carries the run's files | P2 | sonnet | P2-48, P2-70, P2-74, P2-80 | alexia-core/{src/bus.rs, src/resume.rs, tests/resume.rs}, alexia-scheduler/{src/lib.rs, te | deferred | 0 | | after P2 (CEO: finish faster) |
-| P2-82 | MCP: a WASM start that is given up on stops the module; comp | P2 | opus | P2-66 | alexia-mcp/{src/wasm.rs, tests/wasm.rs, src/serve.rs, tests/compute.rs} | review | 1 | cr3studioo/v3-P2-82 | approved after fix, merge after gate |
+| P2-82 | MCP: a WASM start that is given up on stops the module; comp | P2 | opus | P2-66 | alexia-mcp/{src/wasm.rs, tests/wasm.rs, src/serve.rs, tests/compute.rs} | merged | 1 | cr3studioo/v3-P2-82 | |

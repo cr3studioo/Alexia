@@ -495,3 +495,5 @@
 2026-11-22 P2-82 built (full alexia-mcp test killed low memory) -> review ctx_006dfcd58ac4
 2026-11-22 P2-73 built (workspace clippy killed low memory; desktop window no longer runs slash commands, per spec) -> review ctx_47140994efe3
 2026-11-22 CEO (owner: finish faster, P2 grew ~40 tasks): deferred 10 unstarted follow-ups (P2-58,63,64,70,71,75,76,77,78,81) to after P2 gate; CEO.md: no mid-phase reviews, scope control, one-line review fixes by CEO. P2-82 review changes (.. bypass to SMB) fixed by CEO 2154348, compute 16/16, clippy ok; approved, merge after gate
+2026-11-22 Orca was down: P2-67 rv approve, P2-73 rv changes (clippy lock scope + plugin /command became a tool-using task skipping Local/tools checks) fixed by CEO de352aa with test plugin_command_is_never_a_task (fails without fix). P2-34 -> review. Merged 67/73/82, gating
+2026-11-22 P2-67 + P2-73 + P2-82 gate OK (74 suites), pushed
