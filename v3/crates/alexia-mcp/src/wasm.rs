@@ -173,6 +173,8 @@ fn pipes() -> io::Result<(ChildStdin, ChildStdout, ChildStdin, ChildStdout)> {
 
 thread_local! {
     static START_DELAY: std::cell::Cell<Duration> = const { std::cell::Cell::new(Duration::ZERO) };
+    static END_HOOK: std::cell::RefCell<Option<mpsc::Sender<Option<i32>>>> =
+        const { std::cell::RefCell::new(None) };
 }
 
 /// Tests only: every spawn from this thread sleeps `delay` on its compile thread first, to
@@ -180,6 +182,30 @@ thread_local! {
 #[doc(hidden)]
 pub fn set_start_delay(delay: Duration) {
     START_DELAY.set(delay);
+}
+
+/// Tests only: every module thread started from this thread sends its exit code on `hook`
+/// when it ends (`None` when it was stopped before or during `_start`).
+#[doc(hidden)]
+pub fn set_end_hook(hook: Option<mpsc::Sender<Option<i32>>>) {
+    END_HOOK.set(hook);
+}
+
+/// Stops the module unless disarmed: a start that is given up on (timed out, or its future
+/// dropped mid-wait) must not leave the module running with nobody to talk to.
+struct GiveUp {
+    engine: Engine,
+    killed: Arc<AtomicBool>,
+    armed: bool,
+}
+
+impl Drop for GiveUp {
+    fn drop(&mut self) {
+        if self.armed {
+            self.killed.store(true, Ordering::Release);
+            self.engine.increment_epoch();
+        }
+    }
 }
 
 async fn spawn_as(
@@ -221,6 +247,7 @@ async fn spawn_as(
     let (done_tx, done_rx) = tokio::sync::oneshot::channel();
     let (ready_tx, ready_rx) = tokio::sync::oneshot::channel::<Result<(), String>>();
     let delay = START_DELAY.get();
+    let end = END_HOOK.with_borrow(Clone::clone);
     let thread = {
         let (engine, killed, module) = (engine.clone(), Arc::clone(&killed), module.to_path_buf());
         move || {
@@ -260,6 +287,15 @@ async fn spawn_as(
                 Err(e) => return started(Err(format!("{e:#}"))),
             };
             started(Ok(()));
+            let ended = |code: Option<i32>| {
+                if let Some(end) = &end {
+                    let _ = end.send(code);
+                }
+            };
+            // Given up on while it compiled: never run the guest.
+            if killed.load(Ordering::Acquire) {
+                return ended(None);
+            }
             // The ticker runs while the guest does; dropping `stop` ends it.
             let (stop, stopped) = mpsc::channel::<()>();
             let ticker = {
@@ -279,22 +315,24 @@ async fn spawn_as(
             // Closes the guest's stdout, which is what tells the host it is gone.
             drop(store);
             let _ = done_tx.send(code);
+            ended(code);
         }
     };
     std::thread::Builder::new()
         .name(format!("wasm-{id}"))
         .spawn(thread)?;
+    let mut give_up = GiveUp {
+        engine: engine.clone(),
+        killed: Arc::clone(&killed),
+        armed: true,
+    };
     // Async: the compile runs on its own thread, so no runtime worker waits on it.
     match tokio::time::timeout(Duration::from_millis(limits.start_ms), ready_rx).await {
-        Ok(Ok(Ok(()))) => {}
+        Ok(Ok(Ok(()))) => give_up.armed = false,
         Ok(Ok(Err(e))) => return Err(io_err(e)),
         // The thread ended without a word: it panicked.
         Ok(Err(_)) => return Err(io_err("the module failed to start")),
-        Err(_) => {
-            engine.increment_epoch();
-            killed.store(true, Ordering::Release);
-            return Err(io_err("the module took too long to start"));
-        }
+        Err(_) => return Err(io_err("the module took too long to start")),
     }
     Ok(WasmPlugin {
         engine,

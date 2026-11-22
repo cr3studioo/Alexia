@@ -547,3 +547,30 @@ async fn slow_compile_does_not_block_runtime() {
     );
     plugin.kill();
 }
+
+/// P2-82: a start whose future is dropped mid-wait (the host gave up, the hub is stopping)
+/// stops the module: its thread ends without running the guest.
+#[tokio::test]
+async fn dropped_start_stops_module() {
+    use alexia_mcp::wasm::{set_end_hook, Limits, WasmPlugin};
+    let (tx, rx) = std::sync::mpsc::channel();
+    set_end_hook(Some(tx));
+    let limits = Limits {
+        start_ms: 60_000,
+        ..Limits::default()
+    };
+    let spawn = WasmPlugin::spawn_as(Path::new(WASM), None, limits, "dropped");
+    // The compile takes far longer than 1 ms, so this drops the future while it waits.
+    let gave_up = tokio::time::timeout(Duration::from_millis(1), spawn).await;
+    set_end_hook(None);
+    assert!(gave_up.is_err(), "the module started within 1 ms");
+    // A debug compile can take seconds on a loaded machine.
+    let ended = tokio::task::spawn_blocking(move || rx.recv_timeout(Duration::from_secs(60)))
+        .await
+        .unwrap();
+    assert_eq!(
+        ended,
+        Ok(None),
+        "the module thread did not end, or ran the guest after its start was dropped"
+    );
+}

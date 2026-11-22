@@ -205,16 +205,68 @@ fn rpc_of(e: CallError) -> RpcError {
 /// this containment check stays compute's own: it checks a plugin's own folder, not the owner's
 /// scope, and core depends on this crate, not the other way round.
 fn inside(path: &str, roots: &[std::path::PathBuf]) -> Option<std::path::PathBuf> {
-    if crate::is_network_path(path) {
+    let p = std::path::Path::new(path);
+    // Windows folds `..` in the text without checking the folder exists, so a path through a
+    // missing folder and back up would end the walk early and still reach a link. Refuse `..`.
+    let up = p.components().any(|c| c == std::path::Component::ParentDir);
+    if crate::is_network_path(path) || up || !links_stay_local(p, &mut 0) {
         return None;
     }
+    // ponytail: a link created between the walk and the canonicalize is not covered; the
+    // plugin cannot create links outside its own folder.
     let real = std::fs::canonicalize(path).ok()?;
+    if remote(&real) {
+        return None;
+    }
     roots
         .iter()
         .filter(|r| !crate::is_network_path(&r.to_string_lossy()))
         .filter_map(|r| std::fs::canonicalize(r).ok())
         .any(|r| real.starts_with(r))
         .then_some(real)
+}
+
+/// Walks `path`'s prefixes the way `canonicalize` would, but reads each link's target first and
+/// refuses one that is a network path, so no link makes compute talk SMB to another host.
+fn links_stay_local(path: &std::path::Path, hops: &mut u32) -> bool {
+    let mut cur = std::path::PathBuf::new();
+    for c in path.components() {
+        cur.push(c);
+        let Ok(meta) = std::fs::symlink_metadata(&cur) else {
+            // Missing: `canonicalize` fails on it without leaving this machine.
+            return true;
+        };
+        // On Windows this is true for junctions too.
+        if !meta.file_type().is_symlink() {
+            continue;
+        }
+        *hops += 1;
+        let Ok(target) = std::fs::read_link(&cur) else {
+            return false;
+        };
+        if *hops > 40 || remote(&target) {
+            return false;
+        }
+        let target = cur.parent().map_or(target.clone(), |p| p.join(&target));
+        if !links_stay_local(&target, hops) {
+            return false;
+        }
+        cur = target;
+    }
+    true
+}
+
+/// A network path, also in its `\\?\UNC\…` and `\??\UNC\…` forms. A verbatim path counts as
+/// local only on a drive letter (`\\?\C:\…`).
+fn remote(p: &std::path::Path) -> bool {
+    let s = p.to_string_lossy().replace('/', "\\");
+    match s.strip_prefix(r"\\?\").or_else(|| s.strip_prefix(r"\??\")) {
+        Some(rest) => {
+            let b = rest.as_bytes();
+            !(b.len() >= 2 && b[0].is_ascii_alphabetic() && b[1] == b':')
+        }
+        None => crate::is_network_path(&s),
+    }
 }
 
 /// `dir/<name of from>`, or `name-2.ext`, `name-3.ext`... when that is already taken.
