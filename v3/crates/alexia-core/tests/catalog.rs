@@ -4,6 +4,9 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+mod scratch;
+use scratch::Scratch;
+
 use alexia_core::catalog::{chats, routes, same, size_of, Candidate, Catalog};
 use alexia_core::free::{Auth, FreeRow};
 use alexia_core::openai::OpenAiCompat;
@@ -77,18 +80,12 @@ fn row(id: &str, auth: Auth) -> FreeRow {
     }
 }
 
-/// A fresh, empty directory per test; the cache file inside it does not exist yet.
-fn cache(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!(
-        "alexia-catalog-{name}-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    let _ = std::fs::remove_dir_all(&dir);
-    dir.join("cache").join("v3-free-models.json")
+/// A fresh, empty directory per test (removed when the `Scratch` drops); the cache file inside
+/// it does not exist yet.
+fn cache(name: &str) -> (Scratch, PathBuf) {
+    let dir = Scratch::new(&format!("catalog-{name}"));
+    let path = dir.join("cache").join("v3-free-models.json");
+    (dir, path)
 }
 
 fn no_temp_left(cache: &std::path::Path) -> bool {
@@ -234,7 +231,7 @@ fn routes_and_same_match_v2() {
 
 #[tokio::test]
 async fn refresh_writes_and_new_reads_cache() {
-    let path = cache("roundtrip");
+    let (_dir, path) = cache("roundtrip");
     let rows = vec![
         row("groq", Auth::Required),
         row("openrouter", Auth::Required),
@@ -287,7 +284,7 @@ async fn refresh_writes_and_new_reads_cache() {
 
 #[tokio::test]
 async fn failing_provider_keeps_its_entries() {
-    let path = cache("failing");
+    let (_dir, path) = cache("failing");
     let rows = vec![row("groq", Auth::Required), row("cerebras", Auth::Required)];
     Catalog::new(
         vec![
@@ -333,7 +330,7 @@ async fn failing_provider_keeps_its_entries() {
 
 #[tokio::test]
 async fn only_free_and_usable() {
-    let path = cache("usable");
+    let (_dir, path) = cache("usable");
     let mut openrouter = row("openrouter", Auth::Required);
     openrouter.all_free = false;
     // A real provider with no key: `models` says NeedsKey without touching the network.
@@ -367,7 +364,7 @@ async fn only_free_and_usable() {
 
     // A key taken away drops a provider's cached entries, rather than keeping them.
     let rows = vec![row("groq", Auth::Required)];
-    let path = cache("usable-revoked");
+    let (_dir, path) = cache("usable-revoked");
     Catalog::new(
         vec![fake("groq", Says::List(vec![model("llama-3.3-70b", true)]))],
         rows.clone(),
@@ -387,7 +384,7 @@ async fn only_free_and_usable() {
 
 #[tokio::test]
 async fn failed_rename_leaves_no_temp_file() {
-    let path = cache("rename");
+    let (_dir, path) = cache("rename");
     // A directory where the cache file belongs: the rename onto it fails everywhere.
     std::fs::create_dir_all(&path).unwrap();
     let catalog = Catalog::new(
@@ -404,7 +401,7 @@ async fn failed_rename_leaves_no_temp_file() {
 async fn refused_key_drops_cached_entries() {
     // A 401/403 with a stored key (Refused) drops the cache the same way NeedsKey does.
     let rows = vec![row("groq", Auth::Required)];
-    let path = cache("refused");
+    let (_dir, path) = cache("refused");
     Catalog::new(
         vec![fake("groq", Says::List(vec![model("llama-3.3-70b", true)]))],
         rows.clone(),
@@ -427,7 +424,7 @@ async fn refused_key_drops_cached_entries() {
 
 #[tokio::test]
 async fn concurrent_refreshes_do_not_collide() {
-    let path = cache("concurrent");
+    let (_dir, path) = cache("concurrent");
     let catalog = Catalog::new(
         vec![fake("groq", Says::List(vec![model("llama-3.3-70b", true)]))],
         vec![row("groq", Auth::Required)],
@@ -442,7 +439,7 @@ async fn concurrent_refreshes_do_not_collide() {
 
 #[tokio::test]
 async fn seed_when_nothing_answers() {
-    let path = cache("seed");
+    let (_dir, path) = cache("seed");
     let catalog = Catalog::new(
         vec![
             fake("groq", Says::Down),
@@ -467,6 +464,7 @@ async fn seed_when_nothing_answers() {
     assert!(seeded.iter().all(|c| c.provider != "groq"));
 
     // v2 `Catalog.models`: the seed stays beside a live list, first, and wins on a clash.
+    let (_dir, path) = cache("seed-beside-list");
     let catalog = Catalog::new(
         vec![fake(
             "aihorde",
@@ -476,7 +474,7 @@ async fn seed_when_nothing_answers() {
             ]),
         )],
         vec![row("aihorde", Auth::Optional)],
-        cache("seed-beside-list"),
+        path,
     );
     catalog.refresh().await;
     assert_eq!(
@@ -502,6 +500,7 @@ async fn no_list_rows_with_a_key_use_their_seed() {
     for r in &mut rows {
         r.models_path = None;
     }
+    let (_dir, path) = cache("no-list");
     let catalog = Catalog::new(
         vec![
             real(&rows[0], Some("k")),
@@ -509,7 +508,7 @@ async fn no_list_rows_with_a_key_use_their_seed() {
             real(&rows[2], Some("k")),
         ],
         rows.clone(),
-        cache("no-list"),
+        path,
     );
     // Not asked yet: a key-only row's seed waits for its first answer.
     assert!(catalog.candidates().is_empty());
@@ -527,11 +526,8 @@ async fn no_list_rows_with_a_key_use_their_seed() {
     assert_eq!(got[2].context, 1_000_000);
 
     // Without a key there is nothing to offer.
-    let catalog = Catalog::new(
-        vec![real(&rows[0], None), real(&rows[1], None)],
-        rows,
-        cache("no-list-keyless"),
-    );
+    let (_dir, path) = cache("no-list-keyless");
+    let catalog = Catalog::new(vec![real(&rows[0], None), real(&rows[1], None)], rows, path);
     catalog.refresh().await;
     assert!(catalog.candidates().is_empty());
 }
@@ -566,7 +562,7 @@ not found",
             .await;
     });
     let rows = vec![groq.clone()];
-    let path = cache("list-404");
+    let (_dir, path) = cache("list-404");
     Catalog::new(
         vec![fake("groq", Says::List(vec![model("llama-3.3-70b", true)]))],
         rows.clone(),
@@ -586,10 +582,11 @@ not found",
 
 #[tokio::test]
 async fn run_refreshes_then_stops_on_cancel() {
+    let (_dir, path) = cache("run");
     let catalog = Arc::new(Catalog::new(
         vec![fake("groq", Says::List(vec![model("llama-3.3-70b", true)]))],
         vec![row("groq", Auth::Required)],
-        cache("run"),
+        path,
     ));
     let cancel = CancellationToken::new();
     let task = tokio::spawn({
@@ -632,7 +629,7 @@ fn candidate_cache_round_trip_with_and_without_new_fields() {
 
 #[tokio::test]
 async fn refresh_carries_tools_vision_context() {
-    let path = cache("capabilities");
+    let (_dir, path) = cache("capabilities");
     let mut m = model("seer-8b", true);
     m.tools = true;
     m.vision = true;

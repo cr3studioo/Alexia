@@ -11,6 +11,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+mod scratch;
+use scratch::Scratch;
+
 use alexia_core::catalog::Catalog;
 use alexia_core::chat::{Caps, FastChat};
 use alexia_core::free::{Auth, FreeRow};
@@ -543,7 +546,7 @@ async fn capture_is_called_after_reply() {
 
 #[tokio::test]
 async fn mcp_host_caps_with_no_plugins() {
-    let root = temp("host");
+    let root = Scratch::new("chat-host");
     std::fs::create_dir_all(root.join("ext")).unwrap();
     let store = Arc::new(Store::open_in_memory().unwrap());
     let cfg = HostConfig {
@@ -571,7 +574,6 @@ async fn mcp_host_caps_with_no_plugins() {
     let w = world(text(&["Still here."]), caps).await;
     assert_eq!(say(&w, "hello").await.0.unwrap().text, "Still here.");
     host.shutdown().await;
-    let _ = std::fs::remove_dir_all(&root);
 }
 
 #[tokio::test]

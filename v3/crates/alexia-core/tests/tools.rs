@@ -5,6 +5,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
+mod scratch;
+use scratch::Scratch;
+
 use alexia_core::tools::{namespaced, outcome_of, tool_words, McpTooling};
 use alexia_core::{Builtin, Origin, RunId, ToolCtx, ToolOutcome, ToolSpec, Tooling};
 use alexia_mcp::types::CallToolResult;
@@ -33,21 +36,20 @@ fn fixture_exe() -> PathBuf {
 }
 
 struct Env {
-    root: PathBuf,
     host: McpHost,
+    /// Last, so it drops after the host: the folder goes once its plugins have.
+    root: Scratch,
 }
 
 impl Env {
     async fn done(self) {
         self.host.shutdown().await;
-        let _ = std::fs::remove_dir_all(&self.root);
     }
 }
 
 /// A host with one plugin per `(id, fixture mode)`.
 async fn env(tag: &str, plugins: &[(&str, &str)]) -> Env {
-    let root = std::env::temp_dir().join(format!("alexia-tools-{tag}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
+    let root = Scratch::new(&format!("tools-{tag}"));
     let ext = root.join("ext");
     let src = fixture_exe();
     let exe = src.file_name().unwrap().to_str().unwrap();
@@ -66,7 +68,7 @@ async fn env(tag: &str, plugins: &[(&str, &str)]) -> Env {
     boot(root, ext, plugins.iter().map(|(id, _)| *id).collect()).await
 }
 
-async fn boot(root: PathBuf, ext: PathBuf, ids: Vec<&str>) -> Env {
+async fn boot(root: Scratch, ext: PathBuf, ids: Vec<&str>) -> Env {
     let cfg = HostConfig {
         layout: Layout::new(root.join("data")),
         plugin_dirs: vec![ext],
@@ -85,7 +87,7 @@ async fn boot(root: PathBuf, ext: PathBuf, ids: Vec<&str>) -> Env {
     );
     let ids: Vec<PluginId> = ids.into_iter().map(|id| PluginId(id.into())).collect();
     host.start(&ids).await.unwrap();
-    Env { root, host }
+    Env { host, root }
 }
 
 /// A plugin that is a node script, for what the fixture cannot show: it appends every
@@ -123,8 +125,7 @@ async fn node_env(tag: &str, id: &str) -> Env {
 
 /// A host with one node plugin per id, each running [`NODE_PLUGIN`].
 async fn node_envs(tag: &str, ids: &[&str]) -> Env {
-    let root = std::env::temp_dir().join(format!("alexia-tools-{tag}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
+    let root = Scratch::new(&format!("tools-{tag}"));
     let ext = root.join("ext");
     for id in ids {
         let dir = ext.join(id);
@@ -191,6 +192,15 @@ impl Builtin for Note {
             ))
         })
     }
+}
+
+#[tokio::test]
+async fn scratch_removed_after_host_dropped() {
+    let e = env("dropped", &[("hello", "greet")]).await;
+    let root = e.root.to_path_buf();
+    assert!(root.join("ext").join("hello").join("plugin.json").is_file());
+    e.done().await;
+    assert!(!root.exists(), "{} left behind", root.display());
 }
 
 #[tokio::test]
@@ -371,8 +381,7 @@ async fn undo_meta_read() {
 
 #[test]
 fn resource_link_is_produced() {
-    let dir = std::env::temp_dir().join(format!("alexia-tools-files-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = Scratch::new("tools-files");
     let file = dir.join("my report.PNG");
     std::fs::write(&file, b"12345").unwrap();
     let slashed = file
@@ -405,7 +414,6 @@ fn resource_link_is_produced() {
         ("my report.PNG", 5, "image/png")
     );
     assert_eq!(f.path, file);
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[tokio::test]
@@ -512,8 +520,7 @@ fn unc_file_uris_are_not_written() {
 
 #[test]
 fn file_links_with_a_host_are_not_written() {
-    let dir = std::env::temp_dir().join(format!("alexia-tools-host-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = Scratch::new("tools-host");
     let file = dir.join("a.txt");
     std::fs::write(&file, b"x").unwrap();
     let slashed = file.to_string_lossy().replace('\\', "/");
@@ -548,7 +555,6 @@ fn file_links_with_a_host_are_not_written() {
         ]
     );
     assert_eq!(o.files.len(), 2);
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]

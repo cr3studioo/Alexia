@@ -356,6 +356,21 @@ fn reg_export_utf16_parsed() {
     assert_eq!(reg_string(&text, "Missing"), None);
 }
 
+/// Each `reg export` has its own file: eight `game_dirs` at once all see the same registry.
+/// (On a PC without Steam or Epic every result is just empty, so this only bites with them.)
+#[cfg(windows)]
+#[test]
+fn reg_export_parallel_calls_agree() {
+    let store = Store::open_in_memory().unwrap();
+    let all: Vec<Vec<PathBuf>> = std::thread::scope(|s| {
+        let hs: Vec<_> = (0..8)
+            .map(|_| s.spawn(|| alexia_core::gpu::game_dirs(&store)))
+            .collect();
+        hs.into_iter().map(|h| h.join().unwrap()).collect()
+    });
+    assert!(all.iter().all(|d| d == &all[0]), "{all:?}");
+}
+
 /// A watcher over a scripted game/no-game list (the last entry repeats). Returns the over-count
 /// seen at the start of each poll, then the step-aside and game-over counts, once `polls` ran.
 async fn run_script(script: &[bool], polls: u32) -> (Vec<u32>, u32, u32) {
