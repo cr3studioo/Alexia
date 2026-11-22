@@ -28,6 +28,8 @@ reqwest = { workspace = true }
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "std"] }
 
 [dev-dependencies]
+# agent_e2e.rs writes a local wall-clock time for a scheduled job (P2-39).
+chrono = { workspace = true }
 # tests/cli.rs builds a v2 database file.
 rusqlite = { workspace = true }
 
