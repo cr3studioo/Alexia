@@ -504,3 +504,9 @@
 2026-11-22 P2-38 built (telegram_e2e fifty_messages #[ignore = P2-39]; checker model may go stale after idle stop) -> review ctx_f4db99c3cbee
 2026-11-22 P2-38 approved. LATER: checker provider stale after idle stop (main.rs:338). Merged, gating
 2026-11-22 P2-38 gate OK (76 suites), pushed
+2026-11-22 Dispatched: P2-48:ctx_367fbcc6867d P2-39:ctx_c41c4694bb73 P2-40:ctx_e3fa01cb0bed
+2026-11-22 P2-48 built -> review ctx_14386eef87ca
+2026-11-22 P2-40 built (15 v2 plugins on Rust host, 6/6) -> review ctx_8981595c7d65
+2026-11-22 P2-48 approved. LATER: encrypt under ALEXIA_SECRETS_IN_MEMORY only warns (main.rs:1012; key lost if var leaks into a real shell); edit_folders exact-string compare on Windows. Merged, gating
+2026-11-22 P2-40 approved (76 suites; v2 conformance 6/6, 15 plugins running). Merge after P2-48 gate
+2026-11-22 P2-48 gate OK (76 suites), pushed

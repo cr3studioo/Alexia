@@ -100,8 +100,8 @@
 | P2-36 | Compare two models | P2 | sonnet | P2-17 | alexia-core/{src/compare.rs, tests/compare.rs} | merged | 4 | cr3studioo/v3-P2-36 | |
 | P2-37 | Encrypted database at rest | P2 | opus | P2-02, P2-03, P2-10 | v3/Cargo.toml, v3/Cargo.lock, alexia-store/{Cargo.toml, src/db.rs, src/encrypt.rs, src/... | merged | 1 | cr3studioo/v3-P2-37 | crash-recovery follow-up (review) |
 | P2-38 | Hub wiring: Agent is the brain, bridge deleted | P2 | opus | P2-08..P2-11, P2-20..P2-37, P2-42, P2-44, P2-45, P2-46, P2-47, P2-50, P2-60, P2-62, P2-73, P2-74 | alexia-hub/{Cargo.toml, src/main.rs, src/bridge.rs (delete), src/media.rs, tests/cli_p2... | merged | 1 | cr3studioo/v3-P2-38 | |
-| P2-39 | End-to-end: the agent on the real binary | P2 | sonnet | P2-38, P2-43 | alexia-hub/tests/{agent_e2e.rs, telegram_e2e.rs, common/mod.rs} | todo | 0 | | |
-| P2-40 | Every v2 plugin on the Rust host | P2 | sonnet | P2-38 | alexia-hub/tests/v2_plugins.rs | todo | 0 | | |
+| P2-39 | End-to-end: the agent on the real binary | P2 | sonnet | P2-38, P2-43 | alexia-hub/tests/{agent_e2e.rs, telegram_e2e.rs, common/mod.rs} | running | 1 | cr3studioo/v3-P2-39 | ctx_c41c4694bb73 |
+| P2-40 | Every v2 plugin on the Rust host | P2 | sonnet | P2-38 | alexia-hub/tests/v2_plugins.rs | review | 1 | cr3studioo/v3-P2-40 | approved, merge after gate |
 | P2-41 | Twenty real tasks on the PC | P2 | sonnet | P2-39, P2-40, P2-48 | v3/ops/reports/P2-tasks.md | todo | 0 | | |
 | P2-42 | Permissions fail closed: trailing dots, bad boundary entries | P2 | sonnet | P2-12 | alexia-core/{src/permissions.rs, tests/permissions.rs} | merged | 1 | cr3studioo/v3-P2-42 | |
 | P2-43 | telegram_e2e ack check survives a loaded machine | P2 | sonnet | none | alexia-hub/{tests/telegram_e2e.rs, src/latency.rs} | merged | 3 | cr3studioo/v3-P2-43 | |
@@ -109,7 +109,7 @@
 | P2-45 | McpHost::manifests, the agent's source of plugin commands and skills | P2 | sonnet | P2-23 | alexia-mcp/{src/host.rs, tests/manifests.rs} | merged | 1 | cr3studioo/v3-P2-45 | |
 | P2-46 | Permissions fail closed: kv read errors, unannotated deletes, ~ and file:// paths | P2 | opus | P2-42 | alexia-core/{src/permissions.rs, tests/permissions.rs} | merged | 1 | cr3studioo/v3-P2-46 | FILE:// uppercase follow-up |
 | P2-47 | MCP: plugin requests keep cancel and progress; tools unreviewed until read | P2 | opus | P2-45 | alexia-mcp/{src/conn.rs, src/host.rs, src/serve.rs, src/bin/mcp-fixture.rs, tests/conn.rs, tests/compute.rs} | merged | 1 | cr3studioo/v3-P2-47 | |
-| P2-48 | Hub: the P2 CLI verbs | P2 | opus | P2-38 | alexia-hub/{src/main.rs, tests/cli_p2.rs} | todo | 0 | | review4 #7 split |
+| P2-48 | Hub: the P2 CLI verbs | P2 | opus | P2-38 | alexia-hub/{src/main.rs, tests/cli_p2.rs} | merged | 1 | cr3studioo/v3-P2-48 | |
 | P2-49 | Small cleanups: trim's helpers private, one now_ms | P2 | sonnet | none | alexia-core/{src/trim.rs, tests/trim.rs}, alexia-gateway/src/channels/telegram/mod.rs | merged | 1 | cr3studioo/v3-P2-49 | |
 | P2-50 | Tooling: no UNC paths from file URIs; call() applies list() limits | P2 | sonnet | P2-18 | alexia-core/{src/tools.rs, tests/tools.rs} | merged | 1 | cr3studioo/v3-P2-50 | |
 | P2-51 | Core safety edges: odd file URIs, skill symlinks, secret JSON keys | P2 | opus | none | alexia-core/{permissions,prompt,redact}+tests, INTERFACES.md | merged | 1 | cr3studioo/v3-P2-51 | ctx_32aa086e89a4 |
