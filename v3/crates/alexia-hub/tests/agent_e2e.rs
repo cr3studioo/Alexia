@@ -242,9 +242,7 @@ async fn world(
     fixture_plugin(&root, plugin.0, plugin.1);
     if full_trust {
         let store = Store::open(&db(&root)).unwrap();
-        store
-            .kv_set("_core", "mode", &json!("full-trust"))
-            .unwrap();
+        store.kv_set("_core", "mode", &json!("full-trust")).unwrap();
     }
     let (bot, bot_base) = Bot::start().await;
     let p = provider(Box::new(script)).await;
@@ -342,7 +340,10 @@ async fn task_calls_a_plugin_tool() {
     // The model saw the plugin's own words, fenced as data.
     let steps = w.p.steps();
     assert_eq!(steps.len(), 2, "{steps:?}");
-    assert!(last_tool_text(&steps[1]).contains("Hello, Alexia."), "{steps:?}");
+    assert!(
+        last_tool_text(&steps[1]).contains("Hello, Alexia."),
+        "{steps:?}"
+    );
     let rows = w.stopped_audit().await;
     let greets = rows_of(&rows, "hello__greet");
     assert_eq!(greets.len(), 1, "{rows:?}");
@@ -393,7 +394,11 @@ async fn risky_call_asks_and_runs_on_approve() {
         "{:?}",
         sets[0]
     );
-    assert!(sets[0].result.as_deref().unwrap_or("").contains("set colour"));
+    assert!(sets[0]
+        .result
+        .as_deref()
+        .unwrap_or("")
+        .contains("set colour"));
     done(&w);
 }
 
@@ -421,7 +426,11 @@ async fn risky_call_asks_and_does_not_run_on_deny() {
         sets[0]
     );
     assert!(
-        !sets[0].result.as_deref().unwrap_or("").contains("set colour"),
+        !sets[0]
+            .result
+            .as_deref()
+            .unwrap_or("")
+            .contains("set colour"),
         "{:?}",
         sets[0]
     );
@@ -566,7 +575,10 @@ async fn undo_reverses() {
     // (the inverse's tool is namespaced by core), with the hub stopped so the file is ours.
     let rows = w.stopped_audit().await;
     let set = rows_of(&rows, "notes__set")[0].clone();
-    assert!(set.undo.is_none(), "the fixture now declares a summary: {set:?}");
+    assert!(
+        set.undo.is_none(),
+        "the fixture now declares a summary: {set:?}"
+    );
     let undo = json!({"tool": "notes__unset", "arguments": {"key": "colour"}, "summary": "the colour I set"});
     let conn = rusqlite::Connection::open(db(&w.root)).unwrap();
     let n = conn
@@ -592,12 +604,20 @@ async fn undo_reverses() {
     assert_eq!(unsets.len(), 1, "{rows:?}");
     // The undo's own row: it ran through the ask, after approval, and worked.
     assert_eq!(
-        (unsets[0].gate.as_str(), unsets[0].decision.as_str(), unsets[0].ok),
+        (
+            unsets[0].gate.as_str(),
+            unsets[0].decision.as_str(),
+            unsets[0].ok
+        ),
         ("ask", "approved", Some(true)),
         "{:?}",
         unsets[0]
     );
-    assert!(unsets[0].result.as_deref().unwrap_or("").contains("unset colour"));
+    assert!(unsets[0]
+        .result
+        .as_deref()
+        .unwrap_or("")
+        .contains("unset colour"));
     // And it is marked undone, so a second /undo has nothing to do.
     let marked = Store::open(&db(&w.root))
         .unwrap()
