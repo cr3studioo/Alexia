@@ -111,7 +111,7 @@ pub enum BrainError {
     Other(#[from] Error),
 }
 
-/// Whatever answers a turn. Implemented by `Agent` (V3-2) and by the hub's `V2Bridge` (V3-1),
+/// Whatever answers a turn. Implemented by `Agent` (V3-2) and the fast chat lane,
 /// plus a fake in tests. The gateway and the scheduler hold an `Arc<dyn Brain>`.
 #[async_trait::async_trait]
 pub trait Brain: Send + Sync {

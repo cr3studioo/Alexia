@@ -22,7 +22,7 @@ use tokio::time::{sleep_until, Instant};
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 
-use crate::ask::{Asker, ChannelSet};
+use crate::ask::ChannelSet;
 use crate::{
     voice, Channel, ChatRef, Error, GatewayConfig, InFile, InKind, Inbound, Media, Outbound, Result,
 };
@@ -76,17 +76,6 @@ impl Gateway {
         }
     }
 
-    // P2-38 deletes this
-    pub fn new(
-        cfg: GatewayConfig,
-        store: Arc<Store>,
-        bus: Bus,
-        brain: Arc<dyn Brain>,
-        media: Arc<dyn Media>,
-    ) -> Gateway {
-        Gateway::with_channels(cfg, store, bus, brain, media, ChannelSet::new())
-    }
-
     pub fn add(&mut self, channel: Arc<dyn Channel>) {
         self.channels.add(channel);
     }
@@ -117,11 +106,6 @@ impl Gateway {
             tracing::warn!("gateway: some tasks did not stop within 3 s");
         }
         Ok(())
-    }
-
-    // P2-38 deletes this
-    pub fn asker(&self) -> Arc<dyn alexia_core::Ask> {
-        Asker::new(self.channels.clone(), self.store.clone(), self.bus.clone())
     }
 }
 

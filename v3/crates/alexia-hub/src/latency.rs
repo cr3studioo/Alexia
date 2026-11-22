@@ -686,7 +686,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn gateway_spans_round_trip() {
         let store = Arc::new(Store::open_in_memory().unwrap());
-        let mut gw = Gateway::new(
+        let mut gw = Gateway::with_channels(
             GatewayConfig {
                 merge_ms: 20,
                 ..Default::default()
@@ -695,6 +695,7 @@ mod tests {
             Bus::new(64),
             Arc::new(SlowBrain),
             Arc::new(NoMedia),
+            alexia_gateway::ChannelSet::new(),
         );
         gw.add(Arc::new(OneMsg(Default::default())));
         let cancel = CancellationToken::new();

@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! Wires everything together on the Windows PC; CLI; the v2 bridge.
+//! Wires everything together on the Windows PC; CLI. The Agent is the brain (P2-38).
 //!
 //! The hub never names a plugin: ids come from manifests at runtime.
 
-mod bridge;
 mod latency;
 mod media;
 mod watchdog;
@@ -15,13 +14,23 @@ use std::process::ExitCode;
 use std::sync::Arc;
 use std::time::Duration;
 
+use alexia_core::agent::{Agent, AgentParts};
 use alexia_core::catalog::Catalog;
 use alexia_core::chat::{Caps, FastChat};
+use alexia_core::checker::Checker;
+use alexia_core::gpu::{self, GpuEvent};
+use alexia_core::helpers::Helpers;
 use alexia_core::lane::Lanes;
+use alexia_core::local::{LocalJobs, Runtime};
+use alexia_core::prompt::Skills;
 use alexia_core::router::Router;
-use alexia_core::{free, Brain, BrainError, Budget, DraftSink, Provider, Reply, Turn, Urgency};
+use alexia_core::subscription::{Cli, SubscriptionCli};
+use alexia_core::tools::McpTooling;
+use alexia_core::undo::UndoTool;
+use alexia_core::{free, resume, Budget, Limits, Provider, Urgency};
 use alexia_core::{Bus, Event};
-use alexia_gateway::{channels, Gateway, GatewayConfig};
+use alexia_gateway::{channels, Asker, ChannelSet, Gateway, GatewayConfig};
+use alexia_scheduler::Scheduler;
 use alexia_mcp::{EventSink, HostConfig, McpHost, NoUpcalls, PluginId, PluginState, Timings};
 use alexia_store::import::{import_v2, import_v2_files};
 use alexia_store::{data_dir, now_ms, secrets, Layout, Store};
@@ -132,8 +141,8 @@ fn log_plugin_events(bus: &Bus) {
     });
 }
 
-/// Store → bus → host → `start`. The enabled list is kv `_core`/`enabled`; absent means all.
-async fn boot(layout: &Layout) -> Res<Hub> {
+/// Store → bus → host, not started. The enabled list is kv `_core`/`enabled`; absent means all.
+fn open(layout: &Layout) -> Res<(Hub, Vec<PluginId>)> {
     let store = Arc::new(Store::open(&layout.db())?);
     let dirs = plugin_dirs(layout);
     let enabled: Vec<PluginId> = match store.kv_get("_core", "enabled")? {
@@ -157,25 +166,14 @@ async fn boot(layout: &Layout) -> Res<Hub> {
         timings: Timings::default(),
     };
     let host = McpHost::new(cfg, store.clone(), Arc::new(NoUpcalls), sink);
-    host.start(&enabled).await?;
-    Ok(Hub { store, host, bus })
+    Ok((Hub { store, host, bus }, enabled))
 }
 
-/// The task brain when v2 core isn't configured.
-struct NoTaskBrain;
-
-#[async_trait::async_trait]
-impl Brain for NoTaskBrain {
-    async fn reply(
-        &self,
-        _: Turn,
-        _: DraftSink,
-        _: CancellationToken,
-    ) -> Result<Reply, BrainError> {
-        Err(BrainError::Unavailable(
-            "Tasks need v2 core on this PC. Set ALEXIA_V2_ROOT and restart.".into(),
-        ))
-    }
+/// `open` → `start`, for the verbs that only look at plugins (`tools`, `plugins`).
+async fn boot(layout: &Layout) -> Res<Hub> {
+    let (hub, enabled) = open(layout)?;
+    hub.host.start(&enabled).await?;
+    Ok(hub)
 }
 
 /// Runs `f` every `period`, first after one period, until `root` is cancelled.
@@ -219,7 +217,8 @@ async fn run() -> Res<()> {
         eprintln!("Secrets are in memory (ALEXIA_SECRETS_IN_MEMORY is set): nothing is read from or saved to the keychain.");
     }
     let layout = Layout::new(data_dir());
-    let hub = boot(&layout).await?;
+    // §2.6 steps 1 and 2: store → bus → host with `NoUpcalls`, not started yet.
+    let (hub, enabled) = open(&layout)?;
     let root = CancellationToken::new();
     {
         let stop = root.clone();
@@ -239,8 +238,8 @@ async fn run() -> Res<()> {
         });
     }
     let tracker = TaskTracker::new();
-    let result = serve(&hub, &layout, &root, &tracker).await;
-    // Every exit after `boot` ends here, so plugin children stop and the next boot sees a clean stop.
+    let result = serve(&hub, &enabled, &layout, &root, &tracker).await;
+    // Every exit after `open` ends here, so plugin children stop and the next boot sees a clean stop.
     root.cancel();
     tracker.close();
     // The heartbeat must be done before `clean_stop`, or a late tick looks like a crash.
@@ -257,8 +256,10 @@ async fn run() -> Res<()> {
     result
 }
 
+/// INTERFACES §2.6 steps 3 to 11, in that order (steps 1 and 2 are `open`).
 async fn serve(
     hub: &Hub,
+    enabled: &[PluginId],
     layout: &Layout,
     root: &CancellationToken,
     tracker: &TaskTracker,
@@ -266,6 +267,7 @@ async fn serve(
     const DAY_MS: i64 = 24 * 60 * 60 * 1000;
     let (store, bus, host) = (hub.store.clone(), hub.bus.clone(), hub.host.clone());
 
+    // 3. Providers → catalog → router (+ signed-in subscription CLIs) → channels → asker → checker.
     let free_providers = free::configured();
     let rows = free_providers.iter().map(|p| p.row().clone()).collect();
     let providers: Vec<Arc<dyn Provider>> = free_providers
@@ -278,53 +280,98 @@ async fn serve(
         layout.cache().join("v3-free-models.json"),
     ));
     let router = Arc::new(Router::new(providers, catalog.clone(), store.clone()));
+    register_subscriptions(&router).await;
+    let channels = ChannelSet::new();
+    for c in channels::configured(store.clone(), layout) {
+        channels.add(c);
+    }
+    let asker = Asker::new(channels.clone(), store.clone(), bus.clone());
+    let checker = Arc::new(Checker::new(None));
+
+    // 4. Tooling with no builtins yet: the ones below need the agent.
+    let tooling = Arc::new(McpTooling::new(host.clone(), vec![]));
+
+    // 5. The agent.
     let caps: Arc<dyn Caps> = Arc::new(host.clone());
+    let agent = Agent::new(AgentParts {
+        router: router.clone(),
+        tools: tooling.clone(),
+        store: store.clone(),
+        bus: bus.clone(),
+        ask: asker,
+        checker: checker.clone(),
+        caps: caps.clone(),
+        layout: Layout::new(layout.root.clone()),
+        limits: Limits::default(),
+        host: host.clone(),
+    });
+
+    // 6. The builtins that hold a `Weak` back-reference, then the scheduler's.
+    tooling.add_builtin(Helpers::new(&agent));
+    tooling.add_builtin(UndoTool::new(&agent));
+    let scheduler = Scheduler::new(store.clone(), bus.clone(), agent.clone());
+    tooling.add_builtin(scheduler.tools());
+
+    // 7. Residents spawned from here on get the agent's offers.
+    host.set_upcalls(agent.clone());
+    host.start(enabled).await?;
+
+    // 8. Skills: the data folder's and each enabled plugin's declared folders (filled by `start`).
+    let mut skill_dirs = vec![layout.skills()];
+    for p in host.manifests() {
+        skill_dirs.extend(p.manifest.skills.iter().map(|f| p.path.join(f)));
+    }
+    let (skills, problems) = Skills::load(&skill_dirs);
+    for p in problems {
+        tracing::warn!(folder = %p.dir.display(), "a skill was not loaded: {}", p.why);
+    }
+    tooling.add_builtin(Arc::new(skills));
+
+    // 9. Local models.
+    let runtime = Runtime::new(Layout::new(layout.root.clone()), reqwest::Client::new());
+    let jobs = LocalJobs::new(runtime.clone(), store.clone(), router.clone());
+    agent.set_local_jobs(jobs.clone());
+    {
+        // Starting the checker's model can take a while; boot does not wait for it.
+        let (jobs, checker) = (jobs.clone(), checker.clone());
+        tracker.spawn(async move {
+            if let Some(model) = jobs.checker_model().await {
+                checker.set_model(Some(model));
+            }
+        });
+    }
+    {
+        let (c, runtime) = (root.child_token(), runtime.clone());
+        tracker.spawn(async move { runtime.run(c).await });
+    }
+
+    // 10. Chat to the fast lane, the rest to the agent.
     let fast_chat = Arc::new(FastChat::new(
         router,
         caps.clone(),
         store.clone(),
         Budget::CHAT,
     ));
-    let bridge = bridge::V2Config::from_env().map(|mut cfg| {
-        cfg.node = node();
-        if let Some(n) = std::env::var("ALEXIA_V2_DATA_NAME")
-            .ok()
-            .filter(|n| !n.is_empty())
-        {
-            cfg.data_name = n;
-        }
-        Arc::new(bridge::V2Bridge::new(cfg, store.clone()))
-    });
-    let task_brain: Arc<dyn Brain> = match &bridge {
-        Some(b) => b.clone(),
-        None => Arc::new(NoTaskBrain),
-    };
-    let lanes = Arc::new(Lanes::new(fast_chat.clone(), task_brain));
+    let lanes = Arc::new(Lanes::new(fast_chat.clone(), agent.clone()));
     let media = Arc::new(media::McpMedia {
         caps,
         host: host.clone(),
         cache: layout.cache(),
     });
-    let mut gateway = Gateway::new(
-        GatewayConfig::default(),
-        store.clone(),
-        bus.clone(),
-        lanes,
-        media,
-    );
-    let channels = channels::configured(store.clone(), layout);
-    if channels.is_empty() {
+    if channels.all().is_empty() {
         println!(
             "No channel is set up. Run `alexia-hub secret set <key>` with one of: {}",
             channels::secret_keys().join(", ")
         );
     }
-    for c in channels {
-        gateway.add(c);
-    }
-    if let Some(b) = &bridge {
-        b.set_ask(gateway.asker());
-    }
+    let gateway = Gateway::with_channels(
+        GatewayConfig::default(),
+        store.clone(),
+        bus.clone(),
+        lanes,
+        media,
+        channels,
+    );
     for (channel, code) in channels::pairing_codes(&store)? {
         println!("Send {code} to the {channel} bot to pair it.");
     }
@@ -340,10 +387,6 @@ async fn serve(
         let catalog = catalog.clone();
         tracker.spawn(async move { catalog.run(c).await });
     }
-    if let Some(b) = bridge {
-        let c = root.child_token();
-        tracker.spawn(async move { b.run(c).await });
-    }
     {
         let c = root.child_token();
         tracker.spawn(async move {
@@ -352,6 +395,35 @@ async fn serve(
             }
         });
     }
+
+    // 11. Scheduler → resumed runs → GPU watch → catalog news.
+    {
+        let c = root.child_token();
+        tracker.spawn(async move {
+            if let Err(e) = scheduler.run(c).await {
+                tracing::error!("the scheduler stopped: {e}");
+            }
+        });
+    }
+    let resumed = resume::resume_all(agent.clone(), tracker, root.child_token()).await;
+    if resumed > 0 {
+        tracing::info!("{resumed} unfinished runs picked up again");
+    }
+    watch_gpu(tracker, root, &store, host, runtime, jobs);
+    {
+        let (bus, catalog) = (bus.clone(), catalog.clone());
+        every(tracker, root, Duration::from_secs(600), move || {
+            if let Some(text) = news_text(&catalog.news()) {
+                bus.publish(Event::Say {
+                    at: now_ms(),
+                    text,
+                    urgency: Urgency::Normal,
+                    job: None,
+                });
+            }
+        });
+    }
+
     tracker.spawn(watchdog::heartbeat(store.clone(), root.child_token()));
     let invalidate = fast_chat.clone();
     every(tracker, root, Duration::from_secs(600), move || {
@@ -372,6 +444,84 @@ async fn serve(
     println!("Alexia hub is running. Press Ctrl+C to stop.");
     root.cancelled().await;
     Ok(())
+}
+
+/// §2.6 step 3 (review 6 #10, MO-05): each installed, signed-in subscription CLI becomes a
+/// (not local) provider, so a `subscription:<cli>` pin can be used. Missing or signed out: skipped.
+async fn register_subscriptions(router: &Router) {
+    for cli in [Cli::ClaudeCode, Cli::Codex] {
+        let Some(found) = SubscriptionCli::find(cli) else {
+            tracing::info!("{cli:?} is not installed; skipped");
+            continue;
+        };
+        match found.check().await {
+            Ok(()) => {
+                tracing::info!("{} registered", found.id());
+                router.set_provider(Arc::new(found), false);
+            }
+            Err(why) => tracing::info!("{cli:?} skipped: {why}"),
+        }
+    }
+}
+
+/// The GPU watch (P2-62) and the loop that acts on it: a game steps every local model and every
+/// plugin on the GPU aside until it ends.
+fn watch_gpu(
+    tracker: &TaskTracker,
+    root: &CancellationToken,
+    store: &Arc<Store>,
+    host: McpHost,
+    runtime: Arc<Runtime>,
+    jobs: Arc<LocalJobs>,
+) {
+    let ours: Arc<dyn Fn() -> Vec<u32> + Send + Sync> = {
+        let (host, runtime) = (host.clone(), runtime.clone());
+        Arc::new(move || {
+            let mut pids = runtime.pids();
+            pids.extend(host.plugins().iter().filter_map(|p| host.pid(&p.id)));
+            pids
+        })
+    };
+    let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+    tracker.spawn(gpu::Watch::new(store.clone(), ours).run(root.child_token(), tx));
+    let cancel = root.child_token();
+    tracker.spawn(async move {
+        loop {
+            let event = tokio::select! {
+                () = cancel.cancelled() => return,
+                e = rx.recv() => match e { Some(e) => e, None => return },
+            };
+            match event {
+                GpuEvent::StepAside { procs } => {
+                    jobs.set_paused(true);
+                    runtime.stop_all().await;
+                    let on_gpu: Vec<PluginId> = host
+                        .plugins()
+                        .into_iter()
+                        .map(|p| p.id)
+                        .filter(|id| host.pid(id).is_some_and(|pid| procs.iter().any(|g| g.pid == pid)))
+                        .collect();
+                    host.hold(&on_gpu).await;
+                }
+                GpuEvent::GameOver => {
+                    host.release();
+                    jobs.set_paused(false);
+                }
+            }
+        }
+    });
+}
+
+/// The catalog's new models as one sentence; None when there are none.
+fn news_text(news: &[alexia_core::catalog::Candidate]) -> Option<String> {
+    if news.is_empty() {
+        return None;
+    }
+    let names: Vec<String> = news
+        .iter()
+        .map(|c| format!("{} ({})", c.model, c.provider))
+        .collect();
+    Some(format!("New free models I can use: {}.", names.join(", ")))
 }
 
 /// Every key `secret` accepts: the channels' keys and one `provider_<id>` per free provider.
