@@ -60,6 +60,9 @@ pub struct Turn {
 }
 
 /// What the reply is doing while it is written. Mirrors `alexia/stream` (wire-protocol.md §5).
+// `Step` is unboxed as INTERFACES.md has it: a frame lives for one send, so the size costs
+// nothing worth a `Box` in every match.
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug)]
 pub enum DraftFrame {
     Delta(String),
