@@ -22,12 +22,13 @@ use alexia_core::gpu::{self, GpuEvent};
 use alexia_core::helpers::Helpers;
 use alexia_core::lane::Lanes;
 use alexia_core::local::{LocalJobs, Runtime};
+use alexia_core::permissions;
 use alexia_core::prompt::Skills;
 use alexia_core::router::Router;
 use alexia_core::subscription::{Cli, SubscriptionCli};
 use alexia_core::tools::McpTooling;
 use alexia_core::undo::UndoTool;
-use alexia_core::{free, resume, Budget, Limits, Provider, Urgency};
+use alexia_core::{free, hf, resume, trace, Budget, Job, Limits, Provider, Urgency};
 use alexia_core::{Bus, Event};
 use alexia_gateway::{channels, Asker, ChannelSet, Gateway, GatewayConfig};
 use alexia_mcp::{EventSink, HostConfig, McpHost, NoUpcalls, PluginId, PluginState, Timings};
@@ -43,11 +44,26 @@ const USAGE: &str = "usage:
   alexia-hub plugins                               print the status of every plugin found
   alexia-hub import-v2 [--files-only] <v2-folder>  import a v2 data folder
   alexia-hub secret set|clear <key>                store (value asked, never shown) or remove a secret
+  alexia-hub secret set|clear <plugin>.<key>       the same for a plugin's declared `password` setting
   alexia-hub secret list                           the key names that can be set
   alexia-hub secret import-v2 [--overwrite]        copy v2's secrets on this PC into v3 (v2 untouched)
   alexia-hub pair                                  print the pairing code of each unpaired channel
   alexia-hub latency [--last N] [--html FILE] [--check]  the latency dashboard
-  alexia-hub install | uninstall                   start the hub at boot (Windows Task Scheduler)";
+  alexia-hub install | uninstall                   start the hub at boot (Windows Task Scheduler)
+  alexia-hub activity [--last N] [TEXT]            the audited tool calls, newest first; TEXT filters
+  alexia-hub runs [--last N]                       the newest runs
+  alexia-hub runs show <id>                        one run, step by step, as text
+  alexia-hub approvals                             the questions still waiting for an answer, with ids
+  alexia-hub models [list]                         local models, whether each fits this GPU, the pins
+  alexia-hub models import <repo> <quant>          download a GGUF from Hugging Face
+  alexia-hub models import-file <path>             use a GGUF already on this PC
+  alexia-hub models use <job> <pin>|auto           pin a job to <provider>/<model>,
+                                                   subscription:<cli> or local:<id>; auto unpins
+  alexia-hub models games add|remove <folder>      a folder whose programs are games (the GPU steps aside)
+  alexia-hub models games list                     those folders
+  alexia-hub scope add|remove <folder>             a folder Alexia may work in
+  alexia-hub scope list                            those folders
+  alexia-hub encrypt                               encrypt the database (stop the hub first)";
 
 type Res<T> = Result<T, Box<dyn Error>>;
 
@@ -78,6 +94,25 @@ async fn main() -> ExitCode {
         ([Some("latency"), rest @ ..], _) => return latency(rest),
         ([Some("install")], _) => watchdog::install().map_err(Into::into),
         ([Some("uninstall")], _) => watchdog::uninstall().map_err(Into::into),
+        ([Some("activity"), rest @ ..], _) => activity(rest),
+        ([Some("runs"), Some("show"), Some(id)], _) => run_show(id),
+        ([Some("runs"), rest @ ..], _) => runs(rest),
+        ([Some("approvals")], _) => approvals(),
+        ([Some("models")] | [Some("models"), Some("list")], _) => models_list().await,
+        ([Some("models"), Some("import"), Some(repo), Some(quant)], _) => {
+            models_import(repo, quant).await
+        }
+        ([Some("models"), Some("import-file"), _], [_, _, path]) => models_import_file(path),
+        ([Some("models"), Some("use"), Some(job), Some(pin)], _) => models_use(job, pin),
+        ([Some("models"), Some("games"), Some("list")], _) => games(None),
+        ([Some("models"), Some("games"), Some(verb @ ("add" | "remove")), _], [.., folder]) => {
+            games(Some((verb, folder.as_os_str())))
+        }
+        ([Some("scope"), Some("list")], _) => scope(None),
+        ([Some("scope"), Some(verb @ ("add" | "remove")), _], [.., folder]) => {
+            scope(Some((verb, folder.as_os_str())))
+        }
+        ([Some("encrypt")], _) => encrypt(),
         ([Some("import-v2"), Some("--files-only"), _], [_, _, folder]) => import(folder, true),
         ([Some("import-v2"), w], [_, folder]) if *w != Some("--files-only") => {
             import(folder, false)
@@ -540,10 +575,24 @@ fn secret_keys() -> Vec<String> {
         .collect()
 }
 
-fn known_key(key: &str) -> Res<()> {
-    let keys = secret_keys();
+/// `key` as (owner, key): one of [`secret_keys`] for `_core`, or `<plugin>.<key>` for a `password`
+/// setting a discovered manifest declares. Never echoes `key`: it may be a pasted token (P2-10).
+fn known_key(key: &str) -> Res<(String, String)> {
+    let mut keys = secret_keys();
     if keys.iter().any(|k| k == key) {
-        return Ok(());
+        return Ok(("_core".into(), key.into()));
+    }
+    for m in McpHost::scan(&plugin_dirs(&Layout::new(data_dir())))
+        .into_values()
+        .map(|d| d.manifest)
+    {
+        for k in m.password_keys() {
+            let full = format!("{}.{k}", m.id);
+            if full == key {
+                return Ok((m.id, k));
+            }
+            keys.push(full);
+        }
     }
     Err(format!("That is not a known key. Known keys: {}", keys.join(", ")).into())
 }
@@ -558,7 +607,7 @@ fn refuse_in_memory() -> Res<()> {
 
 fn secret_set(key: &str) -> Res<()> {
     use std::io::IsTerminal;
-    known_key(key)?;
+    let (owner, key) = known_key(key)?;
     refuse_in_memory()?;
     let value = if std::io::stdin().is_terminal() {
         rpassword::prompt_password("Paste the value (it won't be shown): ")?
@@ -571,15 +620,15 @@ fn secret_set(key: &str) -> Res<()> {
     if value.is_empty() {
         return Err("No value was given; nothing was saved.".into());
     }
-    secrets::set("_core", key, value)?;
+    secrets::set(&owner, &key, value)?;
     println!("Saved.");
     Ok(())
 }
 
 fn secret_clear(key: &str) -> Res<()> {
-    known_key(key)?;
+    let (owner, key) = known_key(key)?;
     refuse_in_memory()?;
-    secrets::delete("_core", key)?;
+    secrets::delete(&owner, &key)?;
     println!("Cleared.");
     Ok(())
 }
@@ -663,6 +712,311 @@ fn latency(rest: &[Option<&str>]) -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+// ---- the P2 verbs (P2-48): parsing and printing only; the work is the library's ----
+
+fn store() -> Res<Store> {
+    Ok(Store::open(&Layout::new(data_dir()).db())?)
+}
+
+/// UTC "YYYY-MM-DD HH:MM:SS" from epoch ms.
+fn utc(ms: alexia_store::Ms) -> String {
+    let (y, m, d, h, mi, s) = alexia_store::civil_utc(ms);
+    format!("{y:04}-{m:02}-{d:02} {h:02}:{mi:02}:{s:02}")
+}
+
+/// `[--last N] words…` → (N, words).
+fn last_n<'a>(rest: &[Option<&'a str>], default: u32) -> Res<(u32, Vec<&'a str>)> {
+    let mut words = rest
+        .iter()
+        .map(|w| w.ok_or("The arguments must be text."))
+        .collect::<Result<Vec<&str>, _>>()?;
+    let mut n = default;
+    if let Some(i) = words.iter().position(|w| *w == "--last") {
+        n = words
+            .get(i + 1)
+            .and_then(|v| v.parse().ok())
+            .filter(|n| *n > 0)
+            .ok_or("--last needs a number of at least 1.")?;
+        words.drain(i..=i + 1);
+    }
+    Ok((n, words))
+}
+
+/// AC-12: one line per audited call, newest first.
+fn activity(rest: &[Option<&str>]) -> Res<()> {
+    let (n, words) = last_n(rest, 50)?;
+    let text = words.join(" ");
+    let rows = trace::activity(&store()?, Some(text.as_str()).filter(|t| !t.is_empty()), n)?;
+    if rows.is_empty() {
+        println!("No tool calls recorded.");
+    }
+    for r in rows {
+        let ok = match r.ok {
+            Some(true) => "ok",
+            Some(false) => "failed",
+            None => "-",
+        };
+        println!(
+            "{}\t{}\t{}\t{}\t{ok}\t{}",
+            utc(r.at),
+            r.run,
+            r.tool,
+            r.decision,
+            r.summary
+        );
+    }
+    Ok(())
+}
+
+/// TR-08: the newest runs, one line each.
+fn runs(rest: &[Option<&str>]) -> Res<()> {
+    let (n, words) = last_n(rest, 20)?;
+    if !words.is_empty() {
+        return Err(USAGE.into());
+    }
+    let rows = store()?.runs(n)?;
+    if rows.is_empty() {
+        println!("No runs recorded.");
+    }
+    for (id, at, body) in rows {
+        let summary = trace::summary(&body);
+        let first = summary.lines().next().unwrap_or("");
+        println!("{id}\t{}\t{}\t{first}", utc(at), trace::ending(&body));
+    }
+    Ok(())
+}
+
+/// TR-08: one run replayed as text.
+fn run_show(id: &str) -> Res<()> {
+    match trace::replay(&store()?, id)? {
+        Some(text) => {
+            println!("{text}");
+            Ok(())
+        }
+        None => Err("No run has that id. `alexia-hub runs` lists them.".into()),
+    }
+}
+
+/// AC-10: the questions still waiting, with their ids.
+fn approvals() -> Res<()> {
+    let rows = store()?.approvals_pending()?;
+    if rows.is_empty() {
+        println!("No questions are waiting.");
+    }
+    for a in rows {
+        let detail = a.detail.map(|d| format!("\t{d}")).unwrap_or_default();
+        println!(
+            "{}\t{}\t{}\t{}{detail}",
+            a.id,
+            utc(a.asked_at),
+            a.run,
+            a.text
+        );
+    }
+    Ok(())
+}
+
+/// A router over no providers: enough to read and write the owner's pins.
+fn pins_router(store: Arc<Store>) -> Router {
+    let cache = Layout::new(data_dir()).cache().join("v3-free-models.json");
+    Router::new(vec![], Arc::new(Catalog::new(vec![], vec![], cache)), store)
+}
+
+/// Installed local models with their fit on this GPU, then the pins per job.
+async fn models_list() -> Res<()> {
+    // ponytail: fit at an 8k context; a job that asks for more context can fit less well.
+    const CTX: u32 = 8192;
+    let store = Arc::new(store()?);
+    let machine = gpu::machine().await;
+    let headroom = gpu::headroom_mb(&store);
+    match &machine {
+        Some(m) => println!(
+            "gpu\t{}\t{} MB free of {} MB",
+            m.gpu.as_deref().unwrap_or("unknown"),
+            m.free_mb,
+            m.vram_mb
+        ),
+        None => println!("gpu\tnone found (no NVIDIA GPU or driver)"),
+    }
+    for i in hf::installed(&store) {
+        let fit = machine.as_ref().map_or("no GPU", |gpu_now| {
+            let m = &i.meta;
+            let ctx = match m.context {
+                0 => CTX,
+                c => c.min(CTX),
+            };
+            match gpu::fit(
+                gpu_now,
+                m.bytes,
+                m.layers,
+                m.kv_bytes_per_token,
+                ctx,
+                headroom,
+            )
+            .verdict
+            {
+                gpu::Verdict::Fits => "fits",
+                gpu::Verdict::Tight => "fits, tightly",
+                gpu::Verdict::TooBig => "too big for the GPU",
+            }
+        });
+        let mb = i.meta.bytes.div_ceil(1024 * 1024);
+        println!("model\tlocal:{}\t{}\t{mb} MB\t{fit}", i.id, i.meta.arch);
+    }
+    for (job, pins) in pins_router(store).pins() {
+        println!("pin\t{job}\t{}", pins.join(", "));
+    }
+    Ok(())
+}
+
+/// MO-13: download `repo`'s `quant` and record it.
+async fn models_import(repo: &str, quant: &str) -> Res<()> {
+    let layout = Layout::new(data_dir());
+    let store = Store::open(&layout.db())?;
+    println!("Downloading… (Ctrl+C stops; running this again resumes)");
+    let client = reqwest::Client::new();
+    let m = hf::import_repo(
+        repo,
+        quant,
+        &layout,
+        &client,
+        None,
+        CancellationToken::new(),
+    )
+    .await?;
+    hf::record(&store, &m)?;
+    println!("installed\tlocal:{}", m.id);
+    Ok(())
+}
+
+/// MO-13: a GGUF already on disk, used where it lies.
+fn models_import_file(path: &OsStr) -> Res<()> {
+    let layout = Layout::new(data_dir());
+    let store = Store::open(&layout.db())?;
+    let m = hf::import_file(Path::new(path), &layout, false)?;
+    hf::record(&store, &m)?;
+    println!("installed\tlocal:{}", m.id);
+    Ok(())
+}
+
+/// MO-14, MO-05: `auto` unpins the job; anything else becomes its one pin.
+fn models_use(job: &str, pin: &str) -> Res<()> {
+    let job: Job = serde_json::from_value(serde_json::json!(job))
+        .map_err(|_| "Jobs are chat, plan, step, code, vision, check and local.")?;
+    let store = Arc::new(store()?);
+    let pins = if pin == "auto" {
+        vec![]
+    } else if let Some(id) = pin.strip_prefix("local:") {
+        if !hf::installed(&store).iter().any(|i| i.id == id) {
+            return Err("No local model has that id. `alexia-hub models` lists them.".into());
+        }
+        vec![pin.to_owned()]
+    } else if pin
+        .strip_prefix("subscription:")
+        .is_some_and(|c| !c.is_empty())
+        || pin
+            .split_once('/')
+            .is_some_and(|(a, b)| !a.is_empty() && !b.is_empty())
+    {
+        vec![pin.to_owned()]
+    } else {
+        return Err("A pin is <provider>/<model>, subscription:<cli>, local:<id> or auto.".into());
+    };
+    let unpinned = pins.is_empty();
+    pins_router(store).set_pins(job, pins)?;
+    println!(
+        "{}",
+        if unpinned {
+            "Unpinned: the router picks."
+        } else {
+            "Pinned."
+        }
+    );
+    Ok(())
+}
+
+/// `add`/`remove` one folder in `list`. A folder added must exist.
+fn edit_folders(list: &mut Vec<String>, verb: &str, folder: &OsStr) -> Res<()> {
+    let abs = std::path::absolute(folder)?;
+    let text = abs
+        .to_str()
+        .ok_or("The folder's name must be text.")?
+        .to_owned();
+    if verb == "add" {
+        if !abs.is_dir() {
+            return Err("That folder does not exist.".into());
+        }
+        if !list.contains(&text) {
+            list.push(text);
+        }
+    } else {
+        let before = list.len();
+        list.retain(|f| f != &text);
+        if list.len() == before {
+            return Err("That folder is not in the list.".into());
+        }
+    }
+    Ok(())
+}
+
+/// MO-09: `_core.gpu.games`, the folders `gpu::game_dirs` adds to Steam's and Epic's.
+fn games(edit: Option<(&str, &OsStr)>) -> Res<()> {
+    let store = store()?;
+    let mut list: Vec<String> = match store.settings("_core")?.get("gpu.games") {
+        None => vec![],
+        Some(v) => serde_json::from_value(v.clone())
+            .map_err(|_| "The saved game folders are not readable, so nothing was changed.")?,
+    };
+    if let Some((verb, folder)) = edit {
+        edit_folders(&mut list, verb, folder)?;
+        store.set_setting("_core", "gpu.games", &serde_json::json!(list))?;
+    }
+    list.iter().for_each(|f| println!("{f}"));
+    Ok(())
+}
+
+/// TR-01: the `roots` of `_core.scope`; what is listed is what `permissions::scope` reads back.
+fn scope(edit: Option<(&str, &OsStr)>) -> Res<()> {
+    const UNREADABLE: &str = "The saved folders are not readable, so nothing was changed.";
+    let layout = Layout::new(data_dir());
+    let store = Store::open(&layout.db())?;
+    if let Some((verb, folder)) = edit {
+        if verb == "add" && permissions::never_touch(&std::path::absolute(folder)?, &layout.root) {
+            return Err("That folder is on the never-touch list, so it cannot be added.".into());
+        }
+        let mut saved = match store.kv_get("_core", "scope")? {
+            Some(serde_json::Value::Object(o)) => o,
+            None | Some(serde_json::Value::Null) => serde_json::Map::new(),
+            Some(_) => return Err(UNREADABLE.into()),
+        };
+        let mut roots: Vec<String> = match saved.get("roots") {
+            None | Some(serde_json::Value::Null) => vec![],
+            Some(v) => serde_json::from_value(v.clone()).map_err(|_| UNREADABLE)?,
+        };
+        edit_folders(&mut roots, verb, folder)?;
+        saved.insert("roots".into(), serde_json::json!(roots));
+        store.kv_set("_core", "scope", &serde_json::Value::Object(saved))?;
+    }
+    let scope = permissions::scope(&store, &layout.root);
+    if scope.everywhere {
+        println!("everywhere");
+    }
+    scope.roots.iter().for_each(|r| println!("{}", r.display()));
+    Ok(())
+}
+
+/// TR-09. The library refuses while the hub holds the database.
+fn encrypt() -> Res<()> {
+    if secrets::in_memory() {
+        eprintln!("Secrets are in memory (ALEXIA_SECRETS_IN_MEMORY is set): the key is lost when this exits.");
+    }
+    alexia_store::encrypt::encrypt(&Layout::new(data_dir()).db())?;
+    println!(
+        "Encrypted. The key is in Credential Manager; without it the database cannot be read."
+    );
+    Ok(())
 }
 
 async fn tools() -> Res<()> {

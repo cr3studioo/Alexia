@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! P2: `alexia-hub run` with the Agent as its brain (P2-38), run as the owner runs it, against a
-//! fake Bot API and a fake free provider. Nothing real is called. P2-48 adds the CLI verbs here.
+//! fake Bot API and a fake free provider, and the P2 CLI verbs (P2-48). Nothing real is called.
 
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
@@ -602,5 +602,313 @@ async fn run_loads_plugin_skills() {
         "the skill builtin did not list the plugin's skill: {chats:?}"
     );
     assert_eq!(hub.stop().await, Some(0), "{}", hub.log());
+    let _ = std::fs::remove_dir_all(&e.root);
+}
+
+// ---- the P2 CLI verbs (P2-48) ----
+
+/// `alexia-hub <args>` against `e`'s data, `input` on stdin; waits for it.
+fn cli(e: &Env, args: &[&str], input: &str) -> std::process::Output {
+    use std::io::Write;
+    let mut child = command(e)
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    let _ = stdin.write_all(input.as_bytes());
+    drop(stdin);
+    child.wait_with_output().unwrap()
+}
+
+fn out(o: &std::process::Output) -> String {
+    String::from_utf8_lossy(&o.stdout).into_owned()
+}
+
+fn err(o: &std::process::Output) -> String {
+    String::from_utf8_lossy(&o.stderr).into_owned()
+}
+
+fn store(e: &Env) -> alexia_store::Store {
+    alexia_store::Store::open(&alexia_store::Layout::new(e.data.clone()).db()).unwrap()
+}
+
+fn audit_row(run: &str, step: u32, at: i64, tool: &str, args: Value) -> alexia_store::AuditRow {
+    alexia_store::AuditRow {
+        id: 0,
+        at,
+        run: run.into(),
+        session: None,
+        origin: json!({"kind": "owner"}).to_string(),
+        step,
+        tool: tool.into(),
+        plugin: None,
+        args: args.to_string(),
+        gate: "run".into(),
+        decision: "ran".into(),
+        why: None,
+        ok: Some(true),
+        result: None,
+        undo: None,
+        undone_at: None,
+    }
+}
+
+#[test]
+fn activity_lists_calls() {
+    let e = env("activity");
+    {
+        let s = store(&e);
+        s.audit(&audit_row(
+            "run-a",
+            1,
+            1_000,
+            "notes.search",
+            json!({"q": "garden"}),
+        ))
+        .unwrap();
+        s.audit(&audit_row(
+            "run-a",
+            2,
+            2_000,
+            "files.write",
+            json!({"path": "plan.txt"}),
+        ))
+        .unwrap();
+    }
+    let o = cli(&e, &["activity"], "");
+    assert!(o.status.success(), "{}", err(&o));
+    let lines: Vec<String> = out(&o).lines().map(str::to_owned).collect();
+    assert_eq!(lines.len(), 2, "{lines:?}");
+    // Newest first, one line per call.
+    assert!(
+        lines[0].contains("files.write") && lines[0].contains("run-a"),
+        "{lines:?}"
+    );
+    assert!(
+        lines[1].contains("notes.search") && lines[1].contains("ran"),
+        "{lines:?}"
+    );
+
+    let o = cli(&e, &["activity", "--last", "1"], "");
+    assert_eq!(out(&o).lines().count(), 1, "{}", out(&o));
+    assert!(out(&o).contains("files.write"), "{}", out(&o));
+
+    let o = cli(&e, &["activity", "garden"], "");
+    assert!(o.status.success(), "{}", err(&o));
+    assert_eq!(out(&o).lines().count(), 1, "{}", out(&o));
+    assert!(out(&o).contains("notes.search"), "{}", out(&o));
+
+    let o = cli(&e, &["activity", "--last", "zero"], "");
+    assert_eq!(o.status.code(), Some(1), "{}", err(&o));
+    let _ = std::fs::remove_dir_all(&e.root);
+}
+
+#[test]
+fn runs_show_replays() {
+    let e = env("runs");
+    {
+        let s = store(&e);
+        let body = json!({
+            "at": 1_000, "until": 4_000, "ended": "answered", "answered": "fakep/fake-tools-70b",
+            "steps": [{"n": 1, "name": "notes.search", "args": {"q": "garden"}, "ok": true}],
+        });
+        s.save_run("run-garden", 1_000, &body).unwrap();
+        s.audit(&audit_row(
+            "run-garden",
+            1,
+            2_000,
+            "notes.search",
+            json!({"q": "garden"}),
+        ))
+        .unwrap();
+    }
+    let o = cli(&e, &["runs", "--last", "5"], "");
+    assert!(o.status.success(), "{}", err(&o));
+    assert!(
+        out(&o).contains("run-garden") && out(&o).contains("Finished"),
+        "{}",
+        out(&o)
+    );
+
+    let o = cli(&e, &["runs", "show", "run-garden"], "");
+    assert!(o.status.success(), "{}", err(&o));
+    let text = out(&o);
+    assert!(text.contains("# Run run-garden"), "{text}");
+    assert!(text.contains("## 1. notes.search"), "{text}");
+    assert!(text.contains("run -> ran"), "{text}");
+
+    let o = cli(&e, &["runs", "show", "no-such-run"], "");
+    assert_eq!(o.status.code(), Some(1), "{}", err(&o));
+    assert!(err(&o).contains("No run has that id"), "{}", err(&o));
+    let _ = std::fs::remove_dir_all(&e.root);
+}
+
+#[test]
+fn approvals_empty() {
+    let e = env("approvals");
+    let o = cli(&e, &["approvals"], "");
+    assert!(o.status.success(), "{}", err(&o));
+    assert_eq!(out(&o).trim(), "No questions are waiting.");
+
+    let id = store(&e)
+        .approval_open("run-ask", "{}", "May I delete plan.txt?", None, 5_000)
+        .unwrap();
+    let o = cli(&e, &["approvals"], "");
+    assert!(o.status.success(), "{}", err(&o));
+    assert!(
+        out(&o).starts_with(&format!("{id}\t")) && out(&o).contains("May I delete plan.txt?"),
+        "{}",
+        out(&o)
+    );
+    let _ = std::fs::remove_dir_all(&e.root);
+}
+
+#[test]
+fn models_use_sets_pin() {
+    let e = env("models");
+    let o = cli(
+        &e,
+        &["models", "use", "plan", "subscription:claude-code"],
+        "",
+    );
+    assert!(o.status.success(), "{}", err(&o));
+    assert_eq!(
+        store(&e).kv_get("_core", "models").unwrap(),
+        Some(json!({"plan": ["subscription:claude-code"]}))
+    );
+    let o = cli(&e, &["models"], "");
+    assert!(o.status.success(), "{}", err(&o));
+    assert!(
+        out(&o).contains("pin\tplan\tsubscription:claude-code"),
+        "{}",
+        out(&o)
+    );
+
+    // A local pin must name an installed model; an unknown job and a shapeless pin are refused.
+    for args in [
+        ["models", "use", "chat", "local:not-installed"],
+        ["models", "use", "nojob", "auto"],
+        ["models", "use", "chat", "nonsense"],
+    ] {
+        let o = cli(&e, &args, "");
+        assert_eq!(o.status.code(), Some(1), "{args:?}: {}", err(&o));
+    }
+
+    let o = cli(&e, &["models", "use", "plan", "auto"], "");
+    assert!(o.status.success(), "{}", err(&o));
+    assert_eq!(
+        store(&e).kv_get("_core", "models").unwrap(),
+        Some(json!({}))
+    );
+    let _ = std::fs::remove_dir_all(&e.root);
+}
+
+#[test]
+fn scope_add_lists() {
+    let e = env("scope");
+    let folder = e.root.join("garden-notes");
+    std::fs::create_dir_all(&folder).unwrap();
+    let f = folder.to_str().unwrap();
+    let o = cli(&e, &["scope", "add", f], "");
+    assert!(o.status.success(), "{}", err(&o));
+    let o = cli(&e, &["scope", "list"], "");
+    assert!(o.status.success(), "{}", err(&o));
+    assert_eq!(out(&o).trim(), f);
+    // What `scope` lists is what the permission rules read.
+    let scope = alexia_core::permissions::scope(&store(&e), &e.data);
+    assert_eq!(scope.roots, vec![folder.clone()]);
+
+    // A missing folder and Alexia's own data folder are refused.
+    let missing = e.root.join("not-there");
+    for f in [missing.to_str().unwrap(), e.data.to_str().unwrap()] {
+        let o = cli(&e, &["scope", "add", f], "");
+        assert_eq!(o.status.code(), Some(1), "{f}: {}", err(&o));
+    }
+
+    let o = cli(&e, &["scope", "remove", f], "");
+    assert!(o.status.success(), "{}", err(&o));
+    assert_eq!(out(&o).trim(), "");
+    let o = cli(&e, &["scope", "remove", f], "");
+    assert_eq!(o.status.code(), Some(1), "{}", err(&o));
+
+    // Game folders go the same way, into what the GPU watch reads.
+    let o = cli(&e, &["models", "games", "add", f], "");
+    assert!(o.status.success(), "{}", err(&o));
+    assert_eq!(
+        alexia_core::gpu::game_dirs(&store(&e)).last(),
+        Some(&folder)
+    );
+    let o = cli(&e, &["models", "games", "list"], "");
+    assert_eq!(out(&o).trim(), f);
+    let _ = std::fs::remove_dir_all(&e.root);
+}
+
+#[test]
+fn secret_set_plugin_key_declared_only() {
+    let e = env("plugin-secret");
+    plugin(
+        &e,
+        "gardener",
+        "gardener-not-run",
+        &[],
+        json!({"settings": [
+            {"key": "api_password", "type": "password"},
+            {"key": "city", "type": "text"},
+        ]}),
+    );
+    let value = "plugin-value-that-must-stay-quiet-5521";
+    // The declared key passes the check and reaches the in-memory refusal (tests never write the
+    // keychain); the value is never printed.
+    let o = cli(
+        &e,
+        &["secret", "set", "gardener.api_password"],
+        &format!("{value}\n"),
+    );
+    assert_eq!(o.status.code(), Some(1), "{}", err(&o));
+    assert!(
+        err(&o).contains("Secrets are in memory for tests"),
+        "{}",
+        err(&o)
+    );
+    assert!(!out(&o).contains(value) && !err(&o).contains(value));
+    // A setting that is not a `password`, an undeclared key and a pasted token are not known,
+    // and what was typed is never echoed.
+    for key in ["gardener.city", "gardener.token", "pasted.token-4417"] {
+        let o = cli(&e, &["secret", "set", key], &format!("{value}\n"));
+        assert_eq!(o.status.code(), Some(1), "{key}: {}", err(&o));
+        assert!(err(&o).contains("not a known key"), "{key}: {}", err(&o));
+        assert!(err(&o).contains("gardener.api_password"), "{}", err(&o));
+        for text in [value, key] {
+            assert!(!out(&o).contains(text) && !err(&o).contains(text), "{text}");
+        }
+    }
+    let o = cli(&e, &["secret", "clear", "gardener.api_password"], "");
+    assert!(
+        err(&o).contains("Secrets are in memory for tests"),
+        "{}",
+        err(&o)
+    );
+    let _ = std::fs::remove_dir_all(&e.root);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn encrypt_refuses_while_running() {
+    let e = env("encrypt");
+    let db = alexia_store::Layout::new(e.data.clone()).db();
+    let mut hub = Hub::run(command(&e));
+    hub.up().await;
+    let o = cli(&e, &["encrypt"], "");
+    assert_eq!(o.status.code(), Some(1), "{}", err(&o));
+    assert!(err(&o).contains("The database is in use"), "{}", err(&o));
+    assert!(!alexia_store::Store::is_encrypted(&db).unwrap());
+    assert_eq!(hub.stop().await, Some(0), "{}", hub.log());
+
+    // Stopped, it encrypts (the in-memory key is gone afterwards; this folder is thrown away).
+    let o = cli(&e, &["encrypt"], "");
+    assert!(o.status.success(), "{}", err(&o));
+    assert!(alexia_store::Store::is_encrypted(&db).unwrap());
     let _ = std::fs::remove_dir_all(&e.root);
 }
