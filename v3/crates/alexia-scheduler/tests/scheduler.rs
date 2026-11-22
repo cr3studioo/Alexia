@@ -1103,12 +1103,15 @@ async fn stopped_run_finishes_one_shot() {
     let cancel = CancellationToken::new();
     let run = tokio::spawn(sched.clone().run(cancel.clone()));
     tokio::time::timeout(Duration::from_secs(3600), async {
-        while !(brain.count() == 1 && sched.jobs().unwrap().is_empty()) {
+        // A kept one-shot is overdue and fires again at once, so stop at the second turn too.
+        while brain.count() < 2 && !(brain.count() == 1 && sched.jobs().unwrap().is_empty()) {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     })
     .await
-    .expect("the stopped one-shot is finished, not kept");
+    .expect("the one-shot fired");
+    assert_eq!(brain.count(), 1, "a stopped one-shot must not fire again");
+    assert!(sched.jobs().unwrap().is_empty(), "and it is finished");
     // It does not fire again.
     tokio::time::sleep(Duration::from_secs(3600)).await;
     assert_eq!(brain.count(), 1);
