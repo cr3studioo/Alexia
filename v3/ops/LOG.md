@@ -515,3 +515,4 @@
 2026-11-22 P2-39 review: told reviewer latency loosening was a CEO instruction (approved deviation)
 2026-11-22 P2-39 approved (latency loosening = CEO-approved). Candidate fix for P2-41 list: resume_all publishes 'Picking up' before gateway subscribes (lost message). LATER: mcp fixture lacks undo summary. Merged, gating
 2026-11-22 P2-39 gate OK (77 suites), pushed. All P2 build tasks merged. P2-41 blocked-owner: owner runs 20 Telegram tasks on the new core (release build 14:52, Desktop\Alexia.cmd; all v2 keys already in v3)
+2026-11-23 CEO #17 took over (owner started it on c2). Two Claude accounts set up (A-18, CEO.md §16). P2-41 dropped (A-19). Phase 2D approved (A-19): v2 app on the Rust hub. Planning P2D
