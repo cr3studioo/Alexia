@@ -486,3 +486,7 @@
 2026-11-21 P2-21 + P2-66 + P2-80 gate OK (74 suites), pushed
 2026-11-21 P2-79 approved (USER/TMPDIR/LANG kept; check: Windows env_clear drops USERNAME/SystemDrive/ProgramFiles - try real claude/codex on PC before enabling a subscription). Merged, gating
 2026-11-21 P2-79 gate OK (74 suites), pushed
+2026-11-22 P2-74 stuck 2.5h: fail-without-fix test run on old lib.rs hung; coordinator killed it, restored lib.rs, told worker to finish
+2026-11-22 P2-74 built (deviation: Cancelled && token cancelled) -> review ctx_2468a52c3d81
+2026-11-22 P2-74 approved (Cancelled && token deviation accepted). Merged, gating
+2026-11-22 P2-74 gate OK (74 suites), pushed. Batch done. Follow-ups to plan: load-flaky tests (telegram_e2e:786 latency, tools.rs fixtures, wasm.rs:541); router keys JoinError caches empty 60s (router.rs:709); upcalls register no size cap (upcalls.rs:1013); INTERFACES.md:1261 answer_dangling; undo double-run race (undo.rs:134); is_helper fails open (helpers.rs:45); manual: claude/codex start on Windows with env_clear
