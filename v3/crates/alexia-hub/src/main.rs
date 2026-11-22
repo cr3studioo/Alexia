@@ -30,8 +30,8 @@ use alexia_core::undo::UndoTool;
 use alexia_core::{free, resume, Budget, Limits, Provider, Urgency};
 use alexia_core::{Bus, Event};
 use alexia_gateway::{channels, Asker, ChannelSet, Gateway, GatewayConfig};
-use alexia_scheduler::Scheduler;
 use alexia_mcp::{EventSink, HostConfig, McpHost, NoUpcalls, PluginId, PluginState, Timings};
+use alexia_scheduler::Scheduler;
 use alexia_store::import::{import_v2, import_v2_files};
 use alexia_store::{data_dir, now_ms, secrets, Layout, Store};
 use tokio_util::sync::CancellationToken;
@@ -499,7 +499,10 @@ fn watch_gpu(
                         .plugins()
                         .into_iter()
                         .map(|p| p.id)
-                        .filter(|id| host.pid(id).is_some_and(|pid| procs.iter().any(|g| g.pid == pid)))
+                        .filter(|id| {
+                            host.pid(id)
+                                .is_some_and(|pid| procs.iter().any(|g| g.pid == pid))
+                        })
                         .collect();
                     host.hold(&on_gpu).await;
                 }
