@@ -10,7 +10,8 @@
  * 2. Internal dependency edges are exactly the allowed table; licence and SPDX headers.
  * 3. No hard-coded absolute paths in crate sources.
  * 11. No v2 core (P2-38): no `V2Bridge`, `ALEXIA_V2_ROOT|URL|TOKEN` or `/api/chat` in any
- *    crate's `src/`, comments included.
+ *    crate's `src/`, comments included. (P2D-01) `/api/chat` is allowed in `alexia-api/src/`
+ *    only, where it is the route the hub serves to the window; V2Bridge and the variables are not.
  *
  * Deliberate deviation from the spec (CEO-approved): lines whose trimmed text starts with `//`
  * (so `///` and `//!` too) are skipped by every check; and the path check (3) also skips test
@@ -30,7 +31,9 @@ const ALLOWED = {
   'alexia-core': ['alexia-store', 'alexia-mcp'],
   'alexia-gateway': ['alexia-store', 'alexia-core'],
   'alexia-scheduler': ['alexia-store', 'alexia-core'],
-  'alexia-hub': LIBS,
+  // (P2D-01) the window's server sits between the libs and the hub (INTERFACES.md §1.1).
+  'alexia-api': LIBS,
+  'alexia-hub': [...LIBS, 'alexia-api'],
   'alexia-limb': ['alexia-mcp'],
 }
 /** A service a channel adapter speaks to may be named there (INTERFACES.md §8.1). */
@@ -97,12 +100,16 @@ export function pathHits(path, text) {
 }
 
 const V2_CORE = /V2Bridge|ALEXIA_V2_(?:ROOT|URL|TOKEN)\b|\/api\/chat/
+/** The same, minus `/api/chat`: in alexia-api it is the route being served, not v2 being called. */
+const V2_CORE_SERVED = /V2Bridge|ALEXIA_V2_(?:ROOT|URL|TOKEN)\b/
+const API_SRC = 'v3/crates/alexia-api/src/'
 
 /** Hits for check 11: the hub never starts or calls v2 core (INTERFACES.md §2.6, §7). */
 export function v2Hits(path, text) {
   const out = []
+  const pattern = path.startsWith(API_SRC) ? V2_CORE_SERVED : V2_CORE
   text.split('\n').forEach((line, i) => {
-    const m = line.match(V2_CORE)
+    const m = line.match(pattern)
     if (m) out.push(`${path}:${i + 1}: names v2 core ("${m[0]}")`)
   })
   return out
@@ -208,9 +215,12 @@ function selfTest() {
     license,
     dependencies: deps.map((d) => ({ name: d })),
   })
-  const all = (over) => [...LIBS, 'alexia-hub', 'alexia-limb'].map((n) => over[n] ?? pkg(n, ALLOWED[n] ?? []))
+  const all = (over) => [...LIBS, 'alexia-api', 'alexia-hub', 'alexia-limb'].map((n) => over[n] ?? pkg(n, ALLOWED[n] ?? []))
   ok('the allowed graph', graphHits(all({})))
   expect('a bad edge', graphHits(all({ 'alexia-store': pkg('alexia-store', ['alexia-core']) })))
+  expect('the api reaching the hub', graphHits(all({ 'alexia-api': pkg('alexia-api', [...LIBS, 'alexia-hub']) })))
+  expect('a lib reaching the api', graphHits(all({ 'alexia-core': pkg('alexia-core', ['alexia-store', 'alexia-api']) })))
+  ok('the hub on the api', graphHits(all({ 'alexia-hub': pkg('alexia-hub', [...LIBS, 'alexia-api']) })))
   expect('a bad dev edge', graphHits(all({ 'alexia-limb': pkg('alexia-limb', ['alexia-mcp', 'alexia-core']) })))
   expect('a wrong license', graphHits(all({ 'alexia-mcp': pkg('alexia-mcp', ['alexia-store'], 'MIT') })))
   ok('an external dependency', graphHits(all({ 'alexia-mcp': pkg('alexia-mcp', ['alexia-store', 'tokio']) })))
@@ -235,6 +245,12 @@ function selfTest() {
   expect('/api/chat', v2Hits(hub, 'let u = format!("{base}/api/chat");'))
   expect('V2Bridge in a doc comment', v2Hits(hub, '/// Implemented by the V2Bridge.'))
   ok('the v2 importer', v2Hits(hub, 'import_v2(&store, v2, &layout)?;'))
+  const api = `${API_SRC}chat.rs`
+  ok('/api/chat served by alexia-api', v2Hits(api, '.route("/api/chat", post(chat))'))
+  expect('/api/chat in another crate', v2Hits('v3/crates/alexia-core/src/x.rs', 'let u = "/api/chat";'))
+  expect('/api/chat in alexia-api tests', v2Hits('v3/crates/alexia-api/tests/chat.rs', 'let u = "/api/chat";'))
+  expect('V2Bridge in alexia-api', v2Hits(api, 'let b = V2Bridge::new(cfg);'))
+  expect('ALEXIA_V2_URL in alexia-api', v2Hits(api, 'std::env::var("ALEXIA_V2_URL")'))
   ok('ALEXIA_V2_DATA_NAME', v2Hits(hub, 'std::env::var("ALEXIA_V2_DATA_NAME")'))
   return bad
 }
