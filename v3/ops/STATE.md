@@ -1,20 +1,15 @@
 # STATE
 
-CEO: #16 next (chat CEO, A-08). CEO #15 handed off 2026-11-21 afternoon with P2 mid-flight.
+CEO: #17 (started by the owner on c2, 2026-11-22/23). Two Claude accounts: CEO.md §16, A-18.
 Orca run: run_7a40b198ac83 (bind with run-use). Helpers in C:\dev\Alexia-wt:
-- wait.sh (run in background, ONE at a time: check `ps -ef | grep "[w]ait.sh"` before starting; prints the first non-heartbeat message, acks heartbeats)
-- msgs.py, esc.py (`python esc.py <dispatchId>` = latest question/escalation msg id, for `orchestration reply --id`)
-- template.sh (source; `start <id> <phase> <model> [extra rule]`, `mk` builds a builder prompt). start writes start.json: read the dispatchId AFTER start returns (a backgrounded start once left a stale id on the board).
-- rv.sh (source; `rv <id> <phase>`, own target), rv2.sh (`rv2`, shared target; avoid, see below), gate.sh (`CARGO_BUILD_JOBS=3 bash gate.sh`, now CARGO_INCREMENTAL=0), tg.sh (`tg 'text'`), tread.sh (`tread <dispatchId>`: last 25 lines of a worker's terminal)
-- Fix round in same worktree: worker-start with --spec "$(mk <id> P2 "<extra>")".
+- term.sh (source): `wdispatch <wt> <title> <model> <spec> [c1|c2]` starts Claude in an Orca terminal on the account usage.ps1 picks, then worker-start --terminal. template.sh `start` and rv.sh `rv` use it. Never --agent claude (runs on the Orca app's account).
+- wait.sh (background, ONE at a time), msgs.py, esc.py, gate.sh (`CARGO_BUILD_JOBS=3 bash gate.sh`), tg.sh (`tg 'text'`), tread.sh (`tread <dispatchId>`).
+- Usage: `powershell -NoProfile -File C:\Users\vacla\.claude-usage\usage.ps1`.
 
-P0 26/26, P1 35/35 merged. P2: 72 tasks (P2-65..72 added this run), 53 merged.
-Running (sonnet): P2-21 upcalls ctx_002ecff84905, P2-25 commands (try 2) ctx_9055f584d551, P2-27 helpers ctx_32805e9d943e.
-Review: P2-62 (opus reviewer ctx_80e682e366e7). Phase review 6 (opus, read-only, C:\dev\Alexia-wt\phase-rv6, writes phase-review-6.md) ctx_7646419eb0d4.
-Ready: P2-28 (sonnet), P2-66 (sonnet), P2-68 (opus; router.rs + agent.rs, nothing running touches them now).
-Next unlocks: P2-62 -> P2-67 (needs P2-61 too, merged); P2-21 + P2-31..33 -> P2-34; then P2-38 (opus) hub wiring needs P2-21..37 all merged.
-A-15: P2 builders sonnet except P2-12, 13, 20, 37, 38, 46, 47, 48 and the opus follow-ups. BOARD Model column is the authority.
-Builder prompt (template.sh mk) now says: cargo test -p <changed crates>, not --workspace (RAM). Reviewers still run the workspace.
+P0 26/26, P1 35/35, P2 all build tasks merged (gate 77 suites); P2-41 dropped (A-19, owner waived); 10 P2 follow-ups deferred.
+NOW: Phase 2D (A-19): the v2 app (packages/ui + src-tauri) on alexia-hub, same look, all features, plus PC actions.
+Running (opus, c2): P2D-01 ctx_c281ecf9c1bd, P2D-03 ctx_444a1e3a8134.
+Next: P2D-01 unlocks 02 and 13; 02 unlocks 04,06,07,09,10; 03+02 unlock 05,11. Max 2 opus per batch.
 
 MACHINE LIMITS (most important):
 - Disk C: was 9.7 GB free twice this run. Causes found: (1) tests leak alexia-* temp dirs in %TEMP% (40k dirs, ~80 GB; deleted those older than 2 h: PowerShell Get-ChildItem $env:TEMP -Directory -Filter 'alexia-*' | ? LastWriteTime -lt (Get-Date).AddHours(-2) | Remove-Item -Recurse -Force). Do this every few rounds until a task fixes the leak. (2) main checkout v3/target/debug/incremental grew to 21 GB (gate now runs CARGO_INCREMENTAL=0). (3) each worktree target 8-15 GB: rm -rf <wt>/v3/target as soon as approved. 37 GB free at handoff (CEO #15 deleted tgt-shared). rm -rf <wt>/v3/target once a task is approved.

@@ -516,3 +516,5 @@
 2026-11-22 P2-39 approved (latency loosening = CEO-approved). Candidate fix for P2-41 list: resume_all publishes 'Picking up' before gateway subscribes (lost message). LATER: mcp fixture lacks undo summary. Merged, gating
 2026-11-22 P2-39 gate OK (77 suites), pushed. All P2 build tasks merged. P2-41 blocked-owner: owner runs 20 Telegram tasks on the new core (release build 14:52, Desktop\Alexia.cmd; all v2 keys already in v3)
 2026-11-23 CEO #17 took over (owner started it on c2). Two Claude accounts set up (A-18, CEO.md §16). P2-41 dropped (A-19). Phase 2D approved (A-19): v2 app on the Rust hub. Planning P2D
+2026-11-23 P2D planned (c4606fc): 80 UI-to-core calls, hub answers 0 today, 15 tasks. CEO decisions on planner risks: hub opens a loopback-only port with v2's token model (needed for the window; overrides INTERFACES 1.1 no-port); pairing other computers stays V3-4; e2e runs the unbundled exe, the installed v2 app is not replaced; hub task runs at owner sign-in (needed for screen/input); spend controls answer refusals (D212)
+2026-11-23 Dispatched (c2): P2D-01:ctx_c281ecf9c1bd P2D-03:ctx_444a1e3a8134
