@@ -147,10 +147,10 @@
 | P2D-01 | alexia-api: server, gate, static shell, hub wiring | P2D | opus | P2-39 | alexia-api/**, alexia-hub/{main.rs,tests/window.rs}, INTERFACES.md, invariants.mjs | merged | 1 | cr3studioo/v3-P2D-01 | |
 | P2D-02 | Contract: record v2 answers, replay against hub | P2D | sonnet | P2D-01 | alexia-hub/{tools/record-v2.mjs,tests/contract*} | merged | 1 | cr3studioo/v3-P2D-02 | |
 | P2D-03 | Core seam: window origin, progress, step frames, asker | P2D | opus | none | alexia-core/**, alexia-gateway/{lib,ask,gateway}, alexia-scheduler/lib | merged | 1 | cr3studioo/v3-P2D-03 | |
-| P2D-04 | State, setup and settings | P2D | opus | P2D-02 | alexia-api/{state.rs,tests/state.rs} | running | 1 | cr3studioo/v3-P2D-04 | ctx_60a9f8dace3f |
+| P2D-04 | State, setup and settings | P2D | opus | P2D-02 | alexia-api/{state.rs,tests/state.rs} | review | 1 | cr3studioo/v3-P2D-04 | rv ctx_b689e38f67eb |
 | P2D-05 | Chat in the window: stream, stop, approve, commands, files | P2D | opus | P2D-02, P2D-03 | alexia-api/{chat,offers}, alexia-hub/main.rs | merged | 2 | cr3studioo/v3-P2D-05 | |
-| P2D-06 | Plugins screen: panes, settings, trust, install, servers | P2D | opus | P2D-02 | alexia-api/plugins, alexia-mcp/{host.rs,tests/servers.rs} | review | 1 | cr3studioo/v3-P2D-06 | rv ctx_810d5a2eefa8 |
-| P2D-07 | Board: tables, actions, learned skills | P2D | opus | P2D-02 | alexia-api/{board,learned} | ready | 0 | | |
+| P2D-06 | Plugins screen: panes, settings, trust, install, servers | P2D | opus | P2D-02 | alexia-api/plugins, alexia-mcp/{host.rs,tests/servers.rs} | running | 2 | cr3studioo/v3-P2D-06 | fix ctx_33567e5e406e |
+| P2D-07 | Board: tables, actions, learned skills | P2D | opus | P2D-02 | alexia-api/{board,learned} | running | 1 | cr3studioo/v3-P2D-07 | ctx_cf37f7aff89f |
 | P2D-08 | Library: plugins and skills from the shelf | P2D | opus | P2D-02, P2D-06 | alexia-api/library | todo | 0 | | |
 | P2D-09 | Local models and local stats | P2D | opus | P2D-02 | alexia-api/local_models, alexia-core/{hf.rs,local.rs} | ready | 0 | | |
 | P2D-10 | Compute screen, no paired computers | P2D | opus | P2D-02 | alexia-api/compute | ready | 0 | | |
