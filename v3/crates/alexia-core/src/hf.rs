@@ -759,6 +759,19 @@ async fn listing(
     client: &reqwest::Client,
     token: Option<&str>,
 ) -> Result<(String, Vec<Value>), HfError> {
+    listing_meta(base, repo, revision, client, token)
+        .await
+        .map(|(commit, rows, _)| (commit, rows))
+}
+
+/// `listing`, plus the repo's metadata answer (licence, gating, parameter count).
+async fn listing_meta(
+    base: &str,
+    repo: &str,
+    revision: Option<&str>,
+    client: &reqwest::Client,
+    token: Option<&str>,
+) -> Result<(String, Vec<Value>, Value), HfError> {
     valid_repo(repo)?;
     let suffix = match revision {
         Some(r) => {
@@ -784,7 +797,7 @@ async fn listing(
         token,
     )
     .await?;
-    Ok((commit, rows))
+    Ok((commit, rows, meta))
 }
 
 #[doc(hidden)]
@@ -805,7 +818,7 @@ pub async fn quants(
     revision: Option<&str>,
     client: &reqwest::Client,
 ) -> Result<Vec<Quant>, HfError> {
-    quants_at(HUB, repo, revision, client, hf_token().as_deref()).await
+    quants_at(&hub(), repo, revision, client, hf_token().as_deref()).await
 }
 
 fn plan_for(commit: String, rows: Vec<Value>, quant: &str) -> Result<Plan, HfError> {
@@ -900,6 +913,9 @@ fn clear(p: &Path, is_dir: bool) -> Result<(), HfError> {
 
 struct Progress<'a> {
     tx: Option<&'a mpsc::Sender<u8>>,
+    /// `(done, total)` in bytes. Sent with `try_send`: a full channel drops a reading rather
+    /// than slow the download, and the reader only wants the latest one.
+    bytes: Option<&'a mpsc::Sender<(u64, u64)>>,
     total: u64,
     done: u64,
     told: Option<u8>,
@@ -908,6 +924,9 @@ struct Progress<'a> {
 impl Progress<'_> {
     async fn add(&mut self, n: u64) {
         self.done += n;
+        if let Some(tx) = self.bytes {
+            let _ = tx.try_send((self.done.min(self.total), self.total));
+        }
         let pct = (self.done.min(self.total) * 100)
             .checked_div(self.total)
             .unwrap_or(100) as u8;
@@ -1045,6 +1064,42 @@ pub async fn import_repo_at(
     cancel: CancellationToken,
     token: Option<&str>,
 ) -> Result<Installed, HfError> {
+    let src = Source {
+        base,
+        repo,
+        revision: None,
+        quant,
+        token,
+    };
+    import_from(&src, layout, client, progress.as_ref(), None, &cancel).await
+}
+
+/// Where an import comes from.
+struct Source<'a> {
+    base: &'a str,
+    repo: &'a str,
+    /// A branch, tag or commit; `None` is the default branch. The download is pinned to the
+    /// commit it names either way.
+    revision: Option<&'a str>,
+    quant: &'a str,
+    token: Option<&'a str>,
+}
+
+async fn import_from(
+    src: &Source<'_>,
+    layout: &Layout,
+    client: &reqwest::Client,
+    progress: Option<&mpsc::Sender<u8>>,
+    bytes: Option<&mpsc::Sender<(u64, u64)>>,
+    cancel: &CancellationToken,
+) -> Result<Installed, HfError> {
+    let Source {
+        base,
+        repo,
+        revision,
+        quant,
+        token,
+    } = *src;
     valid_repo(repo)?;
     if quant.is_empty()
         || !quant
@@ -1054,7 +1109,7 @@ pub async fn import_repo_at(
         return Err(HfError::Invalid("That is not a quant name.".into()));
     }
     let (commit, rows) = tokio::select! {
-        r = listing(base, repo, None, client, token) => r?,
+        r = listing(base, repo, revision, client, token) => r?,
         () = cancel.cancelled() => return Err(HfError::Cancelled),
     };
     let plan = plan_for(commit, rows, quant)?;
@@ -1067,7 +1122,8 @@ pub async fn import_repo_at(
     }
     let all: Vec<&File> = plan.files.iter().chain(plan.mmproj.as_ref()).collect();
     let mut prog = Progress {
-        tx: progress.as_ref(),
+        tx: progress,
+        bytes,
         total: all.iter().map(|f| f.bytes).sum(),
         done: 0,
         told: None,
@@ -1075,7 +1131,7 @@ pub async fn import_repo_at(
     for f in &all {
         let name = f.name.rsplit('/').next().unwrap_or(&f.name);
         let url = resolve_url(base, repo, &plan.commit, &f.name)?;
-        fetch(client, &url, token, f, &dir.join(name), &mut prog, &cancel).await?;
+        fetch(client, &url, token, f, &dir.join(name), &mut prog, cancel).await?;
     }
     let local = |f: &File| dir.join(f.name.rsplit('/').next().unwrap_or(&f.name));
     let path = local(&plan.files[0]);
@@ -1099,7 +1155,7 @@ pub async fn import_repo(
     cancel: CancellationToken,
 ) -> Result<Installed, HfError> {
     import_repo_at(
-        HUB,
+        &hub(),
         repo,
         quant,
         layout,
@@ -1109,6 +1165,259 @@ pub async fn import_repo(
         hf_token().as_deref(),
     )
     .await
+}
+
+/// `import_repo` at a chosen revision (a vetted entry's pinned commit, or the default branch),
+/// reporting `(done, total)` bytes. Cancelling keeps what arrived as `.part` files, so the next
+/// import of the same quant carries on from there (v2's resumable download).
+pub async fn import_cancellable(
+    repo: &str,
+    revision: Option<&str>,
+    quant: &str,
+    layout: &Layout,
+    client: &reqwest::Client,
+    cancel: CancellationToken,
+    progress: mpsc::Sender<(u64, u64)>,
+) -> Result<Installed, HfError> {
+    let token = hf_token();
+    let base = hub();
+    let src = Source {
+        base: &base,
+        repo,
+        revision,
+        quant,
+        token: token.as_deref(),
+    };
+    import_from(&src, layout, client, None, Some(&progress), &cancel).await
+}
+
+#[doc(hidden)]
+#[allow(clippy::too_many_arguments)]
+pub async fn import_cancellable_at(
+    base: &str,
+    repo: &str,
+    revision: Option<&str>,
+    quant: &str,
+    layout: &Layout,
+    client: &reqwest::Client,
+    cancel: CancellationToken,
+    progress: mpsc::Sender<(u64, u64)>,
+    token: Option<&str>,
+) -> Result<Installed, HfError> {
+    let src = Source {
+        base,
+        repo,
+        revision,
+        quant,
+        token,
+    };
+    import_from(&src, layout, client, None, Some(&progress), &cancel).await
+}
+
+// ---- hf.ts `search` and `repo` ----
+
+/// The two weight formats v2 knew. This PC runs GGUF only: MLX needs Apple Silicon.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Format {
+    #[default]
+    Gguf,
+    Mlx,
+}
+
+/// What v2 said when MLX was asked of a computer without Apple Silicon.
+pub const NO_MLX: &str = "MLX needs Apple Silicon.";
+
+/// One search result (v2 `HfHit`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RepoHit {
+    pub repo: String,
+    pub downloads: u64,
+    pub likes: u64,
+    pub gated: bool,
+}
+
+/// One file of a quant (v2 `ModelFile`); `sha256` is empty when HF gave no content checksum.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RepoFile {
+    pub name: String,
+    pub bytes: u64,
+    pub sha256: String,
+}
+
+/// One complete build (v2 `Quantized`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RepoQuant {
+    pub quant: String,
+    pub bytes: u64,
+    pub files: Vec<RepoFile>,
+}
+
+/// A repo pinned to its commit (v2 `HfRepo`). `params` is in billions.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RepoPreview {
+    pub repo: String,
+    pub revision: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub licence: Option<String>,
+    pub gated: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub params: Option<f64>,
+    pub quants: Vec<RepoQuant>,
+}
+
+/// `https://huggingface.co`, or `ALEXIA_HF_BASE` when it names a loopback http server (tests
+/// stand in for Hugging Face with one). The token never goes there: see `token_for`.
+fn hub() -> String {
+    std::env::var("ALEXIA_HF_BASE")
+        .ok()
+        .filter(|b| {
+            reqwest::Url::parse(b).is_ok_and(|u| {
+                u.scheme() == "http" && matches!(u.host_str(), Some("127.0.0.1" | "localhost"))
+            })
+        })
+        .map_or_else(|| HUB.to_owned(), |b| b.trim_end_matches('/').to_owned())
+}
+
+/// v2 `gated`: `true`, `"auto"` and `"manual"` all mean access must be asked for.
+fn is_gated(v: &Value) -> bool {
+    v == &Value::Bool(true) || v == "auto" || v == "manual"
+}
+
+/// v2 `count`: a non-negative number, else 0.
+fn count(v: &Value) -> f64 {
+    v.as_f64()
+        .filter(|n| n.is_finite() && *n >= 0.0)
+        .unwrap_or(0.0)
+}
+
+/// Hugging Face GGUF repos matching `q`, most downloaded first (v2 `search`, one page of 30).
+/// An empty query asks nothing and finds nothing.
+pub async fn search(
+    client: &reqwest::Client,
+    q: &str,
+    format: Format,
+) -> Result<Vec<RepoHit>, HfError> {
+    search_at(&hub(), client, q, format, hf_token().as_deref()).await
+}
+
+#[doc(hidden)]
+pub async fn search_at(
+    base: &str,
+    client: &reqwest::Client,
+    q: &str,
+    format: Format,
+    token: Option<&str>,
+) -> Result<Vec<RepoHit>, HfError> {
+    if format == Format::Mlx {
+        return Err(HfError::Invalid(NO_MLX.into()));
+    }
+    let q = q.trim();
+    if q.is_empty() {
+        return Ok(Vec::new());
+    }
+    if q.chars().count() > 300 {
+        return Err(HfError::Invalid("Search for something shorter.".into()));
+    }
+    let url = reqwest::Url::parse_with_params(
+        &format!("{base}/api/models"),
+        [
+            ("search", q),
+            ("filter", "gguf"),
+            ("sort", "downloads"),
+            ("direction", "-1"),
+            ("limit", "30"),
+        ],
+    )
+    .map_err(|_| HfError::Invalid("That search cannot be sent.".into()))?;
+    let (body, _) = json(client, url.as_str(), token).await?;
+    let rows = body
+        .as_array()
+        .ok_or_else(|| HfError::Http("it returned an invalid listing.".into()))?;
+    let mut out: Vec<RepoHit> = Vec::new();
+    for row in rows {
+        let Some(id) = row["id"].as_str().or(row["modelId"].as_str()) else {
+            continue;
+        };
+        if valid_repo(id).is_err() || out.iter().any(|h| h.repo == id) {
+            continue;
+        }
+        out.push(RepoHit {
+            repo: id.to_owned(),
+            downloads: count(&row["downloads"]) as u64,
+            likes: count(&row["likes"]) as u64,
+            gated: is_gated(&row["gated"]),
+        });
+    }
+    Ok(out)
+}
+
+/// One repo at its current commit: licence, gating, size and every complete quant (v2 `repo`).
+pub async fn repo(
+    client: &reqwest::Client,
+    repo: &str,
+    format: Format,
+) -> Result<RepoPreview, HfError> {
+    repo_at(&hub(), client, repo, None, format, hf_token().as_deref()).await
+}
+
+#[doc(hidden)]
+pub async fn repo_at(
+    base: &str,
+    client: &reqwest::Client,
+    repo: &str,
+    revision: Option<&str>,
+    format: Format,
+    token: Option<&str>,
+) -> Result<RepoPreview, HfError> {
+    if format == Format::Mlx {
+        return Err(HfError::Invalid(NO_MLX.into()));
+    }
+    let (commit, rows, meta) = listing_meta(base, repo, revision, client, token).await?;
+    let licence = meta["cardData"]["license"]
+        .as_str()
+        .map(str::to_owned)
+        .or_else(|| {
+            meta["tags"].as_array().and_then(|tags| {
+                tags.iter()
+                    .filter_map(Value::as_str)
+                    .find_map(|t| t.strip_prefix("license:").map(str::to_owned))
+            })
+        })
+        .filter(|l| !l.is_empty());
+    let total = if meta["gguf"]["total"].is_null() {
+        &meta["safetensors"]["total"]
+    } else {
+        &meta["gguf"]["total"]
+    };
+    let params = count(total) / 1e9;
+    let quants = group(&rows)?
+        .into_iter()
+        .map(|(quant, files)| RepoQuant {
+            quant,
+            bytes: files.iter().map(|f| f.bytes).sum(),
+            files: files
+                .into_iter()
+                .map(|f| RepoFile {
+                    name: f.name,
+                    bytes: f.bytes,
+                    sha256: f.sha256.unwrap_or_default(),
+                })
+                .collect(),
+        })
+        .collect();
+    Ok(RepoPreview {
+        repo: repo.to_owned(),
+        revision: commit,
+        licence,
+        gated: is_gated(&meta["gated"]),
+        params: (params > 0.0).then_some(params),
+        quants,
+    })
 }
 
 // ---- importModel.ts: a file already on disk ----
@@ -1244,6 +1553,22 @@ pub fn record(store: &Store, model: &Installed) -> Result<(), HfError> {
     store
         .kv_set("_core", "local_models", &value)
         .map_err(|e| HfError::Store(e.to_string()))
+}
+
+/// Drop a model from kv `_core`/`local_models`; its files are the caller's to delete. `false`
+/// when no record had that id.
+pub fn forget(store: &Store, id: &str) -> Result<bool, HfError> {
+    let mut all = installed_all(store);
+    let before = all.len();
+    all.retain(|i| i.id != id);
+    if all.len() == before {
+        return Ok(false);
+    }
+    let value = serde_json::to_value(all).map_err(|e| HfError::Store(e.to_string()))?;
+    store
+        .kv_set("_core", "local_models", &value)
+        .map_err(|e| HfError::Store(e.to_string()))?;
+    Ok(true)
 }
 
 fn installed_all(store: &Store) -> Vec<Installed> {
