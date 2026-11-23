@@ -162,6 +162,14 @@ impl Skills {
         (Skills { skills }, problems)
     }
 
+    /// Each loaded skill's name, description and folder, in load order (the Plugins screen's
+    /// list, v2 `skills.all`).
+    pub fn list(&self) -> impl Iterator<Item = (&str, &str, &Path)> {
+        self.skills
+            .iter()
+            .map(|s| (s.name.as_str(), s.description.as_str(), s.dir.as_path()))
+    }
+
     fn open(&self, args: &Map<String, Value>) -> ToolOutcome {
         let wanted = args.get("name").and_then(Value::as_str).unwrap_or("");
         let shown = if wanted.is_empty() {

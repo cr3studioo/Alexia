@@ -803,3 +803,67 @@ async fn plugin_file_escape_refused() {
         )
     );
 }
+
+fn skill_folder(dir: &Path, name: &str, description: &str) {
+    let d = dir.join(name);
+    std::fs::create_dir_all(&d).unwrap();
+    std::fs::write(
+        d.join("SKILL.md"),
+        format!("---\nname: {name}\ndescription: {description}\n---\nBody.\n"),
+    )
+    .unwrap();
+}
+
+/// v2 `skills.all`: the hub's own skills, and an enabled plugin's bundled ones with its id.
+#[tokio::test]
+async fn skills_listed() {
+    let w = world("skills").await;
+    let a = send(&w, "GET", "/api/plugins", None).await;
+    assert_eq!(a.json()["skills"], json!([]), "none yet");
+
+    let hub = w.api.parts.layout.skills();
+    skill_folder(&hub, "tidy-notes", "Tidies notes when asked to.");
+    // A plugin that brings a skill folder with it.
+    let src = w.root.join("elsewhere").join("skilled");
+    plugin(&w.root.join("elsewhere"), "skilled");
+    let path = src.join("plugin.json");
+    let mut m: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    m["skills"] = json!(["skills"]);
+    std::fs::write(&path, m.to_string()).unwrap();
+    skill_folder(&src.join("skills"), "bundled", "Comes with the plugin.");
+    let id = w.host.install_folder(&src).await.unwrap();
+
+    // Not enabled: its skills are not loaded.
+    let all = send(&w, "GET", "/api/plugins", None).await.json();
+    let names: Vec<&str> = all["skills"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, vec!["tidy-notes"]);
+
+    w.host.set_enabled(&id, true).await.unwrap();
+    let all = send(&w, "GET", "/api/plugins", None).await.json();
+    let skills = all["skills"].as_array().unwrap();
+    assert_eq!(skills.len(), 2, "{all}");
+    assert_eq!(
+        skills[0],
+        json!({
+            "name": "tidy-notes",
+            "description": "Tidies notes when asked to.",
+            "dir": hub.join("tidy-notes").to_string_lossy(),
+        })
+    );
+    let installed = w.host.plugin_dir(&id).unwrap().path;
+    assert_eq!(
+        skills[1],
+        json!({
+            "name": "bundled",
+            "description": "Comes with the plugin.",
+            "dir": installed.join("skills").join("bundled").to_string_lossy(),
+            "pluginId": "skilled",
+        })
+    );
+    assert_eq!(all["skillProblems"], json!([]));
+}

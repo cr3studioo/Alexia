@@ -87,19 +87,41 @@ async fn list(State(api): State<Arc<Api>>) -> Response {
 }
 
 /// The skill folders the hub loads (its data's skills folder and the enabled plugins'
-/// declared ones), re-read so a broken one shows here. `Skills` does not list its skills by
-/// name, so only the problems can be answered; the list stays empty.
+/// declared ones), re-read so a broken one shows here. A skill is v2's `{name, description,
+/// dir}`, with `pluginId` when it came with a plugin.
 fn skills(api: &Api) -> (Vec<Value>, Vec<Value>) {
     let mut dirs = vec![api.parts.layout.skills()];
+    let mut owners: Vec<(PathBuf, String)> = vec![];
     for p in host(api).manifests() {
-        dirs.extend(p.manifest.skills.iter().map(|f| p.path.join(f)));
+        for f in &p.manifest.skills {
+            let dir = p.path.join(f);
+            owners.push((dir.clone(), p.manifest.id.clone()));
+            dirs.push(dir);
+        }
     }
-    let (_, problems) = Skills::load(&dirs);
+    let (loaded, problems) = Skills::load(&dirs);
+    let skills = loaded
+        .list()
+        .map(|(name, description, dir)| {
+            let mut skill = json!({
+                "name": name,
+                "description": description,
+                "dir": dir.to_string_lossy(),
+            });
+            if let Some((_, id)) = owners
+                .iter()
+                .find(|(o, _)| dir.parent() == Some(o.as_path()))
+            {
+                skill["pluginId"] = json!(id);
+            }
+            skill
+        })
+        .collect();
     let problems = problems
         .into_iter()
         .map(|p| json!({ "dir": p.dir.to_string_lossy(), "reason": p.why }))
         .collect();
-    (vec![], problems)
+    (skills, problems)
 }
 
 /// kv `_core`/`unreviewed`, the list `McpHost::tools` reads; anything unreadable is empty.
