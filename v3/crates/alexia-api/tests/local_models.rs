@@ -636,7 +636,8 @@ async fn install_progress_then_done() {
     let counted: Vec<u64> = seen
         .iter()
         .filter(|v| v["step"] == "download" || v["step"] == "verify")
-        .filter_map(|v| (v["total"].as_u64() == Some(total)).then(|| v["done"].as_u64().unwrap()))
+        .filter(|v| v["total"].as_u64() == Some(total))
+        .map(|v| v["done"].as_u64().unwrap())
         .collect();
     assert!(counted.windows(2).all(|p| p[0] <= p[1]), "{counted:?}");
     assert!(counted.iter().all(|d| *d <= total), "{counted:?}");
