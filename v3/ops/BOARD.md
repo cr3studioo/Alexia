@@ -149,7 +149,7 @@
 | P2D-03 | Core seam: window origin, progress, step frames, asker | P2D | opus | none | alexia-core/**, alexia-gateway/{lib,ask,gateway}, alexia-scheduler/lib | merged | 1 | cr3studioo/v3-P2D-03 | |
 | P2D-04 | State, setup and settings | P2D | opus | P2D-02 | alexia-api/{state.rs,tests/state.rs} | running | 1 | cr3studioo/v3-P2D-04 | ctx_60a9f8dace3f |
 | P2D-05 | Chat in the window: stream, stop, approve, commands, files | P2D | opus | P2D-02, P2D-03 | alexia-api/{chat,offers}, alexia-hub/main.rs | merged | 2 | cr3studioo/v3-P2D-05 | |
-| P2D-06 | Plugins screen: panes, settings, trust, install, servers | P2D | opus | P2D-02 | alexia-api/plugins, alexia-mcp/{host.rs,tests/servers.rs} | running | 1 | cr3studioo/v3-P2D-06 | ctx_b1601b19d0ad |
+| P2D-06 | Plugins screen: panes, settings, trust, install, servers | P2D | opus | P2D-02 | alexia-api/plugins, alexia-mcp/{host.rs,tests/servers.rs} | review | 1 | cr3studioo/v3-P2D-06 | rv ctx_810d5a2eefa8 |
 | P2D-07 | Board: tables, actions, learned skills | P2D | opus | P2D-02 | alexia-api/{board,learned} | ready | 0 | | |
 | P2D-08 | Library: plugins and skills from the shelf | P2D | opus | P2D-02, P2D-06 | alexia-api/library | todo | 0 | | |
 | P2D-09 | Local models and local stats | P2D | opus | P2D-02 | alexia-api/local_models, alexia-core/{hf.rs,local.rs} | ready | 0 | | |
