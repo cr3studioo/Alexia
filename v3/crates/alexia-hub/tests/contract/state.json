@@ -5,7 +5,7 @@
       "row": "A1",
       "name": "state on a fresh data folder",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "GET",
         "path": "/api/state",
@@ -94,7 +94,7 @@
       "row": "A2",
       "name": "set the name and the theme",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "POST",
         "path": "/api/setup",
@@ -131,7 +131,7 @@
       "row": "A2",
       "name": "a name that is too long",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "POST",
         "path": "/api/setup",
@@ -159,7 +159,7 @@
       "row": "A3",
       "name": "permissions: the mode",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "POST",
         "path": "/api/permissions",
@@ -189,7 +189,7 @@
       "row": "A4",
       "name": "ceilings",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "POST",
         "path": "/api/ceilings",
@@ -221,7 +221,7 @@
       "row": "A5",
       "name": "adult on without the 18+ confirm",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "POST",
         "path": "/api/adult",
@@ -250,7 +250,7 @@
       "row": "A5",
       "name": "adult on with the confirm",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "POST",
         "path": "/api/adult",
@@ -280,7 +280,7 @@
       "row": "A5",
       "name": "adult off",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "POST",
         "path": "/api/adult",
@@ -309,7 +309,7 @@
       "row": "A6",
       "name": "the board's core tabs",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "GET",
         "path": "/api/panels",
@@ -363,7 +363,7 @@
       "row": "A7",
       "name": "search",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "GET",
         "path": "/api/search",
@@ -397,7 +397,7 @@
       "row": "A1",
       "name": "state with one chat open",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "GET",
         "path": "/api/state",
@@ -484,6 +484,181 @@
           "/personality",
           "/pins/placement"
         ]
+      },
+      "stream": null
+    },
+    {
+      "row": "A2",
+      "name": "a layout that cannot be kept",
+      "source": "hand",
+      "from": "serve.ts:2264-2273",
+      "hub": "answers",
+      "request": {
+        "method": "POST",
+        "path": "/api/setup",
+        "query": {},
+        "body": {
+          "layout": {
+            "v": 1,
+            "cols": 4,
+            "guides": [
+              1,
+              2
+            ],
+            "pages": [
+              {
+                "id": "a",
+                "w": 0,
+                "h": 1
+              }
+            ]
+          }
+        },
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 400,
+        "type": "application/json",
+        "shape": {
+          "ok": "bool",
+          "said": "string"
+        }
+      },
+      "stream": null
+    },
+    {
+      "row": "A2",
+      "name": "a key with a space in it",
+      "source": "hand",
+      "from": "serve.ts:2292-2301",
+      "hub": "answers",
+      "request": {
+        "method": "POST",
+        "path": "/api/setup",
+        "query": {},
+        "body": {
+          "provider": {
+            "id": "groq",
+            "key": "not a key"
+          }
+        },
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 400,
+        "type": "application/json",
+        "shape": {
+          "ok": "bool",
+          "said": "string"
+        }
+      },
+      "stream": null
+    },
+    {
+      "row": "A2",
+      "name": "a stored key is removed",
+      "source": "hand",
+      "from": "serve.ts:2318-2327",
+      "hub": "answers",
+      "request": {
+        "method": "POST",
+        "path": "/api/setup",
+        "query": {},
+        "body": {
+          "provider": {
+            "id": "groq",
+            "remove": true
+          }
+        },
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 200,
+        "type": "application/json",
+        "shape": {
+          "done": "bool",
+          "name": "string",
+          "mode": "string",
+          "theme": "string",
+          "glass": "number",
+          "glassLook": "string",
+          "updates": "bool",
+          "layout": "null",
+          "said": "string"
+        }
+      },
+      "stream": null
+    },
+    {
+      "row": "A3",
+      "name": "permissions: lift the spoken boundaries",
+      "source": "hand",
+      "from": "serve.ts:2446-2465",
+      "hub": "answers",
+      "request": {
+        "method": "POST",
+        "path": "/api/permissions",
+        "query": {},
+        "body": {
+          "lift": true,
+          "confirm": true
+        },
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 200,
+        "type": "application/json",
+        "shape": {
+          "mode": "string",
+          "roots": [],
+          "everywhere": "bool",
+          "boundaries": []
+        }
+      },
+      "stream": null
+    },
+    {
+      "row": "A4",
+      "name": "a daily allowance above zero (D-P2D-6)",
+      "source": "hand",
+      "from": "serve.ts:2481-2483",
+      "hub": "answers",
+      "request": {
+        "method": "POST",
+        "path": "/api/ceilings",
+        "query": {},
+        "body": {
+          "daily": 5
+        },
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 400,
+        "type": "application/json",
+        "shape": {
+          "ok": "bool",
+          "said": "string"
+        }
       },
       "stream": null
     }
