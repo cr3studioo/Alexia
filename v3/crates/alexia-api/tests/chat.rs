@@ -382,7 +382,10 @@ fn request(w: &World, method: &str, path: &str, body: Option<&Value>) -> String 
     req
 }
 
-fn head_of(raw: &[u8]) -> Option<(usize, u16, Vec<(String, String)>)> {
+type Headers = Vec<(String, String)>;
+
+/// Where the body starts, the status and the headers, once the head is complete.
+fn head_of(raw: &[u8]) -> Option<(usize, u16, Headers)> {
     let split = raw.windows(4).position(|x| x == b"\r\n\r\n")?;
     let head = String::from_utf8_lossy(&raw[..split]).into_owned();
     let mut lines = head.split("\r\n");

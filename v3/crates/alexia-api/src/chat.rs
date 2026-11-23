@@ -496,10 +496,12 @@ impl Pump {
         self.tool = Some(name.clone());
         let args = args.unwrap_or_else(|| json!({}));
         // Attribution at the moment it fires: a learned skill can be wrong.
-        let opened = (name == SKILL_TOOL)
-            .then(|| args.get("name").and_then(Value::as_str).unwrap_or(""))
-            .unwrap_or("")
-            .to_owned();
+        let opened = if name == SKILL_TOOL {
+            args.get("name").and_then(Value::as_str).unwrap_or("")
+        } else {
+            ""
+        }
+        .to_owned();
         let mut out = vec![json!({ "step": { "n": n, "name": name, "args": args } })];
         if learned_skill(&self.api, &opened) {
             out.push(json!({ "learned": opened }));
