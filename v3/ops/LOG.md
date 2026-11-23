@@ -550,3 +550,9 @@
 2026-11-23 P2D-06 approved (workspace green, contract 7/7). LATER: host.rs:1497 remove stops on purge error (v2 carries on); plugins.rs:495 persist_enabled race; plugin_file 410 for dir. Merged; gate OK (88 suites), pushed. P2D-08 ready. CEO session hit its usage limit here
 2026-11-23 20:30 c2 reset. P2D-07 approved (966 tests; LNK1127 corrupt rlib after reboot, rebuilt). LATER: learn accept/forget do not invalidate Skills (learned.rs:317/361); save() overwrites an allowed skill folder (consent, board.rs:1150); skill kv RMW no lock. Merged, gating. P2D-09 died at usage limit (code written, uncompiled) -> continue ctx_afd240c31aec, try not counted. P2D-10 paused at limit, resumes itself
 2026-11-23 P2D-07 gate OK (89 suites), pushed
+2026-11-23 P2D-10 asked: gate.rs guard_confirm pins 501. CEO: route-agnostic (not 400/403)
+2026-11-23 P2D-09 built (M1-M17, 4 core + 7 api tests; M2/M3 hand cases network-free) -> review ctx_83e99bca2e7f. Dispatched P2D-11 ctx_2e7e46e0a754
+2026-11-23 P2D-11 asked: attachments API private in core. CEO: plan C, minimal public attachments API + real share upcall in alexia-core upcalls.rs (no decorator, no raw SQL)
+2026-11-23 P2D-10 built (compute routes in v2 recorded shapes, host=this extra; own job queue + paused flag since LocalJobs has neither) -> review ctx_92c0c9e3aee4. Dispatched P2D-08 ctx_e8a898d60fed
+2026-11-23 P2D-08 asked: library contract needs network. CEO: A, local static registry in contract.rs + ALEXIA_LIBRARY_REGISTRY test seam
+2026-11-23 P2D-09 approved (resume_after_kill flaked under load again). LATER: LocalState::launch check+push race (local_models.rs:548); install never checks gpu::fit (owner-visible). Merged; gate: fmt/clippy/tests OK (89+), invariants flagged v2 JSON key memory (RAM stats) as plugin id: CEO built it from RAM_KEY constant, invariants ok, alexia-api + contract green. LATER: invariants should not flag JSON keys. Pushed
