@@ -5,7 +5,7 @@
       "row": "B1",
       "name": "rows: models",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "POST",
         "path": "/api/rows",
@@ -34,7 +34,7 @@
       "row": "B1",
       "name": "rows: routing",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "POST",
         "path": "/api/rows",
@@ -63,7 +63,7 @@
       "row": "B1",
       "name": "rows: activity",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "POST",
         "path": "/api/rows",
@@ -92,7 +92,7 @@
       "row": "B1",
       "name": "rows: last_run",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "POST",
         "path": "/api/rows",
@@ -121,7 +121,7 @@
       "row": "B1",
       "name": "rows: skills",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "POST",
         "path": "/api/rows",
@@ -150,7 +150,7 @@
       "row": "B1",
       "name": "rows: learned",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "POST",
         "path": "/api/rows",
@@ -179,7 +179,7 @@
       "row": "B1",
       "name": "rows: tools",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "POST",
         "path": "/api/rows",
@@ -208,7 +208,7 @@
       "row": "B1",
       "name": "rows: library",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "POST",
         "path": "/api/rows",
@@ -237,7 +237,7 @@
       "row": "B3",
       "name": "action: set_spend",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "POST",
         "path": "/api/action",
@@ -268,7 +268,7 @@
       "row": "B3",
       "name": "action that does not exist",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "POST",
         "path": "/api/action",
@@ -299,7 +299,7 @@
       "row": "B4",
       "name": "learn: save with nothing waiting",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "POST",
         "path": "/api/learn",
@@ -330,7 +330,7 @@
       "row": "B4",
       "name": "learn: forget one",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "POST",
         "path": "/api/learn",
@@ -360,7 +360,7 @@
       "row": "B1",
       "name": "rows: chats",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "POST",
         "path": "/api/rows",
@@ -398,7 +398,7 @@
       "row": "B2",
       "name": "detail of a chat",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "POST",
         "path": "/api/detail",
@@ -428,7 +428,7 @@
       "row": "B3",
       "name": "action: new_chat",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "POST",
         "path": "/api/action",
