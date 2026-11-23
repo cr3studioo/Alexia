@@ -5,7 +5,7 @@
       "row": "M1",
       "name": "overview",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "GET",
         "path": "/api/local-models",
@@ -175,7 +175,13 @@
           "installed": [],
           "jobs": [],
           "mode": "string"
-        }
+        },
+        "optional": [
+          "/picks/*",
+          "/picks/*/quants/*/note",
+          "/all/*/quants/*/note",
+          "/uncensored/*/quants/*/note"
+        ]
       },
       "stream": null
     },
@@ -183,7 +189,7 @@
       "row": "M4",
       "name": "context settings",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "GET",
         "path": "/api/local-models/context",
@@ -212,7 +218,7 @@
       "row": "M5",
       "name": "set context settings",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "POST",
         "path": "/api/local-models/context",
@@ -242,7 +248,7 @@
       "row": "M6",
       "name": "maintenance",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "GET",
         "path": "/api/local-models/maintenance",
@@ -269,7 +275,7 @@
       "row": "M7",
       "name": "import preview of a missing file",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "GET",
         "path": "/api/local-models/import-preview",
@@ -298,7 +304,7 @@
       "row": "M8",
       "name": "progress with nothing running",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "GET",
         "path": "/api/local-models/progress",
@@ -324,7 +330,7 @@
       "row": "M10",
       "name": "cancel a job that is not there",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "POST",
         "path": "/api/local-models/cancel",
@@ -351,7 +357,7 @@
       "row": "M9",
       "name": "install an entry that is not on the list",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "POST",
         "path": "/api/local-models/install",
@@ -382,7 +388,7 @@
       "row": "M11",
       "name": "import a file that is not there",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "POST",
         "path": "/api/local-models/import",
@@ -412,7 +418,7 @@
       "row": "M12",
       "name": "benchmark a model that is not installed",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "POST",
         "path": "/api/local-models/benchmark",
@@ -442,7 +448,7 @@
       "row": "M13",
       "name": "use a model that is not installed",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "POST",
         "path": "/api/local-models/use",
@@ -471,7 +477,7 @@
       "row": "M14",
       "name": "remove a model that is not installed",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "POST",
         "path": "/api/local-models/remove",
@@ -500,7 +506,7 @@
       "row": "M15",
       "name": "DELETE a model that is not installed",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "DELETE",
         "path": "/api/local-models/none",
@@ -528,7 +534,7 @@
       "row": "M16",
       "name": "a Hugging Face token",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "POST",
         "path": "/api/local-models/token",
@@ -556,7 +562,7 @@
       "row": "M17",
       "name": "local stats",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "GET",
         "path": "/api/local-stats",
@@ -616,13 +622,13 @@
     },
     {
       "row": "M2",
-      "name": "search (needs Hugging Face)",
-      "from": "serve.ts:2150; localModels.search",
+      "name": "search with a blank query (asks Hugging Face nothing)",
+      "from": "serve.ts:2150; localModels.search; hf.ts:243",
       "request": {
         "method": "GET",
         "path": "/api/local-models/search",
         "query": {
-          "q": "llama"
+          "q": " "
         },
         "body": null,
         "token": true,
@@ -631,16 +637,10 @@
       "response": {
         "status": 200,
         "type": "application/json",
-        "shape": {
-          "results": [
-            {
-              "repo": "string"
-            }
-          ]
-        }
+        "shape": []
       },
       "source": "hand",
-      "hub": "pending",
+      "hub": "answers",
       "setup": [
         "fresh"
       ],
@@ -648,27 +648,30 @@
     },
     {
       "row": "M3",
-      "name": "repo preview (needs Hugging Face)",
-      "from": "serve.ts:2151; localModels.hf",
+      "name": "repo preview as MLX on a computer without Apple Silicon",
+      "from": "serve.ts:2151; localModels.hf:417",
       "request": {
         "method": "GET",
         "path": "/api/local-models/repo",
         "query": {
-          "repo": "owner/name"
+          "repo": "owner/name",
+          "format": "mlx"
         },
         "body": null,
         "token": true,
         "host": "127.0.0.1"
       },
       "response": {
-        "status": 200,
+        "status": 400,
         "type": "application/json",
         "shape": {
-          "repo": "string"
+          "ok": "bool",
+          "said": "string",
+          "error": "string"
         }
       },
       "source": "hand",
-      "hub": "pending",
+      "hub": "answers",
       "setup": [
         "fresh"
       ],
