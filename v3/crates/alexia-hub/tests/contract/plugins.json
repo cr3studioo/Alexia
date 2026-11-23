@@ -5,7 +5,7 @@
       "row": "P1",
       "name": "no plugins installed",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "GET",
         "path": "/api/plugins",
@@ -35,7 +35,7 @@
       "row": "P2",
       "name": "enable a plugin that is not installed",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "POST",
         "path": "/api/plugin",
@@ -64,7 +64,7 @@
       "row": "P3",
       "name": "install from a folder that is not there",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "POST",
         "path": "/api/install",
@@ -93,7 +93,7 @@
       "row": "P4",
       "name": "trust a server that is not added",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "POST",
         "path": "/api/server",
@@ -124,7 +124,7 @@
       "row": "P5",
       "name": "a setting of a plugin that is not installed",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "POST",
         "path": "/api/settings",
@@ -154,7 +154,7 @@
       "row": "P6",
       "name": "an upload for a plugin that is not installed",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "POST",
         "path": "/api/upload",
@@ -185,7 +185,7 @@
       "row": "P7",
       "name": "a file of a plugin that is not installed",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "GET",
         "path": "/api/plugin-file",
@@ -253,7 +253,20 @@
                   }
                 ]
               },
-              "page": "null"
+              "page": {
+                "title": "string",
+                "sizes": {
+                  "M": {
+                    "at": [
+                      "number"
+                    ],
+                    "show": [
+                      "string"
+                    ]
+                  }
+                },
+                "fixed": "bool"
+              }
             }
           ],
           "problems": [],
@@ -282,14 +295,18 @@
           "/panes/0/panel/widgets/0/available",
           "/panes/0/panel/widgets/0/reason",
           "/panes/0/panel/widgets/0/live",
-          "/panes/0/panel/widgets/0/gates"
+          "/panes/0/panel/widgets/0/gates",
+          "/panes/0/panel/widgets/0/rows",
+          "/panes/0/panel/widgets/0/columns",
+          "/panes/0/settings/0/default",
+          "/panes/0/panel/widgets/0/default"
         ]
       },
       "setup": [
         "plugins"
       ],
       "source": "hand",
-      "hub": "pending",
+      "hub": "answers",
       "stream": null
     }
   ]

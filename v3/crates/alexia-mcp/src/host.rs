@@ -6,7 +6,7 @@
 
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, HashSet};
-use std::path::{Component, Path};
+use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, RwLock, Weak};
 use std::time::{Duration, Instant};
 
@@ -45,8 +45,15 @@ struct Inner {
     /// (P2-62) Stopped while a game runs: nothing in here spawns until `release`. Read with
     /// `plugins` locked (taken after it), where `ensure_running` decides to spawn.
     held: Mutex<HashSet<PluginId>>,
-    /// Serializes the read-modify-writes of `_core.unreviewed` and `_core.known_plugins`.
+    /// Serializes the read-modify-writes of `_core.unreviewed`, `_core.known_plugins` and
+    /// `_core.servers`.
     lists: Mutex<()>,
+    /// Held by `install_folder` and `add_server` from the check that an id is free until its
+    /// slot is in, so two installs of one id never both pass the check (and neither removes a
+    /// folder the other copied). Never held across an `.await`.
+    install: Mutex<()>,
+    /// Folders that are not plugins, and why (v2 `problems`), as the last `start` found them.
+    problems: Mutex<Vec<(PathBuf, String)>>,
 }
 
 struct Slot {
@@ -126,6 +133,8 @@ impl McpHost {
                 closing: CancellationToken::new(),
                 held: Mutex::default(),
                 lists: Mutex::default(),
+                install: Mutex::default(),
+                problems: Mutex::default(),
             }),
         }
     }
@@ -186,26 +195,7 @@ impl McpHost {
 
     /// Every plugin folder in `dirs`, in order; the first folder holding an id wins.
     pub fn scan(dirs: &[std::path::PathBuf]) -> BTreeMap<PluginId, PluginDir> {
-        let mut found: BTreeMap<PluginId, PluginDir> = BTreeMap::new();
-        for root in dirs {
-            for entry in crate::manifest::discover(root) {
-                match entry {
-                    Ok(dir) => match found.entry(PluginId(dir.manifest.id.clone())) {
-                        Entry::Occupied(_) => {
-                            tracing::info!(folder = %dir.path.display(), "a plugin with this id was already found in an earlier folder; ignored")
-                        }
-                        Entry::Vacant(v) => {
-                            v.insert(dir);
-                        }
-                    },
-                    // No id is known, so there is nothing to put in a `Refused` event.
-                    Err((path, e)) => {
-                        tracing::warn!(folder = %path.display(), "{}", e.sentence);
-                    }
-                }
-            }
-        }
-        found
+        scan_all(dirs).0
     }
 
     /// Scan `plugin_dirs` with [`McpHost::scan`], refuse what this
@@ -217,46 +207,31 @@ impl McpHost {
         std::fs::create_dir_all(layout.root.join("plugins"))?;
         std::fs::create_dir_all(layout.cache())?;
         let enabled: HashSet<&PluginId> = enabled.iter().collect();
-        let found = Self::scan(&self.inner.cfg.plugin_dirs);
+        let (mut found, mut problems) = scan_all(&self.inner.cfg.plugin_dirs);
+        // Added MCP servers (`add_server`): hosted like plugins, behind the folders.
+        for server in self.servers() {
+            let id = PluginId(server.id.clone());
+            if found.contains_key(&id) {
+                tracing::info!(plugin = %id.0, "a plugin folder has this server's id; the server is ignored");
+                continue;
+            }
+            match self.server_folder(&server) {
+                Ok(dir) => {
+                    found.insert(id, dir);
+                }
+                Err(sentence) => problems.push((self.servers_dir().join(&server.id), sentence)),
+            }
+        }
+        *lock(&self.inner.problems) = problems;
         self.learn(found.keys());
 
         let mut resident = vec![];
         for (id, dir) in found {
-            let on = enabled.contains(&id);
-            let mut slot = Slot {
-                stamp: Stamp::of(&dir.path, &dir.manifest.entry),
-                enabled: on,
-                state: PluginState::Stopped,
-                sentence: None,
-                running: None,
-                tools: None,
-                tools_epoch: 0,
-                crashes: CrashLog::new(&self.inner.cfg.timings),
-                gen: 0,
-                log: None,
-                spawn: Arc::default(),
-                dir,
-            };
-            match slot.dir.manifest.compatible() {
-                Err(sentence) => refuse(&mut slot, sentence),
-                Ok(()) if on => {
-                    if let Err(sentence) = self.create_tables(&slot.dir) {
-                        refuse(&mut slot, sentence);
-                    } else if slot.dir.manifest.lifetime() == Lifetime::Resident {
-                        resident.push(id.clone());
-                    }
-                }
-                Ok(()) => {}
+            let (slot, wake) = self.admit(dir, enabled.contains(&id));
+            if wake {
+                resident.push(id.clone());
             }
-            let event = match &slot.sentence {
-                Some(sentence) if slot.state == PluginState::Refused => PluginEvent::Refused {
-                    plugin: id.clone(),
-                    sentence: sentence.clone(),
-                },
-                _ => PluginEvent::Loaded { plugin: id.clone() },
-            };
-            lock(&self.inner.plugins).insert(id, slot);
-            self.emit(event);
+            self.insert_slot(id, slot);
         }
 
         let mut set = tokio::task::JoinSet::new();
@@ -1348,6 +1323,549 @@ impl McpHost {
             stop_guest(proc, Duration::ZERO).await;
         }
     }
+}
+
+/// kv `_core` key: the MCP servers added by hand (v2 `servers.ts`), as `[ServerEntry]`.
+const SERVERS: &str = "servers";
+
+/// An MCP server that is not a plugin folder (v2 `servers.ts` `addServer`). The host writes
+/// the smallest honest manifest for it under `<data>/servers/<id>/` and hosts it like a plugin.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ServerEntry {
+    pub id: String,
+    pub name: String,
+    pub run: String,
+    pub args: Vec<String>,
+}
+
+/// v2's summary for a synthesised manifest: it travels with the plugin to every screen.
+const SERVER_SUMMARY: &str = "MCP server. Not an Alexia plugin. Not reviewed by us.";
+
+impl McpHost {
+    /// (EX-12) Copies a plugin folder into the extensions dir, validates its manifest, scans it
+    /// in disabled. Err with v2's sentence when the manifest is refused or the id exists.
+    /// Validated where it stands and copied second (v2 `install`), so a folder that is not a
+    /// plugin never lands in the directory the host scans. A folder holding a symlink or a
+    /// junction is refused: a copy that follows one would take in whatever it points at.
+    pub async fn install_folder(&self, from: &Path) -> Result<PluginId, Error> {
+        let refused = |s: String| Err(Error::Refused(s));
+        let typed = from.to_string_lossy();
+        if typed.trim().is_empty() {
+            return refused("Type or paste the path of a plugin folder first.".into());
+        }
+        let from = PathBuf::from(home(typed.trim()));
+        let shown = from.display();
+        match std::fs::metadata(&from) {
+            Err(_) => return refused(format!("There is no folder at {shown}.")),
+            Ok(m) if !m.is_dir() => {
+                return refused(format!(
+                    "{shown} is a file. Point at the folder that holds plugin.json."
+                ))
+            }
+            Ok(_) => {}
+        }
+        let name = from
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| shown.to_string());
+        let Ok(json) = std::fs::read_to_string(from.join("plugin.json")) else {
+            return refused(format!("{name} has no readable plugin.json"));
+        };
+        let manifest = Manifest::parse(&json).map_err(|e| Error::Refused(e.sentence))?;
+        if manifest.id != name {
+            return refused(format!("{name}'s plugin.json calls it \"{}\"", manifest.id));
+        }
+        let id = PluginId(manifest.id.clone());
+        let _installing = lock(&self.inner.install);
+        let already = || {
+            format!(
+                "{} is already installed. Delete it first to replace it.",
+                id.0
+            )
+        };
+        if self.taken(&id)? {
+            return refused(already());
+        }
+        if let Some(link) = link_inside(&from)? {
+            return refused(format!(
+                "{name} holds a link ({}), and Alexia installs only real files and folders.",
+                link.display()
+            ));
+        }
+        let Some(ext) = self.inner.cfg.plugin_dirs.first() else {
+            return refused("There is no folder to install plugins into.".into());
+        };
+        std::fs::create_dir_all(ext)?;
+        let dest = ext.join(&id.0);
+        // `create_dir` fails on a folder that is there: from here on `dest` is this call's,
+        // and only this call's is removed when the copy fails.
+        match std::fs::create_dir(&dest) {
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => return refused(already()),
+            Err(e) => return Err(e.into()),
+            Ok(()) => {}
+        }
+        if let Err(e) = copy_tree(&from, &dest) {
+            let _ = std::fs::remove_dir_all(&dest);
+            return Err(e.into());
+        }
+        let dir = PluginDir {
+            path: dest,
+            manifest,
+        };
+        // (P2-62) A folder the owner chose to install is still nobody's reviewed code: an id
+        // that was trusted before (deleted, now installed again from anywhere) starts over.
+        self.set_reviewed(&id, false)?;
+        self.know(&id)?;
+        let (slot, _) = self.admit(dir, false);
+        self.insert_slot(id.clone(), slot);
+        Ok(id)
+    }
+
+    /// An MCP server that is not a plugin folder (v2 `servers.ts` `addServer`): kv
+    /// `_core`/`servers` [{id,name,run,args}], hosted like a plugin with no manifest extras,
+    /// unreviewed until trusted. Installed, not enabled. Not probed: whether it starts is
+    /// seen when it is enabled, in its state, as for any plugin.
+    pub async fn add_server(
+        &self,
+        id: &str,
+        name: &str,
+        run: &str,
+        args: &[String],
+    ) -> Result<PluginId, Error> {
+        let refused = |s: String| Err(Error::Refused(s));
+        let id = id.trim();
+        if id.is_empty() {
+            return refused("Give it a name first — lowercase letters, digits and hyphens.".into());
+        }
+        if !server_id(id) {
+            return refused(format!(
+                "“{id}” is not a usable name — lowercase letters, digits and hyphens."
+            ));
+        }
+        let pid = PluginId(id.to_owned());
+        let _installing = lock(&self.inner.install);
+        let taken = || format!("Something called “{id}” is already installed.");
+        if self.taken(&pid)? {
+            return refused(taken());
+        }
+        if run.trim().is_empty() {
+            return refused("There is no command to run.".into());
+        }
+        let entry = ServerEntry {
+            id: id.to_owned(),
+            name: Some(name.trim())
+                .filter(|n| !n.is_empty())
+                .unwrap_or(id)
+                .to_owned(),
+            run: home(run.trim()),
+            args: args.iter().map(|a| home(a)).collect(),
+        };
+        let dir = self.server_folder(&entry).map_err(Error::Refused)?;
+        {
+            let _g = lock(&self.inner.lists);
+            let mut list = self.read_servers()?;
+            if list.iter().any(|s| s.id == entry.id) {
+                return refused(taken());
+            }
+            list.push(entry);
+            self.write_servers(&list)?;
+        }
+        // Nobody has reviewed it: every tool is asked about until the owner says otherwise.
+        self.set_reviewed(&pid, false)?;
+        self.know(&pid)?;
+        let (slot, _) = self.admit(dir, false);
+        self.insert_slot(pid.clone(), slot);
+        Ok(pid)
+    }
+
+    /// The servers `add_server` added, as kv `_core`/`servers` holds them. A list that cannot be
+    /// read is empty here (and logged).
+    pub fn servers(&self) -> Vec<ServerEntry> {
+        self.read_servers().unwrap_or_else(|e| {
+            tracing::warn!("the server list could not be read: {e}");
+            vec![]
+        })
+    }
+
+    /// (v2 `purge`) Everything the plugin owns, gone, and then the plugin itself: its slot,
+    /// the folder it was installed from (or its server entry). `purge` leaves the folder.
+    pub async fn remove(&self, id: &PluginId) -> Result<(), Error> {
+        let dir = lock(&self.inner.plugins)
+            .get(id)
+            .map(|s| s.dir.path.clone())
+            .ok_or_else(|| Error::UnknownPlugin(id.clone()))?;
+        self.purge(id).await?;
+        let spawn = lock(&self.inner.plugins).get(id).map(|s| s.spawn.clone());
+        if let Some(spawn) = spawn {
+            let _g = spawn.lock().await;
+            let gone = lock(&self.inner.plugins).remove(id);
+            if let Some(Running {
+                proc, conn, stop, ..
+            }) = gone.and_then(|s| s.running)
+            {
+                stop.cancel();
+                drop(conn);
+                stop_guest(proc, Duration::ZERO).await;
+            }
+        }
+        self.emit(PluginEvent::Removed { plugin: id.clone() });
+        {
+            let _g = lock(&self.inner.lists);
+            let mut list = self.read_servers()?;
+            let before = list.len();
+            list.retain(|s| s.id != id.0);
+            if list.len() != before {
+                self.write_servers(&list)?;
+            }
+        }
+        // Gone from the known list too: whatever comes back under this id, by install or by a
+        // folder dropped into the plugin dir, is new to the host and so unreviewed.
+        self.forget(id)?;
+        match std::fs::remove_dir_all(&dir) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.into()),
+            _ => Ok(()),
+        }
+    }
+
+    /// (D204) The Restart on a plugin the supervisor switched off: a fresh crash tally and no
+    /// reason; an enabled resident plugin is started now, the others at their next call.
+    pub async fn restart(&self, id: &PluginId) -> Result<(), Error> {
+        let on = {
+            let mut plugins = lock(&self.inner.plugins);
+            let slot = plugins
+                .get_mut(id)
+                .ok_or_else(|| Error::UnknownPlugin(id.clone()))?;
+            slot.crashes.clear();
+            if slot.state == PluginState::Unhealthy {
+                slot.state = PluginState::Stopped;
+                slot.sentence = None;
+            }
+            slot.enabled
+        };
+        if on {
+            self.set_enabled(id, true).await?;
+        }
+        Ok(())
+    }
+
+    /// Any loaded plugin's folder and manifest, enabled or not, refused or not.
+    pub fn plugin_dir(&self, id: &PluginId) -> Option<PluginDir> {
+        lock(&self.inner.plugins).get(id).map(|s| s.dir.clone())
+    }
+
+    /// The tool names a running plugin last listed; None while it is stopped or has not been
+    /// asked. Never spawns.
+    pub fn tool_names(&self, id: &PluginId) -> Option<Vec<String>> {
+        let plugins = lock(&self.inner.plugins);
+        let slot = plugins.get(id)?;
+        slot.running.as_ref()?;
+        slot.tools
+            .as_ref()
+            .map(|t| t.iter().map(|t| t.tool.name.clone()).collect())
+    }
+
+    /// Folders that are not plugins, and why, as the last `start` found them (v2 `problems`).
+    pub fn problems(&self) -> Vec<(PathBuf, String)> {
+        lock(&self.inner.problems).clone()
+    }
+
+    fn servers_dir(&self) -> PathBuf {
+        self.inner.cfg.layout.root.join("servers")
+    }
+
+    /// kv `_core`/`servers`; a malformed list is an error, never overwritten.
+    fn read_servers(&self) -> Result<Vec<ServerEntry>, Error> {
+        Ok(match self.inner.store.kv_get("_core", SERVERS)? {
+            None => vec![],
+            Some(v) => serde_json::from_value(v).map_err(alexia_store::Error::from)?,
+        })
+    }
+
+    /// With `lists` held.
+    fn write_servers(&self, list: &[ServerEntry]) -> Result<(), Error> {
+        let v = serde_json::to_value(list).map_err(alexia_store::Error::from)?;
+        self.inner.store.kv_set("_core", SERVERS, &v)?;
+        Ok(())
+    }
+
+    /// Whether `id` is a loaded plugin, an added server, or a folder in a plugin dir.
+    fn taken(&self, id: &PluginId) -> Result<bool, Error> {
+        Ok(lock(&self.inner.plugins).contains_key(id)
+            || self.read_servers()?.iter().any(|s| s.id == id.0)
+            || self
+                .inner
+                .cfg
+                .plugin_dirs
+                .iter()
+                .any(|d| d.join(&id.0).exists()))
+    }
+
+    /// `id` into `_core.known_plugins`, so a later scan does not take it for new.
+    fn know(&self, id: &PluginId) -> Result<(), Error> {
+        let _g = lock(&self.inner.lists);
+        let store = &self.inner.store;
+        let mut known: Vec<String> = match store.kv_get("_core", KNOWN)? {
+            None => vec![],
+            Some(v) => serde_json::from_value(v).map_err(alexia_store::Error::from)?,
+        };
+        if !known.contains(&id.0) {
+            known.push(id.0.clone());
+            store.kv_set("_core", KNOWN, &json!(known))?;
+        }
+        Ok(())
+    }
+
+    /// `id` out of `_core.known_plugins` (`remove`).
+    fn forget(&self, id: &PluginId) -> Result<(), Error> {
+        let _g = lock(&self.inner.lists);
+        let store = &self.inner.store;
+        let Some(v) = store.kv_get("_core", KNOWN)? else {
+            return Ok(());
+        };
+        let mut known: Vec<String> =
+            serde_json::from_value(v).map_err(alexia_store::Error::from)?;
+        let before = known.len();
+        known.retain(|k| k != &id.0);
+        if known.len() != before {
+            store.kv_set("_core", KNOWN, &json!(known))?;
+        }
+        Ok(())
+    }
+
+    /// The server's synthesised manifest (v2 `synthesise`), written to its folder when it
+    /// differs from what is there. Err is the sentence.
+    fn server_folder(&self, s: &ServerEntry) -> Result<PluginDir, String> {
+        let path = self.servers_dir().join(&s.id);
+        // A manifest names its program on PATH or relative to its folder: a full path typed for
+        // a server is written relative to the folder the host keeps its manifest in.
+        let run = if Path::new(&s.run).is_absolute() {
+            relative_to(&path, Path::new(&s.run)).ok_or_else(|| {
+                format!(
+                    "{} can't be run from where Alexia keeps its servers; put it on the same drive, or on PATH.",
+                    s.run
+                )
+            })?
+        } else {
+            s.run.clone()
+        };
+        let mut entry = json!({ "run": run });
+        if !s.args.is_empty() {
+            entry["args"] = json!(s.args);
+        }
+        let name = if s.name.trim().is_empty() {
+            &s.id
+        } else {
+            &s.name
+        };
+        let text = json!({
+            "manifest_version": 1,
+            "id": s.id,
+            "name": name,
+            "summary": SERVER_SUMMARY,
+            "version": "0.0.0",
+            "license": "unknown",
+            "entry": entry,
+            "alexia_protocol": crate::ALEXIA_PROTOCOL_MIN,
+            "mcp_protocol": crate::MCP_REVISIONS[0],
+        })
+        .to_string();
+        let manifest = Manifest::parse(&text).map_err(|e| e.sentence)?;
+        let file = path.join("plugin.json");
+        if std::fs::read_to_string(&file).ok().as_deref() != Some(text.as_str()) {
+            std::fs::create_dir_all(&path)
+                .and_then(|()| std::fs::write(&file, &text))
+                .map_err(|e| format!("{} could not be written down: {e}", s.id))?;
+        }
+        Ok(PluginDir { path, manifest })
+    }
+
+    /// A slot for a folder just found: refused when this build cannot run it; for an enabled
+    /// plugin its tables are made. True when it is resident and should be started now.
+    fn admit(&self, dir: PluginDir, on: bool) -> (Slot, bool) {
+        let mut slot = Slot {
+            stamp: Stamp::of(&dir.path, &dir.manifest.entry),
+            enabled: on,
+            state: PluginState::Stopped,
+            sentence: None,
+            running: None,
+            tools: None,
+            tools_epoch: 0,
+            crashes: CrashLog::new(&self.inner.cfg.timings),
+            gen: 0,
+            log: None,
+            spawn: Arc::default(),
+            dir,
+        };
+        let mut wake = false;
+        match slot.dir.manifest.compatible() {
+            Err(sentence) => refuse(&mut slot, sentence),
+            Ok(()) if on => {
+                if let Err(sentence) = self.create_tables(&slot.dir) {
+                    refuse(&mut slot, sentence);
+                } else {
+                    wake = slot.dir.manifest.lifetime() == Lifetime::Resident;
+                }
+            }
+            Ok(()) => {}
+        }
+        (slot, wake)
+    }
+
+    /// Puts the slot in and says so: `Refused` with its sentence, else `Loaded`.
+    fn insert_slot(&self, id: PluginId, slot: Slot) {
+        let event = match &slot.sentence {
+            Some(sentence) if slot.state == PluginState::Refused => PluginEvent::Refused {
+                plugin: id.clone(),
+                sentence: sentence.clone(),
+            },
+            _ => PluginEvent::Loaded { plugin: id.clone() },
+        };
+        lock(&self.inner.plugins).insert(id, slot);
+        self.emit(event);
+    }
+}
+
+/// `McpHost::scan`, keeping the folders that are not plugins and why.
+fn scan_all(dirs: &[PathBuf]) -> (BTreeMap<PluginId, PluginDir>, Vec<(PathBuf, String)>) {
+    let mut found: BTreeMap<PluginId, PluginDir> = BTreeMap::new();
+    let mut problems = vec![];
+    for root in dirs {
+        for entry in crate::manifest::discover(root) {
+            match entry {
+                Ok(dir) => match found.entry(PluginId(dir.manifest.id.clone())) {
+                    Entry::Occupied(_) => {
+                        tracing::info!(folder = %dir.path.display(), "a plugin with this id was already found in an earlier folder; ignored")
+                    }
+                    Entry::Vacant(v) => {
+                        v.insert(dir);
+                    }
+                },
+                // No id is known, so there is nothing to put in a `Refused` event.
+                Err((path, e)) => {
+                    tracing::warn!(folder = %path.display(), "{}", e.sentence);
+                    problems.push((path, e.sentence));
+                }
+            }
+        }
+    }
+    (found, problems)
+}
+
+/// `target` as a path relative to `base` (both absolute), or None when they share no root
+/// (another drive).
+fn relative_to(base: &Path, target: &Path) -> Option<String> {
+    let (b, t): (Vec<Component>, Vec<Component>) =
+        (base.components().collect(), target.components().collect());
+    if b.first() != t.first() {
+        return None;
+    }
+    let same = b.iter().zip(&t).take_while(|(x, y)| x == y).count();
+    let mut rel = PathBuf::new();
+    for _ in same..b.len() {
+        rel.push("..");
+    }
+    for c in &t[same..] {
+        rel.push(c.as_os_str());
+    }
+    Some(rel.to_string_lossy().into_owned())
+}
+
+/// v2's server id: lowercase words of letters and digits joined by single hyphens.
+fn server_id(id: &str) -> bool {
+    alexia_store::is_plugin_id(id) && !id.ends_with('-') && !id.contains("--")
+}
+
+/// A leading tilde as a shell reads it (v2 `home`): the home folder, alone or followed by a
+/// path. Anything else is left exactly as typed.
+fn home(typed: &str) -> String {
+    let rest = match typed.strip_prefix('~') {
+        Some("") => "",
+        Some(r) if r.starts_with(['/', '\\']) => &r[1..],
+        _ => return typed.to_owned(),
+    };
+    let found = if cfg!(windows) {
+        std::env::var_os("USERPROFILE")
+    } else {
+        None
+    }
+    .filter(|h| !h.is_empty())
+    .or_else(|| std::env::var_os("HOME").filter(|h| !h.is_empty()));
+    let Some(base) = found.map(PathBuf::from) else {
+        return typed.to_owned();
+    };
+    let full = if rest.is_empty() {
+        base
+    } else {
+        base.join(rest)
+    };
+    full.to_string_lossy().into_owned()
+}
+
+/// True for a symlink, and on Windows for any reparse point (a junction is one).
+fn is_link(m: &std::fs::Metadata) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+        if m.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            return true;
+        }
+    }
+    m.file_type().is_symlink()
+}
+
+/// The first link anywhere under `dir` (the folder itself included), relative to it.
+fn link_inside(dir: &Path) -> std::io::Result<Option<PathBuf>> {
+    if is_link(&std::fs::symlink_metadata(dir)?) {
+        return Ok(Some(PathBuf::from(".")));
+    }
+    let mut todo = vec![dir.to_path_buf()];
+    while let Some(at) = todo.pop() {
+        for e in std::fs::read_dir(&at)? {
+            let p = e?.path();
+            let m = std::fs::symlink_metadata(&p)?;
+            if is_link(&m) {
+                return Ok(Some(
+                    p.strip_prefix(dir).map_or(p.clone(), Path::to_path_buf),
+                ));
+            }
+            if m.is_dir() {
+                todo.push(p);
+            }
+        }
+    }
+    Ok(None)
+}
+
+/// `from` into `to` (an empty folder the caller made) with `std::fs`, `plugin.json` last: a
+/// copy cut short has no manifest, so no scan takes it for a plugin. Links are refused, not
+/// followed.
+fn copy_tree(from: &Path, to: &Path) -> std::io::Result<()> {
+    fn walk(from: &Path, to: &Path, top: bool) -> std::io::Result<()> {
+        if !top {
+            std::fs::create_dir(to)?;
+        }
+        for e in std::fs::read_dir(from)? {
+            let e = e?;
+            let (src, dst) = (e.path(), to.join(e.file_name()));
+            let m = std::fs::symlink_metadata(&src)?;
+            if is_link(&m) {
+                return Err(std::io::Error::other(format!(
+                    "{} is a link",
+                    src.display()
+                )));
+            }
+            if m.is_dir() {
+                walk(&src, &dst, false)?;
+            } else if !(top && e.file_name() == "plugin.json") {
+                std::fs::copy(&src, &dst)?;
+            }
+        }
+        Ok(())
+    }
+    walk(from, to, true)?;
+    std::fs::copy(from.join("plugin.json"), to.join("plugin.json"))?;
+    Ok(())
 }
 
 /// v2's wording (supervisor.ts `#crashed`).

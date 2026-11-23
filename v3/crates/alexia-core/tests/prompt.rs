@@ -144,6 +144,18 @@ async fn skill_tool_lists_descriptions() {
         "{:?}",
         problems.iter().map(|p| &p.why).collect::<Vec<_>>()
     );
+    let listed: Vec<(&str, &str, &Path)> = skills.list().collect();
+    assert_eq!(
+        listed,
+        vec![
+            (
+                "alpha",
+                "Does alpha things well.",
+                root.join("alpha").as_path()
+            ),
+            ("beta", "Does beta.", root.join("beta").as_path()),
+        ]
+    );
     let specs = skills.specs();
     assert_eq!(specs.len(), 1);
     assert_eq!(specs[0].name, "skill");
@@ -182,6 +194,7 @@ async fn skill_tool_lists_descriptions() {
 
     let (empty, _) = Skills::load(&[]);
     assert!(empty.specs().is_empty());
+    assert_eq!(empty.list().count(), 0);
 }
 
 #[tokio::test]
