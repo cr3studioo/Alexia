@@ -950,14 +950,115 @@ async fn attachment_register_refuses_what_is_not_the_plugins_own_picture() {
     assert!(register(fake.to_string_lossy().into_owned(), "../x".into())
         .await
         .is_err());
-    // There is no link to hand out until the hub serves one.
+    // A link is handed out only for a file of the plugin's own.
     let err = pics(
         &w,
         "share",
-        json!({ "conversationId": session, "path": "x", "mime": "image/png" }),
+        json!({ "conversationId": session, "path": stray.to_string_lossy(), "mime": "image/png" }),
     )
     .await
     .unwrap_err();
-    assert_eq!(err.code, code::CAPABILITY_NOT_AVAILABLE);
+    assert_eq!(err.code, code::INVALID_PARAMS);
+    assert!(err.message.contains("own folder"), "{}", err.message);
     let _ = std::fs::remove_dir_all(&outside);
+}
+
+#[tokio::test]
+async fn attachment_share_gives_a_token_for_this_conversation() {
+    let w = world("p", vec!["big-70b"], true, Arc::new(|_, _| text("x"))).await;
+    let session = w.store.create_session(Some("edit")).unwrap().0.to_string();
+    let own = w.layout.own_dir("pics");
+    std::fs::create_dir_all(&own).unwrap();
+    let file = own.join("mask.png");
+    std::fs::write(&file, png(2, 2)).unwrap();
+    let path = file.to_string_lossy().into_owned();
+
+    let shared = pics(
+        &w,
+        "share",
+        json!({ "conversationId": session, "path": path, "mime": "image/png" }),
+    )
+    .await
+    .unwrap();
+    let url = shared["url"].as_str().unwrap();
+    let token = url.strip_prefix("/api/editor/file?token=").expect(url);
+    let album = w.agent.album();
+    let one = album.shared(token).expect("the token names the file");
+    assert_eq!(one.mime, "image/png");
+    assert_eq!(one.conversation, session);
+    assert_eq!(
+        std::fs::read(&one.path).unwrap(),
+        std::fs::read(&file).unwrap()
+    );
+    assert!(album.shared("shr_nobody").is_none());
+
+    // Not for a conversation that is not there, and never without a type.
+    for params in [
+        json!({ "conversationId": "99999", "path": path, "mime": "image/png" }),
+        json!({ "conversationId": session, "path": path, "mime": "" }),
+    ] {
+        let err = pics(&w, "share", params).await.unwrap_err();
+        assert_eq!(err.code, code::INVALID_PARAMS);
+    }
+
+    // Another Alexia in this process never sees it.
+    let other = world("p", vec!["big-70b"], true, Arc::new(|_, _| text("x"))).await;
+    assert!(other.agent.album().shared(token).is_none());
+
+    // Forgetting the conversation forgets its shared files.
+    album.forget(&session).unwrap();
+    assert!(album.shared(token).is_none());
+}
+
+#[tokio::test]
+async fn album_lists_shows_takes_and_forgets_pictures() {
+    let w = world("p", vec!["big-70b"], true, Arc::new(|_, _| text("x"))).await;
+    let album = w.agent.album();
+    let mine = w.store.create_session(Some("mine")).unwrap().0.to_string();
+    let theirs = w
+        .store
+        .create_session(Some("theirs"))
+        .unwrap()
+        .0
+        .to_string();
+
+    assert_eq!(album.list(&mine).unwrap(), Vec::<Value>::new());
+    let up = album.ingest(&mine, "a.png", &png(3, 2), "upload").unwrap();
+    assert_eq!(up["label"], "image_1");
+    let turned = album
+        .ingest(&mine, "b.png", &png(2, 3), "normalized")
+        .unwrap();
+    assert_eq!(turned["label"], "image_2");
+    // Only the ways a picture arrives from the window.
+    assert!(album
+        .ingest(&mine, "c.png", &png(2, 2), "approved_result")
+        .is_err());
+    assert!(album
+        .ingest(&mine, "d.png", b"not a picture", "upload")
+        .is_err());
+    assert!(album
+        .ingest("99999", "e.png", &png(2, 2), "upload")
+        .is_err());
+
+    let listed = album.list(&mine).unwrap();
+    assert_eq!(listed.len(), 2);
+    assert_eq!(listed[0]["id"], up["id"]);
+    assert_eq!(listed[1]["id"], turned["id"]);
+
+    let id = up["id"].as_str().unwrap();
+    let (mime, bytes) = album.bytes(&mine, id).unwrap();
+    assert_eq!(mime, "image/png");
+    assert!(bytes.starts_with(&[0x89, b'P', b'N', b'G']));
+    assert!(!bytes.windows(4).any(|w| w == b"tEXt"), "kept stripped");
+    // A conversation reaches only its own pictures.
+    assert!(album.bytes(&theirs, id).is_err());
+    assert!(album.bytes(&mine, "att_nobody").is_err());
+    assert!(album.bytes("../x", id).is_err());
+
+    album.forget(&mine).unwrap();
+    assert_eq!(album.list(&mine).unwrap(), Vec::<Value>::new());
+    assert!(album.bytes(&mine, id).is_err());
+    assert!(!w.layout.uploads().join(&mine).exists());
+    // Idempotent.
+    album.forget(&mine).unwrap();
 }
