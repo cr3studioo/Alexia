@@ -390,7 +390,12 @@ async fn serve(
     for c in channels::configured(store.clone(), layout) {
         channels.add(c);
     }
-    let asker = Asker::new(channels.clone(), store.clone(), bus.clone());
+    let asker = Asker::with_window(
+        channels.clone(),
+        store.clone(),
+        bus.clone(),
+        alexia_gateway::WindowQuestions::default(),
+    );
     let checker = Arc::new(Checker::new(None));
 
     // 4. Tooling with no builtins yet: the ones below need the agent.
