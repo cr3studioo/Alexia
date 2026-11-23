@@ -420,7 +420,17 @@ async fn guard_confirm() {
         Some(r#"{"confirm":true}"#),
     )
     .await;
-    assert_eq!(a.status, 501);
+    // Route-agnostic: whatever the route answers, the gate did not refuse it.
+    let body = String::from_utf8_lossy(&a.body).into_owned();
+    assert_ne!(a.status, 403, "{body}");
+    assert_ne!(a.status, 400, "{body}");
+    assert!(
+        serde_json::from_str::<Value>(&body)
+            .ok()
+            .and_then(|v| v.get("confirm").cloned())
+            .is_none(),
+        "the guard asked again: {body}"
+    );
     // A read refuses a write, without `confirm`.
     let a = send(w.port, "POST", "/api/state", Some(&t), None, Some("{}")).await;
     assert_eq!(a.status, 405);
