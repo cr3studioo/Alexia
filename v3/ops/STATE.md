@@ -8,8 +8,8 @@ Orca run: run_7a40b198ac83 (bind with run-use). Helpers in C:\dev\Alexia-wt:
 
 P0 26/26, P1 35/35, P2 all build tasks merged (gate 77 suites); P2-41 dropped (A-19, owner waived); 10 P2 follow-ups deferred.
 NOW: Phase 2D (A-19): the v2 app (packages/ui + src-tauri) on alexia-hub, same look, all features, plus PC actions.
-Running (opus, c2): P2D-01 ctx_c281ecf9c1bd, P2D-03 ctx_444a1e3a8134.
-Next: P2D-01 unlocks 02 and 13; 02 unlocks 04,06,07,09,10; 03+02 unlock 05,11. Max 2 opus per batch.
+Running (c2): P2D-02 sonnet ctx_e93199f9578c, P2D-13 opus ctx_c0af8ce4881f. Merged: P2D-01, P2D-03.
+Next: P2D-02 unlocks 04,06,07,09,10 (+05,11 with 03). Max 2 opus per batch. c1 is ~97% weekly until 11-27: when c2 hits 95% 5h, wait for its reset.
 
 MACHINE LIMITS (most important):
 - Disk C: was 9.7 GB free twice this run. Causes found: (1) tests leak alexia-* temp dirs in %TEMP% (40k dirs, ~80 GB; deleted those older than 2 h: PowerShell Get-ChildItem $env:TEMP -Directory -Filter 'alexia-*' | ? LastWriteTime -lt (Get-Date).AddHours(-2) | Remove-Item -Recurse -Force). Do this every few rounds until a task fixes the leak. (2) main checkout v3/target/debug/incremental grew to 21 GB (gate now runs CARGO_INCREMENTAL=0). (3) each worktree target 8-15 GB: rm -rf <wt>/v3/target as soon as approved. 37 GB free at handoff (CEO #15 deleted tgt-shared). rm -rf <wt>/v3/target once a task is approved.

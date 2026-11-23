@@ -522,3 +522,8 @@
 2026-11-23 P2D-03 built (workspace test not run: memory; compile-only edits upcalls.rs + tests/tools.rs; detached Window falls back to primary chat) -> review ctx_fad4e6039469
 2026-11-23 P2D-03 approved (reviewer: workspace 79 suites green). Merged; no code moved on v3 since its branch point, so reviewer's workspace run is the gate. LATER: tools.rs:883 begin() without close() on dropped future (drop guard); tools.rs:916 is_error vs v2 outcome.ok; ask.rs:1055 window wait eats ANSWER_WAIT
 2026-11-23 P2D-01 approved (workspace 81 suites/900 tests). LATER: statics.rs:77 blocking fs in async; token via getrandom/CSPRNG when allowed. Merged after P2D-03; gate OK (83 suites), pushed
+2026-11-23 Dispatched (c2, 5h 69%): P2D-02:ctx_e93199f9578c P2D-13:ctx_c0af8ce4881f
+2026-11-23 P2D-13 asked: pnpm check pins old Node sidecar in packages/core/test (line budget, sidecar, secrets). CEO: allowed to update those 3 tests to the hub shape, budget raised only as needed
+2026-11-23 P2D-02 built (108 contract cases; S1-S4 answer, 76 pending until screen tasks; C1 cases hand-written) -> review ctx_f85272f968a2
+2026-11-23 P2D-02 approved (workspace 84 suites). LATER: contract.rs:834 failure log accumulation; Sse::next silent end on bad JSON. Merged; no code moved since branch point, reviewer run = gate. Pushed
+2026-11-23 P2D-13 failed: pnpm sidecar (release LTO link) killed by low RAM before anything compiled; not counted as a try. Rerun in same worktree with JOBS=1
