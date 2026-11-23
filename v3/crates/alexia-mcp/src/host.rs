@@ -1791,7 +1791,9 @@ fn link_inside(dir: &Path) -> std::io::Result<Option<PathBuf>> {
             let p = e?.path();
             let m = std::fs::symlink_metadata(&p)?;
             if is_link(&m) {
-                return Ok(Some(p.strip_prefix(dir).map_or(p.clone(), Path::to_path_buf)));
+                return Ok(Some(
+                    p.strip_prefix(dir).map_or(p.clone(), Path::to_path_buf),
+                ));
             }
             if m.is_dir() {
                 todo.push(p);
@@ -1811,7 +1813,10 @@ fn copy_tree(from: &Path, to: &Path) -> std::io::Result<()> {
             let (src, dst) = (e.path(), to.join(e.file_name()));
             let m = std::fs::symlink_metadata(&src)?;
             if is_link(&m) {
-                return Err(std::io::Error::other(format!("{} is a link", src.display())));
+                return Err(std::io::Error::other(format!(
+                    "{} is a link",
+                    src.display()
+                )));
             }
             if m.is_dir() {
                 walk(&src, &dst, false)?;

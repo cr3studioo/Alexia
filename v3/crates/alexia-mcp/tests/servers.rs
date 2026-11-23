@@ -74,7 +74,10 @@ async fn install_folder_copies_and_scans_disabled() {
         std::fs::read_to_string(copied.join("assets").join("note.txt")).unwrap(),
         "hello"
     );
-    assert!(from.join("plugin.json").is_file(), "the source is left as it was");
+    assert!(
+        from.join("plugin.json").is_file(),
+        "the source is left as it was"
+    );
 
     let status = h.plugins();
     let p = status.iter().find(|p| p.id == id).expect("scanned in");
@@ -91,7 +94,9 @@ async fn install_folder_copies_and_scans_disabled() {
     // Enabled, it runs from the copy.
     h.set_enabled(&id, true).await.unwrap();
     let tools = h.tools().await;
-    assert!(tools.iter().any(|t| t.plugin == id && t.tool.name == "greet"));
+    assert!(tools
+        .iter()
+        .any(|t| t.plugin == id && t.tool.name == "greet"));
     assert_eq!(h.tool_names(&id).unwrap(), vec!["greet", "secret_tool"]);
 
     // The same id again is refused with v2's sentence.
@@ -259,7 +264,11 @@ async fn servers_persist() {
         let list = h.servers();
         assert_eq!(list.len(), 1);
         assert_eq!(
-            (list[0].id.as_str(), list[0].name.as_str(), list[0].run.as_str()),
+            (
+                list[0].id.as_str(),
+                list[0].name.as_str(),
+                list[0].run.as_str()
+            ),
             ("keeper", "keeper", FIXTURE)
         );
         assert_eq!(list[0].args, vec!["greet".to_owned()]);
