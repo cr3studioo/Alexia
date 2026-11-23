@@ -1,0 +1,33 @@
+[package]
+name = "alexia-api"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+alexia-store = { path = "../alexia-store" }
+alexia-mcp = { path = "../alexia-mcp" }
+alexia-core = { path = "../alexia-core" }
+alexia-gateway = { path = "../alexia-gateway" }
+alexia-scheduler = { path = "../alexia-scheduler" }
+axum = { workspace = true }
+tokio = { workspace = true }
+tokio-stream = { workspace = true }
+tokio-util = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+base64 = { workspace = true }
+reqwest = { workspace = true }
+sha2 = { workspace = true }
+zip = { workspace = true }
+chrono = { workspace = true }
+
+[dev-dependencies]
+async-trait = { workspace = true }

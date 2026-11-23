@@ -15,6 +15,7 @@ alexia-mcp = { path = "../alexia-mcp" }
 alexia-core = { path = "../alexia-core" }
 alexia-gateway = { path = "../alexia-gateway" }
 alexia-scheduler = { path = "../alexia-scheduler" }
+alexia-api = { path = "../alexia-api" }
 tokio = { workspace = true }
 tokio-util = { workspace = true }
 tracing = { workspace = true }
