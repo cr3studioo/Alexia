@@ -542,3 +542,4 @@
 2026-11-23 P2D-04 asked: gate.rs bad_json_400 pins 501 on /api/setup. CEO: allowed, made route-agnostic (not 400/403)
 2026-11-23 P2D-04 built (A1-A7, 10 tests, state.json answers; key not probed before store; agent ignores stored steps ceiling) -> review after c2 reset (15:30)
 2026-11-23 c2 reset 15:30. P2D-06 review changes: trust bypass on delete+reinstall same id (G3), concurrent install race, skills [] (CEO allows one public list method in alexia-core Skills). LATER: add_server no probe. Fix round ctx_33567e5e406e. P2D-04 review ctx_b689e38f67eb. Dispatched P2D-07 ctx_cf37f7aff89f
+2026-11-23 P2D-04 approved (contract 38 cases; resume_after_kill flaked once under load, 7/7 alone). LATER (owner-visible): saving a key for dashed provider ids (kilo-gateway, cloudflare-ai, ollama-cloud) 500s: provider_<id> fails alexia_store is_ident (state.rs:284, free::key_for); steps ceiling stored but unused; setup mode writes kv directly. Merged; gate OK (86 suites), pushed
