@@ -569,7 +569,7 @@ async fn serve(
             }
         });
     }
-    println!("The window answers on 127.0.0.1:{port}.");
+    tracing::info!("the window answers on 127.0.0.1:{port}");
 
     tracker.spawn(watchdog::heartbeat(store.clone(), root.child_token()));
     let invalidate = fast_chat.clone();
