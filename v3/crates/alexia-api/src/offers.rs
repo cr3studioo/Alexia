@@ -285,9 +285,14 @@ const EXECUTABLE: &[&str] = &[
     "dmg",
 ];
 
-/// v2 `openable`: false for a file that runs when it is opened.
+/// v2 `openable`: false for a file that runs when it is opened. Windows drops trailing
+/// dots and spaces when it resolves a name (`evil.exe.` is `evil.exe`), and `evil.exe::$DATA`
+/// or `C:evil.exe` name the program itself, so each `:` piece is checked after trimming.
 pub(crate) fn openable(name: &str) -> bool {
-    !EXECUTABLE.contains(&extension(name).as_str())
+    let last = name.rsplit(['/', '\\']).next().unwrap_or(name);
+    !std::iter::once(last)
+        .chain(last.split(':'))
+        .any(|piece| EXECUTABLE.contains(&extension(piece.trim_end_matches(['.', ' '])).as_str()))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -429,6 +434,27 @@ mod tests {
         for ok in ["x.pdf", "x", ".exe", "x.txt", "x.exe.txt"] {
             assert!(openable(ok), "{ok}");
         }
+    }
+
+    #[test]
+    fn openable_sees_through_windows_name_tricks() {
+        for bad in [
+            "evil.exe.",
+            "evil.exe ",
+            "evil.exe. . ",
+            "dir\\evil.BAT...",
+            "evil.exe::$DATA",
+            "C:evil.exe",
+        ] {
+            assert!(!openable(bad), "{bad:?}");
+        }
+        for ok in ["report.pdf.", "notes.txt ", "photo.png::$DATA"] {
+            assert!(openable(ok), "{ok:?}");
+        }
+    }
+
+    #[test]
+    fn mime_and_disposition_follow_v2() {
         assert_eq!(mime_of("A.PNG"), "image/png");
         assert_eq!(mime_of("x.unknown"), "application/octet-stream");
         assert_eq!(disposition_name("a b/c\"d.é.txt"), "a b_c_d._.txt");
