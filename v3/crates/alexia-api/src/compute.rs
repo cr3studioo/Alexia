@@ -769,9 +769,10 @@ fn tailscale_cli() -> Option<PathBuf> {
     };
     let mut all = Vec::new();
     if cfg!(windows) {
-        let pf = std::env::var_os("ProgramFiles")
-            .map_or_else(|| PathBuf::from("C:\\Program Files"), PathBuf::from);
-        all.push(pf.join("Tailscale").join(named));
+        // Windows always sets ProgramFiles; without it, PATH below is the only place looked.
+        if let Some(pf) = std::env::var_os("ProgramFiles") {
+            all.push(PathBuf::from(pf).join("Tailscale").join(named));
+        }
     } else if cfg!(target_os = "macos") {
         all.push(PathBuf::from(
             "/Applications/Tailscale.app/Contents/MacOS/Tailscale",
