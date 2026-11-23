@@ -20,7 +20,7 @@
 //! * The tray icon is the only answer to *is it running?* the target user has, so its four
 //!   states matter more than usual. The page sets them over IPC.
 //! * **Closing a window puts Alexia away; quitting takes the hub with it — only one this shell
-//!   started.** A hub from Task Scheduler or a console serves Telegram too, and is not ours.
+//!   started.** A hub from Task Scheduler or a console serves other clients too, and is not ours.
 //!
 //! What is **not** here, on purpose: no business logic, no model calls, no file handling, no
 //! policy in the shell lines core sends. If something needs deciding, it is decided on the
@@ -352,19 +352,13 @@ static GENERATION: AtomicU64 = AtomicU64::new(0);
 /// The running hub this shell started, taken out of where quitting finds it — only if it is
 /// `pid`, when one is named.
 fn take_hub(app: &AppHandle, pid: Option<u32>) -> Option<CommandChild> {
-    let state = app.state::<Mutex<Option<CommandChild>>>();
-    let mut held = state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-    held.take_if(|hub| pid.is_none_or(|pid| hub.pid() == pid))
+    let state = app.state::<Mutex<Option<CommandChild>>>().inner();
+    state.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).take_if(|hub| pid.is_none_or(|pid| hub.pid() == pid))
 }
 
 fn held(app: &AppHandle) -> Held {
-    if app.state::<Mutex<Option<CommandChild>>>().lock().is_ok_and(|held| held.is_some()) {
-        Held::Started
-    } else if ATTACHED.load(Ordering::SeqCst) != 0 {
-        Held::Attached
-    } else {
-        Held::Nothing
-    }
+    let started = app.state::<Mutex<Option<CommandChild>>>().lock().is_ok_and(|held| held.is_some());
+    if started { Held::Started } else if ATTACHED.load(Ordering::SeqCst) != 0 { Held::Attached } else { Held::Nothing }
 }
 
 /// Both windows to the hub, the hidden overlay too — and after a restart, this is their reload.
@@ -429,9 +423,22 @@ fn attach(app: &AppHandle, port: u16, lapse: u32, generation: u64) {
         while hub::answers(port) && current(generation) {
             thread::sleep(Duration::from_secs(2));
         }
-        let _ = ATTACHED.compare_exchange(port, 0, Ordering::SeqCst, Ordering::SeqCst);
+        detach(port, generation);
         again(&app, began, lapse, generation);
     });
+}
+
+/// The attached port forgotten, by the watch of the `launch` still in charge only: a watch left
+/// over from an earlier one would otherwise clear a later attach to a hub on the same port.
+fn detach(port: u16, generation: u64) {
+    if current(generation) { let _ = ATTACHED.compare_exchange(port, 0, Ordering::SeqCst, Ordering::SeqCst); }
+}
+
+#[test]
+fn an_earlier_launchs_attach_watch_leaves_a_later_attach_alone() {
+    GENERATION.store(7, Ordering::SeqCst); ATTACHED.store(5000, Ordering::SeqCst);
+    assert_eq!((detach(5000, 6), ATTACHED.load(Ordering::SeqCst)).1, 5000, "a stale watch must not clear it");
+    assert_eq!((detach(5000, 7), ATTACHED.load(Ordering::SeqCst)).1, 0, "the watch in charge clears it");
 }
 
 /// Not quitting, and no later `launch` has taken over.
@@ -715,6 +722,18 @@ fn main() {
             // after launch (a Windows PC in the compute role "opened" and vanished). A real quit
             // or restart carries its own exit code, so it is not caught here.
             RunEvent::ExitRequested { api, code: None, .. } => api.prevent_exit(),
+            // Quit with a hub of ours up: Alexia goes from the screen now, and the wait for the hub
+            // (up to eight seconds) is off the main thread, which asks again once it is stopped —
+            // with nothing held then, so the second ask ends the app. A restart cannot be held
+            // back, so the stop below in `Exit` is the one it gets.
+            RunEvent::ExitRequested { api, code: Some(code), .. } if code != tauri::RESTART_EXIT_CODE && hub::ours(held(app)) => {
+                api.prevent_exit();
+                QUITTING.store(true, Ordering::SeqCst);
+                app.webview_windows().values().for_each(|window| { let _ = window.hide(); });
+                if let Some(icon) = app.state::<Mutex<Option<TrayIcon>>>().lock().ok().and_then(|held| held.clone()) { let _ = icon.set_visible(false); }
+                let (app, hub) = (app.clone(), take_hub(app, None));
+                thread::spawn(move || { hub.into_iter().for_each(hub::stop); app.exit(code) });
+            }
             RunEvent::Exit => {
                 // First, so the watches know this stop was asked for.
                 QUITTING.store(true, Ordering::SeqCst);

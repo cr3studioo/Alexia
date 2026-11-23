@@ -26,7 +26,7 @@ pub enum Held {
 }
 
 /// Quit and *Try again* stop a hub only if this shell started it. An attached hub serves
-/// Telegram and whoever else is using it; it is not ours to end.
+/// other clients too; it is not ours to end.
 pub fn ours(held: Held) -> bool {
     held == Held::Started
 }
@@ -41,10 +41,7 @@ pub fn window_json(local_data: Option<PathBuf>) -> Option<PathBuf> {
 /// `{"port":u16,"pid":u32}`: the port, if the text is that and process `pid` is `alive`.
 pub fn parse_window_json(text: &str, alive: impl Fn(u32) -> bool) -> Option<u16> {
     #[derive(serde::Deserialize)]
-    struct Window {
-        port: u16,
-        pid: u32,
-    }
+    struct Window { port: u16, pid: u32 }
     let window: Window = serde_json::from_str(text).ok()?;
     (window.port != 0 && alive(window.pid)).then_some(window.port)
 }
@@ -80,13 +77,9 @@ pub fn stop(hub: CommandChild) {
         thread::sleep(Duration::from_millis(250));
     }
     if alive(pid) {
-        let _ = quiet(if cfg!(windows) { "taskkill" } else { "kill" }, &kill_args(pid)).status();
+        let args: Vec<String> = if cfg!(windows) { vec!["/F".into(), "/T".into(), "/PID".into(), pid.to_string()] } else { vec!["-9".into(), pid.to_string()] };
+        let _ = quiet(if cfg!(windows) { "taskkill" } else { "kill" }, &args).status();
     }
-}
-
-fn kill_args(pid: u32) -> Vec<String> {
-    let pid = pid.to_string();
-    if cfg!(windows) { vec!["/F".into(), "/T".into(), "/PID".into(), pid] } else { vec!["-9".into(), pid] }
 }
 
 /// A helper process with no console window and nothing on our stdout.
