@@ -159,26 +159,26 @@ pub(crate) fn state(_api: &Api) -> Value {
 // ---- which computer ----
 
 /// v2 `asked()`: the host a GET names in its query, a POST in its body. `""` is none.
-fn asked(v: Option<&Value>) -> Result<Option<String>, Response> {
+fn asked(v: Option<&Value>) -> Result<Option<String>, Box<Response>> {
     match v {
         None | Some(Value::Null) => Ok(None),
         Some(Value::String(s)) if s.is_empty() => Ok(None),
         Some(Value::String(s)) => Ok(Some(s.clone())),
-        Some(_) => Err(refuse(400, "refused", "Supply a valid host.")),
+        Some(_) => Err(Box::new(refuse(400, "refused", "Supply a valid host."))),
     }
 }
 
-fn asked_query(q: &HashMap<String, String>) -> Result<Option<String>, Response> {
+fn asked_query(q: &HashMap<String, String>) -> Result<Option<String>, Box<Response>> {
     asked(q.get("host").map(|h| Value::String(h.clone())).as_ref())
 }
 
 /// v2 `paired()`, with nothing paired: no host is v2's 400, any other name its 404. `this`,
 /// named outright, is this PC.
-fn this_pc(host: Option<String>) -> Result<(), Response> {
+fn this_pc(host: Option<String>) -> Result<(), Box<Response>> {
     match host.as_deref() {
-        None => Err(refuse(400, "refused", CHOOSE)),
+        None => Err(Box::new(refuse(400, "refused", CHOOSE))),
         Some(THIS) => Ok(()),
-        Some(_) => Err(refuse(404, "unpaired", UNPAIRED)),
+        Some(_) => Err(Box::new(refuse(404, "unpaired", UNPAIRED))),
     }
 }
 
@@ -439,7 +439,7 @@ async fn inventory(
     Query(q): Query<HashMap<String, String>>,
 ) -> Response {
     if let Err(r) = asked_query(&q).and_then(this_pc) {
-        return r;
+        return *r;
     }
     json::ok(json!({ "inventory": this_inventory(&api).await, "connection": "direct" }))
 }
@@ -448,7 +448,7 @@ async fn inventory(
 /// `host=this` named outright is this PC, which the request reached directly.
 async fn status(Query(q): Query<HashMap<String, String>>) -> Response {
     if let Err(r) = asked_query(&q).and_then(this_pc) {
-        return r;
+        return *r;
     }
     json::ok(json!({ "connection": "direct", "label": "Direct" }))
 }
@@ -558,7 +558,7 @@ async fn install(State(api): State<Arc<Api>>, Extension(Sent(sent)): Extension<S
         _ => return refuse(400, "refused", "Supply a valid requirement."),
     };
     if let Err(r) = asked(sent.get("host")).and_then(this_pc) {
-        return r;
+        return *r;
     }
     if requirement != ENGINE || engine_installed(&api) {
         return refuse(404, "not-found", "That setup requirement is not known.");
@@ -609,7 +609,7 @@ async fn install(State(api): State<Arc<Api>>, Extension(Sent(sent)): Extension<S
 
 async fn queue(State(api): State<Arc<Api>>, Query(q): Query<HashMap<String, String>>) -> Response {
     if let Err(r) = asked_query(&q).and_then(this_pc) {
-        return r;
+        return *r;
     }
     json::ok(json!({ "queue": queue_of(&lock(&api.compute.jobs)) }))
 }
@@ -623,7 +623,7 @@ async fn job(State(api): State<Arc<Api>>, Query(q): Query<HashMap<String, String
         return refuse(400, "refused", "Supply a valid job.");
     };
     if let Err(r) = asked_query(&q).and_then(this_pc) {
-        return r;
+        return *r;
     }
     let jobs = lock(&api.compute.jobs);
     match jobs.all.iter().find(|j| j.id() == id) {
@@ -635,7 +635,7 @@ async fn job(State(api): State<Arc<Api>>, Query(q): Query<HashMap<String, String
 /// Newest first, as v2's job log.
 async fn jobs(State(api): State<Arc<Api>>, Query(q): Query<HashMap<String, String>>) -> Response {
     if let Err(r) = asked_query(&q).and_then(this_pc) {
-        return r;
+        return *r;
     }
     let jobs = lock(&api.compute.jobs);
     let all: Vec<&Map<String, Value>> = jobs.all.iter().rev().map(|j| &j.snap).collect();
@@ -649,7 +649,7 @@ async fn cancel(State(api): State<Arc<Api>>, Extension(Sent(sent)): Extension<Se
         return refuse(400, "refused", "Supply a valid job.");
     };
     if let Err(r) = asked(sent.get("host")).and_then(this_pc) {
-        return r;
+        return *r;
     }
     let mut jobs = lock(&api.compute.jobs);
     let Some(j) = jobs.all.iter_mut().find(|j| j.id() == id) else {
@@ -675,7 +675,7 @@ async fn pause(State(api): State<Arc<Api>>, Extension(Sent(sent)): Extension<Sen
     match asked(sent.get("host")) {
         Ok(Some(h)) if h == THIS => {}
         Ok(_) => return refuse(409, "refused", ON_COMPUTE),
-        Err(r) => return r,
+        Err(r) => return *r,
     }
     let Some(paused) = sent.get("paused").and_then(Value::as_bool) else {
         return refuse(400, "refused", "Say whether this computer is paused.");
