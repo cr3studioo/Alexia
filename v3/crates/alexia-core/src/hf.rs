@@ -1365,6 +1365,16 @@ pub async fn repo(
     repo_at(&hub(), client, repo, None, format, hf_token().as_deref()).await
 }
 
+/// `repo` at a branch, tag or commit (`None`: the default branch), pinned to the commit it names.
+pub async fn repo_pinned(
+    client: &reqwest::Client,
+    repo: &str,
+    revision: Option<&str>,
+    format: Format,
+) -> Result<RepoPreview, HfError> {
+    repo_at(&hub(), client, repo, revision, format, hf_token().as_deref()).await
+}
+
 #[doc(hidden)]
 pub async fn repo_at(
     base: &str,

@@ -7,7 +7,7 @@
 //! Never resolves "latest". llama-server listening on loopback is the child's port, not the hub's.
 
 use std::collections::hash_map::RandomState;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::hash::{BuildHasher, Hasher};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -15,7 +15,8 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use alexia_store::{Content, Layout, MessageBody, Part, Role, Store};
+use alexia_store::{now_ms, Content, Layout, MessageBody, Part, Role, Store};
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::io::AsyncWriteExt;
 use tokio::process::{Child, Command};
@@ -202,7 +203,7 @@ impl Runtime {
         if let Some(exe) = self.installed() {
             return Ok(exe);
         }
-        if !cfg!(all(windows, target_arch = "x86_64")) {
+        if !Runtime::supported() {
             return Err(LocalError::Unsupported);
         }
         let _one = self.starting.lock().await;
@@ -525,6 +526,33 @@ impl Runtime {
             return Err(bad(&"the model sent the wrong number of vectors"));
         }
         Ok(rows.into_iter().map(|r| r.1).collect())
+    }
+
+    /// Whether the llama.cpp runtime is on this computer (installed, or `ALEXIA_LLAMA_SERVER`).
+    pub fn ready(&self) -> bool {
+        self.installed().is_some()
+    }
+
+    /// The pinned llama.cpp release.
+    pub fn version() -> &'static str {
+        VERSION
+    }
+
+    /// Whether this computer has a llama.cpp build to download (64-bit Windows).
+    pub fn supported() -> bool {
+        cfg!(all(windows, target_arch = "x86_64"))
+    }
+
+    /// The models whose servers are running, by id.
+    pub fn running(&self) -> Vec<String> {
+        let servers = self.servers.lock().unwrap();
+        let mut ids: Vec<String> = servers
+            .iter()
+            .filter(|(_, s)| !s.dead.load(Ordering::SeqCst) && !s.stop.is_cancelled())
+            .map(|(id, _)| id.clone())
+            .collect();
+        ids.sort();
+        ids
     }
 
     /// The port a model's server listens on (tests).
@@ -1044,9 +1072,12 @@ impl LocalJobs {
             Job::Check => CHECK_CTX,
             _ => EMBED_CTX,
         };
-        let ctx_of = |i: &hf::Installed, want: u32| match i.meta.context {
-            0 => want,
-            c => c.min(want),
+        let saved = notes(&self.store);
+        let ctx_of = |i: &hf::Installed, want: u32| {
+            saved_context(i, &saved).unwrap_or(match i.meta.context {
+                0 => want,
+                c => c.min(want),
+            })
         };
         let fits = |i: &hf::Installed, m: &gpu::Machine, ctx: u32| {
             gpu::fit(
@@ -1290,4 +1321,867 @@ pub async fn see_before_cloud(
         out.push((role, body));
     }
     out
+}
+
+// ---- P2D-09: what the Local models screen asks (MO-02, MO-13, MO-14) ----
+
+const GIB: u64 = 1024 * 1024 * 1024;
+const DAY_MS: i64 = 24 * 60 * 60 * 1000;
+/// kv `_core`/`local_model_notes`: id → [`ModelNotes`].
+const NOTES: &str = "local_model_notes";
+/// v2 `smoke`: one short question, answered.
+const SMOKE: &str =
+    "Reply with this sentence: The local model is ready to answer on this computer. /no_think";
+/// v2 `contextPreview`: the smallest context offered.
+const LEAST_CONTEXT: u32 = 256;
+/// A model whose header names no context length gets v2's `DEFAULT_CONTEXT`.
+const DEFAULT_CONTEXT: u32 = 8192;
+
+/// What v3 keeps about an installed model besides `hf::Installed`: where it came from, what the
+/// owner chose for it and how fast it answered. Every field may be missing (a model recorded
+/// before the screen existed has none).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ModelNotes {
+    pub name: Option<String>,
+    /// The vetted catalog entry it was installed from.
+    pub entry: Option<String>,
+    pub repo: Option<String>,
+    pub revision: Option<String>,
+    pub quant: Option<String>,
+    pub licence: Option<String>,
+    pub vetted: bool,
+    pub abliterated: bool,
+    pub tools: bool,
+    /// Brought in from a file already on disk (M11).
+    pub imported: bool,
+    /// The owner's context size (M5); the job's default when absent.
+    pub context: Option<u32>,
+    pub tokens_per_second: Option<f64>,
+    pub installed_at: Option<i64>,
+    pub last_used_at: Option<i64>,
+}
+
+/// Every model's notes.
+pub fn notes(store: &Store) -> BTreeMap<String, ModelNotes> {
+    store
+        .kv_get("_core", NOTES)
+        .ok()
+        .flatten()
+        .and_then(|v| serde_json::from_value(v).ok())
+        .unwrap_or_default()
+}
+
+/// Change one model's notes (`None` drops them).
+pub fn set_notes(
+    store: &Store,
+    id: &str,
+    change: impl FnOnce(Option<ModelNotes>) -> Option<ModelNotes>,
+) -> Result<(), ModelError> {
+    let mut all = notes(store);
+    if let Some(n) = change(all.remove(id)) {
+        all.insert(id.to_owned(), n);
+    }
+    let value = serde_json::to_value(all).map_err(|e| ModelError::Store(e.to_string()))?;
+    store
+        .kv_set("_core", NOTES, &value)
+        .map_err(|e| ModelError::Store(e.to_string()))
+}
+
+/// The owner's context for `i`, when one is saved and still inside what the model holds.
+fn saved_context(i: &hf::Installed, all: &BTreeMap<String, ModelNotes>) -> Option<u32> {
+    let c = all.get(&i.id)?.context?;
+    (LEAST_CONTEXT..=context_max(i)).contains(&c).then_some(c)
+}
+
+/// The longest context the model's header allows (v2 `DEFAULT_CONTEXT` when it names none).
+pub fn context_max(i: &hf::Installed) -> u32 {
+    match i.meta.context {
+        0 => DEFAULT_CONTEXT,
+        c => c,
+    }
+}
+
+/// What a model runs with when the owner chose nothing: its job's context, capped by the model.
+fn default_context(i: &hf::Installed) -> u32 {
+    let want = if is_embedding(&i.meta.arch) {
+        EMBED_CTX
+    } else {
+        CHECK_CTX
+    };
+    context_max(i).min(want)
+}
+
+/// v2 `fit.ts` `needBytes`: weights, the f16 KV cache for `context` (256-token slots plus 10%)
+/// and the runner's overhead (15% of the weights, at least 1 GiB). What `gpu::fit` judges.
+pub fn need_bytes(model_bytes: u64, kv_bytes_per_token: u64, context: u32) -> u64 {
+    let slots = u64::from(context).div_ceil(256) * 256;
+    let kv = (slots as f64 * kv_bytes_per_token as f64 * 1.1).ceil() as u64;
+    let overhead = GIB.max((model_bytes as f64 * 0.15).ceil() as u64);
+    model_bytes + kv + overhead
+}
+
+/// v2's verdict words.
+pub fn verdict_name(v: gpu::Verdict) -> &'static str {
+    match v {
+        gpu::Verdict::Fits => "fits",
+        gpu::Verdict::Tight => "tight",
+        gpu::Verdict::TooBig => "too-big",
+    }
+}
+
+/// The card as a whole (its total memory, not what is free this second): what the screen
+/// judges a model against.
+pub fn whole_card(m: &gpu::Machine) -> gpu::Machine {
+    gpu::Machine {
+        free_mb: m.vram_mb,
+        ..m.clone()
+    }
+}
+
+/// v2 `contextPreview` (the GET context answer).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextSettings {
+    pub context: u32,
+    pub context_max: u32,
+    pub need_bytes: u64,
+    pub verdict: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+    pub drafts: Vec<Draft>,
+    pub kv_options: Vec<String>,
+}
+
+/// A draft model the owner may choose. v3 picks the checker's draft itself (SP-17), so the
+/// screen is offered none.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Draft {
+    pub id: String,
+    pub name: String,
+}
+
+/// v2 `smoke`'s answer: how fast a short local answer came, when enough tokens were timed.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Benchmark {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tokens_per_second: Option<f64>,
+}
+
+/// One line of v2 `maintenance`'s `cleanup`: a model not used for 30 days, or a file under the
+/// models folder that no installed model owns (id `file:<path inside the folder>`).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Suggestion {
+    pub id: String,
+    pub name: String,
+    pub bytes: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_used_at: Option<i64>,
+    pub reason: String,
+}
+
+/// What `remove` took away.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Removed {
+    pub name: String,
+    /// Bytes deleted from the disk; 0 for a model whose files were left where they lie.
+    pub freed: u64,
+    /// Its files were under the models folder (a download or a copy), so they were deleted.
+    pub owned: bool,
+}
+
+/// Each variant is a sentence the owner can read.
+#[derive(Debug, thiserror::Error)]
+pub enum ModelError {
+    #[error("That model is not installed or its files are missing.")]
+    NotInstalled,
+    #[error("{0}")]
+    Invalid(String),
+    #[error("This context exceeds the available memory budget.")]
+    TooBig,
+    #[error("A game is using the graphics card, so local models are paused until it closes.")]
+    Paused,
+    #[error("The measurement was cancelled.")]
+    Cancelled,
+    #[error("The model started but said nothing back.")]
+    Silent,
+    #[error(transparent)]
+    Local(#[from] LocalError),
+    #[error("The model could not answer: {0}")]
+    Answer(String),
+    #[error("Could not change the files: {0}")]
+    Io(String),
+    #[error("Could not record the change: {0}")]
+    Store(String),
+}
+
+/// The pin a local model is chosen by.
+pub fn pin_of(id: &str) -> String {
+    format!("local:{id}")
+}
+
+/// The jobs D213 lets this model do (never chat): embeddings for an embedding model, the
+/// checker for a text model, and vision too when its projector came with it.
+pub fn jobs_for(i: &hf::Installed) -> Vec<Job> {
+    if i.meta.vision_projector {
+        Vec::new()
+    } else if is_embedding(&i.meta.arch) {
+        vec![Job::Local]
+    } else if i.mmproj.is_some() {
+        vec![Job::Vision, Job::Check]
+    } else {
+        vec![Job::Check]
+    }
+}
+
+/// The router's name for a job (`router::job_name`, which is private there).
+pub fn job_name(job: Job) -> &'static str {
+    match job {
+        Job::Chat => "chat",
+        Job::Plan => "plan",
+        Job::Step => "step",
+        Job::Code => "code",
+        Job::Vision => "vision",
+        Job::Check => "check",
+        Job::Local => "local",
+    }
+}
+
+fn job_named(name: &str) -> Option<Job> {
+    [
+        Job::Chat,
+        Job::Plan,
+        Job::Step,
+        Job::Code,
+        Job::Vision,
+        Job::Check,
+        Job::Local,
+    ]
+    .into_iter()
+    .find(|j| job_name(*j) == name)
+}
+
+impl LocalJobs {
+    /// The machine the screen judges against: the test's, else `nvidia-smi`'s (none: no VRAM).
+    pub async fn machine_now(&self) -> gpu::Machine {
+        self.machine().await
+    }
+
+    /// The models folder downloads and copies live in.
+    pub fn models_dir(&self) -> PathBuf {
+        self.runtime.layout.cache().join("models")
+    }
+
+    /// The runtime the jobs start their models on.
+    pub fn runtime(&self) -> &Arc<Runtime> {
+        &self.runtime
+    }
+
+    /// Whether a game has paused the local jobs.
+    pub fn paused(&self) -> bool {
+        self.is_paused()
+    }
+
+    /// An installed model (not a projector) whose files are all there.
+    pub fn installed_one(&self, id: &str) -> Result<hf::Installed, ModelError> {
+        hf::installed(&self.store)
+            .into_iter()
+            .find(|i| i.id == id && !i.meta.vision_projector)
+            .ok_or(ModelError::NotInstalled)
+    }
+
+    /// The context `i` runs with now: the owner's, else its job's default.
+    pub fn context_of(&self, i: &hf::Installed) -> u32 {
+        saved_context(i, &notes(&self.store)).unwrap_or_else(|| default_context(i))
+    }
+
+    /// M4: what `context` tokens would cost this model on this card (its current context when
+    /// `None`). v3 runs the cache at f16 and chooses drafts itself, so those are the only offers.
+    pub async fn context(
+        &self,
+        id: &str,
+        context: Option<u32>,
+    ) -> Result<ContextSettings, ModelError> {
+        let i = self.installed_one(id)?;
+        let max = context_max(&i);
+        let context = context.unwrap_or_else(|| self.context_of(&i));
+        if !(LEAST_CONTEXT..=max).contains(&context) {
+            return Err(ModelError::Invalid(format!(
+                "Choose a context from {LEAST_CONTEXT} to {max} tokens."
+            )));
+        }
+        let m = whole_card(&self.machine().await);
+        let f = gpu::fit(
+            &m,
+            i.meta.bytes,
+            i.meta.layers,
+            i.meta.kv_bytes_per_token,
+            context,
+            gpu::headroom_mb(&self.store),
+        );
+        let known = i.meta.kv_bytes_per_token > 0;
+        Ok(ContextSettings {
+            context,
+            context_max: max,
+            need_bytes: need_bytes(i.meta.bytes, i.meta.kv_bytes_per_token, context),
+            // v2: an unknown cache layout can never be said to fit comfortably.
+            verdict: match f.verdict {
+                gpu::Verdict::Fits if !known => "tight",
+                v => verdict_name(v),
+            }
+            .to_owned(),
+            note: (!known).then(|| {
+                "KV layout is unknown; memory is a cautious allowance. Check the runner before use."
+                    .to_owned()
+            }),
+            drafts: Vec::new(),
+            kv_options: vec!["f16".to_owned()],
+        })
+    }
+
+    /// M5: keep `context` for `id`. A server running it is stopped, so its next start uses it.
+    /// Refused when it does not fit the card at all.
+    pub async fn set_context(
+        &self,
+        id: &str,
+        context: u32,
+    ) -> Result<ContextSettings, ModelError> {
+        let preview = self.context(id, Some(context)).await?;
+        if preview.verdict == "too-big" {
+            return Err(ModelError::TooBig);
+        }
+        set_notes(&self.store, id, |n| {
+            Some(ModelNotes {
+                context: Some(context),
+                ..n.unwrap_or_default()
+            })
+        })?;
+        self.runtime.stop(id).await;
+        Ok(preview)
+    }
+
+    /// M12: start the model and time a short answer on this computer. Never the cloud: the
+    /// question goes to the model's own llama-server. Embedding models do not write answers.
+    pub async fn benchmark(
+        &self,
+        id: &str,
+        cancel: CancellationToken,
+    ) -> Result<Benchmark, ModelError> {
+        let i = self.installed_one(id)?;
+        if is_embedding(&i.meta.arch) {
+            return Err(ModelError::Invalid(
+                "Embedding models do not write answers, so there is no speed to measure.".into(),
+            ));
+        }
+        if self.is_paused() {
+            return Err(ModelError::Paused);
+        }
+        let context = self.context_of(&i);
+        let m = self.machine().await;
+        let f = gpu::fit(
+            &m,
+            i.meta.bytes,
+            i.meta.layers,
+            i.meta.kv_bytes_per_token,
+            context,
+            gpu::headroom_mb(&self.store),
+        );
+        let model = LocalModel {
+            id: i.id.clone(),
+            path: i.path.clone(),
+            mmproj: None,
+            draft: None,
+            context,
+            embedding: false,
+        };
+        let provider = tokio::select! {
+            p = self.runtime.serve(&model, f.gpu_layers) => p?,
+            () = cancel.cancelled() => return Err(ModelError::Cancelled),
+        };
+        let body = MessageBody {
+            content: Content::Text(SMOKE.into()),
+            calls: None,
+            call_id: None,
+            provider: None,
+            notes: None,
+            bad: None,
+            stopped: None,
+            typed: None,
+            extra: serde_json::Map::new(),
+        };
+        let req = ChatRequest {
+            messages: vec![(Role::User, body)],
+            system: None,
+            tools: Vec::new(),
+            max_tokens: Some(64),
+        };
+        let (tx, mut rx) = mpsc::channel(64);
+        let collect = async {
+            let (mut text, mut first) = (String::new(), None);
+            while let Some(chunk) = rx.recv().await {
+                if let ChatChunk::Text(t) = chunk {
+                    first.get_or_insert_with(Instant::now);
+                    text.push_str(&t);
+                }
+            }
+            (text, first)
+        };
+        let (done, (text, first)) =
+            tokio::join!(provider.chat(&req, &i.id, tx, cancel.clone()), collect);
+        if cancel.is_cancelled() {
+            return Err(ModelError::Cancelled);
+        }
+        let done = done.map_err(|e| ModelError::Answer(e.to_string()))?;
+        if text.trim().is_empty() {
+            return Err(ModelError::Silent);
+        }
+        let seconds = first.map_or(0.0, |t| t.elapsed().as_secs_f64());
+        let tokens_per_second = (done.tokens_out > 0 && seconds >= 0.01)
+            .then(|| (done.tokens_out as f64 / seconds * 10.0).round() / 10.0);
+        set_notes(&self.store, id, |n| {
+            let n = n.unwrap_or_default();
+            Some(ModelNotes {
+                tokens_per_second: tokens_per_second.or(n.tokens_per_second),
+                last_used_at: Some(now_ms()),
+                ..n
+            })
+        })?;
+        Ok(Benchmark { tokens_per_second })
+    }
+
+    /// Model ids some job is pinned to.
+    pub fn pinned_ids(&self) -> HashSet<String> {
+        self.router
+            .pins()
+            .into_values()
+            .flatten()
+            .filter_map(|p| p.strip_prefix("local:").map(str::to_owned))
+            .collect()
+    }
+
+    /// Pin `i` to every job D213 lets it do (never chat). The jobs, in order.
+    pub fn pin(&self, i: &hf::Installed) -> Result<Vec<Job>, ModelError> {
+        let jobs = jobs_for(i);
+        for job in &jobs {
+            self.router
+                .set_pins(*job, vec![pin_of(&i.id)])
+                .map_err(|e| ModelError::Store(e.to_string()))?;
+        }
+        Ok(jobs)
+    }
+
+    /// Start `i` for its first job now (a pinned model is warmed, as v2's mode switch loaded it).
+    pub async fn warm(&self, i: &hf::Installed) -> Result<(), ModelError> {
+        let job = *jobs_for(i)
+            .first()
+            .ok_or_else(|| ModelError::Invalid("A projector is not a model.".into()))?;
+        if self.is_paused() {
+            return Err(ModelError::Paused);
+        }
+        match self.start(job).await {
+            Some((_, id)) if id == i.id => Ok(()),
+            Some(_) => Err(ModelError::Invalid(
+                "Another model was chosen for that job meanwhile.".into(),
+            )),
+            None => Err(ModelError::Answer(
+                "the local engine could not start it".into(),
+            )),
+        }
+    }
+
+    /// M6's `cleanup`: models under the models folder nobody used for 30 days (never a pinned
+    /// one), then files there that no installed model owns. Data only: nothing is deleted.
+    pub fn maintenance(&self) -> Vec<Suggestion> {
+        let root = self.models_dir();
+        let all = hf::installed(&self.store);
+        let notes = notes(&self.store);
+        let pinned = self.pinned_ids();
+        let now = now_ms();
+        let mut out: Vec<Suggestion> = all
+            .iter()
+            .filter(|i| !pinned.contains(&i.id) && i.path.starts_with(&root))
+            .filter_map(|i| {
+                let n = notes.get(&i.id)?;
+                let since = n.last_used_at.or(n.installed_at)?;
+                (now - since >= 30 * DAY_MS).then(|| Suggestion {
+                    id: i.id.clone(),
+                    name: n.name.clone().unwrap_or_else(|| i.id.clone()),
+                    bytes: files_of(i).iter().map(|f| file_len(f)).sum(),
+                    last_used_at: n.last_used_at,
+                    reason: "Not used in the last 30 days.".into(),
+                })
+            })
+            .collect();
+        out.extend(self.orphans(&all));
+        out
+    }
+
+    /// Files under the models folder that are no installed model's part or projector.
+    fn orphans(&self, all: &[hf::Installed]) -> Vec<Suggestion> {
+        let root = self.models_dir();
+        let owned: HashSet<PathBuf> = all.iter().flat_map(files_of).collect();
+        let mut found = Vec::new();
+        walk(&root, 0, &mut found);
+        found.sort();
+        found
+            .into_iter()
+            .filter(|f| !owned.contains(f))
+            .filter_map(|f| {
+                let rel: Vec<String> = f
+                    .strip_prefix(&root)
+                    .ok()?
+                    .components()
+                    .map(|c| c.as_os_str().to_string_lossy().into_owned())
+                    .collect();
+                let name = rel.last()?.clone();
+                let reason = if name.ends_with(".part") {
+                    "An unfinished download that nothing is installing. Installing the same model again carries on from it."
+                } else {
+                    "Not part of any installed model."
+                };
+                Some(Suggestion {
+                    id: format!("file:{}", rel.join("/")),
+                    bytes: file_len(&f),
+                    name,
+                    last_used_at: None,
+                    reason: reason.into(),
+                })
+            })
+            .collect()
+    }
+
+    /// M14/M15: a model (its files when they are under the models folder and no other model
+    /// shares them, its record, its pins, its notes), or a `file:` line of `maintenance`.
+    pub async fn remove(&self, id: &str) -> Result<Removed, ModelError> {
+        let root = self.models_dir();
+        let all = hf::installed(&self.store);
+        if let Some(rel) = id.strip_prefix("file:") {
+            let orphan = self
+                .orphans(&all)
+                .into_iter()
+                .find(|o| o.id == id)
+                .ok_or(ModelError::NotInstalled)?;
+            let path = rel.split('/').fold(root, |p, s| p.join(s));
+            std::fs::remove_file(&path).map_err(|e| ModelError::Io(e.to_string()))?;
+            return Ok(Removed {
+                name: orphan.name,
+                freed: orphan.bytes,
+                owned: true,
+            });
+        }
+        let one = all.iter().find(|i| i.id == id).cloned();
+        let note = notes(&self.store).remove(id);
+        self.runtime.stop(id).await;
+        let mut freed = 0;
+        let owned = one.as_ref().is_some_and(|i| i.path.starts_with(&root));
+        if let Some(i) = &one {
+            let shared: HashSet<PathBuf> = all
+                .iter()
+                .filter(|o| o.id != id)
+                .flat_map(files_of)
+                .collect();
+            for f in files_of(i) {
+                if !f.starts_with(&root) || shared.contains(&f) {
+                    continue;
+                }
+                let len = file_len(&f);
+                match std::fs::remove_file(&f) {
+                    Ok(()) => freed += len,
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(e) => return Err(ModelError::Io(e.to_string())),
+                }
+                let _ = std::fs::remove_file(format!("{}.part", f.display()));
+            }
+        }
+        let forgot = hf::forget(&self.store, id).map_err(|e| ModelError::Store(e.to_string()))?;
+        if one.is_none() && !forgot {
+            return Err(ModelError::NotInstalled);
+        }
+        let pin = pin_of(id);
+        for (job, pins) in self.router.pins() {
+            if !pins.contains(&pin) {
+                continue;
+            }
+            if let Some(job) = job_named(&job) {
+                let rest: Vec<String> = pins.into_iter().filter(|p| *p != pin).collect();
+                self.router
+                    .set_pins(job, rest)
+                    .map_err(|e| ModelError::Store(e.to_string()))?;
+            }
+        }
+        set_notes(&self.store, id, |_| None)?;
+        Ok(Removed {
+            name: note.and_then(|n| n.name).unwrap_or_else(|| id.to_owned()),
+            freed,
+            owned,
+        })
+    }
+}
+
+/// A model's files: every split part and its projector.
+fn files_of(i: &hf::Installed) -> Vec<PathBuf> {
+    let mut f = i.meta.parts.clone();
+    if !f.contains(&i.path) {
+        f.push(i.path.clone());
+    }
+    f.extend(i.mmproj.clone());
+    f
+}
+
+fn file_len(p: &Path) -> u64 {
+    std::fs::metadata(p).map_or(0, |m| m.len())
+}
+
+/// Every regular file under `dir`, a few levels deep (`models/<owner>/<repo>/<quant>/<file>`).
+/// An import's staging folder (`.import-*`) is work in progress and left out.
+fn walk(dir: &Path, depth: u32, out: &mut Vec<PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for e in entries.flatten() {
+        let Ok(kind) = e.file_type() else { continue };
+        let p = e.path();
+        if kind.is_dir() {
+            let staging = e.file_name().to_string_lossy().starts_with(".import-");
+            if depth < 6 && !staging {
+                walk(&p, depth + 1, out);
+            }
+        } else if kind.is_file() {
+            out.push(p);
+        }
+    }
+}
+
+/// The Local stats page's machine facts (v2 `system.ts`), read when asked. Windows asks the
+/// kernel; elsewhere `/proc`, and what cannot be read is 0.
+pub mod system {
+    use std::path::Path;
+    use std::sync::Mutex;
+    use std::time::Duration;
+
+    use tokio::process::Command;
+
+    /// (total, in use) physical memory, bytes.
+    pub fn memory() -> (u64, u64) {
+        imp::memory()
+    }
+
+    /// Percent of CPU time spent busy since the previous call (0 on the first).
+    pub fn cpu_percent() -> f64 {
+        static LAST: Mutex<Option<(u64, u64)>> = Mutex::new(None);
+        let Some((busy, total)) = imp::cpu_times() else {
+            return 0.0;
+        };
+        let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
+        let pct = match *last {
+            Some((b0, t0)) if total > t0 => {
+                (busy.saturating_sub(b0) as f64 / (total - t0) as f64 * 100.0).clamp(0.0, 100.0)
+            }
+            _ => 0.0,
+        };
+        *last = Some((busy, total));
+        (pct * 10.0).round() / 10.0
+    }
+
+    /// Seconds since the computer started.
+    pub fn uptime() -> u64 {
+        imp::uptime()
+    }
+
+    /// Free bytes on the volume holding `path`; `None` when it cannot be read.
+    pub fn free_disk(path: &Path) -> Option<u64> {
+        imp::free_disk(path)
+    }
+
+    pub fn cores() -> u64 {
+        std::thread::available_parallelism().map_or(1, |n| n.get() as u64)
+    }
+
+    /// The processor's name, asked once.
+    pub async fn cpu_model() -> String {
+        static NAME: tokio::sync::OnceCell<String> = tokio::sync::OnceCell::const_new();
+        NAME.get_or_init(|| async {
+            run(
+                "reg",
+                &[
+                    "query",
+                    r"HKLM\HARDWARE\DESCRIPTION\System\CentralProcessor\0",
+                    "/v",
+                    "ProcessorNameString",
+                ],
+            )
+            .await
+            .lines()
+            .find_map(|l| l.split_once("REG_SZ").map(|(_, v)| v.trim().to_owned()))
+            .filter(|n| !n.is_empty())
+            .or_else(|| std::env::var("PROCESSOR_IDENTIFIER").ok())
+            .unwrap_or_else(|| std::env::consts::ARCH.to_owned())
+        })
+        .await
+        .clone()
+    }
+
+    /// The NVIDIA card's busy percent (`nvidia-smi`); 0 without one.
+    pub async fn gpu_percent() -> f64 {
+        run(
+            "nvidia-smi",
+            &[
+                "--query-gpu=utilization.gpu",
+                "--format=csv,noheader,nounits",
+            ],
+        )
+        .await
+        .lines()
+        .find_map(|l| l.trim().parse::<f64>().ok())
+        .unwrap_or(0.0)
+    }
+
+    async fn run(exe: &str, args: &[&str]) -> String {
+        let mut cmd = Command::new(exe);
+        cmd.args(args)
+            .stdin(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .kill_on_drop(true);
+        #[cfg(windows)]
+        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+        match tokio::time::timeout(Duration::from_secs(5), cmd.output()).await {
+            Ok(Ok(out)) if out.status.success() => String::from_utf8_lossy(&out.stdout).into(),
+            _ => String::new(),
+        }
+    }
+
+    #[cfg(windows)]
+    #[allow(unsafe_code)]
+    mod imp {
+        use std::os::windows::ffi::OsStrExt;
+        use std::path::Path;
+
+        #[repr(C)]
+        #[derive(Default)]
+        struct MemoryStatusEx {
+            length: u32,
+            memory_load: u32,
+            total_phys: u64,
+            avail_phys: u64,
+            total_page_file: u64,
+            avail_page_file: u64,
+            total_virtual: u64,
+            avail_virtual: u64,
+            avail_extended_virtual: u64,
+        }
+
+        #[repr(C)]
+        #[derive(Default)]
+        struct FileTime {
+            low: u32,
+            high: u32,
+        }
+
+        impl FileTime {
+            fn ticks(&self) -> u64 {
+                (u64::from(self.high) << 32) | u64::from(self.low)
+            }
+        }
+
+        #[link(name = "kernel32")]
+        extern "system" {
+            fn GlobalMemoryStatusEx(buffer: *mut MemoryStatusEx) -> i32;
+            fn GetSystemTimes(
+                idle: *mut FileTime,
+                kernel: *mut FileTime,
+                user: *mut FileTime,
+            ) -> i32;
+            fn GetTickCount64() -> u64;
+            fn GetDiskFreeSpaceExW(
+                dir: *const u16,
+                free_to_caller: *mut u64,
+                total: *mut u64,
+                total_free: *mut u64,
+            ) -> i32;
+        }
+
+        pub fn memory() -> (u64, u64) {
+            let mut m = MemoryStatusEx {
+                length: std::mem::size_of::<MemoryStatusEx>() as u32,
+                ..MemoryStatusEx::default()
+            };
+            // SAFETY: `m` is a MEMORYSTATUSEX with its length set, as the call requires.
+            if unsafe { GlobalMemoryStatusEx(&mut m) } == 0 {
+                return (0, 0);
+            }
+            (m.total_phys, m.total_phys.saturating_sub(m.avail_phys))
+        }
+
+        /// (busy, total) in 100 ns ticks; kernel time includes idle time.
+        pub fn cpu_times() -> Option<(u64, u64)> {
+            let (mut idle, mut kernel, mut user) =
+                (FileTime::default(), FileTime::default(), FileTime::default());
+            // SAFETY: three valid FILETIME out-pointers.
+            if unsafe { GetSystemTimes(&mut idle, &mut kernel, &mut user) } == 0 {
+                return None;
+            }
+            let total = kernel.ticks() + user.ticks();
+            Some((total.saturating_sub(idle.ticks()), total))
+        }
+
+        pub fn uptime() -> u64 {
+            // SAFETY: no arguments, no pointers.
+            unsafe { GetTickCount64() } / 1000
+        }
+
+        pub fn free_disk(path: &Path) -> Option<u64> {
+            let wide: Vec<u16> = path.as_os_str().encode_wide().chain([0]).collect();
+            let (mut free, mut total, mut all_free) = (0u64, 0u64, 0u64);
+            // SAFETY: a NUL-terminated wide string and three valid u64 out-pointers.
+            let ok = unsafe {
+                GetDiskFreeSpaceExW(wide.as_ptr(), &mut free, &mut total, &mut all_free)
+            };
+            (ok != 0).then_some(free)
+        }
+    }
+
+    #[cfg(not(windows))]
+    mod imp {
+        use std::path::Path;
+
+        pub fn memory() -> (u64, u64) {
+            let info = std::fs::read_to_string("/proc/meminfo").unwrap_or_default();
+            let kb = |key: &str| {
+                info.lines()
+                    .find_map(|l| l.strip_prefix(key))
+                    .and_then(|r| r.trim().trim_end_matches("kB").trim().parse::<u64>().ok())
+                    .unwrap_or(0)
+                    * 1024
+            };
+            let total = kb("MemTotal:");
+            (total, total.saturating_sub(kb("MemAvailable:")))
+        }
+
+        pub fn cpu_times() -> Option<(u64, u64)> {
+            let stat = std::fs::read_to_string("/proc/stat").ok()?;
+            let n: Vec<u64> = stat
+                .lines()
+                .next()?
+                .split_whitespace()
+                .skip(1)
+                .filter_map(|x| x.parse().ok())
+                .collect();
+            let total: u64 = n.iter().sum();
+            let idle = n.get(3).copied().unwrap_or(0) + n.get(4).copied().unwrap_or(0);
+            Some((total.saturating_sub(idle), total))
+        }
+
+        pub fn uptime() -> u64 {
+            std::fs::read_to_string("/proc/uptime")
+                .ok()
+                .and_then(|s| s.split('.').next().and_then(|x| x.parse().ok()))
+                .unwrap_or(0)
+        }
+
+        pub fn free_disk(_path: &Path) -> Option<u64> {
+            None
+        }
+    }
 }
