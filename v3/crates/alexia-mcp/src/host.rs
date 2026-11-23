@@ -48,6 +48,10 @@ struct Inner {
     /// Serializes the read-modify-writes of `_core.unreviewed`, `_core.known_plugins` and
     /// `_core.servers`.
     lists: Mutex<()>,
+    /// Held by `install_folder` and `add_server` from the check that an id is free until its
+    /// slot is in, so two installs of one id never both pass the check (and neither removes a
+    /// folder the other copied). Never held across an `.await`.
+    install: Mutex<()>,
     /// Folders that are not plugins, and why (v2 `problems`), as the last `start` found them.
     problems: Mutex<Vec<(PathBuf, String)>>,
 }
@@ -129,6 +133,7 @@ impl McpHost {
                 closing: CancellationToken::new(),
                 held: Mutex::default(),
                 lists: Mutex::default(),
+                install: Mutex::default(),
                 problems: Mutex::default(),
             }),
         }
@@ -1371,6 +1376,7 @@ impl McpHost {
             return refused(format!("{name}'s plugin.json calls it \"{}\"", manifest.id));
         }
         let id = PluginId(manifest.id.clone());
+        let _installing = lock(&self.inner.install);
         let already = || {
             format!(
                 "{} is already installed. Delete it first to replace it.",
@@ -1391,8 +1397,12 @@ impl McpHost {
         };
         std::fs::create_dir_all(ext)?;
         let dest = ext.join(&id.0);
-        if dest.exists() {
-            return refused(already());
+        // `create_dir` fails on a folder that is there: from here on `dest` is this call's,
+        // and only this call's is removed when the copy fails.
+        match std::fs::create_dir(&dest) {
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => return refused(already()),
+            Err(e) => return Err(e.into()),
+            Ok(()) => {}
         }
         if let Err(e) = copy_tree(&from, &dest) {
             let _ = std::fs::remove_dir_all(&dest);
@@ -1402,7 +1412,10 @@ impl McpHost {
             path: dest,
             manifest,
         };
-        self.learn(std::iter::once(&id));
+        // (P2-62) A folder the owner chose to install is still nobody's reviewed code: an id
+        // that was trusted before (deleted, now installed again from anywhere) starts over.
+        self.set_reviewed(&id, false)?;
+        self.know(&id)?;
         let (slot, _) = self.admit(dir, false);
         self.insert_slot(id.clone(), slot);
         Ok(id)
@@ -1430,6 +1443,7 @@ impl McpHost {
             ));
         }
         let pid = PluginId(id.to_owned());
+        let _installing = lock(&self.inner.install);
         let taken = || format!("Something called “{id}” is already installed.");
         if self.taken(&pid)? {
             return refused(taken());
@@ -1504,6 +1518,9 @@ impl McpHost {
                 self.write_servers(&list)?;
             }
         }
+        // Gone from the known list too: whatever comes back under this id, by install or by a
+        // folder dropped into the plugin dir, is new to the host and so unreviewed.
+        self.forget(id)?;
         match std::fs::remove_dir_all(&dir) {
             Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.into()),
             _ => Ok(()),
@@ -1593,6 +1610,23 @@ impl McpHost {
         };
         if !known.contains(&id.0) {
             known.push(id.0.clone());
+            store.kv_set("_core", KNOWN, &json!(known))?;
+        }
+        Ok(())
+    }
+
+    /// `id` out of `_core.known_plugins` (`remove`).
+    fn forget(&self, id: &PluginId) -> Result<(), Error> {
+        let _g = lock(&self.inner.lists);
+        let store = &self.inner.store;
+        let Some(v) = store.kv_get("_core", KNOWN)? else {
+            return Ok(());
+        };
+        let mut known: Vec<String> =
+            serde_json::from_value(v).map_err(alexia_store::Error::from)?;
+        let before = known.len();
+        known.retain(|k| k != &id.0);
+        if known.len() != before {
             store.kv_set("_core", KNOWN, &json!(known))?;
         }
         Ok(())
@@ -1803,11 +1837,14 @@ fn link_inside(dir: &Path) -> std::io::Result<Option<PathBuf>> {
     Ok(None)
 }
 
-/// `from` into `to` (which must not exist) with `std::fs`, `plugin.json` last: a copy cut short
-/// has no manifest, so no scan takes it for a plugin. Links are refused, not followed.
+/// `from` into `to` (an empty folder the caller made) with `std::fs`, `plugin.json` last: a
+/// copy cut short has no manifest, so no scan takes it for a plugin. Links are refused, not
+/// followed.
 fn copy_tree(from: &Path, to: &Path) -> std::io::Result<()> {
     fn walk(from: &Path, to: &Path, top: bool) -> std::io::Result<()> {
-        std::fs::create_dir(to)?;
+        if !top {
+            std::fs::create_dir(to)?;
+        }
         for e in std::fs::read_dir(from)? {
             let e = e?;
             let (src, dst) = (e.path(), to.join(e.file_name()));

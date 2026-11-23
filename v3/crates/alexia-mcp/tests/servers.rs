@@ -295,3 +295,123 @@ async fn servers_persist() {
     assert!(!root.join("ext").join("keeper").exists());
     h.shutdown().await;
 }
+
+fn unreviewed(store: &Store) -> Vec<String> {
+    store
+        .kv_get("_core", "unreviewed")
+        .unwrap()
+        .map(|v| serde_json::from_value(v).unwrap())
+        .unwrap_or_default()
+}
+
+fn known(store: &Store) -> Vec<String> {
+    store
+        .kv_get("_core", "known_plugins")
+        .unwrap()
+        .map(|v| serde_json::from_value(v).unwrap())
+        .unwrap_or_default()
+}
+
+/// (P2-62) Trust belongs to the folder the owner reviewed: deleted and installed again under
+/// the same id, from anywhere, the plugin is unreviewed until the owner says otherwise.
+#[tokio::test]
+async fn reinstall_after_delete_is_unreviewed() {
+    let root = Scratch::new("reinstall");
+    let store = Arc::new(Store::open_in_memory().unwrap());
+    let h = host(&root, store.clone());
+    h.start(&[]).await.unwrap();
+    let id = PluginId("again".into());
+
+    let first = source(&root, "again", manifest("again"));
+    h.install_folder(&first).await.unwrap();
+    h.set_reviewed(&id, true).unwrap();
+    assert!(!unreviewed(&store).contains(&id.0), "the owner trusted it");
+    assert!(known(&store).contains(&id.0));
+
+    h.remove(&id).await.unwrap();
+    assert!(
+        !known(&store).contains(&id.0),
+        "a removed plugin is no longer known"
+    );
+
+    // A different folder under the reviewed id.
+    let other = root.join("elsewhere");
+    std::fs::create_dir_all(&other).unwrap();
+    let second = source(&other, "again", manifest("again"));
+    std::fs::write(second.join("assets").join("note.txt"), "something else").unwrap();
+    h.install_folder(&second).await.unwrap();
+    assert!(
+        unreviewed(&store).contains(&id.0),
+        "installed again, it starts over unreviewed"
+    );
+    assert!(known(&store).contains(&id.0));
+    h.set_enabled(&id, true).await.unwrap();
+    let tools = h.tools().await;
+    assert!(tools.iter().any(|t| t.plugin == id));
+    assert!(tools.iter().filter(|t| t.plugin == id).all(|t| !t.reviewed));
+
+    // And one dropped into the plugin dir by hand and found by a later scan is new as well.
+    h.remove(&id).await.unwrap();
+    h.set_reviewed(&id, true).unwrap();
+    h.shutdown().await;
+    let dropped = root.join("ext").join("again");
+    std::fs::create_dir_all(dropped.join("assets")).unwrap();
+    let exe = Path::new(FIXTURE).file_name().unwrap().to_str().unwrap();
+    std::fs::copy(FIXTURE, dropped.join(exe)).unwrap();
+    std::fs::write(dropped.join("plugin.json"), manifest("again").to_string()).unwrap();
+    let h = host(&root, store.clone());
+    h.start(&[]).await.unwrap();
+    assert!(unreviewed(&store).contains(&id.0));
+    h.shutdown().await;
+}
+
+/// Two installs of one id at once: exactly one wins, the other is refused with v2's sentence,
+/// and the winner's folder is whole (the loser never removes it).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_installs_of_one_id() {
+    let root = Scratch::new("install-race");
+    let store = Arc::new(Store::open_in_memory().unwrap());
+    let h = host(&root, store.clone());
+    h.start(&[]).await.unwrap();
+    // Two source folders with the same id, each with enough files that a copy takes a while.
+    let mut froms = vec![];
+    for side in ["a", "b"] {
+        let base = root.join(side);
+        std::fs::create_dir_all(&base).unwrap();
+        let from = source(&base, "racer", manifest("racer"));
+        for i in 0..200 {
+            std::fs::write(from.join("assets").join(format!("f{i}.txt")), side).unwrap();
+        }
+        froms.push(from);
+    }
+    for round in 0..5 {
+        let id = PluginId("racer".into());
+        let (ha, hb) = (h.clone(), h.clone());
+        let (fa, fb) = (froms[0].clone(), froms[1].clone());
+        let a = tokio::spawn(async move { ha.install_folder(&fa).await });
+        let b = tokio::spawn(async move { hb.install_folder(&fb).await });
+        let (a, b) = (a.await.unwrap(), b.await.unwrap());
+        let (won, lost) = match (&a, &b) {
+            (Ok(_), Err(_)) => ("a", b),
+            (Err(_), Ok(_)) => ("b", a),
+            other => panic!("round {round}: expected one install, got {other:?}"),
+        };
+        assert_eq!(
+            refusal(lost),
+            "racer is already installed. Delete it first to replace it."
+        );
+        let dest = root.join("ext").join("racer");
+        assert!(dest.join("plugin.json").is_file(), "round {round}");
+        for i in 0..200 {
+            assert_eq!(
+                std::fs::read_to_string(dest.join("assets").join(format!("f{i}.txt"))).unwrap(),
+                won,
+                "round {round}: the folder is the winner's, whole"
+            );
+        }
+        assert!(h.plugin_dir(&id).is_some());
+        h.remove(&id).await.unwrap();
+        assert!(!dest.exists());
+    }
+    h.shutdown().await;
+}
