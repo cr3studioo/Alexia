@@ -5,7 +5,7 @@
       "row": "C2",
       "name": "stop with nothing running",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "POST",
         "path": "/api/stop",
@@ -30,7 +30,7 @@
       "row": "C3",
       "name": "approve with nothing waiting",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "POST",
         "path": "/api/approve",
@@ -57,7 +57,7 @@
       "row": "C4",
       "name": "a slash command: /help",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "POST",
         "path": "/api/command",
@@ -103,7 +103,7 @@
       "row": "C4",
       "name": "text that is not a command",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "POST",
         "path": "/api/command",
@@ -143,7 +143,7 @@
       "row": "C5",
       "name": "not her, with no persona plugin",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "POST",
         "path": "/api/not-her",
@@ -169,7 +169,7 @@
       "row": "C6",
       "name": "a file that was never offered",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "GET",
         "path": "/api/file",
@@ -197,7 +197,7 @@
       "row": "C7",
       "name": "show in folder for a file that was never offered",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "POST",
         "path": "/api/file",
@@ -251,7 +251,15 @@
               "kind": "string"
             }
           },
-          "optional": true
+          "optional": true,
+          "repeat": true,
+          "optional_keys": [
+            "/phase/model",
+            "/phase/name",
+            "/phase/attempt",
+            "/phase/behind",
+            "/phase/why"
+          ]
         },
         {
           "shape": {
@@ -280,18 +288,18 @@
         }
       ],
       "source": "hand",
-      "hub": "pending"
+      "hub": "answers"
     },
     {
       "row": "C1",
       "name": "a tool step with progress",
-      "from": "serve.ts:3826-3860 (step, progress, outcome frames)",
+      "from": "serve.ts:3826-3860 (step, progress, outcome frames); the plugin call is gated, so an ask and /api/approve come first",
       "request": {
         "method": "POST",
         "path": "/api/chat",
         "query": {},
         "body": {
-          "text": "Do some work."
+          "text": "Run some work."
         },
         "token": true,
         "host": "127.0.0.1"
@@ -310,7 +318,15 @@
               "kind": "string"
             }
           },
-          "optional": true
+          "optional": true,
+          "repeat": true,
+          "optional_keys": [
+            "/phase/model",
+            "/phase/name",
+            "/phase/attempt",
+            "/phase/behind",
+            "/phase/why"
+          ]
         },
         {
           "shape": {
@@ -318,10 +334,47 @@
               "n": "number",
               "name": "string",
               "args": {
-                "ms": "number"
+                "who": "string"
               }
             }
           }
+        },
+        {
+          "shape": {
+            "phase": {
+              "kind": "string"
+            }
+          },
+          "optional": true,
+          "repeat": true,
+          "optional_keys": [
+            "/phase/model",
+            "/phase/name",
+            "/phase/attempt",
+            "/phase/behind",
+            "/phase/why"
+          ]
+        },
+        {
+          "shape": {
+            "ask": "string"
+          }
+        },
+        {
+          "shape": {
+            "phase": {
+              "kind": "string"
+            }
+          },
+          "optional": true,
+          "repeat": true,
+          "optional_keys": [
+            "/phase/model",
+            "/phase/name",
+            "/phase/attempt",
+            "/phase/behind",
+            "/phase/why"
+          ]
         },
         {
           "shape": {
@@ -338,7 +391,8 @@
           "optional_keys": [
             "/step/progress/total",
             "/step/progress/message"
-          ]
+          ],
+          "repeat": true
         },
         {
           "shape": {
@@ -358,6 +412,22 @@
         },
         {
           "shape": {
+            "phase": {
+              "kind": "string"
+            }
+          },
+          "optional": true,
+          "repeat": true,
+          "optional_keys": [
+            "/phase/model",
+            "/phase/name",
+            "/phase/attempt",
+            "/phase/behind",
+            "/phase/why"
+          ]
+        },
+        {
+          "shape": {
             "delta": "string"
           },
           "repeat": true
@@ -383,18 +453,29 @@
         }
       ],
       "source": "hand",
-      "hub": "pending"
+      "hub": "answers",
+      "during": [
+        {
+          "method": "POST",
+          "path": "/api/approve",
+          "query": {},
+          "body": {
+            "allowed": true
+          },
+          "token": true
+        }
+      ]
     },
     {
       "row": "C1",
       "name": "an ask, then /api/approve",
-      "from": "serve.ts:3797-3799 (ask), 2516-2527 (approve)",
+      "from": "serve.ts:3797-3799 (ask), 2516-2527 (approve); order as v2 agent.ts 937-945 (step, tool phase, then the approval)",
       "request": {
         "method": "POST",
         "path": "/api/chat",
         "query": {},
         "body": {
-          "text": "Please ask before you set it."
+          "text": "Please ask, then run the set."
         },
         "token": true,
         "host": "127.0.0.1"
@@ -424,12 +505,15 @@
               "kind": "string"
             }
           },
-          "optional": true
-        },
-        {
-          "shape": {
-            "ask": "string"
-          }
+          "optional": true,
+          "repeat": true,
+          "optional_keys": [
+            "/phase/model",
+            "/phase/name",
+            "/phase/attempt",
+            "/phase/behind",
+            "/phase/why"
+          ]
         },
         {
           "shape": {
@@ -441,6 +525,27 @@
                 "value": "string"
               }
             }
+          }
+        },
+        {
+          "shape": {
+            "phase": {
+              "kind": "string"
+            }
+          },
+          "optional": true,
+          "repeat": true,
+          "optional_keys": [
+            "/phase/model",
+            "/phase/name",
+            "/phase/attempt",
+            "/phase/behind",
+            "/phase/why"
+          ]
+        },
+        {
+          "shape": {
+            "ask": "string"
           }
         },
         {
@@ -457,6 +562,22 @@
             "/step/timing",
             "/step/card",
             "/step/files"
+          ]
+        },
+        {
+          "shape": {
+            "phase": {
+              "kind": "string"
+            }
+          },
+          "optional": true,
+          "repeat": true,
+          "optional_keys": [
+            "/phase/model",
+            "/phase/name",
+            "/phase/attempt",
+            "/phase/behind",
+            "/phase/why"
           ]
         },
         {
@@ -486,7 +607,7 @@
         }
       ],
       "source": "hand",
-      "hub": "pending"
+      "hub": "answers"
     },
     {
       "row": "C1",
@@ -519,12 +640,12 @@
         "path": "/api/chat",
         "query": {},
         "body": {
-          "text": "Please ask before you set it."
+          "text": "Please ask, then run the set."
         },
         "token": true
       },
       "source": "hand",
-      "hub": "pending",
+      "hub": "answers",
       "stream": null
     }
   ]

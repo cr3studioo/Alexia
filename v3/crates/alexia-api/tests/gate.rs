@@ -539,14 +539,15 @@ async fn every_inventory_route_registered() {
     let t = token(&w).await;
     // `confirm` passes the guard's confirm rows; `open` is an act no route treats as a read.
     let body = r#"{"confirm":true,"action":"open"}"#;
+    // Registered, whatever the area answers: not the empty 404 and not the gate's refusal.
+    // Each area's own answers are its task's tests (and P2D-14 checks full coverage).
     for (method, path) in INVENTORY {
         let a = send(w.port, method, path, Some(&t), None, Some(body)).await;
-        assert_eq!(a.status, 501, "{method} {path}: {}", a.text());
-        assert_eq!(
-            a.json(),
-            json!({ "ok": false, "said": "This part of Alexia is not on the hub yet." }),
-            "{method} {path}"
+        assert!(
+            !(a.status == 404 && a.body.is_empty()),
+            "{method} {path} is not registered"
         );
+        assert_ne!(a.status, 403, "{method} {path}: {}", a.text());
     }
 }
 

@@ -506,7 +506,7 @@ fn seed_chat(data: &Path) {
 
 /// One keyless OpenAI-compatible provider whose one model can use tools. On a request that
 /// offers tools: a tool result already there → "Done."; the text says "ask" → `set` (a call that
-/// asks first); "work" → `crunch` (which reports progress); anything else → "Hello.". Any other
+/// asks first); "work" → `greet` `{"who":"progress"}` (which reports progress); anything else → "Hello.". Any other
 /// request (the chat lane, a helper) → "Noted.".
 struct Provider {
     base: String,
@@ -514,9 +514,14 @@ struct Provider {
 }
 
 fn scripted_reply(body: &Value) -> Result<String, (String, Value)> {
-    let results = body["messages"]
-        .as_array()
-        .map_or(0, |m| m.iter().filter(|m| m["role"] == "tool").count());
+    // This turn's tool results: those after the last user message.
+    let results = body["messages"].as_array().map_or(0, |m| {
+        m.iter()
+            .rev()
+            .take_while(|m| m["role"] != "user")
+            .filter(|m| m["role"] == "tool")
+            .count()
+    });
     let text = last_user_text(body);
     if body["tools"].as_array().is_none_or(Vec::is_empty) {
         return Ok("Noted.".into());
@@ -527,7 +532,7 @@ fn scripted_reply(body: &Value) -> Result<String, (String, Value)> {
     if text.contains("ask") {
         Err(("set".into(), json!({"key": "colour", "value": "blue"})))
     } else if text.contains("work") {
-        Err(("crunch".into(), json!({"ms": 300})))
+        Err(("greet".into(), json!({"who": "progress"})))
     } else {
         Ok("Hello.".into())
     }
@@ -625,6 +630,10 @@ async fn start(name: &str, setup: &[String]) -> (Hub, Window, PathBuf, Option<Ar
         });
         install_fixture(&plugins, "undoable", "undoable", |exe| {
             plain_manifest("undoable", exe, "undoable")
+        });
+        // `compute` tools are never offered to the model; `greet` reports progress and is.
+        install_fixture(&plugins, "greeter", "greet", |exe| {
+            plain_manifest("greeter", exe, "greet")
         });
         let p = provider().await;
         let file = root.join("providers.json");
@@ -1177,7 +1186,7 @@ fn fixtures_apply() {
     assert_eq!(scripted_reply(&body("Please ask", 0)).unwrap_err().0, "set");
     assert_eq!(
         scripted_reply(&body("Do some work", 0)).unwrap_err().0,
-        "crunch"
+        "greet"
     );
     assert_eq!(scripted_reply(&body("Say hi", 0)).unwrap(), "Hello.");
     assert_eq!(scripted_reply(&body("Please ask", 1)).unwrap(), "Done.");
