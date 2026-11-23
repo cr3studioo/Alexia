@@ -6,14 +6,16 @@
  * installed. This does not rebuild any of that — it runs it, then arranges the same files
  * the way `tauri build` looks for them:
  *
- *   src-tauri/binaries/alexia-core-<target triple>.exe   the runtime, as the sidecar
- *   src-tauri/binaries/alexia-connect-<target triple>.exe   native transport, spawned by core
- *   src-tauri/resources/                                  alexia.mjs, boot.mjs, ui/
+ *   src-tauri/binaries/alexia-core-<target triple>.exe   Node, which the hub runs plugins with
+ *   src-tauri/binaries/alexia-connect-<target triple>.exe   native transport
+ *   src-tauri/resources/hub/alexia-hub(.exe)               the Rust hub the app starts (P2D-13)
+ *   src-tauri/resources/ui/                               the window's files, as the hub serves them
  *
  * The split is Tauri's, not ours: an `externalBin` is staged with the triple appended and
  * lands beside the executable without it, while `resources` land in a directory of their own.
- * `main.rs` bridges the two by starting the sidecar with the resource directory as its working
- * directory, which is the whole of what that one line is doing.
+ * `main.rs` bridges the two: it starts `resources/hub/alexia-hub run` with `ALEXIA_UI_DIR` set
+ * to `resources/ui` and `ALEXIA_NODE` set to the sidecar's path. No Node core runs any more, so
+ * `alexia.mjs`, `boot.mjs` and `scripts/` are no longer copied: nothing reads them.
  *
  * **Re-evaluated here, as the plan asked: Node SEA against shipping `node.exe`** (M5-1). SEA
  * would be one signable artefact instead of an executable plus a script, which matters at
@@ -114,13 +116,40 @@ function connectFor(arch) {
   return from
 }
 
-// 3. Everything the sidecar reads once it is running. `Alexia.cmd` and the runtime itself do
-//    not come: the launcher is the app now, and the runtime is above. Neither do plugins —
-//    there are none to copy (D118), and every one of them arrives as a download into
-//    `%LOCALAPPDATA%\Alexia\extensions` instead.
-for (const name of ['alexia.mjs', 'boot.mjs', 'ui', 'scripts']) {
-  const from = join(packaged, name)
-  if (existsSync(from)) cpSync(from, join(resources, name), { recursive: true })
+// 3. The hub (P2D-13), built into v3's own target folder whatever CARGO_TARGET_DIR says, so the
+//    copy below is always the binary just built. A universal Mac gets both halves merged.
+const hubTarget = join(root, 'v3', 'target')
+const hubExe = join(resources, 'hub', `alexia-hub${suffix}`)
+mkdirSync(join(resources, 'hub'), { recursive: true })
+if (universal) lipo(['aarch64-apple-darwin', 'x86_64-apple-darwin'].map(hubFor), hubExe)
+else cpSync(hubFor(), hubExe)
+// Tauri signs every `externalBin` and nothing under `resources`, so the hub is signed here, the
+// way the keyring's library is below — a foreign or missing signature fails notarisation.
+if (process.platform === 'darwin') sign(hubExe)
+
+/** Build the hub's release binary and return where cargo put it. */
+function hubFor(arch) {
+  const args = ['build', '--release', '--locked', '-p', 'alexia-hub', '--manifest-path', join(root, 'v3', 'Cargo.toml'), '--target-dir', hubTarget]
+  if (arch) args.push('--target', arch)
+  const built = spawnSync('cargo', args, { cwd: root, stdio: 'inherit' })
+  if (built.status !== 0) throw new Error(`cargo could not build alexia-hub${arch ? ` for ${arch}` : ''}`)
+  const from = join(hubTarget, ...(arch ? [arch] : []), 'release', `alexia-hub${suffix}`)
+  if (!existsSync(from)) throw new Error(`cargo produced no ${from}`)
+  return from
+}
+
+// 4. The window's files exactly as the hub serves them (`alexia-api`'s statics.rs): the pages,
+//    the stylesheet and pictures, and every compiled module under `dist/src/`, which is where it
+//    reads `<name>.js` from. `pnpm sidecar` has already run `tsc -b`. No plugins: every one
+//    arrives as a download (D118).
+const uiFrom = join(root, 'packages', 'ui')
+const uiTo = join(resources, 'ui')
+mkdirSync(join(uiTo, 'dist', 'src'), { recursive: true })
+for (const name of readdirSync(uiFrom).filter((file) => /^(index|compute)\.html$|^app\.css$|\.(png|svg|webp)$/.test(file))) {
+  cpSync(join(uiFrom, name), join(uiTo, name))
+}
+for (const name of readdirSync(join(uiFrom, 'dist', 'src')).filter((file) => file.endsWith('.js'))) {
+  cpSync(join(uiFrom, 'dist', 'src', name), join(uiTo, 'dist', 'src', name))
 }
 // The native keyring, whatever it is called on this platform. Found rather than named, so
 // this does not quietly ship yesterday's copy under today's filename — the names this used to
@@ -212,11 +241,14 @@ function sign(path) {
   if (signed.status !== 0) throw new Error(`codesign refused ${path}`)
 }
 
-// 4. The entry point has to be there, because `main.rs` names it and a sidecar that starts
-//    Node with nothing to run opens a REPL and waits forever.
-if (!existsSync(join(resources, 'boot.mjs'))) throw new Error('the packaged build has no boot.mjs')
+// 5. What `main.rs` starts and what the hub serves at `/` have to be there, or the app opens on
+//    a starting page that never leaves.
+for (const needed of [hubExe, join(uiTo, 'index.html')]) {
+  if (!existsSync(needed)) throw new Error(`staging left no ${needed}`)
+}
 
 console.log(`Sidecar: ${sidecar}`)
 console.log(`Transport: ${transport}`)
+console.log(`Hub: ${hubExe}`)
 console.log(`Resources: ${resources}`)
 console.log(universal ? 'Now: pnpm tauri build --target universal-apple-darwin' : 'Now: pnpm tauri build')
