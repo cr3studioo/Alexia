@@ -1056,6 +1056,16 @@ async fn not_her_with_nothing_to_mark() {
         a.json(),
         json!({ "ok": false, "said": "There is no answer to mark yet." })
     );
+    // A command's reply is in the conversation, and is not an answer to mark.
+    send(
+        &w,
+        "POST",
+        "/api/command",
+        Some(&json!({ "input": "/help" })),
+    )
+    .await;
+    let a = send(&w, "POST", "/api/not-her", Some(&json!({}))).await;
+    assert_eq!(a.json()["ok"], false);
     // After an answer, the press is taken; nothing provides persona.not_her here, so nothing
     // heard it.
     Sse::open(&w, json!({ "text": "Say hello." }))

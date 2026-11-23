@@ -811,8 +811,19 @@ async fn not_her(State(api): State<Arc<Api>>, Extension(Sent(sent)): Extension<S
             Ok(h) => h,
             Err(e) => return json::said(500, &e.to_string()),
         };
-        let at = history.iter().rposition(|m| {
-            m.role == Role::Assistant && m.body.calls.as_ref().is_none_or(Vec::is_empty)
+        // The latest answer, not a slash command's reply (v3 keeps those in the conversation;
+        // v2 never did).
+        let at = (0..history.len()).rev().find(|&i| {
+            let m = &history[i];
+            let command = i > 0
+                && history[i - 1].role == Role::User
+                && history[i - 1]
+                    .body
+                    .content
+                    .text()
+                    .trim_start()
+                    .starts_with('/');
+            m.role == Role::Assistant && m.body.calls.as_ref().is_none_or(Vec::is_empty) && !command
         });
         let Some(at) = at else {
             return json::ok(json!({ "ok": false, "said": "There is no answer to mark yet." }));
