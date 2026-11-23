@@ -42,6 +42,20 @@ pub(crate) struct Offer {
     pub mime: String,
 }
 
+impl Offer {
+    /// Whether Open may start this file. The name came from the plugin and may lie, and the
+    /// path is what Explorer is actually handed, so both must be openable: an `evil.bat` named
+    /// `invoice.pdf` is refused. (v2 checked the name alone; a missing extension stays openable
+    /// there and here.)
+    pub(crate) fn openable(&self) -> bool {
+        let real = self
+            .path
+            .file_name()
+            .map_or_else(|| self.path.to_string_lossy(), |n| n.to_string_lossy());
+        openable(&self.name) && openable(&real)
+    }
+}
+
 /// The files offered to the window, by id (v2 `Offers`). In memory only: a restart forgets
 /// them, as v2's did.
 #[derive(Default)]
@@ -81,7 +95,7 @@ impl Offers {
                 "path": offer.path.to_string_lossy(),
                 "bytes": offer.bytes,
                 "mime": offer.mime,
-                "openable": openable(&offer.name),
+                "openable": offer.openable(),
             }));
             kept.order.push_back(id.clone());
             kept.by_id.insert(id, offer);
@@ -110,7 +124,7 @@ impl Offers {
         } else {
             How::Reveal
         };
-        if how == How::Open && !openable(&wanted.name) {
+        if how == How::Open && !wanted.openable() {
             return json::said(
                 409,
                 &format!(
@@ -418,6 +432,47 @@ mod tests {
         assert_eq!(mime_of("A.PNG"), "image/png");
         assert_eq!(mime_of("x.unknown"), "application/octet-stream");
         assert_eq!(disposition_name("a b/c\"d.é.txt"), "a b_c_d._.txt");
+    }
+
+    fn offered(offers: &Offers, name: &str, path: &str) -> (String, Value) {
+        let v = offers.keep(&[produced(name, Path::new(path))]).remove(0);
+        (v["id"].as_str().unwrap().to_owned(), v)
+    }
+
+    #[test]
+    fn open_refused_when_path_runs_though_name_is_safe() {
+        let offers = Offers::default();
+        let (id, v) = offered(&offers, "invoice.pdf", "/made/evil-4d2.bat");
+        assert_eq!(v["openable"], json!(false));
+        let r = offers.act(Some(&id), Some("open"));
+        assert_eq!(r.status(), 409);
+        assert!(spawned::with("evil-4d2").is_empty());
+        // Show in folder still works.
+        assert_eq!(offers.act(Some(&id), Some("reveal")).status(), 200);
+        assert_eq!(spawned::with("evil-4d2").len(), 1);
+    }
+
+    #[test]
+    fn open_refused_when_name_runs_though_path_is_safe() {
+        let offers = Offers::default();
+        let (id, v) = offered(&offers, "setup.exe", "/made/notes-8b7.txt");
+        assert_eq!(v["openable"], json!(false));
+        assert_eq!(offers.act(Some(&id), Some("open")).status(), 409);
+        assert!(spawned::with("notes-8b7").is_empty());
+    }
+
+    #[test]
+    fn open_runs_when_name_and_path_are_safe() {
+        let offers = Offers::default();
+        let (id, v) = offered(&offers, "report.pdf", "/made/report-e51.pdf");
+        assert_eq!(v["openable"], json!(true));
+        assert_eq!(offers.act(Some(&id), Some("open")).status(), 200);
+        let started = spawned::with("report-e51");
+        assert_eq!(started.len(), 1);
+        assert!(!started[0]
+            .1
+            .iter()
+            .any(|a| a.contains("-R") || a.contains("/select")));
     }
 
     #[cfg(windows)]
