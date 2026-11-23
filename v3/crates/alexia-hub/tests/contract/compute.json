@@ -5,7 +5,7 @@
       "row": "R1",
       "name": "the role",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "GET",
         "path": "/api/compute/role",
@@ -31,7 +31,7 @@
       "row": "R2",
       "name": "switch the role asks first",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "POST",
         "path": "/api/compute/role",
@@ -60,7 +60,7 @@
       "row": "R3",
       "name": "cancel a role switch that is not waiting",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "POST",
         "path": "/api/compute/role/cancel",
@@ -86,7 +86,7 @@
       "row": "R4",
       "name": "paired computers",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "GET",
         "path": "/api/compute/hosts",
@@ -113,7 +113,7 @@
       "row": "R7",
       "name": "find a computer waiting to pair",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "GET",
         "path": "/api/compute/discover",
@@ -138,7 +138,7 @@
       "row": "R8",
       "name": "open pairing without a code",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "POST",
         "path": "/api/compute/pair/start",
@@ -165,7 +165,7 @@
       "row": "R9",
       "name": "pairing state",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "GET",
         "path": "/api/compute/pair",
@@ -188,7 +188,7 @@
       "row": "R10",
       "name": "cancel pairing that is not open",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "POST",
         "path": "/api/compute/pair/cancel",
@@ -213,7 +213,7 @@
       "row": "R11",
       "name": "unpair a computer that is not paired",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "POST",
         "path": "/api/compute/unpair",
@@ -243,7 +243,7 @@
       "row": "R12",
       "name": "this computer's inventory",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "GET",
         "path": "/api/compute/inventory",
@@ -270,7 +270,7 @@
       "row": "R13",
       "name": "how this computer is reached",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "GET",
         "path": "/api/compute/status",
@@ -297,7 +297,7 @@
       "row": "R14",
       "name": "choose this computer",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "POST",
         "path": "/api/compute/select",
@@ -324,7 +324,7 @@
       "row": "R15",
       "name": "install a requirement with no computer chosen",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "POST",
         "path": "/api/compute/setup/install",
@@ -353,7 +353,7 @@
       "row": "R16",
       "name": "the queue",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "GET",
         "path": "/api/compute/queue",
@@ -380,7 +380,7 @@
       "row": "R17",
       "name": "a job that is not there",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "GET",
         "path": "/api/compute/job",
@@ -409,7 +409,7 @@
       "row": "R18",
       "name": "jobs heard about",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "GET",
         "path": "/api/compute/jobs",
@@ -436,7 +436,7 @@
       "row": "R19",
       "name": "cancel a job that is not there",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "POST",
         "path": "/api/compute/jobs/cancel",
@@ -465,7 +465,7 @@
       "row": "R20",
       "name": "pause",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "POST",
         "path": "/api/compute/pause",
@@ -494,7 +494,7 @@
       "row": "R21",
       "name": "relay and mailbox addresses",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "GET",
         "path": "/api/compute/services",
@@ -519,7 +519,7 @@
       "row": "R22",
       "name": "set the relay address",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "POST",
         "path": "/api/compute/services",
@@ -547,7 +547,7 @@
       "row": "R23",
       "name": "close the compute window on the computer you talk to",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "POST",
         "path": "/api/compute/window/close",
@@ -593,11 +593,12 @@
         },
         "optional": [
           "/tailscale/self",
-          "/tailscale/peers"
+          "/tailscale/peers",
+          "/tailscale/loginUrl"
         ]
       },
       "source": "hand",
-      "hub": "pending",
+      "hub": "answers",
       "setup": [
         "fresh"
       ],
@@ -627,7 +628,7 @@
         }
       },
       "source": "hand",
-      "hub": "pending",
+      "hub": "answers",
       "setup": [
         "fresh"
       ],
@@ -635,8 +636,8 @@
     },
     {
       "row": "R12",
-      "name": "inventory of a paired computer",
-      "from": "compute/api.ts:567-579",
+      "name": "inventory of a computer that is not paired",
+      "from": "compute/api.ts:567-579, 920-924 (paired)",
       "request": {
         "method": "GET",
         "path": "/api/compute/inventory",
@@ -648,21 +649,278 @@
         "host": "127.0.0.1"
       },
       "response": {
+        "status": 404,
+        "type": "application/json",
+        "shape": {
+          "ok": "bool",
+          "said": "string",
+          "code": "string"
+        }
+      },
+      "source": "hand",
+      "hub": "answers",
+      "setup": [
+        "fresh"
+      ],
+      "stream": null
+    },
+    {
+      "row": "R12",
+      "name": "this computer's inventory, named outright",
+      "from": "compute/api.ts:567-579 (the compute role's own inventory), inventory.ts:121-123",
+      "request": {
+        "method": "GET",
+        "path": "/api/compute/inventory",
+        "query": {
+          "host": "this"
+        },
+        "body": null,
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "response": {
         "status": 200,
         "type": "application/json",
         "shape": {
-          "connection": {
-            "state": "string"
+          "inventory": {
+            "name": "string",
+            "appVersion": "string",
+            "machine": {},
+            "models": [],
+            "capabilities": [
+              {
+                "cap": "string",
+                "summary": "string",
+                "weight": "string",
+                "ready": "bool"
+              }
+            ],
+            "setup": [],
+            "revision": "number"
           },
-          "inventory": {}
+          "connection": "string"
         },
-        "optional": [
-          "/inventory",
-          "/failure"
+        "ignore": [
+          "/inventory/machine",
+          "/inventory/models",
+          "/inventory/setup"
         ]
       },
       "source": "hand",
-      "hub": "pending",
+      "hub": "answers",
+      "setup": [
+        "fresh"
+      ],
+      "stream": null
+    },
+    {
+      "row": "R13",
+      "name": "how this computer is reached, named outright",
+      "from": "compute/api.ts:581-596",
+      "request": {
+        "method": "GET",
+        "path": "/api/compute/status",
+        "query": {
+          "host": "this"
+        },
+        "body": null,
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "response": {
+        "status": 200,
+        "type": "application/json",
+        "shape": {
+          "connection": "string",
+          "label": "string"
+        }
+      },
+      "source": "hand",
+      "hub": "answers",
+      "setup": [
+        "fresh"
+      ],
+      "stream": null
+    },
+    {
+      "row": "R15",
+      "name": "install a requirement this computer does not have",
+      "from": "compute/api.ts:607-619, setup.ts:69-73",
+      "request": {
+        "method": "POST",
+        "path": "/api/compute/setup/install",
+        "query": {},
+        "body": {
+          "host": "this",
+          "requirement": "x"
+        },
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "response": {
+        "status": 404,
+        "type": "application/json",
+        "shape": {
+          "ok": "bool",
+          "said": "string",
+          "code": "string"
+        }
+      },
+      "source": "hand",
+      "hub": "answers",
+      "setup": [
+        "fresh"
+      ],
+      "stream": null
+    },
+    {
+      "row": "R16",
+      "name": "this computer's queue",
+      "from": "compute/api.ts:621-631",
+      "request": {
+        "method": "GET",
+        "path": "/api/compute/queue",
+        "query": {
+          "host": "this"
+        },
+        "body": null,
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "response": {
+        "status": 200,
+        "type": "application/json",
+        "shape": {
+          "queue": {
+            "waiting": [],
+            "paused": "bool"
+          }
+        },
+        "optional": [
+          "/queue/running"
+        ]
+      },
+      "source": "hand",
+      "hub": "answers",
+      "setup": [
+        "fresh"
+      ],
+      "stream": null
+    },
+    {
+      "row": "R17",
+      "name": "a job this computer does not know",
+      "from": "compute/api.ts:632-636, 853-857",
+      "request": {
+        "method": "GET",
+        "path": "/api/compute/job",
+        "query": {
+          "host": "this",
+          "job": "none"
+        },
+        "body": null,
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "response": {
+        "status": 404,
+        "type": "application/json",
+        "shape": {
+          "ok": "bool",
+          "said": "string",
+          "code": "string"
+        }
+      },
+      "source": "hand",
+      "hub": "answers",
+      "setup": [
+        "fresh"
+      ],
+      "stream": null
+    },
+    {
+      "row": "R18",
+      "name": "jobs this computer heard about",
+      "from": "compute/api.ts:637-641",
+      "request": {
+        "method": "GET",
+        "path": "/api/compute/jobs",
+        "query": {
+          "host": "this"
+        },
+        "body": null,
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "response": {
+        "status": 200,
+        "type": "application/json",
+        "shape": {
+          "jobs": []
+        }
+      },
+      "source": "hand",
+      "hub": "answers",
+      "setup": [
+        "fresh"
+      ],
+      "stream": null
+    },
+    {
+      "row": "R19",
+      "name": "cancel a job this computer does not know",
+      "from": "compute/api.ts:642-657, scheduler.ts:156-162",
+      "request": {
+        "method": "POST",
+        "path": "/api/compute/jobs/cancel",
+        "query": {},
+        "body": {
+          "host": "this",
+          "job": "none"
+        },
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "response": {
+        "status": 404,
+        "type": "application/json",
+        "shape": {
+          "ok": "bool",
+          "said": "string",
+          "code": "string"
+        }
+      },
+      "source": "hand",
+      "hub": "answers",
+      "setup": [
+        "fresh"
+      ],
+      "stream": null
+    },
+    {
+      "row": "R20",
+      "name": "pause this computer, named outright",
+      "from": "compute/api.ts:659-666",
+      "request": {
+        "method": "POST",
+        "path": "/api/compute/pause",
+        "query": {},
+        "body": {
+          "host": "this",
+          "paused": false
+        },
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "response": {
+        "status": 200,
+        "type": "application/json",
+        "shape": {
+          "ok": "bool"
+        }
+      },
+      "source": "hand",
+      "hub": "answers",
       "setup": [
         "fresh"
       ],
