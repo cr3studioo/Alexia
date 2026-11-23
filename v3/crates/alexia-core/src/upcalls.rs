@@ -6,8 +6,10 @@
 //!
 //! Where v2 and `docs/spec/wire-protocol.md` differ, the spec wins (it says what a plugin sees).
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use alexia_mcp::alexia::{AttachmentsCall, PrivacyMode};
@@ -1079,13 +1081,152 @@ impl Upcalls for Agent {
                 pics.ingest(&text("conversationId"), name, &bytes, &origin)
                     .map_err(bad)
             }
-            // The link is served by the hub's media server (P2-38); until it is wired there is
-            // nothing a link could point at.
-            _ => Err(RpcError::new(
-                code::CAPABILITY_NOT_AVAILABLE,
-                "This Alexia cannot hand out a link to a file yet.",
-            )),
+            // v2 host.ts: a link the editor screen fetches one of the plugin's own files from,
+            // for this conversation only (served by the window at `/api/editor/file`).
+            "share" => {
+                let path = own_file(&own, &text("path")).map_err(bad)?;
+                let mime = text("mime");
+                if mime.is_empty() {
+                    return Err(bad("A shared file needs its type."));
+                }
+                self.album()
+                    .share(&text("conversationId"), path, &mime)
+                    .map(|url| json!({ "url": url }))
+                    .map_err(bad)
+            }
+            _ => Err(RpcError::method_not_found()),
         }
+    }
+}
+
+// ---- the window's view of the pictures (v2 serve.ts `album`, `shared`; P2D-11) ----------
+
+/// The editor's shared files, by token: in memory only, as v2's were, so a restart forgets
+/// them. One map for the process; each entry remembers whose `uploads/` it belongs to, so two
+/// hubs in one process (tests) never see each other's.
+static SHARED: Mutex<BTreeMap<String, Shared>> = Mutex::new(BTreeMap::new());
+
+fn shared_map() -> std::sync::MutexGuard<'static, BTreeMap<String, Shared>> {
+    SHARED.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// One file the editor plugin shared with its screen.
+#[derive(Clone, Debug)]
+pub struct Shared {
+    /// Real, and inside the sharing plugin's own folder (checked when it was shared).
+    pub path: PathBuf,
+    pub mime: String,
+    pub conversation: String,
+    uploads: PathBuf,
+}
+
+/// A conversation's pictures as the window sees them (v2 `Attachments` for serve.ts): what
+/// the editor screen lists, shows, uploads and forgets, and the files it was shared.
+pub struct Album {
+    store: Arc<Store>,
+    uploads: PathBuf,
+}
+
+impl Agent {
+    /// The pictures of this Alexia's conversations, for the window.
+    pub fn album(&self) -> Album {
+        let p = self.parts();
+        Album {
+            store: p.store.clone(),
+            uploads: p.layout.uploads(),
+        }
+    }
+}
+
+impl Album {
+    fn pictures(&self) -> Pictures<'_> {
+        Pictures {
+            store: &self.store,
+            uploads: self.uploads.clone(),
+        }
+    }
+
+    /// The live pictures of a conversation, in the order they arrived.
+    pub fn list(&self, conversation: &str) -> Result<Vec<Value>, String> {
+        let rows = self.pictures().rows(session_of(conversation)?)?;
+        Ok(rows
+            .iter()
+            .filter(|r| r.state == "live")
+            .map(Row::descriptor)
+            .collect())
+    }
+
+    /// The type and bytes of one of this conversation's live pictures.
+    pub fn bytes(&self, conversation: &str, id: &str) -> Result<(String, Vec<u8>), String> {
+        let session = session_of(conversation)?;
+        let pics = self.pictures();
+        let rows = pics.rows(session)?;
+        let gone = || "That picture is not in this conversation any more.".to_owned();
+        let row = rows
+            .iter()
+            .find(|r| r.id == id && r.state == "live")
+            .ok_or_else(gone)?;
+        let path = pics.path(session, row)?;
+        let bytes = std::fs::read(path).map_err(|_| gone())?;
+        Ok((row.mime.clone(), bytes))
+    }
+
+    /// Keep a picture the window sent: `upload`, or `normalized` (turned upright in the
+    /// window). Checked and stripped like every other picture.
+    pub fn ingest(
+        &self,
+        conversation: &str,
+        name: &str,
+        bytes: &[u8],
+        origin: &str,
+    ) -> Result<Value, String> {
+        if !["upload", "normalized"].contains(&origin) {
+            return Err("That is not a way a picture arrives from the window.".into());
+        }
+        self.pictures().ingest(conversation, name, bytes, origin)
+    }
+
+    /// v2 `share`: a token for one file, valid for this conversation until it is forgotten.
+    pub fn share(&self, conversation: &str, path: PathBuf, mime: &str) -> Result<String, String> {
+        let session = session_of(conversation)?;
+        let exists = self
+            .store
+            .sessions()
+            .map_err(|_| "Alexia could not read that conversation.".to_owned())?
+            .iter()
+            .any(|s| s.id.0 == session);
+        if !exists {
+            return Err("That conversation does not exist.".into());
+        }
+        let token = opaque("shr");
+        shared_map().insert(
+            token.clone(),
+            Shared {
+                path,
+                mime: mime.to_owned(),
+                conversation: conversation.to_owned(),
+                uploads: self.uploads.clone(),
+            },
+        );
+        Ok(format!("/api/editor/file?token={token}"))
+    }
+
+    /// The file a token names, if this Alexia shared it and it was not forgotten since.
+    pub fn shared(&self, token: &str) -> Option<Shared> {
+        shared_map()
+            .get(token)
+            .filter(|s| s.uploads == self.uploads)
+            .cloned()
+    }
+
+    /// v2 `revoke` then `cleanup`, and the conversation's shared files: nothing can use
+    /// these pictures any more, then the files and records go. Idempotent.
+    pub fn forget(&self, conversation: &str) -> Result<(), String> {
+        let session = session_of(conversation)?;
+        shared_map().retain(|_, s| !(s.uploads == self.uploads && s.conversation == conversation));
+        let pics = self.pictures();
+        pics.revoke(session)?;
+        pics.cleanup(session)
     }
 }
 
@@ -1383,6 +1524,56 @@ impl Pictures<'_> {
             "version": "1", "conversationId": conversation, "requestId": opaque("req"),
             "selectionId": opaque("sel"), "leaseId": lease, "attachments": attachments,
         }))
+    }
+
+    /// v2 `revoke`: every picture and live lease of the conversation marked, in one go.
+    fn revoke(&self, session: i64) -> Result<(), String> {
+        self.store
+            .transaction(|tx| {
+                tx.execute(
+                    "UPDATE attachments SET state = 'revoked' WHERE session_id = ?",
+                    (session,),
+                )?;
+                tx.execute(
+                    "UPDATE attachment_leases SET state = 'revoked' \
+                     WHERE session_id = ? AND state = 'live'",
+                    (session,),
+                )?;
+                Ok(())
+            })
+            .map_err(|e| {
+                tracing::warn!("pictures could not be revoked: {e}");
+                "Alexia could not forget those pictures.".to_owned()
+            })
+    }
+
+    /// v2 `cleanup`: the folder, then the revoked records and finished leases.
+    fn cleanup(&self, session: i64) -> Result<(), String> {
+        let failed = || "Alexia could not forget those pictures.".to_owned();
+        match std::fs::remove_dir_all(self.folder(session)) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => {
+                tracing::warn!("a picture folder could not be removed: {e}");
+                return Err(failed());
+            }
+        }
+        self.store
+            .transaction(|tx| {
+                tx.execute(
+                    "DELETE FROM attachments WHERE session_id = ? AND state = 'revoked'",
+                    (session,),
+                )?;
+                tx.execute(
+                    "DELETE FROM attachment_leases WHERE session_id = ? AND state != 'live'",
+                    (session,),
+                )?;
+                Ok(())
+            })
+            .map_err(|e| {
+                tracing::warn!("picture records could not be removed: {e}");
+                failed()
+            })
     }
 
     fn release(&self, lease: &str) -> Result<(), String> {
