@@ -527,3 +527,4 @@
 2026-11-23 P2D-02 built (108 contract cases; S1-S4 answer, 76 pending until screen tasks; C1 cases hand-written) -> review ctx_f85272f968a2
 2026-11-23 P2D-02 approved (workspace 84 suites). LATER: contract.rs:834 failure log accumulation; Sse::next silent end on bad JSON. Merged; no code moved since branch point, reviewer run = gate. Pushed
 2026-11-23 P2D-13 failed: pnpm sidecar (release LTO link) killed by low RAM before anything compiled; not counted as a try. Rerun in same worktree with JOBS=1
+2026-11-23 Dispatched (c2, 5h reset): P2D-13 rerun:ctx_247924f98696 P2D-05:ctx_0c3d223ad30d (both JOBS=1)
