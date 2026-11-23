@@ -1,0 +1,678 @@
+{
+  "area": "local_models",
+  "cases": [
+    {
+      "row": "M1",
+      "name": "overview",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "GET",
+        "path": "/api/local-models",
+        "query": {},
+        "body": null,
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 200,
+        "type": "application/json",
+        "shape": {
+          "machine": {
+            "summary": "string",
+            "ramBytes": "number",
+            "freeDiskBytes": "number",
+            "budgetBytes": "number",
+            "appleSilicon": "bool",
+            "chip": "string"
+          },
+          "runtime": {
+            "installed": "bool",
+            "version": "string",
+            "supported": "bool"
+          },
+          "runtimes": {
+            "llama": {
+              "installed": "bool",
+              "version": "string",
+              "supported": "bool"
+            },
+            "mlx": {
+              "installed": "bool",
+              "version": "string",
+              "supported": "bool"
+            }
+          },
+          "picks": {
+            "best": {
+              "entry": "string",
+              "format": "string",
+              "name": "string",
+              "blurb": "string",
+              "publisher": "string",
+              "params": "number",
+              "quant": "string",
+              "bytes": "number",
+              "needBytes": "number",
+              "verdict": "string",
+              "tools": "bool",
+              "vision": "bool",
+              "licence": {
+                "name": "string",
+                "url": "string",
+                "restrictive": "bool"
+              },
+              "abliterated": "bool",
+              "installed": "bool",
+              "quants": [
+                {
+                  "quant": "string",
+                  "bytes": "number",
+                  "needBytes": "number",
+                  "verdict": "string",
+                  "note": "string"
+                }
+              ]
+            },
+            "fast": {
+              "entry": "string",
+              "format": "string",
+              "name": "string",
+              "blurb": "string",
+              "publisher": "string",
+              "params": "number",
+              "quant": "string",
+              "bytes": "number",
+              "needBytes": "number",
+              "verdict": "string",
+              "tools": "bool",
+              "vision": "bool",
+              "licence": {
+                "name": "string",
+                "url": "string",
+                "restrictive": "bool"
+              },
+              "abliterated": "bool",
+              "installed": "bool",
+              "quants": [
+                {
+                  "quant": "string",
+                  "bytes": "number",
+                  "needBytes": "number",
+                  "verdict": "string",
+                  "note": "string"
+                }
+              ]
+            }
+          },
+          "all": [
+            {
+              "entry": "string",
+              "format": "string",
+              "name": "string",
+              "blurb": "string",
+              "publisher": "string",
+              "params": "number",
+              "quant": "string",
+              "bytes": "number",
+              "needBytes": "number",
+              "verdict": "string",
+              "tools": "bool",
+              "vision": "bool",
+              "licence": {
+                "name": "string",
+                "url": "string",
+                "restrictive": "bool"
+              },
+              "abliterated": "bool",
+              "installed": "bool",
+              "quants": [
+                {
+                  "quant": "string",
+                  "bytes": "number",
+                  "needBytes": "number",
+                  "verdict": "string",
+                  "note": "string"
+                }
+              ]
+            }
+          ],
+          "uncensored": [
+            {
+              "entry": "string",
+              "format": "string",
+              "name": "string",
+              "blurb": "string",
+              "publisher": "string",
+              "params": "number",
+              "quant": "string",
+              "bytes": "number",
+              "needBytes": "number",
+              "verdict": "string",
+              "tools": "bool",
+              "vision": "bool",
+              "licence": {
+                "name": "string",
+                "url": "string",
+                "restrictive": "bool"
+              },
+              "abliterated": "bool",
+              "installed": "bool",
+              "quants": [
+                {
+                  "quant": "string",
+                  "bytes": "number",
+                  "needBytes": "number",
+                  "verdict": "string",
+                  "note": "string"
+                }
+              ]
+            }
+          ],
+          "installed": [],
+          "jobs": [],
+          "mode": "string"
+        }
+      },
+      "stream": null
+    },
+    {
+      "row": "M4",
+      "name": "context settings",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "GET",
+        "path": "/api/local-models/context",
+        "query": {
+          "id": "none"
+        },
+        "body": null,
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 404,
+        "type": "application/json",
+        "shape": {
+          "ok": "bool",
+          "said": "string",
+          "error": "string"
+        }
+      },
+      "stream": null
+    },
+    {
+      "row": "M5",
+      "name": "set context settings",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/local-models/context",
+        "query": {},
+        "body": {
+          "id": "none",
+          "context": 4096
+        },
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 400,
+        "type": "application/json",
+        "shape": {
+          "ok": "bool",
+          "said": "string",
+          "error": "string"
+        }
+      },
+      "stream": null
+    },
+    {
+      "row": "M6",
+      "name": "maintenance",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "GET",
+        "path": "/api/local-models/maintenance",
+        "query": {},
+        "body": null,
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 200,
+        "type": "application/json",
+        "shape": {
+          "updates": [],
+          "cleanup": [],
+          "reclaimableBytes": "number"
+        }
+      },
+      "stream": null
+    },
+    {
+      "row": "M7",
+      "name": "import preview of a missing file",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "GET",
+        "path": "/api/local-models/import-preview",
+        "query": {
+          "path": "C:\\Users\\vacla\\AppData\\Local\\Temp\\alexia-none.gguf"
+        },
+        "body": null,
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 400,
+        "type": "application/json",
+        "shape": {
+          "ok": "bool",
+          "said": "string",
+          "error": "string"
+        }
+      },
+      "stream": null
+    },
+    {
+      "row": "M8",
+      "name": "progress with nothing running",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "GET",
+        "path": "/api/local-models/progress",
+        "query": {},
+        "body": null,
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 404,
+        "type": "application/json",
+        "shape": {
+          "ok": "bool",
+          "said": "string"
+        }
+      },
+      "stream": null
+    },
+    {
+      "row": "M10",
+      "name": "cancel a job that is not there",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/local-models/cancel",
+        "query": {},
+        "body": {
+          "job": "none"
+        },
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 200,
+        "type": "application/json",
+        "shape": {
+          "ok": "bool"
+        }
+      },
+      "stream": null
+    },
+    {
+      "row": "M9",
+      "name": "install an entry that is not on the list",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/local-models/install",
+        "query": {},
+        "body": {
+          "entry": "none",
+          "quant": "Q4",
+          "confirm": true
+        },
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 400,
+        "type": "application/json",
+        "shape": {
+          "ok": "bool",
+          "said": "string",
+          "error": "string"
+        }
+      },
+      "stream": null
+    },
+    {
+      "row": "M11",
+      "name": "import a file that is not there",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/local-models/import",
+        "query": {},
+        "body": {
+          "path": "C:\\Users\\vacla\\AppData\\Local\\Temp\\alexia-none.gguf",
+          "confirm": true
+        },
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 400,
+        "type": "application/json",
+        "shape": {
+          "ok": "bool",
+          "said": "string",
+          "error": "string"
+        }
+      },
+      "stream": null
+    },
+    {
+      "row": "M12",
+      "name": "benchmark a model that is not installed",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/local-models/benchmark",
+        "query": {},
+        "body": {
+          "id": "none",
+          "confirm": true
+        },
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 404,
+        "type": "application/json",
+        "shape": {
+          "ok": "bool",
+          "said": "string",
+          "error": "string"
+        }
+      },
+      "stream": null
+    },
+    {
+      "row": "M13",
+      "name": "use a model that is not installed",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/local-models/use",
+        "query": {},
+        "body": {
+          "id": "none",
+          "mode": "local"
+        },
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 409,
+        "type": "application/json",
+        "shape": {
+          "ok": "bool",
+          "said": "string"
+        }
+      },
+      "stream": null
+    },
+    {
+      "row": "M14",
+      "name": "remove a model that is not installed",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/local-models/remove",
+        "query": {},
+        "body": {
+          "id": "none",
+          "confirm": true
+        },
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 404,
+        "type": "application/json",
+        "shape": {
+          "ok": "bool",
+          "said": "string"
+        }
+      },
+      "stream": null
+    },
+    {
+      "row": "M15",
+      "name": "DELETE a model that is not installed",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/local-models/none",
+        "query": {},
+        "body": {
+          "confirm": true
+        },
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 404,
+        "type": "application/json",
+        "shape": {
+          "ok": "bool",
+          "said": "string"
+        }
+      },
+      "stream": null
+    },
+    {
+      "row": "M16",
+      "name": "a Hugging Face token",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/local-models/token",
+        "query": {},
+        "body": {
+          "token": "xxxxxxxx"
+        },
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 200,
+        "type": "application/json",
+        "shape": {
+          "ok": "bool",
+          "said": "string"
+        }
+      },
+      "stream": null
+    },
+    {
+      "row": "M17",
+      "name": "local stats",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "GET",
+        "path": "/api/local-stats",
+        "query": {},
+        "body": null,
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 200,
+        "type": "application/json",
+        "shape": {
+          "running": "bool",
+          "installed": [],
+          "loaded": [],
+          "runners": {
+            "ollama": "bool",
+            "llama": "bool",
+            "mlx": "bool"
+          },
+          "speed": "null",
+          "system": {
+            "cpu": {
+              "percent": "number",
+              "cores": "number",
+              "model": "string"
+            },
+            "gpu": {
+              "percent": "number"
+            },
+            "memory": {
+              "used": "number",
+              "total": "number",
+              "pressure": "null"
+            },
+            "load": "null",
+            "temperature": "null",
+            "uptime": "number",
+            "history": {
+              "cpu": [
+                "number"
+              ],
+              "gpu": [
+                "number"
+              ],
+              "memory": [
+                "number"
+              ]
+            }
+          }
+        }
+      },
+      "stream": null
+    },
+    {
+      "row": "M2",
+      "name": "search (needs Hugging Face)",
+      "from": "serve.ts:2150; localModels.search",
+      "request": {
+        "method": "GET",
+        "path": "/api/local-models/search",
+        "query": {
+          "q": "llama"
+        },
+        "body": null,
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "response": {
+        "status": 200,
+        "type": "application/json",
+        "shape": {
+          "results": [
+            {
+              "repo": "string"
+            }
+          ]
+        }
+      },
+      "source": "hand",
+      "hub": "pending",
+      "setup": [
+        "fresh"
+      ],
+      "stream": null
+    },
+    {
+      "row": "M3",
+      "name": "repo preview (needs Hugging Face)",
+      "from": "serve.ts:2151; localModels.hf",
+      "request": {
+        "method": "GET",
+        "path": "/api/local-models/repo",
+        "query": {
+          "repo": "owner/name"
+        },
+        "body": null,
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "response": {
+        "status": 200,
+        "type": "application/json",
+        "shape": {
+          "repo": "string"
+        }
+      },
+      "source": "hand",
+      "hub": "pending",
+      "setup": [
+        "fresh"
+      ],
+      "stream": null
+    }
+  ]
+}

@@ -1,0 +1,205 @@
+{
+  "area": "editor",
+  "cases": [
+    {
+      "row": "E1",
+      "name": "the editor with no editor plugin",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/editor",
+        "query": {},
+        "body": {
+          "op": "open"
+        },
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 409,
+        "type": "application/json",
+        "shape": {
+          "ok": "bool",
+          "code": "string",
+          "said": "string"
+        }
+      },
+      "stream": null
+    },
+    {
+      "row": "E2",
+      "name": "a shared file that was never shared",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "GET",
+        "path": "/api/editor/file",
+        "query": {
+          "token": "none"
+        },
+        "body": null,
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 404,
+        "type": "application/json",
+        "shape": {
+          "ok": "bool",
+          "said": "string"
+        }
+      },
+      "stream": null
+    },
+    {
+      "row": "E3",
+      "name": "a picture the conversation does not own",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "GET",
+        "path": "/api/editor/picture",
+        "query": {
+          "id": "none"
+        },
+        "body": null,
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 409,
+        "type": "application/json",
+        "shape": {
+          "ok": "bool",
+          "code": "string",
+          "said": "string"
+        }
+      },
+      "stream": null
+    },
+    {
+      "row": "E5",
+      "name": "upload a picture with no conversation",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/editor/upload",
+        "query": {},
+        "body": {
+          "name": "a.png",
+          "data": "aGk="
+        },
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 409,
+        "type": "application/json",
+        "shape": {
+          "ok": "bool",
+          "code": "string",
+          "said": "string"
+        }
+      },
+      "stream": null
+    },
+    {
+      "row": "E4",
+      "name": "forget editor pictures",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/editor/forget",
+        "query": {},
+        "body": {
+          "confirm": true
+        },
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 409,
+        "type": "application/json",
+        "shape": {
+          "ok": "bool",
+          "code": "string",
+          "said": "string"
+        }
+      },
+      "stream": null
+    },
+    {
+      "row": "E6",
+      "name": "research snapshot of a plugin that is not there",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/research",
+        "query": {},
+        "body": {
+          "plugin": "demo"
+        },
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 200,
+        "type": "application/json",
+        "shape": {
+          "snapshot": "null"
+        }
+      },
+      "stream": null
+    },
+    {
+      "row": "E7",
+      "name": "a research file that is not there",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "GET",
+        "path": "/api/research-file",
+        "query": {
+          "plugin": "demo",
+          "run": "r",
+          "source": "s",
+          "kind": "preview"
+        },
+        "body": null,
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 404,
+        "type": null,
+        "shape": null
+      },
+      "stream": null
+    }
+  ]
+}

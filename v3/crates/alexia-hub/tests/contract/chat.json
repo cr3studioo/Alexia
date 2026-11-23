@@ -1,0 +1,531 @@
+{
+  "area": "chat",
+  "cases": [
+    {
+      "row": "C2",
+      "name": "stop with nothing running",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/stop",
+        "query": {},
+        "body": {},
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 200,
+        "type": "application/json",
+        "shape": {
+          "stopping": "bool"
+        }
+      },
+      "stream": null
+    },
+    {
+      "row": "C3",
+      "name": "approve with nothing waiting",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/approve",
+        "query": {},
+        "body": {
+          "allowed": true
+        },
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 200,
+        "type": "application/json",
+        "shape": {
+          "ok": "bool"
+        }
+      },
+      "stream": null
+    },
+    {
+      "row": "C4",
+      "name": "a slash command: /help",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/command",
+        "query": {},
+        "body": {
+          "input": "/help"
+        },
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 200,
+        "type": "application/json",
+        "shape": {
+          "ok": "bool",
+          "note": "string",
+          "data": [
+            {
+              "name": "string",
+              "summary": "string"
+            }
+          ],
+          "setup": {
+            "done": "bool",
+            "name": "string",
+            "mode": "string",
+            "theme": "string",
+            "glass": "number",
+            "glassLook": "string",
+            "updates": "bool"
+          },
+          "pins": {
+            "uncensored": "bool"
+          }
+        }
+      },
+      "stream": null
+    },
+    {
+      "row": "C4",
+      "name": "text that is not a command",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/command",
+        "query": {},
+        "body": {
+          "input": "hello"
+        },
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 200,
+        "type": "application/json",
+        "shape": {
+          "ok": "bool",
+          "note": "string",
+          "setup": {
+            "done": "bool",
+            "name": "string",
+            "mode": "string",
+            "theme": "string",
+            "glass": "number",
+            "glassLook": "string",
+            "updates": "bool"
+          },
+          "pins": {
+            "uncensored": "bool"
+          }
+        }
+      },
+      "stream": null
+    },
+    {
+      "row": "C5",
+      "name": "not her, with no persona plugin",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/not-her",
+        "query": {},
+        "body": {},
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 200,
+        "type": "application/json",
+        "shape": {
+          "ok": "bool",
+          "said": "string"
+        }
+      },
+      "stream": null
+    },
+    {
+      "row": "C6",
+      "name": "a file that was never offered",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "GET",
+        "path": "/api/file",
+        "query": {
+          "id": "nope"
+        },
+        "body": null,
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 404,
+        "type": "application/json",
+        "shape": {
+          "ok": "bool",
+          "said": "string"
+        }
+      },
+      "stream": null
+    },
+    {
+      "row": "C7",
+      "name": "show in folder for a file that was never offered",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/file",
+        "query": {},
+        "body": {
+          "id": "nope",
+          "action": "reveal",
+          "confirm": true
+        },
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 404,
+        "type": "application/json",
+        "shape": {
+          "ok": "bool",
+          "said": "string"
+        }
+      },
+      "stream": null
+    },
+    {
+      "row": "C1",
+      "name": "a plain answer",
+      "from": "serve.ts:3577-3975 (frames at 3797-3815, 3873-3945)",
+      "request": {
+        "method": "POST",
+        "path": "/api/chat",
+        "query": {},
+        "body": {
+          "text": "Say hello."
+        },
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "response": {
+        "status": 200,
+        "type": "text/event-stream"
+      },
+      "setup": [
+        "scripted"
+      ],
+      "stream": [
+        {
+          "shape": {
+            "phase": {
+              "kind": "string"
+            }
+          },
+          "optional": true
+        },
+        {
+          "shape": {
+            "delta": "string"
+          },
+          "repeat": true
+        },
+        {
+          "shape": {
+            "done": {
+              "model": "string",
+              "spent": "number",
+              "today": {
+                "spent": "number",
+                "allowance": "number"
+              },
+              "steps": "number",
+              "ended": "string"
+            }
+          },
+          "optional_keys": [
+            "/done/bubble",
+            "/done/cap",
+            "/done/warning"
+          ]
+        }
+      ],
+      "source": "hand",
+      "hub": "pending"
+    },
+    {
+      "row": "C1",
+      "name": "a tool step with progress",
+      "from": "serve.ts:3826-3860 (step, progress, outcome frames)",
+      "request": {
+        "method": "POST",
+        "path": "/api/chat",
+        "query": {},
+        "body": {
+          "text": "Do some work."
+        },
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "response": {
+        "status": 200,
+        "type": "text/event-stream"
+      },
+      "setup": [
+        "scripted"
+      ],
+      "stream": [
+        {
+          "shape": {
+            "phase": {
+              "kind": "string"
+            }
+          },
+          "optional": true
+        },
+        {
+          "shape": {
+            "step": {
+              "n": "number",
+              "name": "string",
+              "args": {
+                "ms": "number"
+              }
+            }
+          }
+        },
+        {
+          "shape": {
+            "step": {
+              "n": "number",
+              "name": "string",
+              "progress": {
+                "progress": "number",
+                "total": "number",
+                "message": "string"
+              }
+            }
+          },
+          "optional_keys": [
+            "/step/progress/total",
+            "/step/progress/message"
+          ]
+        },
+        {
+          "shape": {
+            "step": {
+              "n": "number",
+              "name": "string",
+              "text": "string",
+              "ok": "bool"
+            }
+          },
+          "optional_keys": [
+            "/step/final",
+            "/step/timing",
+            "/step/card",
+            "/step/files"
+          ]
+        },
+        {
+          "shape": {
+            "delta": "string"
+          },
+          "repeat": true
+        },
+        {
+          "shape": {
+            "done": {
+              "model": "string",
+              "spent": "number",
+              "today": {
+                "spent": "number",
+                "allowance": "number"
+              },
+              "steps": "number",
+              "ended": "string"
+            }
+          },
+          "optional_keys": [
+            "/done/bubble",
+            "/done/cap",
+            "/done/warning"
+          ]
+        }
+      ],
+      "source": "hand",
+      "hub": "pending"
+    },
+    {
+      "row": "C1",
+      "name": "an ask, then /api/approve",
+      "from": "serve.ts:3797-3799 (ask), 2516-2527 (approve)",
+      "request": {
+        "method": "POST",
+        "path": "/api/chat",
+        "query": {},
+        "body": {
+          "text": "Please ask before you set it."
+        },
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "response": {
+        "status": 200,
+        "type": "text/event-stream"
+      },
+      "setup": [
+        "scripted"
+      ],
+      "during": [
+        {
+          "method": "POST",
+          "path": "/api/approve",
+          "query": {},
+          "body": {
+            "allowed": true
+          },
+          "token": true
+        }
+      ],
+      "stream": [
+        {
+          "shape": {
+            "phase": {
+              "kind": "string"
+            }
+          },
+          "optional": true
+        },
+        {
+          "shape": {
+            "ask": "string"
+          }
+        },
+        {
+          "shape": {
+            "step": {
+              "n": "number",
+              "name": "string",
+              "args": {
+                "key": "string",
+                "value": "string"
+              }
+            }
+          }
+        },
+        {
+          "shape": {
+            "step": {
+              "n": "number",
+              "name": "string",
+              "text": "string",
+              "ok": "bool"
+            }
+          },
+          "optional_keys": [
+            "/step/final",
+            "/step/timing",
+            "/step/card",
+            "/step/files"
+          ]
+        },
+        {
+          "shape": {
+            "delta": "string"
+          },
+          "repeat": true
+        },
+        {
+          "shape": {
+            "done": {
+              "model": "string",
+              "spent": "number",
+              "today": {
+                "spent": "number",
+                "allowance": "number"
+              },
+              "steps": "number",
+              "ended": "string"
+            }
+          },
+          "optional_keys": [
+            "/done/bubble",
+            "/done/cap",
+            "/done/warning"
+          ]
+        }
+      ],
+      "source": "hand",
+      "hub": "pending"
+    },
+    {
+      "row": "C1",
+      "name": "423 while another answer is running",
+      "from": "serve.ts:3281-3290",
+      "request": {
+        "method": "POST",
+        "path": "/api/chat",
+        "query": {},
+        "body": {
+          "text": "A second message."
+        },
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "response": {
+        "status": 423,
+        "type": "application/json",
+        "shape": {
+          "ok": "bool",
+          "busy": "bool",
+          "said": "string"
+        }
+      },
+      "setup": [
+        "scripted"
+      ],
+      "behind": {
+        "method": "POST",
+        "path": "/api/chat",
+        "query": {},
+        "body": {
+          "text": "Please ask before you set it."
+        },
+        "token": true
+      },
+      "source": "hand",
+      "hub": "pending",
+      "stream": null
+    }
+  ]
+}

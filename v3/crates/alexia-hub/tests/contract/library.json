@@ -1,0 +1,107 @@
+{
+  "area": "library",
+  "cases": [
+    {
+      "row": "L1",
+      "name": "the library",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "GET",
+        "path": "/api/library",
+        "query": {},
+        "body": null,
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 200,
+        "type": "application/json",
+        "shape": {
+          "ok": "bool",
+          "registry": "string",
+          "app": "string",
+          "verifying": "bool",
+          "plugins": [
+            {
+              "id": "string",
+              "name": "string",
+              "summary": "string",
+              "coming_soon": "bool",
+              "offer": "string",
+              "installed": "bool"
+            }
+          ],
+          "updates": [],
+          "needsNewerApp": {
+            "plugins": "number",
+            "updates": "number"
+          },
+          "skills": [],
+          "revoked": []
+        }
+      },
+      "stream": null
+    },
+    {
+      "row": "L2",
+      "name": "download progress with nothing downloading",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "GET",
+        "path": "/api/library/progress",
+        "query": {
+          "id": "voice"
+        },
+        "body": null,
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 200,
+        "type": "application/json",
+        "shape": {
+          "done": "number"
+        }
+      },
+      "stream": null
+    },
+    {
+      "row": "L3",
+      "name": "install something the registry does not have",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/library/install",
+        "query": {},
+        "body": {
+          "id": "nope",
+          "kind": "plugin",
+          "confirm": true
+        },
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 200,
+        "type": "application/json",
+        "shape": {
+          "ok": "bool",
+          "said": "string"
+        }
+      },
+      "stream": null
+    }
+  ]
+}

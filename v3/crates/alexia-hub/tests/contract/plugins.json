@@ -1,0 +1,296 @@
+{
+  "area": "plugins",
+  "cases": [
+    {
+      "row": "P1",
+      "name": "no plugins installed",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "GET",
+        "path": "/api/plugins",
+        "query": {},
+        "body": null,
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 200,
+        "type": "application/json",
+        "shape": {
+          "panes": [],
+          "problems": [],
+          "skills": [],
+          "unreviewed": [],
+          "offers": {},
+          "skillProblems": []
+        }
+      },
+      "stream": null
+    },
+    {
+      "row": "P2",
+      "name": "enable a plugin that is not installed",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/plugin",
+        "query": {},
+        "body": {
+          "id": "demo",
+          "action": "enable"
+        },
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 200,
+        "type": "application/json",
+        "shape": {
+          "ok": "bool",
+          "said": "string"
+        }
+      },
+      "stream": null
+    },
+    {
+      "row": "P3",
+      "name": "install from a folder that is not there",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/install",
+        "query": {},
+        "body": {
+          "path": "C:\\Users\\vacla\\AppData\\Local\\Temp\\alexia-no-such-folder",
+          "confirm": true
+        },
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 200,
+        "type": "application/json",
+        "shape": {
+          "ok": "bool",
+          "said": "string"
+        }
+      },
+      "stream": null
+    },
+    {
+      "row": "P4",
+      "name": "trust a server that is not added",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/server",
+        "query": {},
+        "body": {
+          "id": "demo",
+          "action": "trust",
+          "confirm": true
+        },
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 200,
+        "type": "application/json",
+        "shape": {
+          "ok": "bool",
+          "unreviewed": [],
+          "panes": []
+        }
+      },
+      "stream": null
+    },
+    {
+      "row": "P5",
+      "name": "a setting of a plugin that is not installed",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/settings",
+        "query": {},
+        "body": {
+          "plugin": "demo",
+          "key": "k",
+          "value": "v"
+        },
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 200,
+        "type": "application/json",
+        "shape": {
+          "ok": "bool",
+          "why": "string"
+        }
+      },
+      "stream": null
+    },
+    {
+      "row": "P6",
+      "name": "an upload for a plugin that is not installed",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/upload",
+        "query": {},
+        "body": {
+          "plugin": "demo",
+          "key": "k",
+          "name": "a.txt",
+          "data": "aGk="
+        },
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 200,
+        "type": "application/json",
+        "shape": {
+          "ok": "bool",
+          "why": "string"
+        }
+      },
+      "stream": null
+    },
+    {
+      "row": "P7",
+      "name": "a file of a plugin that is not installed",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "GET",
+        "path": "/api/plugin-file",
+        "query": {
+          "plugin": "demo",
+          "path": "a.png"
+        },
+        "body": null,
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 404,
+        "type": "application/json",
+        "shape": {
+          "ok": "bool",
+          "said": "string"
+        }
+      },
+      "stream": null
+    },
+    {
+      "row": "P1",
+      "name": "a plugin with every kind of widget",
+      "from": "serve.ts:2534-2547, settings.ts:140-160",
+      "request": {
+        "method": "GET",
+        "path": "/api/plugins",
+        "query": {},
+        "body": null,
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "response": {
+        "status": 200,
+        "type": "application/json",
+        "shape": {
+          "panes": [
+            {
+              "id": "string",
+              "name": "string",
+              "summary": "string",
+              "version": "string",
+              "license": "string",
+              "enabled": "bool",
+              "running": "bool",
+              "requires": [],
+              "settings": [
+                {
+                  "type": "string",
+                  "key": "string",
+                  "label": "string"
+                }
+              ],
+              "panel": {
+                "label": "string",
+                "widgets": [
+                  {
+                    "type": "string",
+                    "key": "string",
+                    "label": "string"
+                  }
+                ]
+              },
+              "page": "null"
+            }
+          ],
+          "problems": [],
+          "skills": [],
+          "unreviewed": [],
+          "offers": {},
+          "skillProblems": []
+        },
+        "optional": [
+          "/panes/0/state",
+          "/panes/0/reason",
+          "/panes/0/panel",
+          "/panes/0/page",
+          "/panes/0/settings/0/hint",
+          "/panes/0/settings/0/value",
+          "/panes/0/settings/0/set",
+          "/panes/0/settings/0/stored",
+          "/panes/0/settings/0/available",
+          "/panes/0/settings/0/reason",
+          "/panes/0/settings/0/live",
+          "/panes/0/settings/0/gates",
+          "/panes/0/panel/widgets/0/hint",
+          "/panes/0/panel/widgets/0/value",
+          "/panes/0/panel/widgets/0/set",
+          "/panes/0/panel/widgets/0/stored",
+          "/panes/0/panel/widgets/0/available",
+          "/panes/0/panel/widgets/0/reason",
+          "/panes/0/panel/widgets/0/live",
+          "/panes/0/panel/widgets/0/gates"
+        ]
+      },
+      "setup": [
+        "plugins"
+      ],
+      "source": "hand",
+      "hub": "pending",
+      "stream": null
+    }
+  ]
+}

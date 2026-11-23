@@ -1,0 +1,298 @@
+{
+  "area": "gate",
+  "cases": [
+    {
+      "row": "S1",
+      "name": "the page",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "GET",
+        "path": "/",
+        "query": {},
+        "body": null,
+        "token": false,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 200,
+        "type": "text/html",
+        "shape": null
+      },
+      "stream": null
+    },
+    {
+      "row": "S1",
+      "name": "the stylesheet",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "GET",
+        "path": "/app.css",
+        "query": {},
+        "body": null,
+        "token": false,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 200,
+        "type": "text/css",
+        "shape": null
+      },
+      "stream": null
+    },
+    {
+      "row": "S1",
+      "name": "the main module",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "GET",
+        "path": "/main.js",
+        "query": {},
+        "body": null,
+        "token": false,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 200,
+        "type": "text/javascript",
+        "shape": null
+      },
+      "stream": null
+    },
+    {
+      "row": "S1",
+      "name": "a picture",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "GET",
+        "path": "/alexia-mark.svg",
+        "query": {},
+        "body": null,
+        "token": false,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 200,
+        "type": "image/svg+xml",
+        "shape": null
+      },
+      "stream": null
+    },
+    {
+      "row": "S2",
+      "name": "no token",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "GET",
+        "path": "/api/state",
+        "query": {},
+        "body": null,
+        "token": false,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 403,
+        "type": "text/plain",
+        "text": "not for you"
+      },
+      "stream": null
+    },
+    {
+      "row": "S2",
+      "name": "a Host that is not 127.0.0.1",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "GET",
+        "path": "/api/state",
+        "query": {},
+        "body": null,
+        "token": true,
+        "host": "localhost"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 403,
+        "type": "text/plain",
+        "text": "not for you"
+      },
+      "stream": null
+    },
+    {
+      "row": "S3",
+      "name": "a body that is not JSON",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/stop",
+        "query": {},
+        "body": "not json",
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 400,
+        "type": "application/json",
+        "shape": {
+          "ok": "bool",
+          "said": "string"
+        }
+      },
+      "stream": null
+    },
+    {
+      "row": "S3",
+      "name": "a risky route without confirm",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/plugin",
+        "query": {},
+        "body": {
+          "id": "demo",
+          "action": "delete"
+        },
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 409,
+        "type": "application/json",
+        "shape": {
+          "ok": "bool",
+          "said": "string",
+          "confirm": "bool"
+        }
+      },
+      "stream": null
+    },
+    {
+      "row": "S3",
+      "name": "a route that only reads, sent a POST",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/state",
+        "query": {},
+        "body": {},
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 405,
+        "type": "application/json",
+        "shape": {
+          "ok": "bool",
+          "said": "string"
+        }
+      },
+      "stream": null
+    },
+    {
+      "row": "S3",
+      "name": "a route nobody serves, sent a POST",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/nothing-here",
+        "query": {},
+        "body": {},
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 404,
+        "type": "application/json",
+        "shape": {
+          "ok": "bool",
+          "said": "string"
+        }
+      },
+      "stream": null
+    },
+    {
+      "row": "S4",
+      "name": "an unknown path",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "GET",
+        "path": "/api/nothing-here",
+        "query": {},
+        "body": null,
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 404,
+        "type": null,
+        "shape": null
+      },
+      "stream": null
+    },
+    {
+      "row": "T4",
+      "name": "start-core-again: after the restart the window answers again",
+      "from": "src-tauri/src/main.rs (event start-core-again); replayed by P2D-13",
+      "request": {
+        "method": "GET",
+        "path": "/",
+        "query": {},
+        "body": null,
+        "token": false,
+        "host": "127.0.0.1"
+      },
+      "response": {
+        "status": 200,
+        "type": "text/html",
+        "shape": null
+      },
+      "source": "hand",
+      "hub": "pending",
+      "setup": [
+        "fresh"
+      ],
+      "stream": null
+    }
+  ]
+}

@@ -1,0 +1,458 @@
+{
+  "area": "board",
+  "cases": [
+    {
+      "row": "B1",
+      "name": "rows: models",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/rows",
+        "query": {},
+        "body": {
+          "plugin": "",
+          "key": "models"
+        },
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 200,
+        "type": "application/json",
+        "shape": {
+          "ok": "bool",
+          "rows": []
+        }
+      },
+      "stream": null
+    },
+    {
+      "row": "B1",
+      "name": "rows: routing",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/rows",
+        "query": {},
+        "body": {
+          "plugin": "",
+          "key": "routing"
+        },
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 200,
+        "type": "application/json",
+        "shape": {
+          "ok": "bool",
+          "rows": []
+        }
+      },
+      "stream": null
+    },
+    {
+      "row": "B1",
+      "name": "rows: activity",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/rows",
+        "query": {},
+        "body": {
+          "plugin": "",
+          "key": "activity"
+        },
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 200,
+        "type": "application/json",
+        "shape": {
+          "ok": "bool",
+          "rows": []
+        }
+      },
+      "stream": null
+    },
+    {
+      "row": "B1",
+      "name": "rows: last_run",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/rows",
+        "query": {},
+        "body": {
+          "plugin": "",
+          "key": "last_run"
+        },
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 200,
+        "type": "application/json",
+        "shape": {
+          "ok": "bool",
+          "rows": []
+        }
+      },
+      "stream": null
+    },
+    {
+      "row": "B1",
+      "name": "rows: skills",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/rows",
+        "query": {},
+        "body": {
+          "plugin": "",
+          "key": "skills"
+        },
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 200,
+        "type": "application/json",
+        "shape": {
+          "ok": "bool",
+          "rows": []
+        }
+      },
+      "stream": null
+    },
+    {
+      "row": "B1",
+      "name": "rows: learned",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/rows",
+        "query": {},
+        "body": {
+          "plugin": "",
+          "key": "learned"
+        },
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 200,
+        "type": "application/json",
+        "shape": {
+          "ok": "bool",
+          "rows": []
+        }
+      },
+      "stream": null
+    },
+    {
+      "row": "B1",
+      "name": "rows: tools",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/rows",
+        "query": {},
+        "body": {
+          "plugin": "",
+          "key": "tools"
+        },
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 200,
+        "type": "application/json",
+        "shape": {
+          "ok": "bool",
+          "rows": []
+        }
+      },
+      "stream": null
+    },
+    {
+      "row": "B1",
+      "name": "rows: library",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/rows",
+        "query": {},
+        "body": {
+          "plugin": "",
+          "key": "library"
+        },
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 200,
+        "type": "application/json",
+        "shape": {
+          "ok": "bool",
+          "rows": []
+        }
+      },
+      "stream": null
+    },
+    {
+      "row": "B3",
+      "name": "action: set_spend",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/action",
+        "query": {},
+        "body": {
+          "plugin": "",
+          "key": "set_spend",
+          "row": "free",
+          "confirm": true
+        },
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 200,
+        "type": "application/json",
+        "shape": {
+          "ok": "bool",
+          "said": "string"
+        }
+      },
+      "stream": null
+    },
+    {
+      "row": "B3",
+      "name": "action that does not exist",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/action",
+        "query": {},
+        "body": {
+          "plugin": "",
+          "key": "no_such_action",
+          "row": "",
+          "confirm": true
+        },
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 200,
+        "type": "application/json",
+        "shape": {
+          "ok": "bool",
+          "said": "string"
+        }
+      },
+      "stream": null
+    },
+    {
+      "row": "B4",
+      "name": "learn: save with nothing waiting",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/learn",
+        "query": {},
+        "body": {
+          "action": "save",
+          "name": "x",
+          "text": "y",
+          "confirm": true
+        },
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 200,
+        "type": "application/json",
+        "shape": {
+          "ok": "bool",
+          "said": "string"
+        }
+      },
+      "stream": null
+    },
+    {
+      "row": "B4",
+      "name": "learn: forget one",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/learn",
+        "query": {},
+        "body": {
+          "action": "forget",
+          "name": "nothing",
+          "confirm": true
+        },
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 200,
+        "type": "application/json",
+        "shape": {
+          "ok": "bool",
+          "said": "string"
+        }
+      },
+      "stream": null
+    },
+    {
+      "row": "B1",
+      "name": "rows: chats",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/rows",
+        "query": {},
+        "body": {
+          "plugin": "",
+          "key": "chats"
+        },
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "chat"
+      ],
+      "response": {
+        "status": 200,
+        "type": "application/json",
+        "shape": {
+          "ok": "bool",
+          "rows": [
+            {
+              "id": "string",
+              "title": "string",
+              "turns": "string",
+              "when": "string",
+              "at": "number",
+              "state": "string"
+            }
+          ]
+        }
+      },
+      "stream": null
+    },
+    {
+      "row": "B2",
+      "name": "detail of a chat",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/detail",
+        "query": {},
+        "body": {
+          "plugin": "",
+          "key": "chats",
+          "row": "1"
+        },
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "chat"
+      ],
+      "response": {
+        "status": 200,
+        "type": "application/json",
+        "shape": {
+          "ok": "bool",
+          "text": "string"
+        }
+      },
+      "stream": null
+    },
+    {
+      "row": "B3",
+      "name": "action: new_chat",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/action",
+        "query": {},
+        "body": {
+          "plugin": "",
+          "key": "new_chat",
+          "row": ""
+        },
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "chat"
+      ],
+      "response": {
+        "status": 200,
+        "type": "application/json",
+        "shape": {
+          "ok": "bool",
+          "said": "string"
+        }
+      },
+      "stream": null
+    }
+  ]
+}
