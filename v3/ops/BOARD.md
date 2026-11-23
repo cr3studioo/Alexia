@@ -144,8 +144,8 @@
 | P2-80 | Resume: a live job's age counts from its last step; every en | P2 | sonnet | none | alexia-core/{src/resume.rs, tests/resume.rs} | merged | 1 | cr3studioo/v3-P2-80 | |
 | P2-81 | Say goes to its run's chat and carries the run's files | P2 | sonnet | P2-48, P2-70, P2-74, P2-80 | alexia-core/{src/bus.rs, src/resume.rs, tests/resume.rs}, alexia-scheduler/{src/lib.rs, te | deferred | 0 | | after P2 (CEO: finish faster) |
 | P2-82 | MCP: a WASM start that is given up on stops the module; comp | P2 | opus | P2-66 | alexia-mcp/{src/wasm.rs, tests/wasm.rs, src/serve.rs, tests/compute.rs} | merged | 1 | cr3studioo/v3-P2-82 | |
-| P2D-01 | alexia-api: server, gate, static shell, hub wiring | P2D | opus | P2-39 | alexia-api/**, alexia-hub/{main.rs,tests/window.rs}, INTERFACES.md, invariants.mjs | review | 1 | cr3studioo/v3-P2D-01 | rv ctx_4b1f93e80af9 |
-| P2D-02 | Contract: record v2 answers, replay against hub | P2D | sonnet | P2D-01 | alexia-hub/{tools/record-v2.mjs,tests/contract*} | todo | 0 | | |
+| P2D-01 | alexia-api: server, gate, static shell, hub wiring | P2D | opus | P2-39 | alexia-api/**, alexia-hub/{main.rs,tests/window.rs}, INTERFACES.md, invariants.mjs | merged | 1 | cr3studioo/v3-P2D-01 | |
+| P2D-02 | Contract: record v2 answers, replay against hub | P2D | sonnet | P2D-01 | alexia-hub/{tools/record-v2.mjs,tests/contract*} | ready | 0 | | |
 | P2D-03 | Core seam: window origin, progress, step frames, asker | P2D | opus | none | alexia-core/**, alexia-gateway/{lib,ask,gateway}, alexia-scheduler/lib | merged | 1 | cr3studioo/v3-P2D-03 | |
 | P2D-04 | State, setup and settings | P2D | opus | P2D-02 | alexia-api/{state.rs,tests/state.rs} | todo | 0 | | |
 | P2D-05 | Chat in the window: stream, stop, approve, commands, files | P2D | opus | P2D-02, P2D-03 | alexia-api/{chat,offers}, alexia-hub/main.rs | todo | 0 | | |
@@ -156,6 +156,6 @@
 | P2D-10 | Compute screen, no paired computers | P2D | opus | P2D-02 | alexia-api/compute | todo | 0 | | |
 | P2D-11 | Image editor and research viewer | P2D | opus | P2D-02, P2D-03 | alexia-api/{editor,research} | todo | 0 | | |
 | P2D-12 | PC actions proven; hub runs in owner session | P2D | opus | P2D-04, P2D-05, P2D-06 | alexia-hub/{Cargo.toml,watchdog.rs,tests/pc_actions.rs} | todo | 0 | | |
-| P2D-13 | Tauri shell starts or attaches to the hub | P2D | opus | P2D-01 | src-tauri/src/main.rs, scripts/sidecar.mjs | todo | 0 | | |
+| P2D-13 | Tauri shell starts or attaches to the hub | P2D | opus | P2D-01 | src-tauri/src/main.rs, scripts/sidecar.mjs | ready | 0 | | |
 | P2D-14 | Coverage and loopback checks | P2D | sonnet | P2D-04..P2D-13 | v3/ci/invariants.mjs, contract/gate.json | todo | 0 | | |
 | P2D-15 | End to end on the real app on this PC | P2D | sonnet | P2D-01..P2D-14 | v3/ops/reports/P2D-e2e.md, p2d-e2e.ps1 | todo | 0 | | |

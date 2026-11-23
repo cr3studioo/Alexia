@@ -521,3 +521,4 @@
 2026-11-23 P2D-01 built (cargo test -p api/hub only; token RandomState+SHA-256, no getrandom) -> review ctx_4b1f93e80af9
 2026-11-23 P2D-03 built (workspace test not run: memory; compile-only edits upcalls.rs + tests/tools.rs; detached Window falls back to primary chat) -> review ctx_fad4e6039469
 2026-11-23 P2D-03 approved (reviewer: workspace 79 suites green). Merged; no code moved on v3 since its branch point, so reviewer's workspace run is the gate. LATER: tools.rs:883 begin() without close() on dropped future (drop guard); tools.rs:916 is_error vs v2 outcome.ok; ask.rs:1055 window wait eats ANSWER_WAIT
+2026-11-23 P2D-01 approved (workspace 81 suites/900 tests). LATER: statics.rs:77 blocking fs in async; token via getrandom/CSPRNG when allowed. Merged after P2D-03; gate OK (83 suites), pushed
