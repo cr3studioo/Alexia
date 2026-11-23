@@ -1372,7 +1372,15 @@ pub async fn repo_pinned(
     revision: Option<&str>,
     format: Format,
 ) -> Result<RepoPreview, HfError> {
-    repo_at(&hub(), client, repo, revision, format, hf_token().as_deref()).await
+    repo_at(
+        &hub(),
+        client,
+        repo,
+        revision,
+        format,
+        hf_token().as_deref(),
+    )
+    .await
 }
 
 #[doc(hidden)]

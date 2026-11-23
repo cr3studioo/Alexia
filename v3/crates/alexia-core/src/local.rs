@@ -1643,11 +1643,7 @@ impl LocalJobs {
 
     /// M5: keep `context` for `id`. A server running it is stopped, so its next start uses it.
     /// Refused when it does not fit the card at all.
-    pub async fn set_context(
-        &self,
-        id: &str,
-        context: u32,
-    ) -> Result<ContextSettings, ModelError> {
+    pub async fn set_context(&self, id: &str, context: u32) -> Result<ContextSettings, ModelError> {
         let preview = self.context(id, Some(context)).await?;
         if preview.verdict == "too-big" {
             return Err(ModelError::TooBig);
@@ -2116,8 +2112,11 @@ pub mod system {
 
         /// (busy, total) in 100 ns ticks; kernel time includes idle time.
         pub fn cpu_times() -> Option<(u64, u64)> {
-            let (mut idle, mut kernel, mut user) =
-                (FileTime::default(), FileTime::default(), FileTime::default());
+            let (mut idle, mut kernel, mut user) = (
+                FileTime::default(),
+                FileTime::default(),
+                FileTime::default(),
+            );
             // SAFETY: three valid FILETIME out-pointers.
             if unsafe { GetSystemTimes(&mut idle, &mut kernel, &mut user) } == 0 {
                 return None;
@@ -2135,9 +2134,8 @@ pub mod system {
             let wide: Vec<u16> = path.as_os_str().encode_wide().chain([0]).collect();
             let (mut free, mut total, mut all_free) = (0u64, 0u64, 0u64);
             // SAFETY: a NUL-terminated wide string and three valid u64 out-pointers.
-            let ok = unsafe {
-                GetDiskFreeSpaceExW(wide.as_ptr(), &mut free, &mut total, &mut all_free)
-            };
+            let ok =
+                unsafe { GetDiskFreeSpaceExW(wide.as_ptr(), &mut free, &mut total, &mut all_free) };
             (ok != 0).then_some(free)
         }
     }

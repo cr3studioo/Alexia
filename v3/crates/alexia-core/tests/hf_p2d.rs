@@ -206,7 +206,11 @@ async fn import_cancel_keeps_partial() {
     let cancel = CancellationToken::new();
     let (tx, mut rx) = mpsc::channel(4096);
     let task = {
-        let (base, layout, cancel) = (base.clone(), Layout::new(layout.root.clone()), cancel.clone());
+        let (base, layout, cancel) = (
+            base.clone(),
+            Layout::new(layout.root.clone()),
+            cancel.clone(),
+        );
         tokio::spawn(async move {
             hf::import_cancellable_at(
                 &base,
@@ -347,7 +351,9 @@ async fn search_parses_fixture() {
     );
     let asked = h.log.lock().unwrap().join("\n");
     assert!(
-        asked.contains("GET /api/models?search=qwen&filter=gguf&sort=downloads&direction=-1&limit=30 "),
+        asked.contains(
+            "GET /api/models?search=qwen&filter=gguf&sort=downloads&direction=-1&limit=30 "
+        ),
         "{asked}"
     );
 
@@ -359,7 +365,10 @@ async fn search_parses_fixture() {
         .is_empty());
     assert_eq!(h.log.lock().unwrap().len(), before);
     let mlx = hf::search_at(&base, &client(), "qwen", Format::Mlx, None).await;
-    assert!(matches!(mlx, Err(HfError::Invalid(ref s)) if s == hf::NO_MLX), "{mlx:?}");
+    assert!(
+        matches!(mlx, Err(HfError::Invalid(ref s)) if s == hf::NO_MLX),
+        "{mlx:?}"
+    );
 
     // The repo preview: pinned to its commit, licence, gating, size and its complete quants.
     let p = hf::repo_at(&base, &client(), "o/m", None, Format::Gguf, None)
@@ -503,7 +512,11 @@ async fn maintenance_finds_orphan_file() {
     let models = w.layout.cache().join("models");
 
     // A fresh store: nothing to suggest.
-    assert!(w.jobs.maintenance().is_empty(), "{:?}", w.jobs.maintenance());
+    assert!(
+        w.jobs.maintenance().is_empty(),
+        "{:?}",
+        w.jobs.maintenance()
+    );
 
     // A file no model owns, and a download nothing is finishing.
     let stray: PathBuf = models.join("o").join("m").join("Q8_0").join("m-Q8_0.gguf");
@@ -568,8 +581,5 @@ async fn maintenance_finds_orphan_file() {
     assert!(!old.path.exists());
     assert!(hf::installed(&w.store).iter().all(|i| i.id != old.id));
     assert_eq!(local::notes(&w.store).get(&old.id), None);
-    assert_eq!(
-        suggestion_ids(&w),
-        ["file:o/m/Q8_0/m-Q8_0.gguf.part"]
-    );
+    assert_eq!(suggestion_ids(&w), ["file:o/m/Q8_0/m-Q8_0.gguf.part"]);
 }

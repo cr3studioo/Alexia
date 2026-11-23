@@ -180,10 +180,9 @@ impl Here {
     /// v2 `summary`.
     fn summary(&self) -> String {
         let card = match &self.card.gpu {
-            Some(name) if self.card.vram_mb > 0 => format!(
-                " · {name} {:.0} GiB",
-                f64::from(self.card.vram_mb) / 1024.0
-            ),
+            Some(name) if self.card.vram_mb > 0 => {
+                format!(" · {name} {:.0} GiB", f64::from(self.card.vram_mb) / 1024.0)
+            }
             _ => String::new(),
         };
         format!(
@@ -256,7 +255,8 @@ fn judge_entry(here: &Here, e: &Entry, q: &CatalogQuant) -> Judged {
 
 /// v2 `quantCard`.
 fn quant_card(quant: &str, bytes: u64, j: &Judged) -> Value {
-    let mut card = json!({ "quant": quant, "bytes": bytes, "needBytes": j.need, "verdict": j.verdict });
+    let mut card =
+        json!({ "quant": quant, "bytes": bytes, "needBytes": j.need, "verdict": j.verdict });
     let notes: Vec<&str> = [quant_note(quant), j.note.as_deref()]
         .into_iter()
         .flatten()
@@ -283,8 +283,10 @@ fn best_quant<'a>(here: &Here, e: &'a Entry) -> Option<(&'a CatalogQuant, Judged
             .cmp(&order(&b.quant))
             .then(a.bytes.cmp(&b.bytes))
     });
-    let judged: Vec<(&CatalogQuant, Judged)> =
-        quants.into_iter().map(|q| (q, judge_entry(here, e, q))).collect();
+    let judged: Vec<(&CatalogQuant, Judged)> = quants
+        .into_iter()
+        .map(|q| (q, judge_entry(here, e, q)))
+        .collect();
     let at = judged
         .iter()
         .position(|(_, j)| j.verdict == "fits")
@@ -317,8 +319,16 @@ fn recommend(here: &Here, have: &HashSet<String>) -> (Map<String, Value>, Vec<Va
             .then_with(|| a.0.id.cmp(&b.0.id))
     });
     let to_card = |(e, q, j): &(&Entry, &CatalogQuant, Judged)| card(here, e, q, j, have);
-    let all: Vec<Value> = chosen.iter().filter(|c| !c.0.abliterated).map(to_card).collect();
-    let uncensored: Vec<Value> = chosen.iter().filter(|c| c.0.abliterated).map(to_card).collect();
+    let all: Vec<Value> = chosen
+        .iter()
+        .filter(|c| !c.0.abliterated)
+        .map(to_card)
+        .collect();
+    let uncensored: Vec<Value> = chosen
+        .iter()
+        .filter(|c| c.0.abliterated)
+        .map(to_card)
+        .collect();
     let eligible: Vec<&(&Entry, &CatalogQuant, Judged)> = chosen
         .iter()
         .filter(|(e, _, j)| {
@@ -367,9 +377,7 @@ fn context_for(here: &Here, bytes: u64, params: f64, most: u32) -> u32 {
             .copied()
             .find(|s| judge(&roomy, bytes, None, params, *s).verdict == v)
     };
-    at("fits")
-        .or_else(|| at("tight"))
-        .unwrap_or(most.min(256))
+    at("fits").or_else(|| at("tight")).unwrap_or(most.min(256))
 }
 
 // ---- the jobs (v2 `Job`) ----
@@ -543,11 +551,7 @@ impl LocalState {
         }
         static NEXT: AtomicU64 = AtomicU64::new(0);
         let view = JobView {
-            id: format!(
-                "{:x}-{:x}",
-                now_ms(),
-                NEXT.fetch_add(1, Ordering::Relaxed)
-            ),
+            id: format!("{:x}-{:x}", now_ms(), NEXT.fetch_add(1, Ordering::Relaxed)),
             target,
             name,
             step: "queued",
@@ -704,10 +708,7 @@ fn stem(p: &Path) -> String {
         .or_else(|| name.strip_suffix(".GGUF"))
         .unwrap_or(&name);
     match base.rsplit_once("-of-") {
-        Some((head, _)) => head
-            .rsplit_once('-')
-            .map_or(head, |(h, _)| h)
-            .to_owned(),
+        Some((head, _)) => head.rsplit_once('-').map_or(head, |(h, _)| h).to_owned(),
         None => base.to_owned(),
     }
 }
@@ -736,7 +737,10 @@ pub(crate) fn routes() -> Router<Arc<Api>> {
         .route("/api/local-models", get(overview))
         .route("/api/local-models/search", get(search))
         .route("/api/local-models/repo", get(repo))
-        .route("/api/local-models/context", get(context_get).post(context_post))
+        .route(
+            "/api/local-models/context",
+            get(context_get).post(context_post),
+        )
         .route("/api/local-models/maintenance", get(maintenance))
         .route("/api/local-models/import-preview", get(import_preview))
         .route("/api/local-models/progress", get(progress))
@@ -860,7 +864,11 @@ async fn repo(State(api): State<Arc<Api>>, Query(q): Q) -> Response {
         .iter()
         .map(|q| {
             let context = context_for(&here, q.bytes, params, DEFAULT_CONTEXT);
-            quant_card(&q.quant, q.bytes, &judge(&here, q.bytes, None, params, context))
+            quant_card(
+                &q.quant,
+                q.bytes,
+                &judge(&here, q.bytes, None, params, context),
+            )
         })
         .collect();
     let mut out = json!({
@@ -937,10 +945,7 @@ async fn context_post(
         }
         _ => return refuse(400, "Choose a supported KV cache precision."),
     }
-    if sent
-        .get("draftModelId")
-        .is_some_and(|d| !d.is_null())
-    {
+    if sent.get("draftModelId").is_some_and(|d| !d.is_null()) {
         return refuse(400, NO_DRAFT);
     }
     let id = match string(&sent, "id") {
@@ -1079,7 +1084,9 @@ async fn install(State(api): State<Arc<Api>>, Extension(Sent(sent)): Extension<S
     }
     if quant.len() < 2
         || quant.len() > 20
-        || !quant.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+        || !quant
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_')
     {
         return refuse(400, "Choose a valid quantization.");
     }
@@ -1298,19 +1305,21 @@ async fn finish(api: &Api, work: &Work, installed: hf::Installed, notes: ModelNo
         .find(|i| i.id == installed.id);
     let before = local::notes(store).remove(&installed.id);
     let id = installed.id.clone();
-    let recorded = hf::record(store, &installed).map_err(|e| e.to_string()).and_then(|()| {
-        local::set_notes(store, &id, |old| {
-            let old = old.unwrap_or_default();
-            Some(ModelNotes {
-                context: old.context,
-                tokens_per_second: old.tokens_per_second,
-                installed_at: Some(now_ms()),
-                last_used_at: Some(now_ms()),
-                ..notes
-            })
-        })
+    let recorded = hf::record(store, &installed)
         .map_err(|e| e.to_string())
-    });
+        .and_then(|()| {
+            local::set_notes(store, &id, |old| {
+                let old = old.unwrap_or_default();
+                Some(ModelNotes {
+                    context: old.context,
+                    tokens_per_second: old.tokens_per_second,
+                    installed_at: Some(now_ms()),
+                    last_used_at: Some(now_ms()),
+                    ..notes
+                })
+            })
+            .map_err(|e| e.to_string())
+        });
     if let Err(e) = recorded {
         return work.fail("It did not finish", &e);
     }
@@ -1525,7 +1534,10 @@ async fn use_model(
         selected: (id.clone(), name.clone()),
         phase: Mutex::new(("loading", format!("Starting {name} on this computer…"))),
     });
-    *api.local.transition.lock().unwrap_or_else(|e| e.into_inner()) = Some(t.clone());
+    *api.local
+        .transition
+        .lock()
+        .unwrap_or_else(|e| e.into_inner()) = Some(t.clone());
     let task_api = api.clone();
     let task_t = t.clone();
     tokio::spawn(async move {
@@ -1616,12 +1628,17 @@ async fn stats(State(api): State<Arc<Api>>) -> Response {
         .iter()
         .filter_map(|i| {
             let n = notes.get(&i.id)?;
-            Some((n.last_used_at.unwrap_or(0), n.tokens_per_second?, name_of(i, Some(n))))
+            Some((
+                n.last_used_at.unwrap_or(0),
+                n.tokens_per_second?,
+                name_of(i, Some(n)),
+            ))
         })
         .max_by_key(|s| s.0)
-        .map_or(Value::Null, |(_, t, model)| {
-            json!({ "model": model, "tokensPerSecond": t })
-        });
+        .map_or(
+            Value::Null,
+            |(_, t, model)| json!({ "model": model, "tokensPerSecond": t }),
+        );
     let (total, used) = system::memory();
     let cpu = system::cpu_percent();
     let gpu_pct = system::gpu_percent().await;
@@ -1690,7 +1707,10 @@ mod tests {
             assert!(e.kv_bytes_per_token > 0, "{}", e.id);
             for q in &e.quants {
                 assert_eq!(q.bytes, q.files.iter().map(|f| f.bytes).sum::<u64>());
-                assert!(q.files.iter().all(|f| f.sha256.len() == 64 && !f.name.is_empty()));
+                assert!(q
+                    .files
+                    .iter()
+                    .all(|f| f.sha256.len() == 64 && !f.name.is_empty()));
             }
         }
         assert!(curated("qwen2.5-vl-7b-instruct").is_some_and(|e| e.projector.is_some()));
@@ -1701,10 +1721,16 @@ mod tests {
         assert_eq!(grouped(4096), "4,096");
         assert_eq!(grouped(131_072), "131,072");
         assert_eq!(grouped(512), "512");
-        assert_eq!(job_words(&[Job::Vision, Job::Check]), "reading pictures and checking answers");
+        assert_eq!(
+            job_words(&[Job::Vision, Job::Check]),
+            "reading pictures and checking answers"
+        );
         assert_eq!(job_words(&[Job::Local]), "embeddings");
         assert_eq!(trim_gguf("Qwen_Qwen3-0.6B-GGUF"), "Qwen_Qwen3-0.6B");
-        assert_eq!(stem(Path::new("/m/Model-Q4_K_M-00001-of-00002.gguf")), "Model-Q4_K_M");
+        assert_eq!(
+            stem(Path::new("/m/Model-Q4_K_M-00001-of-00002.gguf")),
+            "Model-Q4_K_M"
+        );
         assert_eq!(stem(Path::new("/m/tiny.gguf")), "tiny");
     }
 
