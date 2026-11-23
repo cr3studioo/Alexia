@@ -584,11 +584,8 @@ async fn pause_roundtrip() {
     let q = get(&w, "/api/compute/queue?host=this").await.json();
     assert_eq!(q["queue"]["paused"], true);
     // Paused, the local jobs give up at once.
-    let started = w
-        .api
-        .parts
-        .jobs
-        .embed(&["x".into()], CancellationToken::new());
+    let texts = vec!["x".to_owned()];
+    let started = w.api.parts.jobs.embed(&texts, CancellationToken::new());
     assert!(tokio::time::timeout(WAIT, started).await.unwrap().is_none());
 
     if INSTALLS {
