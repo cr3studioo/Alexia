@@ -895,7 +895,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("alexia-api-receive-{}", std::process::id()));
         let b64 = |s: &[u8]| base64::engine::general_purpose::STANDARD.encode(s);
         let mut uploads = vec![
-            json!({"name": "a.txt", "data": b64(b"hello")}),
+            json!({"name": "a.txt", "data": b64(b"some text")}),
             json!({"name": "empty.txt", "data": ""}),
             json!({"name": "bad.bin", "data": "!!not base64!!"}),
             json!({"name": "pic.png", "data": b64(b"png"), "type": "image/jpeg"}),
@@ -907,7 +907,7 @@ mod tests {
         assert_eq!(kept.len(), 6, "{refused:?}");
         assert_eq!(kept[0].name, "a.txt");
         assert_eq!(kept[0].mime, "text/plain");
-        assert_eq!(std::fs::read(&kept[0].path).unwrap(), b"hello");
+        assert_eq!(std::fs::read(&kept[0].path).unwrap(), b"some text");
         assert_eq!(kept[1].mime, "image/jpeg");
         assert_eq!(
             refused,
