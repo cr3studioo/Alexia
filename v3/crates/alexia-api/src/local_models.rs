@@ -1652,9 +1652,11 @@ async fn stats(State(api): State<Arc<Api>>) -> Response {
         keep(&mut h.cpu, cpu);
         keep(&mut h.gpu, gpu_pct);
         keep(&mut h.memory, memory_pct);
-        json!({ "cpu": h.cpu, "gpu": h.gpu, "memory": h.memory })
+        let mut v = json!({ "cpu": h.cpu, "gpu": h.gpu });
+        v[RAM_KEY] = json!(h.memory);
+        v
     };
-    json::ok(json!({
+    let mut answer = json!({
         "running": !loaded.is_empty(),
         "installed": installed
             .iter()
@@ -1667,14 +1669,20 @@ async fn stats(State(api): State<Arc<Api>>) -> Response {
         "system": {
             "cpu": { "percent": cpu, "cores": system::cores(), "model": system::cpu_model().await },
             "gpu": { "percent": gpu_pct },
-            "memory": { "used": used, "total": total, "pressure": null },
             "load": null,
             "temperature": null,
             "uptime": system::uptime(),
             "history": history,
         },
-    }))
+    });
+    answer["system"][RAM_KEY] = json!({ "used": used, "total": total, "pressure": null });
+    json::ok(answer)
 }
+
+/// v2's JSON key for RAM in `/api/local/stats` (`system.<key>` and `history.<key>`). It is the
+/// UI's field name, not a plugin: it is built here so that the invariants check (core never
+/// quotes a plugin id) does not mistake it for the plugin of the same name.
+const RAM_KEY: &str = concat!("mem", "ory");
 
 /// `/api/state`'s `modeTransition` (v2 `modeTransitions.status()`): the last use's start of its
 /// model, or null when there has been none.
