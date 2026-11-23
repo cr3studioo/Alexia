@@ -48,6 +48,11 @@ const SHELF_KEY: &str = "shelf";
 const PREAUTH: &str = "skill_preauth";
 /// The hub's enabled list, as plugins.rs writes it.
 const ENABLED: &str = "enabled";
+/// The board's provenance map (board.rs), undone here only when a skill install fails.
+const PROVENANCE: &str = "skill_provenance";
+/// The registry's URL layout (`/v0/<this>/<id>.json`, one entry each), a segment of the
+/// registry's address. It is not the plugins folder on disk.
+const REGISTRY_ENTRIES: &str = "plugins";
 
 /// v2 `FRESH_MS`: how long a read of GitHub's releases is reused (60 requests an hour).
 const FRESH: Duration = Duration::from_secs(15 * 60);
@@ -346,8 +351,9 @@ fn block_of(body: &str) -> Option<&str> {
     let mut from = 0;
     while let Some(at) = body[from..].find(OPEN) {
         let rest = &body[from + at + OPEN.len()..];
-        if rest.starts_with(char::is_whitespace) {
-            let inner = &rest[1..];
+        if let Some(space) = rest.chars().next().filter(|c| c.is_whitespace()) {
+            // A space may be more than one byte (U+00A0, U+2028): step over the whole char.
+            let inner = &rest[space.len_utf8()..];
             return inner.find("```").map(|end| &inner[..end]);
         }
         from += at + OPEN.len();
@@ -574,7 +580,7 @@ async fn entry(api: &Api, id: &str) -> Result<Option<Found>, String> {
             .find(|r| field(r, "id") == id)
             .map(Found::Entry)),
         Source::Static(base) => {
-            let url = static_url(&base, &format!("/v0/plugins/{id}.json"))?;
+            let url = static_url(&base, &format!("/v0/{REGISTRY_ENTRIES}/{id}.json"))?;
             let r = api
                 .library
                 .client()
@@ -901,8 +907,7 @@ async fn replace(
     host.set_enabled(id, false)
         .await
         .map_err(|e| e.to_string())?;
-    remove_tree(&dir)?;
-    copy_tree(from, &dir).map_err(|e| e.to_string())?;
+    swap_folder(&dir, |to| copy_tree(from, to)).await?;
     host.reload(id).await.map_err(|e| e.to_string())?;
     if on {
         host.set_enabled(id, true)
@@ -910,6 +915,38 @@ async fn replace(
             .map_err(|e| e.to_string())?;
     }
     Ok(())
+}
+
+/// `dir`'s contents replaced by what `fill` writes into it, never leaving nothing behind:
+/// the old folder is renamed aside first, and comes back if `fill` fails. It is deleted only
+/// once the new one is complete.
+async fn swap_folder(
+    dir: &Path,
+    fill: impl FnOnce(&Path) -> std::io::Result<()>,
+) -> Result<(), String> {
+    let name = dir
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let aside = dir.with_file_name(format!(".{name}.old-{}", unique()));
+    rename_tree(dir, &aside).await?;
+    match fill(dir) {
+        Ok(()) => {
+            if let Err(e) = remove_tree(&aside).await {
+                tracing::warn!("the old copy was left behind: {e}");
+            }
+            Ok(())
+        }
+        Err(e) => {
+            let _ = remove_tree(dir).await;
+            rename_tree(&aside, dir).await.map_err(|back| {
+                format!("The update could not be written ({e}), and the old version could not be put back: {back}")
+            })?;
+            Err(format!(
+                "The update could not be written: {e}. The old version is back."
+            ))
+        }
+    }
 }
 
 /// The hub's enabled list, kv `_core`/`enabled`: every enabled id (as plugins.rs writes it).
@@ -971,25 +1008,65 @@ async fn install_skill(api: &Api, id: &str) -> Result<String, String> {
     let root = holding(&out, "SKILL.md")
         .ok_or_else(|| format!("{name}’s download has no SKILL.md in it."))?;
     refuse_links(&root)?;
-    preauthorise(api, &name)?;
-    board::record_provenance(api, &name, "installed");
-    std::fs::create_dir_all(&skills_dir).map_err(|e| e.to_string())?;
-    if let Err(e) = copy_tree(&root, &to) {
-        let _ = std::fs::remove_dir_all(&to);
-        return Err(format!("{name} could not be written: {e}"));
+    // Written before the folder arrives (a board read in between would otherwise call it
+    // unknown), and taken back if the folder never does.
+    let had_preauth = preauthorised(api).contains(&name);
+    let had_provenance = provenance_of(api).contains_key(&name);
+    let written = preauthorise(api, &name).and_then(|()| {
+        board::record_provenance(api, &name, "installed");
+        std::fs::create_dir_all(&skills_dir)
+            .and_then(|()| copy_tree(&root, &to))
+            .map_err(|e| format!("{name} could not be written: {e}"))
+    });
+    if let Err(e) = written {
+        let _ = remove_tree(&to).await;
+        if !had_preauth {
+            unpreauthorise(api, &name);
+        }
+        if !had_provenance {
+            let mut held = provenance_of(api);
+            if held.remove(&name).is_some() {
+                let _ = api.parts.store.kv_set(CORE, PROVENANCE, &json!(held));
+            }
+        }
+        return Err(e);
     }
     Ok(name)
+}
+
+fn preauthorised(api: &Api) -> Vec<String> {
+    api.parts
+        .store
+        .kv_get(CORE, PREAUTH)
+        .ok()
+        .flatten()
+        .and_then(|v| serde_json::from_value(v).ok())
+        .unwrap_or_default()
+}
+
+fn provenance_of(api: &Api) -> Map<String, Value> {
+    api.parts
+        .store
+        .kv_get(CORE, PROVENANCE)
+        .ok()
+        .flatten()
+        .and_then(|v| serde_json::from_value(v).ok())
+        .unwrap_or_default()
+}
+
+/// A preauth this install wrote, taken back because the skill never arrived.
+fn unpreauthorise(api: &Api, name: &str) {
+    let held: Vec<String> = preauthorised(api)
+        .into_iter()
+        .filter(|n| n != name)
+        .collect();
+    let _ = api.parts.store.kv_set(CORE, PREAUTH, &json!(held));
 }
 
 /// v2 consent.ts `preauthorise`: yes, to this exact name, said in advance. Spent once.
 fn preauthorise(api: &Api, name: &str) -> Result<(), String> {
     let store = &api.parts.store;
-    let mut held: Vec<String> = store
-        .kv_get(CORE, PREAUTH)
-        .ok()
-        .flatten()
-        .and_then(|v| serde_json::from_value(v).ok())
-        .unwrap_or_default();
+    let mut held = preauthorised(api);
     if !held.iter().any(|n| n == name) {
         held.push(name.to_owned());
         store
@@ -1006,39 +1083,87 @@ struct Staging(PathBuf);
 
 impl Staging {
     fn new(what: &str) -> Result<Staging, String> {
-        static NEXT: AtomicU64 = AtomicU64::new(0);
-        let n = NEXT.fetch_add(1, Ordering::Relaxed);
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| d.subsec_nanos());
-        let dir =
-            std::env::temp_dir().join(format!("alexia-{what}-{}-{nanos}-{n}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("alexia-{what}-{}", unique()));
         std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
         Ok(Staging(dir))
     }
 }
 
+/// A name no other call in this process has used: pid, a counter and the clock.
+fn unique() -> String {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let n = NEXT.fetch_add(1, Ordering::Relaxed);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.subsec_nanos());
+    format!("{}-{nanos}-{n}", std::process::id())
+}
+
 impl Drop for Staging {
+    /// One try in place; if Windows still holds a file, the retries run on a thread of their
+    /// own, so a runtime worker never waits on them.
     fn drop(&mut self) {
-        let _ = remove_tree(&self.0);
+        if remove_once(&self.0).is_ok() {
+            return;
+        }
+        let dir = self.0.clone();
+        let _ = std::thread::Builder::new()
+            .name("alexia-staging-cleanup".into())
+            .spawn(move || {
+                for _ in 0..RETRIES {
+                    std::thread::sleep(RETRY_DELAY);
+                    if remove_once(&dir).is_ok() {
+                        return;
+                    }
+                }
+                tracing::warn!("{} could not be removed", dir.display());
+            });
     }
 }
 
-/// A folder gone, retried as v2 (`maxRetries: 10, retryDelay: 200`): Windows holds a file a
-/// moment after the process that had it open exits.
-fn remove_tree(dir: &Path) -> Result<(), String> {
+/// v2 `maxRetries: 10, retryDelay: 200`: Windows holds a file a moment after the process
+/// that had it open exits.
+const RETRIES: u32 = 10;
+const RETRY_DELAY: Duration = Duration::from_millis(200);
+
+/// One attempt; a folder already gone counts as removed.
+fn remove_once(dir: &Path) -> std::io::Result<()> {
+    match std::fs::remove_dir_all(dir) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        other => other,
+    }
+}
+
+/// A folder gone, retried as v2; the waits yield to the runtime.
+async fn remove_tree(dir: &Path) -> Result<(), String> {
     let mut last = None;
-    for _ in 0..10 {
-        match std::fs::remove_dir_all(dir) {
+    for _ in 0..RETRIES {
+        match remove_once(dir) {
             Ok(()) => return Ok(()),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
             Err(e) => last = Some(e),
         }
-        std::thread::sleep(Duration::from_millis(200));
+        tokio::time::sleep(RETRY_DELAY).await;
     }
     Err(format!(
         "{} could not be removed: {}",
         dir.display(),
+        last.map_or_else(String::new, |e| e.to_string())
+    ))
+}
+
+/// A folder renamed, retried as `remove_tree` is (a file still held refuses the rename).
+async fn rename_tree(from: &Path, to: &Path) -> Result<(), String> {
+    let mut last = None;
+    for _ in 0..RETRIES {
+        match std::fs::rename(from, to) {
+            Ok(()) => return Ok(()),
+            Err(e) => last = Some(e),
+        }
+        tokio::time::sleep(RETRY_DELAY).await;
+    }
+    Err(format!(
+        "{} could not be moved: {}",
+        from.display(),
         last.map_or_else(String::new, |e| e.to_string())
     ))
 }
@@ -1254,7 +1379,7 @@ mod tests {
 
     #[test]
     fn ids_and_digests() {
-        assert!(is_id("voice") && is_id("a1-b2"));
+        assert!(is_id("sample") && is_id("a1-b2"));
         assert!(!is_id("1a") && !is_id("a--b") && !is_id("a-") && !is_id("../x") && !is_id(""));
         assert!(is_skill_name("tidy-up") && !is_skill_name("../tidy") && !is_skill_name("A"));
         assert!(is_hex64(&"a".repeat(64)) && !is_hex64(&"A".repeat(64)) && !is_hex64("ab"));
@@ -1323,13 +1448,13 @@ mod tests {
     #[test]
     fn rows_are_filtered_as_v2() {
         let sha = "b".repeat(64);
-        let real = json!({"id": "voice", "sha256": sha, "coming_soon": true, "url": "u"});
+        let real = json!({"id": "sample", "sha256": sha, "coming_soon": true, "url": "u"});
         // Not a placeholder (no name/summary): a real row, and it loses the flag.
         assert_eq!(plugin_row(&real).unwrap().get("coming_soon"), None);
-        let soon = json!({"id": "voice", "name": "V", "summary": "S", "coming_soon": true, "url": "u", "sha256": sha});
+        let soon = json!({"id": "sample", "name": "V", "summary": "S", "coming_soon": true, "url": "u", "sha256": sha});
         let row = plugin_row(&soon).unwrap();
         assert!(row.get("url").is_none() && row.get("sha256").is_none());
-        assert!(plugin_row(&json!({"id": "voice", "sha256": "nope"})).is_none());
+        assert!(plugin_row(&json!({"id": "sample", "sha256": "nope"})).is_none());
         assert!(plugin_row(&json!({"id": "Bad", "sha256": sha})).is_none());
     }
 
@@ -1339,8 +1464,8 @@ mod tests {
         let asset =
             |n: &str| json!([{"name": n, "browser_download_url": format!("https://x/{n}")}]);
         let releases = vec![
-            json!({"tag_name": "voice-v1.0.0", "body": block(json!({"id": "voice", "version": "1.0.0"})), "assets": asset("voice-1.0.0.tgz"), "published_at": "2026-01-01T00:00:00Z"}),
-            json!({"tag_name": "voice-v1.2.0", "body": block(json!({"id": "voice", "version": "1.2.0"})), "assets": asset("voice-1.2.0.tgz")}),
+            json!({"tag_name": "sample-v1.0.0", "body": block(json!({"id": "sample", "version": "1.0.0"})), "assets": asset("sample-1.0.0.tgz"), "published_at": "2026-01-01T00:00:00Z"}),
+            json!({"tag_name": "sample-v1.2.0", "body": block(json!({"id": "sample", "version": "1.2.0"})), "assets": asset("sample-1.2.0.tgz")}),
             json!({"tag_name": "draft", "draft": true, "body": block(json!({"id": "draft", "version": "1.0.0"})), "assets": asset("d.tgz")}),
             json!({"tag_name": "v3.0.0", "body": "The app itself.", "assets": asset("Alexia.msi")}),
             json!({"tag_name": "soon", "body": block(json!({"id": "later", "name": "L", "summary": "S", "coming_soon": true}))}),
@@ -1348,10 +1473,79 @@ mod tests {
         ];
         let shelf = read_releases(&releases);
         let ids: Vec<&str> = shelf.plugins.iter().map(|p| field(p, "id")).collect();
-        assert_eq!(ids, ["voice", "later"]);
+        assert_eq!(ids, ["sample", "later"]);
         assert_eq!(field(&shelf.plugins[0], "version"), "1.2.0");
-        assert_eq!(field(&shelf.plugins[0], "url"), "https://x/voice-1.2.0.tgz");
+        assert_eq!(
+            field(&shelf.plugins[0], "url"),
+            "https://x/sample-1.2.0.tgz"
+        );
         assert_eq!(shelf.skills.len(), 1);
         assert_eq!(block_of("```alexiax {}```"), None);
+    }
+
+    #[test]
+    fn a_multibyte_space_after_the_fence() {
+        assert_eq!(block_of("```alexia\u{a0}{\"id\":1}```"), Some("{\"id\":1}"));
+        assert_eq!(block_of("```alexia\u{2028}{}```"), Some("{}"));
+        assert_eq!(block_of("```alexia\n{}```"), Some("{}"));
+    }
+
+    fn scratch(what: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("alexia-libtest-{what}-{}", unique()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[tokio::test]
+    async fn a_failed_update_puts_the_old_folder_back() {
+        let root = scratch("swap-fail");
+        let dir = root.join("sample");
+        std::fs::create_dir_all(dir.join("lib")).unwrap();
+        std::fs::write(dir.join("plugin.json"), "old").unwrap();
+        std::fs::write(dir.join("lib").join("a.js"), "old code").unwrap();
+        let err = swap_folder(&dir, |to| {
+            // Half written, then the disk gives out.
+            std::fs::create_dir_all(to)?;
+            std::fs::write(to.join("plugin.json"), "new")?;
+            Err(std::io::Error::other("disk full"))
+        })
+        .await
+        .unwrap_err();
+        assert!(
+            err.contains("disk full") && err.contains("old version is back"),
+            "{err}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.join("plugin.json")).unwrap(),
+            "old"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.join("lib").join("a.js")).unwrap(),
+            "old code"
+        );
+        // Nothing set aside is left over.
+        let left: Vec<_> = std::fs::read_dir(&root).unwrap().flatten().collect();
+        assert_eq!(left.len(), 1);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn a_good_update_replaces_the_folder() {
+        let root = scratch("swap-ok");
+        let dir = root.join("sample");
+        let from = root.join("new");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("stale.js"), "x").unwrap();
+        std::fs::create_dir_all(&from).unwrap();
+        std::fs::write(from.join("plugin.json"), "new").unwrap();
+        swap_folder(&dir, |to| copy_tree(&from, to)).await.unwrap();
+        assert_eq!(
+            std::fs::read_to_string(dir.join("plugin.json")).unwrap(),
+            "new"
+        );
+        assert!(!dir.join("stale.js").exists());
+        let left: Vec<_> = std::fs::read_dir(&root).unwrap().flatten().collect();
+        assert_eq!(left.len(), 2, "only sample and new remain");
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

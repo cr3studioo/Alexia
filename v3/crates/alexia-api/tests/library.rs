@@ -803,3 +803,39 @@ async fn skill_install_preauthorised() {
     assert!(!w.layout.skills().join("messy").exists());
     assert_eq!(w.kv("skill_preauth"), json!(["tidy"]));
 }
+
+#[tokio::test]
+async fn skill_not_written_takes_back_its_preauth() {
+    let w = world("skill-unwritable", &[]).await;
+    let skill = b"---\nname: neat\ndescription: Neat.\n---\nBe neat.\n";
+    let bytes = zip_of(&[("neat/SKILL.md", skill)]);
+    let url = w.reg.file("neat.zip", bytes.clone(), false);
+    w.reg.json(
+        "/v0/skills.json",
+        json!({ "skills": [
+            { "id": "neat", "name": "neat", "description": "Neat.", "url": url, "sha256": sha(&bytes) },
+        ] }),
+    );
+    // Something else (a file) sits where the skills folder belongs, so the copy cannot happen.
+    let skills = w.layout.skills();
+    let _ = std::fs::remove_dir_all(&skills);
+    std::fs::create_dir_all(skills.parent().unwrap()).unwrap();
+    std::fs::write(&skills, b"in the way").unwrap();
+    w.store
+        .kv_set("_core", "skill_preauth", &json!(["other"]))
+        .unwrap();
+
+    let got = w.install(json!({ "id": "neat", "kind": "skill" })).await;
+    assert_eq!(got["ok"], false, "{got}");
+    assert!(
+        got["said"]
+            .as_str()
+            .unwrap()
+            .contains("neat could not be written"),
+        "{got}"
+    );
+    // The yes this press wrote is taken back; the one somebody else said stays.
+    assert_eq!(w.kv("skill_preauth"), json!(["other"]));
+    assert!(w.kv("skill_provenance").get("neat").is_none());
+    assert!(skills.is_file());
+}
