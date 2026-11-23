@@ -13,6 +13,9 @@
 //! here except cancel, token and use answers v2's refusal. There is no MLX on this computer and
 //! Ollama is not managed by v3: those are answered with v2's "not here" shapes.
 
+// Refusals are axum `Response`s returned straight to the caller, as in the rest of the routes.
+#![allow(clippy::result_large_err)]
+
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -23,7 +26,7 @@ use alexia_core::gpu;
 use alexia_core::hf::{self, Format, HfError};
 use alexia_core::local::{self, system, ModelError, ModelNotes, Runtime};
 use alexia_core::Job;
-use alexia_store::{now_ms, secrets};
+use alexia_store::{now_ms, secrets, Layout};
 use axum::extract::{Path as UrlPath, Query, State};
 use axum::response::Response;
 use axum::routing::{delete, get, post};
@@ -970,7 +973,7 @@ fn grouped(n: u64) -> String {
     let s = n.to_string();
     let mut out = String::new();
     for (i, c) in s.chars().enumerate() {
-        if i > 0 && (s.len() - i) % 3 == 0 {
+        if i > 0 && (s.len() - i).is_multiple_of(3) {
             out.push(',');
         }
         out.push(c);
@@ -1232,7 +1235,7 @@ async fn run_install(api: Arc<Api>, work: Arc<Work>, plan: Plan) {
             }
         })
     };
-    let layout = api.parts.layout.clone();
+    let layout = Layout::new(api.parts.layout.root.clone());
     let got = hf::import_cancellable(
         &plan.repo,
         Some(found.revision.as_str()),
@@ -1399,7 +1402,7 @@ async fn run_import(api: Arc<Api>, work: Arc<Work>, path: PathBuf, copy: bool) {
         .into_iter()
         .map(|i| i.id)
         .collect();
-    let layout = api.parts.layout.clone();
+    let layout = Layout::new(api.parts.layout.root.clone());
     let source = path.clone();
     let got = tokio::task::spawn_blocking(move || hf::import_file(&source, &layout, copy)).await;
     let installed = match got {
