@@ -556,3 +556,7 @@
 2026-11-23 P2D-10 built (compute routes in v2 recorded shapes, host=this extra; own job queue + paused flag since LocalJobs has neither) -> review ctx_92c0c9e3aee4. Dispatched P2D-08 ctx_e8a898d60fed
 2026-11-23 P2D-08 asked: library contract needs network. CEO: A, local static registry in contract.rs + ALEXIA_LIBRARY_REGISTRY test seam
 2026-11-23 P2D-09 approved (resume_after_kill flaked under load again). LATER: LocalState::launch check+push race (local_models.rs:548); install never checks gpu::fit (owner-visible). Merged; gate: fmt/clippy/tests OK (89+), invariants flagged v2 JSON key memory (RAM stats) as plugin id: CEO built it from RAM_KEY constant, invariants ok, alexia-api + contract green. LATER: invariants should not flag JSON keys. Pushed
+2026-11-23 P2D-10 approved (workspace green, contract 7/7). LATER: engine_installed counts any .ready build (compute.rs:335); paused flag separate from LocalJobs. Merged, gating
+2026-11-23 P2D-08 built (library L1-L3, sha256/revocation/zip-slip; no ed25519 crate: signed entries refused) -> review ctx_bc523b63217b
+2026-11-23 P2D-11 built (editor E1-E5 + research E6-E7; plan C public picture album + share upcall in core; forget does not scrub inline images/research snapshots) -> review ctx_caf0ca9e461f
+2026-11-23 P2D-10 gate: fmt/clippy/tests OK, invariants flagged C:\Program Files fallback (compute.rs:773); CEO dropped the fallback (ProgramFiles or PATH), invariants ok, compute 11/11. Pushed
