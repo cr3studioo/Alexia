@@ -607,6 +607,39 @@ async fn provider_conn(p: Arc<Provider>, mut sock: TokioStream) {
     }
 }
 
+/// P2D-08: a static-layout registry (`/v0/*.json`) with one coming-soon row and nothing to
+/// download, so the library rows are replayed offline. Any other path is a 404.
+async fn shelf() -> String {
+    let (listener, base) = listen().await;
+    tokio::spawn(async move {
+        while let Ok((mut sock, _)) = listener.accept().await {
+            tokio::spawn(async move {
+                let mut buf = Vec::new();
+                while let Some(req) = read_req(&mut sock, &mut buf).await {
+                    let body = match req.path.as_str() {
+                        "/v0/plugins.json" => json!({"plugins": [{"id": "voice", "name": "Voice",
+                            "summary": "Talk to Alexia.", "coming_soon": true}]}),
+                        "/v0/skills.json" => json!({"skills": []}),
+                        "/v0/revoked.json" => json!({"plugins": [], "skills": []}),
+                        _ => {
+                            let none = "HTTP/1.1 404 Not Found
+content-length: 0
+
+";
+                            let _ = sock.write_all(none.as_bytes()).await;
+                            continue;
+                        }
+                    };
+                    if !answer(&mut sock, &body.to_string()).await {
+                        return;
+                    }
+                }
+            });
+        }
+    });
+    format!("{base}/")
+}
+
 /// The hub for one setup set: fixtures applied to a scratch folder, then started.
 async fn start(name: &str, setup: &[String]) -> (Hub, Window, PathBuf, Option<Arc<Provider>>) {
     let root = scratch(name);
@@ -622,6 +655,7 @@ async fn start(name: &str, setup: &[String]) -> (Hub, Window, PathBuf, Option<Ar
     }
     let mut c = command(&root);
     c.env("ALEXIA_UI_DIR", write_ui(&root))
+        .env("ALEXIA_LIBRARY_REGISTRY", shelf().await)
         .env_remove("ALEXIA_WINDOW_PORT");
     let mut prov = None;
     if has("scripted") {
