@@ -144,9 +144,9 @@
 | P2-80 | Resume: a live job's age counts from its last step; every en | P2 | sonnet | none | alexia-core/{src/resume.rs, tests/resume.rs} | merged | 1 | cr3studioo/v3-P2-80 | |
 | P2-81 | Say goes to its run's chat and carries the run's files | P2 | sonnet | P2-48, P2-70, P2-74, P2-80 | alexia-core/{src/bus.rs, src/resume.rs, tests/resume.rs}, alexia-scheduler/{src/lib.rs, te | deferred | 0 | | after P2 (CEO: finish faster) |
 | P2-82 | MCP: a WASM start that is given up on stops the module; comp | P2 | opus | P2-66 | alexia-mcp/{src/wasm.rs, tests/wasm.rs, src/serve.rs, tests/compute.rs} | merged | 1 | cr3studioo/v3-P2-82 | |
-| P2D-01 | alexia-api: server, gate, static shell, hub wiring | P2D | opus | P2-39 | alexia-api/**, alexia-hub/{main.rs,tests/window.rs}, INTERFACES.md, invariants.mjs | running | 1 | cr3studioo/v3-P2D-01 | ctx_c281ecf9c1bd |
+| P2D-01 | alexia-api: server, gate, static shell, hub wiring | P2D | opus | P2-39 | alexia-api/**, alexia-hub/{main.rs,tests/window.rs}, INTERFACES.md, invariants.mjs | review | 1 | cr3studioo/v3-P2D-01 | rv ctx_4b1f93e80af9 |
 | P2D-02 | Contract: record v2 answers, replay against hub | P2D | sonnet | P2D-01 | alexia-hub/{tools/record-v2.mjs,tests/contract*} | todo | 0 | | |
-| P2D-03 | Core seam: window origin, progress, step frames, asker | P2D | opus | none | alexia-core/**, alexia-gateway/{lib,ask,gateway}, alexia-scheduler/lib | running | 1 | cr3studioo/v3-P2D-03 | ctx_444a1e3a8134 |
+| P2D-03 | Core seam: window origin, progress, step frames, asker | P2D | opus | none | alexia-core/**, alexia-gateway/{lib,ask,gateway}, alexia-scheduler/lib | merged | 1 | cr3studioo/v3-P2D-03 | |
 | P2D-04 | State, setup and settings | P2D | opus | P2D-02 | alexia-api/{state.rs,tests/state.rs} | todo | 0 | | |
 | P2D-05 | Chat in the window: stream, stop, approve, commands, files | P2D | opus | P2D-02, P2D-03 | alexia-api/{chat,offers}, alexia-hub/main.rs | todo | 0 | | |
 | P2D-06 | Plugins screen: panes, settings, trust, install, servers | P2D | opus | P2D-02 | alexia-api/plugins, alexia-mcp/{host.rs,tests/servers.rs} | todo | 0 | | |

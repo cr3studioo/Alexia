@@ -518,3 +518,6 @@
 2026-11-23 CEO #17 took over (owner started it on c2). Two Claude accounts set up (A-18, CEO.md §16). P2-41 dropped (A-19). Phase 2D approved (A-19): v2 app on the Rust hub. Planning P2D
 2026-11-23 P2D planned (c4606fc): 80 UI-to-core calls, hub answers 0 today, 15 tasks. CEO decisions on planner risks: hub opens a loopback-only port with v2's token model (needed for the window; overrides INTERFACES 1.1 no-port); pairing other computers stays V3-4; e2e runs the unbundled exe, the installed v2 app is not replaced; hub task runs at owner sign-in (needed for screen/input); spend controls answer refusals (D212)
 2026-11-23 Dispatched (c2): P2D-01:ctx_c281ecf9c1bd P2D-03:ctx_444a1e3a8134
+2026-11-23 P2D-01 built (cargo test -p api/hub only; token RandomState+SHA-256, no getrandom) -> review ctx_4b1f93e80af9
+2026-11-23 P2D-03 built (workspace test not run: memory; compile-only edits upcalls.rs + tests/tools.rs; detached Window falls back to primary chat) -> review ctx_fad4e6039469
+2026-11-23 P2D-03 approved (reviewer: workspace 79 suites green). Merged; no code moved on v3 since its branch point, so reviewer's workspace run is the gate. LATER: tools.rs:883 begin() without close() on dropped future (drop guard); tools.rs:916 is_error vs v2 outcome.ok; ask.rs:1055 window wait eats ANSWER_WAIT
