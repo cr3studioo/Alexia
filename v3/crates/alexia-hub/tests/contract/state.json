@@ -1,0 +1,491 @@
+{
+  "area": "state",
+  "cases": [
+    {
+      "row": "A1",
+      "name": "state on a fresh data folder",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "GET",
+        "path": "/api/state",
+        "query": {},
+        "body": null,
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 200,
+        "type": "application/json",
+        "shape": {
+          "setup": {
+            "done": "bool",
+            "name": "string",
+            "mode": "string",
+            "theme": "string",
+            "glass": "number",
+            "glassLook": "string",
+            "updates": "bool"
+          },
+          "compute": {
+            "role": "string",
+            "available": "bool",
+            "hosts": []
+          },
+          "editor": {
+            "installed": "bool",
+            "conversationId": "string",
+            "private": "bool"
+          },
+          "adult": {
+            "confirmed": "bool",
+            "on": "bool"
+          },
+          "layout": "null",
+          "channels": "number",
+          "app": "string",
+          "commands": [
+            {
+              "name": "string",
+              "summary": "string"
+            }
+          ],
+          "pins": {},
+          "messages": [],
+          "spent": "number",
+          "today": {
+            "spent": "number",
+            "allowance": "number"
+          },
+          "notHer": "bool",
+          "cross": "bool",
+          "ceilings": {
+            "steps": "number",
+            "askAbove": "number"
+          },
+          "permissions": {
+            "mode": "string",
+            "modes": {
+              "every-time": "string",
+              "risky": "string",
+              "watch": "string",
+              "full-trust": "string"
+            },
+            "roots": [],
+            "everywhere": "bool",
+            "boundaries": []
+          },
+          "providers": []
+        },
+        "optional": [
+          "/cap",
+          "/warning",
+          "/modeTransition",
+          "/personality",
+          "/pins/placement"
+        ]
+      },
+      "stream": null
+    },
+    {
+      "row": "A2",
+      "name": "set the name and the theme",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/setup",
+        "query": {},
+        "body": {
+          "name": "Ada",
+          "theme": "dark",
+          "glass": 70,
+          "updates": false
+        },
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 200,
+        "type": "application/json",
+        "shape": {
+          "done": "bool",
+          "name": "string",
+          "mode": "string",
+          "theme": "string",
+          "glass": "number",
+          "glassLook": "string",
+          "updates": "bool",
+          "layout": "null"
+        }
+      },
+      "stream": null
+    },
+    {
+      "row": "A2",
+      "name": "a name that is too long",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/setup",
+        "query": {},
+        "body": {
+          "name": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        },
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 400,
+        "type": "application/json",
+        "shape": {
+          "ok": "bool",
+          "said": "string"
+        }
+      },
+      "stream": null
+    },
+    {
+      "row": "A3",
+      "name": "permissions: the mode",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/permissions",
+        "query": {},
+        "body": {
+          "mode": "full-trust"
+        },
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 200,
+        "type": "application/json",
+        "shape": {
+          "mode": "string",
+          "roots": [],
+          "everywhere": "bool",
+          "boundaries": []
+        }
+      },
+      "stream": null
+    },
+    {
+      "row": "A4",
+      "name": "ceilings",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/ceilings",
+        "query": {},
+        "body": {
+          "steps": 12,
+          "askAbove": 1,
+          "daily": 0
+        },
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 200,
+        "type": "application/json",
+        "shape": {
+          "steps": "number",
+          "askAbove": "number",
+          "spent": "number",
+          "allowance": "number"
+        }
+      },
+      "stream": null
+    },
+    {
+      "row": "A5",
+      "name": "adult on without the 18+ confirm",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/adult",
+        "query": {},
+        "body": {
+          "enabled": true,
+          "confirm": true
+        },
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 200,
+        "type": "application/json",
+        "shape": {
+          "ok": "bool",
+          "said": "string"
+        }
+      },
+      "stream": null
+    },
+    {
+      "row": "A5",
+      "name": "adult on with the confirm",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/adult",
+        "query": {},
+        "body": {
+          "enabled": true,
+          "adult": true,
+          "confirm": true
+        },
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 200,
+        "type": "application/json",
+        "shape": {
+          "ok": "bool",
+          "said": "string"
+        }
+      },
+      "stream": null
+    },
+    {
+      "row": "A5",
+      "name": "adult off",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/adult",
+        "query": {},
+        "body": {
+          "enabled": false,
+          "confirm": true
+        },
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 200,
+        "type": "application/json",
+        "shape": {
+          "ok": "bool",
+          "said": "string"
+        }
+      },
+      "stream": null
+    },
+    {
+      "row": "A6",
+      "name": "the board's core tabs",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "GET",
+        "path": "/api/panels",
+        "query": {},
+        "body": null,
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 200,
+        "type": "application/json",
+        "shape": {
+          "tabs": [
+            {
+              "id": "string",
+              "label": "string",
+              "widgets": [
+                {
+                  "type": "string",
+                  "key": "string",
+                  "label": "string",
+                  "hint": "string",
+                  "rows": "string",
+                  "columns": [
+                    {
+                      "key": "string",
+                      "label": "string"
+                    }
+                  ],
+                  "rowActions": [
+                    {
+                      "key": "string",
+                      "label": "string",
+                      "tool": "string"
+                    }
+                  ],
+                  "detail": "string",
+                  "filter": "bool"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "stream": null
+    },
+    {
+      "row": "A7",
+      "name": "search",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "GET",
+        "path": "/api/search",
+        "query": {
+          "q": "chat"
+        },
+        "body": null,
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 200,
+        "type": "application/json",
+        "shape": {
+          "hits": [
+            {
+              "tab": "string",
+              "kind": "string",
+              "label": "string",
+              "score": "number"
+            }
+          ]
+        }
+      },
+      "stream": null
+    },
+    {
+      "row": "A1",
+      "name": "state with one chat open",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "GET",
+        "path": "/api/state",
+        "query": {},
+        "body": null,
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "chat"
+      ],
+      "response": {
+        "status": 200,
+        "type": "application/json",
+        "shape": {
+          "setup": {
+            "done": "bool",
+            "name": "string",
+            "mode": "string",
+            "theme": "string",
+            "glass": "number",
+            "glassLook": "string",
+            "updates": "bool"
+          },
+          "compute": {
+            "role": "string",
+            "available": "bool",
+            "hosts": []
+          },
+          "editor": {
+            "installed": "bool",
+            "conversationId": "string",
+            "private": "bool"
+          },
+          "adult": {
+            "confirmed": "bool",
+            "on": "bool"
+          },
+          "layout": "null",
+          "channels": "number",
+          "app": "string",
+          "commands": [
+            {
+              "name": "string",
+              "summary": "string"
+            }
+          ],
+          "pins": {},
+          "messages": [
+            {
+              "role": "string",
+              "content": "string"
+            }
+          ],
+          "spent": "number",
+          "today": {
+            "spent": "number",
+            "allowance": "number"
+          },
+          "notHer": "bool",
+          "cross": "bool",
+          "ceilings": {
+            "steps": "number",
+            "askAbove": "number"
+          },
+          "permissions": {
+            "mode": "string",
+            "modes": {
+              "every-time": "string",
+              "risky": "string",
+              "watch": "string",
+              "full-trust": "string"
+            },
+            "roots": [],
+            "everywhere": "bool",
+            "boundaries": []
+          },
+          "providers": []
+        },
+        "optional": [
+          "/cap",
+          "/warning",
+          "/modeTransition",
+          "/personality",
+          "/pins/placement"
+        ]
+      },
+      "stream": null
+    }
+  ]
+}

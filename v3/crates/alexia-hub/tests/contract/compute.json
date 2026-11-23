@@ -1,0 +1,672 @@
+{
+  "area": "compute",
+  "cases": [
+    {
+      "row": "R1",
+      "name": "the role",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "GET",
+        "path": "/api/compute/role",
+        "query": {},
+        "body": null,
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 200,
+        "type": "application/json",
+        "shape": {
+          "role": "string",
+          "active": "number"
+        }
+      },
+      "stream": null
+    },
+    {
+      "row": "R2",
+      "name": "switch the role asks first",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/compute/role",
+        "query": {},
+        "body": {
+          "role": "compute"
+        },
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 409,
+        "type": "application/json",
+        "shape": {
+          "ok": "bool",
+          "said": "string",
+          "confirm": "bool"
+        }
+      },
+      "stream": null
+    },
+    {
+      "row": "R3",
+      "name": "cancel a role switch that is not waiting",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/compute/role/cancel",
+        "query": {},
+        "body": {},
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 409,
+        "type": "application/json",
+        "shape": {
+          "ok": "bool",
+          "note": "string"
+        }
+      },
+      "stream": null
+    },
+    {
+      "row": "R4",
+      "name": "paired computers",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "GET",
+        "path": "/api/compute/hosts",
+        "query": {},
+        "body": null,
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 200,
+        "type": "application/json",
+        "shape": {
+          "hosts": [],
+          "selected": "string",
+          "available": "bool"
+        }
+      },
+      "stream": null
+    },
+    {
+      "row": "R7",
+      "name": "find a computer waiting to pair",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "GET",
+        "path": "/api/compute/discover",
+        "query": {},
+        "body": null,
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 200,
+        "type": "application/json",
+        "shape": {
+          "found": []
+        }
+      },
+      "stream": null
+    },
+    {
+      "row": "R8",
+      "name": "open pairing without a code",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/compute/pair/start",
+        "query": {},
+        "body": {},
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 400,
+        "type": "application/json",
+        "shape": {
+          "ok": "bool",
+          "said": "string",
+          "code": "string"
+        }
+      },
+      "stream": null
+    },
+    {
+      "row": "R9",
+      "name": "pairing state",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "GET",
+        "path": "/api/compute/pair",
+        "query": {},
+        "body": null,
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 200,
+        "type": "application/json",
+        "shape": {}
+      },
+      "stream": null
+    },
+    {
+      "row": "R10",
+      "name": "cancel pairing that is not open",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/compute/pair/cancel",
+        "query": {},
+        "body": {},
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 200,
+        "type": "application/json",
+        "shape": {
+          "ok": "bool"
+        }
+      },
+      "stream": null
+    },
+    {
+      "row": "R11",
+      "name": "unpair a computer that is not paired",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/compute/unpair",
+        "query": {},
+        "body": {
+          "host": "nobody",
+          "confirm": true
+        },
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 404,
+        "type": "application/json",
+        "shape": {
+          "ok": "bool",
+          "said": "string",
+          "code": "string"
+        }
+      },
+      "stream": null
+    },
+    {
+      "row": "R12",
+      "name": "this computer's inventory",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "GET",
+        "path": "/api/compute/inventory",
+        "query": {},
+        "body": null,
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 400,
+        "type": "application/json",
+        "shape": {
+          "ok": "bool",
+          "said": "string",
+          "code": "string"
+        }
+      },
+      "stream": null
+    },
+    {
+      "row": "R13",
+      "name": "how this computer is reached",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "GET",
+        "path": "/api/compute/status",
+        "query": {},
+        "body": null,
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 400,
+        "type": "application/json",
+        "shape": {
+          "ok": "bool",
+          "said": "string",
+          "code": "string"
+        }
+      },
+      "stream": null
+    },
+    {
+      "row": "R14",
+      "name": "choose this computer",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/compute/select",
+        "query": {},
+        "body": {
+          "host": "this"
+        },
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 200,
+        "type": "application/json",
+        "shape": {
+          "ok": "bool"
+        }
+      },
+      "stream": null
+    },
+    {
+      "row": "R15",
+      "name": "install a requirement with no computer chosen",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/compute/setup/install",
+        "query": {},
+        "body": {
+          "requirement": "x"
+        },
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 400,
+        "type": "application/json",
+        "shape": {
+          "ok": "bool",
+          "said": "string",
+          "code": "string"
+        }
+      },
+      "stream": null
+    },
+    {
+      "row": "R16",
+      "name": "the queue",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "GET",
+        "path": "/api/compute/queue",
+        "query": {},
+        "body": null,
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 400,
+        "type": "application/json",
+        "shape": {
+          "ok": "bool",
+          "said": "string",
+          "code": "string"
+        }
+      },
+      "stream": null
+    },
+    {
+      "row": "R17",
+      "name": "a job that is not there",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "GET",
+        "path": "/api/compute/job",
+        "query": {
+          "job": "none"
+        },
+        "body": null,
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 400,
+        "type": "application/json",
+        "shape": {
+          "ok": "bool",
+          "said": "string",
+          "code": "string"
+        }
+      },
+      "stream": null
+    },
+    {
+      "row": "R18",
+      "name": "jobs heard about",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "GET",
+        "path": "/api/compute/jobs",
+        "query": {},
+        "body": null,
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 400,
+        "type": "application/json",
+        "shape": {
+          "ok": "bool",
+          "said": "string",
+          "code": "string"
+        }
+      },
+      "stream": null
+    },
+    {
+      "row": "R19",
+      "name": "cancel a job that is not there",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/compute/jobs/cancel",
+        "query": {},
+        "body": {
+          "job": "none"
+        },
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 400,
+        "type": "application/json",
+        "shape": {
+          "ok": "bool",
+          "said": "string",
+          "code": "string"
+        }
+      },
+      "stream": null
+    },
+    {
+      "row": "R20",
+      "name": "pause",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/compute/pause",
+        "query": {},
+        "body": {
+          "paused": true
+        },
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 409,
+        "type": "application/json",
+        "shape": {
+          "ok": "bool",
+          "said": "string",
+          "code": "string"
+        }
+      },
+      "stream": null
+    },
+    {
+      "row": "R21",
+      "name": "relay and mailbox addresses",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "GET",
+        "path": "/api/compute/services",
+        "query": {},
+        "body": null,
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 200,
+        "type": "application/json",
+        "shape": {
+          "defaults": "bool"
+        }
+      },
+      "stream": null
+    },
+    {
+      "row": "R22",
+      "name": "set the relay address",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/compute/services",
+        "query": {},
+        "body": {
+          "relay": "https://relay.example.com"
+        },
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 200,
+        "type": "application/json",
+        "shape": {
+          "relay": "string",
+          "defaults": "bool"
+        }
+      },
+      "stream": null
+    },
+    {
+      "row": "R23",
+      "name": "close the compute window on the computer you talk to",
+      "source": "v2",
+      "hub": "pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/compute/window/close",
+        "query": {},
+        "body": {},
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "setup": [
+        "fresh"
+      ],
+      "response": {
+        "status": 409,
+        "type": "application/json",
+        "shape": {
+          "ok": "bool",
+          "said": "string",
+          "code": "string"
+        }
+      },
+      "stream": null
+    },
+    {
+      "row": "R5",
+      "name": "Tailscale state",
+      "from": "compute/api.ts:519-523",
+      "request": {
+        "method": "GET",
+        "path": "/api/compute/tailscale",
+        "query": {},
+        "body": null,
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "response": {
+        "status": 200,
+        "type": "application/json",
+        "shape": {
+          "tailscale": {
+            "phase": "string",
+            "said": "string"
+          }
+        },
+        "optional": [
+          "/tailscale/self",
+          "/tailscale/peers"
+        ]
+      },
+      "source": "hand",
+      "hub": "pending",
+      "setup": [
+        "fresh"
+      ],
+      "stream": null
+    },
+    {
+      "row": "R6",
+      "name": "tailscale: an action it does not know",
+      "from": "compute/api.ts:524-534",
+      "request": {
+        "method": "POST",
+        "path": "/api/compute/tailscale",
+        "query": {},
+        "body": {
+          "action": "nothing"
+        },
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "response": {
+        "status": 400,
+        "type": "application/json",
+        "shape": {
+          "ok": "bool",
+          "said": "string",
+          "code": "string"
+        }
+      },
+      "source": "hand",
+      "hub": "pending",
+      "setup": [
+        "fresh"
+      ],
+      "stream": null
+    },
+    {
+      "row": "R12",
+      "name": "inventory of a paired computer",
+      "from": "compute/api.ts:567-579",
+      "request": {
+        "method": "GET",
+        "path": "/api/compute/inventory",
+        "query": {
+          "host": "paired"
+        },
+        "body": null,
+        "token": true,
+        "host": "127.0.0.1"
+      },
+      "response": {
+        "status": 200,
+        "type": "application/json",
+        "shape": {
+          "connection": {
+            "state": "string"
+          },
+          "inventory": {}
+        },
+        "optional": [
+          "/inventory",
+          "/failure"
+        ]
+      },
+      "source": "hand",
+      "hub": "pending",
+      "setup": [
+        "fresh"
+      ],
+      "stream": null
+    }
+  ]
+}
