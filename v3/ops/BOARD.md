@@ -155,7 +155,7 @@
 | P2D-09 | Local models and local stats | P2D | opus | P2D-02 | alexia-api/local_models, alexia-core/{hf.rs,local.rs} | merged | 1 | cr3studioo/v3-P2D-09 | |
 | P2D-10 | Compute screen, no paired computers | P2D | opus | P2D-02 | alexia-api/compute | merged | 1 | cr3studioo/v3-P2D-10 | |
 | P2D-11 | Image editor and research viewer | P2D | opus | P2D-02, P2D-03 | alexia-api/{editor,research} | review | 1 | cr3studioo/v3-P2D-11 | rv ctx_caf0ca9e461f |
-| P2D-12 | PC actions proven; hub runs in owner session | P2D | opus | P2D-04, P2D-05, P2D-06 | alexia-hub/{Cargo.toml,watchdog.rs,tests/pc_actions.rs} | todo | 0 | | |
+| P2D-12 | PC actions proven; hub runs in owner session | P2D | opus | P2D-04, P2D-05, P2D-06 | alexia-hub/{Cargo.toml,watchdog.rs,tests/pc_actions.rs} | running | 1 | cr3studioo/v3-P2D-12 | ctx_d81356b6e015 |
 | P2D-13 | Tauri shell starts or attaches to the hub | P2D | opus | P2D-01 | src-tauri/src/main.rs, scripts/sidecar.mjs | merged | 2 | cr3studioo/v3-P2D-13 | |
 | P2D-14 | Coverage and loopback checks | P2D | sonnet | P2D-04..P2D-13 | v3/ci/invariants.mjs, contract/gate.json | todo | 0 | | |
 | P2D-15 | End to end on the real app on this PC | P2D | sonnet | P2D-01..P2D-14 | v3/ops/reports/P2D-e2e.md, p2d-e2e.ps1 | todo | 0 | | |

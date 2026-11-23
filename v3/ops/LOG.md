@@ -560,3 +560,4 @@
 2026-11-23 P2D-08 built (library L1-L3, sha256/revocation/zip-slip; no ed25519 crate: signed entries refused) -> review ctx_bc523b63217b
 2026-11-23 P2D-11 built (editor E1-E5 + research E6-E7; plan C public picture album + share upcall in core; forget does not scrub inline images/research snapshots) -> review ctx_caf0ca9e461f
 2026-11-23 P2D-10 gate: fmt/clippy/tests OK, invariants flagged C:\Program Files fallback (compute.rs:773); CEO dropped the fallback (ProgramFiles or PATH), invariants ok, compute 11/11. Pushed
+2026-11-23 Dispatched P2D-12 (PC actions + interactive logon task) ctx_d81356b6e015; told not to touch the real scheduled task, owner runs the switch
