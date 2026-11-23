@@ -227,7 +227,11 @@ async fn pair_start(Extension(Sent(sent)): Extension<Sent>) -> Response {
         .map(str::trim)
         .unwrap_or("");
     if code.is_empty() || code.chars().count() > 200 {
-        return refuse(400, "refused", "Type the code the other computer is showing.");
+        return refuse(
+            400,
+            "refused",
+            "Type the code the other computer is showing.",
+        );
     }
     refuse(409, "refused", MESH)
 }
@@ -573,7 +577,11 @@ async fn install(State(api): State<Arc<Api>>, Extension(Sent(sent)): Extension<S
             .iter()
             .any(|j| !finished(j.state()) && j.snap.get("label") == Some(&json!(ENGINE_TITLE)))
         {
-            return refuse(409, "refused", "That requirement is already being installed.");
+            return refuse(
+                409,
+                "refused",
+                "That requirement is already being installed.",
+            );
         }
         let mut snap = Map::new();
         snap.insert("id".into(), json!(job_id()));
@@ -599,10 +607,7 @@ async fn install(State(api): State<Arc<Api>>, Extension(Sent(sent)): Extension<S
     json::ok(json!({ "ok": true, "job": now }))
 }
 
-async fn queue(
-    State(api): State<Arc<Api>>,
-    Query(q): Query<HashMap<String, String>>,
-) -> Response {
+async fn queue(State(api): State<Arc<Api>>, Query(q): Query<HashMap<String, String>>) -> Response {
     if let Err(r) = asked_query(&q).and_then(this_pc) {
         return r;
     }
@@ -696,7 +701,11 @@ fn saved_services(api: &Api) -> Map<String, Value> {
         .unwrap_or(Value::Null);
     let mut out = Map::new();
     for name in ["relay", "mailbox"] {
-        if let Some(s) = kept.get(name).and_then(Value::as_str).filter(|s| !s.is_empty()) {
+        if let Some(s) = kept
+            .get(name)
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+        {
             out.insert(name.into(), json!(s));
         }
     }
@@ -778,7 +787,9 @@ fn tailscale_cli() -> Option<PathBuf> {
 fn is_tailnet(ip: &str) -> bool {
     let parts: Vec<&str> = ip.split('.').collect();
     if parts.len() == 4 && parts[0] == "100" {
-        return parts[1].parse::<u8>().is_ok_and(|b| (64..=127).contains(&b));
+        return parts[1]
+            .parse::<u8>()
+            .is_ok_and(|b| (64..=127).contains(&b));
     }
     ip.to_ascii_lowercase().starts_with("fd7a:115c:a1e0:")
 }
@@ -848,8 +859,7 @@ pub(crate) fn parse_tailscale(text: &str) -> Value {
             })
         }
         Some("NeedsLogin" | "NeedsMachineAuth") => {
-            let mut out =
-                json!({ "phase": "needs-login", "said": "Tailscale needs you to sign in once.", "peers": [] });
+            let mut out = json!({ "phase": "needs-login", "said": "Tailscale needs you to sign in once.", "peers": [] });
             if let Some(url) = said
                 .get("AuthURL")
                 .and_then(Value::as_str)
@@ -859,11 +869,15 @@ pub(crate) fn parse_tailscale(text: &str) -> Value {
             }
             out
         }
-        Some("Starting") => json!({ "phase": "starting", "said": "Tailscale is starting.", "peers": peers }),
+        Some("Starting") => {
+            json!({ "phase": "starting", "said": "Tailscale is starting.", "peers": peers })
+        }
         Some("Stopped") => {
             json!({ "phase": "stopped", "said": "Tailscale is installed but switched off.", "peers": [] })
         }
-        _ => json!({ "phase": "stopped", "said": "Tailscale is installed but not running.", "peers": [] }),
+        _ => {
+            json!({ "phase": "stopped", "said": "Tailscale is installed but not running.", "peers": [] })
+        }
     }
 }
 
@@ -954,10 +968,15 @@ mod tests {
             running["said"],
             "Connected to Tailscale. 1 other computer is online on it."
         );
-        assert_eq!(running["self"], json!({ "name": "desk", "ips": ["100.70.1.2"] }));
+        assert_eq!(
+            running["self"],
+            json!({ "name": "desk", "ips": ["100.70.1.2"] })
+        );
         let peers = running["peers"].as_array().unwrap();
         assert_eq!(peers.len(), 2);
-        assert!(peers.iter().any(|p| p["name"] == "lap" && p["online"] == true));
+        assert!(peers
+            .iter()
+            .any(|p| p["name"] == "lap" && p["online"] == true));
     }
 
     #[test]

@@ -322,7 +322,10 @@ async fn role_compute_refused_409() {
     )
     .await;
     refused(&a, 400, "refused", "Choose Interaction or Compute.");
-    assert_eq!(get(&w, "/api/compute/role").await.json()["role"], "interaction");
+    assert_eq!(
+        get(&w, "/api/compute/role").await.json()["role"],
+        "interaction"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -334,7 +337,10 @@ async fn hosts_empty() {
         a.json(),
         json!({ "hosts": [], "selected": "this", "available": false })
     );
-    assert_eq!(get(&w, "/api/compute/discover").await.json(), json!({ "found": [] }));
+    assert_eq!(
+        get(&w, "/api/compute/discover").await.json(),
+        json!({ "found": [] })
+    );
     // Choosing this computer is kept; any other is not paired.
     let a = post(&w, "/api/compute/select", json!({ "host": "this" })).await;
     assert_eq!(a.status, 200);
@@ -372,7 +378,12 @@ async fn hosts_empty() {
     ] {
         refused(&get(&w, path).await, 400, "refused", CHOOSE);
     }
-    let a = post(&w, "/api/compute/setup/install", json!({ "requirement": "x" })).await;
+    let a = post(
+        &w,
+        "/api/compute/setup/install",
+        json!({ "requirement": "x" }),
+    )
+    .await;
     refused(&a, 400, "refused", CHOOSE);
     let a = post(&w, "/api/compute/setup/install", json!({})).await;
     refused(&a, 400, "refused", "Supply a valid requirement.");
@@ -451,7 +462,10 @@ async fn queue_and_cancel_local_job() {
     let w = world("queue").await;
     let a = get(&w, "/api/compute/queue?host=this").await;
     assert_eq!(a.status, 200);
-    assert_eq!(a.json(), json!({ "queue": { "waiting": [], "paused": false } }));
+    assert_eq!(
+        a.json(),
+        json!({ "queue": { "waiting": [], "paused": false } })
+    );
     let a = post(
         &w,
         "/api/compute/setup/install",
@@ -514,7 +528,10 @@ async fn queue_and_cancel_local_job() {
     let said = a.json();
     assert_eq!(said["ok"], true);
     assert!(
-        matches!(said["job"]["state"].as_str(), Some("cancelling" | "cancelled")),
+        matches!(
+            said["job"]["state"].as_str(),
+            Some("cancelling" | "cancelled")
+        ),
         "{said}"
     );
     let done = job_until(&w, &id, |j| j["state"] == "cancelled").await;
@@ -567,7 +584,11 @@ async fn pause_roundtrip() {
     let q = get(&w, "/api/compute/queue?host=this").await.json();
     assert_eq!(q["queue"]["paused"], true);
     // Paused, the local jobs give up at once.
-    let started = w.api.parts.jobs.embed(&["x".into()], CancellationToken::new());
+    let started = w
+        .api
+        .parts
+        .jobs
+        .embed(&["x".into()], CancellationToken::new());
     assert!(tokio::time::timeout(WAIT, started).await.unwrap().is_none());
 
     if INSTALLS {
@@ -693,14 +714,19 @@ async fn tailscale_state_and_actions() {
     let a = post(&w, "/api/compute/tailscale", json!({ "action": "start" })).await;
     assert_eq!(a.status, 200, "{}", a.body);
     assert!(a.json()["tailscale"]["phase"].is_string());
-    let kept = w.store.kv_get("_core", "compute_tailscale").unwrap().unwrap();
+    let kept = w
+        .store
+        .kv_get("_core", "compute_tailscale")
+        .unwrap()
+        .unwrap();
     assert_eq!(kept["action"], "start");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn unknown_path_404_sentence() {
     let w = world("unknown").await;
-    let sentence = json!({ "ok": false, "said": "That compute endpoint or method is not available." });
+    let sentence =
+        json!({ "ok": false, "said": "That compute endpoint or method is not available." });
     for path in [
         "/api/compute/nothing",
         "/api/compute/pair/nothing/else",
