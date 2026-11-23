@@ -151,10 +151,10 @@
 | P2D-05 | Chat in the window: stream, stop, approve, commands, files | P2D | opus | P2D-02, P2D-03 | alexia-api/{chat,offers}, alexia-hub/main.rs | merged | 2 | cr3studioo/v3-P2D-05 | |
 | P2D-06 | Plugins screen: panes, settings, trust, install, servers | P2D | opus | P2D-02 | alexia-api/plugins, alexia-mcp/{host.rs,tests/servers.rs} | merged | 2 | cr3studioo/v3-P2D-06 | |
 | P2D-07 | Board: tables, actions, learned skills | P2D | opus | P2D-02 | alexia-api/{board,learned} | merged | 1 | cr3studioo/v3-P2D-07 | |
-| P2D-08 | Library: plugins and skills from the shelf | P2D | opus | P2D-02, P2D-06 | alexia-api/library | review | 1 | cr3studioo/v3-P2D-08 | rv ctx_bc523b63217b |
+| P2D-08 | Library: plugins and skills from the shelf | P2D | opus | P2D-02, P2D-06 | alexia-api/library | running | 2 | cr3studioo/v3-P2D-08 | fix ctx_a46b51ac489f |
 | P2D-09 | Local models and local stats | P2D | opus | P2D-02 | alexia-api/local_models, alexia-core/{hf.rs,local.rs} | merged | 1 | cr3studioo/v3-P2D-09 | |
 | P2D-10 | Compute screen, no paired computers | P2D | opus | P2D-02 | alexia-api/compute | merged | 1 | cr3studioo/v3-P2D-10 | |
-| P2D-11 | Image editor and research viewer | P2D | opus | P2D-02, P2D-03 | alexia-api/{editor,research} | review | 1 | cr3studioo/v3-P2D-11 | rv ctx_caf0ca9e461f |
+| P2D-11 | Image editor and research viewer | P2D | opus | P2D-02, P2D-03 | alexia-api/{editor,research} | merged | 1 | cr3studioo/v3-P2D-11 | |
 | P2D-12 | PC actions proven; hub runs in owner session | P2D | opus | P2D-04, P2D-05, P2D-06 | alexia-hub/{Cargo.toml,watchdog.rs,tests/pc_actions.rs} | running | 1 | cr3studioo/v3-P2D-12 | ctx_d81356b6e015 |
 | P2D-13 | Tauri shell starts or attaches to the hub | P2D | opus | P2D-01 | src-tauri/src/main.rs, scripts/sidecar.mjs | merged | 2 | cr3studioo/v3-P2D-13 | |
 | P2D-14 | Coverage and loopback checks | P2D | sonnet | P2D-04..P2D-13 | v3/ci/invariants.mjs, contract/gate.json | todo | 0 | | |
