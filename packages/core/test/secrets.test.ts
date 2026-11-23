@@ -308,10 +308,11 @@ test('the stand-in above is vault.rs: the same fields in and the same answers ou
   expect(source).toContain('None => "dev.alexia.app" };')
 })
 
-test('the core the shell hands the vault to cannot be steered from outside', () => {
+test('the hub the shell starts cannot be steered from outside, and is handed no secret', () => {
   const source = main()
   // Its environment rebuilt from a short list of what it needs, cleared *first* so the list
-  // is the whole of what gets through — a list of what to block is never finished.
+  // is the whole of what gets through — a list of what to block is never finished. The hub runs
+  // Node plugins and reads the person's credentials, so steering either is reading them.
   expect(source).toMatch(/\.env_clear\(\)\s*\.envs\(std::env::vars_os\(\)\.filter\(\|\(name, _\)\| passes\(name\)\)\)/)
   // `vars()` panics on a variable that is not valid Unicode, and the release profile aborts.
   expect(source).not.toMatch(/\.envs\(std::env::vars\(\)/)
@@ -322,15 +323,18 @@ test('the core the shell hands the vault to cannot be steered from outside', () 
   }
   // The certificate variables pass on Windows alone, where the credential store trusts no program.
   expect(source).toContain('cfg!(windows) && ["NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE", "SSL_CERT_DIR"]')
-  // SIGUSR1 opens Node's inspector, and any process running as this user may send it.
-  expect(source).toContain('.args(["--disable-sigusr1", "boot.mjs"])')
-  // And the token goes down stdin, the one channel nothing else shares — the vault opened before
-  // core is started, and the child held before the write, so no failure leaves a core running loose.
-  // `start` is the one place core is spawned, and it is handed the vault already open.
-  expect(source).toContain('start(&handle, port, Arc::new(vault::open()?), 0)?;')
+  // `hub_command` is the one place the hub is spawned, with one argument and nothing secret
+  // (D-P2D-5): the vault is not opened and no handover goes down its stdin.
   expect(source.match(/\.spawn\(\)\?/g)?.length).toBe(1)
-  expect(source).toMatch(/fn start\(app: &AppHandle, port: u16, handover: Arc<String>/)
-  expect(source).toContain('held.insert(child).write(handover.as_bytes())')
+  expect(source).toContain('let (mut events, child) = hub_command(app, port)?.spawn()?;')
+  const command = source.slice(source.indexOf('fn hub_command('), source.indexOf('static QUITTING'))
+  expect(command).toContain('.args(["run"])')
+  expect(command.match(/\.args?\(/g)?.length).toBe(1)
+  const names = [...command.matchAll(/"(ALEXIA_[A-Z0-9_]+)"/g)].map((found) => found[1])
+  expect(names.sort()).toEqual(['ALEXIA_HUB_STOP_ON_EOF', 'ALEXIA_NODE', 'ALEXIA_UI_DIR', 'ALEXIA_UI_DIR', 'ALEXIA_V3_DATA', 'ALEXIA_V3_DATA', 'ALEXIA_WINDOW_PORT'])
+  for (const secret of ['TOKEN', 'SECRET', 'KEY', 'PASSWORD', 'VAULT']) expect(command).not.toContain(secret)
+  expect(source).not.toContain('vault::open')
+  expect(source).not.toMatch(/handover[.:,)]/)
 })
 
 test('boot waits for the handover under the app, and only there', () => {

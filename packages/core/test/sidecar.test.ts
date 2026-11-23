@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { expect, test } from 'vitest'
 import { createHash } from 'node:crypto'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, join, resolve, sep } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { runInNewContext } from 'node:vm'
 import { files, repoRoot } from './invariants/_repo.js'
@@ -33,55 +33,88 @@ import { files, repoRoot } from './invariants/_repo.js'
  */
 
 const shell = () => files(['src-tauri/src/main.rs'])[0]?.text ?? ''
+/** Where the shell finds, knocks on and stops the hub (P2D-13). */
+const hubRs = () => files(['src-tauri/src/hub.rs'])[0]?.text ?? ''
 /** Named without the number the invariants folder uses, because it is not one of them. */
 const packager = () => files(['scripts/package.mjs'])[0]?.text ?? ''
 
-test('one Alexia at a time: the shell keeps the sidecar handle and kills it on exit', () => {
+test('one Alexia at a time: the shell keeps the hub it started and stops it on exit', () => {
   const source = shell()
-  // Kept rather than dropped. `sidecar.spawn()?;` on its own is the bug this replaced — and its
-  // events kept too, because they are the only way to hear that core stopped.
-  expect(source, 'the sidecar handle must be kept — dropping it does not stop the process').toMatch(
-    /let \(mut events, child\) = sidecar\(app, port\)\?\.spawn\(\)\?;/,
-  )
-  // Held before the handover is written, so a failed write still leaves it where Exit stops it.
-  expect(source).toContain('held.insert(child).write(handover.as_bytes())')
+  // Kept rather than dropped — and its events kept too, because they are the only way to hear
+  // that the hub stopped. Dropping the handle closes the hub's stdin, which is its stop.
+  expect(source, 'the hub handle must be kept').toMatch(/let \(mut events, child\) = hub_command\(app, port\)\?\.spawn\(\)\?;/)
+  expect(source).toContain('= Some(child);')
   expect(source).toContain('Mutex::<Option<CommandChild>>::new(None)')
+  expect(source).toContain('.env("ALEXIA_HUB_STOP_ON_EOF", "1")')
 
-  // And killed when the app actually ends. `.run(generate_context!())` cannot do this —
+  // And stopped when the app actually ends — only if this shell started it (P2D-13): a hub from
+  // Task Scheduler or a console serves Telegram too. `.run(generate_context!())` cannot do this —
   // it takes no event handler, which is how the leak got in.
-  expect(source).toMatch(/RunEvent::Exit/)
-  expect(source).toMatch(/core\.kill\(\)/)
-  expect(source, 'the run loop needs an event handler to hang the kill on').not.toMatch(
+  const exit = source.slice(source.indexOf('RunEvent::Exit =>'))
+  expect(exit).toMatch(/if hub::ours\(held\(app\)\) \{\s*if let Some\(hub\) = take_hub\(app, None\) \{\s*hub::stop\(hub\);/)
+  expect(source, 'the run loop needs an event handler to hang the stop on').not.toMatch(
     /\.run\(tauri::generate_context!\(\)\)/,
   )
+  // The stop closes stdin first and kills only what is still there after a wait.
+  const stop = hubRs().slice(hubRs().indexOf('pub fn stop('))
+  expect(stop.indexOf('drop(hub)')).toBeGreaterThan(-1)
+  expect(stop.indexOf('drop(hub)')).toBeLessThan(stop.indexOf('taskkill'))
 })
 
-test('a core that stops on its own is started again, and one stopped by quitting is not', () => {
+test('a hub that stops on its own is looked for or started again, and one stopped by quitting is not', () => {
   const source = shell()
   // Every event drained until the one that says it ended.
   expect(source).toMatch(/while let Some\(event\) = events\.blocking_recv\(\)/)
   expect(source).toContain('CommandEvent::Terminated')
-  // Quitting says so before it kills, and the watch asks before and after its wait.
+  // Quitting says so before it stops anything, and the watch asks before and after its wait.
   const exit = source.slice(source.indexOf('RunEvent::Exit =>'))
   expect(exit.indexOf('QUITTING.store(true')).toBeGreaterThan(-1)
-  expect(exit.indexOf('QUITTING.store(true')).toBeLessThan(exit.indexOf('core.kill()'))
-  expect(source.match(/if QUITTING\.load\(Ordering::SeqCst\) \{\s*return;/g)?.length).toBe(2)
+  expect(exit.indexOf('QUITTING.store(true')).toBeLessThan(exit.indexOf('hub::stop('))
+  expect(source).toContain('!QUITTING.load(Ordering::SeqCst) && GENERATION.load(Ordering::SeqCst) == generation')
+  const again = source.slice(source.indexOf('fn again('), source.indexOf('fn start('))
+  expect(again).toMatch(/if !current\(generation\) \{\s*return;/)
+  expect(again).toMatch(/if current\(generation\) \{\s*launch\(app, lapse\);/)
   // Growing waits with a ceiling, never a tight loop.
-  expect(source).toContain('thread::sleep(Duration::from_secs(1 << lapse.min(6)));')
-  // The same port and the same vault line, handed down the same stdin.
-  expect(source).toContain('start(&app, port, handover, lapse)')
+  expect(again).toContain('thread::sleep(Duration::from_secs(1 << lapse.min(6)));')
+  // Both watches go through it: the started hub's events and the attached hub's port.
+  expect(source.match(/again\(&app, began, lapse, generation\);/g)?.length).toBe(2)
 })
 
-test('the windows wait for core: the starting page first, core only once it is listening', () => {
+test('the shell attaches to a hub already running and never stops it', () => {
+  const source = shell()
+  const launch = source.slice(source.indexOf('fn launch('), source.indexOf('fn say('))
+  expect(launch).toContain('hub::find(')
+  expect(launch).toContain('attach(app, port, lapse, generation)')
+  expect(launch).toContain('start(app, free_port(), lapse, generation)')
+  // An attached hub holds no child, so nothing of it is in the slot quitting empties.
+  const attach = source.slice(source.indexOf('fn attach('), source.indexOf('fn current('))
+  expect(attach).not.toContain('CommandChild')
+  expect(attach).not.toMatch(/kill|stop\(/)
+  // *Try again* kills only ours; otherwise it looks again.
+  const again = source.slice(source.indexOf('listen_any("start-core-again"'))
+  expect(again).toMatch(/if !hub::ours\(held\(&handle\)\) \{[^}]*launch\(/)
+  // `window.json` is read the way the hub writes it, and a dead pid is no hub.
+  expect(hubRs()).toContain('join("window.json")')
+  expect(hubRs()).toContain('"ALEXIA_V3_DATA"')
+  expect(hubRs()).toMatch(/alive\(window\.pid\)/)
+})
+
+test('the windows wait for the hub: the starting page first, the hub only once it is listening', () => {
   const source = shell()
   expect(source).toContain('WebviewUrl::App("index.html".into())')
-  expect(source, 'a window pointed at core before it listens stays white').not.toContain('WebviewUrl::External')
-  expect(source).toMatch(/TcpStream::connect_timeout\(/)
+  expect(source, 'a window pointed at the hub before it listens stays white').not.toContain('WebviewUrl::External')
+  expect(hubRs()).toMatch(/TcpStream::connect_timeout\(/)
+  expect(source).toMatch(/if hub::answers\(port\) \{\s*return navigate\(&waiting, port\);/)
   expect(source).toMatch(/window\.navigate\(url\.clone\(\)\)/)
+  // Never the edge of the screen.
+  expect(source.slice(source.indexOf('fn navigate('))).toMatch(/if label != "control" \{\s*let _ = window\.navigate/)
   // The page's *Try again* is an event this process listens for, by the same name.
   const page = files(['src-tauri/placeholder/index.html'])[0]?.text ?? ''
   expect(page).toContain("emit('start-core-again')")
   expect(source).toContain('listen_any("start-core-again"')
+  // And when there is no hub to start, the page says so rather than waiting forever.
+  expect(page).toContain('id="late"')
+  expect(hubRs()).toContain('pub const NOT_FOUND')
 })
 
 test('the overlay is shown on the main thread, whichever thread asked', () => {
@@ -134,11 +167,12 @@ test('one Alexia at a time: and closing a window still only puts it away', () =>
 test('one Alexia at a time: the scanner is actually reading both files', () => {
   // A glob that matches nothing passes silently, forever, and looks exactly like a fix.
   expect(shell().length).toBeGreaterThan(1000)
+  expect(hubRs().length).toBeGreaterThan(1000)
   expect(packager().length).toBeGreaterThan(1000)
 })
 
 /** Execute the staging script with fake builds and files: no package, installer or signing. */
-async function staged(options: { host: string; arch?: string; universal?: boolean; targetDir?: string; cargoStatus?: number; missing?: boolean }) {
+async function staged(options: { host: string; arch?: string; universal?: boolean; targetDir?: string; cargoStatus?: number; missing?: string }) {
   const source = files(['scripts/sidecar.mjs'])[0]?.text ?? ''
   const commands: { command: string; args: string[] }[] = []
   const copies: [string, string][] = []
@@ -162,10 +196,12 @@ async function staged(options: { host: string; arch?: string; universal?: boolea
       return { status: command === 'cargo' ? options.cargoStatus ?? 0 : 0, stdout: `host: ${options.host}\n` }
     },
     cpSync: (from: string, to: string) => { copies.push([from, to]) },
-    existsSync: (path: string) => !(options.missing && path.includes('alexia-connect')),
+    existsSync: (path: string) => !(options.missing && path.includes(options.missing)),
     mkdirSync: () => {}, rmSync: () => {}, writeFileSync: () => {},
     mkdtempSync: (prefix: string) => `${prefix}fixture`, tmpdir: () => join(repoRoot, 'fake-tmp'),
-    readdirSync: () => [],
+    readdirSync: (dir: string) => dir.endsWith(join('dist', 'src'))
+      ? ['main.js', 'settings.js', 'main.d.ts', 'main.js.map']
+      : dir.endsWith(join('packages', 'ui')) ? ['index.html', 'compute.html', 'app.css', 'alexia.png', 'alexia-mark.svg', 'theme-dark.webp', 'package.json', 'tsconfig.json', 'notes.md'] : [],
     readFileSync: () => `'@napi-rs/keyring-darwin-arm64@1.0.0':\n  resolution: {integrity: sha512-${integrity}}\n'@napi-rs/keyring-darwin-x64@1.0.0':\n  resolution: {integrity: sha512-${integrity}}`,
     fetch: async () => ({ ok: true, text: async () => `${sha256}  node-v26.8.2-darwin-arm64.tar.gz\n${sha256}  node-v26.8.2-darwin-x64.tar.gz`, arrayBuffer: async () => archive }),
   })
@@ -175,7 +211,7 @@ async function staged(options: { host: string; arch?: string; universal?: boolea
 test.each(['x86_64-pc-windows-msvc', 'aarch64-apple-darwin', 'x86_64-apple-darwin'])('packaging: %s stages the Cargo release binary beside core', async (host) => {
   const { commands, copies } = await staged({ host })
   const targetDir = join(repoRoot, 'connect', 'target')
-  expect(commands.filter(({ command }) => command === 'cargo')).toEqual([{
+  expect(commands.filter(({ command, args }) => command === 'cargo' && args.includes(join(repoRoot, 'connect', 'Cargo.toml')))).toEqual([{
     command: 'cargo', args: ['build', '--release', '--locked', '--manifest-path', join(repoRoot, 'connect', 'Cargo.toml'), '--target-dir', targetDir],
   }])
   const suffix = host.includes('windows') ? '.exe' : ''
@@ -185,7 +221,7 @@ test.each(['x86_64-pc-windows-msvc', 'aarch64-apple-darwin', 'x86_64-apple-darwi
 test.each(['arm64', 'x64'])('packaging: a universal Mac from %s builds both transport halves and merges them', async (arch) => {
   const { commands, copies } = await staged({ host: `${arch === 'arm64' ? 'aarch64' : 'x86_64'}-apple-darwin`, arch, universal: true })
   const targets = ['aarch64-apple-darwin', 'x86_64-apple-darwin']
-  const cargo = commands.filter(({ command }) => command === 'cargo')
+  const cargo = commands.filter(({ command, args }) => command === 'cargo' && args.includes(join(repoRoot, 'connect', 'Cargo.toml')))
   expect(cargo).toHaveLength(2)
   const halves = targets.map((target, index) => {
     expect(cargo[index]?.args.slice(-2)).toEqual(['--target', target])
@@ -207,7 +243,43 @@ test('packaging: an isolated Cargo directory is both built into and copied from'
 
 test('packaging: a failed Cargo build or missing output stops staging', async () => {
   await expect(staged({ host: 'aarch64-apple-darwin', cargoStatus: 1 })).rejects.toThrow('cargo could not build alexia-connect')
-  await expect(staged({ host: 'aarch64-apple-darwin', missing: true })).rejects.toThrow('cargo produced no')
+  await expect(staged({ host: 'aarch64-apple-darwin', missing: 'alexia-connect' })).rejects.toThrow('cargo produced no')
+  await expect(staged({ host: 'x86_64-pc-windows-msvc', missing: 'alexia-hub' })).rejects.toThrow(/cargo produced no .*alexia-hub\.exe/)
+  await expect(staged({ host: 'x86_64-pc-windows-msvc', missing: 'index.html' })).rejects.toThrow('staging left no')
+})
+
+test.each(['x86_64-pc-windows-msvc', 'aarch64-apple-darwin'])('packaging: %s builds the hub into v3/target and stages it with the UI it serves', async (host) => {
+  const targetDir = join(repoRoot, 'connect', 'target', 'dev')
+  const { commands, copies } = await staged({ host, targetDir })
+  const hubTarget = join(repoRoot, 'v3', 'target')
+  // Into v3's own target folder whatever CARGO_TARGET_DIR says, so the copy is what was just built.
+  expect(commands).toContainEqual({
+    command: 'cargo', args: ['build', '--release', '--locked', '-p', 'alexia-hub', '--manifest-path', join(repoRoot, 'v3', 'Cargo.toml'), '--target-dir', hubTarget],
+  })
+  const suffix = host.includes('windows') ? '.exe' : ''
+  const resources = join(repoRoot, 'src-tauri', 'resources')
+  expect(copies).toContainEqual([join(hubTarget, 'release', `alexia-hub${suffix}`), join(resources, 'hub', `alexia-hub${suffix}`)])
+  // The UI exactly as statics.rs serves it, compiled modules kept under dist/src.
+  const ui = join(repoRoot, 'packages', 'ui')
+  const staged_ = copies.filter(([, to]) => to.startsWith(join(resources, 'ui'))).map(([from, to]) => [from.slice(ui.length), to.slice(join(resources, 'ui').length)])
+  expect(staged_.map(([from]) => from).sort()).toEqual(
+    ['index.html', 'compute.html', 'app.css', 'alexia.png', 'alexia-mark.svg', 'theme-dark.webp', join('dist', 'src', 'main.js'), join('dist', 'src', 'settings.js')].map((name) => join(sep, name)).sort(),
+  )
+  for (const [from, to] of staged_) expect(to).toBe(from)
+  // No Node core any more: nothing it ran is staged.
+  for (const gone of ['boot.mjs', 'alexia.mjs', 'scripts']) expect(copies.some(([, to]) => to === join(resources, gone))).toBe(false)
+  // On a Mac the hub is signed, since Tauri signs nothing under resources.
+  if (!suffix) expect(commands).toContainEqual(expect.objectContaining({ command: 'codesign', args: expect.arrayContaining([join(resources, 'hub', 'alexia-hub')]) }))
+})
+
+test('packaging: a universal Mac builds both hub halves and merges them', async () => {
+  const { commands } = await staged({ host: 'aarch64-apple-darwin', arch: 'arm64', universal: true })
+  const hubTarget = join(repoRoot, 'v3', 'target')
+  const halves = ['aarch64-apple-darwin', 'x86_64-apple-darwin'].map((target) => {
+    expect(commands).toContainEqual(expect.objectContaining({ command: 'cargo', args: expect.arrayContaining(['alexia-hub', '--target', target]) }))
+    return join(hubTarget, target, 'release', 'alexia-hub')
+  })
+  expect(commands).toContainEqual({ command: 'lipo', args: ['-create', '-output', join(repoRoot, 'src-tauri', 'resources', 'hub', 'alexia-hub'), ...halves] })
 })
 
 test('packaging: NSIS and DMG inherit both external binaries without dev configuration', () => {
