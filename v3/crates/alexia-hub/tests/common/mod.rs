@@ -460,3 +460,127 @@ impl Drop for Hub {
         }
     }
 }
+
+// ---- the window's HTTP port (P2D-02) ----
+
+/// The hub's window: the loopback port from `window.json` and the token the page carries.
+pub struct Window {
+    pub port: u16,
+    pub token: String,
+}
+
+/// One HTTP/1.0 exchange with `127.0.0.1:port`: HTTP/1.0 so the answer is never chunked and the
+/// server closes the connection at its end (an SSE answer is read to that end). `host` is the
+/// `Host` header as given; `token` is sent as `x-alexia-token` when there is one. The answer is
+/// (status, content type up to `;` or "" when there is none, body).
+pub fn exchange(
+    port: u16,
+    method: &str,
+    target: &str,
+    host: &str,
+    token: Option<&str>,
+    body: Option<&[u8]>,
+) -> (u16, String, Vec<u8>) {
+    use std::io::{Read, Write};
+    let mut sock = std::net::TcpStream::connect_timeout(
+        &std::net::SocketAddr::from(([127, 0, 0, 1], port)),
+        Duration::from_secs(10),
+    )
+    .expect("the window's port accepts a connection");
+    sock.set_read_timeout(Some(Duration::from_secs(60)))
+        .unwrap();
+    let mut head = format!("{method} {target} HTTP/1.0\r\nHost: {host}\r\n");
+    if let Some(t) = token {
+        head.push_str(&format!("x-alexia-token: {t}\r\n"));
+    }
+    if let Some(b) = body {
+        head.push_str(&format!(
+            "content-type: application/json\r\ncontent-length: {}\r\n",
+            b.len()
+        ));
+    }
+    head.push_str("\r\n");
+    sock.write_all(head.as_bytes()).unwrap();
+    if let Some(b) = body {
+        sock.write_all(b).unwrap();
+    }
+    let mut all = Vec::new();
+    // A read that times out leaves what arrived: the caller's comparison then fails with it.
+    let _ = sock.read_to_end(&mut all);
+    let end = all
+        .windows(4)
+        .position(|w| w == b"\r\n\r\n")
+        .unwrap_or_else(|| {
+            panic!(
+                "no HTTP answer from the window: {:?}",
+                String::from_utf8_lossy(&all)
+            )
+        });
+    let head = String::from_utf8_lossy(&all[..end]).into_owned();
+    let status = head
+        .split_whitespace()
+        .nth(1)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or_else(|| panic!("no status line: {head}"));
+    let kind = head
+        .lines()
+        .find_map(|l| {
+            let (k, v) = l.split_once(':')?;
+            k.eq_ignore_ascii_case("content-type")
+                .then(|| v.split(';').next().unwrap_or("").trim().to_owned())
+        })
+        .unwrap_or_default();
+    (status, kind, all[end + 4..].to_vec())
+}
+
+/// The window of the hub whose data folder is `data` (`ALEXIA_V3_DATA`): waits up to 20 s for
+/// `window.json`, reads the port, `GET /`, and takes the token from the page's `data-token`.
+/// The hub must have been started with `ALEXIA_UI_DIR` set to a folder whose `index.html`
+/// carries `data-token="__TOKEN__"`.
+pub fn window(data: &Path) -> Window {
+    let file = data.join("window.json");
+    let end = Instant::now() + Duration::from_secs(20);
+    let port = loop {
+        let port = std::fs::read_to_string(&file)
+            .ok()
+            .and_then(|t| serde_json::from_str::<Value>(&t).ok())
+            .and_then(|v| v["port"].as_u64())
+            .and_then(|p| u16::try_from(p).ok());
+        if let Some(p) = port {
+            break p;
+        }
+        assert!(
+            Instant::now() < end,
+            "no window.json in {} after 20 s",
+            data.display()
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    let (status, _, body) = exchange(port, "GET", "/", &format!("127.0.0.1:{port}"), None, None);
+    let page = String::from_utf8_lossy(&body).into_owned();
+    assert_eq!(status, 200, "GET / answered {status}: {page}");
+    let token = page
+        .split_once("data-token=\"")
+        .and_then(|(_, rest)| rest.split_once('"'))
+        .map(|(t, _)| t.to_owned())
+        .unwrap_or_else(|| panic!("the page carries no data-token: {page}"));
+    Window { port, token }
+}
+
+/// A call to the window with its token and a `127.0.0.1` Host: (status, content type, body).
+pub fn call(
+    w: &Window,
+    method: &str,
+    path: &str,
+    body: Option<&serde_json::Value>,
+) -> (u16, String, Vec<u8>) {
+    let bytes = body.map(|b| b.to_string().into_bytes());
+    exchange(
+        w.port,
+        method,
+        path,
+        &format!("127.0.0.1:{}", w.port),
+        Some(&w.token),
+        bytes.as_deref(),
+    )
+}

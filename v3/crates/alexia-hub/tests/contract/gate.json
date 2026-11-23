@@ -5,7 +5,7 @@
       "row": "S1",
       "name": "the page",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "GET",
         "path": "/",
@@ -28,7 +28,7 @@
       "row": "S1",
       "name": "the stylesheet",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "GET",
         "path": "/app.css",
@@ -51,7 +51,7 @@
       "row": "S1",
       "name": "the main module",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "GET",
         "path": "/main.js",
@@ -74,7 +74,7 @@
       "row": "S1",
       "name": "a picture",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "GET",
         "path": "/alexia-mark.svg",
@@ -97,7 +97,7 @@
       "row": "S2",
       "name": "no token",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "GET",
         "path": "/api/state",
@@ -120,7 +120,7 @@
       "row": "S2",
       "name": "a Host that is not 127.0.0.1",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "GET",
         "path": "/api/state",
@@ -143,7 +143,7 @@
       "row": "S3",
       "name": "a body that is not JSON",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "POST",
         "path": "/api/stop",
@@ -169,7 +169,7 @@
       "row": "S3",
       "name": "a risky route without confirm",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "POST",
         "path": "/api/plugin",
@@ -199,7 +199,7 @@
       "row": "S3",
       "name": "a route that only reads, sent a POST",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "POST",
         "path": "/api/state",
@@ -225,7 +225,7 @@
       "row": "S3",
       "name": "a route nobody serves, sent a POST",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "POST",
         "path": "/api/nothing-here",
@@ -251,7 +251,7 @@
       "row": "S4",
       "name": "an unknown path",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "GET",
         "path": "/api/nothing-here",
