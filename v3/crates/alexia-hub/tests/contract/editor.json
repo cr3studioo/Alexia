@@ -5,7 +5,7 @@
       "row": "E1",
       "name": "the editor with no editor plugin",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "POST",
         "path": "/api/editor",
@@ -34,7 +34,7 @@
       "row": "E2",
       "name": "a shared file that was never shared",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "GET",
         "path": "/api/editor/file",
@@ -62,7 +62,7 @@
       "row": "E3",
       "name": "a picture the conversation does not own",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "GET",
         "path": "/api/editor/picture",
@@ -91,7 +91,7 @@
       "row": "E5",
       "name": "upload a picture with no conversation",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "POST",
         "path": "/api/editor/upload",
@@ -121,7 +121,7 @@
       "row": "E4",
       "name": "forget editor pictures",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "POST",
         "path": "/api/editor/forget",
@@ -150,7 +150,7 @@
       "row": "E6",
       "name": "research snapshot of a plugin that is not there",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "POST",
         "path": "/api/research",
@@ -177,7 +177,7 @@
       "row": "E7",
       "name": "a research file that is not there",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "GET",
         "path": "/api/research-file",
