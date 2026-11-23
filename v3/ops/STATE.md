@@ -8,7 +8,7 @@ Orca run: run_7a40b198ac83 (bind with run-use). Helpers in C:\dev\Alexia-wt:
 
 P0 26/26, P1 35/35, P2 all build tasks merged (gate 77 suites); P2-41 dropped (A-19, owner waived); 10 P2 follow-ups deferred.
 NOW: Phase 2D (A-19): the v2 app (packages/ui + src-tauri) on alexia-hub, same look, all features, plus PC actions.
-Running (c2): reviews P2D-06 ctx_90b7c54a485f, P2D-07 ctx_04aa765058ca; builds P2D-09 ctx_2da3396fa418, P2D-10 ctx_b2cfa57caecc. Merged: 01-05, 13. Ready: 11.
+Running (c2): review P2D-07 ctx_04aa765058ca; builds P2D-09 ctx_2da3396fa418, P2D-10 ctx_b2cfa57caecc. Merged: 01-06, 13. Ready: 08, 11. CEO #17 session hit its usage limit after the P2D-06 merge.
 Next: P2D-02 unlocks 04,06,07,09,10 (+05,11 with 03). Max 2 opus per batch. c1 is ~97% weekly until 11-27: when c2 hits 95% 5h, wait for its reset.
 
 MACHINE LIMITS (most important):
