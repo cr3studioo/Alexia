@@ -439,19 +439,24 @@ async fn chats_rows_and_forget_open_refused() {
             (Role::Assistant, "It is asleep."),
         ],
     );
+    let other_id = other.0.to_string();
     let r = rows(&w, "chats").await;
     assert_eq!(r["ok"], true, "{r}");
     let list = r["rows"].as_array().unwrap();
     assert_eq!(list.len(), 2, "{r}");
     let row = list
         .iter()
-        .find(|x| x["id"] == other.0.to_string())
+        .find(|x| x["id"].as_str() == Some(other_id.as_str()))
         .unwrap();
     assert_eq!(row["title"], "Printer");
     assert_eq!(row["turns"], "2");
     assert!(row["at"].is_i64() && row["when"].as_str().is_some_and(|s| !s.is_empty()));
     assert_eq!(row["state"], "");
-    let mine = list.iter().find(|x| x["id"] == open.0.to_string()).unwrap();
+    let open_id = open.0.to_string();
+    let mine = list
+        .iter()
+        .find(|x| x["id"].as_str() == Some(open_id.as_str()))
+        .unwrap();
     assert_eq!(mine["state"], "● open");
 
     let d = post(
@@ -611,7 +616,7 @@ async fn use_model_pins_router() {
         r["said"],
         "Back to automatic. Each request goes to the cheapest model that fits it, and no model is pinned."
     );
-    assert!(w.api.parts.router.pins().get("chat").is_none());
+    assert!(!w.api.parts.router.pins().contains_key("chat"));
     let r = press(&w, "automatic", "").await;
     assert_eq!(
         r["said"],

@@ -1194,7 +1194,7 @@ fn met(api: &Api, skill: &SkillInfo) {
 
 /// v2 `live`: a bundled skill, or one somebody said yes to.
 fn live(api: &Api, skill: &SkillInfo) -> bool {
-    skill.plugin.is_some() || allowed(api).iter().any(|n| *n == skill.name)
+    skill.plugin.is_some() || allowed(api).contains(&skill.name)
 }
 
 fn skill_rows(api: &Api, learned_only: bool) -> Vec<Value> {
