@@ -360,9 +360,11 @@ async fn file(w: &World, plugin: &PluginId, run: &str, source: &str, kind: &str)
     .await
 }
 
+/// 404 with no type and none of a file's bytes in it.
 fn empty_404(a: &Answer) {
     assert_eq!(a.status, 404);
-    assert!(a.body.is_empty(), "{}", String::from_utf8_lossy(&a.body));
+    assert_eq!(a.header("content-type"), None);
+    assert_eq!(a.body, b"Not found.");
 }
 
 // ---- tests ----

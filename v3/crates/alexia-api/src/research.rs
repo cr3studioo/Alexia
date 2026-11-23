@@ -89,13 +89,13 @@ async fn research_file(
     let id = PluginId(get("plugin").to_owned());
     let report = get("kind") == "report";
     if api.parts.host.plugin_dir(&id).is_none() {
-        return json::empty(404);
+        return not_found();
     }
     let Some(run) = api.parts.tooling.research(&id, api.session()) else {
-        return json::empty(404);
+        return not_found();
     };
     if run.get("runId").and_then(Value::as_str) != Some(get("run")) {
-        return json::empty(404);
+        return not_found();
     }
     let path = if report {
         run.pointer("/report/path").and_then(Value::as_str)
@@ -110,12 +110,22 @@ async fn research_file(
             .and_then(Value::as_str)
     };
     let Some(path) = path.filter(|p| !p.is_empty()) else {
-        return json::empty(404);
+        return not_found();
     };
     match inside(&api.parts.layout.own_dir(&id.0), path, report) {
         Some((real, bytes)) => served(&real, bytes, report),
-        None => json::empty(404),
+        None => not_found(),
     }
+}
+
+/// v2's 404 carried no body; one with no type and a few words is the same to the window and
+/// tells a registered route from a missing one (the gate's own check).
+fn not_found() -> Response {
+    (
+        axum::http::StatusCode::NOT_FOUND,
+        axum::body::Body::from("Not found."),
+    )
+        .into_response()
 }
 
 /// The file at `path` when it is, really, inside `own` and of the expected kind.
