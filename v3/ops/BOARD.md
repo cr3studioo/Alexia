@@ -147,15 +147,15 @@
 | P2D-01 | alexia-api: server, gate, static shell, hub wiring | P2D | opus | P2-39 | alexia-api/**, alexia-hub/{main.rs,tests/window.rs}, INTERFACES.md, invariants.mjs | merged | 1 | cr3studioo/v3-P2D-01 | |
 | P2D-02 | Contract: record v2 answers, replay against hub | P2D | sonnet | P2D-01 | alexia-hub/{tools/record-v2.mjs,tests/contract*} | merged | 1 | cr3studioo/v3-P2D-02 | |
 | P2D-03 | Core seam: window origin, progress, step frames, asker | P2D | opus | none | alexia-core/**, alexia-gateway/{lib,ask,gateway}, alexia-scheduler/lib | merged | 1 | cr3studioo/v3-P2D-03 | |
-| P2D-04 | State, setup and settings | P2D | opus | P2D-02 | alexia-api/{state.rs,tests/state.rs} | ready | 0 | | |
+| P2D-04 | State, setup and settings | P2D | opus | P2D-02 | alexia-api/{state.rs,tests/state.rs} | running | 1 | cr3studioo/v3-P2D-04 | ctx_60a9f8dace3f |
 | P2D-05 | Chat in the window: stream, stop, approve, commands, files | P2D | opus | P2D-02, P2D-03 | alexia-api/{chat,offers}, alexia-hub/main.rs | merged | 2 | cr3studioo/v3-P2D-05 | |
-| P2D-06 | Plugins screen: panes, settings, trust, install, servers | P2D | opus | P2D-02 | alexia-api/plugins, alexia-mcp/{host.rs,tests/servers.rs} | ready | 0 | | |
+| P2D-06 | Plugins screen: panes, settings, trust, install, servers | P2D | opus | P2D-02 | alexia-api/plugins, alexia-mcp/{host.rs,tests/servers.rs} | running | 1 | cr3studioo/v3-P2D-06 | ctx_b1601b19d0ad |
 | P2D-07 | Board: tables, actions, learned skills | P2D | opus | P2D-02 | alexia-api/{board,learned} | ready | 0 | | |
 | P2D-08 | Library: plugins and skills from the shelf | P2D | opus | P2D-02, P2D-06 | alexia-api/library | todo | 0 | | |
 | P2D-09 | Local models and local stats | P2D | opus | P2D-02 | alexia-api/local_models, alexia-core/{hf.rs,local.rs} | ready | 0 | | |
 | P2D-10 | Compute screen, no paired computers | P2D | opus | P2D-02 | alexia-api/compute | ready | 0 | | |
 | P2D-11 | Image editor and research viewer | P2D | opus | P2D-02, P2D-03 | alexia-api/{editor,research} | ready | 0 | | |
 | P2D-12 | PC actions proven; hub runs in owner session | P2D | opus | P2D-04, P2D-05, P2D-06 | alexia-hub/{Cargo.toml,watchdog.rs,tests/pc_actions.rs} | todo | 0 | | |
-| P2D-13 | Tauri shell starts or attaches to the hub | P2D | opus | P2D-01 | src-tauri/src/main.rs, scripts/sidecar.mjs | running | 2 | cr3studioo/v3-P2D-13 | fix ctx_c95c74fcc374 |
+| P2D-13 | Tauri shell starts or attaches to the hub | P2D | opus | P2D-01 | src-tauri/src/main.rs, scripts/sidecar.mjs | review | 2 | cr3studioo/v3-P2D-13 | rv2 ctx_d6d7b064caf5 |
 | P2D-14 | Coverage and loopback checks | P2D | sonnet | P2D-04..P2D-13 | v3/ci/invariants.mjs, contract/gate.json | todo | 0 | | |
 | P2D-15 | End to end on the real app on this PC | P2D | sonnet | P2D-01..P2D-14 | v3/ops/reports/P2D-e2e.md, p2d-e2e.ps1 | todo | 0 | | |
