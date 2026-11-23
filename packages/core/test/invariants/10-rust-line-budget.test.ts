@@ -47,7 +47,7 @@ import { files } from './_repo.js'
 // 185 lines with their tests): the app now attaches to the hub already running on the PC (Task
 // Scheduler, a console) or starts `alexia-hub run`, and never starts Node. Only this process can
 // do it — it owns the windows that point at the hub and the quit that stops one it started —
-// and it has to tell its own hub from somebody else's, which Telegram depends on. About 55 of
+// and it has to tell its own hub from somebody else's, which other clients depend on. About 55 of
 // those lines are unit tests of `window.json` and the *stop only ours* rule. `vault.rs` (75)
 // stays in the tree unused on this path (D-P2D-5), and comes out of the budget when it goes.
 // It decides nothing: it reads a file, knocks on a port, and starts the same command again.

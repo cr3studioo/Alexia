@@ -48,7 +48,7 @@ test('one Alexia at a time: the shell keeps the hub it started and stops it on e
   expect(source).toContain('.env("ALEXIA_HUB_STOP_ON_EOF", "1")')
 
   // And stopped when the app actually ends — only if this shell started it (P2D-13): a hub from
-  // Task Scheduler or a console serves Telegram too. `.run(generate_context!())` cannot do this —
+  // Task Scheduler or a console serves other clients too. `.run(generate_context!())` cannot do this —
   // it takes no event handler, which is how the leak got in.
   const exit = source.slice(source.indexOf('RunEvent::Exit =>'))
   expect(exit).toMatch(/if hub::ours\(held\(app\)\) \{\s*if let Some\(hub\) = take_hub\(app, None\) \{\s*hub::stop\(hub\);/)

@@ -266,8 +266,9 @@ async fn run() -> Res<()> {
             }
         });
     }
-    // Test hook: with ALEXIA_HUB_STOP_ON_EOF=1, stdin reaching EOF behaves like Ctrl+C
-    // (a real Ctrl+C can't be sent to a child on Windows without unsafe code).
+    // With ALEXIA_HUB_STOP_ON_EOF=1, stdin reaching EOF behaves like Ctrl+C (a real Ctrl+C can't
+    // be sent to a child on Windows without unsafe code). The desktop shell relies on this in
+    // production: it is how quitting the app stops a hub the app started (P2D-13).
     if std::env::var_os("ALEXIA_HUB_STOP_ON_EOF").is_some_and(|v| v == "1") {
         let stop = root.clone();
         std::thread::spawn(move || {
