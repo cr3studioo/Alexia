@@ -206,7 +206,7 @@ async fn import_cancel_keeps_partial() {
     let cancel = CancellationToken::new();
     let (tx, mut rx) = mpsc::channel(4096);
     let task = {
-        let (base, layout, cancel) = (base.clone(), layout.clone(), cancel.clone());
+        let (base, layout, cancel) = (base.clone(), Layout::new(layout.root.clone()), cancel.clone());
         tokio::spawn(async move {
             hf::import_cancellable_at(
                 &base,
@@ -405,7 +405,7 @@ fn world(name: &str, vram_mb: u32) -> World {
     ));
     let router = Arc::new(Router::new(Vec::new(), catalog, store.clone()));
     let layout = Layout::new(root.join("data"));
-    let runtime = Runtime::new(layout.clone(), reqwest::Client::new());
+    let runtime = Runtime::new(Layout::new(layout.root.clone()), reqwest::Client::new());
     let jobs = LocalJobs::new(runtime, store.clone(), router.clone());
     jobs.set_machine(Machine {
         vram_mb,

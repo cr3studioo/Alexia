@@ -2128,7 +2128,7 @@ pub mod system {
 
         pub fn uptime() -> u64 {
             // SAFETY: no arguments, no pointers.
-            unsafe { GetTickCount64() } / 1000
+            (unsafe { GetTickCount64() }) / 1000
         }
 
         pub fn free_disk(path: &Path) -> Option<u64> {
