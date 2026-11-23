@@ -1050,6 +1050,8 @@ impl Pump {
                 self.steerable.store(true, Ordering::SeqCst);
                 return;
             }
+            // The window's: a chat shows what it showed before (the phase and the text).
+            DraftFrame::Step(_) | DraftFrame::Note(_) | DraftFrame::Ask(_) => return,
             DraftFrame::Phase(p) => {
                 if p == Phase::Tool {
                     self.tasky.store(true, Ordering::SeqCst);

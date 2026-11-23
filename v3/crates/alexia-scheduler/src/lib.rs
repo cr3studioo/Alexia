@@ -374,6 +374,7 @@ impl Scheduler {
             Origin::Channel { channel, chat } => self.store.channel_session(channel, chat)?,
             // The job row records only `Desktop`, not which chat, so use the one shared desktop session.
             Origin::Desktop => self.store.channel_session("desktop", "main")?,
+            Origin::Window => self.store.channel_session("window", "main")?,
             Origin::Scheduler { .. } => return Err(invalid("A job needs a chat to answer in.")),
         })
     }

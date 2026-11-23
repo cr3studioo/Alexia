@@ -5,10 +5,11 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use alexia_store::{Content, Ms, SessionId};
+use serde::Serialize;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-use crate::{Error, Lane, Origin, RunId, Span};
+use crate::{Error, Lane, Origin, Produced, RunId, Span, ToolProgress};
 
 /// (V3-1) A file that came with a message, already downloaded under `layout.cache()`.
 #[derive(Clone, Debug)]
@@ -59,6 +60,9 @@ pub struct Turn {
 }
 
 /// What the reply is doing while it is written. Mirrors `alexia/stream` (wire-protocol.md §5).
+// `Step` is unboxed as INTERFACES.md has it: a frame lives for one send, so the size costs
+// nothing worth a `Box` in every match.
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug)]
 pub enum DraftFrame {
     Delta(String),
@@ -66,6 +70,34 @@ pub enum DraftFrame {
     Phase(Phase),
     /// The brain reads `turn.steer` from now on.
     Steerable,
+    /// A tool step starting, moving or done (the window draws it; a chat ignores it).
+    Step(StepFrame),
+    /// A line for the person beside the answer: a boundary heard, a run stopped.
+    Note(String),
+    /// A question for the owner at the window; the answer comes back through the asker.
+    Ask(String),
+}
+
+/// One tool step as the window is told it: `args` when it starts, `progress` while it runs,
+/// `outcome` when it ends (v2 `serve.ts` `step` / `progress` / `done`).
+#[derive(Clone, Debug, Serialize)]
+pub struct StepFrame {
+    pub n: u32,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub args: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub progress: Option<ToolProgress>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub outcome: Option<StepOutcomeFrame>,
+}
+
+/// How a step ended. The window gives the files their ids.
+#[derive(Clone, Debug, Serialize)]
+pub struct StepOutcomeFrame {
+    pub text: String,
+    pub ok: bool,
+    pub files: Vec<Produced>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

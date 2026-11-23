@@ -27,8 +27,8 @@ use crate::trim::{self, TrimOptions};
 use crate::{
     chat, commands, lane, local, Ask, Brain, BrainError, Budget, Bus, ChatChunk, ChatRequest,
     DraftFrame, DraftSink, Job, Lane, Limits, Origin, OutFile, PermissionMode, Phase,
-    ProviderError, Question, Reply, Ruling, RunEnd, RunId, RunResult, Span, Steer, Step, Struggle,
-    ToolCtx, ToolOutcome, ToolSpec, Tooling, Turn,
+    ProviderError, Question, Reply, Ruling, RunEnd, RunId, RunResult, Span, Steer, Step, StepFrame,
+    StepOutcomeFrame, Struggle, ToolCtx, ToolOutcome, ToolProgress, ToolSpec, Tooling, Turn,
 };
 
 pub struct AgentParts {
@@ -91,6 +91,10 @@ const BUSY: &str = "The free models are all busy right now. Try again in a minut
 const NO_FREE: &str = "No free model can answer right now.";
 const STOPPED: &str = "not run: stopped";
 const CAPPED: &str = "not run: step limit reached";
+/// How many progress reports of one call may wait for the window before one is dropped.
+const PROGRESS_QUEUE: usize = 64;
+/// Said when a run is stopped before any model was asked (v2 serve.ts).
+const NOT_STARTED: &str = "Stopped before starting.";
 
 /// v2 `WHY`: what just happened, in the words of somebody watching it. One line, before the change.
 fn why(s: Struggle) -> &'static str {
@@ -286,9 +290,22 @@ impl Run<'_> {
         self.frame(DraftFrame::Phase(p)).await;
     }
 
-    fn note(&mut self, line: &str) {
+    /// A line for the person: kept for the next stored reply, and said now (`DraftFrame::Note`).
+    async fn note(&mut self, line: &str) {
         self.trace.note(line);
         self.notes.push(line.to_owned());
+        self.frame(DraftFrame::Note(line.to_owned())).await;
+    }
+
+    /// A step as the window draws it, with nothing filled in yet.
+    fn step_frame(step: &Step) -> StepFrame {
+        StepFrame {
+            n: step.n,
+            name: step.name.clone(),
+            args: None,
+            progress: None,
+            outcome: None,
+        }
     }
 
     /// Stores a message in the session and adds it to the conversation.
@@ -339,7 +356,7 @@ impl Run<'_> {
     }
 
     /// The spoken-boundary check on the new user turn (TR-01): before the run starts.
-    fn boundaries(&mut self) -> Result<(), BrainError> {
+    async fn boundaries(&mut self) -> Result<(), BrainError> {
         let agent = self.agent;
         let p = &agent.parts;
         let scope = permissions::scope(&p.store, &p.layout.root);
@@ -347,10 +364,11 @@ impl Run<'_> {
             let mut all = scope.boundaries;
             all.push(b.clone());
             permissions::save_boundaries(&p.store, &all).map_err(other)?;
-            self.note(&permissions::boundary_ack(&b));
+            self.note(&permissions::boundary_ack(&b)).await;
         } else if !scope.boundaries.is_empty() && permissions::lifts(&self.said) {
             permissions::save_boundaries(&p.store, &[]).map_err(other)?;
-            self.note("Lifted. I can delete and change things again.");
+            self.note("Lifted. I can delete and change things again.")
+                .await;
         }
         Ok(())
     }
@@ -393,7 +411,7 @@ impl Run<'_> {
     /// router records them) plus the empty answers seen here.
     // ponytail: `tries` are not per run, so a parallel task's busy tries count too; a run
     // column on tries would make it exact.
-    fn free_failing(&mut self, empties: usize, since: Ms, told: &mut bool) {
+    async fn free_failing(&mut self, empties: usize, since: Ms, told: &mut bool) {
         if *told {
             return;
         }
@@ -407,7 +425,8 @@ impl Run<'_> {
             *told = true;
             self.note(&format!(
                 "The free models are struggling right now — {n} empty, cut-off or busy answers in this task."
-            ));
+            ))
+            .await;
         }
     }
 
@@ -426,10 +445,16 @@ impl Run<'_> {
         let (mut empties, mut told) = (0usize, false);
         let mut steerable = false;
 
+        let mut started = false;
         loop {
             if cancel.is_cancelled() {
+                if !started && self.done == 0 {
+                    self.trace.note(NOT_STARTED);
+                    self.frame(DraftFrame::Note(NOT_STARTED.into())).await;
+                }
                 return Ok(RunEnd::Stopped);
             }
+            started = true;
             if steerable {
                 self.steered().await?;
             }
@@ -456,7 +481,7 @@ impl Run<'_> {
                             above = Some(last.clone());
                             // Escalate the planning step, not every step.
                             job = Job::Plan;
-                            self.note(why(signal));
+                            self.note(why(signal)).await;
                         }
                     }
                 }
@@ -509,7 +534,7 @@ impl Run<'_> {
                 relay(rx, self.draft, self.trace),
             );
             for n in p.router.take_notes(Some(&self.run)) {
-                self.note(&n);
+                self.note(&n).await;
             }
             let done = match result {
                 Err(_) if cancel.is_cancelled() => {
@@ -541,10 +566,10 @@ impl Run<'_> {
                 // An empty answer: try another model, and count it towards B9.
                 empties += 1;
                 avoid.push(who);
-                self.free_failing(empties, since, &mut told);
+                self.free_failing(empties, since, &mut told).await;
                 continue;
             }
-            self.free_failing(empties, since, &mut told);
+            self.free_failing(empties, since, &mut told).await;
             self.trace
                 .model(&done.model, &done.model, done.first_byte_ms);
             answered = Some(who);
@@ -592,6 +617,11 @@ impl Run<'_> {
                     outcome: None,
                 };
                 self.trace.step(&step);
+                self.frame(DraftFrame::Step(StepFrame {
+                    args: Some(Value::Object(step.args.clone())),
+                    ..Run::step_frame(&step)
+                }))
+                .await;
                 self.phase(Phase::Tool).await;
                 let spec = available.iter().find(|t| t.name == step.name);
                 let gate = self.gate(&step, spec, cancel).await;
@@ -600,18 +630,32 @@ impl Run<'_> {
             }
 
             let mut running: JoinSet<(usize, ToolOutcome)> = JoinSet::new();
+            // One per running call: its progress, as `Step` frames. The call `try_send`s into a
+            // bounded queue, so a slow window loses a report and never stalls the tool.
+            let mut moving: JoinSet<()> = JoinSet::new();
             for (i, gate) in &gated {
                 if gate.refused.is_some() {
                     continue;
                 }
                 let (tools, step, i) = (p.tools.clone(), self.steps[*i].clone(), *i);
+                let (progress, mut reports) = mpsc::channel::<ToolProgress>(PROGRESS_QUEUE);
+                let (draft, frame) = (self.draft.clone(), Run::step_frame(&step));
+                moving.spawn(async move {
+                    while let Some(report) = reports.recv().await {
+                        let f = StepFrame {
+                            progress: Some(report),
+                            ..frame.clone()
+                        };
+                        let _ = draft.send(DraftFrame::Step(f)).await;
+                    }
+                });
                 let ctx = ToolCtx {
                     session: self.task.session,
                     run: self.run.clone(),
                     origin: self.task.origin.clone(),
                     background: self.task.background,
                     cancel: cancel.child_token(),
-                    progress: None,
+                    progress: Some(progress),
                 };
                 running.spawn(async move { (i, tools.call(&step.name, step.args, ctx).await) });
             }
@@ -624,6 +668,9 @@ impl Run<'_> {
                     Err(e) => tracing::warn!("a tool call stopped unexpectedly: {e}"),
                 }
             }
+            // Every call is over and dropped its sender, so each forwarder ends once it has
+            // said what was queued: no progress frame comes after its step's outcome.
+            while moving.join_next().await.is_some() {}
 
             let n_gated = gated.len();
             let mut failed = false;
@@ -649,7 +696,16 @@ impl Run<'_> {
                 } else {
                     outcome.text.clone()
                 };
+                let done = StepFrame {
+                    outcome: Some(StepOutcomeFrame {
+                        text: outcome.text.clone(),
+                        ok: outcome.ok,
+                        files: outcome.files.clone(),
+                    }),
+                    ..Run::step_frame(&self.steps[i])
+                };
                 self.steps[i].outcome = Some(outcome);
+                self.frame(DraftFrame::Step(done)).await;
                 let step = &self.steps[i];
                 self.trace.step(step);
                 if let Err(e) = self.trace.audited(
@@ -909,7 +965,11 @@ impl Agent {
             text: String::new(),
             said,
         };
-        let ended = if done == 0 { r.boundaries() } else { Ok(()) };
+        let ended = if done == 0 {
+            r.boundaries().await
+        } else {
+            Ok(())
+        };
         let ended = match ended {
             Ok(()) => r.go(&cancel).await,
             Err(e) => Err(e),
@@ -1033,7 +1093,7 @@ async fn attach(turn: &Turn) -> Content {
     Content::Parts(parts)
 }
 
-/// Lane::Command (owner's chat only) → `commands::run`; else append the user turn, build a Task, `run`, map to Reply.
+/// Lane::Command (owner's chat or window) → `commands::run`; else append the user turn, build a Task, `run`, map to Reply.
 #[async_trait::async_trait]
 impl Brain for Agent {
     async fn reply(
@@ -1042,8 +1102,9 @@ impl Brain for Agent {
         draft: DraftSink,
         cancel: CancellationToken,
     ) -> Result<Reply, BrainError> {
-        // Only the owner's own chat can run a command; from anywhere else `/…` is text (TR-01).
-        if matches!(turn.origin, Origin::Channel { .. })
+        // Only the owner can run a command: their own chat, or the window they sit at. From
+        // anywhere else `/…` is text (TR-01).
+        if matches!(turn.origin, Origin::Channel { .. } | Origin::Window)
             && lane::lane(&turn.content) == Lane::Command
         {
             return commands::run(self, &turn, cancel).await;

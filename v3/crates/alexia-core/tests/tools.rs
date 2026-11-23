@@ -287,7 +287,7 @@ async fn progress_forwarded() {
     assert!(out.ok);
     let mut lines = vec![];
     while let Ok(Some(l)) = tokio::time::timeout(Duration::from_secs(30), rx.recv()).await {
-        lines.push(l);
+        lines.push(l.line());
     }
     assert_eq!(lines, ["1 of 2", "2 of 2"]);
     e.done().await;
