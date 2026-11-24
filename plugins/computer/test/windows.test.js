@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { EventEmitter } from 'node:events'
 import { beforeEach, expect, test, vi } from 'vitest'
-import { click, focus, focusScript, front, frontScript, key, MOUSE, NOT_FRONT, openApp, quoted, scroll, type, unknownKey, windowsKeyIn, wrongWindow } from '../windows.js'
+import { candidatesScript, click, elements, focus, focusScript, front, frontScript, invoke, key, MOUSE, NOT_FRONT, openApp, pickWindow, quoted, readElement, scroll, type, unknownKey, windowOf, windowsKeyIn, wrongWindow } from '../windows.js'
 
 /**
  * PowerShell, faked. Every script `run` would hand to powershell.exe lands in `spawned`, and
@@ -341,4 +341,101 @@ test('openApp answers with the process it started, and searches by name only aft
     : JSON.stringify([{ Id: 4242, ProcessName: 'notes', MainWindowTitle: 'Notes' }])
   await expect(openApp('notes')).resolves.toEqual({ pid: 4242, name: 'notes', title: 'Notes' })
   expect(shell.spawned).toHaveLength(2)
+})
+
+// ---- which window of a process `elements`, `read` and `invoke` look in (P2D-19) ----
+
+/**
+ * What `candidatesScript` printed on this PC for a Character Map that had just been focused:
+ * a tooltip's drop shadow (SysShadow, a 164x25 pane of the same process) in front of the dialog.
+ * `FindFirst(Children, ProcessId)` took the shadow, and `elements` said *Nothing there names
+ * itself*.
+ */
+const SHADOW = { handle: 1444132, type: 'Pane', kind: 'SysShadow', name: '', w: 164, h: 25 }
+const DIALOG = { handle: 1444248, type: 'Window', kind: '#32770', name: 'Character Map', w: 491, h: 437 }
+const BOX = { name: 'Characters to copy :', type: 'Edit', id: '104', x: 240, y: 418, w: 165, h: 26, off: false }
+const isCandidates = (script) => script.includes('RootElement.FindAll([System.Windows.Automation.TreeScope]::Children, $cond)')
+
+/** Windows, faked: the candidates, then the dialog's controls only when the walk starts at the dialog. */
+const charmap = (candidates) => (script) => {
+  if (isCandidates(script)) return JSON.stringify(candidates)
+  if (script.includes(`FromHandle([System.IntPtr]${String(DIALOG.handle)})`)) {
+    if (script.includes('$found')) return JSON.stringify({ found: true, text: 'hello', name: BOX.name, type: 'Edit', x: 240, y: 418, how: 'none' })
+    return JSON.stringify([BOX])
+  }
+  return script.includes('$found') ? JSON.stringify({ found: false }) : '[]'
+}
+
+test('elements lists the app window, not the tooltip shadow in front of it', async () => {
+  shell.answer = charmap([SHADOW, DIALOG])
+  await expect(elements({ pid: 17360 })).resolves.toEqual([BOX])
+  expect(shell.spawned).toHaveLength(2)
+  const [candidates, walk] = shell.spawned
+  expect(candidates).toBe(candidatesScript(17360))
+  expect(candidates).toContain('ProcessIdProperty, 17360)')
+  // The walk starts at the window chosen, by its handle, and never at the first one by pid.
+  expect(walk).toContain(`$start = $auto::FromHandle([System.IntPtr]${String(DIALOG.handle)})`)
+  expect(walk).not.toContain(String(SHADOW.handle))
+  expect(walk).not.toMatch(/FindFirst\(\[System\.Windows\.Automation\.TreeScope\]::Children, \$cond\)/)
+  // The order the shadow comes in does not matter: it is never the one.
+  shell.spawned.length = 0
+  shell.answer = charmap([DIALOG, SHADOW])
+  await expect(elements({ pid: 17360 })).resolves.toEqual([BOX])
+})
+
+test('read and invoke look in the same window elements does', async () => {
+  shell.answer = charmap([SHADOW, DIALOG])
+  await expect(readElement({ pid: 17360, match: '104' })).resolves.toMatchObject({ found: true, text: 'hello' })
+  await expect(invoke({ pid: 17360, match: '104' })).resolves.toMatchObject({ found: true })
+  for (const script of shell.spawned.filter((one) => !isCandidates(one))) {
+    expect(script).toContain(`FromHandle([System.IntPtr]${String(DIALOG.handle)})`)
+  }
+})
+
+test('a process with no window of its own is an empty answer, not somebody else’s window', async () => {
+  // Only the shadow (or nothing at all, or something unparseable): no walk starts anywhere.
+  for (const answer of [JSON.stringify([SHADOW]), '', '[]', 'not json']) {
+    shell.spawned.length = 0
+    shell.answer = (script) => (isCandidates(script) ? answer : JSON.stringify([BOX]))
+    const walked = await elements({ pid: 17360 })
+    expect(shell.spawned[1]).toContain('$start = $null\nif ($null -eq $start) { Write-Output "[]"; exit }')
+    expect(shell.spawned[1]).not.toContain('FromHandle([System.IntPtr]')
+    // The fake answers the walk anyway; the real script exits before it at `$start = $null`.
+    expect(Array.isArray(walked)).toBe(true)
+  }
+  // One candidate comes back from ConvertTo-Json as a bare object, not a list.
+  shell.answer = (script) => (isCandidates(script) ? JSON.stringify(DIALOG) : JSON.stringify([BOX]))
+  await expect(windowOf(17360)).resolves.toBe(DIALOG.handle)
+})
+
+test('pickWindow: the frontmost window, else the largest thing that is not a tooltip or menu', () => {
+  const tip = { handle: 1, type: 'ToolTip', kind: 'tooltips_class32', name: 'U+0041', w: 300, h: 300 }
+  const menu = { handle: 2, type: 'Menu', kind: '#32768', name: '', w: 400, h: 400 }
+  const hidden = { handle: 3, type: 'Window', kind: '#32770', name: 'Gone', w: 0, h: 0 }
+  const small = { handle: 4, type: 'Pane', kind: 'Chrome_WidgetWin_1', name: '', w: 10, h: 10 }
+  const big = { handle: 5, type: 'Pane', kind: 'Chrome_WidgetWin_1', name: 'Page', w: 1200, h: 800 }
+  const second = { ...DIALOG, handle: 6, name: 'Advanced' }
+  expect(pickWindow([SHADOW, DIALOG])).toBe(DIALOG)
+  expect(pickWindow([tip, menu, SHADOW, DIALOG, second])).toBe(DIALOG)
+  expect(pickWindow([hidden, second, DIALOG])).toBe(second)
+  // A browser's top-level window is a pane: the largest one, never a bigger tooltip or menu.
+  expect(pickWindow([tip, small, menu, big])).toBe(big)
+  expect(pickWindow([SHADOW])).toBeUndefined()
+  expect(pickWindow([tip, menu, hidden])).toBeUndefined()
+  expect(pickWindow([])).toBeUndefined()
+  expect(pickWindow(undefined)).toBeUndefined()
+})
+
+test('focus brings the app window forward, not whatever MainWindowHandle says', () => {
+  // MainWindowHandle is the first visible unowned window, which was the shadow too.
+  const script = focusScript(17360)
+  expect(script).not.toContain('MainWindowHandle')
+  expect(script).toContain('$window = [Alexia.Front]::WindowOf($target)')
+  expect(script.indexOf('WindowOf($target)')).toBeLessThan(script.indexOf('FrameOf($target)'))
+  // Visible, no owner (GW_OWNER is 4), and not a tool window (WS_EX_TOOLWINDOW 0x80) unless it
+  // asks to be on the taskbar (WS_EX_APPWINDOW 0x40000). The shadow's extended style is 0x800A0.
+  expect(script).toContain('if (PidOf(one) != target || !IsWindowVisible(one) || GetWindow(one, 4) != System.IntPtr.Zero) continue;')
+  expect(script).toContain('if ((ex & 0x80) != 0 && (ex & 0x40000) == 0) continue;')
+  const ex = 0x800a0
+  expect((ex & 0x80) !== 0 && (ex & 0x40000) === 0).toBe(true)
 })
