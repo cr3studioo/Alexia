@@ -416,7 +416,7 @@ pub(crate) fn offer(
     steps: usize,
     answer: &str,
 ) -> Option<Value> {
-    if steps < ENOUGH_STEPS || board::is_private(api, session) {
+    if steps < ENOUGH_STEPS || crate::private::is_private(&api.parts.store, session) {
         return None;
     }
     let episode = episode_of(api, session, task, answer)?;

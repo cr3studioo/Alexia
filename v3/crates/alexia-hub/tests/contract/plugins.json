@@ -70,7 +70,7 @@
         "path": "/api/install",
         "query": {},
         "body": {
-          "path": "C:\\Users\\vacla\\AppData\\Local\\Temp\\alexia-no-such-folder",
+          "path": "%TEMP%\\alexia-no-such-folder",
           "confirm": true
         },
         "token": true,

@@ -47,7 +47,19 @@ fn contract_dir() -> PathBuf {
 fn load(area: &str) -> Value {
     let file = contract_dir().join(format!("{area}.json"));
     let text = std::fs::read_to_string(&file).unwrap_or_else(|e| panic!("{}: {e}", file.display()));
+    let text = fill_temp(&text);
     serde_json::from_str(&text).unwrap_or_else(|e| panic!("{}: {e}", file.display()))
+}
+
+/// The fixtures say `%TEMP%` where the recording had this machine's temp folder, so no user
+/// name is kept in git (P3-00). Filled with `std::env::temp_dir()`, trailing separator trimmed,
+/// escaped as a JSON string's inside.
+fn fill_temp(text: &str) -> String {
+    let dir = std::env::temp_dir();
+    let dir = dir.to_string_lossy();
+    let dir = dir.trim_end_matches(['\\', '/']);
+    let quoted = serde_json::to_string(dir).unwrap();
+    text.replace("%TEMP%", &quoted[1..quoted.len() - 1])
 }
 
 // ---- shapes ----

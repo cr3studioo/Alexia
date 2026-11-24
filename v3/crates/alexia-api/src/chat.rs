@@ -53,8 +53,6 @@ const FINISHED: &str = "reply.finished";
 const NOT_HER: &str = "persona.not_her";
 /// The builtin that opens a skill (`prompt.rs`), v2 `SKILL_TOOL`.
 const SKILL_TOOL: &str = "skill";
-/// kv `_core` key holding the sessions whose pictures stay on this computer (v2).
-const PRIVATE: &str = "private_sessions";
 /// How many frames may wait for a slow window before the brain waits for it.
 const FRAMES: usize = 256;
 
@@ -171,7 +169,7 @@ async fn chat(State(api): State<Arc<Api>>, Extension(Sent(sent)): Extension<Sent
         return json::empty(400);
     }
     if sent.get("private") == Some(&Value::Bool(true)) {
-        if let Err(e) = mark_private(&api, session) {
+        if let Err(e) = crate::private::mark(&api.parts.store, session) {
             tracing::warn!("chat: could not mark the conversation private: {e}");
         }
     }
@@ -238,7 +236,7 @@ async fn reply(
         text,
         uploads,
     } = asked;
-    let private = is_private(&api, session);
+    let private = crate::private::is_private(&api.parts.store, session);
 
     // The documents, before anything else: reading is the first wait after sending a file.
     let mut files = Vec::new();
@@ -532,29 +530,6 @@ fn learned_skill(api: &Api, name: &str) -> bool {
     !name.is_empty()
         && !name.contains(['/', '\\', '.'])
         && api.parts.layout.skills().join(name).is_dir()
-}
-
-fn private_sessions(api: &Api) -> Vec<i64> {
-    api.parts
-        .store
-        .kv_get("_core", PRIVATE)
-        .ok()
-        .flatten()
-        .and_then(|v| serde_json::from_value(v).ok())
-        .unwrap_or_default()
-}
-
-fn is_private(api: &Api, session: SessionId) -> bool {
-    private_sessions(api).contains(&session.0)
-}
-
-fn mark_private(api: &Api, session: SessionId) -> crate::Result<()> {
-    let mut now = private_sessions(api);
-    if !now.contains(&session.0) {
-        now.push(session.0);
-        api.parts.store.kv_set("_core", PRIVATE, &json!(now))?;
-    }
-    Ok(())
 }
 
 // ---- uploads (v2 attach.ts) ----
