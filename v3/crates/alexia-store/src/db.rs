@@ -350,6 +350,40 @@ impl Store {
         Ok(())
     }
 
+    /// Read-modify-write of one kv value inside one transaction, under the store's connection
+    /// mutex: `f` gets the current value (None when absent) and returns the new one (None
+    /// deletes the key). Returns what was written. No other writer can interleave (P3-00).
+    pub fn kv_update(
+        &self,
+        ns: &str,
+        key: &str,
+        f: impl FnOnce(Option<serde_json::Value>) -> Option<serde_json::Value>,
+    ) -> Result<Option<serde_json::Value>> {
+        self.transaction(|tx| {
+            let text: Option<String> = tx
+                .query_row(
+                    "SELECT value FROM kv WHERE ns = ? AND key = ?",
+                    [ns, key],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            let now = text.map(|t| serde_json::from_str(&t)).transpose()?;
+            let next = f(now);
+            match &next {
+                Some(v) => {
+                    tx.execute(
+                        "INSERT INTO kv (ns, key, value) VALUES (?, ?, ?)                          ON CONFLICT (ns, key) DO UPDATE SET value = excluded.value",
+                        params![ns, key, serde_json::to_string(v)?],
+                    )?;
+                }
+                None => {
+                    tx.execute("DELETE FROM kv WHERE ns = ? AND key = ?", [ns, key])?;
+                }
+            }
+            Ok(next)
+        })
+    }
+
     pub fn kv_delete(&self, ns: &str, key: &str) -> Result<()> {
         self.conn()
             .execute("DELETE FROM kv WHERE ns = ? AND key = ?", [ns, key])?;
