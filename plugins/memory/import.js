@@ -142,8 +142,9 @@ function chatgptMessages(data) {
 
 /** Does this look like ChatGPT's `conversations.json` (or something carrying its memory)? */
 function chatgptShaped(data) {
-  if (Array.isArray(data)) return data.some((one) => one !== null && typeof one === 'object' && ('mapping' in one || 'memory' in one || 'memories' in one))
-  return data !== null && typeof data === 'object' && ('memory' in data || 'memories' in data || 'conversations' in data)
+  // A list is ChatGPT's when it holds conversations; a list of `{ memory }` objects is a plain memory list.
+  if (Array.isArray(data)) return data.some((one) => one !== null && typeof one === 'object' && 'mapping' in one)
+  return data !== null && typeof data === 'object' && ('memory' in data || 'conversations' in data)
 }
 
 /**

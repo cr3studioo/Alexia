@@ -2433,7 +2433,7 @@ const hashOf = (text) => createHash('sha256').update(text).digest('hex')
 /**
  * Pinned facts as a Markdown file the owner can read and edit, and what they change read back.
  *
- * On start and every sort: if the file's mtime and hash say it is not what was last written, the
+ * On start and every sort: if the file's hash says it is not what was last written (its mtime is kept beside it), the
  * lines the owner added become pinned stated facts and the lines they took away are unpinned —
  * not forgotten. Then the file is rewritten only if what it says is no longer what is pinned, so
  * a file the owner has laid out their own way is left as it is. A path outside the folders the
@@ -2465,7 +2465,10 @@ async function syncProfile() {
   let bulletsNow = mine?.lines ?? []
   let hash = mine?.hash
   let mtime = mine?.mtime
-  if (info !== null && !(mine && Number(info.mtimeMs) === Number(mine.mtime))) {
+  // Read every time, however little the clock says changed: the file is a few lines, a coarse
+  // file-system timestamp is exactly when an edit made a second after a write is missed, and the
+  // hash is what decides.
+  if (info !== null) {
     const text = await readFile(path, 'utf8')
     hash = hashOf(text)
     mtime = info.mtimeMs
